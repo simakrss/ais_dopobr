@@ -71,6 +71,11 @@ function safePhotoPath(photoPath) {
   return path.join(PHOTO_ROOT, fileName);
 }
 
+function isInsideRoot(fullPath) {
+  const relativePath = path.relative(ROOT, fullPath);
+  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+}
+
 async function deletePhoto(photoPath) {
   const fullPath = safePhotoPath(photoPath);
   if (!fullPath) return false;
@@ -115,7 +120,7 @@ async function serveStatic(req, res) {
   const decodedPath = decodeURIComponent(requestUrl.pathname);
   const relativePath = decodedPath === "/" ? "index.html" : decodedPath.replace(/^\/+/, "");
   const fullPath = path.resolve(ROOT, relativePath);
-  if (!fullPath.startsWith(ROOT)) {
+  if (!isInsideRoot(fullPath)) {
     sendError(res, 403, "Forbidden");
     return;
   }
@@ -129,6 +134,11 @@ async function serveStatic(req, res) {
     const ext = path.extname(fullPath).toLowerCase();
     const headers = { ...CORS_HEADERS, "Content-Type": MIME_TYPES[ext] || "application/octet-stream" };
     if (decodedPath.startsWith("/storage/photos/")) headers["Cache-Control"] = "public, max-age=31536000, immutable";
+    if (req.method === "HEAD") {
+      res.writeHead(200, headers);
+      res.end();
+      return;
+    }
     const file = await fs.readFile(fullPath);
     res.writeHead(200, headers);
     res.end(file);
