@@ -1,0 +1,460 @@
+window.AIS_SEED = {
+  meta: {
+    appName: "АИС Допобразование Web",
+    sourceWorkbook: "АИС Допобразование.xlsb",
+    extractedAt: "2026-05-23",
+    organization: "ООО «Цифровизация Плюс»",
+    sheets: [
+      { name: "Настройки", usedRange: "A1:AW35", rows: 35, columns: 49 },
+      { name: "Запасы", usedRange: "A1:H294", rows: 294, columns: 8 },
+      { name: "Общие затраты", usedRange: "A1:J212", rows: 212, columns: 10 },
+      { name: "Прямые затраты", usedRange: "A1:J1535", rows: 1535, columns: 10 },
+      { name: "Реестр договоров", usedRange: "A1:JE274", rows: 274, columns: 265 },
+      { name: "База", usedRange: "A1:JT983", rows: 983, columns: 280 },
+      { name: "Оценки", usedRange: "A1:C1", rows: 1, columns: 3, hidden: true },
+      { name: "Вебинары", usedRange: "A1:BD705", rows: 705, columns: 56 },
+      { name: "Реестр программ", usedRange: "A1:JO166", rows: 166, columns: 275 },
+      { name: "Учебные планы", usedRange: "A1:K1582", rows: 1582, columns: 11 },
+      { name: "ЕГЭ-ОГЭ", usedRange: "A1:AP37", rows: 37, columns: 42 },
+      { name: "ИндПлан_ПП", usedRange: "A1:AY40", rows: 40, columns: 51 }
+    ],
+    vbaModules: [
+      { name: "Main", lines: 2481 },
+      { name: "КарточкаСлушателя", lines: 2388 },
+      { name: "Строки и массивы", lines: 1729 },
+      { name: "Элементы управления", lines: 1350 },
+      { name: "Разное", lines: 1317 },
+      { name: "JSON", lines: 1187 },
+      { name: "Склонение_ФИО", lines: 1177 },
+      { name: "КарточкаКонтрагента", lines: 1153 },
+      { name: "API", lines: 1100 },
+      { name: "JupiterSync", lines: 1012 },
+      { name: "Настройки", lines: 1008 },
+      { name: "Разное_Excel", lines: 1005 },
+      { name: "Файлы", lines: 882 },
+      { name: "ИмпортЗаявок", lines: 790 },
+      { name: "WhatsApp_BOT", lines: 432 }
+    ]
+  },
+  dictionaries: {
+    statuses: ["Намерение", "В работе", "На зачисление", "Учится", "Окончил", "Отчислен"],
+    contractTypes: ["Договор со слушателем", "Договор с заказчиком", "Партнерская программа", "Договор ГПХ"],
+    studyForms: ["Очно-заочная", "Заочная", "Дистанционная"],
+    programStatuses: ["Набор", "В работе", "Архив"],
+    expenseTypes: [
+      "Оплата преподавателю",
+      "Печать документа об образовании",
+      "Зарплата сотрудников",
+      "Итоговая аттестация",
+      "Курсы ЕГЭ и ОГЭ",
+      "Почтовые расходы"
+    ],
+    inventoryTypes: [
+      "Корочки диплома о профессиональной переподготовке",
+      "Почтовый конверт",
+      "Бланк удостоверения",
+      "Бланк сертификата"
+    ],
+    roles: ["Администратор", "Менеджер", "Методист", "Бухгалтер", "Преподаватель"]
+  },
+  collections: {
+    students: [
+      {
+        id: "stu-001",
+        uid: "1152",
+        name: "Нечаева Вероника Анатольевна",
+        status: "Учится",
+        program: "Технология преподавания физики в образовательной организации (600 ч)",
+        phone: "+7 900 000-00-01",
+        email: "nechaeva@example.ru",
+        source: "Заявка с сайта",
+        group: "ФИЗ-600-25",
+        contractNo: "24",
+        contractAmount: 36000,
+        paidAmount: 24000,
+        balance: 12000,
+        applicationDate: "2025-09-03",
+        startDate: "2025-09-15",
+        endDate: "2026-03-15",
+        documentsStatus: "Комплект документов отправлен",
+        manager: "Симак Роман Сергеевич",
+        tags: "ФРДО, ИАР"
+      },
+      {
+        id: "stu-002",
+        uid: "1153",
+        name: "Симак Варвара Романовна",
+        status: "Учится",
+        program: "Курсы по подготовке к ОГЭ",
+        phone: "+7 900 000-00-02",
+        email: "varvara@example.ru",
+        source: "Рекомендация",
+        group: "ОГЭ-25",
+        contractNo: "30",
+        contractAmount: 1900,
+        paidAmount: 1900,
+        balance: 0,
+        applicationDate: "2025-09-27",
+        startDate: "2025-09-27",
+        endDate: "2026-08-31",
+        documentsStatus: "Все оформлено",
+        manager: "Симак Роман Сергеевич",
+        tags: "ОГЭ"
+      },
+      {
+        id: "stu-003",
+        uid: "1154",
+        name: "Симак Дмитрий Романович",
+        status: "Учится",
+        program: "Курсы по подготовке к ЕГЭ",
+        phone: "+7 900 000-00-03",
+        email: "dmitry@example.ru",
+        source: "Повторное обучение",
+        group: "ЕГЭ-25",
+        contractNo: "31",
+        contractAmount: 10200,
+        paidAmount: 10200,
+        balance: 0,
+        applicationDate: "2025-10-04",
+        startDate: "2025-10-05",
+        endDate: "2026-08-31",
+        documentsStatus: "Все оформлено",
+        manager: "Симак Роман Сергеевич",
+        tags: "ЕГЭ"
+      },
+      {
+        id: "stu-004",
+        uid: "1155",
+        name: "Иванова Мария Петровна",
+        status: "На зачисление",
+        program: "Microsoft Access + SQL (72 ч)",
+        phone: "+7 900 000-00-04",
+        email: "ivanova@example.ru",
+        source: "edu-plus.ru",
+        group: "",
+        contractNo: "",
+        contractAmount: 8000,
+        paidAmount: 0,
+        balance: 8000,
+        applicationDate: "2026-05-18",
+        startDate: "",
+        endDate: "",
+        documentsStatus: "Ожидается договор",
+        manager: "Менеджер обучения",
+        tags: "Access, SQL"
+      },
+      {
+        id: "stu-005",
+        uid: "1156",
+        name: "Петров Алексей Игоревич",
+        status: "В работе",
+        program: "SUP инструктор (300 ч)",
+        phone: "+7 900 000-00-05",
+        email: "petrov@example.ru",
+        source: "Вебинар",
+        group: "",
+        contractNo: "",
+        contractAmount: 10000,
+        paidAmount: 3000,
+        balance: 7000,
+        applicationDate: "2026-05-20",
+        startDate: "",
+        endDate: "",
+        documentsStatus: "Нужны паспортные данные",
+        manager: "Менеджер обучения",
+        tags: "SUP"
+      }
+    ],
+    contracts: [
+      {
+        id: "con-030",
+        name: "Симак Варвара Романовна",
+        contractNo: "30",
+        contractDate: "2025-09-27",
+        startDate: "2025-09-27",
+        endDate: "2026-08-31",
+        amount: 1900,
+        paid: 1900,
+        balance: 0,
+        type: "Договор со слушателем",
+        subject: "Обучение по программе дополнительного образования",
+        status: "Действует"
+      },
+      {
+        id: "con-031",
+        name: "Симак Дмитрий Романович",
+        contractNo: "31",
+        contractDate: "2025-10-04",
+        startDate: "2025-10-05",
+        endDate: "2026-08-31",
+        amount: 10200,
+        paid: 10200,
+        balance: 0,
+        type: "Договор со слушателем",
+        subject: "Обучение по программе дополнительного образования",
+        status: "Действует"
+      },
+      {
+        id: "con-032",
+        name: "Нечаева Вероника Анатольевна",
+        contractNo: "24",
+        contractDate: "2025-09-03",
+        startDate: "2025-09-15",
+        endDate: "2026-03-15",
+        amount: 36000,
+        paid: 24000,
+        balance: 12000,
+        type: "Договор с заказчиком",
+        subject: "Профессиональная переподготовка",
+        status: "Действует"
+      }
+    ],
+    programs: [
+      {
+        id: "prg-001",
+        name: "Microsoft Access + SQL (сертиф. 72 ч)",
+        shortName: "Microsoft Access + SQL",
+        status: "Набор",
+        price: 6000,
+        oldPrice: 8000,
+        type: "Сертификат",
+        hours: 72,
+        duration: "1 месяц",
+        landingCode: "3878",
+        groupIndex: "ACC-SQL",
+        studyForm: "Дистанционная",
+        qualification: "",
+        manager: "Менеджер обучения"
+      },
+      {
+        id: "prg-002",
+        name: "Microsoft Access + SQL (72 ч)",
+        shortName: "Microsoft Access + SQL",
+        status: "Набор",
+        price: 8000,
+        oldPrice: 12000,
+        type: "Повышение квалификации",
+        hours: 72,
+        duration: "1 месяц",
+        landingCode: "3878",
+        groupIndex: "ACC-SQL-PK",
+        studyForm: "Дистанционная",
+        qualification: "",
+        manager: "Менеджер обучения"
+      },
+      {
+        id: "prg-003",
+        name: "SUP инструктор (300 ч)",
+        shortName: "SUP инструктор",
+        status: "Набор",
+        price: 10000,
+        oldPrice: 16000,
+        type: "Профессиональная переподготовка",
+        hours: 300,
+        duration: "3 месяца",
+        landingCode: "4298",
+        groupIndex: "SUP-300",
+        studyForm: "Дистанционная",
+        qualification: "Инструктор",
+        manager: "Менеджер обучения"
+      },
+      {
+        id: "prg-004",
+        name: "Курсы по подготовке к ЕГЭ",
+        shortName: "ЕГЭ",
+        status: "Набор",
+        price: 10200,
+        oldPrice: 12000,
+        type: "Дополнительное образование",
+        hours: 128,
+        duration: "Учебный год",
+        landingCode: "",
+        groupIndex: "ЕГЭ",
+        studyForm: "Очно-заочная",
+        qualification: "",
+        manager: "Методист"
+      }
+    ],
+    trainingPlans: [
+      {
+        id: "plan-001",
+        code: "1",
+        programName: "Курсы по подготовке к ЕГЭ",
+        discipline: "Базовый учебный план",
+        totalHours: 128,
+        theoryHours: 62,
+        practiceHours: 66,
+        attestation: "Зачет",
+        teacher: "",
+        materials: "Учебные материалы",
+        content: "Подготовка по предметным блокам"
+      },
+      {
+        id: "plan-002",
+        code: "2",
+        programName: "Курсы по подготовке к ОГЭ",
+        discipline: "Базовый учебный план",
+        totalHours: 128,
+        theoryHours: 62,
+        practiceHours: 66,
+        attestation: "Зачет",
+        teacher: "",
+        materials: "Учебные материалы",
+        content: "Подготовка по предметным блокам"
+      },
+      {
+        id: "plan-003",
+        code: "4",
+        programName: "Тренинг по работе на планшетных компьютерах",
+        discipline: "Практическая работа",
+        totalHours: 16,
+        theoryHours: 6,
+        practiceHours: 10,
+        attestation: "Зачет",
+        teacher: "",
+        materials: "Методические материалы",
+        content: "Практические задания"
+      }
+    ],
+    webinars: [
+      {
+        id: "web-001",
+        code: "2461",
+        requestDate: "2026-05-20 11:10",
+        name: "Петров Алексей Игоревич",
+        phone: "+7 900 000-00-05",
+        email: "petrov@example.ru",
+        city: "Санкт-Петербург",
+        organization: "Самозанятый",
+        position: "Инструктор",
+        source: "edu-plus.ru",
+        payment: 3000,
+        joinLink: "https://edu-plus.ru/webinar/2461",
+        status: "Зарегистрирован"
+      },
+      {
+        id: "web-002",
+        code: "2461",
+        requestDate: "2026-05-21 14:35",
+        name: "Иванова Мария Петровна",
+        phone: "+7 900 000-00-04",
+        email: "ivanova@example.ru",
+        city: "Москва",
+        organization: "",
+        position: "",
+        source: "ВК",
+        payment: 0,
+        joinLink: "https://edu-plus.ru/webinar/2461",
+        status: "Ожидает оплаты"
+      }
+    ],
+    directExpenses: [
+      {
+        id: "dex-001",
+        uid: "55",
+        date: "2023-05-20",
+        type: "Печать документа об образовании",
+        amount: 170,
+        note: "OQprint",
+        inventoryLink: "",
+        act: "",
+        actStatus: "",
+        recommendation: "Оплатить"
+      },
+      {
+        id: "dex-002",
+        uid: "42",
+        date: "2023-02-21",
+        type: "Оплата преподавателю",
+        amount: 2000,
+        note: "Тесля Елена Владимировна",
+        inventoryLink: "",
+        act: "-",
+        actStatus: "",
+        recommendation: "Проверить акт"
+      }
+    ],
+    generalExpenses: [
+      {
+        id: "gex-001",
+        counterparty: "Симак Надежда Юрьевна",
+        date: "2022-05-18",
+        workType: "Зарплата сотрудников",
+        description: "грант",
+        amount: 57500,
+        paid: "2022-05-20",
+        accountingClosed: "Да",
+        bkExpenseNo: "",
+        otherExpenses: ""
+      },
+      {
+        id: "gex-002",
+        counterparty: "Симак Дмитрий Романович",
+        date: "2022-05-18",
+        workType: "Зарплата сотрудников",
+        description: "грант",
+        amount: 12200,
+        paid: "2022-05-20",
+        accountingClosed: "Да",
+        bkExpenseNo: "",
+        otherExpenses: ""
+      }
+    ],
+    inventory: [
+      {
+        id: "inv-001",
+        date: "2022-11-19",
+        itemType: "Корочки диплома о профессиональной переподготовке",
+        amount: 233,
+        note: "Буквоед",
+        uid: "112",
+        balance: 9
+      },
+      {
+        id: "inv-002",
+        date: "2022-11-19",
+        itemType: "Почтовый конверт",
+        amount: 25,
+        note: "Закупка",
+        uid: "126",
+        balance: 81
+      }
+    ],
+    users: [
+      {
+        id: "usr-001",
+        name: "Администратор",
+        email: "admin@edu-plus.local",
+        role: "Администратор",
+        status: "Активен",
+        lastLogin: "2026-05-23 17:00"
+      },
+      {
+        id: "usr-002",
+        name: "Менеджер обучения",
+        email: "manager@edu-plus.local",
+        role: "Менеджер",
+        status: "Активен",
+        lastLogin: "2026-05-22 12:30"
+      },
+      {
+        id: "usr-003",
+        name: "Методист",
+        email: "methodist@edu-plus.local",
+        role: "Методист",
+        status: "Активен",
+        lastLogin: "2026-05-21 09:15"
+      }
+    ],
+    audit: [
+      {
+        id: "log-001",
+        date: "2026-05-23 17:00",
+        user: "Администратор",
+        action: "Создан web-MVP",
+        area: "Система",
+        details: "Стартовые данные подготовлены по структуре Excel-книги"
+      }
+    ]
+  }
+};
