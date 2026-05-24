@@ -369,14 +369,39 @@ body.sidebar-collapsed .sidebar {
   line-height: 1;
 }
 
+.table-options-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+}
+
 .table-options-panel {
-  display: flex;
-  justify-content: flex-end;
-  margin: -6px 0 12px;
-  padding: 8px 10px;
+  width: min(300px, calc(100vw - 32px));
+  display: grid;
+  gap: 8px;
+  position: fixed;
+  top: 150px;
+  right: 28px;
+  z-index: 8;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel-soft);
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.table-options-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.table-option-command {
+  width: 100%;
+  justify-content: flex-start;
 }
 
 .search-box {

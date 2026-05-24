@@ -852,8 +852,14 @@
     const isOpen = state.tableOptions === configId;
     return `
       ${isOpen ? `
-        <div class="table-options-panel">
-          <button class="ghost-button" data-action="reset-table-options" data-config="${configId}" type="button">Восстановить исходный вид</button>
+        <div class="table-options-backdrop" data-action="close-table-options"></div>
+        <div class="table-options-panel" role="dialog" aria-label="Опции таблицы">
+          <div class="table-options-head">
+            <strong>Опции таблицы</strong>
+            <button class="icon-button" data-action="close-table-options" type="button" title="Закрыть">×</button>
+          </div>
+          <button class="ghost-button table-option-command" data-action="refresh-table-data" data-config="${configId}" type="button">Обновить данные</button>
+          <button class="ghost-button table-option-command" data-action="reset-table-options" data-config="${configId}" type="button">Восстановить исходный вид</button>
         </div>
       ` : ""}
     `;
@@ -937,6 +943,13 @@
     delete state.tableSettings[configId];
     state.tableOptions = null;
     persistTableSettings();
+    render();
+  }
+
+  function refreshTableData(configId) {
+    state.data = loadState();
+    state.selected[configId] = [];
+    state.tableOptions = null;
     render();
   }
 
@@ -1311,6 +1324,9 @@
       const programType = getProgramType(record.program, record);
       return `${label}<input name="${item.key}" type="text" value="${escapeAttr(programType)}" readonly data-program-autofill="educationType"></label>`;
     }
+    if (item.key === "inn") {
+      return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" inputmode="numeric" maxlength="12" pattern="\\d{10}|\\d{12}" autocomplete="off"></label>`;
+    }
     if (item.type === "textarea") {
       return `${label}<textarea name="${item.key}" ${required}>${escapeHtml(value)}</textarea></label>`;
     }
@@ -1523,6 +1539,17 @@
       button.addEventListener("click", () => resetTableOptions(button.dataset.config));
     });
 
+    document.querySelectorAll("[data-action='refresh-table-data']").forEach((button) => {
+      button.addEventListener("click", () => refreshTableData(button.dataset.config));
+    });
+
+    document.querySelectorAll("[data-action='close-table-options']").forEach((element) => {
+      element.addEventListener("click", () => {
+        state.tableOptions = null;
+        render();
+      });
+    });
+
     bindTableColumnEvents();
 
     document.querySelectorAll("[data-action='toggle-finance-metric']").forEach((button) => {
@@ -1545,6 +1572,10 @@
       const program = findProgramByName(event.target.value);
       const educationTypeInput = document.querySelector("[name='educationType']");
       if (educationTypeInput) educationTypeInput.value = program?.type || "";
+    });
+
+    document.querySelector("[name='inn']")?.addEventListener("input", (event) => {
+      event.target.setCustomValidity("");
     });
 
     document.querySelectorAll("[data-action='toggle-row-selection']").forEach((checkbox) => {
@@ -1650,6 +1681,21 @@
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
     if (isStudentCard) {
+      if (formData.has("inn")) {
+        values.inn = normalizeInn(values.inn);
+        const innInput = formElement.querySelector("[name='inn']");
+        if (innInput) innInput.value = values.inn;
+        if (values.inn && !isValidInn(values.inn)) {
+          const message = "ИНН должен содержать 10 или 12 цифр и проходить контрольную проверку.";
+          if (innInput) {
+            innInput.setCustomValidity(message);
+            innInput.reportValidity();
+          } else {
+            alert(message);
+          }
+          return;
+        }
+      }
       const selectedProgram = findProgramByName(values.program);
       if (selectedProgram) values.educationType = selectedProgram.type || "";
       const paymentTotal = sumStudentPayments(values);
@@ -1687,7 +1733,12 @@
       const preview = document.getElementById("studentPhotoPreview");
       try {
         preview?.classList.add("is-loading");
-        const uploaded = await uploadStoredPhoto(reader.result, pathInput?.value || "");
+        const studentName = document.querySelector("[name='name']")?.value || "";
+        const uploaded = await uploadStoredPhoto(reader.result, pathInput?.value || "", {
+          studentName,
+          name: studentName,
+          applicationDate: document.querySelector("[name='applicationDate']")?.value || ""
+        });
         if (hidden) hidden.value = "";
         if (pathInput) pathInput.value = uploaded.photoPath;
         if (urlInput) urlInput.value = uploaded.photoUrl;
@@ -1722,13 +1773,13 @@
     return window.location.protocol === "file:" ? `${defaultPhotoServerOrigin}${pathname}` : pathname;
   }
 
-  async function uploadStoredPhoto(dataUrl, previousPath = "") {
+  async function uploadStoredPhoto(dataUrl, previousPath = "", meta = {}) {
     let response;
     try {
       response = await fetch(photoApiUrl("/api/photos"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl, previousPath })
+        body: JSON.stringify({ dataUrl, previousPath, ...meta })
       });
     } catch (error) {
       throw new Error(`не удалось подключиться к app-server.js (${photoServerOrigin()})`);
@@ -1979,6 +2030,22 @@
 
   function sumBy(rows, key) {
     return rows.reduce((sum, row) => sum + Number(row[key] || 0), 0);
+  }
+
+  function normalizeInn(value) {
+    return String(value || "").replace(/\D/g, "");
+  }
+
+  function isValidInn(value) {
+    const inn = normalizeInn(value);
+    if (!/^\d{10}$|^\d{12}$/.test(inn)) return false;
+    const digits = inn.split("").map(Number);
+    const checksum = (weights) => weights.reduce((sum, weight, index) => sum + weight * digits[index], 0) % 11 % 10;
+    if (inn.length === 10) {
+      return checksum([2, 4, 10, 3, 5, 9, 4, 6, 8]) === digits[9];
+    }
+    return checksum([7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === digits[10]
+      && checksum([3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === digits[11];
   }
 
   function unique(values) {

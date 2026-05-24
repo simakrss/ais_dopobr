@@ -65,9 +65,40 @@ function parseDataUrl(dataUrl) {
   return { bytes, ext, mime: match[1].toLowerCase() };
 }
 
+function safeNamePart(value, fallback) {
+  const cleaned = String(value || "")
+    .normalize("NFC")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "")
+    .replace(/\s+/g, "_")
+    .replace(/[^\p{L}\p{N}_().-]+/gu, "")
+    .replace(/_+/g, "_")
+    .replace(/^[_\-.]+|[_\-.]+$/g, "")
+    .slice(0, 80);
+  return cleaned || fallback;
+}
+
+function safeDatePart(value) {
+  const text = String(value || "").trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const date = new Date(text);
+  if (!Number.isNaN(date.getTime())) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+  return "без-даты-заявки";
+}
+
+function buildPhotoFileName(body, ext) {
+  const name = safeNamePart(body.studentName || body.studentFio || body.fio || body.fullName || body.name, "без-ФИО");
+  const date = safeNamePart(safeDatePart(body.applicationDate), "без-даты-заявки");
+  const suffix = crypto.randomBytes(4).toString("hex");
+  return `${name}_${date}_${suffix}.${ext}`;
+}
+
 function safePhotoPath(photoPath) {
   const fileName = path.basename(String(photoPath || ""));
-  if (!/^[a-f0-9]{32}\.(png|jpg|webp|gif)$/i.test(fileName)) return null;
+  if (!/^[\p{L}\p{N}_().-]+\.(png|jpg|webp|gif)$/iu.test(fileName)) return null;
   return path.join(PHOTO_ROOT, fileName);
 }
 
@@ -93,12 +124,12 @@ async function handlePhotoUpload(req, res) {
     const body = await readJsonBody(req);
     const { bytes, ext } = parseDataUrl(body.dataUrl);
     if (body.previousPath) await deletePhoto(body.previousPath);
-    const fileName = `${crypto.randomBytes(16).toString("hex")}.${ext}`;
+    const fileName = buildPhotoFileName(body, ext);
     const fullPath = path.join(PHOTO_ROOT, fileName);
     await fs.writeFile(fullPath, bytes);
     sendJson(res, 201, {
       photoPath: `storage/photos/${fileName}`,
-      photoUrl: `/storage/photos/${fileName}`
+      photoUrl: `/storage/photos/${encodeURIComponent(fileName)}`
     });
   } catch (error) {
     sendError(res, 400, error.message);
