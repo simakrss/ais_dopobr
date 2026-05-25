@@ -9,6 +9,19 @@
     { key: "direct", label: "Прямые затраты", tone: "direct" },
     { key: "general", label: "Общие затраты", tone: "general" }
   ];
+  const dictionaryDefaults = {
+    managers: [],
+    sources: [],
+    citizenships: ["Российская Федерация"],
+    documentTypes: ["Паспорт гражданина РФ", "Иностранный паспорт", "Вид на жительство", "Свидетельство о рождении"],
+    passportIssuers: []
+  };
+  const searchableStudentFields = {
+    manager: { dict: "managers", fields: [["students", "manager"], ["programs", "manager"]] },
+    source: { dict: "sources", fields: [["students", "source"], ["webinars", "source"]] },
+    citizenship: { dict: "citizenships", fields: [["students", "citizenship"]] },
+    passportType: { dict: "documentTypes", fields: [["students", "passportType"]] }
+  };
 
   const navItems = [
     { id: "dashboard", label: "Рабочий стол", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M7 16l4-4 3 3 5-7"></path><path d="M16 8h3v3"></path></svg>' },
@@ -20,7 +33,7 @@
     { id: "generalExpenses", label: "Общие затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8c0-2 3.6-3.5 8-3.5S20 6 20 8s-3.6 3.5-8 3.5S4 10 4 8z"></path><path d="M4 8v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V8"></path><path d="M4 12v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5v-4"></path></svg>' },
     { id: "inventory", label: "Запасы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8l8-4 8 4-8 4z"></path><path d="M4 8v8l8 4 8-4V8"></path><path d="M12 12v8"></path><path d="M8 6l8 4"></path></svg>' },
     { id: "settings", label: "Справочники", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 17h2"></path><path d="M10 17h10"></path><circle cx="8" cy="17" r="2"></circle></svg>' },
-    { id: "admin", label: "Админка", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1-2 3.4-.2-.1a1.7 1.7 0 0 0-1.8-.2 8 8 0 0 1-1.5.6 1.7 1.7 0 0 0-1.2 1.4v.2H9v-.2a1.7 1.7 0 0 0-1.2-1.4 8 8 0 0 1-1.5-.6 1.7 1.7 0 0 0-1.8.2l-.2.1-2-3.4.1-.1a1.7 1.7 0 0 0 .3-1.8 8 8 0 0 1-.3-1.6A1.7 1.7 0 0 0 1 12v-.1l3.1-1.8A8 8 0 0 1 4.7 8a1.7 1.7 0 0 0-.3-1.8l-.1-.1 2-3.4.2.1a1.7 1.7 0 0 0 1.8.2 8 8 0 0 1 1.5-.6A1.7 1.7 0 0 0 11 1h2a1.7 1.7 0 0 0 1.2 1.4 8 8 0 0 1 1.5.6 1.7 1.7 0 0 0 1.8-.2l.2-.1 2 3.4-.1.1a1.7 1.7 0 0 0-.3 1.8 8 8 0 0 1 .3 1.6A1.7 1.7 0 0 0 23 12v.1l-3.1 1.8a8 8 0 0 1-.5 1.1z"></path></svg>' }
+    { id: "admin", label: "Админка", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 4.6-2.8 7.9-7 10-4.2-2.1-7-5.4-7-10V6z"></path><circle cx="12" cy="12" r="2.4"></circle><path d="M12 8.2v1.2"></path><path d="M12 14.6v1.2"></path><path d="M15.8 12h-1.2"></path><path d="M9.4 12H8.2"></path><path d="M14.7 9.3l-.9.9"></path><path d="M10.2 13.8l-.9.9"></path><path d="M14.7 14.7l-.9-.9"></path><path d="M10.2 10.2l-.9-.9"></path></svg>' }
   ];
 
   const configs = {
@@ -251,16 +264,42 @@
           ]
         },
         {
-          title: "Документы по обучению",
+          title: "Документ об образовании",
           fields: [
-            field("applicationDoc", "Заявление"),
-            field("questionnaire", "Анкета"),
-            field("contractNo", "Договор"),
-            field("contractDate", "Дата договора", "date"),
-            field("consentPersonalData", "Согласие ПнД"),
             field("educationLevel", "Уровень образования"),
             field("educationDocument", "Документ об образовании"),
+            field("educationDocumentSeries", "Серия"),
+            field("educationDocumentNumber", "Номер"),
+            field("educationDocumentDate", "Дата выдачи", "date"),
+            field("educationDocumentIssuer", "Кем выдан", "textarea"),
+            field("applicationDoc", "Заявление"),
+            field("questionnaire", "Анкета"),
             field("documentsStatus", "Состояние комплекта", "textarea")
+          ]
+        }
+      ]
+    },
+    {
+      id: "contract",
+      label: "Договор",
+      sections: [
+        {
+          title: "Договор",
+          fields: [
+            field("contractNo", "Договор"),
+            field("contractDate", "Дата договора", "date"),
+            field("consentPersonalData", "Согласие ПнД", "checkbox")
+          ]
+        },
+        {
+          title: "Финансы договора",
+          fields: [
+            field("contractAmount", "Сумма по договору", "number"),
+            field("monthlyAmount", "Сумма в месяц", "number"),
+            field("paidAmount", "Внесено", "number"),
+            field("balance", "Остаток", "number"),
+            field("discount", "Скидка"),
+            field("fundingSource", "Источник финансирования")
           ]
         }
       ]
@@ -292,26 +331,8 @@
       ]
     },
     {
-      id: "income",
-      label: "Доходы",
-      sections: [
-        {
-          title: "Договор и оплаты",
-          fields: [
-            field("contractAmount", "Сумма по договору", "number"),
-            field("monthlyAmount", "Сумма в месяц", "number"),
-            field("paidAmount", "Внесено", "number"),
-            field("balance", "Остаток", "number"),
-            field("discount", "Скидка"),
-            field("fundingSource", "Источник финансирования")
-          ]
-        }
-      ],
-      payments: true
-    },
-    {
-      id: "expenses",
-      label: "Расходы",
+      id: "finance",
+      label: "Финансы",
       sections: [
         {
           title: "Расходы по слушателю",
@@ -322,6 +343,7 @@
           ]
         }
       ],
+      payments: true,
       expenses: true
     },
     {
@@ -414,7 +436,40 @@
     }
   ];
 
+  const studentEventTemplates = [
+    { key: "docsListNotice", label: "Уведомление с перечнем документов" },
+    { key: "sourceDocsReceived", label: "Получен пакет исходных документов" },
+    { key: "contractDocsSent", label: "Отправлен пакет готовых документов для подписи" },
+    { key: "portalAccountCreated", label: "Создана/обновлена учетная запись на портале" },
+    { key: "enrollmentOrderPrepared", label: "Сформирован приказ на зачисление" },
+    { key: "signedDocsReceived", label: "Получен подписанный пакет документов" },
+    { key: "portalCredentialsSent", label: "Отправлены данные для доступа к порталу" },
+    { key: "expulsionOrderPrepared", label: "Сформирован приказ об отчислении" },
+    { key: "educationDocMaketSent", label: "Отправлен макет документа об образовании на согласование" },
+    { key: "educationDocMaketApproved", label: "Макет документа об образовании согласован" },
+    { key: "educationDocOriginalSent", label: "Отправлен оригинал документа об образовании" },
+    { key: "reviewRequested", label: "Запрошен отзыв о прохождении обучения" },
+    { key: "reviewReceived", label: "Получен отзыв о прохождении обучения" },
+    { key: "recommendationRequested", label: "Запрошена рекомендация учебного центра" },
+    { key: "partnerInviteSent", label: "Отправлено приглашение в партнерскую программу" },
+    { key: "examSheetPrepared", label: "Сформирована зачетно-экзаменационная ведомость" },
+    { key: "personalCasePrinted", label: "Распечатано личное дело" },
+    { key: "extensionDocsSent", label: "Отправлен комплект документов для продления обучения" },
+    { key: "extensionDocsReceived", label: "Получен комплект документов для продления обучения" },
+    { key: "reductionDocsSent", label: "Отправлен комплект документов для сокращения обучения" },
+    { key: "reductionDocsReceived", label: "Получен комплект документов для сокращения обучения" },
+    { key: "certificateSent", label: "Отправлена справка об обучении" }
+  ];
+
   const studentCardFields = studentCardTabs.flatMap((tab) => tab.sections.flatMap((section) => section.fields));
+  const studentSideFields = [
+    field("note", "Примечание", "textarea")
+  ];
+  const studentEventFields = studentEventTemplates.flatMap((event) => [
+    field(`event_${event.key}_state`, event.label),
+    field(`event_${event.key}_date`, `${event.label}: дата`, "date"),
+    field(`event_${event.key}_label`, `${event.label}: название`)
+  ]);
   const paymentFields = Array.from({ length: 8 }, (_, index) => [
     field(`payment${index + 1}Date`, `Дата ${index + 1}`, "date"),
     field(`payment${index + 1}Amount`, `Оплата ${index + 1}`, "number"),
@@ -430,6 +485,8 @@
     field("photoData", "Фото"),
     field("photoPath", "Путь фото"),
     field("photoUrl", "URL фото"),
+    ...studentSideFields,
+    ...studentEventFields,
     ...studentCardFields,
     ...paymentFields,
     ...expenseFields
@@ -462,12 +519,20 @@
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed && parsed.collections) return parsed;
+        if (parsed && parsed.collections) return ensureDataShape(parsed);
       } catch (error) {
         console.warn("Не удалось прочитать сохраненное состояние", error);
       }
     }
-    return clone(window.AIS_SEED);
+    return ensureDataShape(clone(window.AIS_SEED));
+  }
+
+  function ensureDataShape(data) {
+    data.dictionaries = data.dictionaries || {};
+    Object.entries(dictionaryDefaults).forEach(([key, values]) => {
+      data.dictionaries[key] = unique([...(data.dictionaries[key] || []), ...values]);
+    });
+    return data;
   }
 
   function persist() {
@@ -1173,7 +1238,7 @@
   function renderModal() {
     const config = configs[state.modal.config];
     const rows = state.data.collections[config.collection] || [];
-    const record = state.modal.id ? rows.find((row) => row.id === state.modal.id) : {};
+    const record = state.modal.id ? rows.find((row) => row.id === state.modal.id) : ensureRecordUid(config, {});
     if (state.modal.config === "students") return renderStudentModal(record || {});
     const title = state.modal.id ? "Редактирование" : "Новая запись";
     return `
@@ -1203,6 +1268,9 @@
     const value = record[item.key] ?? "";
     const required = item.required ? "required" : "";
     const label = `<label><span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>`;
+    if (item.type === "checkbox") {
+      return `${label}<input name="${item.key}" type="checkbox" value="Да" ${isChecked(value) ? "checked" : ""}></label>`;
+    }
     if (item.type === "textarea") {
       return `${label}<textarea name="${item.key}" ${required}>${escapeHtml(value)}</textarea></label>`;
     }
@@ -1217,6 +1285,7 @@
   }
 
   function renderStudentModal(record) {
+    if (!state.modal.id) record = { ...record, uid: record.uid || getNextUid() };
     const activeTab = studentCardTabs.find((tab) => tab.id === state.studentCardTab) || studentCardTabs[0];
     const title = state.modal.id ? "Карточка слушателя" : "Новая карточка слушателя";
     const photo = getStudentPhotoSrc(record);
@@ -1273,6 +1342,10 @@
                   ${renderStudentTabContent(activeTab, record)}
                 </div>
               </section>
+
+              <aside class="student-side-panel">
+                ${renderStudentSidePanel(record)}
+              </aside>
             </div>
 
           </form>
@@ -1284,13 +1357,14 @@
   function renderProgramHoursField(label, value, required) {
     return `
       ${label}
-        <div class="combo-field">
-          <input name="hours" type="number" min="0" step="1" value="${escapeAttr(value)}" ${required}>
-          <select data-action="set-program-hours" aria-label="Выбрать часы">
-            <option value="">Выбрать</option>
-            ${programHourOptions.map((hours) => `<option value="${hours}" ${String(hours) === String(value) ? "selected" : ""}>${hours}</option>`).join("")}
-          </select>
-        </div>
+        ${renderComboField({
+          name: "hours",
+          type: "number",
+          value,
+          required,
+          options: programHourOptions,
+          attrs: 'min="0" step="1" inputmode="numeric"'
+        })}
       </label>
     `;
   }
@@ -1312,6 +1386,68 @@
     `;
   }
 
+  function renderStudentSidePanel(record) {
+    return `
+      <section class="student-note-block">
+        <div class="student-side-head">
+          <h3>Примечание</h3>
+        </div>
+        <textarea name="note" placeholder="Общее примечание по слушателю">${escapeHtml(record.note || "")}</textarea>
+      </section>
+      <section class="student-events-block">
+        <div class="student-side-head">
+          <h3>Перечень событий</h3>
+        </div>
+        <div class="student-events-head" aria-hidden="true">
+          <span></span>
+          <span>Дата</span>
+          <span>Событие</span>
+        </div>
+        <div class="student-events-list">
+          ${studentEventTemplates.map((event) => renderStudentEventRow(event, record)).join("")}
+        </div>
+        <div class="student-event-editor" data-event-editor hidden>
+          <label>
+            <span>Дата</span>
+            <input type="date" data-event-editor-date>
+          </label>
+          <label>
+            <span>Событие</span>
+            <input type="text" data-event-editor-label>
+          </label>
+          <div class="student-event-editor-actions">
+            <button class="ghost-button" data-action="close-event-editor" type="button">Отмена</button>
+            <button class="primary-button" data-action="apply-event-editor" type="button">Применить</button>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderStudentEventRow(event, record) {
+    const stateKey = `event_${event.key}_state`;
+    const dateKey = `event_${event.key}_date`;
+    const labelKey = `event_${event.key}_label`;
+    const stateValue = normalizeEventState(record[stateKey], record[dateKey]);
+    const dateValue = record[dateKey] || "";
+    const labelValue = record[labelKey] || event.label;
+    return `
+      <div class="student-event-row ${stateValue ? "is-selected" : ""} ${stateValue === "dated" ? "has-date" : ""}" data-action="toggle-student-event" data-event-key="${escapeAttr(event.key)}" role="button" tabindex="0">
+        <input
+          type="checkbox"
+          tabindex="-1"
+          aria-hidden="true"
+          ${stateValue ? "checked" : ""}
+        >
+        <input type="hidden" name="${stateKey}" data-event-state="${escapeAttr(event.key)}" value="${escapeAttr(stateValue)}">
+        <input type="hidden" name="${dateKey}" data-event-date="${escapeAttr(event.key)}" value="${escapeAttr(dateValue)}">
+        <input type="hidden" name="${labelKey}" data-event-label-value="${escapeAttr(event.key)}" value="${escapeAttr(labelValue)}">
+        <span class="event-date" data-event-date-label="${escapeAttr(event.key)}">${stateValue === "dated" ? escapeHtml(dateRu(dateValue)) : ""}</span>
+        <span class="event-label" data-event-label-text="${escapeAttr(event.key)}">${escapeHtml(labelValue)}</span>
+      </div>
+    `;
+  }
+
   function renderStudentField(item, record) {
     const value = record[item.key] ?? "";
     const required = item.required ? "required" : "";
@@ -1320,12 +1456,21 @@
     if (item.key === "program") {
       return renderStudentProgramField(label, value, required);
     }
+    if (searchableStudentFields[item.key]) {
+      return renderSearchableStudentField(label, item, value, required);
+    }
+    if (item.key === "passportIssuer") {
+      return renderPassportIssuerField(label, item, value, required);
+    }
     if (item.key === "educationType") {
       const programType = getProgramType(record.program, record);
       return `${label}<input name="${item.key}" type="text" value="${escapeAttr(programType)}" readonly data-program-autofill="educationType"></label>`;
     }
     if (item.key === "inn") {
       return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" inputmode="numeric" maxlength="12" pattern="\\d{10}|\\d{12}" autocomplete="off"></label>`;
+    }
+    if (item.type === "checkbox") {
+      return `${label}<input name="${item.key}" type="checkbox" value="Да" ${isChecked(value) ? "checked" : ""}></label>`;
     }
     if (item.type === "textarea") {
       return `${label}<textarea name="${item.key}" ${required}>${escapeHtml(value)}</textarea></label>`;
@@ -1344,10 +1489,87 @@
     ].filter(Boolean));
     return `
       ${label}
-        <select name="program" data-action="set-student-program" ${required}>
-          <option value=""></option>
-          ${programNames.map((name) => `<option value="${escapeAttr(name)}" ${String(name) === String(value) ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
-        </select>
+        ${renderComboField({
+          name: "program",
+          type: "search",
+          value,
+          required,
+          options: programNames,
+          action: "set-student-program"
+        })}
+      </label>
+    `;
+  }
+
+  function renderSearchableStudentField(label, item, value, required) {
+    const config = searchableStudentFields[item.key];
+    const options = getLookupOptions(config);
+    return `
+      ${label}
+        ${renderComboField({
+          name: item.key,
+          type: "search",
+          value,
+          required,
+          options
+        })}
+      </label>
+    `;
+  }
+
+  function renderComboField({ name, type = "text", value = "", required = "", options = [], action = "", attrs = "" }) {
+    const normalizedOptions = unique(options.map((option) => String(option)).filter(Boolean));
+    return `
+      <div class="combo-field" data-combo-field>
+        <div class="combo-input-wrap">
+          <input
+            name="${escapeAttr(name)}"
+            type="${escapeAttr(type)}"
+            value="${escapeAttr(value)}"
+            autocomplete="off"
+            data-combo-input
+            ${action ? `data-action="${escapeAttr(action)}"` : ""}
+            ${attrs}
+            ${required}
+          >
+          <button class="combo-clear" data-action="clear-combo-value" type="button" title="Очистить" aria-label="Очистить значение">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 7l10 10"></path><path d="M17 7L7 17"></path></svg>
+          </button>
+        </div>
+        <div class="combo-options" data-combo-options>
+          ${normalizedOptions.map((option) => `
+            <button data-action="select-combo-value" data-value="${escapeAttr(option)}" type="button">
+              ${escapeHtml(option)}
+            </button>
+          `).join("") || `<span class="combo-empty">Нет значений</span>`}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderPassportIssuerField(label, item, value, required) {
+    const options = getPassportIssuerOptions(value);
+    return `
+      ${label}
+        <div class="lookup-field">
+          <textarea name="${item.key}" ${required}>${escapeHtml(value)}</textarea>
+          <button class="icon-button lookup-trigger" data-action="open-field-lookup" data-field="${item.key}" type="button" title="Найти в базе" aria-label="Найти в базе">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6"></circle><path d="M16 16l4 4"></path></svg>
+          </button>
+          <button class="icon-button lookup-clear" data-action="clear-lookup-value" data-field="${item.key}" type="button" title="Очистить" aria-label="Очистить значение">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 7l10 10"></path><path d="M17 7L7 17"></path></svg>
+          </button>
+          <div class="lookup-panel" data-lookup-panel="${item.key}">
+            <input class="lookup-search" data-action="filter-lookup-values" data-field="${item.key}" type="search" placeholder="Поиск по базе" autocomplete="off">
+            <div class="lookup-list">
+              ${options.map((option) => `
+                <button data-action="select-lookup-value" data-field="${item.key}" data-value="${escapeAttr(option)}" type="button">
+                  ${escapeHtml(option)}
+                </button>
+              `).join("") || `<span class="lookup-empty">Значений пока нет</span>`}
+            </div>
+          </div>
+        </div>
       </label>
     `;
   }
@@ -1368,6 +1590,131 @@
   function getProgramType(programName, record = {}) {
     const program = findProgramByName(programName);
     return program?.type || record.educationType || "";
+  }
+
+  function getLookupOptions(config, extraValues = []) {
+    const dictionaryValues = state.data.dictionaries[config.dict] || [];
+    const rowValues = (config.fields || []).flatMap(([collection, key]) => (
+      state.data.collections[collection] || []
+    ).map((row) => row[key]).filter(Boolean));
+    return unique([...dictionaryValues, ...rowValues, ...extraValues].map((value) => String(value).trim()).filter(Boolean)).sort((a, b) => a.localeCompare(b, "ru"));
+  }
+
+  function getPassportIssuerOptions(currentValue = "") {
+    return getLookupOptions({
+      dict: "passportIssuers",
+      fields: [["students", "passportIssuer"]]
+    }, [currentValue]);
+  }
+
+  function todayIso() {
+    const date = new Date();
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  function normalizeEventState(stateValue, dateValue = "") {
+    if (stateValue === "dated" || stateValue === "checked") return stateValue;
+    if (dateValue) return "dated";
+    return "";
+  }
+
+  function nextEventState(stateValue) {
+    if (!stateValue) return "dated";
+    if (stateValue === "dated") return "checked";
+    return "";
+  }
+
+  function updateStudentEventRow(row) {
+    const key = row.dataset.eventKey;
+    const checkbox = row.querySelector("input[type='checkbox']");
+    const stateInput = row?.querySelector(`[data-event-state="${key}"]`);
+    const dateInput = row?.querySelector(`[data-event-date="${key}"]`);
+    const dateLabel = row?.querySelector(`[data-event-date-label="${key}"]`);
+    if (!row || !stateInput || !dateInput || !dateLabel) return;
+    const nextState = nextEventState(normalizeEventState(stateInput.value, dateInput.value));
+    stateInput.value = nextState;
+    dateInput.value = nextState === "dated" ? todayIso() : "";
+    checkbox.checked = Boolean(nextState);
+    row.classList.toggle("is-selected", Boolean(nextState));
+    row.classList.toggle("has-date", nextState === "dated");
+    dateLabel.textContent = nextState === "dated" ? dateRu(dateInput.value) : "";
+  }
+
+  function openStudentEventEditor(row, clientX = 0, clientY = 0) {
+    const key = row.dataset.eventKey;
+    const editor = document.querySelector("[data-event-editor]");
+    const dateInput = editor?.querySelector("[data-event-editor-date]");
+    const labelInput = editor?.querySelector("[data-event-editor-label]");
+    const dateValue = row.querySelector(`[data-event-date="${key}"]`)?.value || "";
+    const labelValue = row.querySelector(`[data-event-label-value="${key}"]`)?.value || row.querySelector("[data-event-label-text]")?.textContent || "";
+    if (!editor || !dateInput || !labelInput) return;
+    document.querySelectorAll(".student-event-row.is-editing").forEach((item) => item.classList.remove("is-editing"));
+    row.classList.add("is-editing");
+    editor.dataset.eventKey = key;
+    dateInput.value = dateValue;
+    labelInput.value = labelValue;
+    editor.hidden = false;
+    const rect = editor.parentElement.getBoundingClientRect();
+    editor.style.left = `${clamp(clientX - rect.left, 8, Math.max(8, rect.width - 320))}px`;
+    editor.style.top = `${clamp(clientY - rect.top, 8, Math.max(8, rect.height - 132))}px`;
+    labelInput.focus({ preventScroll: true });
+    labelInput.select();
+  }
+
+  function closeStudentEventEditor() {
+    const editor = document.querySelector("[data-event-editor]");
+    if (!editor) return;
+    editor.hidden = true;
+    editor.dataset.eventKey = "";
+    document.querySelectorAll(".student-event-row.is-editing").forEach((item) => item.classList.remove("is-editing"));
+  }
+
+  function applyStudentEventEditor() {
+    const editor = document.querySelector("[data-event-editor]");
+    const key = editor?.dataset.eventKey;
+    const row = key ? document.querySelector(`.student-event-row[data-event-key="${CSS.escape(key)}"]`) : null;
+    const dateInput = editor?.querySelector("[data-event-editor-date]");
+    const labelInput = editor?.querySelector("[data-event-editor-label]");
+    if (!editor || !key || !row || !dateInput || !labelInput) return;
+    const stateInput = row.querySelector(`[data-event-state="${key}"]`);
+    const dateHidden = row.querySelector(`[data-event-date="${key}"]`);
+    const labelHidden = row.querySelector(`[data-event-label-value="${key}"]`);
+    const dateLabel = row.querySelector(`[data-event-date-label="${key}"]`);
+    const labelText = row.querySelector(`[data-event-label-text="${key}"]`);
+    const newDate = dateInput.value || "";
+    const newLabel = labelInput.value.trim();
+    if (dateHidden) dateHidden.value = newDate;
+    if (labelHidden && newLabel) labelHidden.value = newLabel;
+    if (labelText && newLabel) labelText.textContent = newLabel;
+    if (dateLabel) dateLabel.textContent = newDate ? dateRu(newDate) : "";
+    if (stateInput) stateInput.value = newDate ? "dated" : (stateInput.value ? "checked" : "");
+    const checkbox = row.querySelector("input[type='checkbox']");
+    const isSelected = Boolean(stateInput?.value);
+    if (checkbox) checkbox.checked = isSelected;
+    row.classList.toggle("is-selected", isSelected);
+    row.classList.toggle("has-date", stateInput?.value === "dated");
+    closeStudentEventEditor();
+  }
+
+  function closeComboPanels(except = null) {
+    document.querySelectorAll("[data-combo-field].is-open").forEach((field) => {
+      if (field !== except) field.classList.remove("is-open");
+    });
+  }
+
+  function filterComboOptions(input) {
+    const field = input.closest("[data-combo-field]");
+    const query = input.value.trim().toLowerCase();
+    field?.querySelectorAll("[data-action='select-combo-value']").forEach((button) => {
+      button.hidden = query && !button.textContent.toLowerCase().includes(query);
+    });
+  }
+
+  function isChecked(value) {
+    if (value === true || value === 1) return true;
+    const normalized = String(value || "").trim().toLowerCase();
+    if (!normalized || ["нет", "не", "false", "0", "off"].includes(normalized)) return false;
+    return true;
   }
 
   function renderPaymentRows(record) {
@@ -1488,8 +1835,14 @@
     });
 
     document.getElementById("searchInput")?.addEventListener("input", (event) => {
+      const cursor = event.target.selectionStart;
       state.search = event.target.value;
       render();
+      const input = document.getElementById("searchInput");
+      if (input) {
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(cursor, cursor);
+      }
     });
 
     document.getElementById("statusFilter")?.addEventListener("change", (event) => {
@@ -1561,17 +1914,147 @@
       });
     });
 
-    document.querySelectorAll("[data-action='set-program-hours']").forEach((select) => {
-      select.addEventListener("change", () => {
-        const input = select.closest("label")?.querySelector("input[name='hours']");
-        if (input && select.value) input.value = select.value;
+    document.querySelectorAll("[data-combo-field]").forEach((field) => {
+      const input = field.querySelector("[data-combo-input]");
+      if (!input) return;
+      const open = (event) => {
+        closeComboPanels(field);
+        filterComboOptions(input);
+        field.classList.add("is-open");
+        if (event?.type === "input" && document.activeElement !== input) {
+          input.focus({ preventScroll: true });
+        }
+      };
+      input.addEventListener("focus", open);
+      input.addEventListener("click", open);
+      input.addEventListener("input", open);
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") field.classList.remove("is-open");
+      });
+      field.addEventListener("pointerdown", (event) => {
+        if (event.target.closest("[data-action='select-combo-value'], [data-action='clear-combo-value']")) {
+          event.preventDefault();
+        }
+      });
+      field.addEventListener("focusout", (event) => {
+        if (event.relatedTarget && field.contains(event.relatedTarget)) return;
+        setTimeout(() => {
+          if (!field.contains(document.activeElement)) field.classList.remove("is-open");
+        }, 0);
       });
     });
 
-    document.querySelector("[data-action='set-student-program']")?.addEventListener("change", (event) => {
-      const program = findProgramByName(event.target.value);
-      const educationTypeInput = document.querySelector("[name='educationType']");
-      if (educationTypeInput) educationTypeInput.value = program?.type || "";
+    document.querySelectorAll("[data-action='select-combo-value']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const field = button.closest("[data-combo-field]");
+        const input = field?.querySelector("[data-combo-input]");
+        if (!input) return;
+        input.value = button.dataset.value || "";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        field.classList.remove("is-open");
+        input.focus();
+      });
+    });
+
+    document.querySelectorAll("[data-action='clear-combo-value']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const field = button.closest("[data-combo-field]");
+        const input = field?.querySelector("[data-combo-input]");
+        if (!input) return;
+        input.value = "";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        filterComboOptions(input);
+        field.classList.add("is-open");
+        input.focus();
+      });
+    });
+
+    document.querySelectorAll("[data-action='set-student-program']").forEach((input) => {
+      const syncProgramType = (event) => {
+        const program = findProgramByName(event.target.value);
+        const educationTypeInput = document.querySelector("[name='educationType']");
+        if (educationTypeInput) educationTypeInput.value = program?.type || "";
+      };
+      input.addEventListener("input", syncProgramType);
+      input.addEventListener("change", syncProgramType);
+    });
+
+    document.querySelectorAll("[data-action='toggle-student-event']").forEach((row) => {
+      row.addEventListener("click", (event) => {
+        event.preventDefault();
+        updateStudentEventRow(row);
+      });
+      row.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        openStudentEventEditor(row, event.clientX, event.clientY);
+      });
+      row.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        updateStudentEventRow(row);
+      });
+    });
+
+    document.querySelector("[data-action='close-event-editor']")?.addEventListener("click", closeStudentEventEditor);
+    document.querySelector("[data-action='apply-event-editor']")?.addEventListener("click", applyStudentEventEditor);
+    document.querySelector("[data-event-editor]")?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeStudentEventEditor();
+      if (event.key === "Enter" && event.target.matches("[data-event-editor-label]")) {
+        event.preventDefault();
+        applyStudentEventEditor();
+      }
+    });
+
+    document.querySelectorAll("[data-action='open-field-lookup']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const panel = document.querySelector(`[data-lookup-panel="${button.dataset.field}"]`);
+        if (!panel) return;
+        document.querySelectorAll(".lookup-panel.is-open").forEach((item) => {
+          if (item !== panel) item.classList.remove("is-open");
+        });
+        panel.classList.toggle("is-open");
+        panel.querySelector(".lookup-search")?.focus();
+      });
+    });
+
+    document.querySelectorAll(".lookup-field").forEach((field) => {
+      field.addEventListener("pointerdown", (event) => {
+        if (event.target.closest("[data-action='select-lookup-value'], [data-action='clear-lookup-value']")) {
+          event.preventDefault();
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-action='filter-lookup-values']").forEach((input) => {
+      input.addEventListener("input", () => {
+        const panel = input.closest(".lookup-panel");
+        const query = input.value.trim().toLowerCase();
+        panel?.querySelectorAll("[data-action='select-lookup-value']").forEach((button) => {
+          button.hidden = query && !button.textContent.toLowerCase().includes(query);
+        });
+      });
+    });
+
+    document.querySelectorAll("[data-action='select-lookup-value']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const field = button.dataset.field;
+        const input = document.querySelector(`[name="${field}"]`);
+        if (input) input.value = button.dataset.value || "";
+        button.closest(".lookup-panel")?.classList.remove("is-open");
+      });
+    });
+
+    document.querySelectorAll("[data-action='clear-lookup-value']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const field = button.dataset.field;
+        const input = document.querySelector(`[name="${field}"]`);
+        if (input) {
+          input.value = "";
+          input.focus();
+        }
+      });
     });
 
     document.querySelector("[name='inn']")?.addEventListener("input", (event) => {
@@ -1676,10 +2159,17 @@
     const values = isStudentCard ? { ...currentRecord } : {};
     const fields = isStudentCard ? studentAllFields : config.fields;
     fields.forEach((item) => {
+      if (item.type === "checkbox") {
+        values[item.key] = formData.has(item.key) ? "Да" : "";
+        return;
+      }
       if (!formData.has(item.key)) return;
       const raw = formData.get(item.key);
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
+    if (!formElement.dataset.id && fields.some((item) => item.key === "uid") && !values.uid) {
+      values.uid = getNextUid();
+    }
     if (isStudentCard) {
       if (formData.has("inn")) {
         values.inn = normalizeInn(values.inn);
@@ -1904,7 +2394,7 @@
       try {
         const parsed = JSON.parse(reader.result);
         if (!parsed.collections || !parsed.dictionaries) throw new Error("Некорректный файл");
-        state.data = parsed;
+        state.data = ensureDataShape(parsed);
         addAudit("Импорт данных", "Админка", file.name);
         persist();
         render();
@@ -1926,7 +2416,7 @@
 
   function resetState() {
     if (!confirm("Сбросить локальные данные к стартовому набору?")) return;
-    state.data = clone(window.AIS_SEED);
+    state.data = ensureDataShape(clone(window.AIS_SEED));
     addAudit("Сброс данных", "Админка", "Возврат к seed.js");
     persist();
     render();
@@ -2060,6 +2550,19 @@
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   }
 
+  function getNextUid() {
+    const values = Object.values(state.data.collections || {})
+      .flat()
+      .map((row) => Number(row?.uid))
+      .filter((value) => Number.isFinite(value));
+    return String((values.length ? Math.max(...values) : 0) + 1);
+  }
+
+  function ensureRecordUid(config, record = {}) {
+    if (state.modal?.id || !config.fields?.some((item) => item.key === "uid")) return record;
+    return { ...record, uid: record.uid || getNextUid() };
+  }
+
   function download(filename, content, type) {
     const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
@@ -2082,6 +2585,11 @@
       programStatuses: "Статусы программ",
       expenseTypes: "Виды затрат",
       inventoryTypes: "Виды ТМЦ",
+      managers: "Ответственные",
+      sources: "Источники",
+      citizenships: "Гражданство",
+      documentTypes: "Виды документов",
+      passportIssuers: "Кем выдан документ",
       roles: "Роли"
     };
     return map[key] || key;
