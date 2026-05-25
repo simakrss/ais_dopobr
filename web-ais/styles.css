@@ -1136,7 +1136,7 @@ body.is-resizing-column {
 
 .student-card-layout {
   display: grid;
-  grid-template-columns: 170px minmax(0, 1fr) 450px;
+  grid-template-columns: minmax(0, 1fr) 450px;
   min-height: 548px;
 }
 
@@ -1158,6 +1158,7 @@ body.is-resizing-column {
   display: grid;
   place-items: center;
   overflow: hidden;
+  position: relative;
   color: var(--teal);
   font-size: 42px;
   font-weight: 800;
@@ -1205,6 +1206,136 @@ body.is-resizing-column {
 
 .photo-upload input {
   display: none;
+}
+
+.student-photo-section {
+  min-height: 360px;
+}
+
+.student-photo-workspace {
+  width: min(280px, 100%);
+}
+
+.photo-actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px;
+  background: linear-gradient(180deg, rgba(31, 41, 38, 0.48), rgba(31, 41, 38, 0));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+
+.photo-preview:hover .photo-actions,
+.photo-preview:focus-within .photo-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.photo-icon-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(31, 41, 38, 0.18);
+}
+
+.photo-icon-button:hover {
+  background: #fff;
+  color: var(--teal);
+}
+
+.photo-icon-button svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.photo-icon-button input {
+  display: none;
+}
+
+.student-main-identity {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.student-main-photo {
+  display: grid;
+  gap: 8px;
+}
+
+.student-main-photo .photo-preview {
+  width: 128px;
+  font-size: 30px;
+}
+
+.student-main-photo label {
+  display: grid;
+  gap: 4px;
+}
+
+.student-main-photo label span {
+  color: #3d4945;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.student-main-photo input {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  padding: 5px 7px;
+  color: var(--text);
+}
+
+.student-main-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.student-name-status-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 8px;
+}
+
+.student-name-status-grid label {
+  display: grid;
+  gap: 4px;
+}
+
+.student-name-status-grid label span {
+  color: #3d4945;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.student-name-status-grid input,
+.student-name-status-grid select {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  padding: 5px 7px;
+  color: var(--text);
 }
 
 .student-mini-card,
@@ -1278,17 +1409,24 @@ body.is-resizing-column {
   font-size: 15px;
 }
 
+.student-events-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: end;
+  gap: 6px;
+}
+
 .student-events-head,
 .student-event-row {
   display: grid;
-  grid-template-columns: 18px 66px max-content;
+  grid-template-columns: 18px 66px minmax(0, 1fr);
   align-items: start;
   gap: 5px;
 }
 
 .student-events-head {
   min-width: 100%;
-  width: max-content;
+  width: 100%;
   color: var(--muted);
   font-size: 11px;
   padding: 0 3px;
@@ -1298,7 +1436,8 @@ body.is-resizing-column {
   height: 486px;
   max-height: calc(94vh - 250px);
   min-height: 260px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: #fff;
@@ -1306,16 +1445,74 @@ body.is-resizing-column {
 }
 
 .student-event-row {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
   min-height: 19px;
   border-radius: 3px;
   padding: 1px 3px;
-  cursor: pointer;
+  cursor: grab;
+  user-select: none;
 }
 
 .student-event-row:hover {
   background: #f3f8f5;
+}
+
+.event-add-button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--teal);
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.event-add-button:hover {
+  background: #e6f4ef;
+}
+
+.event-add-button svg,
+.event-editor-delete svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.event-editor-delete {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border: 1px solid #fecdd3;
+  border-radius: 4px;
+  background: #fff1f2;
+  color: #9f1239;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.event-editor-delete:hover {
+  background: #ffe4e6;
+  border-color: #fda4af;
+}
+
+.student-event-row:active {
+  cursor: grabbing;
+}
+
+.student-event-row.is-dragging {
+  opacity: 0.58;
+  outline: 1px dashed var(--teal);
+  outline-offset: -1px;
+  background: #eef8f5;
 }
 
 .student-event-row.is-selected {
@@ -1348,6 +1545,8 @@ body.is-resizing-column {
 
 .event-label {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 11px;
   line-height: 1.15;
   white-space: nowrap;
@@ -1398,6 +1597,13 @@ body.is-resizing-column {
 .student-event-editor-actions button {
   min-height: 30px;
   padding: 0 10px;
+}
+
+.student-event-editor-actions .event-editor-delete {
+  flex: 0 0 30px;
+  min-width: 30px;
+  margin-right: auto;
+  padding: 0;
 }
 
 .student-tabs {
@@ -1723,6 +1929,15 @@ body.is-resizing-column {
 
   .student-form-grid label {
     grid-template-columns: 1fr;
+  }
+
+  .student-main-identity,
+  .student-name-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .student-main-photo {
+    width: 128px;
   }
 
   .student-photo-panel .ghost-button,

@@ -220,8 +220,8 @@
         {
           title: "Обучающийся",
           fields: [
-            field("uid", "uid"),
             field("name", "ФИО", "text", true),
+            field("uid", "uid"),
             field("status", "Статус", "select", true, "statuses"),
             field("program", "Программа", "text", true),
             field("group", "Группа"),
@@ -461,9 +461,13 @@
     { key: "certificateSent", label: "Отправлена справка об обучении" }
   ];
 
+  const visibleStudentCardTabs = studentCardTabs.filter((tab) => tab.id === "main");
   const studentCardFields = studentCardTabs.flatMap((tab) => tab.sections.flatMap((section) => section.fields));
   const studentSideFields = [
-    field("note", "Примечание", "textarea")
+    field("note", "Примечание", "textarea"),
+    field("eventOrder", "Порядок событий"),
+    field("eventDeleted", "Удаленные события"),
+    field("eventCustomKeys", "Пользовательские события")
   ];
   const studentEventFields = studentEventTemplates.flatMap((event) => [
     field(`event_${event.key}_state`, event.label),
@@ -1286,9 +1290,8 @@
 
   function renderStudentModal(record) {
     if (!state.modal.id) record = { ...record, uid: record.uid || getNextUid() };
-    const activeTab = studentCardTabs.find((tab) => tab.id === state.studentCardTab) || studentCardTabs[0];
+    const activeTab = visibleStudentCardTabs.find((tab) => tab.id === state.studentCardTab) || visibleStudentCardTabs[0];
     const title = state.modal.id ? "Карточка слушателя" : "Новая карточка слушателя";
-    const photo = getStudentPhotoSrc(record);
     return `
       <div class="modal-backdrop" data-action="close-modal">
         <section class="modal student-modal" role="dialog" aria-modal="true" aria-label="${title}">
@@ -1306,33 +1309,9 @@
             </header>
 
             <div class="student-card-layout">
-              <aside class="student-photo-panel">
-                <div class="photo-preview ${photo ? "has-photo" : ""}" id="studentPhotoPreview">
-                  ${photo ? `<img src="${escapeAttr(photo)}" alt="Фото слушателя">` : `<span>${initials(record.name || "Слушатель")}</span>`}
-                </div>
-                <input type="hidden" name="photoData" id="studentPhotoData" value="${escapeAttr(record.photoData || "")}">
-                <input type="hidden" name="photoPath" id="studentPhotoPath" value="${escapeAttr(record.photoPath || "")}">
-                <input type="hidden" name="photoUrl" id="studentPhotoUrl" value="${escapeAttr(record.photoUrl || "")}">
-                <label class="photo-upload">
-                  <input id="studentPhotoInput" type="file" accept="image/*">
-                  <span>Прикрепить фото</span>
-                </label>
-                <button class="ghost-button" data-action="clear-photo" type="button">Убрать фото</button>
-                <div class="student-mini-card">
-                  <strong>${escapeHtml(record.name || "Новый слушатель")}</strong>
-                  <span>uid: ${escapeHtml(record.uid || "не присвоен")}</span>
-                  <span>${escapeHtml(record.program || "Программа не выбрана")}</span>
-                </div>
-                <div class="student-money-card">
-                  <div><span>Договор</span><strong>${money(record.contractAmount || 0)}</strong></div>
-                  <div><span>Внесено</span><strong>${money(record.paidAmount || 0)}</strong></div>
-                  <div><span>Остаток</span><strong>${money(record.balance || 0)}</strong></div>
-                </div>
-              </aside>
-
               <section class="student-card-main">
                 <div class="student-tabs" role="tablist">
-                  ${studentCardTabs.map((tab) => `
+                  ${visibleStudentCardTabs.map((tab) => `
                     <button class="${activeTab.id === tab.id ? "active" : ""}" data-student-tab="${tab.id}" type="button" role="tab">
                       ${escapeHtml(tab.label)}
                     </button>
@@ -1374,9 +1353,9 @@
       ${tab.sections.map((section) => `
         <section class="form-section">
           <h3>${escapeHtml(section.title)}</h3>
-          <div class="student-form-grid">
-            ${section.fields.map((item) => renderStudentField(item, record)).join("")}
-          </div>
+          ${tab.id === "main" && section.fields.some((item) => item.key === "name")
+            ? renderStudentMainIdentity(section, record)
+            : `<div class="student-form-grid">${section.fields.map((item) => renderStudentField(item, record)).join("")}</div>`}
         </section>
       `).join("")}
       ${tab.payments ? renderPaymentRows(record) : ""}
@@ -1386,7 +1365,58 @@
     `;
   }
 
+  function renderStudentMainIdentity(section, record) {
+    const hiddenKeys = new Set(["name", "uid", "status"]);
+    return `
+      <div class="student-main-identity">
+        <div class="student-main-photo">
+          ${renderStudentPhotoEditor(record)}
+          ${renderStudentField(section.fields.find((item) => item.key === "uid"), record)}
+        </div>
+        <div class="student-main-fields">
+          <div class="student-name-status-grid">
+            ${renderStudentField(section.fields.find((item) => item.key === "name"), record)}
+            ${renderStudentField(section.fields.find((item) => item.key === "status"), record)}
+          </div>
+          <div class="student-form-grid">
+            ${section.fields.filter((item) => !hiddenKeys.has(item.key)).map((item) => renderStudentField(item, record)).join("")}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderStudentPhotoEditor(record) {
+    const photo = getStudentPhotoSrc(record);
+    return `
+      <div class="photo-preview ${photo ? "has-photo" : ""}" id="studentPhotoPreview">
+        ${photo ? `<img src="${escapeAttr(photo)}" alt="Фото слушателя">` : `<span>${initials(record.name || "Слушатель")}</span>`}
+        <div class="photo-actions" aria-label="Действия с фото">
+          <label class="photo-icon-button" title="Прикрепить фото" aria-label="Прикрепить фото">
+            <input id="studentPhotoInput" type="file" accept="image/*">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M21.4 11.6l-8.9 8.9a6 6 0 0 1-8.5-8.5l9.8-9.8a4 4 0 0 1 5.7 5.7l-9.8 9.8a2 2 0 0 1-2.8-2.8l8.8-8.8"></path>
+            </svg>
+          </label>
+          <button class="photo-icon-button" data-action="clear-photo" type="button" title="Удалить фото" aria-label="Удалить фото">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M4 7h16"></path>
+              <path d="M10 11v6"></path>
+              <path d="M14 11v6"></path>
+              <path d="M6 7l1 14h10l1-14"></path>
+              <path d="M9 7V4h6v3"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <input type="hidden" name="photoData" id="studentPhotoData" value="${escapeAttr(record.photoData || "")}">
+      <input type="hidden" name="photoPath" id="studentPhotoPath" value="${escapeAttr(record.photoPath || "")}">
+      <input type="hidden" name="photoUrl" id="studentPhotoUrl" value="${escapeAttr(record.photoUrl || "")}">
+    `;
+  }
+
   function renderStudentSidePanel(record) {
+    const orderedEvents = getOrderedStudentEvents(record);
     return `
       <section class="student-note-block">
         <div class="student-side-head">
@@ -1398,13 +1428,24 @@
         <div class="student-side-head">
           <h3>Перечень событий</h3>
         </div>
-        <div class="student-events-head" aria-hidden="true">
-          <span></span>
-          <span>Дата</span>
-          <span>Событие</span>
+        <div class="student-events-top">
+          <div class="student-events-head" aria-hidden="true">
+            <span></span>
+            <span>Дата</span>
+            <span>Событие</span>
+          </div>
+          <button class="icon-button event-add-button" data-action="add-student-event" type="button" title="Добавить событие" aria-label="Добавить событие">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M12 5v14"></path>
+              <path d="M5 12h14"></path>
+            </svg>
+          </button>
         </div>
-        <div class="student-events-list">
-          ${studentEventTemplates.map((event) => renderStudentEventRow(event, record)).join("")}
+        <input type="hidden" name="eventOrder" data-event-order value="${escapeAttr(orderedEvents.map((event) => event.key).join(","))}">
+        <input type="hidden" name="eventDeleted" data-event-deleted value="${escapeAttr(csvList(record.eventDeleted).join(","))}">
+        <input type="hidden" name="eventCustomKeys" data-event-custom-keys value="${escapeAttr(csvList(record.eventCustomKeys).join(","))}">
+        <div class="student-events-list" data-student-events-list>
+          ${orderedEvents.map((event) => renderStudentEventRow(event, record)).join("")}
         </div>
         <div class="student-event-editor" data-event-editor hidden>
           <label>
@@ -1416,6 +1457,15 @@
             <input type="text" data-event-editor-label>
           </label>
           <div class="student-event-editor-actions">
+            <button class="event-editor-delete" data-action="delete-student-event" type="button" title="Удалить событие" aria-label="Удалить событие">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M3 6h18"></path>
+                <path d="M8 6V4c0-1.1.9-2 2-2h4c1.1 0 2 .9 2 2v2"></path>
+                <path d="M19 6l-1 14c-.1 1.1-1 2-2.1 2H8.1c-1.1 0-2-.9-2.1-2L5 6"></path>
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+              </svg>
+            </button>
             <button class="ghost-button" data-action="close-event-editor" type="button">Отмена</button>
             <button class="primary-button" data-action="apply-event-editor" type="button">Применить</button>
           </div>
@@ -1432,7 +1482,7 @@
     const dateValue = record[dateKey] || "";
     const labelValue = record[labelKey] || event.label;
     return `
-      <div class="student-event-row ${stateValue ? "is-selected" : ""} ${stateValue === "dated" ? "has-date" : ""}" data-action="toggle-student-event" data-event-key="${escapeAttr(event.key)}" role="button" tabindex="0">
+      <div class="student-event-row ${stateValue ? "is-selected" : ""} ${stateValue === "dated" ? "has-date" : ""}" data-action="toggle-student-event" data-event-key="${escapeAttr(event.key)}" data-event-custom="${event.custom ? "true" : ""}" role="button" tabindex="0" draggable="true">
         <input
           type="checkbox"
           tabindex="-1"
@@ -1443,9 +1493,133 @@
         <input type="hidden" name="${dateKey}" data-event-date="${escapeAttr(event.key)}" value="${escapeAttr(dateValue)}">
         <input type="hidden" name="${labelKey}" data-event-label-value="${escapeAttr(event.key)}" value="${escapeAttr(labelValue)}">
         <span class="event-date" data-event-date-label="${escapeAttr(event.key)}">${stateValue === "dated" ? escapeHtml(dateRu(dateValue)) : ""}</span>
-        <span class="event-label" data-event-label-text="${escapeAttr(event.key)}">${escapeHtml(labelValue)}</span>
+        <span class="event-label" data-event-label-text="${escapeAttr(event.key)}" title="${escapeAttr(labelValue)}">${escapeHtml(labelValue)}</span>
       </div>
     `;
+  }
+
+  function getOrderedStudentEvents(record) {
+    const catalog = getStudentEventCatalog(record);
+    const keys = String(record.eventOrder || "")
+      .split(",")
+      .map((key) => key.trim())
+      .filter(Boolean);
+    const eventByKey = new Map(catalog.map((event) => [event.key, event]));
+    const ordered = keys.map((key) => eventByKey.get(key)).filter(Boolean);
+    const usedKeys = new Set(ordered.map((event) => event.key));
+    return [
+      ...ordered,
+      ...catalog.filter((event) => !usedKeys.has(event.key))
+    ];
+  }
+
+  function getStudentEventCatalog(record) {
+    const deleted = new Set(csvList(record.eventDeleted));
+    const baseEvents = studentEventTemplates.filter((event) => !deleted.has(event.key));
+    const customEvents = csvList(record.eventCustomKeys).map((key) => ({
+      key,
+      label: record[`event_${key}_label`] || "Новое событие",
+      custom: true
+    }));
+    return [...baseEvents, ...customEvents];
+  }
+
+  function csvList(value) {
+    return String(value || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function syncStudentEventOrder() {
+    const input = document.querySelector("[data-event-order]");
+    const list = document.querySelector("[data-student-events-list]");
+    if (!input || !list) return;
+    input.value = Array.from(list.querySelectorAll(".student-event-row"))
+      .map((row) => row.dataset.eventKey)
+      .filter(Boolean)
+      .join(",");
+  }
+
+  function setCsvHidden(selector, values) {
+    const input = document.querySelector(selector);
+    if (input) input.value = unique(values.filter(Boolean)).join(",");
+  }
+
+  function getEventDragAfterElement(list, y) {
+    const rows = Array.from(list.querySelectorAll(".student-event-row:not(.is-dragging)"));
+    return rows.reduce((closest, row) => {
+      const box = row.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) return { offset, row };
+      return closest;
+    }, { offset: Number.NEGATIVE_INFINITY, row: null }).row;
+  }
+
+  function bindStudentEventRow(row) {
+    row.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (row.dataset.wasDragged === "true") {
+        row.dataset.wasDragged = "";
+        return;
+      }
+      updateStudentEventRow(row);
+    });
+    row.addEventListener("dragstart", (event) => {
+      closeStudentEventEditor();
+      row.classList.add("is-dragging");
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", row.dataset.eventKey || "");
+    });
+    row.addEventListener("dragend", () => {
+      row.classList.remove("is-dragging");
+      row.dataset.wasDragged = "true";
+      window.setTimeout(() => {
+        row.dataset.wasDragged = "";
+      }, 150);
+      syncStudentEventOrder();
+    });
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openStudentEventEditor(row, event.clientX, event.clientY);
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      updateStudentEventRow(row);
+    });
+  }
+
+  function addStudentEvent() {
+    const name = window.prompt("Название события");
+    const label = String(name || "").trim();
+    if (!label) return;
+    const list = document.querySelector("[data-student-events-list]");
+    if (!list) return;
+    const key = `customEvent_${Date.now().toString(36)}`;
+    const customKeys = csvList(document.querySelector("[data-event-custom-keys]")?.value);
+    setCsvHidden("[data-event-custom-keys]", [...customKeys, key]);
+    list.insertAdjacentHTML("beforeend", renderStudentEventRow({ key, label, custom: true }, { [`event_${key}_label`]: label }));
+    const row = list.querySelector(`.student-event-row[data-event-key="${CSS.escape(key)}"]`);
+    if (row) bindStudentEventRow(row);
+    syncStudentEventOrder();
+  }
+
+  function deleteStudentEvent(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const editor = document.querySelector("[data-event-editor]");
+    const key = editor?.dataset.eventKey;
+    const row = key ? document.querySelector(`.student-event-row[data-event-key="${CSS.escape(key)}"]`) : null;
+    if (!row || !key) return;
+    closeStudentEventEditor();
+    if (row.dataset.eventCustom === "true") {
+      setCsvHidden("[data-event-custom-keys]", csvList(document.querySelector("[data-event-custom-keys]")?.value).filter((item) => item !== key));
+    } else {
+      setCsvHidden("[data-event-deleted]", [...csvList(document.querySelector("[data-event-deleted]")?.value), key]);
+    }
+    row.remove();
+    syncStudentEventOrder();
   }
 
   function renderStudentField(item, record) {
@@ -1685,7 +1859,10 @@
     const newLabel = labelInput.value.trim();
     if (dateHidden) dateHidden.value = newDate;
     if (labelHidden && newLabel) labelHidden.value = newLabel;
-    if (labelText && newLabel) labelText.textContent = newLabel;
+    if (labelText && newLabel) {
+      labelText.textContent = newLabel;
+      labelText.title = newLabel;
+    }
     if (dateLabel) dateLabel.textContent = newDate ? dateRu(newDate) : "";
     if (stateInput) stateInput.value = newDate ? "dated" : (stateInput.value ? "checked" : "");
     const checkbox = row.querySelector("input[type='checkbox']");
@@ -1981,24 +2158,27 @@
       input.addEventListener("change", syncProgramType);
     });
 
-    document.querySelectorAll("[data-action='toggle-student-event']").forEach((row) => {
-      row.addEventListener("click", (event) => {
-        event.preventDefault();
-        updateStudentEventRow(row);
-      });
-      row.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        openStudentEventEditor(row, event.clientX, event.clientY);
-      });
-      row.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        updateStudentEventRow(row);
-      });
+    document.querySelectorAll("[data-action='toggle-student-event']").forEach(bindStudentEventRow);
+
+    document.querySelector("[data-action='add-student-event']")?.addEventListener("click", addStudentEvent);
+
+    document.querySelector("[data-student-events-list]")?.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      const list = event.currentTarget;
+      const dragging = list.querySelector(".student-event-row.is-dragging");
+      if (!dragging) return;
+      const afterElement = getEventDragAfterElement(list, event.clientY);
+      if (afterElement) {
+        list.insertBefore(dragging, afterElement);
+      } else {
+        list.appendChild(dragging);
+      }
+      syncStudentEventOrder();
     });
 
     document.querySelector("[data-action='close-event-editor']")?.addEventListener("click", closeStudentEventEditor);
     document.querySelector("[data-action='apply-event-editor']")?.addEventListener("click", applyStudentEventEditor);
+    document.querySelector("[data-action='delete-student-event']")?.addEventListener("click", deleteStudentEvent);
     document.querySelector("[data-event-editor]")?.addEventListener("keydown", (event) => {
       if (event.key === "Escape") closeStudentEventEditor();
       if (event.key === "Enter" && event.target.matches("[data-event-editor-label]")) {
@@ -2122,7 +2302,10 @@
       if (urlInput) urlInput.value = "";
       if (preview) {
         preview.classList.remove("has-photo");
-        preview.innerHTML = `<span>${initials(document.querySelector("[name='name']")?.value || "Слушатель")}</span>`;
+        preview.querySelector("img")?.remove();
+        if (!preview.querySelector(":scope > span")) {
+          preview.insertAdjacentHTML("afterbegin", `<span>${initials(document.querySelector("[name='name']")?.value || "Слушатель")}</span>`);
+        }
       }
     });
 
@@ -2160,6 +2343,7 @@
     const fields = isStudentCard ? studentAllFields : config.fields;
     fields.forEach((item) => {
       if (item.type === "checkbox") {
+        if (!formElement.elements[item.key]) return;
         values[item.key] = formData.has(item.key) ? "Да" : "";
         return;
       }
@@ -2167,6 +2351,13 @@
       const raw = formData.get(item.key);
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
+    if (isStudentCard) {
+      formData.forEach((raw, key) => {
+        if (/^event_[A-Za-z0-9_-]+_(state|date|label)$/.test(key)) {
+          values[key] = String(raw || "");
+        }
+      });
+    }
     if (!formElement.dataset.id && fields.some((item) => item.key === "uid") && !values.uid) {
       values.uid = getNextUid();
     }
@@ -2234,7 +2425,13 @@
         if (urlInput) urlInput.value = uploaded.photoUrl;
         if (preview) {
           preview.classList.add("has-photo");
-          preview.innerHTML = `<img src="${escapeAttr(uploaded.photoUrl)}" alt="Фото слушателя">`;
+          preview.querySelector(":scope > span")?.remove();
+          const image = preview.querySelector("img");
+          if (image) {
+            image.src = uploaded.photoUrl;
+          } else {
+            preview.insertAdjacentHTML("afterbegin", `<img src="${escapeAttr(uploaded.photoUrl)}" alt="Фото слушателя">`);
+          }
         }
       } catch (error) {
         alert("Не удалось сохранить фото: " + error.message);
