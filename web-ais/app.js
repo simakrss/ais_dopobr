@@ -44,6 +44,9 @@
       accent: "teal",
       fields: [
         field("name", "ФИО", "text", true),
+        field("nameEnglish", "ФИО анг."),
+        field("noDeclension", "Не склоняется", "checkbox"),
+        field("addressByFirstName", "Обращаться по имени", "checkbox"),
         field("status", "Статус", "select", true, "statuses"),
         field("program", "Программа", "text", true),
         field("phone", "Телефон"),
@@ -98,12 +101,13 @@
         field("hours", "Часы", "number"),
         field("duration", "Срок"),
         field("landingCode", "Код лендинга"),
+        field("promoSite", "На промо сайте"),
         field("groupIndex", "Индекс группы"),
         field("studyForm", "Форма обучения", "select", false, "studyForms"),
         field("qualification", "Квалификация"),
         field("manager", "Ответственный")
       ],
-      table: ["name", "status", "type", "hours", "price", "landingCode", "groupIndex"]
+      table: ["name", "status", "type", "hours", "price", "landingCode", "promoSite", "groupIndex"]
     },
     trainingPlans: {
       title: "Учебные планы",
@@ -221,12 +225,26 @@
           title: "Обучающийся",
           fields: [
             field("name", "ФИО", "text", true),
+            field("nameEnglish", "ФИО анг."),
+            field("noDeclension", "Не склоняется", "checkbox"),
+            field("addressByFirstName", "Обращаться по имени", "checkbox"),
             field("uid", "uid"),
             field("status", "Статус", "select", true, "statuses"),
             field("program", "Программа", "text", true),
+            field("studyForm", "Форма обучения", "select", false, "studyForms"),
+            field("educationType", "Вид программы"),
+            field("hours", "Кол. часов", "number"),
+            field("registrationAddress", "Адрес места регистрации", "textarea"),
+            field("mailingAddress", "Адрес с почтовым индексом для отправки документов", "textarea"),
+            field("internship", "Стажировка", "checkbox"),
             field("group", "Группа"),
             field("manager", "Ответственный"),
             field("source", "Источник"),
+            field("agent", "Агент"),
+            field("workPlace", "Место работы"),
+            field("position", "Должность"),
+            field("employmentCategory", "Категория занятости"),
+            field("ovzStatus", "Статус ОВЗ"),
             field("tags", "Теги", "textarea")
           ]
         },
@@ -236,9 +254,7 @@
             field("applicationDate", "Дата подачи заявки", "date"),
             field("startDate", "Дата начала обучения", "date"),
             field("endDate", "Дата окончания обучения", "date"),
-            field("extendedEndDate", "Продленная дата окончания", "date"),
-            field("studyForm", "Форма обучения", "select", false, "studyForms"),
-            field("educationType", "Вид программы ДПО")
+            field("extendedEndDate", "Продленная дата окончания", "date")
           ]
         }
       ]
@@ -315,6 +331,7 @@
             field("email", "Email"),
             field("telegram", "Аккаунт Telegram"),
             field("whatsapp", "WhatsApp"),
+            field("messengerUrl", "Адрес мессенджера"),
             field("customer", "Заказчик"),
             field("customerPhone", "Телефон заказчика"),
             field("customerEmail", "Email заказчика")
@@ -505,13 +522,61 @@
     selected: {},
     tableOptions: null,
     tableSettings: loadTableSettings(),
+    dictionarySearch: "",
+    selectedDictionary: "",
+    dictionaryAddFocus: "",
     financeChart: { revenue: true, direct: true, general: true },
     modal: null,
     data: loadState()
   };
+  let sidebarOutsideClickBound = false;
+  let fieldUndoKeyBound = false;
+  let lastDeletedControlState = null;
+
+  const transliterationPairs = [
+    ["А", "A"], ["Б", "B"], ["В", "V"], ["Г", "G"], ["Д", "D"], ["Е", "E"], ["Ё", "Yo"], ["Ж", "Zh"],
+    ["З", "Z"], ["И", "I"], ["Й", "Y"], ["К", "K"], ["Л", "L"], ["М", "M"], ["Н", "N"], ["О", "O"],
+    ["П", "P"], ["Р", "R"], ["С", "S"], ["Т", "T"], ["У", "U"], ["Ф", "F"], ["Х", "Kh"], ["Ц", "Ts"],
+    ["Ч", "Ch"], ["Ш", "Sh"], ["Щ", "Shch"], ["Ъ", ""], ["Ы", "Y"], ["Ь", ""], ["Э", "E"], ["Ю", "Yu"],
+    ["Я", "Ya"]
+  ];
+  const transliterationMap = transliterationPairs.reduce((map, [cyrillic, latin]) => {
+    map[cyrillic] = latin;
+    map[cyrillic.toLowerCase()] = latin.toLowerCase();
+    return map;
+  }, {});
 
   function field(key, label, type = "text", required = false, dict = null, options = null) {
     return { key, label, type, required, dict, options };
+  }
+
+  function transliterateStudentName(value) {
+    return String(value || "")
+      .trim()
+      .replace(/[А-Яа-яЁё]/g, (char) => transliterationMap[char] ?? char)
+      .replace(/\s+/g, " ");
+  }
+
+  function autoFillStudentGender(name) {
+    const gender = inferStudentGender(name);
+    const genderInput = document.querySelector("[name='gender']");
+    if (!gender || !genderInput) return;
+    genderInput.value = gender;
+    genderInput.dispatchEvent(new Event("input", { bubbles: true }));
+    genderInput.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function inferStudentGender(name) {
+    const words = String(name || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return "";
+    if (words.some((word) => /(?:вна|ична)$/.test(word) || word.endsWith("кызы"))) return "Женский";
+    if (words.some((word) => /(?:вич|ич)$/.test(word) || word.endsWith("оглы"))) return "Мужской";
+    const [surname = "", firstName = words[0]] = words;
+    if (/(?:ова|ева|ёва|ина|ая|яя|ская|цкая)$/.test(surname)) return "Женский";
+    if (/(?:ов|ев|ёв|ин|ый|ий|ский|цкий)$/.test(surname)) return "Мужской";
+    if (/(?:а|я)$/.test(firstName) && !/(?:илья|никита|кузьма|фома|лука|савва|добрыня)$/.test(firstName)) return "Женский";
+    if (/(?:н|р|й|м|л|д|т|с|в|п|г|к)$/.test(firstName)) return "Мужской";
+    return "";
   }
 
   function clone(value) {
@@ -536,7 +601,24 @@
     Object.entries(dictionaryDefaults).forEach(([key, values]) => {
       data.dictionaries[key] = unique([...(data.dictionaries[key] || []), ...values]);
     });
+    data.collections = data.collections || {};
+    data.collections.programs = (data.collections.programs || []).map((program) => normalizeProgramRecord(program));
     return data;
+  }
+
+  function normalizeProgramRecord(program) {
+    if (!program || typeof program !== "object") return program;
+    if (program.promoSite) return program;
+    const promoSite = [
+      program["На промо сайте"],
+      program["Промосайт"],
+      program["Промо сайт"],
+      program.promoUrl,
+      program.promoWebsite,
+      program.landingUrl,
+      program.siteUrl
+    ].find((value) => String(value || "").trim());
+    return promoSite ? { ...program, promoSite } : program;
   }
 
   function persist() {
@@ -618,6 +700,7 @@
       ${state.modal ? renderModal() : ""}
     `;
     bindEvents();
+    restoreDictionaryAddFocus();
   }
 
   function renderView() {
@@ -1144,6 +1227,21 @@
 
   function renderSettings() {
     const dictionaries = state.data.dictionaries;
+    const dictionaryItems = Object.keys(dictionaries)
+      .map((key) => ({ key, title: dictionaryTitle(key), values: dictionaries[key] || [] }))
+      .sort((a, b) => a.title.localeCompare(b.title, "ru"));
+    const query = state.dictionarySearch.trim().toLowerCase();
+    const visibleItems = dictionaryItems.filter((item) => (
+      !query ||
+      item.title.toLowerCase().includes(query) ||
+      item.values.some((value) => String(value || "").toLowerCase().includes(query))
+    ));
+    const selectedKey = visibleItems.some((item) => item.key === state.selectedDictionary)
+      ? state.selectedDictionary
+      : visibleItems[0]?.key || dictionaryItems[0]?.key || "";
+    if (state.selectedDictionary !== selectedKey) state.selectedDictionary = selectedKey;
+    const selectedItem = dictionaryItems.find((item) => item.key === selectedKey);
+    const selectedValues = selectedItem?.values || [];
     return `
       <section class="panel">
         <div class="section-head">
@@ -1152,24 +1250,48 @@
             <h2>Справочники системы</h2>
           </div>
         </div>
-        <div class="dictionary-grid">
-          ${Object.entries(dictionaries).map(([key, values]) => `
-            <section class="dictionary-box">
-              <h3>${dictionaryTitle(key)}</h3>
-              <div class="chips">
-                ${values.map((value) => `
-                  <span class="chip">
-                    ${escapeHtml(value)}
-                    <button data-action="dict-remove" data-dict="${key}" data-value="${escapeAttr(value)}" type="button">×</button>
-                  </span>
-                `).join("")}
+        <div class="dictionary-browser">
+          <aside class="dictionary-list-panel">
+            <label class="search-box dictionary-search">
+              <span>⌕</span>
+              <input id="dictionarySearch" value="${escapeAttr(state.dictionarySearch)}" placeholder="Поиск справочника" autocomplete="off">
+            </label>
+            <div class="dictionary-list" role="listbox" aria-label="Справочники">
+              ${visibleItems.length ? visibleItems.map((item) => `
+                <button class="dictionary-list-item ${item.key === selectedKey ? "active" : ""}" data-action="select-dictionary" data-dict="${item.key}" type="button" role="option" aria-selected="${item.key === selectedKey ? "true" : "false"}">
+                  <span>${escapeHtml(item.title)}</span>
+                  <small>${item.values.length}</small>
+                </button>
+              `).join("") : `<div class="empty-state compact"><span>Справочники не найдены</span></div>`}
+            </div>
+          </aside>
+          <section class="dictionary-detail">
+            ${selectedItem ? `
+              <div class="dictionary-detail-head">
+                <div>
+                  <p class="eyebrow">Содержание справочника</p>
+                  <h3>${escapeHtml(selectedItem.title)}</h3>
+                </div>
+                <div class="dictionary-detail-actions">
+                  <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
+                  <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
+                  <span>${selectedValues.length}</span>
+                </div>
               </div>
-              <form class="inline-form" data-action="dict-add" data-dict="${key}">
-                <input name="value" placeholder="Новое значение" autocomplete="off">
+              <form class="inline-form dictionary-add-form" data-action="dict-add" data-dict="${selectedKey}">
+                <input name="value" placeholder="Новое значение или список из буфера обмена" autocomplete="off" data-dictionary-add-input>
                 <button class="ghost-button" type="submit">Добавить</button>
               </form>
-            </section>
-          `).join("")}
+              <div class="chips dictionary-detail-values" data-dictionary-values data-dict="${selectedKey}">
+                ${selectedValues.length ? selectedValues.map((value) => `
+                  <span class="chip dictionary-value-chip" draggable="true" data-dict="${selectedKey}" data-value="${escapeAttr(value)}" title="Перетащите, чтобы изменить порядок">
+                    ${escapeHtml(value)}
+                    <button data-action="dict-remove" data-dict="${selectedKey}" data-value="${escapeAttr(value)}" type="button">×</button>
+                  </span>
+                `).join("") : `<span class="lookup-empty">Значений пока нет</span>`}
+              </div>
+            ` : `<div class="empty-state"><span>Выберите справочник</span></div>`}
+          </section>
         </div>
       </section>
     `;
@@ -1242,7 +1364,8 @@
   function renderModal() {
     const config = configs[state.modal.config];
     const rows = state.data.collections[config.collection] || [];
-    const record = state.modal.id ? rows.find((row) => row.id === state.modal.id) : ensureRecordUid(config, {});
+    const baseRecord = state.modal.id ? rows.find((row) => row.id === state.modal.id) : ensureRecordUid(config, {});
+    const record = state.modal.draft ? { ...(baseRecord || {}), ...state.modal.draft } : baseRecord;
     if (state.modal.config === "students") return renderStudentModal(record || {});
     const title = state.modal.id ? "Редактирование" : "Новая запись";
     return `
@@ -1291,15 +1414,16 @@
   function renderStudentModal(record) {
     if (!state.modal.id) record = { ...record, uid: record.uid || getNextUid() };
     const activeTab = visibleStudentCardTabs.find((tab) => tab.id === state.studentCardTab) || visibleStudentCardTabs[0];
-    const title = state.modal.id ? "Карточка слушателя" : "Новая карточка слушателя";
+    const title = getStudentCardTitle(record);
+    const programTitle = getStudentCardProgramTitle(record);
     return `
       <div class="modal-backdrop" data-action="close-modal">
-        <section class="modal student-modal" role="dialog" aria-modal="true" aria-label="${title}">
+        <section class="modal student-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
           <form id="recordForm" data-config="students" data-id="${record.id || ""}">
             <header class="modal-head student-modal-head">
-              <div>
-                <p class="eyebrow">Лист Excel: База / форма VBA: КарточкаСлушателя</p>
-                <h2>${title}</h2>
+              <div class="student-modal-title">
+                <h2>${escapeHtml(title)}</h2>
+                ${programTitle ? `<p>${escapeHtml(programTitle)}</p>` : ""}
               </div>
               <div class="modal-head-actions">
                 <span class="student-status">${escapeHtml(record.status || "Новая запись")}</span>
@@ -1333,6 +1457,27 @@
     `;
   }
 
+  function getStudentCardTitle(record) {
+    const uid = String(record.uid || "").trim();
+    const name = String(record.name || "").trim() || (state.modal.id ? "Без ФИО" : "Новая запись");
+    const uidPart = uid ? ` [${uid}]` : "";
+    return `Карточка слушателя${uidPart} - ${name}`;
+  }
+
+  function getStudentCardProgramTitle(record) {
+    const program = String(record.program || "").trim();
+    const hours = getStudentProgramHours(record);
+    if (!program) return "";
+    return `${program}${hours ? ` (${hours} ч)` : ""}`;
+  }
+
+  function getStudentProgramHours(record) {
+    const ownHours = String(record.hours || record.programHours || record.totalHours || "").trim();
+    if (ownHours) return ownHours;
+    const program = findProgramByName(record.program);
+    return String(program?.hours || "").trim();
+  }
+
   function renderProgramHoursField(label, value, required) {
     return `
       ${label}
@@ -1350,7 +1495,7 @@
 
   function renderStudentTabContent(tab, record) {
     return `
-      ${tab.sections.map((section) => `
+      ${tab.sections.filter((section) => !(tab.id === "main" && !section.fields.some((item) => item.key === "name"))).map((section) => `
         <section class="form-section">
           <h3>${escapeHtml(section.title)}</h3>
           ${tab.id === "main" && section.fields.some((item) => item.key === "name")
@@ -1366,23 +1511,251 @@
   }
 
   function renderStudentMainIdentity(section, record) {
-    const hiddenKeys = new Set(["name", "uid", "status"]);
+    const hiddenKeys = new Set(["name", "nameEnglish", "noDeclension", "addressByFirstName", "uid", "status", "program", "studyForm", "educationType", "hours", "registrationAddress", "mailingAddress", "internship", "group", "source", "tags"]);
+    const nameField = section.fields.find((item) => item.key === "name");
+    const nameEnglishField = section.fields.find((item) => item.key === "nameEnglish");
+    const uidField = section.fields.find((item) => item.key === "uid");
+    const statusField = section.fields.find((item) => item.key === "status");
+    const programField = section.fields.find((item) => item.key === "program");
+    const studyFormField = section.fields.find((item) => item.key === "studyForm");
+    const educationTypeField = section.fields.find((item) => item.key === "educationType");
+    const hoursField = section.fields.find((item) => item.key === "hours");
+    const registrationAddressField = section.fields.find((item) => item.key === "registrationAddress");
+    const mailingAddressField = section.fields.find((item) => item.key === "mailingAddress");
+    const internshipField = section.fields.find((item) => item.key === "internship");
+    const sourceField = section.fields.find((item) => item.key === "source");
     return `
       <div class="student-main-identity">
         <div class="student-main-photo">
           ${renderStudentPhotoEditor(record)}
-          ${renderStudentField(section.fields.find((item) => item.key === "uid"), record)}
+          ${renderStudentField(uidField, record)}
         </div>
         <div class="student-main-fields">
           <div class="student-name-status-grid">
-            ${renderStudentField(section.fields.find((item) => item.key === "name"), record)}
-            ${renderStudentField(section.fields.find((item) => item.key === "status"), record)}
+            <div class="student-name-stack">
+              ${renderStudentField(nameField, record)}
+              ${renderStudentNameOptions(record)}
+              ${renderStudentEnglishNameField(nameEnglishField, record)}
+            </div>
+            <div class="student-status-stack">
+              ${renderStudentField(sourceField, record)}
+              ${renderStudentField(statusField, record)}
+              ${renderStudentGenderField(record)}
+            </div>
+            ${renderStudentContactLine(record)}
           </div>
           <div class="student-form-grid">
-            ${section.fields.filter((item) => !hiddenKeys.has(item.key)).map((item) => renderStudentField(item, record)).join("")}
+            ${section.fields.filter((item) => !hiddenKeys.has(item.key)).sort(orderStudentMainField).map((item) => renderStudentField(item, record)).join("")}
+          </div>
+        </div>
+        <div class="student-main-program-row">
+          ${renderStudentProgramLine(programField, internshipField, record)}
+          <div class="student-program-details-row">
+            ${[studyFormField, educationTypeField, hoursField].filter(Boolean).map((item) => renderStudentField(item, record)).join("")}
+          </div>
+          <div class="student-address-pair">
+            ${renderStudentAddressField(registrationAddressField, record, "mailingAddress")}
+            ${renderStudentAddressField(mailingAddressField, record, "registrationAddress")}
           </div>
         </div>
       </div>
+    `;
+  }
+
+  function renderStudentAddressField(item, record, copyTargetKey) {
+    if (!item) return "";
+    const value = record[item.key] || "";
+    return `
+      <label class="student-address-field">
+        <span>${escapeHtml(item.label)}</span>
+        <div class="student-address-control">
+          <textarea name="${item.key}" data-address-field="${item.key}">${escapeHtml(value)}</textarea>
+          <div class="student-address-actions">
+            <button class="icon-button student-address-action" data-action="copy-address-to" data-source="${item.key}" data-target="${copyTargetKey}" type="button" title="Скопировать в другое адресное поле" aria-label="Скопировать в другое адресное поле">
+              ${renderAddressCopyIcon(item.key === "registrationAddress" ? "down" : "up")}
+            </button>
+            <button class="icon-button student-address-action student-address-check-action" data-action="check-post-index" data-source="${item.key}" type="button" title="Проверить почтовый индекс через Почту России" aria-label="Проверить почтовый индекс через Почту России">
+              ${renderGlobeGridIcon()}
+            </button>
+          </div>
+        </div>
+      </label>
+    `;
+  }
+
+  function renderStudentProgramLine(item, internshipField, record) {
+    if (!item) return "";
+    const promoTitle = getProgramPromoButtonTitle(getProgramPromoUrl(findProgramByName(record.program)));
+    return `
+      <div class="student-program-link-row">
+        ${renderStudentField(item, record)}
+        <button class="icon-button student-program-promo-button" data-action="open-student-program-promo" type="button" title="${escapeAttr(promoTitle)}" aria-label="${escapeAttr(promoTitle)}">
+          ${renderExternalLinkIcon()}
+        </button>
+        ${renderStudentInternshipField(internshipField, record)}
+      </div>
+    `;
+  }
+
+  function renderStudentInternshipField(item, record) {
+    if (!item) return "";
+    return `
+      <label class="student-internship-field">
+        <span class="student-internship-control">
+          <input name="${item.key}" type="checkbox" value="Да" ${isChecked(record[item.key]) ? "checked" : ""}>
+          <span>${escapeHtml(item.label)}</span>
+        </span>
+      </label>
+    `;
+  }
+
+  function renderStudentNameOptions(record) {
+    return `
+      <div class="student-name-options" aria-label="Настройки ФИО">
+        <label>
+          <input name="noDeclension" type="checkbox" value="Да" ${isChecked(record.noDeclension) ? "checked" : ""}>
+          <span>Не склоняется ФИО</span>
+        </label>
+        <label>
+          <input name="addressByFirstName" type="checkbox" value="Да" ${isChecked(record.addressByFirstName) ? "checked" : ""}>
+          <span>Обращаться по имени</span>
+        </label>
+      </div>
+    `;
+  }
+
+  function orderStudentMainField(a, b) {
+    const order = {
+      agent: 1,
+      manager: 2,
+      workPlace: 3,
+      position: 4,
+      employmentCategory: 5,
+      ovzStatus: 6
+    };
+    return (order[a.key] || 10) - (order[b.key] || 10);
+  }
+
+  function renderStudentGenderField(record) {
+    const value = record.gender || "";
+    const options = ["", "Женский", "Мужской"];
+    return `
+      <label class="student-gender-field">
+        <span>Пол</span>
+        <select name="gender">
+          ${options.map((option) => `<option value="${escapeAttr(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+        </select>
+      </label>
+    `;
+  }
+
+  function renderStudentContactLine(record) {
+    return `
+      <div class="student-contact-line">
+        <label class="student-contact-field">
+          <span>Email</span>
+          <input name="email" type="email" value="${escapeAttr(record.email || "")}">
+        </label>
+        <div class="student-contact-field student-phone-field">
+          <span>Телефон</span>
+          <div class="student-phone-messenger-row">
+            <input name="phone" type="tel" value="${escapeAttr(record.phone || "")}" aria-label="Телефон">
+            <div class="student-messenger-actions">
+              ${renderMessengerButton("max", "Открыть Max", renderMaxIcon())}
+              ${renderMessengerButton("telegram", "Открыть Telegram", renderTelegramIcon())}
+              ${renderMessengerButton("whatsapp", "Открыть WhatsApp", renderWhatsAppIcon())}
+            </div>
+          </div>
+        </div>
+        <label class="student-contact-field student-messenger-url-field">
+          <span>Адрес мессенджера</span>
+          <div class="student-messenger-url-row">
+            <input name="messengerUrl" type="text" value="${escapeAttr(record.messengerUrl || "")}" placeholder="https://max.ru/u/...">
+            <button class="icon-button student-messenger-url-button" data-action="open-student-messenger-url" type="button" title="Перейти по адресу мессенджера" aria-label="Перейти по адресу мессенджера">
+              ${renderExternalLinkIcon()}
+            </button>
+          </div>
+        </label>
+      </div>
+    `;
+  }
+
+  function renderMessengerButton(messenger, label, icon) {
+    return `
+      <button class="icon-button student-messenger-button ${messenger}" data-action="open-student-messenger" data-messenger="${messenger}" type="button" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}">
+        ${icon}
+      </button>
+    `;
+  }
+
+  function renderMaxIcon() {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M4.5 17.5V6.5h3.1l4.4 6.4 4.4-6.4h3.1v11h-3.2v-5.8l-3.3 4.6h-2l-3.3-4.6v5.8z"></path>
+      </svg>
+    `;
+  }
+
+  function renderTelegramIcon() {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M21 4.8 17.8 19c-.2.9-.8 1.1-1.5.7l-4.5-3.3-2.2 2.1c-.2.2-.4.4-.9.4l.3-4.7 8.5-7.7c.4-.3-.1-.5-.5-.2L6.5 12.9 2 11.5c-.9-.3-.9-.9.2-1.3L19.8 3.4c.8-.3 1.5.2 1.2 1.4z"></path>
+      </svg>
+    `;
+  }
+
+  function renderWhatsAppIcon() {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M5.2 19 6 15.9a7.4 7.4 0 1 1 2.8 2.8z"></path>
+        <path d="M9 8.6c.2-.4.4-.5.7-.5h.5c.2 0 .4.1.5.4l.7 1.7c.1.3.1.5-.1.7l-.4.5c-.1.1-.2.3 0 .5.5.9 1.3 1.6 2.2 2 .2.1.4.1.5-.1l.6-.7c.2-.2.4-.2.7-.1l1.6.8c.3.1.4.4.4.6 0 .5-.3 1.2-.8 1.5-.5.3-1.2.4-2.3 0-2.1-.7-4.4-2.6-5.3-4.7-.4-1-.4-1.8 0-2.6z"></path>
+      </svg>
+    `;
+  }
+
+  function renderExternalLinkIcon() {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M14 5h5v5"></path>
+        <path d="M10 14 19 5"></path>
+        <path d="M19 14v5H5V5h5"></path>
+      </svg>
+    `;
+  }
+
+  function renderAddressCopyIcon(direction) {
+    const arrow = direction === "up"
+      ? `<path d="M12 5v14"></path><path d="M6 11l6-6 6 6"></path>`
+      : `<path d="M12 5v14"></path><path d="M6 13l6 6 6-6"></path>`;
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        ${arrow}
+      </svg>
+    `;
+  }
+
+  function renderGlobeGridIcon() {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="12" r="8"></circle>
+        <path d="M4 12h16"></path>
+        <path d="M6.4 7.5h11.2"></path>
+        <path d="M6.4 16.5h11.2"></path>
+        <ellipse cx="12" cy="12" rx="3.2" ry="8"></ellipse>
+      </svg>
+    `;
+  }
+
+  function renderStudentEnglishNameField(item, record) {
+    if (!item) return "";
+    return `
+      <label class="student-name-english-field">
+        <span>${escapeHtml(item.label)}</span>
+        <div class="student-translit-row">
+          <input name="${item.key}" type="text" value="${escapeAttr(record[item.key] || "")}">
+          <button class="icon-button student-translit-button" data-action="transliterate-student-name" type="button" title="Транслитерировать ФИО" aria-label="Транслитерировать ФИО">Aa</button>
+        </div>
+      </label>
     `;
   }
 
@@ -1482,7 +1855,7 @@
     const dateValue = record[dateKey] || "";
     const labelValue = record[labelKey] || event.label;
     return `
-      <div class="student-event-row ${stateValue ? "is-selected" : ""} ${stateValue === "dated" ? "has-date" : ""}" data-action="toggle-student-event" data-event-key="${escapeAttr(event.key)}" data-event-custom="${event.custom ? "true" : ""}" role="button" tabindex="0" draggable="true">
+      <div class="student-event-row ${stateValue ? "is-selected" : ""} ${stateValue === "dated" ? "has-date" : ""}" data-action="toggle-student-event" data-event-key="${escapeAttr(event.key)}" data-event-custom="${event.custom ? "true" : ""}" role="button" tabindex="0" draggable="false">
         <input
           type="checkbox"
           tabindex="-1"
@@ -1557,6 +1930,17 @@
   }
 
   function bindStudentEventRow(row) {
+    row.draggable = false;
+    row.addEventListener("pointerdown", (event) => {
+      const canReorder = event.button === 0 && (event.shiftKey || document.body.classList.contains("event-reorder-mode"));
+      row.draggable = canReorder;
+      row.dataset.reorderDragReady = canReorder ? "true" : "";
+    });
+    row.addEventListener("pointerup", () => {
+      if (row.classList.contains("is-dragging")) return;
+      row.draggable = false;
+      row.dataset.reorderDragReady = "";
+    });
     row.addEventListener("click", (event) => {
       event.preventDefault();
       if (row.dataset.wasDragged === "true") {
@@ -1566,13 +1950,23 @@
       updateStudentEventRow(row);
     });
     row.addEventListener("dragstart", (event) => {
+      const canReorder = row.dataset.reorderDragReady === "true" || event.shiftKey || document.body.classList.contains("event-reorder-mode");
+      if (!canReorder) {
+        event.preventDefault();
+        row.draggable = false;
+        return;
+      }
       closeStudentEventEditor();
       row.classList.add("is-dragging");
+      document.body.classList.add("event-reorder-dragging");
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", row.dataset.eventKey || "");
     });
     row.addEventListener("dragend", () => {
       row.classList.remove("is-dragging");
+      document.body.classList.remove("event-reorder-dragging");
+      row.draggable = false;
+      row.dataset.reorderDragReady = "";
       row.dataset.wasDragged = "true";
       window.setTimeout(() => {
         row.dataset.wasDragged = "";
@@ -1587,6 +1981,31 @@
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       updateStudentEventRow(row);
+    });
+  }
+
+  function setEventReorderMode(active) {
+    document.body.classList.toggle("event-reorder-mode", active);
+    if (!active) {
+      document.querySelectorAll(".student-event-row:not(.is-dragging)").forEach((row) => {
+        row.draggable = false;
+        row.dataset.reorderDragReady = "";
+      });
+    }
+  }
+
+  function bindStudentEventReorderKeys() {
+    if (window.studentEventReorderKeysBound) return;
+    window.studentEventReorderKeysBound = true;
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Shift") setEventReorderMode(true);
+    });
+    document.addEventListener("keyup", (event) => {
+      if (event.key === "Shift") setEventReorderMode(false);
+    });
+    window.addEventListener("blur", () => {
+      setEventReorderMode(false);
+      document.body.classList.remove("event-reorder-dragging");
     });
   }
 
@@ -1626,9 +2045,18 @@
     const value = record[item.key] ?? "";
     const required = item.required ? "required" : "";
     const isWide = item.type === "textarea" || item.key === "program";
-    const label = `<label class="${isWide ? "wide-field" : ""}"><span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>`;
+    const classes = [
+      isWide ? "wide-field" : "",
+      item.key === "manager" ? "manager-field" : "",
+      item.key === "agent" ? "agent-field" : "",
+      ["workPlace", "employmentCategory"].includes(item.key) ? "long-label-field" : ""
+    ].filter(Boolean).join(" ");
+    const label = `<label class="${classes}"><span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>`;
     if (item.key === "program") {
       return renderStudentProgramField(label, value, required);
+    }
+    if (item.key === "hours") {
+      return renderProgramHoursField(label, value, required);
     }
     if (searchableStudentFields[item.key]) {
       return renderSearchableStudentField(label, item, value, required);
@@ -1638,7 +2066,17 @@
     }
     if (item.key === "educationType") {
       const programType = getProgramType(record.program, record);
-      return `${label}<input name="${item.key}" type="text" value="${escapeAttr(programType)}" readonly data-program-autofill="educationType"></label>`;
+      return `
+        ${label}
+          ${renderComboField({
+            name: item.key,
+            type: "search",
+            value: programType,
+            options: getProgramTypeOptions(programType),
+            attrs: 'data-program-autofill="educationType"'
+          })}
+        </label>
+      `;
     }
     if (item.key === "inn") {
       return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" inputmode="numeric" maxlength="12" pattern="\\d{10}|\\d{12}" autocomplete="off"></label>`;
@@ -1761,9 +2199,46 @@
     )) || null;
   }
 
+  function getProgramPromoUrl(program) {
+    if (!program) return "";
+    const rawValue = [
+      program.promoSite,
+      program.promoUrl,
+      program.promoWebsite,
+      program.landingUrl,
+      program.siteUrl,
+      program.website,
+      program.url,
+      program["На промо сайте"],
+      program["Промосайт"],
+      program["Промо сайт"]
+    ].find((value) => String(value || "").trim());
+    return normalizeExternalUrl(rawValue);
+  }
+
+  function getProgramPromoButtonTitle(url) {
+    return url ? `Перейти на промосайт программы\n${url}` : "Перейти на промосайт программы";
+  }
+
+  function updateStudentProgramPromoTitle(programName) {
+    const button = document.querySelector("[data-action='open-student-program-promo']");
+    if (!button) return;
+    const url = getProgramPromoUrl(findProgramByName(programName));
+    const title = getProgramPromoButtonTitle(url);
+    button.title = title;
+    button.setAttribute("aria-label", title);
+  }
+
   function getProgramType(programName, record = {}) {
     const program = findProgramByName(programName);
     return program?.type || record.educationType || "";
+  }
+
+  function getProgramTypeOptions(value = "") {
+    return unique([
+      ...getProgramRows().map((program) => program.type).filter(Boolean),
+      value
+    ].map((item) => String(item).trim()).filter(Boolean)).sort((a, b) => a.localeCompare(b, "ru"));
   }
 
   function getLookupOptions(config, extraValues = []) {
@@ -1965,14 +2440,35 @@
         <div class="quick-actions">
           <a class="ghost-button" href="${phone ? `tel:${phone}` : "#"}">Позвонить</a>
           <a class="ghost-button" href="${record.email ? `mailto:${escapeAttr(record.email)}` : "#"}">Email</a>
-          <a class="ghost-button" href="${phone ? `https://wa.me/${phone.replace("+", "")}` : "#"}" target="_blank" rel="noreferrer">WhatsApp</a>
+          <a class="ghost-button" href="${phone ? `whatsapp://send?phone=${encodeURIComponent(phone.replace("+", ""))}` : "#"}" target="_blank" rel="noreferrer">WhatsApp</a>
           <a class="ghost-button" href="${telegram ? `https://t.me/${escapeAttr(telegram)}` : "#"}" target="_blank" rel="noreferrer">Telegram</a>
         </div>
       </section>
     `;
   }
 
+  function closeSidebar() {
+    document.body.classList.add("sidebar-collapsed");
+    document.body.classList.remove("sidebar-open");
+  }
+
+  function bindSidebarOutsideClick() {
+    if (sidebarOutsideClickBound) return;
+    sidebarOutsideClickBound = true;
+    document.addEventListener("click", (event) => {
+      const sidebar = document.querySelector(".sidebar");
+      if (!sidebar || document.body.classList.contains("sidebar-collapsed")) return;
+      if (event.target.closest("[data-action='toggle-sidebar'], .sidebar")) return;
+      if (!document.body.classList.contains("sidebar-open")) return;
+      closeSidebar();
+    });
+  }
+
   function bindEvents() {
+    bindSidebarOutsideClick();
+    bindFieldUndoShortcut();
+    initializeRecordFormSnapshot(document.getElementById("recordForm"));
+
     document.querySelectorAll("[data-view]").forEach((button) => {
       button.addEventListener("click", () => {
         state.view = button.dataset.view;
@@ -1996,7 +2492,7 @@
       const isCompact = window.matchMedia("(max-width: 1120px)").matches;
       if (document.body.classList.contains("sidebar-collapsed")) {
         document.body.classList.remove("sidebar-collapsed");
-        if (isCompact) document.body.classList.add("sidebar-open");
+        document.body.classList.add("sidebar-open");
         return;
       }
       if (isCompact) {
@@ -2007,8 +2503,34 @@
     });
 
     document.querySelector("[data-action='collapse-sidebar']")?.addEventListener("click", () => {
-      document.body.classList.add("sidebar-collapsed");
-      document.body.classList.remove("sidebar-open");
+      closeSidebar();
+    });
+
+    document.querySelector("[data-action='transliterate-student-name']")?.addEventListener("click", () => {
+      const source = document.querySelector("[name='name']");
+      const target = document.querySelector("[name='nameEnglish']");
+      if (!target) return;
+      target.value = transliterateStudentName(source?.value || "");
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+      target.focus();
+    });
+
+    document.querySelector("[name='name']")?.addEventListener("input", (event) => {
+      autoFillStudentGender(event.target.value);
+    });
+
+    document.querySelectorAll("[data-action='open-student-messenger']").forEach((button) => {
+      button.addEventListener("click", () => openStudentMessenger(button.dataset.messenger));
+    });
+
+    document.querySelector("[data-action='open-student-messenger-url']")?.addEventListener("click", openStudentMessengerUrl);
+    document.querySelector("[data-action='open-student-program-promo']")?.addEventListener("click", openStudentProgramPromo);
+    document.querySelectorAll("[data-action='copy-address-to']").forEach((button) => {
+      button.addEventListener("click", () => copyStudentAddressToField(button.dataset.source, button.dataset.target));
+    });
+    document.querySelectorAll("[data-action='check-post-index']").forEach((button) => {
+      button.addEventListener("click", () => checkStudentAddressPostIndex(button.dataset.source));
     });
 
     document.getElementById("searchInput")?.addEventListener("input", (event) => {
@@ -2025,6 +2547,24 @@
     document.getElementById("statusFilter")?.addEventListener("change", (event) => {
       state.statusFilter = event.target.value;
       render();
+    });
+
+    document.getElementById("dictionarySearch")?.addEventListener("input", (event) => {
+      const cursor = event.target.selectionStart;
+      state.dictionarySearch = event.target.value;
+      render();
+      const input = document.getElementById("dictionarySearch");
+      if (input) {
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(cursor, cursor);
+      }
+    });
+
+    document.querySelectorAll("[data-action='select-dictionary']").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.selectedDictionary = button.dataset.dict;
+        render();
+      });
     });
 
     document.querySelectorAll("[data-action='sort']").forEach((button) => {
@@ -2152,12 +2692,19 @@
       const syncProgramType = (event) => {
         const program = findProgramByName(event.target.value);
         const educationTypeInput = document.querySelector("[name='educationType']");
+        const studyFormInput = document.querySelector("[name='studyForm']");
+        const hoursInput = document.querySelector("[name='hours']");
         if (educationTypeInput) educationTypeInput.value = program?.type || "";
+        if (studyFormInput && program?.studyForm) studyFormInput.value = program.studyForm;
+        if (hoursInput && program?.hours) hoursInput.value = program.hours;
+        updateStudentProgramPromoTitle(event.target.value);
       };
+      updateStudentProgramPromoTitle(input.value);
       input.addEventListener("input", syncProgramType);
       input.addEventListener("change", syncProgramType);
     });
 
+    bindStudentEventReorderKeys();
     document.querySelectorAll("[data-action='toggle-student-event']").forEach(bindStudentEventRow);
 
     document.querySelector("[data-action='add-student-event']")?.addEventListener("click", addStudentEvent);
@@ -2270,23 +2817,23 @@
 
     document.querySelectorAll("[data-action='close-modal']").forEach((element) => {
       element.addEventListener("click", (event) => {
-        if (event.target === element || element.tagName === "BUTTON") {
-          state.modal = null;
-          render();
+        if (event.target === element || (element.tagName === "BUTTON" && element.contains(event.target))) {
+          event.preventDefault();
+          closeModalWithUnsavedCheck();
         }
       });
     });
 
     document.querySelectorAll("[data-student-tab]").forEach((button) => {
       button.addEventListener("click", () => {
-        state.studentCardTab = button.dataset.studentTab;
-        render();
+        switchStudentTab(button.dataset.studentTab);
       });
     });
 
     document.getElementById("studentPhotoInput")?.addEventListener("change", handleStudentPhoto);
 
     document.querySelector("[data-action='clear-photo']")?.addEventListener("click", async () => {
+      const photoInput = document.getElementById("studentPhotoInput");
       const hidden = document.getElementById("studentPhotoData");
       const pathInput = document.getElementById("studentPhotoPath");
       const urlInput = document.getElementById("studentPhotoUrl");
@@ -2300,6 +2847,7 @@
       if (hidden) hidden.value = "";
       if (pathInput) pathInput.value = "";
       if (urlInput) urlInput.value = "";
+      if (photoInput) photoInput.value = "";
       if (preview) {
         preview.classList.remove("has-photo");
         preview.querySelector("img")?.remove();
@@ -2326,9 +2874,345 @@
       button.addEventListener("click", () => removeDictionaryValue(button.dataset.dict, button.dataset.value));
     });
 
+    document.querySelectorAll("[data-action='dict-sort']").forEach((button) => {
+      button.addEventListener("click", () => sortDictionaryValues(button.dataset.dict, button.dataset.order));
+    });
+
+    document.querySelectorAll("[data-dictionary-values]").forEach(bindDictionaryManualSort);
+
     document.querySelectorAll("form[data-action='dict-add']").forEach((formElement) => {
       formElement.addEventListener("submit", addDictionaryValue);
+      formElement.querySelector("[data-dictionary-add-input]")?.addEventListener("paste", pasteDictionaryValues);
     });
+
+    enhanceCopyableFields();
+  }
+
+  function initializeRecordFormSnapshot(form) {
+    if (!form) return;
+    form.dataset.initialSnapshot = captureFormSnapshot(form);
+  }
+
+  function switchStudentTab(tabId) {
+    if (!tabId || state.studentCardTab === tabId) return;
+    state.modal.draft = collectStudentFormDraft();
+    state.studentCardTab = tabId;
+    render();
+  }
+
+  function collectStudentFormDraft() {
+    const formElement = document.getElementById("recordForm");
+    if (!formElement || formElement.dataset.config !== "students") return state.modal?.draft || {};
+    const rows = state.data.collections.students || [];
+    const currentRecord = formElement.dataset.id ? rows.find((row) => row.id === formElement.dataset.id) || {} : {};
+    const values = { ...currentRecord, ...(state.modal?.draft || {}) };
+    const formData = new FormData(formElement);
+    studentAllFields.forEach((item) => {
+      if (item.type === "checkbox") {
+        if (!formElement.elements[item.key]) return;
+        values[item.key] = formData.has(item.key) ? "Да" : "";
+        return;
+      }
+      if (!formData.has(item.key)) return;
+      const raw = formData.get(item.key);
+      values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
+    });
+    formData.forEach((raw, key) => {
+      if (/^event_[A-Za-z0-9_-]+_(state|date|label)$/.test(key)) {
+        values[key] = String(raw || "");
+      }
+    });
+    if (!values.uid) values.uid = getNextUid();
+    const selectedProgram = findProgramByName(values.program);
+    if (selectedProgram) {
+      values.educationType = selectedProgram.type || values.educationType || "";
+      values.studyForm = selectedProgram.studyForm || values.studyForm || "";
+      values.hours = selectedProgram.hours || values.hours || "";
+    }
+    return values;
+  }
+
+  function captureFormSnapshot(form) {
+    const values = Array.from(form.elements || [])
+      .filter((control) => control.name && !isSnapshotIgnoredControl(control))
+      .map((control) => {
+        const tagName = String(control.tagName || "").toLowerCase();
+        const type = String(control.type || "").toLowerCase();
+        if (tagName === "select" && control.multiple) {
+          return {
+            name: control.name,
+            tagName,
+            type,
+            values: Array.from(control.selectedOptions || []).map((option) => option.value)
+          };
+        }
+        if (type === "checkbox" || type === "radio") {
+          return {
+            name: control.name,
+            tagName,
+            type,
+            value: control.value,
+            checked: Boolean(control.checked)
+          };
+        }
+        return {
+          name: control.name,
+          tagName,
+          type,
+          value: control.value
+        };
+      });
+    return JSON.stringify(values);
+  }
+
+  function isSnapshotIgnoredControl(control) {
+    const type = String(control.type || "").toLowerCase();
+    return ["button", "submit", "reset", "file"].includes(type);
+  }
+
+  function hasUnsavedFormChanges(form) {
+    if (!form) return false;
+    return form.dataset.initialSnapshot !== captureFormSnapshot(form);
+  }
+
+  function closeModalWithUnsavedCheck() {
+    const form = document.getElementById("recordForm");
+    if (hasUnsavedFormChanges(form) && !confirm("Есть несохраненные изменения. Закрыть без сохранения?")) {
+      return;
+    }
+    state.modal = null;
+    render();
+  }
+
+  function enhanceCopyableFields() {
+    const form = document.getElementById("recordForm");
+    if (!form) return;
+    form.querySelectorAll("input, select, textarea").forEach((control) => {
+      if (!isCopyableControl(control)) return;
+      if (control.dataset.copyContextBound === "true") return;
+      control.dataset.copyContextBound = "true";
+      control.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        showFieldCopyPopup(control, event.clientX, event.clientY);
+      });
+    });
+  }
+
+  function showFieldCopyPopup(control, x, y) {
+    hideFieldCopyPopup();
+    const popup = document.createElement("div");
+    popup.className = "field-copy-popup";
+    popup.dataset.fieldCopyPopup = "";
+    popup.innerHTML = `
+      <button data-action="copy-field-value" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+          <path d="M5 15V7a2 2 0 0 1 2-2h8"></path>
+        </svg>
+        <span>Копировать</span>
+      </button>
+      <span class="field-copy-divider" aria-hidden="true"></span>
+      <button class="field-delete-button" data-action="delete-field-value" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M4 7h16"></path>
+          <path d="M10 11v6"></path>
+          <path d="M14 11v6"></path>
+          <path d="M6 7l1 14h10l1-14"></path>
+          <path d="M9 7V4h6v3"></path>
+        </svg>
+        <span>Удалить</span>
+      </button>
+      <button class="field-undo-button" data-action="undo-field-delete" type="button" ${lastDeletedControlState ? "" : "disabled"}>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M9 7 4 12l5 5"></path>
+          <path d="M5 12h9a6 6 0 0 1 6 6"></path>
+        </svg>
+        <span>Отменить</span>
+      </button>
+    `;
+    document.body.appendChild(popup);
+    const rect = popup.getBoundingClientRect();
+    const maxLeft = Math.max(8, window.innerWidth - rect.width - 8);
+    const maxTop = Math.max(8, window.innerHeight - rect.height - 8);
+    popup.style.left = `${clamp(x, 8, maxLeft)}px`;
+    popup.style.top = `${clamp(y, 8, maxTop)}px`;
+    const copyButton = popup.querySelector("[data-action='copy-field-value']");
+    let copyStarted = false;
+    const copyNow = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (copyStarted) return;
+      copyStarted = true;
+      copyTextToClipboard(getControlCopyValue(control));
+      popup.classList.add("is-copied");
+      window.setTimeout(hideFieldCopyPopup, 140);
+    };
+    copyButton.addEventListener("pointerdown", copyNow);
+    copyButton.addEventListener("click", copyNow);
+    const deleteButton = popup.querySelector("[data-action='delete-field-value']");
+    let deleteStarted = false;
+    const deleteNow = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (deleteStarted) return;
+      deleteStarted = true;
+      clearControlValue(control);
+      deleteButton.disabled = true;
+      undoButton.disabled = false;
+    };
+    deleteButton.addEventListener("pointerdown", deleteNow);
+    deleteButton.addEventListener("click", deleteNow);
+    const undoButton = popup.querySelector("[data-action='undo-field-delete']");
+    const undoNow = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (undoButton.disabled) return;
+      restoreLastDeletedControl();
+      hideFieldCopyPopup();
+    };
+    undoButton.addEventListener("pointerdown", undoNow);
+    undoButton.addEventListener("click", undoNow);
+    window.setTimeout(() => {
+      document.addEventListener("pointerdown", handleFieldCopyPopupOutside, { once: true });
+    }, 0);
+  }
+
+  function clearControlValue(control) {
+    lastDeletedControlState = captureControlState(control);
+    if (control.type === "checkbox" || control.type === "radio") {
+      control.checked = false;
+    } else if (control.tagName === "SELECT") {
+      control.selectedIndex = -1;
+    } else {
+      control.value = "";
+    }
+    control.dispatchEvent(new Event("input", { bubbles: true }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+    control.focus({ preventScroll: true });
+  }
+
+  function captureControlState(control) {
+    const selectedValues = control.tagName === "SELECT"
+      ? Array.from(control.selectedOptions || []).map((option) => option.value)
+      : [];
+    return {
+      control,
+      name: control.name,
+      tagName: control.tagName,
+      type: String(control.type || "").toLowerCase(),
+      value: control.value,
+      checked: Boolean(control.checked),
+      selectedIndex: control.selectedIndex,
+      selectedValues
+    };
+  }
+
+  function bindFieldUndoShortcut() {
+    if (fieldUndoKeyBound) return;
+    fieldUndoKeyBound = true;
+    document.addEventListener("keydown", (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.key.toLowerCase() !== "z") return;
+      if (!lastDeletedControlState) return;
+      const form = document.getElementById("recordForm");
+      if (!form || !form.contains(document.activeElement)) return;
+      event.preventDefault();
+      restoreLastDeletedControl();
+    });
+  }
+
+  function restoreLastDeletedControl() {
+    const stateToRestore = lastDeletedControlState;
+    const control = getRestorableControl(stateToRestore);
+    if (!control) return;
+    if (stateToRestore.type === "checkbox" || stateToRestore.type === "radio") {
+      control.checked = stateToRestore.checked;
+    } else if (stateToRestore.tagName === "SELECT") {
+      if (control.multiple) {
+        Array.from(control.options).forEach((option) => {
+          option.selected = stateToRestore.selectedValues.includes(option.value);
+        });
+      } else {
+        control.selectedIndex = stateToRestore.selectedIndex;
+      }
+    } else {
+      control.value = stateToRestore.value;
+    }
+    control.dispatchEvent(new Event("input", { bubbles: true }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+    control.focus({ preventScroll: true });
+    lastDeletedControlState = null;
+  }
+
+  function getRestorableControl(stateToRestore) {
+    if (!stateToRestore) return null;
+    if (stateToRestore.control?.isConnected) return stateToRestore.control;
+    const form = document.getElementById("recordForm");
+    const control = form?.elements[stateToRestore.name];
+    if (!control) return null;
+    if (control.tagName) return control;
+    return Array.from(control).find((item) => item.type === stateToRestore.type) || control[0] || null;
+  }
+
+  function handleFieldCopyPopupOutside(event) {
+    if (event.target.closest("[data-field-copy-popup]")) {
+      document.addEventListener("pointerdown", handleFieldCopyPopupOutside, { once: true });
+      return;
+    }
+    hideFieldCopyPopup();
+  }
+
+  function hideFieldCopyPopup() {
+    document.removeEventListener("pointerdown", handleFieldCopyPopupOutside);
+    document.querySelector("[data-field-copy-popup]")?.remove();
+  }
+
+  function isCopyableControl(control) {
+    const type = String(control.type || "").toLowerCase();
+    if (["hidden", "file", "button", "submit", "reset"].includes(type)) return false;
+    if (control.matches("[data-action='filter-lookup-values'], [data-event-editor-date], [data-event-editor-label]")) return false;
+    return true;
+  }
+
+  function getControlCopyValue(control) {
+    const selectedText = getSelectedControlText(control);
+    if (selectedText) return selectedText;
+    if (control.type === "checkbox") return control.checked ? (control.value || "Да") : "Нет";
+    if (control.tagName === "SELECT") return control.selectedOptions?.[0]?.textContent || control.value || "";
+    return control.value || "";
+  }
+
+  function getSelectedControlText(control) {
+    if (!["INPUT", "TEXTAREA"].includes(control.tagName)) return "";
+    try {
+      const start = control.selectionStart;
+      const end = control.selectionEnd;
+      if (typeof start !== "number" || typeof end !== "number" || end <= start) return "";
+      return String(control.value || "").slice(start, end);
+    } catch (error) {
+      return "";
+    }
+  }
+
+  async function copyTextToClipboard(text) {
+    const value = String(text ?? "");
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return;
+      } catch (error) {
+        console.warn("Не удалось скопировать через Clipboard API", error);
+      }
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
   }
 
   function saveRecord(event) {
@@ -2378,7 +3262,11 @@
         }
       }
       const selectedProgram = findProgramByName(values.program);
-      if (selectedProgram) values.educationType = selectedProgram.type || "";
+      if (selectedProgram) {
+        values.educationType = selectedProgram.type || values.educationType || "";
+        values.studyForm = selectedProgram.studyForm || values.studyForm || "";
+        values.hours = selectedProgram.hours || values.hours || "";
+      }
       const paymentTotal = sumStudentPayments(values);
       const expenseTotal = sumStudentExpenses(values);
       if (paymentTotal > 0) values.paidAmount = paymentTotal;
@@ -2420,7 +3308,7 @@
           name: studentName,
           applicationDate: document.querySelector("[name='applicationDate']")?.value || ""
         });
-        if (hidden) hidden.value = "";
+        if (hidden) hidden.value = reader.result;
         if (pathInput) pathInput.value = uploaded.photoPath;
         if (urlInput) urlInput.value = uploaded.photoUrl;
         if (preview) {
@@ -2434,9 +3322,23 @@
           }
         }
       } catch (error) {
-        alert("Не удалось сохранить фото: " + error.message);
+        console.warn("Не удалось сохранить фото через app-server.js, фото будет сохранено в карточке", error);
+        if (hidden) hidden.value = reader.result;
+        if (pathInput) pathInput.value = "";
+        if (urlInput) urlInput.value = "";
+        if (preview) {
+          preview.classList.add("has-photo");
+          preview.querySelector(":scope > span")?.remove();
+          const image = preview.querySelector("img");
+          if (image) {
+            image.src = reader.result;
+          } else {
+            preview.insertAdjacentHTML("afterbegin", `<img src="${escapeAttr(reader.result)}" alt="Фото слушателя">`);
+          }
+        }
       } finally {
         preview?.classList.remove("is-loading");
+        event.target.value = "";
       }
     };
     reader.readAsDataURL(file);
@@ -2457,7 +3359,7 @@
     if (!value) return "";
     if (/^https?:\/\//i.test(value) || value.startsWith("data:")) return value;
     const pathname = value.startsWith("/") ? value : `/${value}`;
-    return window.location.protocol === "file:" ? `${defaultPhotoServerOrigin}${pathname}` : pathname;
+    return window.location.protocol === "file:" ? pathname.replace(/^\/+/, "") : pathname;
   }
 
   async function uploadStoredPhoto(dataUrl, previousPath = "", meta = {}) {
@@ -2498,7 +3400,9 @@
   }
 
   function getStudentPhotoSrc(record) {
-    return photoPublicUrl(record.photoUrl || record.photoData || record.photoPath);
+    if (record.photoData) return record.photoData;
+    if (window.location.protocol === "file:" && record.photoPath) return photoPublicUrl(record.photoPath);
+    return photoPublicUrl(record.photoUrl || record.photoPath);
   }
 
   async function deleteRecord(configId, id) {
@@ -2563,13 +3467,117 @@
     event.preventDefault();
     const dict = event.currentTarget.dataset.dict;
     const input = event.currentTarget.querySelector("input");
-    const value = input.value.trim();
-    if (!value) return;
-    state.data.dictionaries[dict] = unique([...(state.data.dictionaries[dict] || []), value]);
+    const values = parseDictionaryValues(input.value);
+    if (!values.length) {
+      input.focus();
+      return;
+    }
+    addDictionaryValues(dict, values);
     input.value = "";
-    addAudit("Изменен справочник", dictionaryTitle(dict), value);
+    state.dictionaryAddFocus = dict;
+    addAudit("Изменен справочник", dictionaryTitle(dict), values.join(", "));
     persist();
     render();
+  }
+
+  function pasteDictionaryValues(event) {
+    const input = event.currentTarget;
+    const form = input.closest("form[data-action='dict-add']");
+    const dict = form?.dataset.dict;
+    const text = event.clipboardData?.getData("text") || "";
+    const values = parseDictionaryValues(text);
+    if (!dict || values.length <= 1) return;
+    if (!confirmDictionaryPaste(values)) return;
+    event.preventDefault();
+    addDictionaryValues(dict, values);
+    input.value = "";
+    state.dictionaryAddFocus = dict;
+    addAudit("Изменен справочник", dictionaryTitle(dict), values.join(", "));
+    persist();
+    render();
+  }
+
+  function confirmDictionaryPaste(values) {
+    const preview = values.slice(0, 30).map((value) => `- ${value}`).join("\n");
+    const rest = values.length > 30 ? `\n...и еще ${values.length - 30}` : "";
+    return confirm(`Вставить ${values.length} знач. из буфера обмена?\n\n${preview}${rest}`);
+  }
+
+  function parseDictionaryValues(text) {
+    return unique(String(text || "")
+      .split(/[\r\n\t;]+/)
+      .map((value) => value.trim())
+      .filter(Boolean));
+  }
+
+  function addDictionaryValues(dict, values) {
+    state.data.dictionaries[dict] = unique([...(state.data.dictionaries[dict] || []), ...values]);
+  }
+
+  function sortDictionaryValues(dict, order = "asc") {
+    const direction = order === "desc" ? -1 : 1;
+    state.data.dictionaries[dict] = [...(state.data.dictionaries[dict] || [])]
+      .sort((a, b) => direction * String(a).localeCompare(String(b), "ru"));
+    addAudit("Сортировка справочника", dictionaryTitle(dict), order === "desc" ? "Я-А" : "А-Я");
+    persist();
+    render();
+  }
+
+  function bindDictionaryManualSort(list) {
+    list.querySelectorAll(".dictionary-value-chip").forEach((chip) => {
+      chip.addEventListener("dragstart", (event) => {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", chip.dataset.value || "");
+        chip.classList.add("is-dragging");
+      });
+      chip.addEventListener("dragend", () => {
+        chip.classList.remove("is-dragging");
+        saveDictionaryManualOrder(list);
+      });
+    });
+    list.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      const dragging = list.querySelector(".dictionary-value-chip.is-dragging");
+      if (!dragging) return;
+      const afterElement = getDictionaryDragAfterElement(list, event.clientY);
+      if (afterElement == null) {
+        list.appendChild(dragging);
+      } else {
+        list.insertBefore(dragging, afterElement);
+      }
+    });
+  }
+
+  function getDictionaryDragAfterElement(list, y) {
+    const chips = [...list.querySelectorAll(".dictionary-value-chip:not(.is-dragging)")];
+    return chips.reduce((closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) return { offset, element: child };
+      return closest;
+    }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+  }
+
+  function saveDictionaryManualOrder(list) {
+    const dict = list.dataset.dict;
+    if (!dict) return;
+    const ordered = [...list.querySelectorAll(".dictionary-value-chip")]
+      .map((chip) => chip.dataset.value)
+      .filter(Boolean);
+    if (!ordered.length) return;
+    state.data.dictionaries[dict] = ordered;
+    addAudit("Сортировка справочника", dictionaryTitle(dict), "Ручной порядок");
+    persist();
+  }
+
+  function restoreDictionaryAddFocus() {
+    if (!state.dictionaryAddFocus) return;
+    const dict = state.dictionaryAddFocus;
+    state.dictionaryAddFocus = "";
+    requestAnimationFrame(() => {
+      const input = document.querySelector(`form[data-action='dict-add'][data-dict="${CSS.escape(dict)}"] [data-dictionary-add-input]`);
+      input?.focus({ preventScroll: true });
+    });
   }
 
   function removeDictionaryValue(dict, value) {
@@ -2733,6 +3741,283 @@
     }
     return checksum([7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === digits[10]
       && checksum([3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === digits[11];
+  }
+
+  function normalizeMessengerPhone(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    if (digits.length === 11 && digits.startsWith("8")) return `7${digits.slice(1)}`;
+    return digits;
+  }
+
+  async function openStudentMessenger(messenger) {
+    const phoneInput = document.querySelector("[name='phone']");
+    const messengerUrlInput = document.querySelector("[name='messengerUrl']");
+    const phone = normalizeMessengerPhone(phoneInput?.value || "");
+    const phoneForCopy = phone ? `+${phone}` : String(phoneInput?.value || "").trim();
+    const customUrl = getMessengerCustomUrl(messenger, messengerUrlInput?.value || "");
+
+    const url = customUrl || getMessengerPhoneUrl(messenger, phone);
+    if (!url) {
+      alert("Укажите телефон или ссылку мессенджера.");
+      return;
+    }
+    if (messenger === "max") {
+      await openMaxMessenger(url, phoneForCopy);
+      return;
+    }
+    openExternalUrl(url);
+  }
+
+  function openStudentMessengerUrl() {
+    const input = document.querySelector("[name='messengerUrl']");
+    const url = parseMessengerUrl(input?.value || "");
+    if (!url) {
+      alert("Укажите корректный адрес мессенджера.");
+      input?.focus();
+      return;
+    }
+    openExternalUrl(getWhatsAppAppUrl(url) || url.href);
+  }
+
+  function openStudentProgramPromo() {
+    const input = document.querySelector("[name='program']");
+    const program = findProgramByName(input?.value || "");
+    const url = getProgramPromoUrl(program);
+    if (!url) {
+      alert("Для выбранной программы не указан адрес промосайта.");
+      input?.focus();
+      return;
+    }
+    openExternalUrl(url);
+  }
+
+  function getStudentAddressInput(key) {
+    return Array.from(document.querySelectorAll("[data-address-field]")).find((input) => input.dataset.addressField === key);
+  }
+
+  function copyStudentAddressToField(sourceKey, targetKey) {
+    const source = getStudentAddressInput(sourceKey);
+    const target = getStudentAddressInput(targetKey);
+    if (!source || !target) return;
+    const value = source.value.trim();
+    if (!value) {
+      alert("Заполните адрес для копирования.");
+      source.focus();
+      return;
+    }
+    target.value = source.value;
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+    target.focus({ preventScroll: true });
+  }
+
+  async function checkStudentAddressPostIndex(sourceKey) {
+    const input = getStudentAddressInput(sourceKey);
+    const address = input?.value.trim() || "";
+    if (!address) {
+      alert("Заполните адрес для проверки индекса.");
+      input?.focus();
+      return;
+    }
+    const query = `Индекс ${address}`;
+    const searchUrl = getYandexPostalIndexSearchUrl(query);
+    removePostalIndexPopup();
+    const parsedIndex = await findPostalIndexInYandexSearch(query);
+    if (!parsedIndex) {
+      openYandexPostalIndexSearch(searchUrl);
+      return;
+    }
+    showPostalIndexPopup(input, parsedIndex, query);
+  }
+
+  function showPostalIndexPopup(input, index, query) {
+    const popup = document.createElement("div");
+    popup.className = "postal-index-popup";
+    popup.innerHTML = `
+      <button data-action="apply-postal-index" type="button">
+        <span>Вариант индекса</span>
+        <strong>${escapeHtml(index)}</strong>
+      </button>
+      <button data-action="open-postal-index-search" type="button">
+        <span>Найти в интернете...</span>
+      </button>
+    `;
+    document.body.appendChild(popup);
+    positionFloatingElement(popup, input);
+    popup.querySelector("[data-action='apply-postal-index']")?.addEventListener("click", () => {
+      input.value = applyPostalIndexToAddress(input.value, index);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      removePostalIndexPopup();
+      input.focus({ preventScroll: true });
+    });
+    popup.querySelector("[data-action='open-postal-index-search']")?.addEventListener("click", () => {
+      removePostalIndexPopup();
+      openYandexPostalIndexSearch(getYandexPostalIndexSearchUrl(query));
+    });
+    setTimeout(() => {
+      document.addEventListener("pointerdown", closePostalIndexPopupOnOutsideClick, { capture: true, once: true });
+    });
+  }
+
+  function closePostalIndexPopupOnOutsideClick(event) {
+    if (event.target.closest(".postal-index-popup")) {
+      document.addEventListener("pointerdown", closePostalIndexPopupOnOutsideClick, { capture: true, once: true });
+      return;
+    }
+    removePostalIndexPopup();
+  }
+
+  function removePostalIndexPopup() {
+    document.querySelector(".postal-index-popup")?.remove();
+  }
+
+  async function findPostalIndexInYandexSearch(query) {
+    try {
+      const response = await fetch(`/api/postal-index?query=${encodeURIComponent(query)}`);
+      if (!response.ok) return "";
+      const result = await response.json();
+      return normalizePostalIndex(result.index || "");
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function parsePostalIndexFromSearchHtml(html) {
+    const text = String(html || "")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;|&#160;/gi, " ")
+      .replace(/\s+/g, " ");
+    const candidates = [...text.matchAll(/\b\d{6}\b/g)]
+      .map((match) => match[0])
+      .filter((value) => !/^0{6}$/.test(value));
+    return candidates[0] || "";
+  }
+
+  function getYandexPostalIndexSearchUrl(query) {
+    return `https://yandex.ru/search/?text=${encodeURIComponent(query)}`;
+  }
+
+  function openYandexPostalIndexSearch(url, targetWindow = null) {
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.location.href = url;
+      return;
+    }
+    openExternalUrl(url);
+  }
+
+  function positionFloatingElement(element, anchor) {
+    const rect = anchor?.getBoundingClientRect?.();
+    if (!rect) return;
+    const width = Math.min(270, window.innerWidth - 16);
+    element.style.width = `${width}px`;
+    element.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width))}px`;
+    element.style.top = `${Math.max(8, Math.min(window.innerHeight - 110, rect.bottom + 6))}px`;
+  }
+
+  function getPostalIndexFromAddress(address) {
+    return String(address || "").match(/\b\d{6}\b/)?.[0] || "";
+  }
+
+  function normalizePostalIndex(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    return digits.length === 6 ? digits : "";
+  }
+
+  function applyPostalIndexToAddress(address, index) {
+    const value = String(address || "").trim();
+    const normalizedIndex = normalizePostalIndex(index);
+    if (!normalizedIndex) return value;
+    if (!value) return normalizedIndex;
+    if (/^\d{6}\b/.test(value)) return value.replace(/^\d{6}\b/, normalizedIndex);
+    return `${normalizedIndex}, ${value}`;
+  }
+
+  async function openMaxMessenger(url, phoneForCopy) {
+    try {
+      const response = await fetch(photoApiUrl("/api/max/search"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, phone: phoneForCopy })
+      });
+      if (response.ok) return;
+    } catch (error) {
+      // Direct file mode or disabled local server: use the browser-level fallback below.
+    }
+    if (phoneForCopy) copyTextToClipboard(phoneForCopy);
+    openExternalUrl(url);
+  }
+
+  function getMessengerCustomUrl(messenger, value) {
+    const url = parseMessengerUrl(value);
+    if (!url) return "";
+    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
+    const protocol = url.protocol.toLowerCase();
+    const href = url.href;
+    if (messenger === "max" && (protocol === "max:" || host === "max.ru" || host === "web.max.ru")) return href;
+    if (messenger === "telegram" && (protocol === "tg:" || ["t.me", "telegram.me", "telegram.dog"].includes(host))) return href;
+    if (messenger === "whatsapp") return getWhatsAppAppUrl(url);
+    return "";
+  }
+
+  function getWhatsAppAppUrl(url) {
+    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
+    const protocol = url.protocol.toLowerCase();
+    if (protocol === "whatsapp:") return url.href;
+    if (!["wa.me", "whatsapp.com", "api.whatsapp.com", "web.whatsapp.com"].includes(host)) return "";
+    const pathPhone = host === "wa.me" ? normalizeMessengerPhone(url.pathname.replace(/^\/+/, "").split("/")[0]) : "";
+    const queryPhone = normalizeMessengerPhone(url.searchParams.get("phone") || "");
+    const phone = queryPhone || pathPhone;
+    const text = url.searchParams.get("text") || "";
+    if (!phone) return "";
+    const params = new URLSearchParams({ phone });
+    if (text) params.set("text", text);
+    return `whatsapp://send?${params.toString()}`;
+  }
+
+  function parseMessengerUrl(value) {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    try {
+      const url = new URL(text);
+      const protocol = url.protocol.toLowerCase();
+      if (["http:", "https:", "tg:", "whatsapp:", "max:"].includes(protocol)) return url;
+    } catch (error) {
+      return null;
+    }
+    return null;
+  }
+
+  function normalizeExternalUrl(value) {
+    const text = String(value || "").trim();
+    if (!text || /^(?:да|нет|yes|no|true|false)$/i.test(text)) return "";
+    const candidate = /^[a-z][a-z\d+.-]*:/i.test(text) ? text : `https://${text}`;
+    try {
+      const url = new URL(candidate);
+      if (["http:", "https:"].includes(url.protocol.toLowerCase())) return url.href;
+    } catch (error) {
+      return "";
+    }
+    return "";
+  }
+
+  function getMessengerPhoneUrl(messenger, phone) {
+    if (messenger === "max") return phone ? `max://search?phone=${encodeURIComponent(`+${phone}`)}` : "max://";
+    if (messenger === "telegram") return phone ? `tg://resolve?phone=${encodeURIComponent(phone)}` : "";
+    if (messenger === "whatsapp") return phone ? `whatsapp://send?phone=${encodeURIComponent(phone)}` : "";
+    return "";
+  }
+
+  function openExternalUrl(url) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   }
 
   function unique(values) {
