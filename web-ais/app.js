@@ -14,13 +14,46 @@
     sources: [],
     citizenships: ["Российская Федерация"],
     documentTypes: ["Паспорт гражданина РФ", "Иностранный паспорт", "Вид на жительство", "Свидетельство о рождении"],
-    passportIssuers: []
+    passportIssuers: [],
+    educationLevels: ["СПО", "Бакалавр", "Специалист", "Магистр", "Аттестат"],
+    educationDocumentTypes: ["Диплом о начальном профессиональном образовании", "Диплом о среднем профессиональном образовании", "Диплом о высшем образовании"],
+    educationDocumentIssuers: [],
+    workPlaces: [],
+    positions: [],
+    employmentCategories: [
+      "работники предприятий и организаций",
+      "руководители предприятий и организаций",
+      "педагогические работники дошкольных образовательных организаций",
+      "педагогические работники общеобразовательных организаций",
+      "педагогические работники профессиональных образовательных организаций",
+      "педагогические работники образовательных организаций высшего образования",
+      "педагогические работники организаций дополнительного профессионального образования",
+      "педагогические работники организаций дополнительного образования",
+      "руководители дошкольных образовательных организаций",
+      "руководители общеобразовательных организаций",
+      "руководители профессиональных образовательных организаций",
+      "руководители образовательных организаций высшего образования",
+      "руководители организаций дополнительного профессионального образования",
+      "руководители организаций дополнительного образования",
+      "специалисты, замещающие государственные должности и должности государственной гражданской службы",
+      "руководители, замещающие государственные должности и должности государственной гражданской службы",
+      "лица, замещающие муниципальные должности и должности муниципальной службы",
+      "лица, уволенные с военной службы",
+      "незанятые лица по направлению службы занятости",
+      "незанятые лица по направлению службы занятости (безработные)",
+      "студенты, обучающиеся по образовательным программам среднего профессионального образования",
+      "студенты, обучающиеся по образовательным программам высшего образования"
+    ],
+    ovzStatuses: ["ОВЗ", "ОВЗ Инвалиды", "Инвалиды"]
   };
   const searchableStudentFields = {
     manager: { dict: "managers", fields: [["students", "manager"], ["programs", "manager"]] },
     source: { dict: "sources", fields: [["students", "source"], ["webinars", "source"]] },
     citizenship: { dict: "citizenships", fields: [["students", "citizenship"]] },
-    passportType: { dict: "documentTypes", fields: [["students", "passportType"]] }
+    passportType: { dict: "documentTypes", fields: [["students", "passportType"]] },
+    customerPassportType: { dict: "documentTypes", fields: [["students", "customerPassportType"]] },
+    workPlace: { dict: "workPlaces", fields: [["students", "workPlace"]] },
+    position: { dict: "positions", fields: [["students", "position"]] }
   };
 
   const navItems = [
@@ -243,8 +276,8 @@
             field("agent", "Агент"),
             field("workPlace", "Место работы"),
             field("position", "Должность"),
-            field("employmentCategory", "Категория занятости"),
-            field("ovzStatus", "Статус ОВЗ"),
+            field("employmentCategory", "Категория занятости", "select", false, "employmentCategories"),
+            field("ovzStatus", "Статус ОВЗ", "select", false, "ovzStatuses"),
             field("tags", "Теги", "textarea")
           ]
         },
@@ -264,33 +297,43 @@
       label: "Документы",
       sections: [
         {
-          title: "Личные документы",
+          title: "Паспортные данные обучающегося",
           fields: [
             field("birthDate", "Дата рождения", "date"),
-            field("gender", "Пол", "select", false, null, ["", "Женский", "Мужской"]),
             field("citizenship", "Гражданство"),
-            field("snils", "СНИЛС"),
-            field("inn", "ИНН"),
-            field("address", "Адрес места жительства", "textarea"),
             field("passportType", "Вид документа"),
-            field("passportNumber", "Серия и номер"),
             field("passportDate", "Дата выдачи", "date"),
+            field("passportNumber", "Серия и номер"),
+            field("passportCode", "Код подразд."),
             field("passportIssuer", "Кем выдан", "textarea"),
-            field("passportCode", "Код подразделения")
+            field("snils", "СНИЛС"),
+            field("inn", "ИНН")
           ]
         },
         {
-          title: "Документ об образовании",
+          title: "Паспортные данные заказчика",
+          customerPassport: true,
           fields: [
-            field("educationLevel", "Уровень образования"),
-            field("educationDocument", "Документ об образовании"),
+            field("customer", "ФИО заказчика"),
+            field("customerBirthDate", "Дата рождения", "date"),
+            field("customerPassportType", "Вид документа"),
+            field("customerPassportDate", "Дата выдачи", "date"),
+            field("customerPassportNumber", "Серия и номер"),
+            field("customerPassportCode", "Код подразд."),
+            field("customerPassportIssuer", "Кем выдан", "textarea"),
+            field("customerSnils", "СНИЛС"),
+            field("customerInn", "ИНН")
+          ]
+        },
+        {
+          title: "Документ об образовании слушателя",
+          fields: [
+            field("educationLevel", "Уровень образования", "select", false, "educationLevels"),
+            field("educationDocument", "Документ", "select", false, "educationDocumentTypes"),
             field("educationDocumentSeries", "Серия"),
             field("educationDocumentNumber", "Номер"),
             field("educationDocumentDate", "Дата выдачи", "date"),
-            field("educationDocumentIssuer", "Кем выдан", "textarea"),
-            field("applicationDoc", "Заявление"),
-            field("questionnaire", "Анкета"),
-            field("documentsStatus", "Состояние комплекта", "textarea")
+            field("educationDocumentIssuer", "Кем выдан", "textarea")
           ]
         }
       ]
@@ -478,7 +521,7 @@
     { key: "certificateSent", label: "Отправлена справка об обучении" }
   ];
 
-  const visibleStudentCardTabs = studentCardTabs.filter((tab) => tab.id === "main");
+  const visibleStudentCardTabs = studentCardTabs.filter((tab) => ["main", "documents"].includes(tab.id));
   const studentCardFields = studentCardTabs.flatMap((tab) => tab.sections.flatMap((section) => section.fields));
   const studentSideFields = [
     field("note", "Примечание", "textarea"),
@@ -1402,7 +1445,8 @@
       return `${label}<textarea name="${item.key}" ${required}>${escapeHtml(value)}</textarea></label>`;
     }
     if (item.type === "select") {
-      const options = item.options || state.data.dictionaries[item.dict] || [];
+      const dictionaryOptions = item.options || state.data.dictionaries[item.dict] || [];
+      const options = item.required ? dictionaryOptions : ["", ...dictionaryOptions];
       return `${label}<select name="${item.key}" ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
     if (state.modal?.config === "programs" && item.key === "hours") {
@@ -1441,7 +1485,7 @@
                     </button>
                   `).join("")}
                 </div>
-                <div class="student-tab-body">
+                <div class="student-tab-body ${activeTab.id === "documents" ? "student-documents-tab" : ""}">
                   ${renderStudentTabContent(activeTab, record)}
                 </div>
               </section>
@@ -1497,7 +1541,15 @@
     return `
       ${tab.sections.filter((section) => !(tab.id === "main" && !section.fields.some((item) => item.key === "name"))).map((section) => `
         <section class="form-section">
-          <h3>${escapeHtml(section.title)}</h3>
+          <div class="form-section-head">
+            <h3>${escapeHtml(section.title)}</h3>
+            ${section.customerPassport ? `
+              <button class="ghost-button passport-copy-button" data-action="copy-student-passport-to-customer" type="button" title="Скопировать паспортные данные обучающегося" aria-label="Скопировать паспортные данные обучающегося">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h13"></path><path d="M14 8l4 4-4 4"></path></svg>
+                <span>Скопировать данные обучающегося</span>
+              </button>
+            ` : ""}
+          </div>
           ${tab.id === "main" && section.fields.some((item) => item.key === "name")
             ? renderStudentMainIdentity(section, record)
             : `<div class="student-form-grid">${section.fields.map((item) => renderStudentField(item, record)).join("")}</div>`}
@@ -1511,7 +1563,7 @@
   }
 
   function renderStudentMainIdentity(section, record) {
-    const hiddenKeys = new Set(["name", "nameEnglish", "noDeclension", "addressByFirstName", "uid", "status", "program", "studyForm", "educationType", "hours", "registrationAddress", "mailingAddress", "internship", "group", "source", "tags"]);
+    const hiddenKeys = new Set(["name", "nameEnglish", "noDeclension", "addressByFirstName", "uid", "status", "program", "studyForm", "educationType", "hours", "registrationAddress", "mailingAddress", "workPlace", "position", "employmentCategory", "ovzStatus", "internship", "group", "source", "tags"]);
     const nameField = section.fields.find((item) => item.key === "name");
     const nameEnglishField = section.fields.find((item) => item.key === "nameEnglish");
     const uidField = section.fields.find((item) => item.key === "uid");
@@ -1522,6 +1574,12 @@
     const hoursField = section.fields.find((item) => item.key === "hours");
     const registrationAddressField = section.fields.find((item) => item.key === "registrationAddress");
     const mailingAddressField = section.fields.find((item) => item.key === "mailingAddress");
+    const employmentFields = ["workPlace", "position"]
+      .map((key) => section.fields.find((item) => item.key === key))
+      .filter(Boolean);
+    const employmentDetailsFields = ["employmentCategory", "ovzStatus"]
+      .map((key) => section.fields.find((item) => item.key === key))
+      .filter(Boolean);
     const internshipField = section.fields.find((item) => item.key === "internship");
     const sourceField = section.fields.find((item) => item.key === "source");
     return `
@@ -1548,14 +1606,24 @@
             ${section.fields.filter((item) => !hiddenKeys.has(item.key)).sort(orderStudentMainField).map((item) => renderStudentField(item, record)).join("")}
           </div>
         </div>
-        <div class="student-main-program-row">
+        <div class="student-main-program-row student-main-subsection student-program-section">
           ${renderStudentProgramLine(programField, internshipField, record)}
           <div class="student-program-details-row">
             ${[studyFormField, educationTypeField, hoursField].filter(Boolean).map((item) => renderStudentField(item, record)).join("")}
           </div>
-          <div class="student-address-pair">
-            ${renderStudentAddressField(registrationAddressField, record, "mailingAddress")}
-            ${renderStudentAddressField(mailingAddressField, record, "registrationAddress")}
+          <div class="student-main-subsection student-address-section">
+            <div class="student-address-pair">
+              ${renderStudentAddressField(registrationAddressField, record, "mailingAddress")}
+              ${renderStudentAddressField(mailingAddressField, record, "registrationAddress")}
+            </div>
+          </div>
+          <div class="student-main-subsection student-employment-section">
+            <div class="student-employment-row">
+              ${employmentFields.map((item) => renderStudentField(item, record)).join("")}
+            </div>
+            <div class="student-employment-details-row">
+              ${employmentDetailsFields.map((item) => renderStudentField(item, record)).join("")}
+            </div>
           </div>
         </div>
       </div>
@@ -2061,8 +2129,8 @@
     if (searchableStudentFields[item.key]) {
       return renderSearchableStudentField(label, item, value, required);
     }
-    if (item.key === "passportIssuer") {
-      return renderPassportIssuerField(label, item, value, required);
+    if (["passportIssuer", "customerPassportIssuer", "educationDocumentIssuer"].includes(item.key)) {
+      return renderIssuerLookupField(label, item, value, required);
     }
     if (item.key === "educationType") {
       const programType = getProgramType(record.program, record);
@@ -2078,8 +2146,11 @@
         </label>
       `;
     }
-    if (item.key === "inn") {
+    if (["inn", "customerInn"].includes(item.key)) {
       return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" inputmode="numeric" maxlength="12" pattern="\\d{10}|\\d{12}" autocomplete="off"></label>`;
+    }
+    if (["snils", "customerSnils"].includes(item.key)) {
+      return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" inputmode="numeric" maxlength="14" autocomplete="off"></label>`;
     }
     if (item.type === "checkbox") {
       return `${label}<input name="${item.key}" type="checkbox" value="Да" ${isChecked(value) ? "checked" : ""}></label>`;
@@ -2088,7 +2159,8 @@
       return `${label}<textarea name="${item.key}" ${required}>${escapeHtml(value)}</textarea></label>`;
     }
     if (item.type === "select") {
-      const options = item.options || state.data.dictionaries[item.dict] || [];
+      const dictionaryOptions = item.options || state.data.dictionaries[item.dict] || [];
+      const options = item.required ? dictionaryOptions : ["", ...dictionaryOptions];
       return `${label}<select name="${item.key}" ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
     return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required}></label>`;
@@ -2159,8 +2231,10 @@
     `;
   }
 
-  function renderPassportIssuerField(label, item, value, required) {
-    const options = getPassportIssuerOptions(value);
+  function renderIssuerLookupField(label, item, value, required) {
+    const options = item.key === "educationDocumentIssuer"
+      ? getEducationDocumentIssuerOptions(value)
+      : getPassportIssuerOptions(value);
     return `
       ${label}
         <div class="lookup-field">
@@ -2252,7 +2326,14 @@
   function getPassportIssuerOptions(currentValue = "") {
     return getLookupOptions({
       dict: "passportIssuers",
-      fields: [["students", "passportIssuer"]]
+      fields: [["students", "passportIssuer"], ["students", "customerPassportIssuer"]]
+    }, [currentValue]);
+  }
+
+  function getEducationDocumentIssuerOptions(currentValue = "") {
+    return getLookupOptions({
+      dict: "educationDocumentIssuers",
+      fields: [["students", "educationDocumentIssuer"]]
     }, [currentValue]);
   }
 
@@ -2529,6 +2610,7 @@
     document.querySelectorAll("[data-action='copy-address-to']").forEach((button) => {
       button.addEventListener("click", () => copyStudentAddressToField(button.dataset.source, button.dataset.target));
     });
+    document.querySelector("[data-action='copy-student-passport-to-customer']")?.addEventListener("click", copyStudentPassportToCustomer);
     document.querySelectorAll("[data-action='check-post-index']").forEach((button) => {
       button.addEventListener("click", () => checkStudentAddressPostIndex(button.dataset.source));
     });
@@ -2784,9 +2866,10 @@
       });
     });
 
-    document.querySelector("[name='inn']")?.addEventListener("input", (event) => {
-      event.target.setCustomValidity("");
-    });
+    bindStudentIdentityFieldValidation("inn");
+    bindStudentIdentityFieldValidation("snils");
+    bindStudentIdentityFieldValidation("customerInn");
+    bindStudentIdentityFieldValidation("customerSnils");
 
     document.querySelectorAll("[data-action='toggle-row-selection']").forEach((checkbox) => {
       checkbox.addEventListener("change", () => toggleRowSelection(checkbox.dataset.config, checkbox.dataset.id, checkbox.checked));
@@ -3246,21 +3329,22 @@
       values.uid = getNextUid();
     }
     if (isStudentCard) {
-      if (formData.has("inn")) {
-        values.inn = normalizeInn(values.inn);
-        const innInput = formElement.querySelector("[name='inn']");
-        if (innInput) innInput.value = values.inn;
-        if (values.inn && !isValidInn(values.inn)) {
-          const message = "ИНН должен содержать 10 или 12 цифр и проходить контрольную проверку.";
-          if (innInput) {
-            innInput.setCustomValidity(message);
-            innInput.reportValidity();
-          } else {
-            alert(message);
-          }
-          return;
-        }
-      }
+      values.inn = normalizeInn(values.inn);
+      values.snils = formatSnils(values.snils);
+      values.customerInn = normalizeInn(values.customerInn);
+      values.customerSnils = formatSnils(values.customerSnils);
+      const innInput = formElement.querySelector("[name='inn']");
+      const snilsInput = formElement.querySelector("[name='snils']");
+      const customerInnInput = formElement.querySelector("[name='customerInn']");
+      const customerSnilsInput = formElement.querySelector("[name='customerSnils']");
+      if (innInput) innInput.value = values.inn;
+      if (snilsInput) snilsInput.value = values.snils;
+      if (customerInnInput) customerInnInput.value = values.customerInn;
+      if (customerSnilsInput) customerSnilsInput.value = values.customerSnils;
+      if (!validateStudentIdentityValue("inn", values.inn, innInput)
+        || !validateStudentIdentityValue("snils", values.snils, snilsInput)
+        || !validateStudentIdentityValue("customerInn", values.customerInn, customerInnInput)
+        || !validateStudentIdentityValue("customerSnils", values.customerSnils, customerSnilsInput)) return;
       const selectedProgram = findProgramByName(values.program);
       if (selectedProgram) {
         values.educationType = selectedProgram.type || values.educationType || "";
@@ -3731,6 +3815,16 @@
     return String(value || "").replace(/\D/g, "");
   }
 
+  function normalizeSnils(value) {
+    return String(value || "").replace(/\D/g, "");
+  }
+
+  function formatSnils(value) {
+    const snils = normalizeSnils(value);
+    if (snils.length !== 11) return snils;
+    return `${snils.slice(0, 3)}-${snils.slice(3, 6)}-${snils.slice(6, 9)} ${snils.slice(9)}`;
+  }
+
   function isValidInn(value) {
     const inn = normalizeInn(value);
     if (!/^\d{10}$|^\d{12}$/.test(inn)) return false;
@@ -3741,6 +3835,50 @@
     }
     return checksum([7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === digits[10]
       && checksum([3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) === digits[11];
+  }
+
+  function isValidSnils(value) {
+    const snils = normalizeSnils(value);
+    if (!/^\d{11}$/.test(snils)) return false;
+    const digits = snils.split("").map(Number);
+    const checksum = digits.slice(0, 9).reduce((sum, digit, index) => sum + digit * (9 - index), 0);
+    const expected = checksum < 100 ? checksum : checksum === 100 || checksum === 101 ? 0 : checksum % 101 === 100 ? 0 : checksum % 101;
+    return expected === Number(snils.slice(9));
+  }
+
+  function bindStudentIdentityFieldValidation(field) {
+    const input = document.querySelector(`[name="${field}"]`);
+    if (!input) return;
+    input.addEventListener("input", () => {
+      input.setCustomValidity("");
+      input.classList.remove("field-invalid");
+    });
+    input.addEventListener("blur", () => {
+      const value = field.toLowerCase().includes("inn") ? normalizeInn(input.value) : formatSnils(input.value);
+      input.value = value;
+      validateStudentIdentityValue(field, value, input);
+    });
+  }
+
+  function validateStudentIdentityValue(field, value, input = null) {
+    if (!value) {
+      input?.setCustomValidity("");
+      input?.classList.remove("field-invalid");
+      return true;
+    }
+    const isInn = field.toLowerCase().includes("inn");
+    const valid = isInn ? isValidInn(value) : isValidSnils(value);
+    const message = isInn
+      ? "ИНН заполнен неверно. Проверьте количество цифр и контрольное число."
+      : "СНИЛС заполнен неверно. Проверьте количество цифр и контрольное число.";
+    if (input) {
+      input.setCustomValidity(valid ? "" : message);
+      input.classList.toggle("field-invalid", !valid);
+      if (!valid) input.reportValidity();
+    } else if (!valid) {
+      alert(message);
+    }
+    return valid;
   }
 
   function normalizeMessengerPhone(value) {
@@ -3809,6 +3947,33 @@
     target.dispatchEvent(new Event("input", { bubbles: true }));
     target.dispatchEvent(new Event("change", { bubbles: true }));
     target.focus({ preventScroll: true });
+  }
+
+  function copyStudentPassportToCustomer() {
+    const record = (state.data.collections.students || []).find((item) => item.id === state.modal?.id) || {};
+    const fieldPairs = [
+      ["name", "customer"],
+      ["birthDate", "customerBirthDate"],
+      ["snils", "customerSnils"],
+      ["inn", "customerInn"],
+      ["passportType", "customerPassportType"],
+      ["passportNumber", "customerPassportNumber"],
+      ["passportDate", "customerPassportDate"],
+      ["passportIssuer", "customerPassportIssuer"],
+      ["passportCode", "customerPassportCode"]
+    ];
+    let copied = 0;
+    fieldPairs.forEach(([sourceKey, targetKey]) => {
+      const source = document.querySelector(`[name="${sourceKey}"]`);
+      const target = document.querySelector(`[name="${targetKey}"]`);
+      if (!target) return;
+      target.value = source?.value ?? state.modal?.draft?.[sourceKey] ?? record[sourceKey] ?? "";
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+      copied += 1;
+    });
+    if (!copied) return;
+    document.querySelector("[name='customerPassportType']")?.focus({ preventScroll: true });
   }
 
   async function checkStudentAddressPostIndex(sourceKey) {
@@ -4072,6 +4237,13 @@
       citizenships: "Гражданство",
       documentTypes: "Виды документов",
       passportIssuers: "Кем выдан документ",
+      educationLevels: "Уровни образования",
+      educationDocumentTypes: "Виды документов об образовании",
+      educationDocumentIssuers: "Кем выдан документ об образовании",
+      workPlaces: "Места работы",
+      positions: "Должности",
+      employmentCategories: "Категории занятости",
+      ovzStatuses: "Статусы ОВЗ",
       roles: "Роли"
     };
     return map[key] || key;

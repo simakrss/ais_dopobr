@@ -478,8 +478,9 @@ body.sidebar-collapsed .sidebar {
 .combo-clear {
   position: absolute;
   right: 7px;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
   border: 0;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.72);
@@ -489,6 +490,7 @@ body.sidebar-collapsed .sidebar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
 }
 
 .combo-clear:hover {
@@ -971,12 +973,15 @@ body.is-resizing-column {
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+  height: max(420px, calc(100vh - 230px));
 }
 
 .dictionary-list-panel {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
+  min-height: 0;
 }
 
 .dictionary-search {
@@ -985,9 +990,10 @@ body.is-resizing-column {
 }
 
 .dictionary-list {
-  max-height: min(560px, calc(100vh - 250px));
+  min-height: 0;
   overflow-y: auto;
   display: grid;
+  align-content: start;
   gap: 4px;
   padding: 6px;
   border: 1px solid var(--line);
@@ -1039,7 +1045,9 @@ body.is-resizing-column {
 
 .dictionary-detail {
   min-width: 0;
+  min-height: 0;
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
   padding: 14px;
   border: 1px solid var(--line);
@@ -1075,7 +1083,8 @@ body.is-resizing-column {
 }
 
 .dictionary-detail-values {
-  min-height: 120px;
+  min-height: 0;
+  overflow-y: auto;
   align-content: start;
   padding: 10px;
   border: 1px solid var(--line);
@@ -1525,7 +1534,46 @@ body.is-resizing-column {
   display: grid;
   grid-template-columns: 1fr;
   gap: 6px;
-  margin-top: 4px;
+}
+
+.student-main-subsection {
+  min-width: 0;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.student-employment-section {
+  display: grid;
+  gap: 6px;
+}
+
+.student-employment-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.student-employment-details-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, 0.35fr);
+  gap: 8px;
+}
+
+.student-main-program-row .student-employment-row label,
+.student-main-program-row .student-employment-details-row label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: start;
+  gap: 4px;
+}
+
+.student-employment-row .combo-field,
+.student-employment-details-row .combo-field {
+  min-width: 0;
 }
 
 .student-main-program-row .student-address-field {
@@ -2191,6 +2239,57 @@ body.event-reorder-dragging .student-event-row.is-dragging {
   gap: 8px;
 }
 
+.student-documents-tab {
+  grid-template-columns: 1fr;
+  align-items: start;
+  align-content: start;
+  grid-auto-rows: max-content;
+  gap: 5px;
+}
+
+.student-documents-tab .form-section {
+  padding: 3px 4px;
+}
+
+.student-documents-tab .form-section-head {
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.student-documents-tab .student-form-grid {
+  gap: 4px;
+}
+
+.student-documents-tab .student-form-grid label {
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 3px;
+}
+
+.student-documents-tab .student-form-grid label span {
+  font-size: 11px;
+}
+
+.student-documents-tab .student-form-grid input,
+.student-documents-tab .student-form-grid select,
+.student-documents-tab .student-form-grid textarea {
+  min-height: 24px;
+  padding: 1px 5px;
+}
+
+.student-documents-tab .student-form-grid textarea {
+  min-height: 28px;
+}
+
+.student-documents-tab .form-section h3 {
+  font-size: 14px;
+}
+
+.student-documents-tab .passport-copy-button {
+  min-height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
 .form-section {
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -2199,8 +2298,36 @@ body.event-reorder-dragging .student-event-row.is-dragging {
 }
 
 .form-section h3 {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 15px;
+}
+
+.form-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.passport-copy-button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.passport-copy-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .student-form-grid {
@@ -2248,6 +2375,12 @@ body.event-reorder-dragging .student-event-row.is-dragging {
   padding: 4px 7px;
   background: #fff;
   color: var(--text);
+}
+
+.student-form-grid input.field-invalid {
+  border-color: var(--red);
+  background: #fff5f3;
+  box-shadow: 0 0 0 2px rgba(180, 35, 24, 0.14);
 }
 
 .student-form-grid input[readonly] {
@@ -2500,6 +2633,15 @@ body.event-reorder-dragging .student-event-row.is-dragging {
     grid-template-columns: 1fr;
   }
 
+  .dictionary-browser {
+    height: auto;
+  }
+
+  .dictionary-list,
+  .dictionary-detail-values {
+    max-height: min(420px, calc(100vh - 220px));
+  }
+
   .student-photo-panel {
     border-right: 0;
     border-bottom: 1px solid var(--line);
@@ -2568,6 +2710,10 @@ body.event-reorder-dragging .student-event-row.is-dragging {
     grid-template-columns: 1fr;
   }
 
+  .student-documents-tab {
+    grid-template-columns: 1fr;
+  }
+
   .student-form-grid label {
     grid-template-columns: 1fr;
   }
@@ -2582,6 +2728,11 @@ body.event-reorder-dragging .student-event-row.is-dragging {
   }
 
   .student-program-details-row {
+    grid-template-columns: 1fr;
+  }
+
+  .student-employment-row,
+  .student-employment-details-row {
     grid-template-columns: 1fr;
   }
 
