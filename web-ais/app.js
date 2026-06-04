@@ -1,6 +1,7 @@
 (() => {
   const STORAGE_KEY = "ais-dopobr-web-state-v1";
   const TABLE_SETTINGS_KEY = "ais-dopobr-web-table-settings-v1";
+  const STUDENT_CARD_TAB_ORDER_KEY = "ais-dopobr-student-card-tab-order-v1";
   const app = document.getElementById("app");
   const programHourOptions = [1, 2, 4, 16, 36, 72, 144, 300, 600, 1200];
   const studentCommunicationTemplateDefaults = [
@@ -220,6 +221,7 @@
   const dictionaryDefaults = {
     managers: [],
     sources: [],
+    fundingSources: ["Собственные средства", "За счет организации", "Федеральный бюджет", "Местный бюджет"],
     citizenships: ["Российская Федерация"],
     documentTypes: ["Паспорт гражданина РФ", "Иностранный паспорт", "Вид на жительство", "Свидетельство о рождении"],
     passportIssuers: [],
@@ -573,6 +575,24 @@
       ]
     },
     {
+      id: "income",
+      label: "Доходы",
+      payments: true,
+      sections: [
+        {
+          title: "Доходы по договору",
+          fields: [
+            field("fundingSource", "Источник финансирования", "select", false, "fundingSources"),
+            field("orderNo", "Номер заказа"),
+            field("contractAmount", "Сумма договора", "number"),
+            field("discount", "Скидка в %", "number"),
+            field("balance", "Остаток по договору", "number"),
+            field("paidAmount", "Внесено по договору", "number")
+          ]
+        }
+      ]
+    },
+    {
       id: "contract",
       label: "Договор",
       sections: [
@@ -591,8 +611,8 @@
             field("monthlyAmount", "Сумма в месяц", "number"),
             field("paidAmount", "Внесено", "number"),
             field("balance", "Остаток", "number"),
-            field("discount", "Скидка"),
-            field("fundingSource", "Источник финансирования")
+            field("discount", "Скидка в %", "number"),
+            field("fundingSource", "Источник финансирования", "select", false, "fundingSources")
           ]
         }
       ]
@@ -739,7 +759,10 @@
     { key: "certificateSent", label: "Отправлена справка об обучении" }
   ];
 
-  const visibleStudentCardTabs = studentCardTabs.filter((tab) => ["main", "documents", "communications"].includes(tab.id));
+  const studentCardDefaultTabIds = ["main", "documents", "income", "communications"];
+  const visibleStudentCardTabs = studentCardDefaultTabIds
+    .map((id) => studentCardTabs.find((tab) => tab.id === id))
+    .filter(Boolean);
   const studentCardFields = studentCardTabs.flatMap((tab) => tab.sections.flatMap((section) => section.fields));
   const studentSideFields = [
     field("note", "Примечание", "textarea"),
@@ -781,6 +804,8 @@
     statusFilter: "Все",
     sort: { key: "", dir: "asc" },
     studentCardTab: "main",
+    studentCardTabOrder: loadStudentCardTabOrder(),
+    openPaymentRows: [],
     selected: {},
     tableOptions: null,
     tableSettings: loadTableSettings(),
@@ -795,6 +820,8 @@
   let sidebarOutsideClickBound = false;
   let fieldUndoKeyBound = false;
   let lastDeletedControlState = null;
+  let draggedStudentTabId = "";
+  let lastStudentTabDragEndedAt = 0;
   const communicationTemplateEditorHistories = new WeakMap();
 
   const transliterationPairs = [
@@ -1027,6 +1054,33 @@
 
   function persistTableSettings() {
     localStorage.setItem(TABLE_SETTINGS_KEY, JSON.stringify(state.tableSettings));
+  }
+
+  function loadStudentCardTabOrder() {
+    const saved = localStorage.getItem(STUDENT_CARD_TAB_ORDER_KEY);
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+    } catch (error) {
+      console.warn("Не удалось прочитать порядок вкладок карточки слушателя", error);
+      return [];
+    }
+  }
+
+  function persistStudentCardTabOrder(order = state.studentCardTabOrder) {
+    localStorage.setItem(STUDENT_CARD_TAB_ORDER_KEY, JSON.stringify(order));
+  }
+
+  function getOrderedStudentCardTabs() {
+    const availableIds = visibleStudentCardTabs.map((tab) => tab.id);
+    const orderedIds = [
+      ...(state.studentCardTabOrder || []).filter((id) => availableIds.includes(id)),
+      ...availableIds.filter((id) => !(state.studentCardTabOrder || []).includes(id))
+    ];
+    return orderedIds
+      .map((id) => visibleStudentCardTabs.find((tab) => tab.id === id))
+      .filter(Boolean);
   }
 
   function money(value) {
@@ -1902,7 +1956,8 @@
 
   function renderStudentModal(record) {
     if (!state.modal.id) record = { ...record, uid: record.uid || getNextUid() };
-    const activeTab = visibleStudentCardTabs.find((tab) => tab.id === state.studentCardTab) || visibleStudentCardTabs[0];
+    const orderedTabs = getOrderedStudentCardTabs();
+    const activeTab = orderedTabs.find((tab) => tab.id === state.studentCardTab) || orderedTabs[0];
     const title = getStudentCardTitle(record);
     const programTitle = getStudentCardProgramTitle(record);
     return `
@@ -1923,14 +1978,14 @@
 
             <div class="student-card-layout">
               <section class="student-card-main">
-                <div class="student-tabs" role="tablist">
-                  ${visibleStudentCardTabs.map((tab) => `
-                    <button class="${activeTab.id === tab.id ? "active" : ""}" data-student-tab="${tab.id}" type="button" role="tab">
+                <div class="student-tabs" data-student-tabs role="tablist">
+                  ${orderedTabs.map((tab) => `
+                    <button class="${activeTab.id === tab.id ? "active" : ""}" data-student-tab="${tab.id}" draggable="true" type="button" role="tab">
                       ${escapeHtml(tab.label)}
                     </button>
                   `).join("")}
                 </div>
-                <div class="student-tab-body ${activeTab.id === "documents" ? "student-documents-tab" : ""} ${activeTab.id === "communications" ? "student-communications-tab" : ""}">
+                <div class="student-tab-body ${activeTab.id === "documents" ? "student-documents-tab" : ""} ${activeTab.id === "income" ? "student-income-tab" : ""} ${activeTab.id === "communications" ? "student-communications-tab" : ""}">
                   ${renderStudentTabContent(activeTab, record)}
                 </div>
               </section>
@@ -2961,27 +3016,136 @@
     return true;
   }
 
+  function paymentRowHasData(record, index) {
+    return Boolean(record[`payment${index}Date`] || record[`payment${index}Amount`] || record[`payment${index}Note`]);
+  }
+
+  function getOpenPaymentRowIndexes() {
+    return (state.openPaymentRows || [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value >= 1 && value <= 8);
+  }
+
+  function getVisiblePaymentRowIndexes(record) {
+    const openRows = new Set(getOpenPaymentRowIndexes());
+    return Array.from({ length: 8 }, (_, index) => index + 1)
+      .filter((index) => paymentRowHasData(record, index) || openRows.has(index));
+  }
+
+  function getNextAvailablePaymentRowIndex(record) {
+    const openRows = new Set(getOpenPaymentRowIndexes());
+    const hasOpenEmptyRow = [...openRows].some((index) => !paymentRowHasData(record, index));
+    if (hasOpenEmptyRow) return "";
+    return Array.from({ length: 8 }, (_, index) => index + 1)
+      .find((index) => !paymentRowHasData(record, index) && !openRows.has(index)) || "";
+  }
+
   function renderPaymentRows(record) {
+    const rowIndexes = getVisiblePaymentRowIndexes(record);
+    const nextPaymentRow = getNextAvailablePaymentRowIndex(record);
     return `
       <section class="form-section">
-        <h3>График и фактические оплаты</h3>
-        <div class="editable-grid payment-grid">
+        <div class="payment-section-head">
+          <h3>Оплаты</h3>
+          <button class="ghost-button payment-add-button" data-action="add-payment-row" type="button" ${nextPaymentRow ? "" : "disabled"}>Добавить</button>
+        </div>
+        ${rowIndexes.length ? `<div class="editable-grid payment-grid">
           <div class="editable-grid-head">№</div>
           <div class="editable-grid-head">Дата</div>
           <div class="editable-grid-head">Сумма</div>
-          <div class="editable-grid-head">Комментарий</div>
-          ${Array.from({ length: 8 }, (_, index) => {
-            const n = index + 1;
+          <div class="editable-grid-head">Примечание</div>
+          <div class="editable-grid-head"></div>
+          ${rowIndexes.map((n) => {
+            const hasPayment = paymentRowHasData(record, n);
             return `
               <strong>${n}</strong>
-              <input name="payment${n}Date" type="date" value="${escapeAttr(record[`payment${n}Date`] || "")}">
-              <input name="payment${n}Amount" type="number" value="${escapeAttr(record[`payment${n}Amount`] || "")}">
-              <input name="payment${n}Note" value="${escapeAttr(record[`payment${n}Note`] || "")}">
+              <input name="payment${n}Date" data-payment-index="${n}" type="date" value="${escapeAttr(record[`payment${n}Date`] || "")}">
+              <input name="payment${n}Amount" data-payment-index="${n}" type="number" value="${escapeAttr(record[`payment${n}Amount`] || "")}">
+              <input name="payment${n}Note" data-payment-index="${n}" value="${escapeAttr(record[`payment${n}Note`] || "")}">
+              <button
+                class="payment-row-delete"
+                data-action="delete-payment-row"
+                data-payment-index="${n}"
+                type="button"
+                title="Удалить оплату"
+                aria-label="Удалить оплату ${n}"
+                ${hasPayment ? "" : "disabled"}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M3 6h18"></path>
+                  <path d="M8 6V4h8v2"></path>
+                  <path d="M6 6l1 15h10l1-15"></path>
+                  <path d="M10 11v6"></path>
+                  <path d="M14 11v6"></path>
+                </svg>
+              </button>
             `;
           }).join("")}
-        </div>
+        </div>` : `<p class="payment-empty">Оплаты пока не добавлены.</p>`}
       </section>
     `;
+  }
+
+  function getPaymentRowInputs(index) {
+    return ["Date", "Amount", "Note"]
+      .map((suffix) => document.querySelector(`[name="payment${index}${suffix}"]`))
+      .filter(Boolean);
+  }
+
+  function syncPaymentRowDeleteButton(index) {
+    const button = document.querySelector(`[data-action='delete-payment-row'][data-payment-index="${index}"]`);
+    if (!button) return;
+    button.disabled = !getPaymentRowInputs(index).some((input) => String(input.value || "").trim());
+  }
+
+  function syncPaymentAddButton() {
+    const button = document.querySelector("[data-action='add-payment-row']");
+    if (!button) return;
+    const draft = collectStudentFormDraft();
+    button.disabled = !getNextAvailablePaymentRowIndex(draft);
+  }
+
+  function compactStudentPayments(record, deletedIndex) {
+    const payments = Array.from({ length: 8 }, (_, index) => index + 1)
+      .filter((index) => index !== Number(deletedIndex))
+      .map((index) => ({
+        date: record[`payment${index}Date`] || "",
+        amount: record[`payment${index}Amount`] || "",
+        note: record[`payment${index}Note`] || ""
+      }))
+      .filter((payment) => payment.date || payment.amount || payment.note);
+    Array.from({ length: 8 }, (_, index) => index + 1).forEach((index) => {
+      const payment = payments[index - 1] || {};
+      record[`payment${index}Date`] = payment.date || "";
+      record[`payment${index}Amount`] = payment.amount || "";
+      record[`payment${index}Note`] = payment.note || "";
+    });
+    return record;
+  }
+
+  function clearStudentPaymentRow(index) {
+    const inputs = getPaymentRowInputs(index);
+    if (!inputs.length || !inputs.some((input) => String(input.value || "").trim())) return;
+    if (!confirm("Удалить запись оплаты?")) return;
+    if (state.modal) {
+      state.modal.draft = compactStudentPayments(collectStudentFormDraft(), index);
+      state.modal.hasDraftChanges = true;
+    }
+    state.openPaymentRows = [];
+    render();
+  }
+
+  function addStudentPaymentRow() {
+    if (!state.modal) return;
+    const draft = collectStudentFormDraft();
+    const nextIndex = getNextAvailablePaymentRowIndex(draft);
+    if (!nextIndex) return;
+    state.modal.draft = draft;
+    state.openPaymentRows = unique([...getOpenPaymentRowIndexes(), nextIndex]);
+    render();
+    requestAnimationFrame(() => {
+      document.querySelector(`[name="payment${nextIndex}Date"]`)?.focus({ preventScroll: true });
+    });
   }
 
   function renderExpenseRows(record) {
@@ -3382,6 +3546,16 @@
     document.querySelectorAll("[data-action='check-post-index']").forEach((button) => {
       button.addEventListener("click", () => checkStudentAddressPostIndex(button.dataset.source));
     });
+    document.querySelectorAll("[data-action='delete-payment-row']").forEach((button) => {
+      button.addEventListener("click", () => clearStudentPaymentRow(button.dataset.paymentIndex));
+    });
+    document.querySelector("[data-action='add-payment-row']")?.addEventListener("click", addStudentPaymentRow);
+    document.querySelectorAll("[data-payment-index]").forEach((input) => {
+      input.addEventListener("input", () => {
+        syncPaymentRowDeleteButton(input.dataset.paymentIndex);
+        syncPaymentAddButton();
+      });
+    });
 
     document.getElementById("searchInput")?.addEventListener("input", (event) => {
       const cursor = event.target.selectionStart;
@@ -3431,6 +3605,7 @@
     document.querySelectorAll("[data-action='create']").forEach((button) => {
       button.addEventListener("click", () => {
         if (button.dataset.config === "students") state.studentCardTab = "main";
+        if (button.dataset.config === "students") state.openPaymentRows = [];
         state.modal = { config: button.dataset.config, id: "" };
         render();
       });
@@ -3439,6 +3614,7 @@
     document.querySelectorAll("[data-action='edit']").forEach((button) => {
       button.addEventListener("click", () => {
         if (button.dataset.config === "students") state.studentCardTab = "main";
+        if (button.dataset.config === "students") state.openPaymentRows = [];
         state.modal = { config: button.dataset.config, id: button.dataset.id };
         render();
       });
@@ -3675,8 +3851,13 @@
       });
     });
 
+    bindStudentTabOrderControls();
     document.querySelectorAll("[data-student-tab]").forEach((button) => {
       button.addEventListener("click", () => {
+        if (button.dataset.wasDragged === "true" || Date.now() - lastStudentTabDragEndedAt < 200) {
+          button.dataset.wasDragged = "";
+          return;
+        }
         switchStudentTab(button.dataset.studentTab);
       });
     });
@@ -3750,6 +3931,114 @@
   function initializeRecordFormSnapshot(form) {
     if (!form) return;
     form.dataset.initialSnapshot = captureFormSnapshot(form);
+  }
+
+  function syncStudentCardTabOrderFromDom() {
+    const order = [...document.querySelectorAll("[data-student-tab]")]
+      .map((button) => button.dataset.studentTab)
+      .filter(Boolean);
+    if (!order.length) return;
+    state.studentCardTabOrder = order;
+    persistStudentCardTabOrder(order);
+  }
+
+  function getStudentTabDragAfterElement(container, x) {
+    return [...container.querySelectorAll("[data-student-tab]:not(.is-dragging)")].reduce((closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = x - box.left - box.width / 2;
+      if (offset < 0 && offset > closest.offset) {
+        return { offset, element: child };
+      }
+      return closest;
+    }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+  }
+
+  function closeStudentTabMenu() {
+    document.removeEventListener("pointerdown", closeStudentTabMenuOnOutsideClick, { capture: true });
+    document.querySelector("[data-student-tab-menu]")?.remove();
+  }
+
+  function closeStudentTabMenuOnOutsideClick(event) {
+    if (event.target.closest("[data-student-tab-menu]")) {
+      document.addEventListener("pointerdown", closeStudentTabMenuOnOutsideClick, { capture: true, once: true });
+      return;
+    }
+    closeStudentTabMenu();
+  }
+
+  function resetStudentCardTabOrder() {
+    if (state.modal) {
+      state.modal.draft = collectStudentFormDraft();
+      state.modal.hasDraftChanges = true;
+    }
+    state.studentCardTabOrder = [];
+    localStorage.removeItem(STUDENT_CARD_TAB_ORDER_KEY);
+    closeStudentTabMenu();
+    render();
+  }
+
+  function showStudentTabMenu(x, y) {
+    closeStudentTabMenu();
+    const menu = document.createElement("div");
+    menu.className = "student-tab-menu";
+    menu.dataset.studentTabMenu = "";
+    menu.innerHTML = `
+      <button data-action="reset-student-tab-order" type="button">Восстановить порядок вкладок</button>
+    `;
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;
+    menu.style.top = `${clamp(y, 8, Math.max(8, window.innerHeight - rect.height - 8))}px`;
+    menu.querySelector("[data-action='reset-student-tab-order']")?.addEventListener("click", resetStudentCardTabOrder);
+    setTimeout(() => {
+      document.addEventListener("pointerdown", closeStudentTabMenuOnOutsideClick, { capture: true, once: true });
+    });
+  }
+
+  function bindStudentTabOrderControls() {
+    const container = document.querySelector("[data-student-tabs]");
+    if (!container) return;
+    container.addEventListener("contextmenu", (event) => {
+      if (!event.target.closest("[data-student-tab]")) return;
+      event.preventDefault();
+      showStudentTabMenu(event.clientX, event.clientY);
+    });
+    container.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      const dragging = container.querySelector(".is-dragging[data-student-tab]");
+      if (!dragging) return;
+      const afterElement = getStudentTabDragAfterElement(container, event.clientX);
+      if (afterElement) {
+        container.insertBefore(dragging, afterElement);
+      } else {
+        container.appendChild(dragging);
+      }
+      syncStudentCardTabOrderFromDom();
+    });
+    container.addEventListener("drop", (event) => {
+      event.preventDefault();
+      syncStudentCardTabOrderFromDom();
+    });
+    container.querySelectorAll("[data-student-tab]").forEach((button) => {
+      button.addEventListener("dragstart", (event) => {
+        draggedStudentTabId = button.dataset.studentTab || "";
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", draggedStudentTabId);
+        button.classList.add("is-dragging");
+        document.body.classList.add("student-tab-dragging");
+      });
+      button.addEventListener("dragend", () => {
+        button.classList.remove("is-dragging");
+        document.body.classList.remove("student-tab-dragging");
+        if (draggedStudentTabId) button.dataset.wasDragged = "true";
+        lastStudentTabDragEndedAt = Date.now();
+        draggedStudentTabId = "";
+        syncStudentCardTabOrderFromDom();
+        setTimeout(() => {
+          if (button.dataset.wasDragged === "true") button.dataset.wasDragged = "";
+        }, 0);
+      });
+    });
   }
 
   function switchStudentTab(tabId) {
@@ -3844,6 +4133,7 @@
       return;
     }
     state.modal = null;
+    state.openPaymentRows = [];
     render();
   }
 
@@ -5794,6 +6084,7 @@
       positions: "Должности",
       employmentCategories: "Категории занятости",
       ovzStatuses: "Статусы ОВЗ",
+      fundingSources: "Источники финансирования",
       communicationTemplates: "Шаблоны типовых сообщений",
       roles: "Роли"
     };

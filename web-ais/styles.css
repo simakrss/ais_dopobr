@@ -2605,6 +2605,19 @@ body.event-reorder-dragging .student-event-row.is-dragging {
   background: #fff;
 }
 
+.student-tabs button[draggable="true"] {
+  cursor: grab;
+}
+
+.student-tabs button.is-dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+body.student-tab-dragging .student-tabs button {
+  user-select: none;
+}
+
 .student-tabs button {
   min-height: 28px;
   border: 1px solid var(--line);
@@ -2622,11 +2635,67 @@ body.event-reorder-dragging .student-event-row.is-dragging {
   font-weight: 700;
 }
 
+.student-tab-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 220px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
+}
+
+.student-tab-menu button {
+  width: 100%;
+  min-height: 30px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.student-tab-menu button:hover,
+.student-tab-menu button:focus-visible {
+  background: var(--panel-soft);
+}
+
 .student-tab-body {
   padding: 8px;
   overflow: auto;
   display: grid;
   gap: 8px;
+}
+
+.student-income-tab {
+  gap: 4px;
+  align-content: start;
+}
+
+.student-income-tab .form-section {
+  padding: 5px 6px;
+}
+
+.student-income-tab .form-section-head {
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.student-income-tab .student-form-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 6px;
+}
+
+.student-income-tab .student-form-grid label {
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 4px;
+}
+
+.student-income-tab .student-form-grid label span {
+  font-size: 12px;
 }
 
 .student-documents-tab {
@@ -3107,8 +3176,67 @@ body.event-reorder-dragging .student-event-row.is-dragging {
   align-items: center;
 }
 
+.payment-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.payment-section-head h3 {
+  margin: 0;
+}
+
+.payment-add-button {
+  min-height: 30px;
+  padding-inline: 10px;
+}
+
+.payment-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .payment-grid {
-  grid-template-columns: 38px minmax(130px, 0.8fr) minmax(120px, 0.8fr) minmax(180px, 1.6fr);
+  grid-template-columns: 38px minmax(130px, 0.8fr) minmax(120px, 0.8fr) minmax(180px, 1.6fr) 32px;
+}
+
+.payment-row-delete {
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--red);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.payment-row-delete:hover:not(:disabled),
+.payment-row-delete:focus-visible:not(:disabled) {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  opacity: 1;
+}
+
+.payment-row-delete:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.28;
+}
+
+.payment-row-delete svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .expense-grid {
