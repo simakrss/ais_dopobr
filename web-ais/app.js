@@ -3,6 +3,214 @@
   const TABLE_SETTINGS_KEY = "ais-dopobr-web-table-settings-v1";
   const app = document.getElementById("app");
   const programHourOptions = [1, 2, 4, 16, 36, 72, 144, 300, 600, 1200];
+  const studentCommunicationTemplateDefaults = [
+    `{Приветствие}
+
+Меня зовут Симак Роман Сергеевич, я представляю учебный центр Цифровизация Плюс.
+
+Получили от Вас заявку на программу *{ПрограммаКарточки}*, для зачисления необходимо прислать следующие документы:
+{ПереченьДокументов}
+
+Пришлите, пожалуйста, свои документы на адрес mail@edu-plus.ru, мы в ответ подготовим Вам документы для оформления на обучение (договор, анкета, согласие на обработку персональных данных и т.д.).
+
+Дальнейшую переписку предлагаю вести в Телеграмме https://t.me/simakrs или Максе https://max.ru/u/f9LHodD0cOJFNLoo1J-p9xzwXq9NcNpBiO_awFVbsccTG5PS38I_pQg_iPE{ОпцияБезДокумента}`,
+    `{Приветствие}
+
+Меня зовут Симак Роман Сергеевич, я представляю учебный центр Цифровизация Плюс.
+
+Отправили Вам на электронную почту ({EmailКарточки}) комплект документов по курсу *{ПрограммаКарточки}* на подпись для зачисления (письмо могло попасть в спам).
+
+Проверьте его, пожалуйста, если все правильно, подпишите (в местах, выделенных галочкой) и отправьте скан на адрес mail@edu-plus.ru
+
+Подписать можно одним из следующих способов:
+1) Через онлайн-сервис - https://www.ilovepdf.com/ru/sign-pdf (графической подписью)
+2) С помощью сервиса Госключ (после подписи нажать Скачать подпись и отправить ее в ответном сообщении) - https://www.gosuslugi.ru/600373/1/form
+3) От руки
+
+Дальнейшую переписку предлагаю вести в Телеграмме https://t.me/simakrs или Максе https://max.ru/u/f9LHodD0cOJFNLoo1J-p9xzwXq9NcNpBiO_awFVbsccTG5PS38I_pQg_iPE`,
+    `{Приветствие}
+
+Поздравляем Вас с завершением обучения по курсу *{ПрограммаКарточки}* и отправляем сюда и на почту ({EmailКарточки}) {ДокументПослеОбучения}{НапоминаниеОбОплате}`,
+    `{Приветствие}
+
+{ДокументОбОбразовании}
+
+Большая просьба оставить отзыв о пройденном курсе по следующей ссылке {СсылкаАнкеты}`,
+    `{Приветствие}
+
+Отправили Вам документ об образовании на адрес: {АдресОтправкиКарточки}{ТрекКодБлок}
+
+Большая просьба оставить отзыв о пройденном курсе по следующей ссылке {СсылкаАнкеты}`,
+    `{Приветствие}
+
+Благодарим за сотрудничество и дарим купон на дополнительную скидку в 15% на последующее обучение: NEXT15
+
+И еще одна просьба, сможете отправить своим коллегам, знакомым, разместить в своих соцсетях следующую рекомендацию по нашим курсам?
+
+Рекомендую учебный центр Цифровизация Плюс (https://edu-plus.ru?utm_source={СсылкаРекомендации})
+
+Повышение квалификации, переподготовка, отличный сервис, качество обучения и оперативность.
+
+Вот купон на дополнительную скидку в 10% на программы повышения квалификации и переподготовки: SALE10`,
+    `{Приветствие}
+
+До окончания Вашего обучения по курсу *{ПрограммаКарточки}* остается {ДнейДоОкончанияКарточки} дн.
+
+Чтобы успеть выполнить все до {ДатаОкончанияПрописьюКарточки} рекомендуется активизировать учебный процесс.
+
+Для просмотра текущих оценок по всем дисциплинам/модулям можете воспользоваться следующей ссылкой - {СсылкаПрограммыКарточки}
+
+Вам нужно выполнить задания по всем дисциплинам/модулям и затем пройти итоговую аттестацию до окончания обучения (проходной балл - не менее 50%: оценка <удовлетворительно> от 50% до 69%, оценка <хорошо> от 70% до 89%, оценка <отлично> 90% и выше)
+
+{ИтогПослеОбучения}
+
+С уважением, Симак Роман Сергеевич
+Учебный центр Цифровизация Плюс`,
+    `{Приветствие}
+
+Вы досрочно освоили образовательную программу {ПрограммаКарточки}.
+
+Предлагаем Вам сократить срок обучения до {ДатаСокращенияКарточки} (с учетом нормативной продолжительности обучения) для более быстрого получения документа об образовании, заключив дополнительное соглашение к договору
+
+На всякий случай, отправили Вам на электронную почту ({EmailКарточки}) комплект документов на подпись для сокращения обучения на курсах до {ДатаСокращенияКарточки} (проверьте его, пожалуйста, если все правильно, подпишите и отправьте скан на адрес mail@edu-plus.ru)`,
+    `{Приветствие}
+
+Благодарим Вас за сотрудничество и дарим купон на дополнительную скидку в 15% на последующее обучение: {ПартнерскийКупонКарточки}
+
+Данный купон является бессрочным и действует в рамках нашей партнерской программы (https://forms.gle/ArBUi5SB3sw6JHzt6). Вы получите скидку и кэшбэк за свое последующее обучение, а также дополнительный доход от регистраций по купону других слушателей в соответствии с условиями партнерской программы
+
+И еще одна просьба, сможете отправить своим коллегам, знакомым, разместить в своих соцсетях следующую рекомендацию по нашим курсам?
+
+Рекомендую учебный центр Цифровизация Плюс (https://edu-plus.ru?utm_source={СсылкаРекомендации})
+
+Повышение квалификации, переподготовка, отличный сервис, качество обучения и оперативность.
+
+Вот купон на дополнительную скидку в 15% на программы повышения квалификации и переподготовки: {ПартнерскийКупонКарточки}`,
+    `{Приветствие}
+
+Ваш срок обучения по программе {ПрограммаКарточки} подошел к концу - {ДатаОкончанияКарточки}, но программа не освоена в полном объеме.
+
+Предлагаем Вам на выбор два варианта:
+1) Бесплатно продлить срок обучения до {ДатаСокращенияКарточки}, заключив дополнительное соглашение к договору (не более 1 раза, затем ПЛАТНО 1000 руб. за каждое последующее продление).
+2) Отчислить Вас без выдачи документа об образовании с последующей возможностью бесплатного восстановления (не более 1 раза, затем ПЛАТНО 1000 руб. за каждое последующее восстановление)
+
+На всякий случай, отправили Вам на электронную почту ({EmailКарточки}) комплект документов на подпись для продления обучения на курсах до {ДатаСокращенияКарточки} (проверьте его, пожалуйста, если все правильно, подпишите и отправьте скан на адрес mail@edu-plus.ru)
+
+Платное продление возможно не более двух раз, затем полная оплата курса с заключением нового договора`,
+    `{Приветствие}
+
+Ваш срок обучения по программе {ПрограммаКарточки} подошел к концу - {ДатаОкончанияКарточки}, но программа ПОВТОРНО не освоена в полном объеме.
+
+Предлагаем Вам на выбор два варианта:
+1) ПЛАТНО продлить срок обучения до {ДатаСокращенияКарточки}, заключив дополнительное соглашение к договору (платно 1000 руб. за каждое продление).
+2) Отчислить Вас без выдачи документа об образовании с последующей возможностью ПЛАТНОГО восстановления (платно 1000 руб. за каждое последующее восстановление)
+
+Ссылка на оплату: {СсылкаОплатыПродления}
+
+Платное продление возможно не более двух раз, затем полная оплата курса с заключением нового договора`,
+    `{Приветствие}
+
+Отправляем Вам ссылку для участия в мероприятии {ПрограммаКарточки} - {СсылкаПрограммыКарточки}
+
+Отправляем Вам электронный сертификат сюда и на электронную почту ({EmailКарточки}) вместе с записью вебинара
+
+Большая просьба оставить отзыв, можно написать сюда и прикрепить фотографию (или можем взять из Вашего профиля в вацапе) и мы с Вашего разрешения опубликуем его на странице вебинара
+
+Также просим заполнить анкету по адресу {СсылкаАнкеты}
+
+Подписывайтесь на наши группы в Телеграм (https://t.me/zifra_plus) и Вконтакте (https://vk.com/zifra_plus)
+
+С уважением, Симак Роман Сергеевич`
+  ];
+  const studentCommunicationTemplateFields = [
+    "Приветствие", "ПереченьДокументов", "ОпцияБезДокумента", "ДокументПослеОбучения",
+    "НапоминаниеОбОплате", "ДокументОбОбразовании", "ТрекКодБлок", "СсылкаРекомендации",
+    "ИтогПослеОбучения", "СсылкаАнкеты", "СсылкаОплаты", "СсылкаОплатыПродления"
+  ];
+  const studentCommunicationTemplateCardFields = [
+    "ФИОКарточки", "ПрограммаКарточки", "EmailКарточки", "АдресОтправкиКарточки",
+    "ТрекКодКарточки", "ПартнерскийКупонКарточки", "ДнейДоОкончанияКарточки",
+    "ДатаОкончанияКарточки", "ДатаОкончанияПрописьюКарточки", "ДатаСокращенияКарточки",
+    "СсылкаПрограммыКарточки"
+  ];
+  const studentCommunicationTemplateEditableFields = [
+    ...studentCommunicationTemplateFields,
+    ...studentCommunicationTemplateCardFields
+  ];
+  const studentCommunicationTemplateFieldFormulaDefaults = {
+    Приветствие: "{{если:ЕстьИмяОтчество}}Здравствуйте, {ИмяОтчество}!{{иначе}}Здравствуйте!{{конец}}",
+    ПереченьДокументов: `{{если:ДПО}}- скан паспорта с пропиской
+- СНИЛС (для граждан РФ)
+- скан документа о высшем или среднем профессиональном образовании с приложением (скан диплома)
+- сведения о месте работы и занимаемой должности (в простой текстовой форме для целей госстатистики, если не указали при подаче заявки)
+- документы о перемене ФИО, если данные в дипломе не совпадают с паспортом
+- сведения о почтовом адресе фактического места жительства с индексом (для отправки документов)
+
+Данные документы нужны для заключения договора и включения сведений в федеральный государственный реестр документов об образовании (ФРДО) по окончании Вашего обучения{{иначе}}- скан паспорта с пропиской
+- сведения о почтовом адресе фактического места жительства с индексом
+
+Данные документы нужны для заключения договора с последующей выдачей документа об образовании{{конец}}`,
+    ОпцияБезДокумента: `{{если:ДПО}}{{иначе}}
+
+Вы можете не предоставлять данные документы, в случае отсутствия необходимости получения документа об образовании
+
+Какой вариант Вам подходит, с выдачей документа или без выдачи?{{конец}}`,
+    ДокументПослеОбучения: `{{если:ДПО}}для согласования макет документа об образовании (проверьте, пожалуйста, личные данные){{иначе}}электронный документ об образовании
+
+Большая просьба оставить отзыв о пройденном курсе по следующей ссылке {СсылкаАнкеты}{{конец}}`,
+    НапоминаниеОбОплате: `{{если:ЕстьОстатокОплаты}}
+
+Также напоминаем, что Вам нужно внести остаток оплаты за обучение {ОстатокОплаты} руб. по следующей ссылке - {СсылкаОплаты}{{конец}}`,
+    ДокументОбОбразовании: "{{если:ДПО}}Отправляем Вам скан документа об образовании. Оригинал отправим по адресу: {АдресОтправкиКарточки}{{иначе}}Отправляем Вам электронный документ об образовании{{конец}}",
+    ТрекКодБлок: `{{если:ЕстьТрекКод}}
+
+Трек-код: {ТрекКодКарточки}
+
+Для отслеживания почтового отправления рекомендуется установить приложение Почты России - http://play.google.com/store/apps/details?id=com.octopod.russianpost.client.android{{конец}}`,
+    СсылкаРекомендации: "{РеферальныйКод}",
+    ИтогПослеОбучения: "{{если:ДПО}}После выполнения всех заданий и прохождения итоговой аттестации по окончанию срока обучения направим Вам макет документа об образовании для согласования{{иначе}}После выполнения всех заданий и прохождения итоговой аттестации по окончанию срока обучения направим электронный документ об образовании{{конец}}",
+    СсылкаАнкеты: "https://forms.gle/1EcHf4VwVB7rF1e6A",
+    СсылкаОплаты: "https://yookassa.ru/my/i/Z85l1c4uVDu_/l",
+    СсылкаОплатыПродления: "https://yookassa.ru/my/i/Zqknfk2aqFoq/l",
+    ФИОКарточки: "{ФИОКарточки}",
+    ПрограммаКарточки: "{ПрограммаКарточки}",
+    EmailКарточки: "{EmailКарточки}",
+    АдресОтправкиКарточки: "{АдресОтправкиКарточки}",
+    ТрекКодКарточки: "{ТрекКодКарточки}",
+    ПартнерскийКупонКарточки: "{ПартнерскийКупонКарточки}",
+    ДнейДоОкончанияКарточки: "{ДнейДоОкончанияКарточки}",
+    ДатаОкончанияКарточки: "{ДатаОкончанияКарточки}",
+    ДатаОкончанияПрописьюКарточки: "{ДатаОкончанияПрописьюКарточки}",
+    ДатаСокращенияКарточки: "{ДатаСокращенияКарточки}",
+    СсылкаПрограммыКарточки: "{СсылкаПрограммыКарточки}"
+  };
+  const communicationTemplateFieldAliasMap = {
+    ФИО: "ФИОКарточки",
+    ФИОИсходное: "ФИОКарточки",
+    Программа: "ПрограммаКарточки",
+    ПрограммаИсходная: "ПрограммаКарточки",
+    Email: "EmailКарточки",
+    EmailИсходный: "EmailКарточки",
+    АдресОтправки: "АдресОтправкиКарточки",
+    АдресОтправкиИсходный: "АдресОтправкиКарточки",
+    ТрекКод: "ТрекКодКарточки",
+    ТрекКодИсходный: "ТрекКодКарточки",
+    ПартнерскийКупон: "ПартнерскийКупонКарточки",
+    ПартнерскийКупонИсходный: "ПартнерскийКупонКарточки",
+    ДнейДоОкончания: "ДнейДоОкончанияКарточки",
+    ДнейДоОкончанияИсходное: "ДнейДоОкончанияКарточки",
+    ДатаОкончания: "ДатаОкончанияКарточки",
+    ДатаОкончанияИсходная: "ДатаОкончанияКарточки",
+    ДатаОкончанияПрописью: "ДатаОкончанияПрописьюКарточки",
+    ДатаОкончанияПрописьюИсходная: "ДатаОкончанияПрописьюКарточки",
+    ДатаСокращения: "ДатаСокращенияКарточки",
+    ДатаСокращенияИсходная: "ДатаСокращенияКарточки",
+    СсылкаПрограммы: "СсылкаПрограммыКарточки",
+    СсылкаПрограммыИсходная: "СсылкаПрограммыКарточки",
+    СсылкаАнкетыИсходная: "СсылкаАнкеты",
+    СсылкаОплатыИсходная: "СсылкаОплаты",
+    СсылкаОплатыПродленияИсходная: "СсылкаОплатыПродления"
+  };
   const defaultPhotoServerOrigin = "http://localhost:8080";
   const financeMetrics = [
     { key: "revenue", label: "Поступления", tone: "income" },
@@ -135,6 +343,7 @@
         field("duration", "Срок"),
         field("landingCode", "Код лендинга"),
         field("promoSite", "На промо сайте"),
+        field("gradeReportUrl", "Ссылка на отчет по оценкам"),
         field("groupIndex", "Индекс группы"),
         field("studyForm", "Форма обучения", "select", false, "studyForms"),
         field("qualification", "Квалификация"),
@@ -248,6 +457,31 @@
       table: ["name", "email", "role", "status", "lastLogin"]
     }
   };
+
+  const studentCommunicationMessages = [
+    { key: "note1", source: "Примечание1", label: "Документы для зачисления" },
+    { key: "note2", source: "Примечание2", label: "Документы на подпись" },
+    { key: "note3", source: "Примечание3", label: "Завершение обучения" },
+    { key: "note4", source: "Примечание4", label: "Скан документа" },
+    { key: "note5", source: "Примечание5а", label: "Отправка оригинала" },
+    { key: "note6", source: "Примечание6", label: "Скидка и рекомендация" },
+    { key: "note7", source: "Примечание7", label: "Скорое окончание" },
+    { key: "note8", source: "Примечание8", label: "Сокращение срока" },
+    { key: "note9", source: "Примечание9", label: "Партнерская программа" },
+    { key: "note10", source: "Примечание10", label: "Бесплатное продление" },
+    { key: "note11", source: "Примечание11", label: "Платное продление" },
+    { key: "note12", source: "Примечание12", label: "Вебинар и сертификат" }
+  ];
+  const studentCommunicationContactFields = [
+    field("phone", "Телефон обучающегося"),
+    field("email", "Email"),
+    field("telegram", "Аккаунт Telegram"),
+    field("whatsapp", "WhatsApp"),
+    field("messengerUrl", "Адрес мессенджера"),
+    field("customer", "Заказчик"),
+    field("customerPhone", "Телефон заказчика"),
+    field("customerEmail", "Email заказчика")
+  ];
 
   const studentCardTabs = [
     {
@@ -368,25 +602,9 @@
       label: "Коммуникации",
       sections: [
         {
-          title: "Контакты",
-          fields: [
-            field("phone", "Телефон обучающегося"),
-            field("email", "Email"),
-            field("telegram", "Аккаунт Telegram"),
-            field("whatsapp", "WhatsApp"),
-            field("messengerUrl", "Адрес мессенджера"),
-            field("customer", "Заказчик"),
-            field("customerPhone", "Телефон заказчика"),
-            field("customerEmail", "Email заказчика")
-          ]
-        },
-        {
-          title: "Сообщения",
-          fields: [
-            field("messageLogin", "Сообщение с логином", "textarea"),
-            field("lastMessage", "Последнее сообщение", "textarea"),
-            field("communicationNotes", "Примечания", "textarea")
-          ]
+          title: "Типовые сообщения",
+          messageGrid: true,
+          fields: studentCommunicationMessages.map((message) => field(message.key, message.label, "textarea"))
         }
       ]
     },
@@ -521,7 +739,7 @@
     { key: "certificateSent", label: "Отправлена справка об обучении" }
   ];
 
-  const visibleStudentCardTabs = studentCardTabs.filter((tab) => ["main", "documents"].includes(tab.id));
+  const visibleStudentCardTabs = studentCardTabs.filter((tab) => ["main", "documents", "communications"].includes(tab.id));
   const studentCardFields = studentCardTabs.flatMap((tab) => tab.sections.flatMap((section) => section.fields));
   const studentSideFields = [
     field("note", "Примечание", "textarea"),
@@ -551,6 +769,7 @@
     field("photoUrl", "URL фото"),
     ...studentSideFields,
     ...studentEventFields,
+    ...studentCommunicationContactFields,
     ...studentCardFields,
     ...paymentFields,
     ...expenseFields
@@ -568,6 +787,7 @@
     dictionarySearch: "",
     selectedDictionary: "",
     dictionaryAddFocus: "",
+    communicationTemplateFieldSort: "asc",
     financeChart: { revenue: true, direct: true, general: true },
     modal: null,
     data: loadState()
@@ -575,6 +795,7 @@
   let sidebarOutsideClickBound = false;
   let fieldUndoKeyBound = false;
   let lastDeletedControlState = null;
+  const communicationTemplateEditorHistories = new WeakMap();
 
   const transliterationPairs = [
     ["А", "A"], ["Б", "B"], ["В", "V"], ["Г", "G"], ["Д", "D"], ["Е", "E"], ["Ё", "Yo"], ["Ж", "Zh"],
@@ -644,15 +865,129 @@
     Object.entries(dictionaryDefaults).forEach(([key, values]) => {
       data.dictionaries[key] = unique([...(data.dictionaries[key] || []), ...values]);
     });
+    data.dictionaries.communicationTemplates = normalizeCommunicationTemplates(data.dictionaries.communicationTemplates);
+    data.dictionaries.communicationTemplateDescriptions = normalizeCommunicationTemplateDescriptions(
+      data.dictionaries.communicationTemplateDescriptions
+    );
+    data.dictionaries.communicationTemplateFieldOverrides = normalizeCommunicationTemplateFieldOverrides(
+      data.dictionaries.communicationTemplateFieldOverrides
+    );
+    data.dictionaries.communicationTemplateCustomFields = normalizeCommunicationTemplateCustomFields(
+      data.dictionaries.communicationTemplateCustomFields
+    );
     data.collections = data.collections || {};
+    data.collections.students = (data.collections.students || []).map((student) => normalizeStudentRecord(student));
     data.collections.programs = (data.collections.programs || []).map((program) => normalizeProgramRecord(program));
     return data;
   }
 
+  function normalizeCommunicationTemplates(values) {
+    const saved = Array.isArray(values) ? values : [];
+    return studentCommunicationTemplateDefaults.map((template, index) => (
+      replaceCommunicationTemplateFieldAliases(String(saved[index] ?? template))
+    ));
+  }
+
+  function normalizeCommunicationTemplateDescriptions(values) {
+    const saved = Array.isArray(values) ? values : [];
+    return studentCommunicationMessages.map((message, index) => String(saved[index] ?? message.label));
+  }
+
+  function normalizeCommunicationTemplateFieldOverrides(values) {
+    if (!values || typeof values !== "object" || Array.isArray(values)) return {};
+    return Object.fromEntries(Object.entries(values)
+      .map(([name, formula]) => [
+        getCommunicationTemplateFieldAlias(normalizeCommunicationTemplateFieldName(name)),
+        replaceCommunicationTemplateFieldAliases(String(formula ?? ""))
+      ])
+      .filter(([name]) => name));
+  }
+
+  function normalizeCommunicationTemplateCustomFields(values) {
+    if (!Array.isArray(values)) return [];
+    const builtInNames = new Set(studentCommunicationTemplateEditableFields);
+    const seen = new Set();
+    return values.reduce((result, field) => {
+      const name = normalizeCommunicationTemplateFieldName(field?.name);
+      if (!name || builtInNames.has(name) || seen.has(name)) return result;
+      const formula = replaceCommunicationTemplateFieldAliases(String(field?.formula ?? ""));
+      result.push({
+        name,
+        formula,
+        initialFormula: replaceCommunicationTemplateFieldAliases(String(field?.initialFormula ?? formula))
+      });
+      seen.add(name);
+      return result;
+    }, []);
+  }
+
+  function normalizeCommunicationTemplateFieldName(value) {
+    return String(value || "").replace(/[{}]/g, "").trim();
+  }
+
+  function getCommunicationTemplateFieldAlias(name) {
+    return communicationTemplateFieldAliasMap[name] || name;
+  }
+
+  function replaceCommunicationTemplateFieldAliases(value) {
+    return String(value || "").replace(/\{([^{}]+)\}/g, (match, fieldName) => {
+      const alias = getCommunicationTemplateFieldAlias(fieldName.trim());
+      return alias ? `{${alias}}` : match;
+    });
+  }
+
+  function getCommunicationTemplateFieldDefinitions() {
+    const overrides = normalizeCommunicationTemplateFieldOverrides(
+      state.data.dictionaries.communicationTemplateFieldOverrides
+    );
+    const builtIns = studentCommunicationTemplateEditableFields.map((name) => ({
+      name,
+      formula: Object.prototype.hasOwnProperty.call(overrides, name)
+        ? overrides[name]
+        : studentCommunicationTemplateFieldFormulaDefaults[name] || `{${name}}`,
+      initialFormula: studentCommunicationTemplateFieldFormulaDefaults[name] || `{${name}}`,
+      custom: false
+    }));
+    const customFields = normalizeCommunicationTemplateCustomFields(
+      state.data.dictionaries.communicationTemplateCustomFields
+    ).map((field) => ({
+      ...field,
+      formula: Object.prototype.hasOwnProperty.call(overrides, field.name) ? overrides[field.name] : field.formula,
+      custom: true
+    }));
+    return [...builtIns, ...customFields];
+  }
+
+  function sortCommunicationTemplateFieldDefinitions(fields, order = "asc") {
+    const direction = order === "desc" ? -1 : 1;
+    return [...fields].sort((a, b) => (
+      direction * String(a.name || "").localeCompare(String(b.name || ""), "ru", {
+        numeric: true,
+        sensitivity: "base"
+      })
+    ));
+  }
+
+  function normalizeStudentRecord(student) {
+    if (!student || typeof student !== "object") return student;
+    const normalized = { ...student };
+    studentCommunicationMessages.forEach((message, index) => {
+      if (String(normalized[message.key] || "").trim()) return;
+      const number = index + 1;
+      const importedValue = [
+        student[message.source],
+        student[`Примечание${number}`],
+        student[`Примечание ${number}`]
+      ].find((value) => String(value || "").trim());
+      if (importedValue !== undefined) normalized[message.key] = importedValue;
+    });
+    return normalized;
+  }
+
   function normalizeProgramRecord(program) {
     if (!program || typeof program !== "object") return program;
-    if (program.promoSite) return program;
     const promoSite = [
+      program.promoSite,
       program["На промо сайте"],
       program["Промосайт"],
       program["Промо сайт"],
@@ -661,7 +996,17 @@
       program.landingUrl,
       program.siteUrl
     ].find((value) => String(value || "").trim());
-    return promoSite ? { ...program, promoSite } : program;
+    const gradeReportUrl = [
+      program.gradeReportUrl,
+      program["Ссылка на отчет по оценкам"],
+      program.reportUrl,
+      program.gradeUrl
+    ].find((value) => String(value || "").trim());
+    return {
+      ...program,
+      ...(promoSite ? { promoSite } : {}),
+      ...(gradeReportUrl ? { gradeReportUrl } : {})
+    };
   }
 
   function persist() {
@@ -704,6 +1049,8 @@
   }
 
   function render() {
+    hideCommunicationTemplateFieldMenu();
+    document.querySelector("[data-communication-template-field-dialog]")?.remove();
     const current = navItems.find((item) => item.id === state.view) || navItems[0];
     app.innerHTML = `
       <aside class="sidebar">
@@ -1271,6 +1618,11 @@
   function renderSettings() {
     const dictionaries = state.data.dictionaries;
     const dictionaryItems = Object.keys(dictionaries)
+      .filter((key) => ![
+        "communicationTemplateDescriptions",
+        "communicationTemplateFieldOverrides",
+        "communicationTemplateCustomFields"
+      ].includes(key))
       .map((key) => ({ key, title: dictionaryTitle(key), values: dictionaries[key] || [] }))
       .sort((a, b) => a.title.localeCompare(b.title, "ru"));
     const query = state.dictionarySearch.trim().toLowerCase();
@@ -1285,6 +1637,8 @@
     if (state.selectedDictionary !== selectedKey) state.selectedDictionary = selectedKey;
     const selectedItem = dictionaryItems.find((item) => item.key === selectedKey);
     const selectedValues = selectedItem?.values || [];
+    const isCommunicationTemplates = selectedKey === "communicationTemplates";
+    const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     return `
       <section class="panel">
         <div class="section-head">
@@ -1308,7 +1662,7 @@
               `).join("") : `<div class="empty-state compact"><span>Справочники не найдены</span></div>`}
             </div>
           </aside>
-          <section class="dictionary-detail">
+          <section class="dictionary-detail ${isCommunicationTemplates ? "is-communication-templates" : ""}">
             ${selectedItem ? `
               <div class="dictionary-detail-head">
                 <div>
@@ -1316,28 +1670,119 @@
                   <h3>${escapeHtml(selectedItem.title)}</h3>
                 </div>
                 <div class="dictionary-detail-actions">
-                  <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
-                  <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
+                  ${isCommunicationTemplates ? `
+                    <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "asc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="asc" type="button" title="Сортировать поля по алфавиту" aria-label="Сортировать поля по алфавиту" aria-pressed="${communicationTemplateFieldSortOrder === "asc" ? "true" : "false"}">А→Я</button>
+                    <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "desc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="desc" type="button" title="Сортировать поля против алфавита" aria-label="Сортировать поля против алфавита" aria-pressed="${communicationTemplateFieldSortOrder === "desc" ? "true" : "false"}">Я→А</button>
+                  ` : `
+                    <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
+                    <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
+                  `}
                   <span>${selectedValues.length}</span>
                 </div>
               </div>
-              <form class="inline-form dictionary-add-form" data-action="dict-add" data-dict="${selectedKey}">
-                <input name="value" placeholder="Новое значение или список из буфера обмена" autocomplete="off" data-dictionary-add-input>
-                <button class="ghost-button" type="submit">Добавить</button>
-              </form>
-              <div class="chips dictionary-detail-values" data-dictionary-values data-dict="${selectedKey}">
-                ${selectedValues.length ? selectedValues.map((value) => `
-                  <span class="chip dictionary-value-chip" draggable="true" data-dict="${selectedKey}" data-value="${escapeAttr(value)}" title="Перетащите, чтобы изменить порядок">
-                    ${escapeHtml(value)}
-                    <button data-action="dict-remove" data-dict="${selectedKey}" data-value="${escapeAttr(value)}" type="button">×</button>
-                  </span>
-                `).join("") : `<span class="lookup-empty">Значений пока нет</span>`}
-              </div>
+              ${isCommunicationTemplates ? renderCommunicationTemplateDictionary(selectedValues) : `
+                <form class="inline-form dictionary-add-form" data-action="dict-add" data-dict="${selectedKey}">
+                  <input name="value" placeholder="Новое значение или список из буфера обмена" autocomplete="off" data-dictionary-add-input>
+                  <button class="ghost-button" type="submit">Добавить</button>
+                </form>
+                <div class="chips dictionary-detail-values" data-dictionary-values data-dict="${selectedKey}">
+                  ${selectedValues.length ? selectedValues.map((value) => `
+                    <span class="chip dictionary-value-chip" draggable="true" data-dict="${selectedKey}" data-value="${escapeAttr(value)}" title="Перетащите, чтобы изменить порядок">
+                      ${escapeHtml(value)}
+                      <button data-action="dict-remove" data-dict="${selectedKey}" data-value="${escapeAttr(value)}" type="button">×</button>
+                    </span>
+                  `).join("") : `<span class="lookup-empty">Значений пока нет</span>`}
+                </div>
+              `}
             ` : `<div class="empty-state"><span>Выберите справочник</span></div>`}
           </section>
         </div>
       </section>
     `;
+  }
+
+  function renderCommunicationTemplateDictionary(values) {
+    const templates = normalizeCommunicationTemplates(values);
+    const descriptions = normalizeCommunicationTemplateDescriptions(
+      state.data.dictionaries.communicationTemplateDescriptions
+    );
+    const fieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
+    const templateFields = sortCommunicationTemplateFieldDefinitions(
+      getCommunicationTemplateFieldDefinitions(),
+      fieldSortOrder
+    );
+    return `
+      <form class="communication-template-form" data-action="save-communication-templates">
+        <div class="communication-template-fields">
+          <div class="communication-template-fields-head">
+            <strong>Доступные поля</strong>
+            <button class="communication-template-field-add" data-action="add-communication-template-field" type="button" title="Добавить поле" aria-label="Добавить поле">+</button>
+          </div>
+          <div class="communication-template-field-list">${templateFields.map((field) => {
+            return renderCommunicationTemplateFieldToken(field, "Перетащите поле в текст сообщения. Нажмите правой кнопкой мыши для настройки");
+          }).join("")}</div>
+        </div>
+        <div class="communication-template-list">
+          ${studentCommunicationMessages.map((message, index) => `
+            <section class="communication-template-item">
+              <label class="communication-template-item-head">
+                <strong>Сообщение ${index + 1}</strong>
+                <input name="description${index}" value="${escapeAttr(descriptions[index])}" placeholder="Краткое описание" />
+              </label>
+              <div
+                class="communication-template-editor"
+                contenteditable="true"
+                data-template-editor
+                data-template-index="${index}"
+                role="textbox"
+                aria-label="${escapeAttr(`Текст сообщения ${index + 1}`)}"
+                aria-multiline="true"
+              >${renderCommunicationTemplateEditorContent(templates[index])}</div>
+              <input name="template${index}" value="${escapeAttr(templates[index])}" type="hidden" />
+            </section>
+          `).join("")}
+        </div>
+        <div class="communication-template-actions">
+          <button class="ghost-button" data-action="reset-communication-templates" type="button">Восстановить исходные</button>
+          <button class="primary-button" type="submit">Сохранить шаблоны</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderCommunicationTemplateEditorContent(template) {
+    const availableFields = new Set(getCommunicationTemplateFieldDefinitions().map((field) => field.name));
+    return String(template || "")
+      .split(/(\{[^{}]+\})/g)
+      .map((part) => {
+        const fieldName = part.slice(1, -1);
+        if (!/^\{[^{}]+\}$/.test(part) || !availableFields.has(fieldName)) return escapeHtml(part);
+        return `<span class="communication-template-block" contenteditable="false" data-template-token="${escapeAttr(part)}" data-template-field-name="${escapeAttr(fieldName)}" draggable="true" title="Нажмите правой кнопкой мыши для настройки поля">${escapeHtml(part)}</span>`;
+      })
+      .join("");
+  }
+
+  function renderCommunicationTemplateFormulaEditorContent(formula) {
+    const availableFields = new Set(getCommunicationTemplateFieldDefinitions().map((field) => field.name));
+    return String(formula || "")
+      .split(/(\{\{[\s\S]*?\}\}|\{[^{}]+\})/g)
+      .map((part) => {
+        if (/^\{\{[^{}]+\}\}$/.test(part)) {
+          const isElse = part === "{{иначе}}";
+          const isEnd = part === "{{конец}}";
+          const tone = isElse || isEnd ? "keyword" : "condition";
+          return `<span class="communication-template-formula-syntax is-${tone}">${escapeHtml(part)}</span>`;
+        }
+        const fieldName = part.slice(1, -1);
+        if (!/^\{[^{}]+\}$/.test(part) || !availableFields.has(fieldName)) return escapeHtml(part);
+        return `<span class="communication-template-block" contenteditable="false" data-template-token="${escapeAttr(part)}" data-template-field-name="${escapeAttr(fieldName)}" draggable="true" title="Нажмите правой кнопкой мыши для настройки поля">${escapeHtml(part)}</span>`;
+      })
+      .join("");
+  }
+
+  function renderCommunicationTemplateFieldToken(field, title = "Перетащите поле. Нажмите правой кнопкой мыши для настройки") {
+    const token = `{${field.name}}`;
+    return `<button class="communication-template-token communication-template-field-token ${field.custom ? "is-custom" : ""}" data-template-token="${escapeAttr(token)}" data-template-field-name="${escapeAttr(field.name)}" draggable="true" type="button" title="${escapeAttr(title)}">${escapeHtml(token)}</button>`;
   }
 
   function renderAdmin() {
@@ -1485,7 +1930,7 @@
                     </button>
                   `).join("")}
                 </div>
-                <div class="student-tab-body ${activeTab.id === "documents" ? "student-documents-tab" : ""}">
+                <div class="student-tab-body ${activeTab.id === "documents" ? "student-documents-tab" : ""} ${activeTab.id === "communications" ? "student-communications-tab" : ""}">
                   ${renderStudentTabContent(activeTab, record)}
                 </div>
               </section>
@@ -1552,14 +1997,80 @@
           </div>
           ${tab.id === "main" && section.fields.some((item) => item.key === "name")
             ? renderStudentMainIdentity(section, record)
+            : section.messageGrid
+              ? renderStudentCommunicationMessages(section, record)
             : `<div class="student-form-grid">${section.fields.map((item) => renderStudentField(item, record)).join("")}</div>`}
         </section>
       `).join("")}
       ${tab.payments ? renderPaymentRows(record) : ""}
       ${tab.expenses ? renderExpenseRows(record) : ""}
       ${tab.expenses ? renderLinkedExpenses(record) : ""}
-      ${tab.id === "communications" ? renderCommunicationActions(record) : ""}
     `;
+  }
+
+  function renderStudentCommunicationMessages(section, record) {
+    const generatedMessages = generateStudentCommunicationMessages(record);
+    const descriptions = normalizeCommunicationTemplateDescriptions(
+      state.data.dictionaries.communicationTemplateDescriptions
+    );
+    return `
+      <div class="communication-message-grid">
+        ${section.fields.map((item, index) => {
+          const message = studentCommunicationMessages.find((entry) => entry.key === item.key);
+          const source = message?.source || `Примечание${index + 1}`;
+          const label = descriptions[index] || message?.label || item.label;
+          const generatedValue = generatedMessages[item.key] || "";
+          const value = record[item.key] || generatedValue;
+          const isCustomized = String(record[item.key] || "") !== "" && String(record[item.key]) !== String(generatedValue);
+          return `
+            <article class="communication-message-card ${isCustomized ? "is-customized" : ""}">
+              <div class="communication-message-head">
+                <strong>Сообщение ${index + 1}</strong>
+                <span title="${escapeAttr(label)}">${escapeHtml(label)}</span>
+              </div>
+              <textarea
+                name="${item.key}"
+                data-communication-message="${item.key}"
+                data-generated-message="${escapeAttr(encodeURIComponent(generatedValue))}"
+                placeholder="${escapeAttr(`Значение из столбца ${source}`)}"
+                readonly
+              >${escapeHtml(value)}</textarea>
+              <div class="communication-message-menu" role="menu" aria-label="${escapeAttr(`Действия для сообщения ${index + 1}`)}">
+                <button data-action="copy-communication-message" data-message-key="${item.key}" type="button">
+                  ${renderCommunicationActionIcon("copy")}
+                  <span>Копировать</span>
+                </button>
+                <button data-action="edit-communication-message" data-message-key="${item.key}" type="button">
+                  ${renderCommunicationActionIcon("edit")}
+                  <span>Редактировать</span>
+                </button>
+                <button data-action="restore-communication-message" data-message-key="${item.key}" type="button">
+                  ${renderCommunicationActionIcon("restore")}
+                  <span>Восстановить</span>
+                </button>
+                <button data-action="email-communication-message" data-message-key="${item.key}" type="button">
+                  ${renderCommunicationActionIcon("mail")}
+                  <span>Отправить по почте</span>
+                </button>
+              </div>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    `;
+  }
+
+  function renderCommunicationActionIcon(action) {
+    if (action === "edit") {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m14 5 5 5"></path><path d="M4 20h5L19 10a3.5 3.5 0 0 0-5-5L4 15z"></path></svg>`;
+    }
+    if (action === "mail") {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m4 7 8 6 8-6"></path></svg>`;
+    }
+    if (action === "restore") {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v6h6"></path></svg>`;
+    }
+    return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="10" height="10" rx="2"></rect><path d="M5 15V7a2 2 0 0 1 2-2h8"></path></svg>`;
   }
 
   function renderStudentMainIdentity(section, record) {
@@ -2512,20 +3023,265 @@
     `;
   }
 
-  function renderCommunicationActions(record) {
-    const phone = String(record.phone || "").replace(/[^\d+]/g, "");
-    const telegram = record.telegram ? String(record.telegram).replace("@", "") : "";
-    return `
-      <section class="form-section">
-        <h3>Быстрые действия</h3>
-        <div class="quick-actions">
-          <a class="ghost-button" href="${phone ? `tel:${phone}` : "#"}">Позвонить</a>
-          <a class="ghost-button" href="${record.email ? `mailto:${escapeAttr(record.email)}` : "#"}">Email</a>
-          <a class="ghost-button" href="${phone ? `whatsapp://send?phone=${encodeURIComponent(phone.replace("+", ""))}` : "#"}" target="_blank" rel="noreferrer">WhatsApp</a>
-          <a class="ghost-button" href="${telegram ? `https://t.me/${escapeAttr(telegram)}` : "#"}" target="_blank" rel="noreferrer">Telegram</a>
-        </div>
-      </section>
-    `;
+  function generateStudentCommunicationMessages(record) {
+    const greeting = getStudentCommunicationGreeting(record);
+    const program = String(record.program || "").trim() || "образовательной программе";
+    const email = String(record.email || "").trim() || "Email не указан";
+    const mailingAddress = String(record.mailingAddress || "").trim() || "указанный Вами почтовый адрес";
+    const postalTrack = String(record.postalTrack || "").trim();
+    const isDpo = isStudentDpoProgram(record);
+    const surveyUrl = "https://forms.gle/1EcHf4VwVB7rF1e6A";
+    const paymentUrl = "https://yookassa.ru/my/i/Z85l1c4uVDu_/l";
+    const extensionPaymentUrl = "https://yookassa.ru/my/i/Zqknfk2aqFoq/l";
+    const reportUrl = getStudentProgramMessageLink(record);
+    const endDate = formatStudentCommunicationDate(getStudentCommunicationEndDate(record)) || "согласованного срока";
+    const endDateLong = formatStudentCommunicationLongDate(getStudentCommunicationEndDate(record)) || "согласованного срока";
+    const reductionDate = formatStudentCommunicationDate(getStudentCommunicationReductionDate(record));
+    const reductionDeadline = reductionDate || "согласованного с Вами срока";
+    const daysLeft = getStudentCommunicationDaysLeft(record);
+    const referralCode = getStudentReferralCode(record);
+    const partnerCoupon = String(record.partnerCoupon || record.coupon || referralCode.toUpperCase()).trim();
+    const balance = Number(record.balance || 0);
+    const balanceReminder = balance > 0
+      ? `\n\nТакже напоминаем, что Вам нужно внести остаток оплаты за обучение ${balance} руб. по следующей ссылке - ${paymentUrl}`
+      : "";
+    const postalTrackBlock = postalTrack
+      ? `\n\nТрек-код: ${postalTrack}\n\nДля отслеживания почтового отправления рекомендуется установить приложение Почты России - http://play.google.com/store/apps/details?id=com.octopod.russianpost.client.android`
+      : "";
+    const documents = isDpo
+      ? "- скан паспорта с пропиской\n- СНИЛС (для граждан РФ)\n- скан документа о высшем или среднем профессиональном образовании с приложением (скан диплома)\n- сведения о месте работы и занимаемой должности (в простой текстовой форме для целей госстатистики, если не указали при подаче заявки)\n- документы о перемене ФИО, если данные в дипломе не совпадают с паспортом\n- сведения о почтовом адресе фактического места жительства с индексом (для отправки документов)\n\nДанные документы нужны для заключения договора и включения сведений в федеральный государственный реестр документов об образовании (ФРДО) по окончании Вашего обучения"
+      : "- скан паспорта с пропиской\n- сведения о почтовом адресе фактического места жительства с индексом\n\nДанные документы нужны для заключения договора с последующей выдачей документа об образовании";
+    const noEducationDocumentOption = isDpo
+      ? ""
+      : "\n\nВы можете не предоставлять данные документы, в случае отсутствия необходимости получения документа об образовании\n\nКакой вариант Вам подходит, с выдачей документа или без выдачи?";
+    return renderStudentCommunicationTemplates({
+      ИмяОтчество: getStudentCommunicationAddressee(record),
+      ЕстьИмяОтчество: Boolean(getStudentCommunicationAddressee(record)),
+      ДПО: isDpo,
+      ЕстьОстатокОплаты: balance > 0,
+      ОстатокОплаты: balance,
+      ЕстьТрекКод: Boolean(postalTrack),
+      РеферальныйКод: referralCode,
+      ФИОКарточки: String(record.name || "").trim(),
+      ПрограммаКарточки: program,
+      EmailКарточки: email,
+      АдресОтправкиКарточки: mailingAddress,
+      ТрекКодКарточки: postalTrack,
+      ПартнерскийКупонКарточки: partnerCoupon,
+      ДнейДоОкончанияКарточки: daysLeft,
+      ДатаОкончанияКарточки: endDate,
+      ДатаОкончанияПрописьюКарточки: endDateLong,
+      ДатаСокращенияКарточки: reductionDeadline,
+      СсылкаПрограммыКарточки: reportUrl
+    });
+    /*
+     * Старый встроенный набор строк оставлен ниже как справочная копия формул XLSB.
+     * Рабочие тексты собираются из редактируемого справочника шаблонов выше.
+     */
+    return {
+      note1: `${greeting}\n\nМеня зовут Симак Роман Сергеевич, я представляю учебный центр Цифровизация Плюс.\n\nПолучили от Вас заявку на программу *${program}*, для зачисления необходимо прислать следующие документы:\n${documents}\n\nПришлите, пожалуйста, свои документы на адрес mail@edu-plus.ru, мы в ответ подготовим Вам документы для оформления на обучение (договор, анкета, согласие на обработку персональных данных и т.д.).\n\nДальнейшую переписку предлагаю вести в Телеграмме https://t.me/simakrs или Максе https://max.ru/u/f9LHodD0cOJFNLoo1J-p9xzwXq9NcNpBiO_awFVbsccTG5PS38I_pQg_iPE${noEducationDocumentOption}`,
+      note2: `${greeting}\n\nМеня зовут Симак Роман Сергеевич, я представляю учебный центр Цифровизация Плюс.\n\nОтправили Вам на электронную почту (${email}) комплект документов по курсу *${program}* на подпись для зачисления (письмо могло попасть в спам).\n\nПроверьте его, пожалуйста, если все правильно, подпишите (в местах, выделенных галочкой) и отправьте скан на адрес mail@edu-plus.ru\n\nПодписать можно одним из следующих способов:\n1) Через онлайн-сервис - https://www.ilovepdf.com/ru/sign-pdf (графической подписью)\n2) С помощью сервиса Госключ (после подписи нажать Скачать подпись и отправить ее в ответном сообщении) - https://www.gosuslugi.ru/600373/1/form\n3) От руки\n\nДальнейшую переписку предлагаю вести в Телеграмме https://t.me/simakrs или Максе https://max.ru/u/f9LHodD0cOJFNLoo1J-p9xzwXq9NcNpBiO_awFVbsccTG5PS38I_pQg_iPE`,
+      note3: `${greeting}\n\nПоздравляем Вас с завершением обучения по курсу *${program}* и отправляем сюда и на почту (${email}) ${isDpo ? "для согласования макет документа об образовании (проверьте, пожалуйста, личные данные)" : `электронный документ об образовании\n\nБольшая просьба оставить отзыв о пройденном курсе по следующей ссылке ${surveyUrl}`}${balanceReminder}`,
+      note4: `${greeting}\n\n${isDpo ? `Отправляем Вам скан документа об образовании. Оригинал отправим по адресу: ${mailingAddress}` : "Отправляем Вам электронный документ об образовании"}\n\nБольшая просьба оставить отзыв о пройденном курсе по следующей ссылке ${surveyUrl}`,
+      note5: `${greeting}\n\nОтправили Вам документ об образовании на адрес: ${mailingAddress}${postalTrackBlock}\n\nБольшая просьба оставить отзыв о пройденном курсе по следующей ссылке ${surveyUrl}`,
+      note6: `${greeting}\n\nБлагодарим за сотрудничество и дарим купон на дополнительную скидку в 15% на последующее обучение: NEXT15\n\nИ еще одна просьба, сможете отправить своим коллегам, знакомым, разместить в своих соцсетях следующую рекомендацию по нашим курсам?\n\nРекомендую учебный центр Цифровизация Плюс (https://edu-plus.ru?utm_source=${referralCode})\n\nПовышение квалификации, переподготовка, отличный сервис, качество обучения и оперативность.\n\nВот купон на дополнительную скидку в 10% на программы повышения квалификации и переподготовки: SALE10`,
+      note7: `${greeting}\n\nДо окончания Вашего обучения по курсу *${program}* остается ${daysLeft} дн.\n\nЧтобы успеть выполнить все до ${endDateLong} рекомендуется активизировать учебный процесс.\n\nДля просмотра текущих оценок по всем дисциплинам/модулям можете воспользоваться следующей ссылкой - ${reportUrl}\n\nВам нужно выполнить задания по всем дисциплинам/модулям и затем пройти итоговую аттестацию до окончания обучения (проходной балл - не менее 50%: оценка <удовлетворительно> от 50% до 69%, оценка <хорошо> от 70% до 89%, оценка <отлично> 90% и выше)\n\n${isDpo ? "После выполнения всех заданий и прохождения итоговой аттестации по окончанию срока обучения направим Вам макет документа об образовании для согласования" : "После выполнения всех заданий и прохождения итоговой аттестации по окончанию срока обучения направим электронный документ об образовании"}\n\nС уважением, Симак Роман Сергеевич\nУчебный центр Цифровизация Плюс`,
+      note8: `${greeting}\n\nВы досрочно освоили образовательную программу ${program}.\n\nПредлагаем Вам сократить срок обучения до ${reductionDeadline} (с учетом нормативной продолжительности обучения) для более быстрого получения документа об образовании, заключив дополнительное соглашение к договору\n\nНа всякий случай, отправили Вам на электронную почту (${email}) комплект документов на подпись для сокращения обучения на курсах до ${reductionDeadline} (проверьте его, пожалуйста, если все правильно, подпишите и отправьте скан на адрес mail@edu-plus.ru)`,
+      note9: `${greeting}\n\nБлагодарим Вас за сотрудничество и дарим купон на дополнительную скидку в 15% на последующее обучение: ${partnerCoupon}\n\nДанный купон является бессрочным и действует в рамках нашей партнерской программы (https://forms.gle/ArBUi5SB3sw6JHzt6). Вы получите скидку и кэшбэк за свое последующее обучение, а также дополнительный доход от регистраций по купону других слушателей в соответствии с условиями партнерской программы\n\nИ еще одна просьба, сможете отправить своим коллегам, знакомым, разместить в своих соцсетях следующую рекомендацию по нашим курсам?\n\nРекомендую учебный центр Цифровизация Плюс (https://edu-plus.ru?utm_source=${referralCode})\n\nПовышение квалификации, переподготовка, отличный сервис, качество обучения и оперативность.\n\nВот купон на дополнительную скидку в 15% на программы повышения квалификации и переподготовки: ${partnerCoupon}`,
+      note10: `${greeting}\n\nВаш срок обучения по программе ${program} подошел к концу - ${endDate}, но программа не освоена в полном объеме.\n\nПредлагаем Вам на выбор два варианта:\n1) Бесплатно продлить срок обучения до ${reductionDeadline}, заключив дополнительное соглашение к договору (не более 1 раза, затем ПЛАТНО 1000 руб. за каждое последующее продление).\n2) Отчислить Вас без выдачи документа об образовании с последующей возможностью бесплатного восстановления (не более 1 раза, затем ПЛАТНО 1000 руб. за каждое последующее восстановление)\n\nНа всякий случай, отправили Вам на электронную почту (${email}) комплект документов на подпись для продления обучения на курсах до ${reductionDeadline} (проверьте его, пожалуйста, если все правильно, подпишите и отправьте скан на адрес mail@edu-plus.ru)\n\nПлатное продление возможно не более двух раз, затем полная оплата курса с заключением нового договора`,
+      note11: `${greeting}\n\nВаш срок обучения по программе ${program} подошел к концу - ${endDate}, но программа ПОВТОРНО не освоена в полном объеме.\n\nПредлагаем Вам на выбор два варианта:\n1) ПЛАТНО продлить срок обучения до ${reductionDeadline}, заключив дополнительное соглашение к договору (платно 1000 руб. за каждое продление).\n2) Отчислить Вас без выдачи документа об образовании с последующей возможностью ПЛАТНОГО восстановления (платно 1000 руб. за каждое последующее восстановление)\n\nСсылка на оплату: ${extensionPaymentUrl}\n\nПлатное продление возможно не более двух раз, затем полная оплата курса с заключением нового договора`,
+      note12: `${greeting}\n\nОтправляем Вам ссылку для участия в мероприятии ${program} - ${reportUrl}\n\nОтправляем Вам электронный сертификат сюда и на электронную почту (${email}) вместе с записью вебинара\n\nБольшая просьба оставить отзыв, можно написать сюда и прикрепить фотографию (или можем взять из Вашего профиля в вацапе) и мы с Вашего разрешения опубликуем его на странице вебинара\n\nТакже просим заполнить анкету по адресу ${surveyUrl}\n\nПодписывайтесь на наши группы в Телеграм (https://t.me/zifra_plus) и Вконтакте (https://vk.com/zifra_plus)\n\nС уважением, Симак Роман Сергеевич`
+    };
+  }
+
+  function renderStudentCommunicationTemplates(fields) {
+    const templates = normalizeCommunicationTemplates(state.data.dictionaries.communicationTemplates);
+    return Object.fromEntries(studentCommunicationMessages.map((message, index) => [
+      message.key,
+      applyStudentCommunicationTemplate(templates[index], fields)
+    ]));
+  }
+
+  function applyStudentCommunicationTemplate(template, fields) {
+    const definitions = new Map(getCommunicationTemplateFieldDefinitions().map((field) => [field.name, field]));
+    const resolveFormula = (formula, stack = []) => {
+      let source = resolveStudentCommunicationFormulaConditions(String(formula || ""), fields);
+      source = source.replace(/\{([^{}]+)\}/g, (match, fieldName) => {
+        if (stack.includes(fieldName)) {
+          return Object.prototype.hasOwnProperty.call(fields, fieldName) ? String(fields[fieldName] ?? "") : match;
+        }
+        const definition = definitions.get(fieldName);
+        if (definition) return resolveFormula(definition.formula, [...stack, fieldName]);
+        return Object.prototype.hasOwnProperty.call(fields, fieldName) ? String(fields[fieldName] ?? "") : match;
+      });
+      return resolveStudentCommunicationFormulaConditions(source, fields);
+    };
+    return resolveFormula(template);
+  }
+
+  function resolveStudentCommunicationFormulaConditions(formula, fields) {
+    const pattern = /\{\{если:([^{}]+)\}\}((?:(?!\{\{если:|\{\{конец\}\})[\s\S])*)\{\{конец\}\}/g;
+    let result = String(formula || "");
+    let previous = "";
+    while (result !== previous) {
+      previous = result;
+      result = result.replace(pattern, (match, condition, content) => {
+        const delimiter = content.indexOf("{{иначе}}");
+        const positive = delimiter >= 0 ? content.slice(0, delimiter) : content;
+        const negative = delimiter >= 0 ? content.slice(delimiter + "{{иначе}}".length) : "";
+        return isStudentCommunicationFormulaConditionTrue(condition, fields) ? positive : negative;
+      });
+    }
+    return result;
+  }
+
+  function isStudentCommunicationFormulaConditionTrue(condition, fields) {
+    const normalized = String(condition || "").trim();
+    const inverted = normalized.startsWith("!");
+    const fieldName = inverted ? normalized.slice(1).trim() : normalized;
+    const value = fields[fieldName];
+    const truthy = value === true
+      || Number(value) > 0
+      || ["да", "true", "истина"].includes(String(value || "").trim().toLowerCase());
+    return inverted ? !truthy : truthy;
+  }
+
+  function getStudentCommunicationGreeting(record) {
+    const addressee = getStudentCommunicationAddressee(record);
+    return addressee ? `Здравствуйте, ${addressee}!` : "Здравствуйте!";
+  }
+
+  function getStudentCommunicationAddressee(record) {
+    const words = String(record.name || "").trim().split(/\s+/).filter(Boolean);
+    return [words[1], isChecked(record.addressByFirstName) ? "" : words[2]].filter(Boolean).join(" ");
+  }
+
+  function isStudentDpoProgram(record) {
+    const type = String(getProgramType(record.program, record) || "").toLowerCase();
+    return type === "кпк"
+      || type === "ппп"
+      || type.includes("повышен")
+      || type.includes("переподготов");
+  }
+
+  function getStudentProgramMessageLink(record) {
+    const program = findProgramByName(record.program);
+    return [
+      record.gradeReportUrl,
+      record.eventUrl,
+      program?.gradeReportUrl,
+      program?.reportUrl,
+      getProgramPromoUrl(program)
+    ].find((value) => String(value || "").trim()) || "ссылка пока не указана";
+  }
+
+  function getStudentCommunicationEndDate(record) {
+    return record.extendedEndDate || record.endDate || "";
+  }
+
+  function getStudentCommunicationReductionDate(record) {
+    return record.reductionEndDate || record.plannedEndDate || record.extendedEndDate || "";
+  }
+
+  function getStudentCommunicationDaysLeft(record) {
+    if (record.daysLeft !== undefined && record.daysLeft !== "") return record.daysLeft;
+    const endDate = new Date(getStudentCommunicationEndDate(record));
+    if (Number.isNaN(endDate.getTime())) return 0;
+    return Math.ceil((endDate.getTime() - Date.now()) / 86400000);
+  }
+
+  function formatStudentCommunicationDate(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return new Intl.DateTimeFormat("ru-RU").format(date);
+  }
+
+  function formatStudentCommunicationLongDate(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    const dayMonth = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(date);
+    const weekday = new Intl.DateTimeFormat("ru-RU", { weekday: "long" }).format(date);
+    return `${dayMonth} (${weekday})`;
+  }
+
+  function getStudentReferralCode(record) {
+    const explicit = String(record.referralCode || record.utmSource || "").trim();
+    if (explicit) return explicit;
+    const words = String(record.name || "").trim().split(/\s+/).filter(Boolean);
+    return transliterateStudentName(`${words[1] || ""}${words[0] || ""}`)
+      .replace(/[^A-Za-z0-9]+/g, "")
+      .toLowerCase() || "student";
+  }
+
+  function clearUnchangedGeneratedCommunicationMessages(values, formElement) {
+    const generated = generateStudentCommunicationMessages(values);
+    studentCommunicationMessages.forEach((message) => {
+      const control = formElement.elements[message.key];
+      if (!control) return;
+      if (String(control.value || "") === String(generated[message.key] || "")) {
+        values[message.key] = "";
+      }
+    });
+  }
+
+  async function copyStudentCommunicationMessage(button) {
+    const textarea = getStudentCommunicationTextarea(button.dataset.messageKey);
+    if (!textarea) return;
+    await copyTextToClipboard(getControlCopyValue(textarea));
+    const label = button.querySelector("span");
+    if (!label) return;
+    const initialText = label.textContent;
+    label.textContent = "Скопировано";
+    button.classList.add("is-complete");
+    window.setTimeout(() => {
+      label.textContent = initialText;
+      button.classList.remove("is-complete");
+    }, 900);
+  }
+
+  function editStudentCommunicationMessage(messageKey) {
+    const textarea = getStudentCommunicationTextarea(messageKey);
+    if (!textarea) return;
+    textarea.readOnly = false;
+    textarea.closest(".communication-message-card")?.classList.add("is-editing");
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  }
+
+  function restoreStudentCommunicationMessage(messageKey) {
+    const textarea = getStudentCommunicationTextarea(messageKey);
+    if (!textarea || !confirm("Восстановить исходный текст сообщения? Внесенные изменения будут удалены.")) return;
+    textarea.value = decodeURIComponent(textarea.dataset.generatedMessage || "");
+    textarea.readOnly = true;
+    textarea.closest(".communication-message-card")?.classList.remove("is-editing", "is-customized");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function emailStudentCommunicationMessage(messageKey) {
+    const textarea = getStudentCommunicationTextarea(messageKey);
+    const email = getCurrentStudentCardValue("email");
+    if (!email) {
+      alert("Укажите Email слушателя.");
+      return;
+    }
+    const message = studentCommunicationMessages.find((item) => item.key === messageKey);
+    const subject = message ? `Учебный центр: ${message.label}` : "Сообщение от учебного центра";
+    window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(textarea?.value || "")}`;
+  }
+
+  function getCurrentStudentCardValue(key) {
+    const formElement = document.getElementById("recordForm");
+    const control = formElement?.elements[key];
+    const record = (state.data.collections.students || []).find((item) => item.id === state.modal?.id) || {};
+    return String(control?.value ?? state.modal?.draft?.[key] ?? record[key] ?? "").trim();
+  }
+
+  function getStudentCommunicationTextarea(messageKey) {
+    if (!messageKey) return null;
+    return document.querySelector(`[data-communication-message="${CSS.escape(messageKey)}"]`);
   }
 
   function closeSidebar() {
@@ -2607,6 +3363,18 @@
 
     document.querySelector("[data-action='open-student-messenger-url']")?.addEventListener("click", openStudentMessengerUrl);
     document.querySelector("[data-action='open-student-program-promo']")?.addEventListener("click", openStudentProgramPromo);
+    document.querySelectorAll("[data-action='copy-communication-message']").forEach((button) => {
+      button.addEventListener("click", () => copyStudentCommunicationMessage(button));
+    });
+    document.querySelectorAll("[data-action='edit-communication-message']").forEach((button) => {
+      button.addEventListener("click", () => editStudentCommunicationMessage(button.dataset.messageKey));
+    });
+    document.querySelectorAll("[data-action='restore-communication-message']").forEach((button) => {
+      button.addEventListener("click", () => restoreStudentCommunicationMessage(button.dataset.messageKey));
+    });
+    document.querySelectorAll("[data-action='email-communication-message']").forEach((button) => {
+      button.addEventListener("click", () => emailStudentCommunicationMessage(button.dataset.messageKey));
+    });
     document.querySelectorAll("[data-action='copy-address-to']").forEach((button) => {
       button.addEventListener("click", () => copyStudentAddressToField(button.dataset.source, button.dataset.target));
     });
@@ -2961,12 +3729,20 @@
       button.addEventListener("click", () => sortDictionaryValues(button.dataset.dict, button.dataset.order));
     });
 
+    document.querySelectorAll("[data-action='sort-communication-template-fields']").forEach((button) => {
+      button.addEventListener("click", () => sortCommunicationTemplateFields(button.dataset.order));
+    });
+
     document.querySelectorAll("[data-dictionary-values]").forEach(bindDictionaryManualSort);
 
     document.querySelectorAll("form[data-action='dict-add']").forEach((formElement) => {
       formElement.addEventListener("submit", addDictionaryValue);
       formElement.querySelector("[data-dictionary-add-input]")?.addEventListener("paste", pasteDictionaryValues);
     });
+    document.querySelector("form[data-action='save-communication-templates']")?.addEventListener("submit", saveCommunicationTemplates);
+    document.querySelector("[data-action='reset-communication-templates']")?.addEventListener("click", resetCommunicationTemplates);
+    bindCommunicationTemplateDragAndDrop();
+    bindCommunicationTemplateFieldActions();
 
     enhanceCopyableFields();
   }
@@ -2978,6 +3754,9 @@
 
   function switchStudentTab(tabId) {
     if (!tabId || state.studentCardTab === tabId) return;
+    if (hasUnsavedFormChanges(document.getElementById("recordForm"))) {
+      state.modal.hasDraftChanges = true;
+    }
     state.modal.draft = collectStudentFormDraft();
     state.studentCardTab = tabId;
     render();
@@ -3005,6 +3784,7 @@
         values[key] = String(raw || "");
       }
     });
+    clearUnchangedGeneratedCommunicationMessages(values, formElement);
     if (!values.uid) values.uid = getNextUid();
     const selectedProgram = findProgramByName(values.program);
     if (selectedProgram) {
@@ -3060,7 +3840,7 @@
 
   function closeModalWithUnsavedCheck() {
     const form = document.getElementById("recordForm");
-    if (hasUnsavedFormChanges(form) && !confirm("Есть несохраненные изменения. Закрыть без сохранения?")) {
+    if ((state.modal?.hasDraftChanges || hasUnsavedFormChanges(form)) && !confirm("Есть несохраненные изменения. Закрыть без сохранения?")) {
       return;
     }
     state.modal = null;
@@ -3306,7 +4086,7 @@
     const formData = new FormData(formElement);
     const isStudentCard = formElement.dataset.config === "students";
     const currentRecord = formElement.dataset.id ? rows.find((row) => row.id === formElement.dataset.id) || {} : {};
-    const values = isStudentCard ? { ...currentRecord } : {};
+    const values = isStudentCard ? { ...currentRecord, ...(state.modal?.draft || {}) } : {};
     const fields = isStudentCard ? studentAllFields : config.fields;
     fields.forEach((item) => {
       if (item.type === "checkbox") {
@@ -3324,6 +4104,7 @@
           values[key] = String(raw || "");
         }
       });
+      clearUnchangedGeneratedCommunicationMessages(values, formElement);
     }
     if (!formElement.dataset.id && fields.some((item) => item.key === "uid") && !values.uid) {
       values.uid = getNextUid();
@@ -3562,6 +4343,775 @@
     addAudit("Изменен справочник", dictionaryTitle(dict), values.join(", "));
     persist();
     render();
+  }
+
+  function saveCommunicationTemplates(event) {
+    event.preventDefault();
+    collectCommunicationTemplateFormDraft(event.currentTarget);
+    addAudit("Изменен справочник", dictionaryTitle("communicationTemplates"), "Сохранены шаблоны сообщений");
+    persist();
+    render();
+  }
+
+  function collectCommunicationTemplateFormDraft(form = document.querySelector("form[data-action='save-communication-templates']")) {
+    if (!form) return;
+    form.querySelectorAll("[data-template-editor]").forEach(syncCommunicationTemplateEditor);
+    state.data.dictionaries.communicationTemplates = studentCommunicationMessages.map((message, index) => (
+      replaceCommunicationTemplateFieldAliases(String(form.elements[`template${index}`]?.value || ""))
+    ));
+    state.data.dictionaries.communicationTemplateDescriptions = studentCommunicationMessages.map((message, index) => (
+      String(form.elements[`description${index}`]?.value || "").trim() || message.label
+    ));
+  }
+
+  function resetCommunicationTemplates() {
+    if (!confirm("Восстановить исходные шаблоны типовых сообщений?")) return;
+    state.data.dictionaries.communicationTemplates = [...studentCommunicationTemplateDefaults];
+    state.data.dictionaries.communicationTemplateDescriptions = studentCommunicationMessages.map((message) => message.label);
+    addAudit("Изменен справочник", dictionaryTitle("communicationTemplates"), "Восстановлены исходные шаблоны");
+    persist();
+    render();
+  }
+
+  function sortCommunicationTemplateFields(order = "asc") {
+    collectCommunicationTemplateFormDraft();
+    state.communicationTemplateFieldSort = order === "desc" ? "desc" : "asc";
+    render();
+  }
+
+  function initializeCommunicationTemplateEditorHistory(editor) {
+    if (!editor || communicationTemplateEditorHistories.has(editor)) return;
+    communicationTemplateEditorHistories.set(editor, {
+      undo: [],
+      redo: [],
+      current: serializeCommunicationTemplateEditor(editor),
+      applying: false
+    });
+  }
+
+  function recordCommunicationTemplateEditorChange(editor) {
+    if (!editor) return;
+    initializeCommunicationTemplateEditorHistory(editor);
+    const history = communicationTemplateEditorHistories.get(editor);
+    if (!history || history.applying) return;
+    const value = serializeCommunicationTemplateEditor(editor);
+    commitCommunicationTemplateEditorChange(editor, history.current, value);
+  }
+
+  function commitCommunicationTemplateEditorChange(editor, previousValue, nextValue = serializeCommunicationTemplateEditor(editor)) {
+    if (!editor) return;
+    initializeCommunicationTemplateEditorHistory(editor);
+    const history = communicationTemplateEditorHistories.get(editor);
+    if (!history || history.applying || previousValue === nextValue) return;
+    history.undo.push(previousValue);
+    if (history.undo.length > 100) history.undo.shift();
+    history.redo = [];
+    history.current = nextValue;
+  }
+
+  function syncCommunicationTemplateEditorByType(editor) {
+    if (!editor) return;
+    if (editor.matches("[data-formula-editor]")) syncCommunicationTemplateFormulaEditor(editor);
+    else syncCommunicationTemplateEditor(editor);
+  }
+
+  function renderCommunicationTemplateEditorValue(editor, value) {
+    if (editor.matches("[data-formula-editor]")) {
+      editor.innerHTML = renderCommunicationTemplateFormulaEditorContent(value);
+    } else {
+      editor.innerHTML = renderCommunicationTemplateEditorContent(value);
+    }
+    syncCommunicationTemplateEditorByType(editor);
+  }
+
+  function restoreCommunicationTemplateEditorHistoryValue(editor, value) {
+    initializeCommunicationTemplateEditorHistory(editor);
+    const history = communicationTemplateEditorHistories.get(editor);
+    if (!history) return;
+    history.applying = true;
+    renderCommunicationTemplateEditorValue(editor, value);
+    history.current = value;
+    history.applying = false;
+    editor.focus({ preventScroll: true });
+    setCommunicationTemplateEditorCaretOffset(editor, value.length);
+  }
+
+  function undoCommunicationTemplateEditor(editor) {
+    initializeCommunicationTemplateEditorHistory(editor);
+    const history = communicationTemplateEditorHistories.get(editor);
+    if (!history?.undo.length) return false;
+    const current = serializeCommunicationTemplateEditor(editor);
+    if (current !== history.current) history.current = current;
+    const previous = history.undo.pop();
+    history.redo.push(history.current);
+    restoreCommunicationTemplateEditorHistoryValue(editor, previous);
+    return true;
+  }
+
+  function redoCommunicationTemplateEditor(editor) {
+    initializeCommunicationTemplateEditorHistory(editor);
+    const history = communicationTemplateEditorHistories.get(editor);
+    if (!history?.redo.length) return false;
+    const current = serializeCommunicationTemplateEditor(editor);
+    if (current !== history.current) history.current = current;
+    const next = history.redo.pop();
+    history.undo.push(history.current);
+    restoreCommunicationTemplateEditorHistoryValue(editor, next);
+    return true;
+  }
+
+  function handleCommunicationTemplateEditorHistoryKeydown(event, editor) {
+    if (!(event.ctrlKey || event.metaKey)) return false;
+    const key = String(event.key || "").toLowerCase();
+    const code = String(event.code || "");
+    const isUndoKey = key === "z" || code === "KeyZ";
+    const isRedoKey = key === "y" || code === "KeyY";
+    if (isUndoKey && !event.shiftKey) {
+      event.preventDefault();
+      return undoCommunicationTemplateEditor(editor);
+    }
+    if (isRedoKey || (isUndoKey && event.shiftKey)) {
+      event.preventDefault();
+      return redoCommunicationTemplateEditor(editor);
+    }
+    return false;
+  }
+
+  function bindCommunicationTemplateFieldActions() {
+    const form = document.querySelector("form[data-action='save-communication-templates']");
+    if (!form) return;
+    form.querySelector("[data-action='add-communication-template-field']")?.addEventListener("click", () => (
+      showCommunicationTemplateFieldDialog()
+    ));
+    form.addEventListener("contextmenu", (event) => {
+      const token = event.target.closest?.("[data-template-field-name]");
+      if (!token || !form.contains(token)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      showCommunicationTemplateFieldMenu(token.dataset.templateFieldName, event.clientX, event.clientY, token);
+    });
+  }
+
+  function showCommunicationTemplateFieldMenu(fieldName, x, y, sourceToken = null) {
+    hideCommunicationTemplateFieldMenu();
+    const field = getCommunicationTemplateFieldDefinitions().find((item) => item.name === fieldName);
+    if (!field) return;
+    const isFormulaBlock = Boolean(
+      sourceToken?.matches?.(".communication-template-block") &&
+      sourceToken.closest("[data-formula-editor]")
+    );
+    const isMessageBlock = Boolean(
+      sourceToken?.matches?.(".communication-template-block") &&
+      sourceToken.closest("[data-template-editor]")
+    );
+    const formulaEditor = isFormulaBlock ? sourceToken.closest("[data-formula-editor]") : null;
+    const formulaOccurrence = isFormulaBlock ? {
+      editor: formulaEditor,
+      token: sourceToken.dataset.templateToken || sourceToken.textContent || "",
+      offset: getCommunicationTemplateNodeStartOffset(formulaEditor, sourceToken)
+    } : null;
+    const isTemplateBlock = isFormulaBlock || isMessageBlock;
+    const isRestored = field.formula === field.initialFormula;
+    const popup = document.createElement("div");
+    popup.className = "communication-template-field-menu";
+    popup.dataset.communicationTemplateFieldMenu = "";
+    popup.innerHTML = `
+      <button data-action="edit-communication-template-field" type="button">
+        ${renderCommunicationTemplateFieldActionIcon("edit")}
+        <span>Редактировать</span>
+      </button>
+      <button class="is-danger" data-action="delete-communication-template-field" type="button" ${isTemplateBlock || field.custom ? "" : "disabled"}>
+        ${renderCommunicationTemplateFieldActionIcon("delete")}
+        <span>${isFormulaBlock ? "Удалить из формулы" : isMessageBlock ? "Удалить из сообщения" : "Удалить"}</span>
+      </button>
+      <button data-action="restore-communication-template-field" type="button" ${isRestored ? "disabled" : ""}>
+        ${renderCommunicationTemplateFieldActionIcon("restore")}
+        <span>Восстановить</span>
+      </button>
+    `;
+    document.body.appendChild(popup);
+    const rect = popup.getBoundingClientRect();
+    popup.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;
+    popup.style.top = `${clamp(y, 8, Math.max(8, window.innerHeight - rect.height - 8))}px`;
+    popup.querySelector("[data-action='edit-communication-template-field']")?.addEventListener("click", () => (
+      showCommunicationTemplateFieldDialog(field)
+    ));
+    popup.querySelector("[data-action='delete-communication-template-field']")?.addEventListener("click", () => {
+      if (isFormulaBlock) {
+        deleteCommunicationTemplateFormulaOccurrence(sourceToken, formulaOccurrence);
+        return;
+      }
+      if (isMessageBlock) {
+        deleteCommunicationTemplateBlock(sourceToken);
+        return;
+      }
+      deleteCommunicationTemplateField(field);
+    });
+    popup.querySelector("[data-action='restore-communication-template-field']")?.addEventListener("click", () => (
+      restoreCommunicationTemplateField(field)
+    ));
+    window.setTimeout(() => document.addEventListener("pointerdown", closeCommunicationTemplateFieldMenuOnOutsideClick, { capture: true, once: true }));
+  }
+
+  function renderCommunicationTemplateFieldActionIcon(action) {
+    if (action === "delete") {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="m9 7 1-3h4l1 3"></path><path d="M6 7l1 13h10l1-13"></path></svg>`;
+    }
+    if (action === "restore") {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v6h6"></path></svg>`;
+    }
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 5 5 5"></path><path d="M4 20h5L19 10a3.5 3.5 0 0 0-5-5L4 15z"></path></svg>`;
+  }
+
+  function closeCommunicationTemplateFieldMenuOnOutsideClick(event) {
+    if (event.target.closest("[data-communication-template-field-menu]")) {
+      document.addEventListener("pointerdown", closeCommunicationTemplateFieldMenuOnOutsideClick, { capture: true, once: true });
+      return;
+    }
+    hideCommunicationTemplateFieldMenu();
+  }
+
+  function hideCommunicationTemplateFieldMenu() {
+    document.removeEventListener("pointerdown", closeCommunicationTemplateFieldMenuOnOutsideClick, { capture: true });
+    document.querySelector("[data-communication-template-field-menu]")?.remove();
+  }
+
+  function showCommunicationTemplateFieldDialog(field = null) {
+    hideCommunicationTemplateFieldMenu();
+    document.querySelector("[data-communication-template-field-dialog]")?.remove();
+    const isStandardField = Boolean(field && !field.custom);
+    const fieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
+    const availableFields = sortCommunicationTemplateFieldDefinitions(
+      getCommunicationTemplateFieldDefinitions(),
+      fieldSortOrder
+    );
+    const dialog = document.createElement("div");
+    dialog.className = "communication-template-field-dialog-backdrop";
+    dialog.dataset.communicationTemplateFieldDialog = "";
+    dialog.innerHTML = `
+      <form class="communication-template-field-dialog">
+        <header>
+          <strong>${field ? "Редактирование поля" : "Новое поле"}</strong>
+          <button data-action="close-communication-template-field-dialog" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <label>
+          <span>Название поля</span>
+          <input name="fieldName" value="${escapeAttr(field?.name || "")}" placeholder="Например, СсылкаНаКурс" ${field ? "readonly" : ""} ${isStandardField ? 'class="is-standard-field-name"' : ""} required />
+        </label>
+        <label>
+          <span title="Поддерживаются ссылки {Поле} и условия {{если:Условие}}...{{иначе}}...{{конец}}">Формула</span>
+          <div
+            class="communication-template-editor communication-template-formula-editor"
+            contenteditable="true"
+            data-formula-editor
+            role="textbox"
+            aria-label="Формула поля"
+            aria-multiline="true"
+          >${renderCommunicationTemplateFormulaEditorContent(field?.formula || "")}</div>
+          <input name="formula" value="${escapeAttr(field?.formula || "")}" type="hidden" />
+        </label>
+        <section class="communication-template-field-dialog-fields">
+          <div class="communication-template-field-dialog-fields-head">
+            <strong>Доступные поля для формулы</strong>
+            <span>Перетащите в формулу</span>
+          </div>
+          <div class="communication-template-field-list">
+            ${availableFields.map((availableField) => renderCommunicationTemplateFieldToken(
+              availableField,
+              "Перетащите поле в формулу. Нажмите правой кнопкой мыши для настройки"
+            )).join("")}
+          </div>
+        </section>
+        <footer>
+          <button class="ghost-button" data-action="close-communication-template-field-dialog" type="button">Отмена</button>
+          <button class="primary-button" type="submit">${field ? "Сохранить" : "Добавить"}</button>
+        </footer>
+      </form>
+    `;
+    document.body.appendChild(dialog);
+    const close = () => dialog.remove();
+    dialog.addEventListener("pointerdown", (event) => {
+      if (event.target === dialog) close();
+    });
+    dialog.querySelectorAll("[data-action='close-communication-template-field-dialog']").forEach((button) => {
+      button.addEventListener("click", close);
+    });
+    dialog.querySelector("form")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveCommunicationTemplateField(dialog, field);
+    });
+    bindCommunicationTemplateFieldDialogFields(dialog);
+    dialog.querySelector(field ? "[data-formula-editor]" : "[name='fieldName']")?.focus();
+  }
+
+  function bindCommunicationTemplateFieldDialogFields(dialog) {
+    const tokenMime = "application/x-ais-template-field";
+    const editor = dialog.querySelector("[data-formula-editor]");
+    if (!editor) return;
+    let draggedFormulaBlock = null;
+    let formulaHighlightTimer = null;
+    initializeCommunicationTemplateEditorHistory(editor);
+
+    editor.addEventListener("compositionstart", () => {
+      editor.dataset.composing = "true";
+    });
+    editor.addEventListener("compositionend", () => {
+      editor.dataset.composing = "";
+      syncCommunicationTemplateFormulaEditor(editor);
+      refreshCommunicationTemplateFormulaEditor(editor, true);
+    });
+    editor.addEventListener("input", () => {
+      recordCommunicationTemplateEditorChange(editor);
+      syncCommunicationTemplateFormulaEditor(editor);
+      if (editor.dataset.composing === "true") return;
+      window.clearTimeout(formulaHighlightTimer);
+      formulaHighlightTimer = window.setTimeout(() => {
+        refreshCommunicationTemplateFormulaEditor(editor, true);
+      }, 140);
+    });
+    editor.addEventListener("keydown", (event) => {
+      if (handleCommunicationTemplateEditorHistoryKeydown(event, editor)) {
+        window.clearTimeout(formulaHighlightTimer);
+      }
+    });
+    editor.addEventListener("blur", () => {
+      window.clearTimeout(formulaHighlightTimer);
+      refreshCommunicationTemplateFormulaEditor(editor);
+    });
+    dialog.addEventListener("dragstart", (event) => {
+      const token = event.target.closest?.("[data-template-token]");
+      if (!token || !dialog.contains(token) || !event.dataTransfer) return;
+      const value = token.dataset.templateToken || "";
+      draggedFormulaBlock = token.matches(".communication-template-block") && token.closest("[data-formula-editor]") ? token : null;
+      event.dataTransfer.effectAllowed = draggedFormulaBlock ? "move" : "copy";
+      event.dataTransfer.setData("text/plain", value);
+      event.dataTransfer.setData(tokenMime, value);
+      token.classList.add("is-dragging");
+    });
+    dialog.addEventListener("dragend", (event) => {
+      event.target.closest?.("[data-template-token]")?.classList.remove("is-dragging");
+      editor.classList.remove("is-drop-target");
+      window.clearTimeout(formulaHighlightTimer);
+      syncCommunicationTemplateFormulaEditor(editor);
+      draggedFormulaBlock = null;
+    });
+    dialog.addEventListener("contextmenu", (event) => {
+      const token = event.target.closest?.("[data-template-field-name]");
+      if (!token || !dialog.contains(token)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      showCommunicationTemplateFieldMenu(token.dataset.templateFieldName, event.clientX, event.clientY, token);
+    });
+    editor.addEventListener("dragover", (event) => {
+      if (!Array.from(event.dataTransfer?.types || []).includes(tokenMime)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = draggedFormulaBlock ? "move" : "copy";
+      editor.classList.add("is-drop-target");
+    });
+    editor.addEventListener("dragleave", () => editor.classList.remove("is-drop-target"));
+    editor.addEventListener("drop", (event) => {
+      const token = event.dataTransfer?.getData(tokenMime) || "";
+      if (!token) return;
+      event.preventDefault();
+      editor.classList.remove("is-drop-target");
+      const range = getCommunicationTemplateDropRange(editor, event.clientX, event.clientY);
+      if (draggedFormulaBlock?.contains(range?.startContainer)) return;
+      const block = draggedFormulaBlock || createCommunicationTemplateBlock(token);
+      const beforeValue = serializeCommunicationTemplateEditor(editor);
+      if (range) {
+        range.insertNode(block);
+      } else {
+        editor.append(block);
+      }
+      commitCommunicationTemplateEditorChange(editor, beforeValue);
+      syncCommunicationTemplateFormulaEditor(editor);
+      refreshCommunicationTemplateFormulaEditor(editor, true);
+      editor.focus({ preventScroll: true });
+    });
+  }
+
+  function syncCommunicationTemplateFormulaEditor(editor) {
+    const hiddenInput = editor.closest("form")?.elements.formula;
+    if (hiddenInput) hiddenInput.value = serializeCommunicationTemplateEditor(editor);
+  }
+
+  function refreshCommunicationTemplateFormulaEditor(editor, preserveCaret = false) {
+    const formula = serializeCommunicationTemplateEditor(editor);
+    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
+    editor.innerHTML = renderCommunicationTemplateFormulaEditorContent(formula);
+    const hiddenInput = editor.closest("form")?.elements.formula;
+    if (hiddenInput) hiddenInput.value = formula;
+    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
+  }
+
+  function getCommunicationTemplateEditorCaretOffset(editor) {
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount || !editor.contains(selection.anchorNode)) {
+      return serializeCommunicationTemplateEditor(editor).length;
+    }
+    const range = selection.getRangeAt(0).cloneRange();
+    range.selectNodeContents(editor);
+    range.setEnd(selection.anchorNode, selection.anchorOffset);
+    const fragment = document.createElement("div");
+    fragment.append(range.cloneContents());
+    return serializeCommunicationTemplateEditor(fragment).length;
+  }
+
+  function setCommunicationTemplateEditorCaretOffset(editor, offset) {
+    const selection = window.getSelection?.();
+    if (!selection) return;
+    const range = document.createRange();
+    let remaining = Math.max(0, Number(offset || 0));
+    let placed = false;
+    const placeInNode = (node) => {
+      if (placed) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const length = node.nodeValue?.length || 0;
+        if (remaining <= length) {
+          range.setStart(node, remaining);
+          placed = true;
+          return;
+        }
+        remaining -= length;
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.matches("[data-template-token]")) {
+        const tokenLength = (node.dataset.templateToken || node.textContent || "").length;
+        if (remaining <= 0) {
+          range.setStartBefore(node);
+          placed = true;
+          return;
+        }
+        if (remaining < tokenLength) {
+          range.setStartAfter(node);
+          placed = true;
+          return;
+        }
+        remaining -= tokenLength;
+        return;
+      }
+      if (node.tagName === "BR") {
+        if (remaining <= 0) {
+          range.setStartBefore(node);
+          placed = true;
+          return;
+        }
+        remaining -= 1;
+        return;
+      }
+      Array.from(node.childNodes).forEach(placeInNode);
+    };
+    Array.from(editor.childNodes).forEach(placeInNode);
+    if (!placed) {
+      range.selectNodeContents(editor);
+      range.collapse(false);
+    } else {
+      range.collapse(true);
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function saveCommunicationTemplateField(dialog, existingField) {
+    const form = dialog.querySelector("form");
+    dialog.querySelectorAll("[data-formula-editor]").forEach(syncCommunicationTemplateFormulaEditor);
+    const name = getCommunicationTemplateFieldAlias(normalizeCommunicationTemplateFieldName(form.elements.fieldName.value));
+    const formula = replaceCommunicationTemplateFieldAliases(String(form.elements.formula.value || ""));
+    if (!name) {
+      form.elements.fieldName.focus();
+      return;
+    }
+    const duplicate = getCommunicationTemplateFieldDefinitions().some((field) => field.name === name);
+    if (!existingField && duplicate) {
+      alert("Поле с таким названием уже существует.");
+      form.elements.fieldName.focus();
+      return;
+    }
+    collectCommunicationTemplateFormDraft();
+    if (existingField) {
+      state.data.dictionaries.communicationTemplateFieldOverrides[name] = formula;
+    } else {
+      state.data.dictionaries.communicationTemplateCustomFields.push({ name, formula, initialFormula: formula });
+    }
+    addAudit(existingField ? "Изменено поле шаблона" : "Добавлено поле шаблона", name, formula);
+    persist();
+    dialog.remove();
+    render();
+  }
+
+  function deleteCommunicationTemplateField(field) {
+    hideCommunicationTemplateFieldMenu();
+    if (!field.custom || !confirm(`Удалить пользовательское поле {${field.name}}? Ссылки на него останутся в сообщениях как обычный текст.`)) return;
+    collectCommunicationTemplateFormDraft();
+    state.data.dictionaries.communicationTemplateCustomFields = state.data.dictionaries.communicationTemplateCustomFields
+      .filter((item) => item.name !== field.name);
+    delete state.data.dictionaries.communicationTemplateFieldOverrides[field.name];
+    addAudit("Удалено поле шаблона", field.name, "");
+    persist();
+    render();
+  }
+
+  function deleteCommunicationTemplateBlock(block) {
+    hideCommunicationTemplateFieldMenu();
+    const editor = block?.closest?.("[data-template-editor]");
+    if (!editor) return;
+    const beforeValue = serializeCommunicationTemplateEditor(editor);
+    block.remove();
+    commitCommunicationTemplateEditorChange(editor, beforeValue);
+    syncCommunicationTemplateEditor(editor);
+    editor.focus({ preventScroll: true });
+  }
+
+  function deleteCommunicationTemplateFormulaOccurrence(block, occurrence = null) {
+    hideCommunicationTemplateFieldMenu();
+    const editor = block?.closest?.("[data-formula-editor]") ||
+      (occurrence?.editor?.isConnected ? occurrence.editor : document.querySelector("[data-formula-editor]"));
+    const token = occurrence?.token || block?.dataset?.templateToken || block?.textContent || "";
+    if (!editor || !token) return;
+    const beforeValue = serializeCommunicationTemplateEditor(editor);
+    if (block?.isConnected && block.closest("[data-formula-editor]") === editor) {
+      block.remove();
+      commitCommunicationTemplateEditorChange(editor, beforeValue);
+      syncCommunicationTemplateFormulaEditor(editor);
+    } else {
+      const formula = serializeCommunicationTemplateEditor(editor);
+      const offset = Number.isFinite(occurrence?.offset) ? occurrence.offset : formula.indexOf(token);
+      const safeOffset = formula.slice(offset, offset + token.length) === token ? offset : formula.indexOf(token);
+      if (safeOffset < 0) return;
+      const nextFormula = `${formula.slice(0, safeOffset)}${formula.slice(safeOffset + token.length)}`;
+      editor.innerHTML = renderCommunicationTemplateFormulaEditorContent(nextFormula);
+      const hiddenInput = editor.closest("form")?.elements.formula;
+      if (hiddenInput) hiddenInput.value = nextFormula;
+      commitCommunicationTemplateEditorChange(editor, beforeValue, nextFormula);
+    }
+    refreshCommunicationTemplateFormulaEditor(editor, true);
+    editor.focus({ preventScroll: true });
+  }
+
+  function getCommunicationTemplateNodeStartOffset(editor, targetNode) {
+    if (!editor || !targetNode) return 0;
+    let offset = 0;
+    let found = false;
+    const walk = (node) => {
+      if (found) return;
+      if (node === targetNode) {
+        found = true;
+        return;
+      }
+      if (node.nodeType === Node.TEXT_NODE) {
+        offset += node.nodeValue?.length || 0;
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.matches("[data-template-token]")) {
+        offset += (node.dataset.templateToken || node.textContent || "").length;
+        return;
+      }
+      if (node.tagName === "BR") {
+        offset += 1;
+        return;
+      }
+      Array.from(node.childNodes).forEach(walk);
+      if (/^(DIV|P)$/.test(node.tagName)) offset += 1;
+    };
+    Array.from(editor.childNodes).forEach(walk);
+    return offset;
+  }
+
+  function restoreCommunicationTemplateField(field) {
+    hideCommunicationTemplateFieldMenu();
+    collectCommunicationTemplateFormDraft();
+    delete state.data.dictionaries.communicationTemplateFieldOverrides[field.name];
+    addAudit("Восстановлено поле шаблона", field.name, field.initialFormula);
+    persist();
+    render();
+  }
+
+  function bindCommunicationTemplateDragAndDrop() {
+    const tokenMime = "application/x-ais-template-field";
+    const form = document.querySelector("form[data-action='save-communication-templates']");
+    if (!form) return;
+    let draggedTemplateBlock = null;
+
+    form.addEventListener("dragstart", (event) => {
+      const token = event.target.closest?.("[data-template-token]");
+      if (!token || !event.dataTransfer) return;
+      const value = token.dataset.templateToken || "";
+      draggedTemplateBlock = token.matches(".communication-template-block") ? token : null;
+      event.dataTransfer.effectAllowed = draggedTemplateBlock ? "move" : "copy";
+      event.dataTransfer.setData(tokenMime, value);
+      event.dataTransfer.setData("text/plain", value);
+      token.classList.add("is-dragging");
+    });
+
+    form.addEventListener("dragend", (event) => {
+      event.target.closest?.("[data-template-token]")?.classList.remove("is-dragging");
+      form.querySelectorAll("[data-template-editor]").forEach((editor) => editor.classList.remove("is-drop-target"));
+      form.querySelectorAll("[data-template-editor]").forEach(syncCommunicationTemplateEditor);
+      draggedTemplateBlock = null;
+    });
+    form.querySelectorAll("[data-template-editor]").forEach((editor) => {
+      initializeCommunicationTemplateEditorHistory(editor);
+      editor.addEventListener("input", () => {
+        recordCommunicationTemplateEditorChange(editor);
+        syncCommunicationTemplateEditor(editor);
+      });
+      editor.addEventListener("keydown", (event) => {
+        handleCommunicationTemplateEditorHistoryKeydown(event, editor);
+      });
+      editor.addEventListener("dragover", (event) => {
+        if (!Array.from(event.dataTransfer?.types || []).includes(tokenMime)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = draggedTemplateBlock ? "move" : "copy";
+        editor.classList.add("is-drop-target");
+      });
+      editor.addEventListener("dragleave", () => editor.classList.remove("is-drop-target"));
+      editor.addEventListener("drop", (event) => {
+        const token = event.dataTransfer?.getData(tokenMime);
+        if (!token) return;
+        event.preventDefault();
+        editor.classList.remove("is-drop-target");
+        const sourceEditor = draggedTemplateBlock?.closest("[data-template-editor]");
+        const range = getCommunicationTemplateDropRange(editor, event.clientX, event.clientY);
+        if (draggedTemplateBlock?.contains(range?.startContainer)) return;
+        const block = draggedTemplateBlock || createCommunicationTemplateBlock(token);
+        const beforeEditorValue = serializeCommunicationTemplateEditor(editor);
+        const beforeSourceValue = sourceEditor && sourceEditor !== editor
+          ? serializeCommunicationTemplateEditor(sourceEditor)
+          : "";
+        if (range) {
+          range.insertNode(block);
+        } else {
+          editor.append(block);
+        }
+        if (sourceEditor && sourceEditor !== editor) {
+          commitCommunicationTemplateEditorChange(sourceEditor, beforeSourceValue);
+          syncCommunicationTemplateEditor(sourceEditor);
+        }
+        commitCommunicationTemplateEditorChange(editor, beforeEditorValue);
+        syncCommunicationTemplateEditor(editor);
+        editor.focus();
+      });
+    });
+  }
+
+  function createCommunicationTemplateBlock(token) {
+    const block = document.createElement("span");
+    const fieldName = /^\{[^{}]+\}$/.test(token) ? token.slice(1, -1) : "";
+    block.className = "communication-template-block";
+    block.contentEditable = "false";
+    block.draggable = true;
+    block.dataset.templateToken = token;
+    if (fieldName) block.dataset.templateFieldName = fieldName;
+    block.title = "Нажмите правой кнопкой мыши для настройки поля";
+    block.textContent = token;
+    return block;
+  }
+
+  function getCommunicationTemplateDropRange(editor, clientX, clientY) {
+    let range = null;
+    if (document.caretRangeFromPoint) {
+      range = document.caretRangeFromPoint(clientX, clientY);
+    } else if (document.caretPositionFromPoint) {
+      const position = document.caretPositionFromPoint(clientX, clientY);
+      if (position) {
+        range = document.createRange();
+        range.setStart(position.offsetNode, position.offset);
+        range.collapse(true);
+      }
+    }
+    if (!range || !editor.contains(range.startContainer)) return null;
+    const container = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    const tokenBlock = container?.closest?.(".communication-template-block");
+    if (tokenBlock) {
+      const blockRect = tokenBlock.getBoundingClientRect();
+      if (clientX > blockRect.left + (blockRect.width / 2)) range.setStartAfter(tokenBlock);
+      else range.setStartBefore(tokenBlock);
+      range.collapse(true);
+    }
+    return range;
+  }
+
+  function getCommunicationTemplateRangeAtOffset(editor, offset) {
+    if (!editor) return null;
+    const range = document.createRange();
+    let remaining = Math.max(0, Number(offset || 0));
+    let placed = false;
+    const placeInNode = (node) => {
+      if (placed) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const length = node.nodeValue?.length || 0;
+        if (remaining <= length) {
+          range.setStart(node, remaining);
+          placed = true;
+          return;
+        }
+        remaining -= length;
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.matches("[data-template-token]")) {
+        const tokenLength = (node.dataset.templateToken || node.textContent || "").length;
+        if (remaining <= 0) {
+          range.setStartBefore(node);
+          placed = true;
+          return;
+        }
+        if (remaining < tokenLength) {
+          range.setStartAfter(node);
+          placed = true;
+          return;
+        }
+        remaining -= tokenLength;
+        return;
+      }
+      if (node.tagName === "BR") {
+        if (remaining <= 0) {
+          range.setStartBefore(node);
+          placed = true;
+          return;
+        }
+        remaining -= 1;
+        return;
+      }
+      Array.from(node.childNodes).forEach(placeInNode);
+      if (!placed && /^(DIV|P)$/.test(node.tagName)) {
+        if (remaining <= 0) {
+          range.setStartAfter(node);
+          placed = true;
+          return;
+        }
+        remaining -= 1;
+      }
+    };
+    Array.from(editor.childNodes).forEach(placeInNode);
+    if (!placed) {
+      range.selectNodeContents(editor);
+      range.collapse(false);
+    } else {
+      range.collapse(true);
+    }
+    return range;
+  }
+
+  function syncCommunicationTemplateEditor(editor) {
+    const hiddenInput = editor.closest("form")?.elements[`template${editor.dataset.templateIndex}`];
+    if (hiddenInput) hiddenInput.value = serializeCommunicationTemplateEditor(editor);
+  }
+
+  function serializeCommunicationTemplateEditor(editor) {
+    const serializeNode = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || "";
+      if (node.nodeType !== Node.ELEMENT_NODE) return "";
+      if (node.matches("[data-template-token]")) return node.dataset.templateToken || node.textContent || "";
+      if (node.tagName === "BR") return "\n";
+      const text = Array.from(node.childNodes).map(serializeNode).join("");
+      return /^(DIV|P)$/.test(node.tagName) ? `${text}\n` : text;
+    };
+    return Array.from(editor.childNodes).map(serializeNode).join("").replace(/\n$/, "");
   }
 
   function pasteDictionaryValues(event) {
@@ -4244,6 +5794,7 @@
       positions: "Должности",
       employmentCategories: "Категории занятости",
       ovzStatuses: "Статусы ОВЗ",
+      communicationTemplates: "Шаблоны типовых сообщений",
       roles: "Роли"
     };
     return map[key] || key;

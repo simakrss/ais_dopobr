@@ -1055,6 +1055,11 @@ body.is-resizing-column {
   background: var(--panel-soft);
 }
 
+.dictionary-detail.is-communication-templates {
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
 .dictionary-detail-head {
   display: flex;
   align-items: flex-start;
@@ -1142,6 +1147,391 @@ body.is-resizing-column {
 
 .dictionary-add-form {
   margin-top: 0;
+}
+
+.communication-template-form {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 0;
+}
+
+.communication-template-fields {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.communication-template-fields strong {
+  color: #3d4945;
+  font-size: 12px;
+}
+
+.communication-template-fields .communication-template-fields-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.communication-template-field-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: -2px;
+}
+
+.communication-template-field-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.communication-template-field-sort-button {
+  min-width: 32px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.communication-template-field-sort-button.active {
+  border-color: #8fc9bd;
+  background: #edf7f4;
+  color: var(--teal);
+}
+
+.communication-template-field-add {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #b9ded2;
+  border-radius: 4px;
+  background: #edf7f4;
+  color: var(--teal);
+  padding: 0;
+  cursor: pointer;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.communication-template-token {
+  border: 0;
+  border-radius: 4px;
+  background: #edf7f4;
+  color: var(--teal);
+  padding: 2px 4px;
+  cursor: grab;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.communication-template-field-token.is-custom {
+  border: 1px dashed #8fc9bd;
+}
+
+.communication-template-token:active,
+.communication-template-token.is-dragging {
+  cursor: grabbing;
+  opacity: 0.65;
+}
+
+.communication-template-list {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.communication-template-item {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px;
+}
+
+.communication-template-item-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  color: #3d4945;
+  font-size: 12px;
+}
+
+.communication-template-item strong {
+  color: var(--teal);
+  white-space: nowrap;
+}
+
+.communication-template-item input {
+  min-width: 0;
+  height: 27px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  padding: 3px 6px;
+  color: #33413d;
+  font: inherit;
+}
+
+.communication-template-editor {
+  width: 100%;
+  min-height: 128px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 7px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.communication-template-editor.is-drop-target {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.14);
+}
+
+.communication-template-formula-editor {
+  min-height: 154px;
+  max-height: 260px;
+  background: #fcfefd;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.communication-template-formula-syntax {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 1px;
+  border-radius: 4px;
+  padding: 0 3px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.communication-template-formula-syntax.is-condition {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.communication-template-formula-syntax.is-keyword {
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.communication-template-block {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 0 2px;
+  border: 1px solid #b9ded2;
+  border-radius: 4px;
+  background: #edf7f4;
+  color: var(--teal);
+  padding: 0 3px;
+  cursor: grab;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  vertical-align: baseline;
+}
+
+.communication-template-block:active,
+.communication-template-block.is-dragging {
+  cursor: grabbing;
+  opacity: 0.65;
+}
+
+.communication-template-field-menu {
+  position: fixed;
+  z-index: 170;
+  display: grid;
+  gap: 2px;
+  min-width: 164px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(26, 46, 41, 0.18);
+}
+
+.communication-template-field-menu button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #33413d;
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.communication-template-field-menu button:hover:not(:disabled) {
+  background: #edf7f4;
+  color: var(--teal);
+}
+
+.communication-template-field-menu button.is-danger:hover:not(:disabled) {
+  background: #fff1f2;
+  color: var(--red);
+}
+
+.communication-template-field-menu button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.communication-template-field-menu svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.communication-template-field-dialog-backdrop {
+  position: fixed;
+  z-index: 150;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(17, 24, 39, 0.34);
+}
+
+.communication-template-field-dialog {
+  width: min(760px, 100%);
+  max-height: min(92vh, 760px);
+  display: grid;
+  gap: 12px;
+  border-radius: 7px;
+  background: #fff;
+  padding: 14px;
+  box-shadow: 0 20px 55px rgba(17, 24, 39, 0.24);
+  overflow: auto;
+}
+
+.communication-template-field-dialog header,
+.communication-template-field-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.communication-template-field-dialog header > button {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.communication-template-field-dialog label {
+  display: grid;
+  gap: 4px;
+  color: #3d4945;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.communication-template-field-dialog input,
+.communication-template-field-dialog textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--text);
+  padding: 7px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.communication-template-field-dialog input.is-standard-field-name {
+  border-color: #d7dfdc;
+  background: #eef2f1;
+  color: #6b7773;
+  cursor: default;
+}
+
+.communication-template-field-dialog textarea {
+  min-height: 160px;
+  resize: vertical;
+}
+
+.communication-template-field-dialog-fields {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfdfc;
+  padding: 8px;
+}
+
+.communication-template-field-dialog-fields-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.communication-template-field-dialog-fields-head strong {
+  color: #3d4945;
+  font-size: 12px;
+}
+
+.communication-template-field-dialog-fields-head span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.communication-template-field-dialog-fields .communication-template-field-list {
+  max-height: 112px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.communication-template-field-dialog footer {
+  justify-content: flex-end;
+}
+
+.communication-template-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
 }
 
 .inline-form input {
@@ -2290,6 +2680,144 @@ body.event-reorder-dragging .student-event-row.is-dragging {
   font-size: 12px;
 }
 
+.student-communications-tab {
+  align-content: start;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.communication-message-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.communication-message-card {
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  padding: 7px;
+}
+
+.communication-message-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.communication-message-head strong {
+  flex: 0 0 auto;
+  color: var(--teal);
+  font-size: 12px;
+}
+
+.communication-message-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #3d4945;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.communication-message-card textarea {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #f8faf9;
+  color: var(--text);
+  padding: 6px 7px;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.communication-message-card.is-editing {
+  border-color: #8fc9bd;
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12);
+}
+
+.communication-message-card.is-editing textarea,
+.communication-message-card.is-customized textarea {
+  background: #fff;
+}
+
+.communication-message-menu {
+  position: absolute;
+  z-index: 8;
+  top: 28px;
+  left: 100%;
+  display: grid;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 10px 24px rgba(27, 40, 35, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.communication-message-card:nth-child(3n) .communication-message-menu {
+  right: 100%;
+  left: auto;
+}
+
+.communication-message-card:hover .communication-message-menu,
+.communication-message-card:focus-within .communication-message-menu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.communication-message-card:hover,
+.communication-message-card:focus-within {
+  z-index: 7;
+}
+
+.communication-message-menu button {
+  min-height: 27px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #33413d;
+  padding: 3px 7px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.communication-message-menu button:hover,
+.communication-message-menu button.is-complete {
+  background: #edf7f4;
+  color: var(--teal);
+}
+
+.communication-message-menu svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .form-section {
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -2712,6 +3240,17 @@ body.event-reorder-dragging .student-event-row.is-dragging {
 
   .student-documents-tab {
     grid-template-columns: 1fr;
+  }
+
+  .communication-message-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .communication-message-card .communication-message-menu,
+  .communication-message-card:nth-child(3n) .communication-message-menu {
+    top: 100%;
+    right: auto;
+    left: 0;
   }
 
   .student-form-grid label {
