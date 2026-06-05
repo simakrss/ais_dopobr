@@ -1087,6 +1087,40 @@ body.is-resizing-column {
   font-weight: 700;
 }
 
+.dictionary-copy-button,
+.dictionary-clear-button,
+.dictionary-restore-button {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  border-radius: 6px;
+}
+
+.dictionary-copy-button svg,
+.dictionary-clear-button svg,
+.dictionary-restore-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.dictionary-clear-button {
+  color: var(--red);
+}
+
+.dictionary-clear-button:hover {
+  background: #fff1f2;
+  border-color: #fecdd3;
+}
+
+.dictionary-restore-button {
+  color: var(--teal);
+}
+
 .dictionary-detail-values {
   min-height: 0;
   overflow-y: auto;
@@ -1095,6 +1129,17 @@ body.is-resizing-column {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+}
+
+.dictionary-format-hint {
+  margin: -3px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dictionary-format-hint code {
+  color: #33413d;
+  font-size: 12px;
 }
 
 .chips {
@@ -1662,6 +1707,33 @@ body.is-resizing-column {
   gap: 10px;
 }
 
+.student-card-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.student-card-nav-button {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+}
+
+.student-card-nav-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.student-card-nav-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .student-status {
   min-height: 28px;
   display: inline-flex;
@@ -1672,6 +1744,33 @@ body.is-resizing-column {
   color: var(--teal);
   border: 1px solid #b9ded2;
   font-weight: 700;
+}
+
+.student-status-select,
+.student-status-input {
+  height: 30px;
+  max-width: min(260px, 100%);
+  font: inherit;
+}
+
+.student-status-select {
+  appearance: none;
+  padding-right: 26px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+.student-status-select:focus,
+.student-status-input:focus {
+  outline: 2px solid rgba(21, 128, 112, 0.24);
+  outline-offset: 2px;
 }
 
 .student-card-layout {
@@ -2170,7 +2269,14 @@ body.is-resizing-column {
 
 .student-status-stack {
   display: grid;
+  grid-template-rows: auto minmax(22px, auto) auto;
   gap: 6px;
+}
+
+.student-status-stack::before {
+  content: "";
+  grid-row: 2;
+  min-height: 22px;
 }
 
 .student-name-status-grid label {
@@ -2183,6 +2289,14 @@ body.is-resizing-column {
   grid-template-columns: 72px minmax(0, 1fr);
   align-items: center;
   gap: 6px;
+}
+
+.student-status-stack label:first-child {
+  grid-row: 1;
+}
+
+.student-status-stack label:last-child {
+  grid-row: 3;
 }
 
 .student-name-stack label {
@@ -3166,6 +3280,430 @@ body.student-tab-dragging .student-tabs button {
   padding: 8px;
 }
 
+.discount-description-field {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.student-income-tab .discount-description-label {
+  grid-column: 1 / -1;
+}
+
+.discount-description-field input {
+  min-width: 0;
+  flex: 1;
+}
+
+.discount-picker-trigger {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+}
+
+.discount-picker-trigger svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.discount-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(17, 24, 39, 0.28);
+}
+
+.discount-picker {
+  width: min(1090px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 32px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid #b8c2cc;
+  border-radius: 6px;
+  background: #f5f6f7;
+  box-shadow: 0 28px 80px rgba(17, 24, 39, 0.32);
+}
+
+.discount-picker-head {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px;
+  border-bottom: 1px solid #d6dbe0;
+  background: #eef3f6;
+}
+
+.discount-picker-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.discount-picker-head .icon-button {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+}
+
+.discount-picker-tool-button {
+  min-height: 28px;
+  gap: 5px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.discount-picker-head svg,
+.discount-refresh-button svg,
+.discount-restore-button svg,
+.discount-picker-actions svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.discount-picker-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(520px, 1fr) 256px;
+  gap: 12px;
+  padding: 8px;
+}
+
+.discount-picker-list-wrap {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.discount-picker-hint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.discount-picker-list {
+  min-height: 360px;
+  overflow: auto;
+  padding: 2px 0 12px;
+  border: 1px solid #9ca3af;
+  background: #fff;
+}
+
+.discount-group-title {
+  padding: 3px 30px 2px;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.discount-option {
+  width: 100%;
+  display: flex;
+  gap: 5px;
+  padding: 1px 30px;
+  border: 0;
+  background: transparent;
+  color: #111827;
+  text-align: left;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.discount-option:hover,
+.discount-option.active {
+  background: #dbeafe;
+}
+
+.discount-option strong {
+  flex: 0 0 auto;
+  font-weight: 400;
+}
+
+.discount-option span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.discount-separator {
+  padding: 6px 30px 2px;
+  color: #111827;
+  font-size: 14px;
+}
+
+.discount-picker-side {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px 30px;
+  align-items: start;
+}
+
+.discount-rate-box,
+.discount-total-box,
+.discount-note-box {
+  display: grid;
+  gap: 6px;
+  color: #111827;
+  font-size: 12px;
+}
+
+.discount-rate-list {
+  min-height: 192px;
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid #9ca3af;
+  background: #fff;
+}
+
+.discount-rate-list button {
+  border: 0;
+  border-radius: 3px;
+  padding: 4px 6px;
+  background: transparent;
+  color: #111827;
+  text-align: left;
+  cursor: pointer;
+}
+
+.discount-rate-list button.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.discount-rate-list button:hover:not(.active),
+.discount-rate-list button:focus-visible:not(.active) {
+  background: #eaf2ff;
+}
+
+.discount-total-box output {
+  min-height: 62px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #9ca3af;
+  background: #fff;
+  color: #000;
+  font-size: 52px;
+  line-height: 1;
+}
+
+.discount-note-box {
+  grid-column: 1 / -1;
+}
+
+.discount-note-box textarea {
+  min-height: 102px;
+  resize: vertical;
+  border: 1px solid #9ca3af;
+  border-radius: 0;
+  background: #fff;
+}
+
+.discount-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 16px 10px;
+}
+
+.discount-apply-button,
+.discount-cancel-button {
+  min-height: 30px;
+  gap: 4px;
+}
+
+.discount-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 4px;
+}
+
+@media (max-width: 860px) {
+  .discount-picker-backdrop {
+    padding: 8px;
+    align-items: start;
+    justify-items: center;
+    overflow-y: auto;
+  }
+
+  .discount-picker {
+    width: min(100%, 720px);
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+    grid-template-rows: auto auto auto;
+  }
+
+  .discount-picker-body {
+    grid-template-columns: 1fr;
+    overflow: visible;
+    gap: 8px;
+    padding: 6px;
+  }
+
+  .discount-picker-list-wrap {
+    display: block;
+  }
+
+  .discount-picker-hint {
+    margin-bottom: 6px;
+  }
+
+  .discount-picker-list {
+    height: min(190px, 32vh);
+    height: min(190px, 32dvh);
+    min-height: 0;
+    max-height: none;
+  }
+
+  .discount-picker-side {
+    grid-template-columns: minmax(120px, 0.9fr) minmax(120px, 1fr);
+    gap: 6px;
+  }
+
+  .discount-rate-list {
+    min-height: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .discount-rate-list button {
+    min-width: 42px;
+    text-align: center;
+  }
+
+  .discount-total-box output {
+    min-height: 48px;
+    font-size: 38px;
+  }
+
+  .discount-note-box textarea {
+    min-height: 64px;
+  }
+}
+
+@media (max-width: 520px) {
+  .discount-picker {
+    border-radius: 6px;
+    width: 100%;
+    max-height: calc(100vh - 8px);
+    max-height: calc(100dvh - 8px);
+  }
+
+  .discount-picker-head {
+    min-height: 32px;
+    height: auto;
+  }
+
+  .discount-picker-hint {
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .discount-picker-hint > span {
+    flex-basis: 100%;
+    font-weight: 700;
+  }
+
+  .discount-picker-tool-button {
+    flex: 1 1 130px;
+    justify-content: center;
+    min-height: 26px;
+  }
+
+  .discount-picker-list {
+    height: min(145px, 26vh);
+    height: min(145px, 26dvh);
+    min-height: 0;
+    max-height: none;
+  }
+
+  .discount-group-title,
+  .discount-option,
+  .discount-separator {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .discount-group-title {
+    padding-top: 2px;
+    padding-bottom: 1px;
+  }
+
+  .discount-option {
+    padding-top: 3px;
+    padding-bottom: 3px;
+  }
+
+  .discount-separator {
+    padding-top: 4px;
+    padding-bottom: 1px;
+  }
+
+  .discount-rate-box,
+  .discount-total-box,
+  .discount-note-box {
+    gap: 4px;
+  }
+
+  .discount-rate-list {
+    gap: 3px;
+    padding: 3px;
+  }
+
+  .discount-rate-list button {
+    padding: 3px 6px;
+  }
+
+  .discount-note-box textarea {
+    min-height: 58px;
+  }
+
+  .discount-picker-side {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .discount-total-box output {
+    min-height: 42px;
+    font-size: 34px;
+  }
+
+  .discount-picker-actions {
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .discount-apply-button,
+  .discount-cancel-button {
+    flex: 1 1 0;
+    justify-content: center;
+  }
+}
+
 .wide-field {
   grid-column: span 2;
 }
@@ -3174,6 +3712,20 @@ body.student-tab-dragging .student-tabs button {
   display: grid;
   gap: 8px;
   align-items: center;
+}
+
+.editable-grid-row {
+  display: contents;
+}
+
+.editable-grid-cell {
+  min-width: 0;
+}
+
+.editable-grid-cell > input,
+.editable-grid-cell > select,
+.editable-grid-cell > .combo-field {
+  width: 100%;
 }
 
 .payment-section-head {
@@ -3240,7 +3792,24 @@ body.student-tab-dragging .student-tabs button {
 }
 
 .expense-grid {
-  grid-template-columns: 38px minmax(130px, 0.8fr) minmax(180px, 1.2fr) minmax(120px, 0.7fr) minmax(180px, 1.4fr);
+  grid-template-columns: 38px minmax(118px, 0.7fr) minmax(170px, 1.15fr) minmax(112px, 0.65fr) 58px minmax(180px, 1.35fr) 32px;
+}
+
+.expense-grid .combo-field {
+  min-width: 0;
+}
+
+.expense-paid-check {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.expense-paid-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--teal);
 }
 
 .editable-grid-head {
@@ -3360,10 +3929,76 @@ body.student-tab-dragging .student-tabs button {
   }
 
   .student-photo-panel,
-  .student-form-grid,
+  .student-form-grid {
+    grid-template-columns: 1fr;
+  }
+
   .payment-grid,
   .expense-grid {
     grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .payment-grid .editable-grid-head,
+  .expense-grid .editable-grid-head {
+    display: none;
+  }
+
+  .payment-grid .editable-grid-row,
+  .expense-grid .editable-grid-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+  }
+
+  .payment-grid .editable-grid-cell,
+  .expense-grid .editable-grid-cell {
+    display: grid;
+    grid-template-columns: minmax(86px, 0.34fr) minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+  }
+
+  .payment-grid .editable-grid-cell::before,
+  .expense-grid .editable-grid-cell::before {
+    content: attr(data-label);
+    min-width: 0;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+
+  .payment-grid .editable-grid-cell > input,
+  .expense-grid .editable-grid-cell > input,
+  .expense-grid .editable-grid-cell > select,
+  .expense-grid .editable-grid-cell > .combo-field {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .payment-grid .row-action-cell,
+  .expense-grid .row-action-cell {
+    grid-template-columns: minmax(86px, 0.34fr) auto;
+    justify-content: start;
+  }
+
+  .payment-grid .row-number-cell,
+  .expense-grid .row-number-cell {
+    padding-bottom: 2px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .expense-paid-cell .expense-paid-check {
+    justify-content: flex-start;
+  }
+
+  .student-income-tab .student-form-grid label {
+    min-width: 0;
   }
 
   .student-documents-tab {
@@ -3388,6 +4023,19 @@ body.student-tab-dragging .student-tabs button {
   .student-main-identity,
   .student-name-status-grid {
     grid-template-columns: 1fr;
+  }
+
+  .student-status-stack {
+    grid-template-rows: none;
+  }
+
+  .student-status-stack::before {
+    display: none;
+  }
+
+  .student-status-stack label:first-child,
+  .student-status-stack label:last-child {
+    grid-row: auto;
   }
 
   .student-program-link-row {

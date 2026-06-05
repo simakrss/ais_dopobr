@@ -254,8 +254,36 @@
       "студенты, обучающиеся по образовательным программам среднего профессионального образования",
       "студенты, обучающиеся по образовательным программам высшего образования"
     ],
-    ovzStatuses: ["ОВЗ", "ОВЗ Инвалиды", "Инвалиды"]
+    ovzStatuses: ["ОВЗ", "ОВЗ Инвалиды", "Инвалиды"],
+    expenseNotes: [],
+    discountRules: []
   };
+  const discountGroups = [
+    {
+      title: "ПРОФЕССИОНАЛЬНЫЕ ПРОГРАММЫ",
+      items: [
+        { rates: [25, 50, 75, 100], title: "По решению директора учебного центра" },
+        { rates: [15, 40], title: "Скидка по партнерской программе" },
+        { rates: [50], title: "Сотрудники и преподаватели военных учебных заведений" },
+        { rates: [15], title: "Выпускники/партнерская программа учебного центра Цифровизация+" },
+        { rates: [10, 20, 30], title: "Акция Приведи друга; ФИО рекомендовавших друзей" },
+        { rates: [10], title: "Ранняя предоплата (не менее чем за месяц до начала курса)" },
+        { rates: [10, 15, 20], title: "Периодическая акция" }
+      ]
+    },
+    {
+      title: "ОБЩЕОБРАЗОВАТЕЛЬНЫЕ ПРОГРАММЫ",
+      items: [
+        { rates: [20], title: "Регистрация на курсы до 1 октября года набора на обучение" },
+        { separator: "или" },
+        { rates: [10], title: "Регистрация на курсы до 1 декабря года набора на обучение" },
+        { rates: [10], title: "Обучение одновременно на двух и более дополнительных общеобразовательных программах" },
+        { separator: "или" },
+        { rates: [10], title: "Многодетная/неполная семья" },
+        { rates: [2, 4, 6, 8, 10], title: "Акция Приведи друга; ФИО рекомендовавших друзей" }
+      ]
+    }
+  ];
   const searchableStudentFields = {
     manager: { dict: "managers", fields: [["students", "manager"], ["programs", "manager"]] },
     source: { dict: "sources", fields: [["students", "source"], ["webinars", "source"]] },
@@ -576,8 +604,9 @@
     },
     {
       id: "income",
-      label: "Доходы",
+      label: "Финансы",
       payments: true,
+      expenses: true,
       sections: [
         {
           title: "Доходы по договору",
@@ -586,8 +615,9 @@
             field("orderNo", "Номер заказа"),
             field("contractAmount", "Сумма договора", "number"),
             field("discount", "Скидка в %", "number"),
+            field("paidAmount", "Внесено по договору", "number"),
             field("balance", "Остаток по договору", "number"),
-            field("paidAmount", "Внесено по договору", "number")
+            field("discountDescription", "Описание скидки")
           ]
         }
       ]
@@ -642,7 +672,8 @@
         }
       ],
       payments: true,
-      expenses: true
+      expenses: true,
+      linkedExpenses: true
     },
     {
       id: "orders",
@@ -784,6 +815,7 @@
     field(`expense${index + 1}Date`, `Дата ${index + 1}`, "date"),
     field(`expense${index + 1}Type`, `Вид затрат ${index + 1}`, "select", false, "expenseTypes"),
     field(`expense${index + 1}Amount`, `Сумма ${index + 1}`, "number"),
+    field(`expense${index + 1}IsPaid`, `Оплачено ${index + 1}`, "checkbox"),
     field(`expense${index + 1}Note`, `Примечание ${index + 1}`)
   ]).flat();
   const studentAllFields = [
@@ -805,7 +837,10 @@
     sort: { key: "", dir: "asc" },
     studentCardTab: "main",
     studentCardTabOrder: loadStudentCardTabOrder(),
+    discountPickerOpen: false,
+    discountPicker: null,
     openPaymentRows: [],
+    openExpenseRows: [],
     selected: {},
     tableOptions: null,
     tableSettings: loadTableSettings(),
@@ -889,9 +924,11 @@
 
   function ensureDataShape(data) {
     data.dictionaries = data.dictionaries || {};
+    const hasDiscountRules = Array.isArray(data.dictionaries.discountRules);
     Object.entries(dictionaryDefaults).forEach(([key, values]) => {
       data.dictionaries[key] = unique([...(data.dictionaries[key] || []), ...values]);
     });
+    if (!hasDiscountRules) data.dictionaries.discountRules = getDefaultDiscountRuleValues();
     data.dictionaries.communicationTemplates = normalizeCommunicationTemplates(data.dictionaries.communicationTemplates);
     data.dictionaries.communicationTemplateDescriptions = normalizeCommunicationTemplateDescriptions(
       data.dictionaries.communicationTemplateDescriptions
@@ -1731,6 +1768,17 @@
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
                   `}
+                  <button class="icon-button dictionary-copy-button" data-action="dict-copy-all" data-dict="${selectedKey}" type="button" title="Скопировать все значения" aria-label="Скопировать все значения">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M5 15V5h10"></path></svg>
+                  </button>
+                  <button class="icon-button dictionary-clear-button" data-action="dict-clear" data-dict="${selectedKey}" type="button" title="Очистить справочник" aria-label="Очистить справочник">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+                  </button>
+                  ${selectedKey === "discountRules" ? `
+                    <button class="icon-button dictionary-restore-button" data-action="restore-default-discount-rules" type="button" title="Восстановить исходный перечень скидок" aria-label="Восстановить исходный перечень скидок">
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v6h6"></path><path d="M12 8v5l3 2"></path></svg>
+                    </button>
+                  ` : ""}
                   <span>${selectedValues.length}</span>
                 </div>
               </div>
@@ -1739,6 +1787,9 @@
                   <input name="value" placeholder="Новое значение или список из буфера обмена" autocomplete="off" data-dictionary-add-input>
                   <button class="ghost-button" type="submit">Добавить</button>
                 </form>
+                ${selectedKey === "discountRules" ? `
+                  <p class="dictionary-format-hint">Формат скидок: <code># Название группы</code>, <code>25,50; Описание скидки</code>, <code>или</code>.</p>
+                ` : ""}
                 <div class="chips dictionary-detail-values" data-dictionary-values data-dict="${selectedKey}">
                   ${selectedValues.length ? selectedValues.map((value) => `
                     <span class="chip dictionary-value-chip" draggable="true" data-dict="${selectedKey}" data-value="${escapeAttr(value)}" title="Перетащите, чтобы изменить порядок">
@@ -1960,6 +2011,7 @@
     const activeTab = orderedTabs.find((tab) => tab.id === state.studentCardTab) || orderedTabs[0];
     const title = getStudentCardTitle(record);
     const programTitle = getStudentCardProgramTitle(record);
+    const navigation = getStudentCardNavigation(record);
     return `
       <div class="modal-backdrop" data-action="close-modal">
         <section class="modal student-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
@@ -1970,9 +2022,17 @@
                 ${programTitle ? `<p>${escapeHtml(programTitle)}</p>` : ""}
               </div>
               <div class="modal-head-actions">
-                <span class="student-status">${escapeHtml(record.status || "Новая запись")}</span>
+                ${renderStudentHeaderStatus(record)}
                 <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
                 <button class="primary-button" type="submit">Сохранить карточку</button>
+                <div class="student-card-nav" aria-label="Переход между карточками слушателей">
+                  <button class="icon-button student-card-nav-button" data-action="navigate-student-card" data-direction="-1" type="button" title="Предыдущая карточка" aria-label="Предыдущая карточка" ${navigation.hasPrev ? "" : "disabled"}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
+                  </button>
+                  <button class="icon-button student-card-nav-button" data-action="navigate-student-card" data-direction="1" type="button" title="Следующая карточка" aria-label="Следующая карточка" ${navigation.hasNext ? "" : "disabled"}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6l6 6-6 6"></path></svg>
+                  </button>
+                </div>
               </div>
             </header>
 
@@ -1995,9 +2055,26 @@
               </aside>
             </div>
 
+            ${state.discountPickerOpen ? renderDiscountPicker(record) : ""}
           </form>
         </section>
       </div>
+    `;
+  }
+
+  function renderStudentHeaderStatus(record) {
+    const value = String(record.status || "");
+    const options = unique([
+      value,
+      ...(state.data.dictionaries.statuses || [])
+    ].map((option) => String(option || "").trim()).filter(Boolean));
+    if (!options.length) {
+      return `<input class="student-status student-status-input" name="status" value="${escapeAttr(value)}" placeholder="Статус" required>`;
+    }
+    return `
+      <select class="student-status student-status-select" name="status" title="Статус" aria-label="Статус" required>
+        ${options.map((option) => `<option value="${escapeAttr(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+      </select>
     `;
   }
 
@@ -2059,7 +2136,7 @@
       `).join("")}
       ${tab.payments ? renderPaymentRows(record) : ""}
       ${tab.expenses ? renderExpenseRows(record) : ""}
-      ${tab.expenses ? renderLinkedExpenses(record) : ""}
+      ${tab.linkedExpenses ? renderLinkedExpenses(record) : ""}
     `;
   }
 
@@ -2163,7 +2240,6 @@
             </div>
             <div class="student-status-stack">
               ${renderStudentField(sourceField, record)}
-              ${renderStudentField(statusField, record)}
               ${renderStudentGenderField(record)}
             </div>
             ${renderStudentContactLine(record)}
@@ -2683,6 +2759,7 @@
       isWide ? "wide-field" : "",
       item.key === "manager" ? "manager-field" : "",
       item.key === "agent" ? "agent-field" : "",
+      item.key === "discountDescription" ? "discount-description-label" : "",
       ["workPlace", "employmentCategory"].includes(item.key) ? "long-label-field" : ""
     ].filter(Boolean).join(" ");
     const label = `<label class="${classes}"><span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>`;
@@ -2712,6 +2789,9 @@
         </label>
       `;
     }
+    if (item.key === "discountDescription") {
+      return renderDiscountDescriptionField(label, value);
+    }
     if (["inn", "customerInn"].includes(item.key)) {
       return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" inputmode="numeric" maxlength="12" pattern="\\d{10}|\\d{12}" autocomplete="off"></label>`;
     }
@@ -2730,6 +2810,177 @@
       return `${label}<select name="${item.key}" ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
     return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required}></label>`;
+  }
+
+  function renderDiscountDescriptionField(label, value) {
+    return `
+      ${label}
+        <div class="discount-description-field">
+          <input name="discountDescription" type="text" value="${escapeAttr(value)}" autocomplete="off">
+          <button class="icon-button discount-picker-trigger" data-action="open-discount-picker" type="button" title="Выбрать скидку" aria-label="Выбрать скидку">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M20 10.6V5.8A1.8 1.8 0 0 0 18.2 4h-4.8a2 2 0 0 0-1.4.6l-7.4 7.4a2 2 0 0 0 0 2.8l4.6 4.6a2 2 0 0 0 2.8 0l7.4-7.4a2 2 0 0 0 .6-1.4z"></path>
+              <circle cx="16.2" cy="7.8" r="1"></circle>
+              <path d="M8.6 15.4l6.8-6.8"></path>
+              <circle cx="9.2" cy="9.2" r="1"></circle>
+              <circle cx="14.8" cy="14.8" r="1"></circle>
+            </svg>
+          </button>
+        </div>
+      </label>
+    `;
+  }
+
+  function getDiscountOptionKey(groupIndex, itemIndex) {
+    return `${groupIndex}:${itemIndex}`;
+  }
+
+  function getDefaultDiscountRuleValues() {
+    return discountGroups.flatMap((group) => [
+      `# ${group.title}`,
+      ...group.items.map((item) => item.separator
+        ? item.separator
+        : `${item.rates.join(",")}; ${item.title}`)
+    ]);
+  }
+
+  function parseDiscountRuleValues(values = []) {
+    const groups = [];
+    let currentGroup = null;
+    const ensureGroup = () => {
+      if (!currentGroup) {
+        currentGroup = { title: "СКИДКИ", items: [] };
+        groups.push(currentGroup);
+      }
+      return currentGroup;
+    };
+    (values || []).forEach((raw) => {
+      const line = String(raw || "").trim();
+      if (!line) return;
+      if (line.startsWith("#")) {
+        currentGroup = { title: line.replace(/^#+\s*/, "").trim() || "СКИДКИ", items: [] };
+        groups.push(currentGroup);
+        return;
+      }
+      if (/^или$/i.test(line)) {
+        ensureGroup().items.push({ separator: "или" });
+        return;
+      }
+      const match = line.match(/^([\d\s,.;]+)\s*;\s*(.+)$/);
+      if (!match) return;
+      const rates = match[1]
+        .split(/[,\s]+/)
+        .map((value) => Number(String(value).replace(",", ".")))
+        .filter((value) => Number.isFinite(value) && value > 0 && value <= 100);
+      const title = match[2].trim();
+      if (!rates.length || !title) return;
+      ensureGroup().items.push({ rates: unique(rates), title });
+    });
+    return groups.filter((group) => group.items.length);
+  }
+
+  function getDiscountGroups() {
+    return parseDiscountRuleValues(state.data.dictionaries.discountRules || []);
+  }
+
+  function getFlatDiscountOptions() {
+    return getDiscountGroups().flatMap((group, groupIndex) => (
+      group.items
+        .map((item, itemIndex) => ({ ...item, groupTitle: group.title, key: getDiscountOptionKey(groupIndex, itemIndex) }))
+        .filter((item) => !item.separator)
+    ));
+  }
+
+  function getDiscountPickerState(record = {}) {
+    const picker = state.discountPicker || {};
+    const description = String(picker.description ?? record.discountDescription ?? "").trim();
+    const option = findDiscountOptionByKey(picker.key)
+      || getFlatDiscountOptions().find((item) => item.title === description)
+      || getFlatDiscountOptions().find((item) => item.rates.includes(Number(picker.percent ?? record.discount ?? 0)))
+      || getFlatDiscountOptions()[0];
+    const percent = Number(picker.percent ?? record.discount ?? 0) || option?.rates?.[0] || 0;
+    return {
+      key: picker.key || option?.key || "",
+      description: description || option?.title || "",
+      percent
+    };
+  }
+
+  function renderDiscountPicker(record) {
+    const picker = getDiscountPickerState(record);
+    const groups = getDiscountGroups();
+    const flatOptions = getFlatDiscountOptions();
+    const selectedOption = flatOptions.find((item) => item.key === picker.key)
+      || flatOptions.find((item) => item.title === picker.description);
+    const selectedRates = selectedOption?.rates || (picker.percent ? [picker.percent] : []);
+    const selectedPercent = picker.percent || selectedRates[0] || 0;
+    return `
+      <div class="discount-picker-backdrop" role="presentation">
+        <section class="discount-picker" role="dialog" aria-modal="true" aria-label="Скидки">
+          <header class="discount-picker-head">
+            <h3>Скидки</h3>
+            <button class="icon-button" data-action="close-discount-picker" type="button" title="Закрыть" aria-label="Закрыть">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 7l10 10"></path><path d="M17 7L7 17"></path></svg>
+            </button>
+          </header>
+          <div class="discount-picker-body">
+            <div class="discount-picker-list-wrap">
+              <div class="discount-picker-hint">
+                <span>Перечень доступных скидок</span>
+                <button class="ghost-button discount-picker-tool-button discount-refresh-button" data-action="refresh-discount-picker" type="button" title="Обновить список из справочника">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12a8 8 0 0 1 13.7-5.7"></path><path d="M18 4v5h-5"></path><path d="M20 12a8 8 0 0 1-13.7 5.7"></path><path d="M6 20v-5h5"></path></svg>
+                  <span>Обновить</span>
+                </button>
+                <button class="ghost-button discount-picker-tool-button discount-restore-button" data-action="restore-default-discount-rules" type="button" title="Восстановить исходный перечень">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v6h6"></path><path d="M12 8v5l3 2"></path></svg>
+                  <span>Восстановить</span>
+                </button>
+              </div>
+              <div class="discount-picker-list">
+                ${groups.length ? groups.map((group, groupIndex) => `
+                  <div class="discount-group-title">${escapeHtml(group.title)}</div>
+                  ${group.items.map((item, itemIndex) => item.separator
+                    ? `<div class="discount-separator">${escapeHtml(item.separator)}</div>`
+                    : `<button class="discount-option ${picker.key === getDiscountOptionKey(groupIndex, itemIndex) ? "active" : ""}" data-action="select-discount-option" data-key="${getDiscountOptionKey(groupIndex, itemIndex)}" type="button">
+                        <strong>${escapeHtml(item.rates.join(","))};</strong>
+                        <span>${escapeHtml(item.title)}</span>
+                      </button>`
+                  ).join("")}
+                `).join("") : `<div class="discount-empty discount-list-empty">Справочник скидок пуст. Восстановите исходный перечень или добавьте значения в справочнике.</div>`}
+              </div>
+            </div>
+            <aside class="discount-picker-side">
+              <label class="discount-rate-box">
+                <span>Величина скидки</span>
+                <div class="discount-rate-list">
+                  ${selectedRates.length ? selectedRates.map((rate) => `
+                    <button class="${Number(rate) === Number(selectedPercent) ? "active" : ""}" data-action="select-discount-rate" data-rate="${rate}" type="button" aria-pressed="${Number(rate) === Number(selectedPercent) ? "true" : "false"}">${rate}</button>
+                  `).join("") : `<span class="discount-empty">Нет</span>`}
+                </div>
+              </label>
+              <label class="discount-total-box">
+                <span>Суммарная скидка, %</span>
+                <output>${escapeHtml(selectedPercent)}</output>
+              </label>
+              <label class="discount-note-box">
+                <span>Примечание</span>
+                <textarea data-discount-note>${escapeHtml(picker.description)}</textarea>
+              </label>
+            </aside>
+          </div>
+          <footer class="discount-picker-actions">
+            <button class="primary-button discount-apply-button" data-action="apply-discount-picker" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 13l4 4L19 7"></path></svg>
+              <span>Применить</span>
+            </button>
+            <button class="ghost-button discount-cancel-button" data-action="close-discount-picker" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 7l10 10"></path><path d="M17 7L7 17"></path></svg>
+              <span>Отмена</span>
+            </button>
+          </footer>
+        </section>
+      </div>
+    `;
   }
 
   function renderStudentProgramField(label, value, required) {
@@ -3046,7 +3297,7 @@
     return `
       <section class="form-section">
         <div class="payment-section-head">
-          <h3>Оплаты</h3>
+          <h3>Оплаты слушателя</h3>
           <button class="ghost-button payment-add-button" data-action="add-payment-row" type="button" ${nextPaymentRow ? "" : "disabled"}>Добавить</button>
         </div>
         ${rowIndexes.length ? `<div class="editable-grid payment-grid">
@@ -3058,27 +3309,37 @@
           ${rowIndexes.map((n) => {
             const hasPayment = paymentRowHasData(record, n);
             return `
-              <strong>${n}</strong>
-              <input name="payment${n}Date" data-payment-index="${n}" type="date" value="${escapeAttr(record[`payment${n}Date`] || "")}">
-              <input name="payment${n}Amount" data-payment-index="${n}" type="number" value="${escapeAttr(record[`payment${n}Amount`] || "")}">
-              <input name="payment${n}Note" data-payment-index="${n}" value="${escapeAttr(record[`payment${n}Note`] || "")}">
-              <button
-                class="payment-row-delete"
-                data-action="delete-payment-row"
-                data-payment-index="${n}"
-                type="button"
-                title="Удалить оплату"
-                aria-label="Удалить оплату ${n}"
-                ${hasPayment ? "" : "disabled"}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M3 6h18"></path>
-                  <path d="M8 6V4h8v2"></path>
-                  <path d="M6 6l1 15h10l1-15"></path>
-                  <path d="M10 11v6"></path>
-                  <path d="M14 11v6"></path>
-                </svg>
-              </button>
+              <div class="editable-grid-row payment-grid-row">
+                <div class="editable-grid-cell row-number-cell" data-label="№"><strong class="editable-grid-row-number">${n}</strong></div>
+                <label class="editable-grid-cell" data-label="Дата">
+                  <input name="payment${n}Date" data-payment-index="${n}" type="date" value="${escapeAttr(record[`payment${n}Date`] || "")}">
+                </label>
+                <label class="editable-grid-cell" data-label="Сумма">
+                  <input name="payment${n}Amount" data-payment-index="${n}" type="number" value="${escapeAttr(record[`payment${n}Amount`] || "")}">
+                </label>
+                <label class="editable-grid-cell" data-label="Примечание">
+                  <input name="payment${n}Note" data-payment-index="${n}" value="${escapeAttr(record[`payment${n}Note`] || "")}">
+                </label>
+                <div class="editable-grid-cell row-action-cell" data-label="Удалить">
+                  <button
+                    class="payment-row-delete"
+                    data-action="delete-payment-row"
+                    data-payment-index="${n}"
+                    type="button"
+                    title="Удалить оплату"
+                    aria-label="Удалить оплату ${n}"
+                    ${hasPayment ? "" : "disabled"}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M3 6h18"></path>
+                      <path d="M8 6V4h8v2"></path>
+                      <path d="M6 6l1 15h10l1-15"></path>
+                      <path d="M10 11v6"></path>
+                      <path d="M14 11v6"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
             `;
           }).join("")}
         </div>` : `<p class="payment-empty">Оплаты пока не добавлены.</p>`}
@@ -3148,33 +3409,213 @@
     });
   }
 
+  function getStudentExpenseTypeOptions(record = {}) {
+    const inventoryRows = state.data.collections.inventory || [];
+    const studentTypes = (state.data.collections.students || []).flatMap((student) => (
+      Array.from({ length: 6 }, (_, index) => student[`expense${index + 1}Type`])
+    ));
+    const currentTypes = Array.from({ length: 6 }, (_, index) => record[`expense${index + 1}Type`]);
+    return unique([
+      ...(state.data.dictionaries.expenseTypes || []),
+      ...(state.data.dictionaries.inventoryTypes || []),
+      ...studentTypes,
+      ...currentTypes,
+      ...(state.data.collections.directExpenses || []).map((expense) => expense.type),
+      ...(state.data.collections.generalExpenses || []).map((expense) => expense.workType),
+      ...inventoryRows.flatMap((item) => [item.itemType, item.note])
+    ].map((value) => String(value || "").trim()).filter(Boolean));
+  }
+
+  function getStudentExpenseNoteOptions(record = {}) {
+    const studentNotes = (state.data.collections.students || []).flatMap((student) => (
+      Array.from({ length: 6 }, (_, index) => student[`expense${index + 1}Note`])
+    ));
+    const currentNotes = Array.from({ length: 6 }, (_, index) => record[`expense${index + 1}Note`]);
+    const directExpenseNotes = (state.data.collections.directExpenses || []).map((expense) => expense.note);
+    const generalExpenseNotes = (state.data.collections.generalExpenses || [])
+      .flatMap((expense) => [expense.description, expense.otherExpenses]);
+    return unique([
+      ...(state.data.dictionaries.expenseNotes || []),
+      ...studentNotes,
+      ...currentNotes,
+      ...directExpenseNotes,
+      ...generalExpenseNotes
+    ].map((value) => String(value || "").trim()).filter(Boolean));
+  }
+
+  function expenseRowHasData(record, index) {
+    return Boolean(
+      record[`expense${index}Date`] ||
+      record[`expense${index}Type`] ||
+      record[`expense${index}Amount`] ||
+      isChecked(record[`expense${index}IsPaid`]) ||
+      record[`expense${index}Note`]
+    );
+  }
+
+  function getOpenExpenseRowIndexes() {
+    return (state.openExpenseRows || [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value >= 1 && value <= 6);
+  }
+
+  function getVisibleExpenseRowIndexes(record) {
+    const openRows = new Set(getOpenExpenseRowIndexes());
+    return Array.from({ length: 6 }, (_, index) => index + 1)
+      .filter((index) => expenseRowHasData(record, index) || openRows.has(index));
+  }
+
+  function getNextAvailableExpenseRowIndex(record) {
+    const openRows = new Set(getOpenExpenseRowIndexes());
+    const hasOpenEmptyRow = [...openRows].some((index) => !expenseRowHasData(record, index));
+    if (hasOpenEmptyRow) return "";
+    return Array.from({ length: 6 }, (_, index) => index + 1)
+      .find((index) => !expenseRowHasData(record, index) && !openRows.has(index)) || "";
+  }
+
   function renderExpenseRows(record) {
+    const typeOptions = getStudentExpenseTypeOptions(record);
+    const noteOptions = getStudentExpenseNoteOptions(record);
+    const rowIndexes = getVisibleExpenseRowIndexes(record);
+    const nextExpenseRow = getNextAvailableExpenseRowIndex(record);
     return `
       <section class="form-section">
-        <h3>Ручные расходы карточки</h3>
-        <div class="editable-grid expense-grid">
+        <div class="payment-section-head">
+          <h3>Расходы</h3>
+          <button class="ghost-button payment-add-button" data-action="add-expense-row" type="button" ${nextExpenseRow ? "" : "disabled"}>Добавить</button>
+        </div>
+        ${rowIndexes.length ? `<div class="editable-grid expense-grid">
           <div class="editable-grid-head">№</div>
           <div class="editable-grid-head">Дата</div>
           <div class="editable-grid-head">Вид затрат</div>
           <div class="editable-grid-head">Сумма</div>
+          <div class="editable-grid-head">Оплач.</div>
           <div class="editable-grid-head">Примечание</div>
-          ${Array.from({ length: 6 }, (_, index) => {
-            const n = index + 1;
+          <div class="editable-grid-head"></div>
+          ${rowIndexes.map((n) => {
             const type = record[`expense${n}Type`] || "";
+            const hasExpense = expenseRowHasData(record, n);
             return `
-              <strong>${n}</strong>
-              <input name="expense${n}Date" type="date" value="${escapeAttr(record[`expense${n}Date`] || "")}">
-              <select name="expense${n}Type">
-                <option value=""></option>
-                ${(state.data.dictionaries.expenseTypes || []).map((option) => `<option ${option === type ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
-              </select>
-              <input name="expense${n}Amount" type="number" value="${escapeAttr(record[`expense${n}Amount`] || "")}">
-              <input name="expense${n}Note" value="${escapeAttr(record[`expense${n}Note`] || "")}">
+              <div class="editable-grid-row expense-grid-row">
+                <div class="editable-grid-cell row-number-cell" data-label="№"><strong class="editable-grid-row-number">${n}</strong></div>
+                <label class="editable-grid-cell" data-label="Дата">
+                  <input name="expense${n}Date" data-expense-index="${n}" type="date" value="${escapeAttr(record[`expense${n}Date`] || "")}">
+                </label>
+                <label class="editable-grid-cell" data-label="Вид затрат">
+                  <select name="expense${n}Type" data-expense-index="${n}">
+                    <option value=""></option>
+                    ${typeOptions.map((option) => `<option ${option === type ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+                  </select>
+                </label>
+                <label class="editable-grid-cell" data-label="Сумма">
+                  <input name="expense${n}Amount" data-expense-index="${n}" type="number" value="${escapeAttr(record[`expense${n}Amount`] || "")}">
+                </label>
+                <label class="editable-grid-cell expense-paid-cell" data-label="Оплач." title="Оплачено">
+                  <span class="expense-paid-check">
+                    <input name="expense${n}IsPaid" data-expense-index="${n}" type="checkbox" ${isChecked(record[`expense${n}IsPaid`]) ? "checked" : ""}>
+                  </span>
+                </label>
+                <div class="editable-grid-cell expense-note-cell" data-label="Примечание">
+                  ${renderComboField({
+                    name: `expense${n}Note`,
+                    type: "search",
+                    value: record[`expense${n}Note`] || "",
+                    options: noteOptions,
+                    attrs: `data-expense-index="${n}"`
+                  })}
+                </div>
+                <div class="editable-grid-cell row-action-cell" data-label="Удалить">
+                  <button
+                    class="payment-row-delete"
+                    data-action="delete-expense-row"
+                    data-expense-index="${n}"
+                    type="button"
+                    title="Удалить расход"
+                    aria-label="Удалить расход ${n}"
+                    ${hasExpense ? "" : "disabled"}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M3 6h18"></path>
+                      <path d="M8 6V4h8v2"></path>
+                      <path d="M6 6l1 15h10l1-15"></path>
+                      <path d="M10 11v6"></path>
+                      <path d="M14 11v6"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
             `;
           }).join("")}
-        </div>
+        </div>` : `<p class="payment-empty">Расходы пока не добавлены.</p>`}
       </section>
     `;
+  }
+
+  function getExpenseRowInputs(index) {
+    return ["Date", "Type", "Amount", "IsPaid", "Note"]
+      .map((suffix) => document.querySelector(`[name="expense${index}${suffix}"]`))
+      .filter(Boolean);
+  }
+
+  function syncExpenseRowDeleteButton(index) {
+    const button = document.querySelector(`[data-action='delete-expense-row'][data-expense-index="${index}"]`);
+    if (!button) return;
+    const draft = collectStudentFormDraft();
+    button.disabled = !expenseRowHasData(draft, Number(index));
+  }
+
+  function syncExpenseAddButton() {
+    const button = document.querySelector("[data-action='add-expense-row']");
+    if (!button) return;
+    const draft = collectStudentFormDraft();
+    button.disabled = !getNextAvailableExpenseRowIndex(draft);
+  }
+
+  function compactStudentExpenses(record, deletedIndex) {
+    const expenses = Array.from({ length: 6 }, (_, index) => index + 1)
+      .filter((index) => index !== Number(deletedIndex))
+      .map((index) => ({
+        date: record[`expense${index}Date`] || "",
+        type: record[`expense${index}Type`] || "",
+        amount: record[`expense${index}Amount`] || "",
+        isPaid: record[`expense${index}IsPaid`] || "",
+        note: record[`expense${index}Note`] || ""
+      }))
+      .filter((expense) => expense.date || expense.type || expense.amount || isChecked(expense.isPaid) || expense.note);
+    Array.from({ length: 6 }, (_, index) => index + 1).forEach((index) => {
+      const expense = expenses[index - 1] || {};
+      record[`expense${index}Date`] = expense.date || "";
+      record[`expense${index}Type`] = expense.type || "";
+      record[`expense${index}Amount`] = expense.amount || "";
+      record[`expense${index}IsPaid`] = expense.isPaid || "";
+      record[`expense${index}Note`] = expense.note || "";
+    });
+    return record;
+  }
+
+  function clearStudentExpenseRow(index) {
+    const inputs = getExpenseRowInputs(index);
+    if (!inputs.length || !expenseRowHasData(collectStudentFormDraft(), Number(index))) return;
+    if (!confirm("Удалить запись расхода?")) return;
+    if (state.modal) {
+      state.modal.draft = compactStudentExpenses(collectStudentFormDraft(), index);
+      state.modal.hasDraftChanges = true;
+    }
+    state.openExpenseRows = [];
+    render();
+  }
+
+  function addStudentExpenseRow() {
+    if (!state.modal) return;
+    const draft = collectStudentFormDraft();
+    const nextIndex = getNextAvailableExpenseRowIndex(draft);
+    if (!nextIndex) return;
+    state.modal.draft = draft;
+    state.openExpenseRows = unique([...getOpenExpenseRowIndexes(), nextIndex]);
+    render();
+    requestAnimationFrame(() => {
+      document.querySelector(`[name="expense${nextIndex}Date"]`)?.focus({ preventScroll: true });
+    });
   }
 
   function renderLinkedExpenses(record) {
@@ -3546,15 +3987,45 @@
     document.querySelectorAll("[data-action='check-post-index']").forEach((button) => {
       button.addEventListener("click", () => checkStudentAddressPostIndex(button.dataset.source));
     });
+    document.querySelector("[data-action='open-discount-picker']")?.addEventListener("click", openDiscountPicker);
+    document.querySelectorAll("[data-action='close-discount-picker']").forEach((button) => {
+      button.addEventListener("click", closeDiscountPicker);
+    });
+    document.querySelector("[data-action='refresh-discount-picker']")?.addEventListener("click", refreshDiscountPicker);
+    document.querySelectorAll("[data-action='restore-default-discount-rules']").forEach((button) => {
+      button.addEventListener("click", restoreDefaultDiscountRules);
+    });
+    document.querySelector("[data-action='apply-discount-picker']")?.addEventListener("click", applyDiscountPicker);
+    document.querySelectorAll("[data-action='select-discount-option']").forEach((button) => {
+      button.addEventListener("click", () => selectDiscountOption(button.dataset.key));
+    });
+    document.querySelectorAll("[data-action='select-discount-rate']").forEach((button) => {
+      button.addEventListener("click", () => selectDiscountRate(button.dataset.rate));
+    });
     document.querySelectorAll("[data-action='delete-payment-row']").forEach((button) => {
       button.addEventListener("click", () => clearStudentPaymentRow(button.dataset.paymentIndex));
     });
     document.querySelector("[data-action='add-payment-row']")?.addEventListener("click", addStudentPaymentRow);
+    document.querySelectorAll("[data-action='delete-expense-row']").forEach((button) => {
+      button.addEventListener("click", () => clearStudentExpenseRow(button.dataset.expenseIndex));
+    });
+    document.querySelector("[data-action='add-expense-row']")?.addEventListener("click", addStudentExpenseRow);
+    document.querySelectorAll("[data-action='navigate-student-card']").forEach((button) => {
+      button.addEventListener("click", () => navigateStudentCard(button.dataset.direction));
+    });
     document.querySelectorAll("[data-payment-index]").forEach((input) => {
       input.addEventListener("input", () => {
         syncPaymentRowDeleteButton(input.dataset.paymentIndex);
         syncPaymentAddButton();
       });
+    });
+    document.querySelectorAll("[data-expense-index]").forEach((input) => {
+      const syncExpenseControls = () => {
+        syncExpenseRowDeleteButton(input.dataset.expenseIndex);
+        syncExpenseAddButton();
+      };
+      input.addEventListener("input", syncExpenseControls);
+      input.addEventListener("change", syncExpenseControls);
     });
 
     document.getElementById("searchInput")?.addEventListener("input", (event) => {
@@ -3606,6 +4077,9 @@
       button.addEventListener("click", () => {
         if (button.dataset.config === "students") state.studentCardTab = "main";
         if (button.dataset.config === "students") state.openPaymentRows = [];
+        if (button.dataset.config === "students") state.openExpenseRows = [];
+        if (button.dataset.config === "students") state.discountPickerOpen = false;
+        if (button.dataset.config === "students") state.discountPicker = null;
         state.modal = { config: button.dataset.config, id: "" };
         render();
       });
@@ -3615,6 +4089,9 @@
       button.addEventListener("click", () => {
         if (button.dataset.config === "students") state.studentCardTab = "main";
         if (button.dataset.config === "students") state.openPaymentRows = [];
+        if (button.dataset.config === "students") state.openExpenseRows = [];
+        if (button.dataset.config === "students") state.discountPickerOpen = false;
+        if (button.dataset.config === "students") state.discountPicker = null;
         state.modal = { config: button.dataset.config, id: button.dataset.id };
         render();
       });
@@ -3910,6 +4387,14 @@
       button.addEventListener("click", () => sortDictionaryValues(button.dataset.dict, button.dataset.order));
     });
 
+    document.querySelectorAll("[data-action='dict-copy-all']").forEach((button) => {
+      button.addEventListener("click", () => copyDictionaryValues(button.dataset.dict));
+    });
+
+    document.querySelectorAll("[data-action='dict-clear']").forEach((button) => {
+      button.addEventListener("click", () => clearDictionaryValues(button.dataset.dict));
+    });
+
     document.querySelectorAll("[data-action='sort-communication-template-fields']").forEach((button) => {
       button.addEventListener("click", () => sortCommunicationTemplateFields(button.dataset.order));
     });
@@ -4051,6 +4536,160 @@
     render();
   }
 
+  function getStudentNavigationRows() {
+    const visibleRows = getVisibleRows(configs.students);
+    return visibleRows.length ? visibleRows : (state.data.collections.students || []);
+  }
+
+  function getStudentCardNavigation(record = {}) {
+    const rows = getStudentNavigationRows();
+    const index = rows.findIndex((row) => row.id === record.id);
+    return {
+      index,
+      total: rows.length,
+      hasPrev: Boolean(record.id) && index > 0,
+      hasNext: Boolean(record.id) && index >= 0 && index < rows.length - 1
+    };
+  }
+
+  function getStudentNavigationTarget(currentId, direction) {
+    const rows = getStudentNavigationRows();
+    const index = rows.findIndex((row) => row.id === currentId);
+    if (index < 0) return null;
+    return rows[index + (Number(direction) < 0 ? -1 : 1)] || null;
+  }
+
+  function resetStudentCardTransientState() {
+    state.openPaymentRows = [];
+    state.openExpenseRows = [];
+    state.discountPickerOpen = false;
+    state.discountPicker = null;
+  }
+
+  function openStudentCardById(id) {
+    if (!id) return;
+    resetStudentCardTransientState();
+    state.modal = { config: "students", id };
+    render();
+  }
+
+  function navigateStudentCard(direction) {
+    const formElement = document.getElementById("recordForm");
+    if (!formElement || formElement.dataset.config !== "students" || !state.modal?.id) return;
+    let currentId = formElement.dataset.id || state.modal.id;
+    const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
+    if (hasChanges) {
+      if (confirm("Сохранить изменения перед переходом к другой карточке?")) {
+        const savedId = saveFormRecord(formElement);
+        if (!savedId) return;
+        persist();
+        currentId = savedId;
+      } else if (!confirm("Перейти без сохранения изменений?")) {
+        return;
+      }
+    }
+    const target = getStudentNavigationTarget(currentId, direction);
+    if (!target) return;
+    openStudentCardById(target.id);
+  }
+
+  function findDiscountOptionByKey(key) {
+    return getFlatDiscountOptions().find((item) => item.key === key) || null;
+  }
+
+  function openDiscountPicker() {
+    if (!state.modal || state.modal.config !== "students") return;
+    const draft = collectStudentFormDraft();
+    state.modal.draft = draft;
+    state.modal.hasDraftChanges = state.modal.hasDraftChanges || hasUnsavedFormChanges(document.getElementById("recordForm"));
+    const picker = getDiscountPickerState(draft);
+    const option = findDiscountOptionByKey(picker.key);
+    state.discountPicker = {
+      key: picker.key,
+      description: picker.description,
+      percent: picker.percent || option?.rates?.[0] || 0
+    };
+    state.discountPickerOpen = true;
+    render();
+  }
+
+  function closeDiscountPicker() {
+    state.discountPickerOpen = false;
+    state.discountPicker = null;
+    render();
+  }
+
+  function selectDiscountOption(key) {
+    if (!state.modal || state.modal.config !== "students") return;
+    const draft = collectStudentFormDraft();
+    state.modal.draft = draft;
+    state.modal.hasDraftChanges = state.modal.hasDraftChanges || hasUnsavedFormChanges(document.getElementById("recordForm"));
+    const option = findDiscountOptionByKey(key);
+    if (!option) return;
+    const currentPercent = Number(state.discountPicker?.percent || draft.discount || 0);
+    state.discountPicker = {
+      key,
+      description: option.title,
+      percent: option.rates.includes(currentPercent) ? currentPercent : option.rates[0]
+    };
+    state.discountPickerOpen = true;
+    render();
+  }
+
+  function selectDiscountRate(rate) {
+    const percent = Number(rate || 0);
+    if (!state.discountPicker || !percent) return;
+    state.discountPicker = { ...state.discountPicker, percent };
+    state.discountPickerOpen = true;
+    if (state.modal?.config === "students") state.modal.draft = collectStudentFormDraft();
+    render();
+  }
+
+  function refreshDiscountPicker() {
+    if (!state.modal || state.modal.config !== "students") {
+      render();
+      return;
+    }
+    if (state.modal?.config === "students") state.modal.draft = collectStudentFormDraft();
+    const picker = getDiscountPickerState(state.modal?.draft || {});
+    const option = findDiscountOptionByKey(picker.key) || getFlatDiscountOptions()[0];
+    state.discountPicker = {
+      key: option?.key || picker.key || "",
+      description: option?.title || picker.description || "",
+      percent: option?.rates?.includes(picker.percent) ? picker.percent : (option?.rates?.[0] || picker.percent || 0)
+    };
+    state.discountPickerOpen = true;
+    render();
+  }
+
+  function restoreDefaultDiscountRules() {
+    if (!confirm("Восстановить исходный перечень скидок? Текущий справочник скидок будет заменен.")) return;
+    state.data.dictionaries.discountRules = getDefaultDiscountRuleValues();
+    addAudit("Восстановлен справочник", dictionaryTitle("discountRules"), "Исходный перечень скидок");
+    persist();
+    if (state.modal?.config === "students" && state.discountPickerOpen) refreshDiscountPicker();
+    else render();
+  }
+
+  function applyDiscountPicker() {
+    if (!state.modal || state.modal.config !== "students") return;
+    const note = document.querySelector("[data-discount-note]")?.value.trim();
+    const picker = getDiscountPickerState(collectStudentFormDraft());
+    const draft = {
+      ...collectStudentFormDraft(),
+      discount: Number(picker.percent || 0),
+      discountDescription: note || picker.description || ""
+    };
+    const paymentTotal = sumStudentPayments(draft);
+    if (paymentTotal > 0) draft.paidAmount = paymentTotal;
+    draft.balance = calculateStudentBalance(draft);
+    state.modal.draft = draft;
+    state.modal.hasDraftChanges = true;
+    state.discountPickerOpen = false;
+    state.discountPicker = null;
+    render();
+  }
+
   function collectStudentFormDraft() {
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "students") return state.modal?.draft || {};
@@ -4133,7 +4772,10 @@
       return;
     }
     state.modal = null;
+    state.discountPickerOpen = false;
+    state.discountPicker = null;
     state.openPaymentRows = [];
+    state.openExpenseRows = [];
     render();
   }
 
@@ -4368,9 +5010,8 @@
     textarea.remove();
   }
 
-  function saveRecord(event) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
+  function saveFormRecord(formElement) {
+    if (!formElement) return "";
     const config = configs[formElement.dataset.config];
     const rows = state.data.collections[config.collection];
     const formData = new FormData(formElement);
@@ -4415,7 +5056,7 @@
       if (!validateStudentIdentityValue("inn", values.inn, innInput)
         || !validateStudentIdentityValue("snils", values.snils, snilsInput)
         || !validateStudentIdentityValue("customerInn", values.customerInn, customerInnInput)
-        || !validateStudentIdentityValue("customerSnils", values.customerSnils, customerSnilsInput)) return;
+        || !validateStudentIdentityValue("customerSnils", values.customerSnils, customerSnilsInput)) return "";
       const selectedProgram = findProgramByName(values.program);
       if (selectedProgram) {
         values.educationType = selectedProgram.type || values.educationType || "";
@@ -4426,17 +5067,26 @@
       const expenseTotal = sumStudentExpenses(values);
       if (paymentTotal > 0) values.paidAmount = paymentTotal;
       if (expenseTotal > 0) values.expenseTotal = expenseTotal;
-      values.balance = Number(values.contractAmount || 0) - Number(values.paidAmount || 0);
+      values.balance = calculateStudentBalance(values);
     }
 
+    let savedId = formElement.dataset.id;
     if (formElement.dataset.id) {
       const index = rows.findIndex((row) => row.id === formElement.dataset.id);
       rows[index] = { ...rows[index], ...values };
       addAudit("Изменена запись", config.title, values.name || values.contractNo || values.code || values.itemType || "");
     } else {
-      rows.unshift({ id: makeId(config.collection), ...values });
+      savedId = makeId(config.collection);
+      rows.unshift({ id: savedId, ...values });
       addAudit("Создана запись", config.title, values.name || values.contractNo || values.code || values.itemType || "");
     }
+    return savedId;
+  }
+
+  function saveRecord(event) {
+    event.preventDefault();
+    const savedId = saveFormRecord(event.currentTarget);
+    if (!savedId) return;
     state.modal = null;
     persist();
     render();
@@ -4622,7 +5272,7 @@
     event.preventDefault();
     const dict = event.currentTarget.dataset.dict;
     const input = event.currentTarget.querySelector("input");
-    const values = parseDictionaryValues(input.value);
+    const values = parseDictionaryValues(input.value, dict);
     if (!values.length) {
       input.focus();
       return;
@@ -5409,7 +6059,7 @@
     const form = input.closest("form[data-action='dict-add']");
     const dict = form?.dataset.dict;
     const text = event.clipboardData?.getData("text") || "";
-    const values = parseDictionaryValues(text);
+    const values = parseDictionaryValues(text, dict);
     if (!dict || values.length <= 1) return;
     if (!confirmDictionaryPaste(values)) return;
     event.preventDefault();
@@ -5427,9 +6077,10 @@
     return confirm(`Вставить ${values.length} знач. из буфера обмена?\n\n${preview}${rest}`);
   }
 
-  function parseDictionaryValues(text) {
+  function parseDictionaryValues(text, dict = "") {
+    const separator = dict === "discountRules" ? /[\r\n\t]+/ : /[\r\n\t;]+/;
     return unique(String(text || "")
-      .split(/[\r\n\t;]+/)
+      .split(separator)
       .map((value) => value.trim())
       .filter(Boolean));
   }
@@ -5443,6 +6094,28 @@
     state.data.dictionaries[dict] = [...(state.data.dictionaries[dict] || [])]
       .sort((a, b) => direction * String(a).localeCompare(String(b), "ru"));
     addAudit("Сортировка справочника", dictionaryTitle(dict), order === "desc" ? "Я-А" : "А-Я");
+    persist();
+    render();
+  }
+
+  async function copyDictionaryValues(dict) {
+    if (!dict) return;
+    const values = state.data.dictionaries[dict] || [];
+    if (!values.length) {
+      alert("В справочнике нет значений для копирования.");
+      return;
+    }
+    await copyTextToClipboard(values.map((value) => String(value ?? "")).join("\n"));
+    alert(`Скопировано значений: ${values.length}`);
+  }
+
+  function clearDictionaryValues(dict) {
+    if (!dict) return;
+    const values = state.data.dictionaries[dict] || [];
+    if (!values.length) return;
+    if (!confirm(`Очистить справочник "${dictionaryTitle(dict)}"?\n\nБудет удалено значений: ${values.length}`)) return;
+    state.data.dictionaries[dict] = [];
+    addAudit("Очищен справочник", dictionaryTitle(dict), `${values.length} знач.`);
     persist();
     render();
   }
@@ -5584,6 +6257,14 @@
   function sumStudentPayments(record) {
     return Array.from({ length: 8 }, (_, index) => Number(record[`payment${index + 1}Amount`] || 0))
       .reduce((sum, value) => sum + value, 0);
+  }
+
+  function calculateStudentBalance(record) {
+    const contractAmount = Number(record.contractAmount || 0);
+    const paidAmount = Number(record.paidAmount || 0);
+    const discountPercent = Math.max(0, Math.min(100, Number(record.discount || 0)));
+    const discountedAmount = contractAmount * (1 - discountPercent / 100);
+    return Math.round((discountedAmount - paidAmount) * 100) / 100;
   }
 
   function sumStudentExpenses(record) {
@@ -6085,6 +6766,8 @@
       employmentCategories: "Категории занятости",
       ovzStatuses: "Статусы ОВЗ",
       fundingSources: "Источники финансирования",
+      expenseNotes: "Типовые примечания расходов",
+      discountRules: "Скидки",
       communicationTemplates: "Шаблоны типовых сообщений",
       roles: "Роли"
     };
