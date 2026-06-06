@@ -676,6 +676,30 @@
       linkedExpenses: true
     },
     {
+      id: "ordersSdo",
+      label: "Приказы, СДО",
+      sections: [
+        {
+          title: "Приказы и СДО",
+          fields: [
+            field("contractDate", "Дата договора", "date"),
+            field("contractNo", "Номер договора"),
+            field("startDate", "Дата нач. обуч.", "date"),
+            field("endDate", "Дата окон. обуч.", "date"),
+            field("extendedEndDate", "Дата окончания (измененная)", "date"),
+            field("enrollmentDate", "Дата зачислен.", "date"),
+            field("enrollmentOrderNo", "Номер приказа"),
+            field("expulsionDate", "Дата отчислен.", "date"),
+            field("expulsionOrderNo", "Номер приказа"),
+            field("group", "Номер группы"),
+            field("login", "Логин"),
+            field("password", "Пароль"),
+            field("portalAccessMessage", "Сообщение о доступе к порталу обучения", "textarea")
+          ]
+        }
+      ]
+    },
+    {
       id: "orders",
       label: "Приказы",
       sections: [
@@ -790,7 +814,7 @@
     { key: "certificateSent", label: "Отправлена справка об обучении" }
   ];
 
-  const studentCardDefaultTabIds = ["main", "documents", "income", "communications"];
+  const studentCardDefaultTabIds = ["main", "documents", "income", "communications", "ordersSdo"];
   const visibleStudentCardTabs = studentCardDefaultTabIds
     .map((id) => studentCardTabs.find((tab) => tab.id === id))
     .filter(Boolean);
@@ -2045,7 +2069,7 @@
                     </button>
                   `).join("")}
                 </div>
-                <div class="student-tab-body ${activeTab.id === "documents" ? "student-documents-tab" : ""} ${activeTab.id === "income" ? "student-income-tab" : ""} ${activeTab.id === "communications" ? "student-communications-tab" : ""}">
+                <div class="student-tab-body ${activeTab.id === "documents" ? "student-documents-tab" : ""} ${activeTab.id === "income" ? "student-income-tab" : ""} ${activeTab.id === "communications" ? "student-communications-tab" : ""} ${activeTab.id === "ordersSdo" ? "student-orders-sdo-tab" : ""}">
                   ${renderStudentTabContent(activeTab, record)}
                 </div>
               </section>
@@ -2115,6 +2139,7 @@
   }
 
   function renderStudentTabContent(tab, record) {
+    if (tab.id === "ordersSdo") return renderStudentOrdersSdoTab(record);
     return `
       ${tab.sections.filter((section) => !(tab.id === "main" && !section.fields.some((item) => item.key === "name"))).map((section) => `
         <section class="form-section">
@@ -2138,6 +2163,108 @@
       ${tab.expenses ? renderExpenseRows(record) : ""}
       ${tab.linkedExpenses ? renderLinkedExpenses(record) : ""}
     `;
+  }
+
+  function renderStudentOrdersSdoTab(record) {
+    const portalMessage = record.portalAccessMessage || generateStudentPortalAccessMessage(record);
+    return `
+      <section class="form-section student-orders-sdo-panel">
+        <div class="orders-sdo-topbar">
+          <button class="ghost-button orders-sdo-auto-button" type="button">⚡ Авто</button>
+        </div>
+        <div class="orders-sdo-contract-grid">
+          ${renderOrdersSdoControl("contractDate", "Дата договора", record, "date", { tools: ["calendar", "step"] })}
+          ${renderOrdersSdoControl("contractNo", "Номер договора", record, "text", { tools: ["pin", "copy"] })}
+          ${renderOrdersSdoControl("startDate", "Дата нач. обуч.", record, "date", { tools: ["calendar", "step"] })}
+          ${renderOrdersSdoControl("endDate", "Дата окон. обуч.", record, "date", { tools: ["calendar", "step", "down"] })}
+          <div class="orders-sdo-shift-row">
+            <button class="orders-sdo-icon-button" type="button" title="Перенести дату вниз">↓</button>
+            ${renderOrdersSdoControl("extendedEndDate", "Дата окончания (измененная)", record, "date", { tools: ["up", "clear", "calendar", "step", "down"], compact: true })}
+            <button class="orders-sdo-icon-button is-add" type="button" title="Добавить">+</button>
+            <button class="orders-sdo-icon-button is-danger" type="button" title="Удалить">−</button>
+          </div>
+        </div>
+        <div class="orders-sdo-orders-grid">
+          ${renderOrdersSdoControl("enrollmentDate", "Дата зачислен.", record, "date", { tools: ["calendar", "step"] })}
+          ${renderOrdersSdoControl("expulsionDate", "Дата отчислен.", record, "date", { tools: ["calendar", "step"] })}
+          ${renderOrdersSdoControl("enrollmentOrderNo", "Номер приказа", record, "text", { tools: ["pin", "file"], after: `<button class="ghost-button orders-sdo-certificate-button" type="button">📄 Справка</button>` })}
+          ${renderOrdersSdoControl("expulsionOrderNo", "Номер приказа", record, "text", { tools: ["pin", "file"] })}
+          ${renderOrdersSdoControl("group", "Номер группы", record, "text", { tools: ["pin"], className: "orders-sdo-group-field" })}
+        </div>
+        <fieldset class="orders-sdo-lms">
+          <legend>Система дистанционного обучения</legend>
+          <div class="orders-sdo-lms-row">
+            ${renderOrdersSdoControl("login", "Логин", record, "text", { tools: ["copy"], compact: true })}
+            ${renderOrdersSdoControl("password", "Пароль", record, "text", { tools: ["dropdown", "copy"], compact: true })}
+            <button class="ghost-button orders-sdo-tool-button" type="button">🔑 Сгенерировать</button>
+            <button class="orders-sdo-icon-button" type="button" title="Открыть портал">🌐</button>
+          </div>
+          <div class="orders-sdo-message-head">
+            <span>Сообщение о доступе к порталу обучения</span>
+            <button class="ghost-button orders-sdo-tool-button" type="button">🔐 Экспорт в СДО</button>
+            <button class="ghost-button orders-sdo-tool-button" type="button">@ Отправить</button>
+            <button class="orders-sdo-icon-button" type="button" title="Копировать сообщение">📋</button>
+          </div>
+          <textarea name="portalAccessMessage" class="orders-sdo-message">${escapeHtml(portalMessage)}</textarea>
+        </fieldset>
+      </section>
+    `;
+  }
+
+  function renderOrdersSdoControl(key, label, record, type = "text", options = {}) {
+    const tools = options.tools || [];
+    const value = record[key] ?? "";
+    const control = `<input name="${key}" type="${type}" value="${escapeAttr(value)}">`;
+    return `
+      <label class="orders-sdo-field ${options.compact ? "is-compact" : ""} ${options.className || ""}">
+        <span>${escapeHtml(label)}</span>
+        <div class="orders-sdo-control">
+          ${control}
+          ${tools.map(renderOrdersSdoToolButton).join("")}
+          ${options.after || ""}
+        </div>
+      </label>
+    `;
+  }
+
+  function renderOrdersSdoToolButton(tool) {
+    const map = {
+      calendar: ["📅", "Календарь"],
+      step: ["↕", "Изменить значение"],
+      pin: ["📌", "Закрепить"],
+      copy: ["📄", "Копировать"],
+      file: ["▫", "Документ"],
+      down: ["↓", "Перенести вниз"],
+      up: ["↑", "Перенести вверх"],
+      clear: ["×", "Очистить"],
+      dropdown: ["⌄", "Выбрать"]
+    };
+    const [icon, title] = map[tool] || [tool, ""];
+    const tone = tool === "clear" ? " is-danger" : "";
+    return `<button class="orders-sdo-icon-button${tone}" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">${icon}</button>`;
+  }
+
+  function generateStudentPortalAccessMessage(record) {
+    const name = getStudentCommunicationAddressee(record) || String(record.name || "").trim() || "слушатель";
+    const login = String(record.login || "").trim();
+    const password = String(record.password || "").trim();
+    const program = getStudentCardProgramTitle(record) || String(record.program || "").trim();
+    const endDate = dateRu(record.endDate || "");
+    return `Здравствуйте, ${name}!
+
+Вот Ваши учетные данные для обучения на портале дистанционного обучения Цифровизация Плюс (https://portal.edu-plus.ru):
+
+логин: ${login}
+пароль: ${password}
+
+Программа: ${program}
+Срок обучения до: ${endDate}
+
+Точка входа на курс: https://portal.edu-plus.ru/my/courses.php
+
+Вам нужно выполнить задания по всем дисциплинам/модулям и затем пройти итоговую аттестацию до окончания обучения.
+
+После выполнения всех заданий и прохождения итоговой аттестации по окончанию срока обучения направим Вам электронный документ об образовании.`;
   }
 
   function renderStudentCommunicationMessages(section, record) {
