@@ -2962,6 +2962,16 @@ body.student-tab-dragging .student-tabs button {
   color: #0b5f59;
 }
 
+.orders-sdo-icon-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .orders-sdo-icon-button.is-danger {
   color: #dc2626;
 }

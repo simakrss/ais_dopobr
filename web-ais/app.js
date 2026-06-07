@@ -930,6 +930,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let sidebarOutsideClickBound = false;
   let fieldUndoKeyBound = false;
   let lastDeletedControlState = null;
+  let lastGeneratedContractNumberState = null;
   let draggedStudentTabId = "";
   let lastStudentTabDragEndedAt = 0;
   const communicationTemplateEditorHistories = new WeakMap();
@@ -2242,7 +2243,7 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         <div class="orders-sdo-contract-grid">
           ${renderOrdersSdoControl("contractDate", "Дата договора", record, "date", { tools: ["dateStep"] })}
-          ${renderOrdersSdoControl("contractNo", "Номер договора", record, "text", { tools: ["pin", "copy"] })}
+          ${renderOrdersSdoControl("contractNo", "Номер договора", record, "text", { tools: ["generateContractNo"] })}
           ${renderOrdersSdoControl("startDate", "Дата нач. обуч.", record, "date", { tools: ["dateStep"] })}
           ${renderOrdersSdoControl("endDate", "Дата окон. обуч.", record, "date", { tools: ["dateStep"] })}
           <div class="orders-sdo-shift-row">
@@ -2293,6 +2294,25 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderOrdersSdoToolButton(tool, fieldName) {
+    if (tool === "generateContractNo") {
+      return `
+        <button
+          class="orders-sdo-icon-button"
+          data-action="generate-contract-number"
+          type="button"
+          title="Сформировать номер договора"
+          aria-label="Сформировать номер договора"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 20 15.5 8.5"></path>
+            <path d="m14 6 4 4"></path>
+            <path d="m6 4 .6 1.4L8 6l-1.4.6L6 8l-.6-1.4L4 6l1.4-.6L6 4Z"></path>
+            <path d="m18 14 .7 1.3 1.3.7-1.3.7L18 18l-.7-1.3L16 16l1.3-.7L18 14Z"></path>
+            <path d="m19 2 .5 1 .9.5-.9.5-.5 1-.5-1-.9-.5.9-.5.5-1Z"></path>
+          </svg>
+        </button>
+      `;
+    }
     if (tool === "dateStep") {
       return `
         <span class="orders-sdo-date-step">
@@ -2372,6 +2392,39 @@ MAX - https://bizvmax.ru/zifra_plus
     target.dispatchEvent(new Event("input", { bubbles: true }));
     target.dispatchEvent(new Event("change", { bubbles: true }));
     target.focus({ preventScroll: true });
+  }
+
+  function generateContractNumber() {
+    const formElement = document.getElementById("recordForm");
+    const input = formElement?.elements.contractNo;
+    if (!(input instanceof HTMLInputElement)) return;
+    const previousState = captureControlState(input);
+    const now = new Date();
+    const yearDigit = String(now.getFullYear()).slice(-1);
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    const prefix = `${yearDigit}${month}-${day}/ДО-`;
+    const currentId = String(formElement.dataset.id || "");
+    const sequences = ["students", "contracts"]
+      .flatMap((collection) => state.data.collections[collection] || [])
+      .filter((record) => !currentId || String(record.id || "") !== currentId)
+      .map((record) => String(record.contractNo || ""))
+      .map((number) => {
+        const normalized = number.trim();
+        if (!normalized.startsWith(prefix)) return 0;
+        const sequence = normalized.slice(prefix.length);
+        return /^\d+$/.test(sequence) ? Number(sequence) : 0;
+      })
+      .filter((number) => Number.isFinite(number) && number > 0);
+    const generatedValue = `${prefix}${(sequences.length ? Math.max(...sequences) : 0) + 1}`;
+    input.value = generatedValue;
+    lastGeneratedContractNumberState = {
+      ...previousState,
+      generatedValue
+    };
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.focus({ preventScroll: true });
   }
 
   function parseOrdersSdoDate(value) {
@@ -4255,6 +4308,7 @@ MAX - https://bizvmax.ru/zifra_plus
         shiftOrdersSdoDate(button.dataset.field, button.dataset.direction, event.altKey);
       });
     });
+    document.querySelector("[data-action='generate-contract-number']")?.addEventListener("click", generateContractNumber);
     document.querySelector("[data-action='copy-extended-end-date-up']")?.addEventListener("click", copyExtendedEndDateToEndDate);
     document.querySelectorAll("[data-action='copy-communication-message']").forEach((button) => {
       button.addEventListener("click", () => copyStudentCommunicationMessage(button));
@@ -5195,13 +5249,41 @@ MAX - https://bizvmax.ru/zifra_plus
     if (fieldUndoKeyBound) return;
     fieldUndoKeyBound = true;
     document.addEventListener("keydown", (event) => {
-      if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.key.toLowerCase() !== "z") return;
-      if (!lastDeletedControlState) return;
+      const isUndoKey = event.code === "KeyZ" || event.key.toLowerCase() === "z" || event.key.toLowerCase() === "я";
+      if (!(event.ctrlKey || event.metaKey) || event.shiftKey || !isUndoKey) return;
       const form = document.getElementById("recordForm");
-      if (!form || !form.contains(document.activeElement)) return;
+      if (!form) return;
+      if (canUndoGeneratedContractNumber()) {
+        event.preventDefault();
+        restoreGeneratedContractNumber();
+        return;
+      }
+      if (!form.contains(document.activeElement)) return;
+      if (!lastDeletedControlState) return;
       event.preventDefault();
       restoreLastDeletedControl();
     });
+  }
+
+  function canUndoGeneratedContractNumber() {
+    const stateToRestore = lastGeneratedContractNumberState;
+    const control = stateToRestore?.control;
+    return Boolean(
+      control?.isConnected
+      && document.getElementById("recordForm")?.contains(control)
+      && control.value === stateToRestore.generatedValue
+    );
+  }
+
+  function restoreGeneratedContractNumber() {
+    if (!canUndoGeneratedContractNumber()) return;
+    const stateToRestore = lastGeneratedContractNumberState;
+    const control = stateToRestore.control;
+    control.value = stateToRestore.value;
+    control.dispatchEvent(new Event("input", { bubbles: true }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+    control.focus({ preventScroll: true });
+    lastGeneratedContractNumberState = null;
   }
 
   function restoreLastDeletedControl() {
