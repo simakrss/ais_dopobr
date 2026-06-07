@@ -121,18 +121,42 @@
 
 Подписывайтесь на наши группы в Телеграм (https://t.me/zifra_plus) и Вконтакте (https://vk.com/zifra_plus)
 
-С уважением, Симак Роман Сергеевич`
+С уважением, Симак Роман Сергеевич`,
+    `{{если:ЕстьЛогин}}{Приветствие}
+
+Вот Ваши учетные данные для обучения на портале дистанционного обучения Цифровизация Плюс (https://portal.edu-plus.ru):
+
+логин: {ЛогинКарточки}
+пароль: {ПарольКарточки}
+
+Программа: {ПрограммаКарточки}
+Срок обучения по: {СрокОбученияПоКарточки}
+
+{ТелеграмГруппаБлок}Точка входа на курс: https://portal.edu-plus.ru/my/courses.php
+Перед началом работы посмотрите, пожалуйста, вводный видеоурок: https://edu-plus.ru/portal_intro
+
+Вам нужно выполнить задания по всем дисциплинам/модулям (факультативные задания, при наличии, выполняются по желанию) и затем пройти итоговую аттестацию до окончания обучения (проходной балл - не менее 50%: оценка <удовлетворительно> от 50% до 69%, оценка <хорошо> от 70% до 89%, оценка <отлично> 90% и выше){ИтогДоступаКПорталу}
+
+С уважением,
+Симак Роман Сергеевич
+
+Учебный центр Цифровизация Плюс
+www.edu-plus.ru
+
+{СсылкиСоцсети}{{конец}}`
   ];
   const studentCommunicationTemplateFields = [
     "Приветствие", "ПереченьДокументов", "ОпцияБезДокумента", "ДокументПослеОбучения",
     "НапоминаниеОбОплате", "ДокументОбОбразовании", "ТрекКодБлок", "СсылкаРекомендации",
-    "ИтогПослеОбучения", "СсылкаАнкеты", "СсылкаОплаты", "СсылкаОплатыПродления"
+    "ИтогПослеОбучения", "СсылкаАнкеты", "СсылкаОплаты", "СсылкаОплатыПродления",
+    "ТелеграмГруппаБлок", "ИтогДоступаКПорталу", "СертификатПослеОбучения", "СсылкиСоцсети"
   ];
   const studentCommunicationTemplateCardFields = [
     "ФИОКарточки", "ПрограммаКарточки", "EmailКарточки", "АдресОтправкиКарточки",
     "ТрекКодКарточки", "ПартнерскийКупонКарточки", "ДнейДоОкончанияКарточки",
     "ДатаОкончанияКарточки", "ДатаОкончанияПрописьюКарточки", "ДатаСокращенияКарточки",
-    "СсылкаПрограммыКарточки"
+    "СсылкаПрограммыКарточки", "ЛогинКарточки", "ПарольКарточки",
+    "СрокОбученияПоКарточки", "ТелеграмГруппаПрограммыКарточки"
   ];
   const studentCommunicationTemplateEditableFields = [
     ...studentCommunicationTemplateFields,
@@ -173,6 +197,19 @@
     СсылкаАнкеты: "https://forms.gle/1EcHf4VwVB7rF1e6A",
     СсылкаОплаты: "https://yookassa.ru/my/i/Z85l1c4uVDu_/l",
     СсылкаОплатыПродления: "https://yookassa.ru/my/i/Zqknfk2aqFoq/l",
+    ТелеграмГруппаБлок: `{{если:ЕстьТелеграмГруппа}}Вступите, пожалуйста, в группу курса в телеграмме - {ТелеграмГруппаПрограммыКарточки}
+
+{{конец}}`,
+    ИтогДоступаКПорталу: `{{если:ДПО}}
+
+После выполнения всех заданий и прохождения итоговой аттестации по окончанию срока обучения направим Вам макет документа об образовании для согласования{{иначе}}{СертификатПослеОбучения}{{конец}}`,
+    СертификатПослеОбучения: `{{если:ВыдаватьДокумент}}
+
+После выполнения всех заданий и прохождения итоговой аттестации по окончанию срока обучения направим Вам электронный сертификат{{конец}}`,
+    СсылкиСоцсети: `Вступайте в наши группы:
+MAX - https://bizvmax.ru/zifra_plus
+ВК - https://vk.com/zifra_plus
+Телеграмм - https://t.me/zifra_plus`,
     ФИОКарточки: "{ФИОКарточки}",
     ПрограммаКарточки: "{ПрограммаКарточки}",
     EmailКарточки: "{EmailКарточки}",
@@ -183,7 +220,11 @@
     ДатаОкончанияКарточки: "{ДатаОкончанияКарточки}",
     ДатаОкончанияПрописьюКарточки: "{ДатаОкончанияПрописьюКарточки}",
     ДатаСокращенияКарточки: "{ДатаСокращенияКарточки}",
-    СсылкаПрограммыКарточки: "{СсылкаПрограммыКарточки}"
+    СсылкаПрограммыКарточки: "{СсылкаПрограммыКарточки}",
+    ЛогинКарточки: "{ЛогинКарточки}",
+    ПарольКарточки: "{ПарольКарточки}",
+    СрокОбученияПоКарточки: "{СрокОбученияПоКарточки}",
+    ТелеграмГруппаПрограммыКарточки: "{ТелеграмГруппаПрограммыКарточки}"
   };
   const communicationTemplateFieldAliasMap = {
     ФИО: "ФИОКарточки",
@@ -374,12 +415,13 @@
         field("landingCode", "Код лендинга"),
         field("promoSite", "На промо сайте"),
         field("gradeReportUrl", "Ссылка на отчет по оценкам"),
+        field("telegramGroup", "Гр. Телеграмм"),
         field("groupIndex", "Индекс группы"),
         field("studyForm", "Форма обучения", "select", false, "studyForms"),
         field("qualification", "Квалификация"),
         field("manager", "Ответственный")
       ],
-      table: ["name", "status", "type", "hours", "price", "landingCode", "promoSite", "groupIndex"]
+      table: ["name", "status", "type", "hours", "price", "landingCode", "promoSite", "telegramGroup", "groupIndex"]
     },
     trainingPlans: {
       title: "Учебные планы",
@@ -500,7 +542,14 @@
     { key: "note9", source: "Примечание9", label: "Партнерская программа" },
     { key: "note10", source: "Примечание10", label: "Бесплатное продление" },
     { key: "note11", source: "Примечание11", label: "Платное продление" },
-    { key: "note12", source: "Примечание12", label: "Вебинар и сертификат" }
+    { key: "note12", source: "Примечание12", label: "Вебинар и сертификат" },
+    {
+      key: "portalAccessMessage",
+      source: "СообщЛогин",
+      label: "Доступ к порталу СДО",
+      showInCommunications: false,
+      importValue: false
+    }
   ];
   const studentCommunicationContactFields = [
     field("phone", "Телефон обучающегося"),
@@ -654,7 +703,9 @@
         {
           title: "Типовые сообщения",
           messageGrid: true,
-          fields: studentCommunicationMessages.map((message) => field(message.key, message.label, "textarea"))
+          fields: studentCommunicationMessages
+            .filter((message) => message.showInCommunications !== false)
+            .map((message) => field(message.key, message.label, "textarea"))
         }
       ]
     },
@@ -686,7 +737,7 @@
             field("contractNo", "Номер договора"),
             field("startDate", "Дата нач. обуч.", "date"),
             field("endDate", "Дата окон. обуч.", "date"),
-            field("extendedEndDate", "Дата окончания (измененная)", "date"),
+            field("extendedEndDate", "Дата окон. изм.", "date"),
             field("enrollmentDate", "Дата зачислен.", "date"),
             field("enrollmentOrderNo", "Номер приказа"),
             field("expulsionDate", "Дата отчислен.", "date"),
@@ -1060,6 +1111,7 @@
     if (!student || typeof student !== "object") return student;
     const normalized = { ...student };
     studentCommunicationMessages.forEach((message, index) => {
+      if (message.importValue === false) return;
       if (String(normalized[message.key] || "").trim()) return;
       const number = index + 1;
       const importedValue = [
@@ -1090,10 +1142,19 @@
       program.reportUrl,
       program.gradeUrl
     ].find((value) => String(value || "").trim());
+    const telegramGroup = [
+      program.telegramGroup,
+      program["Гр. Телеграмм"],
+      program["ГрТелегр"],
+      program["Группа Телеграмм"],
+      program.telegramUrl,
+      program.telegram
+    ].find((value) => String(value || "").trim());
     return {
       ...program,
       ...(promoSite ? { promoSite } : {}),
-      ...(gradeReportUrl ? { gradeReportUrl } : {})
+      ...(gradeReportUrl ? { gradeReportUrl } : {}),
+      ...(telegramGroup ? { telegramGroup } : {})
     };
   }
 
@@ -1882,8 +1943,10 @@
   function renderCommunicationTemplateEditorContent(template) {
     const availableFields = new Set(getCommunicationTemplateFieldDefinitions().map((field) => field.name));
     return String(template || "")
-      .split(/(\{[^{}]+\})/g)
+      .split(/(\{\{[\s\S]*?\}\}|\{[^{}]+\})/g)
       .map((part) => {
+        const syntax = renderCommunicationTemplateSyntax(part);
+        if (syntax) return syntax;
         const fieldName = part.slice(1, -1);
         if (!/^\{[^{}]+\}$/.test(part) || !availableFields.has(fieldName)) return escapeHtml(part);
         return `<span class="communication-template-block" contenteditable="false" data-template-token="${escapeAttr(part)}" data-template-field-name="${escapeAttr(fieldName)}" draggable="true" title="Нажмите правой кнопкой мыши для настройки поля">${escapeHtml(part)}</span>`;
@@ -1896,17 +1959,21 @@
     return String(formula || "")
       .split(/(\{\{[\s\S]*?\}\}|\{[^{}]+\})/g)
       .map((part) => {
-        if (/^\{\{[^{}]+\}\}$/.test(part)) {
-          const isElse = part === "{{иначе}}";
-          const isEnd = part === "{{конец}}";
-          const tone = isElse || isEnd ? "keyword" : "condition";
-          return `<span class="communication-template-formula-syntax is-${tone}">${escapeHtml(part)}</span>`;
-        }
+        const syntax = renderCommunicationTemplateSyntax(part);
+        if (syntax) return syntax;
         const fieldName = part.slice(1, -1);
         if (!/^\{[^{}]+\}$/.test(part) || !availableFields.has(fieldName)) return escapeHtml(part);
         return `<span class="communication-template-block" contenteditable="false" data-template-token="${escapeAttr(part)}" data-template-field-name="${escapeAttr(fieldName)}" draggable="true" title="Нажмите правой кнопкой мыши для настройки поля">${escapeHtml(part)}</span>`;
       })
       .join("");
+  }
+
+  function renderCommunicationTemplateSyntax(part) {
+    if (!/^\{\{[^{}]+\}\}$/.test(part)) return "";
+    const isElse = part === "{{иначе}}";
+    const isEnd = part === "{{конец}}";
+    const tone = isElse || isEnd ? "keyword" : "condition";
+    return `<span class="communication-template-formula-syntax is-${tone}">${escapeHtml(part)}</span>`;
   }
 
   function renderCommunicationTemplateFieldToken(field, title = "Перетащите поле. Нажмите правой кнопкой мыши для настройки") {
@@ -2166,27 +2233,25 @@
   }
 
   function renderStudentOrdersSdoTab(record) {
-    const portalMessage = record.portalAccessMessage || generateStudentPortalAccessMessage(record);
+    const generatedMessages = generateStudentCommunicationMessages(record);
+    const portalMessage = record.portalAccessMessage || generatedMessages.portalAccessMessage || "";
     return `
       <section class="form-section student-orders-sdo-panel">
         <div class="orders-sdo-topbar">
           <button class="ghost-button orders-sdo-auto-button" type="button">⚡ Авто</button>
         </div>
         <div class="orders-sdo-contract-grid">
-          ${renderOrdersSdoControl("contractDate", "Дата договора", record, "date", { tools: ["calendar", "step"] })}
+          ${renderOrdersSdoControl("contractDate", "Дата договора", record, "date", { tools: ["dateStep"] })}
           ${renderOrdersSdoControl("contractNo", "Номер договора", record, "text", { tools: ["pin", "copy"] })}
-          ${renderOrdersSdoControl("startDate", "Дата нач. обуч.", record, "date", { tools: ["calendar", "step"] })}
-          ${renderOrdersSdoControl("endDate", "Дата окон. обуч.", record, "date", { tools: ["calendar", "step", "down"] })}
+          ${renderOrdersSdoControl("startDate", "Дата нач. обуч.", record, "date", { tools: ["dateStep"] })}
+          ${renderOrdersSdoControl("endDate", "Дата окон. обуч.", record, "date", { tools: ["dateStep"] })}
           <div class="orders-sdo-shift-row">
-            <button class="orders-sdo-icon-button" type="button" title="Перенести дату вниз">↓</button>
-            ${renderOrdersSdoControl("extendedEndDate", "Дата окончания (измененная)", record, "date", { tools: ["up", "clear", "calendar", "step", "down"], compact: true })}
-            <button class="orders-sdo-icon-button is-add" type="button" title="Добавить">+</button>
-            <button class="orders-sdo-icon-button is-danger" type="button" title="Удалить">−</button>
+            ${renderOrdersSdoControl("extendedEndDate", "Дата окон. изм.", record, "date", { tools: ["dateStep", "copyExtendedEndUp"] })}
           </div>
         </div>
         <div class="orders-sdo-orders-grid">
-          ${renderOrdersSdoControl("enrollmentDate", "Дата зачислен.", record, "date", { tools: ["calendar", "step"] })}
-          ${renderOrdersSdoControl("expulsionDate", "Дата отчислен.", record, "date", { tools: ["calendar", "step"] })}
+          ${renderOrdersSdoControl("enrollmentDate", "Дата зачислен.", record, "date", { tools: ["dateStep"] })}
+          ${renderOrdersSdoControl("expulsionDate", "Дата отчислен.", record, "date", { tools: ["dateStep"] })}
           ${renderOrdersSdoControl("enrollmentOrderNo", "Номер приказа", record, "text", { tools: ["pin", "file"], after: `<button class="ghost-button orders-sdo-certificate-button" type="button">📄 Справка</button>` })}
           ${renderOrdersSdoControl("expulsionOrderNo", "Номер приказа", record, "text", { tools: ["pin", "file"] })}
           ${renderOrdersSdoControl("group", "Номер группы", record, "text", { tools: ["pin"], className: "orders-sdo-group-field" })}
@@ -2220,17 +2285,50 @@
         <span>${escapeHtml(label)}</span>
         <div class="orders-sdo-control">
           ${control}
-          ${tools.map(renderOrdersSdoToolButton).join("")}
+          ${tools.map((tool) => renderOrdersSdoToolButton(tool, key)).join("")}
           ${options.after || ""}
         </div>
       </label>
     `;
   }
 
-  function renderOrdersSdoToolButton(tool) {
+  function renderOrdersSdoToolButton(tool, fieldName) {
+    if (tool === "dateStep") {
+      return `
+        <span class="orders-sdo-date-step">
+          <button
+            class="orders-sdo-icon-button"
+            data-action="shift-orders-sdo-date"
+            data-field="${escapeAttr(fieldName)}"
+            data-direction="-1"
+            type="button"
+            title="На один день назад; с Alt — на один месяц назад"
+            aria-label="Изменить дату назад"
+          >‹</button>
+          <button
+            class="orders-sdo-icon-button"
+            data-action="shift-orders-sdo-date"
+            data-field="${escapeAttr(fieldName)}"
+            data-direction="1"
+            type="button"
+            title="На один день вперед; с Alt — на один месяц вперед"
+            aria-label="Изменить дату вперед"
+          >›</button>
+        </span>
+      `;
+    }
+    if (tool === "copyExtendedEndUp") {
+      return `
+        <button
+          class="orders-sdo-icon-button"
+          data-action="copy-extended-end-date-up"
+          type="button"
+          title="Скопировать измененную дату окончания обучения в дату окончания обучения"
+          aria-label="Скопировать измененную дату окончания обучения в дату окончания обучения"
+        >↑</button>
+      `;
+    }
     const map = {
-      calendar: ["📅", "Календарь"],
-      step: ["↕", "Изменить значение"],
       pin: ["📌", "Закрепить"],
       copy: ["📄", "Копировать"],
       file: ["▫", "Документ"],
@@ -2244,27 +2342,58 @@
     return `<button class="orders-sdo-icon-button${tone}" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">${icon}</button>`;
   }
 
-  function generateStudentPortalAccessMessage(record) {
-    const name = getStudentCommunicationAddressee(record) || String(record.name || "").trim() || "слушатель";
-    const login = String(record.login || "").trim();
-    const password = String(record.password || "").trim();
-    const program = getStudentCardProgramTitle(record) || String(record.program || "").trim();
-    const endDate = dateRu(record.endDate || "");
-    return `Здравствуйте, ${name}!
+  function shiftOrdersSdoDate(fieldName, direction, byMonth = false) {
+    const formElement = document.getElementById("recordForm");
+    const input = formElement?.elements[fieldName];
+    if (!(input instanceof HTMLInputElement) || input.type !== "date") return;
+    const current = parseOrdersSdoDate(input.value) || new Date();
+    const step = Number(direction) < 0 ? -1 : 1;
+    const shifted = byMonth
+      ? shiftDateByClampedMonth(current, step)
+      : new Date(current.getFullYear(), current.getMonth(), current.getDate() + step);
+    input.value = formatOrdersSdoDate(shifted);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.focus({ preventScroll: true });
+  }
 
-Вот Ваши учетные данные для обучения на портале дистанционного обучения Цифровизация Плюс (https://portal.edu-plus.ru):
+  function copyExtendedEndDateToEndDate() {
+    const formElement = document.getElementById("recordForm");
+    const source = formElement?.elements.extendedEndDate;
+    const target = formElement?.elements.endDate;
+    if (!(source instanceof HTMLInputElement) || !(target instanceof HTMLInputElement)) return;
+    if (!source.value) {
+      alert("Укажите измененную дату окончания обучения.");
+      source.focus({ preventScroll: true });
+      return;
+    }
+    if (!confirm("Скопировать измененную дату окончания обучения в дату окончания обучения?")) return;
+    target.value = source.value;
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+    target.focus({ preventScroll: true });
+  }
 
-логин: ${login}
-пароль: ${password}
+  function parseOrdersSdoDate(value) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ""));
+    if (!match) return null;
+    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
 
-Программа: ${program}
-Срок обучения до: ${endDate}
+  function shiftDateByClampedMonth(date, direction) {
+    const target = new Date(date.getFullYear(), date.getMonth() + direction, 1);
+    const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+    target.setDate(Math.min(date.getDate(), lastDay));
+    return target;
+  }
 
-Точка входа на курс: https://portal.edu-plus.ru/my/courses.php
-
-Вам нужно выполнить задания по всем дисциплинам/модулям и затем пройти итоговую аттестацию до окончания обучения.
-
-После выполнения всех заданий и прохождения итоговой аттестации по окончанию срока обучения направим Вам электронный документ об образовании.`;
+  function formatOrdersSdoDate(date) {
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0")
+    ].join("-");
   }
 
   function renderStudentCommunicationMessages(section, record) {
@@ -3773,6 +3902,12 @@
     const daysLeft = getStudentCommunicationDaysLeft(record);
     const referralCode = getStudentReferralCode(record);
     const partnerCoupon = String(record.partnerCoupon || record.coupon || referralCode.toUpperCase()).trim();
+    const login = String(record.login || "").trim();
+    const password = String(record.password || "").trim();
+    const programRecord = findProgramByName(record.program);
+    const telegramGroup = String(programRecord?.telegramGroup || "").trim();
+    const portalEndDate = formatStudentCommunicationPortalEndDate(getStudentCommunicationEndDate(record)) || "неограничен";
+    const issueDocument = String(record.status || "").trim().toLowerCase() !== "без выдачи документа";
     const balance = Number(record.balance || 0);
     const balanceReminder = balance > 0
       ? `\n\nТакже напоминаем, что Вам нужно внести остаток оплаты за обучение ${balance} руб. по следующей ссылке - ${paymentUrl}`
@@ -3793,6 +3928,9 @@
       ЕстьОстатокОплаты: balance > 0,
       ОстатокОплаты: balance,
       ЕстьТрекКод: Boolean(postalTrack),
+      ЕстьЛогин: Boolean(login),
+      ЕстьТелеграмГруппа: Boolean(telegramGroup),
+      ВыдаватьДокумент: issueDocument,
       РеферальныйКод: referralCode,
       ФИОКарточки: String(record.name || "").trim(),
       ПрограммаКарточки: program,
@@ -3804,7 +3942,11 @@
       ДатаОкончанияКарточки: endDate,
       ДатаОкончанияПрописьюКарточки: endDateLong,
       ДатаСокращенияКарточки: reductionDeadline,
-      СсылкаПрограммыКарточки: reportUrl
+      СсылкаПрограммыКарточки: reportUrl,
+      ЛогинКарточки: login,
+      ПарольКарточки: password,
+      СрокОбученияПоКарточки: portalEndDate,
+      ТелеграмГруппаПрограммыКарточки: telegramGroup
     });
     /*
      * Старый встроенный набор строк оставлен ниже как справочная копия формул XLSB.
@@ -3936,6 +4078,19 @@
     const dayMonth = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(date);
     const weekday = new Intl.DateTimeFormat("ru-RU", { weekday: "long" }).format(date);
     return `${dayMonth} (${weekday})`;
+  }
+
+  function formatStudentCommunicationPortalEndDate(value) {
+    if (!value) return "";
+    const date = parseOrdersSdoDate(value) || new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    const numericDate = new Intl.DateTimeFormat("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    }).format(date);
+    const weekday = new Intl.DateTimeFormat("ru-RU", { weekday: "long" }).format(date);
+    return `${numericDate} (${weekday})`;
   }
 
   function getStudentReferralCode(record) {
@@ -4095,6 +4250,12 @@
 
     document.querySelector("[data-action='open-student-messenger-url']")?.addEventListener("click", openStudentMessengerUrl);
     document.querySelector("[data-action='open-student-program-promo']")?.addEventListener("click", openStudentProgramPromo);
+    document.querySelectorAll("[data-action='shift-orders-sdo-date']").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        shiftOrdersSdoDate(button.dataset.field, button.dataset.direction, event.altKey);
+      });
+    });
+    document.querySelector("[data-action='copy-extended-end-date-up']")?.addEventListener("click", copyExtendedEndDateToEndDate);
     document.querySelectorAll("[data-action='copy-communication-message']").forEach((button) => {
       button.addEventListener("click", () => copyStudentCommunicationMessage(button));
     });
@@ -6019,13 +6180,33 @@
       draggedTemplateBlock = null;
     });
     form.querySelectorAll("[data-template-editor]").forEach((editor) => {
+      let templateHighlightTimer = null;
       initializeCommunicationTemplateEditorHistory(editor);
+      editor.addEventListener("compositionstart", () => {
+        editor.dataset.composing = "true";
+      });
+      editor.addEventListener("compositionend", () => {
+        editor.dataset.composing = "";
+        syncCommunicationTemplateEditor(editor);
+        refreshCommunicationTemplateEditor(editor, true);
+      });
       editor.addEventListener("input", () => {
         recordCommunicationTemplateEditorChange(editor);
         syncCommunicationTemplateEditor(editor);
+        if (editor.dataset.composing === "true") return;
+        window.clearTimeout(templateHighlightTimer);
+        templateHighlightTimer = window.setTimeout(() => {
+          refreshCommunicationTemplateEditor(editor, true);
+        }, 140);
       });
       editor.addEventListener("keydown", (event) => {
-        handleCommunicationTemplateEditorHistoryKeydown(event, editor);
+        if (handleCommunicationTemplateEditorHistoryKeydown(event, editor)) {
+          window.clearTimeout(templateHighlightTimer);
+        }
+      });
+      editor.addEventListener("blur", () => {
+        window.clearTimeout(templateHighlightTimer);
+        refreshCommunicationTemplateEditor(editor);
       });
       editor.addEventListener("dragover", (event) => {
         if (!Array.from(event.dataTransfer?.types || []).includes(tokenMime)) return;
@@ -6058,6 +6239,7 @@
         }
         commitCommunicationTemplateEditorChange(editor, beforeEditorValue);
         syncCommunicationTemplateEditor(editor);
+        refreshCommunicationTemplateEditor(editor, true);
         editor.focus();
       });
     });
@@ -6167,6 +6349,15 @@
   function syncCommunicationTemplateEditor(editor) {
     const hiddenInput = editor.closest("form")?.elements[`template${editor.dataset.templateIndex}`];
     if (hiddenInput) hiddenInput.value = serializeCommunicationTemplateEditor(editor);
+  }
+
+  function refreshCommunicationTemplateEditor(editor, preserveCaret = false) {
+    const template = serializeCommunicationTemplateEditor(editor);
+    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
+    editor.innerHTML = renderCommunicationTemplateEditorContent(template);
+    const hiddenInput = editor.closest("form")?.elements[`template${editor.dataset.templateIndex}`];
+    if (hiddenInput) hiddenInput.value = template;
+    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
   }
 
   function serializeCommunicationTemplateEditor(editor) {

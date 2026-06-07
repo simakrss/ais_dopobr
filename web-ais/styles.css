@@ -2894,11 +2894,8 @@ body.student-tab-dragging .student-tabs button {
 }
 
 .orders-sdo-shift-row {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 28px 28px;
-  gap: 5px;
-  align-items: center;
+  grid-column: 2;
+  min-width: 0;
 }
 
 .orders-sdo-field {
@@ -2971,6 +2968,18 @@ body.student-tab-dragging .student-tabs button {
 
 .orders-sdo-icon-button.is-add {
   color: #16a34a;
+}
+
+.orders-sdo-date-step {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 1px;
+}
+
+.orders-sdo-date-step .orders-sdo-icon-button {
+  width: 23px;
+  min-width: 23px;
+  font-size: 18px;
 }
 
 .orders-sdo-auto-button,
@@ -4185,11 +4194,7 @@ body.student-tab-dragging .student-tabs button {
   }
 
   .orders-sdo-shift-row {
-    grid-template-columns: 28px minmax(0, 1fr);
-  }
-
-  .orders-sdo-shift-row .orders-sdo-icon-button:nth-last-child(-n + 2) {
-    justify-self: start;
+    grid-column: 1;
   }
 
   .communication-message-grid {
