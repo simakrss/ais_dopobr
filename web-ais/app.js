@@ -253,6 +253,35 @@ MAX - https://bizvmax.ru/zifra_plus
     СсылкаОплатыИсходная: "СсылкаОплаты",
     СсылкаОплатыПродленияИсходная: "СсылкаОплатыПродления"
   };
+  const dataFormulaTokenDefinitions = [
+    { name: "Год1", label: "Последняя цифра года", token: "{Год1}" },
+    { name: "Месяц2", label: "Месяц, 2 цифры", token: "{Месяц2}" },
+    { name: "День2", label: "Число, 2 цифры", token: "{День2}" },
+    { name: "ПорядковыйНомерЗаДату", label: "Порядковый номер за дату", token: "{ПорядковыйНомерЗаДату}" }
+  ];
+  const dataFormulaDefaults = [
+    {
+      key: "contractNumber",
+      label: "Номер договора",
+      dateField: "contractDate",
+      targetField: "contractNo",
+      template: "{Год1}{Месяц2}-{День2}/ДО-{ПорядковыйНомерЗаДату}"
+    },
+    {
+      key: "enrollmentOrderNumber",
+      label: "Номер приказа о зачислении",
+      dateField: "enrollmentDate",
+      targetField: "enrollmentOrderNo",
+      template: "Зач-{Год1}{Месяц2}-{День2}"
+    },
+    {
+      key: "expulsionOrderNumber",
+      label: "Номер приказа об отчислении",
+      dateField: "expulsionDate",
+      targetField: "expulsionOrderNo",
+      template: "Отч-{Год1}{Месяц2}-{День2}"
+    }
+  ];
   const defaultPhotoServerOrigin = "http://localhost:8080";
   const financeMetrics = [
     { key: "revenue", label: "Поступления", tone: "income" },
@@ -930,7 +959,6 @@ MAX - https://bizvmax.ru/zifra_plus
   let sidebarOutsideClickBound = false;
   let fieldUndoKeyBound = false;
   let lastDeletedControlState = null;
-  let lastGeneratedContractNumberState = null;
   let draggedStudentTabId = "";
   let lastStudentTabDragEndedAt = 0;
   const communicationTemplateEditorHistories = new WeakMap();
@@ -1015,10 +1043,22 @@ MAX - https://bizvmax.ru/zifra_plus
     data.dictionaries.communicationTemplateCustomFields = normalizeCommunicationTemplateCustomFields(
       data.dictionaries.communicationTemplateCustomFields
     );
+    data.dictionaries.dataFormulas = normalizeDataFormulaTemplates(data.dictionaries.dataFormulas);
     data.collections = data.collections || {};
     data.collections.students = (data.collections.students || []).map((student) => normalizeStudentRecord(student));
     data.collections.programs = (data.collections.programs || []).map((program) => normalizeProgramRecord(program));
     return data;
+  }
+
+  function normalizeDataFormulaTemplates(values) {
+    const saved = Array.isArray(values) ? values : [];
+    return dataFormulaDefaults.map((formula) => {
+      const savedFormula = saved.find((item) => item?.key === formula.key);
+      return {
+        ...formula,
+        template: String(savedFormula?.template ?? formula.template)
+      };
+    });
   }
 
   function normalizeCommunicationTemplates(values) {
@@ -1806,7 +1846,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const visibleItems = dictionaryItems.filter((item) => (
       !query ||
       item.title.toLowerCase().includes(query) ||
-      item.values.some((value) => String(value || "").toLowerCase().includes(query))
+      item.values.some((value) => (
+        typeof value === "object"
+          ? `${value?.label || ""} ${value?.template || ""}`.toLowerCase().includes(query)
+          : String(value || "").toLowerCase().includes(query)
+      ))
     ));
     const selectedKey = visibleItems.some((item) => item.key === state.selectedDictionary)
       ? state.selectedDictionary
@@ -1815,6 +1859,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const selectedItem = dictionaryItems.find((item) => item.key === selectedKey);
     const selectedValues = selectedItem?.values || [];
     const isCommunicationTemplates = selectedKey === "communicationTemplates";
+    const isDataFormulas = selectedKey === "dataFormulas";
+    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     return `
       <section class="panel">
@@ -1839,7 +1885,7 @@ MAX - https://bizvmax.ru/zifra_plus
               `).join("") : `<div class="empty-state compact"><span>Справочники не найдены</span></div>`}
             </div>
           </aside>
-          <section class="dictionary-detail ${isCommunicationTemplates ? "is-communication-templates" : ""}">
+          <section class="dictionary-detail ${isSpecialDictionary ? "is-communication-templates" : ""}">
             ${selectedItem ? `
               <div class="dictionary-detail-head">
                 <div>
@@ -1850,16 +1896,18 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${isCommunicationTemplates ? `
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "asc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="asc" type="button" title="Сортировать поля по алфавиту" aria-label="Сортировать поля по алфавиту" aria-pressed="${communicationTemplateFieldSortOrder === "asc" ? "true" : "false"}">А→Я</button>
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "desc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="desc" type="button" title="Сортировать поля против алфавита" aria-label="Сортировать поля против алфавита" aria-pressed="${communicationTemplateFieldSortOrder === "desc" ? "true" : "false"}">Я→А</button>
-                  ` : `
+                  ` : isDataFormulas ? "" : `
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
                   `}
-                  <button class="icon-button dictionary-copy-button" data-action="dict-copy-all" data-dict="${selectedKey}" type="button" title="Скопировать все значения" aria-label="Скопировать все значения">
-                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M5 15V5h10"></path></svg>
-                  </button>
-                  <button class="icon-button dictionary-clear-button" data-action="dict-clear" data-dict="${selectedKey}" type="button" title="Очистить справочник" aria-label="Очистить справочник">
-                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
-                  </button>
+                  ${isSpecialDictionary ? "" : `
+                    <button class="icon-button dictionary-copy-button" data-action="dict-copy-all" data-dict="${selectedKey}" type="button" title="Скопировать все значения" aria-label="Скопировать все значения">
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M5 15V5h10"></path></svg>
+                    </button>
+                    <button class="icon-button dictionary-clear-button" data-action="dict-clear" data-dict="${selectedKey}" type="button" title="Очистить справочник" aria-label="Очистить справочник">
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+                    </button>
+                  `}
                   ${selectedKey === "discountRules" ? `
                     <button class="icon-button dictionary-restore-button" data-action="restore-default-discount-rules" type="button" title="Восстановить исходный перечень скидок" aria-label="Восстановить исходный перечень скидок">
                       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v6h6"></path><path d="M12 8v5l3 2"></path></svg>
@@ -1868,7 +1916,11 @@ MAX - https://bizvmax.ru/zifra_plus
                   <span>${selectedValues.length}</span>
                 </div>
               </div>
-              ${isCommunicationTemplates ? renderCommunicationTemplateDictionary(selectedValues) : `
+              ${isCommunicationTemplates
+                ? renderCommunicationTemplateDictionary(selectedValues)
+                : isDataFormulas
+                  ? renderDataFormulaDictionary(selectedValues)
+                  : `
                 <form class="inline-form dictionary-add-form" data-action="dict-add" data-dict="${selectedKey}">
                   <input name="value" placeholder="Новое значение или список из буфера обмена" autocomplete="off" data-dictionary-add-input>
                   <button class="ghost-button" type="submit">Добавить</button>
@@ -1939,6 +1991,76 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
       </form>
     `;
+  }
+
+  function renderDataFormulaDictionary(values) {
+    const formulas = normalizeDataFormulaTemplates(values);
+    const sampleDate = new Date(2026, 1, 16);
+    return `
+      <form class="data-formula-form" data-action="save-data-formulas">
+        <aside class="data-formula-tokens">
+          <strong>Блоки формулы</strong>
+          <p>Перетащите блок в нужное место формулы.</p>
+          <div class="data-formula-token-list">
+            ${dataFormulaTokenDefinitions.map((item) => `
+              <button
+                class="communication-template-token data-formula-token"
+                data-template-token="${escapeAttr(item.token)}"
+                draggable="true"
+                type="button"
+                title="${escapeAttr(item.label)}"
+              >${escapeHtml(item.token)}</button>
+            `).join("")}
+          </div>
+        </aside>
+        <div class="data-formula-list">
+          ${formulas.map((formula, index) => `
+            <section class="data-formula-item">
+              <header>
+                <div>
+                  <strong>${escapeHtml(formula.label)}</strong>
+                  <small>Дата: ${escapeHtml(getDataFormulaDateFieldLabel(formula.dateField))}</small>
+                </div>
+                <output>${escapeHtml(evaluateDataFormula(formula.template, sampleDate, 1))}</output>
+              </header>
+              <div
+                class="communication-template-editor data-formula-editor"
+                contenteditable="true"
+                data-data-formula-editor
+                data-formula-index="${index}"
+                role="textbox"
+                aria-label="${escapeAttr(formula.label)}"
+              >${renderDataFormulaEditorContent(formula.template)}</div>
+              <input name="formula${index}" value="${escapeAttr(formula.template)}" type="hidden">
+            </section>
+          `).join("")}
+          <div class="data-formula-actions">
+            <button class="ghost-button" data-action="reset-data-formulas" type="button">Восстановить исходные</button>
+            <button class="primary-button" type="submit">Сохранить формулы</button>
+          </div>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderDataFormulaEditorContent(template) {
+    const availableTokens = new Set(dataFormulaTokenDefinitions.map((item) => item.token));
+    return String(template || "")
+      .split(/(\{[^{}]+\})/g)
+      .map((part) => {
+        if (!availableTokens.has(part)) return escapeHtml(part).replace(/\n/g, "<br>");
+        return `<span class="communication-template-block data-formula-block" contenteditable="false" data-template-token="${escapeAttr(part)}" draggable="true">${escapeHtml(part)}</span>`;
+      })
+      .join("");
+  }
+
+  function getDataFormulaDateFieldLabel(fieldName) {
+    const labels = {
+      contractDate: "Дата договора",
+      enrollmentDate: "Дата зачисления",
+      expulsionDate: "Дата отчисления"
+    };
+    return labels[fieldName] || fieldName;
   }
 
   function renderCommunicationTemplateEditorContent(template) {
@@ -2253,8 +2375,8 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="orders-sdo-orders-grid">
           ${renderOrdersSdoControl("enrollmentDate", "Дата зачислен.", record, "date", { tools: ["dateStep"] })}
           ${renderOrdersSdoControl("expulsionDate", "Дата отчислен.", record, "date", { tools: ["dateStep"] })}
-          ${renderOrdersSdoControl("enrollmentOrderNo", "Номер приказа", record, "text", { tools: ["pin", "file"], after: `<button class="ghost-button orders-sdo-certificate-button" type="button">📄 Справка</button>` })}
-          ${renderOrdersSdoControl("expulsionOrderNo", "Номер приказа", record, "text", { tools: ["pin", "file"] })}
+          ${renderOrdersSdoControl("enrollmentOrderNo", "Номер приказа", record, "text", { tools: ["generateEnrollmentOrderNo", "document", "educationCertificate"] })}
+          ${renderOrdersSdoControl("expulsionOrderNo", "Номер приказа", record, "text", { tools: ["generateExpulsionOrderNo", "document"] })}
           ${renderOrdersSdoControl("group", "Номер группы", record, "text", { tools: ["pin"], className: "orders-sdo-group-field" })}
         </div>
         <fieldset class="orders-sdo-lms">
@@ -2294,14 +2416,20 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderOrdersSdoToolButton(tool, fieldName) {
-    if (tool === "generateContractNo") {
+    if (["generateContractNo", "generateEnrollmentOrderNo", "generateExpulsionOrderNo"].includes(tool)) {
+      const actionMap = {
+        generateContractNo: ["generate-contract-number", "Сформировать номер договора"],
+        generateEnrollmentOrderNo: ["generate-enrollment-order-number", "Сформировать номер приказа о зачислении"],
+        generateExpulsionOrderNo: ["generate-expulsion-order-number", "Сформировать номер приказа об отчислении"]
+      };
+      const [action, title] = actionMap[tool];
       return `
         <button
           class="orders-sdo-icon-button"
-          data-action="generate-contract-number"
+          data-action="${action}"
           type="button"
-          title="Сформировать номер договора"
-          aria-label="Сформировать номер договора"
+          title="${escapeAttr(title)}"
+          aria-label="${escapeAttr(title)}"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M4 20 15.5 8.5"></path>
@@ -2309,6 +2437,33 @@ MAX - https://bizvmax.ru/zifra_plus
             <path d="m6 4 .6 1.4L8 6l-1.4.6L6 8l-.6-1.4L4 6l1.4-.6L6 4Z"></path>
             <path d="m18 14 .7 1.3 1.3.7-1.3.7L18 18l-.7-1.3L16 16l1.3-.7L18 14Z"></path>
             <path d="m19 2 .5 1 .9.5-.9.5-.5 1-.5-1-.9-.5.9-.5.5-1Z"></path>
+          </svg>
+        </button>
+      `;
+    }
+    if (tool === "document") {
+      return `
+        <button class="orders-sdo-icon-button" type="button" title="Документ" aria-label="Документ">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M6 3h8l4 4v14H6z"></path>
+            <path d="M14 3v5h5"></path>
+          </svg>
+        </button>
+      `;
+    }
+    if (tool === "educationCertificate") {
+      return `
+        <button
+          class="orders-sdo-icon-button"
+          type="button"
+          title="Сформировать справку об обучении"
+          aria-label="Сформировать справку об обучении"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M6 3h8l4 4v14H6z"></path>
+            <path d="M14 3v5h5"></path>
+            <path d="M9 13h6"></path>
+            <path d="M9 17h4"></path>
           </svg>
         </button>
       `;
@@ -2395,36 +2550,67 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function generateContractNumber() {
+    generateNumberFromDataFormula("contractNumber");
+  }
+
+  function generateEnrollmentOrderNumber() {
+    generateNumberFromDataFormula("enrollmentOrderNumber");
+  }
+
+  function generateExpulsionOrderNumber() {
+    generateNumberFromDataFormula("expulsionOrderNumber");
+  }
+
+  function generateNumberFromDataFormula(formulaKey) {
+    const formula = normalizeDataFormulaTemplates(state.data.dictionaries.dataFormulas)
+      .find((item) => item.key === formulaKey);
     const formElement = document.getElementById("recordForm");
-    const input = formElement?.elements.contractNo;
-    if (!(input instanceof HTMLInputElement)) return;
-    const previousState = captureControlState(input);
-    const now = new Date();
-    const yearDigit = String(now.getFullYear()).slice(-1);
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
-    const prefix = `${yearDigit}${month}-${day}/ДО-`;
-    const currentId = String(formElement.dataset.id || "");
-    const sequences = ["students", "contracts"]
-      .flatMap((collection) => state.data.collections[collection] || [])
-      .filter((record) => !currentId || String(record.id || "") !== currentId)
-      .map((record) => String(record.contractNo || ""))
-      .map((number) => {
-        const normalized = number.trim();
-        if (!normalized.startsWith(prefix)) return 0;
-        const sequence = normalized.slice(prefix.length);
-        return /^\d+$/.test(sequence) ? Number(sequence) : 0;
-      })
-      .filter((number) => Number.isFinite(number) && number > 0);
-    const generatedValue = `${prefix}${(sequences.length ? Math.max(...sequences) : 0) + 1}`;
-    input.value = generatedValue;
-    lastGeneratedContractNumberState = {
-      ...previousState,
-      generatedValue
-    };
+    const input = formElement?.elements[formula?.targetField];
+    if (!formula || !(input instanceof HTMLInputElement)) return;
+    const dateInput = formElement.elements[formula.dateField];
+    const date = parseOrdersSdoDate(dateInput?.value) || new Date();
+    const sequence = formula.template.includes("{ПорядковыйНомерЗаДату}")
+      ? getNextDataFormulaSequence(formula, date, formElement.dataset.id)
+      : 1;
+    input.value = evaluateDataFormula(formula.template, date, sequence);
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
     input.focus({ preventScroll: true });
+  }
+
+  function evaluateDataFormula(template, date, sequence = 1) {
+    const safeDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+    const values = {
+      Год1: String(safeDate.getFullYear()).slice(-1),
+      Месяц2: String(safeDate.getMonth() + 1).padStart(2, "0"),
+      День2: String(safeDate.getDate()).padStart(2, "0"),
+      ПорядковыйНомерЗаДату: String(sequence)
+    };
+    return String(template || "").replace(/\{([^{}]+)\}/g, (match, name) => (
+      Object.prototype.hasOwnProperty.call(values, name) ? values[name] : match
+    ));
+  }
+
+  function getNextDataFormulaSequence(formula, date, currentId = "") {
+    const marker = "__AIS_SEQUENCE__";
+    const sample = evaluateDataFormula(formula.template, date, marker);
+    const markerIndex = sample.indexOf(marker);
+    if (markerIndex < 0) return 1;
+    const prefix = sample.slice(0, markerIndex);
+    const suffix = sample.slice(markerIndex + marker.length);
+    const pattern = new RegExp(`^${escapeRegExp(prefix)}(\\d+)${escapeRegExp(suffix)}$`);
+    const sequences = ["students", "contracts"]
+      .flatMap((collection) => state.data.collections[collection] || [])
+      .filter((record) => !currentId || String(record.id || "") !== String(currentId))
+      .map((record) => pattern.exec(String(record[formula.targetField] || "").trim()))
+      .filter(Boolean)
+      .map((match) => Number(match[1]))
+      .filter((number) => Number.isFinite(number) && number > 0);
+    return (sequences.length ? Math.max(...sequences) : 0) + 1;
+  }
+
+  function escapeRegExp(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   function parseOrdersSdoDate(value) {
@@ -4309,6 +4495,8 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
     document.querySelector("[data-action='generate-contract-number']")?.addEventListener("click", generateContractNumber);
+    document.querySelector("[data-action='generate-enrollment-order-number']")?.addEventListener("click", generateEnrollmentOrderNumber);
+    document.querySelector("[data-action='generate-expulsion-order-number']")?.addEventListener("click", generateExpulsionOrderNumber);
     document.querySelector("[data-action='copy-extended-end-date-up']")?.addEventListener("click", copyExtendedEndDateToEndDate);
     document.querySelectorAll("[data-action='copy-communication-message']").forEach((button) => {
       button.addEventListener("click", () => copyStudentCommunicationMessage(button));
@@ -4751,6 +4939,9 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='reset-communication-templates']")?.addEventListener("click", resetCommunicationTemplates);
     bindCommunicationTemplateDragAndDrop();
     bindCommunicationTemplateFieldActions();
+    document.querySelector("form[data-action='save-data-formulas']")?.addEventListener("submit", saveDataFormulas);
+    document.querySelector("[data-action='reset-data-formulas']")?.addEventListener("click", resetDataFormulas);
+    bindDataFormulaConstructor();
 
     enhanceCopyableFields();
   }
@@ -5249,41 +5440,13 @@ MAX - https://bizvmax.ru/zifra_plus
     if (fieldUndoKeyBound) return;
     fieldUndoKeyBound = true;
     document.addEventListener("keydown", (event) => {
-      const isUndoKey = event.code === "KeyZ" || event.key.toLowerCase() === "z" || event.key.toLowerCase() === "я";
-      if (!(event.ctrlKey || event.metaKey) || event.shiftKey || !isUndoKey) return;
-      const form = document.getElementById("recordForm");
-      if (!form) return;
-      if (canUndoGeneratedContractNumber()) {
-        event.preventDefault();
-        restoreGeneratedContractNumber();
-        return;
-      }
-      if (!form.contains(document.activeElement)) return;
+      if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.key.toLowerCase() !== "z") return;
       if (!lastDeletedControlState) return;
+      const form = document.getElementById("recordForm");
+      if (!form || !form.contains(document.activeElement)) return;
       event.preventDefault();
       restoreLastDeletedControl();
     });
-  }
-
-  function canUndoGeneratedContractNumber() {
-    const stateToRestore = lastGeneratedContractNumberState;
-    const control = stateToRestore?.control;
-    return Boolean(
-      control?.isConnected
-      && document.getElementById("recordForm")?.contains(control)
-      && control.value === stateToRestore.generatedValue
-    );
-  }
-
-  function restoreGeneratedContractNumber() {
-    if (!canUndoGeneratedContractNumber()) return;
-    const stateToRestore = lastGeneratedContractNumberState;
-    const control = stateToRestore.control;
-    control.value = stateToRestore.value;
-    control.dispatchEvent(new Event("input", { bubbles: true }));
-    control.dispatchEvent(new Event("change", { bubbles: true }));
-    control.focus({ preventScroll: true });
-    lastGeneratedContractNumberState = null;
   }
 
   function restoreLastDeletedControl() {
@@ -5683,6 +5846,28 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
+  function saveDataFormulas(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    form.querySelectorAll("[data-data-formula-editor]").forEach(syncDataFormulaEditor);
+    const current = normalizeDataFormulaTemplates(state.data.dictionaries.dataFormulas);
+    state.data.dictionaries.dataFormulas = current.map((formula, index) => ({
+      ...formula,
+      template: String(form.elements[`formula${index}`]?.value || formula.template)
+    }));
+    addAudit("Изменен справочник", dictionaryTitle("dataFormulas"), "Сохранены формулы генерации номеров");
+    persist();
+    render();
+  }
+
+  function resetDataFormulas() {
+    if (!confirm("Восстановить исходные формулы генерации номеров?")) return;
+    state.data.dictionaries.dataFormulas = normalizeDataFormulaTemplates([]);
+    addAudit("Изменен справочник", dictionaryTitle("dataFormulas"), "Восстановлены исходные формулы");
+    persist();
+    render();
+  }
+
   function sortCommunicationTemplateFields(order = "asc") {
     collectCommunicationTemplateFormDraft();
     state.communicationTemplateFieldSort = order === "desc" ? "desc" : "asc";
@@ -5721,12 +5906,15 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function syncCommunicationTemplateEditorByType(editor) {
     if (!editor) return;
-    if (editor.matches("[data-formula-editor]")) syncCommunicationTemplateFormulaEditor(editor);
+    if (editor.matches("[data-data-formula-editor]")) syncDataFormulaEditor(editor);
+    else if (editor.matches("[data-formula-editor]")) syncCommunicationTemplateFormulaEditor(editor);
     else syncCommunicationTemplateEditor(editor);
   }
 
   function renderCommunicationTemplateEditorValue(editor, value) {
-    if (editor.matches("[data-formula-editor]")) {
+    if (editor.matches("[data-data-formula-editor]")) {
+      editor.innerHTML = renderDataFormulaEditorContent(value);
+    } else if (editor.matches("[data-formula-editor]")) {
       editor.innerHTML = renderCommunicationTemplateFormulaEditorContent(value);
     } else {
       editor.innerHTML = renderCommunicationTemplateEditorContent(value);
@@ -6236,6 +6424,116 @@ MAX - https://bizvmax.ru/zifra_plus
     addAudit("Восстановлено поле шаблона", field.name, field.initialFormula);
     persist();
     render();
+  }
+
+  function bindDataFormulaConstructor() {
+    const tokenMime = "application/x-ais-data-formula-token";
+    const form = document.querySelector("form[data-action='save-data-formulas']");
+    if (!form) return;
+    let draggedBlock = null;
+
+    form.addEventListener("dragstart", (event) => {
+      const token = event.target.closest?.("[data-template-token]");
+      if (!token || !event.dataTransfer) return;
+      const value = token.dataset.templateToken || "";
+      draggedBlock = token.matches(".data-formula-block") ? token : null;
+      event.dataTransfer.effectAllowed = draggedBlock ? "move" : "copy";
+      event.dataTransfer.setData(tokenMime, value);
+      event.dataTransfer.setData("text/plain", value);
+      token.classList.add("is-dragging");
+    });
+
+    form.addEventListener("dragend", (event) => {
+      event.target.closest?.("[data-template-token]")?.classList.remove("is-dragging");
+      form.querySelectorAll("[data-data-formula-editor]").forEach((editor) => {
+        editor.classList.remove("is-drop-target");
+        syncDataFormulaEditor(editor);
+      });
+      draggedBlock = null;
+    });
+
+    form.querySelectorAll(".data-formula-token").forEach((button) => {
+      button.addEventListener("click", () => {
+        const activeIndex = form.dataset.activeFormulaIndex || "0";
+        const editor = form.querySelector(`[data-data-formula-editor][data-formula-index="${activeIndex}"]`)
+          || form.querySelector("[data-data-formula-editor]");
+        if (!editor) return;
+        const beforeValue = serializeCommunicationTemplateEditor(editor);
+        editor.append(createDataFormulaBlock(button.dataset.templateToken || ""));
+        commitCommunicationTemplateEditorChange(editor, beforeValue);
+        syncDataFormulaEditor(editor);
+        editor.focus({ preventScroll: true });
+      });
+    });
+
+    form.querySelectorAll("[data-data-formula-editor]").forEach((editor) => {
+      initializeCommunicationTemplateEditorHistory(editor);
+      editor.addEventListener("focus", () => {
+        form.dataset.activeFormulaIndex = editor.dataset.formulaIndex || "0";
+      });
+      editor.addEventListener("input", () => {
+        recordCommunicationTemplateEditorChange(editor);
+        syncDataFormulaEditor(editor);
+      });
+      editor.addEventListener("keydown", (event) => {
+        handleCommunicationTemplateEditorHistoryKeydown(event, editor);
+      });
+      editor.addEventListener("blur", () => refreshDataFormulaEditor(editor));
+      editor.addEventListener("dragover", (event) => {
+        if (!Array.from(event.dataTransfer?.types || []).includes(tokenMime)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = draggedBlock ? "move" : "copy";
+        editor.classList.add("is-drop-target");
+      });
+      editor.addEventListener("dragleave", () => editor.classList.remove("is-drop-target"));
+      editor.addEventListener("drop", (event) => {
+        const token = event.dataTransfer?.getData(tokenMime);
+        if (!token) return;
+        event.preventDefault();
+        editor.classList.remove("is-drop-target");
+        const sourceEditor = draggedBlock?.closest("[data-data-formula-editor]");
+        const range = getCommunicationTemplateDropRange(editor, event.clientX, event.clientY);
+        if (draggedBlock?.contains(range?.startContainer)) return;
+        const beforeValue = serializeCommunicationTemplateEditor(editor);
+        const beforeSourceValue = sourceEditor && sourceEditor !== editor
+          ? serializeCommunicationTemplateEditor(sourceEditor)
+          : "";
+        const block = draggedBlock || createDataFormulaBlock(token);
+        if (range) range.insertNode(block);
+        else editor.append(block);
+        if (sourceEditor && sourceEditor !== editor) {
+          commitCommunicationTemplateEditorChange(sourceEditor, beforeSourceValue);
+          syncDataFormulaEditor(sourceEditor);
+        }
+        commitCommunicationTemplateEditorChange(editor, beforeValue);
+        syncDataFormulaEditor(editor);
+        editor.focus({ preventScroll: true });
+      });
+    });
+  }
+
+  function createDataFormulaBlock(token) {
+    const block = createCommunicationTemplateBlock(token);
+    block.classList.add("data-formula-block");
+    block.removeAttribute("data-template-field-name");
+    block.title = "Перетащите блок, чтобы изменить формулу";
+    return block;
+  }
+
+  function syncDataFormulaEditor(editor) {
+    const form = editor.closest("form");
+    const index = Number(editor.dataset.formulaIndex);
+    const value = serializeCommunicationTemplateEditor(editor);
+    const hiddenInput = form?.elements[`formula${index}`];
+    if (hiddenInput) hiddenInput.value = value;
+    const output = editor.closest(".data-formula-item")?.querySelector("output");
+    if (output) output.textContent = evaluateDataFormula(value, new Date(2026, 1, 16), 1);
+  }
+
+  function refreshDataFormulaEditor(editor) {
+    const value = serializeCommunicationTemplateEditor(editor);
+    editor.innerHTML = renderDataFormulaEditorContent(value);
+    syncDataFormulaEditor(editor);
   }
 
   function bindCommunicationTemplateDragAndDrop() {
@@ -7168,6 +7466,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fundingSources: "Источники финансирования",
       expenseNotes: "Типовые примечания расходов",
       discountRules: "Скидки",
+      dataFormulas: "Конструктор формул данных",
       communicationTemplates: "Шаблоны типовых сообщений",
       roles: "Роли"
     };
