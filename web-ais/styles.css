@@ -3081,7 +3081,7 @@ body.student-tab-dragging .student-tabs button {
   color: #0b5f59;
 }
 
-.orders-sdo-icon-button svg {
+.orders-sdo-icon {
   width: 16px;
   height: 16px;
   fill: none;
@@ -3099,6 +3099,16 @@ body.student-tab-dragging .student-tabs button {
   color: #16a34a;
 }
 
+.orders-sdo-icon-button.is-magic .orders-sdo-icon {
+  color: #c48a16;
+  stroke-width: 2.2;
+}
+
+.orders-sdo-icon-button.is-magic:hover .orders-sdo-icon,
+.orders-sdo-icon-button.is-magic:focus-visible .orders-sdo-icon {
+  color: #9a670d;
+}
+
 .orders-sdo-date-step {
   display: inline-flex;
   flex: 0 0 auto;
@@ -3114,12 +3124,22 @@ body.student-tab-dragging .student-tabs button {
 .orders-sdo-auto-button,
 .orders-sdo-tool-button,
 .orders-sdo-certificate-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   min-height: 26px;
   padding: 0 8px;
   border-radius: 2px;
   font-size: 12px;
   line-height: 1;
   white-space: nowrap;
+}
+
+.orders-sdo-auto-button .orders-sdo-icon,
+.orders-sdo-tool-button .orders-sdo-icon,
+.orders-sdo-certificate-button .orders-sdo-icon {
+  width: 15px;
+  height: 15px;
 }
 
 .orders-sdo-lms {

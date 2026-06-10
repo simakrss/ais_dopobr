@@ -209,76 +209,7 @@ window.AIS_SEED = {
         status: "Действует"
       }
     ],
-    programs: [
-      {
-        id: "prg-001",
-        name: "Microsoft Access + SQL (сертиф. 72 ч)",
-        shortName: "Microsoft Access + SQL",
-        status: "Набор",
-        price: 6000,
-        oldPrice: 8000,
-        type: "Сертификат",
-        hours: 72,
-        duration: "1 месяц",
-        landingCode: "3878",
-        promoSite: "",
-        groupIndex: "ACC-SQL",
-        studyForm: "Дистанционная",
-        qualification: "",
-        manager: "Менеджер обучения"
-      },
-      {
-        id: "prg-002",
-        name: "Microsoft Access + SQL (72 ч)",
-        shortName: "Microsoft Access + SQL",
-        status: "Набор",
-        price: 8000,
-        oldPrice: 12000,
-        type: "Повышение квалификации",
-        hours: 72,
-        duration: "1 месяц",
-        landingCode: "3878",
-        promoSite: "",
-        groupIndex: "ACC-SQL-PK",
-        studyForm: "Дистанционная",
-        qualification: "",
-        manager: "Менеджер обучения"
-      },
-      {
-        id: "prg-003",
-        name: "SUP инструктор (300 ч)",
-        shortName: "SUP инструктор",
-        status: "Набор",
-        price: 10000,
-        oldPrice: 16000,
-        type: "Профессиональная переподготовка",
-        hours: 300,
-        duration: "3 месяца",
-        landingCode: "4298",
-        promoSite: "",
-        groupIndex: "SUP-300",
-        studyForm: "Дистанционная",
-        qualification: "Инструктор",
-        manager: "Менеджер обучения"
-      },
-      {
-        id: "prg-004",
-        name: "Курсы по подготовке к ЕГЭ",
-        shortName: "ЕГЭ",
-        status: "Набор",
-        price: 10200,
-        oldPrice: 12000,
-        type: "Дополнительное образование",
-        hours: 128,
-        duration: "Учебный год",
-        landingCode: "",
-        promoSite: "",
-        groupIndex: "ЕГЭ",
-        studyForm: "Очно-заочная",
-        qualification: "",
-        manager: "Методист"
-      }
-    ],
+    programs: window.AIS_PROGRAM_REGISTRY || [],
     trainingPlans: [
       {
         id: "plan-001",

@@ -326,6 +326,7 @@ MAX - https://bizvmax.ru/zifra_plus
     ],
     ovzStatuses: ["ОВЗ", "ОВЗ Инвалиды", "Инвалиды"],
     expenseNotes: [],
+    moodlePortalUrls: ["https://portal.edu-plus.ru"],
     discountRules: []
   };
   const discountGroups = [
@@ -1018,7 +1019,11 @@ MAX - https://bizvmax.ru/zifra_plus
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed && parsed.collections) return ensureDataShape(parsed);
+        if (parsed && parsed.collections) {
+          const normalized = ensureDataShape(parsed);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+          return normalized;
+        }
       } catch (error) {
         console.warn("Не удалось прочитать сохраненное состояние", error);
       }
@@ -1045,9 +1050,59 @@ MAX - https://bizvmax.ru/zifra_plus
     );
     data.dictionaries.dataFormulas = normalizeDataFormulaTemplates(data.dictionaries.dataFormulas);
     data.collections = data.collections || {};
+    data.collections.programs = mergeProgramRegistry(data)
+      .map((program) => normalizeProgramRecord(program));
     data.collections.students = (data.collections.students || []).map((student) => normalizeStudentRecord(student));
-    data.collections.programs = (data.collections.programs || []).map((program) => normalizeProgramRecord(program));
     return data;
+  }
+
+  function mergeProgramRegistry(data) {
+    const currentPrograms = Array.isArray(data.collections.programs) ? data.collections.programs : [];
+    const registry = Array.isArray(window.AIS_PROGRAM_REGISTRY) ? window.AIS_PROGRAM_REGISTRY : [];
+    const version = String(window.AIS_PROGRAM_REGISTRY_VERSION || "");
+    data.meta = data.meta && typeof data.meta === "object" ? data.meta : {};
+    if (!registry.length || (version && data.meta.programRegistryVersion === version)) return currentPrograms;
+
+    const existingByName = new Map();
+    currentPrograms.forEach((program) => {
+      const key = normalizeProgramName(program?.name);
+      if (!key) return;
+      if (!existingByName.has(key)) existingByName.set(key, []);
+      existingByName.get(key).push(program);
+    });
+
+    const importedPrograms = registry.map((program) => {
+      const matches = existingByName.get(normalizeProgramName(program.name)) || [];
+      const existing = matches.shift();
+      return {
+        ...(existing || {}),
+        ...clone(program),
+        id: existing?.id || program.id
+      };
+    });
+    const customPrograms = Array.from(existingByName.values()).flat();
+    data.meta.programRegistryVersion = version;
+    return [...importedPrograms, ...customPrograms];
+  }
+
+  function normalizeProgramName(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function findProgramInRows(programs, name) {
+    const normalized = normalizeProgramName(name);
+    if (!normalized) return null;
+    return programs.find((program) => normalizeProgramName(program.name) === normalized)
+      || programs.find((program) => normalizeProgramName(program.shortName) === normalized)
+      || null;
+  }
+
+  function buildStudentGroupNumber(programName, startDate, programs = []) {
+    const program = findProgramInRows(programs, programName);
+    const groupIndex = String(program?.groupIndex || "").trim().replace(/-+$/, "");
+    const dateMatch = /^(\d{4})-(\d{2})/.exec(String(startDate || "").trim());
+    if (!groupIndex || !dateMatch) return "";
+    return `${groupIndex}-${dateMatch[1].slice(-1)}${dateMatch[2]}`;
   }
 
   function normalizeDataFormulaTemplates(values) {
@@ -2361,7 +2416,10 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <section class="form-section student-orders-sdo-panel">
         <div class="orders-sdo-topbar">
-          <button class="ghost-button orders-sdo-auto-button" type="button">⚡ Авто</button>
+          <button class="ghost-button orders-sdo-auto-button" type="button">
+            ${renderOrdersSdoIcon("zap")}
+            <span>Авто</span>
+          </button>
         </div>
         <div class="orders-sdo-contract-grid">
           ${renderOrdersSdoControl("contractDate", "Дата договора", record, "date", { tools: ["dateStep"] })}
@@ -2377,21 +2435,40 @@ MAX - https://bizvmax.ru/zifra_plus
           ${renderOrdersSdoControl("expulsionDate", "Дата отчислен.", record, "date", { tools: ["dateStep"] })}
           ${renderOrdersSdoControl("enrollmentOrderNo", "Номер приказа", record, "text", { tools: ["generateEnrollmentOrderNo", "document", "educationCertificate"] })}
           ${renderOrdersSdoControl("expulsionOrderNo", "Номер приказа", record, "text", { tools: ["generateExpulsionOrderNo", "document"] })}
-          ${renderOrdersSdoControl("group", "Номер группы", record, "text", { tools: ["pin"], className: "orders-sdo-group-field" })}
+          ${renderOrdersSdoControl("group", "Номер группы", record, "text", { tools: ["generateGroupNo"], className: "orders-sdo-group-field" })}
         </div>
         <fieldset class="orders-sdo-lms">
           <legend>Система дистанционного обучения</legend>
           <div class="orders-sdo-lms-row">
-            ${renderOrdersSdoControl("login", "Логин", record, "text", { tools: ["copy"], compact: true })}
-            ${renderOrdersSdoControl("password", "Пароль", record, "text", { tools: ["dropdown", "copy"], compact: true })}
-            <button class="ghost-button orders-sdo-tool-button" type="button">🔑 Сгенерировать</button>
-            <button class="orders-sdo-icon-button" type="button" title="Открыть портал">🌐</button>
+            ${renderOrdersSdoControl("login", "Логин", record, "text", {
+              compact: true,
+              attrs: 'autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore data-moodle-credential'
+            })}
+            ${renderOrdersSdoControl("password", "Пароль", record, "text", {
+              compact: true,
+              attrs: 'autocomplete="new-password" data-lpignore="true" data-1p-ignore data-moodle-credential'
+            })}
+            <button class="ghost-button orders-sdo-tool-button" data-action="generate-portal-password" type="button">
+              ${renderOrdersSdoIcon("key")}
+              <span>Сгенерировать</span>
+            </button>
+            <button class="orders-sdo-icon-button" data-action="open-moodle-portal" type="button" title="Войти в портал Moodle" aria-label="Войти в портал Moodle">
+              ${renderOrdersSdoIcon("globe")}
+            </button>
           </div>
           <div class="orders-sdo-message-head">
             <span>Сообщение о доступе к порталу обучения</span>
-            <button class="ghost-button orders-sdo-tool-button" type="button">🔐 Экспорт в СДО</button>
-            <button class="ghost-button orders-sdo-tool-button" type="button">@ Отправить</button>
-            <button class="orders-sdo-icon-button" type="button" title="Копировать сообщение">📋</button>
+            <button class="ghost-button orders-sdo-tool-button" type="button">
+              ${renderOrdersSdoIcon("lock")}
+              <span>Экспорт в СДО</span>
+            </button>
+            <button class="ghost-button orders-sdo-tool-button" type="button">
+              ${renderOrdersSdoIcon("at")}
+              <span>Отправить</span>
+            </button>
+            <button class="orders-sdo-icon-button" type="button" title="Копировать сообщение" aria-label="Копировать сообщение">
+              ${renderOrdersSdoIcon("clipboard")}
+            </button>
           </div>
           <textarea name="portalAccessMessage" class="orders-sdo-message">${escapeHtml(portalMessage)}</textarea>
         </fieldset>
@@ -2399,10 +2476,30 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderOrdersSdoIcon(name) {
+    const paths = {
+      at: '<circle cx="12" cy="12" r="8"></circle><path d="M16 12v1.5a2.5 2.5 0 0 1-5 0V12a2.5 2.5 0 0 1 5 0Z"></path><path d="M16 9v6"></path>',
+      chevronDown: '<path d="m7 9 5 5 5-5"></path>',
+      chevronLeft: '<path d="m15 18-6-6 6-6"></path>',
+      chevronRight: '<path d="m9 18 6-6-6-6"></path>',
+      arrowUp: '<path d="m7 11 5-5 5 5"></path><path d="M12 6v12"></path>',
+      clipboard: '<rect x="6" y="5" width="12" height="16" rx="2"></rect><path d="M9 5.5V3h6v2.5"></path>',
+      copy: '<rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>',
+      document: '<path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h5"></path>',
+      documentText: '<path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h4"></path>',
+      globe: '<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a14 14 0 0 1 0 18"></path><path d="M12 3a14 14 0 0 0 0 18"></path>',
+      key: '<circle cx="8" cy="15" r="3"></circle><path d="m10.5 13.5 8-8"></path><path d="m16 8 2 2"></path><path d="m14 10 2 2"></path>',
+      lock: '<rect x="5" y="10" width="14" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="M12 14v3"></path>',
+      wand: '<path d="m4 20 11-11"></path><path d="m13 7 4 4"></path><path d="m5.5 3 .8 1.7L8 5.5l-1.7.8L5.5 8l-.8-1.7L3 5.5l1.7-.8L5.5 3Z"></path><path d="m18.5 13 .8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8.8-1.7Z"></path><path d="m19 2 .5 1 .9.5-.9.5-.5 1-.5-1-.9-.5.9-.5.5-1Z"></path>',
+      zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"></path>'
+    };
+    return `<svg class="orders-sdo-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${paths[name] || ""}</svg>`;
+  }
+
   function renderOrdersSdoControl(key, label, record, type = "text", options = {}) {
     const tools = options.tools || [];
     const value = record[key] ?? "";
-    const control = `<input name="${key}" type="${type}" value="${escapeAttr(value)}">`;
+    const control = `<input name="${key}" type="${type}" value="${escapeAttr(value)}" ${options.attrs || ""}>`;
     return `
       <label class="orders-sdo-field ${options.compact ? "is-compact" : ""} ${options.className || ""}">
         <span>${escapeHtml(label)}</span>
@@ -2416,38 +2513,35 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderOrdersSdoToolButton(tool, fieldName) {
-    if (["generateContractNo", "generateEnrollmentOrderNo", "generateExpulsionOrderNo"].includes(tool)) {
+    if (["generateContractNo", "generateEnrollmentOrderNo", "generateExpulsionOrderNo", "generateGroupNo"].includes(tool)) {
       const actionMap = {
         generateContractNo: ["generate-contract-number", "Сформировать номер договора"],
         generateEnrollmentOrderNo: ["generate-enrollment-order-number", "Сформировать номер приказа о зачислении"],
-        generateExpulsionOrderNo: ["generate-expulsion-order-number", "Сформировать номер приказа об отчислении"]
+        generateExpulsionOrderNo: ["generate-expulsion-order-number", "Сформировать номер приказа об отчислении"],
+        generateGroupNo: ["generate-group-number", "Сформировать номер группы"]
       };
       const [action, title] = actionMap[tool];
       return `
         <button
-          class="orders-sdo-icon-button"
+          class="orders-sdo-icon-button is-magic"
           data-action="${action}"
           type="button"
           title="${escapeAttr(title)}"
           aria-label="${escapeAttr(title)}"
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M4 20 15.5 8.5"></path>
-            <path d="m14 6 4 4"></path>
-            <path d="m6 4 .6 1.4L8 6l-1.4.6L6 8l-.6-1.4L4 6l1.4-.6L6 4Z"></path>
-            <path d="m18 14 .7 1.3 1.3.7-1.3.7L18 18l-.7-1.3L16 16l1.3-.7L18 14Z"></path>
-            <path d="m19 2 .5 1 .9.5-.9.5-.5 1-.5-1-.9-.5.9-.5.5-1Z"></path>
-          </svg>
+          ${renderOrdersSdoIcon("wand")}
         </button>
       `;
     }
     if (tool === "document") {
+      const title = fieldName === "enrollmentOrderNo"
+        ? "Сформировать приказ на зачисление"
+        : fieldName === "expulsionOrderNo"
+          ? "Сформировать приказ на отчисление"
+          : "Документ";
       return `
-        <button class="orders-sdo-icon-button" type="button" title="Документ" aria-label="Документ">
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M6 3h8l4 4v14H6z"></path>
-            <path d="M14 3v5h5"></path>
-          </svg>
+        <button class="orders-sdo-icon-button" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">
+          ${renderOrdersSdoIcon("document")}
         </button>
       `;
     }
@@ -2459,12 +2553,7 @@ MAX - https://bizvmax.ru/zifra_plus
           title="Сформировать справку об обучении"
           aria-label="Сформировать справку об обучении"
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M6 3h8l4 4v14H6z"></path>
-            <path d="M14 3v5h5"></path>
-            <path d="M9 13h6"></path>
-            <path d="M9 17h4"></path>
-          </svg>
+          ${renderOrdersSdoIcon("documentText")}
         </button>
       `;
     }
@@ -2479,7 +2568,7 @@ MAX - https://bizvmax.ru/zifra_plus
             type="button"
             title="На один день назад; с Alt — на один месяц назад"
             aria-label="Изменить дату назад"
-          >‹</button>
+          >${renderOrdersSdoIcon("chevronLeft")}</button>
           <button
             class="orders-sdo-icon-button"
             data-action="shift-orders-sdo-date"
@@ -2488,7 +2577,7 @@ MAX - https://bizvmax.ru/zifra_plus
             type="button"
             title="На один день вперед; с Alt — на один месяц вперед"
             aria-label="Изменить дату вперед"
-          >›</button>
+          >${renderOrdersSdoIcon("chevronRight")}</button>
         </span>
       `;
     }
@@ -2500,17 +2589,14 @@ MAX - https://bizvmax.ru/zifra_plus
           type="button"
           title="Скопировать измененную дату окончания обучения в дату окончания обучения"
           aria-label="Скопировать измененную дату окончания обучения в дату окончания обучения"
-        >↑</button>
+        >${renderOrdersSdoIcon("arrowUp")}</button>
       `;
     }
     const map = {
-      pin: ["📌", "Закрепить"],
-      copy: ["📄", "Копировать"],
-      file: ["▫", "Документ"],
-      down: ["↓", "Перенести вниз"],
-      up: ["↑", "Перенести вверх"],
-      clear: ["×", "Очистить"],
-      dropdown: ["⌄", "Выбрать"]
+      copy: [renderOrdersSdoIcon("copy"), "Копировать"],
+      file: [renderOrdersSdoIcon("document"), "Документ"],
+      up: [renderOrdersSdoIcon("arrowUp"), "Перенести вверх"],
+      dropdown: [renderOrdersSdoIcon("chevronDown"), "Выбрать"]
     };
     const [icon, title] = map[tool] || [tool, ""];
     const tone = tool === "clear" ? " is-danger" : "";
@@ -3577,12 +3663,181 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function findProgramByName(name) {
-    const normalized = String(name || "").trim().toLowerCase();
-    if (!normalized) return null;
-    return getProgramRows().find((program) => (
-      String(program.name || "").trim().toLowerCase() === normalized ||
-      String(program.shortName || "").trim().toLowerCase() === normalized
-    )) || null;
+    return findProgramInRows(getProgramRows(), name);
+  }
+
+  function getStudentGroupNumber(programName, startDate) {
+    return buildStudentGroupNumber(programName, startDate, getProgramRows());
+  }
+
+  function generateStudentGroupNumber() {
+    const form = document.getElementById("recordForm");
+    if (!form || form.dataset.config !== "students") return;
+    const programName = String(form.querySelector("[name='program']")?.value || state.modal?.draft?.program || "").trim();
+    const startDate = String(form.querySelector("[name='startDate']")?.value || state.modal?.draft?.startDate || "").trim();
+    const program = findProgramByName(programName);
+    if (!programName || !program) {
+      alert("Выберите программу обучения из реестра программ.");
+      form.querySelector("[name='program']")?.focus();
+      return;
+    }
+    if (!String(program.groupIndex || "").trim()) {
+      alert("Для выбранной программы в реестре не указан индекс группы.");
+      return;
+    }
+    if (!startDate) {
+      alert("Заполните дату начала обучения.");
+      form.querySelector("[name='startDate']")?.focus();
+      return;
+    }
+    const group = getStudentGroupNumber(programName, startDate);
+    if (!group) {
+      alert("Не удалось сформировать номер группы. Проверьте программу и дату начала обучения.");
+      return;
+    }
+    const groupInput = form.querySelector("[name='group']");
+    if (!groupInput) return;
+    groupInput.value = group;
+    groupInput.dispatchEvent(new Event("input", { bubbles: true }));
+    groupInput.dispatchEvent(new Event("change", { bubbles: true }));
+    state.modal.draft = {
+      ...(state.modal.draft || {}),
+      program: programName,
+      startDate,
+      group
+    };
+    state.modal.hasDraftChanges = true;
+    groupInput.focus({ preventScroll: true });
+  }
+
+  function generatePortalPassword() {
+    const form = document.getElementById("recordForm");
+    const loginInput = form?.querySelector("[name='login']");
+    const passwordInput = form?.querySelector("[name='password']");
+    if (!loginInput || !passwordInput) return;
+    const currentStudent = (state.data.collections.students || [])
+      .find((student) => student.id === state.modal?.id) || {};
+    const email = String(
+      form.querySelector("[name='email']")?.value
+      || state.modal?.draft?.email
+      || currentStudent.email
+      || ""
+    ).trim();
+    const emailParts = email.split("@");
+    const generatedLogin = emailParts.length > 1 ? emailParts[0].trim().toLowerCase() : "";
+    if (!generatedLogin) {
+      alert("Заполните корректный адрес электронной почты слушателя. Логин формируется из части адреса до символа @.");
+      return;
+    }
+    if (passwordInput.value && !confirm("Пароль уже заполнен. Заменить его новым шестизначным паролем?")) return;
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    loginInput.value = generatedLogin;
+    passwordInput.value = String(random[0] % 1000000).padStart(6, "0");
+    loginInput.dispatchEvent(new Event("input", { bubbles: true }));
+    loginInput.dispatchEvent(new Event("change", { bubbles: true }));
+    passwordInput.dispatchEvent(new Event("input", { bubbles: true }));
+    passwordInput.dispatchEvent(new Event("change", { bubbles: true }));
+    state.modal.draft = {
+      ...(state.modal.draft || {}),
+      email,
+      login: loginInput.value,
+      password: passwordInput.value
+    };
+    state.modal.hasDraftChanges = true;
+    passwordInput.focus({ preventScroll: true });
+    passwordInput.select();
+  }
+
+  function updatePortalAccessMessage() {
+    const form = document.getElementById("recordForm");
+    const messageInput = form?.querySelector("[name='portalAccessMessage']");
+    if (!form || !messageInput || form.dataset.config !== "students") return;
+    const currentStudent = (state.data.collections.students || [])
+      .find((student) => student.id === state.modal?.id) || {};
+    const values = {
+      ...currentStudent,
+      ...(state.modal?.draft || {}),
+      login: String(form.querySelector("[name='login']")?.value || ""),
+      password: String(form.querySelector("[name='password']")?.value || "")
+    };
+    const generated = generateStudentCommunicationMessages(values).portalAccessMessage || "";
+    messageInput.value = generated;
+    state.modal.draft = {
+      ...(state.modal.draft || {}),
+      login: values.login,
+      password: values.password,
+      portalAccessMessage: ""
+    };
+    state.modal.hasDraftChanges = true;
+  }
+
+  function getMoodleLoginUrl() {
+    const configured = (state.data.dictionaries.moodlePortalUrls || [])
+      .map((value) => String(value || "").trim())
+      .find(Boolean);
+    if (!configured) return "";
+    try {
+      const portalUrl = new URL(/^https?:\/\//i.test(configured) ? configured : `https://${configured}`);
+      portalUrl.search = "";
+      portalUrl.hash = "";
+      if (!/\/login\/index\.php\/?$/i.test(portalUrl.pathname)) {
+        portalUrl.pathname = `${portalUrl.pathname.replace(/\/+$/, "")}/login/index.php`;
+      }
+      return portalUrl.toString();
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function openMoodlePortal() {
+    const form = document.getElementById("recordForm");
+    const username = String(form?.querySelector("[name='login']")?.value || "").trim();
+    const password = String(form?.querySelector("[name='password']")?.value || "");
+    if (!username) {
+      alert("Заполните логин для портала.");
+      form?.querySelector("[name='login']")?.focus();
+      return;
+    }
+    if (!password) {
+      alert("Заполните или сгенерируйте пароль для портала.");
+      form?.querySelector("[name='password']")?.focus();
+      return;
+    }
+    const loginUrl = getMoodleLoginUrl();
+    if (!loginUrl) {
+      alert("Укажите корректный адрес портала Moodle в справочнике «Адрес портала Moodle».");
+      return;
+    }
+
+    const targetName = `moodlePortal${Date.now()}`;
+    const portalWindow = window.open("about:blank", targetName);
+    if (!portalWindow) {
+      alert("Браузер заблокировал открытие портала. Разрешите всплывающие окна для этого сайта.");
+      return;
+    }
+    const actionUrl = new URL(loginUrl);
+    actionUrl.searchParams.set("loginredirect", "1");
+    const loginForm = document.createElement("form");
+    loginForm.method = "post";
+    loginForm.action = actionUrl.toString();
+    loginForm.target = targetName;
+    loginForm.hidden = true;
+    [
+      ["anchor", ""],
+      ["username", username],
+      ["password", password],
+      ["rememberusername", "1"]
+    ].forEach(([name, value]) => {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value;
+      loginForm.appendChild(input);
+    });
+    document.body.appendChild(loginForm);
+    loginForm.submit();
+    loginForm.remove();
   }
 
   function getProgramPromoUrl(program) {
@@ -4497,6 +4752,14 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='generate-contract-number']")?.addEventListener("click", generateContractNumber);
     document.querySelector("[data-action='generate-enrollment-order-number']")?.addEventListener("click", generateEnrollmentOrderNumber);
     document.querySelector("[data-action='generate-expulsion-order-number']")?.addEventListener("click", generateExpulsionOrderNumber);
+    document.querySelector("[data-action='generate-group-number']")?.addEventListener("click", generateStudentGroupNumber);
+    document.querySelector("[data-action='generate-portal-password']")?.addEventListener("click", generatePortalPassword);
+    document.querySelector("[data-action='open-moodle-portal']")?.addEventListener("click", openMoodlePortal);
+    ["login", "password"].forEach((fieldName) => {
+      const input = document.querySelector(`[name="${fieldName}"]`);
+      input?.addEventListener("input", updatePortalAccessMessage);
+      input?.addEventListener("change", updatePortalAccessMessage);
+    });
     document.querySelector("[data-action='copy-extended-end-date-up']")?.addEventListener("click", copyExtendedEndDateToEndDate);
     document.querySelectorAll("[data-action='copy-communication-message']").forEach((button) => {
       button.addEventListener("click", () => copyStudentCommunicationMessage(button));
@@ -7465,6 +7728,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ovzStatuses: "Статусы ОВЗ",
       fundingSources: "Источники финансирования",
       expenseNotes: "Типовые примечания расходов",
+      moodlePortalUrls: "Адрес портала Moodle",
       discountRules: "Скидки",
       dataFormulas: "Конструктор формул данных",
       communicationTemplates: "Шаблоны типовых сообщений",
