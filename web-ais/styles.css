@@ -1481,6 +1481,54 @@ body.is-resizing-column {
   padding-top: 2px;
 }
 
+.sdo-settings-form {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  align-content: start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.sdo-settings-fields {
+  display: grid;
+  gap: 10px;
+  max-width: 900px;
+}
+
+.sdo-settings-fields label {
+  display: grid;
+  gap: 5px;
+}
+
+.sdo-settings-fields label > span {
+  color: #33413d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sdo-settings-fields input {
+  width: 100%;
+  min-width: 0;
+}
+
+.sdo-settings-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sdo-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-self: end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
 .communication-template-formula-syntax {
   display: inline-flex;
   align-items: center;

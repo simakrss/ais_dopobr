@@ -282,6 +282,18 @@ MAX - https://bizvmax.ru/zifra_plus
       template: "Отч-{Год1}{Месяц2}-{День2}"
     }
   ];
+  const sdoSettingDefaults = [
+    {
+      key: "portalUrl",
+      label: "Адрес портала СДО",
+      value: "https://portal.edu-plus.ru"
+    },
+    {
+      key: "uploadUsersUrl",
+      label: "Страница загрузки пользователей",
+      value: "https://portal.edu-plus.ru/admin/tool/uploaduser/index.php"
+    }
+  ];
   const defaultPhotoServerOrigin = "http://localhost:8080";
   const financeMetrics = [
     { key: "revenue", label: "Поступления", tone: "income" },
@@ -326,7 +338,6 @@ MAX - https://bizvmax.ru/zifra_plus
     ],
     ovzStatuses: ["ОВЗ", "ОВЗ Инвалиды", "Инвалиды"],
     expenseNotes: [],
-    moodlePortalUrls: ["https://portal.edu-plus.ru"],
     discountRules: []
   };
   const discountGroups = [
@@ -1034,6 +1045,9 @@ MAX - https://bizvmax.ru/zifra_plus
   function ensureDataShape(data) {
     data.dictionaries = data.dictionaries || {};
     const hasDiscountRules = Array.isArray(data.dictionaries.discountRules);
+    const legacyMoodlePortalUrl = Array.isArray(data.dictionaries.moodlePortalUrls)
+      ? data.dictionaries.moodlePortalUrls.find((value) => String(value || "").trim())
+      : "";
     Object.entries(dictionaryDefaults).forEach(([key, values]) => {
       data.dictionaries[key] = unique([...(data.dictionaries[key] || []), ...values]);
     });
@@ -1049,11 +1063,30 @@ MAX - https://bizvmax.ru/zifra_plus
       data.dictionaries.communicationTemplateCustomFields
     );
     data.dictionaries.dataFormulas = normalizeDataFormulaTemplates(data.dictionaries.dataFormulas);
+    data.dictionaries.sdoSettings = normalizeSdoSettings(data.dictionaries.sdoSettings, legacyMoodlePortalUrl);
+    delete data.dictionaries.moodlePortalUrls;
     data.collections = data.collections || {};
     data.collections.programs = mergeProgramRegistry(data)
       .map((program) => normalizeProgramRecord(program));
     data.collections.students = (data.collections.students || []).map((student) => normalizeStudentRecord(student));
     return data;
+  }
+
+  function normalizeSdoSettings(values, legacyPortalUrl = "") {
+    const saved = Array.isArray(values) ? values : [];
+    return sdoSettingDefaults.map((setting) => {
+      const savedSetting = saved.find((item) => item?.key === setting.key);
+      const legacyValue = setting.key === "portalUrl" ? legacyPortalUrl : "";
+      return {
+        ...setting,
+        value: String(savedSetting?.value || legacyValue || setting.value)
+      };
+    });
+  }
+
+  function getSdoSettingValue(key) {
+    return normalizeSdoSettings(state.data.dictionaries.sdoSettings)
+      .find((setting) => setting.key === key)?.value || "";
   }
 
   function mergeProgramRegistry(data) {
@@ -1903,7 +1936,7 @@ MAX - https://bizvmax.ru/zifra_plus
       item.title.toLowerCase().includes(query) ||
       item.values.some((value) => (
         typeof value === "object"
-          ? `${value?.label || ""} ${value?.template || ""}`.toLowerCase().includes(query)
+          ? `${value?.label || ""} ${value?.template || ""} ${value?.value || ""}`.toLowerCase().includes(query)
           : String(value || "").toLowerCase().includes(query)
       ))
     ));
@@ -1915,7 +1948,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const selectedValues = selectedItem?.values || [];
     const isCommunicationTemplates = selectedKey === "communicationTemplates";
     const isDataFormulas = selectedKey === "dataFormulas";
-    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas;
+    const isSdoSettings = selectedKey === "sdoSettings";
+    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     return `
       <section class="panel">
@@ -1951,7 +1985,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${isCommunicationTemplates ? `
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "asc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="asc" type="button" title="Сортировать поля по алфавиту" aria-label="Сортировать поля по алфавиту" aria-pressed="${communicationTemplateFieldSortOrder === "asc" ? "true" : "false"}">А→Я</button>
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "desc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="desc" type="button" title="Сортировать поля против алфавита" aria-label="Сортировать поля против алфавита" aria-pressed="${communicationTemplateFieldSortOrder === "desc" ? "true" : "false"}">Я→А</button>
-                  ` : isDataFormulas ? "" : `
+                  ` : isDataFormulas || isSdoSettings ? "" : `
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
                   `}
@@ -1975,6 +2009,8 @@ MAX - https://bizvmax.ru/zifra_plus
                 ? renderCommunicationTemplateDictionary(selectedValues)
                 : isDataFormulas
                   ? renderDataFormulaDictionary(selectedValues)
+                  : isSdoSettings
+                    ? renderSdoSettingsDictionary(selectedValues)
                   : `
                 <form class="inline-form dictionary-add-form" data-action="dict-add" data-dict="${selectedKey}">
                   <input name="value" placeholder="Новое значение или список из буфера обмена" autocomplete="off" data-dictionary-add-input>
@@ -1996,6 +2032,34 @@ MAX - https://bizvmax.ru/zifra_plus
           </section>
         </div>
       </section>
+    `;
+  }
+
+  function renderSdoSettingsDictionary(values) {
+    const settings = normalizeSdoSettings(values);
+    return `
+      <form class="sdo-settings-form" data-action="save-sdo-settings">
+        <div class="sdo-settings-fields">
+          ${settings.map((setting) => `
+            <label>
+              <span>${escapeHtml(setting.label)}</span>
+              <input
+                name="${escapeAttr(setting.key)}"
+                type="url"
+                value="${escapeAttr(setting.value)}"
+                placeholder="https://"
+                autocomplete="off"
+                required
+              >
+            </label>
+          `).join("")}
+        </div>
+        <p class="sdo-settings-hint">Эти адреса используются для входа в портал и перехода к загрузке пользователей после формирования CSV.</p>
+        <div class="sdo-settings-actions">
+          <button class="ghost-button" data-action="reset-sdo-settings" type="button">Восстановить исходные</button>
+          <button class="primary-button" type="submit">Сохранить настройки</button>
+        </div>
+      </form>
     `;
   }
 
@@ -2458,8 +2522,8 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           <div class="orders-sdo-message-head">
             <span>Сообщение о доступе к порталу обучения</span>
-            <button class="ghost-button orders-sdo-tool-button" type="button">
-              ${renderOrdersSdoIcon("lock")}
+            <button class="ghost-button orders-sdo-tool-button" data-action="export-student-to-sdo" type="button">
+              ${renderOrdersSdoIcon("laptop")}
               <span>Экспорт в СДО</span>
             </button>
             <button class="ghost-button orders-sdo-tool-button" type="button">
@@ -2489,6 +2553,7 @@ MAX - https://bizvmax.ru/zifra_plus
       documentText: '<path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h4"></path>',
       globe: '<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a14 14 0 0 1 0 18"></path><path d="M12 3a14 14 0 0 0 0 18"></path>',
       key: '<circle cx="8" cy="15" r="3"></circle><path d="m10.5 13.5 8-8"></path><path d="m16 8 2 2"></path><path d="m14 10 2 2"></path>',
+      laptop: '<rect x="5" y="4" width="14" height="11" rx="1.5"></rect><path d="M3 18h18"></path><path d="m5 15-2 3"></path><path d="m19 15 2 3"></path><path d="M9 18h6"></path>',
       lock: '<rect x="5" y="10" width="14" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="M12 14v3"></path>',
       wand: '<path d="m4 20 11-11"></path><path d="m13 7 4 4"></path><path d="m5.5 3 .8 1.7L8 5.5l-1.7.8L5.5 8l-.8-1.7L3 5.5l1.7-.8L5.5 3Z"></path><path d="m18.5 13 .8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8.8-1.7Z"></path><path d="m19 2 .5 1 .9.5-.9.5-.5 1-.5-1-.9-.5.9-.5.5-1Z"></path>',
       zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"></path>'
@@ -3773,9 +3838,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getMoodleLoginUrl() {
-    const configured = (state.data.dictionaries.moodlePortalUrls || [])
-      .map((value) => String(value || "").trim())
-      .find(Boolean);
+    const configured = getSdoSettingValue("portalUrl").trim();
     if (!configured) return "";
     try {
       const portalUrl = new URL(/^https?:\/\//i.test(configured) ? configured : `https://${configured}`);
@@ -3806,7 +3869,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const loginUrl = getMoodleLoginUrl();
     if (!loginUrl) {
-      alert("Укажите корректный адрес портала Moodle в справочнике «Адрес портала Moodle».");
+      alert("Укажите корректный адрес портала в справочнике «Настройки СДО».");
       return;
     }
 
@@ -3838,6 +3901,65 @@ MAX - https://bizvmax.ru/zifra_plus
     document.body.appendChild(loginForm);
     loginForm.submit();
     loginForm.remove();
+  }
+
+  function exportStudentToSdo() {
+    const record = collectStudentFormDraft();
+    const uploadUsersUrl = normalizeExternalUrl(getSdoSettingValue("uploadUsersUrl"));
+    if (!uploadUsersUrl) {
+      alert("Укажите корректный адрес страницы загрузки пользователей в справочнике «Настройки СДО».");
+      return;
+    }
+    const login = String(record.login || "").trim();
+    const password = String(record.password || "");
+    const email = String(record.email || "").trim();
+    const nameParts = splitStudentNameForSdo(record.name);
+    const program = findProgramByName(record.program);
+    const cohort = String(program?.groupIndex || "").trim();
+    const required = [
+      [login, "Заполните логин для портала.", "login"],
+      [password, "Заполните пароль для портала.", "password"],
+      [nameParts.lastname, "Заполните ФИО слушателя.", ""],
+      [email, "Заполните Email слушателя.", ""],
+      [String(record.program || "").trim(), "Выберите программу обучения.", ""],
+      [cohort, "Для выбранной программы в реестре не указан индекс группы.", ""]
+    ];
+    const missing = required.find(([value]) => !value);
+    if (missing) {
+      alert(missing[1]);
+      if (missing[2]) document.querySelector(`[name="${missing[2]}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    const columns = ["username", "password", "firstname", "lastname", "email", "cohort1"];
+    const values = [login, password, nameParts.firstname, nameParts.lastname, email, cohort];
+    const content = [
+      columns.map(sdoCsvCell).join(";"),
+      values.map(sdoCsvCell).join(";")
+    ].join("\r\n");
+    download(`ЭкспортПользователей_${formatSdoExportDate(new Date())}.csv`, `\ufeff${content}`, "text/csv;charset=utf-8");
+    openExternalUrl(uploadUsersUrl);
+  }
+
+  function splitStudentNameForSdo(value) {
+    const parts = String(value || "").trim().replace(/\s+/g, " ").split(" ").filter(Boolean);
+    const lastname = parts.shift() || "";
+    return {
+      firstname: parts.join(" ") || lastname,
+      lastname
+    };
+  }
+
+  function sdoCsvCell(value) {
+    const text = String(value ?? "").trim().replace(/\s{2,}/g, " ");
+    return /[;"\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+  }
+
+  function formatSdoExportDate(date) {
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0")
+    ].join(".");
   }
 
   function getProgramPromoUrl(program) {
@@ -4755,6 +4877,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='generate-group-number']")?.addEventListener("click", generateStudentGroupNumber);
     document.querySelector("[data-action='generate-portal-password']")?.addEventListener("click", generatePortalPassword);
     document.querySelector("[data-action='open-moodle-portal']")?.addEventListener("click", openMoodlePortal);
+    document.querySelector("[data-action='export-student-to-sdo']")?.addEventListener("click", exportStudentToSdo);
     ["login", "password"].forEach((fieldName) => {
       const input = document.querySelector(`[name="${fieldName}"]`);
       input?.addEventListener("input", updatePortalAccessMessage);
@@ -5205,6 +5328,8 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("form[data-action='save-data-formulas']")?.addEventListener("submit", saveDataFormulas);
     document.querySelector("[data-action='reset-data-formulas']")?.addEventListener("click", resetDataFormulas);
     bindDataFormulaConstructor();
+    document.querySelector("form[data-action='save-sdo-settings']")?.addEventListener("submit", saveSdoSettings);
+    document.querySelector("[data-action='reset-sdo-settings']")?.addEventListener("click", resetSdoSettings);
 
     enhanceCopyableFields();
   }
@@ -6127,6 +6252,33 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!confirm("Восстановить исходные формулы генерации номеров?")) return;
     state.data.dictionaries.dataFormulas = normalizeDataFormulaTemplates([]);
     addAudit("Изменен справочник", dictionaryTitle("dataFormulas"), "Восстановлены исходные формулы");
+    persist();
+    render();
+  }
+
+  function saveSdoSettings(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const settings = sdoSettingDefaults.map((setting) => ({
+      ...setting,
+      value: String(form.elements[setting.key]?.value || "").trim()
+    }));
+    const invalidSetting = settings.find((setting) => !normalizeExternalUrl(setting.value));
+    if (invalidSetting) {
+      alert(`Укажите корректный адрес: ${invalidSetting.label}.`);
+      form.elements[invalidSetting.key]?.focus();
+      return;
+    }
+    state.data.dictionaries.sdoSettings = settings;
+    addAudit("Изменен справочник", dictionaryTitle("sdoSettings"), "Сохранены настройки СДО");
+    persist();
+    render();
+  }
+
+  function resetSdoSettings() {
+    if (!confirm("Восстановить исходные настройки СДО?")) return;
+    state.data.dictionaries.sdoSettings = normalizeSdoSettings([]);
+    addAudit("Изменен справочник", dictionaryTitle("sdoSettings"), "Восстановлены исходные настройки СДО");
     persist();
     render();
   }
@@ -7728,7 +7880,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ovzStatuses: "Статусы ОВЗ",
       fundingSources: "Источники финансирования",
       expenseNotes: "Типовые примечания расходов",
-      moodlePortalUrls: "Адрес портала Moodle",
+      sdoSettings: "Настройки СДО",
       discountRules: "Скидки",
       dataFormulas: "Конструктор формул данных",
       communicationTemplates: "Шаблоны типовых сообщений",
