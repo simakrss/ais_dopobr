@@ -292,6 +292,17 @@ MAX - https://bizvmax.ru/zifra_plus
       key: "uploadUsersUrl",
       label: "Страница загрузки пользователей",
       value: "https://portal.edu-plus.ru/admin/tool/uploaduser/index.php"
+    },
+    {
+      key: "coursesUrl",
+      label: "Страница курсов СДО",
+      value: "https://portal.edu-plus.ru/my/courses.php"
+    },
+    {
+      key: "portalAccessEmailSubject",
+      label: "Тема письма о доступе к порталу",
+      type: "text",
+      value: "Доступ к порталу дистанционного обучения Цифровизация Плюс"
     }
   ];
   const defaultPhotoServerOrigin = "http://localhost:8080";
@@ -906,7 +917,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { key: "certificateSent", label: "Отправлена справка об обучении" }
   ];
 
-  const studentCardDefaultTabIds = ["main", "documents", "income", "communications", "ordersSdo"];
+  const studentCardDefaultTabIds = ["main", "documents", "income", "communications", "ordersSdo", "results"];
   const visibleStudentCardTabs = studentCardDefaultTabIds
     .map((id) => studentCardTabs.find((tab) => tab.id === id))
     .filter(Boolean);
@@ -1593,11 +1604,12 @@ MAX - https://bizvmax.ru/zifra_plus
         <button class="ghost-button" data-action="bulk-clear" data-config="${configId}" type="button" ${selected.length ? "" : "disabled"}>Снять выбор</button>
         <button class="ghost-button icon-only csv-button" data-action="bulk-export" data-config="${configId}" type="button" title="Экспорт выбранных в CSV" aria-label="Экспорт выбранных в CSV" ${selectedRows.length ? "" : "disabled"}>
           <svg class="csv-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M7 3h7l4 4v14H7z"></path>
-            <path d="M14 3v5h5"></path>
-            <path d="M12 17V9"></path>
-            <path d="M8.5 12.5L12 9l3.5 3.5"></path>
-            <path d="M9 18h6"></path>
+            <rect x="3" y="4" width="13" height="16" rx="2"></rect>
+            <path d="M3 9h13"></path>
+            <path d="M3 14h9"></path>
+            <path d="M8 4v16"></path>
+            <path d="M19 10v9"></path>
+            <path d="m16 16 3 3 3-3"></path>
           </svg>
         </button>
         <button class="danger-button icon-only trash-button" data-action="bulk-delete" data-config="${configId}" type="button" title="Удалить выбранные" aria-label="Удалить выбранные" ${selected.length ? "" : "disabled"}>
@@ -2045,16 +2057,16 @@ MAX - https://bizvmax.ru/zifra_plus
               <span>${escapeHtml(setting.label)}</span>
               <input
                 name="${escapeAttr(setting.key)}"
-                type="url"
+                type="${setting.type === "text" ? "text" : "url"}"
                 value="${escapeAttr(setting.value)}"
-                placeholder="https://"
+                placeholder="${setting.type === "text" ? "" : "https://"}"
                 autocomplete="off"
                 required
               >
             </label>
           `).join("")}
         </div>
-        <p class="sdo-settings-hint">Эти адреса используются для входа в портал и перехода к загрузке пользователей после формирования CSV.</p>
+        <p class="sdo-settings-hint">Здесь настраиваются адреса СДО и тема письма с данными доступа.</p>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-sdo-settings" type="button">Восстановить исходные</button>
           <button class="primary-button" type="submit">Сохранить настройки</button>
@@ -2340,6 +2352,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderStudentModal(record) {
     if (!state.modal.id) record = { ...record, uid: record.uid || getNextUid() };
+    record = calculateStudentFinance(record);
     const orderedTabs = getOrderedStudentCardTabs();
     const activeTab = orderedTabs.find((tab) => tab.id === state.studentCardTab) || orderedTabs[0];
     const title = getStudentCardTitle(record);
@@ -2378,7 +2391,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     </button>
                   `).join("")}
                 </div>
-                <div class="student-tab-body ${activeTab.id === "documents" ? "student-documents-tab" : ""} ${activeTab.id === "income" ? "student-income-tab" : ""} ${activeTab.id === "communications" ? "student-communications-tab" : ""} ${activeTab.id === "ordersSdo" ? "student-orders-sdo-tab" : ""}">
+                <div class="student-tab-body ${activeTab.id === "documents" ? "student-documents-tab" : ""} ${activeTab.id === "income" ? "student-income-tab" : ""} ${activeTab.id === "communications" ? "student-communications-tab" : ""} ${activeTab.id === "ordersSdo" ? "student-orders-sdo-tab" : ""} ${activeTab.id === "results" ? "student-results-tab" : ""}">
                   ${renderStudentTabContent(activeTab, record)}
                 </div>
               </section>
@@ -2422,7 +2435,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const program = String(record.program || "").trim();
     const hours = getStudentProgramHours(record);
     if (!program) return "";
-    return `${program}${hours ? ` (${hours} ч)` : ""}`;
+    const registeredProgram = findProgramByName(program);
+    const title = String(registeredProgram?.shortName || program)
+      .replace(/\s*\(\s*\d+(?:[.,]\d+)?\s*(?:ч|час|часа|часов)\s*\)\s*$/i, "")
+      .trim();
+    return `${title}${hours ? ` (${hours} ч)` : ""}`;
   }
 
   function getStudentProgramHours(record) {
@@ -2468,9 +2485,36 @@ MAX - https://bizvmax.ru/zifra_plus
             : `<div class="student-form-grid">${section.fields.map((item) => renderStudentField(item, record)).join("")}</div>`}
         </section>
       `).join("")}
+      ${tab.id === "income" ? renderStudentFinancialResult(record) : ""}
       ${tab.payments ? renderPaymentRows(record) : ""}
       ${tab.expenses ? renderExpenseRows(record) : ""}
       ${tab.linkedExpenses ? renderLinkedExpenses(record) : ""}
+    `;
+  }
+
+  function renderStudentFinancialResult(record) {
+    const payments = Math.round(sumStudentPayments(record) * 100) / 100;
+    const expenses = Math.round(sumStudentExpenses(record) * 100) / 100;
+    const result = Math.round((payments - expenses) * 100) / 100;
+    const tone = result > 0 ? "is-positive" : result < 0 ? "is-negative" : "is-neutral";
+    return `
+      <section class="form-section student-financial-result">
+        <h3>Финансовый результат</h3>
+        <div class="student-financial-result-grid">
+          <div>
+            <span>Оплаты слушателя</span>
+            <strong data-student-finance-payments>${escapeHtml(money(payments))}</strong>
+          </div>
+          <div>
+            <span>Расходы</span>
+            <strong data-student-finance-expenses>${escapeHtml(money(expenses))}</strong>
+          </div>
+          <div class="student-financial-result-total ${tone}" data-student-finance-result-card>
+            <span>Результат</span>
+            <strong data-student-finance-result>${escapeHtml(money(result))}</strong>
+          </div>
+        </div>
+      </section>
     `;
   }
 
@@ -2480,7 +2524,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <section class="form-section student-orders-sdo-panel">
         <div class="orders-sdo-topbar">
-          <button class="ghost-button orders-sdo-auto-button" type="button">
+          <button class="ghost-button orders-sdo-auto-button" data-action="auto-fill-orders-sdo" type="button">
             ${renderOrdersSdoIcon("zap")}
             <span>Авто</span>
           </button>
@@ -2489,7 +2533,7 @@ MAX - https://bizvmax.ru/zifra_plus
           ${renderOrdersSdoControl("contractDate", "Дата договора", record, "date", { tools: ["dateStep"] })}
           ${renderOrdersSdoControl("contractNo", "Номер договора", record, "text", { tools: ["generateContractNo"] })}
           ${renderOrdersSdoControl("startDate", "Дата нач. обуч.", record, "date", { tools: ["dateStep"] })}
-          ${renderOrdersSdoControl("endDate", "Дата окон. обуч.", record, "date", { tools: ["dateStep"] })}
+          ${renderOrdersSdoControl("endDate", "Дата окон. обуч.", record, "date", { tools: ["generateEndDate", "dateStep"] })}
           <div class="orders-sdo-shift-row">
             ${renderOrdersSdoControl("extendedEndDate", "Дата окон. изм.", record, "date", { tools: ["dateStep", "copyExtendedEndUp"] })}
           </div>
@@ -2516,7 +2560,7 @@ MAX - https://bizvmax.ru/zifra_plus
               ${renderOrdersSdoIcon("key")}
               <span>Сгенерировать</span>
             </button>
-            <button class="orders-sdo-icon-button" data-action="open-moodle-portal" type="button" title="Войти в портал Moodle" aria-label="Войти в портал Moodle">
+            <button class="orders-sdo-icon-button" data-action="open-sdo-courses" type="button" title="Перейти в СДО" aria-label="Перейти в СДО">
               ${renderOrdersSdoIcon("globe")}
             </button>
           </div>
@@ -2526,12 +2570,9 @@ MAX - https://bizvmax.ru/zifra_plus
               ${renderOrdersSdoIcon("laptop")}
               <span>Экспорт в СДО</span>
             </button>
-            <button class="ghost-button orders-sdo-tool-button" type="button">
-              ${renderOrdersSdoIcon("at")}
+            <button class="ghost-button orders-sdo-tool-button" data-action="email-portal-access" type="button">
+              ${renderOrdersSdoIcon("mail")}
               <span>Отправить</span>
-            </button>
-            <button class="orders-sdo-icon-button" type="button" title="Копировать сообщение" aria-label="Копировать сообщение">
-              ${renderOrdersSdoIcon("clipboard")}
             </button>
           </div>
           <textarea name="portalAccessMessage" class="orders-sdo-message">${escapeHtml(portalMessage)}</textarea>
@@ -2555,6 +2596,7 @@ MAX - https://bizvmax.ru/zifra_plus
       key: '<circle cx="8" cy="15" r="3"></circle><path d="m10.5 13.5 8-8"></path><path d="m16 8 2 2"></path><path d="m14 10 2 2"></path>',
       laptop: '<rect x="5" y="4" width="14" height="11" rx="1.5"></rect><path d="M3 18h18"></path><path d="m5 15-2 3"></path><path d="m19 15 2 3"></path><path d="M9 18h6"></path>',
       lock: '<rect x="5" y="10" width="14" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="M12 14v3"></path>',
+      mail: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m4 7 8 6 8-6"></path>',
       wand: '<path d="m4 20 11-11"></path><path d="m13 7 4 4"></path><path d="m5.5 3 .8 1.7L8 5.5l-1.7.8L5.5 8l-.8-1.7L3 5.5l1.7-.8L5.5 3Z"></path><path d="m18.5 13 .8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8.8-1.7Z"></path><path d="m19 2 .5 1 .9.5-.9.5-.5 1-.5-1-.9-.5.9-.5.5-1Z"></path>',
       zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"></path>'
     };
@@ -2578,12 +2620,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderOrdersSdoToolButton(tool, fieldName) {
-    if (["generateContractNo", "generateEnrollmentOrderNo", "generateExpulsionOrderNo", "generateGroupNo"].includes(tool)) {
+    if (["generateContractNo", "generateEnrollmentOrderNo", "generateExpulsionOrderNo", "generateGroupNo", "generateEndDate"].includes(tool)) {
       const actionMap = {
         generateContractNo: ["generate-contract-number", "Сформировать номер договора"],
         generateEnrollmentOrderNo: ["generate-enrollment-order-number", "Сформировать номер приказа о зачислении"],
         generateExpulsionOrderNo: ["generate-expulsion-order-number", "Сформировать номер приказа об отчислении"],
-        generateGroupNo: ["generate-group-number", "Сформировать номер группы"]
+        generateGroupNo: ["generate-group-number", "Сформировать номер группы"],
+        generateEndDate: ["generate-training-end-date", "Рассчитать по 40 часам в неделю; с Shift — по 54 часам"]
       };
       const [action, title] = actionMap[tool];
       return `
@@ -2712,21 +2755,121 @@ MAX - https://bizvmax.ru/zifra_plus
     generateNumberFromDataFormula("expulsionOrderNumber");
   }
 
-  function generateNumberFromDataFormula(formulaKey) {
+  function getGeneratedNumberFromDataFormula(formulaKey, date, currentId = "") {
     const formula = normalizeDataFormulaTemplates(state.data.dictionaries.dataFormulas)
       .find((item) => item.key === formulaKey);
+    if (!formula) return { formula: null, value: "" };
+    const sequence = formula.template.includes("{ПорядковыйНомерЗаДату}")
+      ? getNextDataFormulaSequence(formula, date, currentId)
+      : 1;
+    return {
+      formula,
+      value: evaluateDataFormula(formula.template, date, sequence)
+    };
+  }
+
+  function generateNumberFromDataFormula(formulaKey) {
     const formElement = document.getElementById("recordForm");
+    const formula = normalizeDataFormulaTemplates(state.data.dictionaries.dataFormulas)
+      .find((item) => item.key === formulaKey);
     const input = formElement?.elements[formula?.targetField];
     if (!formula || !(input instanceof HTMLInputElement)) return;
     const dateInput = formElement.elements[formula.dateField];
     const date = parseOrdersSdoDate(dateInput?.value) || new Date();
-    const sequence = formula.template.includes("{ПорядковыйНомерЗаДату}")
-      ? getNextDataFormulaSequence(formula, date, formElement.dataset.id)
-      : 1;
-    input.value = evaluateDataFormula(formula.template, date, sequence);
+    input.value = getGeneratedNumberFromDataFormula(formulaKey, date, formElement.dataset.id).value;
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
     input.focus({ preventScroll: true });
+  }
+
+  function getTrainingEndDate(startDate, hours, hoursPerWeek = 40) {
+    const date = parseOrdersSdoDate(startDate);
+    const numericHours = Number(String(hours ?? "").replace(",", "."));
+    const weeklyLimit = Number(hoursPerWeek);
+    if (!date || !Number.isFinite(numericHours) || numericHours <= 0
+      || !Number.isFinite(weeklyLimit) || weeklyLimit <= 0) return null;
+    const fullWeeks = Math.floor(numericHours / weeklyLimit);
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + fullWeeks * 7);
+  }
+
+  function setOrdersSdoFieldValue(form, fieldName, value) {
+    const input = form?.elements[fieldName];
+    if (!(input instanceof HTMLInputElement)) return false;
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }
+
+  function getOrdersSdoAutofillContext() {
+    const form = document.getElementById("recordForm");
+    if (!form || form.dataset.config !== "students") return null;
+    const record = collectStudentFormDraft();
+    const programName = String(record.program || "").trim();
+    const program = findProgramByName(programName);
+    if (!programName || !program) {
+      alert("Выберите программу обучения из реестра программ.");
+      form.querySelector("[name='program']")?.focus();
+      return null;
+    }
+    const hours = Number(String(getStudentProgramHours(record)).replace(",", "."));
+    if (!Number.isFinite(hours) || hours <= 0) {
+      alert("Укажите срок обучения в часах для выбранной программы.");
+      form.querySelector("[name='hours']")?.focus();
+      return null;
+    }
+    return { form, record, program, programName, hours };
+  }
+
+  function generateTrainingEndDate(event) {
+    const context = getOrdersSdoAutofillContext();
+    if (!context) return;
+    const startDateInput = context.form.elements.startDate;
+    const startDate = String(startDateInput?.value || context.record.startDate || "").trim();
+    if (!parseOrdersSdoDate(startDate)) {
+      alert("Заполните дату начала обучения.");
+      startDateInput?.focus({ preventScroll: true });
+      return;
+    }
+    const endDate = getTrainingEndDate(startDate, context.hours, event?.shiftKey ? 54 : 40);
+    if (!endDate) return;
+    setOrdersSdoFieldValue(context.form, "endDate", formatOrdersSdoDate(endDate));
+    state.modal.draft = collectStudentFormDraft();
+    state.modal.hasDraftChanges = true;
+    context.form.elements.endDate?.focus({ preventScroll: true });
+  }
+
+  function autoFillOrdersSdo() {
+    const context = getOrdersSdoAutofillContext();
+    if (!context) return;
+    if (!String(context.program.groupIndex || "").trim()) {
+      alert("Для выбранной программы в реестре не указан индекс группы.");
+      return;
+    }
+    const confirmed = confirm(
+      "Заполнить текущей датой дату договора, начала обучения и зачисления, "
+      + "а также автоматически сформировать дату окончания, номер договора, номер приказа и номер группы?"
+    );
+    if (!confirmed) return;
+
+    const today = new Date();
+    const currentDate = formatOrdersSdoDate(today);
+    const endDate = getTrainingEndDate(currentDate, context.hours);
+    const contract = getGeneratedNumberFromDataFormula("contractNumber", today, context.form.dataset.id);
+    const enrollmentOrder = getGeneratedNumberFromDataFormula("enrollmentOrderNumber", today, context.form.dataset.id);
+    const group = getStudentGroupNumber(context.programName, currentDate);
+
+    setOrdersSdoFieldValue(context.form, "contractDate", currentDate);
+    setOrdersSdoFieldValue(context.form, "startDate", currentDate);
+    setOrdersSdoFieldValue(context.form, "enrollmentDate", currentDate);
+    setOrdersSdoFieldValue(context.form, "endDate", formatOrdersSdoDate(endDate));
+    setOrdersSdoFieldValue(context.form, "contractNo", contract.value);
+    setOrdersSdoFieldValue(context.form, "enrollmentOrderNo", enrollmentOrder.value);
+    setOrdersSdoFieldValue(context.form, "group", group);
+
+    state.modal.draft = collectStudentFormDraft();
+    state.modal.hasDraftChanges = true;
+    context.form.elements.contractDate?.focus({ preventScroll: true });
   }
 
   function evaluateDataFormula(template, date, sequence = 1) {
@@ -3400,6 +3543,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderStudentField(item, record) {
     const value = record[item.key] ?? "";
     const required = item.required ? "required" : "";
+    const isCalculatedFinanceField = ["paidAmount", "balance"].includes(item.key);
     const isWide = item.type === "textarea" || item.key === "program";
     const classes = [
       isWide ? "wide-field" : "",
@@ -3455,7 +3599,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const options = item.required ? dictionaryOptions : ["", ...dictionaryOptions];
       return `${label}<select name="${item.key}" ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
-    return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required}></label>`;
+    return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${isCalculatedFinanceField ? 'readonly class="calculated-finance-field"' : ""}></label>`;
   }
 
   function renderDiscountDescriptionField(label, value) {
@@ -3837,70 +3981,13 @@ MAX - https://bizvmax.ru/zifra_plus
     state.modal.hasDraftChanges = true;
   }
 
-  function getMoodleLoginUrl() {
-    const configured = getSdoSettingValue("portalUrl").trim();
-    if (!configured) return "";
-    try {
-      const portalUrl = new URL(/^https?:\/\//i.test(configured) ? configured : `https://${configured}`);
-      portalUrl.search = "";
-      portalUrl.hash = "";
-      if (!/\/login\/index\.php\/?$/i.test(portalUrl.pathname)) {
-        portalUrl.pathname = `${portalUrl.pathname.replace(/\/+$/, "")}/login/index.php`;
-      }
-      return portalUrl.toString();
-    } catch (error) {
-      return "";
-    }
-  }
-
-  function openMoodlePortal() {
-    const form = document.getElementById("recordForm");
-    const username = String(form?.querySelector("[name='login']")?.value || "").trim();
-    const password = String(form?.querySelector("[name='password']")?.value || "");
-    if (!username) {
-      alert("Заполните логин для портала.");
-      form?.querySelector("[name='login']")?.focus();
+  function openSdoCourses() {
+    const coursesUrl = normalizeExternalUrl(getSdoSettingValue("coursesUrl"));
+    if (!coursesUrl) {
+      alert("Укажите корректный адрес страницы курсов в справочнике «Настройки СДО».");
       return;
     }
-    if (!password) {
-      alert("Заполните или сгенерируйте пароль для портала.");
-      form?.querySelector("[name='password']")?.focus();
-      return;
-    }
-    const loginUrl = getMoodleLoginUrl();
-    if (!loginUrl) {
-      alert("Укажите корректный адрес портала в справочнике «Настройки СДО».");
-      return;
-    }
-
-    const targetName = `moodlePortal${Date.now()}`;
-    const portalWindow = window.open("about:blank", targetName);
-    if (!portalWindow) {
-      alert("Браузер заблокировал открытие портала. Разрешите всплывающие окна для этого сайта.");
-      return;
-    }
-    const actionUrl = new URL(loginUrl);
-    actionUrl.searchParams.set("loginredirect", "1");
-    const loginForm = document.createElement("form");
-    loginForm.method = "post";
-    loginForm.action = actionUrl.toString();
-    loginForm.target = targetName;
-    loginForm.hidden = true;
-    [
-      ["anchor", ""],
-      ["username", username],
-      ["password", password],
-      ["rememberusername", "1"]
-    ].forEach(([name, value]) => {
-      const input = document.createElement("input");
-      input.type = "hidden";
-      input.name = name;
-      input.value = value;
-      loginForm.appendChild(input);
-    });
-    document.body.appendChild(loginForm);
-    loginForm.submit();
-    loginForm.remove();
+    openExternalUrl(coursesUrl);
   }
 
   function exportStudentToSdo() {
@@ -4238,6 +4325,32 @@ MAX - https://bizvmax.ru/zifra_plus
     button.disabled = !getNextAvailablePaymentRowIndex(draft);
   }
 
+  function syncStudentFinanceFields() {
+    const form = document.getElementById("recordForm");
+    if (!form || form.dataset.config !== "students") return;
+    const values = calculateStudentFinance(collectStudentFormDraft());
+    const expenses = Math.round(sumStudentExpenses(values) * 100) / 100;
+    const financialResult = Math.round((values.paidAmount - expenses) * 100) / 100;
+    ["paidAmount", "balance"].forEach((fieldName) => {
+      const input = form.elements[fieldName];
+      if (input instanceof HTMLInputElement) input.value = String(values[fieldName] ?? 0);
+    });
+    const paymentsOutput = document.querySelector("[data-student-finance-payments]");
+    const expensesOutput = document.querySelector("[data-student-finance-expenses]");
+    const resultOutput = document.querySelector("[data-student-finance-result]");
+    const resultCard = document.querySelector("[data-student-finance-result-card]");
+    if (paymentsOutput) paymentsOutput.textContent = money(values.paidAmount);
+    if (expensesOutput) expensesOutput.textContent = money(expenses);
+    if (resultOutput) resultOutput.textContent = money(financialResult);
+    resultCard?.classList.toggle("is-positive", financialResult > 0);
+    resultCard?.classList.toggle("is-negative", financialResult < 0);
+    resultCard?.classList.toggle("is-neutral", financialResult === 0);
+    if (state.modal) {
+      state.modal.draft = { ...(state.modal.draft || {}), ...values, expenseTotal: expenses };
+      state.modal.hasDraftChanges = true;
+    }
+  }
+
   function compactStudentPayments(record, deletedIndex) {
     const payments = Array.from({ length: 8 }, (_, index) => index + 1)
       .filter((index) => index !== Number(deletedIndex))
@@ -4261,7 +4374,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!inputs.length || !inputs.some((input) => String(input.value || "").trim())) return;
     if (!confirm("Удалить запись оплаты?")) return;
     if (state.modal) {
-      state.modal.draft = compactStudentPayments(collectStudentFormDraft(), index);
+      state.modal.draft = calculateStudentFinance(compactStudentPayments(collectStudentFormDraft(), index));
       state.modal.hasDraftChanges = true;
     }
     state.openPaymentRows = [];
@@ -4273,11 +4386,15 @@ MAX - https://bizvmax.ru/zifra_plus
     const draft = collectStudentFormDraft();
     const nextIndex = getNextAvailablePaymentRowIndex(draft);
     if (!nextIndex) return;
-    state.modal.draft = draft;
+    state.modal.draft = {
+      ...draft,
+      [`payment${nextIndex}Date`]: formatOrdersSdoDate(new Date())
+    };
+    state.modal.hasDraftChanges = true;
     state.openPaymentRows = unique([...getOpenPaymentRowIndexes(), nextIndex]);
     render();
     requestAnimationFrame(() => {
-      document.querySelector(`[name="payment${nextIndex}Date"]`)?.focus({ preventScroll: true });
+      document.querySelector(`[name="payment${nextIndex}Amount"]`)?.focus({ preventScroll: true });
     });
   }
 
@@ -4470,7 +4587,8 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!inputs.length || !expenseRowHasData(collectStudentFormDraft(), Number(index))) return;
     if (!confirm("Удалить запись расхода?")) return;
     if (state.modal) {
-      state.modal.draft = compactStudentExpenses(collectStudentFormDraft(), index);
+      const draft = compactStudentExpenses(collectStudentFormDraft(), index);
+      state.modal.draft = { ...draft, expenseTotal: sumStudentExpenses(draft) };
       state.modal.hasDraftChanges = true;
     }
     state.openExpenseRows = [];
@@ -4482,11 +4600,15 @@ MAX - https://bizvmax.ru/zifra_plus
     const draft = collectStudentFormDraft();
     const nextIndex = getNextAvailableExpenseRowIndex(draft);
     if (!nextIndex) return;
-    state.modal.draft = draft;
+    state.modal.draft = {
+      ...draft,
+      [`expense${nextIndex}Date`]: formatOrdersSdoDate(new Date())
+    };
+    state.modal.hasDraftChanges = true;
     state.openExpenseRows = unique([...getOpenExpenseRowIndexes(), nextIndex]);
     render();
     requestAnimationFrame(() => {
-      document.querySelector(`[name="expense${nextIndex}Date"]`)?.focus({ preventScroll: true });
+      document.querySelector(`[name="expense${nextIndex}Amount"]`)?.focus({ preventScroll: true });
     });
   }
 
@@ -4763,16 +4885,82 @@ MAX - https://bizvmax.ru/zifra_plus
     textarea.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  function emailStudentCommunicationMessage(messageKey) {
+  async function sendServerEmail({ email, subject, message, confirmText, button }) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      alert("Укажите корректный Email слушателя.");
+      document.querySelector("[name='email']")?.focus({ preventScroll: true });
+      return false;
+    }
+    if (!String(subject || "").trim()) {
+      alert("Не указана тема письма.");
+      return false;
+    }
+    if (!String(message || "").trim()) {
+      alert("Текст письма пуст.");
+      return false;
+    }
+    if (!confirm(confirmText || `Отправить письмо на адрес ${email}?`)) return false;
+
+    const originalDisabled = Boolean(button?.disabled);
+    if (button) button.disabled = true;
+    try {
+      const response = await fetch("send-mail.php", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({
+          to: email,
+          subject: String(subject).trim(),
+          message: String(message).trim()
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      }
+      alert(`Письмо отправлено на адрес ${email}.`);
+      return true;
+    } catch (error) {
+      alert(`Не удалось отправить письмо через сервер: ${error.message}`);
+      return false;
+    } finally {
+      if (button) button.disabled = originalDisabled;
+    }
+  }
+
+  async function emailStudentCommunicationMessage(messageKey, button) {
     const textarea = getStudentCommunicationTextarea(messageKey);
     const email = getCurrentStudentCardValue("email");
-    if (!email) {
-      alert("Укажите Email слушателя.");
-      return;
-    }
     const message = studentCommunicationMessages.find((item) => item.key === messageKey);
     const subject = message ? `Учебный центр: ${message.label}` : "Сообщение от учебного центра";
-    window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(textarea?.value || "")}`;
+    await sendServerEmail({
+      email,
+      subject,
+      message: textarea?.value || "",
+      confirmText: `Отправить сообщение «${message?.label || "Сообщение от учебного центра"}» на адрес ${email}?`,
+      button
+    });
+  }
+
+  async function emailPortalAccessMessage(event) {
+    const email = getCurrentStudentCardValue("email");
+    const message = String(document.querySelector("[name='portalAccessMessage']")?.value || "").trim();
+    if (!message) {
+      alert("Заполните сообщение о доступе к порталу обучения.");
+      document.querySelector("[name='portalAccessMessage']")?.focus({ preventScroll: true });
+      return;
+    }
+    const subject = getSdoSettingValue("portalAccessEmailSubject").trim()
+      || "Доступ к порталу дистанционного обучения Цифровизация Плюс";
+    await sendServerEmail({
+      email,
+      subject,
+      message,
+      confirmText: `Отправить письмо с доступом к порталу на адрес ${email}?`,
+      button: event?.currentTarget
+    });
   }
 
   function getCurrentStudentCardValue(key) {
@@ -4875,9 +5063,12 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='generate-enrollment-order-number']")?.addEventListener("click", generateEnrollmentOrderNumber);
     document.querySelector("[data-action='generate-expulsion-order-number']")?.addEventListener("click", generateExpulsionOrderNumber);
     document.querySelector("[data-action='generate-group-number']")?.addEventListener("click", generateStudentGroupNumber);
+    document.querySelector("[data-action='generate-training-end-date']")?.addEventListener("click", generateTrainingEndDate);
+    document.querySelector("[data-action='auto-fill-orders-sdo']")?.addEventListener("click", autoFillOrdersSdo);
     document.querySelector("[data-action='generate-portal-password']")?.addEventListener("click", generatePortalPassword);
-    document.querySelector("[data-action='open-moodle-portal']")?.addEventListener("click", openMoodlePortal);
+    document.querySelector("[data-action='open-sdo-courses']")?.addEventListener("click", openSdoCourses);
     document.querySelector("[data-action='export-student-to-sdo']")?.addEventListener("click", exportStudentToSdo);
+    document.querySelector("[data-action='email-portal-access']")?.addEventListener("click", emailPortalAccessMessage);
     ["login", "password"].forEach((fieldName) => {
       const input = document.querySelector(`[name="${fieldName}"]`);
       input?.addEventListener("input", updatePortalAccessMessage);
@@ -4894,7 +5085,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", () => restoreStudentCommunicationMessage(button.dataset.messageKey));
     });
     document.querySelectorAll("[data-action='email-communication-message']").forEach((button) => {
-      button.addEventListener("click", () => emailStudentCommunicationMessage(button.dataset.messageKey));
+      button.addEventListener("click", () => emailStudentCommunicationMessage(button.dataset.messageKey, button));
     });
     document.querySelectorAll("[data-action='copy-address-to']").forEach((button) => {
       button.addEventListener("click", () => copyStudentAddressToField(button.dataset.source, button.dataset.target));
@@ -4933,12 +5124,20 @@ MAX - https://bizvmax.ru/zifra_plus
       input.addEventListener("input", () => {
         syncPaymentRowDeleteButton(input.dataset.paymentIndex);
         syncPaymentAddButton();
+        syncStudentFinanceFields();
       });
+      input.addEventListener("change", syncStudentFinanceFields);
+    });
+    ["contractAmount", "discount"].forEach((fieldName) => {
+      const input = document.querySelector(`[name="${fieldName}"]`);
+      input?.addEventListener("input", syncStudentFinanceFields);
+      input?.addEventListener("change", syncStudentFinanceFields);
     });
     document.querySelectorAll("[data-expense-index]").forEach((input) => {
       const syncExpenseControls = () => {
         syncExpenseRowDeleteButton(input.dataset.expenseIndex);
         syncExpenseAddButton();
+        syncStudentFinanceFields();
       };
       input.addEventListener("input", syncExpenseControls);
       input.addEventListener("change", syncExpenseControls);
@@ -5331,7 +5530,17 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("form[data-action='save-sdo-settings']")?.addEventListener("submit", saveSdoSettings);
     document.querySelector("[data-action='reset-sdo-settings']")?.addEventListener("click", resetSdoSettings);
 
+    enhanceDatePlaceholders();
     enhanceCopyableFields();
+  }
+
+  function enhanceDatePlaceholders() {
+    document.querySelectorAll("input[type='date']").forEach((input) => {
+      const sync = () => input.classList.toggle("is-empty-date", !input.value);
+      sync();
+      input.addEventListener("input", sync);
+      input.addEventListener("change", sync);
+    });
   }
 
   function initializeRecordFormSnapshot(form) {
@@ -5601,10 +5810,7 @@ MAX - https://bizvmax.ru/zifra_plus
       discount: Number(picker.percent || 0),
       discountDescription: note || picker.description || ""
     };
-    const paymentTotal = sumStudentPayments(draft);
-    if (paymentTotal > 0) draft.paidAmount = paymentTotal;
-    draft.balance = calculateStudentBalance(draft);
-    state.modal.draft = draft;
+    state.modal.draft = calculateStudentFinance(draft);
     state.modal.hasDraftChanges = true;
     state.discountPickerOpen = false;
     state.discountPicker = null;
@@ -5641,7 +5847,7 @@ MAX - https://bizvmax.ru/zifra_plus
       values.studyForm = selectedProgram.studyForm || values.studyForm || "";
       values.hours = selectedProgram.hours || values.hours || "";
     }
-    return values;
+    return calculateStudentFinance(values);
   }
 
   function captureFormSnapshot(form) {
@@ -5984,11 +6190,9 @@ MAX - https://bizvmax.ru/zifra_plus
         values.studyForm = selectedProgram.studyForm || values.studyForm || "";
         values.hours = selectedProgram.hours || values.hours || "";
       }
-      const paymentTotal = sumStudentPayments(values);
       const expenseTotal = sumStudentExpenses(values);
-      if (paymentTotal > 0) values.paidAmount = paymentTotal;
-      if (expenseTotal > 0) values.expenseTotal = expenseTotal;
-      values.balance = calculateStudentBalance(values);
+      Object.assign(values, calculateStudentFinance(values));
+      values.expenseTotal = expenseTotal;
     }
 
     let savedId = formElement.dataset.id;
@@ -6263,10 +6467,16 @@ MAX - https://bizvmax.ru/zifra_plus
       ...setting,
       value: String(form.elements[setting.key]?.value || "").trim()
     }));
-    const invalidSetting = settings.find((setting) => !normalizeExternalUrl(setting.value));
+    const invalidSetting = settings.find((setting) => setting.type !== "text" && !normalizeExternalUrl(setting.value));
     if (invalidSetting) {
       alert(`Укажите корректный адрес: ${invalidSetting.label}.`);
       form.elements[invalidSetting.key]?.focus();
+      return;
+    }
+    const emptyTextSetting = settings.find((setting) => setting.type === "text" && !setting.value);
+    if (emptyTextSetting) {
+      alert(`Заполните настройку: ${emptyTextSetting.label}.`);
+      form.elements[emptyTextSetting.key]?.focus();
       return;
     }
     state.data.dictionaries.sdoSettings = settings;
@@ -7372,12 +7582,19 @@ MAX - https://bizvmax.ru/zifra_plus
       .reduce((sum, value) => sum + value, 0);
   }
 
+  function calculateStudentFinance(record) {
+    const paidAmount = Math.round(sumStudentPayments(record) * 100) / 100;
+    const values = { ...record, paidAmount };
+    return {
+      ...values,
+      balance: calculateStudentBalance(values)
+    };
+  }
+
   function calculateStudentBalance(record) {
     const contractAmount = Number(record.contractAmount || 0);
     const paidAmount = Number(record.paidAmount || 0);
-    const discountPercent = Math.max(0, Math.min(100, Number(record.discount || 0)));
-    const discountedAmount = contractAmount * (1 - discountPercent / 100);
-    return Math.round((discountedAmount - paidAmount) * 100) / 100;
+    return Math.round((contractAmount - paidAmount) * 100) / 100;
   }
 
   function sumStudentExpenses(record) {

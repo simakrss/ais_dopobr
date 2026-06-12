@@ -156,6 +156,10 @@ async function serveStatic(req, res) {
     return;
   }
   try {
+    if (path.extname(fullPath).toLowerCase() === ".php") {
+      sendError(res, 404, "Not found");
+      return;
+    }
     const stat = await fs.stat(fullPath);
     if (stat.isDirectory()) {
       res.writeHead(301, { Location: `${requestUrl.pathname.replace(/\/$/, "")}/index.html` });
@@ -198,6 +202,10 @@ async function route(req, res) {
   }
   if (req.method === "DELETE" && req.url === "/api/photos") {
     await handlePhotoDelete(req, res);
+    return;
+  }
+  if (req.method === "POST" && req.url === "/send-mail.php") {
+    sendError(res, 501, "PHP-отправщик доступен только на веб-сервере с настроенным PHP mail().");
     return;
   }
   if (req.method === "GET" || req.method === "HEAD") {

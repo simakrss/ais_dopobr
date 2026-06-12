@@ -45,6 +45,76 @@ input[type="search"]::-webkit-search-results-decoration {
   display: none;
 }
 
+input[type="date"].is-empty-date {
+  color: rgba(17, 24, 39, 0.2);
+}
+
+input[type="date"].is-empty-date::-webkit-datetime-edit {
+  color: rgba(17, 24, 39, 0.2);
+}
+
+input[type="date"].is-empty-date:focus,
+input[type="date"].is-empty-date:focus::-webkit-datetime-edit {
+  color: rgba(17, 24, 39, 0.38);
+}
+
+.calculated-finance-field[readonly] {
+  background: #f3f6f5;
+  color: #33413d;
+  cursor: default;
+}
+
+.student-financial-result {
+  gap: 10px;
+}
+
+.student-financial-result h3 {
+  margin: 0;
+}
+
+.student-financial-result-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.student-financial-result-grid > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faf9;
+}
+
+.student-financial-result-grid span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.student-financial-result-grid strong {
+  color: #26332f;
+  font-size: 20px;
+}
+
+.student-financial-result-total.is-positive {
+  border-color: #9bcab8;
+  background: #edf8f3;
+}
+
+.student-financial-result-total.is-positive strong {
+  color: #176b4d;
+}
+
+.student-financial-result-total.is-negative {
+  border-color: #e0aaaa;
+  background: #fff1f1;
+}
+
+.student-financial-result-total.is-negative strong {
+  color: #a33131;
+}
+
 input::-ms-clear,
 input::-ms-reveal {
   display: none;
@@ -3030,6 +3100,33 @@ body.student-tab-dragging .student-tabs button {
   font-size: 12px;
 }
 
+.student-results-tab {
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+  align-items: start;
+  align-content: start;
+}
+
+.student-results-tab .form-section {
+  min-width: 0;
+}
+
+.student-results-tab .student-form-grid {
+  grid-template-columns: 1fr;
+}
+
+.student-results-tab .student-form-grid label {
+  grid-template-columns: 130px minmax(0, 1fr);
+}
+
+.student-results-tab .student-form-grid .wide-field {
+  grid-column: auto;
+}
+
+.student-results-tab .student-form-grid textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
 .student-orders-sdo-tab {
   align-content: start;
   gap: 5px;
@@ -3216,7 +3313,7 @@ body.student-tab-dragging .student-tabs button {
 
 .orders-sdo-message-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto 28px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 5px;
   align-items: center;
   min-width: 0;
@@ -4390,6 +4487,10 @@ body.student-tab-dragging .student-tabs button {
     grid-template-columns: 1fr;
   }
 
+  .student-results-tab {
+    grid-template-columns: 1fr;
+  }
+
   .orders-sdo-contract-grid,
   .orders-sdo-orders-grid,
   .orders-sdo-lms-row,
@@ -4399,6 +4500,10 @@ body.student-tab-dragging .student-tabs button {
 
   .orders-sdo-field,
   .orders-sdo-field.is-compact {
+    grid-template-columns: 1fr;
+  }
+
+  .student-financial-result-grid {
     grid-template-columns: 1fr;
   }
 
