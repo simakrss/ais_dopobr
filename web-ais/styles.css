@@ -1599,6 +1599,135 @@ body.is-resizing-column {
   padding-top: 4px;
 }
 
+.attestation-settings-form {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 12px;
+}
+
+.attestation-settings-section {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.attestation-settings-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.attestation-settings-head h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.attestation-settings-head p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.attestation-add-button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 9px;
+}
+
+.attestation-category-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+}
+
+.attestation-category-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 5px;
+}
+
+.attestation-category-row input,
+.attestation-scale-row input {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 7px;
+  background: #fff;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.attestation-scale-table {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  overflow-x: hidden;
+}
+
+.attestation-scale-header,
+.attestation-scale-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns:
+    minmax(95px, 0.85fr)
+    minmax(125px, 1.15fr)
+    minmax(58px, 70px)
+    minmax(58px, 70px)
+    32px;
+  align-items: center;
+  gap: 6px;
+}
+
+.attestation-scale-header {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.attestation-scale-row input {
+  padding-right: 5px;
+  padding-left: 5px;
+}
+
+.attestation-delete-button {
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--red);
+  cursor: pointer;
+}
+
+.attestation-delete-button:hover,
+.attestation-delete-button:focus-visible {
+  background: #fff1ef;
+}
+
+.attestation-delete-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.attestation-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .communication-template-formula-syntax {
   display: inline-flex;
   align-items: center;
@@ -3125,6 +3254,40 @@ body.student-tab-dragging .student-tabs button {
 .student-results-tab .student-form-grid textarea {
   min-height: 76px;
   resize: vertical;
+}
+
+.student-final-grade-field {
+  z-index: 2;
+}
+
+.student-final-grade-field::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 20;
+  left: 130px;
+  bottom: calc(100% + 6px);
+  width: max-content;
+  max-width: min(360px, calc(100vw - 48px));
+  padding: 8px 10px;
+  border: 1px solid #b8c9c3;
+  border-radius: 6px;
+  background: #fff;
+  color: #26332f;
+  box-shadow: 0 8px 24px rgba(28, 45, 39, 0.16);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: pre-line;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.student-final-grade-field:hover::after,
+.student-final-grade-field:focus-within::after {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .student-orders-sdo-tab {

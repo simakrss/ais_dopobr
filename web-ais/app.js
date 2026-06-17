@@ -4,6 +4,18 @@
   const STUDENT_CARD_TAB_ORDER_KEY = "ais-dopobr-student-card-tab-order-v1";
   const app = document.getElementById("app");
   const programHourOptions = [1, 2, 4, 16, 36, 72, 144, 300, 600, 1200];
+  const finalAttestationSettingDefaults = [
+    { kind: "category", id: "grade-credit", label: "Зачтено" },
+    { kind: "category", id: "grade-satisfactory", label: "Удовлетворительно" },
+    { kind: "category", id: "grade-good", label: "Хорошо" },
+    { kind: "category", id: "grade-excellent", label: "Отлично" },
+    { kind: "category", id: "grade-certified", label: "Аттестован" },
+    { kind: "category", id: "grade-not-certified", label: "Неаттестован" },
+    { kind: "scale", id: "scale-kpk-credit", programType: "КПК", grade: "Зачтено", minPercent: "50", maxPercent: "100" },
+    { kind: "scale", id: "scale-ppp-satisfactory", programType: "ППП", grade: "Удовлетворительно", minPercent: "50", maxPercent: "69" },
+    { kind: "scale", id: "scale-ppp-good", programType: "ППП", grade: "Хорошо", minPercent: "70", maxPercent: "89" },
+    { kind: "scale", id: "scale-ppp-excellent", programType: "ППП", grade: "Отлично", minPercent: "90", maxPercent: "100" }
+  ];
   const studentCommunicationTemplateDefaults = [
     `{Приветствие}
 
@@ -853,7 +865,7 @@ MAX - https://bizvmax.ru/zifra_plus
           title: "Аттестация",
           fields: [
             field("finalWorkTopic", "Тема ИАР", "textarea"),
-            field("finalGrade", "Оценка ИА"),
+            field("finalGrade", "Оценка ИА", "select"),
             field("qualification", "Квалификация"),
             field("chairman", "Председатель"),
             field("commissionMember1", "Член комиссии 1"),
@@ -1075,6 +1087,9 @@ MAX - https://bizvmax.ru/zifra_plus
     );
     data.dictionaries.dataFormulas = normalizeDataFormulaTemplates(data.dictionaries.dataFormulas);
     data.dictionaries.sdoSettings = normalizeSdoSettings(data.dictionaries.sdoSettings, legacyMoodlePortalUrl);
+    data.dictionaries.finalAttestationSettings = normalizeFinalAttestationSettings(
+      data.dictionaries.finalAttestationSettings
+    );
     delete data.dictionaries.moodlePortalUrls;
     data.collections = data.collections || {};
     data.collections.programs = mergeProgramRegistry(data)
@@ -1098,6 +1113,94 @@ MAX - https://bizvmax.ru/zifra_plus
   function getSdoSettingValue(key) {
     return normalizeSdoSettings(state.data.dictionaries.sdoSettings)
       .find((setting) => setting.key === key)?.value || "";
+  }
+
+  function normalizeFinalAttestationSettings(values) {
+    if (!Array.isArray(values)) return clone(finalAttestationSettingDefaults);
+    const categories = values
+      .filter((item) => item?.kind === "category")
+      .map((item, index) => ({
+        kind: "category",
+        id: String(item.id || `grade-${index + 1}`),
+        label: String(item.label || "").trim()
+      }))
+      .filter((item) => item.label);
+    const scales = values
+      .filter((item) => item?.kind === "scale")
+      .map((item, index) => {
+        const isLegacyKpkCredit = item.id === "scale-kpk-credit"
+          && String(item.programType || "").trim() === "КПК"
+          && String(item.grade || "").trim() === "Зачтено"
+          && normalizeAttestationPercent(item.minPercent) === "";
+        const minPercent = isLegacyKpkCredit ? "50" : normalizeAttestationPercent(item.minPercent);
+        const maxPercent = normalizeAttestationPercent(item.maxPercent);
+        return {
+          kind: "scale",
+          id: String(item.id || `scale-${index + 1}`),
+          programType: String(item.programType || "").trim(),
+          grade: String(item.grade || "").trim(),
+          minPercent,
+          maxPercent: minPercent !== "" && maxPercent === "" ? "100" : maxPercent
+        };
+      })
+      .filter((item) => item.programType || item.grade);
+    if (!categories.length && !scales.length) return clone(finalAttestationSettingDefaults);
+    return [...categories, ...scales];
+  }
+
+  function normalizeAttestationPercent(value) {
+    if (value === "" || value === null || value === undefined) return "";
+    const number = Number(value);
+    return Number.isFinite(number) ? String(Math.max(0, Math.min(100, number))) : "";
+  }
+
+  function getFinalAttestationGradeOptions(currentValue = "") {
+    const categories = normalizeFinalAttestationSettings(state.data.dictionaries.finalAttestationSettings)
+      .filter((item) => item.kind === "category")
+      .map((item) => item.label);
+    return unique([...categories, String(currentValue || "").trim()].filter(Boolean));
+  }
+
+  function getFinalAttestationGradeTooltip() {
+    const scales = normalizeFinalAttestationSettings(state.data.dictionaries.finalAttestationSettings)
+      .filter((item) => item.kind === "scale" && item.programType && item.grade);
+    if (!scales.length) return "Шкала итоговой аттестации не настроена.";
+    const groups = [];
+    scales.forEach((item) => {
+      let group = groups.find((entry) => entry.programType === item.programType);
+      if (!group) {
+        group = { programType: item.programType, items: [] };
+        groups.push(group);
+      }
+      group.items.push(item);
+    });
+    const lines = ["Шкала итоговой аттестации:"];
+    groups.forEach((group) => {
+      if (group.items.length === 1 && group.items[0].minPercent === "" && group.items[0].maxPercent === "") {
+        lines.push(`${group.programType} — ${lowercaseFirst(group.items[0].grade)}.`);
+        return;
+      }
+      lines.push(`${group.programType}:`);
+      group.items.forEach((item) => lines.push(`${formatFinalAttestationScaleItem(item)};`));
+    });
+    const lastIndex = lines.length - 1;
+    if (lastIndex > 0) lines[lastIndex] = lines[lastIndex].replace(/;$/, ".");
+    return lines.join("\n");
+  }
+
+  function formatFinalAttestationScaleItem(item) {
+    const grade = lowercaseFirst(item.grade);
+    if (item.minPercent !== "" && item.maxPercent !== "") {
+      return `${grade} — от ${item.minPercent}% до ${item.maxPercent}%`;
+    }
+    if (item.minPercent !== "") return `${grade} — ${item.minPercent}% и выше`;
+    if (item.maxPercent !== "") return `${grade} — до ${item.maxPercent}%`;
+    return grade;
+  }
+
+  function lowercaseFirst(value) {
+    const text = String(value || "");
+    return text ? `${text.charAt(0).toLowerCase()}${text.slice(1)}` : "";
   }
 
   function mergeProgramRegistry(data) {
@@ -1948,7 +2051,7 @@ MAX - https://bizvmax.ru/zifra_plus
       item.title.toLowerCase().includes(query) ||
       item.values.some((value) => (
         typeof value === "object"
-          ? `${value?.label || ""} ${value?.template || ""} ${value?.value || ""}`.toLowerCase().includes(query)
+          ? `${value?.label || ""} ${value?.template || ""} ${value?.value || ""} ${value?.programType || ""} ${value?.grade || ""}`.toLowerCase().includes(query)
           : String(value || "").toLowerCase().includes(query)
       ))
     ));
@@ -1961,7 +2064,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const isCommunicationTemplates = selectedKey === "communicationTemplates";
     const isDataFormulas = selectedKey === "dataFormulas";
     const isSdoSettings = selectedKey === "sdoSettings";
-    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings;
+    const isFinalAttestationSettings = selectedKey === "finalAttestationSettings";
+    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isFinalAttestationSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     return `
       <section class="panel">
@@ -1997,7 +2101,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${isCommunicationTemplates ? `
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "asc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="asc" type="button" title="Сортировать поля по алфавиту" aria-label="Сортировать поля по алфавиту" aria-pressed="${communicationTemplateFieldSortOrder === "asc" ? "true" : "false"}">А→Я</button>
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "desc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="desc" type="button" title="Сортировать поля против алфавита" aria-label="Сортировать поля против алфавита" aria-pressed="${communicationTemplateFieldSortOrder === "desc" ? "true" : "false"}">Я→А</button>
-                  ` : isDataFormulas || isSdoSettings ? "" : `
+                  ` : isDataFormulas || isSdoSettings || isFinalAttestationSettings ? "" : `
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
                   `}
@@ -2023,6 +2127,8 @@ MAX - https://bizvmax.ru/zifra_plus
                   ? renderDataFormulaDictionary(selectedValues)
                   : isSdoSettings
                     ? renderSdoSettingsDictionary(selectedValues)
+                    : isFinalAttestationSettings
+                      ? renderFinalAttestationSettingsDictionary(selectedValues)
                   : `
                 <form class="inline-form dictionary-add-form" data-action="dict-add" data-dict="${selectedKey}">
                   <input name="value" placeholder="Новое значение или список из буфера обмена" autocomplete="off" data-dictionary-add-input>
@@ -2069,6 +2175,71 @@ MAX - https://bizvmax.ru/zifra_plus
         <p class="sdo-settings-hint">Здесь настраиваются адреса СДО и тема письма с данными доступа.</p>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-sdo-settings" type="button">Восстановить исходные</button>
+          <button class="primary-button" type="submit">Сохранить настройки</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderFinalAttestationSettingsDictionary(values) {
+    const settings = normalizeFinalAttestationSettings(values);
+    const categories = settings.filter((item) => item.kind === "category");
+    const scales = settings.filter((item) => item.kind === "scale");
+    return `
+      <form class="attestation-settings-form" data-action="save-final-attestation-settings">
+        <section class="attestation-settings-section">
+          <div class="attestation-settings-head">
+            <div>
+              <h4>Категории оценок</h4>
+              <p>Эти значения доступны в поле «Оценка ИА» карточки слушателя.</p>
+            </div>
+            <button class="ghost-button attestation-add-button" data-action="add-attestation-category" type="button">+ Категория</button>
+          </div>
+          <div class="attestation-category-list">
+            ${categories.map((item, index) => `
+              <div class="attestation-category-row" data-attestation-category data-id="${escapeAttr(item.id)}">
+                <input name="attestationCategory${index}" value="${escapeAttr(item.label)}" data-attestation-category-input aria-label="Название категории оценки" required>
+                <button class="attestation-delete-button" data-action="remove-attestation-setting" data-kind="category" data-id="${escapeAttr(item.id)}" type="button" title="Удалить категорию" aria-label="Удалить категорию">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+                </button>
+              </div>
+            `).join("")}
+          </div>
+        </section>
+        <section class="attestation-settings-section">
+          <div class="attestation-settings-head">
+            <div>
+              <h4>Шкала перевода процентов</h4>
+              <p>Пустые границы означают оценку без процентного диапазона.</p>
+            </div>
+            <button class="ghost-button attestation-add-button" data-action="add-attestation-scale" type="button">+ Строка шкалы</button>
+          </div>
+          <datalist id="attestationGradeCategories">
+            ${categories.map((item) => `<option value="${escapeAttr(item.label)}"></option>`).join("")}
+          </datalist>
+          <div class="attestation-scale-table">
+            <div class="attestation-scale-header" aria-hidden="true">
+              <span>Вид программы</span>
+              <span>Оценка</span>
+              <span>От, %</span>
+              <span>По, %</span>
+              <span></span>
+            </div>
+            ${scales.map((item, index) => `
+              <div class="attestation-scale-row" data-attestation-scale data-id="${escapeAttr(item.id)}">
+                <input name="attestationProgramType${index}" value="${escapeAttr(item.programType)}" placeholder="КПК" aria-label="Вид программы" required>
+                <input name="attestationGrade${index}" value="${escapeAttr(item.grade)}" data-attestation-grade-input list="attestationGradeCategories" placeholder="Оценка" aria-label="Категория оценки" required>
+                <input name="attestationMin${index}" type="number" value="${escapeAttr(item.minPercent)}" min="0" max="100" step="1" inputmode="numeric" placeholder="—" aria-label="Минимальный процент">
+                <input name="attestationMax${index}" type="number" value="${escapeAttr(item.maxPercent)}" min="0" max="100" step="1" inputmode="numeric" placeholder="100" aria-label="Максимальный процент">
+                <button class="attestation-delete-button" data-action="remove-attestation-setting" data-kind="scale" data-id="${escapeAttr(item.id)}" type="button" title="Удалить строку шкалы" aria-label="Удалить строку шкалы">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+                </button>
+              </div>
+            `).join("")}
+          </div>
+        </section>
+        <div class="attestation-settings-actions">
+          <button class="ghost-button" data-action="reset-final-attestation-settings" type="button">Восстановить исходные</button>
           <button class="primary-button" type="submit">Сохранить настройки</button>
         </div>
       </form>
@@ -3549,10 +3720,14 @@ MAX - https://bizvmax.ru/zifra_plus
       isWide ? "wide-field" : "",
       item.key === "manager" ? "manager-field" : "",
       item.key === "agent" ? "agent-field" : "",
+      item.key === "finalGrade" ? "student-final-grade-field" : "",
       item.key === "discountDescription" ? "discount-description-label" : "",
       ["workPlace", "employmentCategory"].includes(item.key) ? "long-label-field" : ""
     ].filter(Boolean).join(" ");
-    const label = `<label class="${classes}"><span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>`;
+    const tooltip = item.key === "finalGrade"
+      ? ` data-tooltip="${escapeAttr(getFinalAttestationGradeTooltip())}"`
+      : "";
+    const label = `<label class="${classes}"${tooltip}><span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>`;
     if (item.key === "program") {
       return renderStudentProgramField(label, value, required);
     }
@@ -3581,6 +3756,10 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (item.key === "discountDescription") {
       return renderDiscountDescriptionField(label, value);
+    }
+    if (item.key === "finalGrade") {
+      const options = ["", ...getFinalAttestationGradeOptions(value)];
+      return `${label}<select name="${item.key}">${options.map((option) => `<option value="${escapeAttr(option)}" ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
     if (["inn", "customerInn"].includes(item.key)) {
       return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" inputmode="numeric" maxlength="12" pattern="\\d{10}|\\d{12}" autocomplete="off"></label>`;
@@ -5529,6 +5708,22 @@ MAX - https://bizvmax.ru/zifra_plus
     bindDataFormulaConstructor();
     document.querySelector("form[data-action='save-sdo-settings']")?.addEventListener("submit", saveSdoSettings);
     document.querySelector("[data-action='reset-sdo-settings']")?.addEventListener("click", resetSdoSettings);
+    document.querySelector("form[data-action='save-final-attestation-settings']")?.addEventListener("submit", saveFinalAttestationSettings);
+    document.querySelector("[data-action='reset-final-attestation-settings']")?.addEventListener("click", resetFinalAttestationSettings);
+    document.querySelector("[data-action='add-attestation-category']")?.addEventListener("click", () => addFinalAttestationSetting("category"));
+    document.querySelector("[data-action='add-attestation-scale']")?.addEventListener("click", () => addFinalAttestationSetting("scale"));
+    document.querySelectorAll("[data-action='remove-attestation-setting']").forEach((button) => {
+      button.addEventListener("click", () => removeFinalAttestationSetting(button.dataset.kind, button.dataset.id));
+    });
+    document.querySelectorAll("[data-attestation-category-input]").forEach((input) => {
+      let previousValue = input.value;
+      input.addEventListener("input", () => {
+        document.querySelectorAll("[data-attestation-grade-input]").forEach((gradeInput) => {
+          if (gradeInput.value === previousValue) gradeInput.value = input.value;
+        });
+        previousValue = input.value;
+      });
+    });
 
     enhanceDatePlaceholders();
     enhanceCopyableFields();
@@ -6490,6 +6685,104 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.dictionaries.sdoSettings = normalizeSdoSettings([]);
     addAudit("Изменен справочник", dictionaryTitle("sdoSettings"), "Восстановлены исходные настройки СДО");
     persist();
+    render();
+  }
+
+  function collectFinalAttestationSettings(form = document.querySelector("form[data-action='save-final-attestation-settings']")) {
+    if (!form) return normalizeFinalAttestationSettings(state.data.dictionaries.finalAttestationSettings);
+    const categories = [...form.querySelectorAll("[data-attestation-category]")].map((row, index) => ({
+      kind: "category",
+      id: row.dataset.id || `grade-${Date.now()}-${index}`,
+      label: String(form.elements[`attestationCategory${index}`]?.value || "").trim()
+    }));
+    const scales = [...form.querySelectorAll("[data-attestation-scale]")].map((row, index) => ({
+      kind: "scale",
+      id: row.dataset.id || `scale-${Date.now()}-${index}`,
+      programType: String(form.elements[`attestationProgramType${index}`]?.value || "").trim(),
+      grade: String(form.elements[`attestationGrade${index}`]?.value || "").trim(),
+      minPercent: String(form.elements[`attestationMin${index}`]?.value || "").trim(),
+      maxPercent: String(form.elements[`attestationMax${index}`]?.value || "").trim()
+    }));
+    return [...categories, ...scales];
+  }
+
+  function validateFinalAttestationSettings(settings) {
+    const categories = settings.filter((item) => item.kind === "category");
+    const scales = settings.filter((item) => item.kind === "scale");
+    if (!categories.length || categories.some((item) => !item.label)) {
+      return "Добавьте хотя бы одну заполненную категорию оценки.";
+    }
+    const normalizedLabels = categories.map((item) => item.label.toLowerCase());
+    if (new Set(normalizedLabels).size !== normalizedLabels.length) {
+      return "Названия категорий оценок не должны повторяться.";
+    }
+    const categoryLabels = new Set(categories.map((item) => item.label));
+    for (const item of scales) {
+      if (!item.programType || !item.grade) return "Заполните вид программы и оценку во всех строках шкалы.";
+      if (!categoryLabels.has(item.grade)) return `Оценка «${item.grade}» отсутствует в списке категорий.`;
+      const min = item.minPercent === "" ? null : Number(item.minPercent);
+      const max = item.maxPercent === "" ? null : Number(item.maxPercent);
+      if ((min !== null && (!Number.isInteger(min) || min < 0 || min > 100))
+        || (max !== null && (!Number.isInteger(max) || max < 0 || max > 100))) {
+        return "Проценты в шкале должны быть целыми числами от 0 до 100.";
+      }
+      if (min !== null && max !== null && min > max) {
+        return `В строке «${item.programType} — ${item.grade}» нижняя граница больше верхней.`;
+      }
+    }
+    return "";
+  }
+
+  function saveFinalAttestationSettings(event) {
+    event.preventDefault();
+    const settings = collectFinalAttestationSettings(event.currentTarget);
+    const validationError = validateFinalAttestationSettings(settings);
+    if (validationError) {
+      alert(validationError);
+      return;
+    }
+    state.data.dictionaries.finalAttestationSettings = normalizeFinalAttestationSettings(settings);
+    addAudit("Изменен справочник", dictionaryTitle("finalAttestationSettings"), "Сохранены категории и шкала оценок");
+    persist();
+    render();
+  }
+
+  function resetFinalAttestationSettings() {
+    if (!confirm("Восстановить исходные категории и шкалу итоговой аттестации?")) return;
+    state.data.dictionaries.finalAttestationSettings = clone(finalAttestationSettingDefaults);
+    addAudit("Изменен справочник", dictionaryTitle("finalAttestationSettings"), "Восстановлены исходные настройки");
+    persist();
+    render();
+  }
+
+  function addFinalAttestationSetting(kind) {
+    const settings = collectFinalAttestationSettings();
+    if (kind === "category") {
+      settings.push({
+        kind: "category",
+        id: `grade-${Date.now()}`,
+        label: "Новая категория"
+      });
+    } else {
+      const firstCategory = settings.find((item) => item.kind === "category")?.label || "";
+      settings.push({
+        kind: "scale",
+        id: `scale-${Date.now()}`,
+        programType: "",
+        grade: firstCategory,
+        minPercent: "",
+        maxPercent: "100"
+      });
+    }
+    state.data.dictionaries.finalAttestationSettings = settings;
+    render();
+  }
+
+  function removeFinalAttestationSetting(kind, id) {
+    const settings = collectFinalAttestationSettings();
+    state.data.dictionaries.finalAttestationSettings = settings.filter((item) => (
+      item.kind !== kind || item.id !== id
+    ));
     render();
   }
 
@@ -8098,6 +8391,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fundingSources: "Источники финансирования",
       expenseNotes: "Типовые примечания расходов",
       sdoSettings: "Настройки СДО",
+      finalAttestationSettings: "Итоговая аттестация: оценки и шкала",
       discountRules: "Скидки",
       dataFormulas: "Конструктор формул данных",
       communicationTemplates: "Шаблоны типовых сообщений",
