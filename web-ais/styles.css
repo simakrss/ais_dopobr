@@ -1607,6 +1607,43 @@ body.is-resizing-column {
   padding: 12px;
 }
 
+.education-registration-code-form {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.education-registration-code-head,
+.education-registration-code-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(120px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.education-registration-code-head {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.education-registration-code-list {
+  display: grid;
+  gap: 6px;
+}
+
+.education-registration-code-row input {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 7px;
+  background: #fff;
+  color: var(--text);
+  font-size: 13px;
+}
+
 .attestation-settings-section {
   display: grid;
   gap: 10px;
@@ -3254,6 +3291,12 @@ body.student-tab-dragging .student-tabs button {
 .student-results-tab .student-form-grid textarea {
   min-height: 76px;
   resize: vertical;
+}
+
+.education-document-autofill-button {
+  width: 28px;
+  min-width: 28px;
+  height: 26px;
 }
 
 .student-final-grade-field {

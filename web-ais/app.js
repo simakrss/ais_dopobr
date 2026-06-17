@@ -267,9 +267,12 @@ MAX - https://bizvmax.ru/zifra_plus
   };
   const dataFormulaTokenDefinitions = [
     { name: "Год1", label: "Последняя цифра года", token: "{Год1}" },
+    { name: "Год2", label: "Последние две цифры года", token: "{Год2}" },
     { name: "Месяц2", label: "Месяц, 2 цифры", token: "{Месяц2}" },
     { name: "День2", label: "Число, 2 цифры", token: "{День2}" },
-    { name: "ПорядковыйНомерЗаДату", label: "Порядковый номер за дату", token: "{ПорядковыйНомерЗаДату}" }
+    { name: "ПорядковыйНомерЗаДату", label: "Порядковый номер за дату", token: "{ПорядковыйНомерЗаДату}" },
+    { name: "ПорядковыйНомерЗаГод", label: "Порядковый номер за год", token: "{ПорядковыйНомерЗаГод}" },
+    { name: "СокращениеТипаПрограммы", label: "Сокращение типа программы для рег. номера", token: "{СокращениеТипаПрограммы}" }
   ];
   const dataFormulaDefaults = [
     {
@@ -292,6 +295,13 @@ MAX - https://bizvmax.ru/zifra_plus
       dateField: "expulsionDate",
       targetField: "expulsionOrderNo",
       template: "Отч-{Год1}{Месяц2}-{День2}"
+    },
+    {
+      key: "educationRegistrationNumber",
+      label: "Рег. номер документа об образовании",
+      dateField: "diplomaIssueDate",
+      targetField: "registrationNo",
+      template: "{ПорядковыйНомерЗаГод}/{Год2}-{СокращениеТипаПрограммы}"
     }
   ];
   const sdoSettingDefaults = [
@@ -316,6 +326,12 @@ MAX - https://bizvmax.ru/zifra_plus
       type: "text",
       value: "Доступ к порталу дистанционного обучения Цифровизация Плюс"
     }
+  ];
+  const educationRegistrationTypeCodeDefaults = [
+    { programType: "КПК", code: "ПК" },
+    { programType: "ППП", code: "ПП" },
+    { programType: "ДОП", code: "ДОП" },
+    { programType: "ПРО", code: "ПРО" }
   ];
   const defaultPhotoServerOrigin = "http://localhost:8080";
   const financeMetrics = [
@@ -864,9 +880,9 @@ MAX - https://bizvmax.ru/zifra_plus
         {
           title: "Аттестация",
           fields: [
-            field("finalWorkTopic", "Тема ИАР", "textarea"),
             field("finalGrade", "Оценка ИА", "select"),
-            field("qualification", "Квалификация"),
+            field("finalWorkTopic", "Тема ИАР", "textarea"),
+            field("finalWorkNotes", "Замечания по итоговой работе", "textarea"),
             field("chairman", "Председатель"),
             field("commissionMember1", "Член комиссии 1"),
             field("commissionMember2", "Член комиссии 2"),
@@ -875,11 +891,14 @@ MAX - https://bizvmax.ru/zifra_plus
         },
         {
           title: "Документ об образовании",
+          educationDocument: true,
           fields: [
             field("diplomaBlankNo", "Номер бланка"),
             field("registrationNo", "Рег. номер"),
             field("diplomaIssueDate", "Дата выдачи", "date"),
-            field("deliveryDate", "Дата доставки", "date"),
+            field("frdoDate", "Дата выгрузки в ФРДО", "date"),
+            field("protocolNo", "Номер протокола"),
+            field("qualification", "Квалификация"),
             field("postalTrack", "Трек-код")
           ]
         }
@@ -1087,6 +1106,9 @@ MAX - https://bizvmax.ru/zifra_plus
     );
     data.dictionaries.dataFormulas = normalizeDataFormulaTemplates(data.dictionaries.dataFormulas);
     data.dictionaries.sdoSettings = normalizeSdoSettings(data.dictionaries.sdoSettings, legacyMoodlePortalUrl);
+    data.dictionaries.educationRegistrationTypeCodes = normalizeEducationRegistrationTypeCodes(
+      data.dictionaries.educationRegistrationTypeCodes
+    );
     data.dictionaries.finalAttestationSettings = normalizeFinalAttestationSettings(
       data.dictionaries.finalAttestationSettings
     );
@@ -1108,6 +1130,27 @@ MAX - https://bizvmax.ru/zifra_plus
         value: String(savedSetting?.value || legacyValue || setting.value)
       };
     });
+  }
+
+  function normalizeEducationRegistrationTypeCodes(values) {
+    const saved = Array.isArray(values) ? values : [];
+    const normalizeItem = (item, index) => ({
+      programType: String(item?.programType || item?.type || item?.label || `Тип ${index + 1}`).trim(),
+      code: String(item?.code || item?.value || "").trim().toUpperCase()
+    });
+    const normalized = saved.map(normalizeItem).filter((item) => item.programType && item.code);
+    const result = educationRegistrationTypeCodeDefaults.map((defaultItem) => {
+      const savedItem = normalized.find((item) => (
+        normalizeEducationProgramType(item.programType) === defaultItem.programType
+      ));
+      return savedItem || { ...defaultItem };
+    });
+    normalized.forEach((item) => {
+      if (!result.some((existing) => normalizeEducationProgramType(existing.programType) === normalizeEducationProgramType(item.programType))) {
+        result.push(item);
+      }
+    });
+    return result;
   }
 
   function getSdoSettingValue(key) {
@@ -2051,7 +2094,7 @@ MAX - https://bizvmax.ru/zifra_plus
       item.title.toLowerCase().includes(query) ||
       item.values.some((value) => (
         typeof value === "object"
-          ? `${value?.label || ""} ${value?.template || ""} ${value?.value || ""} ${value?.programType || ""} ${value?.grade || ""}`.toLowerCase().includes(query)
+          ? `${value?.label || ""} ${value?.template || ""} ${value?.value || ""} ${value?.programType || ""} ${value?.grade || ""} ${value?.code || ""}`.toLowerCase().includes(query)
           : String(value || "").toLowerCase().includes(query)
       ))
     ));
@@ -2064,8 +2107,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const isCommunicationTemplates = selectedKey === "communicationTemplates";
     const isDataFormulas = selectedKey === "dataFormulas";
     const isSdoSettings = selectedKey === "sdoSettings";
+    const isEducationRegistrationTypeCodes = selectedKey === "educationRegistrationTypeCodes";
     const isFinalAttestationSettings = selectedKey === "finalAttestationSettings";
-    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isFinalAttestationSettings;
+    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     return `
       <section class="panel">
@@ -2101,7 +2145,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${isCommunicationTemplates ? `
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "asc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="asc" type="button" title="Сортировать поля по алфавиту" aria-label="Сортировать поля по алфавиту" aria-pressed="${communicationTemplateFieldSortOrder === "asc" ? "true" : "false"}">А→Я</button>
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "desc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="desc" type="button" title="Сортировать поля против алфавита" aria-label="Сортировать поля против алфавита" aria-pressed="${communicationTemplateFieldSortOrder === "desc" ? "true" : "false"}">Я→А</button>
-                  ` : isDataFormulas || isSdoSettings || isFinalAttestationSettings ? "" : `
+                  ` : isDataFormulas || isSdoSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings ? "" : `
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
                   `}
@@ -2127,8 +2171,10 @@ MAX - https://bizvmax.ru/zifra_plus
                   ? renderDataFormulaDictionary(selectedValues)
                   : isSdoSettings
                     ? renderSdoSettingsDictionary(selectedValues)
-                    : isFinalAttestationSettings
-                      ? renderFinalAttestationSettingsDictionary(selectedValues)
+                    : isEducationRegistrationTypeCodes
+                      ? renderEducationRegistrationTypeCodesDictionary(selectedValues)
+                      : isFinalAttestationSettings
+                        ? renderFinalAttestationSettingsDictionary(selectedValues)
                   : `
                 <form class="inline-form dictionary-add-form" data-action="dict-add" data-dict="${selectedKey}">
                   <input name="value" placeholder="Новое значение или список из буфера обмена" autocomplete="off" data-dictionary-add-input>
@@ -2175,6 +2221,31 @@ MAX - https://bizvmax.ru/zifra_plus
         <p class="sdo-settings-hint">Здесь настраиваются адреса СДО и тема письма с данными доступа.</p>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-sdo-settings" type="button">Восстановить исходные</button>
+          <button class="primary-button" type="submit">Сохранить настройки</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderEducationRegistrationTypeCodesDictionary(values) {
+    const settings = normalizeEducationRegistrationTypeCodes(values);
+    return `
+      <form class="education-registration-code-form" data-action="save-education-registration-type-codes">
+        <div class="education-registration-code-head">
+          <span>Тип программы</span>
+          <span>Сокращение в рег. номере</span>
+        </div>
+        <div class="education-registration-code-list">
+          ${settings.map((item, index) => `
+            <div class="education-registration-code-row">
+              <input name="registrationProgramType${index}" value="${escapeAttr(item.programType)}" aria-label="Тип программы" required>
+              <input name="registrationProgramCode${index}" value="${escapeAttr(item.code)}" aria-label="Сокращение в регистрационном номере" required>
+            </div>
+          `).join("")}
+        </div>
+        <p class="sdo-settings-hint">Сокращение используется в регистрационном номере документа об образовании, например <code>5/26-ПК</code>.</p>
+        <div class="sdo-settings-actions">
+          <button class="ghost-button" data-action="reset-education-registration-type-codes" type="button">Восстановить исходные</button>
           <button class="primary-button" type="submit">Сохранить настройки</button>
         </div>
       </form>
@@ -2360,7 +2431,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const labels = {
       contractDate: "Дата договора",
       enrollmentDate: "Дата зачисления",
-      expulsionDate: "Дата отчисления"
+      expulsionDate: "Дата отчисления",
+      diplomaIssueDate: "Дата выдачи документа"
     };
     return labels[fieldName] || fieldName;
   }
@@ -2648,6 +2720,11 @@ MAX - https://bizvmax.ru/zifra_plus
                 <span>Скопировать данные обучающегося</span>
               </button>
             ` : ""}
+            ${section.educationDocument ? `
+              <button class="orders-sdo-icon-button is-magic education-document-autofill-button" data-action="auto-fill-education-document" type="button" title="Заполнить документ об образовании" aria-label="Заполнить документ об образовании">
+                ${renderOrdersSdoIcon("wand")}
+              </button>
+            ` : ""}
           </div>
           ${tab.id === "main" && section.fields.some((item) => item.key === "name")
             ? renderStudentMainIdentity(section, record)
@@ -2930,12 +3007,28 @@ MAX - https://bizvmax.ru/zifra_plus
     const formula = normalizeDataFormulaTemplates(state.data.dictionaries.dataFormulas)
       .find((item) => item.key === formulaKey);
     if (!formula) return { formula: null, value: "" };
-    const sequence = formula.template.includes("{ПорядковыйНомерЗаДату}")
-      ? getNextDataFormulaSequence(formula, date, currentId)
-      : 1;
+    const context = getDataFormulaContext(formulaKey);
+    const sequence = formula.template.includes("{ПорядковыйНомерЗаГод}")
+      ? getNextDataFormulaYearSequence(formula, date, currentId, context)
+      : formula.template.includes("{ПорядковыйНомерЗаДату}")
+        ? getNextDataFormulaSequence(formula, date, currentId, context)
+        : 1;
     return {
       formula,
-      value: evaluateDataFormula(formula.template, date, sequence)
+      value: evaluateDataFormula(formula.template, date, sequence, context)
+    };
+  }
+
+  function getDataFormulaContext(formulaKey) {
+    if (formulaKey !== "educationRegistrationNumber") return {};
+    const form = document.getElementById("recordForm");
+    if (!form || form.dataset.config !== "students") return {};
+    const record = collectStudentFormDraft();
+    const program = findProgramByName(record.program);
+    const programType = normalizeEducationProgramType(program?.type || record.educationType);
+    return {
+      programType,
+      programTypeCode: getEducationRegistrationTypeCode(programType)
     };
   }
 
@@ -2965,11 +3058,116 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function setOrdersSdoFieldValue(form, fieldName, value) {
     const input = form?.elements[fieldName];
-    if (!(input instanceof HTMLInputElement)) return false;
+    if (!(input instanceof HTMLInputElement) && !(input instanceof HTMLTextAreaElement) && !(input instanceof HTMLSelectElement)) return false;
     input.value = value;
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
+  }
+
+  function normalizeEducationProgramType(value) {
+    const text = String(value || "").trim().toUpperCase();
+    if (!text) return "";
+    if (text.includes("КПК") || text.includes("ПОВЫШ")) return "КПК";
+    if (text.includes("ППП") || text.includes("ПЕРЕПОД")) return "ППП";
+    if (text.includes("ДОП")) return "ДОП";
+    if (text.includes("ПРО")) return "ПРО";
+    return text.replace(/[^А-ЯA-Z0-9]/g, "").slice(0, 8);
+  }
+
+  function isFrdoProgramType(programType) {
+    return ["КПК", "ППП"].includes(normalizeEducationProgramType(programType));
+  }
+
+  function getEducationRegistrationTypeCode(programType) {
+    const typeCode = normalizeEducationProgramType(programType);
+    const settings = normalizeEducationRegistrationTypeCodes(state.data.dictionaries.educationRegistrationTypeCodes);
+    return settings.find((item) => normalizeEducationProgramType(item.programType) === typeCode)?.code || typeCode;
+  }
+
+  function getEducationDocumentAutofillContext() {
+    const form = document.getElementById("recordForm");
+    if (!form || form.dataset.config !== "students") return null;
+    const record = collectStudentFormDraft();
+    const programName = String(record.program || "").trim();
+    const program = findProgramByName(programName);
+    if (!programName || !program) {
+      alert("Выберите программу обучения из реестра программ.");
+      form.querySelector("[name='program']")?.focus({ preventScroll: true });
+      return null;
+    }
+    const programType = normalizeEducationProgramType(program.type || record.educationType);
+    if (!programType) {
+      alert("Для выбранной программы в реестре не указан тип образовательной программы.");
+      return null;
+    }
+    const issueDate = String(record.expulsionDate || record.expulsionOrderDate || "").trim();
+    if (!parseOrdersSdoDate(issueDate)) {
+      alert("Заполните дату отчисления. Дата выдачи документа берется из даты отчисления.");
+      form.querySelector("[name='expulsionDate'], [name='expulsionOrderDate']")?.focus({ preventScroll: true });
+      return null;
+    }
+    return { form, record, program, programType, issueDate };
+  }
+
+  function getStudentProgramTypeCode(record) {
+    const program = findProgramByName(record?.program);
+    return normalizeEducationProgramType(program?.type || record?.educationType);
+  }
+
+  function getNextEducationBlankNumber(programType, currentId = "") {
+    const typeCode = normalizeEducationProgramType(programType);
+    const numbers = (state.data.collections.students || [])
+      .filter((record) => !currentId || String(record.id || "") !== String(currentId))
+      .filter((record) => getStudentProgramTypeCode(record) === typeCode)
+      .map((record) => String(record.diplomaBlankNo || "").trim())
+      .filter((value) => /^\d{1,10}$/.test(value))
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+    return String((numbers.length ? Math.max(...numbers) : 0) + 1).padStart(10, "0");
+  }
+
+  function getNextEducationProtocolNo(issueDate, currentId = "") {
+    const numbers = (state.data.collections.students || [])
+      .filter((record) => !currentId || String(record.id || "") !== String(currentId))
+      .filter((record) => getStudentProgramTypeCode(record) === "ППП")
+      .filter((record) => String(record.diplomaIssueDate || record.protocolDate || "").trim() === issueDate)
+      .map((record) => String(record.protocolNo || "").trim())
+      .filter((value) => /^\d+$/.test(value))
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    return String((numbers.length ? Math.max(...numbers) : 0) + 1);
+  }
+
+  function autoFillEducationDocument() {
+    const context = getEducationDocumentAutofillContext();
+    if (!context) return;
+    const values = {
+      diplomaBlankNo: getNextEducationBlankNumber(context.programType, context.form.dataset.id),
+      registrationNo: getGeneratedNumberFromDataFormula(
+        "educationRegistrationNumber",
+        parseOrdersSdoDate(context.issueDate),
+        context.form.dataset.id
+      ).value,
+      diplomaIssueDate: context.issueDate,
+      frdoDate: isFrdoProgramType(context.programType) ? context.record.frdoDate || "" : "",
+      protocolNo: context.programType === "ППП"
+        ? getNextEducationProtocolNo(context.issueDate, context.form.dataset.id)
+        : "",
+      qualification: context.programType === "ППП"
+        ? String(context.program.qualification || "").trim()
+        : ""
+    };
+    Object.entries(values).forEach(([fieldName, value]) => {
+      setOrdersSdoFieldValue(context.form, fieldName, value);
+    });
+    state.modal.draft = {
+      ...(state.modal.draft || {}),
+      ...collectStudentFormDraft(),
+      ...values
+    };
+    state.modal.hasDraftChanges = true;
+    context.form.elements.diplomaBlankNo?.focus({ preventScroll: true });
   }
 
   function getOrdersSdoAutofillContext() {
@@ -3043,35 +3241,79 @@ MAX - https://bizvmax.ru/zifra_plus
     context.form.elements.contractDate?.focus({ preventScroll: true });
   }
 
-  function evaluateDataFormula(template, date, sequence = 1) {
+  function evaluateDataFormula(template, date, sequence = 1, context = {}) {
     const safeDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+    const programTypeCode = String(
+      context.programTypeCode
+      || (context.programType ? getEducationRegistrationTypeCode(context.programType) : "")
+      || educationRegistrationTypeCodeDefaults[0].code
+    ).trim();
     const values = {
       Год1: String(safeDate.getFullYear()).slice(-1),
+      Год2: String(safeDate.getFullYear()).slice(-2),
       Месяц2: String(safeDate.getMonth() + 1).padStart(2, "0"),
       День2: String(safeDate.getDate()).padStart(2, "0"),
-      ПорядковыйНомерЗаДату: String(sequence)
+      ПорядковыйНомерЗаДату: String(sequence),
+      ПорядковыйНомерЗаГод: String(sequence),
+      СокращениеТипаПрограммы: programTypeCode
     };
     return String(template || "").replace(/\{([^{}]+)\}/g, (match, name) => (
       Object.prototype.hasOwnProperty.call(values, name) ? values[name] : match
     ));
   }
 
-  function getNextDataFormulaSequence(formula, date, currentId = "") {
-    const marker = "__AIS_SEQUENCE__";
-    const sample = evaluateDataFormula(formula.template, date, marker);
-    const markerIndex = sample.indexOf(marker);
-    if (markerIndex < 0) return 1;
-    const prefix = sample.slice(0, markerIndex);
-    const suffix = sample.slice(markerIndex + marker.length);
-    const pattern = new RegExp(`^${escapeRegExp(prefix)}(\\d+)${escapeRegExp(suffix)}$`);
-    const sequences = ["students", "contracts"]
+  function getDataFormulaTargetRecords(formula, currentId = "") {
+    return ["students", "contracts"]
       .flatMap((collection) => state.data.collections[collection] || [])
       .filter((record) => !currentId || String(record.id || "") !== String(currentId))
+      .filter((record) => Object.prototype.hasOwnProperty.call(record, formula.targetField));
+  }
+
+  function getNextDataFormulaSequence(formula, date, currentId = "", context = {}) {
+    const pattern = buildDataFormulaSequencePattern(formula.template, date, "ПорядковыйНомерЗаДату", context);
+    if (!pattern) return 1;
+    const sequences = getDataFormulaTargetRecords(formula, currentId)
       .map((record) => pattern.exec(String(record[formula.targetField] || "").trim()))
       .filter(Boolean)
       .map((match) => Number(match[1]))
       .filter((number) => Number.isFinite(number) && number > 0);
     return (sequences.length ? Math.max(...sequences) : 0) + 1;
+  }
+
+  function getNextDataFormulaYearSequence(formula, date, currentId = "", context = {}) {
+    const pattern = buildDataFormulaSequencePattern(
+      formula.template,
+      date,
+      "ПорядковыйНомерЗаГод",
+      context,
+      new Set(["СокращениеТипаПрограммы"])
+    );
+    if (!pattern) return 1;
+    const sequences = getDataFormulaTargetRecords(formula, currentId)
+      .map((record) => pattern.exec(String(record[formula.targetField] || "").trim()))
+      .filter(Boolean)
+      .map((match) => Number(match[1]))
+      .filter((number) => Number.isFinite(number) && number > 0);
+    return (sequences.length ? Math.max(...sequences) : 0) + 1;
+  }
+
+  function buildDataFormulaSequencePattern(template, date, sequenceTokenName, context = {}, wildcardTokenNames = new Set()) {
+    let hasSequence = false;
+    const source = String(template || "")
+      .split(/(\{[^{}]+\})/g)
+      .map((part) => {
+        const tokenMatch = /^\{([^{}]+)\}$/.exec(part);
+        if (!tokenMatch) return escapeRegExp(part);
+        const tokenName = tokenMatch[1];
+        if (tokenName === sequenceTokenName) {
+          hasSequence = true;
+          return "(\\d+)";
+        }
+        if (wildcardTokenNames.has(tokenName)) return "[^\\s/\\\\-]+";
+        return escapeRegExp(evaluateDataFormula(part, date, 1, context));
+      })
+      .join("");
+    return hasSequence ? new RegExp(`^${source}$`, "i") : null;
   }
 
   function escapeRegExp(value) {
@@ -3760,6 +4002,11 @@ MAX - https://bizvmax.ru/zifra_plus
     if (item.key === "finalGrade") {
       const options = ["", ...getFinalAttestationGradeOptions(value)];
       return `${label}<select name="${item.key}">${options.map((option) => `<option value="${escapeAttr(option)}" ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
+    }
+    if (item.key === "frdoDate") {
+      const enabled = isFrdoProgramType(getProgramType(record.program, record));
+      const title = enabled ? "" : "Дата выгрузки в ФРДО доступна только для КПК и ППП";
+      return `${label}<input name="${item.key}" type="date" value="${escapeAttr(value)}" ${enabled ? "" : "disabled"} title="${escapeAttr(title)}"></label>`;
     }
     if (["inn", "customerInn"].includes(item.key)) {
       return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" inputmode="numeric" maxlength="12" pattern="\\d{10}|\\d{12}" autocomplete="off"></label>`;
@@ -5244,6 +5491,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='generate-group-number']")?.addEventListener("click", generateStudentGroupNumber);
     document.querySelector("[data-action='generate-training-end-date']")?.addEventListener("click", generateTrainingEndDate);
     document.querySelector("[data-action='auto-fill-orders-sdo']")?.addEventListener("click", autoFillOrdersSdo);
+    document.querySelector("[data-action='auto-fill-education-document']")?.addEventListener("click", autoFillEducationDocument);
     document.querySelector("[data-action='generate-portal-password']")?.addEventListener("click", generatePortalPassword);
     document.querySelector("[data-action='open-sdo-courses']")?.addEventListener("click", openSdoCourses);
     document.querySelector("[data-action='export-student-to-sdo']")?.addEventListener("click", exportStudentToSdo);
@@ -5708,6 +5956,8 @@ MAX - https://bizvmax.ru/zifra_plus
     bindDataFormulaConstructor();
     document.querySelector("form[data-action='save-sdo-settings']")?.addEventListener("submit", saveSdoSettings);
     document.querySelector("[data-action='reset-sdo-settings']")?.addEventListener("click", resetSdoSettings);
+    document.querySelector("form[data-action='save-education-registration-type-codes']")?.addEventListener("submit", saveEducationRegistrationTypeCodes);
+    document.querySelector("[data-action='reset-education-registration-type-codes']")?.addEventListener("click", resetEducationRegistrationTypeCodes);
     document.querySelector("form[data-action='save-final-attestation-settings']")?.addEventListener("submit", saveFinalAttestationSettings);
     document.querySelector("[data-action='reset-final-attestation-settings']")?.addEventListener("click", resetFinalAttestationSettings);
     document.querySelector("[data-action='add-attestation-category']")?.addEventListener("click", () => addFinalAttestationSetting("category"));
@@ -6684,6 +6934,37 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!confirm("Восстановить исходные настройки СДО?")) return;
     state.data.dictionaries.sdoSettings = normalizeSdoSettings([]);
     addAudit("Изменен справочник", dictionaryTitle("sdoSettings"), "Восстановлены исходные настройки СДО");
+    persist();
+    render();
+  }
+
+  function saveEducationRegistrationTypeCodes(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const rows = [...form.querySelectorAll(".education-registration-code-row")];
+    const settings = rows.map((row, index) => ({
+      programType: String(form.elements[`registrationProgramType${index}`]?.value || "").trim(),
+      code: String(form.elements[`registrationProgramCode${index}`]?.value || "").trim().toUpperCase()
+    }));
+    if (settings.some((item) => !item.programType || !item.code)) {
+      alert("Заполните тип программы и сокращение во всех строках.");
+      return;
+    }
+    const typeCodes = settings.map((item) => normalizeEducationProgramType(item.programType));
+    if (new Set(typeCodes).size !== typeCodes.length) {
+      alert("Типы программ не должны повторяться.");
+      return;
+    }
+    state.data.dictionaries.educationRegistrationTypeCodes = normalizeEducationRegistrationTypeCodes(settings);
+    addAudit("Изменен справочник", dictionaryTitle("educationRegistrationTypeCodes"), "Сохранены сокращения для рег. номеров");
+    persist();
+    render();
+  }
+
+  function resetEducationRegistrationTypeCodes() {
+    if (!confirm("Восстановить исходные сокращения типов программ для регистрационных номеров?")) return;
+    state.data.dictionaries.educationRegistrationTypeCodes = normalizeEducationRegistrationTypeCodes([]);
+    addAudit("Изменен справочник", dictionaryTitle("educationRegistrationTypeCodes"), "Восстановлены исходные сокращения");
     persist();
     render();
   }
@@ -8391,6 +8672,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fundingSources: "Источники финансирования",
       expenseNotes: "Типовые примечания расходов",
       sdoSettings: "Настройки СДО",
+      educationRegistrationTypeCodes: "Сокращения типов программ в рег. номере",
       finalAttestationSettings: "Итоговая аттестация: оценки и шкала",
       discountRules: "Скидки",
       dataFormulas: "Конструктор формул данных",
