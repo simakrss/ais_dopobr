@@ -3669,6 +3669,20 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderEducationDocumentActions(record) {
+    return `
+      <div class="education-document-actions">
+        <button class="ghost-button education-document-open-button" data-action="open-student-education-document" type="button" title="${escapeAttr(getEducationDocumentButtonTitle(record))}" aria-label="Документ об образовании">
+          ${renderOrdersSdoIcon("documentText")}
+          <span>Документ об образовании</span>
+        </button>
+        <button class="orders-sdo-icon-button is-magic education-document-autofill-button" data-action="auto-fill-education-document" type="button" title="Заполнить реквизиты документа об образовании" aria-label="Заполнить реквизиты документа об образовании">
+          ${renderOrdersSdoIcon("wand")}
+        </button>
+      </div>
+    `;
+  }
+
   function renderStudentTabContent(tab, record) {
     if (tab.id === "ordersSdo") return renderStudentOrdersSdoTab(record);
     return `
@@ -3682,17 +3696,6 @@ MAX - https://bizvmax.ru/zifra_plus
                 <span>Скопировать данные обучающегося</span>
               </button>
             ` : ""}
-            ${section.educationDocument ? `
-              <div class="education-document-actions">
-                <button class="ghost-button education-document-open-button" data-action="open-student-education-document" type="button" title="${escapeAttr(getEducationDocumentButtonTitle(record))}" aria-label="Документ об образовании">
-                  ${renderOrdersSdoIcon("documentText")}
-                  <span>Документ об образовании</span>
-                </button>
-                <button class="orders-sdo-icon-button is-magic education-document-autofill-button" data-action="auto-fill-education-document" type="button" title="Заполнить реквизиты документа об образовании" aria-label="Заполнить реквизиты документа об образовании">
-                  ${renderOrdersSdoIcon("wand")}
-                </button>
-              </div>
-            ` : ""}
           </div>
           ${tab.id === "main" && section.fields.some((item) => item.key === "name")
             ? renderStudentMainIdentity(section, record)
@@ -3701,6 +3704,7 @@ MAX - https://bizvmax.ru/zifra_plus
             : section.reviewPanel
               ? renderStudentReviewPanel(record)
             : `<div class="student-form-grid">${section.fields.map((item) => renderStudentField(item, record)).join("")}</div>`}
+          ${section.educationDocument ? renderEducationDocumentActions(record) : ""}
         </section>
       `).join("")}
       ${tab.id === "main" ? renderStudentMainActions(record) : ""}

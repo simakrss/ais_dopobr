@@ -1650,17 +1650,33 @@ body.is-resizing-column {
 }
 
 .document-template-settings-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
   align-items: flex-start;
   gap: 12px;
 }
 
+.document-template-settings-head > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.document-template-settings-head h2 {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .document-template-settings-head .document-template-head-actions {
-  display: grid;
-  justify-items: end;
+  display: flex;
+  align-items: flex-start;
   align-content: start;
   justify-content: flex-end;
+  flex-wrap: nowrap;
   gap: 6px;
-  max-width: min(760px, 58vw);
+  max-width: none;
+  min-width: 0;
 }
 
 .document-template-primary-actions,
@@ -1669,6 +1685,11 @@ body.is-resizing-column {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.document-template-settings-head .document-template-primary-actions,
+.document-template-settings-head .document-template-tool-actions {
+  flex-wrap: nowrap;
 }
 
 .document-template-settings-head .modal-head-actions button {
@@ -4251,7 +4272,8 @@ body.student-tab-dragging .student-tabs button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
+  justify-content: flex-start;
+  margin-top: 8px;
 }
 
 .education-document-open-button {
