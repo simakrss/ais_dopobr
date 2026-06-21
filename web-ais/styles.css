@@ -1651,9 +1651,10 @@ body.is-resizing-column {
 
 .document-template-settings-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-columns: minmax(0, 420px) minmax(420px, max-content);
   align-items: flex-start;
-  gap: 12px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .document-template-settings-head > div:first-child {
@@ -1662,20 +1663,17 @@ body.is-resizing-column {
 }
 
 .document-template-settings-head h2 {
-  max-width: 100%;
+  max-width: min(100%, 420px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .document-template-settings-head .document-template-head-actions {
-  display: flex;
-  align-items: flex-start;
-  align-content: start;
-  justify-content: flex-end;
-  flex-wrap: nowrap;
-  gap: 6px;
-  max-width: none;
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  max-width: min(100%, 520px);
   min-width: 0;
 }
 
@@ -1689,16 +1687,19 @@ body.is-resizing-column {
 
 .document-template-settings-head .document-template-primary-actions,
 .document-template-settings-head .document-template-tool-actions {
+  width: 100%;
+  min-width: 0;
   flex-wrap: nowrap;
+  gap: 4px;
 }
 
 .document-template-settings-head .modal-head-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   min-height: 30px;
-  padding: 5px 9px;
+  padding: 5px 7px;
   white-space: nowrap;
 }
 

@@ -3676,9 +3676,6 @@ MAX - https://bizvmax.ru/zifra_plus
           ${renderOrdersSdoIcon("documentText")}
           <span>Документ об образовании</span>
         </button>
-        <button class="orders-sdo-icon-button is-magic education-document-autofill-button" data-action="auto-fill-education-document" type="button" title="Заполнить реквизиты документа об образовании" aria-label="Заполнить реквизиты документа об образовании">
-          ${renderOrdersSdoIcon("wand")}
-        </button>
       </div>
     `;
   }
@@ -3694,6 +3691,11 @@ MAX - https://bizvmax.ru/zifra_plus
               <button class="ghost-button passport-copy-button" data-action="copy-student-passport-to-customer" type="button" title="Скопировать паспортные данные обучающегося" aria-label="Скопировать паспортные данные обучающегося">
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h13"></path><path d="M14 8l4 4-4 4"></path></svg>
                 <span>Скопировать данные обучающегося</span>
+              </button>
+            ` : ""}
+            ${section.educationDocument ? `
+              <button class="orders-sdo-icon-button is-magic education-document-autofill-button" data-action="auto-fill-education-document" type="button" title="Заполнить реквизиты документа об образовании" aria-label="Заполнить реквизиты документа об образовании">
+                ${renderOrdersSdoIcon("wand")}
               </button>
             ` : ""}
           </div>
@@ -4232,7 +4234,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const confirmed = confirm(
       "Заполнить текущей датой дату договора, начала обучения и зачисления, "
-      + "а также автоматически сформировать дату окончания, номер договора, номер приказа и номер группы?"
+      + "автоматически сформировать дату окончания, номер договора, номер приказа, номер группы, "
+      + "а также данные СДО: логин, пароль и сообщение о доступе?"
     );
     if (!confirmed) return;
 
@@ -4242,6 +4245,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const contract = getGeneratedNumberFromDataFormula("contractNumber", today, context.form.dataset.id);
     const enrollmentOrder = getGeneratedNumberFromDataFormula("enrollmentOrderNumber", today, context.form.dataset.id);
     const group = getStudentGroupNumber(context.programName, currentDate);
+    const portalCredentials = getPortalCredentialsForAutofill(context.form);
+    if (!portalCredentials) return;
 
     setOrdersSdoFieldValue(context.form, "contractDate", currentDate);
     setOrdersSdoFieldValue(context.form, "startDate", currentDate);
@@ -4250,6 +4255,9 @@ MAX - https://bizvmax.ru/zifra_plus
     setOrdersSdoFieldValue(context.form, "contractNo", contract.value);
     setOrdersSdoFieldValue(context.form, "enrollmentOrderNo", enrollmentOrder.value);
     setOrdersSdoFieldValue(context.form, "group", group);
+    setOrdersSdoFieldValue(context.form, "login", portalCredentials.login);
+    setOrdersSdoFieldValue(context.form, "password", portalCredentials.password);
+    setOrdersSdoFieldValue(context.form, "portalAccessMessage", getGeneratedPortalAccessMessage(context.form));
 
     state.modal.draft = collectStudentFormDraft();
     state.modal.hasDraftChanges = true;
@@ -5361,37 +5369,68 @@ MAX - https://bizvmax.ru/zifra_plus
     groupInput.focus({ preventScroll: true });
   }
 
-  function generatePortalPassword() {
-    const form = document.getElementById("recordForm");
-    const loginInput = form?.querySelector("[name='login']");
-    const passwordInput = form?.querySelector("[name='password']");
-    if (!loginInput || !passwordInput) return;
+  function getPortalLoginFromForm(form) {
     const currentStudent = (state.data.collections.students || [])
       .find((student) => student.id === state.modal?.id) || {};
     const email = String(
-      form.querySelector("[name='email']")?.value
+      form?.querySelector("[name='email']")?.value
       || state.modal?.draft?.email
       || currentStudent.email
       || ""
     ).trim();
     const emailParts = email.split("@");
-    const generatedLogin = emailParts.length > 1 ? emailParts[0].trim().toLowerCase() : "";
+    return emailParts.length > 1 ? emailParts[0].trim().toLowerCase() : "";
+  }
+
+  function createPortalPassword() {
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    return String(random[0] % 1000000).padStart(6, "0");
+  }
+
+  function getPortalCredentialsForAutofill(form) {
+    const login = getPortalLoginFromForm(form);
+    if (!login) {
+      alert("Заполните корректный адрес электронной почты слушателя. Логин СДО формируется из части адреса до символа @.");
+      form?.querySelector("[name='email']")?.focus({ preventScroll: true });
+      return null;
+    }
+    return { login, password: createPortalPassword() };
+  }
+
+  function getGeneratedPortalAccessMessage(form) {
+    const currentStudent = (state.data.collections.students || [])
+      .find((student) => student.id === state.modal?.id) || {};
+    const values = {
+      ...currentStudent,
+      ...(state.modal?.draft || {}),
+      ...collectStudentFormDraft(),
+      login: String(form?.querySelector("[name='login']")?.value || ""),
+      password: String(form?.querySelector("[name='password']")?.value || ""),
+      portalAccessMessage: ""
+    };
+    return generateStudentCommunicationMessages(values).portalAccessMessage || "";
+  }
+
+  function generatePortalPassword() {
+    const form = document.getElementById("recordForm");
+    const loginInput = form?.querySelector("[name='login']");
+    const passwordInput = form?.querySelector("[name='password']");
+    if (!loginInput || !passwordInput) return;
+    const generatedLogin = getPortalLoginFromForm(form);
     if (!generatedLogin) {
       alert("Заполните корректный адрес электронной почты слушателя. Логин формируется из части адреса до символа @.");
       return;
     }
     if (passwordInput.value && !confirm("Пароль уже заполнен. Заменить его новым шестизначным паролем?")) return;
-    const random = new Uint32Array(1);
-    crypto.getRandomValues(random);
     loginInput.value = generatedLogin;
-    passwordInput.value = String(random[0] % 1000000).padStart(6, "0");
+    passwordInput.value = createPortalPassword();
     loginInput.dispatchEvent(new Event("input", { bubbles: true }));
     loginInput.dispatchEvent(new Event("change", { bubbles: true }));
     passwordInput.dispatchEvent(new Event("input", { bubbles: true }));
     passwordInput.dispatchEvent(new Event("change", { bubbles: true }));
     state.modal.draft = {
       ...(state.modal.draft || {}),
-      email,
       login: loginInput.value,
       password: passwordInput.value
     };
@@ -5404,15 +5443,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = document.getElementById("recordForm");
     const messageInput = form?.querySelector("[name='portalAccessMessage']");
     if (!form || !messageInput || form.dataset.config !== "students") return;
-    const currentStudent = (state.data.collections.students || [])
-      .find((student) => student.id === state.modal?.id) || {};
+    const generated = getGeneratedPortalAccessMessage(form);
     const values = {
-      ...currentStudent,
-      ...(state.modal?.draft || {}),
       login: String(form.querySelector("[name='login']")?.value || ""),
       password: String(form.querySelector("[name='password']")?.value || "")
     };
-    const generated = generateStudentCommunicationMessages(values).portalAccessMessage || "";
     messageInput.value = generated;
     state.modal.draft = {
       ...(state.modal.draft || {}),
@@ -8615,11 +8650,16 @@ MAX - https://bizvmax.ru/zifra_plus
         templatePath: document.templatePath
       });
       const nextDocument = applyDocumentTemplateInspection(document, inspection, document.fields);
+      const loadedFieldsCount = nextDocument.fields.length;
+      const markerCount = unique((inspection?.markers || []).map((marker) => (
+        String(marker || "").replace(/^#+|#+$/g, "").trim()
+      )).filter(Boolean)).length;
       commitDocumentTemplates(documents.map((item) => item.id === document.id ? nextDocument : item), nextDocument);
       state.activeContractTemplateFieldId = "";
       addAudit("Изменен конструктор документов", nextDocument.title, "Поля обновлены из файла Word");
       persist();
       render();
+      alert(`Загружено полей: ${loadedFieldsCount}${markerCount !== loadedFieldsCount ? ` (маркеров в Word: ${markerCount})` : ""}.`);
     } catch (error) {
       alert(`Не удалось обновить поля: ${error.message}`);
     } finally {
