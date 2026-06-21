@@ -304,6 +304,248 @@ MAX - https://bizvmax.ru/zifra_plus
       template: "{ПорядковыйНомерЗаГод}/{Год2}-{СокращениеТипаПрограммы}"
     }
   ];
+  const contractTemplateSettingDefaults = [
+    {
+      key: "templateUrl",
+      label: "Ссылка на шаблон (Яндекс.Диск, OneDrive, Google Drive)",
+      value: "https://disk.yandex.ru/i/_3SnxIXyPuVaZQ",
+      type: "url",
+      required: false
+    },
+    {
+      key: "fileNameTemplate",
+      label: "Название файла",
+      value: "Заявление+договор_#ФИО_обуч#_#N Договора#",
+      type: "text",
+      required: true
+    },
+    {
+      key: "useCustomDocumentProperties",
+      label: "Использовать формулы из дополнительных свойств DOCX",
+      value: "1",
+      type: "checkbox",
+      required: false
+    }
+  ];
+  const contractTemplateFieldDefaults = [
+    { id: "contract-field-24", position: 1, name: "Email", formula: `=[Email]`, hideEmpty: false, custom: false },
+    { id: "contract-field-56", position: 2, name: "N Договора", formula: `=ЕСЛИ([Договор]="";"__________";[Договор])`, hideEmpty: false, custom: false },
+    { id: "contract-field-19", position: 3, name: "Адрес места жительства", formula: `=[Адрес места жительства]`, hideEmpty: false, custom: false },
+    { id: "contract-field-64", position: 4, name: "Адрес места регистрации", formula: `=[Адрес места регистрации]`, hideEmpty: false, custom: false },
+    { id: "contract-field-42", position: 5, name: "Вид документа", formula: `=[Обр_Вид образования]`, hideEmpty: false, custom: false },
+    { id: "contract-field-27", position: 6, name: "Вид курсов", formula: `=ЕСЛИ(ЕСЛИОШИБКА(ПОИСК([Количество часов];[Прогр обуч факт])<>0;ЛОЖЬ);ПОДСТАВИТЬ([Прогр обуч факт];" ч)";СИМВОЛ(160) & "ч)");[Прогр обуч факт] & " (" & [Количество часов] & " ч.)")`, hideEmpty: false, custom: false },
+    { id: "contract-field-51", position: 7, name: "Внесено (руб)", formula: `=ЕСЛИ(ИЛИ([Внесено (руб)]="0";[Внесено (руб)]="");"";[Внесено (руб)] & " (" & ЧИСЛО_В_ПРОПИСЬ([Внесено (руб)]) & ") рублей")`, hideEmpty: false, custom: false },
+    { id: "contract-field-48", position: 8, name: "Гражданство", formula: `=[Гражданство]`, hideEmpty: false, custom: false },
+    { id: "contract-field-37", position: 9, name: "дата выдачи", formula: `=[Обр_Дата выдачи]`, hideEmpty: false, custom: false },
+    { id: "contract-field-49", position: 10, name: "Дата подачи заявки", formula: `=[Дата подачи заявки]`, hideEmpty: false, custom: false },
+    { id: "contract-field-18", position: 11, name: "Дата рождения_обуч", formula: `=([ДР обуч])`, hideEmpty: false, custom: false },
+    { id: "contract-field-52", position: 12, name: "ДатаДоговора", formula: `=ЕСЛИ([Дата договора]="";[Дата подачи заявки];[Дата договора])`, hideEmpty: false, custom: false },
+    { id: "contract-field-55", position: 13, name: "Должность", formula: `=[Должность]`, hideEmpty: false, custom: false },
+    { id: "contract-field-30", position: 14, name: "Имя", formula: `= ПОЛУЧИТЬ_ЭЛЕМЕНТ([ФИО];2;" ")`, hideEmpty: false, custom: false },
+    { id: "contract-field-62", position: 15, name: "ИО", formula: `=СКЛОНЕНИЕ_ФИО([ФИО];"И";"ИО")`, hideEmpty: false, custom: false },
+    { id: "contract-field-38", position: 16, name: "кем выдано", formula: `=[Обр_Кем выдан]`, hideEmpty: false, custom: false },
+    { id: "contract-field-54", position: 17, name: "Место работы", formula: `=[МестоРаботы]`, hideEmpty: false, custom: false },
+    { id: "contract-field-41", position: 18, name: "номер Диплома", formula: `=[Обр_Номер]`, hideEmpty: false, custom: false },
+    { id: "contract-field-25", position: 19, name: "Основание скидки", formula: `=[Осн# скидки]`, hideEmpty: false, custom: false },
+    { id: "contract-field-65", position: 20, name: "Отчество", formula: `= ПОЛУЧИТЬ_ЭЛЕМЕНТ([ФИО];3;" ")`, hideEmpty: false, custom: false },
+    { id: "contract-field-43", position: 21, name: "Пасп_Обуч_Вид документа", formula: `=[Пасп_Обуч_Вид документа]`, hideEmpty: false, custom: false },
+    { id: "contract-field-44", position: 22, name: "Пасп_Обуч_Дата", formula: `=[Пасп_Обуч_Дата]`, hideEmpty: false, custom: false },
+    { id: "contract-field-45", position: 23, name: "Пасп_Обуч_Кем", formula: `=[Пасп_Обуч_Кем]`, hideEmpty: false, custom: false },
+    { id: "contract-field-21", position: 24, name: "Паспорт_обуч", formula: `=[Пасп_Обуч_Серия_Номер]`, hideEmpty: false, custom: false },
+    { id: "contract-field-63", position: 25, name: "ПутьСохр", formula: `=ПутьДокумента(1) & [Фото]`, hideEmpty: false, custom: false },
+    { id: "contract-field-60", position: 26, name: "Серия", formula: `=[Обр_Серия]`, hideEmpty: false, custom: false },
+    { id: "contract-field-57", position: 27, name: "СНИЛС", formula: `=[СНИЛС]`, hideEmpty: false, custom: false },
+    { id: "contract-field-15", position: 28, name: "СрокПо", formula: `=ТЕКСТ(ЛЕВСИМВ([Дата окончания обучения];10);"ДД.ММ.ГГГГ")`, hideEmpty: false, custom: false },
+    { id: "contract-field-14", position: 29, name: "СрокС", formula: `=ТЕКСТ(ЛЕВСИМВ([Дата начала обучения];10);"ДД.ММ.ГГГГ")`, hideEmpty: false, custom: false },
+    { id: "contract-field-32", position: 30, name: "Сумма", formula: `=ЕСЛИ(ИЛИ([Сумма  по договору (руб)]="0";[Сумма  по договору (руб)]="");"";[Сумма  по договору (руб)] & " (" & ЧИСЛО_В_ПРОПИСЬ([Сумма  по договору (руб)]) & ") рублей")`, hideEmpty: false, custom: false },
+    { id: "contract-field-23", position: 31, name: "Тел_обуч", formula: `=[Обуч тел#]`, hideEmpty: false, custom: false },
+    { id: "contract-field-29", position: 32, name: "Фамилия", formula: `= ПОЛУЧИТЬ_ЭЛЕМЕНТ([ФИО];1;" ")`, hideEmpty: false, custom: false },
+    { id: "contract-field-13", position: 33, name: "ФИО_обуч", formula: `=[ФИО]`, hideEmpty: false, custom: false },
+    { id: "contract-field-1", position: 34, name: "ФИО_обуч_род", formula: `=ЕСЛИ([ФИО_несклон]="+";СКЛОНЕНИЕ_ФИО([ФИО];;"И";;"Ф") & " " & СКЛОНЕНИЕ_ФИО([ФИО];;"Р";;"ИО");СКЛОНЕНИЕ_ФИО([ФИО];;"Р";;"ФИО"))`, hideEmpty: false, custom: false },
+    { id: "contract-field-61", position: 35, name: "Фото", formula: `=ИЗОБРАЖЕНИЕ(ПутьДокумента(1) & [Фото])`, hideEmpty: false, custom: false },
+    { id: "contract-field-66", position: 36, name: "Стажировка", formula: `=ЕСЛИ([Стажировка]<>"";"(со стажировкой)";"")`, hideEmpty: false, custom: false },
+    { id: "contract-field-67", position: 37, name: "Форма обучения", formula: `=СТРОЧН(ЕСЛИ([Форма обучения]="Дистант";"Заочная дистанционная";[Форма обучения]))`, hideEmpty: false, custom: false }
+  ];
+  const contractTemplateSourceFieldNames = [
+    "ФИО", "ФИО_несклон", "Email", "Договор", "Дата договора", "Дата подачи заявки", "Дата начала обучения", "Дата окончания обучения",
+    "Прогр обуч факт", "Количество часов", "Форма обучения", "Стажировка", "Гражданство", "ДР обуч", "Обуч тел#",
+    "Адрес места жительства", "Адрес места регистрации", "МестоРаботы", "Должность", "СНИЛС", "Осн# скидки",
+    "Пасп_Обуч_Вид документа", "Пасп_Обуч_Дата", "Пасп_Обуч_Серия_Номер", "Пасп_Обуч_Кем",
+    "Обр_Вид образования", "Обр_Серия", "Обр_Номер", "Обр_Дата выдачи", "Обр_Кем выдан",
+    "Внесено (руб)", "Сумма  по договору (руб)", "Фото",
+    "ИО", "ФИО_ENG", "Прогр обуч факт_ENG", "Дата выдачи документа", "Дата отчисления",
+    "Документ об образовании", "Номер бланка", "РегНомер", "Номер протокола", "Оценка ИА",
+    "Квалификация", "УчебныйПлан", "СфераДеятельности", "Часы", "Срок обучения_ENG", "QRкод"
+  ];
+  const contractTemplateSourceFieldMap = {
+    "ФИО": "name",
+    "ФИО_несклон": "noDeclension",
+    "Email": "email",
+    "Договор": "contractNo",
+    "Дата договора": "contractDate",
+    "Дата подачи заявки": "applicationDate",
+    "Дата начала обучения": "startDate",
+    "Дата окончания обучения": "endDate",
+    "Прогр обуч факт": "program",
+    "Количество часов": "hours",
+    "Форма обучения": "studyForm",
+    "Стажировка": "internship",
+    "Гражданство": "citizenship",
+    "ДР обуч": "birthDate",
+    "Обуч тел#": "phone",
+    "Адрес места жительства": "mailingAddress",
+    "Адрес места регистрации": "registrationAddress",
+    "МестоРаботы": "workPlace",
+    "Должность": "position",
+    "СНИЛС": "snils",
+    "Осн# скидки": "discountDescription",
+    "Пасп_Обуч_Вид документа": "passportType",
+    "Пасп_Обуч_Дата": "passportDate",
+    "Пасп_Обуч_Серия_Номер": "passportNumber",
+    "Пасп_Обуч_Кем": "passportIssuer",
+    "Обр_Вид образования": "educationDocument",
+    "Обр_Серия": "educationDocumentSeries",
+    "Обр_Номер": "educationDocumentNumber",
+    "Обр_Дата выдачи": "educationDocumentDate",
+    "Обр_Кем выдан": "educationDocumentIssuer",
+    "Внесено (руб)": "paidAmount",
+    "Сумма  по договору (руб)": "contractAmount",
+    "Сумма по договору (руб)": "contractAmount",
+    "Фото": "photoPath",
+    "ФИО_ENG": "nameEnglish",
+    "Дата выдачи документа": "diplomaIssueDate",
+    "Дата отчисления": "expulsionDate",
+    "Номер бланка": "diplomaBlankNo",
+    "РегНомер": "registrationNo",
+    "Номер протокола": "protocolNo",
+    "Оценка ИА": "finalGrade",
+    "Квалификация": "qualification",
+    "Часы": "hours",
+    "QRкод": "qrCode"
+  };
+  const defaultDocumentTemplateId = "document-contract-application";
+  const documentTemplateInspectionVersion = "2026-06-20-formulas-v4";
+  const wordTemplateExtensions = ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"];
+  const wordTemplateAccept = wordTemplateExtensions.map((ext) => `.${ext}`).join(",");
+
+  function createDefaultDocumentTemplate() {
+    return {
+      id: defaultDocumentTemplateId,
+      title: "Заявление и договор",
+      templateUrl: "https://disk.yandex.ru/i/_3SnxIXyPuVaZQ",
+      templatePath: "",
+      fileNameTemplate: "Заявление+договор_#ФИО_обуч#_#N Договора#",
+      useCustomDocumentProperties: "1",
+      fields: contractTemplateFieldDefaults.map((field) => ({ ...field })),
+      originalFields: contractTemplateFieldDefaults.map((field) => ({ ...field })),
+      source: "link",
+      createdAt: "2026-06-20T00:00:00.000Z"
+    };
+  }
+  const educationDocumentTemplateDefinitions = [
+    {
+      id: "education-document-diploma-ppp",
+      title: "Диплом о переподготовке",
+      templateUrl: "https://disk.yandex.ru/i/eyxERaRJXPCC4A",
+      templatePath: "storage/document-templates/Диплом о переподготовке_v1.docx",
+      fileName: "Диплом о переподготовке_v1.docx",
+      fileNameTemplate: "Диплом_#ФИО#_#РегНомер#",
+      programTypes: ["ППП"],
+      markers: [
+        "Дата выдачи", "Дата начала", "Дата окончания", "Дата приказа", "ДокументОбОбразовании",
+        "ИО", "Квалификация", "Номер бланка", "Номер протокола", "Оценка ИА", "Прогр обуч факт",
+        "РегНомер", "СфераДеятельности", "УчебныйПлан", "ФИО", "Часы", "Email"
+      ]
+    },
+    {
+      id: "education-document-certificate-kpk",
+      title: "Удостоверение о повышении квалификации",
+      templateUrl: "https://disk.yandex.ru/i/lAQO0kGbtWTjSA",
+      templatePath: "storage/document-templates/Удостоверение о повышении квалификации_v1.docx",
+      fileName: "Удостоверение о повышении квалификации_v1.docx",
+      fileNameTemplate: "Удостоверение_#ФИО#_#РегНомер#",
+      programTypes: ["КПК"],
+      markers: [
+        "Дата выдачи", "Дата начала", "Дата окончания", "ДокументОбОбразовании", "ИО",
+        "Номер бланка", "Прогр обуч факт", "РегНомер", "Стажировка", "УчебныйПлан",
+        "ФИО", "Часы", "Email"
+      ]
+    },
+    {
+      id: "education-document-certificate-dop-pro",
+      title: "Сертификат ПРО",
+      templateUrl: "https://disk.yandex.ru/i/VSPdwaaaFKUK9g",
+      templatePath: "storage/document-templates/Сертификат ПРО.docx",
+      fileName: "Сертификат ПРО.docx",
+      fileNameTemplate: "Сертификат_#ФИО#_#РегНомер#",
+      programTypes: ["ДОП", "ПРО"],
+      markers: [
+        "Дата выдачи", "ИО", "Номер бланка", "Прогр обуч факт", "Прогр обуч факт_ENG",
+        "РегНомер", "РегНомер_ENG", "Срок обучения_ENG", "ФИО", "ФИО_ENG", "Email", "QRкод"
+      ]
+    }
+  ];
+  const educationDocumentTemplateFieldFormulaMap = {
+    "Email": "=[Email]",
+    "Дата выдачи": "=[Дата выдачи документа]",
+    "Дата начала": "=[Дата начала обучения]",
+    "Дата окончания": "=[Дата окончания обучения]",
+    "Дата приказа": "=[Дата отчисления]",
+    "ДокументОбОбразовании": "=[Документ об образовании]",
+    "ИО": "=[ИО]",
+    "Квалификация": "=[Квалификация]",
+    "Номер бланка": "=[Номер бланка]",
+    "Номер протокола": "=[Номер протокола]",
+    "Оценка ИА": "=[Оценка ИА]",
+    "Прогр обуч факт": "=[Прогр обуч факт]",
+    "Прогр обуч факт_ENG": "=[Прогр обуч факт_ENG]",
+    "РегНомер": "=[РегНомер]",
+    "РегНомер_ENG": "=[РегНомер]",
+    "Срок обучения_ENG": "=[Срок обучения_ENG]",
+    "Стажировка": "=[Стажировка]",
+    "СфераДеятельности": "=[СфераДеятельности]",
+    "УчебныйПлан": "=[УчебныйПлан]",
+    "ФИО": "=[ФИО]",
+    "ФИО_ENG": "=[ФИО_ENG]",
+    "Часы": "=[Часы]",
+    "QRкод": "=[QRкод]"
+  };
+
+  function createEducationDocumentTemplate(definition, index = 0) {
+    const fields = definition.markers.map((name, fieldIndex) => ({
+      id: `${definition.id}-field-${fieldIndex + 1}`,
+      position: fieldIndex + 1,
+      name,
+      formula: educationDocumentTemplateFieldFormulaMap[name] || "",
+      hideEmpty: false,
+      custom: true
+    }));
+    return {
+      id: definition.id,
+      title: definition.title,
+      templateUrl: definition.templateUrl || "",
+      templatePath: definition.templatePath,
+      fileName: definition.fileName,
+      fileNameTemplate: definition.fileNameTemplate,
+      useCustomDocumentProperties: "1",
+      fields,
+      originalFields: fields.map((field) => ({ ...field })),
+      fieldsMode: "document-markers",
+      source: definition.templateUrl ? "link" : "file",
+      documentKind: "education",
+      programTypes: definition.programTypes,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      lastInspectedSignature: "",
+      updatedAt: ""
+    };
+  }
+
+  function getDefaultDocumentTemplates() {
+    return [
+      createDefaultDocumentTemplate(),
+      ...educationDocumentTemplateDefinitions.map(createEducationDocumentTemplate)
+    ];
+  }
   const sdoSettingDefaults = [
     {
       key: "portalUrl",
@@ -333,7 +575,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { programType: "ДОП", code: "ДОП" },
     { programType: "ПРО", code: "ПРО" }
   ];
-  const defaultPhotoServerOrigin = "http://localhost:8080";
+  const defaultPhotoServerOrigin = "http://localhost:8081";
   const financeMetrics = [
     { key: "revenue", label: "Поступления", tone: "income" },
     { key: "direct", label: "Прямые затраты", tone: "direct" },
@@ -424,6 +666,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "directExpenses", label: "Прямые затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3h10v18l-2-1.2-2 1.2-2-1.2-2 1.2-2-1.2z"></path><path d="M10 8h5"></path><path d="M10 12h5"></path><circle cx="8" cy="8" r="0.7"></circle><circle cx="8" cy="12" r="0.7"></circle><path d="M13 16h4"></path><path d="M15 14v4"></path></svg>' },
     { id: "generalExpenses", label: "Общие затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8c0-2 3.6-3.5 8-3.5S20 6 20 8s-3.6 3.5-8 3.5S4 10 4 8z"></path><path d="M4 8v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V8"></path><path d="M4 12v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5v-4"></path></svg>' },
     { id: "inventory", label: "Запасы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8l8-4 8 4-8 4z"></path><path d="M4 8v8l8 4 8-4V8"></path><path d="M12 12v8"></path><path d="M8 6l8 4"></path></svg>' },
+    { id: "documentConstructor", label: "Конструктор документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><path d="M4 7h2"></path><path d="M4 11h2"></path><path d="M4 15h2"></path></svg>' },
     { id: "settings", label: "Справочники", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 17h2"></path><path d="M10 17h10"></path><circle cx="8" cy="17" r="2"></circle></svg>' },
     { id: "admin", label: "Админка", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 4.6-2.8 7.9-7 10-4.2-2.1-7-5.4-7-10V6z"></path><circle cx="12" cy="12" r="2.4"></circle><path d="M12 8.2v1.2"></path><path d="M12 14.6v1.2"></path><path d="M15.8 12h-1.2"></path><path d="M9.4 12H8.2"></path><path d="M14.7 9.3l-.9.9"></path><path d="M10.2 13.8l-.9.9"></path><path d="M14.7 14.7l-.9-.9"></path><path d="M10.2 10.2l-.9-.9"></path></svg>' }
   ];
@@ -607,6 +850,21 @@ MAX - https://bizvmax.ru/zifra_plus
         field("lastLogin", "Последний вход")
       ],
       table: ["name", "email", "role", "status", "lastLogin"]
+    },
+    documentTemplates: {
+      title: "Конструктор документов",
+      subtitle: "Шаблоны Word",
+      collection: "documentTemplates",
+      accent: "teal",
+      fields: [
+        field("title", "Документ", "text", true),
+        field("sourceLabel", "Источник"),
+        field("sourceValue", "Ссылка / файл"),
+        field("fileNameTemplate", "Имя файла"),
+        field("fieldsCount", "Поля", "number"),
+        field("updatedAt", "Обновлен", "date")
+      ],
+      table: ["title", "sourceLabel", "sourceValue", "fileNameTemplate", "fieldsCount", "updatedAt"]
     }
   };
 
@@ -882,7 +1140,7 @@ MAX - https://bizvmax.ru/zifra_plus
           fields: [
             field("finalGrade", "Оценка ИА", "select"),
             field("finalWorkTopic", "Тема ИАР", "textarea"),
-            field("finalWorkNotes", "Замечания по итоговой работе", "textarea"),
+            field("finalWorkNotes", "Замечания по ИАР", "textarea"),
             field("chairman", "Председатель"),
             field("commissionMember1", "Член комиссии 1"),
             field("commissionMember2", "Член комиссии 2"),
@@ -901,6 +1159,14 @@ MAX - https://bizvmax.ru/zifra_plus
             field("qualification", "Квалификация"),
             field("postalTrack", "Трек-код")
           ]
+        },
+        {
+          title: "Отзыв",
+          reviewPanel: true,
+          fields: [
+            field("review", "Отзыв", "textarea"),
+            field("reviewPublished", "Отзыв размещен на сайте", "checkbox")
+          ]
         }
       ]
     },
@@ -913,7 +1179,7 @@ MAX - https://bizvmax.ru/zifra_plus
           fields: [
             field("review", "Текст отзыва", "textarea"),
             field("reviewDate", "Дата отзыва", "date"),
-            field("reviewPublished", "Отзыв размещен"),
+            field("reviewPublished", "Отзыв размещен на сайте", "checkbox"),
             field("reviewLink", "Ссылка на отзыв"),
             field("reviewPermission", "Согласие на публикацию"),
             field("reviewNotes", "Примечания", "textarea")
@@ -1006,6 +1272,13 @@ MAX - https://bizvmax.ru/zifra_plus
     selectedDictionary: "",
     dictionaryAddFocus: "",
     communicationTemplateFieldSort: "asc",
+    documentTemplateSearch: "",
+    documentTemplateSort: { key: "title", dir: "asc" },
+    documentTemplateLinkDialog: false,
+    activeDocumentTemplateId: defaultDocumentTemplateId,
+    documentTemplateDialogId: "",
+    activeContractTemplateFieldId: "",
+    pendingContractTemplateFieldFocus: "",
     financeChart: { revenue: true, direct: true, general: true },
     modal: null,
     data: loadState()
@@ -1015,6 +1288,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let lastDeletedControlState = null;
   let draggedStudentTabId = "";
   let lastStudentTabDragEndedAt = 0;
+  let documentTemplateAutoInspectionStarted = false;
   const communicationTemplateEditorHistories = new WeakMap();
 
   const transliterationPairs = [
@@ -1105,6 +1379,15 @@ MAX - https://bizvmax.ru/zifra_plus
       data.dictionaries.communicationTemplateCustomFields
     );
     data.dictionaries.dataFormulas = normalizeDataFormulaTemplates(data.dictionaries.dataFormulas);
+    const legacyContractTemplateFields = data.dictionaries.contractTemplateFields;
+    const legacyContractTemplateSettings = data.dictionaries.contractTemplateSettings;
+    data.dictionaries.contractTemplateFields = normalizeContractTemplateFields(data.dictionaries.contractTemplateFields);
+    data.dictionaries.contractTemplateSettings = normalizeContractTemplateSettings(data.dictionaries.contractTemplateSettings);
+    data.dictionaries.documentTemplates = normalizeDocumentTemplates(
+      data.dictionaries.documentTemplates,
+      legacyContractTemplateSettings,
+      legacyContractTemplateFields
+    );
     data.dictionaries.sdoSettings = normalizeSdoSettings(data.dictionaries.sdoSettings, legacyMoodlePortalUrl);
     data.dictionaries.educationRegistrationTypeCodes = normalizeEducationRegistrationTypeCodes(
       data.dictionaries.educationRegistrationTypeCodes
@@ -1304,6 +1587,209 @@ MAX - https://bizvmax.ru/zifra_plus
         template: String(savedFormula?.template ?? formula.template)
       };
     });
+  }
+  function normalizeContractTemplateSettings(values) {
+    const saved = Array.isArray(values) ? values : [];
+    return contractTemplateSettingDefaults.map((setting) => {
+      const savedSetting = saved.find((item) => item?.key === setting.key);
+      return {
+        ...setting,
+        value: String(savedSetting?.value ?? setting.value)
+      };
+    });
+  }
+
+  function createDocumentTemplateFromLegacy(settingsValues, fieldsValues) {
+    const documentTemplate = createDefaultDocumentTemplate();
+    const settings = normalizeContractTemplateSettings(settingsValues);
+    documentTemplate.templateUrl = settings.find((item) => item.key === "templateUrl")?.value || documentTemplate.templateUrl;
+    documentTemplate.fileNameTemplate = settings.find((item) => item.key === "fileNameTemplate")?.value || documentTemplate.fileNameTemplate;
+    documentTemplate.useCustomDocumentProperties = settings.find((item) => item.key === "useCustomDocumentProperties")?.value || documentTemplate.useCustomDocumentProperties;
+    documentTemplate.fields = normalizeContractTemplateFields(fieldsValues);
+    documentTemplate.originalFields = normalizeContractTemplateFields(fieldsValues);
+    return documentTemplate;
+  }
+
+  function normalizeDocumentTemplates(values, legacySettings = null, legacyFields = null) {
+    const saved = Array.isArray(values) ? values : [];
+    const normalized = saved
+      .map((item, index) => normalizeDocumentTemplate(item, index))
+      .filter((item) => item.title || item.templateUrl || item.templatePath || item.fields.length);
+    if (!normalized.length) normalized.push(createDocumentTemplateFromLegacy(legacySettings, legacyFields));
+    getDefaultDocumentTemplates().forEach((defaultTemplate) => {
+      const existing = normalized.find((item) => item.id === defaultTemplate.id);
+      if (existing) {
+        if (defaultTemplate.documentKind === "education") {
+          if (!existing.templateUrl && defaultTemplate.templateUrl) {
+            existing.templateUrl = defaultTemplate.templateUrl;
+            existing.source = "link";
+          }
+          existing.templatePath = existing.templatePath || defaultTemplate.templatePath;
+          existing.fileName = existing.fileName || defaultTemplate.fileName;
+          existing.documentKind = existing.documentKind || defaultTemplate.documentKind;
+          if (!existing.programTypes?.length) existing.programTypes = [...defaultTemplate.programTypes];
+        }
+        return;
+      }
+      normalized.push(normalizeDocumentTemplate(defaultTemplate, normalized.length));
+    });
+    return normalized;
+  }
+
+  function normalizeDocumentTemplate(item, index = 0) {
+    const fallback = index === 0 ? createDefaultDocumentTemplate() : {
+      id: `document-template-${Date.now().toString(36)}-${index}`,
+      title: `Документ ${index + 1}`,
+      templateUrl: "",
+      templatePath: "",
+      fileNameTemplate: contractTemplateSettingDefaults.find((setting) => setting.key === "fileNameTemplate")?.value || "документ_#ФИО_обуч#",
+      useCustomDocumentProperties: "1",
+      fields: [],
+      originalFields: [],
+      source: "link",
+      createdAt: new Date().toISOString()
+    };
+    const fieldsMode = String(item?.fieldsMode || fallback.fieldsMode || "").trim();
+    const fields = Array.isArray(item?.fields)
+      ? item.fields
+      : (Array.isArray(item?.contractTemplateFields) ? item.contractTemplateFields : []);
+    const originalFields = Array.isArray(item?.originalFields) && item.originalFields.length
+      ? item.originalFields
+      : (fields.length ? fields : (isDocumentTemplateMarkerFieldMode(fieldsMode) ? [] : fallback.originalFields || fallback.fields));
+    const normalizedFields = normalizeDocumentTemplateFieldList(
+      { fieldsMode },
+      fields.length || isDocumentTemplateMarkerFieldMode(fieldsMode) ? fields : fallback.fields
+    );
+    return {
+      id: String(item?.id || fallback.id),
+      title: String(item?.title || item?.name || item?.label || fallback.title).trim(),
+      templateUrl: String(item?.templateUrl || "").trim(),
+      templatePath: String(item?.templatePath || "").trim(),
+      fileNameTemplate: String(item?.fileNameTemplate || fallback.fileNameTemplate).trim(),
+      useCustomDocumentProperties: isChecked(item?.useCustomDocumentProperties ?? fallback.useCustomDocumentProperties) ? "1" : "0",
+      fields: normalizedFields,
+      originalFields: normalizeDocumentTemplateFieldList({ fieldsMode }, originalFields),
+      fieldsMode,
+      source: String(item?.source || (item?.templatePath ? "file" : "link")),
+      fileName: String(item?.fileName || "").trim(),
+      documentKind: String(item?.documentKind || fallback.documentKind || "").trim(),
+      programTypes: Array.isArray(item?.programTypes)
+        ? item.programTypes.map((value) => normalizeEducationProgramType(value)).filter(Boolean)
+        : (Array.isArray(fallback.programTypes) ? fallback.programTypes.map((value) => normalizeEducationProgramType(value)).filter(Boolean) : []),
+      createdAt: String(item?.createdAt || fallback.createdAt),
+      lastInspectedSignature: String(item?.lastInspectedSignature || ""),
+      updatedAt: String(item?.updatedAt || "")
+    };
+  }
+
+  function getContractTemplateSettingValue(key) {
+    return normalizeContractTemplateSettings(state.data.dictionaries.contractTemplateSettings)
+      .find((setting) => setting.key === key)?.value || "";
+  }
+
+  function normalizeContractTemplateFields(values) {
+    const saved = Array.isArray(values) ? values : [];
+    const byName = new Map();
+    saved.forEach((item, index) => {
+      const normalized = normalizeContractTemplateField(item, index);
+      if (normalized.name) byName.set(normalized.name, normalized);
+    });
+    const result = contractTemplateFieldDefaults.map((defaultField, index) => ({
+      ...defaultField,
+      ...(byName.get(defaultField.name) || {}),
+      id: byName.get(defaultField.name)?.id || defaultField.id || `contract-field-${index + 1}`,
+      custom: false
+    }));
+    const defaultNames = new Set(contractTemplateFieldDefaults.map((field) => field.name));
+    saved.forEach((item, index) => {
+      const normalized = normalizeContractTemplateField(item, index);
+      if (!normalized.name || defaultNames.has(normalized.name)) return;
+      if (result.some((field) => field.name === normalized.name)) return;
+      result.push({ ...normalized, custom: true });
+    });
+    return result.sort((a, b) => Number(a.position || 0) - Number(b.position || 0) || a.name.localeCompare(b.name, "ru"));
+  }
+
+  function normalizeContractTemplateDocumentFields(values) {
+    const saved = Array.isArray(values) ? values : [];
+    const byName = new Map();
+    saved.forEach((item, index) => {
+      const normalized = normalizeContractTemplateField(item, index);
+      if (normalized.name) byName.set(normalized.name, normalized);
+    });
+    return [...byName.values()]
+      .sort((a, b) => Number(a.position || 0) - Number(b.position || 0) || a.name.localeCompare(b.name, "ru"))
+      .map((field, index) => ({ ...field, position: index + 1 }));
+  }
+
+  function isDocumentTemplateMarkerFieldMode(itemOrMode) {
+    const mode = typeof itemOrMode === "string" ? itemOrMode : itemOrMode?.fieldsMode;
+    return String(mode || "").trim() === "document-markers";
+  }
+
+  function normalizeDocumentTemplateFieldList(documentTemplate, values = documentTemplate?.fields) {
+    return isDocumentTemplateMarkerFieldMode(documentTemplate)
+      ? normalizeContractTemplateDocumentFields(values)
+      : normalizeContractTemplateFields(values);
+  }
+
+  function normalizeContractTemplateField(item, index = 0) {
+    const name = String(item?.name || item?.label || "").replace(/^#+|#+$/g, "").trim();
+    const position = Number.parseInt(item?.position, 10);
+    const defaultField = contractTemplateFieldDefaults.find((field) => field.name === name);
+    return {
+      id: String(item?.id || defaultField?.id || `contract-custom-field-${Date.now().toString(36)}-${index}`),
+      position: Number.isFinite(position) && position > 0 ? position : (defaultField?.position || index + 1),
+      name,
+      formula: String(item?.formula ?? defaultField?.formula ?? ""),
+      hideEmpty: Boolean(item?.hideEmpty || item?.hideIfEmpty || item?.СкрытьПустые),
+      custom: Boolean(item?.custom && !defaultField)
+    };
+  }
+
+  function getDocumentTemplates() {
+    return normalizeDocumentTemplates(
+      state.data.dictionaries.documentTemplates,
+      state.data.dictionaries.contractTemplateSettings,
+      state.data.dictionaries.contractTemplateFields
+    );
+  }
+
+  function getActiveDocumentTemplate(documents = getDocumentTemplates()) {
+    const active = documents.find((item) => item.id === state.activeDocumentTemplateId) || documents[0] || createDefaultDocumentTemplate();
+    if (active.id && state.activeDocumentTemplateId !== active.id) state.activeDocumentTemplateId = active.id;
+    return active;
+  }
+
+  function getPrimaryDocumentTemplate() {
+    return normalizeDocumentTemplate(getDocumentTemplates()[0] || createDefaultDocumentTemplate(), 0);
+  }
+
+  function getActiveDocumentTemplateFields() {
+    return getActiveDocumentTemplate().fields;
+  }
+
+  function getContractTemplateSourceTokens(fields = getActiveDocumentTemplateFields()) {
+    const sourceTokens = contractTemplateSourceFieldNames.map((name) => ({ token: `[${name}]`, label: name, type: "source" }));
+    const fieldTokens = fields.map((field) => ({ token: `#${field.name}#`, label: field.name, type: "field" }));
+    return [...sourceTokens, ...fieldTokens];
+  }
+
+  function getSortedContractDocumentTokens(fields) {
+    return normalizeContractTemplateDocumentFields(fields)
+      .map((field) => ({
+        token: `#${field.name}#`,
+        label: field.name,
+        type: "document",
+        fieldId: field.id
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true }));
+  }
+
+  function getSortedContractSourceTokens() {
+    return contractTemplateSourceFieldNames
+      .map((name) => ({ token: `[${name}]`, label: name, type: "source" }))
+      .sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true }));
   }
 
   function normalizeCommunicationTemplates(values) {
@@ -1506,7 +1992,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function valueForDisplay(key, value) {
     if (value === undefined || value === null || value === "") return "—";
     if (["amount", "price", "oldPrice", "paid", "balance", "contractAmount", "paidAmount"].includes(key) && !Number.isNaN(Number(value))) return money(value);
-    if (key.toLowerCase().includes("date") || key === "paid") return dateRu(value);
+    if (key.toLowerCase().includes("date") || key.endsWith("At") || key === "paid") return dateRu(value);
     return String(value);
   }
 
@@ -1550,13 +2036,28 @@ MAX - https://bizvmax.ru/zifra_plus
         </section>
       </main>
       ${state.modal ? renderModal() : ""}
+      ${state.documentTemplateDialogId ? renderDocumentTemplateDialog() : ""}
     `;
     bindEvents();
     restoreDictionaryAddFocus();
+    focusPendingContractTemplateField();
+  }
+
+  function focusPendingContractTemplateField() {
+    const fieldId = state.pendingContractTemplateFieldFocus;
+    if (!fieldId) return;
+    state.pendingContractTemplateFieldFocus = "";
+    window.setTimeout(() => {
+      const button = document.querySelector(`.contract-template-document-fields-panel [data-action='select-contract-document-token'][data-contract-field-id="${CSS.escape(fieldId)}"]`);
+      if (!button) return;
+      button.focus({ preventScroll: true });
+      button.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
   }
 
   function renderView() {
     if (state.view === "dashboard") return renderDashboard();
+    if (state.view === "documentConstructor") return renderDocumentConstructor();
     if (state.view === "settings") return renderSettings();
     if (state.view === "admin") return renderAdmin();
     const config = configs[state.view];
@@ -1773,12 +2274,19 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function getVisibleRows(config) {
-    const query = state.search.trim().toLowerCase();
-    const rows = state.data.collections[config.collection] || [];
+  function getRowsForConfig(config, rowsOverride = null) {
+    if (Array.isArray(rowsOverride)) return rowsOverride;
+    if (config?.collection === "documentTemplates") return getDocumentTemplateRows();
+    return state.data.collections[config.collection] || [];
+  }
+
+  function getVisibleRows(config, rowsOverride = null) {
+    const isDocumentTemplateTable = config.collection === "documentTemplates";
+    const query = (isDocumentTemplateTable ? state.documentTemplateSearch : state.search).trim().toLowerCase();
+    const rows = getRowsForConfig(config, rowsOverride);
     let filtered = rows.filter((row) => {
       const matchQuery = !query || Object.values(row).some((value) => String(value || "").toLowerCase().includes(query));
-      const matchStatus = state.statusFilter === "Все" || row.status === state.statusFilter || row.type === state.statusFilter || row.workType === state.statusFilter || row.itemType === state.statusFilter;
+      const matchStatus = isDocumentTemplateTable || state.statusFilter === "Все" || row.status === state.statusFilter || row.type === state.statusFilter || row.workType === state.statusFilter || row.itemType === state.statusFilter;
       return matchQuery && matchStatus;
     });
     if (state.sort.key) {
@@ -1789,7 +2297,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getFilterOptions(config) {
-    const rows = state.data.collections[config.collection] || [];
+    const rows = getRowsForConfig(config);
     const keys = ["status", "type", "workType", "itemType"];
     const key = keys.find((item) => rows.some((row) => row[item]));
     if (!key) return [];
@@ -2055,7 +2563,10 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getRowsByIds(collection, ids) {
     const set = new Set(ids);
-    return (state.data.collections[collection] || []).filter((row) => set.has(row.id));
+    const rows = collection === "documentTemplates"
+      ? getDocumentTemplateRows()
+      : (state.data.collections[collection] || []);
+    return rows.filter((row) => set.has(row.id));
   }
 
   function toggleRowSelection(configId, id, checked) {
@@ -2078,13 +2589,42 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
+  function renderDocumentConstructor() {
+    const documents = getDocumentTemplates();
+    const activeDocument = getActiveDocumentTemplate(documents);
+    const fields = activeDocument.fields;
+    const customCount = fields.filter((field) => field.custom).length;
+    return `
+      <section class="panel document-constructor-panel">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Шаблоны и формулы</p>
+            <h2 class="document-constructor-title">
+              <span>Конструктор документов</span>
+              <span class="document-constructor-active-title" title="${escapeAttr(activeDocument.title)}">- ${escapeHtml(activeDocument.title)}</span>
+            </h2>
+          </div>
+          <div class="contract-template-summary">
+            <span>${documents.length} документов</span>
+            <span>${fields.length} полей</span>
+            <span>${customCount} пользовательских</span>
+          </div>
+        </div>
+        ${renderDocumentTemplatesTable(documents, activeDocument.id)}
+      </section>
+    `;
+  }
+
   function renderSettings() {
     const dictionaries = state.data.dictionaries;
     const dictionaryItems = Object.keys(dictionaries)
       .filter((key) => ![
         "communicationTemplateDescriptions",
         "communicationTemplateFieldOverrides",
-        "communicationTemplateCustomFields"
+        "communicationTemplateCustomFields",
+        "contractTemplateFields",
+        "contractTemplateSettings",
+        "documentTemplates"
       ].includes(key))
       .map((key) => ({ key, title: dictionaryTitle(key), values: dictionaries[key] || [] }))
       .sort((a, b) => a.title.localeCompare(b.title, "ru"));
@@ -2094,7 +2634,7 @@ MAX - https://bizvmax.ru/zifra_plus
       item.title.toLowerCase().includes(query) ||
       item.values.some((value) => (
         typeof value === "object"
-          ? `${value?.label || ""} ${value?.template || ""} ${value?.value || ""} ${value?.programType || ""} ${value?.grade || ""} ${value?.code || ""}`.toLowerCase().includes(query)
+          ? `${value?.label || ""} ${value?.name || ""} ${value?.formula || ""} ${value?.template || ""} ${value?.value || ""} ${value?.programType || ""} ${value?.grade || ""} ${value?.code || ""}`.toLowerCase().includes(query)
           : String(value || "").toLowerCase().includes(query)
       ))
     ));
@@ -2416,6 +2956,428 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+
+  function getDocumentTemplateSourceLabel(item) {
+    if (item.templateUrl) return "Ссылка";
+    if (item.templatePath) return "Файл";
+    return "Не задан";
+  }
+
+  function getDocumentTemplateSourceValue(item) {
+    return item.templateUrl || item.fileName || item.templatePath || "";
+  }
+
+  function getDocumentTemplateOpenUrl(item) {
+    const templateUrl = String(item?.templateUrl || "").trim();
+    if (templateUrl) return templateUrl;
+    const templatePath = String(item?.templatePath || "").replace(/^\/+/, "").trim();
+    return templatePath ? photoApiUrl(`/${templatePath}`) : "";
+  }
+
+  function getDocumentTemplateRows(documents = getDocumentTemplates()) {
+    return documents.map((item) => ({
+      ...item,
+      sourceLabel: getDocumentTemplateSourceLabel(item),
+      sourceValue: getDocumentTemplateSourceValue(item) || "—",
+      fieldsCount: item.fields.length
+    }));
+  }
+
+  function getVisibleDocumentTemplateRows(documents = getDocumentTemplates()) {
+    return getVisibleRows(configs.documentTemplates, getDocumentTemplateRows(documents));
+  }
+
+  function renderDocumentTemplateToolbarIcon(type) {
+    const icons = {
+      link: `<svg class="document-template-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"></path><path d="M14 11a5 5 0 0 0-7.1 0l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1"></path></svg>`,
+      upload: `<svg class="document-template-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M12 17V10"></path><path d="m9 13 3-3 3 3"></path></svg>`
+    };
+    return icons[type] || "";
+  }
+
+  function renderDocumentTemplateLinkDialog() {
+    if (!state.documentTemplateLinkDialog) return "";
+    return `
+      <div class="modal-backdrop document-link-dialog-backdrop" data-action="close-document-template-link-dialog">
+        <section class="modal document-link-dialog" role="dialog" aria-modal="true" aria-label="Добавить документ по ссылке">
+          <header class="modal-head">
+            <div>
+              <p class="eyebrow">Конструктор документов</p>
+              <h2>Добавить по ссылке</h2>
+            </div>
+            <button class="icon-button" data-action="close-document-template-link-dialog" type="button" title="Закрыть">×</button>
+          </header>
+          <form class="document-link-form" data-action="submit-document-template-link">
+            <label>
+              <span>Ссылка на файл Word</span>
+              <input name="newDocumentUrl" type="url" placeholder="Яндекс.Диск, OneDrive, Google Drive или прямая ссылка" autocomplete="off" required>
+            </label>
+            <footer class="modal-actions">
+              <button class="ghost-button" data-action="close-document-template-link-dialog" type="button">Отмена</button>
+              <button class="primary-button" type="submit">Добавить</button>
+            </footer>
+          </form>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderDocumentTemplatesTable(documents, activeDocumentId) {
+    const visibleDocuments = getVisibleDocumentTemplateRows(documents);
+    return `
+      <section class="document-template-registry">
+        <div class="document-template-toolbar">
+          <label class="search-box document-template-search">
+            <span>⌕</span>
+            <input data-action="document-template-search" value="${escapeAttr(state.documentTemplateSearch)}" placeholder="Поиск документа" autocomplete="off">
+          </label>
+          <div class="document-template-add">
+            <button class="ghost-button document-template-toolbar-button" data-action="open-document-template-link-dialog" type="button">
+              ${renderDocumentTemplateToolbarIcon("link")}
+              <span>Добавить по ссылке</span>
+            </button>
+            <input id="documentTemplateUploadInput" data-document-template-upload-input type="file" accept="${escapeAttr(wordTemplateAccept)},application/msword,application/rtf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-word.document.macroEnabled.12,application/vnd.openxmlformats-officedocument.wordprocessingml.template,application/vnd.ms-word.template.macroEnabled.12" hidden>
+            <button class="ghost-button document-template-toolbar-button" data-action="upload-document-template-trigger" type="button">
+              ${renderDocumentTemplateToolbarIcon("upload")}
+              <span>Загрузить файл</span>
+            </button>
+          </div>
+        </div>
+        ${renderBulkToolbar(configs.documentTemplates, visibleDocuments, "documentTemplates")}
+        ${renderTable(configs.documentTemplates, visibleDocuments, "documentTemplates")}
+        ${renderDocumentTemplateLinkDialog()}
+      </section>
+    `;
+  }
+
+  function renderDocumentTemplateActionIcon(type) {
+    const icons = {
+      add: `<svg class="document-template-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14"></path><path d="M5 12h14"></path><path d="M4 4h16v16H4z"></path></svg>`,
+      delete: `<svg class="document-template-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>`,
+      refresh: `<svg class="document-template-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 12a8 8 0 0 1-14 5.3"></path><path d="M4 12a8 8 0 0 1 14-5.3"></path><path d="M18 3v4h-4"></path><path d="M6 21v-4h4"></path></svg>`,
+      restore: `<svg class="document-template-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7v6h6"></path><path d="M5 13a7 7 0 1 0 2-7"></path><path d="M5 7l4 4"></path></svg>`
+    };
+    return icons[type] || "";
+  }
+
+  function renderDocumentTemplateDialog() {
+    const documents = getDocumentTemplates();
+    const activeDocument = documents.find((item) => item.id === state.documentTemplateDialogId)
+      || getActiveDocumentTemplate(documents);
+    const fields = activeDocument.fields;
+    const activeField = getActiveContractTemplateField(fields);
+    const activeIndex = Math.max(0, fields.findIndex((field) => field.id === activeField?.id));
+    state.activeDocumentTemplateId = activeDocument.id;
+    return `
+      <div class="modal-backdrop document-template-dialog-backdrop" data-action="close-document-template-settings">
+        <section class="modal document-template-settings-modal" role="dialog" aria-modal="true" aria-label="Настройки документа">
+          <header class="modal-head document-template-settings-head">
+            <div>
+              <p class="eyebrow">Конструктор документов</p>
+              <h2>${escapeHtml(activeDocument.title || "Настройки документа")}</h2>
+            </div>
+            <div class="modal-head-actions document-template-head-actions">
+              <div class="document-template-primary-actions">
+                <button class="primary-button" form="documentTemplateSettingsForm" type="submit">Сохранить</button>
+                <button class="ghost-button" data-action="close-document-template-settings" type="button">Закрыть</button>
+              </div>
+              <div class="document-template-tool-actions">
+                <button class="ghost-button" data-action="add-contract-template-field" type="button" title="Добавить поле">
+                  ${renderDocumentTemplateActionIcon("add")}
+                  <span>Поле</span>
+                </button>
+                <button class="ghost-button danger-text-button" data-action="remove-contract-template-field" data-index="${activeIndex}" type="button" title="Удалить поле" ${activeField?.custom ? "" : "disabled"}>
+                  ${renderDocumentTemplateActionIcon("delete")}
+                  <span>Удалить поле</span>
+                </button>
+                <button class="ghost-button" data-action="refresh-document-template-fields" type="button" title="Обновить поля&#10;Поля подгружаются из текста документа из блоков вида #...#&#10;Формулы подгружаются из свойств документа при наличии, если они сделаны через программу Ассистент">
+                  ${renderDocumentTemplateActionIcon("refresh")}
+                  <span>Обновить поля</span>
+                </button>
+              </div>
+            </div>
+          </header>
+          ${renderContractTemplateDictionary(activeDocument)}
+        </section>
+      </div>
+    `;
+  }
+
+  function renderContractTemplateDictionary(documentTemplate) {
+    const activeDocument = normalizeDocumentTemplate(documentTemplate, 0);
+    const fields = activeDocument.fields;
+    const documentTokens = getSortedContractDocumentTokens(fields);
+    const sourceTokens = getSortedContractSourceTokens();
+    const activeField = getActiveContractTemplateField(fields);
+    const activeIndex = Math.max(0, fields.findIndex((field) => field.id === activeField?.id));
+    return `
+      <form id="documentTemplateSettingsForm" class="contract-template-form document-template-settings-form" data-action="save-contract-template-fields" data-document-id="${escapeAttr(activeDocument.id)}">
+        <div class="contract-template-field-store" hidden>
+          ${fields.map((field, index) => renderContractTemplateHiddenFieldRow(field, index)).join("")}
+        </div>
+        <section class="contract-template-settings">
+          <div class="contract-template-settings-head">
+            <strong>Настройки документа</strong>
+            <div class="document-template-source-actions">
+              <button class="ghost-button document-template-source-button" data-action="open-document-template-source" type="button" ${activeDocument.templateUrl || activeDocument.templatePath ? "" : "disabled"}>
+                ${renderExternalLinkIcon()}
+                <span>Открыть</span>
+              </button>
+              <button class="ghost-button document-template-source-button" data-action="replace-document-template-link" type="button">
+                ${renderDocumentTemplateToolbarIcon("link")}
+                <span>Заменить ссылку</span>
+              </button>
+              <button class="ghost-button document-template-source-button" data-action="replace-document-template-file-trigger" type="button">
+                ${renderDocumentTemplateToolbarIcon("upload")}
+                <span>Заменить файл</span>
+              </button>
+              <input data-document-template-replace-input type="file" accept="${escapeAttr(wordTemplateAccept)},application/msword,application/rtf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-word.document.macroEnabled.12,application/vnd.openxmlformats-officedocument.wordprocessingml.template,application/vnd.ms-word.template.macroEnabled.12" hidden>
+            </div>
+            <span class="contract-template-source-meta" title="${escapeAttr(activeDocument.fileName || getDocumentTemplateSourceLabel(activeDocument))}">${escapeHtml(activeDocument.fileName || getDocumentTemplateSourceLabel(activeDocument))}</span>
+          </div>
+          <div class="document-template-title-row">
+            <label>
+              <span>Название</span>
+              <input name="documentTitle" value="${escapeAttr(activeDocument.title)}" autocomplete="off" required>
+            </label>
+            <label>
+              <span>Название итогового файла</span>
+              <input name="fileNameTemplate" value="${escapeAttr(activeDocument.fileNameTemplate)}" autocomplete="off" required>
+            </label>
+          </div>
+          <label class="contract-template-wide-field">
+            <span>Ссылка на шаблон</span>
+            <input name="templateUrl" type="url" value="${escapeAttr(activeDocument.templateUrl)}" placeholder="Яндекс.Диск, OneDrive или Google Drive" autocomplete="off">
+          </label>
+          <input name="useCustomDocumentProperties" type="hidden" value="1">
+          <input name="templatePath" type="hidden" value="${escapeAttr(activeDocument.templatePath)}">
+          <input name="documentSource" type="hidden" value="${escapeAttr(activeDocument.source)}">
+          <input name="documentFileName" type="hidden" value="${escapeAttr(activeDocument.fileName)}">
+        </section>
+        <div class="contract-template-workspace">
+          <aside class="contract-template-token-panel contract-template-document-fields-panel">
+            ${renderContractTemplateTokenGroup(
+              "Поля документа",
+              "Выберите поле, чтобы открыть его формулу. Перетащите в формулу для ссылки.",
+              documentTokens,
+              activeField?.id
+            )}
+          </aside>
+          <section class="contract-template-editor-panel">
+            ${activeField ? `
+              <header>
+                <div>
+                  <strong>${escapeHtml(activeField.name)}</strong>
+                  <span>Формула поля договора</span>
+                </div>
+                <small>Перетаскивайте поля в формулу. Правый щелчок по блоку открывает меню.</small>
+              </header>
+              <div class="contract-active-field-controls">
+                <label>
+                  <span>Исходное имя поля в документе</span>
+                  <input data-active-contract-name-input value="${escapeAttr(activeField.name)}" aria-label="Исходное имя поля в документе" required>
+                </label>
+              </div>
+              <div
+                class="communication-template-editor communication-template-formula-editor contract-template-formula-editor"
+                contenteditable="true"
+                data-contract-formula-editor
+                data-contract-field-id="${escapeAttr(activeField.id)}"
+                data-contract-field-index="${activeIndex}"
+                role="textbox"
+                aria-label="Формула поля ${escapeAttr(activeField.name)}"
+                aria-multiline="true"
+              >${renderContractFormulaEditorContent(activeField.formula, fields)}</div>
+            ` : `<div class="empty-state compact"><span>Нет полей договора</span></div>`}
+            <div class="contract-template-available-fields">
+              ${renderContractTemplateTokenGroup(
+                "Доступные поля",
+                "Перетащите поле в формулу.",
+                sourceTokens,
+                activeField?.id
+              )}
+            </div>
+          </section>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderContractTemplateTokenGroup(title, subtitle, tokens, activeFieldId = "") {
+    return `
+      <section class="contract-template-token-group">
+        <div class="contract-template-token-head">
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(subtitle)}</span>
+        </div>
+        <div class="contract-template-token-list">
+          ${tokens.length ? tokens.map((item) => `
+            <button
+              class="communication-template-token contract-template-token is-${escapeAttr(item.type)} ${item.fieldId && item.fieldId === activeFieldId ? "is-active" : ""}"
+              ${item.fieldId ? `data-action="select-contract-document-token" data-contract-field-id="${escapeAttr(item.fieldId)}"` : `data-action="insert-contract-template-token"`}
+              data-contract-token="${escapeAttr(item.token)}"
+              data-template-token="${escapeAttr(item.token)}"
+              data-token="${escapeAttr(item.token)}"
+              draggable="true"
+              type="button"
+              title="${escapeAttr(item.label)}"
+            >${escapeHtml(item.label)}</button>
+          `).join("") : `<span class="lookup-empty">Поля не найдены</span>`}
+        </div>
+      </section>
+    `;
+  }
+
+  function getActiveContractTemplateField(fields) {
+    const activeField = fields.find((field) => field.id === state.activeContractTemplateFieldId) || fields[0] || null;
+    if (activeField && state.activeContractTemplateFieldId !== activeField.id) {
+      state.activeContractTemplateFieldId = activeField.id;
+    }
+    return activeField;
+  }
+
+  function renderContractTemplateFieldRow(field, index, isActive = false) {
+    const formulaPreview = renderContractFormulaPreview(field.formula);
+    return `
+      <tr class="contract-template-field-row ${isActive ? "is-active" : ""}" data-contract-field-row data-contract-field-index="${index}" data-contract-field-id="${escapeAttr(field.id)}" data-contract-hide-empty="${field.hideEmpty ? "true" : "false"}" data-action="select-contract-template-field">
+        <td class="contract-template-drag-cell">
+          <button
+            class="contract-template-drag-handle"
+            data-contract-field-drag-handle
+            draggable="true"
+            type="button"
+            title="Изменить порядок"
+            aria-label="Изменить порядок"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 5h.01"></path><path d="M15 5h.01"></path><path d="M9 12h.01"></path><path d="M15 12h.01"></path><path d="M9 19h.01"></path><path d="M15 19h.01"></path></svg>
+          </button>
+        </td>
+        <td>
+          <input name="contractPosition${index}" data-contract-position-input type="number" min="1" step="1" value="${escapeAttr(field.position)}" inputmode="numeric" aria-label="Позиция">
+        </td>
+        <td>
+          <input name="contractName${index}" data-contract-name-input value="${escapeAttr(field.name)}" ${field.custom ? "" : 'class="is-standard-field-name" readonly'} aria-label="Имя поля" required>
+        </td>
+        <td>
+          <input name="contractFormula${index}" value="${escapeAttr(field.formula)}" data-contract-formula type="hidden">
+          <div class="contract-template-row-formula" data-contract-formula-preview>
+            ${formulaPreview || `<span class="contract-formula-empty">Формула не задана</span>`}
+          </div>
+        </td>
+        <td>
+          <button
+            class="attestation-delete-button"
+            data-action="remove-contract-template-field"
+            data-index="${index}"
+            type="button"
+            title="Удалить поле"
+            aria-label="Удалить поле"
+            ${field.custom ? "" : "disabled"}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+          </button>
+        </td>
+      </tr>
+    `;
+  }
+
+  function renderContractTemplateHiddenFieldRow(field, index) {
+    return `
+      <div data-contract-field-row data-contract-field-index="${index}" data-contract-field-id="${escapeAttr(field.id)}" data-contract-hide-empty="${field.hideEmpty ? "true" : "false"}">
+        <input name="contractPosition${index}" data-contract-position-input type="hidden" value="${escapeAttr(field.position)}">
+        <input name="contractName${index}" data-contract-name-input type="hidden" value="${escapeAttr(field.name)}">
+        <input name="contractFormula${index}" value="${escapeAttr(field.formula)}" data-contract-formula type="hidden">
+        <input name="contractCustom${index}" value="${field.custom ? "1" : "0"}" data-contract-custom type="hidden">
+      </div>
+    `;
+  }
+
+  function renderContractFormulaEditorContent(formula, fields = getActiveDocumentTemplateFields()) {
+    const documentFieldNames = new Set(fields.map((field) => field.name));
+    const sourceFieldNames = new Set(contractTemplateSourceFieldNames);
+    return String(formula || "")
+      .split(/(#[^#\r\n]+#|\[[^\]\r\n]+\])/g)
+      .map((part) => {
+        const documentMatch = /^#([^#]+)#$/.exec(part);
+        if (documentMatch && documentFieldNames.has(documentMatch[1])) {
+          return `<span class="communication-template-block contract-formula-block is-document" contenteditable="false" data-template-token="${escapeAttr(part)}" data-contract-document-field-name="${escapeAttr(documentMatch[1])}" data-contract-formula-token draggable="true" title="Нажмите правой кнопкой мыши для настройки поля">${escapeHtml(part)}</span>`;
+        }
+        const sourceMatch = /^\[([^\]]+)\]$/.exec(part);
+        if (sourceMatch && sourceFieldNames.has(sourceMatch[1])) {
+          return `<span class="communication-template-block contract-formula-block is-source" contenteditable="false" data-template-token="${escapeAttr(part)}" data-contract-source-field-name="${escapeAttr(sourceMatch[1])}" data-contract-formula-token draggable="true" title="Нажмите правой кнопкой мыши для действий с блоком">${escapeHtml(part)}</span>`;
+        }
+        return escapeHtml(part).replace(/\n/g, "<br>");
+      })
+      .join("");
+  }
+
+  function renderContractFormulaPreview(formula) {
+    return String(formula || "")
+      .split(/(#[^#\r\n]+#|\[[^\]\r\n]+\]|"[^"]*"|[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*(?=\()|[()&=;])/g)
+      .filter((part) => part !== "")
+      .map((part) => {
+        const escaped = escapeHtml(part).replace(/\n/g, "<br>");
+        if (/^#.+#$/.test(part)) return `<span class="contract-formula-token is-document">${escaped}</span>`;
+        if (/^\[.+\]$/.test(part)) return `<span class="contract-formula-token is-source">${escaped}</span>`;
+        if (/^".*"$/.test(part)) return `<span class="contract-formula-token is-string">${escaped}</span>`;
+        if (/^[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*$/.test(part)) return `<span class="contract-formula-token is-function">${escaped}</span>`;
+        if (/^[()&=;]$/.test(part)) return `<span class="contract-formula-operator">${escaped}</span>`;
+        return escaped;
+      })
+      .join("");
+  }
+
+  function getContractFormulaDocumentReferences(formula) {
+    const result = [];
+    const seen = new Set();
+    for (const match of String(formula || "").matchAll(/#([^#\r\n]+)#/g)) {
+      const name = String(match[1] || "").trim();
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      result.push(name);
+    }
+    return result;
+  }
+
+  function findContractTemplateFormulaCycle(fields) {
+    const normalizedFields = normalizeContractTemplateDocumentFields(fields);
+    const names = new Set(normalizedFields.map((field) => field.name));
+    const graph = new Map(normalizedFields.map((field) => [
+      field.name,
+      getContractFormulaDocumentReferences(field.formula).filter((name) => names.has(name))
+    ]));
+    const stateByName = new Map();
+    const path = [];
+    const visit = (name) => {
+      if (stateByName.get(name) === "visiting") {
+        const startIndex = path.indexOf(name);
+        return [...path.slice(Math.max(0, startIndex)), name];
+      }
+      if (stateByName.get(name) === "visited") return null;
+      stateByName.set(name, "visiting");
+      path.push(name);
+      for (const dependency of graph.get(name) || []) {
+        const cycle = visit(dependency);
+        if (cycle) return cycle;
+      }
+      path.pop();
+      stateByName.set(name, "visited");
+      return null;
+    };
+    for (const name of graph.keys()) {
+      const cycle = visit(name);
+      if (cycle) return cycle;
+    }
+    return null;
+  }
+
+  function validateContractTemplateFormulaGraph(fields) {
+    const cycle = findContractTemplateFormulaCycle(fields);
+    return cycle
+      ? `Обнаружена рекурсия в формулах документа: ${cycle.join(" → ")}. Уберите ссылку, чтобы формулы не зацикливались.`
+      : "";
+  }
+
   function renderDataFormulaEditorContent(template) {
     const availableTokens = new Set(dataFormulaTokenDefinitions.map((item) => item.token));
     return String(template || "")
@@ -2711,7 +3673,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (tab.id === "ordersSdo") return renderStudentOrdersSdoTab(record);
     return `
       ${tab.sections.filter((section) => !(tab.id === "main" && !section.fields.some((item) => item.key === "name"))).map((section) => `
-        <section class="form-section">
+        <section class="form-section ${section.reviewPanel ? "student-review-section" : ""}">
           <div class="form-section-head">
             <h3>${escapeHtml(section.title)}</h3>
             ${section.customerPassport ? `
@@ -2721,22 +3683,71 @@ MAX - https://bizvmax.ru/zifra_plus
               </button>
             ` : ""}
             ${section.educationDocument ? `
-              <button class="orders-sdo-icon-button is-magic education-document-autofill-button" data-action="auto-fill-education-document" type="button" title="Заполнить документ об образовании" aria-label="Заполнить документ об образовании">
-                ${renderOrdersSdoIcon("wand")}
-              </button>
+              <div class="education-document-actions">
+                <button class="ghost-button education-document-open-button" data-action="open-student-education-document" type="button" title="${escapeAttr(getEducationDocumentButtonTitle(record))}" aria-label="Документ об образовании">
+                  ${renderOrdersSdoIcon("documentText")}
+                  <span>Документ об образовании</span>
+                </button>
+                <button class="orders-sdo-icon-button is-magic education-document-autofill-button" data-action="auto-fill-education-document" type="button" title="Заполнить реквизиты документа об образовании" aria-label="Заполнить реквизиты документа об образовании">
+                  ${renderOrdersSdoIcon("wand")}
+                </button>
+              </div>
             ` : ""}
           </div>
           ${tab.id === "main" && section.fields.some((item) => item.key === "name")
             ? renderStudentMainIdentity(section, record)
             : section.messageGrid
               ? renderStudentCommunicationMessages(section, record)
+            : section.reviewPanel
+              ? renderStudentReviewPanel(record)
             : `<div class="student-form-grid">${section.fields.map((item) => renderStudentField(item, record)).join("")}</div>`}
         </section>
       `).join("")}
+      ${tab.id === "main" ? renderStudentMainActions(record) : ""}
       ${tab.id === "income" ? renderStudentFinancialResult(record) : ""}
       ${tab.payments ? renderPaymentRows(record) : ""}
       ${tab.expenses ? renderExpenseRows(record) : ""}
       ${tab.linkedExpenses ? renderLinkedExpenses(record) : ""}
+    `;
+  }
+
+
+  function renderStudentMainActions(record) {
+    const documentTemplate = getPrimaryDocumentTemplate();
+    const source = documentTemplate.templateUrl || documentTemplate.fileName || "";
+    const title = source
+      ? `Сформировать заявление и договор\n${source}`
+      : "Сформировать заявление и договор";
+    return `
+      <div class="student-main-actions">
+        <button class="primary-button student-contract-button" data-action="open-student-contract-document" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">
+          ${renderOrdersSdoIcon("document")}
+          <span>Договор</span>
+        </button>
+      </div>
+    `;
+  }
+  function renderStudentReviewPanel(record) {
+    const courseUrl = getProgramPromoUrl(findProgramByName(record.program));
+    const buttonTitle = courseUrl
+      ? `Открыть страницу курса\n${courseUrl}`
+      : "Открыть страницу курса";
+    return `
+      <div class="student-review-panel">
+        <label class="student-review-text">
+          <textarea name="review">${escapeHtml(record.review || "")}</textarea>
+        </label>
+        <div class="student-review-actions">
+          <button class="ghost-button student-course-page-button" data-action="open-student-course-page" type="button" title="${escapeAttr(buttonTitle)}" aria-label="${escapeAttr(buttonTitle)}">
+            ${renderExternalLinkIcon()}
+            <span>Открыть страницу курса</span>
+          </button>
+          <label class="student-review-published">
+            <input name="reviewPublished" type="checkbox" value="Да" ${isChecked(record.reviewPublished) ? "checked" : ""}>
+            <span>Отзыв размещен на сайте</span>
+          </label>
+        </div>
+      </div>
     `;
   }
 
@@ -3963,6 +4974,7 @@ MAX - https://bizvmax.ru/zifra_plus
       item.key === "manager" ? "manager-field" : "",
       item.key === "agent" ? "agent-field" : "",
       item.key === "finalGrade" ? "student-final-grade-field" : "",
+      ["finalWorkTopic", "finalWorkNotes"].includes(item.key) ? "student-final-work-field" : "",
       item.key === "discountDescription" ? "discount-description-label" : "",
       ["workPlace", "employmentCategory"].includes(item.key) ? "long-label-field" : ""
     ].filter(Boolean).join(" ");
@@ -5480,6 +6492,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
     document.querySelector("[data-action='open-student-messenger-url']")?.addEventListener("click", openStudentMessengerUrl);
     document.querySelector("[data-action='open-student-program-promo']")?.addEventListener("click", openStudentProgramPromo);
+    document.querySelector("[data-action='open-student-course-page']")?.addEventListener("click", openStudentCoursePage);
     document.querySelectorAll("[data-action='shift-orders-sdo-date']").forEach((button) => {
       button.addEventListener("click", (event) => {
         shiftOrdersSdoDate(button.dataset.field, button.dataset.direction, event.altKey);
@@ -5629,6 +6642,10 @@ MAX - https://bizvmax.ru/zifra_plus
 
     document.querySelectorAll("[data-action='edit']").forEach((button) => {
       button.addEventListener("click", () => {
+        if (button.dataset.config === "documentTemplates") {
+          selectDocumentTemplate(button.dataset.id);
+          return;
+        }
         if (button.dataset.config === "students") state.studentCardTab = "main";
         if (button.dataset.config === "students") state.openPaymentRows = [];
         if (button.dataset.config === "students") state.openExpenseRows = [];
@@ -5909,6 +6926,8 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     document.getElementById("recordForm")?.addEventListener("submit", saveRecord);
+    document.querySelector("[data-action='open-student-contract-document']")?.addEventListener("click", openStudentContractDocument);
+    document.querySelector("[data-action='open-student-education-document']")?.addEventListener("click", openStudentEducationDocument);
 
     document.querySelectorAll("[data-action='export-json']").forEach((button) => {
       button.addEventListener("click", exportJson);
@@ -5954,6 +6973,59 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("form[data-action='save-data-formulas']")?.addEventListener("submit", saveDataFormulas);
     document.querySelector("[data-action='reset-data-formulas']")?.addEventListener("click", resetDataFormulas);
     bindDataFormulaConstructor();
+    document.querySelector("form[data-action='save-contract-template-fields']")?.addEventListener("submit", saveContractTemplateFields);
+    document.querySelector("[data-action='document-template-search']")?.addEventListener("input", (event) => {
+      updateDocumentTemplateSearch(event.target.value, event.target.selectionStart);
+    });
+    document.querySelector("[data-action='open-document-template-link-dialog']")?.addEventListener("click", openDocumentTemplateLinkDialog);
+    document.querySelectorAll("[data-action='close-document-template-link-dialog']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (event.target === element || element.tagName === "BUTTON") {
+          event.preventDefault();
+          closeDocumentTemplateLinkDialog();
+        }
+      });
+    });
+    document.querySelector("[data-action='submit-document-template-link']")?.addEventListener("submit", addDocumentTemplateByLink);
+    document.querySelector("[data-action='upload-document-template-trigger']")?.addEventListener("click", () => {
+      document.querySelector("[data-document-template-upload-input]")?.click();
+    });
+    document.querySelector("[data-document-template-upload-input]")?.addEventListener("change", handleDocumentTemplateUpload);
+    document.querySelector("[data-action='open-document-template-source']")?.addEventListener("click", openActiveDocumentTemplateSource);
+    document.querySelector("[data-action='replace-document-template-link']")?.addEventListener("click", replaceActiveDocumentTemplateLink);
+    document.querySelector("[data-action='replace-document-template-file-trigger']")?.addEventListener("click", () => {
+      document.querySelector("[data-document-template-replace-input]")?.click();
+    });
+    document.querySelector("[data-document-template-replace-input]")?.addEventListener("change", handleDocumentTemplateReplaceFile);
+    document.querySelector("[data-action='refresh-document-template-fields']")?.addEventListener("click", (event) => {
+      refreshActiveDocumentTemplateFields(event.currentTarget);
+    });
+    document.querySelectorAll("[data-active-contract-name-input]").forEach((input) => {
+      input.addEventListener("input", syncActiveContractTemplateFieldControls);
+      input.addEventListener("change", syncActiveContractTemplateFieldControls);
+    });
+    document.querySelectorAll("[data-action='close-document-template-settings']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (event.target === element || element.tagName === "BUTTON") {
+          event.preventDefault();
+          closeDocumentTemplateSettings();
+        }
+      });
+    });
+    document.querySelector("[data-action='add-contract-template-field']")?.addEventListener("click", addContractTemplateField);
+    document.querySelectorAll("[data-action='remove-contract-template-field']").forEach((button) => {
+      button.addEventListener("click", () => removeContractTemplateField(button.dataset.index));
+    });
+    document.querySelectorAll("[data-action='insert-contract-template-token']").forEach((button) => {
+      button.addEventListener("click", () => insertContractTemplateToken(button.dataset.token || ""));
+    });
+    document.querySelectorAll("[data-action='select-contract-document-token']").forEach((button) => {
+      button.addEventListener("click", () => selectContractTemplateField(button.dataset.contractFieldId, { focusToken: true }));
+      button.addEventListener("keydown", (event) => {
+        handleContractTemplateFieldNavigation(event, button.dataset.contractFieldId);
+      });
+    });
+    bindContractTemplateConstructor();
     document.querySelector("form[data-action='save-sdo-settings']")?.addEventListener("submit", saveSdoSettings);
     document.querySelector("[data-action='reset-sdo-settings']")?.addEventListener("click", resetSdoSettings);
     document.querySelector("form[data-action='save-education-registration-type-codes']")?.addEventListener("submit", saveEducationRegistrationTypeCodes);
@@ -6781,6 +7853,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function deleteRecord(configId, id) {
+    if (configId === "documentTemplates") {
+      removeDocumentTemplate(id);
+      return;
+    }
     const config = configs[configId];
     const rows = state.data.collections[config.collection];
     const record = rows.find((row) => row.id === id);
@@ -6806,6 +7882,22 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!selected.length) return;
     if (!confirm(`Удалить выбранные записи: ${selected.length}?`)) return;
     const selectedSet = new Set(selected);
+    if (configId === "documentTemplates") {
+      const documents = getDocumentTemplates();
+      if (documents.length <= selected.length) {
+        alert("Нельзя удалить все документы конструктора. Оставьте хотя бы один шаблон.");
+        return;
+      }
+      const removed = documents.filter((item) => selectedSet.has(item.id));
+      const nextDocuments = documents.filter((item) => !selectedSet.has(item.id));
+      const nextActive = nextDocuments.find((item) => item.id === state.activeDocumentTemplateId) || nextDocuments[0];
+      commitDocumentTemplates(nextDocuments, nextActive);
+      state.selected[configId] = [];
+      addAudit("Массовое удаление", config.title, `${removed.length} документов`);
+      persist();
+      render();
+      return;
+    }
     if (configId === "students") {
       const selectedStudents = getRowsByIds(config.collection, selected);
       try {
@@ -6901,6 +7993,974 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!confirm("Восстановить исходные формулы генерации номеров?")) return;
     state.data.dictionaries.dataFormulas = normalizeDataFormulaTemplates([]);
     addAudit("Изменен справочник", dictionaryTitle("dataFormulas"), "Восстановлены исходные формулы");
+    persist();
+    render();
+  }
+  function collectContractTemplateForm(form = document.querySelector("form[data-action='save-contract-template-fields']")) {
+    if (!form) {
+      const documents = getDocumentTemplates();
+      const documentTemplate = getActiveDocumentTemplate(documents);
+      return {
+        documents,
+        document: documentTemplate,
+        settings: documentTemplateToLegacySettings(documentTemplate),
+        fields: documentTemplate.fields
+      };
+    }
+    form?.querySelectorAll("[data-contract-formula-editor]").forEach(syncContractFormulaEditor);
+    const documents = getDocumentTemplates();
+    const activeId = form?.dataset.documentId || state.activeDocumentTemplateId;
+    const activeIndex = Math.max(0, documents.findIndex((item) => item.id === activeId));
+    const currentDocument = documents[activeIndex] || getActiveDocumentTemplate(documents);
+    const rows = [...(form?.querySelectorAll("[data-contract-field-row]") || [])];
+    const fields = rows.map((row, index) => normalizeContractTemplateField({
+      id: row.dataset.contractFieldId,
+      position: row.querySelector("[data-contract-position-input]")?.value,
+      name: row.querySelector("[data-contract-name-input]")?.value,
+      formula: row.querySelector("[data-contract-formula]")?.value,
+      hideEmpty: row.dataset.contractHideEmpty === "true",
+      custom: !contractTemplateFieldDefaults.some((field) => field.name === String(row.querySelector("[data-contract-name-input]")?.value || "").trim())
+    }, index)).filter((field) => field.name);
+    const customPropertiesInput = form?.elements.useCustomDocumentProperties;
+    const useCustomDocumentProperties = customPropertiesInput
+      ? (customPropertiesInput.type === "checkbox" ? customPropertiesInput.checked : isChecked(customPropertiesInput.value))
+      : isChecked(currentDocument.useCustomDocumentProperties ?? "1");
+    const documentTemplate = normalizeDocumentTemplate({
+      ...currentDocument,
+      title: String(form?.elements.documentTitle?.value || currentDocument.title || "").trim(),
+      templateUrl: String(form?.elements.templateUrl?.value || "").trim(),
+      templatePath: String(form?.elements.templatePath?.value || currentDocument.templatePath || "").trim(),
+      fileNameTemplate: String(form?.elements.fileNameTemplate?.value || currentDocument.fileNameTemplate || "").trim(),
+      useCustomDocumentProperties: useCustomDocumentProperties ? "1" : "0",
+      source: String(form?.elements.documentSource?.value || currentDocument.source || ""),
+      fileName: String(form?.elements.documentFileName?.value || currentDocument.fileName || ""),
+      fields
+    }, activeIndex);
+    const nextDocuments = documents.map((item, index) => (
+      index === activeIndex ? documentTemplate : item
+    ));
+    const settings = documentTemplateToLegacySettings(documentTemplate);
+    return { documents: nextDocuments, document: documentTemplate, settings, fields };
+  }
+
+  function documentTemplateToLegacySettings(documentTemplate) {
+    return contractTemplateSettingDefaults.map((setting) => ({
+      ...setting,
+      value: setting.key === "templateUrl"
+        ? String(documentTemplate.templateUrl || "")
+        : setting.key === "fileNameTemplate"
+          ? String(documentTemplate.fileNameTemplate || "")
+          : setting.key === "useCustomDocumentProperties"
+            ? (isChecked(documentTemplate.useCustomDocumentProperties) ? "1" : "0")
+            : String(setting.value || "")
+    }));
+  }
+
+  function syncLegacyContractTemplateState(documentTemplate) {
+    const normalized = normalizeDocumentTemplate(documentTemplate, 0);
+    state.data.dictionaries.contractTemplateSettings = documentTemplateToLegacySettings(normalized);
+    state.data.dictionaries.contractTemplateFields = normalizeDocumentTemplateFieldList(normalized, normalized.fields);
+  }
+
+  function commitDocumentTemplates(documents, activeDocument = null) {
+    const normalized = normalizeDocumentTemplates(documents);
+    const nextActive = activeDocument
+      ? normalized.find((item) => item.id === activeDocument.id)
+      : normalized.find((item) => item.id === state.activeDocumentTemplateId);
+    const active = nextActive || normalized[0] || createDefaultDocumentTemplate();
+    state.activeDocumentTemplateId = active.id;
+    state.data.dictionaries.documentTemplates = normalized;
+    syncLegacyContractTemplateState(active);
+    return active;
+  }
+
+  function mergeDocumentTemplateFieldsFromInspection(inspection, baseFields = []) {
+    const markerNames = unique((inspection?.markers || []).map((marker) => (
+      String(marker || "").replace(/^#+|#+$/g, "").trim()
+    )).filter(Boolean));
+    const markerSet = new Set(markerNames);
+    const sourceFields = normalizeContractTemplateDocumentFields(baseFields)
+      .filter((field) => markerSet.has(field.name));
+    const fieldsByName = new Map(sourceFields.map((field) => [field.name, { ...field }]));
+    const propertiesByName = new Map();
+    (inspection?.properties || []).forEach((property) => {
+      const normalizedName = String(property?.name || "").replace(/^#+|#+$/g, "").trim();
+      if (normalizedName && markerSet.has(normalizedName)) propertiesByName.set(normalizedName, property);
+    });
+    const normalizeInspectedFormula = (name, formula = "") => {
+      if (!isGetSqlQueryFormula(formula)) return String(formula || "");
+      return String(name || "").replace(/^#+|#+$/g, "").trim() === "УчебныйПлан" ? "=[УчебныйПлан]" : "";
+    };
+    const pushInspectedField = (name, formula = "", forceFormula = false) => {
+      const normalizedName = String(name || "").replace(/^#+|#+$/g, "").trim();
+      if (!normalizedName || !markerSet.has(normalizedName)) return;
+      const existing = fieldsByName.get(normalizedName);
+      const defaultField = contractTemplateFieldDefaults.find((field) => field.name === normalizedName);
+      const inspectedFormula = normalizeInspectedFormula(normalizedName, formula);
+      if (existing) {
+        if (forceFormula) existing.formula = inspectedFormula;
+        fieldsByName.set(normalizedName, existing);
+        return;
+      }
+      fieldsByName.set(normalizedName, {
+        id: `contract-doc-field-${Date.now().toString(36)}-${fieldsByName.size}`,
+        position: fieldsByName.size + 1,
+        name: normalizedName,
+        formula: forceFormula ? inspectedFormula : String(defaultField?.formula || ""),
+        hideEmpty: false,
+        custom: !defaultField
+      });
+    };
+    markerNames.forEach((marker) => {
+      const property = propertiesByName.get(marker);
+      pushInspectedField(marker, property?.formula || "", Boolean(property?.formula));
+    });
+    return normalizeContractTemplateDocumentFields([...fieldsByName.values()]);
+  }
+
+  function saveContractTemplateFields(event) {
+    event.preventDefault();
+    const { documents, document, fields } = collectContractTemplateForm(event.currentTarget);
+    if (!document.title) {
+      alert("Укажите название документа.");
+      return;
+    }
+    if (!document.templateUrl.trim() && !document.templatePath.trim()) {
+      alert("Укажите ссылку на шаблон или загрузите файл Word.");
+      return;
+    }
+    const duplicate = fields.find((field, index) => fields.findIndex((item) => item.name === field.name) !== index);
+    if (duplicate) {
+      alert(`Имя поля документа повторяется: ${duplicate.name}`);
+      return;
+    }
+    const formulaGraphError = validateContractTemplateFormulaGraph(fields);
+    if (formulaGraphError) {
+      alert(formulaGraphError);
+      return;
+    }
+    commitDocumentTemplates(documents, document);
+    addAudit("Изменен конструктор документов", document.title, "Сохранены настройки, поля и формулы");
+    persist();
+    render();
+  }
+
+  function addContractTemplateField() {
+    const { documents, document, fields } = collectContractTemplateForm();
+    const nextPosition = Math.max(0, ...fields.map((field) => Number(field.position) || 0)) + 1;
+    const newField = {
+      id: `contract-custom-field-${Date.now().toString(36)}`,
+      position: nextPosition,
+      name: `Новое поле ${nextPosition}`,
+      formula: "",
+      hideEmpty: false,
+      custom: true
+    };
+    fields.push(newField);
+    state.activeContractTemplateFieldId = newField.id;
+    document.fields = normalizeDocumentTemplateFieldList(document, fields);
+    commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
+    render();
+  }
+
+  function removeContractTemplateField(index) {
+    const { documents, document, fields } = collectContractTemplateForm();
+    const target = fields[Number(index)];
+    if (!target || !target.custom) return;
+    if (!confirm(`Удалить поле документа «${target.name}»?`)) return;
+    if (state.activeContractTemplateFieldId === target.id) {
+      state.activeContractTemplateFieldId = fields[Number(index) + 1]?.id || fields[Number(index) - 1]?.id || "";
+    }
+    document.fields = normalizeDocumentTemplateFieldList(document, fields.filter((_, itemIndex) => itemIndex !== Number(index)));
+    commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
+    render();
+  }
+
+  function resetContractTemplateFields() {
+    if (!confirm("Восстановить исходные поля и формулы выбранного документа?")) return;
+    const { documents, document } = collectContractTemplateForm();
+    const originalFields = normalizeDocumentTemplateFieldList(document, document.originalFields?.length ? document.originalFields : []);
+    document.fields = originalFields;
+    state.activeContractTemplateFieldId = "";
+    commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
+    addAudit("Изменен конструктор документов", document.title, "Восстановлены исходные имена полей и формулы");
+    persist();
+    render();
+  }
+
+  function selectContractTemplateField(indexOrId, options = {}) {
+    const { documents, document, fields } = collectContractTemplateForm();
+    const target = fields.find((field, index) => String(field.id) === String(indexOrId) || String(index) === String(indexOrId));
+    if (!target) return;
+    state.activeContractTemplateFieldId = target.id;
+    if (options.focusToken) state.pendingContractTemplateFieldFocus = target.id;
+    document.fields = normalizeDocumentTemplateFieldList(document, fields);
+    commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
+    render();
+  }
+
+  function handleContractTemplateFieldNavigation(event, currentFieldId = "") {
+    if (!["ArrowUp", "ArrowDown"].includes(event.key)) return false;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+    const target = event.target;
+    if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return false;
+    const form = target?.closest?.("form[data-action='save-contract-template-fields']");
+    if (!form) return false;
+    const buttons = Array.from(form.querySelectorAll(".contract-template-document-fields-panel [data-action='select-contract-document-token']"));
+    const fieldIds = buttons.map((button) => button.dataset.contractFieldId).filter(Boolean);
+    if (!fieldIds.length) return false;
+    const activeId = currentFieldId || state.activeContractTemplateFieldId || fieldIds[0];
+    const activeIndex = Math.max(0, fieldIds.indexOf(activeId));
+    const nextIndex = clamp(activeIndex + (event.key === "ArrowDown" ? 1 : -1), 0, fieldIds.length - 1);
+    event.preventDefault();
+    if (fieldIds[nextIndex] && fieldIds[nextIndex] !== activeId) {
+      selectContractTemplateField(fieldIds[nextIndex], { focusToken: true });
+    }
+    return true;
+  }
+
+  function syncActiveContractTemplateFieldControls() {
+    const form = document.querySelector("form[data-action='save-contract-template-fields']");
+    const editor = form?.querySelector("[data-contract-formula-editor]");
+    const fieldId = editor?.dataset.contractFieldId || "";
+    const row = fieldId
+      ? form?.querySelector(`[data-contract-field-row][data-contract-field-id="${CSS.escape(fieldId)}"]`)
+      : null;
+    if (!row) return;
+    const nameValue = form.querySelector("[data-active-contract-name-input]")?.value;
+    const nameInput = row.querySelector("[data-contract-name-input]");
+    if (nameInput && nameValue !== undefined) {
+      nameInput.value = nameValue;
+      const title = form.querySelector(".contract-template-editor-panel header strong");
+      if (title) title.textContent = nameValue || "Новое поле";
+    }
+  }
+
+  function selectDocumentTemplate(id) {
+    const { documents, document } = collectContractTemplateForm();
+    commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
+    state.activeDocumentTemplateId = id;
+    state.documentTemplateDialogId = id;
+    state.activeContractTemplateFieldId = "";
+    render();
+  }
+
+  function closeDocumentTemplateSettings() {
+    state.documentTemplateDialogId = "";
+    state.activeContractTemplateFieldId = "";
+    render();
+  }
+
+  function sortDocumentTemplates(key) {
+    const { documents, document } = collectContractTemplateForm();
+    commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
+    state.documentTemplateSort = {
+      key,
+      dir: state.documentTemplateSort?.key === key && state.documentTemplateSort.dir === "asc" ? "desc" : "asc"
+    };
+    render();
+  }
+
+  function updateDocumentTemplateSearch(value, cursor = null) {
+    const { documents, document: activeDocument } = collectContractTemplateForm();
+    commitDocumentTemplates(documents.map((item) => item.id === activeDocument.id ? activeDocument : item), activeDocument);
+    state.documentTemplateSearch = value;
+    render();
+    const input = window.document.querySelector("[data-action='document-template-search']");
+    if (input) {
+      input.focus({ preventScroll: true });
+      if (cursor !== null) input.setSelectionRange(cursor, cursor);
+    }
+  }
+
+  function openDocumentTemplateLinkDialog() {
+    const { documents, document: activeDocument } = collectContractTemplateForm();
+    commitDocumentTemplates(documents.map((item) => item.id === activeDocument.id ? activeDocument : item), activeDocument);
+    state.documentTemplateLinkDialog = true;
+    render();
+    window.setTimeout(() => document.querySelector("[name='newDocumentUrl']")?.focus({ preventScroll: true }));
+  }
+
+  function closeDocumentTemplateLinkDialog() {
+    state.documentTemplateLinkDialog = false;
+    render();
+  }
+
+  function removeDocumentTemplate(id) {
+    const { documents, document } = collectContractTemplateForm();
+    if (documents.length <= 1) return;
+    const target = documents.find((item) => item.id === id);
+    if (!target) return;
+    if (!confirm(`Удалить документ «${target.title}» из конструктора?`)) return;
+    const nextDocuments = documents.filter((item) => item.id !== id);
+    const nextActive = document.id === id ? nextDocuments[0] : document;
+    commitDocumentTemplates(nextDocuments, nextActive);
+    state.selected.documentTemplates = getSelected("documentTemplates").filter((selectedId) => selectedId !== id);
+    addAudit("Изменен конструктор документов", target.title, "Документ удален");
+    persist();
+    render();
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error || new Error("Не удалось прочитать файл"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function inspectDocumentTemplateSource(source) {
+    let response;
+    try {
+      response = await fetch(photoApiUrl("/api/documents/template-inspect"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(source)
+      });
+    } catch (error) {
+      throw new Error(`не удалось подключиться к app-server.js (${photoServerOrigin()})`);
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "не удалось прочитать свойства файла Word");
+    return payload;
+  }
+
+  function getDocumentTemplateInspectionSignature(documentTemplate) {
+    const templateUrl = String(documentTemplate?.templateUrl || "").trim();
+    const templatePath = String(documentTemplate?.templatePath || "").trim();
+    if (!templateUrl && !templatePath) return "";
+    return [
+      documentTemplateInspectionVersion,
+      templateUrl,
+      templatePath,
+      String(documentTemplate?.fileName || "").trim()
+    ].join("|");
+  }
+
+  function applyDocumentTemplateInspection(documentTemplate, inspection, baseFields = documentTemplate?.fields || []) {
+    const nextDocument = {
+      ...documentTemplate,
+      fields: mergeDocumentTemplateFieldsFromInspection(inspection, baseFields),
+      originalFields: mergeDocumentTemplateFieldsFromInspection(inspection, []),
+      fieldsMode: "document-markers",
+      lastInspectedSignature: getDocumentTemplateInspectionSignature(documentTemplate),
+      updatedAt: new Date().toISOString()
+    };
+    const formulaGraphError = validateContractTemplateFormulaGraph(nextDocument.fields);
+    if (formulaGraphError) throw new Error(formulaGraphError);
+    return nextDocument;
+  }
+
+  async function autoInspectDocumentTemplates() {
+    if (documentTemplateAutoInspectionStarted) return;
+    documentTemplateAutoInspectionStarted = true;
+    let documents = getDocumentTemplates();
+    let refreshedCount = 0;
+    const failed = [];
+    for (const documentTemplate of documents) {
+      const signature = getDocumentTemplateInspectionSignature(documentTemplate);
+      if (!signature || documentTemplate.lastInspectedSignature === signature) continue;
+      try {
+        const inspection = await inspectDocumentTemplateSource({
+          templateUrl: documentTemplate.templateUrl,
+          templatePath: documentTemplate.templatePath
+        });
+        const nextDocument = applyDocumentTemplateInspection(documentTemplate, inspection, documentTemplate.fields);
+        documents = documents.map((item) => item.id === nextDocument.id ? nextDocument : item);
+        refreshedCount += 1;
+      } catch (error) {
+        failed.push(`${documentTemplate.title}: ${error.message}`);
+        console.warn("Не удалось распознать документ", documentTemplate.title, error);
+      }
+    }
+    if (!refreshedCount) return;
+    const activeDocument = documents.find((item) => item.id === state.activeDocumentTemplateId) || documents[0];
+    commitDocumentTemplates(documents, activeDocument);
+    addAudit(
+      "Распознаны шаблоны документов",
+      "Конструктор документов",
+      failed.length ? `${refreshedCount} успешно, ${failed.length} с ошибкой` : `${refreshedCount} документов`
+    );
+    persist();
+    render();
+  }
+
+  async function uploadDocumentTemplateFile(file) {
+    const dataUrl = await readFileAsDataUrl(file);
+    let response;
+    try {
+      response = await fetch(photoApiUrl("/api/documents/template-upload"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, dataUrl })
+      });
+    } catch (error) {
+      throw new Error(`не удалось подключиться к app-server.js (${photoServerOrigin()})`);
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "не удалось загрузить файл Word");
+    return payload;
+  }
+
+  function isSupportedWordTemplateFile(fileName) {
+    const extension = String(fileName || "").split(".").pop()?.toLowerCase() || "";
+    return wordTemplateExtensions.includes(extension);
+  }
+
+  function stripWordTemplateExtension(value) {
+    return String(value || "").replace(/\.(?:doc|docx|docm|dot|dotx|dotm|rtf)$/i, "");
+  }
+
+  function buildDocumentTemplateTitleFromUrl(url) {
+    try {
+      const parsed = new URL(url);
+      const last = decodeURIComponent(parsed.pathname.split("/").filter(Boolean).pop() || "");
+      return stripWordTemplateExtension(last) || parsed.hostname;
+    } catch (error) {
+      return "Новый документ";
+    }
+  }
+
+  async function addDocumentTemplateByLink(event = null) {
+    event?.preventDefault?.();
+    const form = event?.currentTarget?.matches?.("form") ? event.currentTarget : document.querySelector("[data-action='submit-document-template-link']");
+    const button = form?.querySelector("button[type='submit']") || event?.currentTarget || null;
+    const urlInput = form?.elements.newDocumentUrl || document.querySelector("[name='newDocumentUrl']");
+    const url = normalizeExternalUrl(urlInput?.value || "");
+    if (!url) {
+      alert("Укажите корректную ссылку на файл Word.");
+      urlInput?.focus();
+      return;
+    }
+    const wasDisabled = Boolean(button?.disabled);
+    if (button) button.disabled = true;
+    try {
+      const { documents, document } = collectContractTemplateForm();
+      const inspection = await inspectDocumentTemplateSource({ templateUrl: url });
+      const title = buildDocumentTemplateTitleFromUrl(url);
+      const newDocumentBase = normalizeDocumentTemplate({
+        id: `document-template-${Date.now().toString(36)}`,
+        title,
+        templateUrl: url,
+        templatePath: "",
+        fileNameTemplate: `${title}_#ФИО_обуч#`,
+        useCustomDocumentProperties: "1",
+        fields: [],
+        originalFields: [],
+        fieldsMode: "document-markers",
+        source: "link",
+        createdAt: new Date().toISOString()
+      }, documents.length);
+      const newDocument = applyDocumentTemplateInspection(newDocumentBase, inspection, []);
+      commitDocumentTemplates([...documents.map((item) => item.id === document.id ? document : item), newDocument], newDocument);
+      state.documentTemplateLinkDialog = false;
+      state.documentTemplateDialogId = newDocument.id;
+      state.activeContractTemplateFieldId = "";
+      addAudit("Изменен конструктор документов", newDocument.title, "Документ добавлен по ссылке");
+      persist();
+      render();
+    } catch (error) {
+      alert(`Не удалось добавить документ: ${error.message}`);
+    } finally {
+      if (button) button.disabled = wasDisabled;
+    }
+  }
+
+  async function handleDocumentTemplateUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!isSupportedWordTemplateFile(file.name)) {
+      alert("Выберите файл Word: doc, docx, docm, dot, dotx, dotm или rtf.");
+      event.target.value = "";
+      return;
+    }
+    try {
+      const { documents, document } = collectContractTemplateForm();
+      const uploaded = await uploadDocumentTemplateFile(file);
+      const title = stripWordTemplateExtension(file.name);
+      const newDocumentBase = normalizeDocumentTemplate({
+        id: `document-template-${Date.now().toString(36)}`,
+        title,
+        templateUrl: "",
+        templatePath: uploaded.templatePath || "",
+        fileName: uploaded.fileName || file.name,
+        fileNameTemplate: `${title}_#ФИО_обуч#`,
+        useCustomDocumentProperties: "1",
+        fields: [],
+        originalFields: [],
+        fieldsMode: "document-markers",
+        source: "file",
+        createdAt: new Date().toISOString()
+      }, documents.length);
+      const newDocument = applyDocumentTemplateInspection(newDocumentBase, uploaded, []);
+      commitDocumentTemplates([...documents.map((item) => item.id === document.id ? document : item), newDocument], newDocument);
+      state.documentTemplateDialogId = newDocument.id;
+      state.activeContractTemplateFieldId = "";
+      addAudit("Изменен конструктор документов", newDocument.title, "Файл Word загружен");
+      persist();
+      render();
+    } catch (error) {
+      alert(`Не удалось загрузить документ: ${error.message}`);
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function openActiveDocumentTemplateSource(event = null) {
+    event?.preventDefault?.();
+    const { document } = collectContractTemplateForm();
+    const url = getDocumentTemplateOpenUrl(document);
+    if (!url) {
+      alert("У документа не задана ссылка и не загружен файл.");
+      return;
+    }
+    openExternalUrl(url);
+  }
+
+  function updateActiveDocumentTemplateSource(documents, document, sourcePatch, inspection, auditDetails) {
+    const nextDocumentBase = {
+      ...document,
+      ...sourcePatch
+    };
+    const nextDocument = applyDocumentTemplateInspection(nextDocumentBase, inspection, document.fields);
+    commitDocumentTemplates(documents.map((item) => item.id === document.id ? nextDocument : item), nextDocument);
+    state.documentTemplateDialogId = nextDocument.id;
+    state.activeContractTemplateFieldId = "";
+    addAudit("Изменен конструктор документов", nextDocument.title, auditDetails);
+    persist();
+    render();
+  }
+
+  async function replaceActiveDocumentTemplateLink(event = null) {
+    event?.preventDefault?.();
+    const { documents, document } = collectContractTemplateForm();
+    const input = window.prompt("Укажите ссылку на файл Word", document.templateUrl || "");
+    if (input === null) return;
+    const url = normalizeExternalUrl(input);
+    if (!url) {
+      alert("Укажите корректную ссылку на файл Word.");
+      return;
+    }
+    const button = event?.currentTarget || null;
+    const wasDisabled = Boolean(button?.disabled);
+    if (button) button.disabled = true;
+    try {
+      const inspection = await inspectDocumentTemplateSource({ templateUrl: url });
+      updateActiveDocumentTemplateSource(
+        documents,
+        document,
+        {
+          templateUrl: url,
+          templatePath: "",
+          fileName: "",
+          source: "link"
+        },
+        inspection,
+        "Источник заменен ссылкой"
+      );
+    } catch (error) {
+      alert(`Не удалось заменить ссылку: ${error.message}`);
+    } finally {
+      if (button) button.disabled = wasDisabled;
+    }
+  }
+
+  async function handleDocumentTemplateReplaceFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!isSupportedWordTemplateFile(file.name)) {
+      alert("Выберите файл Word: doc, docx, docm, dot, dotx, dotm или rtf.");
+      event.target.value = "";
+      return;
+    }
+    try {
+      const { documents, document } = collectContractTemplateForm();
+      const uploaded = await uploadDocumentTemplateFile(file);
+      updateActiveDocumentTemplateSource(
+        documents,
+        document,
+        {
+          templateUrl: "",
+          templatePath: uploaded.templatePath || "",
+          fileName: uploaded.fileName || file.name,
+          source: "file"
+        },
+        uploaded,
+        "Источник заменен файлом Word"
+      );
+    } catch (error) {
+      alert(`Не удалось заменить файл: ${error.message}`);
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  async function refreshActiveDocumentTemplateFields(button = null) {
+    const { documents, document } = collectContractTemplateForm();
+    if (!document.templateUrl.trim() && !document.templatePath.trim()) {
+      alert("Укажите ссылку на шаблон или загрузите файл Word.");
+      return;
+    }
+    if (!confirm("Обновить поля из файла Word? Поля будут перечитаны по маркерам #...# и свойствам документа.")) return;
+    const wasDisabled = Boolean(button?.disabled);
+    if (button) button.disabled = true;
+    try {
+      const inspection = await inspectDocumentTemplateSource({
+        templateUrl: document.templateUrl,
+        templatePath: document.templatePath
+      });
+      const nextDocument = applyDocumentTemplateInspection(document, inspection, document.fields);
+      commitDocumentTemplates(documents.map((item) => item.id === document.id ? nextDocument : item), nextDocument);
+      state.activeContractTemplateFieldId = "";
+      addAudit("Изменен конструктор документов", nextDocument.title, "Поля обновлены из файла Word");
+      persist();
+      render();
+    } catch (error) {
+      alert(`Не удалось обновить поля: ${error.message}`);
+    } finally {
+      if (button) button.disabled = wasDisabled;
+    }
+  }
+
+  function getContractFormulaTokenDocumentFieldName(token) {
+    return /^#([^#\r\n]+)#$/.exec(String(token || "").trim())?.[1]?.trim() || "";
+  }
+
+  function getContractFormulaEditorFieldName(editor) {
+    const form = editor?.closest?.("form");
+    const activeName = form?.querySelector("[data-active-contract-name-input]")?.value;
+    if (String(activeName || "").trim()) return String(activeName || "").trim();
+    const fieldId = editor?.dataset.contractFieldId || "";
+    const row = fieldId
+      ? form?.querySelector(`[data-contract-field-row][data-contract-field-id="${CSS.escape(fieldId)}"]`)
+      : null;
+    return String(row?.querySelector("[data-contract-name-input]")?.value || "").trim();
+  }
+
+  function canInsertContractFormulaToken(editor, token, options = {}) {
+    const notify = options.notify !== false;
+    const targetName = getContractFormulaEditorFieldName(editor);
+    const tokenFieldName = getContractFormulaTokenDocumentFieldName(token);
+    if (targetName && tokenFieldName && targetName === tokenFieldName) {
+      if (notify) alert(`Поле «${targetName}» нельзя добавить в его собственную формулу.`);
+      return false;
+    }
+    return true;
+  }
+
+  function insertContractTemplateToken(token) {
+    const form = document.querySelector("form[data-action='save-contract-template-fields']");
+    const editor = form?.querySelector("[data-contract-formula-editor]");
+    if (!editor || !token) return;
+    if (!canInsertContractFormulaToken(editor, token)) return;
+    const beforeValue = serializeCommunicationTemplateEditor(editor);
+    editor.append(createContractFormulaBlock(token));
+    commitCommunicationTemplateEditorChange(editor, beforeValue);
+    syncContractFormulaEditor(editor);
+    refreshContractFormulaEditor(editor, true);
+    editor.focus({ preventScroll: true });
+  }
+
+  function bindContractTemplateConstructor() {
+    const form = document.querySelector("form[data-action='save-contract-template-fields']");
+    if (!form) return;
+    const tokenMime = "application/x-ais-contract-template-token";
+    const rowMime = "application/x-ais-contract-template-field-row";
+    let draggedRow = null;
+    let draggedFormulaBlock = null;
+
+    form.addEventListener("dragstart", (event) => {
+      const handle = event.target.closest?.("[data-contract-field-drag-handle]");
+      if (handle) {
+        const row = handle.closest("[data-contract-field-row]");
+        if (!row || !event.dataTransfer) return;
+        draggedRow = row;
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData(rowMime, row.dataset.contractFieldIndex || "");
+        row.classList.add("is-dragging");
+        return;
+      }
+      const token = event.target.closest?.("[data-template-token]");
+      if (!token || !event.dataTransfer) return;
+      const value = token.dataset.templateToken || token.dataset.contractToken || token.dataset.token || "";
+      draggedFormulaBlock = token.matches(".contract-formula-block") ? token : null;
+      event.dataTransfer.effectAllowed = draggedFormulaBlock ? "move" : "copy";
+      event.dataTransfer.setData(tokenMime, value);
+      event.dataTransfer.setData("text/plain", value);
+      token.classList.add("is-dragging");
+    });
+
+    form.addEventListener("dragend", (event) => {
+      event.target.closest?.("[data-template-token], [data-contract-field-row]")?.classList.remove("is-dragging");
+      form.querySelectorAll("[data-contract-field-row]").forEach((row) => row.classList.remove("is-drop-target"));
+      form.querySelectorAll("[data-contract-formula-editor]").forEach((editor) => {
+        editor.classList.remove("is-drop-target");
+        removeContractFormulaDropCaret(editor);
+        syncContractFormulaEditor(editor);
+      });
+      draggedRow = null;
+      draggedFormulaBlock = null;
+    });
+
+    form.addEventListener("contextmenu", (event) => {
+      const token = event.target.closest?.("[data-contract-formula-token]");
+      if (!token || !form.contains(token)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      showContractFormulaTokenMenu(token, event.clientX, event.clientY);
+    });
+
+    form.querySelectorAll("[data-contract-field-row]").forEach((row) => {
+      row.addEventListener("click", (event) => {
+        if (event.target.closest("input, button, textarea, select, [contenteditable='true']")) return;
+        selectContractTemplateField(row.dataset.contractFieldId || row.dataset.contractFieldIndex, { focusToken: true });
+      });
+      row.addEventListener("focusin", () => {
+        form.dataset.activeContractFieldId = row.dataset.contractFieldId || "";
+      });
+      row.addEventListener("dragover", (event) => {
+        if (!Array.from(event.dataTransfer?.types || []).includes(rowMime)) return;
+        event.preventDefault();
+        row.classList.add("is-drop-target");
+        event.dataTransfer.dropEffect = "move";
+      });
+      row.addEventListener("dragleave", () => row.classList.remove("is-drop-target"));
+      row.addEventListener("drop", (event) => {
+        if (!Array.from(event.dataTransfer?.types || []).includes(rowMime)) return;
+        event.preventDefault();
+        row.classList.remove("is-drop-target");
+        moveContractTemplateFieldRow(form, draggedRow, row, event.clientY);
+      });
+    });
+
+    form.querySelectorAll("[data-contract-formula-editor]").forEach((editor) => {
+      initializeCommunicationTemplateEditorHistory(editor);
+      editor.addEventListener("focus", () => {
+        form.dataset.activeContractFieldId = editor.dataset.contractFieldId || "";
+      });
+      editor.addEventListener("input", () => {
+        recordCommunicationTemplateEditorChange(editor);
+        syncContractFormulaEditor(editor);
+      });
+      editor.addEventListener("keydown", (event) => {
+        handleCommunicationTemplateEditorHistoryKeydown(event, editor);
+      });
+      editor.addEventListener("blur", () => refreshContractFormulaEditor(editor));
+      editor.addEventListener("dragover", (event) => {
+        if (!Array.from(event.dataTransfer?.types || []).includes(tokenMime)) return;
+        event.preventDefault();
+        const token = event.dataTransfer?.getData(tokenMime);
+        if (!canInsertContractFormulaToken(editor, token, { notify: false })) {
+          event.dataTransfer.dropEffect = "none";
+          editor.classList.remove("is-drop-target");
+          removeContractFormulaDropCaret(editor);
+          return;
+        }
+        event.dataTransfer.dropEffect = draggedFormulaBlock ? "move" : "copy";
+        editor.classList.add("is-drop-target");
+        const range = getCommunicationTemplateDropRange(editor, event.clientX, event.clientY);
+        if (range && !draggedFormulaBlock?.contains(range.startContainer)) {
+          showContractFormulaDropCaret(editor, range);
+        }
+      });
+      editor.addEventListener("dragleave", () => {
+        editor.classList.remove("is-drop-target");
+        removeContractFormulaDropCaret(editor);
+      });
+      editor.addEventListener("drop", (event) => {
+        const token = event.dataTransfer?.getData(tokenMime);
+        if (!token) return;
+        event.preventDefault();
+        editor.classList.remove("is-drop-target");
+        if (!canInsertContractFormulaToken(editor, token)) {
+          removeContractFormulaDropCaret(editor);
+          editor.focus({ preventScroll: true });
+          return;
+        }
+        const range = getContractFormulaDropCaretRange(editor) || getCommunicationTemplateDropRange(editor, event.clientX, event.clientY);
+        if (draggedFormulaBlock?.contains(range?.startContainer)) return;
+        const beforeValue = serializeCommunicationTemplateEditor(editor);
+        const block = draggedFormulaBlock || createContractFormulaBlock(token);
+        if (range) range.insertNode(block);
+        else editor.append(block);
+        removeContractFormulaDropCaret(editor);
+        commitCommunicationTemplateEditorChange(editor, beforeValue);
+        syncContractFormulaEditor(editor);
+        refreshContractFormulaEditor(editor, true);
+        editor.focus({ preventScroll: true });
+      });
+    });
+  }
+
+  function removeContractFormulaDropCaret(editor) {
+    editor?.querySelectorAll?.("[data-contract-drop-caret]").forEach((caret) => caret.remove());
+  }
+
+  function showContractFormulaDropCaret(editor, range) {
+    if (!editor || !range) return;
+    removeContractFormulaDropCaret(editor);
+    const caret = document.createElement("span");
+    caret.className = "contract-formula-drop-caret";
+    caret.contentEditable = "false";
+    caret.dataset.contractDropCaret = "";
+    caret.setAttribute("aria-hidden", "true");
+    range.insertNode(caret);
+  }
+
+  function getContractFormulaDropCaretRange(editor) {
+    const caret = editor?.querySelector?.("[data-contract-drop-caret]");
+    if (!caret) return null;
+    const range = document.createRange();
+    range.setStartBefore(caret);
+    range.collapse(true);
+    caret.remove();
+    return range;
+  }
+
+  function moveContractTemplateFieldRow(form, sourceRow, targetRow, clientY) {
+    if (!form || !sourceRow || !targetRow || sourceRow === targetRow) return;
+    const targetRect = targetRow.getBoundingClientRect();
+    if (clientY > targetRect.top + targetRect.height / 2) {
+      targetRow.after(sourceRow);
+    } else {
+      targetRow.before(sourceRow);
+    }
+    refreshContractTemplateRowIndexes(form);
+  }
+
+  function refreshContractTemplateRowIndexes(form) {
+    form.querySelectorAll("[data-contract-field-row]").forEach((row, index) => {
+      row.dataset.contractFieldIndex = String(index);
+      const positionInput = row.querySelector("[data-contract-position-input]");
+      const nameInput = row.querySelector("[data-contract-name-input]");
+      const formulaInput = row.querySelector("[data-contract-formula]");
+      const deleteButton = row.querySelector("[data-action='remove-contract-template-field']");
+      if (positionInput) {
+        positionInput.name = `contractPosition${index}`;
+        positionInput.value = String(index + 1);
+      }
+      if (nameInput) nameInput.name = `contractName${index}`;
+      if (formulaInput) formulaInput.name = `contractFormula${index}`;
+      if (deleteButton) deleteButton.dataset.index = String(index);
+    });
+  }
+
+  function createContractFormulaBlock(token) {
+    const block = document.createElement("span");
+    const text = String(token || "");
+    block.className = "communication-template-block contract-formula-block";
+    block.contentEditable = "false";
+    block.draggable = true;
+    block.dataset.templateToken = text;
+    block.dataset.contractFormulaToken = "";
+    const documentMatch = /^#([^#]+)#$/.exec(text);
+    const sourceMatch = /^\[([^\]]+)\]$/.exec(text);
+    if (documentMatch) {
+      block.classList.add("is-document");
+      block.dataset.contractDocumentFieldName = documentMatch[1];
+      block.title = "Нажмите правой кнопкой мыши для настройки поля";
+    } else if (sourceMatch) {
+      block.classList.add("is-source");
+      block.dataset.contractSourceFieldName = sourceMatch[1];
+      block.title = "Нажмите правой кнопкой мыши для действий с блоком";
+    }
+    block.textContent = text;
+    return block;
+  }
+
+  function syncContractFormulaEditor(editor) {
+    const form = editor.closest("form");
+    const row = Array.from(form?.querySelectorAll("[data-contract-field-row]") || [])
+      .find((item) => item.dataset.contractFieldId === (editor.dataset.contractFieldId || ""));
+    const value = serializeCommunicationTemplateEditor(editor);
+    const hiddenInput = row?.querySelector("[data-contract-formula]");
+    if (hiddenInput) hiddenInput.value = value;
+    const rowPreview = row?.querySelector("[data-contract-formula-preview]");
+    if (rowPreview) rowPreview.innerHTML = renderContractFormulaPreview(value) || `<span class="contract-formula-empty">Формула не задана</span>`;
+    const activePreview = form?.querySelector("[data-contract-active-formula-preview]");
+    if (activePreview) activePreview.innerHTML = renderContractFormulaPreview(value) || `<span class="contract-formula-empty">Формула не задана</span>`;
+  }
+
+  function refreshContractFormulaEditor(editor, preserveCaret = false) {
+    const formula = serializeCommunicationTemplateEditor(editor);
+    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
+    const fields = collectContractTemplateForm(editor.closest("form")).document.fields;
+    editor.innerHTML = renderContractFormulaEditorContent(formula, fields);
+    syncContractFormulaEditor(editor);
+    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
+  }
+
+  function showContractFormulaTokenMenu(token, x, y) {
+    hideCommunicationTemplateFieldMenu();
+    const editor = token.closest("[data-contract-formula-editor]");
+    const fieldName = token.dataset.contractDocumentFieldName || "";
+    const fields = collectContractTemplateForm(editor?.closest("form")).document.fields;
+    const field = fields.find((item) => item.name === fieldName);
+    const defaultField = field ? contractTemplateFieldDefaults.find((item) => item.name === field.name) : null;
+    const canRestore = Boolean(defaultField && String(defaultField.formula || "").trim() !== String(field?.formula || "").trim());
+    const popup = document.createElement("div");
+    popup.className = "communication-template-field-menu";
+    popup.dataset.communicationTemplateFieldMenu = "";
+    popup.innerHTML = `
+      <button data-action="edit-contract-template-field" type="button" ${field ? "" : "disabled"}>
+        ${renderCommunicationTemplateFieldActionIcon("edit")}
+        <span>Редактировать</span>
+      </button>
+      <button class="is-danger" data-action="delete-contract-template-token" type="button">
+        ${renderCommunicationTemplateFieldActionIcon("delete")}
+        <span>Удалить из формулы</span>
+      </button>
+      <button data-action="restore-contract-template-field" type="button" ${canRestore ? "" : "disabled"}>
+        ${renderCommunicationTemplateFieldActionIcon("restore")}
+        <span>Восстановить</span>
+      </button>
+    `;
+    document.body.appendChild(popup);
+    const rect = popup.getBoundingClientRect();
+    popup.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;
+    popup.style.top = `${clamp(y, 8, Math.max(8, window.innerHeight - rect.height - 8))}px`;
+    const bindMenuAction = (selector, handler) => {
+      popup.querySelector(selector)?.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        handler();
+      });
+    };
+    bindMenuAction("[data-action='edit-contract-template-field']", () => {
+      hideCommunicationTemplateFieldMenu();
+      if (field) selectContractTemplateField(field.id, { focusToken: true });
+    });
+    bindMenuAction("[data-action='delete-contract-template-token']", () => deleteContractFormulaToken(token));
+    bindMenuAction("[data-action='restore-contract-template-field']", () => restoreContractTemplateFieldFormula(field));
+    window.setTimeout(() => document.addEventListener("pointerdown", closeCommunicationTemplateFieldMenuOnOutsideClick, { capture: true, once: true }));
+  }
+
+  function deleteContractFormulaToken(token) {
+    const editor = token?.closest?.("[data-contract-formula-editor]");
+    hideCommunicationTemplateFieldMenu();
+    if (!editor) return;
+    const beforeValue = serializeCommunicationTemplateEditor(editor);
+    token.remove();
+    commitCommunicationTemplateEditorChange(editor, beforeValue);
+    syncContractFormulaEditor(editor);
+    refreshContractFormulaEditor(editor, true);
+    editor.focus({ preventScroll: true });
+  }
+
+  function restoreContractTemplateFieldFormula(field) {
+    hideCommunicationTemplateFieldMenu();
+    if (!field) return;
+    const defaultField = contractTemplateFieldDefaults.find((item) => item.name === field.name);
+    if (!defaultField) return;
+    const { documents, document, fields } = collectContractTemplateForm();
+    const nextFields = fields.map((item) => (
+      item.name === field.name ? { ...item, formula: defaultField.formula } : item
+    ));
+    state.activeContractTemplateFieldId = field.id;
+    document.fields = normalizeDocumentTemplateFieldList(document, nextFields);
+    commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
+    addAudit("Восстановлено поле договора", field.name, defaultField.formula);
     persist();
     render();
   }
@@ -7105,13 +9165,17 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function syncCommunicationTemplateEditorByType(editor) {
     if (!editor) return;
-    if (editor.matches("[data-data-formula-editor]")) syncDataFormulaEditor(editor);
+    if (editor.matches("[data-contract-formula-editor]")) syncContractFormulaEditor(editor);
+    else if (editor.matches("[data-data-formula-editor]")) syncDataFormulaEditor(editor);
     else if (editor.matches("[data-formula-editor]")) syncCommunicationTemplateFormulaEditor(editor);
     else syncCommunicationTemplateEditor(editor);
   }
 
   function renderCommunicationTemplateEditorValue(editor, value) {
-    if (editor.matches("[data-data-formula-editor]")) {
+    if (editor.matches("[data-contract-formula-editor]")) {
+      const fields = collectContractTemplateForm(editor.closest("form")).document.fields;
+      editor.innerHTML = renderContractFormulaEditorContent(value, fields);
+    } else if (editor.matches("[data-data-formula-editor]")) {
       editor.innerHTML = renderDataFormulaEditorContent(value);
     } else if (editor.matches("[data-formula-editor]")) {
       editor.innerHTML = renderCommunicationTemplateFormulaEditorContent(value);
@@ -8354,6 +10418,466 @@ MAX - https://bizvmax.ru/zifra_plus
     openExternalUrl(url);
   }
 
+  function openStudentCoursePage() {
+    const input = document.querySelector("[name='program']");
+    const program = findProgramByName(input?.value || state.modal?.draft?.program || "");
+    const url = getProgramPromoUrl(program);
+    if (!url) {
+      alert("Для выбранной программы в реестре программ не заполнено поле «На промо сайте».");
+      input?.focus({ preventScroll: true });
+      return;
+    }
+    openExternalUrl(url);
+  }
+
+  function getEducationDocumentTemplateForRecord(record) {
+    const programType = getStudentProgramTypeCode(record);
+    if (!programType) return null;
+    return getDocumentTemplates().find((documentTemplate) => (
+      documentTemplate.documentKind === "education"
+      && (documentTemplate.programTypes || []).some((type) => normalizeEducationProgramType(type) === programType)
+    )) || null;
+  }
+
+  function getEducationDocumentButtonTitle(record) {
+    const documentTemplate = getEducationDocumentTemplateForRecord(record);
+    const programType = getStudentProgramTypeCode(record);
+    if (!programType) return "Сформировать документ об образовании\nСначала выберите образовательную программу";
+    if (!documentTemplate) return `Сформировать документ об образовании\nДля вида программы ${programType} шаблон не найден`;
+    const source = documentTemplate.templateUrl || documentTemplate.templatePath || documentTemplate.fileName || "";
+    return source
+      ? `Сформировать документ об образовании\n${documentTemplate.title}\n${source}`
+      : `Сформировать документ об образовании\n${documentTemplate.title}`;
+  }
+
+  async function downloadStudentDocumentFromTemplate(documentTemplate, record, button, errorTitle) {
+    const templateUrl = documentTemplate.templateUrl || "";
+    const templatePath = documentTemplate.templatePath || "";
+    const useCustomDocumentProperties = isChecked(documentTemplate.useCustomDocumentProperties);
+    const fileNameTemplate = documentTemplate.fileNameTemplate || `${documentTemplate.title || "документ"}_#ФИО#`;
+    if (!templateUrl.trim() && !templatePath.trim()) {
+      alert(`${errorTitle}: в конструкторе документов не указана ссылка на шаблон и не загружен файл Word.`);
+      return;
+    }
+    const wasDisabled = Boolean(button?.disabled);
+    if (button) button.disabled = true;
+    try {
+      const fieldValues = evaluateContractTemplateFields(record, documentTemplate.fields);
+      const sourceValues = collectContractTemplateSourceValues(record);
+      const fileName = ensureDocxFileName(applyContractTemplateMarkers(fileNameTemplate, fieldValues));
+      const response = await fetch(photoApiUrl("/api/contracts/student-document"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateUrl, templatePath, fileName, fieldValues, sourceValues, useCustomDocumentProperties })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      }
+      const blob = await response.blob();
+      downloadBlob(fileName, blob);
+    } catch (error) {
+      alert(`${errorTitle}: ${error.message}`);
+    } finally {
+      if (button) button.disabled = wasDisabled;
+    }
+  }
+
+  async function openStudentEducationDocument(event) {
+    const button = event?.currentTarget;
+    const record = collectStudentFormDraft();
+    const programType = getStudentProgramTypeCode(record);
+    if (!programType) {
+      alert("Выберите образовательную программу из реестра программ.");
+      document.querySelector("[name='program']")?.focus({ preventScroll: true });
+      return;
+    }
+    const documentTemplate = getEducationDocumentTemplateForRecord(record);
+    if (!documentTemplate) {
+      alert(`Для вида программы ${programType} не найден шаблон документа об образовании в конструкторе документов.`);
+      return;
+    }
+    await downloadStudentDocumentFromTemplate(
+      documentTemplate,
+      record,
+      button,
+      "Не удалось сформировать документ об образовании"
+    );
+  }
+
+  async function openStudentContractDocument(event) {
+    const button = event?.currentTarget;
+    const record = collectStudentFormDraft();
+    const documentTemplate = getPrimaryDocumentTemplate();
+    const fields = documentTemplate.fields;
+    const templateUrl = documentTemplate.templateUrl || "";
+    const templatePath = documentTemplate.templatePath || "";
+    const useCustomDocumentProperties = isChecked(documentTemplate.useCustomDocumentProperties);
+    const fileNameTemplate = documentTemplate.fileNameTemplate || "договор_#ФИО_обуч#";
+    if (!templateUrl.trim() && !templatePath.trim()) {
+      alert("В конструкторе документов не указана ссылка на шаблон и не загружен файл Word.");
+      return;
+    }
+    const wasDisabled = Boolean(button?.disabled);
+    if (button) button.disabled = true;
+    try {
+      const fieldValues = evaluateContractTemplateFields(record, fields);
+      const sourceValues = collectContractTemplateSourceValues(record);
+      const fileName = ensureDocxFileName(applyContractTemplateMarkers(fileNameTemplate, fieldValues));
+      const response = await fetch(photoApiUrl("/api/contracts/student-document"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateUrl, templatePath, fileName, fieldValues, sourceValues, useCustomDocumentProperties })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      }
+      const blob = await response.blob();
+      downloadBlob(fileName, blob);
+    } catch (error) {
+      alert(`Не удалось сформировать договор: ${error.message}`);
+    } finally {
+      if (button) button.disabled = wasDisabled;
+    }
+  }
+
+  function evaluateContractTemplateFields(record, fields) {
+    const formulaGraphError = validateContractTemplateFormulaGraph(fields);
+    if (formulaGraphError) throw new Error(formulaGraphError);
+    const normalizedFields = normalizeContractTemplateDocumentFields(fields);
+    const fieldsByName = new Map(normalizedFields.map((field) => [field.name, field]));
+    const values = {};
+    const evaluating = [];
+    const evaluateByName = (name) => {
+      const fieldName = String(name || "").trim();
+      if (!fieldName) return "";
+      if (Object.prototype.hasOwnProperty.call(values, fieldName)) return values[fieldName];
+      const field = fieldsByName.get(fieldName);
+      if (!field) return "";
+      const cycleStart = evaluating.indexOf(fieldName);
+      if (cycleStart >= 0) {
+        const cycle = [...evaluating.slice(cycleStart), fieldName];
+        throw new Error(`Обнаружена рекурсия в формулах документа: ${cycle.join(" → ")}.`);
+      }
+      evaluating.push(fieldName);
+      try {
+        values[fieldName] = evaluateContractTemplateField(field, record, values, evaluateByName);
+      } finally {
+        evaluating.pop();
+      }
+      return values[fieldName];
+    };
+    normalizedFields.forEach((field) => {
+      evaluateByName(field.name);
+    });
+    return values;
+  }
+
+  function collectContractTemplateSourceValues(record) {
+    const values = {};
+    contractTemplateSourceFieldNames.forEach((name) => {
+      values[name] = getContractTemplateSourceValue(name, record);
+    });
+    return values;
+  }
+
+  function evaluateContractTemplateField(field, record, values, evaluateByName = null) {
+    const defaultField = contractTemplateFieldDefaults.find((item) => item.name === field.name);
+    const formula = String(field.formula || "").trim();
+    if (isGetSqlQueryFormula(formula)) {
+      return field.name === "УчебныйПлан" ? formatEducationDocumentTrainingPlan(record) : "";
+    }
+    const isDefaultFormula = defaultField && formula === String(defaultField.formula || "").trim();
+    if (!isDefaultFormula) return evaluateContractFormulaFallback(formula, record, values, evaluateByName);
+    const source = (name) => getContractTemplateSourceValue(name, record);
+    const raw = (name) => getContractTemplateRawSourceValue(name, record);
+    const nameParts = splitFullName(record.name);
+    switch (field.name) {
+      case "N Договора": return source("Договор") || "__________";
+      case "Вид курсов": return formatContractProgramTitle(record);
+      case "Внесено (руб)": return formatContractMoneyWithWords(raw("Внесено (руб)"));
+      case "ДатаДоговора": return formatContractDate(raw("Дата договора") || raw("Дата подачи заявки"));
+      case "Имя": return nameParts.firstName;
+      case "ИО": return [nameParts.firstName, nameParts.patronymic].filter(Boolean).join(" ");
+      case "Отчество": return nameParts.patronymic;
+      case "ПутьСохр": return raw("Фото") || "";
+      case "СрокПо": return formatContractDate(raw("Дата окончания обучения"));
+      case "СрокС": return formatContractDate(raw("Дата начала обучения"));
+      case "Сумма": return formatContractMoneyWithWords(raw("Сумма  по договору (руб)"));
+      case "Фамилия": return nameParts.surname;
+      case "ФИО_обуч_род": return isChecked(record.noDeclension) ? record.name || "" : inflectFioGenitive(record.name || "");
+      case "Фото": return raw("Фото") || "";
+      case "Стажировка": return isChecked(record.internship) ? "(со стажировкой)" : "";
+      case "Форма обучения": return formatContractStudyForm(raw("Форма обучения"));
+      default: return evaluateContractFormulaFallback(formula, record, values, evaluateByName);
+    }
+  }
+
+  function evaluateContractFormulaFallback(formula, record, values, evaluateByName = null) {
+    let result = String(formula || "").replace(/^=\s*/, "");
+    const directField = /^\(?\s*\[([^\]]+)\]\s*\)?$/.exec(result.trim());
+    if (directField) return getContractTemplateSourceValue(directField[1], record);
+    result = result.replace(/#([^#]+)#/g, (match, fieldName) => {
+      const normalizedName = String(fieldName || "").trim();
+      if (typeof evaluateByName === "function") {
+        const resolved = evaluateByName(normalizedName);
+        return resolved === "" && !Object.prototype.hasOwnProperty.call(values, normalizedName) ? match : resolved;
+      }
+      return Object.prototype.hasOwnProperty.call(values, normalizedName) ? values[normalizedName] : match;
+    });
+    result = result.replace(/\[([^\]]+)\]/g, (match, fieldName) => getContractTemplateSourceValue(fieldName, record));
+    return result.replace(/ПутьДокумента\(1\)\s*&\s*/gi, "").trim();
+  }
+
+  function isGetSqlQueryFormula(value) {
+    return /Получить\s*SQL\s*запрос|ПолучитьSQLзапрос/i.test(String(value || ""));
+  }
+
+  function getContractTemplateRawSourceValue(name, record) {
+    const normalized = String(name || "").replace(/\s+/g, " ").trim();
+    if (normalized === "Количество часов") return getStudentProgramHours(record);
+    if (normalized === "Часы") return getStudentProgramHours(record);
+    if (normalized === "ФИО_несклон") return isChecked(record.noDeclension) ? "+" : "";
+    if (normalized === "Фото") return record.photoPath || record.photoUrl || record.photoData || "";
+    if (normalized === "ИО") {
+      const parts = splitFullName(record.name);
+      return [parts.firstName, parts.patronymic].filter(Boolean).join(" ");
+    }
+    if (normalized === "Прогр обуч факт_ENG") {
+      const program = findProgramByName(record.program);
+      return String(record.programEnglish || program?.shortName || record.program || "").trim();
+    }
+    if (normalized === "Документ об образовании") return getIssuedEducationDocumentName(record);
+    if (normalized === "Квалификация") {
+      const program = findProgramByName(record.program);
+      return String(record.qualification || program?.qualification || "").trim();
+    }
+    if (normalized === "УчебныйПлан") return formatEducationDocumentTrainingPlan(record);
+    if (normalized === "СфераДеятельности") {
+      const program = findProgramByName(record.program);
+      return String(program?.qualification || record.qualification || program?.type || "").trim();
+    }
+    if (normalized === "Срок обучения_ENG") return formatEducationDocumentStudyPeriod(record);
+    if (normalized === "QRкод") return String(record.qrCode || getProgramPromoUrl(findProgramByName(record.program)) || "").trim();
+    const key = contractTemplateSourceFieldMap[normalized] || contractTemplateSourceFieldMap[name] || normalized;
+    return record[key] ?? "";
+  }
+
+  function getIssuedEducationDocumentName(record) {
+    const typeCode = getStudentProgramTypeCode(record);
+    if (typeCode === "ППП") return "Диплом о профессиональной переподготовке";
+    if (typeCode === "КПК") return "Удостоверение о повышении квалификации";
+    if (typeCode === "ДОП" || typeCode === "ПРО") return "Сертификат";
+    return "Документ об образовании";
+  }
+
+  function formatEducationDocumentTrainingPlan(record) {
+    const programName = String(record?.program || "").trim();
+    if (!programName) return "";
+    const rows = state.data.collections.trainingPlans || [];
+    const program = findProgramByName(programName);
+    const exactNames = new Set([programName, program?.name, program?.shortName].filter(Boolean).map(normalizeProgramName));
+    const comparableNames = new Set([programName, program?.name, program?.shortName].filter(Boolean).map(normalizeTrainingPlanProgramName));
+    const related = rows.filter((item) => {
+      const rowProgramName = String(item.programName || "").trim();
+      return exactNames.has(normalizeProgramName(rowProgramName))
+        || comparableNames.has(normalizeTrainingPlanProgramName(rowProgramName));
+    });
+    if (!related.length) return "";
+    return related.map((item) => {
+      const discipline = String(item.discipline || item.code || "").trim();
+      const hours = String(item.totalHours || "").trim();
+      const grade = isFinalAttestationPlanRow(item) ? String(record?.finalGrade || "").trim() : "зачтено";
+      return [discipline, hours, grade].join("\t");
+    }).filter(Boolean).join("\n");
+  }
+
+  function normalizeTrainingPlanProgramName(value) {
+    return normalizeProgramName(value)
+      .replace(/\s*\(\s*\d+(?:[.,]\d+)?\s*(?:ч|час|часа|часов)\s*\)\s*$/i, "")
+      .trim();
+  }
+
+  function isFinalAttestationPlanRow(item) {
+    const text = [item?.discipline, item?.attestation, item?.content, item?.code]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" ");
+    return /итогов|итоговая\s+аттестация|\bиа\b/i.test(text);
+  }
+
+  function formatEducationDocumentStudyPeriod(record) {
+    const start = formatContractDate(record.startDate);
+    const end = formatContractDate(record.endDate);
+    if (start && end) return `${start} - ${end}`;
+    return start || end || "";
+  }
+
+  function getContractTemplateSourceValue(name, record) {
+    const value = getContractTemplateRawSourceValue(name, record);
+    if (isContractDateSource(name)) return formatContractDate(value);
+    return String(value ?? "");
+  }
+
+  function isContractDateSource(name) {
+    return /Дата|Срок|ДР/i.test(String(name || ""));
+  }
+
+  function formatContractDate(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+    if (iso) return `${iso[3]}.${iso[2]}.${iso[1]}`;
+    const ru = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(text);
+    if (ru) return text;
+    const date = new Date(text);
+    if (Number.isNaN(date.getTime())) return text;
+    return `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}.${date.getFullYear()}`;
+  }
+
+  function formatContractProgramTitle(record) {
+    const program = String(record.program || "").trim();
+    const hours = String(getStudentProgramHours(record) || "").trim();
+    if (!program) return hours ? `(${hours} ч.)` : "";
+    if (hours && new RegExp(`\\b${escapeRegExp(hours)}\\b`).test(program)) {
+      return program.replace(/\s*ч\)/i, " ч)");
+    }
+    return hours ? `${program} (${hours} ч.)` : program;
+  }
+
+  function formatContractStudyForm(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    const normalized = text.toLowerCase();
+    if (normalized === "дистант") return "заочная дистанционная";
+    return normalized;
+  }
+
+  function formatContractMoneyWithWords(value) {
+    const number = Number(String(value ?? "").replace(/\s+/g, "").replace(",", "."));
+    if (!Number.isFinite(number) || number === 0) return "";
+    const integer = Math.round(number);
+    return `${integer} (${numberToRussianWords(integer)}) рублей`;
+  }
+
+  function numberToRussianWords(value) {
+    const number = Math.abs(Math.trunc(Number(value) || 0));
+    if (!number) return "ноль";
+    const units = [
+      { forms: ["", "", ""], gender: "male" },
+      { forms: ["тысяча", "тысячи", "тысяч"], gender: "female" },
+      { forms: ["миллион", "миллиона", "миллионов"], gender: "male" },
+      { forms: ["миллиард", "миллиарда", "миллиардов"], gender: "male" }
+    ];
+    const parts = [];
+    let rest = number;
+    let unitIndex = 0;
+    while (rest > 0 && unitIndex < units.length) {
+      const chunk = rest % 1000;
+      if (chunk) parts.unshift(formatRussianNumberChunk(chunk, units[unitIndex]));
+      rest = Math.floor(rest / 1000);
+      unitIndex += 1;
+    }
+    return parts.join(" ").replace(/\s+/g, " ").trim();
+  }
+
+  function formatRussianNumberChunk(value, unit) {
+    const hundreds = ["", "сто", "двести", "триста", "четыреста", "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот"];
+    const tens = ["", "", "двадцать", "тридцать", "сорок", "пятьдесят", "шестьдесят", "семьдесят", "восемьдесят", "девяносто"];
+    const teens = ["десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"];
+    const onesMale = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"];
+    const onesFemale = ["", "одна", "две", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"];
+    const result = [];
+    const h = Math.floor(value / 100);
+    const t = Math.floor((value % 100) / 10);
+    const o = value % 10;
+    if (hundreds[h]) result.push(hundreds[h]);
+    if (t === 1) result.push(teens[o]);
+    else {
+      if (tens[t]) result.push(tens[t]);
+      const ones = unit.gender === "female" ? onesFemale : onesMale;
+      if (ones[o]) result.push(ones[o]);
+    }
+    if (unit.forms[0]) result.push(unit.forms[getRussianPluralIndex(value)]);
+    return result.join(" ");
+  }
+
+  function getRussianPluralIndex(value) {
+    const mod10 = value % 10;
+    const mod100 = value % 100;
+    if (mod10 === 1 && mod100 !== 11) return 0;
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 1;
+    return 2;
+  }
+
+  function splitFullName(name) {
+    const [surname = "", firstName = "", patronymic = ""] = String(name || "").trim().split(/\s+/).filter(Boolean);
+    return { surname, firstName, patronymic };
+  }
+
+  function inflectFioGenitive(name) {
+    const parts = splitFullName(name);
+    const gender = inferStudentGender(name);
+    return [
+      inflectRussianNamePart(parts.surname, gender, "surname"),
+      inflectRussianNamePart(parts.firstName, gender, "firstName"),
+      inflectRussianNamePart(parts.patronymic, gender, "patronymic")
+    ].filter(Boolean).join(" ");
+  }
+
+  function inflectRussianNamePart(value, gender, role) {
+    if (!value) return "";
+    return String(value).split("-").map((part) => inflectRussianSimpleNamePart(part, gender, role)).join("-");
+  }
+
+  function inflectRussianSimpleNamePart(value, gender, role) {
+    const lower = value.toLowerCase();
+    const replaceEnding = (pattern, ending) => value.replace(pattern, ending);
+    if (gender === "Женский") {
+      if (role === "patronymic" && /(?:вна|ична)$/i.test(value)) return value.replace(/а$/i, "ы");
+      if (/(ская|цкая)$/i.test(value)) return replaceEnding(/ая$/i, "ой");
+      if (/(ая|яя)$/i.test(value)) return replaceEnding(/[ая]$/i, "ой");
+      if (/(ова|ева|ёва|ина)$/i.test(value)) return replaceEnding(/а$/i, "ой");
+      if (/ия$/i.test(value)) return replaceEnding(/ия$/i, "ии");
+      if (/я$/i.test(value)) return replaceEnding(/я$/i, "и");
+      if (/а$/i.test(value)) return replaceEnding(/а$/i, /[гкхжчшщ]а$/i.test(lower) ? "и" : "ы");
+      return value;
+    }
+    if (role === "patronymic" && /ич$/i.test(value)) return `${value}а`;
+    if (/(ский|цкий)$/i.test(value)) return value.replace(/ий$/i, "ого");
+    if (/(ый|ой)$/i.test(value)) return value.replace(/[ыо]й$/i, "ого");
+    if (/ий$/i.test(value)) return value.replace(/ий$/i, "ия");
+    if (/[йь]$/i.test(value)) return value.replace(/[йь]$/i, "я");
+    if (/[бвгджзклмнпрстфхцчшщ]$/i.test(value)) return `${value}а`;
+    return value;
+  }
+
+  function applyContractTemplateMarkers(template, fieldValues) {
+    return String(template || "").replace(/#([^#]+)#/g, (match, fieldName) => (
+      Object.prototype.hasOwnProperty.call(fieldValues, fieldName) ? String(fieldValues[fieldName] || "") : match
+    ));
+  }
+
+  function ensureDocxFileName(value) {
+    const cleaned = String(value || "договор")
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, "")
+      .replace(/\s+/g, "_")
+      .replace(/^[_\-.]+|[_\-.]+$/g, "") || "договор";
+    return /\.docx$/i.test(cleaned) ? cleaned : `${cleaned}.docx`;
+  }
+
+  function downloadBlob(fileName, blob) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
   function getStudentAddressInput(key) {
     return Array.from(document.querySelectorAll("[data-address-field]")).find((input) => input.dataset.addressField === key);
   }
@@ -8676,6 +11200,7 @@ MAX - https://bizvmax.ru/zifra_plus
       finalAttestationSettings: "Итоговая аттестация: оценки и шкала",
       discountRules: "Скидки",
       dataFormulas: "Конструктор формул данных",
+      contractTemplateFields: "Конструктор полей договора",
       communicationTemplates: "Шаблоны типовых сообщений",
       roles: "Роли"
     };
@@ -8711,4 +11236,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   render();
+  window.setTimeout(() => {
+    autoInspectDocumentTemplates();
+  }, 250);
 })();
