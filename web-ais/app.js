@@ -8332,6 +8332,9 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     commitDocumentTemplates(documents, document);
     addAudit("Изменен конструктор документов", document.title, "Сохранены настройки, поля и формулы");
+    state.documentTemplateDialogId = "";
+    state.activeContractTemplateFieldId = "";
+    state.pendingContractTemplateFieldFocus = "";
     persist();
     render();
   }
@@ -10740,7 +10743,17 @@ MAX - https://bizvmax.ru/zifra_plus
     await downloadStudentDocumentFromTemplate(documentTemplate, record, button, errorTitle);
   }
 
+  function ensureStudentOrderNumber(record, fieldName, message) {
+    const value = String(record?.[fieldName] || "").trim();
+    if (value) return true;
+    alert(message);
+    document.querySelector(`[name='${fieldName}']`)?.focus({ preventScroll: true });
+    return false;
+  }
+
   async function openStudentEnrollmentOrderDocument(event) {
+    const record = collectStudentFormDraft();
+    if (!ensureStudentOrderNumber(record, "enrollmentOrderNo", "Укажите номер приказа о зачислении.")) return;
     await openStudentCardBoundDocument(
       event,
       "enrollmentOrder",
@@ -10750,6 +10763,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function openStudentExpulsionOrderDocument(event) {
+    const record = collectStudentFormDraft();
+    if (!ensureStudentOrderNumber(record, "expulsionOrderNo", "Укажите номер приказа об отчислении.")) return;
     await openStudentCardBoundDocument(
       event,
       "expulsionOrder",
