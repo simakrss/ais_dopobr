@@ -742,6 +742,9 @@ function findTopLevelComparison(value) {
     else if (char === "(") depth += 1;
     else if (char === ")") depth = Math.max(0, depth - 1);
     else if (depth === 0 && squareDepth === 0) {
+      const twoChars = text.slice(index, index + 2);
+      if ([">=", "<=", "<>"].includes(twoChars)) return { index, operator: twoChars };
+      if ([">", "<"].includes(char)) return { index, operator: char };
       if (text.slice(index, index + 2) === "<>") return { index, operator: "<>" };
       if (char === "=") return { index, operator: "=" };
     }
@@ -762,10 +765,51 @@ function formulaValueToBoolean(value) {
   return Boolean(text && text !== "0" && text !== "ложь" && text !== "false");
 }
 
+function parseDocumentFormulaDateValue(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.getTime();
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const ru = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(text);
+  if (ru) return new Date(Number(ru[3]), Number(ru[2]) - 1, Number(ru[1])).getTime();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+  if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])).getTime();
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date.getTime();
+}
+
+function compareDocumentFormulaValues(left, right, operator) {
+  if (operator === "=" || operator === "<>") {
+    const result = formulaValueToString(left) === formulaValueToString(right);
+    return operator === "<>" ? !result : result;
+  }
+  const leftNumber = typeof left === "number" ? left : Number(String(left ?? "").replace(",", "."));
+  const rightNumber = typeof right === "number" ? right : Number(String(right ?? "").replace(",", "."));
+  let comparableLeft = leftNumber;
+  let comparableRight = rightNumber;
+  if (!Number.isFinite(comparableLeft) || !Number.isFinite(comparableRight)) {
+    comparableLeft = parseDocumentFormulaDateValue(left);
+    comparableRight = parseDocumentFormulaDateValue(right);
+  }
+  if (comparableLeft === null || comparableRight === null || !Number.isFinite(comparableLeft) || !Number.isFinite(comparableRight)) {
+    comparableLeft = formulaValueToString(left);
+    comparableRight = formulaValueToString(right);
+  }
+  if (operator === ">") return comparableLeft > comparableRight;
+  if (operator === "<") return comparableLeft < comparableRight;
+  if (operator === ">=") return comparableLeft >= comparableRight;
+  if (operator === "<=") return comparableLeft <= comparableRight;
+  return false;
+}
+
 function getFormulaContextValue(name, context) {
   const key = String(name || "").trim();
   if (Object.prototype.hasOwnProperty.call(context.fieldValues, key)) return context.fieldValues[key];
   if (Object.prototype.hasOwnProperty.call(context.sourceValues, key)) return context.sourceValues[key];
+  const baseKey = key.split("|")[0].trim();
+  if (baseKey && baseKey !== key) {
+    if (Object.prototype.hasOwnProperty.call(context.fieldValues, baseKey)) return context.fieldValues[baseKey];
+    if (Object.prototype.hasOwnProperty.call(context.sourceValues, baseKey)) return context.sourceValues[baseKey];
+  }
   return "";
 }
 
@@ -798,9 +842,9 @@ function evaluateDocumentFormulaExpression(expression, context) {
   }
   const comparison = findTopLevelComparison(text);
   if (comparison) {
-    const left = formulaValueToString(evaluateDocumentFormulaExpression(text.slice(0, comparison.index), context));
-    const right = formulaValueToString(evaluateDocumentFormulaExpression(text.slice(comparison.index + comparison.operator.length), context));
-    return comparison.operator === "<>" ? left !== right : left === right;
+    const left = evaluateDocumentFormulaExpression(text.slice(0, comparison.index), context);
+    const right = evaluateDocumentFormulaExpression(text.slice(comparison.index + comparison.operator.length), context);
+    return compareDocumentFormulaValues(left, right, comparison.operator);
   }
   const hashRef = /^#([^#]+)#$/.exec(text);
   if (hashRef) return getFormulaContextValue(hashRef[1], context);
@@ -819,7 +863,9 @@ function evaluateDocumentFormulaFunction(name, args, context) {
   const upperName = String(name || "").toUpperCase();
   const value = (index) => evaluateDocumentFormulaExpression(args[index] || "", context);
   const text = (index) => formulaValueToString(value(index));
+  if (upperName === "ТДАТА") return new Date();
   if (upperName === "ЕСЛИ") return formulaValueToBoolean(value(0)) ? value(1) : value(2);
+  if (upperName === "И") return args.every((arg) => formulaValueToBoolean(evaluateDocumentFormulaExpression(arg, context)));
   if (upperName === "ИЛИ") return args.some((arg) => formulaValueToBoolean(evaluateDocumentFormulaExpression(arg, context)));
   if (upperName === "ЕСЛИОШИБКА") {
     try { return value(0); } catch { return value(1); }
@@ -843,11 +889,14 @@ function evaluateDocumentFormulaFunction(name, args, context) {
   }
   if (upperName === "ЧИСЛО_В_ПРОПИСЬ") return numberToRussianWords(Number(String(text(0)).replace(/\s+/g, "").replace(",", ".")) || 0);
   if (upperName === "СКЛОНЕНИЕ_ФИО") {
+    const grammaticalCase = text(1).toUpperCase();
     const mode = text(2).toUpperCase();
     if (mode === "ИО") {
       const parts = splitFullName(text(0));
       return [parts.firstName, parts.patronymic].filter(Boolean).join(" ");
     }
+    if (grammaticalCase === "И") return text(0);
+    if (grammaticalCase === "Д") return inflectFioDative(text(0));
     return inflectFioGenitive(text(0));
   }
   return `${name}(${args.map((arg) => formulaValueToString(evaluateDocumentFormulaExpression(arg, context))).join(";")})`;
@@ -936,9 +985,24 @@ function inflectFioGenitive(name) {
   ].filter(Boolean).join(" ");
 }
 
+function inflectFioDative(name) {
+  const gender = inferGenderFromFio(name);
+  const parts = splitFullName(name);
+  return [
+    inflectRussianNamePartDative(parts.surname, gender, "surname"),
+    inflectRussianNamePartDative(parts.firstName, gender, "firstName"),
+    inflectRussianNamePartDative(parts.patronymic, gender, "patronymic")
+  ].filter(Boolean).join(" ");
+}
+
 function inflectRussianNamePart(value, gender, role) {
   if (!value) return "";
   return String(value).split("-").map((part) => inflectRussianSimpleNamePart(part, gender, role)).join("-");
+}
+
+function inflectRussianNamePartDative(value, gender, role) {
+  if (!value) return "";
+  return String(value).split("-").map((part) => inflectRussianSimpleNamePartDative(part, gender, role)).join("-");
 }
 
 function inflectRussianSimpleNamePart(value, gender, role) {
@@ -963,23 +1027,113 @@ function inflectRussianSimpleNamePart(value, gender, role) {
   return value;
 }
 
+function inflectRussianSimpleNamePartDative(value, gender, role) {
+  if (!value) return "";
+  const lower = value.toLowerCase();
+  const replaceEnding = (pattern, ending) => value.replace(pattern, ending);
+  if (gender === "female") {
+    if (role === "patronymic" && /(?:вна|ична)$/i.test(value)) return value.replace(/а$/i, "е");
+    if (/(ская|цкая)$/i.test(value)) return replaceEnding(/ая$/i, "ой");
+    if (/яя$/i.test(value)) return replaceEnding(/яя$/i, "ей");
+    if (/ая$/i.test(value)) return replaceEnding(/ая$/i, "ой");
+    if (/(ова|ева|ёва|ина)$/i.test(value)) return replaceEnding(/а$/i, "ой");
+    if (/ия$/i.test(value)) return replaceEnding(/ия$/i, "ии");
+    if (/[ая]$/i.test(value)) return replaceEnding(/[ая]$/i, "е");
+    return value;
+  }
+  if (role === "patronymic" && /ич$/i.test(value)) return `${value}у`;
+  if (/(ский|цкий)$/i.test(value)) return value.replace(/ий$/i, "ому");
+  if (/(ый|ой)$/i.test(value)) return value.replace(/[ыо]й$/i, "ому");
+  if (/ий$/i.test(value)) return value.replace(/ий$/i, "ию");
+  if (/[йь]$/i.test(value)) return value.replace(/[йь]$/i, "ю");
+  if (/[бвгджзклмнпрстфхцчшщ]$/i.test(lower)) return `${value}у`;
+  return value;
+}
+
 function applyCustomDocumentPropertyFormulas(templateBytes, fieldValues, sourceValues) {
   const entries = readDocxZipEntries(templateBytes);
   const values = { ...(fieldValues || {}) };
   const context = { fieldValues: values, sourceValues: sourceValues || {} };
   orderDocumentFormulaProperties(getDocumentFormulaPropertiesFromEntries(entries)).forEach((property) => {
     if (isGetSqlQueryFormula(property.value)) {
+      const existingValue = getFormulaContextValue(property.name, context) || values[property.name] || "";
       values[property.name] = property.name === "УчебныйПлан"
-        ? (getFormulaContextValue("УчебныйПлан", context) || values[property.name] || "")
-        : "";
+        ? (getFormulaContextValue("УчебныйПлан", context) || existingValue || "")
+        : existingValue;
       return;
     }
-    values[property.name] = evaluateDocumentFormula(property.value, context);
+    const existingValue = getFormulaContextValue(property.name, context) || values[property.name] || "";
+    const evaluatedValue = evaluateDocumentFormula(property.value, context);
+    values[property.name] = evaluatedValue || existingValue;
   });
   return values;
 }
 
-function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}) {
+function getSubjectFieldPositionMap(entries) {
+  const positionMap = new Map();
+  orderDocumentFormulaProperties(getDocumentFormulaPropertiesFromEntries(entries)).forEach((property) => {
+    const position = Number(property.position);
+    if (Number.isFinite(position) && position > 0 && property.name) {
+      positionMap.set(String(position), property.name);
+    }
+  });
+  return positionMap;
+}
+
+function replaceWordFieldResultXml(resultXml, value) {
+  const escapedValue = escapeXmlText(value);
+  let replaced = false;
+  const nextXml = String(resultXml || "").replace(/<w:t\b[^>]*>[\s\S]*?<\/w:t>/g, () => {
+    if (!replaced) {
+      replaced = true;
+      return `<w:t xml:space="preserve">${escapedValue}</w:t>`;
+    }
+    return "<w:t></w:t>";
+  });
+  if (replaced) return nextXml;
+  return `<w:r><w:t xml:space="preserve">${escapedValue}</w:t></w:r>`;
+}
+
+function applySubjectFieldValues(xml, fieldValues, subjectFieldPositionMap) {
+  if (!subjectFieldPositionMap?.size) return xml;
+  return String(xml || "").replace(
+    /(<w:fldChar\b(?=[^>]*w:fldCharType="begin")[^>]*\/>[\s\S]*?<w:instrText\b[^>]*>[\s\S]*?SUBJECT\s+"[^"<]*"\s*\/(\d+)[\s\S]*?<\/w:instrText>[\s\S]*?<w:fldChar\b(?=[^>]*w:fldCharType="separate")[^>]*\/>)([\s\S]*?)(<w:fldChar\b(?=[^>]*w:fldCharType="end")[^>]*\/>)/g,
+    (match, startXml, position, resultXml, endXml) => {
+      const fieldName = subjectFieldPositionMap.get(String(position));
+      if (!fieldName || !Object.prototype.hasOwnProperty.call(fieldValues, fieldName)) return match;
+      const value = fieldValues[fieldName];
+      const escapedInstructionValue = escapeXmlText(value);
+      const nextStartXml = startXml.replace(
+        /(SUBJECT\s+)"[^"<]*"(\s*\/\d+)/i,
+        `$1"${escapedInstructionValue}"$2`
+      );
+      return `${nextStartXml}${replaceWordFieldResultXml(resultXml, value)}${endXml}`;
+    }
+  );
+}
+
+function updateCustomDocumentProperties(entries, fieldValues, allowedNames = null) {
+  const entry = entries.find((item) => item.name === "docProps/custom.xml");
+  if (!entry) return;
+  const values = fieldValues || {};
+  let xml = entry.content.toString("utf8");
+  xml = xml.replace(
+    /(<property\b[^>]*\bname="([^"]+)"[^>]*>)([\s\S]*?)(<\/property>)/g,
+    (match, startXml, encodedName, bodyXml, endXml) => {
+      const name = decodeXmlText(encodedName);
+      if (allowedNames?.size && !allowedNames.has(name)) return match;
+      if (!Object.prototype.hasOwnProperty.call(values, name)) return match;
+      const value = escapeXmlText(values[name]);
+      const nextBody = /<vt:[^>]+>[\s\S]*?<\/vt:[^>]+>/.test(bodyXml)
+        ? bodyXml.replace(/(<vt:[^>]+>)[\s\S]*?(<\/vt:[^>]+>)/, `$1${value}$2`)
+        : `<vt:lpwstr>${value}</vt:lpwstr>`;
+      return `${startXml}${nextBody}${endXml}`;
+    }
+  );
+  entry.content = Buffer.from(xml, "utf8");
+}
+
+function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyUpdateNames = null) {
   const replacements = Object.entries(fieldValues || {})
     .filter(([name]) => String(name || "").trim())
     .map(([name, value]) => ({
@@ -987,6 +1141,8 @@ function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}) {
       value: Object.prototype.hasOwnProperty.call(imageValues, name) ? "" : escapeXmlText(value)
     }));
   const entries = readDocxZipEntries(templateBytes);
+  const subjectFieldPositionMap = getSubjectFieldPositionMap(entries);
+  updateCustomDocumentProperties(entries, fieldValues, propertyUpdateNames);
   Object.entries(imageValues || {}).forEach(([name, image]) => {
     if (image?.bytes?.length) insertDocumentImage(entries, name, image);
   });
@@ -996,6 +1152,7 @@ function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}) {
     replacements.forEach(({ marker, value }) => {
       xml = xml.split(marker).join(value);
     });
+    xml = applySubjectFieldValues(xml, fieldValues, subjectFieldPositionMap);
     entry.content = Buffer.from(xml, "utf8");
   });
   return buildDocxZip(entries);
@@ -1359,11 +1516,13 @@ async function handleContractDocument(req, res) {
   try {
     const body = await readJsonBody(req);
     const templateBytes = await loadTemplateBytes(body.templateUrl, body.templatePath);
+    const inputFieldValues = body.fieldValues || {};
     const fieldValues = body.useCustomDocumentProperties
-      ? applyCustomDocumentPropertyFormulas(templateBytes, body.fieldValues || {}, body.sourceValues || {})
-      : (body.fieldValues || {});
+      ? applyCustomDocumentPropertyFormulas(templateBytes, inputFieldValues, body.sourceValues || {})
+      : inputFieldValues;
+    const propertyUpdateNames = new Set(Object.keys(inputFieldValues || {}));
     const photo = await loadContractPhoto(fieldValues);
-    const result = fillDocxMarkers(templateBytes, fieldValues, photo ? { "Фото": photo } : { "Фото": null });
+    const result = fillDocxMarkers(templateBytes, fieldValues, photo ? { "Фото": photo } : { "Фото": null }, propertyUpdateNames);
     sendFile(
       res,
       200,

@@ -373,9 +373,10 @@ MAX - https://bizvmax.ru/zifra_plus
     "Пасп_Обуч_Вид документа", "Пасп_Обуч_Дата", "Пасп_Обуч_Серия_Номер", "Пасп_Обуч_Кем",
     "Обр_Вид образования", "Обр_Серия", "Обр_Номер", "Обр_Дата выдачи", "Обр_Кем выдан",
     "Внесено (руб)", "Сумма  по договору (руб)", "Фото",
-    "ИО", "ФИО_ENG", "Прогр обуч факт_ENG", "Дата выдачи документа", "Дата отчисления",
+    "ИО", "ФИО_ENG", "Прогр обуч факт_ENG", "Дата выдачи документа", "Дата отчисления", "Дата приказа отчисления",
     "Документ об образовании", "Номер бланка", "РегНомер", "Номер протокола", "Оценка ИА",
-    "Квалификация", "УчебныйПлан", "СфераДеятельности", "Часы", "Срок обучения_ENG", "QRкод"
+    "Квалификация", "УчебныйПлан", "СфераДеятельности", "Часы", "Срок обучения_ENG", "QRкод",
+    "Вид  программы ДПО", "Номер приказа зачисления", "Дата приказа зачисления", "Номер приказа отчисления", "Пол"
   ];
   const contractTemplateSourceFieldMap = {
     "ФИО": "name",
@@ -415,18 +416,33 @@ MAX - https://bizvmax.ru/zifra_plus
     "ФИО_ENG": "nameEnglish",
     "Дата выдачи документа": "diplomaIssueDate",
     "Дата отчисления": "expulsionDate",
+    "Дата приказа отчисления": "expulsionDate",
     "Номер бланка": "diplomaBlankNo",
     "РегНомер": "registrationNo",
     "Номер протокола": "protocolNo",
     "Оценка ИА": "finalGrade",
     "Квалификация": "qualification",
     "Часы": "hours",
-    "QRкод": "qrCode"
+    "QRкод": "qrCode",
+    "Вид программы ДПО": "educationType",
+    "Вид  программы ДПО": "educationType",
+    "Номер приказа зачисления": "enrollmentOrderNo",
+    "Дата приказа зачисления": "enrollmentDate",
+    "Номер приказа отчисления": "expulsionOrderNo",
+    "Пол": "gender"
   };
   const defaultDocumentTemplateId = "document-contract-application";
   const documentTemplateInspectionVersion = "2026-06-20-formulas-v4";
   const wordTemplateExtensions = ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"];
   const wordTemplateAccept = wordTemplateExtensions.map((ext) => `.${ext}`).join(",");
+  const studentCardDocumentBindingOptions = [
+    { value: "", label: "Без привязки" },
+    { value: "contract", label: "Карточка слушателя. Договор" },
+    { value: "education", label: "Карточка слушателя. Документ об образовании" },
+    { value: "studyCertificate", label: "Карточка слушателя. Справка об обучении" },
+    { value: "enrollmentOrder", label: "Карточка слушателя. Приказ на зачисление" },
+    { value: "expulsionOrder", label: "Карточка слушателя. Приказ об отчислении" }
+  ];
 
   function createDefaultDocumentTemplate() {
     return {
@@ -436,6 +452,7 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: "",
       fileNameTemplate: "Заявление+договор_#ФИО_обуч#_#N Договора#",
       useCustomDocumentProperties: "1",
+      documentKind: "contract",
       fields: contractTemplateFieldDefaults.map((field) => ({ ...field })),
       originalFields: contractTemplateFieldDefaults.map((field) => ({ ...field })),
       source: "link",
@@ -485,6 +502,85 @@ MAX - https://bizvmax.ru/zifra_plus
       ]
     }
   ];
+  const studyCertificateDocumentTemplateDefinition = {
+    id: "document-study-certificate",
+    title: "Справка об обучении",
+    templateUrl: "https://disk.yandex.ru/i/2SP7KB2PpwykbQ",
+    templatePath: "",
+    fileName: "Справка об обучении.docx",
+    fileNameTemplate: "Справка_об_обучении_#ФИО#",
+    documentKind: "studyCertificate",
+    markers: [
+      "ФИО_кому", "ДР обуч", "Прогр обуч факт", "ВидПрограммы", "Номер приказа зачисления",
+      "Дата приказа зачисления", "Местоимение", "Договор", "Дата окончания обучения",
+      "Дата начала обучения", "Глагол", "Вид курсов", "ИО", "ПутьСохр", "Email"
+    ],
+    formulas: {
+      "ФИО_кому": `=СКЛОНЕНИЕ_ФИО([ФИО]; "Д")`,
+      "ДР обуч": "=[ДР обуч]",
+      "Прогр обуч факт": "=[Прогр обуч факт]",
+      "ВидПрограммы": `=Если([Вид  программы ДПО]="КПК";"курсов повышения квалификации ";Если([Вид  программы ДПО]="ППП";"профессиональной переподготовки";"дополнительного образования"))`,
+      "Номер приказа зачисления": "=[Номер приказа зачисления]",
+      "Дата приказа зачисления": "=[Дата приказа зачисления]",
+      "Местоимение": `=Если([Пол]="Ж";"она";"он")`,
+      "Договор": "=[Договор]",
+      "Дата окончания обучения": "=[Дата окончания обучения]",
+      "Дата начала обучения": `=ЕСЛИ([Дата начала обучения]="";[Дата приказа зачисления];[Дата начала обучения])`,
+      "Глагол": `=ЕСЛИ(ТДАТА()<[Дата окончания обучения];"обучается";Если([Пол]="Ж";"обучалась";"обучался"))`,
+      "Вид курсов": `=ЕСЛИ(ЕСЛИОШИБКА(ПОИСК([Количество часов];[Прогр обуч факт])<>0;ЛОЖЬ);[Прогр обуч факт];[Прогр обуч факт] & " (" & [Количество часов] & " ч.)")`,
+      "ИО": `=СКЛОНЕНИЕ_ФИО([ФИО];"И";"ИО")`,
+      "ПутьСохр": `=ПутьДокумента(1) & [Фото]`,
+      "Email": "=[Email]"
+    }
+  };
+  const orderDocumentTemplateDefinitions = [
+    {
+      id: "document-enrollment-order",
+      title: "Приказ на зачисление",
+      templateUrl: "https://disk.yandex.ru/i/cqN9Hcs4j_dgUw",
+      templatePath: "",
+      fileName: "Приказ на зачисление.docx",
+      fileNameTemplate: "Приказ_на_зачисление_#Номер приказа зачисления#_#ФИО#",
+      documentKind: "enrollmentOrder",
+      markers: [
+        "Номер приказа зачисления",
+        "Дата приказа зачисления",
+        "Дата начала обучения",
+        "Список"
+      ],
+      formulas: {
+        "Номер приказа зачисления": "=[Номер приказа зачисления]",
+        "Дата приказа зачисления": "=[Дата приказа зачисления]",
+        "Дата начала обучения": "=[Дата начала обучения]",
+        "Список": "=ПолучитьSQLзапрос(\"SELECT список слушателей для приказа зачисления\")"
+      }
+    },
+    {
+      id: "document-expulsion-order",
+      title: "Приказ об отчислении",
+      templateUrl: "https://disk.yandex.ru/i/6TdhHJVX2cZl3A",
+      templatePath: "",
+      fileName: "Приказ об отчислении.docx",
+      fileNameTemplate: "Приказ_об_отчислении_#Номер приказа отчисления#_#ФИО#",
+      documentKind: "expulsionOrder",
+      markers: [
+        "Номер приказа отчисления",
+        "Дата приказа отчисления",
+        "СписокСвыдачей",
+        "СписокБезВыдачи",
+        "N2",
+        "N3"
+      ],
+      formulas: {
+        "Номер приказа отчисления": "=[Номер приказа отчисления]",
+        "Дата приказа отчисления": "=[Дата приказа отчисления]",
+        "СписокСвыдачей": "=ПолучитьSQLзапрос(\"SELECT список слушателей с выдачей документа\")",
+        "СписокБезВыдачи": "=ПолучитьSQLзапрос(\"SELECT список слушателей без выдачи документа\")",
+        "N2": "=ЕСЛИ(\"#СписокСвыдачей|5#\"<>\"\";2;1)",
+        "N3": "=ЕСЛИ(И(\"#СписокСвыдачей|5#\"<>\"\";\"#СписокБезВыдачи|5#\"<>\"\");3;ЕСЛИ(\"#СписокСвыдачей|5#\"<>\"\";2;ЕСЛИ(\"#СписокБезВыдачи|5#\"<>\"\";2;1)))"
+      }
+    }
+  ];
   const educationDocumentTemplateFieldFormulaMap = {
     "Email": "=[Email]",
     "Дата выдачи": "=[Дата выдачи документа]",
@@ -516,7 +612,7 @@ MAX - https://bizvmax.ru/zifra_plus
       id: `${definition.id}-field-${fieldIndex + 1}`,
       position: fieldIndex + 1,
       name,
-      formula: educationDocumentTemplateFieldFormulaMap[name] || "",
+      formula: definition.formulas?.[name] || educationDocumentTemplateFieldFormulaMap[name] || "",
       hideEmpty: false,
       custom: true
     }));
@@ -532,8 +628,8 @@ MAX - https://bizvmax.ru/zifra_plus
       originalFields: fields.map((field) => ({ ...field })),
       fieldsMode: "document-markers",
       source: definition.templateUrl ? "link" : "file",
-      documentKind: "education",
-      programTypes: definition.programTypes,
+      documentKind: definition.documentKind || "education",
+      programTypes: definition.programTypes || [],
       createdAt: "2026-06-20T00:00:00.000Z",
       lastInspectedSignature: "",
       updatedAt: ""
@@ -543,7 +639,11 @@ MAX - https://bizvmax.ru/zifra_plus
   function getDefaultDocumentTemplates() {
     return [
       createDefaultDocumentTemplate(),
-      ...educationDocumentTemplateDefinitions.map(createEducationDocumentTemplate)
+      ...educationDocumentTemplateDefinitions.map(createEducationDocumentTemplate),
+      createEducationDocumentTemplate(studyCertificateDocumentTemplateDefinition, educationDocumentTemplateDefinitions.length),
+      ...orderDocumentTemplateDefinitions.map((definition, index) => (
+        createEducationDocumentTemplate(definition, educationDocumentTemplateDefinitions.length + index + 1)
+      ))
     ];
   }
   const sdoSettingDefaults = [
@@ -858,13 +958,14 @@ MAX - https://bizvmax.ru/zifra_plus
       accent: "teal",
       fields: [
         field("title", "Документ", "text", true),
+        field("bindingLabel", "Привязка"),
         field("sourceLabel", "Источник"),
         field("sourceValue", "Ссылка / файл"),
         field("fileNameTemplate", "Имя файла"),
         field("fieldsCount", "Поля", "number"),
         field("updatedAt", "Обновлен", "date")
       ],
-      table: ["title", "sourceLabel", "sourceValue", "fileNameTemplate", "fieldsCount", "updatedAt"]
+      table: ["title", "bindingLabel", "sourceLabel", "sourceValue", "fileNameTemplate", "fieldsCount", "updatedAt"]
     }
   };
 
@@ -1619,16 +1720,17 @@ MAX - https://bizvmax.ru/zifra_plus
     getDefaultDocumentTemplates().forEach((defaultTemplate) => {
       const existing = normalized.find((item) => item.id === defaultTemplate.id);
       if (existing) {
-        if (defaultTemplate.documentKind === "education") {
-          if (!existing.templateUrl && defaultTemplate.templateUrl) {
-            existing.templateUrl = defaultTemplate.templateUrl;
-            existing.source = "link";
-          }
-          existing.templatePath = existing.templatePath || defaultTemplate.templatePath;
-          existing.fileName = existing.fileName || defaultTemplate.fileName;
-          existing.documentKind = existing.documentKind || defaultTemplate.documentKind;
-          if (!existing.programTypes?.length) existing.programTypes = [...defaultTemplate.programTypes];
+        if (!existing.templateUrl && defaultTemplate.templateUrl) {
+          existing.templateUrl = defaultTemplate.templateUrl;
+          existing.source = "link";
         }
+        existing.templatePath = existing.templatePath || defaultTemplate.templatePath;
+        existing.fileName = existing.fileName || defaultTemplate.fileName;
+        existing.documentKind = existing.documentKind || defaultTemplate.documentKind;
+        if (!existing.fileNameTemplate && defaultTemplate.fileNameTemplate) existing.fileNameTemplate = defaultTemplate.fileNameTemplate;
+        if (!existing.fields?.length && defaultTemplate.fields?.length) existing.fields = defaultTemplate.fields.map((field) => ({ ...field }));
+        if (!existing.originalFields?.length && defaultTemplate.originalFields?.length) existing.originalFields = defaultTemplate.originalFields.map((field) => ({ ...field }));
+        if (defaultTemplate.documentKind === "education" && !existing.programTypes?.length) existing.programTypes = [...defaultTemplate.programTypes];
         return;
       }
       normalized.push(normalizeDocumentTemplate(defaultTemplate, normalized.length));
@@ -1762,7 +1864,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getPrimaryDocumentTemplate() {
-    return normalizeDocumentTemplate(getDocumentTemplates()[0] || createDefaultDocumentTemplate(), 0);
+    const documents = getDocumentTemplates();
+    return normalizeDocumentTemplate(
+      documents.find((documentTemplate) => documentTemplate.documentKind === "contract")
+        || documents[0]
+        || createDefaultDocumentTemplate(),
+      0
+    );
   }
 
   function getActiveDocumentTemplateFields() {
@@ -2967,6 +3075,11 @@ MAX - https://bizvmax.ru/zifra_plus
     return item.templateUrl || item.fileName || item.templatePath || "";
   }
 
+  function getDocumentTemplateBindingLabel(item) {
+    const kind = String(item?.documentKind || "");
+    return studentCardDocumentBindingOptions.find((option) => option.value === kind)?.label || "Без привязки";
+  }
+
   function getDocumentTemplateOpenUrl(item) {
     const templateUrl = String(item?.templateUrl || "").trim();
     if (templateUrl) return templateUrl;
@@ -2977,6 +3090,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function getDocumentTemplateRows(documents = getDocumentTemplates()) {
     return documents.map((item) => ({
       ...item,
+      bindingLabel: getDocumentTemplateBindingLabel(item),
       sourceLabel: getDocumentTemplateSourceLabel(item),
       sourceValue: getDocumentTemplateSourceValue(item) || "—",
       fieldsCount: item.fields.length
@@ -3145,10 +3259,20 @@ MAX - https://bizvmax.ru/zifra_plus
               <input name="fileNameTemplate" value="${escapeAttr(activeDocument.fileNameTemplate)}" autocomplete="off" required>
             </label>
           </div>
-          <label class="contract-template-wide-field">
-            <span>Ссылка на шаблон</span>
-            <input name="templateUrl" type="url" value="${escapeAttr(activeDocument.templateUrl)}" placeholder="Яндекс.Диск, OneDrive или Google Drive" autocomplete="off">
-          </label>
+          <div class="document-template-binding-row">
+            <label>
+              <span>Привязка</span>
+              <select name="documentKind">
+                ${studentCardDocumentBindingOptions.map((option) => `
+                  <option value="${escapeAttr(option.value)}" ${activeDocument.documentKind === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>
+                `).join("")}
+              </select>
+            </label>
+            <label>
+              <span>Ссылка на шаблон</span>
+              <input name="templateUrl" type="url" value="${escapeAttr(activeDocument.templateUrl)}" placeholder="Яндекс.Диск, OneDrive или Google Drive" autocomplete="off">
+            </label>
+          </div>
           <input name="useCustomDocumentProperties" type="hidden" value="1">
           <input name="templatePath" type="hidden" value="${escapeAttr(activeDocument.templatePath)}">
           <input name="documentSource" type="hidden" value="${escapeAttr(activeDocument.source)}">
@@ -3672,7 +3796,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderEducationDocumentActions(record) {
     return `
       <div class="education-document-actions">
-        <button class="ghost-button education-document-open-button" data-action="open-student-education-document" type="button" title="${escapeAttr(getEducationDocumentButtonTitle(record))}" aria-label="Документ об образовании">
+        <button class="ghost-button student-document-generate-button education-document-open-button" data-action="open-student-education-document" type="button" title="${escapeAttr(getEducationDocumentButtonTitle(record))}" aria-label="Документ об образовании">
           ${renderOrdersSdoIcon("documentText")}
           <span>Документ об образовании</span>
         </button>
@@ -3726,7 +3850,7 @@ MAX - https://bizvmax.ru/zifra_plus
       : "Сформировать заявление и договор";
     return `
       <div class="student-main-actions">
-        <button class="primary-button student-contract-button" data-action="open-student-contract-document" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">
+        <button class="primary-button student-document-generate-button student-contract-button" data-action="open-student-contract-document" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">
           ${renderOrdersSdoIcon("document")}
           <span>Договор</span>
         </button>
@@ -3912,8 +4036,19 @@ MAX - https://bizvmax.ru/zifra_plus
         : fieldName === "expulsionOrderNo"
           ? "Сформировать приказ на отчисление"
           : "Документ";
+      const action = fieldName === "enrollmentOrderNo"
+        ? "open-student-enrollment-order-document"
+        : fieldName === "expulsionOrderNo"
+          ? "open-student-expulsion-order-document"
+          : "";
       return `
-        <button class="orders-sdo-icon-button" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">
+        <button
+          class="orders-sdo-icon-button student-document-generate-button"
+          ${action ? `data-action="${escapeAttr(action)}"` : ""}
+          type="button"
+          title="${escapeAttr(title)}"
+          aria-label="${escapeAttr(title)}"
+        >
           ${renderOrdersSdoIcon("document")}
         </button>
       `;
@@ -3921,7 +4056,8 @@ MAX - https://bizvmax.ru/zifra_plus
     if (tool === "educationCertificate") {
       return `
         <button
-          class="orders-sdo-icon-button"
+          class="orders-sdo-icon-button student-document-generate-button"
+          data-action="open-student-study-certificate-document"
           type="button"
           title="Сформировать справку об обучении"
           aria-label="Сформировать справку об обучении"
@@ -6967,6 +7103,9 @@ MAX - https://bizvmax.ru/zifra_plus
     document.getElementById("recordForm")?.addEventListener("submit", saveRecord);
     document.querySelector("[data-action='open-student-contract-document']")?.addEventListener("click", openStudentContractDocument);
     document.querySelector("[data-action='open-student-education-document']")?.addEventListener("click", openStudentEducationDocument);
+    document.querySelector("[data-action='open-student-study-certificate-document']")?.addEventListener("click", openStudentStudyCertificateDocument);
+    document.querySelector("[data-action='open-student-enrollment-order-document']")?.addEventListener("click", openStudentEnrollmentOrderDocument);
+    document.querySelector("[data-action='open-student-expulsion-order-document']")?.addEventListener("click", openStudentExpulsionOrderDocument);
 
     document.querySelectorAll("[data-action='export-json']").forEach((button) => {
       button.addEventListener("click", exportJson);
@@ -8073,6 +8212,7 @@ MAX - https://bizvmax.ru/zifra_plus
       useCustomDocumentProperties: useCustomDocumentProperties ? "1" : "0",
       source: String(form?.elements.documentSource?.value || currentDocument.source || ""),
       fileName: String(form?.elements.documentFileName?.value || currentDocument.fileName || ""),
+      documentKind: String(form?.elements.documentKind?.value ?? currentDocument.documentKind ?? "").trim(),
       fields
     }, activeIndex);
     const nextDocuments = documents.map((item, index) => (
@@ -8117,12 +8257,24 @@ MAX - https://bizvmax.ru/zifra_plus
     const markerNames = unique((inspection?.markers || []).map((marker) => (
       String(marker || "").replace(/^#+|#+$/g, "").trim()
     )).filter(Boolean));
-    const markerSet = new Set(markerNames);
+    const assistantProperties = (inspection?.properties || []).filter((property) => (
+      property?.source === "assistant-options" || Number(property?.position || 0) > 0
+    ));
+    const propertyNames = unique(assistantProperties.map((property) => (
+      String(property?.name || "").replace(/^#+|#+$/g, "").trim()
+    )).filter(Boolean));
+    const inspectedNames = markerNames.length ? markerNames : propertyNames;
+    const referencedNames = unique(assistantProperties.flatMap((property) => (
+      [...String(property?.formula || "").matchAll(/#([^#\r\n]+)#/g)]
+        .map((match) => String(match[1] || "").split("|")[0].trim())
+        .filter(Boolean)
+    )));
+    const markerSet = new Set([...inspectedNames, ...referencedNames]);
     const sourceFields = normalizeContractTemplateDocumentFields(baseFields)
       .filter((field) => markerSet.has(field.name));
     const fieldsByName = new Map(sourceFields.map((field) => [field.name, { ...field }]));
     const propertiesByName = new Map();
-    (inspection?.properties || []).forEach((property) => {
+    assistantProperties.forEach((property) => {
       const normalizedName = String(property?.name || "").replace(/^#+|#+$/g, "").trim();
       if (normalizedName && markerSet.has(normalizedName)) propertiesByName.set(normalizedName, property);
     });
@@ -8150,7 +8302,7 @@ MAX - https://bizvmax.ru/zifra_plus
         custom: !defaultField
       });
     };
-    markerNames.forEach((marker) => {
+    inspectedNames.forEach((marker) => {
       const property = propertiesByName.get(marker);
       pushInspectedField(marker, property?.formula || "", Boolean(property?.formula));
     });
@@ -10494,6 +10646,18 @@ MAX - https://bizvmax.ru/zifra_plus
       : `Сформировать документ об образовании\n${documentTemplate.title}`;
   }
 
+  function getStudentCardDocumentTemplate(documentKind) {
+    const kind = String(documentKind || "").trim();
+    if (!kind) return null;
+    return getDocumentTemplates().find((documentTemplate) => (
+      documentTemplate.documentKind === kind
+    )) || null;
+  }
+
+  function getStudyCertificateDocumentTemplate() {
+    return getStudentCardDocumentTemplate("studyCertificate");
+  }
+
   async function downloadStudentDocumentFromTemplate(documentTemplate, record, button, errorTitle) {
     const templateUrl = documentTemplate.templateUrl || "";
     const templatePath = documentTemplate.templatePath || "";
@@ -10546,6 +10710,51 @@ MAX - https://bizvmax.ru/zifra_plus
       record,
       button,
       "Не удалось сформировать документ об образовании"
+    );
+  }
+
+  async function openStudentStudyCertificateDocument(event) {
+    const button = event?.currentTarget;
+    const record = collectStudentFormDraft();
+    const documentTemplate = getStudyCertificateDocumentTemplate();
+    if (!documentTemplate) {
+      alert("В конструкторе документов не найден шаблон «Справка об обучении».");
+      return;
+    }
+    await downloadStudentDocumentFromTemplate(
+      documentTemplate,
+      record,
+      button,
+      "Не удалось сформировать справку об обучении"
+    );
+  }
+
+  async function openStudentCardBoundDocument(event, documentKind, missingMessage, errorTitle) {
+    const button = event?.currentTarget;
+    const record = collectStudentFormDraft();
+    const documentTemplate = getStudentCardDocumentTemplate(documentKind);
+    if (!documentTemplate) {
+      alert(missingMessage);
+      return;
+    }
+    await downloadStudentDocumentFromTemplate(documentTemplate, record, button, errorTitle);
+  }
+
+  async function openStudentEnrollmentOrderDocument(event) {
+    await openStudentCardBoundDocument(
+      event,
+      "enrollmentOrder",
+      "В конструкторе документов не найден шаблон «Приказ на зачисление».",
+      "Не удалось сформировать приказ на зачисление"
+    );
+  }
+
+  async function openStudentExpulsionOrderDocument(event) {
+    await openStudentCardBoundDocument(
+      event,
+      "expulsionOrder",
+      "В конструкторе документов не найден шаблон «Приказ об отчислении».",
+      "Не удалось сформировать приказ об отчислении"
     );
   }
 
@@ -10626,7 +10835,59 @@ MAX - https://bizvmax.ru/zifra_plus
     return values;
   }
 
+  function getOrderDocumentProgramPhrase(record, enrollment = false) {
+    const type = getStudentProgramTypeCode(record);
+    if (type === "ППП") return enrollment ? "программу профессиональной переподготовки: " : "программа профессиональной переподготовки: ";
+    if (type === "КПК") return enrollment ? "программу повышения квалификации: " : "программа повышения квалификации: ";
+    if (type === "ДОП") return enrollment ? "дополнительную общеобразовательную программу: " : "дополнительная общеобразовательная программа: ";
+    if (type === "ПРО") return enrollment ? "программу профессионального обучения: " : "программа профессионального обучения: ";
+    return enrollment ? "программу обучения: " : "программа обучения: ";
+  }
+
+  function getOrderDocumentProgramText(record) {
+    const program = String(record.program || "").trim();
+    const hours = String(getStudentProgramHours(record) || "").trim();
+    if (!program) return hours ? `${hours} ч.` : "";
+    if (hours && new RegExp(`\\b${escapeRegExp(hours)}\\b`).test(program)) return program;
+    return hours ? `${program}, ${hours} ч.` : program;
+  }
+
+  function formatEnrollmentOrderStudentList(record) {
+    const name = String(record.name || "").trim();
+    const programText = getOrderDocumentProgramText(record);
+    return [name, `на ${getOrderDocumentProgramPhrase(record, true)}${programText}`]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  function hasStudentEducationDocumentIssued(record) {
+    return Boolean(
+      String(record.diplomaBlankNo || "").trim()
+      || String(record.registrationNo || "").trim()
+      || String(record.educationDocument || "").trim()
+    );
+  }
+
+  function formatExpulsionOrderStudentList(record) {
+    const name = String(record.name || "").trim();
+    const programText = getOrderDocumentProgramText(record);
+    return [name, `${getOrderDocumentProgramPhrase(record, false)}${programText}`]
+      .filter(Boolean)
+      .join(", ");
+  }
+
   function evaluateContractTemplateField(field, record, values, evaluateByName = null) {
+    const fieldName = String(field.name || "").trim();
+    if (fieldName === "Номер приказа зачисления") return getContractTemplateSourceValue("Номер приказа зачисления", record);
+    if (fieldName === "Дата приказа зачисления") return getContractTemplateSourceValue("Дата приказа зачисления", record);
+    if (fieldName === "Дата начала обучения") return getContractTemplateSourceValue("Дата начала обучения", record);
+    if (fieldName === "Номер приказа отчисления") return getContractTemplateSourceValue("Номер приказа отчисления", record);
+    if (fieldName === "Дата приказа отчисления") return getContractTemplateSourceValue("Дата приказа отчисления", record);
+    if (fieldName === "Список") return formatEnrollmentOrderStudentList(record);
+    if (fieldName === "СписокСвыдачей") return hasStudentEducationDocumentIssued(record) ? formatExpulsionOrderStudentList(record) : "";
+    if (fieldName === "СписокБезВыдачи") return hasStudentEducationDocumentIssued(record) ? "" : formatExpulsionOrderStudentList(record);
+    if (fieldName === "N2") return hasStudentEducationDocumentIssued(record) ? "2" : "1";
+    if (fieldName === "N3") return String(formatExpulsionOrderStudentList(record) ? 2 : 1);
     const defaultField = contractTemplateFieldDefaults.find((item) => item.name === field.name);
     const formula = String(field.formula || "").trim();
     if (isGetSqlQueryFormula(formula)) {
@@ -10682,6 +10943,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const normalized = String(name || "").replace(/\s+/g, " ").trim();
     if (normalized === "Количество часов") return getStudentProgramHours(record);
     if (normalized === "Часы") return getStudentProgramHours(record);
+    if (normalized === "Вид программы ДПО") return getStudentProgramTypeCode(record);
     if (normalized === "ФИО_несклон") return isChecked(record.noDeclension) ? "+" : "";
     if (normalized === "Фото") return record.photoPath || record.photoUrl || record.photoData || "";
     if (normalized === "ИО") {

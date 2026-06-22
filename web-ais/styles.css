@@ -1907,7 +1907,14 @@ body.is-resizing-column {
 .document-template-title-row {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(420px, 1.2fr) minmax(300px, 0.8fr);
+  gap: 10px 12px;
+}
+
+.document-template-binding-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(420px, 1.2fr) minmax(300px, 0.8fr);
   gap: 10px 12px;
 }
 
@@ -2197,6 +2204,7 @@ body.is-resizing-column {
 .contract-template-field-head input,
 .contract-template-field-table input,
 .contract-template-settings input,
+.contract-template-settings select,
 .document-link-form input,
 .contract-template-formula-label textarea {
   width: 100%;
@@ -2204,6 +2212,7 @@ body.is-resizing-column {
 }
 
 .contract-template-settings input,
+.contract-template-settings select,
 .document-link-form input {
   font-size: 14px;
   min-height: 30px;
@@ -4425,6 +4434,27 @@ body.student-tab-dragging .student-tabs button {
   color: #0b5f59;
 }
 
+.student-document-generate-button,
+.orders-sdo-icon-button.student-document-generate-button {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+
+.student-document-generate-button:hover,
+.student-document-generate-button:focus-visible,
+.orders-sdo-icon-button.student-document-generate-button:hover,
+.orders-sdo-icon-button.student-document-generate-button:focus-visible {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+
+.student-document-generate-button .orders-sdo-icon,
+.orders-sdo-icon-button.student-document-generate-button .orders-sdo-icon {
+  color: currentColor;
+}
+
 .orders-sdo-icon {
   width: 16px;
   height: 16px;
@@ -5569,6 +5599,10 @@ body.student-tab-dragging .student-tabs button {
 
 @media (max-width: 720px) {
   .document-constructor-panel .section-head {
+    grid-template-columns: 1fr;
+  }
+
+  .document-template-binding-row {
     grid-template-columns: 1fr;
   }
 
