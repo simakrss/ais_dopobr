@@ -1907,15 +1907,20 @@ body.is-resizing-column {
 .document-template-title-row {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(420px, 1.2fr) minmax(300px, 0.8fr);
+  grid-template-columns: minmax(500px, 1.45fr) minmax(260px, 0.55fr);
   gap: 10px 12px;
 }
 
 .document-template-binding-row {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(420px, 1.2fr) minmax(300px, 0.8fr);
+  grid-template-columns: minmax(500px, 1.45fr) minmax(260px, 0.55fr);
   gap: 10px 12px;
+}
+
+.document-template-title-row > label:first-child,
+.document-template-binding-row > label:first-child {
+  grid-template-columns: 112px minmax(0, 1fr);
 }
 
 .contract-template-settings label {
