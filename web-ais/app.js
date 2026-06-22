@@ -8257,13 +8257,17 @@ MAX - https://bizvmax.ru/zifra_plus
     const markerNames = unique((inspection?.markers || []).map((marker) => (
       String(marker || "").replace(/^#+|#+$/g, "").trim()
     )).filter(Boolean));
+    const subjectFieldNames = unique((inspection?.subjectFields || []).map((field) => (
+      String(field?.name || "").replace(/^#+|#+$/g, "").trim()
+    )).filter(Boolean));
     const assistantProperties = (inspection?.properties || []).filter((property) => (
       property?.source === "assistant-options" || Number(property?.position || 0) > 0
     ));
     const propertyNames = unique(assistantProperties.map((property) => (
       String(property?.name || "").replace(/^#+|#+$/g, "").trim()
     )).filter(Boolean));
-    const inspectedNames = markerNames.length ? markerNames : propertyNames;
+    const inspectedNames = unique([...markerNames, ...subjectFieldNames]);
+    if (!inspectedNames.length) inspectedNames.push(...propertyNames);
     const referencedNames = unique(assistantProperties.flatMap((property) => (
       [...String(property?.formula || "").matchAll(/#([^#\r\n]+)#/g)]
         .map((match) => String(match[1] || "").split("|")[0].trim())
@@ -10867,12 +10871,50 @@ MAX - https://bizvmax.ru/zifra_plus
     return hours ? `${program}, ${hours} ч.` : program;
   }
 
-  function formatEnrollmentOrderStudentList(record) {
+  function normalizeOrderDocumentNumber(value) {
+    return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function getStudentOrderDocumentRecords(record, orderFieldName) {
+    const targetNumber = normalizeOrderDocumentNumber(record?.[orderFieldName]);
+    if (!targetNumber) return [];
+    const currentId = String(record?.id || state.modal?.id || "").trim();
+    const rows = state.data.collections.students || [];
+    const result = [];
+    let currentRecordIncluded = false;
+    rows.forEach((row) => {
+      const isCurrent = currentId && String(row.id || "") === currentId;
+      const item = isCurrent ? { ...row, ...record } : row;
+      if (isCurrent) currentRecordIncluded = true;
+      if (normalizeOrderDocumentNumber(item?.[orderFieldName]) === targetNumber) result.push(item);
+    });
+    if (!currentRecordIncluded && normalizeOrderDocumentNumber(record?.[orderFieldName]) === targetNumber) {
+      result.push(record);
+    }
+    const seen = new Set();
+    return result
+      .filter((item, index) => {
+        const key = item.id ? `id:${item.id}` : (item.uid ? `uid:${item.uid}` : `row:${index}`);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "ru"));
+  }
+
+  function formatEnrollmentOrderStudentListItem(record) {
     const name = String(record.name || "").trim();
     const programText = getOrderDocumentProgramText(record);
     return [name, `на ${getOrderDocumentProgramPhrase(record, true)}${programText}`]
       .filter(Boolean)
       .join(" ");
+  }
+
+  function formatEnrollmentOrderStudentList(record) {
+    return getStudentOrderDocumentRecords(record, "enrollmentOrderNo")
+      .map(formatEnrollmentOrderStudentListItem)
+      .filter(Boolean)
+      .join("\n");
   }
 
   function hasStudentEducationDocumentIssued(record) {
@@ -10883,12 +10925,24 @@ MAX - https://bizvmax.ru/zifra_plus
     );
   }
 
-  function formatExpulsionOrderStudentList(record) {
+  function formatExpulsionOrderStudentListItem(record) {
     const name = String(record.name || "").trim();
     const programText = getOrderDocumentProgramText(record);
     return [name, `${getOrderDocumentProgramPhrase(record, false)}${programText}`]
       .filter(Boolean)
       .join(", ");
+  }
+
+  function getExpulsionOrderDocumentRecords(record, issuedFilter = null) {
+    return getStudentOrderDocumentRecords(record, "expulsionOrderNo")
+      .filter((item) => issuedFilter === null || hasStudentEducationDocumentIssued(item) === issuedFilter);
+  }
+
+  function formatExpulsionOrderStudentList(record, issuedFilter = null) {
+    return getExpulsionOrderDocumentRecords(record, issuedFilter)
+      .map(formatExpulsionOrderStudentListItem)
+      .filter(Boolean)
+      .join("\n");
   }
 
   function evaluateContractTemplateField(field, record, values, evaluateByName = null) {
@@ -10899,10 +10953,14 @@ MAX - https://bizvmax.ru/zifra_plus
     if (fieldName === "Номер приказа отчисления") return getContractTemplateSourceValue("Номер приказа отчисления", record);
     if (fieldName === "Дата приказа отчисления") return getContractTemplateSourceValue("Дата приказа отчисления", record);
     if (fieldName === "Список") return formatEnrollmentOrderStudentList(record);
-    if (fieldName === "СписокСвыдачей") return hasStudentEducationDocumentIssued(record) ? formatExpulsionOrderStudentList(record) : "";
-    if (fieldName === "СписокБезВыдачи") return hasStudentEducationDocumentIssued(record) ? "" : formatExpulsionOrderStudentList(record);
-    if (fieldName === "N2") return hasStudentEducationDocumentIssued(record) ? "2" : "1";
-    if (fieldName === "N3") return String(formatExpulsionOrderStudentList(record) ? 2 : 1);
+    if (fieldName === "СписокСвыдачей") return formatExpulsionOrderStudentList(record, true);
+    if (fieldName === "СписокБезВыдачи") return formatExpulsionOrderStudentList(record, false);
+    if (fieldName === "N2") return getExpulsionOrderDocumentRecords(record, true).length ? "2" : "1";
+    if (fieldName === "N3") {
+      const withIssued = getExpulsionOrderDocumentRecords(record, true).length;
+      const withoutIssued = getExpulsionOrderDocumentRecords(record, false).length;
+      return withIssued && withoutIssued ? "3" : (withIssued || withoutIssued ? "2" : "1");
+    }
     const defaultField = contractTemplateFieldDefaults.find((item) => item.name === field.name);
     const formula = String(field.formula || "").trim();
     if (isGetSqlQueryFormula(formula)) {

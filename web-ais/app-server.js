@@ -577,11 +577,11 @@ function parseAssistantDocumentFieldProperties(properties) {
   const configText = decodeAssistantOptionText(optionProperties.map((property) => property.value || "").join(""));
   const fields = [];
   const seen = new Set();
-  const sectionPattern = /^\[Поля\\[^\]]+\]\s*\n([\s\S]*?)(?=^\[[^\]]+\]\s*$|(?![\s\S]))/gm;
+  const sectionPattern = /^\[Поля\\([^\]]+)\]\s*\n([\s\S]*?)(?=^\[[^\]]+\]\s*$|(?![\s\S]))/gm;
   for (const match of configText.matchAll(sectionPattern)) {
     const values = {};
     let currentKey = "";
-    String(match[1] || "").split("\n").forEach((line) => {
+    String(match[2] || "").split("\n").forEach((line) => {
       const separatorIndex = line.indexOf("=");
       if (separatorIndex > 0) {
         currentKey = line.slice(0, separatorIndex).trim();
@@ -594,10 +594,12 @@ function parseAssistantDocumentFieldProperties(properties) {
     if (!name || seen.has(name)) continue;
     const formula = String(values["Формула"] || "").trim();
     if (!formula) continue;
+    const fieldNumber = Number.parseInt(String(match[1] || "").trim(), 10);
     const position = Number.parseInt(values["Позиция"], 10);
     fields.push({
       name,
       value: formula,
+      fieldNumber: Number.isFinite(fieldNumber) && fieldNumber > 0 ? fieldNumber : undefined,
       position: Number.isFinite(position) && position > 0 ? position : fields.length + 1,
       hideEmpty: parseAssistantOptionBoolean(values["СкрытьПустые"]),
       source: "assistant-options"
@@ -1080,7 +1082,14 @@ function getSubjectFieldPositionMap(entries) {
   return positionMap;
 }
 
+function buildWordTextRuns(value) {
+  return String(value ?? "").split(/\r\n|\r|\n/).map((line, index) => (
+    `${index ? "<w:r><w:br/></w:r>" : ""}<w:r><w:t xml:space="preserve">${escapeXmlText(line)}</w:t></w:r>`
+  )).join("");
+}
+
 function replaceWordFieldResultXml(resultXml, value) {
+  if (/\r|\n/.test(String(value ?? ""))) return buildWordTextRuns(value);
   const escapedValue = escapeXmlText(value);
   let replaced = false;
   const nextXml = String(resultXml || "").replace(/<w:t\b[^>]*>[\s\S]*?<\/w:t>/g, () => {
@@ -1102,7 +1111,7 @@ function applySubjectFieldValues(xml, fieldValues, subjectFieldPositionMap) {
       const fieldName = subjectFieldPositionMap.get(String(position));
       if (!fieldName || !Object.prototype.hasOwnProperty.call(fieldValues, fieldName)) return match;
       const value = fieldValues[fieldName];
-      const escapedInstructionValue = escapeXmlText(value);
+      const escapedInstructionValue = escapeXmlText(String(value ?? "").replace(/\r\n|\r|\n/g, " "));
       const nextStartXml = startXml.replace(
         /(SUBJECT\s+)"[^"<]*"(\s*\/\d+)/i,
         `$1"${escapedInstructionValue}"$2`
@@ -1455,13 +1464,70 @@ function parseDocxTextMarkers(entries) {
   return [...markers].filter(Boolean).sort((a, b) => a.localeCompare(b, "ru"));
 }
 
+function parseDocxSubjectFields(entries) {
+  const fields = [];
+  const seen = new Set();
+  entries
+    .filter((entry) => /^word\/(?:document|header\d*|footer\d*)\.xml$/i.test(entry.name))
+    .forEach((entry) => {
+      const xml = entry.content.toString("utf8");
+      const fieldPattern = /<w:fldChar\b(?=[^>]*w:fldCharType="begin")[^>]*\/>([\s\S]*?)<w:fldChar\b(?=[^>]*w:fldCharType="separate")[^>]*\/>/g;
+      for (const fieldMatch of xml.matchAll(fieldPattern)) {
+        const instruction = [...String(fieldMatch[1] || "").matchAll(/<w:instrText\b[^>]*>([\s\S]*?)<\/w:instrText>/g)]
+          .map((match) => decodeXmlText(match[1]))
+          .join("")
+          .replace(/\s+/g, " ")
+          .trim();
+        const subjectMatch = /\bSUBJECT\s+"([^"]*)"\s*\/(\d+)/i.exec(instruction);
+        if (!subjectMatch) continue;
+        const position = Number(subjectMatch[2]);
+        if (!Number.isFinite(position) || position <= 0 || seen.has(position)) continue;
+        seen.add(position);
+        fields.push({
+          position,
+          value: subjectMatch[1],
+          source: "subject-field"
+        });
+      }
+    });
+  return fields.sort((left, right) => left.position - right.position);
+}
+
+function mapSubjectFieldsToDocumentProperties(subjectFields, properties) {
+  const propertiesByFieldNumber = new Map();
+  const propertiesByPosition = new Map();
+  (Array.isArray(properties) ? properties : []).forEach((property) => {
+    const fieldNumber = Number(property?.fieldNumber);
+    if (Number.isFinite(fieldNumber) && fieldNumber > 0 && property?.name) {
+      propertiesByFieldNumber.set(fieldNumber, property);
+    }
+    const position = Number(property?.position);
+    if (Number.isFinite(position) && position > 0 && property?.name) {
+      propertiesByPosition.set(position, property);
+    }
+  });
+  return (Array.isArray(subjectFields) ? subjectFields : []).map((field) => {
+    const property = propertiesByFieldNumber.get(Number(field.position))
+      || propertiesByPosition.get(Number(field.position));
+    return {
+      ...field,
+      name: property?.name || "",
+      formula: property?.value || "",
+      hideEmpty: Boolean(property?.hideEmpty),
+      source: "subject-field"
+    };
+  });
+}
+
 function inspectDocxTemplate(templateBytes) {
   const entries = readDocxZipEntries(templateBytes);
-  const properties = getDocumentFormulaPropertiesFromEntries(entries)
+  const formulaProperties = getDocumentFormulaPropertiesFromEntries(entries);
+  const properties = formulaProperties
     .map((property) => ({
       name: property.name,
       formula: property.value,
       isFormula: isFormulaLike(property.value),
+      fieldNumber: property.fieldNumber,
       position: property.position,
       hideEmpty: Boolean(property.hideEmpty),
       source: property.source || "custom-property"
@@ -1469,6 +1535,7 @@ function inspectDocxTemplate(templateBytes) {
     .filter((property) => property.name);
   return {
     properties,
+    subjectFields: mapSubjectFieldsToDocumentProperties(parseDocxSubjectFields(entries), formulaProperties),
     markers: parseDocxTextMarkers(entries)
   };
 }
