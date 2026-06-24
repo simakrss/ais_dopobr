@@ -8313,6 +8313,35 @@ MAX - https://bizvmax.ru/zifra_plus
     return normalizeContractTemplateDocumentFields([...fieldsByName.values()]);
   }
 
+  function getDocumentTemplateEditSnapshot(documentTemplate) {
+    const normalized = normalizeDocumentTemplate(documentTemplate, 0);
+    return {
+      title: normalized.title,
+      templateUrl: normalized.templateUrl,
+      templatePath: normalized.templatePath,
+      fileNameTemplate: normalized.fileNameTemplate,
+      useCustomDocumentProperties: normalized.useCustomDocumentProperties,
+      source: normalized.source,
+      fileName: normalized.fileName,
+      documentKind: normalized.documentKind,
+      programTypes: normalized.programTypes,
+      fields: normalized.fields.map((field) => ({
+        position: Number(field.position) || 0,
+        name: String(field.name || ""),
+        formula: String(field.formula || ""),
+        hideEmpty: Boolean(field.hideEmpty),
+        custom: Boolean(field.custom)
+      }))
+    };
+  }
+
+  function hasUnsavedDocumentTemplateChanges(form = document.querySelector("form[data-action='save-contract-template-fields']")) {
+    if (!form) return false;
+    const { document: draftDocument } = collectContractTemplateForm(form);
+    const savedDocument = getDocumentTemplates().find((item) => item.id === draftDocument.id);
+    if (!savedDocument) return true;
+    return JSON.stringify(getDocumentTemplateEditSnapshot(draftDocument)) !== JSON.stringify(getDocumentTemplateEditSnapshot(savedDocument));
+  }
   function saveContractTemplateFields(event) {
     event.preventDefault();
     const { documents, document, fields } = collectContractTemplateForm(event.currentTarget);
@@ -8444,8 +8473,17 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeDocumentTemplateSettings() {
+    const form = document.querySelector("form[data-action='save-contract-template-fields']");
+    if (hasUnsavedDocumentTemplateChanges(form)) {
+      if (confirm("В карточке документа есть несохраненные изменения. Сохранить перед закрытием?")) {
+        saveContractTemplateFields({ preventDefault() {}, currentTarget: form });
+        return;
+      }
+      if (!confirm("Закрыть карточку документа без сохранения изменений?")) return;
+    }
     state.documentTemplateDialogId = "";
     state.activeContractTemplateFieldId = "";
+    state.pendingContractTemplateFieldFocus = "";
     render();
   }
 
