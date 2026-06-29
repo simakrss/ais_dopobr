@@ -593,7 +593,6 @@ function parseAssistantDocumentFieldProperties(properties) {
     const name = String(values["ИмяПоля"] || "").replace(/^#+|#+$/g, "").trim();
     if (!name || seen.has(name)) continue;
     const formula = String(values["Формула"] || "").trim();
-    if (!formula) continue;
     const fieldNumber = Number.parseInt(String(match[1] || "").trim(), 10);
     const position = Number.parseInt(values["Позиция"], 10);
     fields.push({
@@ -805,14 +804,48 @@ function compareDocumentFormulaValues(left, right, operator) {
 
 function getFormulaContextValue(name, context) {
   const key = String(name || "").trim();
+  if (key && key === String(context?.evaluatingName || "").trim()
+    && Object.prototype.hasOwnProperty.call(context.sourceValues, key)) {
+    return context.sourceValues[key];
+  }
   if (Object.prototype.hasOwnProperty.call(context.fieldValues, key)) return context.fieldValues[key];
   if (Object.prototype.hasOwnProperty.call(context.sourceValues, key)) return context.sourceValues[key];
   const baseKey = key.split("|")[0].trim();
   if (baseKey && baseKey !== key) {
+    if (baseKey === String(context?.evaluatingName || "").trim()
+      && Object.prototype.hasOwnProperty.call(context.sourceValues, baseKey)) {
+      return context.sourceValues[baseKey];
+    }
     if (Object.prototype.hasOwnProperty.call(context.fieldValues, baseKey)) return context.fieldValues[baseKey];
     if (Object.prototype.hasOwnProperty.call(context.sourceValues, baseKey)) return context.sourceValues[baseKey];
   }
   return "";
+}
+
+function replaceDocumentFormulaReferences(text, context) {
+  return String(text ?? "")
+    .replace(/#([^#]+)#/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)))
+    .replace(/\[([^\]]+)\]/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)));
+}
+
+function parseDocumentFormulaQuotedLiteral(value) {
+  const text = String(value || "");
+  if (text.length < 2 || text[0] !== '"') return null;
+  let result = "";
+  for (let index = 1; index < text.length; index += 1) {
+    const char = text[index];
+    if (char !== '"') {
+      result += char;
+      continue;
+    }
+    if (text[index + 1] === '"') {
+      result += '"';
+      index += 1;
+      continue;
+    }
+    return index === text.length - 1 ? result : null;
+  }
+  return null;
 }
 
 function evaluateDocumentFormula(formula, context) {
@@ -821,7 +854,7 @@ function evaluateDocumentFormula(formula, context) {
   } catch {
     return String(formula || "")
       .replace(/^=\s*/, "")
-      .replace(/#([^#]+)#/g, (match, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context) || match))
+      .replace(/#([^#]+)#/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)))
       .replace(/\[([^\]]+)\]/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)))
       .trim();
   }
@@ -836,7 +869,8 @@ function evaluateDocumentFormulaExpression(expression, context) {
   if (!text) return "";
   if (/^ИСТИНА$/i.test(text)) return true;
   if (/^ЛОЖЬ$/i.test(text)) return false;
-  if (/^"[\s\S]*"$/.test(text)) return text.slice(1, -1).replace(/""/g, '"');
+  const quotedLiteral = parseDocumentFormulaQuotedLiteral(text);
+  if (quotedLiteral !== null) return replaceDocumentFormulaReferences(quotedLiteral, context);
   if (/^-?\d+(?:[.,]\d+)?$/.test(text)) return Number(text.replace(",", "."));
   const concatParts = splitTopLevel(text, "&");
   if (concatParts.length > 1) {
@@ -1057,29 +1091,52 @@ function applyCustomDocumentPropertyFormulas(templateBytes, fieldValues, sourceV
   const values = { ...(fieldValues || {}) };
   const context = { fieldValues: values, sourceValues: sourceValues || {} };
   orderDocumentFormulaProperties(getDocumentFormulaPropertiesFromEntries(entries)).forEach((property) => {
+    context.evaluatingName = property.name;
     if (isGetSqlQueryFormula(property.value)) {
       const existingValue = getFormulaContextValue(property.name, context) || values[property.name] || "";
       values[property.name] = property.name === "УчебныйПлан"
         ? (getFormulaContextValue("УчебныйПлан", context) || existingValue || "")
         : existingValue;
+      context.evaluatingName = "";
       return;
     }
     const existingValue = getFormulaContextValue(property.name, context) || values[property.name] || "";
     const evaluatedValue = evaluateDocumentFormula(property.value, context);
     values[property.name] = evaluatedValue || existingValue;
+    context.evaluatingName = "";
   });
   return values;
 }
 
-function getSubjectFieldPositionMap(entries) {
+function getIndexedWordFieldPositionMap(entries) {
   const positionMap = new Map();
-  orderDocumentFormulaProperties(getDocumentFormulaPropertiesFromEntries(entries)).forEach((property) => {
+  getDocumentFormulaPropertiesFromEntries(entries).forEach((property) => {
+    const fieldNumber = Number(property.fieldNumber);
+    if (Number.isFinite(fieldNumber) && fieldNumber > 0 && property.name) {
+      positionMap.set(String(fieldNumber), property.name);
+    }
     const position = Number(property.position);
-    if (Number.isFinite(position) && position > 0 && property.name) {
+    if (Number.isFinite(position) && position > 0 && property.name && !positionMap.has(String(position))) {
       positionMap.set(String(position), property.name);
     }
   });
   return positionMap;
+}
+
+function normalizeExpulsionOrderFieldPositionMap(fieldPositionMap, fieldValues) {
+  const values = fieldValues || {};
+  const hasExpulsionOrderLists = Object.prototype.hasOwnProperty.call(values, "СписокСвыдачей")
+    || Object.prototype.hasOwnProperty.call(values, "СписокБезВыдачи");
+  if (!hasExpulsionOrderLists || !fieldPositionMap?.size) return fieldPositionMap;
+  const mappedNames = new Set(fieldPositionMap.values());
+  if (mappedNames.has("СписокСвыдачей")) return fieldPositionMap;
+  const hasKnownAssistantShift = fieldPositionMap.get("6") === "N3"
+    && fieldPositionMap.get("7") === "СписокБезВыдачи"
+    && fieldPositionMap.get("9") === "N3";
+  if (!hasKnownAssistantShift) return fieldPositionMap;
+  const normalizedMap = new Map(fieldPositionMap);
+  normalizedMap.set("6", "СписокСвыдачей");
+  return normalizedMap;
 }
 
 function buildWordTextRuns(value) {
@@ -1103,21 +1160,617 @@ function replaceWordFieldResultXml(resultXml, value) {
   return `<w:r><w:t xml:space="preserve">${escapedValue}</w:t></w:r>`;
 }
 
-function applySubjectFieldValues(xml, fieldValues, subjectFieldPositionMap) {
-  if (!subjectFieldPositionMap?.size) return xml;
+function parseIndexedWordFieldInstruction(instruction) {
+  const text = decodeXmlText(instruction).replace(/\s+/g, " ").trim();
+  const match = /\b(SUBJECT|SEQ(?:UENCE)?)\s+"([^"]*)"[\s\S]*?(?:[\\\/]\s*|\\r\s+)(\d+)/i.exec(text);
+  if (!match) return null;
+  const position = Number(match[3]);
+  if (!Number.isFinite(position) || position <= 0) return null;
+  return {
+    type: /^SUBJECT$/i.test(match[1]) ? "subject" : "sequence",
+    value: match[2],
+    position
+  };
+}
+
+function getComplexWordFieldInstruction(fieldStartXml) {
+  return [...String(fieldStartXml || "").matchAll(/<w:instrText\b[^>]*>([\s\S]*?)<\/w:instrText>/g)]
+    .map((match) => decodeXmlText(match[1]))
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function updateSubjectFieldInstruction(startXml, value) {
+  const escapedInstructionValue = escapeXmlText(String(value ?? "").replace(/\r\n|\r|\n/g, " "));
+  return String(startXml || "").replace(
+    /(SUBJECT\s+)"[^"<]*"([\s\S]*?(?:[\\\/]\s*|\\r\s+)\d+)/i,
+    `$1"${escapedInstructionValue}"$2`
+  );
+}
+
+const ORDER_LIST_DOCUMENT_FIELDS = new Set([
+  "\u0421\u043f\u0438\u0441\u043e\u043a",
+  "\u0421\u043f\u0438\u0441\u043e\u043a\u0421\u0432\u044b\u0434\u0430\u0447\u0435\u0439",
+  "\u0421\u043f\u0438\u0441\u043e\u043a\u0411\u0435\u0437\u0412\u044b\u0434\u0430\u0447\u0438"
+]);
+const EDUCATION_TRAINING_PLAN_FIELD = "\u0423\u0447\u0435\u0431\u043d\u044b\u0439\u041f\u043b\u0430\u043d";
+
+function shouldRenderDocumentFieldAsParagraphs(fieldName, value) {
+  return ORDER_LIST_DOCUMENT_FIELDS.has(String(fieldName || "").trim()) && /\r|\n/.test(String(value ?? ""));
+}
+
+function splitDocumentFieldParagraphLines(value) {
+  return String(value ?? "").split(/\r\n|\r|\n/);
+}
+
+function splitEducationTrainingPlanLines(value) {
+  return String(value ?? "").split(/\r\n|\r|\n|\u000b/);
+}
+
+function parseEducationTrainingPlanTableRows(value) {
+  return splitEducationTrainingPlanLines(value)
+    .map((line, index) => {
+      const parts = String(line || "").split("\t").map((part) => part.trim());
+      if (!parts.some(Boolean)) return null;
+      const hasExplicitNumber = parts.length >= 4 && /^\d+[.)]?$/.test(parts[0] || "");
+      return {
+        number: hasExplicitNumber ? parts[0].replace(/[.)]$/, "") : String(index + 1),
+        discipline: hasExplicitNumber ? parts[1] || "" : parts[0] || "",
+        hours: hasExplicitNumber ? parts[2] || "" : parts[1] || "",
+        grade: hasExplicitNumber ? parts.slice(3).join(" ").trim() : parts.slice(2).join(" ").trim()
+      };
+    })
+    .filter((row) => row && (row.discipline || row.hours || row.grade));
+}
+
+function isEmptyDocumentFieldValue(value) {
+  return !String(value ?? "").trim();
+}
+
+function getWordParagraphText(paragraphXml) {
+  return [...String(paragraphXml || "").matchAll(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g)]
+    .map((match) => decodeXmlText(match[1]))
+    .join("");
+}
+
+function paragraphHasIndexedDocumentField(paragraphXml, fieldName, fieldPositionMap) {
+  if (!fieldPositionMap?.size) return false;
+  const targetName = String(fieldName || "").trim();
+  if (!targetName) return false;
+  const complexFieldPattern = /<w:fldChar\b(?=[^>]*w:fldCharType="begin")[^>]*\/>([\s\S]*?)<w:fldChar\b(?=[^>]*w:fldCharType="separate")[^>]*\/>/g;
+  for (const match of String(paragraphXml || "").matchAll(complexFieldPattern)) {
+    const indexedField = parseIndexedWordFieldInstruction(getComplexWordFieldInstruction(match[1] || ""));
+    if (indexedField && fieldPositionMap.get(String(indexedField.position)) === targetName) return true;
+  }
+  const simpleFieldPattern = /<w:fldSimple\b[^>]*\bw:instr="([^"]*)"[^>]*>/g;
+  for (const match of String(paragraphXml || "").matchAll(simpleFieldPattern)) {
+    const indexedField = parseIndexedWordFieldInstruction(match[1] || "");
+    if (indexedField && fieldPositionMap.get(String(indexedField.position)) === targetName) return true;
+  }
+  return false;
+}
+
+function paragraphHasDocumentField(paragraphXml, fieldName, fieldPositionMap) {
+  const targetName = String(fieldName || "").trim();
+  if (!targetName) return false;
+  return getWordParagraphText(paragraphXml).includes(`#${targetName}#`)
+    || paragraphHasIndexedDocumentField(paragraphXml, targetName, fieldPositionMap);
+}
+
+function getWordParagraphNormalizedText(paragraphXml) {
+  return getWordParagraphText(paragraphXml).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function findWordParagraphIndex(paragraphs, predicate) {
+  return paragraphs.findIndex((match, index) => predicate(match[0], index));
+}
+
+function addWordParagraphRangeRemoval(removeIndexes, startIndex, endIndex) {
+  const hasStart = Number.isInteger(startIndex) && startIndex >= 0;
+  const hasEnd = Number.isInteger(endIndex) && endIndex >= 0;
+  if (hasStart && hasEnd && startIndex <= endIndex) {
+    for (let index = startIndex; index <= endIndex; index += 1) removeIndexes.add(index);
+    return;
+  }
+  if (hasStart) removeIndexes.add(startIndex);
+  if (hasEnd) removeIndexes.add(endIndex);
+}
+
+function addWordParagraphRange(set, startIndex, endIndex) {
+  const hasStart = Number.isInteger(startIndex) && startIndex >= 0;
+  const hasEnd = Number.isInteger(endIndex) && endIndex >= 0;
+  if (hasStart && hasEnd && startIndex <= endIndex) {
+    for (let index = startIndex; index <= endIndex; index += 1) set.add(index);
+    return;
+  }
+  if (hasStart) set.add(startIndex);
+  if (hasEnd) set.add(endIndex);
+}
+
+function findWordFieldEndParagraphIndex(paragraphs, startIndex) {
+  if (!Number.isInteger(startIndex) || startIndex < 0 || startIndex >= paragraphs.length) return -1;
+  for (let index = startIndex; index < paragraphs.length; index += 1) {
+    if (/<w:fldChar\b(?=[^>]*w:fldCharType="end")[^>]*\/>/.test(paragraphs[index][0])) return index;
+  }
+  return startIndex;
+}
+
+function setWordHiddenFalse(xml) {
+  return String(xml || "")
+    .replace(/<w:vanish\b[^>]*\/>/g, '<w:vanish w:val="false"/>')
+    .replace(/<w:vanish\b[^>]*>[\s\S]*?<\/w:vanish>/g, '<w:vanish w:val="false"/>');
+}
+
+function applyExpulsionOrderConditionalBlocks(xml, fieldValues, fieldPositionMap) {
+  const values = fieldValues || {};
+  const hasExpulsionOrderFields = Object.prototype.hasOwnProperty.call(values, "СписокСвыдачей")
+    || Object.prototype.hasOwnProperty.call(values, "СписокБезВыдачи");
+  if (!hasExpulsionOrderFields) return xml;
+  const hasIssuedList = !isEmptyDocumentFieldValue(values["СписокСвыдачей"]);
+  const hasWithoutIssueList = !isEmptyDocumentFieldValue(values["СписокБезВыдачи"]);
+  const paragraphs = [...String(xml || "").matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)];
+  if (!paragraphs.length) return xml;
+  const removeIndexes = new Set();
+  const revealIndexes = new Set();
+  const issuedHeaderIndex = findWordParagraphIndex(paragraphs, (paragraphXml) => {
+    const text = getWordParagraphNormalizedText(paragraphXml);
+    return text.includes("с выдачей") && !text.includes("без выдачи") && text.includes("документа об образовании");
+  });
+  const issuedListIndex = findWordParagraphIndex(paragraphs, (paragraphXml) => (
+    paragraphHasDocumentField(paragraphXml, "СписокСвыдачей", fieldPositionMap)
+  ));
+  const issuedListEndIndex = findWordFieldEndParagraphIndex(paragraphs, issuedListIndex);
+  const withoutIssueHeaderIndex = findWordParagraphIndex(paragraphs, (paragraphXml) => {
+    const text = getWordParagraphNormalizedText(paragraphXml);
+    return paragraphHasDocumentField(paragraphXml, "N2", fieldPositionMap)
+      || (text.includes("без выдачи") && text.includes("документа об образовании"));
+  });
+  const withoutIssueListIndex = findWordParagraphIndex(paragraphs, (paragraphXml) => (
+    paragraphHasDocumentField(paragraphXml, "СписокБезВыдачи", fieldPositionMap)
+  ));
+  const withoutIssueListEndIndex = findWordFieldEndParagraphIndex(paragraphs, withoutIssueListIndex);
+  if (!hasIssuedList) addWordParagraphRangeRemoval(removeIndexes, issuedHeaderIndex, issuedListEndIndex);
+  if (!hasWithoutIssueList) addWordParagraphRangeRemoval(removeIndexes, withoutIssueHeaderIndex, withoutIssueListEndIndex);
+  if (hasIssuedList) addWordParagraphRange(revealIndexes, issuedHeaderIndex, issuedListEndIndex);
+  if (hasWithoutIssueList) addWordParagraphRange(revealIndexes, withoutIssueHeaderIndex, withoutIssueListEndIndex);
+  if (!removeIndexes.size && !revealIndexes.size) return xml;
+  let cursor = 0;
+  let result = "";
+  paragraphs.forEach((match, index) => {
+    result += String(xml || "").slice(cursor, match.index);
+    if (!removeIndexes.has(index)) {
+      result += revealIndexes.has(index) ? setWordHiddenFalse(match[0]) : match[0];
+    }
+    cursor = match.index + match[0].length;
+  });
+  return result + String(xml || "").slice(cursor);
+}
+
+function getWordParagraphPropertiesXml(paragraphXml) {
+  return /<w:pPr\b[\s\S]*?<\/w:pPr>/.exec(String(paragraphXml || ""))?.[0] || "";
+}
+
+function getWordParagraphOpenTag(paragraphXml) {
+  return /^<w:p\b[^>]*>/.exec(String(paragraphXml || ""))?.[0] || "<w:p>";
+}
+
+function getWordClonedParagraphOpenTag(paragraphXml) {
+  return getWordParagraphOpenTag(paragraphXml)
+    .replace(/\s+w14:paraId="[^"]*"/g, "")
+    .replace(/\s+w14:textId="[^"]*"/g, "");
+}
+
+function getWordParagraphInnerXml(paragraphXml) {
+  const text = String(paragraphXml || "");
+  const openTag = getWordParagraphOpenTag(text);
+  return text.endsWith("</w:p>")
+    ? text.slice(openTag.length, -"</w:p>".length)
+    : text.slice(openTag.length);
+}
+
+function getWordMarkerRunPropertiesXml(paragraphXml, marker) {
+  const text = String(paragraphXml || "");
+  const markerIndex = marker ? text.indexOf(marker) : -1;
+  const runStart = markerIndex >= 0 ? text.lastIndexOf("<w:r", markerIndex) : text.indexOf("<w:r");
+  const runEnd = runStart >= 0 ? text.indexOf("</w:r>", Math.max(markerIndex, runStart)) : -1;
+  const runXml = runStart >= 0 && runEnd >= 0 ? text.slice(runStart, runEnd + "</w:r>".length) : text;
+  return /<w:rPr\b[\s\S]*?<\/w:rPr>/.exec(runXml)?.[0]
+    || /<w:rPr\b[\s\S]*?<\/w:rPr>/.exec(text)?.[0]
+    || "";
+}
+
+function buildWordRunFromLine(sourceParagraphXml, line, marker = "") {
+  const runProperties = getWordMarkerRunPropertiesXml(sourceParagraphXml, marker);
+  return `<w:r>${runProperties}<w:t xml:space="preserve">${escapeXmlText(line)}</w:t></w:r>`;
+}
+
+function buildWordParagraphFromLine(sourceParagraphXml, line, marker = "") {
+  const openTag = getWordClonedParagraphOpenTag(sourceParagraphXml);
+  const paragraphProperties = getWordParagraphPropertiesXml(sourceParagraphXml);
+  return `${openTag}${paragraphProperties}${buildWordRunFromLine(sourceParagraphXml, line, marker)}</w:p>`;
+}
+
+function splitWordTableRowCells(rowXml) {
+  return [...String(rowXml || "").matchAll(/<w:tc\b[\s\S]*?<\/w:tc>/g)]
+    .map((match) => ({ xml: match[0], index: match.index }));
+}
+
+function getWordTableCellOpenTag(cellXml) {
+  return /^<w:tc\b[^>]*>/.exec(String(cellXml || ""))?.[0] || "<w:tc>";
+}
+
+function getWordTableCellPropertiesXml(cellXml) {
+  return /<w:tcPr\b[\s\S]*?<\/w:tcPr>/.exec(String(cellXml || ""))?.[0] || "";
+}
+
+function getWordTableCellFirstParagraphXml(cellXml) {
+  return /<w:p\b[\s\S]*?<\/w:p>/.exec(String(cellXml || ""))?.[0] || "<w:p></w:p>";
+}
+
+function buildWordTableCellValueXml(cellXml, value) {
+  const openTag = getWordTableCellOpenTag(cellXml);
+  const cellProperties = getWordTableCellPropertiesXml(cellXml);
+  const sourceParagraphXml = getWordTableCellFirstParagraphXml(cellXml);
+  const lines = splitDocumentFieldParagraphLines(value);
+  const paragraphsXml = (lines.length ? lines : [""])
+    .map((line) => buildWordParagraphFromLine(sourceParagraphXml, line))
+    .join("");
+  return `${openTag}${cellProperties}${paragraphsXml}</w:tc>`;
+}
+
+function replaceWordTableRowCells(rowXml, nextCells) {
+  const cells = splitWordTableRowCells(rowXml);
+  if (!cells.length) return rowXml;
+  let cursor = 0;
+  let result = "";
+  cells.forEach((cell, index) => {
+    result += String(rowXml || "").slice(cursor, cell.index);
+    result += nextCells[index] || cell.xml;
+    cursor = cell.index + cell.xml.length;
+  });
+  return result + String(rowXml || "").slice(cursor);
+}
+
+function getEducationTrainingPlanFieldCellIndex(cells, fieldPositionMap) {
+  return cells.findIndex((cell) => paragraphHasDocumentField(
+    cell.xml,
+    EDUCATION_TRAINING_PLAN_FIELD,
+    fieldPositionMap
+  ));
+}
+
+function buildEducationTrainingPlanTableRow(rowXml, row, rowIndex, fieldCellIndex) {
+  const cells = splitWordTableRowCells(rowXml);
+  if (!cells.length) return rowXml;
+  const disciplineIndex = fieldCellIndex >= 0 ? fieldCellIndex : (cells.length >= 4 ? 1 : 0);
+  const numberIndex = disciplineIndex > 0 ? disciplineIndex - 1 : -1;
+  const hoursIndex = disciplineIndex + 1 < cells.length ? disciplineIndex + 1 : -1;
+  const gradeIndex = disciplineIndex + 2 < cells.length ? disciplineIndex + 2 : -1;
+  const cellValues = new Map();
+  if (numberIndex >= 0) {
+    cellValues.set(numberIndex, /<w:numPr\b/.test(cells[numberIndex].xml) ? "" : row.number || String(rowIndex + 1));
+  }
+  cellValues.set(disciplineIndex, row.discipline || "");
+  if (hoursIndex >= 0) cellValues.set(hoursIndex, row.hours || "");
+  if (gradeIndex >= 0) cellValues.set(gradeIndex, row.grade || "");
+  const nextCells = cells.map((cell, index) => (
+    cellValues.has(index) ? buildWordTableCellValueXml(cell.xml, cellValues.get(index)) : cell.xml
+  ));
+  return replaceWordTableRowCells(rowXml, nextCells);
+}
+
+function applyEducationTrainingPlanTableRows(xml, fieldValues, fieldPositionMap) {
+  const value = fieldValues?.[EDUCATION_TRAINING_PLAN_FIELD];
+  const rows = parseEducationTrainingPlanTableRows(value);
+  if (!rows.length) return xml;
+  return String(xml || "").replace(/<w:tr\b[\s\S]*?<\/w:tr>/g, (rowXml) => {
+    const cells = splitWordTableRowCells(rowXml);
+    if (cells.length < 2) return rowXml;
+    const fieldCellIndex = getEducationTrainingPlanFieldCellIndex(cells, fieldPositionMap);
+    if (fieldCellIndex < 0) return rowXml;
+    return rows.map((row, index) => buildEducationTrainingPlanTableRow(rowXml, row, index, fieldCellIndex)).join("");
+  });
+}
+
+function trimDanglingWordRunStartXml(xml) {
+  const text = String(xml || "");
+  const runStarts = [...text.matchAll(/<w:r\b[^>]*>/g)];
+  const lastRunStart = runStarts.length ? runStarts[runStarts.length - 1].index : -1;
+  const lastRunEnd = text.lastIndexOf("</w:r>");
+  if (lastRunStart > lastRunEnd) return text.slice(0, lastRunStart);
+  return text;
+}
+
+function trimLeadingWordRunCloseXml(xml) {
+  return String(xml || "").replace(/^\s*<\/w:r>/, "");
+}
+
+function buildComplexFieldParagraphsFromLines({
+  sourceParagraphXml,
+  beforeInner,
+  startXml,
+  resultXml,
+  endXml,
+  afterInner,
+  lines,
+  marker = "",
+  spanFieldAcrossParagraphs = true
+}) {
+  if (!Array.isArray(lines) || !lines.length) return null;
+  const openTag = getWordParagraphOpenTag(sourceParagraphXml);
+  const clonedOpenTag = getWordClonedParagraphOpenTag(sourceParagraphXml);
+  const paragraphProperties = getWordParagraphPropertiesXml(sourceParagraphXml);
+  const instruction = getComplexWordFieldInstruction(startXml);
+  const beforeFieldXml = trimDanglingWordRunStartXml(beforeInner);
+  const afterFieldXml = trimLeadingWordRunCloseXml(afterInner);
+  const fieldEndXml = `<w:r><w:fldChar w:fldCharType="end"/></w:r>${afterFieldXml}`;
+  if (lines.length === 1) {
+    return `${openTag}${beforeFieldXml}${buildComplexFieldStartXmlFromInstruction(instruction)}${buildWordRunFromLine(sourceParagraphXml, lines[0], marker)}${fieldEndXml}</w:p>`;
+  }
+  if (!spanFieldAcrossParagraphs) {
+    const firstParagraphXml = `${openTag}${beforeFieldXml}${buildComplexFieldStartXmlFromInstruction(instruction)}${buildWordRunFromLine(sourceParagraphXml, lines[0], marker)}${fieldEndXml}</w:p>`;
+    const restParagraphsXml = lines
+      .slice(1)
+      .map((line) => `${clonedOpenTag}${paragraphProperties}${buildWordRunFromLine(sourceParagraphXml, line, marker)}</w:p>`)
+      .join("");
+    return `${firstParagraphXml}${restParagraphsXml}`;
+  }
+  const firstParagraphXml = `${openTag}${beforeFieldXml}${buildComplexFieldStartXmlFromInstruction(instruction)}${buildWordRunFromLine(sourceParagraphXml, lines[0], marker)}</w:p>`;
+  const restParagraphsXml = lines
+    .slice(1)
+    .map((line, index, restLines) => {
+      const isLastLine = index === restLines.length - 1;
+      return `${clonedOpenTag}${paragraphProperties}${buildWordRunFromLine(sourceParagraphXml, line, marker)}${isLastLine ? fieldEndXml : ""}</w:p>`;
+    })
+    .join("");
+  return `${firstParagraphXml}${restParagraphsXml}`;
+}
+
+function buildComplexFieldStartXmlFromInstruction(instruction) {
+  const instructionText = escapeXmlText(decodeXmlText(instruction).replace(/\r\n|\r|\n/g, " "));
+  return `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve">${instructionText}</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>`;
+}
+
+function buildComplexFieldParagraphsFromSimpleField({
+  sourceParagraphXml,
+  beforeInner,
+  encodedInstruction,
+  resultXml,
+  afterInner,
+  lines,
+  marker = "",
+  spanFieldAcrossParagraphs = true
+}) {
+  const startXml = buildComplexFieldStartXmlFromInstruction(encodedInstruction);
+  const endXml = '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
+  return buildComplexFieldParagraphsFromLines({
+    sourceParagraphXml,
+    beforeInner,
+    startXml,
+    resultXml,
+    endXml,
+    afterInner,
+    lines,
+    marker,
+    spanFieldAcrossParagraphs
+  });
+}
+
+function replaceTextMarkerInsideWordFieldWithParagraphs(paragraphXml, marker, lines) {
+  const innerXml = getWordParagraphInnerXml(paragraphXml);
+  const complexFieldPattern = /(<w:fldChar\b(?=[^>]*w:fldCharType="begin")[^>]*\/>[\s\S]*?<w:fldChar\b(?=[^>]*w:fldCharType="separate")[^>]*\/>)([\s\S]*?)(<w:fldChar\b(?=[^>]*w:fldCharType="end")[^>]*\/>)/g;
+  for (const match of innerXml.matchAll(complexFieldPattern)) {
+    if (!String(match[2] || "").includes(marker)) continue;
+    return buildComplexFieldParagraphsFromLines({
+      sourceParagraphXml: paragraphXml,
+      beforeInner: innerXml.slice(0, match.index),
+      startXml: match[1],
+      resultXml: match[2],
+      endXml: match[3],
+      afterInner: innerXml.slice(match.index + match[0].length),
+      lines,
+      marker,
+      spanFieldAcrossParagraphs: true
+    });
+  }
+  const simpleFieldPattern = /(<w:fldSimple\b[^>]*\bw:instr="([^"]*)"[^>]*>)([\s\S]*?)(<\/w:fldSimple>)/g;
+  for (const match of innerXml.matchAll(simpleFieldPattern)) {
+    if (!String(match[3] || "").includes(marker)) continue;
+    return buildComplexFieldParagraphsFromSimpleField({
+      sourceParagraphXml: paragraphXml,
+      beforeInner: innerXml.slice(0, match.index),
+      encodedInstruction: match[2],
+      resultXml: match[3],
+      afterInner: innerXml.slice(match.index + match[0].length),
+      lines,
+      marker,
+      spanFieldAcrossParagraphs: true
+    });
+  }
+  return null;
+}
+
+function replaceTextMarkerWithParagraphs(xml, marker, value) {
+  const lines = splitDocumentFieldParagraphLines(value);
+  if (lines.length < 2) return String(xml || "").split(marker).join(escapeXmlText(value));
+  let replaced = false;
+  const nextXml = String(xml || "").replace(/<w:p\b[\s\S]*?<\/w:p>/g, (paragraphXml) => {
+    if (!paragraphXml.includes(marker)) return paragraphXml;
+    replaced = true;
+    const fieldParagraphXml = replaceTextMarkerInsideWordFieldWithParagraphs(paragraphXml, marker, lines);
+    if (fieldParagraphXml) return fieldParagraphXml;
+    const firstParagraphXml = paragraphXml.split(marker).join(escapeXmlText(lines[0]));
+    const restParagraphsXml = lines
+      .slice(1)
+      .map((line) => buildWordParagraphFromLine(paragraphXml, line, marker))
+      .join("");
+    return `${firstParagraphXml}${restParagraphsXml}`;
+  });
+  if (replaced) return nextXml;
+  return String(xml || "").split(marker).join(lines.map((line) => escapeXmlText(line)).join("&#10;"));
+}
+
+function replaceIndexedWordFieldInsideParagraphWithParagraphs(paragraphXml, fieldValues, fieldPositionMap) {
+  const innerXml = getWordParagraphInnerXml(paragraphXml);
+  const complexFieldPattern = /(<w:fldChar\b(?=[^>]*w:fldCharType="begin")[^>]*\/>[\s\S]*?<w:fldChar\b(?=[^>]*w:fldCharType="separate")[^>]*\/>)([\s\S]*?)(<w:fldChar\b(?=[^>]*w:fldCharType="end")[^>]*\/>)/g;
+  for (const match of innerXml.matchAll(complexFieldPattern)) {
+    const indexedField = parseIndexedWordFieldInstruction(getComplexWordFieldInstruction(match[1]));
+    if (!indexedField) continue;
+    const fieldName = fieldPositionMap.get(String(indexedField.position));
+    if (!fieldName || !Object.prototype.hasOwnProperty.call(fieldValues, fieldName)) continue;
+    const value = fieldValues[fieldName];
+    if (!shouldRenderDocumentFieldAsParagraphs(fieldName, value)) continue;
+    const lines = splitDocumentFieldParagraphLines(value);
+    const isOrderListField = ORDER_LIST_DOCUMENT_FIELDS.has(String(fieldName || "").trim());
+    if (isOrderListField && getWordParagraphText(match[2]).trim() === String(lines[0] || "").trim()) continue;
+    const startXml = indexedField.type === "subject"
+      ? updateSubjectFieldInstruction(match[1], lines[0])
+      : match[1];
+    return buildComplexFieldParagraphsFromLines({
+      sourceParagraphXml: paragraphXml,
+      beforeInner: innerXml.slice(0, match.index),
+      startXml,
+      resultXml: match[2],
+      endXml: match[3],
+      afterInner: innerXml.slice(match.index + match[0].length),
+      lines,
+      spanFieldAcrossParagraphs: true
+    });
+  }
+  const simpleFieldPattern = /(<w:fldSimple\b[^>]*\bw:instr="([^"]*)"[^>]*>)([\s\S]*?)(<\/w:fldSimple>)/g;
+  for (const match of innerXml.matchAll(simpleFieldPattern)) {
+    const indexedField = parseIndexedWordFieldInstruction(match[2] || "");
+    if (!indexedField) continue;
+    const fieldName = fieldPositionMap.get(String(indexedField.position));
+    if (!fieldName || !Object.prototype.hasOwnProperty.call(fieldValues, fieldName)) continue;
+    const value = fieldValues[fieldName];
+    if (!shouldRenderDocumentFieldAsParagraphs(fieldName, value)) continue;
+    const lines = splitDocumentFieldParagraphLines(value);
+    const isOrderListField = ORDER_LIST_DOCUMENT_FIELDS.has(String(fieldName || "").trim());
+    if (isOrderListField && getWordParagraphText(match[3]).trim() === String(lines[0] || "").trim()) continue;
+    return buildComplexFieldParagraphsFromSimpleField({
+      sourceParagraphXml: paragraphXml,
+      beforeInner: innerXml.slice(0, match.index),
+      encodedInstruction: match[2],
+      resultXml: match[3],
+      afterInner: innerXml.slice(match.index + match[0].length),
+      lines,
+      spanFieldAcrossParagraphs: true
+    });
+  }
+  return null;
+}
+
+function applyIndexedWordFieldParagraphValues(xml, fieldValues, fieldPositionMap) {
+  return String(xml || "").replace(/<w:p\b[\s\S]*?<\/w:p>/g, (paragraphXml) => {
+    return replaceIndexedWordFieldInsideParagraphWithParagraphs(paragraphXml, fieldValues, fieldPositionMap)
+      || paragraphXml;
+  });
+}
+
+function replaceIndexedComplexFieldAcrossParagraphs(paragraphs, startIndex, fieldValues, fieldPositionMap) {
+  const sourceParagraphXml = paragraphs[startIndex]?.[0] || "";
+  const innerXml = getWordParagraphInnerXml(sourceParagraphXml);
+  const startPattern = /(<w:fldChar\b(?=[^>]*w:fldCharType="begin")[^>]*\/>[\s\S]*?<w:fldChar\b(?=[^>]*w:fldCharType="separate")[^>]*\/>)/g;
+  for (const startMatch of innerXml.matchAll(startPattern)) {
+    const indexedField = parseIndexedWordFieldInstruction(getComplexWordFieldInstruction(startMatch[1]));
+    if (!indexedField) continue;
+    const fieldName = fieldPositionMap.get(String(indexedField.position));
+    if (!fieldName || !Object.prototype.hasOwnProperty.call(fieldValues, fieldName)) continue;
+    if (!ORDER_LIST_DOCUMENT_FIELDS.has(String(fieldName || "").trim())) continue;
+    const value = fieldValues[fieldName];
+    const lines = splitDocumentFieldParagraphLines(value).filter((line) => String(line || "").trim());
+    if (!lines.length) continue;
+    const sameParagraphEndMatch = /<w:fldChar\b(?=[^>]*w:fldCharType="end")[^>]*\/>/.exec(innerXml.slice(startMatch.index + startMatch[0].length));
+    if (sameParagraphEndMatch) continue;
+    for (let endIndex = startIndex + 1; endIndex < paragraphs.length; endIndex += 1) {
+      const endInnerXml = getWordParagraphInnerXml(paragraphs[endIndex][0]);
+      const endMatch = /<w:fldChar\b(?=[^>]*w:fldCharType="end")[^>]*\/>/.exec(endInnerXml);
+      if (!endMatch) continue;
+      return {
+        endIndex,
+        xml: buildComplexFieldParagraphsFromLines({
+          sourceParagraphXml,
+          beforeInner: innerXml.slice(0, startMatch.index),
+          startXml: indexedField.type === "subject"
+            ? updateSubjectFieldInstruction(startMatch[1], lines[0])
+            : startMatch[1],
+          resultXml: "",
+          endXml: endMatch[0],
+          afterInner: endInnerXml.slice(endMatch.index + endMatch[0].length),
+          lines,
+          spanFieldAcrossParagraphs: true
+        })
+      };
+    }
+  }
+  return null;
+}
+
+function applyIndexedComplexFieldParagraphValues(xml, fieldValues, fieldPositionMap) {
+  const sourceXml = String(xml || "");
+  const paragraphs = [...sourceXml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)];
+  if (!paragraphs.length) return sourceXml;
+  let cursor = 0;
+  let result = "";
+  for (let index = 0; index < paragraphs.length; index += 1) {
+    const match = paragraphs[index];
+    result += sourceXml.slice(cursor, match.index);
+    const replacement = replaceIndexedComplexFieldAcrossParagraphs(paragraphs, index, fieldValues, fieldPositionMap);
+    if (replacement?.xml) {
+      result += replacement.xml;
+      const endMatch = paragraphs[replacement.endIndex];
+      cursor = endMatch.index + endMatch[0].length;
+      index = replacement.endIndex;
+    } else {
+      result += match[0];
+      cursor = match.index + match[0].length;
+    }
+  }
+  return result + sourceXml.slice(cursor);
+}
+
+function applyIndexedComplexFieldValues(xml, fieldValues, fieldPositionMap) {
   return String(xml || "").replace(
-    /(<w:fldChar\b(?=[^>]*w:fldCharType="begin")[^>]*\/>[\s\S]*?<w:instrText\b[^>]*>[\s\S]*?SUBJECT\s+"[^"<]*"\s*\/(\d+)[\s\S]*?<\/w:instrText>[\s\S]*?<w:fldChar\b(?=[^>]*w:fldCharType="separate")[^>]*\/>)([\s\S]*?)(<w:fldChar\b(?=[^>]*w:fldCharType="end")[^>]*\/>)/g,
-    (match, startXml, position, resultXml, endXml) => {
-      const fieldName = subjectFieldPositionMap.get(String(position));
+    /(<w:fldChar\b(?=[^>]*w:fldCharType="begin")[^>]*\/>[\s\S]*?<w:fldChar\b(?=[^>]*w:fldCharType="separate")[^>]*\/>)([\s\S]*?)(<w:fldChar\b(?=[^>]*w:fldCharType="end")[^>]*\/>)/g,
+    (match, startXml, resultXml, endXml) => {
+      const indexedField = parseIndexedWordFieldInstruction(getComplexWordFieldInstruction(startXml));
+      if (!indexedField) return match;
+      const fieldName = fieldPositionMap.get(String(indexedField.position));
       if (!fieldName || !Object.prototype.hasOwnProperty.call(fieldValues, fieldName)) return match;
       const value = fieldValues[fieldName];
-      const escapedInstructionValue = escapeXmlText(String(value ?? "").replace(/\r\n|\r|\n/g, " "));
-      const nextStartXml = startXml.replace(
-        /(SUBJECT\s+)"[^"<]*"(\s*\/\d+)/i,
-        `$1"${escapedInstructionValue}"$2`
-      );
+      if (shouldRenderDocumentFieldAsParagraphs(fieldName, value)) return match;
+      const nextStartXml = indexedField.type === "subject"
+        ? updateSubjectFieldInstruction(startXml, value)
+        : startXml;
       return `${nextStartXml}${replaceWordFieldResultXml(resultXml, value)}${endXml}`;
     }
+  );
+}
+
+function applyIndexedSimpleFieldValues(xml, fieldValues, fieldPositionMap) {
+  return String(xml || "").replace(
+    /(<w:fldSimple\b[^>]*\bw:instr="([^"]*)"[^>]*>)([\s\S]*?)(<\/w:fldSimple>)/g,
+    (match, startXml, encodedInstruction, resultXml, endXml) => {
+      const indexedField = parseIndexedWordFieldInstruction(encodedInstruction);
+      if (!indexedField) return match;
+      const fieldName = fieldPositionMap.get(String(indexedField.position));
+      if (!fieldName || !Object.prototype.hasOwnProperty.call(fieldValues, fieldName)) return match;
+      if (shouldRenderDocumentFieldAsParagraphs(fieldName, fieldValues[fieldName])) return match;
+      return `${startXml}${replaceWordFieldResultXml(resultXml, fieldValues[fieldName])}${endXml}`;
+    }
+  );
+}
+
+function applyIndexedWordFieldValues(xml, fieldValues, fieldPositionMap) {
+  if (!fieldPositionMap?.size) return xml;
+  const complexParagraphXml = applyIndexedComplexFieldParagraphValues(xml, fieldValues, fieldPositionMap);
+  const paragraphXml = applyIndexedWordFieldParagraphValues(complexParagraphXml, fieldValues, fieldPositionMap);
+  return applyIndexedSimpleFieldValues(
+    applyIndexedComplexFieldValues(paragraphXml, fieldValues, fieldPositionMap),
+    fieldValues,
+    fieldPositionMap
   );
 }
 
@@ -1145,12 +1798,19 @@ function updateCustomDocumentProperties(entries, fieldValues, allowedNames = nul
 function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyUpdateNames = null) {
   const replacements = Object.entries(fieldValues || {})
     .filter(([name]) => String(name || "").trim())
-    .map(([name, value]) => ({
-      marker: `#${name}#`,
-      value: Object.prototype.hasOwnProperty.call(imageValues, name) ? "" : escapeXmlText(value)
-    }));
+    .map(([name, value]) => {
+      const hasImageValue = Object.prototype.hasOwnProperty.call(imageValues, name);
+      return {
+        marker: `#${name}#`,
+        value: hasImageValue ? "" : value,
+        renderAsParagraphs: !hasImageValue && shouldRenderDocumentFieldAsParagraphs(name, value)
+      };
+    });
   const entries = readDocxZipEntries(templateBytes);
-  const subjectFieldPositionMap = getSubjectFieldPositionMap(entries);
+  const indexedFieldPositionMap = normalizeExpulsionOrderFieldPositionMap(
+    getIndexedWordFieldPositionMap(entries),
+    fieldValues
+  );
   updateCustomDocumentProperties(entries, fieldValues, propertyUpdateNames);
   Object.entries(imageValues || {}).forEach(([name, image]) => {
     if (image?.bytes?.length) insertDocumentImage(entries, name, image);
@@ -1158,10 +1818,14 @@ function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyU
   entries.forEach((entry) => {
     if (!/^word\/.+\.xml$/i.test(entry.name)) return;
     let xml = entry.content.toString("utf8");
-    replacements.forEach(({ marker, value }) => {
-      xml = xml.split(marker).join(value);
+    xml = applyExpulsionOrderConditionalBlocks(xml, fieldValues, indexedFieldPositionMap);
+    xml = applyEducationTrainingPlanTableRows(xml, fieldValues, indexedFieldPositionMap);
+    replacements.forEach(({ marker, value, renderAsParagraphs }) => {
+      xml = renderAsParagraphs
+        ? replaceTextMarkerWithParagraphs(xml, marker, value)
+        : xml.split(marker).join(escapeXmlText(value));
     });
-    xml = applySubjectFieldValues(xml, fieldValues, subjectFieldPositionMap);
+    xml = applyIndexedWordFieldValues(xml, fieldValues, indexedFieldPositionMap);
     entry.content = Buffer.from(xml, "utf8");
   });
   return buildDocxZip(entries);
@@ -1464,7 +2128,7 @@ function parseDocxTextMarkers(entries) {
   return [...markers].filter(Boolean).sort((a, b) => a.localeCompare(b, "ru"));
 }
 
-function parseDocxSubjectFields(entries) {
+function parseDocxIndexedFields(entries) {
   const fields = [];
   const seen = new Set();
   entries
@@ -1473,27 +2137,31 @@ function parseDocxSubjectFields(entries) {
       const xml = entry.content.toString("utf8");
       const fieldPattern = /<w:fldChar\b(?=[^>]*w:fldCharType="begin")[^>]*\/>([\s\S]*?)<w:fldChar\b(?=[^>]*w:fldCharType="separate")[^>]*\/>/g;
       for (const fieldMatch of xml.matchAll(fieldPattern)) {
-        const instruction = [...String(fieldMatch[1] || "").matchAll(/<w:instrText\b[^>]*>([\s\S]*?)<\/w:instrText>/g)]
-          .map((match) => decodeXmlText(match[1]))
-          .join("")
-          .replace(/\s+/g, " ")
-          .trim();
-        const subjectMatch = /\bSUBJECT\s+"([^"]*)"\s*\/(\d+)/i.exec(instruction);
-        if (!subjectMatch) continue;
-        const position = Number(subjectMatch[2]);
-        if (!Number.isFinite(position) || position <= 0 || seen.has(position)) continue;
-        seen.add(position);
+        const indexedField = parseIndexedWordFieldInstruction(getComplexWordFieldInstruction(fieldMatch[1] || ""));
+        if (!indexedField || seen.has(indexedField.position)) continue;
+        seen.add(indexedField.position);
         fields.push({
-          position,
-          value: subjectMatch[1],
-          source: "subject-field"
+          position: indexedField.position,
+          value: indexedField.value,
+          source: `${indexedField.type}-field`
+        });
+      }
+      const simpleFieldPattern = /<w:fldSimple\b[^>]*\bw:instr="([^"]*)"[^>]*>/g;
+      for (const fieldMatch of xml.matchAll(simpleFieldPattern)) {
+        const indexedField = parseIndexedWordFieldInstruction(fieldMatch[1] || "");
+        if (!indexedField || seen.has(indexedField.position)) continue;
+        seen.add(indexedField.position);
+        fields.push({
+          position: indexedField.position,
+          value: indexedField.value,
+          source: `${indexedField.type}-field`
         });
       }
     });
   return fields.sort((left, right) => left.position - right.position);
 }
 
-function mapSubjectFieldsToDocumentProperties(subjectFields, properties) {
+function mapIndexedFieldsToDocumentProperties(indexedFields, properties) {
   const propertiesByFieldNumber = new Map();
   const propertiesByPosition = new Map();
   (Array.isArray(properties) ? properties : []).forEach((property) => {
@@ -1506,7 +2174,7 @@ function mapSubjectFieldsToDocumentProperties(subjectFields, properties) {
       propertiesByPosition.set(position, property);
     }
   });
-  return (Array.isArray(subjectFields) ? subjectFields : []).map((field) => {
+  return (Array.isArray(indexedFields) ? indexedFields : []).map((field) => {
     const property = propertiesByFieldNumber.get(Number(field.position))
       || propertiesByPosition.get(Number(field.position));
     return {
@@ -1514,7 +2182,7 @@ function mapSubjectFieldsToDocumentProperties(subjectFields, properties) {
       name: property?.name || "",
       formula: property?.value || "",
       hideEmpty: Boolean(property?.hideEmpty),
-      source: "subject-field"
+      source: field.source || "indexed-field"
     };
   });
 }
@@ -1535,7 +2203,7 @@ function inspectDocxTemplate(templateBytes) {
     .filter((property) => property.name);
   return {
     properties,
-    subjectFields: mapSubjectFieldsToDocumentProperties(parseDocxSubjectFields(entries), formulaProperties),
+    subjectFields: mapIndexedFieldsToDocumentProperties(parseDocxIndexedFields(entries), formulaProperties),
     markers: parseDocxTextMarkers(entries)
   };
 }
