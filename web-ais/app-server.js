@@ -521,6 +521,93 @@ function insertDocumentImage(entries, fieldName, image) {
   return true;
 }
 
+function findAdjacentWordImageRun(paragraphXml, startIndex) {
+  const source = String(paragraphXml || "");
+  let cursor = Math.max(0, Number(startIndex) || 0);
+  for (let index = 0; index < 4; index += 1) {
+    const remaining = source.slice(cursor);
+    const match = /^\s*(<w:r\b[\s\S]*?<\/w:r>)/.exec(remaining);
+    if (!match) break;
+    const runXml = match[1];
+    const runStart = cursor + match[0].indexOf(runXml);
+    const runEnd = runStart + runXml.length;
+    if (/<w:(?:drawing|pict)\b/.test(runXml)) {
+      return { insertionIndex: startIndex, runStart, runEnd, runXml };
+    }
+    if (getWordParagraphText(runXml).trim()) break;
+    cursor += match[0].length;
+  }
+  return { insertionIndex: startIndex, runStart: -1, runEnd: -1, runXml: "" };
+}
+
+function findIndexedWordFieldImageAnchor(paragraphXml, fieldName, fieldPositionMap) {
+  const source = String(paragraphXml || "");
+  const targetName = String(fieldName || "").trim();
+  if (!targetName || !fieldPositionMap?.size) return null;
+  const complexFieldPattern = /<w:fldChar\b(?=[^>]*w:fldCharType="begin")[^>]*\/>[\s\S]*?<w:fldChar\b(?=[^>]*w:fldCharType="separate")[^>]*\/>[\s\S]*?<w:fldChar\b(?=[^>]*w:fldCharType="end")[^>]*\/>/g;
+  for (const match of source.matchAll(complexFieldPattern)) {
+    const indexedField = parseIndexedWordFieldInstruction(getComplexWordFieldInstruction(match[0]));
+    if (!indexedField || fieldPositionMap.get(String(indexedField.position)) !== targetName) continue;
+    let fieldEnd = match.index + match[0].length;
+    const closingRun = /^\s*<\/w:r>/.exec(source.slice(fieldEnd));
+    if (closingRun) fieldEnd += closingRun[0].length;
+    return findAdjacentWordImageRun(source, fieldEnd);
+  }
+  const simpleFieldPattern = /<w:fldSimple\b[^>]*\bw:instr="([^"]*)"[^>]*>[\s\S]*?<\/w:fldSimple>/g;
+  for (const match of source.matchAll(simpleFieldPattern)) {
+    const indexedField = parseIndexedWordFieldInstruction(match[1] || "");
+    if (!indexedField || fieldPositionMap.get(String(indexedField.position)) !== targetName) continue;
+    return findAdjacentWordImageRun(source, match.index + match[0].length);
+  }
+  return null;
+}
+
+function applyIndexedDocumentImage(entries, fieldName, image, fieldPositionMap) {
+  const documentEntry = entryByName(entries, "word/document.xml");
+  if (!documentEntry || !fieldPositionMap?.size) return false;
+  const documentXml = documentEntry.content.toString("utf8");
+  const paragraphs = [...documentXml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)];
+  for (const paragraph of paragraphs) {
+    const anchor = findIndexedWordFieldImageAnchor(paragraph[0], fieldName, fieldPositionMap);
+    if (!anchor) continue;
+    let replacementRun = "";
+    if (image?.bytes?.length) {
+      const ext = image.ext === "jpeg" ? "jpg" : image.ext;
+      const contentType = IMAGE_CONTENT_TYPES[ext];
+      if (!contentType) return false;
+      const mediaName = uniqueMediaName(entries, ext);
+      const target = mediaName.replace(/^word\//, "");
+      const relationshipId = addDocumentImageRelationship(entries, target);
+      const frame = anchor.runXml ? {
+        width: parseXmlTagNumberAttribute(anchor.runXml, "wp:extent", "cx"),
+        height: parseXmlTagNumberAttribute(anchor.runXml, "wp:extent", "cy")
+      } : null;
+      const { cx, cy } = imageExtentEmu(image, frame);
+      const drawingXml = buildImageDrawingXml({
+        relationshipId,
+        cx,
+        cy,
+        docPrId: nextDocPrId(documentXml),
+        name: image.name || fieldName
+      });
+      const runOpenTag = /^<w:r\b[^>]*>/.exec(anchor.runXml)?.[0] || "<w:r>";
+      const runProperties = /<w:rPr\b[\s\S]*?<\/w:rPr>/.exec(anchor.runXml)?.[0] || "";
+      replacementRun = `${runOpenTag}${runProperties}${drawingXml}</w:r>`;
+      entries.push({ name: mediaName, content: image.bytes });
+      ensureContentType(entries, ext, contentType);
+    }
+    const replacementStart = anchor.runStart >= 0 ? anchor.runStart : anchor.insertionIndex;
+    const replacementEnd = anchor.runEnd >= 0 ? anchor.runEnd : anchor.insertionIndex;
+    const paragraphXml = `${paragraph[0].slice(0, replacementStart)}${replacementRun}${paragraph[0].slice(replacementEnd)}`;
+    documentEntry.content = Buffer.from(
+      `${documentXml.slice(0, paragraph.index)}${paragraphXml}${documentXml.slice(paragraph.index + paragraph[0].length)}`,
+      "utf8"
+    );
+    return true;
+  }
+  return false;
+}
+
 function decodeXmlText(value) {
   return String(value || "")
     .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
@@ -567,6 +654,10 @@ function isAssistantOptionPropertyName(name) {
   return text.startsWith(prefix) && /^\d+$/.test(text.slice(prefix.length));
 }
 
+function isAssistantReservePropertyName(name) {
+  return /^(?:Резерв|ДатаРезерва)\d+$/u.test(String(name || ""));
+}
+
 function parseAssistantDocumentFieldProperties(properties) {
   const optionProperties = (Array.isArray(properties) ? properties : [])
     .filter((property) => isAssistantOptionPropertyName(property?.name))
@@ -611,14 +702,21 @@ function parseAssistantDocumentFieldProperties(properties) {
 function getDocumentFormulaPropertiesFromEntries(entries) {
   const properties = parseCustomDocumentProperties(entries);
   return [
-    ...properties.filter((property) => !isAssistantOptionPropertyName(property.name)),
+    ...properties.filter((property) => (
+      !isAssistantOptionPropertyName(property.name)
+      && !isAssistantReservePropertyName(property.name)
+    )),
     ...parseAssistantDocumentFieldProperties(properties)
   ];
 }
 
 function isFormulaLike(value) {
   const text = String(value || "").trim();
-  return Boolean(text && (/^=/.test(text) || /\[[^\]]+\]|#[^#]+#|[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*\(/.test(text)));
+  return Boolean(text && (
+    /^=/.test(text)
+    || /\[[^\]]+\]|#[^#]+#/u.test(text)
+    || /[\p{L}_][\p{L}\p{N}_*]*\(/u.test(text)
+  ));
 }
 
 function getDocumentFormulaFieldReferences(formula) {
@@ -780,7 +878,15 @@ function parseDocumentFormulaDateValue(value) {
 
 function compareDocumentFormulaValues(left, right, operator) {
   if (operator === "=" || operator === "<>") {
-    const result = formulaValueToString(left) === formulaValueToString(right);
+    const normalizeEquivalentValue = (value) => {
+      const text = formulaValueToString(value);
+      const normalized = text.trim().toLocaleLowerCase("ru-RU");
+      return normalized === "\u0434\u0438\u0441\u0442\u0430\u043d\u0442"
+        || normalized === "\u0434\u0438\u0441\u0442\u0430\u043d\u0446\u0438\u043e\u043d\u043d\u0430\u044f"
+        ? "\u0434\u0438\u0441\u0442\u0430\u043d\u0446\u0438\u043e\u043d\u043d\u0430\u044f"
+        : text;
+    };
+    const result = normalizeEquivalentValue(left) === normalizeEquivalentValue(right);
     return operator === "<>" ? !result : result;
   }
   const leftNumber = typeof left === "number" ? left : Number(String(left ?? "").replace(",", "."));
@@ -886,7 +992,7 @@ function evaluateDocumentFormulaExpression(expression, context) {
   if (hashRef) return getFormulaContextValue(hashRef[1], context);
   const sourceRef = /^\[([^\]]+)\]$/.exec(text);
   if (sourceRef) return getFormulaContextValue(sourceRef[1], context);
-  const functionMatch = /^([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)\(([\s\S]*)\)$/.exec(text);
+  const functionMatch = /^([\p{L}_][\p{L}\p{N}_*]*)\(([\s\S]*)\)$/u.exec(text);
   if (functionMatch) {
     return evaluateDocumentFormulaFunction(functionMatch[1], splitTopLevel(functionMatch[2], ";"), context);
   }
@@ -897,8 +1003,12 @@ function evaluateDocumentFormulaExpression(expression, context) {
 
 function evaluateDocumentFormulaFunction(name, args, context) {
   const upperName = String(name || "").toUpperCase();
+  const compactName = upperName.replace(/[\s_*]+/g, "");
   const value = (index) => evaluateDocumentFormulaExpression(args[index] || "", context);
   const text = (index) => formulaValueToString(value(index));
+  if (upperName === "\u0421\u0422\u0420\u041e\u0427\u041d") return text(0).toLocaleLowerCase("ru-RU");
+  if (upperName === "\u041f\u0423\u0422\u042c\u0414\u041e\u041a\u0423\u041c\u0415\u041d\u0422\u0410") return "";
+  if (upperName === "\u0418\u0417\u041e\u0411\u0420\u0410\u0416\u0415\u041d\u0418\u0415") return text(0);
   if (upperName === "ТДАТА") return new Date();
   if (upperName === "ЕСЛИ") return formulaValueToBoolean(value(0)) ? value(1) : value(2);
   if (upperName === "И") return args.every((arg) => formulaValueToBoolean(evaluateDocumentFormulaExpression(arg, context)));
@@ -923,7 +1033,9 @@ function evaluateDocumentFormulaFunction(name, args, context) {
     const index = Math.max(1, Number(value(1)) || 1) - 1;
     return text(0).split(delimiter).filter(Boolean)[index] || "";
   }
-  if (upperName === "ЧИСЛО_В_ПРОПИСЬ") return numberToRussianWords(Number(String(text(0)).replace(/\s+/g, "").replace(",", ".")) || 0);
+  if (compactName === "\u0427\u0418\u0421\u041b\u041e\u0412\u041f\u0420\u041e\u041f\u0418\u0421\u042c") {
+    return numberToRussianWords(Number(String(text(0)).replace(/\s+/g, "").replace(",", ".")) || 0);
+  }
   if (upperName === "СКЛОНЕНИЕ_ФИО") {
     const grammaticalCase = text(1).toUpperCase();
     const mode = text(2).toUpperCase();
@@ -1100,9 +1212,8 @@ function applyCustomDocumentPropertyFormulas(templateBytes, fieldValues, sourceV
       context.evaluatingName = "";
       return;
     }
-    const existingValue = getFormulaContextValue(property.name, context) || values[property.name] || "";
     const evaluatedValue = evaluateDocumentFormula(property.value, context);
-    values[property.name] = evaluatedValue || existingValue;
+    values[property.name] = evaluatedValue;
     context.evaluatingName = "";
   });
   return values;
@@ -1464,13 +1575,41 @@ function applyEducationTrainingPlanTableRows(xml, fieldValues, fieldPositionMap)
   const value = fieldValues?.[EDUCATION_TRAINING_PLAN_FIELD];
   const rows = parseEducationTrainingPlanTableRows(value);
   if (!rows.length) return xml;
-  return String(xml || "").replace(/<w:tr\b[\s\S]*?<\/w:tr>/g, (rowXml) => {
+  const sourceXml = String(xml || "");
+  const tableRows = [...sourceXml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
+  if (!tableRows.length) return sourceXml;
+  let cursor = 0;
+  let result = "";
+  let changed = false;
+  for (let index = 0; index < tableRows.length; index += 1) {
+    const match = tableRows[index];
+    const rowXml = match[0];
     const cells = splitWordTableRowCells(rowXml);
-    if (cells.length < 2) return rowXml;
+    if (cells.length < 2) continue;
     const fieldCellIndex = getEducationTrainingPlanFieldCellIndex(cells, fieldPositionMap);
-    if (fieldCellIndex < 0) return rowXml;
-    return rows.map((row, index) => buildEducationTrainingPlanTableRow(rowXml, row, index, fieldCellIndex)).join("");
-  });
+    if (fieldCellIndex < 0) continue;
+    result += sourceXml.slice(cursor, match.index);
+    result += rows.map((row, rowIndex) => (
+      buildEducationTrainingPlanTableRow(rowXml, row, rowIndex, fieldCellIndex)
+    )).join("");
+    let lastDataRowIndex = index;
+    for (let nextIndex = index + 1; nextIndex < tableRows.length; nextIndex += 1) {
+      const previousMatch = tableRows[nextIndex - 1];
+      const nextMatch = tableRows[nextIndex];
+      const betweenRows = sourceXml.slice(
+        previousMatch.index + previousMatch[0].length,
+        nextMatch.index
+      );
+      if (/<\/?w:tbl\b/.test(betweenRows)) break;
+      if (splitWordTableRowCells(nextMatch[0]).length !== cells.length) break;
+      lastDataRowIndex = nextIndex;
+    }
+    const lastDataRow = tableRows[lastDataRowIndex];
+    cursor = lastDataRow.index + lastDataRow[0].length;
+    index = lastDataRowIndex;
+    changed = true;
+  }
+  return changed ? result + sourceXml.slice(cursor) : sourceXml;
 }
 
 function trimDanglingWordRunStartXml(xml) {
@@ -1813,7 +1952,8 @@ function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyU
   );
   updateCustomDocumentProperties(entries, fieldValues, propertyUpdateNames);
   Object.entries(imageValues || {}).forEach(([name, image]) => {
-    if (image?.bytes?.length) insertDocumentImage(entries, name, image);
+    const indexedImageHandled = applyIndexedDocumentImage(entries, name, image, indexedFieldPositionMap);
+    if (!indexedImageHandled && image?.bytes?.length) insertDocumentImage(entries, name, image);
   });
   entries.forEach((entry) => {
     if (!/^word\/.+\.xml$/i.test(entry.name)) return;
@@ -2256,8 +2396,16 @@ async function handleContractDocument(req, res) {
       ? applyCustomDocumentPropertyFormulas(templateBytes, inputFieldValues, body.sourceValues || {})
       : inputFieldValues;
     const propertyUpdateNames = new Set(Object.keys(inputFieldValues || {}));
-    const photo = await loadContractPhoto(fieldValues);
-    const result = fillDocxMarkers(templateBytes, fieldValues, photo ? { "Фото": photo } : { "Фото": null }, propertyUpdateNames);
+    const sourceValues = body.sourceValues || {};
+    const photo = await loadContractPhoto({
+      ...fieldValues,
+      "Фото": sourceValues["Фото"] || fieldValues["Фото"] || "",
+      photo: sourceValues.photo || fieldValues.photo || "",
+      photoPath: sourceValues.photoPath || fieldValues.photoPath || ""
+    });
+    const outputFieldValues = { ...fieldValues, "Фото": "" };
+    if (!photo) outputFieldValues["ПутьСохр"] = "";
+    const result = fillDocxMarkers(templateBytes, outputFieldValues, photo ? { "Фото": photo } : { "Фото": null }, propertyUpdateNames);
     sendFile(
       res,
       200,

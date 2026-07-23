@@ -536,11 +536,17 @@ body.sidebar-collapsed .sidebar {
 
 .combo-field {
   position: relative;
+  min-width: 0;
   width: 100%;
+}
+
+.combo-field.is-open {
+  z-index: 40;
 }
 
 .combo-input-wrap {
   position: relative;
+  min-width: 0;
   display: flex;
   align-items: center;
 }
@@ -587,11 +593,12 @@ body.sidebar-collapsed .sidebar {
   z-index: 30;
   top: calc(100% + 6px);
   left: 0;
-  right: 0;
+  right: auto;
   display: none;
-  width: max-content;
+  box-sizing: border-box;
+  width: 100%;
   min-width: 100%;
-  max-width: min(800px, calc(100vw - 48px));
+  max-width: 100%;
   max-height: 260px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -624,6 +631,17 @@ body.sidebar-collapsed .sidebar {
 
 .combo-options button:hover {
   background: #edf7f4;
+}
+
+.combo-options button.is-selected {
+  background: #dff3ed;
+  color: var(--teal);
+  font-weight: 700;
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.combo-options button.is-selected:hover {
+  background: #d3eee6;
 }
 
 .combo-empty {
@@ -1568,13 +1586,6 @@ body.is-resizing-column {
   padding-top: 2px;
 }
 
-
-.student-main-actions {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: flex-start;
-  padding-top: 4px;
-}
 
 .student-contract-button {
   min-height: 32px;
@@ -2964,6 +2975,38 @@ body.is-resizing-column {
 
 .modal h2 {
   margin: 2px 0 0;
+}
+
+.student-document-choice-dialog {
+  width: min(480px, 100%);
+}
+
+.student-document-choice-body {
+  display: grid;
+  gap: 9px;
+  padding: 18px;
+}
+
+.student-document-choice-body label {
+  display: grid;
+  gap: 6px;
+}
+
+.student-document-choice-body label > span {
+  color: #3d4945;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.student-document-choice-body select {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 9px;
+}
+
+.student-document-choice-body small {
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .form-grid {
@@ -4557,19 +4600,50 @@ body.student-tab-dragging .student-tabs button {
   background: #f1f3f2;
 }
 
-.orders-sdo-topbar {
-  display: flex;
-  justify-content: flex-end;
-  min-height: 24px;
-  margin-bottom: -5px;
-}
-
 .orders-sdo-contract-grid,
 .orders-sdo-orders-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 5px 14px;
   align-items: center;
+}
+
+.orders-sdo-contract-line {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.orders-sdo-contract-number-field {
+  flex: 1 1 auto;
+  grid-template-columns: 104px minmax(140px, 1fr);
+}
+
+.orders-sdo-contract-line .orders-sdo-auto-button {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.orders-sdo-contract-button {
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 2px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.orders-sdo-expulsion-order-stack {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.orders-sdo-contract-document-row {
+  display: flex;
+  justify-content: flex-end;
+  padding-left: 124px;
 }
 
 .orders-sdo-shift-row {
@@ -5949,6 +6023,18 @@ body.student-tab-dragging .student-tabs button {
   .orders-sdo-field,
   .orders-sdo-field.is-compact {
     grid-template-columns: 1fr;
+  }
+
+  .orders-sdo-contract-line {
+    align-items: end;
+  }
+
+  .orders-sdo-contract-number-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .orders-sdo-contract-document-row {
+    padding-left: 0;
   }
 
   .student-financial-result-grid {

@@ -1,4 +1,4 @@
-window.AIS_PROGRAM_REGISTRY_VERSION = "2026-05-23";
+window.AIS_PROGRAM_REGISTRY_VERSION = "2026-07-23";
 window.AIS_PROGRAM_REGISTRY = [
     {
         "id":  "prg-xlsb-001",
@@ -458,11 +458,11 @@ window.AIS_PROGRAM_REGISTRY = [
     },
     {
         "id":  "prg-xlsb-025",
-        "name":  "Интерактивный тренажер квест-тест",
-        "shortName":  "Интерактивный тренажер квест-тест",
+        "name":  "Интерактивный тренажер",
+        "shortName":  "Интерактивный тренажер",
         "status":  "Набор",
         "price":  5000,
-        "oldPrice":  1000,
+        "oldPrice":  0,
         "type":  "ИТ",
         "hours":  0,
         "duration":  "",

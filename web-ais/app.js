@@ -432,12 +432,14 @@ MAX - https://bizvmax.ru/zifra_plus
     "Пол": "gender"
   };
   const defaultDocumentTemplateId = "document-contract-application";
+  const legalEntityApplicationDocumentTemplateId = "document-legal-entity-application";
   const documentTemplateInspectionVersion = "2026-06-20-formulas-v4";
   const wordTemplateExtensions = ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"];
   const wordTemplateAccept = wordTemplateExtensions.map((ext) => `.${ext}`).join(",");
   const studentCardDocumentBindingOptions = [
     { value: "", label: "Без привязки" },
     { value: "contract", label: "Карточка слушателя. Договор" },
+    { value: "application", label: "Карточка слушателя. Заявление" },
     { value: "education", label: "Карточка слушателя. Документ об образовании" },
     { value: "studyCertificate", label: "Карточка слушателя. Справка об обучении" },
     { value: "enrollmentOrder", label: "Карточка слушателя. Приказ на зачисление" },
@@ -457,6 +459,23 @@ MAX - https://bizvmax.ru/zifra_plus
       originalFields: contractTemplateFieldDefaults.map((field) => ({ ...field })),
       source: "link",
       createdAt: "2026-06-20T00:00:00.000Z"
+    };
+  }
+
+  function createLegalEntityApplicationDocumentTemplate() {
+    return {
+      id: legalEntityApplicationDocumentTemplateId,
+      title: "Заявление",
+      templateUrl: "https://disk.yandex.ru/i/FR1VbW_1EtRHAQ",
+      templatePath: "",
+      fileName: "Заявление ДПП.docx",
+      fileNameTemplate: "Заявление_#ФИО_обуч#",
+      useCustomDocumentProperties: "1",
+      documentKind: "application",
+      fields: contractTemplateFieldDefaults.map((field) => ({ ...field })),
+      originalFields: contractTemplateFieldDefaults.map((field) => ({ ...field })),
+      source: "link",
+      createdAt: "2026-07-23T00:00:00.000Z"
     };
   }
   const educationDocumentTemplateDefinitions = [
@@ -639,6 +658,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function getDefaultDocumentTemplates() {
     return [
       createDefaultDocumentTemplate(),
+      createLegalEntityApplicationDocumentTemplate(),
       ...educationDocumentTemplateDefinitions.map(createEducationDocumentTemplate),
       createEducationDocumentTemplate(studyCertificateDocumentTemplateDefinition, educationDocumentTemplateDefinitions.length),
       ...orderDocumentTemplateDefinitions.map((definition, index) => (
@@ -966,7 +986,8 @@ MAX - https://bizvmax.ru/zifra_plus
         field("fieldsCount", "Поля", "number"),
         field("updatedAt", "Обновлен", "date")
       ],
-      table: ["title", "bindingLabel", "sourceLabel", "sourceValue", "fileNameTemplate", "fieldsCount", "updatedAt"]
+      table: ["title", "bindingLabel", "sourceLabel", "sourceValue", "fileNameTemplate", "fieldsCount", "updatedAt"],
+      defaultSort: { key: "title", dir: "asc" }
     }
   };
 
@@ -1503,6 +1524,10 @@ MAX - https://bizvmax.ru/zifra_plus
     data.collections = data.collections || {};
     data.collections.programs = mergeProgramRegistry(data)
       .map((program) => normalizeProgramRecord(program));
+    data.dictionaries.studyForms = unique([
+      ...(data.dictionaries.studyForms || []).map((value) => normalizeStudyForm(value)),
+      ...data.collections.programs.map((program) => String(program.studyForm || "").trim())
+    ].filter(Boolean));
     data.collections.trainingPlans = mergeTrainingPlanSeed(
       (data.collections.trainingPlans || []).map((item, index) => normalizeTrainingPlanRecord(item, index)),
       data
@@ -1645,8 +1670,12 @@ MAX - https://bizvmax.ru/zifra_plus
     data.meta = data.meta && typeof data.meta === "object" ? data.meta : {};
     if (!registry.length || (version && data.meta.programRegistryVersion === version)) return currentPrograms;
 
+    const existingById = new Map();
     const existingByName = new Map();
+    const remainingPrograms = new Set(currentPrograms);
     currentPrograms.forEach((program) => {
+      const id = String(program?.id || "").trim();
+      if (id && !existingById.has(id)) existingById.set(id, program);
       const key = normalizeProgramName(program?.name);
       if (!key) return;
       if (!existingByName.has(key)) existingByName.set(key, []);
@@ -1654,21 +1683,34 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     const importedPrograms = registry.map((program) => {
-      const matches = existingByName.get(normalizeProgramName(program.name)) || [];
-      const existing = matches.shift();
+      const importedId = String(program?.id || "").trim();
+      let existing = importedId ? existingById.get(importedId) : null;
+      if (!existing || !remainingPrograms.has(existing)) {
+        const matches = existingByName.get(normalizeProgramName(program.name)) || [];
+        existing = matches.find((item) => remainingPrograms.has(item));
+      }
+      if (existing) remainingPrograms.delete(existing);
       return {
         ...(existing || {}),
         ...clone(program),
         id: existing?.id || program.id
       };
     });
-    const customPrograms = Array.from(existingByName.values()).flat();
+    const customPrograms = currentPrograms.filter((program) => remainingPrograms.has(program));
     data.meta.programRegistryVersion = version;
     return [...importedPrograms, ...customPrograms];
   }
 
   function normalizeProgramName(value) {
     return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function normalizeStudyForm(value) {
+    const text = String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+    const normalized = text.toLocaleLowerCase("ru-RU");
+    return normalized === "дистант" || normalized === "дистанционная"
+      ? "Дистанционная"
+      : text;
   }
 
   function findProgramInRows(programs, name) {
@@ -1905,6 +1947,28 @@ MAX - https://bizvmax.ru/zifra_plus
     );
   }
 
+  function getLegalEntityApplicationDocumentTemplate() {
+    const documents = getDocumentTemplates();
+    return normalizeDocumentTemplate(
+      documents.find((documentTemplate) => documentTemplate.documentKind === "application")
+        || createLegalEntityApplicationDocumentTemplate(),
+      1
+    );
+  }
+
+  function getStudentContractDocumentTemplates() {
+    const result = [
+      getPrimaryDocumentTemplate(),
+      getLegalEntityApplicationDocumentTemplate()
+    ];
+    const seen = new Set();
+    return result.filter((documentTemplate) => {
+      if (!documentTemplate?.id || seen.has(documentTemplate.id)) return false;
+      seen.add(documentTemplate.id);
+      return true;
+    });
+  }
+
   function getActiveDocumentTemplateFields() {
     return getActiveDocumentTemplate().fields;
   }
@@ -2021,7 +2085,10 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function normalizeStudentRecord(student) {
     if (!student || typeof student !== "object") return student;
-    const normalized = { ...student };
+    const normalized = {
+      ...student,
+      studyForm: normalizeStudyForm(student.studyForm)
+    };
     studentCommunicationMessages.forEach((message, index) => {
       if (message.importValue === false) return;
       if (String(normalized[message.key] || "").trim()) return;
@@ -2038,6 +2105,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function normalizeProgramRecord(program) {
     if (!program || typeof program !== "object") return program;
+    const studyForm = normalizeStudyForm(program.studyForm || program["Форма обучения"]);
     const promoSite = [
       program.promoSite,
       program["На промо сайте"],
@@ -2064,6 +2132,7 @@ MAX - https://bizvmax.ru/zifra_plus
     ].find((value) => String(value || "").trim());
     return {
       ...program,
+      studyForm,
       ...(promoSite ? { promoSite } : {}),
       ...(gradeReportUrl ? { gradeReportUrl } : {}),
       ...(telegramGroup ? { telegramGroup } : {})
@@ -2491,6 +2560,14 @@ MAX - https://bizvmax.ru/zifra_plus
     return state.data.collections[config.collection] || [];
   }
 
+  function getDefaultTableSort(configId) {
+    const defaultSort = configs[configId]?.defaultSort || {};
+    return {
+      key: String(defaultSort.key || ""),
+      dir: defaultSort.dir === "desc" ? "desc" : "asc"
+    };
+  }
+
   function getVisibleRows(config, rowsOverride = null) {
     const isDocumentTemplateTable = config.collection === "documentTemplates";
     const query = (isDocumentTemplateTable ? state.documentTemplateSearch : state.search).trim().toLowerCase();
@@ -2666,6 +2743,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function resetTableOptions(configId) {
     delete state.tableSettings[configId];
+    if (state.view === configId) state.sort = getDefaultTableSort(configId);
     state.tableOptions = null;
     persistTableSettings();
     render();
@@ -4084,7 +4162,6 @@ MAX - https://bizvmax.ru/zifra_plus
           ${section.educationDocument ? renderEducationDocumentActions(record) : ""}
         </section>
       `).join("")}
-      ${tab.id === "main" ? renderStudentMainActions(record) : ""}
       ${tab.id === "income" ? renderStudentFinancialResult(record) : ""}
       ${tab.payments ? renderPaymentRows(record) : ""}
       ${tab.expenses ? renderExpenseRows(record) : ""}
@@ -4093,19 +4170,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
 
-  function renderStudentMainActions(record) {
-    const documentTemplate = getPrimaryDocumentTemplate();
-    const source = documentTemplate.templateUrl || documentTemplate.fileName || "";
-    const title = source
-      ? `Сформировать заявление и договор\n${source}`
-      : "Сформировать заявление и договор";
+  function renderStudentContractButton() {
+    const title = "Сформировать договор\nShift + щелчок: выбрать документ";
     return `
-      <div class="student-main-actions">
-        <button class="primary-button student-document-generate-button student-contract-button" data-action="open-student-contract-document" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">
-          ${renderOrdersSdoIcon("document")}
-          <span>Договор</span>
-        </button>
-      </div>
+      <button class="primary-button student-document-generate-button student-contract-button orders-sdo-contract-button" data-action="open-student-contract-document" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">
+        ${renderOrdersSdoIcon("document")}
+        <span>Договор</span>
+      </button>
     `;
   }
   function renderStudentReviewPanel(record) {
@@ -4163,15 +4234,18 @@ MAX - https://bizvmax.ru/zifra_plus
     const portalMessage = record.portalAccessMessage || generatedMessages.portalAccessMessage || "";
     return `
       <section class="form-section student-orders-sdo-panel">
-        <div class="orders-sdo-topbar">
-          <button class="ghost-button orders-sdo-auto-button" data-action="auto-fill-orders-sdo" type="button">
-            ${renderOrdersSdoIcon("zap")}
-            <span>Авто</span>
-          </button>
-        </div>
         <div class="orders-sdo-contract-grid">
           ${renderOrdersSdoControl("contractDate", "Дата договора", record, "date", { tools: ["dateStep"] })}
-          ${renderOrdersSdoControl("contractNo", "Номер договора", record, "text", { tools: ["generateContractNo"] })}
+          <div class="orders-sdo-contract-line">
+            ${renderOrdersSdoControl("contractNo", "Номер договора", record, "text", {
+              tools: ["generateContractNo"],
+              className: "orders-sdo-contract-number-field"
+            })}
+            <button class="ghost-button orders-sdo-auto-button" data-action="auto-fill-orders-sdo" type="button">
+              ${renderOrdersSdoIcon("zap")}
+              <span>Авто</span>
+            </button>
+          </div>
           ${renderOrdersSdoControl("startDate", "Дата нач. обуч.", record, "date", { tools: ["dateStep"] })}
           ${renderOrdersSdoControl("endDate", "Дата окон. обуч.", record, "date", { tools: ["generateEndDate", "dateStep"] })}
           <div class="orders-sdo-shift-row">
@@ -4182,7 +4256,12 @@ MAX - https://bizvmax.ru/zifra_plus
           ${renderOrdersSdoControl("enrollmentDate", "Дата зачислен.", record, "date", { tools: ["dateStep"] })}
           ${renderOrdersSdoControl("expulsionDate", "Дата отчислен.", record, "date", { tools: ["dateStep"] })}
           ${renderOrdersSdoControl("enrollmentOrderNo", "Номер приказа", record, "text", { tools: ["generateEnrollmentOrderNo", "document", "educationCertificate"] })}
-          ${renderOrdersSdoControl("expulsionOrderNo", "Номер приказа", record, "text", { tools: ["generateExpulsionOrderNo", "document"] })}
+          <div class="orders-sdo-expulsion-order-stack">
+            ${renderOrdersSdoControl("expulsionOrderNo", "Номер приказа", record, "text", { tools: ["generateExpulsionOrderNo", "document"] })}
+            <div class="orders-sdo-contract-document-row">
+              ${renderStudentContractButton()}
+            </div>
+          </div>
           ${renderOrdersSdoControl("group", "Номер группы", record, "text", { tools: ["generateGroupNo"], className: "orders-sdo-group-field" })}
         </div>
         <fieldset class="orders-sdo-lms">
@@ -5677,11 +5756,14 @@ MAX - https://bizvmax.ru/zifra_plus
           </button>
         </div>
         <div class="combo-options" data-combo-options>
-          ${normalizedOptions.map((option) => `
-            <button data-action="select-combo-value" data-value="${escapeAttr(option)}" type="button">
-              ${escapeHtml(option)}
-            </button>
-          `).join("") || `<span class="combo-empty">Нет значений</span>`}
+          ${normalizedOptions.map((option) => {
+            const selected = option === String(value);
+            return `
+              <button class="${selected ? "is-selected" : ""}" data-action="select-combo-value" data-value="${escapeAttr(option)}" type="button" aria-selected="${selected ? "true" : "false"}">
+                ${escapeHtml(option)}
+              </button>
+            `;
+          }).join("") || `<span class="combo-empty">Нет значений</span>`}
         </div>
       </div>
     `;
@@ -6114,11 +6196,30 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function filterComboOptions(input) {
+  function filterComboOptions(input, { showAll = false } = {}) {
     const field = input.closest("[data-combo-field]");
-    const query = input.value.trim().toLowerCase();
+    const query = showAll ? "" : input.value.trim().toLowerCase();
     field?.querySelectorAll("[data-action='select-combo-value']").forEach((button) => {
       button.hidden = query && !button.textContent.toLowerCase().includes(query);
+    });
+  }
+
+  function focusComboSelectedOption(input) {
+    const field = input.closest("[data-combo-field]");
+    const optionsPanel = field?.querySelector("[data-combo-options]");
+    const value = input.value.trim();
+    let selectedOption = null;
+    field?.querySelectorAll("[data-action='select-combo-value']").forEach((button) => {
+      const selected = Boolean(value) && String(button.dataset.value || "").trim() === value;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-selected", selected ? "true" : "false");
+      if (selected) selectedOption = button;
+    });
+    if (!selectedOption || !optionsPanel) return;
+    requestAnimationFrame(() => {
+      const centeredTop = selectedOption.offsetTop
+        - Math.max(0, (optionsPanel.clientHeight - selectedOption.offsetHeight) / 2);
+      optionsPanel.scrollTop = Math.max(0, centeredTop);
     });
   }
 
@@ -6909,6 +7010,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeTopmostWindowByEscape() {
+    const studentDocumentChoiceDialog = document.querySelector("[data-student-document-choice-dialog]");
+    if (studentDocumentChoiceDialog) {
+      studentDocumentChoiceDialog.closeStudentDocumentChoice?.();
+      return true;
+    }
     const communicationFieldDialog = document.querySelector("[data-communication-template-field-dialog]");
     if (communicationFieldDialog) {
       communicationFieldDialog.remove();
@@ -6982,7 +7088,7 @@ MAX - https://bizvmax.ru/zifra_plus
         state.view = button.dataset.view;
         state.search = "";
         state.statusFilter = "Все";
-        state.sort = { key: "", dir: "asc" };
+        state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
         render();
       });
@@ -6991,6 +7097,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-view-shortcut]").forEach((button) => {
       button.addEventListener("click", () => {
         state.view = button.dataset.viewShortcut;
+        state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
         render();
       });
@@ -7264,8 +7371,10 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!input) return;
       const open = (event) => {
         closeComboPanels(field);
-        filterComboOptions(input);
+        const showAll = event?.type !== "input";
+        filterComboOptions(input, { showAll });
         field.classList.add("is-open");
+        if (showAll) focusComboSelectedOption(input);
         if (event?.type === "input" && document.activeElement !== input) {
           input.focus({ preventScroll: true });
         }
@@ -7323,7 +7432,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const studyFormInput = document.querySelector("[name='studyForm']");
         const hoursInput = document.querySelector("[name='hours']");
         if (educationTypeInput) educationTypeInput.value = program?.type || "";
-        if (studyFormInput && program?.studyForm) studyFormInput.value = program.studyForm;
+        if (studyFormInput && program) studyFormInput.value = normalizeStudyForm(program.studyForm);
         if (hoursInput && program?.hours) hoursInput.value = program.hours;
         updateStudentProgramPromoTitle(event.target.value);
       };
@@ -7931,7 +8040,6 @@ MAX - https://bizvmax.ru/zifra_plus
     const selectedProgram = findProgramByName(values.program);
     if (selectedProgram) {
       values.educationType = selectedProgram.type || values.educationType || "";
-      values.studyForm = selectedProgram.studyForm || values.studyForm || "";
       values.hours = selectedProgram.hours || values.hours || "";
     }
     return calculateStudentFinance(values);
@@ -8462,7 +8570,6 @@ MAX - https://bizvmax.ru/zifra_plus
       const selectedProgram = findProgramByName(values.program);
       if (selectedProgram) {
         values.educationType = selectedProgram.type || values.educationType || "";
-        values.studyForm = selectedProgram.studyForm || values.studyForm || "";
         values.hours = selectedProgram.hours || values.hours || "";
       }
       const expenseTotal = sumStudentExpenses(values);
@@ -11281,6 +11388,9 @@ MAX - https://bizvmax.ru/zifra_plus
       { key: "registrationNo", label: "рег. номер" },
       { key: "diplomaIssueDate", label: "дату выдачи" }
     ];
+    if (programType === "ППП" || programType === "КПК") {
+      requiredFields.push({ key: "finalGrade", label: "оценку ИА" });
+    }
     if (programType === "ППП") {
       requiredFields.push(
         { key: "protocolNo", label: "номер протокола" },
@@ -11328,7 +11438,8 @@ MAX - https://bizvmax.ru/zifra_plus
     try {
       const fieldValues = evaluateContractTemplateFields(record, documentTemplate.fields);
       const sourceValues = collectContractTemplateSourceValues(record);
-      const fileName = ensureDocxFileName(applyContractTemplateMarkers(fileNameTemplate, fieldValues));
+      const fileNameValues = { ...sourceValues, ...fieldValues };
+      const fileName = ensureDocxFileName(applyContractTemplateMarkers(fileNameTemplate, fileNameValues));
       const response = await fetch(photoApiUrl("/api/contracts/student-document"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -11466,10 +11577,86 @@ MAX - https://bizvmax.ru/zifra_plus
     );
   }
 
+  function isStudentFundedByLegalEntity(record) {
+    const fundingSource = String(record?.fundingSource || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLocaleLowerCase("ru-RU");
+    return /за\s+сч[её]т\s+организац/u.test(fundingSource)
+      || /юр(?:идическ[\p{L}\p{N}_]*\s+лиц[\p{L}\p{N}_]*|лиц[\p{L}\p{N}_]*)/u.test(fundingSource);
+  }
+
+  function chooseStudentContractDocument(documentTemplates, selectedDocumentId) {
+    document.querySelector("[data-student-document-choice-dialog]")?.closeStudentDocumentChoice?.();
+    const templates = Array.isArray(documentTemplates) ? documentTemplates.filter(Boolean) : [];
+    if (!templates.length) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const backdrop = document.createElement("div");
+      backdrop.className = "modal-backdrop student-document-choice-backdrop";
+      backdrop.dataset.studentDocumentChoiceDialog = "";
+      backdrop.innerHTML = `
+        <form class="modal student-document-choice-dialog">
+          <header class="modal-head">
+            <div>
+              <p class="eyebrow">Карточка слушателя</p>
+              <h2>Сформировать документ</h2>
+            </div>
+            <button class="icon-button" data-action="close-student-document-choice" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+          </header>
+          <div class="student-document-choice-body">
+            <label>
+              <span>Документ</span>
+              <select name="documentTemplateId">
+                ${templates.map((documentTemplate) => `
+                  <option value="${escapeAttr(documentTemplate.id)}" ${documentTemplate.id === selectedDocumentId ? "selected" : ""}>
+                    ${escapeHtml(documentTemplate.title)}
+                  </option>
+                `).join("")}
+              </select>
+            </label>
+            <small>Без Shift документ выбирается автоматически по источнику финансирования.</small>
+          </div>
+          <footer class="modal-actions">
+            <button class="ghost-button" data-action="close-student-document-choice" type="button">Отмена</button>
+            <button class="primary-button" type="submit">Сформировать</button>
+          </footer>
+        </form>
+      `;
+      let settled = false;
+      const finish = (documentTemplate = null) => {
+        if (settled) return;
+        settled = true;
+        backdrop.remove();
+        resolve(documentTemplate);
+      };
+      backdrop.closeStudentDocumentChoice = () => finish(null);
+      backdrop.addEventListener("pointerdown", (dialogEvent) => {
+        if (dialogEvent.target === backdrop) finish(null);
+      });
+      backdrop.querySelectorAll("[data-action='close-student-document-choice']").forEach((button) => {
+        button.addEventListener("click", () => finish(null));
+      });
+      backdrop.querySelector("form")?.addEventListener("submit", (submitEvent) => {
+        submitEvent.preventDefault();
+        const selectedId = String(submitEvent.currentTarget.elements.documentTemplateId?.value || "");
+        finish(templates.find((documentTemplate) => documentTemplate.id === selectedId) || null);
+      });
+      document.body.appendChild(backdrop);
+      backdrop.querySelector("select")?.focus();
+    });
+  }
+
   async function openStudentContractDocument(event) {
     const button = event?.currentTarget;
     const record = collectStudentFormDraft();
-    const documentTemplate = getPrimaryDocumentTemplate();
+    const automaticTemplate = isStudentFundedByLegalEntity(record)
+      ? getLegalEntityApplicationDocumentTemplate()
+      : getPrimaryDocumentTemplate();
+    const documentTemplate = event?.shiftKey
+      ? await chooseStudentContractDocument(getStudentContractDocumentTemplates(), automaticTemplate.id)
+      : automaticTemplate;
+    if (!documentTemplate) return;
     const fields = documentTemplate.fields;
     const templateUrl = documentTemplate.templateUrl || "";
     const templatePath = documentTemplate.templatePath || "";
@@ -11497,7 +11684,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const blob = await response.blob();
       downloadBlob(fileName, blob);
     } catch (error) {
-      alert(`Не удалось сформировать договор: ${error.message}`);
+      alert(`Не удалось сформировать документ «${documentTemplate.title}»: ${error.message}`);
     } finally {
       if (button) button.disabled = wasDisabled;
     }
@@ -11717,6 +11904,12 @@ MAX - https://bizvmax.ru/zifra_plus
     if (normalized === "Количество часов") return getStudentProgramHours(record);
     if (normalized === "Часы") return getStudentProgramHours(record);
     if (normalized === "Вид программы ДПО") return getStudentProgramTypeCode(record);
+    if (normalized === "Пол") {
+      const gender = String(record?.gender || inferStudentGender(record?.name) || "").trim().toLowerCase();
+      if (gender.startsWith("ж")) return "Ж";
+      if (gender.startsWith("м")) return "М";
+      return "";
+    }
     if (normalized === "ФИО_несклон") return isChecked(record.noDeclension) ? "+" : "";
     if (normalized === "Фото") return record.photoPath || record.photoUrl || record.photoData || "";
     if (normalized === "ИО") {
@@ -11751,16 +11944,82 @@ MAX - https://bizvmax.ru/zifra_plus
     return "Документ об образовании";
   }
 
+  function getTrainingPlanHours(value) {
+    const text = String(value ?? "").replace(",", ".").trim();
+    const direct = /^\d+(?:\.\d+)?$/.exec(text);
+    if (direct) return Number(direct[0]);
+    const inName = /\(\s*(\d+(?:[.,]\d+)?)\s*(?:ч|час|часа|часов)\s*\)\s*$/i.exec(text);
+    return inName ? Number(inName[1].replace(",", ".")) : 0;
+  }
+
+  function findEducationDocumentProgram(record) {
+    const programName = String(record?.program || "").trim();
+    if (!programName) return null;
+    const programs = getProgramRows();
+    const exactName = normalizeProgramName(programName);
+    const exactProgram = programs.find((program) => normalizeProgramName(program?.name) === exactName);
+    if (exactProgram) return exactProgram;
+    const comparableName = normalizeTrainingPlanProgramName(programName);
+    const candidates = programs.filter((program) => (
+      [program?.name, program?.shortName].some((name) => (
+        normalizeProgramName(name) === exactName
+        || normalizeTrainingPlanProgramName(name) === comparableName
+      ))
+    ));
+    const requestedHours = getTrainingPlanHours(
+      record?.hours || record?.programHours || record?.totalHours || programName
+    );
+    if (requestedHours) {
+      const matchingHours = candidates.filter((program) => (
+        getTrainingPlanHours(program?.hours || program?.name) === requestedHours
+      ));
+      if (matchingHours.length === 1) return matchingHours[0];
+    }
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+
+  function getEducationDocumentTrainingPlanRows(record) {
+    const rows = state.data.collections.trainingPlans || [];
+    const programName = String(record?.program || "").trim();
+    const program = findEducationDocumentProgram(record);
+    const programId = String(program?.id || "").trim();
+    if (programId) {
+      const linkedRows = rows.filter((item) => String(item?.programId || "").trim() === programId);
+      if (linkedRows.length) return linkedRows;
+    }
+    const exactNames = new Set([programName, program?.name]
+      .map(normalizeProgramName)
+      .filter(Boolean));
+    const exactRows = rows.filter((item) => exactNames.has(normalizeProgramName(item?.programName)));
+    if (exactRows.length) return exactRows;
+    const comparableNames = new Set([programName, program?.name, program?.shortName]
+      .map(normalizeTrainingPlanProgramName)
+      .filter(Boolean));
+    const comparableRows = rows.filter((item) => (
+      comparableNames.has(normalizeTrainingPlanProgramName(item?.programName))
+    ));
+    const requestedHours = getTrainingPlanHours(
+      record?.hours || record?.programHours || record?.totalHours || program?.hours || programName
+    );
+    if (requestedHours) {
+      const matchingHours = comparableRows.filter((item) => (
+        getTrainingPlanHours(item?.programName) === requestedHours
+      ));
+      if (matchingHours.length) return matchingHours;
+    }
+    const distinctPlans = new Set(comparableRows.map((item) => normalizeProgramName(item?.programName)));
+    return distinctPlans.size <= 1 ? comparableRows : [];
+  }
+
   function formatEducationDocumentTrainingPlan(record) {
     const programName = String(record?.program || "").trim();
     if (!programName) return "";
-    const program = findProgramByName(programName) || { name: programName };
-    const related = getProgramTrainingPlanRows(program, programName);
+    const related = getEducationDocumentTrainingPlanRows(record);
     if (!related.length) return "";
     return related.map((item) => {
       const discipline = String(item.discipline || item.code || "").trim();
       const hours = String(item.totalHours || "").trim();
-      const grade = isFinalAttestationPlanRow(item) ? String(record?.finalGrade || "").trim() : "зачтено";
+      const grade = isFinalAttestationPlanRow(item) ? String(record?.finalGrade || "").trim() : "Зачтено";
       return [discipline, hours, grade].join("\t");
     }).filter(Boolean).join("\n");
   }
