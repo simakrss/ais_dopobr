@@ -220,11 +220,41 @@ body.sidebar-collapsed .sidebar {
   text-align: left;
   padding: 10px 12px;
   border-radius: 8px;
+  cursor: grab;
+  user-select: none;
+  transition: opacity 140ms ease, transform 140ms ease, background 140ms ease;
 }
 
 .nav-item:hover,
 .nav-item.active {
   background: #25574f;
+}
+
+.nav-item.is-dragging {
+  opacity: 0.35;
+  transform: scale(0.98);
+}
+
+body.nav-item-dragging,
+body.nav-item-dragging .nav-item {
+  cursor: grabbing;
+}
+
+.nav-item-menu {
+  min-width: 238px;
+}
+
+.nav-item-menu-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+}
+
+.nav-item-menu-check {
+  color: var(--teal);
+  font-weight: 800;
+  text-align: center;
 }
 
 .nav-icon {
@@ -534,6 +564,114 @@ body.sidebar-collapsed .sidebar {
   padding: 0 10px;
 }
 
+.student-program-type-filter {
+  position: relative;
+}
+
+.student-program-type-filter summary {
+  height: 38px;
+  min-width: 172px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.student-program-type-filter summary::-webkit-details-marker {
+  display: none;
+}
+
+.student-program-type-filter summary strong {
+  max-width: 126px;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.student-program-type-filter summary svg {
+  width: 10px;
+  flex: 0 0 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+  transition: transform 120ms ease;
+}
+
+.student-program-type-filter[open] summary svg {
+  transform: rotate(180deg);
+}
+
+.student-program-type-filter.is-active summary {
+  border-color: #86c8b5;
+  background: #eef8f4;
+}
+
+.student-program-type-filter-panel {
+  min-width: 100%;
+  display: grid;
+  gap: 4px;
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 45;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.student-program-type-filter-panel label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.student-program-type-filter-panel label:hover {
+  background: var(--panel-soft);
+}
+
+.student-program-type-filter-panel input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--green);
+}
+
+.student-program-type-filter-clear {
+  min-height: 30px;
+  margin-top: 3px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--green);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.student-program-type-filter-clear:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.55;
+}
+
 .combo-field {
   position: relative;
   min-width: 0;
@@ -650,6 +788,37 @@ body.sidebar-collapsed .sidebar {
   padding: 8px 10px;
 }
 
+.modal .combo-options {
+  top: calc(100% + 3px);
+  max-height: 210px;
+  padding: 3px;
+  border-radius: 5px;
+}
+
+.modal .combo-field.is-open .combo-options {
+  gap: 1px;
+}
+
+.modal .combo-options button {
+  min-height: 22px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 1.15;
+}
+
+.modal .combo-empty {
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.modal select option {
+  min-height: 20px;
+  padding: 2px 4px;
+  font-size: 12px;
+  line-height: 1.15;
+}
+
 .primary-button,
 .ghost-button,
 .danger-button,
@@ -746,6 +915,62 @@ body.sidebar-collapsed .sidebar-toggle {
 
 .table-wrap.compact {
   border: 0;
+}
+
+.table-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.table-pagination-summary {
+  margin-right: auto;
+  white-space: nowrap;
+}
+
+.table-pagination-navigation,
+.table-pagination-current,
+.table-page-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.table-pagination-navigation .icon-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 17px;
+}
+
+.table-pagination-current input {
+  width: 56px;
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  text-align: center;
+  font: inherit;
+}
+
+.table-page-size select {
+  min-height: 32px;
+  padding: 4px 28px 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
 }
 
 .data-table {
@@ -2977,6 +3202,212 @@ body.is-resizing-column {
   margin: 2px 0 0;
 }
 
+.admin-database-settings {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.admin-database-settings h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.admin-connection-panel .admin-database-settings {
+  margin-bottom: 0;
+}
+
+.admin-database-copy {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.admin-database-copy p,
+.admin-database-history p {
+  margin: 0;
+}
+
+.admin-database-history {
+  display: grid;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.admin-database-history p {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-database-history span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-database-history strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.admin-database-actions {
+  flex-wrap: wrap;
+}
+
+.student-database-import-button {
+  white-space: nowrap;
+}
+
+.student-database-import-button.is-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.student-database-import-button.is-loading::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(15, 118, 110, 0.24);
+  border-top-color: var(--teal);
+  border-radius: 50%;
+  animation: spin 760ms linear infinite;
+}
+
+.database-import-indicator {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 80;
+  width: min(430px, calc(100vw - 32px));
+  padding: 14px 16px;
+  border: 1px solid rgba(15, 118, 110, 0.28);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 50px rgba(26, 43, 36, 0.18);
+}
+
+.database-import-indicator[hidden] {
+  display: none;
+}
+
+.database-import-indicator-head {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.database-import-indicator-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.database-import-indicator-head strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.database-import-indicator-head [data-database-import-status],
+.database-import-indicator-head [data-database-export-status] {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.database-import-indicator-icon {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(15, 118, 110, 0.22);
+  border-top-color: var(--teal);
+  border-radius: 50%;
+  animation: spin 760ms linear infinite;
+}
+
+.database-import-indicator-percent {
+  color: var(--teal);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.database-import-progress-track {
+  height: 4px;
+  margin-top: 11px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.12);
+}
+
+.database-import-progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+  transition: width 220ms ease;
+}
+
+.database-import-indicator.is-indeterminate .database-import-progress-track > span {
+  width: 38% !important;
+  animation: database-import-progress 1.15s ease-in-out infinite;
+}
+
+.database-import-indicator.tone-success {
+  border-color: rgba(22, 163, 74, 0.35);
+}
+
+.database-import-indicator.tone-success .database-import-indicator-icon,
+.database-import-indicator.tone-error .database-import-indicator-icon {
+  display: grid;
+  place-items: center;
+  border: 0;
+  animation: none;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.database-import-indicator.tone-success .database-import-indicator-icon {
+  background: #16a34a;
+}
+
+.database-import-indicator.tone-success .database-import-indicator-icon::before {
+  content: "✓";
+}
+
+.database-import-indicator.tone-success .database-import-progress-track > span {
+  background: #16a34a;
+}
+
+.database-import-indicator.tone-error {
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+.database-import-indicator.tone-error .database-import-indicator-icon {
+  background: #dc2626;
+}
+
+.database-import-indicator.tone-error .database-import-indicator-icon::before {
+  content: "!";
+}
+
+.database-import-indicator.tone-error .database-import-progress-track > span {
+  background: #dc2626;
+}
+
+@keyframes database-import-progress {
+  0% {
+    transform: translateX(-115%);
+  }
+  100% {
+    transform: translateX(310%);
+  }
+}
+
 .student-document-choice-dialog {
   width: min(480px, 100%);
 }
@@ -3627,7 +4058,7 @@ body.is-resizing-column {
 .student-main-program-row .student-address-field {
   display: grid;
   grid-template-columns: 218px minmax(0, 1fr);
-  align-items: center;
+  align-items: start;
   gap: 8px;
 }
 
@@ -3636,14 +4067,14 @@ body.is-resizing-column {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
-  align-items: center;
+  align-items: start;
 }
 
 .student-address-control textarea {
   min-width: 0;
   width: 100%;
-  height: 30px;
-  min-height: 30px;
+  height: 52px;
+  min-height: 52px;
   resize: vertical;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -3651,7 +4082,7 @@ body.is-resizing-column {
   padding: 5px 7px;
   color: var(--text);
   line-height: 18px;
-  overflow-y: hidden;
+  overflow-y: auto;
 }
 
 .student-address-actions {
@@ -4529,21 +4960,34 @@ body.student-tab-dragging .student-tabs button {
 }
 
 .education-document-actions {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px;
   justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
   margin-top: 8px;
 }
 
 .education-document-open-button {
+  min-width: 0;
+  max-width: 100%;
   min-height: 26px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px;
+  gap: 4px;
+  padding: 0 5px;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 11px;
+}
+
+.education-document-open-button:first-child {
+  flex: 1 1 168px;
+}
+
+.education-document-open-button:last-child {
+  flex: 0 1 auto;
 }
 
 .education-document-open-button .orders-sdo-icon {
@@ -5731,7 +6175,8 @@ body.student-tab-dragging .student-tabs button {
 }
 
 .payment-grid {
-  grid-template-columns: 38px minmax(130px, 0.8fr) minmax(120px, 0.8fr) minmax(180px, 1.6fr) 32px;
+  grid-template-columns: 42px minmax(118px, 0.75fr) minmax(100px, 0.65fr) minmax(180px, 1.6fr) 26px;
+  gap: 3px 5px;
 }
 
 .payment-row-delete {
@@ -5772,24 +6217,100 @@ body.student-tab-dragging .student-tabs button {
 }
 
 .expense-grid {
-  grid-template-columns: 38px minmax(118px, 0.7fr) minmax(170px, 1.15fr) minmax(112px, 0.65fr) 58px minmax(180px, 1.35fr) 32px;
+  grid-template-columns: 42px minmax(108px, 0.65fr) minmax(160px, 1.1fr) minmax(92px, 0.55fr) minmax(180px, 1.45fr) 26px;
+  gap: 3px 5px;
 }
 
 .expense-grid .combo-field {
   min-width: 0;
 }
 
-.expense-paid-check {
-  min-height: 34px;
-  display: inline-flex;
+.finance-row-number-cell {
+  display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 2px;
 }
 
-.expense-paid-check input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--teal);
+.finance-row-drag-handle {
+  width: 17px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  grid-template-columns: repeat(2, 2px);
+  grid-auto-rows: 2px;
+  align-content: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: grab;
+}
+
+.finance-row-drag-handle span {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.finance-row-drag-handle:hover,
+.finance-row-drag-handle:focus-visible {
+  background: #e7f5ef;
+  color: var(--green);
+}
+
+.finance-row-drag-handle:active {
+  cursor: grabbing;
+}
+
+.payment-grid-row.is-dragging > .editable-grid-cell,
+.expense-grid-row.is-dragging > .editable-grid-cell {
+  opacity: 0.55;
+  background: #ecfdf5;
+}
+
+.student-income-tab .payment-grid input,
+.student-income-tab .expense-grid input,
+.student-income-tab .expense-grid select {
+  min-height: 24px;
+  padding: 1px 5px;
+  font-size: 13px;
+}
+
+.student-income-tab .expense-grid .combo-input-wrap input {
+  padding-right: 25px;
+}
+
+.student-income-tab .expense-grid .combo-clear {
+  right: 4px;
+  width: 15px;
+  height: 15px;
+  min-height: 15px;
+}
+
+.student-income-tab .expense-grid .combo-clear svg {
+  width: 13px;
+  height: 13px;
+}
+
+.student-income-tab .payment-grid .payment-row-delete,
+.student-income-tab .expense-grid .payment-row-delete {
+  width: 24px;
+  height: 24px;
+}
+
+.student-income-tab .payment-grid .payment-row-delete svg,
+.student-income-tab .expense-grid .payment-row-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+.student-income-tab .payment-grid .editable-grid-head,
+.student-income-tab .expense-grid .editable-grid-head {
+  font-size: 11px;
 }
 
 .editable-grid-head {
@@ -5909,6 +6430,23 @@ body.student-tab-dragging .student-tabs button {
     flex-wrap: wrap;
   }
 
+  .table-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .table-pagination-summary {
+    margin-right: 0;
+  }
+
+  .table-pagination-navigation {
+    justify-content: space-between;
+  }
+
+  .table-page-size {
+    justify-content: space-between;
+  }
+
   .section-head,
   .panel-head {
     display: grid;
@@ -5922,10 +6460,17 @@ body.student-tab-dragging .student-tabs button {
 
   .search-box,
   .select-control,
+  .student-program-type-filter,
+  .student-program-type-filter summary,
   .toolbar button,
   .bulk-toolbar button {
     min-width: 0;
     width: 100%;
+  }
+
+  .student-program-type-filter-panel {
+    right: 0;
+    left: 0;
   }
 
   .form-grid {
@@ -5997,8 +6542,9 @@ body.student-tab-dragging .student-tabs button {
     border-bottom: 1px solid var(--line);
   }
 
-  .expense-paid-cell .expense-paid-check {
-    justify-content: flex-start;
+  .payment-grid .finance-row-number-cell,
+  .expense-grid .finance-row-number-cell {
+    grid-template-columns: minmax(86px, 0.34fr) auto 1fr;
   }
 
   .student-income-tab .student-form-grid label {

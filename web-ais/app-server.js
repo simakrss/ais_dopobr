@@ -4,16 +4,228 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const zlib = require("node:zlib");
+const os = require("node:os");
+const { spawn } = require("node:child_process");
+const { Worker, isMainThread } = require("node:worker_threads");
+const XLSX = require("./vendor/sheetjs/xlsx.full.min.js");
 
 const ROOT = __dirname;
 const STORAGE_ROOT = path.join(ROOT, "storage");
 const PHOTO_ROOT = path.join(STORAGE_ROOT, "photos");
+const SERVER_SETTINGS_PATH = path.join(STORAGE_ROOT, "server-settings.json");
+const STUDENT_DATABASE_SYNC_SCRIPT = path.join(ROOT, "scripts", "sync-student-database.ps1");
+const DEFAULT_STUDENT_PHOTO_SOURCE_ROOT = path.resolve(
+  process.env.STUDENT_PHOTO_SOURCE_ROOT || "Y:\\АИС Допобразование\\Слушатели"
+);
+let studentPhotoSourceRoot = DEFAULT_STUDENT_PHOTO_SOURCE_ROOT;
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
 const MAX_JSON_BYTES = 40 * 1024 * 1024;
 const MAX_DOCX_BYTES = 24 * 1024 * 1024;
+const MAX_STUDENT_DATABASE_BYTES = 24 * 1024 * 1024;
+const MAX_STUDENT_PHOTO_BYTES = 16 * 1024 * 1024;
+const MAX_STUDENT_DATABASE_EXPORT_STUDENTS = 20000;
+const MAX_STUDENT_DATABASE_EXPORT_EXPENSES = 100000;
+const STUDENT_IMPORT_JOB_TTL_MS = 15 * 60 * 1000;
+const studentImportJobs = new Map();
+const studentExportJobs = new Map();
 const WORD_TEMPLATE_EXTENSIONS = new Set(["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"]);
 const OPENXML_WORD_EXTENSIONS = new Set(["docx", "docm", "dotx", "dotm"]);
+const STUDENT_DATABASE_COLUMN_MAP = Object.freeze({
+  "uid": "uid",
+  "ФИО": "name",
+  "Дата подачи заявки": "applicationDate",
+  "Статус": "status",
+  "Источник": "source",
+  "Теги": "tags",
+  "Агент": "agent",
+  "Скидка": "discount",
+  "Вид программы ДПО": "educationType",
+  "Вид  программы ДПО": "educationType",
+  "Прогр обуч факт": "program",
+  "Количество часов": "hours",
+  "Форма обучения": "studyForm",
+  "Стажировка": "internship",
+  "Обуч тел.": "phone",
+  "Email": "email",
+  "АккаунтTelegram": "telegram",
+  "Пол": "gender",
+  "Осн. скидки": "discountDescription",
+  "Фото": "photoPath",
+  "ФИО_eng": "nameEnglish",
+  "ОбрПоИмени": "addressByFirstName",
+  "СНИЛС": "snils",
+  "СНИЛС_зак": "customerSnils",
+  "ИНН": "inn",
+  "ИНН_зак": "customerInn",
+  "ФИО_несклон": "noDeclension",
+  "Адрес места жительства": "mailingAddress",
+  "Адрес места регистрации": "registrationAddress",
+  "МестоРаботы": "workPlace",
+  "Должность": "position",
+  "Категория занятости": "employmentCategory",
+  "Статус ОВЗ": "ovzStatus",
+  "Гражданство": "citizenship",
+  "Пасп_Обуч_Вид документа": "passportType",
+  "ДР обуч": "birthDate",
+  "Пасп_Обуч_Серия_Номер": "passportNumber",
+  "КодПодрОбуч": "passportCode",
+  "Пасп_Обуч_Дата": "passportDate",
+  "Пасп_Обуч_Кем": "passportIssuer",
+  "Обр_Вид образования": "educationDocument",
+  "Обр_Уровень": "educationLevel",
+  "Обр_Серия": "educationDocumentSeries",
+  "Обр_Номер": "educationDocumentNumber",
+  "Обр_Дата выдачи": "educationDocumentDate",
+  "Обр_Кем выдан": "educationDocumentIssuer",
+  "Обр_Специальность": "educationSpecialty",
+  "Обр_Квалификация": "educationQualification",
+  "Фамилия в документе": "educationDocumentSurname",
+  "Заказчик": "customer",
+  "Зак тел.": "customerPhone",
+  "WhatsApp": "whatsapp",
+  "Пасп_Зак_Вид документа": "customerPassportType",
+  "ДР зак": "customerBirthDate",
+  "Пасп_Зак_Серия_Номер": "customerPassportNumber",
+  "КодПодрЗак": "customerPassportCode",
+  "Пасп_Зак_Дата": "customerPassportDate",
+  "Пасп_Зак_Кем": "customerPassportIssuer",
+  "Логин": "login",
+  "Пароль": "password",
+  "СообщЛогин": "portalAccessMessage",
+  "Диплом": "diplomaStatus",
+  "Заявл.": "applicationDocumentStatus",
+  "Анкета": "questionnaireStatus",
+  "Договор": "contractNo",
+  "Дата договора": "contractDate",
+  "Согласие на обр. ПнД": "consentPersonalData",
+  "Источник финансирования": "fundingSource",
+  "Сумма по договору (руб)": "contractAmount",
+  "Сумма  по договору (руб)": "contractAmount",
+  "Сумма в месяц (руб)": "monthlyAmount",
+  "Остаток по договору (руб)": "balance",
+  "Остаток  по договору (руб)": "balance",
+  "Внесено (руб)": "paidAmount",
+  "Заказ": "orderNo",
+  "Дата1": "payment1Date",
+  "Оплата1": "payment1Amount",
+  "Дата2": "payment2Date",
+  "Оплата2": "payment2Amount",
+  "Дата3": "payment3Date",
+  "Оплата3": "payment3Amount",
+  "Дата4": "payment4Date",
+  "Оплата4": "payment4Amount",
+  "Дата5": "payment5Date",
+  "Оплата5": "payment5Amount",
+  "Дата6": "payment6Date",
+  "Оплата6": "payment6Amount",
+  "Дата7": "payment7Date",
+  "Оплата7": "payment7Amount",
+  "Дата8": "payment8Date",
+  "Оплата8": "payment8Amount",
+  "Номер приказа зачисления": "enrollmentOrderNo",
+  "Дата приказа зачисления": "enrollmentDate",
+  "Номер группы": "group",
+  "Дата начала обучения": "startDate",
+  "Тема ВАР": "finalWorkTopic",
+  "Замечания ВАР": "finalWorkNotes",
+  "Оценка ИА": "finalGrade",
+  "Дата окончания обучения": "endDate",
+  "Продленная дата окончания обучения": "extendedEndDate",
+  "Признак оформления": "documentsStatus",
+  "Номер приказа отчисления": "expulsionOrderNo",
+  "Дата приказа Отчисл Док Обр": "expulsionDate",
+  "Номер протокола": "protocolNo",
+  "Примечание5": "note",
+  "Отзыв": "review",
+  "ОтзывРазмещен": "reviewPublished",
+  "Почта": "postalTrack",
+  "Номер бланка": "diplomaBlankNo",
+  "РегНомер": "registrationNo",
+  "Дата выдачи": "diplomaIssueDate",
+  "Квалификация": "qualification",
+  "Председатель": "chairman",
+  "Руководитель орг": "commissionMember1",
+  "Секретарь": "secretary",
+  "ФРДО": "frdoStatus",
+  "Дата доставки": "deliveryDate"
+});
+const STUDENT_DATABASE_DATE_FIELDS = new Set([
+  "applicationDate",
+  "birthDate",
+  "passportDate",
+  "educationDocumentDate",
+  "customerBirthDate",
+  "customerPassportDate",
+  "contractDate",
+  "payment1Date",
+  "payment2Date",
+  "payment3Date",
+  "payment4Date",
+  "payment5Date",
+  "payment6Date",
+  "payment7Date",
+  "payment8Date",
+  "enrollmentDate",
+  "startDate",
+  "endDate",
+  "extendedEndDate",
+  "expulsionDate",
+  "diplomaIssueDate",
+  "deliveryDate"
+]);
+const STUDENT_DATABASE_NUMBER_FIELDS = new Set([
+  "discount",
+  "hours",
+  "contractAmount",
+  "monthlyAmount",
+  "balance",
+  "paidAmount",
+  "payment1Amount",
+  "payment2Amount",
+  "payment3Amount",
+  "payment4Amount",
+  "payment5Amount",
+  "payment6Amount",
+  "payment7Amount",
+  "payment8Amount"
+]);
+const DIRECT_EXPENSE_DATABASE_COLUMN_MAP = Object.freeze({
+  "uid": "uid",
+  "Дата": "date",
+  "Вид затрат": "type",
+  "Сумма": "amount",
+  "Примечание": "note",
+  "Связь с запасами": "inventoryLink",
+  "Акт": "act",
+  "Статус акта": "actStatus",
+  "Рекомендация оплаты": "recommendation",
+  "Дополнительная информация": "additionalInfo"
+});
+const STUDENT_EVENT_IMPORT_TEMPLATES = Object.freeze([
+  { key: "docsListNotice", label: "Уведомление с перечнем документов" },
+  { key: "sourceDocsReceived", label: "Получен пакет исходных документов" },
+  { key: "contractDocsSent", label: "Отправлен пакет готовых документов для подписи" },
+  { key: "portalAccountCreated", label: "Создана/обновлена учетная запись на портале" },
+  { key: "enrollmentOrderPrepared", label: "Сформирован приказ на зачисление" },
+  { key: "signedDocsReceived", label: "Получен подписанный пакет документов" },
+  { key: "portalCredentialsSent", label: "Отправлены данные для доступа к порталу" },
+  { key: "expulsionOrderPrepared", label: "Сформирован приказ об отчислении" },
+  { key: "educationDocMaketSent", label: "Отправлен макет документа об образовании на согласование" },
+  { key: "educationDocMaketApproved", label: "Макет документа об образовании согласован" },
+  { key: "educationDocOriginalSent", label: "Отправлен оригинал документа об образовании" },
+  { key: "reviewRequested", label: "Запрошен отзыв о прохождении обучения" },
+  { key: "reviewReceived", label: "Получен отзыв о прохождении обучения" },
+  { key: "recommendationRequested", label: "Запрошена рекомендация учебного центра" },
+  { key: "partnerInviteSent", label: "Отправлено приглашение в партнерскую программу" },
+  { key: "examSheetPrepared", label: "Сформирована зачетно-экзаменационная ведомость" },
+  { key: "personalCasePrinted", label: "Распечатано личное дело" },
+  { key: "extensionDocsSent", label: "Отправлен комплект документов для продления обучения" },
+  { key: "extensionDocsReceived", label: "Получен комплект документов для продления обучения" },
+  { key: "reductionDocsSent", label: "Отправлен комплект документов для сокращения обучения" },
+  { key: "reductionDocsReceived", label: "Получен комплект документов для сокращения обучения" },
+  { key: "certificateSent", label: "Отправлена справка об обучении" }
+]);
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
@@ -43,6 +255,13 @@ const MIME_TYPES = {
 async function ensureStorage() {
   await fs.mkdir(PHOTO_ROOT, { recursive: true });
   await fs.mkdir(DOCUMENT_TEMPLATE_ROOT, { recursive: true });
+  try {
+    const settings = JSON.parse(await fs.readFile(SERVER_SETTINGS_PATH, "utf8"));
+    const savedPath = String(settings.studentPhotoBasePath || "").trim();
+    if (savedPath && path.isAbsolute(savedPath)) studentPhotoSourceRoot = path.resolve(savedPath);
+  } catch (error) {
+    if (error.code !== "ENOENT") console.warn(`Не удалось прочитать настройки сервера: ${error.message}`);
+  }
 }
 
 function sendJson(res, status, payload) {
@@ -851,6 +1070,35 @@ function findTopLevelComparison(value) {
   return null;
 }
 
+function findTopLevelAdditiveOperator(value) {
+  const text = String(value || "");
+  let depth = 0;
+  let squareDepth = 0;
+  let quoted = false;
+  for (let index = text.length - 1; index >= 0; index -= 1) {
+    const char = text[index];
+    if (char === '"') {
+      if (quoted && text[index - 1] === '"') {
+        index -= 1;
+        continue;
+      }
+      quoted = !quoted;
+      continue;
+    }
+    if (quoted) continue;
+    if (char === ")") depth += 1;
+    else if (char === "(") depth = Math.max(0, depth - 1);
+    else if (char === "]") squareDepth += 1;
+    else if (char === "[") squareDepth = Math.max(0, squareDepth - 1);
+    else if (depth === 0 && squareDepth === 0 && (char === "+" || char === "-")) {
+      const previous = text.slice(0, index).trimEnd().slice(-1);
+      if (!previous || /[+\-*/(;,<>=]/.test(previous)) continue;
+      return { index, operator: char };
+    }
+  }
+  return null;
+}
+
 function formulaValueToString(value) {
   if (value === true) return "ИСТИНА";
   if (value === false) return "ЛОЖЬ";
@@ -988,6 +1236,13 @@ function evaluateDocumentFormulaExpression(expression, context) {
     const right = evaluateDocumentFormulaExpression(text.slice(comparison.index + comparison.operator.length), context);
     return compareDocumentFormulaValues(left, right, comparison.operator);
   }
+  const additive = findTopLevelAdditiveOperator(text);
+  if (additive) {
+    const left = Number(evaluateDocumentFormulaExpression(text.slice(0, additive.index), context));
+    const right = Number(evaluateDocumentFormulaExpression(text.slice(additive.index + 1), context));
+    if (!Number.isFinite(left) || !Number.isFinite(right)) throw new Error("Некорректное арифметическое выражение");
+    return additive.operator === "+" ? left + right : left - right;
+  }
   const hashRef = /^#([^#]+)#$/.exec(text);
   if (hashRef) return getFormulaContextValue(hashRef[1], context);
   const sourceRef = /^\[([^\]]+)\]$/.exec(text);
@@ -1026,6 +1281,13 @@ function evaluateDocumentFormulaFunction(name, args, context) {
   if (upperName === "ПОДСТАВИТЬ") return text(0).split(text(1)).join(text(2));
   if (upperName === "СИМВОЛ") return String.fromCharCode(Number(value(0)) || 0);
   if (upperName === "ЛЕВСИМВ") return text(0).slice(0, Number(value(1)) || 0);
+  if (upperName === "ДЛСТР") return text(0).length;
+  if (upperName === "ПСТР") {
+    const start = Math.max(1, Number(value(1)) || 1) - 1;
+    const length = Math.max(0, Number(value(2)) || 0);
+    return text(0).slice(start, start + length);
+  }
+  if (upperName === "СЖПРОБЕЛЫ") return text(0).replace(/\s+/g, " ").trim();
   if (upperName === "ТЕКСТ") return formatDocumentFormulaDate(text(0));
   if (upperName === "ПОЛУЧИТЬSQLЗАПРОС" || upperName === "ПОЛУЧИТЬ_SQL_ЗАПРОС") return "";
   if (upperName === "ПОЛУЧИТЬ_ЭЛЕМЕНТ") {
@@ -1977,6 +2239,41 @@ function imageExtensionFromPath(value) {
   return IMAGE_CONTENT_TYPES[ext] ? ext : "";
 }
 
+function isInsideDirectory(rootPath, fullPath) {
+  const relativePath = path.relative(rootPath, fullPath);
+  return relativePath === ""
+    || (relativePath !== ".." && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath));
+}
+
+function resolveStudentSourcePhotoPath(value) {
+  const source = String(value || "").trim();
+  if (!source || /^data:|^https?:/i.test(source)) return null;
+  const normalizedSource = source.replace(/[\\/]+/g, path.sep);
+  const employeePhotoRoot = path.resolve(
+    path.parse(studentPhotoSourceRoot).root,
+    "Договора",
+    "_Сотрудники"
+  );
+  const legacyEmployeePrefix = /^\[-1\][\\/]+Договора[\\/]+_Сотрудники[\\/]+/iu;
+  let fullPath;
+  if (legacyEmployeePrefix.test(source)) {
+    const relativeParts = source.replace(legacyEmployeePrefix, "").split(/[\\/]+/).filter(Boolean);
+    fullPath = path.resolve(employeePhotoRoot, ...relativeParts);
+  } else if (/^[a-z]:[\\/]/i.test(source)) {
+    fullPath = path.resolve(normalizedSource);
+  } else {
+    const parts = normalizedSource.replace(/^[\\/]+/, "").split(/[\\/]+/).filter(Boolean);
+    const studentsIndex = parts.findIndex((part) => part.toLocaleLowerCase("ru-RU") === "слушатели");
+    const relativeParts = studentsIndex >= 0 ? parts.slice(studentsIndex + 1) : parts;
+    fullPath = path.resolve(studentPhotoSourceRoot, ...relativeParts);
+  }
+  if (
+    !isInsideDirectory(studentPhotoSourceRoot, fullPath)
+    && !isInsideDirectory(employeePhotoRoot, fullPath)
+  ) return null;
+  return imageExtensionFromPath(fullPath) ? fullPath : null;
+}
+
 function resolveStoredPhotoPath(value) {
   const source = String(value || "").trim();
   if (!source || /^data:/i.test(source)) return null;
@@ -1997,7 +2294,9 @@ function resolveStoredPhotoPath(value) {
     const fullPath = path.resolve(ROOT, webPath);
     return isInsideRoot(fullPath) ? fullPath : null;
   }
-  if (path.isAbsolute(source)) return source;
+  const studentSourcePath = resolveStudentSourcePhotoPath(source);
+  if (studentSourcePath) return studentSourcePath;
+  if (path.isAbsolute(source)) return null;
   return safePhotoPath(source);
 }
 
@@ -2061,8 +2360,13 @@ function requestBuffer(url, options = {}, redirectCount = 0) {
       }
       const chunks = [];
       let size = 0;
+      const totalSize = Number(res.headers["content-length"]) || 0;
       res.on("data", (chunk) => {
         size += chunk.length;
+        options.onProgress?.({
+          receivedBytes: size,
+          totalBytes: totalSize
+        });
         if (size > MAX_DOCX_BYTES) {
           req.destroy(new Error("Скачанный шаблон договора слишком большой."));
           return;
@@ -2077,13 +2381,13 @@ function requestBuffer(url, options = {}, redirectCount = 0) {
   });
 }
 
-async function downloadYandexDiskPublicFile(publicUrl) {
+async function downloadYandexDiskPublicFile(publicUrl, options = {}) {
   const apiUrl = `https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=${encodeURIComponent(publicUrl)}`;
   const json = JSON.parse((await requestBuffer(apiUrl, {
     headers: { Accept: "application/json" }
   })).toString("utf8"));
   if (!json.href) throw new Error("Яндекс.Диск не вернул ссылку на скачивание шаблона.");
-  return requestBuffer(json.href);
+  return requestBuffer(json.href, { onProgress: options.onProgress });
 }
 
 function extractGoogleDriveFileId(publicUrl) {
@@ -2161,6 +2465,738 @@ function isOneDriveHost(host) {
     || host === "onedrive.live.com"
     || host.endsWith(".sharepoint.com")
     || host.endsWith("-my.sharepoint.com");
+}
+
+function normalizeStudentDatabaseDate(value) {
+  let date = null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    date = value;
+  } else if (typeof value === "number" && Number.isFinite(value)) {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (parsed) date = new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d));
+  } else {
+    const text = String(value ?? "").trim();
+    if (!text) return "";
+    const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+    if (iso) date = new Date(Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])));
+    const ru = /^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/.exec(text);
+    if (!date && ru) {
+      const year = Number(ru[3].length === 2 ? `${Number(ru[3]) >= 70 ? "19" : "20"}${ru[3]}` : ru[3]);
+      date = new Date(Date.UTC(year, Number(ru[2]) - 1, Number(ru[1])));
+    }
+    const slash = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(text);
+    if (!date && slash) {
+      const year = Number(slash[3].length === 2 ? `${Number(slash[3]) >= 70 ? "19" : "20"}${slash[3]}` : slash[3]);
+      date = new Date(Date.UTC(year, Number(slash[1]) - 1, Number(slash[2])));
+    }
+  }
+  if (!date || Number.isNaN(date.getTime()) || date.getUTCFullYear() < 1900) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeStudentDatabaseNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : "";
+  const text = String(value ?? "").replace(/\u00a0/g, "").replace(/\s+/g, "").replace(",", ".").trim();
+  if (!text) return "";
+  const number = Number(text);
+  return Number.isFinite(number) ? number : String(value).trim();
+}
+
+function normalizeStudentDatabaseValue(value, fieldName) {
+  if (STUDENT_DATABASE_DATE_FIELDS.has(fieldName)) return normalizeStudentDatabaseDate(value);
+  if (STUDENT_DATABASE_NUMBER_FIELDS.has(fieldName)) return normalizeStudentDatabaseNumber(value);
+  if (fieldName === "uid") return String(value ?? "").trim().replace(/\.0+$/, "");
+  if (typeof value === "string") return value.trim();
+  if (value === null || value === undefined) return "";
+  return value;
+}
+
+function normalizeImportedStudentEventLabel(value) {
+  return String(value || "")
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const STUDENT_EVENT_IMPORT_KEY_BY_LABEL = new Map(
+  STUDENT_EVENT_IMPORT_TEMPLATES.map((event) => [
+    normalizeImportedStudentEventLabel(event.label),
+    event.key
+  ])
+);
+
+[
+  ["Уведомление с перечнем документов в мессенжер (whApp, tlg)", "docsListNotice"],
+  ["Запрошена рекомендация учебного центра коллегам, знакомым", "recommendationRequested"],
+  ["Сформировано личное дело", "personalCasePrinted"]
+].forEach(([label, key]) => {
+  STUDENT_EVENT_IMPORT_KEY_BY_LABEL.set(normalizeImportedStudentEventLabel(label), key);
+});
+
+function decodeStudentEventSettingValue(value) {
+  const base64 = String(value || "").replace(/[\s\u000b]+/g, "");
+  if (!base64) return "";
+  try {
+    return new TextDecoder("windows-1251").decode(Buffer.from(base64, "base64")).trim();
+  } catch {
+    return "";
+  }
+}
+
+function normalizeImportedStudentEventDate(value) {
+  const text = String(value || "").trim().toLocaleLowerCase("ru-RU");
+  const standardDate = normalizeStudentDatabaseDate(text);
+  if (standardDate) return standardDate;
+  const match = /^(\d{1,2})\s+([а-яё]+)\s+(\d{2}|\d{4})$/iu.exec(text);
+  if (!match) return "";
+  const monthByName = {
+    янв: 1,
+    фев: 2,
+    мар: 3,
+    апр: 4,
+    май: 5,
+    июн: 6,
+    июл: 7,
+    авг: 8,
+    сен: 9,
+    сент: 9,
+    окт: 10,
+    ноя: 11,
+    дек: 12
+  };
+  const monthName = match[2].replace(/ё/g, "е");
+  const month = monthByName[monthName] || monthByName[monthName.slice(0, 3)];
+  if (!month) return "";
+  const day = Number(match[1]);
+  const shortYear = Number(match[3]);
+  const year = match[3].length === 2
+    ? (shortYear >= 70 ? 1900 + shortYear : 2000 + shortYear)
+    : shortYear;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year
+    || date.getUTCMonth() !== month - 1
+    || date.getUTCDate() !== day
+  ) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function parseStudentEventSettings(value) {
+  const lines = String(value || "").replace(/\u000b/g, "").split(/\r?\n/);
+  const blocks = [];
+  let block = null;
+  let currentEvent = null;
+  let insideEventSection = false;
+  lines.forEach((line) => {
+    const section = /^\[КарточкаСлушателя\\События(?:\\(\d+))?\]$/u.exec(line.trim());
+    if (section) {
+      insideEventSection = true;
+      if (!section[1]) {
+        block = { selected: [], events: [] };
+        blocks.push(block);
+        currentEvent = null;
+      } else if (block) {
+        const index = Number(section[1]);
+        currentEvent = { index, date: "", label: "" };
+        block.events.push(currentEvent);
+      }
+      return;
+    }
+    if (/^\[/.test(line.trim())) {
+      currentEvent = null;
+      insideEventSection = false;
+      return;
+    }
+    if (!block || !insideEventSection) return;
+    const separator = line.indexOf("=");
+    if (separator < 0) return;
+    const key = line.slice(0, separator).trim();
+    const rawValue = line.slice(separator + 1).trim();
+    if (!currentEvent && key === "Выд") {
+      block.selected = rawValue.split(",")
+        .map((item) => Number(item.trim()))
+        .filter((item) => Number.isInteger(item) && item > 0);
+      return;
+    }
+    if (!currentEvent) return;
+    if (key === "0") currentEvent.date = decodeStudentEventSettingValue(rawValue);
+    if (key === "1") currentEvent.label = decodeStudentEventSettingValue(rawValue);
+  });
+
+  const sourceBlock = [...blocks].reverse().find((item) => item.events.some((event) => event.label));
+  if (!sourceBlock) return {};
+  const selected = new Set(sourceBlock.selected);
+  const usedBaseKeys = new Set();
+  const customKeys = [];
+  const eventOrder = [];
+  const result = {};
+  sourceBlock.events
+    .filter((event) => event.label)
+    .forEach((event) => {
+      const normalizedLabel = normalizeImportedStudentEventLabel(event.label);
+      let eventKey = STUDENT_EVENT_IMPORT_KEY_BY_LABEL.get(normalizedLabel) || "";
+      if (eventKey && usedBaseKeys.has(eventKey)) eventKey = "";
+      if (eventKey) {
+        usedBaseKeys.add(eventKey);
+      } else {
+        const hash = crypto.createHash("sha1")
+          .update(`${event.index}:${normalizedLabel}`)
+          .digest("hex")
+          .slice(0, 10);
+        eventKey = `imported_${hash}`;
+        customKeys.push(eventKey);
+      }
+      const date = normalizeImportedStudentEventDate(event.date);
+      const isSelected = selected.has(event.index);
+      eventOrder.push(eventKey);
+      result[`event_${eventKey}_label`] = event.label;
+      if (date) result[`event_${eventKey}_date`] = date;
+      if (isSelected) result[`event_${eventKey}_state`] = date ? "dated" : "checked";
+    });
+  result.eventOrder = eventOrder.join(",");
+  result.eventCustomKeys = customKeys.join(",");
+  result.eventDeleted = STUDENT_EVENT_IMPORT_TEMPLATES
+    .map((event) => event.key)
+    .filter((key) => !usedBaseKeys.has(key))
+    .join(",");
+  return result;
+}
+
+function buildStudentDatabaseRecordId(uid, rowNumber) {
+  const normalizedUid = String(uid || "").trim();
+  const safeUid = normalizedUid.replace(/[^\p{L}\p{N}_-]+/gu, "-").replace(/^-+|-+$/g, "");
+  if (safeUid) return `student-db-${safeUid}`;
+  const hash = crypto.createHash("sha1").update(`${normalizedUid}:${rowNumber}`).digest("hex").slice(0, 12);
+  return `student-db-${hash}`;
+}
+
+function normalizeDirectExpenseDatabaseValue(value, fieldName) {
+  if (fieldName === "date") return normalizeStudentDatabaseDate(value);
+  if (fieldName === "amount") return normalizeStudentDatabaseNumber(value);
+  if (fieldName === "uid") return String(value ?? "").trim().replace(/\.0+$/, "");
+  if (typeof value === "string") return value.trim();
+  if (value === null || value === undefined) return "";
+  return value;
+}
+
+function buildDirectExpenseDatabaseRecordId(expense, rowNumber) {
+  const fingerprint = [
+    expense.uid,
+    expense.date,
+    expense.type,
+    expense.amount,
+    expense.note,
+    rowNumber
+  ].map((value) => String(value ?? "").trim()).join(":");
+  const hash = crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 16);
+  return `direct-expense-db-${hash}`;
+}
+
+function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}) {
+  const worksheet = workbook.Sheets["Прямые затраты"];
+  if (!worksheet) throw new Error("В файле не найден лист «Прямые затраты».");
+  onProgress({ progress: 68, message: "Чтение листа «Прямые затраты»..." });
+  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: true, UTC: true });
+  const headerRowIndex = rows.findIndex((row) => (
+    row.some((value) => String(value || "").trim() === "Дата")
+    && row.some((value) => String(value || "").trim() === "Вид затрат")
+    && row.some((value) => String(value || "").trim() === "Сумма")
+  ));
+  if (headerRowIndex < 0) {
+    throw new Error("На листе «Прямые затраты» не найдены колонки Дата, Вид затрат и Сумма.");
+  }
+  const headers = rows[headerRowIndex].map((value) => String(value || "").trim());
+  const mappedColumns = headers
+    .map((header, index) => ({ index, fieldName: DIRECT_EXPENSE_DATABASE_COLUMN_MAP[header] || "" }))
+    .filter((column) => column.fieldName);
+  const dateColumn = headers.indexOf("Дата");
+  const typeColumn = headers.indexOf("Вид затрат");
+  const amountColumn = headers.indexOf("Сумма");
+  const directExpenses = [];
+  const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
+  const progressStep = Math.max(1, Math.floor(sourceRowCount / 100));
+  for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    const processedRows = rowIndex - headerRowIndex;
+    if (processedRows === 1 || processedRows % progressStep === 0 || processedRows === sourceRowCount) {
+      onProgress({
+        progress: 70 + Math.floor((processedRows / Math.max(1, sourceRowCount)) * 25),
+        message: `Обработка прямых затрат: ${processedRows} из ${sourceRowCount}`,
+        processedRows,
+        totalRows: sourceRowCount
+      });
+    }
+    const row = rows[rowIndex] || [];
+    const date = normalizeStudentDatabaseDate(row[dateColumn]);
+    const type = String(row[typeColumn] ?? "").trim();
+    const amount = normalizeStudentDatabaseNumber(row[amountColumn]);
+    if (!date || !type || amount === "" || !Number.isFinite(Number(amount))) continue;
+    const expense = {};
+    mappedColumns.forEach((column) => {
+      const value = normalizeDirectExpenseDatabaseValue(row[column.index], column.fieldName);
+      if (value === "") return;
+      expense[column.fieldName] = value;
+    });
+    expense.id = buildDirectExpenseDatabaseRecordId(expense, rowIndex + 1);
+    expense.date = date;
+    expense.type = type;
+    expense.amount = Number(amount);
+    directExpenses.push(expense);
+  }
+  if (!directExpenses.length) {
+    throw new Error("На листе «Прямые затраты» не найдено ни одной заполненной строки расходов.");
+  }
+  return {
+    directExpenses,
+    directExpenseSheetName: "Прямые затраты",
+    directExpenseSourceRows: sourceRowCount,
+    directExpenseSkippedRows: Math.max(0, sourceRowCount - directExpenses.length)
+  };
+}
+
+function attachDirectExpensesToStudents(students, directExpenses) {
+  const studentsByUid = new Map();
+  students.forEach((student) => {
+    student.directExpenses = [];
+    const uid = String(student.uid || "").trim();
+    if (uid && !studentsByUid.has(uid)) studentsByUid.set(uid, student);
+  });
+  const unlinkedDirectExpenses = [];
+  let linkedDirectExpenseCount = 0;
+  directExpenses.forEach((expense) => {
+    const uid = String(expense.uid || "").trim();
+    const student = uid ? studentsByUid.get(uid) : null;
+    if (!student) {
+      unlinkedDirectExpenses.push(expense);
+      return;
+    }
+    student.directExpenses.push(expense);
+    linkedDirectExpenseCount += 1;
+  });
+  return {
+    unlinkedDirectExpenses,
+    linkedDirectExpenseCount,
+    totalDirectExpenseCount: directExpenses.length
+  };
+}
+
+function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
+  let workbook;
+  onProgress({ progress: 0, message: "Чтение структуры XLSB..." });
+  try {
+    workbook = XLSX.read(bytes, { type: "buffer", cellDates: true });
+  } catch (error) {
+    throw new Error(`Не удалось прочитать базу Excel: ${error.message}`);
+  }
+  onProgress({ progress: 12, message: "Чтение листа «База»..." });
+  const worksheet = workbook.Sheets["База"];
+  if (!worksheet) throw new Error("В файле не найден лист «База».");
+  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: true, UTC: true });
+  const headerRowIndex = rows.findIndex((row) => (
+    row.some((value) => String(value || "").trim() === "uid")
+    && row.some((value) => String(value || "").trim() === "ФИО")
+  ));
+  if (headerRowIndex < 0) throw new Error("На листе «База» не найдены колонки uid и ФИО.");
+  const headers = rows[headerRowIndex].map((value) => String(value || "").trim());
+  const mappedColumns = headers
+    .map((header, index) => ({ header, index, fieldName: STUDENT_DATABASE_COLUMN_MAP[header] || "" }))
+    .filter((column) => column.fieldName);
+  const uidColumn = headers.indexOf("uid");
+  const nameColumn = headers.indexOf("ФИО");
+  const eventSettingsColumn = headers.indexOf("ДопНастрСлушат");
+  const students = [];
+  const usedIds = new Map();
+  const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
+  const progressStep = Math.max(1, Math.floor(sourceRowCount / 100));
+  for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    const processedRows = rowIndex - headerRowIndex;
+    if (processedRows === 1 || processedRows % progressStep === 0 || processedRows === sourceRowCount) {
+      onProgress({
+        progress: 15 + Math.floor((processedRows / Math.max(1, sourceRowCount)) * 50),
+        message: `Обработка слушателей: ${processedRows} из ${sourceRowCount}`,
+        processedRows,
+        totalRows: sourceRowCount
+      });
+    }
+    const row = rows[rowIndex] || [];
+    const uid = String(row[uidColumn] ?? "").trim().replace(/\.0+$/, "");
+    const name = String(row[nameColumn] ?? "").trim();
+    if (!uid || !name) continue;
+    const student = {};
+    mappedColumns.forEach((column) => {
+      const value = normalizeStudentDatabaseValue(row[column.index], column.fieldName);
+      if (value === "") return;
+      student[column.fieldName] = value;
+    });
+    if (eventSettingsColumn >= 0) {
+      Object.assign(student, parseStudentEventSettings(row[eventSettingsColumn]));
+    }
+    const baseId = buildStudentDatabaseRecordId(uid, rowIndex + 1);
+    const duplicateNumber = (usedIds.get(baseId) || 0) + 1;
+    usedIds.set(baseId, duplicateNumber);
+    student.id = duplicateNumber === 1 ? baseId : `${baseId}-${duplicateNumber}`;
+    student.uid = uid;
+    student.name = name;
+    if (student.enrollmentDate) student.enrollmentOrderDate = student.enrollmentDate;
+    if (student.expulsionDate) student.expulsionOrderDate = student.expulsionDate;
+    students.push(student);
+  }
+  if (!students.length) throw new Error("На листе «База» не найдено ни одного слушателя с uid и ФИО.");
+  const directExpenseResult = parseDirectExpenseDatabaseSheet(workbook, onProgress);
+  onProgress({ progress: 97, message: "Привязка прямых затрат к слушателям..." });
+  const {
+    unlinkedDirectExpenses,
+    linkedDirectExpenseCount,
+    totalDirectExpenseCount
+  } = attachDirectExpensesToStudents(students, directExpenseResult.directExpenses);
+  onProgress({ progress: 100, message: "Обработка базы завершена." });
+  return {
+    students,
+    sheetName: "База",
+    sourceRows: sourceRowCount,
+    skippedRows: Math.max(0, sourceRowCount - students.length),
+    ...directExpenseResult,
+    directExpenses: unlinkedDirectExpenses,
+    linkedDirectExpenseCount,
+    totalDirectExpenseCount
+  };
+}
+
+async function loadStudentDatabaseBytes(databaseUrl, onProgress = null) {
+  const source = String(databaseUrl || "").trim();
+  if (!source) throw new Error("Не указана ссылка на базу слушателей.");
+  let parsed;
+  try {
+    parsed = new URL(source);
+  } catch {
+    throw new Error("Укажите корректную ссылку на базу слушателей.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Ссылка на базу должна начинаться с http:// или https://.");
+  }
+  const bytes = isYandexDiskHost(parsed.hostname.toLowerCase())
+    ? await downloadYandexDiskPublicFile(source, { onProgress })
+    : await requestBuffer(source, {
+      headers: { Accept: "application/vnd.ms-excel.sheet.binary.macroEnabled.12,application/octet-stream,*/*" },
+      onProgress
+    });
+  if (!bytes.length) throw new Error("Загруженный файл базы пуст.");
+  if (bytes.length > MAX_STUDENT_DATABASE_BYTES) throw new Error("Файл базы превышает допустимый размер 24 МБ.");
+  return bytes;
+}
+
+function countWorksheetFormulaCells(worksheet) {
+  if (!worksheet) return 0;
+  return Object.entries(worksheet)
+    .filter(([address, cell]) => address[0] !== "!" && cell && typeof cell.f === "string")
+    .length;
+}
+
+function inspectStudentDatabaseBinary(bytes) {
+  const workbook = XLSX.read(bytes, { type: "buffer", bookVBA: true });
+  const baseSheet = workbook.Sheets["База"];
+  const directExpenseSheet = workbook.Sheets["Прямые затраты"];
+  if (!baseSheet) throw new Error("В файле не найден лист «База».");
+  if (!directExpenseSheet) throw new Error("В файле не найден лист «Прямые затраты».");
+  return {
+    hasVba: Boolean(workbook.vbaraw?.length),
+    vbaBytes: Number(workbook.vbaraw?.length || 0),
+    baseFormulaCount: countWorksheetFormulaCells(baseSheet),
+    directExpenseFormulaCount: countWorksheetFormulaCells(directExpenseSheet)
+  };
+}
+
+function runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, onProgress = () => {}) {
+  if (process.platform !== "win32") {
+    return Promise.reject(new Error("Синхронизация XLSB требует Microsoft Excel на сервере Windows."));
+  }
+  const powershellPath = process.env.SystemRoot
+    ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    : "powershell.exe";
+  const launcher = [
+    "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
+    "$scriptText = [IO.File]::ReadAllText($env:AIS_SYNC_SCRIPT, [Text.UTF8Encoding]::new($false))",
+    "& ([ScriptBlock]::Create($scriptText)) -InputPath $env:AIS_SYNC_INPUT -OutputPath $env:AIS_SYNC_OUTPUT -PayloadPath $env:AIS_SYNC_PAYLOAD"
+  ].join("; ");
+  const args = [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-EncodedCommand",
+    Buffer.from(launcher, "utf16le").toString("base64")
+  ];
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      powershellPath,
+      args,
+      {
+        windowsHide: true,
+        env: {
+          ...process.env,
+          AIS_SYNC_SCRIPT: STUDENT_DATABASE_SYNC_SCRIPT,
+          AIS_SYNC_INPUT: inputPath,
+          AIS_SYNC_OUTPUT: outputPath,
+          AIS_SYNC_PAYLOAD: payloadPath
+        }
+      }
+    );
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+    let result = null;
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error("Microsoft Excel не завершил синхронизацию за 10 минут."));
+    }, 10 * 60 * 1000);
+    const consumeLine = (line) => {
+      const value = String(line || "").replace(/^\uFEFF/, "").trim();
+      if (!value) return;
+      try {
+        const message = JSON.parse(value);
+        if (message?.type === "progress") {
+          onProgress({
+            progress: Number(message.progress) || 0,
+            message: String(message.message || "")
+          });
+        } else if (message?.type === "result") {
+          result = message;
+        }
+      } catch {
+        stdoutBuffer += `${value}\n`;
+      }
+    };
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdoutBuffer += chunk;
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() || "";
+      lines.forEach(consumeLine);
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      if (stderrBuffer.length < 4 * 1024 * 1024) stderrBuffer += chunk;
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      consumeLine(stdoutBuffer);
+      if (code !== 0) {
+        const detail = String(stderrBuffer || stdoutBuffer || "").trim();
+        reject(new Error(detail || `Microsoft Excel завершил синхронизацию с кодом ${code}.`));
+        return;
+      }
+      resolve(result || {});
+    });
+  });
+}
+
+function sanitizeStudentDatabaseExportPayload(body) {
+  if (!Array.isArray(body.students) || !body.students.length) {
+    throw new Error("В облачной базе нет слушателей для синхронизации.");
+  }
+  if (body.students.length > MAX_STUDENT_DATABASE_EXPORT_STUDENTS) {
+    throw new Error(`Число слушателей превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_STUDENTS}.`);
+  }
+  if (!Array.isArray(body.directExpenses)) {
+    throw new Error("Не передан список прямых затрат.");
+  }
+  if (body.directExpenses.length > MAX_STUDENT_DATABASE_EXPORT_EXPENSES) {
+    throw new Error(`Число прямых затрат превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_EXPENSES}.`);
+  }
+  const students = body.students
+    .filter((student) => student && typeof student === "object" && !Array.isArray(student))
+    .map((student) => {
+      const {
+        photoData,
+        photoUrl,
+        directExpenses,
+        ...databaseFields
+      } = student;
+      return databaseFields;
+    });
+  const directExpenses = body.directExpenses
+    .filter((expense) => expense && typeof expense === "object" && !Array.isArray(expense))
+    .map((expense) => ({ ...expense }));
+  return {
+    students,
+    directExpenses,
+    studentColumnMap: {
+      ...STUDENT_DATABASE_COLUMN_MAP,
+      "ДопНастрСлушат": "__eventSettings"
+    },
+    studentDateFields: [...STUDENT_DATABASE_DATE_FIELDS],
+    studentNumberFields: [...STUDENT_DATABASE_NUMBER_FIELDS],
+    directExpenseColumnMap: DIRECT_EXPENSE_DATABASE_COLUMN_MAP,
+    studentEventTemplates: STUDENT_EVENT_IMPORT_TEMPLATES
+  };
+}
+
+async function safelyRemoveStudentDatabaseExportDirectory(directoryPath) {
+  const tempRoot = path.resolve(os.tmpdir());
+  const resolvedPath = path.resolve(directoryPath);
+  const relativePath = path.relative(tempRoot, resolvedPath);
+  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) return;
+  await fs.rm(resolvedPath, { recursive: true, force: true });
+}
+
+function buildStudentDatabaseExportFileName() {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0")
+  ].join("-")
+    + "_"
+    + [
+      String(now.getHours()).padStart(2, "0"),
+      String(now.getMinutes()).padStart(2, "0")
+    ].join("-");
+  return `АИС Допобразование_${stamp}.xlsb`;
+}
+
+function formatImportBytes(bytes) {
+  const value = Math.max(0, Number(bytes) || 0);
+  if (value < 1024) return `${value} Б`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} КБ`;
+  return `${(value / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
+function parseStudentDatabaseInWorker(bytes, onProgress = () => {}) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(ROOT, "student-import-worker.js"), {
+      workerData: bytes
+    });
+    let settled = false;
+    worker.on("message", (message) => {
+      if (message?.type === "progress") {
+        onProgress(message.progress || {});
+        return;
+      }
+      if (message?.type === "result") {
+        settled = true;
+        resolve(message.result);
+        return;
+      }
+      if (message?.type === "error") {
+        settled = true;
+        reject(new Error(message.message || "Не удалось обработать базу Excel."));
+      }
+    });
+    worker.on("error", (error) => {
+      if (!settled) reject(error);
+    });
+    worker.on("exit", (code) => {
+      if (!settled && code !== 0) {
+        reject(new Error(`Обработка базы Excel завершилась с кодом ${code}.`));
+      }
+    });
+  });
+}
+
+function buildStudentDatabaseImportResult(result) {
+  return {
+    ...result,
+    count: result.students.length,
+    directExpenseCount: result.directExpenses.length,
+    linkedDirectExpenseCount: result.linkedDirectExpenseCount,
+    totalDirectExpenseCount: result.totalDirectExpenseCount,
+    sourceName: "АИС Допобразование.xlsb",
+    importedAt: new Date().toISOString()
+  };
+}
+
+function cleanupStudentImportJobs() {
+  const expiresBefore = Date.now() - STUDENT_IMPORT_JOB_TTL_MS;
+  studentImportJobs.forEach((job, id) => {
+    if (job.updatedAt < expiresBefore) studentImportJobs.delete(id);
+  });
+}
+
+function updateStudentImportJob(job, patch) {
+  if (Number.isFinite(Number(patch.progress))) {
+    job.progress = Math.max(
+      Number(job.progress) || 0,
+      Math.min(100, Math.round(Number(patch.progress)))
+    );
+  }
+  if (patch.status) job.status = patch.status;
+  if (patch.stage) job.stage = patch.stage;
+  if (patch.message) job.message = patch.message;
+  if (Object.prototype.hasOwnProperty.call(patch, "error")) job.error = patch.error;
+  job.updatedAt = Date.now();
+}
+
+function publicStudentImportJob(job) {
+  return {
+    id: job.id,
+    status: job.status,
+    stage: job.stage,
+    message: job.message,
+    progress: job.progress,
+    error: job.error || "",
+    createdAt: new Date(job.createdAt).toISOString(),
+    updatedAt: new Date(job.updatedAt).toISOString()
+  };
+}
+
+async function runStudentImportJob(job, databaseUrl) {
+  try {
+    updateStudentImportJob(job, {
+      stage: "download",
+      message: "Получение ссылки на файл...",
+      progress: 0
+    });
+    const bytes = await loadStudentDatabaseBytes(databaseUrl, ({ receivedBytes, totalBytes }) => {
+      const downloadPercent = totalBytes > 0
+        ? Math.min(100, Math.floor((receivedBytes / totalBytes) * 100))
+        : 0;
+      updateStudentImportJob(job, {
+        stage: "download",
+        progress: totalBytes > 0 ? downloadPercent / 2 : job.progress,
+        message: totalBytes > 0
+          ? `Скачивание файла: ${downloadPercent}% (${formatImportBytes(receivedBytes)} из ${formatImportBytes(totalBytes)})`
+          : `Скачано ${formatImportBytes(receivedBytes)}`
+      });
+    });
+    updateStudentImportJob(job, {
+      stage: "parse",
+      progress: 50,
+      message: `Файл загружен (${formatImportBytes(bytes.length)}). Чтение XLSB...`
+    });
+    const result = await parseStudentDatabaseInWorker(bytes, (parseProgress) => {
+      const value = Math.max(0, Math.min(100, Number(parseProgress.progress) || 0));
+      updateStudentImportJob(job, {
+        stage: "parse",
+        progress: 50 + value * 0.49,
+        message: parseProgress.message || "Обработка данных Excel..."
+      });
+    });
+    job.result = buildStudentDatabaseImportResult(result);
+    updateStudentImportJob(job, {
+      status: "completed",
+      stage: "complete",
+      progress: 100,
+      message: `Обработано: ${job.result.count} слушателей, ${job.result.totalDirectExpenseCount} расходов`
+    });
+  } catch (error) {
+    updateStudentImportJob(job, {
+      status: "failed",
+      stage: "error",
+      error: error instanceof Error ? error.message : String(error),
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
 
 async function loadLocalTemplateBytes(templatePath) {
@@ -2387,6 +3423,280 @@ async function handleDocumentTemplateUpload(req, res) {
   }
 }
 
+async function handleStudentDatabaseImport(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const bytes = await loadStudentDatabaseBytes(body.databaseUrl);
+    const result = await parseStudentDatabaseInWorker(bytes);
+    sendJson(res, 200, buildStudentDatabaseImportResult(result));
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function buildStudentDatabaseExport(body, onProgress = () => {}) {
+  let tempDirectory = "";
+  try {
+    onProgress({ progress: 1, stage: "prepare", message: "Подготовка данных веб-базы..." });
+    const payload = sanitizeStudentDatabaseExportPayload(body);
+    onProgress({ progress: 2, stage: "download", message: "Получение исходного XLSB..." });
+    const sourceBytes = await loadStudentDatabaseBytes(body.databaseUrl, ({ receivedBytes, totalBytes }) => {
+      const downloadPercent = totalBytes > 0
+        ? Math.min(100, Math.floor((receivedBytes / totalBytes) * 100))
+        : 0;
+      onProgress({
+        progress: totalBytes > 0 ? 2 + downloadPercent * 0.13 : 2,
+        stage: "download",
+        message: totalBytes > 0
+          ? `Скачивание исходной базы: ${downloadPercent}%`
+          : `Скачано ${formatImportBytes(receivedBytes)}`
+      });
+    });
+    onProgress({ progress: 16, stage: "inspect", message: "Проверка структуры исходной книги..." });
+    const sourceInspection = inspectStudentDatabaseBinary(sourceBytes);
+    tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ais-student-database-export-"));
+    const inputPath = path.join(tempDirectory, "source.xlsb");
+    const outputPath = path.join(tempDirectory, "updated.xlsb");
+    const payloadPath = path.join(tempDirectory, "payload.json");
+    onProgress({ progress: 19, stage: "prepare", message: "Подготовка файлов для Microsoft Excel..." });
+    await Promise.all([
+      fs.writeFile(inputPath, sourceBytes),
+      fs.writeFile(payloadPath, JSON.stringify(payload), "utf8")
+    ]);
+    await runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, (scriptProgress) => {
+      const value = Math.max(0, Math.min(100, Number(scriptProgress.progress) || 0));
+      onProgress({
+        progress: 20 + value * 0.7,
+        stage: "excel",
+        message: scriptProgress.message || "Обновление книги в Microsoft Excel..."
+      });
+    });
+    onProgress({ progress: 92, stage: "verify", message: "Чтение сформированной книги..." });
+    const outputBytes = await fs.readFile(outputPath);
+    if (!outputBytes.length) throw new Error("Microsoft Excel создал пустой файл.");
+    onProgress({ progress: 95, stage: "verify", message: "Проверка VBA и формул..." });
+    const outputInspection = inspectStudentDatabaseBinary(outputBytes);
+    if (sourceInspection.hasVba && !outputInspection.hasVba) {
+      throw new Error("Проверка сформированной книги не пройдена: VBA-модули не сохранены.");
+    }
+    const baseFormulaLoss = sourceInspection.baseFormulaCount - outputInspection.baseFormulaCount;
+    const directExpenseFormulaLoss = (
+      sourceInspection.directExpenseFormulaCount - outputInspection.directExpenseFormulaCount
+    );
+    if (baseFormulaLoss > 5 || directExpenseFormulaLoss > 5) {
+      throw new Error(
+        "Проверка сформированной книги не пройдена: потеряно слишком много формул "
+        + `(База: ${sourceInspection.baseFormulaCount} → ${outputInspection.baseFormulaCount}; `
+        + `Прямые затраты: ${sourceInspection.directExpenseFormulaCount} → ${outputInspection.directExpenseFormulaCount}).`
+      );
+    }
+    onProgress({ progress: 99, stage: "complete", message: "Подготовка XLSB к скачиванию..." });
+    await safelyRemoveStudentDatabaseExportDirectory(tempDirectory);
+    tempDirectory = "";
+    return {
+      bytes: outputBytes,
+      fileName: buildStudentDatabaseExportFileName(),
+      studentCount: payload.students.length,
+      directExpenseCount: payload.directExpenses.length
+    };
+  } finally {
+    if (tempDirectory) {
+      await safelyRemoveStudentDatabaseExportDirectory(tempDirectory).catch(() => {});
+    }
+  }
+}
+
+async function handleStudentDatabaseExport(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const result = await buildStudentDatabaseExport(body);
+    sendFile(
+      res,
+      200,
+      result.bytes,
+      result.fileName,
+      "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
+    );
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+function cleanupStudentExportJobs() {
+  const expiresBefore = Date.now() - STUDENT_IMPORT_JOB_TTL_MS;
+  studentExportJobs.forEach((job, id) => {
+    if (job.updatedAt < expiresBefore) studentExportJobs.delete(id);
+  });
+}
+
+function updateStudentExportJob(job, patch) {
+  if (Number.isFinite(Number(patch.progress))) {
+    job.progress = Math.max(
+      Number(job.progress) || 0,
+      Math.min(100, Math.round(Number(patch.progress)))
+    );
+  }
+  if (patch.status) job.status = patch.status;
+  if (patch.stage) job.stage = patch.stage;
+  if (patch.message) job.message = patch.message;
+  if (Object.prototype.hasOwnProperty.call(patch, "error")) job.error = patch.error;
+  job.updatedAt = Date.now();
+}
+
+function publicStudentExportJob(job) {
+  return {
+    id: job.id,
+    status: job.status,
+    stage: job.stage,
+    message: job.message,
+    progress: job.progress,
+    error: job.error || "",
+    createdAt: new Date(job.createdAt).toISOString(),
+    updatedAt: new Date(job.updatedAt).toISOString()
+  };
+}
+
+async function runStudentExportJob(job, body) {
+  try {
+    job.result = await buildStudentDatabaseExport(body, (progress) => {
+      updateStudentExportJob(job, progress);
+    });
+    updateStudentExportJob(job, {
+      status: "completed",
+      stage: "complete",
+      progress: 100,
+      message: `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} расходов`
+    });
+  } catch (error) {
+    updateStudentExportJob(job, {
+      status: "failed",
+      stage: "error",
+      error: error instanceof Error ? error.message : String(error),
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function handleStudentDatabaseExportStart(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    cleanupStudentExportJobs();
+    const now = Date.now();
+    const job = {
+      id: crypto.randomUUID(),
+      status: "running",
+      stage: "prepare",
+      message: "Подготовка синхронизации...",
+      progress: 0,
+      error: "",
+      result: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    studentExportJobs.set(job.id, job);
+    setImmediate(() => runStudentExportJob(job, body));
+    sendJson(res, 202, publicStudentExportJob(job));
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+function getStudentExportJob(requestUrl) {
+  cleanupStudentExportJobs();
+  const id = String(requestUrl.searchParams.get("id") || "").trim();
+  return id ? studentExportJobs.get(id) : null;
+}
+
+function handleStudentDatabaseExportStatus(res, requestUrl) {
+  const job = getStudentExportJob(requestUrl);
+  if (!job) {
+    sendError(res, 404, "Задача синхронизации не найдена или срок её хранения истёк.");
+    return;
+  }
+  sendJson(res, 200, publicStudentExportJob(job));
+}
+
+function handleStudentDatabaseExportResult(res, requestUrl) {
+  const job = getStudentExportJob(requestUrl);
+  if (!job) {
+    sendError(res, 404, "Задача синхронизации не найдена или срок её хранения истёк.");
+    return;
+  }
+  if (job.status === "failed") {
+    sendError(res, 400, job.error || "Синхронизация завершилась с ошибкой.");
+    return;
+  }
+  if (job.status !== "completed" || !job.result?.bytes) {
+    sendError(res, 409, "Синхронизация ещё не завершена.");
+    return;
+  }
+  sendFile(
+    res,
+    200,
+    job.result.bytes,
+    job.result.fileName,
+    "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
+  );
+}
+
+async function handleStudentDatabaseImportStart(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const databaseUrl = String(body.databaseUrl || "").trim();
+    if (!databaseUrl) throw new Error("Не указана ссылка на базу слушателей.");
+    cleanupStudentImportJobs();
+    const now = Date.now();
+    const job = {
+      id: crypto.randomUUID(),
+      status: "running",
+      stage: "prepare",
+      message: "Подготовка импорта...",
+      progress: 0,
+      error: "",
+      result: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    studentImportJobs.set(job.id, job);
+    setImmediate(() => runStudentImportJob(job, databaseUrl));
+    sendJson(res, 202, publicStudentImportJob(job));
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+function getStudentImportJob(requestUrl) {
+  cleanupStudentImportJobs();
+  const id = String(requestUrl.searchParams.get("id") || "").trim();
+  return id ? studentImportJobs.get(id) : null;
+}
+
+function handleStudentDatabaseImportStatus(res, requestUrl) {
+  const job = getStudentImportJob(requestUrl);
+  if (!job) {
+    sendError(res, 404, "Задача импорта не найдена или срок ее хранения истек.");
+    return;
+  }
+  sendJson(res, 200, publicStudentImportJob(job));
+}
+
+function handleStudentDatabaseImportResult(res, requestUrl) {
+  const job = getStudentImportJob(requestUrl);
+  if (!job) {
+    sendError(res, 404, "Задача импорта не найдена или срок ее хранения истек.");
+    return;
+  }
+  if (job.status === "failed") {
+    sendError(res, 400, job.error || "Импорт завершился с ошибкой.");
+    return;
+  }
+  if (job.status !== "completed" || !job.result) {
+    sendError(res, 409, "Импорт еще не завершен.");
+    return;
+  }
+  sendJson(res, 200, job.result);
+}
+
 async function handleContractDocument(req, res) {
   try {
     const body = await readJsonBody(req);
@@ -2482,6 +3792,7 @@ function isInsideRoot(fullPath) {
 }
 
 async function deletePhoto(photoPath) {
+  if (resolveStudentSourcePhotoPath(photoPath)) return false;
   const fullPath = safePhotoPath(photoPath);
   if (!fullPath) return false;
   try {
@@ -2516,6 +3827,72 @@ async function handlePhotoDelete(req, res) {
     const deleted = await deletePhoto(body.photoPath);
     sendJson(res, 200, { deleted });
   } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleStudentSourcePhoto(req, res, requestUrl) {
+  const fullPath = resolveStudentSourcePhotoPath(requestUrl.searchParams.get("path"));
+  if (!fullPath) {
+    sendError(res, 404, "Фото не найдено.");
+    return;
+  }
+  try {
+    const stat = await fs.stat(fullPath);
+    if (!stat.isFile() || stat.size > MAX_STUDENT_PHOTO_BYTES) {
+      sendError(res, 404, "Фото не найдено.");
+      return;
+    }
+    const ext = imageExtensionFromPath(fullPath);
+    const headers = {
+      ...CORS_HEADERS,
+      "Content-Type": IMAGE_CONTENT_TYPES[ext],
+      "Content-Length": stat.size,
+      "Cache-Control": "private, max-age=60"
+    };
+    if (req.method === "HEAD") {
+      res.writeHead(200, headers);
+      res.end();
+      return;
+    }
+    const bytes = await fs.readFile(fullPath);
+    res.writeHead(200, headers);
+    res.end(bytes);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      sendError(res, 404, "Фото не найдено.");
+      return;
+    }
+    sendError(res, 500, error.message);
+  }
+}
+
+async function handleStudentPhotoSettings(req, res) {
+  if (req.method === "GET") {
+    sendJson(res, 200, { basePath: studentPhotoSourceRoot });
+    return;
+  }
+  try {
+    const body = await readJsonBody(req);
+    const source = String(body.basePath || "").trim();
+    if (!source || !path.isAbsolute(source)) {
+      throw new Error("Укажите полный абсолютный путь к папке фотографий.");
+    }
+    const nextPath = path.resolve(source);
+    const stat = await fs.stat(nextPath);
+    if (!stat.isDirectory()) throw new Error("Указанный путь не является папкой.");
+    await fs.writeFile(
+      SERVER_SETTINGS_PATH,
+      `${JSON.stringify({ studentPhotoBasePath: nextPath }, null, 2)}\n`,
+      "utf8"
+    );
+    studentPhotoSourceRoot = nextPath;
+    sendJson(res, 200, { basePath: studentPhotoSourceRoot });
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      sendError(res, 400, "Указанная папка фотографий не найдена.");
+      return;
+    }
     sendError(res, 400, error.message);
   }
 }
@@ -2561,6 +3938,7 @@ async function serveStatic(req, res) {
 }
 
 async function route(req, res) {
+  const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   if (req.method === "OPTIONS") {
     res.writeHead(204, CORS_HEADERS);
     res.end();
@@ -2578,12 +3956,55 @@ async function route(req, res) {
     await handlePhotoDelete(req, res);
     return;
   }
+  if ((req.method === "GET" || req.method === "HEAD") && requestUrl.pathname === "/api/student-photo") {
+    await handleStudentSourcePhoto(req, res, requestUrl);
+    return;
+  }
+  if (
+    (req.method === "GET" || req.method === "POST")
+    && requestUrl.pathname === "/api/settings/student-photos"
+  ) {
+    await handleStudentPhotoSettings(req, res);
+    return;
+  }
   if (req.method === "POST" && req.url === "/api/documents/template-inspect") {
     await handleDocumentTemplateInspect(req, res);
     return;
   }
   if (req.method === "POST" && req.url === "/api/documents/template-upload") {
     await handleDocumentTemplateUpload(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/import-database/start") {
+    await handleStudentDatabaseImportStart(req, res);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/students/import-database/status") {
+    handleStudentDatabaseImportStatus(res, requestUrl);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/students/import-database/result") {
+    handleStudentDatabaseImportResult(res, requestUrl);
+    return;
+  }
+  if (req.method === "POST" && req.url === "/api/students/import-database") {
+    await handleStudentDatabaseImport(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/export-database/start") {
+    await handleStudentDatabaseExportStart(req, res);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/students/export-database/status") {
+    handleStudentDatabaseExportStatus(res, requestUrl);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/students/export-database/result") {
+    handleStudentDatabaseExportResult(res, requestUrl);
+    return;
+  }
+  if (req.method === "POST" && req.url === "/api/students/export-database") {
+    await handleStudentDatabaseExport(req, res);
     return;
   }
   if (req.method === "POST" && req.url === "/api/contracts/student-document") {
@@ -2601,16 +4022,23 @@ async function route(req, res) {
   sendError(res, 405, "Method not allowed");
 }
 
-ensureStorage()
-  .then(() => {
-    http.createServer((req, res) => {
-      route(req, res).catch((error) => sendError(res, 500, error.message));
-    }).listen(PORT, () => {
-      console.log(`АИС Допобразование Web: http://localhost:${PORT}`);
-      console.log(`Фото: ${PHOTO_ROOT}`);
+if (isMainThread) {
+  ensureStorage()
+    .then(() => {
+      http.createServer((req, res) => {
+        route(req, res).catch((error) => sendError(res, 500, error.message));
+      }).listen(PORT, () => {
+        console.log(`АИС Допобразование Web: http://localhost:${PORT}`);
+        console.log(`Фото: ${PHOTO_ROOT}`);
+        console.log(`Фото слушателей на Яндекс.Диске: ${studentPhotoSourceRoot}`);
+      });
+    })
+    .catch((error) => {
+      console.error(error);
+      process.exit(1);
     });
-  })
-  .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+}
+
+module.exports = {
+  parseStudentDatabaseWorkbook
+};
