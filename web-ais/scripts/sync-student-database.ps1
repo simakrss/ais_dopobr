@@ -470,6 +470,7 @@ function Update-StudentSheet {
     $existingUidCounts = @{}
     $targetSectionRow = 0
     $nextSectionRow = 0
+    $targetSeparatorBlankRowCount = 0
     $targetBlankRows = [Collections.Generic.List[int]]::new()
     try {
       $uidRange = $sheet.Range($sheet.Cells.Item($startRow, $uidColumn), $sheet.Cells.Item($lastRow, $uidColumn))
@@ -499,11 +500,19 @@ function Update-StudentSheet {
       if ($targetSectionRow -le 0 -or $nextSectionRow -le $targetSectionRow) {
         throw "Не найдены границы раздела '$targetSectionTitle' на листе 'База'."
       }
+      for ($row = $nextSectionRow - 1; $row -gt $targetSectionRow; $row -= 1) {
+        $offset = $row - $startRow + 1
+        $uid = Convert-Uid (Get-MatrixValue $uidValues $offset 1)
+        $name = ([string](Get-MatrixValue $nameValues $offset 1)).Trim()
+        if ($uid -or $name) { break }
+        $targetSeparatorBlankRowCount += 1
+      }
+      $targetSeparatorStartRow = $nextSectionRow - $targetSeparatorBlankRowCount
       for ($row = $targetSectionRow + 1; $row -lt $nextSectionRow; $row += 1) {
         $offset = $row - $startRow + 1
         $uid = Convert-Uid (Get-MatrixValue $uidValues $offset 1)
         $name = ([string](Get-MatrixValue $nameValues $offset 1)).Trim()
-        if (-not $uid -and -not $name) {
+        if (-not $uid -and -not $name -and $row -lt $targetSeparatorStartRow) {
           $targetBlankRows.Add([int]$row) | Out-Null
         }
       }
@@ -530,16 +539,19 @@ function Update-StudentSheet {
     }
 
     if ($newStudentCount -gt $targetBlankRows.Count) {
+      $insertRow = $nextSectionRow - $targetSeparatorBlankRowCount
       $templateRow = if ($targetBlankRows.Count -gt 0) {
         $targetBlankRows[$targetBlankRows.Count - 1]
+      } elseif ($targetSeparatorBlankRowCount -gt 0) {
+        $insertRow
       } else {
         $targetSectionRow + 1
       }
       $rowsToInsert = $newStudentCount - $targetBlankRows.Count
       Write-SyncProgress 9 "Добавление $rowsToInsert строк в раздел '$targetSectionTitle'..."
-      Insert-StudentTemplateRows $sheet $templateRow $nextSectionRow $header.LastColumn $rowsToInsert
+      Insert-StudentTemplateRows $sheet $templateRow $insertRow $header.LastColumn $rowsToInsert
       for ($index = 0; $index -lt $rowsToInsert; $index += 1) {
-        $targetBlankRows.Add([int]($nextSectionRow + $index)) | Out-Null
+        $targetBlankRows.Add([int]($insertRow + $index)) | Out-Null
       }
       $nextSectionRow += $rowsToInsert
       $lastRow += $rowsToInsert
@@ -548,6 +560,7 @@ function Update-StudentSheet {
     $preserveRows = [Collections.Generic.HashSet[int]]::new()
     $rowsByUid = @{}
     $newStudentRows = [Collections.Generic.Queue[int]]::new()
+    $targetSeparatorStartRow = $nextSectionRow - $targetSeparatorBlankRowCount
     try {
       $uidRange = $sheet.Range($sheet.Cells.Item($startRow, $uidColumn), $sheet.Cells.Item($lastRow, $uidColumn))
       $nameRange = $sheet.Range($sheet.Cells.Item($startRow, $nameColumn), $sheet.Cells.Item($lastRow, $nameColumn))
@@ -564,7 +577,11 @@ function Update-StudentSheet {
           $rowsByUid[$uid].Enqueue($row)
         } else {
           $preserveRows.Add($row) | Out-Null
-          if ($row -gt $targetSectionRow -and $row -lt $nextSectionRow -and -not $name) {
+          if (
+            $row -gt $targetSectionRow -and
+            $row -lt $targetSeparatorStartRow -and
+            -not $name
+          ) {
             $newStudentRows.Enqueue($row)
           }
         }

@@ -1,5 +1,6 @@
 const http = require("node:http");
 const https = require("node:https");
+const tls = require("node:tls");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -7,6 +8,7 @@ const zlib = require("node:zlib");
 const os = require("node:os");
 const { spawn } = require("node:child_process");
 const { Worker, isMainThread } = require("node:worker_threads");
+const { TextDecoder } = require("node:util");
 const XLSX = require("./vendor/sheetjs/xlsx.full.min.js");
 
 const ROOT = __dirname;
@@ -14,10 +16,11 @@ const STORAGE_ROOT = path.join(ROOT, "storage");
 const PHOTO_ROOT = path.join(STORAGE_ROOT, "photos");
 const SERVER_SETTINGS_PATH = path.join(STORAGE_ROOT, "server-settings.json");
 const STUDENT_DATABASE_SYNC_SCRIPT = path.join(ROOT, "scripts", "sync-student-database.ps1");
-const DEFAULT_STUDENT_PHOTO_SOURCE_ROOT = path.resolve(
-  process.env.STUDENT_PHOTO_SOURCE_ROOT || "Y:\\АИС Допобразование\\Слушатели"
-);
-let studentPhotoSourceRoot = DEFAULT_STUDENT_PHOTO_SOURCE_ROOT;
+const STUDENT_APPLICATIONS_QUERY_SCRIPT = path.join(ROOT, "scripts", "query-student-applications.ps1");
+const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH = "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
+const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
+const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
+let serverSettings = {};
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
 const MAX_JSON_BYTES = 40 * 1024 * 1024;
@@ -229,7 +232,8 @@ const STUDENT_EVENT_IMPORT_TEMPLATES = Object.freeze([
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type"
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Expose-Headers": "Content-Disposition, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error"
 };
 
 const MIME_TYPES = {
@@ -256,12 +260,42 @@ async function ensureStorage() {
   await fs.mkdir(PHOTO_ROOT, { recursive: true });
   await fs.mkdir(DOCUMENT_TEMPLATE_ROOT, { recursive: true });
   try {
-    const settings = JSON.parse(await fs.readFile(SERVER_SETTINGS_PATH, "utf8"));
-    const savedPath = String(settings.studentPhotoBasePath || "").trim();
-    if (savedPath && path.isAbsolute(savedPath)) studentPhotoSourceRoot = path.resolve(savedPath);
+    serverSettings = JSON.parse(await fs.readFile(SERVER_SETTINGS_PATH, "utf8"));
   } catch (error) {
     if (error.code !== "ENOENT") console.warn(`Не удалось прочитать настройки сервера: ${error.message}`);
+    serverSettings = {};
   }
+  serverSettings = {
+    studentDatabaseWebDavPath: DEFAULT_STUDENT_DATABASE_WEBDAV_PATH,
+    yandexDiskBasePath: DEFAULT_YANDEX_DISK_BASE_PATH,
+    localDocumentsRoot: DEFAULT_LOCAL_DOCUMENTS_ROOT,
+    localDocumentsRootIsSystemParent: false,
+    studentApplicationsMySqlConnectionString: "",
+    studentApplicationsEmailHost: "",
+    studentApplicationsEmailPort: 993,
+    studentApplicationsEmailSecure: true,
+    studentApplicationsEmailLogin: "",
+    yandexDiskLogin: "",
+    yandexDiskAutoSave: false,
+    ...serverSettings
+  };
+  delete serverSettings.systemDocumentsPublicUrl;
+  delete serverSettings.systemDocumentsPublicPassword;
+  delete serverSettings.studentDatabaseUrl;
+  delete serverSettings.studentPhotoBasePath;
+}
+
+async function saveServerSettings(patch) {
+  serverSettings = {
+    ...serverSettings,
+    ...patch
+  };
+  await fs.writeFile(
+    SERVER_SETTINGS_PATH,
+    `${JSON.stringify(serverSettings, null, 2)}\n`,
+    "utf8"
+  );
+  return serverSettings;
 }
 
 function sendJson(res, status, payload) {
@@ -276,14 +310,15 @@ function sendJson(res, status, payload) {
 function sendError(res, status, message) {
   sendJson(res, status, { error: message });
 }
-function sendFile(res, status, bytes, fileName, contentType) {
+function sendFile(res, status, bytes, fileName, contentType, extraHeaders = {}) {
   const encodedName = encodeURIComponent(fileName).replace(/['()]/g, escape);
   res.writeHead(status, {
     ...CORS_HEADERS,
     "Content-Type": contentType,
     "Content-Length": bytes.length,
     "Content-Disposition": `attachment; filename*=UTF-8''${encodedName}`,
-    "Cache-Control": "no-store"
+    "Cache-Control": "no-store",
+    ...extraHeaders
   });
   res.end(bytes);
 }
@@ -1158,12 +1193,21 @@ function compareDocumentFormulaValues(left, right, operator) {
 
 function getFormulaContextValue(name, context) {
   const key = String(name || "").trim();
+  const evaluatingName = String(context?.evaluatingName || "").trim();
   if (key && key === String(context?.evaluatingName || "").trim()
     && Object.prototype.hasOwnProperty.call(context.sourceValues, key)) {
     return context.sourceValues[key];
   }
   if (Object.prototype.hasOwnProperty.call(context.fieldValues, key)) return context.fieldValues[key];
   if (Object.prototype.hasOwnProperty.call(context.sourceValues, key)) return context.sourceValues[key];
+  if (key === "Приказ" && /^Номер приказа (?:зачисления|отчисления)$/i.test(evaluatingName)) {
+    if (Object.prototype.hasOwnProperty.call(context.fieldValues, evaluatingName)) {
+      return context.fieldValues[evaluatingName];
+    }
+    if (Object.prototype.hasOwnProperty.call(context.sourceValues, evaluatingName)) {
+      return context.sourceValues[evaluatingName];
+    }
+  }
   const baseKey = key.split("|")[0].trim();
   if (baseKey && baseKey !== key) {
     if (baseKey === String(context?.evaluatingName || "").trim()
@@ -2239,39 +2283,112 @@ function imageExtensionFromPath(value) {
   return IMAGE_CONTENT_TYPES[ext] ? ext : "";
 }
 
-function isInsideDirectory(rootPath, fullPath) {
-  const relativePath = path.relative(rootPath, fullPath);
-  return relativePath === ""
-    || (relativePath !== ".." && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath));
+function normalizeSystemDocumentsRelativePath(value) {
+  let source = String(value || "").trim().replace(/\\/g, "/");
+  if (!source || /^data:|^https?:/i.test(source)) return "";
+  source = source.replace(/^[a-z]:\/+/i, "");
+  source = source.replace(/^\[-1\]\//i, "");
+  const rootMarker = "аис допобразование/";
+  const rootIndex = source.toLocaleLowerCase("ru-RU").indexOf(rootMarker);
+  if (rootIndex >= 0) source = source.slice(rootIndex + rootMarker.length);
+  const parts = source
+    .replace(/^\/+|\/+$/g, "")
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.some((part) => part === "." || part === "..")) return "";
+  return parts.join("/");
 }
 
-function resolveStudentSourcePhotoPath(value) {
-  const source = String(value || "").trim();
-  if (!source || /^data:|^https?:/i.test(source)) return null;
-  const normalizedSource = source.replace(/[\\/]+/g, path.sep);
-  const employeePhotoRoot = path.resolve(
-    path.parse(studentPhotoSourceRoot).root,
-    "Договора",
-    "_Сотрудники"
+function usesParentSystemDocumentsFolder(value) {
+  return /^\s*\[-1\](?:[\\/]+|$)/u.test(String(value || ""));
+}
+
+function resolveYandexDiskBasePath(useParentFolder = false) {
+  const parts = normalizeWebDavPath(
+    serverSettings.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+  ).split("/").filter(Boolean);
+  if (useParentFolder) parts.pop();
+  return parts.length ? `/${parts.join("/")}` : "/";
+}
+
+function resolveYandexDiskSourcePath(source) {
+  const normalizedPath = normalizeSystemDocumentsRelativePath(source);
+  if (!normalizedPath) return "";
+  return normalizeWebDavPath(
+    `${resolveYandexDiskBasePath(usesParentSystemDocumentsFolder(source))}/${normalizedPath}`
   );
-  const legacyEmployeePrefix = /^\[-1\][\\/]+Договора[\\/]+_Сотрудники[\\/]+/iu;
-  let fullPath;
-  if (legacyEmployeePrefix.test(source)) {
-    const relativeParts = source.replace(legacyEmployeePrefix, "").split(/[\\/]+/).filter(Boolean);
-    fullPath = path.resolve(employeePhotoRoot, ...relativeParts);
-  } else if (/^[a-z]:[\\/]/i.test(source)) {
-    fullPath = path.resolve(normalizedSource);
-  } else {
-    const parts = normalizedSource.replace(/^[\\/]+/, "").split(/[\\/]+/).filter(Boolean);
-    const studentsIndex = parts.findIndex((part) => part.toLocaleLowerCase("ru-RU") === "слушатели");
-    const relativeParts = studentsIndex >= 0 ? parts.slice(studentsIndex + 1) : parts;
-    fullPath = path.resolve(studentPhotoSourceRoot, ...relativeParts);
+}
+
+function resolveLocalDocumentsFolder(source) {
+  const rootSource = String(
+    serverSettings.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
+  ).trim();
+  if (!rootSource || !path.isAbsolute(rootSource)) {
+    throw new Error("Укажите абсолютный путь к локальной папке документов.");
   }
-  if (
-    !isInsideDirectory(studentPhotoSourceRoot, fullPath)
-    && !isInsideDirectory(employeePhotoRoot, fullPath)
-  ) return null;
-  return imageExtensionFromPath(fullPath) ? fullPath : null;
+  const relativePath = normalizeSystemDocumentsRelativePath(source);
+  if (!relativePath) throw new Error("Не удалось определить папку документов слушателя.");
+  const relativeParts = relativePath.split("/").filter(Boolean);
+  if (relativeParts.some((part) => /[<>:"|?*\u0000-\u001f]/u.test(part))) {
+    throw new Error("Путь к папке документов содержит недопустимые символы.");
+  }
+  const baseParts = normalizeWebDavPath(
+    serverSettings.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+  ).split("/").filter(Boolean);
+  if (serverSettings.localDocumentsRootIsSystemParent && baseParts.length > 1) {
+    baseParts.splice(0, baseParts.length - 1);
+  }
+  if (usesParentSystemDocumentsFolder(source)) baseParts.pop();
+  const rootPath = path.resolve(rootSource);
+  const folderPath = path.resolve(rootPath, ...baseParts, ...relativeParts);
+  const pathFromRoot = path.relative(rootPath, folderPath);
+  if (pathFromRoot.startsWith("..") || path.isAbsolute(pathFromRoot)) {
+    throw new Error("Папка документов находится за пределами локального хранилища.");
+  }
+  return folderPath;
+}
+
+function openFolderInExplorer(folderPath) {
+  if (process.platform !== "win32") {
+    return Promise.reject(new Error("Открытие папки в Проводнике доступно только в Windows."));
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn("explorer.exe", [folderPath], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
+
+async function handleOpenLocalDocumentsFolder(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const folderPath = resolveLocalDocumentsFolder(body.folder);
+    await fs.mkdir(folderPath, { recursive: true });
+    await openFolderInExplorer(folderPath);
+    sendJson(res, 200, { ok: true, path: folderPath });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function loadSystemDocumentFromYandexDisk(relativePath) {
+  const remotePath = resolveYandexDiskSourcePath(relativePath);
+  if (!remotePath) return null;
+  const response = await requestYandexWebDav("GET", remotePath, {
+    acceptedStatuses: [200],
+    maxResponseBytes: MAX_STUDENT_PHOTO_BYTES
+  });
+  const bytes = response.body;
+  if (!bytes.length || bytes.length > MAX_STUDENT_PHOTO_BYTES) return null;
+  return bytes;
 }
 
 function resolveStoredPhotoPath(value) {
@@ -2294,10 +2411,7 @@ function resolveStoredPhotoPath(value) {
     const fullPath = path.resolve(ROOT, webPath);
     return isInsideRoot(fullPath) ? fullPath : null;
   }
-  const studentSourcePath = resolveStudentSourcePhotoPath(source);
-  if (studentSourcePath) return studentSourcePath;
-  if (path.isAbsolute(source)) return null;
-  return safePhotoPath(source);
+  return null;
 }
 
 async function loadContractPhoto(fieldValues) {
@@ -2312,21 +2426,22 @@ async function loadContractPhoto(fieldValues) {
     };
   }
   const fullPath = resolveStoredPhotoPath(source);
-  if (!fullPath) return null;
-  const ext = imageExtensionFromPath(fullPath);
+  const ext = imageExtensionFromPath(fullPath || source);
   if (!ext) return null;
   try {
-    const bytes = await fs.readFile(fullPath);
-    if (!bytes.length) return null;
+    const bytes = fullPath
+      ? await fs.readFile(fullPath)
+      : await loadSystemDocumentFromYandexDisk(source);
+    if (!bytes?.length) return null;
     return {
       bytes,
       ext,
       mime: IMAGE_CONTENT_TYPES[ext],
       ...imageDimensions(bytes, ext),
-      name: path.basename(fullPath)
+      name: path.basename(String(fullPath || source).replace(/\\/g, "/"))
     };
   } catch (error) {
-    if (error.code === "ENOENT") return null;
+    if (!fullPath || error.code === "ENOENT") return null;
     throw error;
   }
 }
@@ -2381,12 +2496,285 @@ function requestBuffer(url, options = {}, redirectCount = 0) {
   });
 }
 
+function normalizeWebDavPath(value) {
+  const parts = String(value || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "")
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.some((part) => part === "." || part === "..")) {
+    throw new Error("Путь Яндекс-Диска содержит недопустимый сегмент.");
+  }
+  return parts.length ? `/${parts.join("/")}` : "/";
+}
+
+function parseHttpResourceUrl(value) {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    return ["http:", "https:"].includes(parsed.protocol.toLowerCase()) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isYandexWebDavHost(host) {
+  return String(host || "").toLowerCase() === "webdav.yandex.ru";
+}
+
+function extractYandexWebDavPath(value) {
+  const source = String(value || "").trim();
+  if (!source) return "";
+  const parsed = parseHttpResourceUrl(source);
+  if (parsed) {
+    if (!isYandexWebDavHost(parsed.hostname)) return "";
+    try {
+      return decodeURIComponent(parsed.pathname);
+    } catch {
+      return parsed.pathname;
+    }
+  }
+  if (/^webdav:\/\//i.test(source)) {
+    const withoutProtocol = source.replace(/^webdav:\/\//i, "");
+    const withoutHost = withoutProtocol.replace(/^webdav\.yandex\.ru(?:\/+|$)/i, "");
+    try {
+      return decodeURIComponent(withoutHost);
+    } catch {
+      return withoutHost;
+    }
+  }
+  return source;
+}
+
+function normalizeYandexDiskResourceSetting(value, fallback = "") {
+  const source = String(value || fallback || "").trim();
+  if (!source) return "";
+  const parsed = parseHttpResourceUrl(source);
+  if (parsed && !isYandexWebDavHost(parsed.hostname)) return parsed.href;
+  const webDavPath = extractYandexWebDavPath(source);
+  return normalizeWebDavPath(webDavPath).replace(/^\/+/, "");
+}
+
+function resolveConfiguredYandexWebDavPath(value) {
+  const source = String(value || "").trim();
+  const extractedPath = extractYandexWebDavPath(source);
+  if (!extractedPath) throw new Error("Не указан путь к файлу на Яндекс-Диске.");
+  const useParentFolder = /^\s*\[-1\](?:[\\/]+|$)/u.test(extractedPath);
+  const sourcePath = normalizeWebDavPath(extractedPath.replace(/^\s*\[-1\](?:[\\/]+|$)/u, ""));
+  const basePath = normalizeWebDavPath(
+    serverSettings.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+  );
+  const sourceParts = sourcePath.split("/").filter(Boolean);
+  const baseParts = basePath.split("/").filter(Boolean);
+  const sourceRoot = sourceParts[0]?.toLocaleLowerCase("ru-RU") || "";
+  const baseRoot = baseParts[0]?.toLocaleLowerCase("ru-RU") || "";
+  if (sourceRoot && sourceRoot === baseRoot) return sourcePath;
+  if (useParentFolder) baseParts.pop();
+  return normalizeWebDavPath(`/${baseParts.join("/")}/${sourceParts.join("/")}`);
+}
+
+async function loadYandexWebDavResourceBytes(source, options = {}) {
+  const response = await requestYandexWebDav("GET", resolveConfiguredYandexWebDavPath(source), {
+    acceptedStatuses: [200],
+    maxResponseBytes: Number(options.maxResponseBytes) || MAX_DOCX_BYTES,
+    onProgress: options.onProgress
+  });
+  return response.body;
+}
+
+function getYandexDiskCredentials() {
+  const login = String(serverSettings.yandexDiskLogin || process.env.YANDEX_DISK_LOGIN || "").trim();
+  const password = String(
+    serverSettings.yandexDiskPassword || process.env.YANDEX_DISK_PASSWORD || ""
+  );
+  if (!login || !password) {
+    throw new Error("В админке не настроены логин и пароль приложения Яндекс-Диска.");
+  }
+  return { login, password };
+}
+
+function requestYandexWebDav(method, davPath, options = {}) {
+  return new Promise((resolve, reject) => {
+    const { login, password } = getYandexDiskCredentials();
+    const target = new URL("https://webdav.yandex.ru");
+    target.pathname = normalizeWebDavPath(davPath);
+    const body = options.body ? Buffer.from(options.body) : null;
+    const acceptedStatuses = new Set(options.acceptedStatuses || [200, 201, 204, 207]);
+    const request = https.request(target, {
+      method,
+      headers: {
+        "User-Agent": "AIS-Dopobrazovanie-Web/1.0",
+        Authorization: `Basic ${Buffer.from(`${login}:${password}`, "utf8").toString("base64")}`,
+        ...(body ? {
+          "Content-Type": options.contentType || "application/octet-stream",
+          "Content-Length": body.length
+        } : {}),
+        ...(options.headers || {})
+      }
+    }, (response) => {
+      const chunks = [];
+      let size = 0;
+      let responseTooLarge = false;
+      const maxResponseBytes = Number(options.maxResponseBytes) || 1024 * 1024;
+      const totalSize = Number(response.headers["content-length"]) || 0;
+      response.on("data", (chunk) => {
+        size += chunk.length;
+        options.onProgress?.({ receivedBytes: size, totalBytes: totalSize });
+        if (size > maxResponseBytes) {
+          responseTooLarge = true;
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on("end", () => {
+        if (responseTooLarge) {
+          reject(new Error("Файл на Яндекс-Диске превышает допустимый размер."));
+          return;
+        }
+        if (acceptedStatuses.has(response.statusCode)) {
+          resolve({
+            statusCode: response.statusCode,
+            headers: response.headers,
+            body: Buffer.concat(chunks)
+          });
+          return;
+        }
+        if (response.statusCode === 401 || response.statusCode === 403) {
+          reject(new Error(
+            "Яндекс-Диск отклонил авторизацию. Используйте отдельный пароль приложения для WebDAV."
+          ));
+          return;
+        }
+        reject(new Error(
+          `Яндекс-Диск вернул HTTP ${response.statusCode}: ${Buffer.concat(chunks).toString("utf8").slice(0, 240)}`
+        ));
+      });
+    });
+    request.on("error", reject);
+    request.setTimeout(30000, () => request.destroy(new Error("Истекло время ожидания ответа Яндекс-Диска.")));
+    if (body) request.write(body);
+    request.end();
+  });
+}
+
+async function testYandexDiskConnection() {
+  const basePath = normalizeWebDavPath(
+    serverSettings.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+  );
+  await requestYandexWebDav("PROPFIND", "/", {
+    acceptedStatuses: [207],
+    headers: { Depth: "0" },
+    contentType: "application/xml; charset=utf-8",
+    body: '<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><displayname/></prop></propfind>'
+  });
+  await ensureYandexDiskFolder(basePath);
+  await requestYandexWebDav("PROPFIND", basePath, {
+    acceptedStatuses: [207],
+    headers: { Depth: "0" },
+    contentType: "application/xml; charset=utf-8",
+    body: '<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><displayname/></prop></propfind>'
+  });
+  return basePath.replace(/^\/+/, "");
+}
+
+async function ensureYandexDiskFolder(davPath) {
+  const parts = normalizeWebDavPath(davPath).split("/").filter(Boolean);
+  let currentPath = "";
+  for (const part of parts) {
+    currentPath += `/${part}`;
+    await requestYandexWebDav("MKCOL", currentPath, {
+      acceptedStatuses: [201, 405]
+    });
+  }
+  return currentPath || "/";
+}
+
+async function handleEnsureStudentDocumentFolders(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const students = Array.isArray(body.students) ? body.students : [];
+    if (!students.length) throw new Error("Не выбраны слушатели для создания папок.");
+    if (students.length > 5000) throw new Error("За один раз можно создать не более 5000 папок слушателей.");
+
+    const folders = students.map((student, index) => {
+      const name = String(student?.name || "").trim();
+      const compactName = buildStudentCompactName(name);
+      if (!compactName) throw new Error(`Не заполнено ФИО слушателя в строке ${index + 1}.`);
+      return {
+        id: String(student?.id || index),
+        compactName,
+        relativePath: `Слушатели/${compactName}/Документы`
+      };
+    });
+
+    const basePath = resolveYandexDiskBasePath(false);
+    const studentsRoot = normalizeWebDavPath(`${basePath}/Слушатели`);
+    await ensureYandexDiskFolder(studentsRoot);
+    const uniqueNames = [...new Set(folders.map((folder) => folder.compactName))];
+    for (const compactName of uniqueNames) {
+      const studentFolder = normalizeWebDavPath(`${studentsRoot}/${compactName}`);
+      await requestYandexWebDav("MKCOL", studentFolder, {
+        acceptedStatuses: [201, 405]
+      });
+      await requestYandexWebDav("MKCOL", `${studentFolder}/Документы`, {
+        acceptedStatuses: [201, 405]
+      });
+    }
+
+    sendJson(res, 200, {
+      folders: folders.map(({ id, relativePath }) => ({ id, relativePath }))
+    });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+function resolveStudentDocumentRelativeFolder(body) {
+  const sourceValues = body.sourceValues || {};
+  const source = body.studentFolder
+    || sourceValues["Фото"]
+    || sourceValues.photoPath
+    || "";
+  const useParentFolder = usesParentSystemDocumentsFolder(source);
+  let relativePath = normalizeSystemDocumentsRelativePath(source);
+  if (relativePath && path.posix.extname(relativePath)) {
+    relativePath = path.posix.dirname(relativePath);
+  }
+  if (relativePath && relativePath !== ".") {
+    return { relativeFolder: relativePath, useParentFolder };
+  }
+  const studentName = buildStudentCompactName(
+    sourceValues["ФИО"] || sourceValues["ФИО_обуч"] || body.studentName || "Без ФИО"
+  );
+  return {
+    relativeFolder: `Слушатели/${studentName || "БезФИО"}/Документы`,
+    useParentFolder: false
+  };
+}
+
+async function uploadStudentDocumentToYandexDisk(bytes, fileName, body) {
+  const { relativeFolder, useParentFolder } = resolveStudentDocumentRelativeFolder(body);
+  const basePath = resolveYandexDiskBasePath(useParentFolder);
+  const folderPath = normalizeWebDavPath(`${basePath}/${relativeFolder}`);
+  await ensureYandexDiskFolder(folderPath);
+  const targetPath = normalizeWebDavPath(`${folderPath}/${safeDocumentFileName(fileName)}`);
+  await requestYandexWebDav("PUT", targetPath, {
+    acceptedStatuses: [200, 201, 204],
+    body: bytes,
+    contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  });
+  return targetPath;
+}
+
 async function downloadYandexDiskPublicFile(publicUrl, options = {}) {
-  const apiUrl = `https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=${encodeURIComponent(publicUrl)}`;
+  const apiUrl = new URL("https://cloud-api.yandex.net/v1/disk/public/resources/download");
+  apiUrl.searchParams.set("public_key", publicUrl);
+  if (options.path) apiUrl.searchParams.set("path", options.path);
   const json = JSON.parse((await requestBuffer(apiUrl, {
     headers: { Accept: "application/json" }
   })).toString("utf8"));
-  if (!json.href) throw new Error("Яндекс.Диск не вернул ссылку на скачивание шаблона.");
+  if (!json.href) throw new Error("Яндекс.Диск не вернул ссылку на скачивание файла.");
   return requestBuffer(json.href, { onProgress: options.onProgress });
 }
 
@@ -2862,24 +3250,25 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
   };
 }
 
-async function loadStudentDatabaseBytes(databaseUrl, onProgress = null) {
-  const source = String(databaseUrl || "").trim();
-  if (!source) throw new Error("Не указана ссылка на базу слушателей.");
-  let parsed;
-  try {
-    parsed = new URL(source);
-  } catch {
-    throw new Error("Укажите корректную ссылку на базу слушателей.");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Ссылка на базу должна начинаться с http:// или https://.");
-  }
-  const bytes = isYandexDiskHost(parsed.hostname.toLowerCase())
-    ? await downloadYandexDiskPublicFile(source, { onProgress })
-    : await requestBuffer(source, {
-      headers: { Accept: "application/vnd.ms-excel.sheet.binary.macroEnabled.12,application/octet-stream,*/*" },
+async function loadStudentDatabaseBytes(databasePath, onProgress = null) {
+  const source = String(
+    databasePath
+    || serverSettings.studentDatabaseWebDavPath
+    || DEFAULT_STUDENT_DATABASE_WEBDAV_PATH
+  ).trim();
+  if (!source) throw new Error("Не указан WebDAV-путь или ссылка на базу слушателей.");
+  const remoteUrl = parseHttpResourceUrl(source);
+  let bytes;
+  if (remoteUrl && isYandexDiskHost(remoteUrl.hostname.toLowerCase())) {
+    bytes = await downloadYandexDiskPublicFile(source, { onProgress });
+  } else if (remoteUrl && !isYandexWebDavHost(remoteUrl.hostname)) {
+    bytes = await requestBuffer(source, { onProgress });
+  } else {
+    bytes = await loadYandexWebDavResourceBytes(source, {
+      maxResponseBytes: MAX_STUDENT_DATABASE_BYTES,
       onProgress
     });
+  }
   if (!bytes.length) throw new Error("Загруженный файл базы пуст.");
   if (bytes.length > MAX_STUDENT_DATABASE_BYTES) throw new Error("Файл базы превышает допустимый размер 24 МБ.");
   return bytes;
@@ -2999,6 +3388,796 @@ function runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, onProg
       resolve(result || {});
     });
   });
+}
+
+function runStudentApplicationsQuery(filters) {
+  if (process.platform !== "win32") {
+    return Promise.reject(new Error("Импорт заявок через ODBC доступен только на сервере Windows."));
+  }
+  const connectionString = String(
+    serverSettings.studentApplicationsMySqlConnectionString
+      || process.env.STUDENT_APPLICATIONS_MYSQL_CONNECTION_STRING
+      || ""
+  ).trim();
+  if (!connectionString) {
+    return Promise.reject(new Error("Не настроено подключение к базе заявок."));
+  }
+  const powershellPath = process.env.SystemRoot
+    ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    : "powershell.exe";
+  const launcher = [
+    "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
+    "$scriptText = [IO.File]::ReadAllText($env:AIS_APPLICATIONS_SCRIPT, [Text.UTF8Encoding]::new($false))",
+    "try { & ([ScriptBlock]::Create($scriptText)) } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
+  ].join("; ");
+  const args = [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-EncodedCommand",
+    Buffer.from(launcher, "utf16le").toString("base64")
+  ];
+  return new Promise((resolve, reject) => {
+    const child = spawn(powershellPath, args, {
+      windowsHide: true,
+      env: {
+        ...process.env,
+        AIS_APPLICATIONS_SCRIPT: STUDENT_APPLICATIONS_QUERY_SCRIPT,
+        AIS_APPLICATIONS_DB: connectionString,
+        AIS_APPLICATIONS_DATE_FROM: filters.dateFrom,
+        AIS_APPLICATIONS_DATE_TO: filters.dateTo,
+        AIS_APPLICATIONS_PROGRAM_NAME: filters.programName,
+        AIS_APPLICATIONS_PRODUCT_ID: filters.productId,
+        AIS_APPLICATIONS_ONLY_PAID: filters.onlyPaid ? "1" : "0"
+      }
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error("База заявок не ответила за 60 секунд."));
+    }, 60 * 1000);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      if (stdout.length < 24 * 1024 * 1024) stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      if (stderr.length < 2 * 1024 * 1024) stderr += chunk;
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (code !== 0) {
+        const detail = String(stderr || stdout || "")
+          .replace(/#< CLIXML[\s\S]*$/i, "")
+          .trim();
+        reject(new Error(detail || `Запрос заявок завершился с кодом ${code}.`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(String(stdout || "").replace(/^\uFEFF/, "").trim()));
+      } catch {
+        reject(new Error("Сервер заявок вернул некорректный ответ."));
+      }
+    });
+  });
+}
+
+function getStudentApplicationsEmailSettings() {
+  const host = String(
+    serverSettings.studentApplicationsEmailHost
+      || process.env.STUDENT_APPLICATIONS_EMAIL_HOST
+      || ""
+  ).trim();
+  const port = Number(
+    serverSettings.studentApplicationsEmailPort
+      || process.env.STUDENT_APPLICATIONS_EMAIL_PORT
+      || 993
+  );
+  const login = String(
+    serverSettings.studentApplicationsEmailLogin
+      || process.env.STUDENT_APPLICATIONS_EMAIL_LOGIN
+      || ""
+  ).trim();
+  const password = String(
+    serverSettings.studentApplicationsEmailPassword
+      || process.env.STUDENT_APPLICATIONS_EMAIL_PASSWORD
+      || ""
+  );
+  return {
+    host,
+    port: Number.isInteger(port) && port > 0 && port <= 65535 ? port : 993,
+    login,
+    password
+  };
+}
+
+function hasStudentApplicationsEmailSettings() {
+  const settings = getStudentApplicationsEmailSettings();
+  return Boolean(settings.host && settings.login && settings.password);
+}
+
+function quoteImapValue(value) {
+  return `"${String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function createImapResponseReader(socket) {
+  let buffer = Buffer.alloc(0);
+  let pending = null;
+  let closedError = null;
+
+  const checkPending = () => {
+    if (!pending) return;
+    let result;
+    try {
+      result = pending.matcher(buffer);
+    } catch (error) {
+      const current = pending;
+      pending = null;
+      clearTimeout(current.timer);
+      current.reject(error);
+      return;
+    }
+    if (!result) return;
+    const current = pending;
+    pending = null;
+    clearTimeout(current.timer);
+    const response = buffer.subarray(0, result.end);
+    buffer = buffer.subarray(result.end);
+    current.resolve({ ...result, response });
+  };
+
+  socket.on("data", (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    if (buffer.length > 32 * 1024 * 1024) {
+      const error = new Error("Ответ IMAP-сервера превышает допустимый размер.");
+      if (pending) {
+        const current = pending;
+        pending = null;
+        clearTimeout(current.timer);
+        current.reject(error);
+      }
+      socket.destroy(error);
+      return;
+    }
+    checkPending();
+  });
+  socket.on("error", (error) => {
+    closedError = error;
+    if (!pending) return;
+    const current = pending;
+    pending = null;
+    clearTimeout(current.timer);
+    current.reject(error);
+  });
+  socket.on("close", () => {
+    closedError ||= new Error("IMAP-сервер закрыл соединение.");
+    if (!pending) return;
+    const current = pending;
+    pending = null;
+    clearTimeout(current.timer);
+    current.reject(closedError);
+  });
+
+  return {
+    waitFor(matcher, timeoutMessage, timeout = 30000) {
+      if (pending) return Promise.reject(new Error("Предыдущая команда IMAP ещё не завершена."));
+      if (closedError) return Promise.reject(closedError);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          if (!pending) return;
+          pending = null;
+          reject(new Error(timeoutMessage));
+          socket.destroy();
+        }, timeout);
+        pending = { matcher, resolve, reject, timer };
+        checkPending();
+      });
+    }
+  };
+}
+
+async function connectStudentApplicationsImap() {
+  const settings = getStudentApplicationsEmailSettings();
+  if (!settings.host || !settings.login || !settings.password) {
+    throw new Error("В админке не настроено подключение к почтовому ящику заявок.");
+  }
+  const trustedCertificates = typeof tls.getCACertificates === "function"
+    ? [
+      ...tls.getCACertificates("default"),
+      ...tls.getCACertificates("system")
+    ]
+    : [];
+  const socket = tls.connect({
+    host: settings.host,
+    port: settings.port,
+    servername: settings.host,
+    rejectUnauthorized: true,
+    ...(trustedCertificates.length ? { ca: trustedCertificates } : {})
+  });
+  socket.setTimeout(45000, () => socket.destroy(new Error("Истекло время ожидания IMAP-сервера.")));
+  const reader = createImapResponseReader(socket);
+  await reader.waitFor((buffer) => {
+    const end = buffer.indexOf("\r\n");
+    if (end < 0) return null;
+    const greeting = buffer.subarray(0, end + 2).toString("utf8");
+    if (!/^\*\s+(?:OK|PREAUTH)\b/i.test(greeting)) {
+      throw new Error(`IMAP-сервер отклонил подключение: ${greeting.trim()}`);
+    }
+    return { end: end + 2, status: "OK" };
+  }, "IMAP-сервер не прислал приветствие.", 20000);
+
+  let commandNumber = 0;
+  const command = async (commandText, timeout = 30000) => {
+    const tag = `A${String(++commandNumber).padStart(4, "0")}`;
+    const responsePromise = reader.waitFor((buffer) => {
+      const text = buffer.toString("latin1");
+      const match = new RegExp(`(?:^|\\r\\n)${tag} (OK|NO|BAD)(?: ([^\\r\\n]*))?\\r\\n`, "i").exec(text);
+      if (!match) return null;
+      return {
+        end: match.index + match[0].length,
+        status: match[1].toUpperCase(),
+        message: String(match[2] || "").trim()
+      };
+    }, `IMAP-сервер не ответил на команду ${tag}.`, timeout);
+    socket.write(`${tag} ${commandText}\r\n`, "utf8");
+    const result = await responsePromise;
+    if (result.status !== "OK") {
+      throw new Error(`IMAP: ${result.message || "команда отклонена"}`);
+    }
+    return result.response;
+  };
+
+  try {
+    await command(`LOGIN ${quoteImapValue(settings.login)} ${quoteImapValue(settings.password)}`);
+    await command('EXAMINE "INBOX"');
+  } catch (error) {
+    socket.destroy();
+    if (/auth|login|credential|password|authentication/i.test(error.message)) {
+      throw new Error("IMAP-сервер отклонил логин или пароль.");
+    }
+    throw error;
+  }
+
+  return {
+    command,
+    async close() {
+      try {
+        await command("LOGOUT", 10000);
+      } catch {
+        // Соединение могло закрыться сразу после ответа BYE.
+      } finally {
+        socket.end();
+      }
+    }
+  };
+}
+
+function formatImapDate(isoDate) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ""));
+  if (!match) throw new Error("Не удалось подготовить дату для IMAP.");
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${Number(match[3])}-${months[Number(match[2]) - 1]}-${match[1]}`;
+}
+
+function addDaysToIsoDate(isoDate, days) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ""));
+  if (!match) return "";
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days));
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0")
+  ].join("-");
+}
+
+function parseImapSearchUids(response) {
+  const text = Buffer.from(response || "").toString("latin1");
+  const match = /^\* SEARCH(?: ([0-9 ]+))?\r?$/im.exec(text);
+  return match?.[1]
+    ? match[1].trim().split(/\s+/).filter((value) => /^\d+$/.test(value))
+    : [];
+}
+
+function extractImapLiteral(response) {
+  const bytes = Buffer.from(response || "");
+  const text = bytes.toString("latin1");
+  const match = /\{(\d+)\}\r\n/.exec(text);
+  if (!match) throw new Error("IMAP-сервер не вернул содержимое письма.");
+  const length = Number(match[1]);
+  const start = match.index + match[0].length;
+  const end = start + length;
+  if (!Number.isFinite(length) || length < 1 || end > bytes.length) {
+    throw new Error("IMAP-сервер вернул повреждённое письмо.");
+  }
+  return bytes.subarray(start, end);
+}
+
+function extractImapFetchLiterals(response) {
+  const bytes = Buffer.from(response || "");
+  const text = bytes.toString("latin1");
+  const entries = [];
+  const literalPattern = /\{(\d+)\}\r\n/g;
+  let cursor = 0;
+  while (cursor < bytes.length) {
+    literalPattern.lastIndex = cursor;
+    const match = literalPattern.exec(text);
+    if (!match) break;
+    const length = Number(match[1]);
+    const start = match.index + match[0].length;
+    const end = start + length;
+    if (!Number.isFinite(length) || length < 0 || end > bytes.length) {
+      throw new Error("IMAP-сервер вернул повреждённый пакет писем.");
+    }
+    const responseStart = Math.max(
+      text.lastIndexOf("\r\n* ", match.index),
+      text.lastIndexOf("\n* ", match.index),
+      text.lastIndexOf("* ", match.index)
+    );
+    const prefix = text.slice(Math.max(cursor, responseStart >= 0 ? responseStart : cursor), match.index);
+    const uid = /\bUID\s+(\d+)\b/i.exec(prefix)?.[1] || "";
+    if (uid) entries.push({ uid, bytes: bytes.subarray(start, end) });
+    cursor = end;
+  }
+  return entries;
+}
+
+function chunkValues(values, size) {
+  const chunks = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function readEmailSubject(rawHeaders) {
+  const { headers } = splitMimeEntity(rawHeaders);
+  return decodeMimeHeader(headers.subject);
+}
+
+async function fetchImapSubjects(client, uids, warnings) {
+  const subjects = new Map();
+  const readResponse = (response) => {
+    extractImapFetchLiterals(response).forEach((entry) => {
+      subjects.set(entry.uid, readEmailSubject(entry.bytes));
+    });
+  };
+  for (const batch of chunkValues(uids, 200)) {
+    try {
+      const response = await client.command(
+        `UID FETCH ${batch.join(",")} (UID BODY.PEEK[HEADER.FIELDS (SUBJECT)])`,
+        45000
+      );
+      readResponse(response);
+    } catch {
+      for (const uid of batch) {
+        try {
+          const response = await client.command(
+            `UID FETCH ${uid} (UID BODY.PEEK[HEADER.FIELDS (SUBJECT)])`,
+            30000
+          );
+          readResponse(response);
+        } catch (error) {
+          warnings.push(`Тема письма UID ${uid} не прочитана: ${error.message}`);
+        }
+      }
+    }
+  }
+  return subjects;
+}
+
+async function fetchImapMessages(client, uids, warnings) {
+  const messages = [];
+  const readResponse = (response) => {
+    messages.push(...extractImapFetchLiterals(response));
+  };
+  for (const batch of chunkValues(uids, 20)) {
+    try {
+      const response = await client.command(
+        `UID FETCH ${batch.join(",")} (UID BODY.PEEK[])`,
+        60000
+      );
+      readResponse(response);
+    } catch {
+      for (const uid of batch) {
+        try {
+          const response = await client.command(`UID FETCH ${uid} (UID BODY.PEEK[])`, 45000);
+          readResponse(response);
+        } catch (error) {
+          warnings.push(`Письмо UID ${uid} пропущено: ${error.message}`);
+        }
+      }
+    }
+  }
+  return messages;
+}
+
+function splitMimeEntity(bytes) {
+  const buffer = Buffer.from(bytes || "");
+  let separatorIndex = buffer.indexOf("\r\n\r\n");
+  let separatorLength = 4;
+  if (separatorIndex < 0) {
+    separatorIndex = buffer.indexOf("\n\n");
+    separatorLength = 2;
+  }
+  if (separatorIndex < 0) return { headers: {}, body: buffer };
+  const rawHeaders = buffer.subarray(0, separatorIndex).toString("latin1");
+  const unfolded = rawHeaders.replace(/\r?\n[ \t]+/g, " ");
+  const headers = {};
+  unfolded.split(/\r?\n/).forEach((line) => {
+    const separator = line.indexOf(":");
+    if (separator <= 0) return;
+    const name = line.slice(0, separator).trim().toLowerCase();
+    const value = line.slice(separator + 1).trim();
+    headers[name] = headers[name] ? `${headers[name]}, ${value}` : value;
+  });
+  return {
+    headers,
+    body: buffer.subarray(separatorIndex + separatorLength)
+  };
+}
+
+function decodeQuotedPrintableBytes(bytes) {
+  const source = Buffer.from(bytes || "").toString("latin1").replace(/=\r?\n/g, "");
+  const output = [];
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] === "=" && /^[0-9a-f]{2}$/i.test(source.slice(index + 1, index + 3))) {
+      output.push(Number.parseInt(source.slice(index + 1, index + 3), 16));
+      index += 2;
+    } else {
+      output.push(source.charCodeAt(index) & 0xff);
+    }
+  }
+  return Buffer.from(output);
+}
+
+function decodeMimeTransfer(body, transferEncoding) {
+  const encoding = String(transferEncoding || "").toLowerCase();
+  if (encoding === "base64") {
+    return Buffer.from(Buffer.from(body || "").toString("ascii").replace(/\s+/g, ""), "base64");
+  }
+  if (encoding === "quoted-printable") return decodeQuotedPrintableBytes(body);
+  return Buffer.from(body || "");
+}
+
+function decodeTextBytes(bytes, charset = "utf-8") {
+  const normalized = String(charset || "utf-8").trim().replace(/^"|"$/g, "").toLowerCase();
+  try {
+    return new TextDecoder(normalized || "utf-8").decode(bytes);
+  } catch {
+    return Buffer.from(bytes || "").toString("utf8");
+  }
+}
+
+function parseMimeContentType(value) {
+  const source = String(value || "text/plain");
+  const type = source.split(";")[0].trim().toLowerCase();
+  const parameters = {};
+  source.replace(/;\s*([^=;\s]+)\s*=\s*(?:"([^"]*)"|([^;\s]*))/g, (match, name, quoted, plain) => {
+    parameters[String(name).toLowerCase()] = quoted ?? plain ?? "";
+    return match;
+  });
+  return { type, parameters };
+}
+
+function extractMimeText(bytes) {
+  const { headers, body } = splitMimeEntity(bytes);
+  const contentType = parseMimeContentType(headers["content-type"]);
+  if (contentType.type.startsWith("multipart/") && contentType.parameters.boundary) {
+    const delimiter = `--${contentType.parameters.boundary}`;
+    const sections = body.toString("latin1").split(delimiter).slice(1);
+    let htmlFallback = "";
+    for (const sectionSource of sections) {
+      if (/^--/.test(sectionSource)) break;
+      const section = sectionSource.replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+      if (!section.trim()) continue;
+      const result = extractMimeText(Buffer.from(section, "latin1"));
+      if (result.plain) return result;
+      if (!htmlFallback && result.html) htmlFallback = result.html;
+    }
+    return { plain: "", html: htmlFallback };
+  }
+  if (contentType.type === "message/rfc822") return extractMimeText(body);
+  if (contentType.type !== "text/plain" && contentType.type !== "text/html") {
+    return { plain: "", html: "" };
+  }
+  const decoded = decodeMimeTransfer(body, headers["content-transfer-encoding"]);
+  const text = decodeTextBytes(decoded, contentType.parameters.charset || "utf-8").replace(/\u0000/g, "");
+  return contentType.type === "text/plain"
+    ? { plain: text, html: "" }
+    : { plain: "", html: text };
+}
+
+function decodeMimeHeader(value) {
+  const source = String(value || "").replace(/\r?\n[ \t]+/g, " ");
+  return source.replace(/=\?([^?]+)\?([bq])\?([^?]*)\?=\s*/gi, (match, charset, encoding, encoded) => {
+    const bytes = encoding.toLowerCase() === "b"
+      ? Buffer.from(encoded, "base64")
+      : decodeQuotedPrintableBytes(Buffer.from(encoded.replace(/_/g, " "), "latin1"));
+    return decodeTextBytes(bytes, charset);
+  }).trim();
+}
+
+function htmlToPlainText(value) {
+  return String(value || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|tr|li)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#(\d+);/g, (match, code) => String.fromCodePoint(Number(code)))
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function normalizeEmailOrderText(value) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .trim();
+}
+
+function parseEmailMoney(value) {
+  const normalized = String(value || "")
+    .replace(/[^\d,.-]/g, "")
+    .replace(",", ".");
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function normalizeEmailCustomerName(value) {
+  const parts = String(value || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length !== 3) return parts.join(" ");
+  const patronymicPattern = /(?:ович|евич|ич|овна|евна|ична|инична)$/iu;
+  if (patronymicPattern.test(parts[1]) && !patronymicPattern.test(parts[2])) {
+    return [parts[2], parts[0], parts[1]].join(" ");
+  }
+  return parts.join(" ");
+}
+
+function parseInSalesOrderEmail(rawMessage) {
+  const { headers } = splitMimeEntity(rawMessage);
+  const subject = decodeMimeHeader(headers.subject);
+  if (!/^Новый заказ №/iu.test(subject)) return [];
+  const mimeText = extractMimeText(rawMessage);
+  const text = normalizeEmailOrderText(mimeText.plain || htmlToPlainText(mimeText.html));
+  const orderMatch = /Поступил заказ №\s*(\d+)\s+от\s+(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}:\d{2})/iu.exec(text);
+  if (!orderMatch) return [];
+  const [, orderId, day, month, year, time] = orderMatch;
+  const readField = (label) => {
+    const match = new RegExp(`${label}:\\s*\\n+([^\\n]+)`, "iu").exec(text);
+    return String(match?.[1] || "").trim();
+  };
+  const name = normalizeEmailCustomerName(readField("Имя"));
+  const email = readField("E-mail");
+  const phone = readField("Телефон");
+  const composition = /Состав заказа:\s*\n+([\s\S]*?)\n+Сумма:/iu.exec(text)?.[1] || "";
+  const products = [];
+  const productPattern = /(?:^|\n)\s*(\d+)\s*\n+([\s\S]*?)\n+цена:\s*([0-9\s.,]+)\s*₽,\s*количество:\s*(\d+)\s*шт\./giu;
+  let productMatch;
+  while ((productMatch = productPattern.exec(composition))) {
+    products.push({
+      productId: String(productMatch[1]).trim(),
+      program: String(productMatch[2]).replace(/\s+/g, " ").trim(),
+      baseAmount: parseEmailMoney(productMatch[3]) * Math.max(1, Number(productMatch[4]) || 1)
+    });
+  }
+  if (!products.length) return [];
+
+  const coupon = /Скидка:\s*\n+([^\n]+)/iu.exec(text)?.[1]?.trim() || "";
+  const paymentMethod = /Способ оплаты:\s*\n+([^\n]+)/iu.exec(text)?.[1]?.trim() || "";
+  const paymentStatus = /Статус оплаты:\s*\n+([^\n]+)/iu.exec(text)?.[1]?.trim() || "";
+  const paid = /оплачен/iu.test(paymentStatus) && !/не\s+оплачен/iu.test(paymentStatus);
+  const totalAmount = parseEmailMoney(
+    /Итого\s+к\s+оплате\s*:\s*([0-9][0-9\s.,]*)\s*(?:₽|руб)/iu.exec(text)?.[1] || ""
+  );
+  const deliveryBlock = /Способ получения товара:\s*\n+([\s\S]*?)\n+Способ оплаты:/iu.exec(text)?.[1] || "";
+  const deliveryLines = deliveryBlock.split("\n").map((line) => line.trim()).filter(Boolean);
+  const city = deliveryLines.slice(1).find((line) => !/^[\d\s.,-]+\s*₽$/u.test(line)) || "";
+  const totalBaseAmount = products.reduce((sum, product) => sum + product.baseAmount, 0);
+  const dateCreated = `${year}-${month}-${day}T${time}:00`;
+  const messageId = String(headers["message-id"] || "").replace(/[<>\s]+/g, "").slice(0, 120);
+
+  return products.map((product, index) => {
+    const paymentAmount = Math.round((products.length === 1
+      ? totalAmount
+      : totalAmount * (product.baseAmount / Math.max(totalBaseAmount, 1))) * 100) / 100;
+    const orderParts = [
+      orderId,
+      paid ? `опл ${paymentAmount}` : "",
+      coupon
+    ].filter(Boolean);
+    return {
+      id: `email-${orderId}-${product.productId || index + 1}-${messageId || index + 1}`,
+      sourceType: "email",
+      date: `${day}.${month}.${year} ${time}:00`,
+      dateCreated,
+      name,
+      order: orderParts.join(" "),
+      orderId,
+      program: product.program,
+      productId: product.productId,
+      phone,
+      email,
+      city,
+      organization: "",
+      position: "",
+      source: "Электронная почта / InSales",
+      note: [paymentMethod, paymentStatus, coupon].filter(Boolean).join("\n"),
+      paid,
+      paymentAmount
+    };
+  });
+}
+
+function studentEmailApplicationMatchesFilters(row, filters) {
+  if (filters.onlyPaid && !row.paid) return false;
+  const productId = String(filters.productId || "").trim();
+  const programName = String(filters.programName || "").trim().toLocaleLowerCase("ru-RU");
+  if (!productId && !programName) return true;
+  const matchesProduct = productId && String(row.productId || "").trim() === productId;
+  const rowProgram = String(row.program || "").toLocaleLowerCase("ru-RU");
+  const matchesProgram = programName && (
+    rowProgram.includes(programName)
+    || programName.includes(rowProgram.replace(/\s*\([^)]*\)\s*$/u, "").trim())
+  );
+  return Boolean(matchesProduct || matchesProgram);
+}
+
+async function runStudentApplicationsEmailQuery(filters) {
+  const client = await connectStudentApplicationsImap();
+  const warnings = [];
+  try {
+    const beforeDate = addDaysToIsoDate(filters.dateTo, 1);
+    const searchResponse = await client.command(
+      `UID SEARCH SINCE ${formatImapDate(filters.dateFrom)} BEFORE ${formatImapDate(beforeDate)}`,
+      45000
+    );
+    const allUids = parseImapSearchUids(searchResponse);
+    const uids = allUids.slice(-1000).reverse();
+    const subjects = await fetchImapSubjects(client, uids, warnings);
+    const orderUids = uids.filter((uid) => /^Новый заказ №/iu.test(subjects.get(uid) || ""));
+    const messages = await fetchImapMessages(client, orderUids, warnings);
+    const rows = [];
+    for (const message of messages) {
+      try {
+        rows.push(...parseInSalesOrderEmail(message.bytes).filter((row) => (
+          studentEmailApplicationMatchesFilters(row, filters)
+        )));
+      } catch (error) {
+        warnings.push(`Письмо UID ${message.uid} пропущено: ${error.message}`);
+      }
+    }
+    return {
+      rows,
+      total: rows.length,
+      truncated: allUids.length > uids.length,
+      warnings
+    };
+  } finally {
+    await client.close();
+  }
+}
+
+async function testStudentApplicationsEmailConnection() {
+  const client = await connectStudentApplicationsImap();
+  await client.close();
+  return getStudentApplicationsEmailSettings();
+}
+
+function parseStudentApplicationsQueryFilters(body = {}) {
+  const parseDate = (value, label) => {
+    const source = String(value || "").trim();
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(source);
+    if (!match) throw new Error(`Укажите ${label}.`);
+    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    if (
+      Number.isNaN(date.getTime())
+      || date.getFullYear() !== Number(match[1])
+      || date.getMonth() !== Number(match[2]) - 1
+      || date.getDate() !== Number(match[3])
+    ) {
+      throw new Error(`Укажите корректную ${label}.`);
+    }
+    return source;
+  };
+  const dateFrom = parseDate(body.dateFrom, "дату начала периода");
+  const dateTo = parseDate(body.dateTo, "дату окончания периода");
+  if (dateFrom > dateTo) {
+    throw new Error("Дата начала периода не может быть позже даты окончания.");
+  }
+  return {
+    dateFrom,
+    dateTo,
+    programName: String(body.programName || "").trim().slice(0, 500),
+    productId: String(body.productId || "").trim().slice(0, 80),
+    onlyPaid: Boolean(body.onlyPaid)
+  };
+}
+
+async function handleStudentApplicationsQuery(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const filters = parseStudentApplicationsQueryFilters(body);
+    const sources = [];
+    if (String(
+      serverSettings.studentApplicationsMySqlConnectionString
+        || process.env.STUDENT_APPLICATIONS_MYSQL_CONNECTION_STRING
+        || ""
+    ).trim()) {
+      sources.push({
+        label: "База сайта",
+        promise: runStudentApplicationsQuery(filters)
+      });
+    }
+    if (hasStudentApplicationsEmailSettings()) {
+      sources.push({
+        label: "Электронная почта",
+        promise: runStudentApplicationsEmailQuery(filters)
+      });
+    }
+    if (!sources.length) {
+      throw new Error("Не настроены источники заявок: база сайта и электронная почта.");
+    }
+
+    const settled = await Promise.allSettled(sources.map((source) => source.promise));
+    const warnings = [];
+    const rows = [];
+    let truncated = false;
+    settled.forEach((result, index) => {
+      if (result.status === "rejected") {
+        warnings.push(`${sources[index].label}: ${result.reason?.message || "источник недоступен"}`);
+        return;
+      }
+      rows.push(...(Array.isArray(result.value?.rows) ? result.value.rows : []));
+      truncated ||= Boolean(result.value?.truncated);
+      warnings.push(...(Array.isArray(result.value?.warnings) ? result.value.warnings : []));
+    });
+    if (settled.every((result) => result.status === "rejected")) {
+      throw new Error(warnings.join("\n"));
+    }
+
+    const uniqueRows = [];
+    const seen = new Set();
+    rows
+      .slice()
+      .sort((left, right) => (
+        String(right.dateCreated || "").localeCompare(String(left.dateCreated || ""))
+        || String(right.id || "").localeCompare(String(left.id || ""))
+      ))
+      .forEach((row) => {
+        const key = `${row.sourceType || "mysql"}\u0000${row.orderId || ""}\u0000${row.productId || ""}\u0000${row.id || ""}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        uniqueRows.push(row);
+      });
+    sendJson(res, 200, {
+      rows: uniqueRows,
+      total: uniqueRows.length,
+      truncated,
+      warnings
+    });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
 }
 
 function sanitizeStudentDatabaseExportPayload(body) {
@@ -3150,14 +4329,14 @@ function publicStudentImportJob(job) {
   };
 }
 
-async function runStudentImportJob(job, databaseUrl) {
+async function runStudentImportJob(job, databasePath) {
   try {
     updateStudentImportJob(job, {
       stage: "download",
-      message: "Получение ссылки на файл...",
+      message: "Получение файла через WebDAV...",
       progress: 0
     });
-    const bytes = await loadStudentDatabaseBytes(databaseUrl, ({ receivedBytes, totalBytes }) => {
+    const bytes = await loadStudentDatabaseBytes(databasePath, ({ receivedBytes, totalBytes }) => {
       const downloadPercent = totalBytes > 0
         ? Math.min(100, Math.floor((receivedBytes / totalBytes) * 100))
         : 0;
@@ -3216,13 +4395,16 @@ async function loadLocalTemplateBytes(templatePath) {
 }
 
 async function loadRemoteTemplateBytes(templateUrl) {
-  const parsed = new URL(templateUrl);
-  const host = parsed.hostname.toLowerCase();
+  const source = String(templateUrl || "").trim();
+  const parsed = parseHttpResourceUrl(source);
+  const host = parsed?.hostname.toLowerCase() || "";
   let bytes;
-  if (isYandexDiskHost(host)) bytes = await downloadYandexDiskPublicFile(templateUrl);
-  else if (isGoogleDriveHost(host)) bytes = await downloadGoogleDrivePublicFile(templateUrl);
-  else if (isOneDriveHost(host)) bytes = await downloadOneDrivePublicFile(templateUrl);
-  else bytes = await requestBuffer(templateUrl);
+  if (!parsed || isYandexWebDavHost(host)) {
+    bytes = await loadYandexWebDavResourceBytes(source, { maxResponseBytes: MAX_DOCX_BYTES });
+  } else if (isYandexDiskHost(host)) bytes = await downloadYandexDiskPublicFile(source);
+  else if (isGoogleDriveHost(host)) bytes = await downloadGoogleDrivePublicFile(source);
+  else if (isOneDriveHost(host)) bytes = await downloadOneDrivePublicFile(source);
+  else bytes = await requestBuffer(source);
   if (bytes.length > MAX_DOCX_BYTES) throw new Error("Скачанный шаблон договора слишком большой.");
   return bytes;
 }
@@ -3426,7 +4608,7 @@ async function handleDocumentTemplateUpload(req, res) {
 async function handleStudentDatabaseImport(req, res) {
   try {
     const body = await readJsonBody(req);
-    const bytes = await loadStudentDatabaseBytes(body.databaseUrl);
+    const bytes = await loadStudentDatabaseBytes(body.databasePath);
     const result = await parseStudentDatabaseInWorker(bytes);
     sendJson(res, 200, buildStudentDatabaseImportResult(result));
   } catch (error) {
@@ -3440,7 +4622,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     onProgress({ progress: 1, stage: "prepare", message: "Подготовка данных веб-базы..." });
     const payload = sanitizeStudentDatabaseExportPayload(body);
     onProgress({ progress: 2, stage: "download", message: "Получение исходного XLSB..." });
-    const sourceBytes = await loadStudentDatabaseBytes(body.databaseUrl, ({ receivedBytes, totalBytes }) => {
+    const sourceBytes = await loadStudentDatabaseBytes(body.databasePath, ({ receivedBytes, totalBytes }) => {
       const downloadPercent = totalBytes > 0
         ? Math.min(100, Math.floor((receivedBytes / totalBytes) * 100))
         : 0;
@@ -3642,8 +4824,12 @@ function handleStudentDatabaseExportResult(res, requestUrl) {
 async function handleStudentDatabaseImportStart(req, res) {
   try {
     const body = await readJsonBody(req);
-    const databaseUrl = String(body.databaseUrl || "").trim();
-    if (!databaseUrl) throw new Error("Не указана ссылка на базу слушателей.");
+    const databasePath = String(
+      body.databasePath
+      || serverSettings.studentDatabaseWebDavPath
+      || DEFAULT_STUDENT_DATABASE_WEBDAV_PATH
+    ).trim();
+    if (!databasePath) throw new Error("Не указан WebDAV-путь или ссылка на базу слушателей.");
     cleanupStudentImportJobs();
     const now = Date.now();
     const job = {
@@ -3658,7 +4844,7 @@ async function handleStudentDatabaseImportStart(req, res) {
       updatedAt: now
     };
     studentImportJobs.set(job.id, job);
-    setImmediate(() => runStudentImportJob(job, databaseUrl));
+    setImmediate(() => runStudentImportJob(job, databasePath));
     sendJson(res, 202, publicStudentImportJob(job));
   } catch (error) {
     sendError(res, 400, error.message);
@@ -3716,12 +4902,28 @@ async function handleContractDocument(req, res) {
     const outputFieldValues = { ...fieldValues, "Фото": "" };
     if (!photo) outputFieldValues["ПутьСохр"] = "";
     const result = fillDocxMarkers(templateBytes, outputFieldValues, photo ? { "Фото": photo } : { "Фото": null }, propertyUpdateNames);
+    const extraHeaders = {};
+    if (body.saveToYandexDisk) {
+      try {
+        const uploadedPath = await uploadStudentDocumentToYandexDisk(
+          result,
+          body.fileName || "договор",
+          body
+        );
+        extraHeaders["X-Yandex-Disk-Saved"] = "true";
+        extraHeaders["X-Yandex-Disk-Path"] = encodeURIComponent(uploadedPath);
+      } catch (uploadError) {
+        extraHeaders["X-Yandex-Disk-Saved"] = "false";
+        extraHeaders["X-Yandex-Disk-Error"] = encodeURIComponent(uploadError.message);
+      }
+    }
     sendFile(
       res,
       200,
       result,
       safeDocumentFileName(body.fileName || "договор"),
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      extraHeaders
     );
   } catch (error) {
     sendError(res, 400, error.message);
@@ -3762,28 +4964,40 @@ function safeNamePart(value, fallback) {
   return cleaned || fallback;
 }
 
-function safeDatePart(value) {
-  const text = String(value || "").trim();
-  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  const date = new Date(text);
-  if (!Number.isNaN(date.getTime())) {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+function buildStudentCompactName(value) {
+  const parts = String(value || "").normalize("NFC").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "";
+  const surname = safeNamePart(parts[0], "");
+  const initials = [];
+  for (const part of parts.slice(1)) {
+    const letters = part.match(/\p{L}/gu) || [];
+    if (!letters.length) continue;
+    if (part.includes(".")) {
+      initials.push(...letters);
+    } else {
+      initials.push(letters[0]);
+    }
+    if (initials.length >= 2) break;
   }
-  return "без-даты-заявки";
+  return safeNamePart(`${surname}${initials.slice(0, 2).join("")}`, "");
 }
 
-function buildPhotoFileName(body, ext) {
-  const name = safeNamePart(body.studentName || body.studentFio || body.fio || body.fullName || body.name, "без-ФИО");
-  const date = safeNamePart(safeDatePart(body.applicationDate), "без-даты-заявки");
-  const suffix = crypto.randomBytes(4).toString("hex");
-  return `${name}_${date}_${suffix}.${ext}`;
+function managedStudentPhotoRelativePath(value) {
+  if (usesParentSystemDocumentsFolder(value)) return "";
+  const relativePath = normalizeSystemDocumentsRelativePath(value);
+  return /^Слушатели\/[^/]+\/Документы\/[^/]+\.(?:png|jpe?g|webp|gif)$/iu.test(relativePath)
+    ? relativePath
+    : "";
 }
 
-function safePhotoPath(photoPath) {
-  const fileName = path.basename(String(photoPath || ""));
-  if (!/^[\p{L}\p{N}_().-]+\.(png|jpe?g|webp|gif)$/iu.test(fileName)) return null;
-  return path.join(PHOTO_ROOT, fileName);
+async function deleteManagedStudentPhoto(photoPath) {
+  const relativePath = managedStudentPhotoRelativePath(photoPath);
+  if (!relativePath) return false;
+  const remotePath = normalizeWebDavPath(`${resolveYandexDiskBasePath(false)}/${relativePath}`);
+  const response = await requestYandexWebDav("DELETE", remotePath, {
+    acceptedStatuses: [200, 204, 404]
+  });
+  return response.statusCode === 200 || response.statusCode === 204;
 }
 
 function isInsideRoot(fullPath) {
@@ -3792,9 +5006,10 @@ function isInsideRoot(fullPath) {
 }
 
 async function deletePhoto(photoPath) {
-  if (resolveStudentSourcePhotoPath(photoPath)) return false;
-  const fullPath = safePhotoPath(photoPath);
+  const fullPath = resolveStoredPhotoPath(photoPath);
   if (!fullPath) return false;
+  const relativePath = path.relative(PHOTO_ROOT, fullPath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) return false;
   try {
     await fs.unlink(fullPath);
     return true;
@@ -3807,14 +5022,35 @@ async function deletePhoto(photoPath) {
 async function handlePhotoUpload(req, res) {
   try {
     const body = await readJsonBody(req);
-    const { bytes, ext } = parseDataUrl(body.dataUrl);
-    if (body.previousPath) await deletePhoto(body.previousPath);
-    const fileName = buildPhotoFileName(body, ext);
-    const fullPath = path.join(PHOTO_ROOT, fileName);
-    await fs.writeFile(fullPath, bytes);
+    const { bytes, ext, mime } = parseDataUrl(body.dataUrl);
+    const studentName = String(
+      body.studentName || body.studentFio || body.fio || body.fullName || body.name || ""
+    ).trim();
+    const compactName = buildStudentCompactName(studentName);
+    if (!compactName) throw new Error("Сначала укажите ФИО слушателя.");
+    const relativeFolder = `Слушатели/${compactName}/Документы`;
+    const relativePath = `${relativeFolder}/${compactName}.${ext}`;
+    const folderPath = normalizeWebDavPath(
+      `${resolveYandexDiskBasePath(false)}/${relativeFolder}`
+    );
+    await ensureYandexDiskFolder(folderPath);
+    const targetPath = normalizeWebDavPath(`${resolveYandexDiskBasePath(false)}/${relativePath}`);
+    await requestYandexWebDav("PUT", targetPath, {
+      acceptedStatuses: [200, 201, 204],
+      body: bytes,
+      contentType: mime
+    });
+    const previousPath = String(body.previousPath || "").trim();
+    if (previousPath && previousPath !== relativePath) {
+      try {
+        if (!await deleteManagedStudentPhoto(previousPath)) await deletePhoto(previousPath);
+      } catch (cleanupError) {
+        console.warn(`Не удалось удалить предыдущее фото: ${cleanupError.message}`);
+      }
+    }
     sendJson(res, 201, {
-      photoPath: `storage/photos/${fileName}`,
-      photoUrl: `/storage/photos/${encodeURIComponent(fileName)}`
+      photoPath: relativePath,
+      photoUrl: `/api/student-photo?path=${encodeURIComponent(relativePath)}`
     });
   } catch (error) {
     sendError(res, 400, error.message);
@@ -3824,7 +5060,8 @@ async function handlePhotoUpload(req, res) {
 async function handlePhotoDelete(req, res) {
   try {
     const body = await readJsonBody(req);
-    const deleted = await deletePhoto(body.photoPath);
+    const deleted = await deleteManagedStudentPhoto(body.photoPath)
+      || await deletePhoto(body.photoPath);
     sendJson(res, 200, { deleted });
   } catch (error) {
     sendError(res, 400, error.message);
@@ -3832,67 +5069,138 @@ async function handlePhotoDelete(req, res) {
 }
 
 async function handleStudentSourcePhoto(req, res, requestUrl) {
-  const fullPath = resolveStudentSourcePhotoPath(requestUrl.searchParams.get("path"));
-  if (!fullPath) {
+  const sourcePath = String(requestUrl.searchParams.get("path") || "").trim();
+  const ext = imageExtensionFromPath(sourcePath);
+  if (!ext) {
     sendError(res, 404, "Фото не найдено.");
     return;
   }
   try {
-    const stat = await fs.stat(fullPath);
-    if (!stat.isFile() || stat.size > MAX_STUDENT_PHOTO_BYTES) {
+    const bytes = await loadSystemDocumentFromYandexDisk(sourcePath);
+    if (!bytes) {
       sendError(res, 404, "Фото не найдено.");
       return;
     }
-    const ext = imageExtensionFromPath(fullPath);
     const headers = {
       ...CORS_HEADERS,
       "Content-Type": IMAGE_CONTENT_TYPES[ext],
-      "Content-Length": stat.size,
-      "Cache-Control": "private, max-age=60"
+      "Content-Length": bytes.length,
+      "Cache-Control": "no-store"
     };
     if (req.method === "HEAD") {
       res.writeHead(200, headers);
       res.end();
       return;
     }
-    const bytes = await fs.readFile(fullPath);
     res.writeHead(200, headers);
     res.end(bytes);
   } catch (error) {
-    if (error.code === "ENOENT") {
-      sendError(res, 404, "Фото не найдено.");
-      return;
-    }
-    sendError(res, 500, error.message);
+    sendError(res, 404, "Фото не найдено.");
   }
 }
 
-async function handleStudentPhotoSettings(req, res) {
+function publicSystemDocumentSettings() {
+  return {
+    databasePath: normalizeYandexDiskResourceSetting(
+      serverSettings.studentDatabaseWebDavPath,
+      DEFAULT_STUDENT_DATABASE_WEBDAV_PATH
+    ),
+    basePath: normalizeWebDavPath(
+      serverSettings.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+    ).replace(/^\/+/, ""),
+    localDocumentsRoot: String(
+      serverSettings.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
+    ).trim(),
+    localDocumentsRootIsSystemParent: Boolean(
+      serverSettings.localDocumentsRootIsSystemParent
+    ),
+    login: String(serverSettings.yandexDiskLogin || process.env.YANDEX_DISK_LOGIN || "").trim(),
+    hasPassword: Boolean(
+      serverSettings.yandexDiskPassword || process.env.YANDEX_DISK_PASSWORD
+    ),
+    autoSave: Boolean(serverSettings.yandexDiskAutoSave),
+    emailHost: String(serverSettings.studentApplicationsEmailHost || "").trim(),
+    emailPort: Number(serverSettings.studentApplicationsEmailPort || 993),
+    emailLogin: String(serverSettings.studentApplicationsEmailLogin || "").trim(),
+    emailHasPassword: Boolean(
+      serverSettings.studentApplicationsEmailPassword
+        || process.env.STUDENT_APPLICATIONS_EMAIL_PASSWORD
+    )
+  };
+}
+
+async function handleSystemDocumentSettings(req, res) {
   if (req.method === "GET") {
-    sendJson(res, 200, { basePath: studentPhotoSourceRoot });
+    sendJson(res, 200, publicSystemDocumentSettings());
     return;
   }
   try {
     const body = await readJsonBody(req);
-    const source = String(body.basePath || "").trim();
-    if (!source || !path.isAbsolute(source)) {
-      throw new Error("Укажите полный абсолютный путь к папке фотографий.");
-    }
-    const nextPath = path.resolve(source);
-    const stat = await fs.stat(nextPath);
-    if (!stat.isDirectory()) throw new Error("Указанный путь не является папкой.");
-    await fs.writeFile(
-      SERVER_SETTINGS_PATH,
-      `${JSON.stringify({ studentPhotoBasePath: nextPath }, null, 2)}\n`,
-      "utf8"
+    const databasePath = normalizeYandexDiskResourceSetting(
+      body.databasePath,
+      DEFAULT_STUDENT_DATABASE_WEBDAV_PATH
     );
-    studentPhotoSourceRoot = nextPath;
-    sendJson(res, 200, { basePath: studentPhotoSourceRoot });
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      sendError(res, 400, "Указанная папка фотографий не найдена.");
-      return;
+    const basePath = normalizeWebDavPath(body.basePath || DEFAULT_YANDEX_DISK_BASE_PATH);
+    const localDocumentsRoot = String(
+      body.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
+    ).trim();
+    if (!path.isAbsolute(localDocumentsRoot)) {
+      throw new Error("Укажите абсолютный путь к локальной папке документов.");
     }
+    const login = String(body.login || "").trim();
+    const password = String(body.password || "");
+    const emailHost = String(body.emailHost || "").trim();
+    const emailPort = Number(body.emailPort || 993);
+    const emailLogin = String(body.emailLogin || "").trim();
+    const emailPassword = String(body.emailPassword || "");
+    if (!Number.isInteger(emailPort) || emailPort < 1 || emailPort > 65535) {
+      throw new Error("Укажите корректный порт IMAP.");
+    }
+    const patch = {
+      studentDatabaseWebDavPath: databasePath,
+      yandexDiskBasePath: basePath.replace(/^\/+/, ""),
+      localDocumentsRoot: path.resolve(localDocumentsRoot),
+      localDocumentsRootIsSystemParent: Boolean(body.localDocumentsRootIsSystemParent),
+      yandexDiskLogin: login,
+      yandexDiskAutoSave: Boolean(body.autoSave),
+      studentApplicationsEmailHost: emailHost,
+      studentApplicationsEmailPort: emailPort,
+      studentApplicationsEmailSecure: true,
+      studentApplicationsEmailLogin: emailLogin
+    };
+    if (password) patch.yandexDiskPassword = password;
+    if (body.clearPassword) patch.yandexDiskPassword = "";
+    if (emailPassword) patch.studentApplicationsEmailPassword = emailPassword;
+    if (body.clearEmailPassword) patch.studentApplicationsEmailPassword = "";
+    await saveServerSettings(patch);
+    sendJson(res, 200, publicSystemDocumentSettings());
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleYandexDiskConnectionTest(req, res) {
+  try {
+    const basePath = await testYandexDiskConnection();
+    sendJson(res, 200, {
+      ok: true,
+      basePath,
+      message: "Подключение к Яндекс-Диску по WebDAV работает."
+    });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleStudentApplicationsEmailConnectionTest(req, res) {
+  try {
+    const settings = await testStudentApplicationsEmailConnection();
+    sendJson(res, 200, {
+      ok: true,
+      host: settings.host,
+      message: "Подключение к почтовому ящику по IMAP работает."
+    });
+  } catch (error) {
     sendError(res, 400, error.message);
   }
 }
@@ -3900,6 +5208,15 @@ async function handleStudentPhotoSettings(req, res) {
 async function serveStatic(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const decodedPath = decodeURIComponent(requestUrl.pathname);
+  const normalizedPublicPath = decodedPath.replace(/\\/g, "/").toLowerCase();
+  const isPublicPhotoPath = normalizedPublicPath.startsWith("/storage/photos/");
+  if (
+    (normalizedPublicPath.startsWith("/storage/") && !isPublicPhotoPath)
+    || normalizedPublicPath.startsWith("/scripts/")
+  ) {
+    sendError(res, 404, "Not found");
+    return;
+  }
   const relativePath = decodedPath === "/" ? "index.html" : decodedPath.replace(/^\/+/, "");
   const fullPath = path.resolve(ROOT, relativePath);
   if (!isInsideRoot(fullPath)) {
@@ -3945,7 +5262,7 @@ async function route(req, res) {
     return;
   }
   if (req.method === "GET" && req.url === "/api/health") {
-    sendJson(res, 200, { ok: true, storage: "storage/photos" });
+    sendJson(res, 200, { ok: true, storage: "yandex-disk" });
     return;
   }
   if (req.method === "POST" && req.url === "/api/photos") {
@@ -3962,9 +5279,29 @@ async function route(req, res) {
   }
   if (
     (req.method === "GET" || req.method === "POST")
-    && requestUrl.pathname === "/api/settings/student-photos"
+    && requestUrl.pathname === "/api/settings/system-documents"
   ) {
-    await handleStudentPhotoSettings(req, res);
+    await handleSystemDocumentSettings(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/local-documents/open-folder") {
+    await handleOpenLocalDocumentsFolder(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/yandex-disk/test") {
+    await handleYandexDiskConnectionTest(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/student-applications-email/test") {
+    await handleStudentApplicationsEmailConnectionTest(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/import-applications/query") {
+    await handleStudentApplicationsQuery(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/ensure-document-folders") {
+    await handleEnsureStudentDocumentFolders(req, res);
     return;
   }
   if (req.method === "POST" && req.url === "/api/documents/template-inspect") {
@@ -4030,7 +5367,6 @@ if (isMainThread) {
       }).listen(PORT, () => {
         console.log(`АИС Допобразование Web: http://localhost:${PORT}`);
         console.log(`Фото: ${PHOTO_ROOT}`);
-        console.log(`Фото слушателей на Яндекс.Диске: ${studentPhotoSourceRoot}`);
       });
     })
     .catch((error) => {

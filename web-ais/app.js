@@ -4,8 +4,10 @@
   const STUDENT_CARD_TAB_ORDER_KEY = "ais-dopobr-student-card-tab-order-v1";
   const NAV_ITEM_ORDER_KEY = "ais-dopobr-nav-item-order-v1";
   const START_VIEW_KEY = "ais-dopobr-start-view-v1";
-  const DEFAULT_STUDENT_DATABASE_URL = "https://disk.yandex.ru/i/lBJmPi6hm2AtmQ";
-  const DEFAULT_STUDENT_PHOTO_BASE_PATH = "Y:\\АИС Допобразование\\Слушатели";
+  const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH =
+    "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
+  const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
+  const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
   const TABLE_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
   const DEFAULT_TABLE_PAGE_SIZE = 50;
   const STUDENT_PROGRAM_TYPE_FILTER_OPTIONS = ["КПК", "ППП", "ДОП", "ПРО"];
@@ -311,12 +313,34 @@ MAX - https://bizvmax.ru/zifra_plus
       template: "{ПорядковыйНомерЗаГод}/{Год2}-{СокращениеТипаПрограммы}"
     }
   ];
+  const documentTemplatePublicSourceMigrations = Object.freeze({
+    "https://disk.yandex.ru/i/_3SnxIXyPuVaZQ": "Документы/Заявление+договор_ДПП (повыш. квалиф. и профпереп.).docx",
+    "https://disk.yandex.ru/i/FR1VbW_1EtRHAQ": "Документы/Заявление_ДПП (повыш. квалиф. и профпереп.).docx",
+    "https://disk.yandex.ru/i/eyxERaRJXPCC4A": "Документы/Диплом о переподготовке_v1.docx",
+    "https://disk.yandex.ru/i/lAQO0kGbtWTjSA": "Документы/Удостоверение о повышении квалификации_v1.docx",
+    "https://disk.yandex.ru/i/VSPdwaaaFKUK9g": "Документы/Сертификат ПРО.docx",
+    "https://disk.yandex.ru/i/2SP7KB2PpwykbQ": "Документы/Справка подтверждающая обучение.docx",
+    "https://disk.yandex.ru/i/a5MJDB7nQQYptg": "Документы/Конверт C5 почтовое отправление документа об образовании.docx",
+    "https://disk.yandex.ru/i/cqN9Hcs4j_dgUw": "Документы/Приказ о зачислении (с подписью).docx",
+    "https://disk.yandex.ru/i/6TdhHJVX2cZl3A": "Документы/Приказ об отчислении (с подписью).docx"
+  });
+  const defaultDocumentTemplateWebDavSources = Object.freeze({
+    contract: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/_3SnxIXyPuVaZQ"],
+    legalApplication: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/FR1VbW_1EtRHAQ"],
+    diploma: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/eyxERaRJXPCC4A"],
+    qualificationCertificate: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/lAQO0kGbtWTjSA"],
+    proCertificate: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/VSPdwaaaFKUK9g"],
+    studyCertificate: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/2SP7KB2PpwykbQ"],
+    postalEnvelope: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/a5MJDB7nQQYptg"],
+    enrollmentOrder: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/cqN9Hcs4j_dgUw"],
+    expulsionOrder: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/6TdhHJVX2cZl3A"]
+  });
   const contractTemplateSettingDefaults = [
     {
       key: "templateUrl",
-      label: "Ссылка на шаблон (Яндекс.Диск, OneDrive, Google Drive)",
-      value: "https://disk.yandex.ru/i/_3SnxIXyPuVaZQ",
-      type: "url",
+      label: "WebDAV-путь или ссылка на шаблон",
+      value: defaultDocumentTemplateWebDavSources.contract,
+      type: "text",
       required: false
     },
     {
@@ -381,6 +405,7 @@ MAX - https://bizvmax.ru/zifra_plus
     "Обр_Вид образования", "Обр_Серия", "Обр_Номер", "Обр_Дата выдачи", "Обр_Кем выдан",
     "Внесено (руб)", "Сумма  по договору (руб)", "Фото",
     "ИО", "ФИО_ENG", "Прогр обуч факт_ENG", "Дата выдачи документа", "Дата отчисления", "Дата приказа отчисления",
+    "Дата приказа Отчисл Док Обр",
     "Документ об образовании", "Номер бланка", "РегНомер", "Номер протокола", "Оценка ИА",
     "Квалификация", "УчебныйПлан", "СфераДеятельности", "Часы", "Срок обучения_ENG", "QRкод",
     "Вид  программы ДПО", "Номер приказа зачисления", "Дата приказа зачисления", "Номер приказа отчисления", "Пол"
@@ -424,6 +449,7 @@ MAX - https://bizvmax.ru/zifra_plus
     "Дата выдачи документа": "diplomaIssueDate",
     "Дата отчисления": "expulsionDate",
     "Дата приказа отчисления": "expulsionDate",
+    "Дата приказа Отчисл Док Обр": "expulsionDate",
     "Номер бланка": "diplomaBlankNo",
     "РегНомер": "registrationNo",
     "Номер протокола": "protocolNo",
@@ -459,7 +485,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return {
       id: defaultDocumentTemplateId,
       title: "Заявление и договор",
-      templateUrl: "https://disk.yandex.ru/i/_3SnxIXyPuVaZQ",
+      templateUrl: defaultDocumentTemplateWebDavSources.contract,
       templatePath: "",
       fileNameTemplate: "Заявление+договор_#ФИО_обуч#_#N Договора#",
       useCustomDocumentProperties: "1",
@@ -475,7 +501,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return {
       id: legalEntityApplicationDocumentTemplateId,
       title: "Заявление",
-      templateUrl: "https://disk.yandex.ru/i/FR1VbW_1EtRHAQ",
+      templateUrl: defaultDocumentTemplateWebDavSources.legalApplication,
       templatePath: "",
       fileName: "Заявление ДПП.docx",
       fileNameTemplate: "Заявление_#ФИО_обуч#",
@@ -491,7 +517,7 @@ MAX - https://bizvmax.ru/zifra_plus
     {
       id: "education-document-diploma-ppp",
       title: "Диплом о переподготовке",
-      templateUrl: "https://disk.yandex.ru/i/eyxERaRJXPCC4A",
+      templateUrl: defaultDocumentTemplateWebDavSources.diploma,
       templatePath: "storage/document-templates/Диплом о переподготовке_v1.docx",
       fileName: "Диплом о переподготовке_v1.docx",
       fileNameTemplate: "Диплом_#ФИО#_#РегНомер#",
@@ -505,7 +531,7 @@ MAX - https://bizvmax.ru/zifra_plus
     {
       id: "education-document-certificate-kpk",
       title: "Удостоверение о повышении квалификации",
-      templateUrl: "https://disk.yandex.ru/i/lAQO0kGbtWTjSA",
+      templateUrl: defaultDocumentTemplateWebDavSources.qualificationCertificate,
       templatePath: "storage/document-templates/Удостоверение о повышении квалификации_v1.docx",
       fileName: "Удостоверение о повышении квалификации_v1.docx",
       fileNameTemplate: "Удостоверение_#ФИО#_#РегНомер#",
@@ -519,7 +545,7 @@ MAX - https://bizvmax.ru/zifra_plus
     {
       id: "education-document-certificate-dop-pro",
       title: "Сертификат ПРО",
-      templateUrl: "https://disk.yandex.ru/i/VSPdwaaaFKUK9g",
+      templateUrl: defaultDocumentTemplateWebDavSources.proCertificate,
       templatePath: "storage/document-templates/Сертификат ПРО.docx",
       fileName: "Сертификат ПРО.docx",
       fileNameTemplate: "Сертификат_#ФИО#_#РегНомер#",
@@ -533,7 +559,7 @@ MAX - https://bizvmax.ru/zifra_plus
   const studyCertificateDocumentTemplateDefinition = {
     id: "document-study-certificate",
     title: "Справка об обучении",
-    templateUrl: "https://disk.yandex.ru/i/2SP7KB2PpwykbQ",
+    templateUrl: defaultDocumentTemplateWebDavSources.studyCertificate,
     templatePath: "",
     fileName: "Справка об обучении.docx",
     fileNameTemplate: "Справка_об_обучении_#ФИО#",
@@ -564,7 +590,7 @@ MAX - https://bizvmax.ru/zifra_plus
   const postalEnvelopeDocumentTemplateDefinition = {
     id: postalEnvelopeDocumentTemplateId,
     title: "Почтовый конверт",
-    templateUrl: "https://disk.yandex.ru/i/a5MJDB7nQQYptg",
+    templateUrl: defaultDocumentTemplateWebDavSources.postalEnvelope,
     templatePath: "",
     fileName: "Почтовый конверт.docx",
     fileNameTemplate: "Почтовый_конверт_#ФИО#",
@@ -587,7 +613,7 @@ MAX - https://bizvmax.ru/zifra_plus
     {
       id: "document-enrollment-order",
       title: "Приказ на зачисление",
-      templateUrl: "https://disk.yandex.ru/i/cqN9Hcs4j_dgUw",
+      templateUrl: defaultDocumentTemplateWebDavSources.enrollmentOrder,
       templatePath: "",
       fileName: "Приказ на зачисление.docx",
       fileNameTemplate: "Приказ_на_зачисление_#Номер приказа зачисления#",
@@ -608,7 +634,7 @@ MAX - https://bizvmax.ru/zifra_plus
     {
       id: "document-expulsion-order",
       title: "Приказ об отчислении",
-      templateUrl: "https://disk.yandex.ru/i/6TdhHJVX2cZl3A",
+      templateUrl: defaultDocumentTemplateWebDavSources.expulsionOrder,
       templatePath: "",
       fileName: "Приказ об отчислении.docx",
       fileNameTemplate: "Приказ_об_отчислении_#Номер приказа отчисления#",
@@ -1069,6 +1095,7 @@ MAX - https://bizvmax.ru/zifra_plus
             field("noDeclension", "Не склоняется", "checkbox"),
             field("addressByFirstName", "Обращаться по имени", "checkbox"),
             field("uid", "uid"),
+            field("photoPath", "Ссылка на фото"),
             field("status", "Статус", "select", true, "statuses"),
             field("program", "Программа", "text", true),
             field("studyForm", "Форма обучения", "select", false, "studyForms"),
@@ -1395,11 +1422,12 @@ MAX - https://bizvmax.ru/zifra_plus
     field(`expense${index + 1}Type`, `Вид затрат ${index + 1}`, "select", false, "expenseTypes"),
     field(`expense${index + 1}Amount`, `Сумма ${index + 1}`, "number"),
     field(`expense${index + 1}IsPaid`, `Оплачено ${index + 1}`, "checkbox"),
-    field(`expense${index + 1}Note`, `Примечание ${index + 1}`)
+    field(`expense${index + 1}Note`, `Примечание ${index + 1}`),
+    field(`expense${index + 1}InventoryId`, `Запас ${index + 1}`),
+    field(`expense${index + 1}InventoryLink`, `Связь с запасами ${index + 1}`)
   ]).flat();
   const studentAllFields = [
     field("photoData", "Фото"),
-    field("photoPath", "Путь фото"),
     field("photoUrl", "URL фото"),
     ...studentSideFields,
     ...studentEventFields,
@@ -1415,6 +1443,7 @@ MAX - https://bizvmax.ru/zifra_plus
     search: "",
     statusFilter: getDefaultStatusFilter(initialView),
     studentProgramTypeFilter: [],
+    studentImportedViewIds: [],
     sort: { key: "", dir: "asc" },
     navItemOrder: loadNavItemOrder(),
     studentCardTab: "main",
@@ -1440,6 +1469,26 @@ MAX - https://bizvmax.ru/zifra_plus
       progress: 0,
       tone: "active",
       indeterminate: false
+    },
+    studentApplicationsImport: {
+      open: false,
+      loading: false,
+      importing: false,
+      rows: [],
+      selected: [],
+      activeId: "",
+      truncated: false,
+      error: "",
+      warnings: [],
+      filters: {
+        programId: "",
+        period: "30",
+        dateFrom: "",
+        dateTo: "",
+        onlyPaid: false,
+        search: "",
+        status: "На зачисление"
+      }
     },
     tableOptions: null,
     tableSettings: loadTableSettings(),
@@ -1542,10 +1591,37 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function ensureDataShape(data) {
     data.meta = data.meta && typeof data.meta === "object" ? data.meta : {};
-    data.meta.studentDatabaseUrl = String(data.meta.studentDatabaseUrl || DEFAULT_STUDENT_DATABASE_URL).trim();
-    data.meta.studentPhotoBasePath = String(
-      data.meta.studentPhotoBasePath || DEFAULT_STUDENT_PHOTO_BASE_PATH
+    data.meta.studentDatabaseWebDavPath = String(
+      data.meta.studentDatabaseWebDavPath || DEFAULT_STUDENT_DATABASE_WEBDAV_PATH
     ).trim();
+    delete data.meta.studentDatabaseUrl;
+    delete data.meta.studentPhotoBasePath;
+    delete data.meta.systemDocumentsPublicUrl;
+    delete data.meta.systemDocumentsHasPublicPassword;
+    data.meta.yandexDiskBasePath = String(
+      data.meta.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+    ).trim();
+    data.meta.localDocumentsRoot = String(
+      data.meta.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
+    ).trim();
+    data.meta.localDocumentsRootIsSystemParent = Boolean(
+      data.meta.localDocumentsRootIsSystemParent
+    );
+    data.meta.yandexDiskLogin = String(data.meta.yandexDiskLogin || "").trim();
+    data.meta.yandexDiskHasPassword = Boolean(data.meta.yandexDiskHasPassword);
+    data.meta.yandexDiskAutoSave = Boolean(data.meta.yandexDiskAutoSave);
+    data.meta.studentApplicationsEmailHost = String(
+      data.meta.studentApplicationsEmailHost || ""
+    ).trim();
+    data.meta.studentApplicationsEmailPort = Number(
+      data.meta.studentApplicationsEmailPort || 993
+    );
+    data.meta.studentApplicationsEmailLogin = String(
+      data.meta.studentApplicationsEmailLogin || ""
+    ).trim();
+    data.meta.studentApplicationsEmailHasPassword = Boolean(
+      data.meta.studentApplicationsEmailHasPassword
+    );
     data.dictionaries = data.dictionaries || {};
     const hasDiscountRules = Array.isArray(data.dictionaries.discountRules);
     const legacyMoodlePortalUrl = Array.isArray(data.dictionaries.moodlePortalUrls)
@@ -1817,13 +1893,35 @@ MAX - https://bizvmax.ru/zifra_plus
       };
     });
   }
+
+  function normalizeDocumentTemplateSource(value) {
+    const source = String(value || "").trim();
+    if (!source) return "";
+    const migratedSource = documentTemplatePublicSourceMigrations[source] || source;
+    if (/^https?:\/\//i.test(migratedSource)) return normalizeExternalUrl(migratedSource);
+    if (/^(?:disk\.yandex\.ru|yadi\.sk|webdav\.yandex\.ru)\//i.test(migratedSource)) {
+      return normalizeExternalUrl(`https://${migratedSource}`);
+    }
+    if (/^webdav:\/\//i.test(migratedSource)) return migratedSource;
+    const parts = migratedSource
+      .replace(/\\/g, "/")
+      .replace(/^\/+|\/+$/g, "")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (!parts.length || parts.some((part) => part === "." || part === "..")) return "";
+    return parts.join("/");
+  }
+
   function normalizeContractTemplateSettings(values) {
     const saved = Array.isArray(values) ? values : [];
     return contractTemplateSettingDefaults.map((setting) => {
       const savedSetting = saved.find((item) => item?.key === setting.key);
       return {
         ...setting,
-        value: String(savedSetting?.value ?? setting.value)
+        value: setting.key === "templateUrl"
+          ? normalizeDocumentTemplateSource(savedSetting?.value ?? setting.value)
+          : String(savedSetting?.value ?? setting.value)
       };
     });
   }
@@ -1914,7 +2012,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return {
       id: String(item?.id || fallback.id),
       title: String(item?.title || item?.name || item?.label || fallback.title).trim(),
-      templateUrl: String(item?.templateUrl || "").trim(),
+      templateUrl: normalizeDocumentTemplateSource(item?.templateUrl || ""),
       templatePath: String(item?.templatePath || "").trim(),
       fileNameTemplate: normalizeOrderDocumentFileNameTemplate({
         id: item?.id || fallback.id,
@@ -2462,6 +2560,52 @@ MAX - https://bizvmax.ru/zifra_plus
     return String(value);
   }
 
+  function pushStudentStatusHistory(status) {
+    const currentHistoryState = window.history.state && typeof window.history.state === "object"
+      ? window.history.state
+      : {};
+    window.history.replaceState({
+      ...currentHistoryState,
+      aisStudentStatusNavigation: { view: "dashboard" }
+    }, "");
+    window.history.pushState({
+      ...currentHistoryState,
+      aisStudentStatusNavigation: { view: "students", status }
+    }, "");
+  }
+
+  function bindStudentStatusHistoryNavigation() {
+    window.addEventListener("popstate", (event) => {
+      const navigation = event.state?.aisStudentStatusNavigation;
+      if (!navigation) return;
+      state.modal = null;
+      state.studentApplicationsImport.open = false;
+      state.documentTemplateDialogId = "";
+      state.search = "";
+      state.studentProgramTypeFilter = [];
+      state.studentImportedViewIds = [];
+      state.tableOptions = null;
+
+      if (navigation.view === "students") {
+        state.view = "students";
+        state.statusFilter = navigation.status || "Все";
+        state.sort = getDefaultTableSort("students");
+        state.tablePages.students = 1;
+        render();
+        return;
+      }
+
+      state.view = "dashboard";
+      state.statusFilter = getDefaultStatusFilter("dashboard");
+      state.sort = getDefaultTableSort("dashboard");
+      render();
+      window.requestAnimationFrame(() => {
+        document.querySelector("[data-dashboard-student-statuses]")
+          ?.scrollIntoView({ block: "start" });
+      });
+    });
+  }
+
   function render() {
     hideCommunicationTemplateFieldMenu();
     closeNavItemMenu();
@@ -2498,6 +2642,7 @@ MAX - https://bizvmax.ru/zifra_plus
           ${renderView()}
         </section>
       </main>
+      ${state.studentApplicationsImport.open ? renderStudentApplicationsImport() : ""}
       ${state.modal ? renderModal() : ""}
       ${state.documentTemplateDialogId ? renderDocumentTemplateDialog() : ""}
       ${renderDatabaseImportIndicator()}
@@ -2546,7 +2691,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const statusCounts = countBy(students, "status");
     const maxStatus = Math.max(...Object.values(statusCounts), 1);
     const dueSoon = students
-      .filter((item) => item.endDate)
+      .filter((item) => String(item.status || "").trim() === "Учится" && item.endDate)
       .sort((a, b) => new Date(a.endDate) - new Date(b.endDate))
       .slice(0, 5);
 
@@ -2558,8 +2703,18 @@ MAX - https://bizvmax.ru/zifra_plus
         ${metric("Дебиторка", money(receivable), "Остаток к оплате", "red")}
       </div>
 
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Контроль сроков</p>
+            <h2>Ближайшие окончания обучения</h2>
+          </div>
+        </div>
+        ${miniTable(dueSoon, ["name", "program", "endDate", "balance"], { config: "students" })}
+      </section>
+
       <div class="split-layout">
-        <section class="panel">
+        <section class="panel" data-dashboard-student-statuses>
           <div class="panel-head">
             <div>
               <p class="eyebrow">Заявки и обучение</p>
@@ -2569,11 +2724,16 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           <div class="bar-list">
             ${Object.entries(statusCounts).map(([label, count]) => `
-              <div class="bar-row">
+              <button
+                class="bar-row bar-row-link"
+                data-student-status-shortcut="${escapeAttr(label)}"
+                type="button"
+                title="Открыть слушателей со статусом «${escapeAttr(label)}»"
+              >
                 <span>${escapeHtml(label)}</span>
-                <div class="bar-track"><i style="width:${Math.max(8, (count / maxStatus) * 100)}%"></i></div>
+                <span class="bar-track"><i style="width:${Math.max(8, (count / maxStatus) * 100)}%"></i></span>
                 <strong>${count}</strong>
-              </div>
+              </button>
             `).join("")}
           </div>
         </section>
@@ -2595,16 +2755,6 @@ MAX - https://bizvmax.ru/zifra_plus
           ${renderFinanceChart(financeSeries)}
         </section>
       </div>
-
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">Контроль сроков</p>
-            <h2>Ближайшие окончания обучения</h2>
-          </div>
-        </div>
-        ${miniTable(dueSoon, ["name", "program", "endDate", "balance"])}
-      </section>
     `;
   }
 
@@ -2672,6 +2822,14 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderCollection(config) {
     const rows = getVisibleRows(config);
     const statuses = getFilterOptions(config);
+    const importedViewIds = state.view === "students"
+      ? (state.studentImportedViewIds || [])
+      : [];
+    const importedViewCount = state.view === "students"
+      ? importedViewIds.filter((id) => (
+        (state.data.collections.students || []).some((student) => String(student.id) === String(id))
+      )).length
+      : 0;
     return `
       <section class="panel">
         <div class="section-head">
@@ -2690,14 +2848,706 @@ MAX - https://bizvmax.ru/zifra_plus
               </select>
             ` : ""}
             ${state.view === "students" ? renderStudentProgramTypeFilter() : ""}
+            ${state.view === "students" ? `<button class="ghost-button student-applications-import-button" data-action="open-student-applications-import" type="button">Импорт слушателей</button>` : ""}
             <button class="ghost-button" data-action="export-csv" data-config="${state.view}" type="button">CSV</button>
             <button class="primary-button" data-action="create" data-config="${state.view}" type="button">Добавить</button>
           </div>
         </div>
+        ${importedViewIds.length ? `
+          <div class="student-imported-view-bar" role="status">
+            <span>Показаны импортированные заявки: <strong>${importedViewCount}</strong></span>
+            <button class="ghost-button" data-action="clear-student-imported-view" type="button">Показать всех</button>
+          </div>
+        ` : ""}
         ${renderBulkToolbar(config, rows, state.view)}
         ${renderTable(config, rows, state.view)}
       </section>
     `;
+  }
+
+  function getStudentApplicationsDefaultDates(days = 30) {
+    const dateTo = new Date();
+    const dateFrom = new Date(dateTo);
+    dateFrom.setDate(dateFrom.getDate() - days);
+    const format = (date) => [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0")
+    ].join("-");
+    return { dateFrom: format(dateFrom), dateTo: format(dateTo) };
+  }
+
+  function openStudentApplicationsImport() {
+    const dates = getStudentApplicationsDefaultDates(30);
+    state.studentApplicationsImport = {
+      open: true,
+      loading: false,
+      importing: false,
+      rows: [],
+      selected: [],
+      activeId: "",
+      truncated: false,
+      error: "",
+      warnings: [],
+      filters: {
+        programId: "",
+        period: "30",
+        ...dates,
+        onlyPaid: false,
+        search: "",
+        status: "На зачисление"
+      }
+    };
+    render();
+  }
+
+  function closeStudentApplicationsImport() {
+    if (state.studentApplicationsImport.importing) return;
+    state.studentApplicationsImport.open = false;
+    state.studentApplicationsImport.loading = false;
+    render();
+  }
+
+  function getStudentApplicationSourceKey(row) {
+    const orderId = String(row?.orderId || "").trim();
+    const lineId = String(row?.id || "").trim();
+    const sourceType = String(row?.sourceType || "mysql").trim().toLowerCase();
+    return orderId && lineId ? `${sourceType}:${orderId}:${lineId}` : "";
+  }
+
+  function getStudentApplicationProgramTitle(row) {
+    return String(row?.program || "")
+      .replace(/\s*\[\s*\d+\s*\]\s*$/u, "")
+      .trim();
+  }
+
+  function normalizeStudentApplicationProgramName(value) {
+    return normalizeProgramName(value)
+      .replace(/\s*\(\s*\d+(?:[.,]\d+)?\s*(?:ч|час|часа|часов)(?:\s*\/[^)]*)?\)\s*$/iu, "")
+      .trim();
+  }
+
+  function getStudentApplicationProgram(row, selectedProgramId = "") {
+    const selectedProgram = (state.data.collections.programs || [])
+      .find((program) => String(program.id || "") === String(selectedProgramId || ""));
+    if (selectedProgram) return selectedProgram;
+    const productId = String(row?.productId || "").trim();
+    const byProductId = productId
+      ? (state.data.collections.programs || []).find((program) => (
+        String(program.landingCode || "").trim() === productId
+      ))
+      : null;
+    const title = getStudentApplicationProgramTitle(row);
+    const byName = findProgramByName(title);
+    if (byProductId || byName) return byProductId || byName;
+    const comparableTitle = normalizeStudentApplicationProgramName(title);
+    return (state.data.collections.programs || []).find((program) => (
+      [program.name, program.shortName].some((name) => (
+        normalizeStudentApplicationProgramName(name) === comparableTitle
+      ))
+    )) || null;
+  }
+
+  function buildStudentApplicationsImportLookup() {
+    const sourceKeys = new Set();
+    const orderProductKeys = new Set();
+    const orderProgramKeys = new Set();
+    (state.data.collections.students || []).forEach((student) => {
+      const sourceKey = String(student.sourceApplicationKey || "").trim();
+      const orderId = String(student.orderNo || "").trim();
+      const productId = String(student.sourceProductId || "").trim();
+      const program = normalizeProgramName(student.program);
+      if (sourceKey) sourceKeys.add(sourceKey);
+      if (orderId && productId) orderProductKeys.add(`${orderId}\u0000${productId}`);
+      if (orderId && program) orderProgramKeys.add(`${orderId}\u0000${program}`);
+    });
+    return { sourceKeys, orderProductKeys, orderProgramKeys };
+  }
+
+  function isStudentApplicationImported(row, lookup = buildStudentApplicationsImportLookup()) {
+    const sourceKey = getStudentApplicationSourceKey(row);
+    const orderId = String(row?.orderId || "").trim();
+    const productId = String(row?.productId || "").trim();
+    const programName = normalizeProgramName(getStudentApplicationProgramTitle(row));
+    if (sourceKey && lookup.sourceKeys.has(sourceKey)) return true;
+    if (!orderId) return false;
+    if (productId && lookup.orderProductKeys.has(`${orderId}\u0000${productId}`)) return true;
+    return Boolean(programName && lookup.orderProgramKeys.has(`${orderId}\u0000${programName}`));
+  }
+
+  function getVisibleStudentApplications() {
+    const query = String(state.studentApplicationsImport.filters.search || "").trim().toLocaleLowerCase("ru-RU");
+    const rows = state.studentApplicationsImport.rows || [];
+    if (!query) return rows;
+    return rows.filter((row) => (
+      [
+        row.date,
+        row.name,
+        row.order,
+        row.paymentAmount,
+        row.program,
+        row.phone,
+        row.email,
+        row.city,
+        row.organization,
+        row.position,
+        row.source,
+        row.note
+      ].some((value) => String(value || "").toLocaleLowerCase("ru-RU").includes(query))
+    ));
+  }
+
+  function getStudentApplicationCouponDiscount(row = {}) {
+    const couponText = [row.coupon, row.order, row.note]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" ");
+    if (/(?:^|[^a-z0-9])SALE10(?:$|[^a-z0-9])/i.test(couponText)) {
+      return {
+        coupon: "SALE10",
+        percent: 10,
+        description: "Периодическая акция"
+      };
+    }
+    return { coupon: "", percent: 0, description: "" };
+  }
+
+  function renderStudentApplicationDetail(row) {
+    if (!row) return `<div class="student-applications-import-empty">Выберите заявку в таблице.</div>`;
+    const mappedProgram = getStudentApplicationProgram(
+      row,
+      state.studentApplicationsImport.filters.programId
+    );
+    const paymentAmount = Math.max(0, Number(row.paymentAmount || 0));
+    const hasPayment = paymentAmount > 0 || Boolean(row.paid);
+    const couponDiscount = getStudentApplicationCouponDiscount(row);
+    const details = [
+      ["Дата", row.date],
+      ["ФИО", row.name],
+      ["Заказ", row.order],
+      ["Оплата", hasPayment ? money(paymentAmount) : "—"],
+      ["Скидка", couponDiscount.percent ? `${couponDiscount.percent}% — ${couponDiscount.description}` : "—"],
+      ["Программа", row.program],
+      ["Телефон", row.phone],
+      ["Email", row.email],
+      ["Город", row.city],
+      ["Организация", row.organization],
+      ["Должность", row.position],
+      ["Источник", row.source],
+      ["Примечание", row.note]
+    ];
+    return `
+      <div class="student-application-detail-grid">
+        ${details.map(([label, value]) => `
+          <div>
+            <dt>${escapeHtml(label)}</dt>
+            <dd>${escapeHtml(value || "—")}</dd>
+          </div>
+        `).join("")}
+      </div>
+      <div class="student-application-import-preview">
+        <span>Будет добавлено</span>
+        <strong>${escapeHtml(mappedProgram?.name || getStudentApplicationProgramTitle(row) || "Программа не определена")}</strong>
+        <small>${hasPayment ? `Оплата: ${escapeHtml(money(paymentAmount))}` : "Без оплаты"}</small>
+      </div>
+    `;
+  }
+
+  function renderStudentApplicationsImport() {
+    const importState = state.studentApplicationsImport;
+    const filters = importState.filters;
+    const visibleRows = getVisibleStudentApplications();
+    const importedLookup = buildStudentApplicationsImportLookup();
+    const selectedIds = new Set(importState.selected || []);
+    const selectedRows = (importState.rows || []).filter((row) => selectedIds.has(String(row.id)));
+    const selectedPayment = selectedRows.reduce((sum, row) => sum + Number(row.paymentAmount || 0), 0);
+    const importedCount = visibleRows.filter((row) => isStudentApplicationImported(row, importedLookup)).length;
+    const activeRow = (importState.rows || []).find((row) => String(row.id) === String(importState.activeId))
+      || visibleRows[0]
+      || null;
+    const programs = (state.data.collections.programs || [])
+      .slice()
+      .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "ru"));
+    const statuses = unique([
+      filters.status || "На зачисление",
+      ...(state.data.dictionaries.statuses || [])
+    ].filter(Boolean));
+    return `
+      <div class="modal-backdrop student-applications-import-backdrop" data-action="close-student-applications-import">
+        <section class="modal student-applications-import-modal" role="dialog" aria-modal="true" aria-label="Импорт слушателей">
+          <form data-student-applications-import-form>
+            <header class="modal-head student-applications-import-head">
+              <div>
+                <p class="eyebrow">Слушатели и заявки</p>
+                <h2>Импорт слушателей</h2>
+              </div>
+              <button class="icon-button" data-action="close-student-applications-import" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+            </header>
+
+            <div class="student-applications-import-filters">
+              <label class="student-applications-program-filter">
+                <span>Программа обучения</span>
+                <select name="programId">
+                  <option value="">Все программы</option>
+                  ${programs.map((program) => `
+                    <option value="${escapeAttr(program.id)}" ${String(program.id) === String(filters.programId) ? "selected" : ""}>
+                      ${escapeHtml(program.name || "Без названия")}${program.landingCode ? ` [${escapeHtml(program.landingCode)}]` : ""}
+                    </option>
+                  `).join("")}
+                </select>
+              </label>
+              <label>
+                <span>Период импорта</span>
+                <select name="period">
+                  <option value="7" ${filters.period === "7" ? "selected" : ""}>За последние 7 дней</option>
+                  <option value="30" ${filters.period === "30" ? "selected" : ""}>За последние 30 дней</option>
+                  <option value="90" ${filters.period === "90" ? "selected" : ""}>За последние 90 дней</option>
+                  <option value="custom" ${filters.period === "custom" ? "selected" : ""}>Произвольный период</option>
+                </select>
+              </label>
+              <label>
+                <span>Дата с</span>
+                <input name="dateFrom" type="date" value="${escapeAttr(filters.dateFrom)}" required>
+              </label>
+              <label>
+                <span>Дата по</span>
+                <input name="dateTo" type="date" value="${escapeAttr(filters.dateTo)}" required>
+              </label>
+              <label class="student-applications-paid-filter">
+                <input name="onlyPaid" type="checkbox" ${filters.onlyPaid ? "checked" : ""}>
+                <span>Только с оплатой</span>
+              </label>
+              <button class="primary-button student-applications-fetch-button ${importState.loading ? "is-loading" : ""}" type="submit" ${importState.loading ? "disabled" : ""}>
+                ${importState.loading ? "Получение..." : "Получить список заявок"}
+              </button>
+            </div>
+
+            <div class="student-applications-import-tools">
+              <label class="search-box">
+                <span>⌕</span>
+                <input name="applicationSearch" value="${escapeAttr(filters.search)}" placeholder="Поиск в заявках" autocomplete="off">
+              </label>
+              <button class="ghost-button" data-action="select-all-student-applications" type="button" ${visibleRows.some((row) => !isStudentApplicationImported(row, importedLookup)) ? "" : "disabled"}>Выделить все</button>
+              <button class="ghost-button" data-action="clear-student-applications-filters" type="button">Очистить фильтры</button>
+              <label class="student-applications-status-filter">
+                <span>Установить статус</span>
+                <select name="importStatus">
+                  ${statuses.map((status) => `<option value="${escapeAttr(status)}" ${status === filters.status ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}
+                </select>
+              </label>
+              <div class="student-applications-import-summary">
+                Всего: <strong>${visibleRows.length}</strong>
+                <span>Выбрано: <strong>${selectedRows.length}</strong></span>
+                <span>Оплаты: <strong>${escapeHtml(money(selectedPayment))}</strong></span>
+                ${importedCount ? `<span>Уже в базе: <strong>${importedCount}</strong></span>` : ""}
+              </div>
+            </div>
+
+            <div class="student-applications-import-messages">
+              ${importState.error ? `<div class="student-applications-import-error">${escapeHtml(importState.error)}</div>` : ""}
+              ${(importState.warnings || []).map((warning) => `<div class="student-applications-import-warning">${escapeHtml(warning)}</div>`).join("")}
+              ${importState.truncated ? `<div class="student-applications-import-warning">Показаны первые 5000 заявок. Уточните условия отбора.</div>` : ""}
+            </div>
+
+            <div class="student-applications-import-table-wrap">
+              <table class="student-applications-import-table">
+                <thead>
+                  <tr>
+                    <th aria-label="Выбор"></th>
+                    <th>Дата</th>
+                    <th>ФИО</th>
+                    <th>Заказ</th>
+                    <th>Оплата</th>
+                    <th>Программа</th>
+                    <th>Телефон</th>
+                    <th>Email</th>
+                    <th>Город</th>
+                    <th>Источник</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${visibleRows.length ? visibleRows.map((row) => {
+                    const imported = isStudentApplicationImported(row, importedLookup);
+                    const selected = selectedIds.has(String(row.id));
+                    const active = String(activeRow?.id || "") === String(row.id);
+                    return `
+                      <tr class="${active ? "is-active" : ""} ${imported ? "is-imported" : ""}" data-student-application-row="${escapeAttr(row.id)}">
+                        <td>
+                          <input data-student-application-select="${escapeAttr(row.id)}" type="checkbox" ${selected ? "checked" : ""} ${imported ? "disabled" : ""} aria-label="Выбрать заявку">
+                        </td>
+                        <td>${escapeHtml(row.date || "")}</td>
+                        <td>${escapeHtml(row.name || "")}${imported ? `<small>Уже в базе</small>` : ""}</td>
+                        <td>${escapeHtml(row.order || "")}</td>
+                        <td class="student-applications-payment-cell">${Number(row.paymentAmount || 0) > 0 || row.paid ? escapeHtml(money(row.paymentAmount)) : "—"}</td>
+                        <td>${escapeHtml(row.program || "")}</td>
+                        <td>${escapeHtml(row.phone || "")}</td>
+                        <td>${escapeHtml(row.email || "")}</td>
+                        <td>${escapeHtml(row.city || "")}</td>
+                        <td>${escapeHtml(row.source || "")}</td>
+                      </tr>
+                    `;
+                  }).join("") : `
+                    <tr>
+                      <td colspan="10">
+                        <div class="student-applications-import-empty">
+                          ${importState.loading ? "Получение заявок из базы и электронной почты..." : "Задайте условия и получите список заявок."}
+                        </div>
+                      </td>
+                    </tr>
+                  `}
+                </tbody>
+              </table>
+            </div>
+
+            <div class="student-applications-import-detail">
+              <h3>Информация о выбранной заявке</h3>
+              ${renderStudentApplicationDetail(activeRow)}
+            </div>
+
+            <div class="modal-actions student-applications-import-actions">
+              <button class="ghost-button" data-action="close-student-applications-import" type="button">Закрыть</button>
+              <button class="primary-button" data-action="add-selected-student-applications" type="button" ${selectedRows.length && !importState.importing ? "" : "disabled"}>
+                ${importState.importing ? "Создание папок..." : "Добавить в базу"}
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
+    `;
+  }
+
+  function syncStudentApplicationsImportFilters(form) {
+    if (!form) return;
+    const filters = state.studentApplicationsImport.filters;
+    filters.programId = String(form.elements.programId?.value || "");
+    filters.period = String(form.elements.period?.value || "custom");
+    filters.dateFrom = String(form.elements.dateFrom?.value || "");
+    filters.dateTo = String(form.elements.dateTo?.value || "");
+    filters.onlyPaid = Boolean(form.elements.onlyPaid?.checked);
+    filters.search = String(form.elements.applicationSearch?.value || "");
+    filters.status = String(form.elements.importStatus?.value || "На зачисление");
+  }
+
+  async function fetchStudentApplications(event) {
+    event?.preventDefault();
+    const form = event?.currentTarget || document.querySelector("[data-student-applications-import-form]");
+    syncStudentApplicationsImportFilters(form);
+    const filters = state.studentApplicationsImport.filters;
+    if (!filters.dateFrom || !filters.dateTo) {
+      state.studentApplicationsImport.error = "Укажите период импорта.";
+      render();
+      return;
+    }
+    if (filters.dateFrom > filters.dateTo) {
+      state.studentApplicationsImport.error = "Дата начала периода не может быть позже даты окончания.";
+      render();
+      return;
+    }
+    const program = (state.data.collections.programs || [])
+      .find((item) => String(item.id || "") === String(filters.programId || ""));
+    state.studentApplicationsImport.loading = true;
+    state.studentApplicationsImport.error = "";
+    state.studentApplicationsImport.warnings = [];
+    render();
+    try {
+      const response = await fetch(photoApiUrl("/api/students/import-applications/query"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo,
+          programName: String(program?.name || ""),
+          productId: String(program?.landingCode || ""),
+          onlyPaid: filters.onlyPaid
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Не удалось получить заявки.");
+      const rows = (Array.isArray(payload.rows) ? payload.rows : []).map((row, index) => ({
+        ...row,
+        id: String(row.id || `${row.orderId || "order"}-${index}`)
+      }));
+      state.studentApplicationsImport.rows = rows;
+      state.studentApplicationsImport.selected = [];
+      state.studentApplicationsImport.activeId = String(rows[0]?.id || "");
+      state.studentApplicationsImport.truncated = Boolean(payload.truncated);
+      state.studentApplicationsImport.warnings = Array.isArray(payload.warnings)
+        ? payload.warnings.map(String).filter(Boolean)
+        : [];
+    } catch (error) {
+      state.studentApplicationsImport.rows = [];
+      state.studentApplicationsImport.selected = [];
+      state.studentApplicationsImport.activeId = "";
+      state.studentApplicationsImport.error = error.message;
+      state.studentApplicationsImport.warnings = [];
+    } finally {
+      state.studentApplicationsImport.loading = false;
+      render();
+    }
+  }
+
+  function updateStudentApplicationsPeriod(period) {
+    const value = String(period || "custom");
+    state.studentApplicationsImport.filters.period = value;
+    if (value !== "custom") {
+      Object.assign(
+        state.studentApplicationsImport.filters,
+        getStudentApplicationsDefaultDates(Number(value) || 30)
+      );
+    }
+    render();
+  }
+
+  function clearStudentApplicationsFilters() {
+    const dates = getStudentApplicationsDefaultDates(30);
+    state.studentApplicationsImport.filters = {
+      programId: "",
+      period: "30",
+      ...dates,
+      onlyPaid: false,
+      search: "",
+      status: "На зачисление"
+    };
+    state.studentApplicationsImport.rows = [];
+    state.studentApplicationsImport.selected = [];
+    state.studentApplicationsImport.activeId = "";
+    state.studentApplicationsImport.truncated = false;
+    state.studentApplicationsImport.error = "";
+    state.studentApplicationsImport.warnings = [];
+    render();
+  }
+
+  function toggleAllStudentApplications() {
+    const importedLookup = buildStudentApplicationsImportLookup();
+    const selectableIds = getVisibleStudentApplications()
+      .filter((row) => !isStudentApplicationImported(row, importedLookup))
+      .map((row) => String(row.id));
+    const selected = new Set(state.studentApplicationsImport.selected || []);
+    const allSelected = selectableIds.length && selectableIds.every((id) => selected.has(id));
+    selectableIds.forEach((id) => {
+      if (allSelected) selected.delete(id);
+      else selected.add(id);
+    });
+    state.studentApplicationsImport.selected = [...selected];
+    render();
+  }
+
+  function toggleStudentApplicationSelection(id, selected) {
+    const values = new Set(state.studentApplicationsImport.selected || []);
+    if (selected) values.add(String(id));
+    else values.delete(String(id));
+    state.studentApplicationsImport.selected = [...values];
+    state.studentApplicationsImport.activeId = String(id);
+    render();
+  }
+
+  function createStudentFromApplication(row, uid, status, selectedProgramId) {
+    const program = getStudentApplicationProgram(row, selectedProgramId);
+    const couponDiscount = getStudentApplicationCouponDiscount(row);
+    const rawPaymentAmount = Number(row.paymentAmount || 0);
+    const paymentAmount = Number.isFinite(rawPaymentAmount) && rawPaymentAmount > 0
+      ? Math.round(rawPaymentAmount * 100) / 100
+      : 0;
+    const applicationDate = String(row.dateCreated || "").slice(0, 10);
+    const paymentDate = paymentAmount ? (applicationDate || todayIso()) : "";
+    const city = String(row.city || "").trim();
+    const noteParts = [
+      String(row.note || "").trim(),
+      city ? `Город: ${city}` : ""
+    ].filter(Boolean);
+    const record = {
+      id: makeId("students"),
+      uid: String(uid),
+      name: String(row.name || "").trim(),
+      status: status || "На зачисление",
+      program: String(program?.name || getStudentApplicationProgramTitle(row)).trim(),
+      studyForm: String(program?.studyForm || ""),
+      educationType: String(program?.type || ""),
+      hours: program?.hours || "",
+      phone: String(row.phone || "").trim(),
+      email: String(row.email || "").trim(),
+      registrationAddress: city,
+      workPlace: String(row.organization || "").trim(),
+      position: String(row.position || "").trim(),
+      source: String(row.source || "Сайт").trim(),
+      manager: String(program?.manager || ""),
+      discount: couponDiscount.percent,
+      discountDescription: couponDiscount.description,
+      note: noteParts.join("\n"),
+      applicationDate,
+      orderNo: String(row.orderId || "").trim(),
+      sourceApplicationKey: getStudentApplicationSourceKey(row),
+      sourceOrderId: String(row.orderId || "").trim(),
+      sourceProductId: String(row.productId || "").trim(),
+      photoPath: `Слушатели/${getStudentCompactFolderName(row.name)}/Документы`,
+      contractAmount: paymentAmount,
+      payment1Date: paymentDate,
+      payment1Amount: paymentAmount,
+      payment1Note: paymentAmount ? `Заказ №${String(row.orderId || "").trim()}` : "",
+      directExpenses: []
+    };
+    return calculateStudentFinance(record);
+  }
+
+  async function ensureStudentDocumentFolders(records) {
+    const response = await fetch(photoApiUrl("/api/students/ensure-document-folders"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        students: records.map((record) => ({
+          id: record.id,
+          name: record.name
+        }))
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || "Не удалось создать папки слушателей на Яндекс-Диске.");
+    }
+    const folderById = new Map((payload.folders || []).map((item) => [
+      String(item.id),
+      String(item.relativePath || "")
+    ]));
+    records.forEach((record) => {
+      const relativePath = folderById.get(String(record.id));
+      if (!relativePath) {
+        throw new Error(`Сервер не вернул путь папки для ${record.name}.`);
+      }
+      record.photoPath = relativePath;
+    });
+  }
+
+  async function addSelectedStudentApplications() {
+    const selectedIds = new Set(state.studentApplicationsImport.selected || []);
+    const importedLookup = buildStudentApplicationsImportLookup();
+    const selectedRows = (state.studentApplicationsImport.rows || [])
+      .filter((row) => (
+        selectedIds.has(String(row.id))
+        && !isStudentApplicationImported(row, importedLookup)
+      ));
+    if (!selectedRows.length) {
+      alert("Выберите заявки, которые нужно добавить.");
+      return;
+    }
+    if (!confirm(`Добавить выбранных слушателей: ${selectedRows.length}?`)) return;
+    const status = state.studentApplicationsImport.filters.status || "На зачисление";
+    let nextUid = Number(getNextUid()) || 1;
+    const imported = [];
+    let skipped = 0;
+    selectedRows.forEach((row) => {
+      if (!String(row.name || "").trim()) {
+        skipped += 1;
+        return;
+      }
+      imported.push(createStudentFromApplication(
+        row,
+        nextUid,
+        status,
+        state.studentApplicationsImport.filters.programId
+      ));
+      nextUid += 1;
+    });
+    if (!imported.length) {
+      alert("В выбранных заявках не заполнено ФИО.");
+      return;
+    }
+    state.studentApplicationsImport.importing = true;
+    render();
+    try {
+      await ensureStudentDocumentFolders(imported);
+    } catch (error) {
+      state.studentApplicationsImport.importing = false;
+      render();
+      alert(`Слушатели не импортированы: ${error.message}`);
+      return;
+    }
+    state.data.collections.students = [
+      ...imported,
+      ...(state.data.collections.students || [])
+    ];
+    addAudit(
+      "Импортированы слушатели",
+      "Слушатели и заявки",
+      `Добавлено: ${imported.length}${skipped ? `, пропущено без ФИО: ${skipped}` : ""}`
+    );
+    state.lastEditedRow = { config: "students", id: imported[0].id };
+    state.view = "students";
+    state.search = "";
+    state.statusFilter = "Все";
+    state.studentProgramTypeFilter = [];
+    state.studentImportedViewIds = imported.map((record) => record.id);
+    state.selected.students = [];
+    state.sort = getDefaultTableSort("students");
+    state.tablePages.students = 1;
+    state.tableOptions = null;
+    state.studentApplicationsImport.open = false;
+    state.studentApplicationsImport.importing = false;
+    persist();
+    render();
+  }
+
+  function bindStudentApplicationsImportEvents() {
+    document.querySelector("[data-action='open-student-applications-import']")
+      ?.addEventListener("click", openStudentApplicationsImport);
+    if (!state.studentApplicationsImport.open) return;
+    document.querySelectorAll("[data-action='close-student-applications-import']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (element === event.currentTarget && (
+          element.matches("button")
+          || event.target === element
+        )) {
+          event.preventDefault();
+          closeStudentApplicationsImport();
+        }
+      });
+    });
+    const form = document.querySelector("[data-student-applications-import-form]");
+    form?.addEventListener("submit", fetchStudentApplications);
+    form?.elements.period?.addEventListener("change", (event) => {
+      syncStudentApplicationsImportFilters(form);
+      updateStudentApplicationsPeriod(event.currentTarget.value);
+    });
+    ["programId", "dateFrom", "dateTo", "onlyPaid", "importStatus"].forEach((name) => {
+      form?.elements[name]?.addEventListener("change", () => {
+        if (name === "dateFrom" || name === "dateTo") {
+          form.elements.period.value = "custom";
+        }
+        syncStudentApplicationsImportFilters(form);
+      });
+    });
+    form?.elements.applicationSearch?.addEventListener("input", (event) => {
+      const cursor = event.currentTarget.selectionStart;
+      state.studentApplicationsImport.filters.search = event.currentTarget.value;
+      render();
+      const input = document.querySelector("[name='applicationSearch']");
+      input?.focus({ preventScroll: true });
+      input?.setSelectionRange(cursor, cursor);
+    });
+    document.querySelector("[data-action='clear-student-applications-filters']")
+      ?.addEventListener("click", clearStudentApplicationsFilters);
+    document.querySelector("[data-action='select-all-student-applications']")
+      ?.addEventListener("click", toggleAllStudentApplications);
+    document.querySelector("[data-action='add-selected-student-applications']")
+      ?.addEventListener("click", addSelectedStudentApplications);
+    document.querySelectorAll("[data-student-application-select]").forEach((input) => {
+      input.addEventListener("click", (event) => event.stopPropagation());
+      input.addEventListener("change", () => {
+        toggleStudentApplicationSelection(input.dataset.studentApplicationSelect, input.checked);
+      });
+    });
+    document.querySelectorAll("[data-student-application-row]").forEach((row) => {
+      row.addEventListener("click", () => {
+        const id = String(row.dataset.studentApplicationRow || "");
+        const checkbox = row.querySelector("[data-student-application-select]");
+        if (checkbox && !checkbox.disabled) {
+          const selected = (state.studentApplicationsImport.selected || []).map(String).includes(id);
+          toggleStudentApplicationSelection(id, !selected);
+          return;
+        }
+        state.studentApplicationsImport.activeId = id;
+        render();
+      });
+    });
   }
 
   function renderBulkToolbar(config, rows, configId) {
@@ -2920,14 +3770,26 @@ MAX - https://bizvmax.ru/zifra_plus
     const selectedProgramTypes = state.view === "students"
       ? state.studentProgramTypeFilter
       : [];
+    const importedViewIds = state.view === "students"
+      ? new Set((state.studentImportedViewIds || []).map(String))
+      : new Set();
     let filtered = rows.filter((row) => {
       const matchQuery = !query || Object.values(row).some((value) => String(value || "").toLowerCase().includes(query));
-      const matchStatus = isDocumentTemplateTable || state.statusFilter === "Все" || row.status === state.statusFilter || row.type === state.statusFilter || row.workType === state.statusFilter || row.itemType === state.statusFilter;
+      const hasUnassignedStatus = state.statusFilter === "Не задано"
+        && ![row.status, row.type, row.workType, row.itemType].some((value) => String(value || "").trim());
+      const matchStatus = isDocumentTemplateTable
+        || state.statusFilter === "Все"
+        || hasUnassignedStatus
+        || row.status === state.statusFilter
+        || row.type === state.statusFilter
+        || row.workType === state.statusFilter
+        || row.itemType === state.statusFilter;
       const programType = normalizeEducationProgramType(
         row.educationType || findProgramByName(row.program)?.type
       );
       const matchProgramType = !selectedProgramTypes.length || selectedProgramTypes.includes(programType);
-      return matchQuery && matchStatus && matchProgramType;
+      const matchImportedView = !importedViewIds.size || importedViewIds.has(String(row.id));
+      return matchQuery && matchStatus && matchProgramType && matchImportedView;
     });
     if (state.sort.key) {
       const dir = state.sort.dir === "asc" ? 1 : -1;
@@ -2939,9 +3801,11 @@ MAX - https://bizvmax.ru/zifra_plus
   function getFilterOptions(config) {
     const rows = getRowsForConfig(config);
     const keys = ["status", "type", "workType", "itemType"];
-    const key = keys.find((item) => rows.some((row) => row[item]));
+    const key = keys.find((item) => rows.some((row) => Object.prototype.hasOwnProperty.call(row, item)));
     if (!key) return [];
-    return unique(rows.map((row) => row[key]).filter(Boolean));
+    const values = unique(rows.map((row) => row[key]).filter(Boolean));
+    if (rows.some((row) => !String(row[key] || "").trim())) values.push("Не задано");
+    return values;
   }
 
   function getTablePageSize(configId) {
@@ -3663,6 +4527,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
 
   function getDocumentTemplateSourceLabel(item) {
+    if (item.templateUrl && getDocumentTemplateWebDavPath(item.templateUrl)) return "WebDAV";
     if (item.templateUrl) return "Ссылка";
     if (item.templatePath) return "Файл";
     return "Не задан";
@@ -3677,9 +4542,49 @@ MAX - https://bizvmax.ru/zifra_plus
     return studentCardDocumentBindingOptions.find((option) => option.value === kind)?.label || "Без привязки";
   }
 
+  function getDocumentTemplateWebDavPath(value) {
+    const source = String(value || "").trim();
+    if (!source) return "";
+    if (/^webdav:\/\//i.test(source)) {
+      try {
+        const parsed = new URL(source);
+        return decodeURIComponent(parsed.pathname).replace(/^\/+|\/+$/g, "");
+      } catch {
+        return source.replace(/^webdav:\/\/(?:webdav\.yandex\.ru\/)?/i, "").replace(/^\/+|\/+$/g, "");
+      }
+    }
+    if (/^https?:\/\//i.test(source)) {
+      try {
+        const parsed = new URL(source);
+        if (parsed.hostname.toLowerCase() !== "webdav.yandex.ru") return "";
+        return decodeURIComponent(parsed.pathname).replace(/^\/+|\/+$/g, "");
+      } catch {
+        return "";
+      }
+    }
+    return source.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  }
+
+  function getYandexDiskResourceOpenUrl(source) {
+    const resourcePath = getDocumentTemplateWebDavPath(source);
+    if (!resourcePath) return "";
+    const sourceParts = resourcePath.split("/").map((part) => part.trim()).filter(Boolean);
+    const baseParts = getYandexDiskBasePath()
+      .replace(/\\/g, "/")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const sourceLower = sourceParts.map((part) => part.toLocaleLowerCase("ru-RU"));
+    const baseLower = baseParts.map((part) => part.toLocaleLowerCase("ru-RU"));
+    const alreadyAbsolute = sourceLower[0] && sourceLower[0] === baseLower[0];
+    const fullPath = alreadyAbsolute ? sourceParts : [...baseParts, ...sourceParts];
+    if (!fullPath.length || fullPath.some((part) => part === "." || part === "..")) return "";
+    return `https://disk.yandex.ru/client/disk/${fullPath.map(encodeURIComponent).join("/")}`;
+  }
+
   function getDocumentTemplateOpenUrl(item) {
     const templateUrl = String(item?.templateUrl || "").trim();
-    if (templateUrl) return templateUrl;
+    if (templateUrl) return getYandexDiskResourceOpenUrl(templateUrl) || templateUrl;
     const templatePath = String(item?.templatePath || "").replace(/^\/+/, "").trim();
     return templatePath ? photoApiUrl(`/${templatePath}`) : "";
   }
@@ -3710,18 +4615,18 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!state.documentTemplateLinkDialog) return "";
     return `
       <div class="modal-backdrop document-link-dialog-backdrop" data-action="close-document-template-link-dialog">
-        <section class="modal document-link-dialog" role="dialog" aria-modal="true" aria-label="Добавить документ по ссылке">
+        <section class="modal document-link-dialog" role="dialog" aria-modal="true" aria-label="Добавить источник документа">
           <header class="modal-head">
             <div>
               <p class="eyebrow">Конструктор документов</p>
-              <h2>Добавить по ссылке</h2>
+              <h2>Добавить источник</h2>
             </div>
             <button class="icon-button" data-action="close-document-template-link-dialog" type="button" title="Закрыть">×</button>
           </header>
           <form class="document-link-form" data-action="submit-document-template-link">
             <label>
-              <span>Ссылка на файл Word</span>
-              <input name="newDocumentUrl" type="url" placeholder="Яндекс.Диск, OneDrive, Google Drive или прямая ссылка" autocomplete="off" required>
+              <span>WebDAV-путь или ссылка на файл Word</span>
+              <input name="newDocumentUrl" type="text" placeholder="Документы/Шаблон.docx или ссылка Яндекс-Диска" autocomplete="off" required>
             </label>
             <footer class="modal-actions">
               <button class="ghost-button" data-action="close-document-template-link-dialog" type="button">Отмена</button>
@@ -3745,7 +4650,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="document-template-add">
             <button class="ghost-button document-template-toolbar-button" data-action="open-document-template-link-dialog" type="button">
               ${renderDocumentTemplateToolbarIcon("link")}
-              <span>Добавить по ссылке</span>
+              <span>Добавить источник</span>
             </button>
             <input id="documentTemplateUploadInput" data-document-template-upload-input type="file" accept="${escapeAttr(wordTemplateAccept)},application/msword,application/rtf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-word.document.macroEnabled.12,application/vnd.openxmlformats-officedocument.wordprocessingml.template,application/vnd.ms-word.template.macroEnabled.12" hidden>
             <button class="ghost-button document-template-toolbar-button" data-action="upload-document-template-trigger" type="button">
@@ -3836,7 +4741,7 @@ MAX - https://bizvmax.ru/zifra_plus
               </button>
               <button class="ghost-button document-template-source-button" data-action="replace-document-template-link" type="button">
                 ${renderDocumentTemplateToolbarIcon("link")}
-                <span>Заменить ссылку</span>
+                <span>Заменить источник</span>
               </button>
               <button class="ghost-button document-template-source-button" data-action="replace-document-template-file-trigger" type="button">
                 ${renderDocumentTemplateToolbarIcon("upload")}
@@ -3866,8 +4771,8 @@ MAX - https://bizvmax.ru/zifra_plus
               </select>
             </label>
             <label>
-              <span>Ссылка на шаблон</span>
-              <input name="templateUrl" type="url" value="${escapeAttr(activeDocument.templateUrl)}" placeholder="Яндекс.Диск, OneDrive или Google Drive" autocomplete="off">
+              <span>WebDAV-путь или ссылка на шаблон</span>
+              <input name="templateUrl" type="text" value="${escapeAttr(activeDocument.templateUrl)}" placeholder="Документы/Шаблон.docx или ссылка Яндекс-Диска" autocomplete="off">
             </label>
           </div>
           <input name="useCustomDocumentProperties" type="hidden" value="1">
@@ -4175,13 +5080,77 @@ MAX - https://bizvmax.ru/zifra_plus
             <form class="sdo-settings-form" data-action="save-student-database-settings">
               <div class="sdo-settings-fields">
                 <label>
-                  <span>Ссылка на АИС Допобразование.xlsb</span>
-                  <input name="studentDatabaseUrl" type="url" value="${escapeAttr(getStudentDatabaseUrl())}" required>
+                  <span>WebDAV-путь или ссылка на АИС Допобразование.xlsb</span>
+                  <input name="studentDatabaseWebDavPath" type="text" value="${escapeAttr(getStudentDatabaseWebDavPath())}" required spellcheck="false" placeholder="ООО .../АИС Допобразование.xlsb или ссылка Яндекс-Диска">
+                  <small class="sdo-settings-hint">Можно использовать путь в подключенном WebDAV или публичную ссылку Яндекс-Диска.</small>
+                </label>
+                <div class="admin-system-documents-head">
+                  <strong>Документы системы на Яндекс-Диске (WebDAV)</strong>
+                  <button class="ghost-button admin-connection-test-button" data-action="test-yandex-disk" type="button">Проверить WebDAV</button>
+                </div>
+                <label>
+                  <span>Путь папки в Яндекс-Диске</span>
+                  <input name="yandexDiskBasePath" type="text" value="${escapeAttr(getYandexDiskBasePath())}" required spellcheck="false">
+                </label>
+                <div class="admin-local-documents-root-row">
+                  <label>
+                    <span>Расположение всех документов на локальном диске</span>
+                    <input name="localDocumentsRoot" type="text" value="${escapeAttr(getLocalDocumentsRoot())}" required spellcheck="false" placeholder="Y:\">
+                    <small class="sdo-settings-hint">Используется при Shift + щелчке по кнопке папки.</small>
+                  </label>
+                  <label class="admin-local-documents-root-mode">
+                    <input name="localDocumentsRootIsSystemParent" type="checkbox" ${state.data.meta.localDocumentsRootIsSystemParent ? "checked" : ""}>
+                    <span>Корневая папка документов системы</span>
+                  </label>
+                </div>
+                <label>
+                  <span>Логин Яндекс</span>
+                  <input name="yandexDiskLogin" type="text" value="${escapeAttr(getYandexDiskLogin())}" autocomplete="username">
                 </label>
                 <label>
-                  <span>Базовая папка фото слушателей</span>
-                  <input name="studentPhotoBasePath" type="text" value="${escapeAttr(getStudentPhotoBasePath())}" required spellcheck="false">
+                  <span>Пароль приложения WebDAV</span>
+                  <input
+                    name="yandexDiskPassword"
+                    type="password"
+                    value=""
+                    placeholder="${state.data.meta.yandexDiskHasPassword ? "Пароль сохранён на сервере" : "Введите пароль приложения"}"
+                    autocomplete="new-password"
+                  >
+                  <small class="sdo-settings-hint">Обычный пароль Яндекс ID для WebDAV не подходит.</small>
                 </label>
+                <label class="admin-yandex-autosave">
+                  <input name="yandexDiskAutoSave" type="checkbox" ${state.data.meta.yandexDiskAutoSave ? "checked" : ""}>
+                  <span>Автоматически сохранять сформированные документы в папку слушателя</span>
+                </label>
+                <div class="admin-system-documents-head">
+                  <strong>Заявки из электронной почты (IMAP)</strong>
+                  <button class="ghost-button admin-connection-test-button" data-action="test-student-applications-email" type="button">Проверить почту</button>
+                </div>
+                <div class="admin-email-settings-grid">
+                  <label>
+                    <span>IMAP-сервер</span>
+                    <input name="studentApplicationsEmailHost" type="text" value="${escapeAttr(getStudentApplicationsEmailHost())}" required spellcheck="false" placeholder="imap.example.ru">
+                  </label>
+                  <label>
+                    <span>Порт</span>
+                    <input name="studentApplicationsEmailPort" type="number" min="1" max="65535" value="${escapeAttr(getStudentApplicationsEmailPort())}" required>
+                  </label>
+                  <label>
+                    <span>Логин электронной почты</span>
+                    <input name="studentApplicationsEmailLogin" type="email" value="${escapeAttr(getStudentApplicationsEmailLogin())}" required autocomplete="username">
+                  </label>
+                  <label>
+                    <span>Пароль электронной почты</span>
+                    <input
+                      name="studentApplicationsEmailPassword"
+                      type="password"
+                      value=""
+                      placeholder="${state.data.meta.studentApplicationsEmailHasPassword ? "Пароль сохранён на сервере" : "Введите пароль"}"
+                      autocomplete="new-password"
+                    >
+                  </label>
+                </div>
+                <small class="sdo-settings-hint">Письма с темой «Новый заказ №…» загружаются из папки «Входящие» за период, выбранный в окне импорта.</small>
               </div>
               <div class="admin-database-copy">
                 <p>Загрузка заменяет текущие списки слушателей и расходов данными с листов «База» и «Прямые затраты».</p>
@@ -4202,13 +5171,13 @@ MAX - https://bizvmax.ru/zifra_plus
                 </p>
               </div>
               <div class="sdo-settings-actions admin-database-actions">
-                <button class="primary-button" type="submit">Сохранить подключение</button>
                 <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" ${state.databaseImport.running ? "disabled" : ""}>
                   <span data-import-button-label>${state.databaseImport.running ? "Импорт..." : "Загрузить из базы"}</span>
                 </button>
                 <button class="ghost-button ${state.databaseExport.running ? "is-loading" : ""}" data-action="sync-students-database" type="button" ${state.databaseExport.running ? "disabled" : ""}>
                   <span data-database-export-button-label>${state.databaseExport.running ? "Синхронизация..." : "Синхронизировать и скачать XLSB"}</span>
                 </button>
+                <button class="primary-button" type="submit">Сохранить подключение</button>
               </div>
             </form>
           </div>
@@ -4464,7 +5433,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     </button>
                   `).join("")}
                 </div>
-                <div class="student-tab-body ${activeTab.id === "documents" ? "student-documents-tab" : ""} ${activeTab.id === "income" ? "student-income-tab" : ""} ${activeTab.id === "communications" ? "student-communications-tab" : ""} ${activeTab.id === "ordersSdo" ? "student-orders-sdo-tab" : ""} ${activeTab.id === "results" ? "student-results-tab" : ""}">
+                <div class="student-tab-body ${activeTab.id === "main" ? "student-main-tab" : ""} ${activeTab.id === "documents" ? "student-documents-tab" : ""} ${activeTab.id === "income" ? "student-income-tab" : ""} ${activeTab.id === "communications" ? "student-communications-tab" : ""} ${activeTab.id === "ordersSdo" ? "student-orders-sdo-tab" : ""} ${activeTab.id === "results" ? "student-results-tab" : ""}">
                   ${renderStudentTabContent(activeTab, record)}
                 </div>
               </section>
@@ -5327,10 +6296,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderStudentMainIdentity(section, record) {
-    const hiddenKeys = new Set(["name", "nameEnglish", "noDeclension", "addressByFirstName", "uid", "status", "program", "studyForm", "educationType", "hours", "registrationAddress", "mailingAddress", "workPlace", "position", "employmentCategory", "ovzStatus", "internship", "group", "source", "tags"]);
+    const hiddenKeys = new Set(["name", "nameEnglish", "noDeclension", "addressByFirstName", "uid", "photoPath", "status", "program", "studyForm", "educationType", "hours", "registrationAddress", "mailingAddress", "workPlace", "position", "employmentCategory", "ovzStatus", "internship", "group", "source", "tags"]);
     const nameField = section.fields.find((item) => item.key === "name");
     const nameEnglishField = section.fields.find((item) => item.key === "nameEnglish");
     const uidField = section.fields.find((item) => item.key === "uid");
+    const photoPathField = section.fields.find((item) => item.key === "photoPath");
     const statusField = section.fields.find((item) => item.key === "status");
     const programField = section.fields.find((item) => item.key === "program");
     const studyFormField = section.fields.find((item) => item.key === "studyForm");
@@ -5350,7 +6320,6 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="student-main-identity">
         <div class="student-main-photo">
           ${renderStudentPhotoEditor(record)}
-          ${renderStudentField(uidField, record)}
         </div>
         <div class="student-main-fields">
           <div class="student-name-status-grid">
@@ -5365,9 +6334,13 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
             ${renderStudentContactLine(record)}
           </div>
-          <div class="student-form-grid">
-            ${section.fields.filter((item) => !hiddenKeys.has(item.key)).sort(orderStudentMainField).map((item) => renderStudentField(item, record)).join("")}
-          </div>
+        </div>
+        <div class="student-main-uid">
+          ${renderStudentField(uidField, record)}
+        </div>
+        ${renderStudentPhotoPathField(photoPathField, record)}
+        <div class="student-form-grid student-agent-manager-grid">
+          ${section.fields.filter((item) => !hiddenKeys.has(item.key)).sort(orderStudentMainField).map((item) => renderStudentField(item, record)).join("")}
         </div>
         <div class="student-main-program-row student-main-subsection student-program-section">
           ${renderStudentProgramLine(programField, internshipField, record)}
@@ -5614,8 +6587,57 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
       </div>
       <input type="hidden" name="photoData" id="studentPhotoData" value="${escapeAttr(record.photoData || "")}">
-      <input type="hidden" name="photoPath" id="studentPhotoPath" value="${escapeAttr(record.photoPath || "")}">
       <input type="hidden" name="photoUrl" id="studentPhotoUrl" value="${escapeAttr(record.photoUrl || "")}">
+    `;
+  }
+
+  function renderStudentPhotoPathField(item, record) {
+    if (!item) return "";
+    const value = String(record.photoPath || "").trim();
+    const documentsFolder = getStudentYandexDocumentsFolder(record);
+    const folderUrl = getStudentYandexDocumentsFolderUrl(record);
+    const tooltip = "Относительный путь к фото или папке документов в WebDAV. Префикс [-1]\\ означает переход в папку уровнем выше.";
+    const folderTooltip = "Открыть папку на Яндекс-Диске. Shift + щелчок: открыть в Проводнике.";
+    return `
+      <label class="student-photo-path-field" title="${escapeAttr(tooltip)}">
+        <div class="student-photo-path-control">
+          <input
+            name="photoPath"
+            id="studentPhotoPath"
+            type="text"
+            value="${escapeAttr(value)}"
+            placeholder="Слушатели/ИвановИИ/Документы/ИвановИИ.jpg"
+            spellcheck="false"
+            title="${escapeAttr(tooltip)}"
+            aria-label="${escapeAttr(tooltip)}"
+          >
+          <a
+            class="icon-button student-documents-folder-link"
+            data-student-documents-folder-link
+            data-student-documents-folder="${escapeAttr(documentsFolder)}"
+            href="${escapeAttr(folderUrl || "#")}"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="${escapeAttr(folderTooltip)}"
+            aria-label="${escapeAttr(folderTooltip)}"
+            ${folderUrl ? "" : 'aria-disabled="true" tabindex="-1"'}
+          >
+            <svg class="student-folder-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M3 6.5h7l2 2h9v10H3z"></path>
+              <path d="M3 9h18"></path>
+            </svg>
+          </a>
+          <button
+            class="icon-button student-documents-folder-create"
+            data-action="create-student-documents-folder"
+            type="button"
+            title="Создать папку документов и заполнить путь, если он пуст"
+            aria-label="Создать папку документов и заполнить путь, если он пуст"
+          >
+            ${renderOrdersSdoIcon("wand")}
+          </button>
+        </div>
+      </label>
     `;
   }
 
@@ -6851,6 +7873,191 @@ MAX - https://bizvmax.ru/zifra_plus
     ].map((value) => String(value || "").trim()).filter(Boolean));
   }
 
+  function getInventoryBalance(item) {
+    const balance = Number(item?.balance || 0);
+    return Number.isFinite(balance) ? Math.max(0, balance) : 0;
+  }
+
+  function findInventoryItemById(id) {
+    const inventoryId = String(id || "").trim();
+    if (!inventoryId) return null;
+    return (state.data.collections.inventory || []).find((item) => String(item.id || "") === inventoryId) || null;
+  }
+
+  function getStudentExpenseInventoryOptions(selectedId = "") {
+    const currentId = String(selectedId || "").trim();
+    return (state.data.collections.inventory || [])
+      .filter((item) => (
+        String(item.id || "").trim()
+        && String(item.itemType || "").trim()
+        && (getInventoryBalance(item) > 0 || String(item.id || "") === currentId)
+      ))
+      .slice()
+      .sort((left, right) => (
+        String(left.itemType || "").localeCompare(String(right.itemType || ""), "ru", {
+          numeric: true,
+          sensitivity: "base"
+        })
+        || String(left.date || "").localeCompare(String(right.date || ""))
+        || String(left.id || "").localeCompare(String(right.id || ""))
+      ));
+  }
+
+  function formatStudentExpenseInventoryOption(item) {
+    const details = [
+      Number(item?.amount || 0) ? money(Number(item.amount)) : "",
+      `остаток: ${getInventoryBalance(item)}`,
+      String(item?.note || "").trim()
+    ].filter(Boolean);
+    return `[Запас] ${String(item?.itemType || "").trim()}${details.length ? ` · ${details.join(" · ")}` : ""}`;
+  }
+
+  function renderStudentExpenseTypeSelect({
+    prefix,
+    type,
+    inventoryId,
+    inventoryLink,
+    typeOptions,
+    index,
+    direct = false
+  }) {
+    const selectedInventoryId = String(inventoryId || "").trim();
+    const inventoryOptions = getStudentExpenseInventoryOptions(selectedInventoryId);
+    const selectedInventory = inventoryOptions.find((item) => String(item.id || "") === selectedInventoryId);
+    const dataIndex = direct
+      ? `data-direct-expense-index="${index}"`
+      : `data-expense-index="${index}"`;
+    const missingInventoryOption = selectedInventoryId && !selectedInventory
+      ? `<option value="inventory:${escapeAttr(selectedInventoryId)}" data-inventory-id="${escapeAttr(selectedInventoryId)}" selected>[Запас недоступен] ${escapeHtml(inventoryLink || type || selectedInventoryId)}</option>`
+      : "";
+    return `
+      <select
+        name="${prefix}InventoryChoice"
+        ${dataIndex}
+        data-student-expense-inventory-choice
+        data-expense-prefix="${escapeAttr(prefix)}"
+        aria-label="Вид затрат или запас"
+      >
+        <option value=""></option>
+        <optgroup label="Виды затрат">
+          ${typeOptions.map((option, optionIndex) => `
+            <option
+              value="type:${optionIndex}"
+              data-expense-type="${escapeAttr(option)}"
+              ${!selectedInventoryId && option === type ? "selected" : ""}
+            >${escapeHtml(option)}</option>
+          `).join("")}
+        </optgroup>
+        ${inventoryOptions.length || missingInventoryOption ? `
+          <optgroup label="Запасы">
+            ${missingInventoryOption}
+            ${inventoryOptions.map((item) => {
+              const itemId = String(item.id || "");
+              const selected = itemId === selectedInventoryId;
+              return `
+                <option
+                  value="inventory:${escapeAttr(itemId)}"
+                  data-inventory-id="${escapeAttr(itemId)}"
+                  ${selected ? "selected" : ""}
+                  ${!selected && getInventoryBalance(item) <= 0 ? "disabled" : ""}
+                >${escapeHtml(formatStudentExpenseInventoryOption(item))}</option>
+              `;
+            }).join("")}
+          </optgroup>
+        ` : ""}
+      </select>
+      <input name="${prefix}Type" type="hidden" value="${escapeAttr(type || "")}">
+      <input name="${prefix}InventoryId" type="hidden" value="${escapeAttr(selectedInventoryId)}">
+      <input name="${prefix}InventoryLink" type="hidden" value="${escapeAttr(inventoryLink || selectedInventory?.itemType || "")}">
+    `;
+  }
+
+  function applyStudentExpenseInventoryChoice(select) {
+    const prefix = String(select?.dataset.expensePrefix || "").trim();
+    const form = select?.form;
+    if (!prefix || !form) return;
+    const option = select.selectedOptions?.[0];
+    const inventoryIdInput = form.elements[`${prefix}InventoryId`];
+    const inventoryLinkInput = form.elements[`${prefix}InventoryLink`];
+    const typeInput = form.elements[`${prefix}Type`];
+    const amountInput = form.elements[`${prefix}Amount`];
+    const inventoryId = String(option?.dataset.inventoryId || "").trim();
+    if (inventoryId) {
+      const inventoryItem = findInventoryItemById(inventoryId);
+      if (!inventoryItem) return;
+      const previousInventoryId = String(inventoryIdInput?.value || "").trim();
+      if (inventoryId !== previousInventoryId && getInventoryBalance(inventoryItem) <= 0) {
+        alert("Эта позиция запаса закончилась.");
+        select.value = previousInventoryId ? `inventory:${previousInventoryId}` : "";
+        return;
+      }
+      if (typeInput) typeInput.value = String(inventoryItem.itemType || "");
+      if (inventoryIdInput) inventoryIdInput.value = inventoryId;
+      if (inventoryLinkInput) inventoryLinkInput.value = String(inventoryItem.itemType || "");
+      if (amountInput) amountInput.value = String(normalizeOptionalNumber(inventoryItem.amount) || 0);
+    } else {
+      if (typeInput) typeInput.value = String(option?.dataset.expenseType || "");
+      if (inventoryIdInput) inventoryIdInput.value = "";
+      if (inventoryLinkInput) inventoryLinkInput.value = "";
+    }
+    syncStudentFinanceFields();
+  }
+
+  function getStudentInventoryAllocationCounts(record = {}) {
+    const counts = new Map();
+    const add = (inventoryId) => {
+      const id = String(inventoryId || "").trim();
+      if (id) counts.set(id, (counts.get(id) || 0) + 1);
+    };
+    Array.from({ length: 6 }, (_, index) => index + 1).forEach((index) => {
+      if (expenseRowHasData(record, index)) add(record[`expense${index}InventoryId`]);
+    });
+    (Array.isArray(record.directExpenses) ? record.directExpenses : []).forEach((expense) => {
+      add(expense?.inventoryId);
+    });
+    return counts;
+  }
+
+  function applyStudentInventoryAllocationChanges(previousRecord = {}, nextRecord = {}) {
+    const previousCounts = getStudentInventoryAllocationCounts(previousRecord);
+    const nextCounts = getStudentInventoryAllocationCounts(nextRecord);
+    const ids = new Set([...previousCounts.keys(), ...nextCounts.keys()]);
+    const changes = [...ids].map((id) => ({
+      id,
+      delta: (nextCounts.get(id) || 0) - (previousCounts.get(id) || 0)
+    })).filter((change) => change.delta);
+    for (const change of changes) {
+      if (change.delta <= 0) continue;
+      const item = findInventoryItemById(change.id);
+      if (!item) {
+        alert("Выбранная позиция запаса больше не существует. Обновите строку расхода.");
+        return false;
+      }
+      if (getInventoryBalance(item) < change.delta) {
+        alert(`Недостаточно запаса «${item.itemType || change.id}». Доступно: ${getInventoryBalance(item)}.`);
+        return false;
+      }
+    }
+    changes.forEach((change) => {
+      const item = findInventoryItemById(change.id);
+      if (!item) return;
+      item.balance = Math.max(0, getInventoryBalance(item) - change.delta);
+    });
+    return true;
+  }
+
+  function getInventoryAllocationCount(inventoryId) {
+    const id = String(inventoryId || "").trim();
+    if (!id) return 0;
+    const studentCount = (state.data.collections.students || []).reduce((total, student) => (
+      total + (getStudentInventoryAllocationCounts(student).get(id) || 0)
+    ), 0);
+    const unlinkedCount = (state.data.collections.directExpenses || [])
+      .filter((expense) => String(expense?.inventoryId || "").trim() === id)
+      .length;
+    return studentCount + unlinkedCount;
+  }
+
   function getStudentExpenseNoteOptions(record = {}) {
     const studentNotes = (state.data.collections.students || []).flatMap((student) => (
       Array.from({ length: 6 }, (_, index) => student[`expense${index + 1}Note`])
@@ -6878,7 +8085,8 @@ MAX - https://bizvmax.ru/zifra_plus
       record[`expense${index}Date`] ||
       record[`expense${index}Type`] ||
       record[`expense${index}Amount`] ||
-      record[`expense${index}Note`]
+      record[`expense${index}Note`] ||
+      record[`expense${index}InventoryId`]
     );
   }
 
@@ -6934,10 +8142,14 @@ MAX - https://bizvmax.ru/zifra_plus
                   <input name="expense${n}Date" data-expense-index="${n}" type="date" value="${escapeAttr(record[`expense${n}Date`] || "")}">
                 </label>
                 <label class="editable-grid-cell" data-label="Вид затрат">
-                  <select name="expense${n}Type" data-expense-index="${n}">
-                    <option value=""></option>
-                    ${typeOptions.map((option) => `<option ${option === type ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
-                  </select>
+                  ${renderStudentExpenseTypeSelect({
+                    prefix: `expense${n}`,
+                    type,
+                    inventoryId: record[`expense${n}InventoryId`],
+                    inventoryLink: record[`expense${n}InventoryLink`],
+                    typeOptions,
+                    index: n
+                  })}
                 </label>
                 <label class="editable-grid-cell" data-label="Сумма">
                   <input name="expense${n}Amount" data-expense-index="${n}" type="number" value="${escapeAttr(record[`expense${n}Amount`] || "")}">
@@ -6986,10 +8198,15 @@ MAX - https://bizvmax.ru/zifra_plus
                   <input name="directExpense${index}Date" data-direct-expense-index="${index}" type="date" value="${escapeAttr(expense.date || "")}">
                 </label>
                 <label class="editable-grid-cell" data-label="Вид затрат">
-                  <select name="directExpense${index}Type" data-direct-expense-index="${index}">
-                    <option value=""></option>
-                    ${typeOptions.map((option) => `<option ${option === type ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
-                  </select>
+                  ${renderStudentExpenseTypeSelect({
+                    prefix: `directExpense${index}`,
+                    type,
+                    inventoryId: expense.inventoryId,
+                    inventoryLink: expense.inventoryLink,
+                    typeOptions,
+                    index,
+                    direct: true
+                  })}
                 </label>
                 <label class="editable-grid-cell" data-label="Сумма">
                   <input name="directExpense${index}Amount" data-direct-expense-index="${index}" type="number" value="${escapeAttr(expense.amount || "")}">
@@ -7056,9 +8273,18 @@ MAX - https://bizvmax.ru/zifra_plus
         type: record[`expense${index}Type`] || "",
         amount: record[`expense${index}Amount`] || "",
         isPaid: record[`expense${index}IsPaid`] || "",
-        note: record[`expense${index}Note`] || ""
+        note: record[`expense${index}Note`] || "",
+        inventoryId: record[`expense${index}InventoryId`] || "",
+        inventoryLink: record[`expense${index}InventoryLink`] || ""
       }))
-      .filter((expense) => expense.date || expense.type || expense.amount || isChecked(expense.isPaid) || expense.note);
+      .filter((expense) => (
+        expense.date
+        || expense.type
+        || expense.amount
+        || isChecked(expense.isPaid)
+        || expense.note
+        || expense.inventoryId
+      ));
     Array.from({ length: 6 }, (_, index) => index + 1).forEach((index) => {
       const expense = expenses[index - 1] || {};
       record[`expense${index}Date`] = expense.date || "";
@@ -7066,6 +8292,8 @@ MAX - https://bizvmax.ru/zifra_plus
       record[`expense${index}Amount`] = expense.amount || "";
       record[`expense${index}IsPaid`] = expense.isPaid || "";
       record[`expense${index}Note`] = expense.note || "";
+      record[`expense${index}InventoryId`] = expense.inventoryId || "";
+      record[`expense${index}InventoryLink`] = expense.inventoryLink || "";
     });
     return record;
   }
@@ -7116,7 +8344,9 @@ MAX - https://bizvmax.ru/zifra_plus
           type: "",
           amount: "",
           isPaid: "",
-          note: ""
+          note: "",
+          inventoryId: "",
+          inventoryLink: ""
         }
       ]
     };
@@ -7171,7 +8401,9 @@ MAX - https://bizvmax.ru/zifra_plus
         type: draft[`expense${index}Type`] || "",
         amount: draft[`expense${index}Amount`] || "",
         isPaid: draft[`expense${index}IsPaid`] || "",
-        note: draft[`expense${index}Note`] || ""
+        note: draft[`expense${index}Note`] || "",
+        inventoryId: draft[`expense${index}InventoryId`] || "",
+        inventoryLink: draft[`expense${index}InventoryLink`] || ""
       };
     }).filter(Boolean);
     Array.from({ length: 6 }, (_, index) => index + 1).forEach((index) => {
@@ -7180,6 +8412,8 @@ MAX - https://bizvmax.ru/zifra_plus
       draft[`expense${index}Amount`] = "";
       draft[`expense${index}IsPaid`] = "";
       draft[`expense${index}Note`] = "";
+      draft[`expense${index}InventoryId`] = "";
+      draft[`expense${index}InventoryLink`] = "";
     });
     draft.directExpenses = orderedExpenses;
     draft.expenseTotal = sumStudentExpenses(draft);
@@ -7611,6 +8845,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.addEventListener("click", (event) => {
       const sidebar = document.querySelector(".sidebar");
       if (!sidebar || document.body.classList.contains("sidebar-collapsed")) return;
+      if (!window.matchMedia("(max-width: 1120px)").matches) return;
       if (event.target.closest("[data-action='toggle-sidebar'], .sidebar")) return;
       if (!document.body.classList.contains("sidebar-open")) return;
       closeSidebar();
@@ -7706,6 +8941,10 @@ MAX - https://bizvmax.ru/zifra_plus
       closeDocumentTemplateSettings();
       return true;
     }
+    if (state.studentApplicationsImport.open) {
+      closeStudentApplicationsImport();
+      return true;
+    }
     if (state.modal) {
       closeModalWithUnsavedCheck();
       return true;
@@ -7723,6 +8962,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindStudentProgramTypeFilterOutsideClick();
     bindNavItemOrderControls();
     bindFieldUndoShortcut();
+    bindStudentApplicationsImportEvents();
     initializeRecordFormSnapshot(document.getElementById("recordForm"));
 
     document.querySelectorAll("[data-view]").forEach((button) => {
@@ -7732,6 +8972,7 @@ MAX - https://bizvmax.ru/zifra_plus
         state.search = "";
         state.statusFilter = getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
+        state.studentImportedViewIds = [];
         state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
         render();
@@ -7744,6 +8985,7 @@ MAX - https://bizvmax.ru/zifra_plus
         state.search = "";
         state.statusFilter = getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
+        state.studentImportedViewIds = [];
         state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
         render();
@@ -7754,7 +8996,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const isCompact = window.matchMedia("(max-width: 1120px)").matches;
       if (document.body.classList.contains("sidebar-collapsed")) {
         document.body.classList.remove("sidebar-collapsed");
-        document.body.classList.add("sidebar-open");
+        document.body.classList.toggle("sidebar-open", isCompact);
         return;
       }
       if (isCompact) {
@@ -7772,6 +9014,9 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.querySelector("[data-action='sync-students-database']")?.addEventListener("click", exportStudentsToDatabase);
     document.querySelector("form[data-action='save-student-database-settings']")?.addEventListener("submit", saveStudentDatabaseSettings);
+    document.querySelector("[data-action='test-yandex-disk']")?.addEventListener("click", testYandexDiskConnection);
+    document.querySelector("[data-action='test-student-applications-email']")
+      ?.addEventListener("click", testStudentApplicationsEmailConnection);
 
     document.querySelector("[data-action='transliterate-student-name']")?.addEventListener("click", () => {
       const source = document.querySelector("[name='name']");
@@ -7901,6 +9146,9 @@ MAX - https://bizvmax.ru/zifra_plus
       input?.addEventListener("input", syncStudentFinanceFields);
       input?.addEventListener("change", syncStudentFinanceFields);
     });
+    document.querySelectorAll("[data-student-expense-inventory-choice]").forEach((select) => {
+      select.addEventListener("change", () => applyStudentExpenseInventoryChoice(select));
+    });
     document.querySelectorAll("[data-expense-index]").forEach((input) => {
       const syncExpenseControls = () => {
         syncExpenseRowDeleteButton(input.dataset.expenseIndex);
@@ -7948,6 +9196,12 @@ MAX - https://bizvmax.ru/zifra_plus
       state.tablePages.students = 1;
       render();
     });
+    document.querySelector("[data-action='clear-student-imported-view']")?.addEventListener("click", () => {
+      state.studentImportedViewIds = [];
+      state.statusFilter = getDefaultStatusFilter("students");
+      state.tablePages.students = 1;
+      render();
+    });
 
     document.getElementById("dictionarySearch")?.addEventListener("input", (event) => {
       const cursor = event.target.selectionStart;
@@ -7975,6 +9229,22 @@ MAX - https://bizvmax.ru/zifra_plus
           dir: state.sort.key === key && state.sort.dir === "asc" ? "desc" : "asc"
         };
         state.tablePages[state.view] = 1;
+        render();
+      });
+    });
+
+    document.querySelectorAll("[data-student-status-shortcut]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const status = button.dataset.studentStatusShortcut || "Все";
+        pushStudentStatusHistory(status);
+        state.view = "students";
+        state.search = "";
+        state.statusFilter = status;
+        state.studentProgramTypeFilter = [];
+        state.studentImportedViewIds = [];
+        state.sort = getDefaultTableSort("students");
+        state.tablePages.students = 1;
+        state.tableOptions = null;
         render();
       });
     });
@@ -8017,6 +9287,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (button.dataset.config === "students") state.openExpenseRows = [];
         if (button.dataset.config === "students") state.discountPickerOpen = false;
         if (button.dataset.config === "students") state.discountPicker = null;
+        if (button.dataset.config === "students") state.studentImportedViewIds = [];
         state.modal = { config: button.dataset.config, id: "" };
         render();
       });
@@ -8037,6 +9308,14 @@ MAX - https://bizvmax.ru/zifra_plus
         if (button.dataset.config === "students") state.discountPicker = null;
         state.modal = { config: button.dataset.config, id: button.dataset.id };
         render();
+      });
+    });
+
+    document.querySelectorAll(".mini-table-link-row").forEach((row) => {
+      row.addEventListener("keydown", (event) => {
+        if (!["Enter", " "].includes(event.key)) return;
+        event.preventDefault();
+        row.click();
       });
     });
 
@@ -8285,6 +9564,19 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     document.getElementById("studentPhotoInput")?.addEventListener("change", handleStudentPhoto);
+    document.querySelector("[data-student-documents-folder-link]")?.addEventListener(
+      "click",
+      openStudentDocumentsFolder
+    );
+    document.querySelector("[data-action='create-student-documents-folder']")
+      ?.addEventListener("click", createMissingStudentDocumentsFolder);
+    document.getElementById("studentPhotoPath")?.addEventListener("change", (event) => {
+      const hidden = document.getElementById("studentPhotoData");
+      const urlInput = document.getElementById("studentPhotoUrl");
+      if (hidden) hidden.value = "";
+      if (urlInput) urlInput.value = "";
+      syncStudentPhotoPathUi(event.currentTarget.value, true);
+    });
 
     document.querySelector("[data-action='clear-photo']")?.addEventListener("click", async () => {
       const photoInput = document.getElementById("studentPhotoInput");
@@ -8301,6 +9593,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (hidden) hidden.value = "";
       if (pathInput) pathInput.value = "";
       if (urlInput) urlInput.value = "";
+      syncStudentPhotoPathUi("", false);
       if (photoInput) photoInput.value = "";
       if (preview) {
         preview.classList.remove("has-photo");
@@ -8852,13 +10145,17 @@ MAX - https://bizvmax.ru/zifra_plus
       const amountInput = field("Amount");
       const isPaidInput = field("IsPaid");
       const noteInput = field("Note");
+      const inventoryIdInput = field("InventoryId");
+      const inventoryLinkInput = field("InventoryLink");
       return {
         ...expense,
         date: String(dateInput.value || ""),
         type: String(typeInput?.value || ""),
         amount: Number(amountInput?.value || 0),
         isPaid: isPaidInput ? (isPaidInput.checked ? "Да" : "") : expense.isPaid || "",
-        note: String(noteInput?.value || "")
+        note: String(noteInput?.value || ""),
+        inventoryId: String(inventoryIdInput?.value || ""),
+        inventoryLink: String(inventoryLinkInput?.value || "")
       };
     });
   }
@@ -9427,6 +10724,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const expenseTotal = sumStudentExpenses(values);
       Object.assign(values, calculateStudentFinance(values));
       values.expenseTotal = expenseTotal;
+      if (!applyStudentInventoryAllocationChanges(currentRecord, values)) return "";
     }
 
     let savedId = formElement.dataset.id;
@@ -9472,6 +10770,12 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Выберите файл изображения.");
       return;
     }
+    const studentName = String(document.querySelector("[name='name']")?.value || "").trim();
+    if (!studentName) {
+      alert("Сначала укажите ФИО слушателя.");
+      event.target.value = "";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = async () => {
       const hidden = document.getElementById("studentPhotoData");
@@ -9480,15 +10784,14 @@ MAX - https://bizvmax.ru/zifra_plus
       const preview = document.getElementById("studentPhotoPreview");
       try {
         preview?.classList.add("is-loading");
-        const studentName = document.querySelector("[name='name']")?.value || "";
         const uploaded = await uploadStoredPhoto(reader.result, pathInput?.value || "", {
           studentName,
-          name: studentName,
-          applicationDate: document.querySelector("[name='applicationDate']")?.value || ""
+          name: studentName
         });
-        if (hidden) hidden.value = reader.result;
+        if (hidden) hidden.value = "";
         if (pathInput) pathInput.value = uploaded.photoPath;
         if (urlInput) urlInput.value = uploaded.photoUrl;
+        syncStudentPhotoPathUi(uploaded.photoPath, false);
         if (preview) {
           preview.classList.add("has-photo");
           preview.querySelector(":scope > span")?.remove();
@@ -9500,20 +10803,8 @@ MAX - https://bizvmax.ru/zifra_plus
           }
         }
       } catch (error) {
-        console.warn("Не удалось сохранить фото через app-server.js, фото будет сохранено в карточке", error);
-        if (hidden) hidden.value = reader.result;
-        if (pathInput) pathInput.value = "";
-        if (urlInput) urlInput.value = "";
-        if (preview) {
-          preview.classList.add("has-photo");
-          preview.querySelector(":scope > span")?.remove();
-          const image = preview.querySelector("img");
-          if (image) {
-            image.src = reader.result;
-          } else {
-            preview.insertAdjacentHTML("afterbegin", `<img src="${escapeAttr(reader.result)}" alt="Фото слушателя">`);
-          }
-        }
+        console.warn("Не удалось сохранить фото на Яндекс-Диске", error);
+        alert(`Не удалось сохранить фото на Яндекс-Диске: ${error.message}`);
       } finally {
         preview?.classList.remove("is-loading");
         event.target.value = "";
@@ -9544,12 +10835,142 @@ MAX - https://bizvmax.ru/zifra_plus
     const source = String(value || "").trim();
     if (!/\.(png|jpe?g|webp|gif)$/i.test(source)) return false;
     return /^[a-z]:[\\/]/i.test(source)
-      || /^\[-1\][\\/]+Договора[\\/]+_Сотрудники[\\/]+/iu.test(source)
+      || /^\[-1\][\\/]+/u.test(source)
       || /^[\\/]*(?:АИС Допобразование[\\/]+)?Слушатели[\\/]/iu.test(source);
   }
 
   function studentSourcePhotoUrl(value) {
     return photoApiUrl(`/api/student-photo?path=${encodeURIComponent(String(value || "").trim())}`);
+  }
+
+  function getStudentPhotoPathLink(value, storedUrl = "") {
+    const source = String(value || "").trim();
+    if (!source) return "";
+    if (isStudentSourcePhotoPath(source)) return studentSourcePhotoUrl(source);
+    const candidate = String(storedUrl || source).trim();
+    if (!/^data:image\//i.test(candidate)
+      && !/^https?:\/\//i.test(candidate)
+      && !/\.(png|jpe?g|webp|gif)$/i.test(candidate)) return "";
+    return photoPublicUrl(candidate);
+  }
+
+  async function openStudentDocumentsFolder(event) {
+    if (!event.shiftKey) return;
+    event.preventDefault();
+    const link = event.currentTarget;
+    const folder = String(link.dataset.studentDocumentsFolder || "").trim();
+    if (!folder) {
+      alert("Не удалось определить папку документов слушателя.");
+      return;
+    }
+    link.setAttribute("aria-busy", "true");
+    try {
+      const response = await fetch(photoApiUrl("/api/local-documents/open-folder"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Не удалось открыть папку в Проводнике.");
+      }
+    } catch (error) {
+      alert(`Не удалось открыть папку в Проводнике: ${error.message}`);
+    } finally {
+      link.removeAttribute("aria-busy");
+    }
+  }
+
+  function studentDocumentsPathHasData(pathInput) {
+    return Boolean(
+      String(pathInput?.value || "").trim()
+      || String(document.getElementById("studentPhotoData")?.value || "").trim()
+      || String(document.getElementById("studentPhotoUrl")?.value || "").trim()
+    );
+  }
+
+  async function createMissingStudentDocumentsFolder(event) {
+    const button = event.currentTarget;
+    const form = button.closest("#recordForm");
+    const pathInput = form?.elements.photoPath;
+    if (!form || form.dataset.config !== "students" || !(pathInput instanceof HTMLInputElement)) return;
+    if (studentDocumentsPathHasData(pathInput)) {
+      alert("Путь или данные фото уже заполнены. Существующие данные не изменены.");
+      pathInput.focus({ preventScroll: true });
+      return;
+    }
+    const studentName = String(form.elements.name?.value || "").trim();
+    if (!studentName) {
+      alert("Сначала укажите ФИО слушателя.");
+      form.elements.name?.focus({ preventScroll: true });
+      return;
+    }
+
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    try {
+      const folderRecord = {
+        id: String(form.dataset.id || state.modal?.id || "current"),
+        name: studentName
+      };
+      await ensureStudentDocumentFolders([folderRecord]);
+      if (studentDocumentsPathHasData(pathInput)) {
+        alert("За время создания папки путь был заполнен. Существующие данные не изменены.");
+        return;
+      }
+      pathInput.value = folderRecord.photoPath;
+      syncStudentPhotoPathUi(folderRecord.photoPath, false);
+      state.modal.draft = collectStudentFormDraft();
+      state.modal.hasDraftChanges = true;
+      pathInput.focus({ preventScroll: true });
+    } catch (error) {
+      alert(`Не удалось создать папку документов: ${error.message}`);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  }
+
+  function syncStudentPhotoPathUi(value, refreshPreview = false) {
+    const photoPath = String(value || "").trim();
+    const storedUrl = document.getElementById("studentPhotoUrl")?.value || "";
+    const photoUrl = getStudentPhotoPathLink(photoPath, storedUrl);
+    const currentRecord = (state.data.collections.students || [])
+      .find((item) => item.id === state.modal?.id) || {};
+    const folderRecord = {
+      ...currentRecord,
+      ...(state.modal?.draft || {}),
+      photoPath,
+      name: document.querySelector("[name='name']")?.value || currentRecord.name || "",
+      applicationDate: document.querySelector("[name='applicationDate']")?.value
+        || currentRecord.applicationDate
+        || "",
+      startDate: document.querySelector("[name='startDate']")?.value || currentRecord.startDate || ""
+    };
+    const folderUrl = getStudentYandexDocumentsFolderUrl(folderRecord);
+    const documentsFolder = getStudentYandexDocumentsFolder(folderRecord);
+    const link = document.querySelector("[data-student-documents-folder-link]");
+    if (link) {
+      link.dataset.studentDocumentsFolder = documentsFolder;
+      if (folderUrl) {
+        link.href = folderUrl;
+        link.removeAttribute("aria-disabled");
+        link.removeAttribute("tabindex");
+      } else {
+        link.href = "#";
+        link.setAttribute("aria-disabled", "true");
+        link.setAttribute("tabindex", "-1");
+      }
+    }
+    if (!refreshPreview || !photoUrl) return;
+    const preview = document.getElementById("studentPhotoPreview");
+    if (!preview) return;
+    preview.classList.add("has-photo");
+    preview.querySelector(":scope > span")?.remove();
+    const image = preview.querySelector("img") || document.createElement("img");
+    image.src = photoUrl;
+    image.alt = "Фото слушателя";
+    if (!image.parentElement) preview.prepend(image);
   }
 
   async function uploadStoredPhoto(dataUrl, previousPath = "", meta = {}) {
@@ -9567,13 +10988,14 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!response.ok) throw new Error(payload.error || "ошибка загрузки");
     return {
       ...payload,
-      photoUrl: photoPublicUrl(payload.photoUrl || payload.photoPath)
+      photoUrl: isStudentSourcePhotoPath(payload.photoPath)
+        ? studentSourcePhotoUrl(payload.photoPath)
+        : photoPublicUrl(payload.photoUrl || payload.photoPath)
     };
   }
 
   async function deleteStoredPhoto(photoPath) {
     if (!photoPath) return;
-    if (isStudentSourcePhotoPath(photoPath)) return;
     let response;
     try {
       response = await fetch(photoApiUrl("/api/photos"), {
@@ -9594,7 +11016,10 @@ MAX - https://bizvmax.ru/zifra_plus
     if (record.photoData) return record.photoData;
     if (record.photoUrl) return photoPublicUrl(record.photoUrl);
     if (isStudentSourcePhotoPath(record.photoPath)) return studentSourcePhotoUrl(record.photoPath);
-    return photoPublicUrl(record.photoPath);
+    if (/\.(png|jpe?g|webp|gif)$/i.test(String(record.photoPath || "").trim())) {
+      return photoPublicUrl(record.photoPath);
+    }
+    return "";
   }
 
   async function deleteRecord(configId, id) {
@@ -9606,6 +11031,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const rows = state.data.collections[config.collection];
     const record = rows.find((row) => row.id === id);
     if (!record) return;
+    if (configId === "inventory" && getInventoryAllocationCount(record.id) > 0) {
+      alert("Эту позицию нельзя удалить: она распределена на слушателей.");
+      return;
+    }
     if (!confirm("Удалить запись?")) return;
     if (configId === "students" && record.photoPath) {
       try {
@@ -9626,6 +11055,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const config = configs[configId];
     const selected = getSelected(configId);
     if (!selected.length) return;
+    if (configId === "inventory") {
+      const allocated = getRowsByIds(config.collection, selected)
+        .find((item) => getInventoryAllocationCount(item.id) > 0);
+      if (allocated) {
+        alert(`Позицию «${allocated.itemType || allocated.id}» нельзя удалить: она распределена на слушателей.`);
+        return;
+      }
+    }
     if (!confirm(`Удалить выбранные записи: ${selected.length}?`)) return;
     const selectedSet = new Set(selected);
     if (configId === "documentTemplates") {
@@ -10218,13 +11655,15 @@ MAX - https://bizvmax.ru/zifra_plus
     return String(value || "").replace(/\.(?:doc|docx|docm|dot|dotx|dotm|rtf)$/i, "");
   }
 
-  function buildDocumentTemplateTitleFromUrl(url) {
+  function buildDocumentTemplateTitleFromSource(value) {
+    const source = String(value || "").trim();
     try {
-      const parsed = new URL(url);
+      const parsed = new URL(source);
       const last = decodeURIComponent(parsed.pathname.split("/").filter(Boolean).pop() || "");
       return stripWordTemplateExtension(last) || parsed.hostname;
     } catch (error) {
-      return "Новый документ";
+      const last = source.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "";
+      return stripWordTemplateExtension(last) || "Новый документ";
     }
   }
 
@@ -10233,9 +11672,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = event?.currentTarget?.matches?.("form") ? event.currentTarget : document.querySelector("[data-action='submit-document-template-link']");
     const button = form?.querySelector("button[type='submit']") || event?.currentTarget || null;
     const urlInput = form?.elements.newDocumentUrl || document.querySelector("[name='newDocumentUrl']");
-    const url = normalizeExternalUrl(urlInput?.value || "");
-    if (!url) {
-      alert("Укажите корректную ссылку на файл Word.");
+    const source = normalizeDocumentTemplateSource(urlInput?.value || "");
+    if (!source) {
+      alert("Укажите корректный WebDAV-путь или ссылку на файл Word.");
       urlInput?.focus();
       return;
     }
@@ -10243,12 +11682,12 @@ MAX - https://bizvmax.ru/zifra_plus
     if (button) button.disabled = true;
     try {
       const { documents, document } = collectContractTemplateForm();
-      const inspection = await inspectDocumentTemplateSource({ templateUrl: url });
-      const title = buildDocumentTemplateTitleFromUrl(url);
+      const inspection = await inspectDocumentTemplateSource({ templateUrl: source });
+      const title = buildDocumentTemplateTitleFromSource(source);
       const newDocumentBase = normalizeDocumentTemplate({
         id: `document-template-${Date.now().toString(36)}`,
         title,
-        templateUrl: url,
+        templateUrl: source,
         templatePath: "",
         fileNameTemplate: `${title}_#ФИО_обуч#`,
         useCustomDocumentProperties: "1",
@@ -10263,7 +11702,7 @@ MAX - https://bizvmax.ru/zifra_plus
       state.documentTemplateLinkDialog = false;
       state.documentTemplateDialogId = newDocument.id;
       state.activeContractTemplateFieldId = "";
-      addAudit("Изменен конструктор документов", newDocument.title, "Документ добавлен по ссылке");
+      addAudit("Изменен конструктор документов", newDocument.title, "Добавлен источник документа");
       persist();
       render();
     } catch (error) {
@@ -10341,29 +11780,29 @@ MAX - https://bizvmax.ru/zifra_plus
   async function replaceActiveDocumentTemplateLink(event = null) {
     event?.preventDefault?.();
     const { documents, document } = collectContractTemplateForm();
-    const input = window.prompt("Укажите ссылку на файл Word", document.templateUrl || "");
+    const input = window.prompt("Укажите WebDAV-путь или ссылку на файл Word", document.templateUrl || "");
     if (input === null) return;
-    const url = normalizeExternalUrl(input);
-    if (!url) {
-      alert("Укажите корректную ссылку на файл Word.");
+    const source = normalizeDocumentTemplateSource(input);
+    if (!source) {
+      alert("Укажите корректный WebDAV-путь или ссылку на файл Word.");
       return;
     }
     const button = event?.currentTarget || null;
     const wasDisabled = Boolean(button?.disabled);
     if (button) button.disabled = true;
     try {
-      const inspection = await inspectDocumentTemplateSource({ templateUrl: url });
+      const inspection = await inspectDocumentTemplateSource({ templateUrl: source });
       updateActiveDocumentTemplateSource(
         documents,
         document,
         {
-          templateUrl: url,
+          templateUrl: source,
           templatePath: "",
           fileName: "",
           source: "link"
         },
         inspection,
-        "Источник заменен ссылкой"
+        "Источник документа заменен"
       );
     } catch (error) {
       alert(`Не удалось заменить ссылку: ${error.message}`);
@@ -11960,12 +13399,39 @@ MAX - https://bizvmax.ru/zifra_plus
     download("ais-dopobrazovanie-export.json", JSON.stringify(state.data, null, 2), "application/json");
   }
 
-  function getStudentDatabaseUrl() {
-    return String(state.data.meta?.studentDatabaseUrl || DEFAULT_STUDENT_DATABASE_URL).trim();
+  function getStudentDatabaseWebDavPath() {
+    return String(
+      state.data.meta?.studentDatabaseWebDavPath || DEFAULT_STUDENT_DATABASE_WEBDAV_PATH
+    ).trim();
   }
 
-  function getStudentPhotoBasePath() {
-    return String(state.data.meta?.studentPhotoBasePath || DEFAULT_STUDENT_PHOTO_BASE_PATH).trim();
+  function getYandexDiskBasePath() {
+    return String(
+      state.data.meta?.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+    ).trim();
+  }
+
+  function getLocalDocumentsRoot() {
+    return String(
+      state.data.meta?.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
+    ).trim();
+  }
+
+  function getYandexDiskLogin() {
+    return String(state.data.meta?.yandexDiskLogin || "").trim();
+  }
+
+  function getStudentApplicationsEmailHost() {
+    return String(state.data.meta?.studentApplicationsEmailHost || "").trim();
+  }
+
+  function getStudentApplicationsEmailPort() {
+    const port = Number(state.data.meta?.studentApplicationsEmailPort || 993);
+    return Number.isInteger(port) && port > 0 && port <= 65535 ? port : 993;
+  }
+
+  function getStudentApplicationsEmailLogin() {
+    return String(state.data.meta?.studentApplicationsEmailLogin || "").trim();
   }
 
   function formatDateTimeRu(value) {
@@ -11976,60 +13442,183 @@ MAX - https://bizvmax.ru/zifra_plus
   async function saveStudentDatabaseSettings(event) {
     event.preventDefault();
     const form = event.currentTarget;
-    const databaseUrl = String(form.elements.studentDatabaseUrl?.value || "").trim();
-    const studentPhotoBasePath = String(form.elements.studentPhotoBasePath?.value || "").trim();
-    let parsed;
-    try {
-      parsed = new URL(databaseUrl);
-    } catch {
-      alert("Укажите корректную ссылку на базу слушателей.");
-      form.elements.studentDatabaseUrl?.focus();
-      return;
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      alert("Ссылка на базу должна начинаться с http:// или https://.");
-      form.elements.studentDatabaseUrl?.focus();
-      return;
-    }
-    if (!studentPhotoBasePath) {
-      alert("Укажите базовую папку фотографий слушателей.");
-      form.elements.studentPhotoBasePath?.focus();
+    const databasePath = String(form.elements.studentDatabaseWebDavPath?.value || "").trim();
+    if (!databasePath) {
+      alert("Укажите WebDAV-путь или ссылку на базу слушателей.");
+      form.elements.studentDatabaseWebDavPath?.focus();
       return;
     }
     const submitButton = form.querySelector("button[type='submit']");
     if (submitButton) submitButton.disabled = true;
     try {
-      const response = await fetch(photoApiUrl("/api/settings/student-photos"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ basePath: studentPhotoBasePath })
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || "Не удалось сохранить путь к фотографиям.");
-      state.data.meta.studentDatabaseUrl = databaseUrl;
-      state.data.meta.studentPhotoBasePath = String(payload.basePath || studentPhotoBasePath).trim();
-      addAudit("Изменено подключение", "Админка", "База слушателей и фотографии");
+      const yandexSettings = await saveYandexDiskSettings(form);
+      applyYandexDiskSettings(yandexSettings);
+      addAudit("Изменено подключение", "Админка", "База слушателей и WebDAV");
       persist();
       render();
     } catch (error) {
       alert(`Не удалось сохранить настройки: ${error.message}`);
-      form.elements.studentPhotoBasePath?.focus();
+      form.elements.studentDatabaseWebDavPath?.focus();
       if (submitButton) submitButton.disabled = false;
     }
   }
 
-  async function syncStudentPhotoBasePath() {
+  async function saveYandexDiskSettings(form) {
+    const databasePath = String(form.elements.studentDatabaseWebDavPath?.value || "").trim();
+    const basePath = String(form.elements.yandexDiskBasePath?.value || "").trim();
+    const localDocumentsRoot = String(form.elements.localDocumentsRoot?.value || "").trim();
+    const localDocumentsRootIsSystemParent = Boolean(
+      form.elements.localDocumentsRootIsSystemParent?.checked
+    );
+    const login = String(form.elements.yandexDiskLogin?.value || "").trim();
+    const password = String(form.elements.yandexDiskPassword?.value || "");
+    const emailHost = String(form.elements.studentApplicationsEmailHost?.value || "").trim();
+    const emailPort = Number(form.elements.studentApplicationsEmailPort?.value || 993);
+    const emailLogin = String(form.elements.studentApplicationsEmailLogin?.value || "").trim();
+    const emailPassword = String(form.elements.studentApplicationsEmailPassword?.value || "");
+    if (!databasePath) throw new Error("Укажите WebDAV-путь или ссылку на базу слушателей.");
+    if (!basePath) throw new Error("Укажите путь папки документов в Яндекс-Диске.");
+    if (!localDocumentsRoot) throw new Error("Укажите расположение документов на локальном диске.");
+    if (!emailHost) throw new Error("Укажите IMAP-сервер.");
+    if (!Number.isInteger(emailPort) || emailPort < 1 || emailPort > 65535) {
+      throw new Error("Укажите корректный порт IMAP.");
+    }
+    if (!emailLogin) throw new Error("Укажите логин электронной почты.");
+    const response = await fetch(photoApiUrl("/api/settings/system-documents"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        databasePath,
+        basePath,
+        localDocumentsRoot,
+        localDocumentsRootIsSystemParent,
+        login,
+        password,
+        autoSave: Boolean(form.elements.yandexDiskAutoSave?.checked),
+        emailHost,
+        emailPort,
+        emailLogin,
+        emailPassword
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Не удалось сохранить настройки Яндекс-Диска.");
+    if (form.elements.yandexDiskPassword) form.elements.yandexDiskPassword.value = "";
+    if (form.elements.studentApplicationsEmailPassword) {
+      form.elements.studentApplicationsEmailPassword.value = "";
+    }
+    return payload;
+  }
+
+  function applyYandexDiskSettings(payload = {}) {
+    state.data.meta.studentDatabaseWebDavPath = String(
+      payload.databasePath || getStudentDatabaseWebDavPath()
+    ).trim();
+    state.data.meta.yandexDiskBasePath = String(payload.basePath || getYandexDiskBasePath()).trim();
+    state.data.meta.localDocumentsRoot = String(
+      payload.localDocumentsRoot || getLocalDocumentsRoot()
+    ).trim();
+    state.data.meta.localDocumentsRootIsSystemParent = Boolean(
+      payload.localDocumentsRootIsSystemParent
+    );
+    state.data.meta.yandexDiskLogin = String(payload.login ?? getYandexDiskLogin()).trim();
+    state.data.meta.yandexDiskHasPassword = Boolean(payload.hasPassword);
+    state.data.meta.yandexDiskAutoSave = Boolean(payload.autoSave);
+    state.data.meta.studentApplicationsEmailHost = String(
+      payload.emailHost ?? getStudentApplicationsEmailHost()
+    ).trim();
+    state.data.meta.studentApplicationsEmailPort = Number(
+      payload.emailPort || getStudentApplicationsEmailPort()
+    );
+    state.data.meta.studentApplicationsEmailLogin = String(
+      payload.emailLogin ?? getStudentApplicationsEmailLogin()
+    ).trim();
+    state.data.meta.studentApplicationsEmailHasPassword = Boolean(payload.emailHasPassword);
+  }
+
+  async function testYandexDiskConnection(event) {
+    const button = event.currentTarget;
+    const form = button.closest("form");
+    if (!form) return;
+    button.disabled = true;
     try {
-      const response = await fetch(photoApiUrl("/api/settings/student-photos"));
-      if (!response.ok) return;
-      const payload = await response.json();
-      const basePath = String(payload.basePath || "").trim();
-      if (!basePath || basePath === getStudentPhotoBasePath()) return;
-      state.data.meta.studentPhotoBasePath = basePath;
+      const settings = await saveYandexDiskSettings(form);
+      applyYandexDiskSettings(settings);
+      persist();
+      const response = await fetch(photoApiUrl("/api/yandex-disk/test"), {
+        method: "POST"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Не удалось подключиться к WebDAV.");
+      alert(payload.message || "Подключение WebDAV работает.");
+      render();
+    } catch (error) {
+      alert(`Проверка WebDAV не выполнена: ${error.message}`);
+      button.disabled = false;
+    }
+  }
+
+  async function testStudentApplicationsEmailConnection(event) {
+    const button = event.currentTarget;
+    const form = button.closest("form");
+    if (!form) return;
+    button.disabled = true;
+    try {
+      const settings = await saveYandexDiskSettings(form);
+      applyYandexDiskSettings(settings);
+      persist();
+      const response = await fetch(photoApiUrl("/api/student-applications-email/test"), {
+        method: "POST"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Не удалось подключиться к почтовому ящику.");
+      alert(payload.message || "Подключение к почтовому ящику работает.");
+      render();
+    } catch (error) {
+      alert(`Проверка почты не выполнена: ${error.message}`);
+      button.disabled = false;
+    }
+  }
+
+  async function syncServerConnectionSettings() {
+    try {
+      const yandexResponse = await fetch(photoApiUrl("/api/settings/system-documents"));
+      let changed = false;
+      if (yandexResponse.ok) {
+        const payload = await yandexResponse.json();
+        const before = JSON.stringify({
+          databasePath: getStudentDatabaseWebDavPath(),
+          basePath: getYandexDiskBasePath(),
+          localDocumentsRoot: getLocalDocumentsRoot(),
+          localDocumentsRootIsSystemParent: state.data.meta.localDocumentsRootIsSystemParent,
+          login: getYandexDiskLogin(),
+          hasPassword: state.data.meta.yandexDiskHasPassword,
+          autoSave: state.data.meta.yandexDiskAutoSave,
+          emailHost: getStudentApplicationsEmailHost(),
+          emailPort: getStudentApplicationsEmailPort(),
+          emailLogin: getStudentApplicationsEmailLogin(),
+          emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword
+        });
+        applyYandexDiskSettings(payload);
+        changed = before !== JSON.stringify({
+          databasePath: getStudentDatabaseWebDavPath(),
+          basePath: getYandexDiskBasePath(),
+          localDocumentsRoot: getLocalDocumentsRoot(),
+          localDocumentsRootIsSystemParent: state.data.meta.localDocumentsRootIsSystemParent,
+          login: getYandexDiskLogin(),
+          hasPassword: state.data.meta.yandexDiskHasPassword,
+          autoSave: state.data.meta.yandexDiskAutoSave,
+          emailHost: getStudentApplicationsEmailHost(),
+          emailPort: getStudentApplicationsEmailPort(),
+          emailLogin: getStudentApplicationsEmailLogin(),
+          emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword
+        });
+      }
+      if (!changed) return;
       persist();
       if (state.view === "admin") render();
     } catch (error) {
-      console.warn("Не удалось получить серверную настройку пути к фотографиям", error);
+      console.warn("Не удалось получить серверные настройки подключений", error);
     }
   }
 
@@ -12054,11 +13643,11 @@ MAX - https://bizvmax.ru/zifra_plus
     return payload;
   }
 
-  async function runStudentDatabaseImport(databaseUrl) {
+  async function runStudentDatabaseImport(databasePath) {
     const startResponse = await fetch("/api/students/import-database/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ databaseUrl })
+      body: JSON.stringify({ databasePath })
     });
     const job = await readStudentImportResponse(startResponse);
     if (!job.id) throw new Error("Сервер не вернул идентификатор задачи импорта.");
@@ -12161,7 +13750,8 @@ MAX - https://bizvmax.ru/zifra_plus
           date,
           type,
           amount: hasAmount ? Number(amountValue) || 0 : "",
-          note
+          note,
+          inventoryLink: String(student[`expense${number}InventoryLink`] || "").trim()
         };
       }).filter(Boolean)
     ));
@@ -12205,7 +13795,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const students = buildStudentDatabaseExportStudents();
       const directExpenses = buildStudentDatabaseExportDirectExpenses();
       const response = await runStudentDatabaseExport({
-        databaseUrl: getStudentDatabaseUrl(),
+        databasePath: getStudentDatabaseWebDavPath(),
         students,
         directExpenses
       });
@@ -12258,7 +13848,7 @@ MAX - https://bizvmax.ru/zifra_plus
       indeterminate: false
     });
     try {
-      const payload = await runStudentDatabaseImport(getStudentDatabaseUrl());
+      const payload = await runStudentDatabaseImport(getStudentDatabaseWebDavPath());
       if (!Array.isArray(payload.students) || !payload.students.length) {
         throw new Error("В базе не найдено ни одного слушателя.");
       }
@@ -12383,14 +13973,15 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.collections.audit = audit.slice(-200);
   }
 
-  function miniTable(rows, keys) {
+  function miniTable(rows, keys, options = {}) {
     if (!rows.length) return `<div class="empty-state compact"><span>Нет данных</span></div>`;
+    const config = String(options.config || "");
     return `
       <div class="table-wrap compact">
         <table class="data-table mini">
           <tbody>
             ${rows.map((row) => `
-              <tr>
+              <tr ${config && row.id ? `class="mini-table-link-row" data-action="edit" data-config="${escapeAttr(config)}" data-id="${escapeAttr(row.id)}" role="button" tabindex="0" title="Открыть карточку слушателя"` : ""}>
                 ${keys.map((key) => `<td>${escapeHtml(valueForDisplay(key, row[key]))}</td>`).join("")}
               </tr>
             `).join("")}
@@ -12681,6 +14272,95 @@ MAX - https://bizvmax.ru/zifra_plus
     return getStudentCardDocumentTemplate("studyCertificate");
   }
 
+  function getStudentCompactFolderName(value) {
+    const parts = String(value || "").normalize("NFC").trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "";
+    const surname = parts[0].replace(/[\\/:*?"<>|]+/g, "").replace(/[^\p{L}\p{N}().-]+/gu, "");
+    const initials = [];
+    for (const part of parts.slice(1)) {
+      const letters = part.match(/\p{L}/gu) || [];
+      if (!letters.length) continue;
+      if (part.includes(".")) initials.push(...letters);
+      else initials.push(letters[0]);
+      if (initials.length >= 2) break;
+    }
+    return `${surname}${initials.slice(0, 2).join("")}`
+      .replace(/[^\p{L}\p{N}().-]+/gu, "")
+      .slice(0, 80);
+  }
+
+  function getStudentYandexDocumentsFolder(record) {
+    let source = String(record?.photoPath || "")
+      .trim()
+      .replace(/\\/g, "/")
+      .replace(/^[a-z]:\/+/i, "");
+    const useParentFolder = /^\[-1\](?:\/+|$)/u.test(source);
+    source = source.replace(/^\[-1\]\/+/u, "");
+    const rootMarker = "аис допобразование/";
+    const rootIndex = source.toLocaleLowerCase("ru-RU").indexOf(rootMarker);
+    if (rootIndex >= 0) source = source.slice(rootIndex + rootMarker.length);
+    const parts = source.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+    if (parts.length && /\.[a-z0-9]{2,5}$/i.test(parts.at(-1))) parts.pop();
+    if (parts.length && !parts.some((part) => part === "." || part === "..")) {
+      return `${useParentFolder ? "[-1]/" : ""}${parts.join("/")}`;
+    }
+    const studentName = getStudentCompactFolderName(record?.name) || "БезФИО";
+    return `Слушатели/${studentName}/Документы`;
+  }
+
+  function getStudentYandexDocumentsFolderUrl(record) {
+    if (!String(record?.photoPath || "").trim() && !String(record?.name || "").trim()) return "";
+    let folder = getStudentYandexDocumentsFolder(record);
+    const useParentFolder = /^\[-1\](?:[\\/]+|$)/u.test(folder);
+    folder = folder.replace(/^\[-1\][\\/]+/u, "");
+    const baseParts = getYandexDiskBasePath()
+      .replace(/\\/g, "/")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (useParentFolder) baseParts.pop();
+    const fullPath = [...baseParts, ...folder
+      .replace(/\\/g, "/")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean)];
+    if (!fullPath.length || fullPath.some((part) => part === "." || part === "..")) return "";
+    return `https://disk.yandex.ru/client/disk/${fullPath.map(encodeURIComponent).join("/")}`;
+  }
+
+  function getStudentDocumentStorageRequest(record) {
+    return {
+      saveToYandexDisk: Boolean(state.data.meta.yandexDiskAutoSave),
+      studentFolder: getStudentYandexDocumentsFolder(record),
+      studentName: String(record?.name || "")
+    };
+  }
+
+  function readYandexDocumentSaveResult(response, requested) {
+    if (!requested) return null;
+    const saved = response.headers.get("X-Yandex-Disk-Saved");
+    const decodeHeader = (name) => {
+      const value = response.headers.get(name) || "";
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return value;
+      }
+    };
+    if (saved === "true") {
+      return { saved: true, path: decodeHeader("X-Yandex-Disk-Path") };
+    }
+    return {
+      saved: false,
+      error: decodeHeader("X-Yandex-Disk-Error") || "Яндекс-Диск не подтвердил сохранение файла."
+    };
+  }
+
+  function showYandexDocumentSaveWarning(result) {
+    if (!result || result.saved) return;
+    alert(`Документ скачан, но не сохранён на Яндекс-Диск: ${result.error}`);
+  }
+
   async function downloadStudentDocumentFromTemplate(documentTemplate, record, button, errorTitle) {
     const templateUrl = documentTemplate.templateUrl || "";
     const templatePath = documentTemplate.templatePath || "";
@@ -12697,17 +14377,28 @@ MAX - https://bizvmax.ru/zifra_plus
       const sourceValues = collectContractTemplateSourceValues(record);
       const fileNameValues = { ...sourceValues, ...fieldValues };
       const fileName = ensureDocxFileName(applyContractTemplateMarkers(fileNameTemplate, fileNameValues));
+      const storageRequest = getStudentDocumentStorageRequest(record);
       const response = await fetch(photoApiUrl("/api/contracts/student-document"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ templateUrl, templatePath, fileName, fieldValues, sourceValues, useCustomDocumentProperties })
+        body: JSON.stringify({
+          templateUrl,
+          templatePath,
+          fileName,
+          fieldValues,
+          sourceValues,
+          useCustomDocumentProperties,
+          ...storageRequest
+        })
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       }
+      const yandexSaveResult = readYandexDocumentSaveResult(response, storageRequest.saveToYandexDisk);
       const blob = await response.blob();
       downloadBlob(fileName, blob);
+      showYandexDocumentSaveWarning(yandexSaveResult);
     } catch (error) {
       alert(`${errorTitle}: ${error.message}`);
     } finally {
@@ -12938,17 +14629,28 @@ MAX - https://bizvmax.ru/zifra_plus
       const fieldValues = evaluateContractTemplateFields(record, fields);
       const sourceValues = collectContractTemplateSourceValues(record);
       const fileName = ensureDocxFileName(applyContractTemplateMarkers(fileNameTemplate, fieldValues));
+      const storageRequest = getStudentDocumentStorageRequest(record);
       const response = await fetch(photoApiUrl("/api/contracts/student-document"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ templateUrl, templatePath, fileName, fieldValues, sourceValues, useCustomDocumentProperties })
+        body: JSON.stringify({
+          templateUrl,
+          templatePath,
+          fileName,
+          fieldValues,
+          sourceValues,
+          useCustomDocumentProperties,
+          ...storageRequest
+        })
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       }
+      const yandexSaveResult = readYandexDocumentSaveResult(response, storageRequest.saveToYandexDisk);
       const blob = await response.blob();
       downloadBlob(fileName, blob);
+      showYandexDocumentSaveWarning(yandexSaveResult);
     } catch (error) {
       alert(`Не удалось сформировать документ «${documentTemplate.title}»: ${error.message}`);
     } finally {
@@ -13170,6 +14872,13 @@ MAX - https://bizvmax.ru/zifra_plus
     if (normalized === "Количество часов") return getStudentProgramHours(record);
     if (normalized === "Часы") return getStudentProgramHours(record);
     if (normalized === "Вид программы ДПО") return getStudentProgramTypeCode(record);
+    if ([
+      "Дата отчисления",
+      "Дата приказа отчисления",
+      "Дата приказа Отчисл Док Обр"
+    ].includes(normalized)) {
+      return String(record?.expulsionDate || record?.expulsionOrderDate || "").trim();
+    }
     if (normalized === "Пол") {
       const gender = String(record?.gender || inferStudentGender(record?.name) || "").trim().toLowerCase();
       if (gender.startsWith("ж")) return "Ж";
@@ -13177,6 +14886,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return "";
     }
     if (normalized === "ФИО_несклон") return isChecked(record.noDeclension) ? "+" : "";
+    if (normalized === "Стажировка") return isChecked(record.internship) ? "+" : "";
     if (normalized === "Фото") return record.photoPath || record.photoUrl || record.photoData || "";
     if (normalized === "ИО") {
       const parts = splitFullName(record.name);
@@ -13835,8 +15545,9 @@ MAX - https://bizvmax.ru/zifra_plus
     return escapeHtml(value).replaceAll("\n", " ");
   }
 
+  bindStudentStatusHistoryNavigation();
   render();
-  syncStudentPhotoBasePath();
+  syncServerConnectionSettings();
   window.setTimeout(() => {
     autoInspectDocumentTemplates();
   }, 250);
