@@ -2,12 +2,27 @@
   const STORAGE_KEY = "ais-dopobr-web-state-v1";
   const TABLE_SETTINGS_KEY = "ais-dopobr-web-table-settings-v1";
   const STUDENT_CARD_TAB_ORDER_KEY = "ais-dopobr-student-card-tab-order-v1";
+  const TAB_ORDER_SETTINGS_KEY = "ais-dopobr-tab-orders-v1";
   const NAV_ITEM_ORDER_KEY = "ais-dopobr-nav-item-order-v1";
   const START_VIEW_KEY = "ais-dopobr-start-view-v1";
   const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH =
     "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
   const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
   const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
+  const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
+  const PAYMENT_FORMULA_CONSTANT_MIME = "application/x-ais-payment-constant";
+  const STUDENT_STATUS_ORDER = Object.freeze([
+    "Намерение",
+    "В работе",
+    "На зачисление",
+    "Учится",
+    "Без выдачи документа",
+    "Отчислен",
+    "Отказ",
+    "На восстановление",
+    "На отчисление",
+    "Новый набор"
+  ]);
   const TABLE_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
   const DEFAULT_TABLE_PAGE_SIZE = 50;
   const STUDENT_PROGRAM_TYPE_FILTER_OPTIONS = ["КПК", "ППП", "ДОП", "ПРО"];
@@ -467,7 +482,10 @@ MAX - https://bizvmax.ru/zifra_plus
   const defaultDocumentTemplateId = "document-contract-application";
   const legalEntityApplicationDocumentTemplateId = "document-legal-entity-application";
   const postalEnvelopeDocumentTemplateId = "document-postal-envelope";
-  const documentTemplateInspectionVersion = "2026-06-20-formulas-v4";
+  const postalEnvelopeGenerationFormatVersion = "postal-envelope-docx-v1";
+  const studentDocumentsFolderTemplateMarker = "#Папка документов слушателя#";
+  const downloadsFolderTemplateMarker = "#Папка Загрузки#";
+  const documentTemplateInspectionVersion = "2026-07-29-email-v8";
   const wordTemplateExtensions = ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"];
   const wordTemplateAccept = wordTemplateExtensions.map((ext) => `.${ext}`).join(",");
   const studentCardDocumentBindingOptions = [
@@ -488,6 +506,8 @@ MAX - https://bizvmax.ru/zifra_plus
       templateUrl: defaultDocumentTemplateWebDavSources.contract,
       templatePath: "",
       fileNameTemplate: "Заявление+договор_#ФИО_обуч#_#N Договора#",
+      saveFolderTemplate: studentDocumentsFolderTemplateMarker,
+      generationFormat: "pdf",
       useCustomDocumentProperties: "1",
       documentKind: "contract",
       fields: contractTemplateFieldDefaults.map((field) => ({ ...field })),
@@ -505,6 +525,8 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: "",
       fileName: "Заявление ДПП.docx",
       fileNameTemplate: "Заявление_#ФИО_обуч#",
+      saveFolderTemplate: studentDocumentsFolderTemplateMarker,
+      generationFormat: "pdf",
       useCustomDocumentProperties: "1",
       documentKind: "application",
       fields: contractTemplateFieldDefaults.map((field) => ({ ...field })),
@@ -521,6 +543,7 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: "storage/document-templates/Диплом о переподготовке_v1.docx",
       fileName: "Диплом о переподготовке_v1.docx",
       fileNameTemplate: "Диплом_#ФИО#_#РегНомер#",
+      saveFolderTemplate: "Дипломы ПП",
       programTypes: ["ППП"],
       markers: [
         "Дата выдачи", "Дата начала", "Дата окончания", "Дата приказа", "ДокументОбОбразовании",
@@ -535,6 +558,7 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: "storage/document-templates/Удостоверение о повышении квалификации_v1.docx",
       fileName: "Удостоверение о повышении квалификации_v1.docx",
       fileNameTemplate: "Удостоверение_#ФИО#_#РегНомер#",
+      saveFolderTemplate: "Удостоверения ПК",
       programTypes: ["КПК"],
       markers: [
         "Дата выдачи", "Дата начала", "Дата окончания", "ДокументОбОбразовании", "ИО",
@@ -549,6 +573,7 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: "storage/document-templates/Сертификат ПРО.docx",
       fileName: "Сертификат ПРО.docx",
       fileNameTemplate: "Сертификат_#ФИО#_#РегНомер#",
+      saveFolderTemplate: "Сертификаты мероприятия",
       programTypes: ["ДОП", "ПРО"],
       markers: [
         "Дата выдачи", "ИО", "Номер бланка", "Прогр обуч факт", "Прогр обуч факт_ENG",
@@ -563,6 +588,7 @@ MAX - https://bizvmax.ru/zifra_plus
     templatePath: "",
     fileName: "Справка об обучении.docx",
     fileNameTemplate: "Справка_об_обучении_#ФИО#",
+    saveFolderTemplate: studentDocumentsFolderTemplateMarker,
     documentKind: "studyCertificate",
     markers: [
       "ФИО_кому", "ДР обуч", "Прогр обуч факт", "ВидПрограммы", "Номер приказа зачисления",
@@ -594,6 +620,9 @@ MAX - https://bizvmax.ru/zifra_plus
     templatePath: "",
     fileName: "Почтовый конверт.docx",
     fileNameTemplate: "Почтовый_конверт_#ФИО#",
+    saveFolderTemplate: downloadsFolderTemplateMarker,
+    generationFormat: "docx",
+    generationFormatVersion: postalEnvelopeGenerationFormatVersion,
     documentKind: "postalEnvelope",
     markers: ["ФИО", "Адрес", "Телефон", "Индекс"],
     fieldPositions: {
@@ -616,7 +645,8 @@ MAX - https://bizvmax.ru/zifra_plus
       templateUrl: defaultDocumentTemplateWebDavSources.enrollmentOrder,
       templatePath: "",
       fileName: "Приказ на зачисление.docx",
-      fileNameTemplate: "Приказ_на_зачисление_#Номер приказа зачисления#",
+      fileNameTemplate: "#Номер приказа зачисления#-#Дата приказа зачисления#",
+      saveFolderTemplate: "Документы/Приказы о зачислении",
       documentKind: "enrollmentOrder",
       markers: [
         "Номер приказа зачисления",
@@ -637,7 +667,8 @@ MAX - https://bizvmax.ru/zifra_plus
       templateUrl: defaultDocumentTemplateWebDavSources.expulsionOrder,
       templatePath: "",
       fileName: "Приказ об отчислении.docx",
-      fileNameTemplate: "Приказ_об_отчислении_#Номер приказа отчисления#",
+      fileNameTemplate: "#Номер приказа отчисления#-#Дата приказа отчисления#",
+      saveFolderTemplate: "Документы/Приказы об отчислении",
       documentKind: "expulsionOrder",
       markers: [
         "Номер приказа отчисления",
@@ -699,6 +730,9 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: definition.templatePath,
       fileName: definition.fileName,
       fileNameTemplate: definition.fileNameTemplate,
+      saveFolderTemplate: definition.saveFolderTemplate || studentDocumentsFolderTemplateMarker,
+      generationFormat: normalizeDocumentGenerationFormat(definition.generationFormat),
+      generationFormatVersion: String(definition.generationFormatVersion || ""),
       useCustomDocumentProperties: "1",
       fields,
       originalFields: fields.map((field) => ({ ...field })),
@@ -724,6 +758,93 @@ MAX - https://bizvmax.ru/zifra_plus
       ))
     ];
   }
+
+  function getDefaultDocumentSaveFolderTemplate(documentTemplate = {}) {
+    const configured = String(documentTemplate?.saveFolderTemplate || "").trim();
+    const templateId = String(documentTemplate?.id || "").trim();
+    const documentKind = String(documentTemplate?.documentKind || "").trim();
+    if (
+      (templateId === postalEnvelopeDocumentTemplateId || documentKind === "postalEnvelope")
+      && configured === studentDocumentsFolderTemplateMarker
+    ) {
+      return downloadsFolderTemplateMarker;
+    }
+    if (
+      (templateId === "document-enrollment-order" || documentKind === "enrollmentOrder")
+      && /^Документы[\\/]Приказы на зачисление$/iu.test(configured)
+    ) {
+      return "Документы/Приказы о зачислении";
+    }
+    if (configured) return configured;
+    const defaultsById = {
+      [postalEnvelopeDocumentTemplateId]: downloadsFolderTemplateMarker,
+      "document-enrollment-order": "Документы/Приказы о зачислении",
+      "document-expulsion-order": "Документы/Приказы об отчислении",
+      "education-document-diploma-ppp": "Дипломы ПП",
+      "education-document-certificate-kpk": "Удостоверения ПК",
+      "education-document-certificate-dop-pro": "Сертификаты мероприятия"
+    };
+    if (defaultsById[templateId]) return defaultsById[templateId];
+    if (documentKind === "postalEnvelope") return downloadsFolderTemplateMarker;
+    if (documentKind === "enrollmentOrder") return "Документы/Приказы о зачислении";
+    if (documentKind === "expulsionOrder") return "Документы/Приказы об отчислении";
+    if (documentKind === "education") {
+      const programTypes = Array.isArray(documentTemplate?.programTypes)
+        ? documentTemplate.programTypes.map((value) => normalizeEducationProgramType(value))
+        : [];
+      if (programTypes.includes("ППП")) return "Дипломы ПП";
+      if (programTypes.includes("КПК")) return "Удостоверения ПК";
+      if (programTypes.includes("ПРО") || programTypes.includes("ДОП")) return "Сертификаты мероприятия";
+    }
+    return studentDocumentsFolderTemplateMarker;
+  }
+
+  function normalizeDocumentGenerationFormat(value) {
+    return String(value || "").trim().toLowerCase() === "docx" ? "docx" : "pdf";
+  }
+
+  function getDefaultDocumentEmailDeliveryMode(documentTemplate = {}) {
+    const documentKind = String(documentTemplate?.documentKind || "").trim();
+    return documentKind === "contract" || documentKind === "education" ? "student" : "off";
+  }
+
+  function normalizeDocumentEmailDeliveryMode(value, documentTemplate = {}) {
+    const mode = String(value || "").trim().toLowerCase();
+    return ["off", "student", "system"].includes(mode)
+      ? mode
+      : getDefaultDocumentEmailDeliveryMode(documentTemplate);
+  }
+
+  function normalizeDocumentEmailTemplateValues(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(
+      Object.entries(value)
+        .map(([name, templateValue]) => [
+          String(name || "").replace(/^\[|\]$/g, "").trim(),
+          String(templateValue ?? "")
+        ])
+        .filter(([name]) => name)
+    );
+  }
+
+  function getDefaultDocumentEmailSubjectTemplate(documentTemplate = {}) {
+    const documentKind = String(documentTemplate?.documentKind || "").trim();
+    if (documentKind === "contract") return "Договор на обучение: #ФИО_обуч#";
+    if (documentKind === "education") return "Документ об образовании: #ФИО#";
+    return "";
+  }
+
+  function getDefaultDocumentEmailMessageTemplate(documentTemplate = {}) {
+    const documentKind = String(documentTemplate?.documentKind || "").trim();
+    if (documentKind === "contract") {
+      return "Направляем договор на обучение.\n\nС уважением,\nООО «Цифровизация Плюс»";
+    }
+    if (documentKind === "education") {
+      return "Направляем документ об образовании.\n\nС уважением,\nООО «Цифровизация Плюс»";
+    }
+    return "";
+  }
+
   const sdoSettingDefaults = [
     {
       key: "portalUrl",
@@ -747,6 +868,75 @@ MAX - https://bizvmax.ru/zifra_plus
       value: "Доступ к порталу дистанционного обучения Цифровизация Плюс"
     }
   ];
+  const paymentSettingDefaults = [
+    {
+      key: "authorRate",
+      marker: "АвторскаяСтавка",
+      label: "Авторская ставка",
+      type: "number",
+      unit: "%",
+      value: "50"
+    },
+    {
+      key: "employeeRate",
+      marker: "СтавкаОплатыСотруднику",
+      label: "Ставка оплаты сотруднику",
+      type: "number",
+      value: "350"
+    },
+    {
+      key: "teacherRate",
+      marker: "СтавкаОплатыПреподавателю",
+      label: "Ставка оплаты преподавателю",
+      type: "number",
+      value: "400"
+    },
+    {
+      key: "commissionChairRate",
+      marker: "СтавкаОплатыИАК",
+      label: "Ставка оплаты председателю ИАК",
+      type: "number",
+      value: "400"
+    },
+    {
+      key: "practiceReviewRate",
+      marker: "СтавкаОплатыПроверкаПрактики",
+      label: "Ставка проверки практической работы",
+      type: "number",
+      value: "200"
+    },
+    {
+      key: "automaticExpenseRules",
+      label: "Автоматическое назначение оплат",
+      type: "textarea",
+      value: [
+        "Оплата преподавателю,[АвторскаяСтавка],-Симак Роман Сергеевич",
+        "Оплата председателю ИАК,[СтавкаОплатыИАК]",
+        "Оплата сотруднику,[СтавкаОплатыСотруднику],Симак Варвара Романовна",
+        "Оплата сотруднику,[СтавкаОплатыСотруднику],Симак Юрий Романович",
+        "Печать документа об образовании,110,Печатная лавка",
+        "Почтовое отправление,130,Почта России"
+      ].join("\n")
+    },
+    {
+      key: "sourceAgentAssignments",
+      label: "Назначение агентов в зависимости от источника заявки",
+      type: "textarea",
+      value: "Вконтакте=Симак Варвара Романовна"
+    }
+  ];
+  const documentPathSettingDefaults = [
+    {
+      key: "studentDocumentsFolder",
+      label: studentDocumentsFolderTemplateMarker,
+      value: "Слушатели/#ФамилияИО#/Документы"
+    }
+  ];
+  const documentPathMarkerDefinitions = [
+    { token: "#ФамилияИО#", label: "Фамилия и инициалы" },
+    { token: "#ФИО#", label: "Полное ФИО" },
+    { token: "#UID#", label: "UID слушателя" }
+  ];
   const educationRegistrationTypeCodeDefaults = [
     { programType: "КПК", code: "ПК" },
     { programType: "ППП", code: "ПП" },
@@ -760,8 +950,14 @@ MAX - https://bizvmax.ru/zifra_plus
     { key: "general", label: "Общие затраты", tone: "general" }
   ];
   const dictionaryDefaults = {
+    statuses: [...STUDENT_STATUS_ORDER],
     managers: [],
+    agents: [],
     sources: [],
+    frdoProfessionalAreas: [],
+    economicActivities: [],
+    minimumEducationLevels: [],
+    studentAdditionalStatuses: [DEFAULT_STUDENT_ADDITIONAL_STATUS],
     fundingSources: ["Собственные средства", "За счет организации", "Федеральный бюджет", "Местный бюджет"],
     citizenships: ["Российская Федерация"],
     documentTypes: ["Паспорт гражданина РФ", "Иностранный паспорт", "Вид на жительство", "Свидетельство о рождении"],
@@ -828,6 +1024,7 @@ MAX - https://bizvmax.ru/zifra_plus
   ];
   const searchableStudentFields = {
     manager: { dict: "managers", fields: [["students", "manager"], ["programs", "manager"]] },
+    agent: { dict: "agents", fields: [["students", "agent"]] },
     source: { dict: "sources", fields: [["students", "source"], ["webinars", "source"]] },
     citizenship: { dict: "citizenships", fields: [["students", "citizenship"]] },
     passportType: { dict: "documentTypes", fields: [["students", "passportType"]] },
@@ -845,9 +1042,48 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "generalExpenses", label: "Общие затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8c0-2 3.6-3.5 8-3.5S20 6 20 8s-3.6 3.5-8 3.5S4 10 4 8z"></path><path d="M4 8v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V8"></path><path d="M4 12v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5v-4"></path></svg>' },
     { id: "inventory", label: "Запасы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8l8-4 8 4-8 4z"></path><path d="M4 8v8l8 4 8-4V8"></path><path d="M12 12v8"></path><path d="M8 6l8 4"></path></svg>' },
     { id: "documentConstructor", label: "Конструктор документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><path d="M4 7h2"></path><path d="M4 11h2"></path><path d="M4 15h2"></path></svg>' },
-    { id: "settings", label: "Справочники", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 17h2"></path><path d="M10 17h10"></path><circle cx="8" cy="17" r="2"></circle></svg>' },
+    { id: "settings", label: "Настройки", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 17h2"></path><path d="M10 17h10"></path><circle cx="8" cy="17" r="2"></circle></svg>' },
     { id: "admin", label: "Админка", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 4.6-2.8 7.9-7 10-4.2-2.1-7-5.4-7-10V6z"></path><circle cx="12" cy="12" r="2.4"></circle><path d="M12 8.2v1.2"></path><path d="M12 14.6v1.2"></path><path d="M15.8 12h-1.2"></path><path d="M9.4 12H8.2"></path><path d="M14.7 9.3l-.9.9"></path><path d="M10.2 13.8l-.9.9"></path><path d="M14.7 14.7l-.9-.9"></path><path d="M10.2 10.2l-.9-.9"></path></svg>' }
   ];
+
+  const PROGRAM_LIST_FIELD_KEYS = new Set([
+    "qualification",
+    "activityScope",
+    "fgos",
+    "fgosCompetency",
+    "professionalStandard",
+    "professionalStandardFunctions",
+    "teachers",
+    "literature"
+  ]);
+  const PROGRAM_FIELD_ALIASES = Object.freeze({
+    qualification: ["Квалификация"],
+    activityScope: ["Сфера деятельности"],
+    fgos: ["ФГОС"],
+    fgosCompetency: ["ФГОС компетенция"],
+    professionalStandard: ["Профстандарт"],
+    professionalStandardFunctions: ["Профстандарт трудовые функции"],
+    frdoProfessionalArea: ["Область профессиональной деятельности (для ФРДО)"],
+    economicActivity: ["Вид экономической деятельности (для 1-ПК)"],
+    minimumEducationLevel: ["Минимальный уровень образования слушателя"],
+    programOrderNo: ["Номер приказа"],
+    programOrderDate: ["Дата приказа"],
+    opFolder: ["Папка ОП"],
+    opFileName: ["Имя файла ОП"],
+    commissionChair: ["Председатель", "chair"],
+    commissionMember1: ["Член1"],
+    commissionMember2: ["Член2"],
+    secretary: ["Секретарь"],
+    developer: ["Разработчик"],
+    manager: ["Менеджер"],
+    teachers: ["Преподаватели"],
+    literature: ["Литература ОП"]
+  });
+  const PROGRAM_DICTIONARY_FIELDS = Object.freeze({
+    frdoProfessionalArea: "frdoProfessionalAreas",
+    economicActivity: "economicActivities",
+    minimumEducationLevel: "minimumEducationLevels"
+  });
 
   const configs = {
     students: {
@@ -858,9 +1094,10 @@ MAX - https://bizvmax.ru/zifra_plus
       fields: [
         field("name", "ФИО", "text", true),
         field("nameEnglish", "ФИО анг."),
-        field("noDeclension", "Не склоняется", "checkbox"),
+        field("noDeclension", "Не склоняется фамилия", "checkbox"),
         field("addressByFirstName", "Обращаться по имени", "checkbox"),
         field("status", "Статус", "select", true, "statuses"),
+        field("additionalStatus", "Доп. статус", "select", false, "studentAdditionalStatuses"),
         field("program", "Программа", "text", true),
         field("phone", "Телефон"),
         field("email", "Email", "email"),
@@ -919,8 +1156,27 @@ MAX - https://bizvmax.ru/zifra_plus
         field("telegramGroup", "Гр. Телеграмм"),
         field("groupIndex", "Индекс группы"),
         field("studyForm", "Форма обучения", "select", false, "studyForms"),
-        field("qualification", "Квалификация"),
-        field("manager", "Ответственный")
+        field("qualification", "Квалификация", "textarea", false, null, { programTab: "characteristics", list: true }),
+        field("activityScope", "Сфера деятельности", "textarea", false, null, { programTab: "characteristics", list: true }),
+        field("fgos", "ФГОС", "textarea", false, null, { programTab: "characteristics", list: true }),
+        field("fgosCompetency", "ФГОС компетенция", "textarea", false, null, { programTab: "characteristics", list: true }),
+        field("professionalStandard", "Профстандарт", "textarea", false, null, { programTab: "characteristics", list: true }),
+        field("professionalStandardFunctions", "Профстандарт трудовые функции", "textarea", false, null, { programTab: "characteristics", list: true }),
+        field("frdoProfessionalArea", "Область профессиональной деятельности (для ФРДО)", "select", false, "frdoProfessionalAreas", { programTab: "characteristics" }),
+        field("economicActivity", "Вид экономической деятельности (для 1-ПК)", "select", false, "economicActivities", { programTab: "characteristics" }),
+        field("minimumEducationLevel", "Минимальный уровень образования слушателя", "select", false, "minimumEducationLevels", { programTab: "characteristics" }),
+        field("programOrderNo", "Номер приказа", "text", false, null, { programTab: "characteristics" }),
+        field("programOrderDate", "Дата приказа", "date", false, null, { programTab: "characteristics" }),
+        field("opFolder", "Папка ОП", "text", false, null, { programTab: "characteristics", wide: true }),
+        field("opFileName", "Имя файла ОП", "text", false, null, { programTab: "characteristics", wide: true }),
+        field("literature", "Литература ОП", "textarea", false, null, { programTab: "characteristics", list: true, wide: true }),
+        field("commissionChair", "Председатель", "text", false, null, { programTab: "commission" }),
+        field("commissionMember1", "Член 1", "text", false, null, { programTab: "commission" }),
+        field("commissionMember2", "Член 2", "text", false, null, { programTab: "commission" }),
+        field("secretary", "Секретарь", "text", false, null, { programTab: "commission" }),
+        field("developer", "Разработчик", "text", false, null, { programTab: "commission" }),
+        field("manager", "Менеджер", "text", false, null, { programTab: "commission" }),
+        field("teachers", "Преподаватели", "textarea", false, null, { programTab: "commission", list: true, wide: true, rows: 5 })
       ],
       table: ["name", "status", "type", "hours", "price", "landingCode", "promoSite", "telegramGroup", "groupIndex"]
     },
@@ -1013,7 +1269,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("amount", "Сумма", "number"),
         field("note", "Примечание"),
         field("uid", "uid"),
-        field("balance", "Остаток", "number")
+        field("balance", "Остаток, шт.", "number")
       ],
       table: ["itemType", "balance", "date", "amount", "note", "uid"]
     },
@@ -1092,11 +1348,12 @@ MAX - https://bizvmax.ru/zifra_plus
           fields: [
             field("name", "ФИО", "text", true),
             field("nameEnglish", "ФИО анг."),
-            field("noDeclension", "Не склоняется", "checkbox"),
+            field("noDeclension", "Не склоняется фамилия", "checkbox"),
             field("addressByFirstName", "Обращаться по имени", "checkbox"),
             field("uid", "uid"),
             field("photoPath", "Ссылка на фото"),
             field("status", "Статус", "select", true, "statuses"),
+            field("additionalStatus", "Доп. статус", "select", false, "studentAdditionalStatuses"),
             field("program", "Программа", "text", true),
             field("studyForm", "Форма обучения", "select", false, "studyForms"),
             field("educationType", "Вид программы"),
@@ -1443,11 +1700,13 @@ MAX - https://bizvmax.ru/zifra_plus
     search: "",
     statusFilter: getDefaultStatusFilter(initialView),
     studentProgramTypeFilter: [],
+    programRegistryTypeFilter: [],
     studentImportedViewIds: [],
     sort: { key: "", dir: "asc" },
     navItemOrder: loadNavItemOrder(),
     studentCardTab: "main",
-    studentCardTabOrder: loadStudentCardTabOrder(),
+    programCardTab: "main",
+    tabOrders: loadTabOrders(),
     discountPickerOpen: false,
     discountPicker: null,
     openPaymentRows: [],
@@ -1493,15 +1752,18 @@ MAX - https://bizvmax.ru/zifra_plus
     tableOptions: null,
     tableSettings: loadTableSettings(),
     tablePages: {},
+    inventoryStudentSort: { key: "name", dir: "asc" },
     dictionarySearch: "",
     selectedDictionary: "",
     dictionaryAddFocus: "",
+    paymentSettingsTab: "rates",
     communicationTemplateFieldSort: "asc",
     documentTemplateSearch: "",
     documentTemplateSort: { key: "title", dir: "asc" },
     documentTemplateLinkDialog: false,
     activeDocumentTemplateId: defaultDocumentTemplateId,
     documentTemplateDialogId: "",
+    documentTemplateSettingsTab: "main",
     activeContractTemplateFieldId: "",
     pendingContractTemplateFieldFocus: "",
     financeChart: { revenue: true, direct: true, general: true },
@@ -1509,12 +1771,10 @@ MAX - https://bizvmax.ru/zifra_plus
     data: loadState()
   };
   let sidebarOutsideClickBound = false;
-  let studentProgramTypeFilterOutsideClickBound = false;
+  let programTypeFilterOutsideClickBound = false;
   let fieldUndoKeyBound = false;
   let globalEscapeKeyBound = false;
   let lastDeletedControlState = null;
-  let draggedStudentTabId = "";
-  let lastStudentTabDragEndedAt = 0;
   let draggedNavItemId = "";
   let databaseImportHideTimer = 0;
   let databaseExportHideTimer = 0;
@@ -1607,6 +1867,7 @@ MAX - https://bizvmax.ru/zifra_plus
     data.meta.localDocumentsRootIsSystemParent = Boolean(
       data.meta.localDocumentsRootIsSystemParent
     );
+    data.meta.openDocumentsLocally = data.meta.openDocumentsLocally !== false;
     data.meta.yandexDiskLogin = String(data.meta.yandexDiskLogin || "").trim();
     data.meta.yandexDiskHasPassword = Boolean(data.meta.yandexDiskHasPassword);
     data.meta.yandexDiskAutoSave = Boolean(data.meta.yandexDiskAutoSave);
@@ -1616,13 +1877,28 @@ MAX - https://bizvmax.ru/zifra_plus
     data.meta.studentApplicationsEmailPort = Number(
       data.meta.studentApplicationsEmailPort || 993
     );
+    data.meta.studentApplicationsEmailSmtpHost = String(
+      data.meta.studentApplicationsEmailSmtpHost
+        || data.meta.studentApplicationsEmailHost.replace(/^imap(?=\.)/i, "smtp")
+    ).trim();
+    data.meta.studentApplicationsEmailSmtpPort = Number(
+      data.meta.studentApplicationsEmailSmtpPort || 465
+    );
     data.meta.studentApplicationsEmailLogin = String(
       data.meta.studentApplicationsEmailLogin || ""
     ).trim();
     data.meta.studentApplicationsEmailHasPassword = Boolean(
       data.meta.studentApplicationsEmailHasPassword
     );
+    data.meta.defaultAuthorPaymentPercent = normalizePaymentPercent(
+      data.meta.defaultAuthorPaymentPercent,
+      50
+    );
     data.dictionaries = data.dictionaries || {};
+    const missingProgramDictionaryKeys = new Set(
+      Object.values(PROGRAM_DICTIONARY_FIELDS)
+        .filter((key) => !Array.isArray(data.dictionaries[key]))
+    );
     const hasDiscountRules = Array.isArray(data.dictionaries.discountRules);
     const legacyMoodlePortalUrl = Array.isArray(data.dictionaries.moodlePortalUrls)
       ? data.dictionaries.moodlePortalUrls.find((value) => String(value || "").trim())
@@ -1630,6 +1906,7 @@ MAX - https://bizvmax.ru/zifra_plus
     Object.entries(dictionaryDefaults).forEach(([key, values]) => {
       data.dictionaries[key] = unique([...(data.dictionaries[key] || []), ...values]);
     });
+    data.dictionaries.statuses = [...STUDENT_STATUS_ORDER];
     if (!hasDiscountRules) data.dictionaries.discountRules = getDefaultDiscountRuleValues();
     data.dictionaries.communicationTemplates = normalizeCommunicationTemplates(data.dictionaries.communicationTemplates);
     data.dictionaries.communicationTemplateDescriptions = normalizeCommunicationTemplateDescriptions(
@@ -1652,6 +1929,23 @@ MAX - https://bizvmax.ru/zifra_plus
       legacyContractTemplateFields
     );
     data.dictionaries.sdoSettings = normalizeSdoSettings(data.dictionaries.sdoSettings, legacyMoodlePortalUrl);
+    data.dictionaries.documentPathSettings = normalizeDocumentPathSettings(data.dictionaries.documentPathSettings);
+    const savedPaymentSettings = Array.isArray(data.dictionaries.paymentSettings)
+      ? data.dictionaries.paymentSettings
+      : [];
+    const hadAuthorRateConstant = savedPaymentSettings.some((setting) => (
+      setting?.key === "authorRate"
+      || normalizePaymentConstantMarker(setting?.marker).toLocaleLowerCase("ru-RU")
+        === "АвторскаяСтавка".toLocaleLowerCase("ru-RU")
+    ));
+    data.dictionaries.paymentSettings = normalizePaymentSettings(savedPaymentSettings);
+    if (!hadAuthorRateConstant) {
+      data.dictionaries.paymentSettings = data.dictionaries.paymentSettings.map((setting) => (
+        setting.key === "authorRate"
+          ? { ...setting, value: String(data.meta.defaultAuthorPaymentPercent) }
+          : setting
+      ));
+    }
     data.dictionaries.educationRegistrationTypeCodes = normalizeEducationRegistrationTypeCodes(
       data.dictionaries.educationRegistrationTypeCodes
     );
@@ -1660,8 +1954,30 @@ MAX - https://bizvmax.ru/zifra_plus
     );
     delete data.dictionaries.moodlePortalUrls;
     data.collections = data.collections || {};
-    data.collections.programs = mergeProgramRegistry(data)
+    data.collections.programs = mergeProgramPaymentRegistry(data, mergeProgramRegistry(data))
       .map((program) => normalizeProgramRecord(program));
+    Object.entries(PROGRAM_DICTIONARY_FIELDS).forEach(([fieldKey, dictionaryKey]) => {
+      if (!missingProgramDictionaryKeys.has(dictionaryKey)) return;
+      const importedValues = data.collections.programs
+        .flatMap((program) => getProgramDictionaryFieldValues(program[fieldKey]))
+        .sort((left, right) => left.localeCompare(right, "ru"));
+      data.dictionaries[dictionaryKey] = unique([
+        ...(data.dictionaries[dictionaryKey] || []),
+        ...importedValues
+      ]);
+    });
+    const globalAuthorRate = normalizePaymentRateValue(
+      data.dictionaries.paymentSettings.find((setting) => setting.key === "authorRate")?.value
+        ?? data.meta.defaultAuthorPaymentPercent
+    );
+    data.collections.programs = data.collections.programs.map((program) => (
+      applyGlobalAuthorRateToPrograms(
+        [program],
+        program.defaultAuthorPaymentPercent || 50,
+        globalAuthorRate
+      )[0]
+    ));
+    data.meta.defaultAuthorPaymentPercent = globalAuthorRate;
     data.dictionaries.studyForms = unique([
       ...(data.dictionaries.studyForms || []).map((value) => normalizeStudyForm(value)),
       ...data.collections.programs.map((program) => String(program.studyForm || "").trim())
@@ -1672,6 +1988,10 @@ MAX - https://bizvmax.ru/zifra_plus
     );
     data.collections.trainingPlans = linkTrainingPlanRecordsToPrograms(data.collections.trainingPlans, data.collections.programs);
     data.collections.students = (data.collections.students || []).map((student) => normalizeStudentRecord(student));
+    data.dictionaries.studentAdditionalStatuses = unique([
+      ...(data.dictionaries.studentAdditionalStatuses || []),
+      ...data.collections.students.map((student) => student.additionalStatus)
+    ].map((value) => String(value || "").trim()).filter(Boolean));
     const directExpensePartition = attachDirectExpensesToStudentRecords(
       data.collections.students,
       data.collections.directExpenses || []
@@ -1718,6 +2038,146 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getSdoSettingValue(key) {
     return normalizeSdoSettings(state.data.dictionaries.sdoSettings)
+      .find((setting) => setting.key === key)?.value || "";
+  }
+
+  function normalizeDocumentPathSettings(values) {
+    const saved = Array.isArray(values) ? values : [];
+    return documentPathSettingDefaults.map((setting) => {
+      const savedSetting = saved.find((item) => item?.key === setting.key);
+      return {
+        ...setting,
+        value: String(savedSetting?.value ?? setting.value).trim()
+      };
+    });
+  }
+
+  function normalizePaymentRateValue(value) {
+    const number = Number(String(value ?? "").replace(",", ".").trim());
+    if (!Number.isFinite(number)) return 0;
+    return Math.round(Math.max(0, number) / 10) * 10;
+  }
+
+  function isPaymentRateValueValid(value) {
+    return Number.isFinite(value)
+      && value >= 0
+      && Math.abs(value / 10 - Math.round(value / 10)) < 1e-9;
+  }
+
+  function normalizePaymentSettings(values) {
+    const saved = Array.isArray(values) ? values : [];
+    const defaultSettings = paymentSettingDefaults.map((setting) => {
+      const savedSetting = saved.find((item) => item?.key === setting.key);
+      const sourceValue = savedSetting?.value ?? setting.value;
+      return {
+        ...setting,
+        label: String(savedSetting?.label || setting.label),
+        value: setting.type === "number"
+          ? String(normalizePaymentRateValue(sourceValue))
+          : String(sourceValue || "")
+      };
+    });
+    const defaultKeys = new Set(paymentSettingDefaults.map((setting) => setting.key));
+    const defaultMarkers = new Set(paymentSettingDefaults
+      .map((setting) => normalizePaymentConstantMarker(setting.marker))
+      .filter(Boolean)
+      .map((marker) => marker.toLocaleLowerCase("ru-RU")));
+    const customMarkers = new Set();
+    const customSettings = saved
+      .filter((setting) => (
+        setting?.type === "number"
+        && (setting.custom || !defaultKeys.has(String(setting.key || "")))
+      ))
+      .map((setting, index) => {
+        const marker = normalizePaymentConstantMarker(setting.marker || setting.label);
+        const normalizedMarker = marker.toLocaleLowerCase("ru-RU");
+        if (!marker || defaultMarkers.has(normalizedMarker) || customMarkers.has(normalizedMarker)) return null;
+        customMarkers.add(normalizedMarker);
+        return {
+          key: String(setting.key || `customPaymentConstant${index + 1}`).trim(),
+          marker,
+          label: String(setting.label || marker).trim() || marker,
+          type: "number",
+          value: String(normalizePaymentRateValue(setting.value)),
+          custom: true
+        };
+      })
+      .filter(Boolean);
+    const numericSettings = [
+      ...defaultSettings.filter((setting) => setting.type === "number"),
+      ...customSettings
+    ];
+    const numericByKey = new Map(numericSettings.map((setting) => [setting.key, setting]));
+    const savedNumericOrder = unique(saved
+      .map((setting) => String(setting?.key || "").trim())
+      .filter((key) => numericByKey.has(key)));
+    const pinnedNumericKeys = ["authorRate"].filter((key) => numericByKey.has(key));
+    const orderedNumericSettings = [
+      ...pinnedNumericKeys.map((key) => numericByKey.get(key)),
+      ...savedNumericOrder
+        .filter((key) => !pinnedNumericKeys.includes(key))
+        .map((key) => numericByKey.get(key)),
+      ...numericSettings.filter((setting) => (
+        !pinnedNumericKeys.includes(setting.key)
+        && !savedNumericOrder.includes(setting.key)
+      ))
+    ];
+    return [
+      ...orderedNumericSettings,
+      ...defaultSettings.filter((setting) => setting.type !== "number")
+    ];
+  }
+
+  function normalizePaymentConstantMarker(value) {
+    return String(value || "").replace(/^\[+|\]+$/g, "").trim();
+  }
+
+  function isValidPaymentConstantMarker(value) {
+    const marker = normalizePaymentConstantMarker(value);
+    return marker.length <= 255
+      && /^[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*$/u.test(marker)
+      && !/^[A-Z]{1,3}[1-9]\d*$/i.test(marker)
+      && !/^R[1-9]\d*C[1-9]\d*$/i.test(marker)
+      && !/^[RC]$/i.test(marker);
+  }
+
+  function getPaymentConstantSettings() {
+    return normalizePaymentSettings(state.data.dictionaries.paymentSettings)
+      .filter((setting) => setting.type === "number" && setting.marker);
+  }
+
+  function getPaymentConstantUnit(setting) {
+    if (setting?.unit) return String(setting.unit);
+    return setting?.key === "authorRate" ? "%" : "";
+  }
+
+  function formatPaymentConstantValue(setting) {
+    const value = String(setting?.value ?? "").trim();
+    return value ? `${value}${getPaymentConstantUnit(setting)}` : "";
+  }
+
+  function findPaymentConstantSetting(marker) {
+    const normalizedMarker = normalizePaymentConstantMarker(marker).toLocaleLowerCase("ru-RU");
+    return getPaymentConstantSettings().find((setting) => (
+      normalizePaymentConstantMarker(setting.marker).toLocaleLowerCase("ru-RU") === normalizedMarker
+    )) || null;
+  }
+
+  function getPaymentSettingValue(key) {
+    return normalizePaymentSettings(state.data.dictionaries.paymentSettings)
+      .find((setting) => setting.key === key)?.value || "";
+  }
+
+  function normalizePaymentPercent(value, fallback = "") {
+    if (value === "" || value === null || value === undefined) return fallback;
+    const number = Number(String(value).replace(",", "."));
+    if (!Number.isFinite(number)) return fallback;
+    const percent = Math.abs(number) <= 1 ? number * 100 : number;
+    return Math.round(percent * 100) / 100;
+  }
+
+  function getDocumentPathSettingValue(key) {
+    return normalizeDocumentPathSettings(state.data.dictionaries.documentPathSettings)
       .find((setting) => setting.key === key)?.value || "";
   }
 
@@ -1847,6 +2307,60 @@ MAX - https://bizvmax.ru/zifra_plus
     return [...importedPrograms, ...customPrograms];
   }
 
+  function mergeProgramPaymentRegistry(data, programs) {
+    const currentPrograms = Array.isArray(programs) ? programs : [];
+    const registry = Array.isArray(window.AIS_PROGRAM_PAYMENT_REGISTRY)
+      ? window.AIS_PROGRAM_PAYMENT_REGISTRY
+      : [];
+    const version = String(window.AIS_PROGRAM_PAYMENT_REGISTRY_VERSION || "");
+    const previousAuthorPercent = normalizePaymentPercent(
+      data.meta.defaultAuthorPaymentPercent,
+      50
+    );
+    const defaultAuthorPercent = normalizePaymentPercent(
+      window.AIS_PROGRAM_DEFAULT_AUTHOR_PAYMENT_PERCENT,
+      previousAuthorPercent
+    );
+    if (!registry.length || (version && data.meta.programPaymentRegistryVersion === version)) {
+      return currentPrograms;
+    }
+
+    data.meta.defaultAuthorPaymentPercent = defaultAuthorPercent;
+    if (window.AIS_PAYMENT_RATES && typeof window.AIS_PAYMENT_RATES === "object") {
+      data.dictionaries.paymentSettings = mergeImportedPaymentRates(
+        data.dictionaries.paymentSettings,
+        {
+          ...window.AIS_PAYMENT_RATES,
+          authorRate: defaultAuthorPercent
+        }
+      );
+    }
+    const importedByName = new Map(registry
+      .map((item) => [normalizeProgramName(item?.name), item])
+      .filter(([name]) => name));
+    const mergedPrograms = currentPrograms.map((program) => {
+      const imported = importedByName.get(normalizeProgramName(program?.name));
+      if (!imported) return program;
+      const authorSource = String(imported.authorSource || "").trim();
+      const importedFields = clone(imported);
+      delete importedFields.name;
+      return {
+        ...program,
+        ...importedFields,
+        author: authorSource,
+        authorSource,
+        authorPayments: parseProgramAuthorPayments(authorSource, defaultAuthorPercent),
+        defaultAuthorPaymentPercent: defaultAuthorPercent
+      };
+    });
+    data.meta.programPaymentRegistryVersion = version;
+    return applyGlobalAuthorRateToPrograms(
+      mergedPrograms,
+      previousAuthorPercent,
+      defaultAuthorPercent
+    );
+  }
+
   function normalizeProgramName(value) {
     return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
   }
@@ -1954,9 +2468,17 @@ MAX - https://bizvmax.ru/zifra_plus
         existing.fileName = existing.fileName || defaultTemplate.fileName;
         existing.documentKind = existing.documentKind || defaultTemplate.documentKind;
         if (!existing.fileNameTemplate && defaultTemplate.fileNameTemplate) existing.fileNameTemplate = defaultTemplate.fileNameTemplate;
+        if (!existing.saveFolderTemplate && defaultTemplate.saveFolderTemplate) existing.saveFolderTemplate = defaultTemplate.saveFolderTemplate;
         if (!existing.fields?.length && defaultTemplate.fields?.length) existing.fields = defaultTemplate.fields.map((field) => ({ ...field }));
         if (!existing.originalFields?.length && defaultTemplate.originalFields?.length) existing.originalFields = defaultTemplate.originalFields.map((field) => ({ ...field }));
         if (defaultTemplate.documentKind === "education" && !existing.programTypes?.length) existing.programTypes = [...defaultTemplate.programTypes];
+        if (
+          defaultTemplate.generationFormatVersion
+          && existing.generationFormatVersion !== defaultTemplate.generationFormatVersion
+        ) {
+          existing.generationFormat = defaultTemplate.generationFormat;
+          existing.generationFormatVersion = defaultTemplate.generationFormatVersion;
+        }
         return;
       }
       normalized.push(normalizeDocumentTemplate(defaultTemplate, normalized.length));
@@ -1965,18 +2487,24 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function normalizeOrderDocumentFileNameTemplate(documentTemplate) {
-    const oldTemplates = {
-      "document-enrollment-order": "Приказ_на_зачисление_#Номер приказа зачисления#_#ФИО#",
-      "document-expulsion-order": "Приказ_об_отчислении_#Номер приказа отчисления#_#ФИО#"
+    const legacyTemplates = {
+      "document-enrollment-order": [
+        "Приказ_на_зачисление_#Номер приказа зачисления#_#ФИО#",
+        "Приказ_на_зачисление_#Номер приказа зачисления#"
+      ],
+      "document-expulsion-order": [
+        "Приказ_об_отчислении_#Номер приказа отчисления#_#ФИО#",
+        "Приказ_об_отчислении_#Номер приказа отчисления#"
+      ]
     };
     const newTemplates = {
-      "document-enrollment-order": "Приказ_на_зачисление_#Номер приказа зачисления#",
-      "document-expulsion-order": "Приказ_об_отчислении_#Номер приказа отчисления#"
+      "document-enrollment-order": "#Номер приказа зачисления#-#Дата приказа зачисления#",
+      "document-expulsion-order": "#Номер приказа отчисления#-#Дата приказа отчисления#"
     };
     const id = String(documentTemplate?.id || "");
     const current = String(documentTemplate?.fileNameTemplate || "").trim();
     const fallback = newTemplates[id] || current;
-    if (!current || current === oldTemplates[id]) return fallback;
+    if (!current || (legacyTemplates[id] || []).includes(current)) return fallback;
     if (!newTemplates[id]) return current;
     const withoutName = current
       .replace(/_?#ФИО#_?/g, "_")
@@ -1992,6 +2520,8 @@ MAX - https://bizvmax.ru/zifra_plus
       templateUrl: "",
       templatePath: "",
       fileNameTemplate: contractTemplateSettingDefaults.find((setting) => setting.key === "fileNameTemplate")?.value || "документ_#ФИО_обуч#",
+      saveFolderTemplate: studentDocumentsFolderTemplateMarker,
+      generationFormat: "pdf",
       useCustomDocumentProperties: "1",
       fields: [],
       originalFields: [],
@@ -2009,6 +2539,9 @@ MAX - https://bizvmax.ru/zifra_plus
       { fieldsMode },
       fields.length || isDocumentTemplateMarkerFieldMode(fieldsMode) ? fields : fallback.fields
     );
+    const emailDefaultsSource = { ...fallback, ...(item || {}) };
+    const hasEmailSubjectTemplate = Object.prototype.hasOwnProperty.call(item || {}, "emailSubjectTemplate");
+    const hasEmailMessageTemplate = Object.prototype.hasOwnProperty.call(item || {}, "emailMessageTemplate");
     return {
       id: String(item?.id || fallback.id),
       title: String(item?.title || item?.name || item?.label || fallback.title).trim(),
@@ -2018,6 +2551,30 @@ MAX - https://bizvmax.ru/zifra_plus
         id: item?.id || fallback.id,
         fileNameTemplate: String(item?.fileNameTemplate || fallback.fileNameTemplate).trim()
       }),
+      saveFolderTemplate: getDefaultDocumentSaveFolderTemplate(item || fallback),
+      generationFormat: normalizeDocumentGenerationFormat(
+        item?.generationFormat || fallback.generationFormat
+      ),
+      generationFormatVersion: String(
+        item?.generationFormatVersion || fallback.generationFormatVersion || ""
+      ),
+      emailDeliveryMode: normalizeDocumentEmailDeliveryMode(
+        item?.emailDeliveryMode,
+        emailDefaultsSource
+      ),
+      emailSubjectTemplate: String(
+        hasEmailSubjectTemplate
+          ? item.emailSubjectTemplate
+          : getDefaultDocumentEmailSubjectTemplate(emailDefaultsSource)
+      ),
+      emailMessageTemplate: String(
+        hasEmailMessageTemplate
+          ? item.emailMessageTemplate
+          : getDefaultDocumentEmailMessageTemplate(emailDefaultsSource)
+      ),
+      emailTemplateValues: normalizeDocumentEmailTemplateValues(
+        item?.emailTemplateValues || fallback.emailTemplateValues
+      ),
       useCustomDocumentProperties: isChecked(item?.useCustomDocumentProperties ?? fallback.useCustomDocumentProperties) ? "1" : "0",
       fields: normalizedFields,
       originalFields: normalizeDocumentTemplateFieldList({ fieldsMode }, originalFields),
@@ -2172,6 +2729,26 @@ MAX - https://bizvmax.ru/zifra_plus
       .sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true }));
   }
 
+  function getDocumentEmailTemplateTokens(documentTemplate) {
+    const constantTokens = Object.keys(documentTemplate?.emailTemplateValues || {})
+      .sort((a, b) => a.localeCompare(b, "ru"))
+      .map((name) => ({
+        token: `[${name}]`,
+        label: name,
+        type: "constant",
+        templateValueName: name
+      }));
+    return Array.from(
+      new Map(
+        [
+          ...getSortedContractDocumentTokens(documentTemplate?.fields || []),
+          ...getSortedContractSourceTokens(),
+          ...constantTokens
+        ].map((item) => [item.token, item])
+      ).values()
+    );
+  }
+
   function normalizeCommunicationTemplates(values) {
     const saved = Array.isArray(values) ? values : [];
     return studentCommunicationTemplateDefaults.map((template, index) => (
@@ -2263,8 +2840,11 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!student || typeof student !== "object") return student;
     const normalized = {
       ...student,
+      additionalStatus: String(student.additionalStatus || "").trim(),
       studyForm: normalizeStudyForm(student.studyForm),
-      gender: normalizeStudentGender(student.gender)
+      gender: normalizeStudentGender(student.gender),
+      discount: normalizeDiscountPercent(student.discount, student.discountUnit),
+      discountUnit: "percent"
     };
     studentCommunicationMessages.forEach((message, index) => {
       if (message.importValue === false) return;
@@ -2278,6 +2858,14 @@ MAX - https://bizvmax.ru/zifra_plus
       if (importedValue !== undefined) normalized[message.key] = importedValue;
     });
     return normalized;
+  }
+
+  function normalizeDiscountPercent(value, unit = "") {
+    const numeric = Number(String(value ?? "").trim().replace(",", "."));
+    if (!Number.isFinite(numeric)) return 0;
+    const isKnownPercent = String(unit || "").trim().toLowerCase() === "percent";
+    const percent = !isKnownPercent && numeric > 0 && numeric < 1 ? numeric * 100 : numeric;
+    return Math.round(percent * 100) / 100;
   }
 
   function directExpenseIdentity(expense, index = 0) {
@@ -2344,6 +2932,124 @@ MAX - https://bizvmax.ru/zifra_plus
     return [...linked, ...(state.data.collections.directExpenses || [])];
   }
 
+  function parseProgramAuthorPayments(source, defaultPercent = 50) {
+    const text = String(source || "").trim();
+    if (!text) return [];
+    return text.split(/\s*,\s*(?=[А-ЯЁA-Z][^,]*(?:\(|$))/u)
+      .map((entry, index) => {
+        const sourceEntry = String(entry || "").trim();
+        if (!sourceEntry) return null;
+        const detailsMatch = /^(.*?)\s*\(([^()]*)\)\s*$/u.exec(sourceEntry);
+        const recipient = String(detailsMatch?.[1] || sourceEntry).trim();
+        const details = String(detailsMatch?.[2] || "").trim();
+        const percentMatch = /(-?\d+(?:[.,]\d+)?)\s*%/u.exec(details);
+        const formulaMatch = /(\[[^\]]+\]\s*%?)/u.exec(details);
+        const fixedAmountMatch = !percentMatch && !formulaMatch
+          ? /^(-?\d+(?:[.,]\d+)?)\s*(?:руб\.?)?$/iu.exec(details)
+          : null;
+        const explicitPercent = percentMatch
+          ? normalizePaymentPercent(percentMatch[1], defaultPercent)
+          : "";
+        return {
+          id: `program-author-${index + 1}`,
+          recipient,
+          percent: "",
+          amountFormula: formulaMatch?.[1]
+            || fixedAmountMatch?.[1]
+            || (explicitPercent === "" ? "[АвторскаяСтавка]" : `${explicitPercent}%`)
+        };
+      })
+      .filter((item) => item?.recipient);
+  }
+
+  function normalizeProgramAuthorPayments(values, source = "", defaultPercent = 50) {
+    const rows = Array.isArray(values)
+      ? values
+      : parseProgramAuthorPayments(source, defaultPercent);
+    const normalizedDefaultPercent = normalizePaymentPercent(defaultPercent, 50);
+    return rows.map((item, index) => {
+      const legacyPercent = item?.percent === "" || item?.percent === null || item?.percent === undefined
+        ? ""
+        : normalizePaymentPercent(item.percent, "");
+      const amountFormula = String(item?.amountFormula || item?.formula || "").trim()
+        || (legacyPercent === ""
+          ? ""
+          : (Math.abs(Number(legacyPercent) - Number(normalizedDefaultPercent)) < 1e-9
+            ? "[АвторскаяСтавка]"
+            : `${legacyPercent}%`));
+      return {
+        id: String(item?.id || "").trim() || `program-author-${index + 1}`,
+        recipient: String(item?.recipient || item?.name || "").trim(),
+        percent: "",
+        amountFormula
+      };
+    }).filter((item) => item.recipient);
+  }
+
+  function applyGlobalAuthorRateToPrograms(programs, previousRate, nextRate) {
+    const previousPercent = normalizePaymentPercent(previousRate, "");
+    const nextPercent = normalizePaymentPercent(nextRate, "");
+    if (previousPercent === "" || nextPercent === "") {
+      return Array.isArray(programs) ? programs : [];
+    }
+    return (Array.isArray(programs) ? programs : []).map((program) => {
+      const authorPayments = normalizeProgramAuthorPayments(
+        program?.authorPayments,
+        program?.authorSource,
+        program?.defaultAuthorPaymentPercent || previousPercent
+      );
+      const authorSource = formatProgramAuthorPaymentSource(authorPayments);
+      return {
+        ...program,
+        defaultAuthorPaymentPercent: nextPercent,
+        authorPayments,
+        authorSource,
+        author: authorSource
+      };
+    });
+  }
+
+  function syncVisibleGlobalAuthorRate(previousRate, nextRate) {
+    if (
+      normalizePaymentPercent(previousRate, "") === ""
+      || normalizePaymentPercent(nextRate, "") === ""
+    ) return;
+    refreshVisiblePaymentFormulaEditors();
+  }
+
+  function normalizeProgramListValue(value) {
+    const sourceValues = Array.isArray(value) ? value : [value];
+    return unique(sourceValues
+      .flatMap((item) => String(item ?? "").split(/\r?\n|;\s*/u))
+      .map((item) => item.trim())
+      .filter(Boolean))
+      .join("\n");
+  }
+
+  function getProgramAliasedFieldValue(program, key) {
+    const candidates = [
+      program?.[key],
+      ...(PROGRAM_FIELD_ALIASES[key] || []).map((alias) => program?.[alias])
+    ];
+    return candidates.find((value) => value !== undefined && value !== null) ?? "";
+  }
+
+  function normalizeProgramOrderDate(value) {
+    const source = String(value || "").trim();
+    if (!source) return "";
+    const ruMatch = /^(\d{2})[./-](\d{2})[./-](\d{4})$/u.exec(source);
+    if (ruMatch) return `${ruMatch[3]}-${ruMatch[2]}-${ruMatch[1]}`;
+    const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/u.exec(source);
+    return isoMatch ? `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}` : source;
+  }
+
+  function getProgramDictionaryFieldValues(value) {
+    return String(value || "")
+      .split(/\r?\n/u)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
   function normalizeProgramRecord(program) {
     if (!program || typeof program !== "object") return program;
     const studyForm = normalizeStudyForm(program.studyForm || program["Форма обучения"]);
@@ -2371,13 +3077,33 @@ MAX - https://bizvmax.ru/zifra_plus
       program.telegramUrl,
       program.telegram
     ].find((value) => String(value || "").trim());
-    return {
+    const authorSource = [
+      program.authorSource,
+      program.author,
+      program["Автор"]
+    ].find((value) => String(value || "").trim()) || "";
+    const hasConfiguredAuthorPayments = Array.isArray(program.authorPayments);
+    const normalizedProgram = {
       ...program,
       studyForm,
+      authorSource: String(authorSource).trim(),
+      authorPayments: normalizeProgramAuthorPayments(
+        hasConfiguredAuthorPayments ? program.authorPayments : null,
+        authorSource,
+        normalizePaymentPercent(program.defaultAuthorPaymentPercent, 50)
+      ),
       ...(promoSite ? { promoSite } : {}),
       ...(gradeReportUrl ? { gradeReportUrl } : {}),
       ...(telegramGroup ? { telegramGroup } : {})
     };
+    Object.keys(PROGRAM_FIELD_ALIASES).forEach((key) => {
+      const value = getProgramAliasedFieldValue(program, key);
+      normalizedProgram[key] = PROGRAM_LIST_FIELD_KEYS.has(key)
+        ? normalizeProgramListValue(value)
+        : String(value || "").trim();
+    });
+    normalizedProgram.programOrderDate = normalizeProgramOrderDate(normalizedProgram.programOrderDate);
+    return normalizedProgram;
   }
 
   function normalizeTrainingPlanRecord(item, index = 0) {
@@ -2514,36 +3240,62 @@ MAX - https://bizvmax.ru/zifra_plus
       .filter(Boolean);
   }
 
-  function loadStudentCardTabOrder() {
-    const saved = localStorage.getItem(STUDENT_CARD_TAB_ORDER_KEY);
-    if (!saved) return [];
+  function loadTabOrders() {
+    let orders = {};
     try {
-      const parsed = JSON.parse(saved);
-      return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+      const parsed = JSON.parse(localStorage.getItem(TAB_ORDER_SETTINGS_KEY) || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        orders = Object.fromEntries(Object.entries(parsed).map(([groupId, values]) => [
+          groupId,
+          Array.isArray(values) ? values.filter((id) => typeof id === "string") : []
+        ]));
+      }
     } catch (error) {
-      console.warn("Не удалось прочитать порядок вкладок карточки слушателя", error);
-      return [];
+      console.warn("Не удалось прочитать порядок вкладок", error);
     }
+    try {
+      const legacyOrder = JSON.parse(localStorage.getItem(STUDENT_CARD_TAB_ORDER_KEY) || "[]");
+      if (!orders["student-card"]?.length && Array.isArray(legacyOrder) && legacyOrder.length) {
+        orders["student-card"] = legacyOrder.filter((id) => typeof id === "string");
+        localStorage.setItem(TAB_ORDER_SETTINGS_KEY, JSON.stringify(orders));
+      }
+      localStorage.removeItem(STUDENT_CARD_TAB_ORDER_KEY);
+    } catch (error) {
+      console.warn("Не удалось перенести сохраненный порядок вкладок карточки слушателя", error);
+    }
+    return orders;
   }
 
-  function persistStudentCardTabOrder(order = state.studentCardTabOrder) {
-    localStorage.setItem(STUDENT_CARD_TAB_ORDER_KEY, JSON.stringify(order));
+  function persistTabOrders(orders = state.tabOrders) {
+    localStorage.setItem(TAB_ORDER_SETTINGS_KEY, JSON.stringify(orders || {}));
+  }
+
+  // New tab sets should use this helper and data-orderable-tabs/data-orderable-tab attributes.
+  function getOrderedTabs(groupId, tabs = []) {
+    const definitions = tabs.map((tab, index) => ({ ...tab, defaultTabIndex: index }));
+    const availableIds = definitions.map((tab) => tab.id);
+    const savedOrder = state.tabOrders?.[groupId] || [];
+    const orderedIds = [
+      ...savedOrder.filter((id) => availableIds.includes(id)),
+      ...availableIds.filter((id) => !savedOrder.includes(id))
+    ];
+    return orderedIds
+      .map((id) => definitions.find((tab) => tab.id === id))
+      .filter(Boolean);
   }
 
   function getOrderedStudentCardTabs() {
-    const availableIds = visibleStudentCardTabs.map((tab) => tab.id);
-    const orderedIds = [
-      ...(state.studentCardTabOrder || []).filter((id) => availableIds.includes(id)),
-      ...availableIds.filter((id) => !(state.studentCardTabOrder || []).includes(id))
-    ];
-    return orderedIds
-      .map((id) => visibleStudentCardTabs.find((tab) => tab.id === id))
-      .filter(Boolean);
+    return getOrderedTabs("student-card", visibleStudentCardTabs);
   }
 
   function money(value) {
     const num = Number(value || 0);
     return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(num);
+  }
+
+  function pieces(value) {
+    const num = Number(value || 0);
+    return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 }).format(num)} шт.`;
   }
 
   function dateRu(value) {
@@ -2553,8 +3305,9 @@ MAX - https://bizvmax.ru/zifra_plus
     return new Intl.DateTimeFormat("ru-RU").format(date);
   }
 
-  function valueForDisplay(key, value) {
+  function valueForDisplay(key, value, configId = "") {
     if (value === undefined || value === null || value === "") return "—";
+    if (configId === "inventory" && key === "balance" && !Number.isNaN(Number(value))) return pieces(value);
     if (["amount", "price", "oldPrice", "paid", "balance", "contractAmount", "paidAmount"].includes(key) && !Number.isNaN(Number(value))) return money(value);
     if (key.toLowerCase().includes("date") || key.endsWith("At") || key === "paid") return dateRu(value);
     return String(value);
@@ -2589,7 +3342,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (navigation.view === "students") {
         state.view = "students";
         state.statusFilter = navigation.status || "Все";
-        state.sort = getDefaultTableSort("students");
+        state.sort = getStudentStatusTableSort(state.statusFilter);
         state.tablePages.students = 1;
         render();
         return;
@@ -2689,7 +3442,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const receivable = sumBy(students, "balance");
     const activeStudents = students.filter((item) => ["Учится", "На зачисление", "В работе"].includes(item.status)).length;
     const statusCounts = countBy(students, "status");
-    const maxStatus = Math.max(...Object.values(statusCounts), 1);
+    const studentStatusItems = STUDENT_STATUS_ORDER.map((status) => ({
+      label: status,
+      count: Number(statusCounts[status]) || 0
+    }));
+    const maxStatus = Math.max(...studentStatusItems.map((item) => item.count), 1);
     const dueSoon = students
       .filter((item) => String(item.status || "").trim() === "Учится" && item.endDate)
       .sort((a, b) => new Date(a.endDate) - new Date(b.endDate))
@@ -2723,9 +3480,9 @@ MAX - https://bizvmax.ru/zifra_plus
             <button class="icon-button" data-view-shortcut="students" type="button" title="Открыть слушателей">↗</button>
           </div>
           <div class="bar-list">
-            ${Object.entries(statusCounts).map(([label, count]) => `
+            ${studentStatusItems.map(({ label, count }) => `
               <button
-                class="bar-row bar-row-link"
+                class="bar-row bar-row-link ${label === "На зачисление" && count > 0 ? "is-alert" : ""}"
                 data-student-status-shortcut="${escapeAttr(label)}"
                 type="button"
                 title="Открыть слушателей со статусом «${escapeAttr(label)}»"
@@ -2848,6 +3605,7 @@ MAX - https://bizvmax.ru/zifra_plus
               </select>
             ` : ""}
             ${state.view === "students" ? renderStudentProgramTypeFilter() : ""}
+            ${state.view === "programs" ? renderProgramRegistryTypeFilter() : ""}
             ${state.view === "students" ? `<button class="ghost-button student-applications-import-button" data-action="open-student-applications-import" type="button">Импорт слушателей</button>` : ""}
             <button class="ghost-button" data-action="export-csv" data-config="${state.view}" type="button">CSV</button>
             <button class="primary-button" data-action="create" data-config="${state.view}" type="button">Добавить</button>
@@ -2927,6 +3685,29 @@ MAX - https://bizvmax.ru/zifra_plus
       .trim();
   }
 
+  function normalizeStudentApplicationPersonName(value) {
+    return String(value || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/[.,;:()[\]{}"'«»]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е");
+  }
+
+  function getStudentApplicationIdentityKeys(person, programName) {
+    const program = normalizeStudentApplicationProgramName(programName);
+    if (!program) return [];
+    const name = normalizeStudentApplicationPersonName(person?.name);
+    const email = String(person?.email || "").trim().toLocaleLowerCase("ru-RU");
+    const phone = String(person?.phone || "").replace(/\D/g, "").slice(-10);
+    return [
+      name ? `name:${name}\u0000${program}` : "",
+      email ? `email:${email}\u0000${program}` : "",
+      phone.length === 10 ? `phone:${phone}\u0000${program}` : ""
+    ].filter(Boolean);
+  }
+
   function getStudentApplicationProgram(row, selectedProgramId = "") {
     const selectedProgram = (state.data.collections.programs || [])
       .find((program) => String(program.id || "") === String(selectedProgramId || ""));
@@ -2949,30 +3730,57 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function buildStudentApplicationsImportLookup() {
-    const sourceKeys = new Set();
-    const orderProductKeys = new Set();
-    const orderProgramKeys = new Set();
+    const historyByIdentity = new Map();
     (state.data.collections.students || []).forEach((student) => {
-      const sourceKey = String(student.sourceApplicationKey || "").trim();
-      const orderId = String(student.orderNo || "").trim();
-      const productId = String(student.sourceProductId || "").trim();
-      const program = normalizeProgramName(student.program);
-      if (sourceKey) sourceKeys.add(sourceKey);
-      if (orderId && productId) orderProductKeys.add(`${orderId}\u0000${productId}`);
-      if (orderId && program) orderProgramKeys.add(`${orderId}\u0000${program}`);
+      const entry = {
+        id: String(student.id || ""),
+        name: String(student.name || ""),
+        program: String(student.program || ""),
+        applicationDate: String(student.applicationDate || "")
+      };
+      getStudentApplicationIdentityKeys(student, student.program).forEach((key) => {
+        const history = historyByIdentity.get(key) || [];
+        history.push(entry);
+        historyByIdentity.set(key, history);
+      });
     });
-    return { sourceKeys, orderProductKeys, orderProgramKeys };
+    return { historyByIdentity };
+  }
+
+  function getStudentApplicationPreviousMatches(
+    row,
+    lookup = buildStudentApplicationsImportLookup(),
+    selectedProgramId = state.studentApplicationsImport.filters.programId
+  ) {
+    if (!row) return [];
+    const mappedProgram = getStudentApplicationProgram(row, selectedProgramId);
+    const programName = mappedProgram?.name || getStudentApplicationProgramTitle(row);
+    const matchesById = new Map();
+    getStudentApplicationIdentityKeys(row, programName).forEach((key) => {
+      (lookup.historyByIdentity.get(key) || []).forEach((entry) => {
+        matchesById.set(entry.id || `${entry.name}\u0000${entry.applicationDate}`, entry);
+      });
+    });
+    return [...matchesById.values()].sort((left, right) => {
+      const leftDate = parseTableSortDate(left.applicationDate);
+      const rightDate = parseTableSortDate(right.applicationDate);
+      if (leftDate === null && rightDate !== null) return 1;
+      if (leftDate !== null && rightDate === null) return -1;
+      return (rightDate || 0) - (leftDate || 0);
+    });
+  }
+
+  function getStudentApplicationRepeatComment(row, lookup = buildStudentApplicationsImportLookup()) {
+    const previous = getStudentApplicationPreviousMatches(row, lookup)[0];
+    if (!previous) return "";
+    const applicationDate = dateRu(previous.applicationDate);
+    return applicationDate
+      ? `Слушатель уже подавал заявку на эту программу: ${applicationDate}. Повторный импорт разрешён.`
+      : "Слушатель уже подавал заявку на эту программу. Дата предыдущей заявки не указана. Повторный импорт разрешён.";
   }
 
   function isStudentApplicationImported(row, lookup = buildStudentApplicationsImportLookup()) {
-    const sourceKey = getStudentApplicationSourceKey(row);
-    const orderId = String(row?.orderId || "").trim();
-    const productId = String(row?.productId || "").trim();
-    const programName = normalizeProgramName(getStudentApplicationProgramTitle(row));
-    if (sourceKey && lookup.sourceKeys.has(sourceKey)) return true;
-    if (!orderId) return false;
-    if (productId && lookup.orderProductKeys.has(`${orderId}\u0000${productId}`)) return true;
-    return Boolean(programName && lookup.orderProgramKeys.has(`${orderId}\u0000${programName}`));
+    return getStudentApplicationPreviousMatches(row, lookup).length > 0;
   }
 
   function getVisibleStudentApplications() {
@@ -3012,7 +3820,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return { coupon: "", percent: 0, description: "" };
   }
 
-  function renderStudentApplicationDetail(row) {
+  function renderStudentApplicationDetail(row, importedLookup = buildStudentApplicationsImportLookup()) {
     if (!row) return `<div class="student-applications-import-empty">Выберите заявку в таблице.</div>`;
     const mappedProgram = getStudentApplicationProgram(
       row,
@@ -3021,6 +3829,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const paymentAmount = Math.max(0, Number(row.paymentAmount || 0));
     const hasPayment = paymentAmount > 0 || Boolean(row.paid);
     const couponDiscount = getStudentApplicationCouponDiscount(row);
+    const repeatComment = getStudentApplicationRepeatComment(row, importedLookup);
     const details = [
       ["Дата", row.date],
       ["ФИО", row.name],
@@ -3049,6 +3858,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <span>Будет добавлено</span>
         <strong>${escapeHtml(mappedProgram?.name || getStudentApplicationProgramTitle(row) || "Программа не определена")}</strong>
         <small>${hasPayment ? `Оплата: ${escapeHtml(money(paymentAmount))}` : "Без оплаты"}</small>
+        ${repeatComment ? `<small class="student-application-repeat-comment">${escapeHtml(repeatComment)}</small>` : ""}
       </div>
     `;
   }
@@ -3069,8 +3879,8 @@ MAX - https://bizvmax.ru/zifra_plus
       .slice()
       .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "ru"));
     const statuses = unique([
-      filters.status || "На зачисление",
-      ...(state.data.dictionaries.statuses || [])
+      ...(state.data.dictionaries.statuses || []),
+      filters.status || "На зачисление"
     ].filter(Boolean));
     return `
       <div class="modal-backdrop student-applications-import-backdrop" data-action="close-student-applications-import">
@@ -3127,19 +3937,19 @@ MAX - https://bizvmax.ru/zifra_plus
                 <span>⌕</span>
                 <input name="applicationSearch" value="${escapeAttr(filters.search)}" placeholder="Поиск в заявках" autocomplete="off">
               </label>
-              <button class="ghost-button" data-action="select-all-student-applications" type="button" ${visibleRows.some((row) => !isStudentApplicationImported(row, importedLookup)) ? "" : "disabled"}>Выделить все</button>
+              <button class="ghost-button" data-action="select-all-student-applications" type="button" ${visibleRows.length ? "" : "disabled"}>Выделить все</button>
               <button class="ghost-button" data-action="clear-student-applications-filters" type="button">Очистить фильтры</button>
               <label class="student-applications-status-filter">
                 <span>Установить статус</span>
                 <select name="importStatus">
-                  ${statuses.map((status) => `<option value="${escapeAttr(status)}" ${status === filters.status ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}
+                  ${renderStudentStatusOptions(statuses, filters.status)}
                 </select>
               </label>
               <div class="student-applications-import-summary">
                 Всего: <strong>${visibleRows.length}</strong>
                 <span>Выбрано: <strong>${selectedRows.length}</strong></span>
                 <span>Оплаты: <strong>${escapeHtml(money(selectedPayment))}</strong></span>
-                ${importedCount ? `<span>Уже в базе: <strong>${importedCount}</strong></span>` : ""}
+                ${importedCount ? `<span>Повторные заявки: <strong>${importedCount}</strong></span>` : ""}
               </div>
             </div>
 
@@ -3168,15 +3978,16 @@ MAX - https://bizvmax.ru/zifra_plus
                 <tbody>
                   ${visibleRows.length ? visibleRows.map((row) => {
                     const imported = isStudentApplicationImported(row, importedLookup);
+                    const repeatComment = imported ? getStudentApplicationRepeatComment(row, importedLookup) : "";
                     const selected = selectedIds.has(String(row.id));
                     const active = String(activeRow?.id || "") === String(row.id);
                     return `
-                      <tr class="${active ? "is-active" : ""} ${imported ? "is-imported" : ""}" data-student-application-row="${escapeAttr(row.id)}">
+                      <tr class="${active ? "is-active" : ""} ${imported ? "is-repeat" : ""}" data-student-application-row="${escapeAttr(row.id)}">
                         <td>
-                          <input data-student-application-select="${escapeAttr(row.id)}" type="checkbox" ${selected ? "checked" : ""} ${imported ? "disabled" : ""} aria-label="Выбрать заявку">
+                          <input data-student-application-select="${escapeAttr(row.id)}" type="checkbox" ${selected ? "checked" : ""} aria-label="Выбрать заявку">
                         </td>
                         <td>${escapeHtml(row.date || "")}</td>
-                        <td>${escapeHtml(row.name || "")}${imported ? `<small>Уже в базе</small>` : ""}</td>
+                        <td>${escapeHtml(row.name || "")}${repeatComment ? `<small>${escapeHtml(repeatComment)}</small>` : ""}</td>
                         <td>${escapeHtml(row.order || "")}</td>
                         <td class="student-applications-payment-cell">${Number(row.paymentAmount || 0) > 0 || row.paid ? escapeHtml(money(row.paymentAmount)) : "—"}</td>
                         <td>${escapeHtml(row.program || "")}</td>
@@ -3201,7 +4012,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
             <div class="student-applications-import-detail">
               <h3>Информация о выбранной заявке</h3>
-              ${renderStudentApplicationDetail(activeRow)}
+              ${renderStudentApplicationDetail(activeRow, importedLookup)}
             </div>
 
             <div class="modal-actions student-applications-import-actions">
@@ -3318,9 +4129,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function toggleAllStudentApplications() {
-    const importedLookup = buildStudentApplicationsImportLookup();
     const selectableIds = getVisibleStudentApplications()
-      .filter((row) => !isStudentApplicationImported(row, importedLookup))
       .map((row) => String(row.id));
     const selected = new Set(state.studentApplicationsImport.selected || []);
     const allSelected = selectableIds.length && selectableIds.every((id) => selected.has(id));
@@ -3339,6 +4148,369 @@ MAX - https://bizvmax.ru/zifra_plus
     state.studentApplicationsImport.selected = [...values];
     state.studentApplicationsImport.activeId = String(id);
     render();
+  }
+
+  function parseSourceAgentAssignments(value) {
+    return String(value || "").split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const separatorIndex = line.indexOf("=");
+        if (separatorIndex < 0) return null;
+        return {
+          source: line.slice(0, separatorIndex).trim(),
+          agent: line.slice(separatorIndex + 1).trim()
+        };
+      })
+      .filter((item) => item?.source && item.agent);
+  }
+
+  function getApplicationSourceAgent(source) {
+    const normalizedSource = normalizeProgramName(source);
+    if (!normalizedSource) return "";
+    const assignments = parseSourceAgentAssignments(getPaymentSettingValue("sourceAgentAssignments"));
+    const exact = assignments.find((item) => normalizeProgramName(item.source) === normalizedSource);
+    if (exact) return exact.agent;
+    return assignments
+      .filter((item) => normalizedSource.includes(normalizeProgramName(item.source)))
+      .sort((left, right) => normalizeProgramName(right.source).length - normalizeProgramName(left.source).length)[0]
+      ?.agent || "";
+  }
+
+  function applyMappedAgentToStudentRecord(record, options = {}) {
+    if (!record || typeof record !== "object") return record;
+    const mappedAgent = getApplicationSourceAgent(record.source);
+    if (!mappedAgent || (options.onlyWhenEmpty && String(record.agent || "").trim())) return record;
+    return { ...record, agent: mappedAgent };
+  }
+
+  function syncStudentAgentFromSource(source) {
+    const mappedAgent = getApplicationSourceAgent(source);
+    if (!mappedAgent) return;
+    const form = document.getElementById("recordForm");
+    if (!form || form.dataset.config !== "students") return;
+    const agentInput = form.elements.agent;
+    if (!(agentInput instanceof HTMLInputElement) || agentInput.value === mappedAgent) return;
+    agentInput.value = mappedAgent;
+    agentInput.dispatchEvent(new Event("input", { bubbles: true }));
+    agentInput.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function parseAutomaticExpenseRules(value) {
+    return String(value || "").split(/\r?\n/u)
+      .map((line, index) => {
+        const parts = line.split(",");
+        const type = String(parts.shift() || "").trim();
+        const amountFormula = String(parts.shift() || "").trim();
+        const noteValues = parts.join(",").split(";")
+          .map((item) => item.trim())
+          .filter(Boolean);
+        return {
+          id: `automatic-expense-${index + 1}`,
+          type,
+          amountFormula,
+          notes: noteValues.filter((item) => !item.startsWith("-")),
+          exclusions: noteValues
+            .filter((item) => item.startsWith("-"))
+            .map((item) => item.slice(1).trim())
+            .filter(Boolean)
+        };
+      })
+      .filter((item) => item.type && item.amountFormula);
+  }
+
+  function getPaymentRateMarkerValues() {
+    const settings = normalizePaymentSettings(state.data.dictionaries.paymentSettings);
+    return Object.fromEntries(settings
+      .filter((setting) => setting.type === "number" && setting.marker)
+      .map((setting) => [setting.marker, Number(setting.value || 0)]));
+  }
+
+  function evaluatePaymentArithmeticExpression(value) {
+    const source = String(value || "").replace(/\s+/g, "").replace(/,/g, ".");
+    if (!source) return 0;
+    const tokens = source.match(/\d+(?:\.\d+)?|[()+\-*/]/g) || [];
+    if (tokens.join("") !== source) return 0;
+    let index = 0;
+    const parsePrimary = () => {
+      const token = tokens[index];
+      if (token === "(") {
+        index += 1;
+        const result = parseAddition();
+        if (tokens[index] !== ")") throw new Error("missing parenthesis");
+        index += 1;
+        return result;
+      }
+      if (token === "+" || token === "-") {
+        index += 1;
+        const result = parsePrimary();
+        return token === "-" ? -result : result;
+      }
+      const number = Number(token);
+      if (!Number.isFinite(number)) throw new Error("invalid number");
+      index += 1;
+      return number;
+    };
+    const parseMultiplication = () => {
+      let result = parsePrimary();
+      while (tokens[index] === "*" || tokens[index] === "/") {
+        const operator = tokens[index];
+        index += 1;
+        const operand = parsePrimary();
+        result = operator === "*" ? result * operand : result / operand;
+      }
+      return result;
+    };
+    const parseAddition = () => {
+      let result = parseMultiplication();
+      while (tokens[index] === "+" || tokens[index] === "-") {
+        const operator = tokens[index];
+        index += 1;
+        const operand = parseMultiplication();
+        result = operator === "+" ? result + operand : result - operand;
+      }
+      return result;
+    };
+    try {
+      const result = parseAddition();
+      return index === tokens.length && Number.isFinite(result) ? result : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function evaluatePaymentAmountFormula(formula) {
+    let expression = String(formula || "").trim().replace(/[\[\]]/g, "");
+    const markerValues = new Map(Object.entries(getPaymentRateMarkerValues()).map(([marker, value]) => [
+      normalizePaymentConstantMarker(marker).toLocaleLowerCase("ru-RU"),
+      value
+    ]));
+    expression = expression
+      .split(/([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)/gu)
+      .map((part) => (
+        markerValues.has(part.toLocaleLowerCase("ru-RU"))
+          ? String(markerValues.get(part.toLocaleLowerCase("ru-RU")))
+          : part
+      ))
+      .join("");
+    const amount = evaluatePaymentArithmeticExpression(expression);
+    return Math.round(Math.max(0, amount) * 100) / 100;
+  }
+
+  function getProgramAuthorPaymentPercent(formula) {
+    const source = String(formula || "").trim();
+    const normalizedAuthorRateFormula = source
+      .replace(/^\[+|\]+$/g, "")
+      .trim()
+      .toLocaleLowerCase("ru-RU");
+    if (normalizedAuthorRateFormula === "АвторскаяСтавка".toLocaleLowerCase("ru-RU")) {
+      return evaluatePaymentAmountFormula("[АвторскаяСтавка]");
+    }
+    if (!source.endsWith("%")) return "";
+    return evaluatePaymentAmountFormula(source.slice(0, -1));
+  }
+
+  function evaluateProgramAuthorPaymentFormula(formula, paymentTotal) {
+    const percent = getProgramAuthorPaymentPercent(formula);
+    if (percent !== "") {
+      return Math.round(Math.max(0, Number(paymentTotal || 0)) * Number(percent || 0)) / 100;
+    }
+    return evaluatePaymentAmountFormula(formula);
+  }
+
+  function extractPaymentRecipientName(value) {
+    return String(value || "").split(",")[0].trim().split(/\s+/u).slice(0, 3).join(" ");
+  }
+
+  function automaticExpenseFingerprint(expense) {
+    return [
+      normalizeProgramName(expense?.type),
+      Math.round(Number(expense?.amount || 0) * 100) / 100,
+      normalizeProgramName(expense?.note)
+    ].join("|");
+  }
+
+  function getProgramAuthorExpenseRule(rules = null) {
+    const sourceRules = Array.isArray(rules)
+      ? rules
+      : parseAutomaticExpenseRules(getPaymentSettingValue("automaticExpenseRules"));
+    return sourceRules.find((rule) => (
+      normalizeProgramName(rule.type) === normalizeProgramName("Оплата преподавателю")
+    )) || null;
+  }
+
+  function buildProgramAuthorExpenseSpecifications(record, program, rule) {
+    if (!program || !rule) return [];
+    const paymentTotal = Math.round(sumStudentPayments(record) * 100) / 100;
+    const authors = normalizeProgramAuthorPayments(
+      program.authorPayments,
+      program.authorSource,
+      program.defaultAuthorPaymentPercent || state.data.meta.defaultAuthorPaymentPercent || 50
+    );
+    return authors.map((author, index) => {
+      const recipient = String(author.recipient || "").trim();
+      const normalizedRecipient = normalizeProgramName(recipient);
+      if (!recipient || rule.exclusions.some((item) => normalizeProgramName(item) === normalizedRecipient)) {
+        return null;
+      }
+      const paymentPercent = getProgramAuthorPaymentPercent(author.amountFormula);
+      const amount = evaluateProgramAuthorPaymentFormula(author.amountFormula, paymentTotal);
+      return {
+        recipient,
+        amount: Math.round(Math.max(0, Number(amount || 0)) * 100) / 100,
+        suffix: `author-${index + 1}-${normalizedRecipient}`,
+        automaticPaymentKind: "program-author",
+        automaticPaymentProgramId: String(program.id || "").trim(),
+        automaticPaymentProgramName: String(program.name || "").trim(),
+        automaticPaymentAuthorId: String(author.id || `program-author-${index + 1}`),
+        automaticPaymentPercent: paymentPercent === "" ? "" : Number(paymentPercent || 0),
+        automaticPaymentFormula: String(author.amountFormula || "").trim()
+      };
+    }).filter(Boolean);
+  }
+
+  function isAutomaticProgramAuthorExpense(expense) {
+    const key = String(expense?.automaticPaymentKey || "");
+    return expense?.automaticPaymentKind === "program-author"
+      || (/^automatic-expense-\d+:author-/u.test(key));
+  }
+
+  function recalculateAutomaticProgramAuthorExpenses(record, programOverride = null) {
+    const directExpenses = Array.isArray(record?.directExpenses)
+      ? record.directExpenses
+      : [];
+    if (!directExpenses.some(isAutomaticProgramAuthorExpense)) return record;
+    const program = programOverride || findProgramByName(record?.program);
+    const rule = getProgramAuthorExpenseRule();
+    if (!program || !rule) return record;
+    const specifications = buildProgramAuthorExpenseSpecifications(record, program, rule)
+      .map((item) => ({
+        ...item,
+        automaticPaymentKey: `${rule.id}:${item.suffix}`
+      }));
+    const unusedSpecifications = new Set(specifications);
+    let changed = false;
+    const nextExpenses = directExpenses.map((expense) => {
+      if (!isAutomaticProgramAuthorExpense(expense)) return expense;
+      const expenseKey = String(expense.automaticPaymentKey || "");
+      let specification = specifications.find((item) => (
+        unusedSpecifications.has(item) && item.automaticPaymentKey === expenseKey
+      ));
+      if (!specification) {
+        const recipient = normalizeProgramName(expense.note);
+        specification = specifications.find((item) => (
+          unusedSpecifications.has(item) && normalizeProgramName(item.recipient) === recipient
+        ));
+      }
+      if (!specification) return expense;
+      unusedSpecifications.delete(specification);
+      const nextExpense = {
+        ...expense,
+        type: rule.type,
+        amount: specification.amount,
+        note: specification.recipient,
+        automaticPaymentKey: specification.automaticPaymentKey,
+        automaticPaymentKind: specification.automaticPaymentKind,
+        automaticPaymentProgramId: specification.automaticPaymentProgramId,
+        automaticPaymentProgramName: specification.automaticPaymentProgramName,
+        automaticPaymentAuthorId: specification.automaticPaymentAuthorId,
+        automaticPaymentPercent: specification.automaticPaymentPercent,
+        automaticPaymentFormula: specification.automaticPaymentFormula
+      };
+      if (
+        Number(expense.amount || 0) !== nextExpense.amount
+        || expense.note !== nextExpense.note
+        || expense.automaticPaymentKey !== nextExpense.automaticPaymentKey
+        || expense.automaticPaymentPercent !== nextExpense.automaticPaymentPercent
+        || expense.automaticPaymentFormula !== nextExpense.automaticPaymentFormula
+      ) changed = true;
+      return nextExpense;
+    });
+    return changed ? { ...record, directExpenses: nextExpenses } : record;
+  }
+
+  function buildAutomaticStudentExpenses(record, program = null) {
+    const rules = parseAutomaticExpenseRules(getPaymentSettingValue("automaticExpenseRules"));
+    const existingExpenses = Array.isArray(record.directExpenses) ? record.directExpenses : [];
+    const existingKeys = new Set(existingExpenses.map((expense) => String(expense?.automaticPaymentKey || "")).filter(Boolean));
+    const existingFingerprints = new Set(existingExpenses.map(automaticExpenseFingerprint));
+    const additions = [];
+    const addExpense = (rule, recipient, amount, suffix = "", options = {}) => {
+      const note = String(recipient || "").trim();
+      const normalizedRecipient = normalizeProgramName(note);
+      if (rule.exclusions.some((item) => normalizeProgramName(item) === normalizedRecipient)) return;
+      const roundedAmount = Math.round(Number(amount || 0) * 100) / 100;
+      if (!Number.isFinite(roundedAmount) || roundedAmount < 0 || (!options.allowZero && roundedAmount === 0)) return;
+      const automaticPaymentKey = `${rule.id}:${suffix || normalizedRecipient || "default"}`;
+      const expense = {
+        id: makeId("direct-expense"),
+        uid: String(record.uid || "").trim(),
+        date: todayIso(),
+        type: rule.type,
+        amount: roundedAmount,
+        isPaid: "",
+        note,
+        inventoryId: "",
+        inventoryLink: "",
+        automaticPaymentKey,
+        ...(options.metadata || {})
+      };
+      const fingerprint = automaticExpenseFingerprint(expense);
+      if (
+        existingKeys.has(automaticPaymentKey)
+        || (!options.allowDuplicateFingerprint && existingFingerprints.has(fingerprint))
+      ) return;
+      existingKeys.add(automaticPaymentKey);
+      existingFingerprints.add(fingerprint);
+      additions.push(expense);
+    };
+
+    rules.forEach((rule) => {
+      const normalizedType = normalizeProgramName(rule.type);
+      if (normalizedType === normalizeProgramName("Оплата преподавателю")) {
+        buildProgramAuthorExpenseSpecifications(record, program, rule).forEach((item) => {
+          addExpense(rule, item.recipient, item.amount, item.suffix, {
+            allowZero: true,
+            allowDuplicateFingerprint: true,
+            metadata: {
+              automaticPaymentKind: item.automaticPaymentKind,
+              automaticPaymentProgramId: item.automaticPaymentProgramId,
+              automaticPaymentProgramName: item.automaticPaymentProgramName,
+              automaticPaymentAuthorId: item.automaticPaymentAuthorId,
+              automaticPaymentPercent: item.automaticPaymentPercent,
+              automaticPaymentFormula: item.automaticPaymentFormula
+            }
+          });
+        });
+        return;
+      }
+      if (normalizedType === normalizeProgramName("Оплата председателю ИАК")) {
+        const recipient = extractPaymentRecipientName(program?.commissionChair);
+        if (recipient) addExpense(rule, recipient, evaluatePaymentAmountFormula(rule.amountFormula), "commission-chair");
+        return;
+      }
+      addExpense(
+        rule,
+        rule.notes.join("; "),
+        evaluatePaymentAmountFormula(rule.amountFormula),
+        `rule-${rule.id}`
+      );
+    });
+    return additions;
+  }
+
+  function addAutomaticStudentExpenses(record, program = null) {
+    const reconciledRecord = recalculateAutomaticProgramAuthorExpenses(record, program);
+    const additions = buildAutomaticStudentExpenses(reconciledRecord, program);
+    const nextRecord = {
+      ...reconciledRecord,
+      directExpenses: [
+        ...(Array.isArray(reconciledRecord.directExpenses) ? reconciledRecord.directExpenses : []),
+        ...additions
+      ]
+    };
+    nextRecord.expenseTotal = Math.round(sumStudentExpenses(nextRecord) * 100) / 100;
+    return { record: nextRecord, additions };
   }
 
   function createStudentFromApplication(row, uid, status, selectedProgramId) {
@@ -3370,8 +4542,10 @@ MAX - https://bizvmax.ru/zifra_plus
       workPlace: String(row.organization || "").trim(),
       position: String(row.position || "").trim(),
       source: String(row.source || "Сайт").trim(),
+      agent: getApplicationSourceAgent(row.source || "Сайт"),
       manager: String(program?.manager || ""),
       discount: couponDiscount.percent,
+      discountUnit: "percent",
       discountDescription: couponDiscount.description,
       note: noteParts.join("\n"),
       applicationDate,
@@ -3386,7 +4560,7 @@ MAX - https://bizvmax.ru/zifra_plus
       payment1Note: paymentAmount ? `Заказ №${String(row.orderId || "").trim()}` : "",
       directExpenses: []
     };
-    return calculateStudentFinance(record);
+    return calculateStudentFinance(addAutomaticStudentExpenses(record, program).record);
   }
 
   async function ensureStudentDocumentFolders(records) {
@@ -3419,12 +4593,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function addSelectedStudentApplications() {
     const selectedIds = new Set(state.studentApplicationsImport.selected || []);
-    const importedLookup = buildStudentApplicationsImportLookup();
     const selectedRows = (state.studentApplicationsImport.rows || [])
-      .filter((row) => (
-        selectedIds.has(String(row.id))
-        && !isStudentApplicationImported(row, importedLookup)
-      ));
+      .filter((row) => selectedIds.has(String(row.id)));
     if (!selectedRows.length) {
       alert("Выберите заявки, которые нужно добавить.");
       return;
@@ -3465,6 +4635,10 @@ MAX - https://bizvmax.ru/zifra_plus
       ...imported,
       ...(state.data.collections.students || [])
     ];
+    state.data.dictionaries.agents = unique([
+      ...(state.data.dictionaries.agents || []),
+      ...imported.map((record) => String(record.agent || "").trim()).filter(Boolean)
+    ]);
     addAudit(
       "Импортированы слушатели",
       "Слушатели и заявки",
@@ -3560,7 +4734,9 @@ MAX - https://bizvmax.ru/zifra_plus
         <span>Выбрано: <strong>${selected.length}</strong></span>
         ${statusOptions.length ? `
           <select id="bulkStatusSelect" class="select-control" ${selected.length ? "" : "disabled"}>
-            ${statusOptions.map((item) => `<option>${escapeHtml(item)}</option>`).join("")}
+            ${configId === "students"
+              ? renderStudentStatusOptions(statusOptions)
+              : statusOptions.map((item) => `<option>${escapeHtml(item)}</option>`).join("")}
           </select>
           <button class="ghost-button" data-action="bulk-status" data-config="${configId}" type="button" ${selected.length ? "" : "disabled"}>Сменить статус</button>
         ` : ""}
@@ -3645,7 +4821,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .filter((item) => state.studentProgramTypeFilter.includes(item));
     const selectionLabel = selected.length ? selected.join(", ") : "Все виды";
     return `
-      <details class="student-program-type-filter ${selected.length ? "is-active" : ""}" data-student-program-type-filter>
+      <details class="student-program-type-filter ${selected.length ? "is-active" : ""}" data-program-type-filter data-student-program-type-filter>
         <summary title="Фильтр по виду программы">
           <span>Вид программы</span>
           <strong>${escapeHtml(selectionLabel)}</strong>
@@ -3659,6 +4835,48 @@ MAX - https://bizvmax.ru/zifra_plus
             </label>
           `).join("")}
           <button class="student-program-type-filter-clear" data-action="clear-student-program-type-filter" type="button" ${selected.length ? "" : "disabled"}>Сбросить</button>
+        </div>
+      </details>
+    `;
+  }
+
+  function getProgramRegistryTypeFilterOptions() {
+    const values = unique(
+      getProgramRows()
+        .map((program) => String(program.type || "").trim())
+        .filter(Boolean)
+    );
+    const ordered = [
+      ...STUDENT_PROGRAM_TYPE_FILTER_OPTIONS.filter((item) => values.includes(item)),
+      ...values
+        .filter((item) => !STUDENT_PROGRAM_TYPE_FILTER_OPTIONS.includes(item))
+        .sort((left, right) => left.localeCompare(right, "ru"))
+    ];
+    if (getProgramRows().some((program) => !String(program.type || "").trim())) {
+      ordered.push("Не задано");
+    }
+    return ordered;
+  }
+
+  function renderProgramRegistryTypeFilter() {
+    const options = getProgramRegistryTypeFilterOptions();
+    const selected = options.filter((item) => state.programRegistryTypeFilter.includes(item));
+    const selectionLabel = selected.length ? selected.join(", ") : "Все типы";
+    return `
+      <details class="student-program-type-filter ${selected.length ? "is-active" : ""}" data-program-type-filter data-program-registry-type-filter>
+        <summary title="Фильтр по типу программы">
+          <span>Тип программы</span>
+          <strong>${escapeHtml(selectionLabel)}</strong>
+          <svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5"></path></svg>
+        </summary>
+        <div class="student-program-type-filter-panel">
+          ${options.map((item) => `
+            <label>
+              <input type="checkbox" value="${escapeAttr(item)}" data-program-registry-type-filter-option ${selected.includes(item) ? "checked" : ""}>
+              <span>${escapeHtml(item)}</span>
+            </label>
+          `).join("")}
+          <button class="student-program-type-filter-clear" data-action="clear-program-registry-type-filter" type="button" ${selected.length ? "" : "disabled"}>Сбросить</button>
         </div>
       </details>
     `;
@@ -3763,12 +4981,33 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function getStudentStatusTableSort(status) {
+    return String(status || "").trim().toLocaleLowerCase("ru-RU") === "отчислен"
+      ? { key: "endDate", dir: "desc" }
+      : getDefaultTableSort("students");
+  }
+
+  function parseTableSortDate(value) {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+    if (iso) return Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+    const ru = /^(\d{1,2})\.(\d{1,2})\.(\d{4})/.exec(text);
+    if (ru) return Date.UTC(Number(ru[3]), Number(ru[2]) - 1, Number(ru[1]));
+    const timestamp = Date.parse(text);
+    return Number.isNaN(timestamp) ? null : timestamp;
+  }
+
   function getVisibleRows(config, rowsOverride = null) {
     const isDocumentTemplateTable = config.collection === "documentTemplates";
     const query = (isDocumentTemplateTable ? state.documentTemplateSearch : state.search).trim().toLowerCase();
     const rows = getRowsForConfig(config, rowsOverride);
     const selectedProgramTypes = state.view === "students"
       ? state.studentProgramTypeFilter
+      : [];
+    const selectedRegistryProgramTypes = state.view === "programs"
+      ? getProgramRegistryTypeFilterOptions()
+        .filter((item) => state.programRegistryTypeFilter.includes(item))
       : [];
     const importedViewIds = state.view === "students"
       ? new Set((state.studentImportedViewIds || []).map(String))
@@ -3788,12 +5027,32 @@ MAX - https://bizvmax.ru/zifra_plus
         row.educationType || findProgramByName(row.program)?.type
       );
       const matchProgramType = !selectedProgramTypes.length || selectedProgramTypes.includes(programType);
+      const registryProgramType = String(row.type || "").trim() || "Не задано";
+      const matchRegistryProgramType = !selectedRegistryProgramTypes.length
+        || selectedRegistryProgramTypes.includes(registryProgramType);
       const matchImportedView = !importedViewIds.size || importedViewIds.has(String(row.id));
-      return matchQuery && matchStatus && matchProgramType && matchImportedView;
+      return matchQuery
+        && matchStatus
+        && matchProgramType
+        && matchRegistryProgramType
+        && matchImportedView;
     });
     if (state.sort.key) {
       const dir = state.sort.dir === "asc" ? 1 : -1;
-      filtered = filtered.slice().sort((a, b) => String(a[state.sort.key] || "").localeCompare(String(b[state.sort.key] || ""), "ru") * dir);
+      filtered = filtered.slice().sort((a, b) => {
+        const left = a[state.sort.key];
+        const right = b[state.sort.key];
+        if (state.sort.key === "endDate") {
+          const leftDate = parseTableSortDate(left);
+          const rightDate = parseTableSortDate(right);
+          if (leftDate === null && rightDate !== null) return 1;
+          if (leftDate !== null && rightDate === null) return -1;
+          if (leftDate !== null && rightDate !== null && leftDate !== rightDate) {
+            return (leftDate - rightDate) * dir;
+          }
+        }
+        return String(left || "").localeCompare(String(right || ""), "ru") * dir;
+      });
     }
     return filtered;
   }
@@ -3905,7 +5164,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   <input type="checkbox" data-action="toggle-row-selection" data-config="${configId}" data-id="${row.id}" ${selected.includes(row.id) ? "checked" : ""} aria-label="Выбрать строку">
                 </td>
                 ${fields.map((fieldItem, index) => {
-                  const value = escapeHtml(valueForDisplay(fieldItem.key, row[fieldItem.key]) || "Открыть");
+                  const value = escapeHtml(valueForDisplay(fieldItem.key, row[fieldItem.key], configId) || "Открыть");
                   const style = columnStyleAttr(configId, fieldItem.key);
                   const attrs = columnDataAttrs(configId, fieldItem.key);
                   if (index === 0) {
@@ -4216,16 +5475,18 @@ MAX - https://bizvmax.ru/zifra_plus
     const isCommunicationTemplates = selectedKey === "communicationTemplates";
     const isDataFormulas = selectedKey === "dataFormulas";
     const isSdoSettings = selectedKey === "sdoSettings";
+    const isPaymentSettings = selectedKey === "paymentSettings";
+    const isDocumentPathSettings = selectedKey === "documentPathSettings";
     const isEducationRegistrationTypeCodes = selectedKey === "educationRegistrationTypeCodes";
     const isFinalAttestationSettings = selectedKey === "finalAttestationSettings";
-    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings;
+    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     return `
       <section class="panel">
         <div class="section-head">
           <div>
             <p class="eyebrow">Настройки</p>
-            <h2>Справочники системы</h2>
+            <h2>Настройки системы</h2>
           </div>
         </div>
         <div class="dictionary-browser">
@@ -4236,14 +5497,14 @@ MAX - https://bizvmax.ru/zifra_plus
             </label>
             <div class="dictionary-list" role="listbox" aria-label="Справочники">
               ${visibleItems.length ? visibleItems.map((item) => `
-                <button class="dictionary-list-item ${item.key === selectedKey ? "active" : ""}" data-action="select-dictionary" data-dict="${item.key}" type="button" role="option" aria-selected="${item.key === selectedKey ? "true" : "false"}">
+                <button class="dictionary-list-item ${item.key === selectedKey ? "active" : ""}" data-action="select-dictionary" data-dict="${item.key}" type="button" role="option" aria-selected="${item.key === selectedKey ? "true" : "false"}" tabindex="${item.key === selectedKey ? "0" : "-1"}">
                   <span>${escapeHtml(item.title)}</span>
                   <small>${item.values.length}</small>
                 </button>
               `).join("") : `<div class="empty-state compact"><span>Справочники не найдены</span></div>`}
             </div>
           </aside>
-          <section class="dictionary-detail ${isSpecialDictionary ? "is-communication-templates" : ""}">
+          <section class="dictionary-detail ${isSpecialDictionary ? "is-communication-templates" : ""} ${selectedKey === "discountRules" ? "has-format-hint" : ""}">
             ${selectedItem ? `
               <div class="dictionary-detail-head">
                 <div>
@@ -4254,7 +5515,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${isCommunicationTemplates ? `
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "asc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="asc" type="button" title="Сортировать поля по алфавиту" aria-label="Сортировать поля по алфавиту" aria-pressed="${communicationTemplateFieldSortOrder === "asc" ? "true" : "false"}">А→Я</button>
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "desc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="desc" type="button" title="Сортировать поля против алфавита" aria-label="Сортировать поля против алфавита" aria-pressed="${communicationTemplateFieldSortOrder === "desc" ? "true" : "false"}">Я→А</button>
-                  ` : isDataFormulas || isSdoSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings ? "" : `
+                  ` : isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings ? "" : `
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
                   `}
@@ -4278,12 +5539,16 @@ MAX - https://bizvmax.ru/zifra_plus
                 ? renderCommunicationTemplateDictionary(selectedValues)
                 : isDataFormulas
                   ? renderDataFormulaDictionary(selectedValues)
-                  : isSdoSettings
+                : isSdoSettings
                     ? renderSdoSettingsDictionary(selectedValues)
-                    : isEducationRegistrationTypeCodes
-                      ? renderEducationRegistrationTypeCodesDictionary(selectedValues)
-                      : isFinalAttestationSettings
-                        ? renderFinalAttestationSettingsDictionary(selectedValues)
+                    : isPaymentSettings
+                      ? renderPaymentSettingsDictionary(selectedValues)
+                    : isDocumentPathSettings
+                      ? renderDocumentPathSettingsDictionary(selectedValues)
+                      : isEducationRegistrationTypeCodes
+                        ? renderEducationRegistrationTypeCodesDictionary(selectedValues)
+                        : isFinalAttestationSettings
+                          ? renderFinalAttestationSettingsDictionary(selectedValues)
                   : `
                 <form class="inline-form dictionary-add-form" data-action="dict-add" data-dict="${selectedKey}">
                   <input name="value" placeholder="Новое значение или список из буфера обмена" autocomplete="off" data-dictionary-add-input>
@@ -4308,6 +5573,78 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function keepDictionaryListItemVisible(list, item) {
+    if (!list || !item) return;
+    const listRect = list.getBoundingClientRect();
+    const itemRect = item.getBoundingClientRect();
+    if (itemRect.top < listRect.top) {
+      list.scrollTop -= listRect.top - itemRect.top + 4;
+    } else if (itemRect.bottom > listRect.bottom) {
+      list.scrollTop += itemRect.bottom - listRect.bottom + 4;
+    }
+  }
+
+  function selectDictionary(dict, { focus = true, reveal = false } = {}) {
+    if (!dict) return;
+    const currentList = document.querySelector(".dictionary-list");
+    const listScrollTop = currentList?.scrollTop || 0;
+    const scrollingElement = document.scrollingElement;
+    const pageScrollTop = scrollingElement?.scrollTop || window.scrollY || 0;
+    const pageScrollLeft = scrollingElement?.scrollLeft || window.scrollX || 0;
+
+    state.selectedDictionary = dict;
+    render();
+
+    const nextScrollingElement = document.scrollingElement;
+    if (nextScrollingElement) {
+      nextScrollingElement.scrollTop = pageScrollTop;
+      nextScrollingElement.scrollLeft = pageScrollLeft;
+    }
+    const nextList = document.querySelector(".dictionary-list");
+    if (!nextList) return;
+    nextList.scrollTop = listScrollTop;
+    const selectedButton = Array.from(nextList.querySelectorAll("[data-action='select-dictionary']"))
+      .find((button) => button.dataset.dict === dict);
+    if (!selectedButton) return;
+    if (reveal) keepDictionaryListItemVisible(nextList, selectedButton);
+    if (focus) selectedButton.focus({ preventScroll: true });
+  }
+
+  function handleDictionaryListKeydown(event) {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const currentButton = event.target.closest("[data-action='select-dictionary']");
+    const list = currentButton?.closest(".dictionary-list");
+    if (!currentButton || !list) return;
+    const buttons = Array.from(list.querySelectorAll("[data-action='select-dictionary']"));
+    const currentIndex = buttons.indexOf(currentButton);
+    if (currentIndex < 0) return;
+
+    let targetIndex = currentIndex;
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") targetIndex += 1;
+    else if (event.key === "ArrowUp" || event.key === "ArrowLeft") targetIndex -= 1;
+    else if (event.key === "Home") targetIndex = 0;
+    else if (event.key === "End") targetIndex = buttons.length - 1;
+    else return;
+
+    event.preventDefault();
+    const target = buttons[Math.max(0, Math.min(buttons.length - 1, targetIndex))];
+    if (target === currentButton) return;
+    selectDictionary(target.dataset.dict, { focus: true, reveal: true });
+  }
+
+  function focusDictionaryListFromSearch(event) {
+    if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+    const list = document.querySelector(".dictionary-list");
+    if (!list) return;
+    const buttons = Array.from(list.querySelectorAll("[data-action='select-dictionary']"));
+    if (!buttons.length) return;
+    event.preventDefault();
+    const target = list.querySelector(".dictionary-list-item.active")
+      || (event.key === "ArrowUp" ? buttons.at(-1) : buttons[0]);
+    keepDictionaryListItemVisible(list, target);
+    target.focus({ preventScroll: true });
+  }
+
   function renderSdoSettingsDictionary(values) {
     const settings = normalizeSdoSettings(values);
     return `
@@ -4330,6 +5667,362 @@ MAX - https://bizvmax.ru/zifra_plus
         <p class="sdo-settings-hint">Здесь настраиваются адреса СДО и тема письма с данными доступа.</p>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-sdo-settings" type="button">Восстановить исходные</button>
+          <button class="primary-button" type="submit">Сохранить настройки</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderPaymentSettingsDictionary(values) {
+    const settings = normalizePaymentSettings(values);
+    const rateSettings = settings.filter((setting) => setting.type === "number");
+    const automaticExpenseRules = settings.find((setting) => setting.key === "automaticExpenseRules");
+    const sourceAgentAssignments = settings.find((setting) => setting.key === "sourceAgentAssignments");
+    const tabs = getOrderedTabs("payment-settings", [
+      { id: "rates", label: "Ставки" },
+      { id: "assignment", label: "Назначение" },
+      { id: "agents", label: "Агенты" }
+    ]);
+    const activeTab = tabs.some((tab) => tab.id === state.paymentSettingsTab)
+      ? state.paymentSettingsTab
+      : tabs[0].id;
+    state.paymentSettingsTab = activeTab;
+    const tabAttributes = (tabId) => (
+      tabId === activeTab
+        ? 'class="active" aria-selected="true" tabindex="0"'
+        : 'aria-selected="false" tabindex="-1"'
+    );
+    return `
+      <form class="payment-settings-form" data-action="save-payment-settings">
+        <div class="payment-settings-tabs" data-orderable-tabs="payment-settings" role="tablist" aria-label="Разделы настроек оплаты">
+          ${tabs.map((tab) => `
+            <button
+              ${tabAttributes(tab.id)}
+              data-payment-settings-tab="${escapeAttr(tab.id)}"
+              data-orderable-tab="${escapeAttr(tab.id)}"
+              data-orderable-tab-default-index="${tab.defaultTabIndex}"
+              draggable="true"
+              type="button"
+              role="tab"
+              aria-controls="payment-settings-panel-${escapeAttr(tab.id)}"
+            >${escapeHtml(tab.label)}</button>
+          `).join("")}
+        </div>
+        <section
+          id="payment-settings-panel-rates"
+          class="payment-settings-card payment-settings-panel ${activeTab === "rates" ? "is-active" : ""}"
+          data-payment-settings-panel="rates"
+          role="tabpanel"
+          ${activeTab === "rates" ? "" : "hidden"}
+        >
+          <div class="payment-settings-card-head">
+            <div>
+              <h4>Константы оплаты</h4>
+              <p>Встроенные значения загружаются с листа «Настройки». Пользовательские константы можно применять в формулах по имени в квадратных скобках.</p>
+            </div>
+            <button class="ghost-button payment-add-button" data-action="add-payment-constant" type="button">Добавить константу</button>
+          </div>
+          <div class="payment-constant-table" data-payment-constant-list>
+            <div class="payment-constant-head payment-constant-order-cell">№</div>
+            <div class="payment-constant-head">Константа</div>
+            <div class="payment-constant-head">Значение</div>
+            <div class="payment-constant-head"></div>
+            ${rateSettings.map((setting, index) => renderPaymentConstantRow(setting, index)).join("")}
+          </div>
+        </section>
+        <section
+          id="payment-settings-panel-assignment"
+          class="payment-settings-card payment-settings-panel ${activeTab === "assignment" ? "is-active" : ""}"
+          data-payment-settings-panel="assignment"
+          role="tabpanel"
+          ${activeTab === "assignment" ? "" : "hidden"}
+        >
+          <label class="payment-settings-textarea">
+            <span>${escapeHtml(automaticExpenseRules.label)}</span>
+            <textarea name="${escapeAttr(automaticExpenseRules.key)}" rows="10" spellcheck="false">${escapeHtml(automaticExpenseRules.value)}</textarea>
+          </label>
+          <p class="payment-settings-hint">
+            Формат строки: <code>Вид затрат, Сумма или формула, Примечание</code>.
+            Значения примечания со знаком «-» не добавляются. Несколько исключений разделяются точкой с запятой.
+            Для «Оплаты преподавателю» и «Оплаты председателю ИАК» получатель определяется из настроек программы.
+          </p>
+        </section>
+        <section
+          id="payment-settings-panel-agents"
+          class="payment-settings-card payment-settings-panel ${activeTab === "agents" ? "is-active" : ""}"
+          data-payment-settings-panel="agents"
+          role="tabpanel"
+          ${activeTab === "agents" ? "" : "hidden"}
+        >
+          <label class="payment-settings-textarea">
+            <span>${escapeHtml(sourceAgentAssignments.label)}</span>
+            <textarea name="${escapeAttr(sourceAgentAssignments.key)}" rows="6" spellcheck="false">${escapeHtml(sourceAgentAssignments.value)}</textarea>
+          </label>
+          <p class="payment-settings-hint">Каждое соответствие указывается с новой строки в формате <code>Источник=ФИО агента</code>.</p>
+        </section>
+        <div class="sdo-settings-actions">
+          <button class="ghost-button" data-action="reset-payment-settings" type="button">Восстановить исходные</button>
+          <button class="primary-button" type="submit">Сохранить настройки</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderPaymentConstantRow(setting = {}, index = 0) {
+    const custom = Boolean(setting.custom);
+    const pinned = setting.key === "authorRate";
+    const removable = custom && !pinned;
+    const unit = getPaymentConstantUnit(setting);
+    return `
+      <div
+        class="payment-constant-row ${pinned ? "is-pinned" : ""}"
+        data-payment-constant-row
+        data-payment-constant-custom="${custom ? "true" : "false"}"
+        ${pinned ? "data-payment-constant-pinned" : ""}
+      >
+        <input type="hidden" data-payment-constant-field="key" value="${escapeAttr(setting.key || makeId("payment-constant"))}">
+        <input type="hidden" data-payment-constant-field="label" value="${escapeAttr(setting.label || setting.marker || "")}">
+        <div class="payment-constant-order-cell">
+          ${renderFinanceRowDragHandle(
+            pinned ? "Глобальная авторская ставка закреплена первой" : `Перетащить константу ${index + 1}`,
+            { disabled: pinned }
+          )}
+          <strong data-payment-constant-row-number>${index + 1}</strong>
+        </div>
+        <label class="payment-constant-marker-cell">
+          <span class="sr-only">Константа</span>
+          <span class="payment-constant-bracket">[</span>
+          <input
+            data-payment-constant-field="marker"
+            value="${escapeAttr(setting.marker || "")}"
+            placeholder="НоваяКонстанта"
+            autocomplete="off"
+            ${custom ? "" : "readonly"}
+            required
+          >
+          <span class="payment-constant-bracket">]</span>
+        </label>
+        <label class="payment-constant-value-cell">
+          <span class="sr-only">Значение</span>
+          <input data-payment-constant-field="value" type="number" min="0" step="10" value="${escapeAttr(setting.value ?? "")}" required>
+          ${unit ? `<span class="payment-constant-unit" aria-hidden="true">${escapeHtml(unit)}</span>` : ""}
+        </label>
+        <button
+          class="payment-row-delete"
+          data-action="delete-payment-constant"
+          type="button"
+          title="${removable ? "Удалить константу" : "Глобальную или встроенную константу удалить нельзя"}"
+          aria-label="${removable ? "Удалить константу" : "Глобальную или встроенную константу удалить нельзя"}"
+          ${removable ? "" : "disabled"}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 14h10l1-14"></path><path d="M9 7V4h6v3"></path></svg>
+        </button>
+      </div>
+    `;
+  }
+
+  function switchPaymentSettingsTab(tabId, options = {}) {
+    const target = ["rates", "assignment", "agents"].includes(String(tabId || ""))
+      ? String(tabId)
+      : "rates";
+    state.paymentSettingsTab = target;
+    const form = document.querySelector("form[data-action='save-payment-settings']");
+    if (!form) return;
+    form.querySelectorAll("[data-payment-settings-tab]").forEach((button) => {
+      const isActive = button.dataset.paymentSettingsTab === target;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-selected", isActive ? "true" : "false");
+      button.tabIndex = isActive ? 0 : -1;
+      if (isActive && options.focus) button.focus({ preventScroll: true });
+    });
+    form.querySelectorAll("[data-payment-settings-panel]").forEach((panel) => {
+      const isActive = panel.dataset.paymentSettingsPanel === target;
+      panel.classList.toggle("is-active", isActive);
+      panel.hidden = !isActive;
+    });
+  }
+
+  function bindPaymentSettingsTabs() {
+    document.querySelectorAll("[data-payment-settings-tab]").forEach((button) => {
+      button.addEventListener("click", () => switchPaymentSettingsTab(button.dataset.paymentSettingsTab));
+    });
+  }
+
+  function addPaymentConstantRow() {
+    const list = document.querySelector("[data-payment-constant-list]");
+    if (!list) return;
+    const index = list.querySelectorAll("[data-payment-constant-row]").length;
+    list.insertAdjacentHTML("beforeend", renderPaymentConstantRow({
+      key: makeId("payment-constant"),
+      marker: "",
+      label: "",
+      value: "0",
+      type: "number",
+      custom: true
+    }, index));
+    const row = list.lastElementChild;
+    updatePaymentConstantRowNumbers(list);
+    row?.querySelector('[data-payment-constant-field="marker"]')?.focus({ preventScroll: true });
+  }
+
+  function bindPaymentConstantListActions(list) {
+    if (!list || list.dataset.paymentConstantActionsBound === "true") return;
+    list.dataset.paymentConstantActionsBound = "true";
+    list.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-action='delete-payment-constant']");
+      if (!button || !list.contains(button)) return;
+      deletePaymentConstantRow(button);
+    });
+  }
+
+  function deletePaymentConstantRow(button) {
+    const row = button?.closest("[data-payment-constant-row]");
+    const key = String(
+      row?.querySelector('[data-payment-constant-field="key"]')?.value || ""
+    ).trim();
+    if (!row || key === "authorRate" || row.dataset.paymentConstantCustom !== "true") return;
+    const marker = normalizePaymentConstantMarker(
+      row.querySelector('[data-payment-constant-field="marker"]')?.value
+    );
+    if (marker && !confirm(`Удалить константу [${marker}]? Формулы с ней перестанут вычисляться.`)) return;
+    row.remove();
+    updatePaymentConstantRowNumbers(document.querySelector("[data-payment-constant-list]"));
+  }
+
+  function updatePaymentConstantRowNumbers(list) {
+    const pinnedRow = list?.querySelector("[data-payment-constant-pinned]");
+    const firstRow = list?.querySelector("[data-payment-constant-row]");
+    if (pinnedRow && firstRow && pinnedRow !== firstRow) {
+      list.insertBefore(pinnedRow, firstRow);
+    }
+    list?.querySelectorAll("[data-payment-constant-row]").forEach((row, index) => {
+      const number = row.querySelector("[data-payment-constant-row-number]");
+      if (number) number.textContent = String(index + 1);
+      const handle = row.querySelector("[data-finance-row-drag]");
+      if (handle && !row.hasAttribute("data-payment-constant-pinned")) {
+        handle.setAttribute("aria-label", `Перетащить константу ${index + 1}`);
+      }
+    });
+  }
+
+  function getPaymentConstantDragAfterRow(list, y) {
+    return [...list.querySelectorAll("[data-payment-constant-row]:not(.is-dragging)")].reduce((closest, row) => {
+      const cell = row.querySelector(".payment-constant-order-cell");
+      if (!cell) return closest;
+      const box = cell.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      return offset < 0 && offset > closest.offset ? { offset, row } : closest;
+    }, { offset: Number.NEGATIVE_INFINITY, row: null }).row;
+  }
+
+  function bindPaymentConstantRowDrag(list) {
+    if (!list || list.dataset.paymentConstantDragBound === "true") return;
+    list.dataset.paymentConstantDragBound = "true";
+    list.addEventListener("dragstart", (event) => {
+      const handle = event.target.closest("[data-finance-row-drag]");
+      const row = handle?.closest("[data-payment-constant-row]");
+      if (!row) {
+        event.preventDefault();
+        return;
+      }
+      row.classList.add("is-dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", "");
+      }
+    });
+    list.addEventListener("dragover", (event) => {
+      const dragging = list.querySelector("[data-payment-constant-row].is-dragging");
+      if (!dragging) return;
+      event.preventDefault();
+      const afterRow = getPaymentConstantDragAfterRow(list, event.clientY);
+      if (afterRow) list.insertBefore(dragging, afterRow);
+      else list.appendChild(dragging);
+      updatePaymentConstantRowNumbers(list);
+    });
+    list.addEventListener("drop", (event) => event.preventDefault());
+    list.addEventListener("dragend", () => {
+      list.querySelectorAll("[data-payment-constant-row]").forEach((row) => row.classList.remove("is-dragging"));
+      updatePaymentConstantRowNumbers(list);
+    });
+  }
+
+  function collectPaymentConstantSettings(form) {
+    const rows = [...(form?.querySelectorAll("[data-payment-constant-row]") || [])];
+    const markers = new Set();
+    const settings = [];
+    for (const row of rows) {
+      const field = (name) => row.querySelector(`[data-payment-constant-field="${name}"]`);
+      const marker = normalizePaymentConstantMarker(field("marker")?.value);
+      const normalizedMarker = marker.toLocaleLowerCase("ru-RU");
+      const label = String(field("label")?.value || "").trim() || marker;
+      const rawValue = String(field("value")?.value || "").trim().replace(",", ".");
+      const value = Number(rawValue);
+      if (!isValidPaymentConstantMarker(marker)) {
+        return { error: `Некорректное имя константы «${marker || "(пусто)"}». Используйте буквы, цифры и знак подчеркивания.`, input: field("marker") };
+      }
+      if (markers.has(normalizedMarker)) {
+        return { error: `Константа [${marker}] указана несколько раз.`, input: field("marker") };
+      }
+      if (!isPaymentRateValueValid(value)) {
+        return { error: `Значение константы [${marker}] должно быть неотрицательным и кратным 10.`, input: field("value") };
+      }
+      markers.add(normalizedMarker);
+      const custom = row.dataset.paymentConstantCustom === "true";
+      settings.push({
+        key: String(field("key")?.value || makeId("payment-constant")).trim(),
+        marker,
+        label,
+        type: "number",
+        value: String(normalizePaymentRateValue(value)),
+        ...(custom ? { custom: true } : {})
+      });
+    }
+    return { settings };
+  }
+
+  function renderDocumentPathSettingsDictionary(values) {
+    const settings = normalizeDocumentPathSettings(values);
+    return `
+      <form class="sdo-settings-form" data-action="save-document-path-settings">
+        <div class="document-path-settings-layout">
+          <div class="sdo-settings-fields">
+            ${settings.map((setting) => `
+              <label>
+                <span>${escapeHtml(setting.label)}</span>
+                <div
+                  class="document-save-folder-editor document-path-value-editor"
+                  contenteditable="true"
+                  data-document-path-value-editor
+                  data-document-path-setting-key="${escapeAttr(setting.key)}"
+                  data-placeholder="Введите путь и добавьте маркеры"
+                  role="textbox"
+                  aria-label="${escapeAttr(setting.label)}"
+                >${renderDocumentPathValueEditorContent(setting.value)}</div>
+                <input name="${escapeAttr(setting.key)}" type="hidden" value="${escapeAttr(setting.value)}">
+              </label>
+            `).join("")}
+          </div>
+          <aside class="document-path-marker-panel">
+            <strong>Доступные маркеры</strong>
+            <p>Перетащите блок в нужное место пути.</p>
+            <div class="document-path-marker-list">
+              ${documentPathMarkerDefinitions.map((marker) => `
+                <button
+                  class="communication-template-token document-path-marker"
+                  data-document-path-marker
+                  data-template-token="${escapeAttr(marker.token)}"
+                  draggable="true"
+                  type="button"
+                  title="${escapeAttr(marker.label)}"
+                >${escapeHtml(marker.token)}</button>
+              `).join("")}
+            </div>
+          </aside>
+        </div>
+        <p class="sdo-settings-hint">Путь задается относительно папки системы на Яндекс-Диске. Индивидуальный путь из карточки слушателя имеет приоритет.</p>
+        <div class="sdo-settings-actions">
+          <button class="ghost-button" data-action="reset-document-path-settings" type="button">Восстановить исходные</button>
           <button class="primary-button" type="submit">Сохранить настройки</button>
         </div>
       </form>
@@ -4694,22 +6387,12 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
             <div class="modal-head-actions document-template-head-actions">
               <div class="document-template-primary-actions">
+                <button class="ghost-button" data-action="refresh-document-template-fields" type="button" title="Обновить поля и параметры отправки&#10;Поля подгружаются из маркеров #...# и полей SEQ/SEQUENCE по номерам из CustomProperties&#10;Тема и текст письма подгружаются из свойств «Тема сообщения» и «Шаблон»">
+                  ${renderDocumentTemplateActionIcon("refresh")}
+                  <span>Обновить данные</span>
+                </button>
                 <button class="primary-button" form="documentTemplateSettingsForm" type="submit">Сохранить</button>
                 <button class="ghost-button" data-action="close-document-template-settings" type="button">Закрыть</button>
-              </div>
-              <div class="document-template-tool-actions">
-                <button class="ghost-button" data-action="add-contract-template-field" type="button" title="Добавить поле">
-                  ${renderDocumentTemplateActionIcon("add")}
-                  <span>Поле</span>
-                </button>
-                <button class="ghost-button danger-text-button" data-action="remove-contract-template-field" data-index="${activeIndex}" type="button" title="Удалить поле" ${activeField?.custom ? "" : "disabled"}>
-                  ${renderDocumentTemplateActionIcon("delete")}
-                  <span>Удалить поле</span>
-                </button>
-                <button class="ghost-button" data-action="refresh-document-template-fields" type="button" title="Обновить поля&#10;Поля подгружаются из маркеров #...# и полей SEQ/SEQUENCE по номерам из CustomProperties&#10;Формулы подгружаются из свойств документа при наличии, если они сделаны через программу Ассистент">
-                  ${renderDocumentTemplateActionIcon("refresh")}
-                  <span>Обновить поля</span>
-                </button>
               </div>
             </div>
           </header>
@@ -4722,8 +6405,24 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderContractTemplateDictionary(documentTemplate) {
     const activeDocument = normalizeDocumentTemplate(documentTemplate, 0);
     const fields = activeDocument.fields;
+    const settingsTabs = getOrderedTabs("document-template-settings", [
+      { id: "main", label: "Основное" },
+      { id: "fields", label: "Поля документа" },
+      { id: "email", label: "Отправка по почте" }
+    ]);
+    const activeSettingsTab = settingsTabs.some((tab) => tab.id === state.documentTemplateSettingsTab)
+      ? state.documentTemplateSettingsTab
+      : "main";
     const documentTokens = getSortedContractDocumentTokens(fields);
     const sourceTokens = getSortedContractSourceTokens();
+    const emailTokens = getDocumentEmailTemplateTokens(activeDocument);
+    const saveFolderTokens = [
+      ...normalizeDocumentPathSettings(state.data.dictionaries.documentPathSettings),
+      {
+        key: "browserDownloadsFolder",
+        label: downloadsFolderTemplateMarker
+      }
+    ];
     const activeField = getActiveContractTemplateField(fields);
     const activeIndex = Math.max(0, fields.findIndex((field) => field.id === activeField?.id));
     return `
@@ -4731,102 +6430,345 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="contract-template-field-store" hidden>
           ${fields.map((field, index) => renderContractTemplateHiddenFieldRow(field, index)).join("")}
         </div>
-        <section class="contract-template-settings">
-          <div class="contract-template-settings-head">
-            <strong>Настройки документа</strong>
-            <div class="document-template-source-actions">
-              <button class="ghost-button document-template-source-button" data-action="open-document-template-source" type="button" ${activeDocument.templateUrl || activeDocument.templatePath ? "" : "disabled"}>
-                ${renderExternalLinkIcon()}
-                <span>Открыть</span>
-              </button>
-              <button class="ghost-button document-template-source-button" data-action="replace-document-template-link" type="button">
-                ${renderDocumentTemplateToolbarIcon("link")}
-                <span>Заменить источник</span>
-              </button>
-              <button class="ghost-button document-template-source-button" data-action="replace-document-template-file-trigger" type="button">
-                ${renderDocumentTemplateToolbarIcon("upload")}
-                <span>Заменить файл</span>
-              </button>
-              <input data-document-template-replace-input type="file" accept="${escapeAttr(wordTemplateAccept)},application/msword,application/rtf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-word.document.macroEnabled.12,application/vnd.openxmlformats-officedocument.wordprocessingml.template,application/vnd.ms-word.template.macroEnabled.12" hidden>
-            </div>
-            <span class="contract-template-source-meta" title="${escapeAttr(activeDocument.fileName || getDocumentTemplateSourceLabel(activeDocument))}">${escapeHtml(activeDocument.fileName || getDocumentTemplateSourceLabel(activeDocument))}</span>
-          </div>
-          <div class="document-template-title-row">
-            <label>
-              <span>Название</span>
-              <input name="documentTitle" value="${escapeAttr(activeDocument.title)}" autocomplete="off" required>
-            </label>
-            <label>
-              <span>Название итогового файла</span>
-              <input name="fileNameTemplate" value="${escapeAttr(activeDocument.fileNameTemplate)}" autocomplete="off" required>
-            </label>
-          </div>
-          <div class="document-template-binding-row">
-            <label>
-              <span>Привязка</span>
-              <select name="documentKind">
-                ${studentCardDocumentBindingOptions.map((option) => `
-                  <option value="${escapeAttr(option.value)}" ${activeDocument.documentKind === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>
-                `).join("")}
-              </select>
-            </label>
-            <label>
-              <span>WebDAV-путь или ссылка на шаблон</span>
-              <input name="templateUrl" type="text" value="${escapeAttr(activeDocument.templateUrl)}" placeholder="Документы/Шаблон.docx или ссылка Яндекс-Диска" autocomplete="off">
-            </label>
+        <div class="document-template-settings-tabs" data-orderable-tabs="document-template-settings" role="tablist" aria-label="Разделы параметров документа">
+          ${settingsTabs.map((tab) => `
+            <button
+              class="${activeSettingsTab === tab.id ? "active" : ""}"
+              data-action="switch-document-template-settings-tab"
+              data-document-template-settings-tab="${escapeAttr(tab.id)}"
+              data-orderable-tab="${escapeAttr(tab.id)}"
+              data-orderable-tab-default-index="${tab.defaultTabIndex}"
+              draggable="true"
+              type="button"
+              role="tab"
+              aria-selected="${activeSettingsTab === tab.id ? "true" : "false"}"
+              tabindex="${activeSettingsTab === tab.id ? "0" : "-1"}"
+              aria-controls="documentTemplateSettingsPanel-${escapeAttr(tab.id)}"
+            >${escapeHtml(tab.label)}</button>
+          `).join("")}
+        </div>
+        <div
+          id="documentTemplateSettingsPanel-main"
+          class="document-template-settings-tab-panel is-main"
+          data-document-template-settings-panel="main"
+          role="tabpanel"
+          ${activeSettingsTab === "main" ? "" : "hidden"}
+        >
+          <div class="document-template-main-layout">
+            <section class="document-template-main-card is-document">
+              <header class="document-template-main-card-head">
+                <div>
+                  <strong>Документ</strong>
+                  <span>Название, назначение и формат результата.</span>
+                </div>
+              </header>
+              <div class="document-template-main-document-grid">
+                <label class="document-template-main-title">
+                  <span>Название документа</span>
+                  <input name="documentTitle" value="${escapeAttr(activeDocument.title)}" autocomplete="off" required>
+                </label>
+                <label class="document-template-main-binding">
+                  <span>Привязка к кнопке системы</span>
+                  <select name="documentKind">
+                    ${studentCardDocumentBindingOptions.map((option) => `
+                      <option value="${escapeAttr(option.value)}" ${activeDocument.documentKind === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>
+                    `).join("")}
+                  </select>
+                </label>
+                <label class="document-template-main-format">
+                  <span>Формат</span>
+                  <select name="generationFormat">
+                    <option value="pdf" ${activeDocument.generationFormat === "pdf" ? "selected" : ""}>PDF</option>
+                    <option value="docx" ${activeDocument.generationFormat === "docx" ? "selected" : ""}>DOCX</option>
+                  </select>
+                </label>
+                <label class="document-template-main-file-name">
+                  <span>Название итогового файла</span>
+                  <input name="fileNameTemplate" value="${escapeAttr(activeDocument.fileNameTemplate)}" autocomplete="off" required>
+                </label>
+              </div>
+            </section>
+            <section class="document-template-main-card is-source">
+              <header class="document-template-main-card-head">
+                <div>
+                  <strong>Источник шаблона</strong>
+                  <span class="contract-template-source-meta" title="${escapeAttr(activeDocument.fileName || getDocumentTemplateSourceLabel(activeDocument))}">${escapeHtml(activeDocument.fileName || getDocumentTemplateSourceLabel(activeDocument))}</span>
+                </div>
+                <div class="document-template-source-actions">
+                  <button class="ghost-button document-template-source-button" data-action="open-document-template-source" type="button" title="${escapeAttr(getOpenDocumentsLocally() ? "Открыть шаблон. Shift + щелчок: показать локальный файл в Проводнике." : "Открыть шаблон.")}" ${activeDocument.templateUrl || activeDocument.templatePath ? "" : "disabled"}>
+                    ${renderExternalLinkIcon()}
+                    <span>Открыть</span>
+                  </button>
+                  <button class="ghost-button document-template-source-button" data-action="replace-document-template-link" type="button">
+                    ${renderDocumentTemplateToolbarIcon("link")}
+                    <span>Заменить ссылку</span>
+                  </button>
+                  <button class="ghost-button document-template-source-button" data-action="replace-document-template-file-trigger" type="button">
+                    ${renderDocumentTemplateToolbarIcon("upload")}
+                    <span>Загрузить файл</span>
+                  </button>
+                  <input data-document-template-replace-input type="file" accept="${escapeAttr(wordTemplateAccept)},application/msword,application/rtf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-word.document.macroEnabled.12,application/vnd.openxmlformats-officedocument.wordprocessingml.template,application/vnd.ms-word.template.macroEnabled.12" hidden>
+                </div>
+              </header>
+              <label class="document-template-main-wide-field">
+                <span>WebDAV-путь или ссылка на шаблон</span>
+                <input name="templateUrl" type="text" value="${escapeAttr(activeDocument.templateUrl)}" placeholder="Документы/Шаблон.docx или ссылка Яндекс-Диска" autocomplete="off">
+              </label>
+            </section>
+            <section class="document-template-main-card is-save">
+              <header class="document-template-main-card-head">
+                <div>
+                  <strong>Сохранение</strong>
+                  <span>Укажите рекомендуемую папку или выберите системное поле.</span>
+                </div>
+              </header>
+              <label class="document-template-main-wide-field" title="Можно ввести путь относительно папки системы или добавить поле. Поле «Папка Загрузки» использует стандартную папку загрузок браузера на компьютере.">
+                <span>Папка сохранения</span>
+                <div class="document-save-folder-control">
+                  <div
+                    class="document-save-folder-editor"
+                    contenteditable="true"
+                    data-document-save-folder-editor
+                    data-placeholder="Введите путь или добавьте поле"
+                    role="textbox"
+                    aria-label="Папка сохранения документа"
+                  >${renderDocumentSaveFolderEditorContent(activeDocument.saveFolderTemplate, saveFolderTokens)}</div>
+                  <select data-document-save-folder-token-select aria-label="Добавить поле в путь сохранения">
+                    <option value="">Добавить поле...</option>
+                    ${saveFolderTokens.map((setting) => `
+                      <option value="${escapeAttr(setting.label)}">${escapeHtml(setting.label)}</option>
+                    `).join("")}
+                  </select>
+                  <input name="saveFolderTemplate" type="hidden" value="${escapeAttr(activeDocument.saveFolderTemplate)}">
+                </div>
+              </label>
+            </section>
           </div>
           <input name="useCustomDocumentProperties" type="hidden" value="1">
           <input name="templatePath" type="hidden" value="${escapeAttr(activeDocument.templatePath)}">
           <input name="documentSource" type="hidden" value="${escapeAttr(activeDocument.source)}">
           <input name="documentFileName" type="hidden" value="${escapeAttr(activeDocument.fileName)}">
-        </section>
-        <div class="contract-template-workspace">
-          <aside class="contract-template-token-panel contract-template-document-fields-panel">
-            ${renderContractTemplateTokenGroup(
-              "Поля документа",
-              "Выберите поле, чтобы открыть его формулу. Перетащите в формулу для ссылки.",
-              documentTokens,
-              activeField?.id
-            )}
-          </aside>
-          <section class="contract-template-editor-panel">
-            ${activeField ? `
-              <header>
-                <div>
-                  <strong>${escapeHtml(activeField.name)}</strong>
-                  <span>Формула поля договора</span>
-                </div>
-                <small>Перетаскивайте поля в формулу. Правый щелчок по блоку открывает меню.</small>
-              </header>
-              <div class="contract-active-field-controls">
-                <label>
-                  <span>Исходное имя поля в документе</span>
-                  <input data-active-contract-name-input value="${escapeAttr(activeField.name)}" aria-label="Исходное имя поля в документе" required>
-                </label>
-              </div>
-              <div
-                class="communication-template-editor communication-template-formula-editor contract-template-formula-editor"
-                contenteditable="true"
-                data-contract-formula-editor
-                data-contract-field-id="${escapeAttr(activeField.id)}"
-                data-contract-field-index="${activeIndex}"
-                role="textbox"
-                aria-label="Формула поля ${escapeAttr(activeField.name)}"
-                aria-multiline="true"
-              >${renderContractFormulaEditorContent(activeField.formula, fields)}</div>
-            ` : `<div class="empty-state compact"><span>Нет полей договора</span></div>`}
-            <div class="contract-template-available-fields">
+        </div>
+        <div
+          id="documentTemplateSettingsPanel-fields"
+          class="document-template-settings-tab-panel is-fields"
+          data-document-template-settings-panel="fields"
+          role="tabpanel"
+          ${activeSettingsTab === "fields" ? "" : "hidden"}
+        >
+          <div class="document-template-fields-toolbar">
+            <div>
+              <strong>Поля документа</strong>
+              <span>Добавляйте пользовательские поля и редактируйте их формулы.</span>
+            </div>
+            <div>
+              <button class="ghost-button" data-action="add-contract-template-field" type="button" title="Добавить поле">
+                ${renderDocumentTemplateActionIcon("add")}
+                <span>Добавить поле</span>
+              </button>
+              <button class="ghost-button danger-text-button" data-action="remove-contract-template-field" data-index="${activeIndex}" type="button" title="Удалить поле" ${activeField?.custom ? "" : "disabled"}>
+                ${renderDocumentTemplateActionIcon("delete")}
+                <span>Удалить поле</span>
+              </button>
+            </div>
+          </div>
+          <div class="contract-template-workspace">
+            <aside class="contract-template-token-panel contract-template-document-fields-panel">
               ${renderContractTemplateTokenGroup(
-                "Доступные поля",
-                "Перетащите поле в формулу.",
-                sourceTokens,
+                "Поля документа",
+                "Выберите поле, чтобы открыть его формулу. Перетащите в формулу для ссылки.",
+                documentTokens,
                 activeField?.id
               )}
-            </div>
-          </section>
+            </aside>
+            <section class="contract-template-editor-panel">
+              ${activeField ? `
+                <header>
+                  <div>
+                    <strong>${escapeHtml(activeField.name)}</strong>
+                    <span>Формула поля договора</span>
+                  </div>
+                  <small>Перетаскивайте поля в формулу. Правый щелчок по блоку открывает меню.</small>
+                </header>
+                <div class="contract-active-field-controls">
+                  <label>
+                    <span>Исходное имя поля в документе</span>
+                    <input data-active-contract-name-input value="${escapeAttr(activeField.name)}" aria-label="Исходное имя поля в документе" required>
+                  </label>
+                </div>
+                <div
+                  class="communication-template-editor communication-template-formula-editor contract-template-formula-editor"
+                  contenteditable="true"
+                  data-contract-formula-editor
+                  data-contract-field-id="${escapeAttr(activeField.id)}"
+                  data-contract-field-index="${activeIndex}"
+                  role="textbox"
+                  aria-label="Формула поля ${escapeAttr(activeField.name)}"
+                  aria-multiline="true"
+                >${renderContractFormulaEditorContent(activeField.formula, fields)}</div>
+              ` : `<div class="empty-state compact"><span>Нет полей договора</span></div>`}
+              <div class="contract-template-available-fields">
+                ${renderContractTemplateTokenGroup(
+                  "Доступные поля",
+                  "Перетащите поле в формулу.",
+                  sourceTokens,
+                  activeField?.id
+                )}
+              </div>
+            </section>
+          </div>
+        </div>
+        <div
+          id="documentTemplateSettingsPanel-email"
+          class="document-template-settings-tab-panel is-email"
+          data-document-template-settings-panel="email"
+          role="tabpanel"
+          ${activeSettingsTab === "email" ? "" : "hidden"}
+        >
+          ${renderDocumentEmailSettings(activeDocument, emailTokens)}
         </div>
       </form>
     `;
+  }
+
+  function renderProtectedPathEditorContent(template, tokens) {
+    const availableTokens = new Set(tokens);
+    return String(template || "")
+      .split(/(#[^#\r\n]+#)/g)
+      .map((part) => {
+        if (!availableTokens.has(part)) return escapeHtml(part);
+        return `<span class="document-save-folder-token" contenteditable="false" data-template-token="${escapeAttr(part)}" data-document-save-folder-token><span>${escapeHtml(part)}</span><button data-action="remove-document-save-folder-token" type="button" title="Удалить поле" aria-label="Удалить поле ${escapeAttr(part)}">×</button></span>`;
+      })
+      .join("");
+  }
+
+  function renderDocumentEmailEditorContent(template, tokens) {
+    const availableTokens = new Map(tokens.map((item) => [item.token, item]));
+    return String(template || "")
+      .split(/(#[^#\r\n]+#|\[[^\]\r\n]+\])/g)
+      .map((part) => {
+        if (!/^(?:#[^#\r\n]+#|\[[^\]\r\n]+\])$/.test(part)) {
+          return renderCommunicationTemplateLinks(part);
+        }
+        const tokenDefinition = availableTokens.get(part);
+        const isKnown = Boolean(tokenDefinition);
+        const type = tokenDefinition?.type === "constant"
+          ? "constant"
+          : (part.startsWith("#") ? "document" : "source");
+        const fieldAttributes = tokenDefinition?.fieldId
+          ? ` data-contract-field-id="${escapeAttr(tokenDefinition.fieldId)}" data-contract-document-field-name="${escapeAttr(tokenDefinition.label)}"`
+          : "";
+        const templateValueAttributes = tokenDefinition?.templateValueName
+          ? ` data-document-email-template-value-name="${escapeAttr(tokenDefinition.templateValueName)}"`
+          : "";
+        return `<span class="communication-template-block document-email-template-block is-${type} ${isKnown ? "" : "is-unresolved"}" contenteditable="false" data-template-token="${escapeAttr(part)}" data-document-email-token${fieldAttributes}${templateValueAttributes} draggable="true" title="${isKnown ? "Правый щелчок: действия с полем" : "Поле не найдено в текущем шаблоне"}">${escapeHtml(part)}</span>`;
+      })
+      .join("");
+  }
+
+  function renderDocumentEmailSettings(documentTemplate, tokens) {
+    const deliveryMode = normalizeDocumentEmailDeliveryMode(
+      documentTemplate.emailDeliveryMode,
+      documentTemplate
+    );
+    const documentTokens = tokens.filter((item) => item.type === "document");
+    const sourceTokens = tokens.filter((item) => item.type === "source");
+    const constantTokens = tokens.filter((item) => item.type === "constant");
+    const renderMarkerGroup = (title, subtitle, items) => `
+      <section class="document-template-email-marker-group" data-document-email-marker-group>
+        <div class="document-template-email-marker-group-head">
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(subtitle)} · ${items.length}</span>
+        </div>
+        <div class="document-template-email-marker-list">
+          ${items.map((item) => `
+            <button
+              class="communication-template-token contract-template-token document-email-marker is-${escapeAttr(item.type)}"
+              data-action="insert-document-email-token"
+              data-template-token="${escapeAttr(item.token)}"
+              data-document-email-marker-label="${escapeAttr(`${item.label} ${item.token}`.toLocaleLowerCase("ru-RU"))}"
+              data-document-email-token
+              ${item.fieldId ? `data-contract-field-id="${escapeAttr(item.fieldId)}" data-contract-document-field-name="${escapeAttr(item.label)}"` : ""}
+              ${item.templateValueName ? `data-document-email-template-value-name="${escapeAttr(item.templateValueName)}"` : ""}
+              draggable="true"
+              type="button"
+              title="${escapeAttr(`${item.label}: ${item.token}${item.fieldId || item.templateValueName ? "\nПравый щелчок: редактировать поле" : ""}`)}"
+            >${escapeHtml(item.label)}</button>
+          `).join("")}
+          <span class="lookup-empty document-template-email-marker-empty" ${items.length ? "hidden" : ""}>${items.length ? "Совпадений нет" : "Поля не найдены"}</span>
+        </div>
+      </section>
+    `;
+    return `
+      <section class="document-template-email-settings">
+        <div class="document-template-email-settings-head">
+          <div>
+            <strong>Отправка по почте</strong>
+            <span>Тема и текст загружаются из CustomProperties «Тема сообщения» и «Шаблон».</span>
+          </div>
+          <label>
+            <span>Получатель</span>
+            <select name="emailDeliveryMode">
+              <option value="off" ${deliveryMode === "off" ? "selected" : ""}>Не отправлять</option>
+              <option value="student" ${deliveryMode === "student" ? "selected" : ""}>Слушатель</option>
+              <option value="system" ${deliveryMode === "system" ? "selected" : ""}>Системный ящик</option>
+            </select>
+          </label>
+        </div>
+        <div class="document-template-email-layout">
+          <div class="document-template-email-editors">
+            <label class="document-template-email-field">
+              <span>Тема сообщения</span>
+              <div
+                class="document-email-template-editor is-subject is-active-editor"
+                contenteditable="true"
+                data-document-email-editor
+                data-document-email-field="emailSubjectTemplate"
+                role="textbox"
+                aria-label="Тема отправляемого письма"
+              >${renderDocumentEmailEditorContent(documentTemplate.emailSubjectTemplate, tokens)}</div>
+              <input name="emailSubjectTemplate" type="hidden" value="${escapeAttr(documentTemplate.emailSubjectTemplate)}">
+            </label>
+            <label class="document-template-email-field is-message">
+              <span>Текст сообщения</span>
+              <div
+                class="document-email-template-editor is-message"
+                contenteditable="true"
+                data-document-email-editor
+                data-document-email-field="emailMessageTemplate"
+                role="textbox"
+                aria-label="Текст отправляемого письма"
+                aria-multiline="true"
+              >${renderDocumentEmailEditorContent(documentTemplate.emailMessageTemplate, tokens)}</div>
+              <input name="emailMessageTemplate" type="hidden" value="${escapeAttr(documentTemplate.emailMessageTemplate)}">
+            </label>
+          </div>
+          <aside class="document-template-email-markers">
+            <div class="document-template-email-markers-head">
+              <strong>Доступные поля</strong>
+              <span>Щёлкните или перетащите поле в активный редактор.</span>
+            </div>
+            <label class="document-template-email-marker-search">
+              <span aria-hidden="true">⌕</span>
+              <input data-document-email-marker-search type="search" placeholder="Найти поле" autocomplete="off" aria-label="Поиск доступного поля">
+            </label>
+            <div class="document-template-email-marker-groups">
+              ${renderMarkerGroup("Поля документа", "значения после расчёта", documentTokens)}
+              ${renderMarkerGroup("Исходные данные", "значения карточки слушателя", sourceTokens)}
+              ${renderMarkerGroup("Константы", "значения из файла Word", constantTokens)}
+            </div>
+          </aside>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderDocumentSaveFolderEditorContent(template, settings = normalizeDocumentPathSettings(state.data.dictionaries.documentPathSettings)) {
+    return renderProtectedPathEditorContent(template, settings.map((setting) => setting.label));
+  }
+
+  function renderDocumentPathValueEditorContent(template) {
+    return renderProtectedPathEditorContent(template, documentPathMarkerDefinitions.map((marker) => marker.token));
   }
 
   function renderContractTemplateTokenGroup(title, subtitle, tokens, activeFieldId = "") {
@@ -4932,7 +6874,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (sourceMatch && sourceFieldNames.has(sourceMatch[1])) {
           return `<span class="communication-template-block contract-formula-block is-source" contenteditable="false" data-template-token="${escapeAttr(part)}" data-contract-source-field-name="${escapeAttr(sourceMatch[1])}" data-contract-formula-token draggable="true" title="Нажмите правой кнопкой мыши для действий с блоком">${escapeHtml(part)}</span>`;
         }
-        return escapeHtml(part).replace(/\n/g, "<br>");
+        return renderCommunicationTemplateLinks(part);
       })
       .join("");
   }
@@ -5033,10 +6975,44 @@ MAX - https://bizvmax.ru/zifra_plus
         const syntax = renderCommunicationTemplateSyntax(part);
         if (syntax) return syntax;
         const fieldName = part.slice(1, -1);
-        if (!/^\{[^{}]+\}$/.test(part) || !availableFields.has(fieldName)) return escapeHtml(part);
+        if (!/^\{[^{}]+\}$/.test(part) || !availableFields.has(fieldName)) {
+          return renderCommunicationTemplateLinks(part);
+        }
         return `<span class="communication-template-block" contenteditable="false" data-template-token="${escapeAttr(part)}" data-template-field-name="${escapeAttr(fieldName)}" draggable="true" title="Нажмите правой кнопкой мыши для настройки поля">${escapeHtml(part)}</span>`;
       })
       .join("");
+  }
+
+  function renderCommunicationTemplateLinks(value) {
+    const source = String(value || "");
+    const urlPattern = /\bhttps?:\/\/[^\s<>"']+/giu;
+    let result = "";
+    let offset = 0;
+    for (const match of source.matchAll(urlPattern)) {
+      let url = match[0];
+      let trailing = "";
+      while (/[),.;:!?]$/.test(url)) {
+        trailing = `${url.slice(-1)}${trailing}`;
+        url = url.slice(0, -1);
+      }
+      result += escapeHtml(source.slice(offset, match.index));
+      result += url
+        ? `<span class="communication-template-html-link" data-template-external-url="${escapeAttr(url)}" title="${escapeAttr(`Ctrl + щелчок: открыть ${url}`)}">${escapeHtml(url)}</span>${escapeHtml(trailing)}`
+        : escapeHtml(match[0]);
+      offset = Number(match.index) + match[0].length;
+    }
+    return `${result}${escapeHtml(source.slice(offset))}`;
+  }
+
+  function openTemplateEditorLink(event) {
+    if (!(event.ctrlKey || event.metaKey)) return false;
+    const link = event.target.closest?.("[data-template-external-url]");
+    const url = normalizeExternalUrl(link?.dataset.templateExternalUrl || "");
+    if (!link || !url) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    openExternalUrl(url);
+    return true;
   }
 
   function renderCommunicationTemplateFormulaEditorContent(formula) {
@@ -5076,8 +7052,30 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </div>
           <div class="admin-database-settings">
-            <h3>База АИС Допобразование</h3>
             <form class="sdo-settings-form" data-action="save-student-database-settings">
+              <div class="admin-database-settings-head">
+                <h3>База АИС Допобразование</h3>
+                <div class="sdo-settings-actions admin-database-actions">
+                  <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" ${state.databaseImport.running ? "disabled" : ""}>
+                    <span data-import-button-label>${state.databaseImport.running ? "Импорт..." : "Загрузить из базы"}</span>
+                  </button>
+                  <button class="ghost-button ${state.databaseExport.running ? "is-loading" : ""}" data-action="sync-students-database" type="button" ${state.databaseExport.running ? "disabled" : ""}>
+                    <span data-database-export-button-label>${state.databaseExport.running ? "Синхронизация..." : "Синхронизировать и скачать XLSB"}</span>
+                  </button>
+                  <button
+                    class="primary-button icon-only admin-save-connection-button"
+                    type="submit"
+                    title="Сохранить подключение"
+                    aria-label="Сохранить подключение"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M5 3h12l2 2v16H5z"></path>
+                      <path d="M8 3v6h8V3"></path>
+                      <path d="M8 21v-7h8v7"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
               <div class="sdo-settings-fields">
                 <label>
                   <span>WebDAV-путь или ссылка на АИС Допобразование.xlsb</span>
@@ -5096,13 +7094,19 @@ MAX - https://bizvmax.ru/zifra_plus
                   <label>
                     <span>Расположение всех документов на локальном диске</span>
                     <input name="localDocumentsRoot" type="text" value="${escapeAttr(getLocalDocumentsRoot())}" required spellcheck="false" placeholder="Y:\">
-                    <small class="sdo-settings-hint">Используется при Shift + щелчке по кнопке папки.</small>
+                    <small class="sdo-settings-hint">${getOpenDocumentsLocally()
+                      ? "Используется при обычном щелчке по кнопке документов."
+                      : "Используется при Shift + щелчке по кнопке документов."}</small>
                   </label>
                   <label class="admin-local-documents-root-mode">
                     <input name="localDocumentsRootIsSystemParent" type="checkbox" ${state.data.meta.localDocumentsRootIsSystemParent ? "checked" : ""}>
                     <span>Корневая папка документов системы</span>
                   </label>
                 </div>
+                <label class="admin-open-documents-mode">
+                  <input name="openDocumentsLocally" type="checkbox" ${getOpenDocumentsLocally() ? "checked" : ""}>
+                  <span>Открывать документы на локальном компьютере</span>
+                </label>
                 <label>
                   <span>Логин Яндекс</span>
                   <input name="yandexDiskLogin" type="text" value="${escapeAttr(getYandexDiskLogin())}" autocomplete="username">
@@ -5120,10 +7124,15 @@ MAX - https://bizvmax.ru/zifra_plus
                 </label>
                 <label class="admin-yandex-autosave">
                   <input name="yandexDiskAutoSave" type="checkbox" ${state.data.meta.yandexDiskAutoSave ? "checked" : ""}>
-                  <span>Автоматически сохранять сформированные документы в папку слушателя</span>
+                  <span class="admin-yandex-autosave-copy">
+                    <span>Автоматически сохранять сформированные документы в рекомендуемые папки</span>
+                    <small class="sdo-settings-hint" data-document-autosave-hint>
+                      ${escapeHtml(getAutomaticDocumentSaveHint())}
+                    </small>
+                  </span>
                 </label>
                 <div class="admin-system-documents-head">
-                  <strong>Заявки из электронной почты (IMAP)</strong>
+                  <strong>Электронная почта (IMAP/SMTP)</strong>
                   <button class="ghost-button admin-connection-test-button" data-action="test-student-applications-email" type="button">Проверить почту</button>
                 </div>
                 <div class="admin-email-settings-grid">
@@ -5132,14 +7141,22 @@ MAX - https://bizvmax.ru/zifra_plus
                     <input name="studentApplicationsEmailHost" type="text" value="${escapeAttr(getStudentApplicationsEmailHost())}" required spellcheck="false" placeholder="imap.example.ru">
                   </label>
                   <label>
-                    <span>Порт</span>
+                    <span>Порт IMAP</span>
                     <input name="studentApplicationsEmailPort" type="number" min="1" max="65535" value="${escapeAttr(getStudentApplicationsEmailPort())}" required>
                   </label>
                   <label>
+                    <span>SMTP-сервер</span>
+                    <input name="studentApplicationsEmailSmtpHost" type="text" value="${escapeAttr(getStudentApplicationsEmailSmtpHost())}" required spellcheck="false" placeholder="smtp.example.ru">
+                  </label>
+                  <label>
+                    <span>Порт SMTP</span>
+                    <input name="studentApplicationsEmailSmtpPort" type="number" min="1" max="65535" value="${escapeAttr(getStudentApplicationsEmailSmtpPort())}" required>
+                  </label>
+                  <label class="admin-email-credential-field">
                     <span>Логин электронной почты</span>
                     <input name="studentApplicationsEmailLogin" type="email" value="${escapeAttr(getStudentApplicationsEmailLogin())}" required autocomplete="username">
                   </label>
-                  <label>
+                  <label class="admin-email-credential-field">
                     <span>Пароль электронной почты</span>
                     <input
                       name="studentApplicationsEmailPassword"
@@ -5150,7 +7167,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     >
                   </label>
                 </div>
-                <small class="sdo-settings-hint">Письма с темой «Новый заказ №…» загружаются из папки «Входящие» за период, выбранный в окне импорта.</small>
+                <small class="sdo-settings-hint">IMAP используется для загрузки заявок. Все исходящие сообщения отправляются через SMTP от имени указанного ящика.</small>
               </div>
               <div class="admin-database-copy">
                 <p>Загрузка заменяет текущие списки слушателей и расходов данными с листов «База» и «Прямые затраты».</p>
@@ -5170,15 +7187,6 @@ MAX - https://bizvmax.ru/zifra_plus
                     : "Ещё не выполнялась"}</strong>
                 </p>
               </div>
-              <div class="sdo-settings-actions admin-database-actions">
-                <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" ${state.databaseImport.running ? "disabled" : ""}>
-                  <span data-import-button-label>${state.databaseImport.running ? "Импорт..." : "Загрузить из базы"}</span>
-                </button>
-                <button class="ghost-button ${state.databaseExport.running ? "is-loading" : ""}" data-action="sync-students-database" type="button" ${state.databaseExport.running ? "disabled" : ""}>
-                  <span data-database-export-button-label>${state.databaseExport.running ? "Синхронизация..." : "Синхронизировать и скачать XLSB"}</span>
-                </button>
-                <button class="primary-button" type="submit">Сохранить подключение</button>
-              </div>
             </form>
           </div>
       </section>
@@ -5188,6 +7196,20 @@ MAX - https://bizvmax.ru/zifra_plus
             <p class="eyebrow">Журнал</p>
             <h2>Последние действия</h2>
           </div>
+          <button
+            class="ghost-button admin-audit-download-button"
+            data-action="download-audit-log"
+            type="button"
+            title="Скачать весь журнал последних действий в CSV"
+            ${state.data.collections.audit.length ? "" : "disabled"}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M12 3v12"></path>
+              <path d="m7 10 5 5 5-5"></path>
+              <path d="M5 20h14"></path>
+            </svg>
+            <span>Скачать журнал</span>
+          </button>
         </div>
         ${miniTable(state.data.collections.audit.slice().reverse().slice(0, 12), ["date", "user", "action", "area", "details"])}
       </section>
@@ -5201,6 +7223,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const record = state.modal.draft ? { ...(baseRecord || {}), ...state.modal.draft } : baseRecord;
     if (state.modal.config === "students") return renderStudentModal(record || {});
     if (state.modal.config === "programs") return renderProgramModal(record || {});
+    if (state.modal.config === "inventory") return renderInventoryModal(record || {});
     const title = state.modal.id ? "Редактирование" : "Новая запись";
     return `
       <div class="modal-backdrop" data-action="close-modal">
@@ -5225,9 +7248,150 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function getInventoryStudentAllocationRows(inventoryId) {
+    const id = String(inventoryId || "").trim();
+    if (!id) return [];
+    const rows = (state.data.collections.students || [])
+      .map((student) => ({
+        id: student.id,
+        name: String(student.name || "").trim(),
+        uid: String(student.uid || "").trim(),
+        phone: String(student.phone || "").trim(),
+        program: String(student.program || "").trim(),
+        status: String(student.status || "").trim(),
+        expulsionDate: String(
+          student.expulsionDate || student.expulsionOrderDate || ""
+        ).trim(),
+        count: getStudentInventoryAllocationCounts(student).get(id) || 0
+      }))
+      .filter((student) => student.count > 0);
+    const key = state.inventoryStudentSort?.key || "name";
+    const direction = state.inventoryStudentSort?.dir === "desc" ? -1 : 1;
+    return rows.sort((left, right) => {
+      if (key === "count") {
+        const difference = Number(left.count || 0) - Number(right.count || 0);
+        if (difference) return difference * direction;
+      } else if (key === "expulsionDate") {
+        const leftDate = parseTableSortDate(left.expulsionDate);
+        const rightDate = parseTableSortDate(right.expulsionDate);
+        if (leftDate === null && rightDate !== null) return 1;
+        if (leftDate !== null && rightDate === null) return -1;
+        if (leftDate !== null && rightDate !== null && leftDate !== rightDate) {
+          return (leftDate - rightDate) * direction;
+        }
+      } else {
+        const comparison = String(left[key] || "").localeCompare(
+          String(right[key] || ""),
+          "ru",
+          { numeric: true, sensitivity: "base" }
+        );
+        if (comparison) return comparison * direction;
+      }
+      return (
+        left.name.localeCompare(right.name, "ru", { numeric: true, sensitivity: "base" })
+        || left.uid.localeCompare(right.uid, "ru", { numeric: true, sensitivity: "base" })
+      );
+    });
+  }
+
+  function renderInventoryStudentSortHeading(key, label) {
+    const active = state.inventoryStudentSort?.key === key;
+    const direction = state.inventoryStudentSort?.dir === "desc" ? "desc" : "asc";
+    const ariaSort = active ? (direction === "asc" ? "ascending" : "descending") : "none";
+    return `
+      <th aria-sort="${ariaSort}">
+        <button class="inventory-student-sort-button" data-action="sort-inventory-students" data-key="${escapeAttr(key)}" type="button">
+          <span>${escapeHtml(label)}</span>
+          <span class="inventory-student-sort-indicator" aria-hidden="true">${active ? (direction === "asc" ? "↑" : "↓") : ""}</span>
+        </button>
+      </th>
+    `;
+  }
+
+  function renderInventoryModal(record) {
+    const config = configs.inventory;
+    const title = state.modal.id ? "Редактирование запаса" : "Новый запас";
+    const students = getInventoryStudentAllocationRows(record.id);
+    const allocatedCount = students.reduce((total, student) => total + student.count, 0);
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <section class="modal inventory-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
+          <form id="recordForm" data-config="inventory" data-id="${record.id || ""}">
+            <header class="modal-head">
+              <div>
+                <p class="eyebrow">${escapeHtml(config.title)}</p>
+                <h2>${title}</h2>
+              </div>
+              <div class="modal-head-actions">
+                <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
+                <button class="primary-button" type="submit">Сохранить</button>
+              </div>
+            </header>
+            <div class="form-grid">
+              ${config.fields.map((item) => renderField(item, record)).join("")}
+            </div>
+            <section class="form-section inventory-student-allocations">
+              <div class="form-section-head">
+                <div>
+                  <h3>Слушатели, к которым привязан запас</h3>
+                  <p>Слушателей: ${students.length}. Распределено: ${pieces(allocatedCount)}</p>
+                </div>
+              </div>
+              ${students.length ? `
+                <div class="table-wrap">
+                  <table class="data-table mini inventory-student-table">
+                    <thead>
+                      <tr>
+                        ${renderInventoryStudentSortHeading("name", "ФИО")}
+                        ${renderInventoryStudentSortHeading("uid", "UID")}
+                        ${renderInventoryStudentSortHeading("phone", "Телефон")}
+                        ${renderInventoryStudentSortHeading("program", "Программа")}
+                        ${renderInventoryStudentSortHeading("status", "Статус")}
+                        ${renderInventoryStudentSortHeading("expulsionDate", "Дата отчисления")}
+                        ${renderInventoryStudentSortHeading("count", "Количество")}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${students.map((student) => `
+                        <tr>
+                          <td>
+                            <button class="table-edit-link inventory-student-link" data-action="edit" data-config="students" data-id="${escapeAttr(student.id)}" type="button" title="Открыть карточку слушателя">
+                              ${escapeHtml(student.name || "—")}
+                            </button>
+                          </td>
+                          <td>${escapeHtml(student.uid || "—")}</td>
+                          <td>${escapeHtml(student.phone || "—")}</td>
+                          <td>${escapeHtml(student.program || "—")}</td>
+                          <td>${escapeHtml(student.status || "—")}</td>
+                          <td>${escapeHtml(valueForDisplay("expulsionDate", student.expulsionDate))}</td>
+                          <td>${escapeHtml(pieces(student.count))}</td>
+                        </tr>
+                      `).join("")}
+                    </tbody>
+                  </table>
+                </div>
+              ` : `
+                <p class="inventory-student-empty">Этот запас пока не привязан ни к одному слушателю.</p>
+              `}
+            </section>
+          </form>
+        </section>
+      </div>
+    `;
+  }
+
   function renderProgramModal(record) {
     const config = configs.programs;
     const title = state.modal.id ? "Редактирование программы" : "Новая программа";
+    const programTabs = getOrderedTabs("program-card", [
+      { id: "main", label: "Основное" },
+      { id: "trainingPlan", label: "Учебный план" },
+      { id: "characteristics", label: "Характеристики" },
+      { id: "commission", label: "Комиссия" }
+    ]);
+    const activeTab = programTabs.find((tab) => tab.id === state.programCardTab) || programTabs[0];
+    const navigation = getProgramCardNavigation(record);
+    const mainFields = config.fields.filter((item) => !item.options?.programTab);
     return `
       <div class="modal-backdrop" data-action="close-modal">
         <section class="modal program-modal" role="dialog" aria-modal="true" aria-label="${title}">
@@ -5240,26 +7404,257 @@ MAX - https://bizvmax.ru/zifra_plus
               <div class="modal-head-actions">
                 <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
                 <button class="primary-button" type="submit">Сохранить</button>
+                <div class="student-card-nav program-card-nav" aria-label="Переход между карточками программ">
+                  <button class="icon-button student-card-nav-button" data-action="navigate-program-card" data-direction="-1" type="button" title="Предыдущая программа" aria-label="Предыдущая программа" ${navigation.hasPrev ? "" : "disabled"}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
+                  </button>
+                  <button class="icon-button student-card-nav-button" data-action="navigate-program-card" data-direction="1" type="button" title="Следующая программа" aria-label="Следующая программа" ${navigation.hasNext ? "" : "disabled"}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6l6 6-6 6"></path></svg>
+                  </button>
+                </div>
               </div>
             </header>
             <div class="program-modal-body">
-              <div class="program-tabs" role="tablist" aria-label="Разделы карточки программы">
-                <button class="active" data-action="switch-program-tab" data-program-tab="main" type="button" role="tab" aria-selected="true">Карточка</button>
-                <button data-action="switch-program-tab" data-program-tab="trainingPlan" type="button" role="tab" aria-selected="false">Учебный план</button>
+              <div class="program-tabs" data-orderable-tabs="program-card" role="tablist" aria-label="Разделы карточки программы">
+                ${programTabs.map((tab) => `
+                  <button
+                    class="${tab.id === activeTab.id ? "active" : ""}"
+                    data-action="switch-program-tab"
+                    data-program-tab="${escapeAttr(tab.id)}"
+                    data-orderable-tab="${escapeAttr(tab.id)}"
+                    data-orderable-tab-default-index="${tab.defaultTabIndex}"
+                    draggable="true"
+                    type="button"
+                    role="tab"
+                    aria-selected="${tab.id === activeTab.id ? "true" : "false"}"
+                    tabindex="${tab.id === activeTab.id ? "0" : "-1"}"
+                  >${escapeHtml(tab.label)}</button>
+                `).join("")}
               </div>
-              <div class="program-tab-panel is-active" data-program-tab-panel="main" role="tabpanel">
-                <div class="form-grid program-form-grid">
-                  ${config.fields.map((item) => renderField(item, record || {})).join("")}
+              <div class="program-tab-panel program-main-panel ${activeTab.id === "main" ? "is-active" : ""}" data-program-tab-panel="main" role="tabpanel" ${activeTab.id === "main" ? "" : "hidden"}>
+                <div class="program-main-content">
+                  <div class="form-grid program-form-grid">
+                    ${mainFields.map((item) => renderField(item, record || {})).join("")}
+                  </div>
+                  ${renderProgramAuthorSection(record || {})}
                 </div>
+                ${renderProgramPaymentConstantPalette()}
               </div>
-              <div class="program-tab-panel" data-program-tab-panel="trainingPlan" role="tabpanel" hidden>
+              <div class="program-tab-panel ${activeTab.id === "trainingPlan" ? "is-active" : ""}" data-program-tab-panel="trainingPlan" role="tabpanel" ${activeTab.id === "trainingPlan" ? "" : "hidden"}>
                 ${renderProgramTrainingPlanSection(record || {})}
+              </div>
+              <div class="program-tab-panel ${activeTab.id === "characteristics" ? "is-active" : ""}" data-program-tab-panel="characteristics" role="tabpanel" ${activeTab.id === "characteristics" ? "" : "hidden"}>
+                ${renderProgramCharacteristicsSection(record || {})}
+              </div>
+              <div class="program-tab-panel ${activeTab.id === "commission" ? "is-active" : ""}" data-program-tab-panel="commission" role="tabpanel" ${activeTab.id === "commission" ? "" : "hidden"}>
+                ${renderProgramCommissionSection(record || {})}
               </div>
             </div>
           </form>
         </section>
       </div>
     `;
+  }
+
+  function getProgramFieldsByTab(tabId) {
+    return configs.programs.fields.filter((item) => item.options?.programTab === tabId);
+  }
+
+  function getProgramOperationalDocumentTooltip(resourceType) {
+    const resourceLabel = resourceType === "file" ? "файл ОП" : "папку ОП";
+    return getOpenDocumentsLocally()
+      ? `Открыть ${resourceLabel} на локальном компьютере. Shift + щелчок: открыть на Яндекс-Диске.`
+      : `Открыть ${resourceLabel} на Яндекс-Диске. Shift + щелчок: открыть на локальном компьютере.`;
+  }
+
+  function renderProgramOperationalDocumentField(item, record) {
+    const resourceType = item.key === "opFileName" ? "file" : "folder";
+    const tooltip = getProgramOperationalDocumentTooltip(resourceType);
+    const placeholder = resourceType === "folder"
+      ? "[-1]\\Образовательные программы\\Название программы"
+      : "Имя файла образовательной программы";
+    const icon = resourceType === "folder"
+      ? '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6.5h7l2 2h9v10H3z"></path><path d="M3 9h18"></path></svg>'
+      : '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 13h6"></path><path d="M9 17h4"></path></svg>';
+    return `
+      <label class="program-field-wide program-op-resource-field" data-field-key="${escapeAttr(item.key)}">
+        <span>${escapeHtml(item.label)}</span>
+        <div class="program-op-resource-control">
+          <input
+            name="${escapeAttr(item.key)}"
+            type="text"
+            value="${escapeAttr(record[item.key] || "")}"
+            placeholder="${escapeAttr(placeholder)}"
+            spellcheck="false"
+          >
+          <button
+            class="icon-button program-op-resource-open"
+            data-action="open-program-op-resource"
+            data-program-op-resource="${resourceType}"
+            type="button"
+            title="${escapeAttr(tooltip)}"
+            aria-label="${escapeAttr(tooltip)}"
+          >${icon}</button>
+        </div>
+      </label>
+    `;
+  }
+
+  function renderProgramCharacteristicsSection(record) {
+    const fields = getProgramFieldsByTab("characteristics");
+    const orderFieldKeys = new Set(["programOrderNo", "programOrderDate"]);
+    const orderFields = fields.filter((item) => orderFieldKeys.has(item.key));
+    return `
+      <section class="form-section program-characteristics-section">
+        <div class="form-section-head">
+          <div>
+            <h3>Характеристики программы</h3>
+            <p>Значения списков загружаются из АИС Допобразование и редактируются в «Настройках».</p>
+          </div>
+        </div>
+        <div class="form-grid program-characteristics-grid">
+          ${fields.map((item) => {
+            if (item.key === "programOrderDate") return "";
+            if (item.key === "programOrderNo") {
+              return `
+                <div class="program-order-fields">
+                  ${orderFields.map((orderField) => renderField(orderField, record)).join("")}
+                </div>
+              `;
+            }
+            return item.key === "opFolder" || item.key === "opFileName"
+              ? renderProgramOperationalDocumentField(item, record)
+              : renderField(item, record);
+          }).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderProgramCommissionSection(record) {
+    const fields = getProgramFieldsByTab("commission");
+    return `
+      <section class="form-section program-commission-section">
+        <div class="form-section-head">
+          <div>
+            <h3>Комиссия и участники программы</h3>
+            <p>Для преподавателей указывайте каждого человека с новой строки.</p>
+          </div>
+        </div>
+        <div class="form-grid program-commission-grid">
+          ${fields.map((item) => renderField(item, record)).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderProgramAuthorSection(record) {
+    const authorPayments = normalizeProgramAuthorPayments(
+      record.authorPayments,
+      record.authorSource,
+      record.defaultAuthorPaymentPercent || 50
+    );
+    return `
+      <section class="form-section program-author-section">
+        <div class="form-section-head">
+          <div>
+            <h3>Автор</h3>
+            <p>Укажите формулу оплаты: [АвторскаяСтавка], отдельный процент, например 25%, или расчёт фиксированной суммы.</p>
+          </div>
+          <button class="ghost-button payment-add-button" data-action="add-program-author-payment-row" type="button">Добавить автора</button>
+        </div>
+        <div class="program-author-payment-table" data-program-author-payment-list data-next-index="${authorPayments.length}">
+          <div class="program-author-payment-head program-author-payment-number">№</div>
+          <div class="program-author-payment-head">Автор</div>
+          <div class="program-author-payment-head">Формула</div>
+          <div class="program-author-payment-head"></div>
+          ${authorPayments.map((item, index) => renderProgramAuthorPaymentRow(item, index)).join("")}
+        </div>
+        ${authorPayments.length ? "" : `<p class="payment-empty" data-program-author-payment-empty>Авторы пока не указаны.</p>`}
+      </section>
+    `;
+  }
+
+  function renderProgramPaymentConstantPalette() {
+    return `
+      <aside class="program-payment-constant-palette" data-program-payment-constant-palette aria-label="Доступные константы оплаты">
+        <div class="program-payment-constant-palette-head">
+          <span class="program-payment-constant-palette-label">Доступные константы</span>
+          <span class="program-payment-constant-palette-hint">Перетащите в формулу. Правый щелчок: редактировать.</span>
+        </div>
+        <div class="program-payment-constant-tokens" data-program-payment-constant-tokens>
+          ${renderProgramPaymentConstantTokens()}
+        </div>
+      </aside>
+    `;
+  }
+
+  function renderProgramPaymentConstantTokens() {
+    return getPaymentConstantSettings().map((setting) => {
+      const marker = normalizePaymentConstantMarker(setting.marker);
+      const label = String(setting.label || marker).trim();
+      const displayValue = formatPaymentConstantValue(setting);
+      const title = `${label}: ${displayValue}. Перетащите в формулу. Правый щелчок: редактировать`;
+      return `
+        <span
+          class="program-payment-constant-token"
+          data-program-payment-constant-token="${escapeAttr(marker)}"
+          draggable="true"
+          title="${escapeAttr(title)}"
+        >
+          <strong>${escapeHtml(`[${marker}]`)}</strong>
+          <small>${escapeHtml(label)} · ${escapeHtml(displayValue)}</small>
+        </span>
+      `;
+    }).join("");
+  }
+
+  function refreshProgramPaymentConstantPalette() {
+    const container = document.querySelector("[data-program-payment-constant-tokens]");
+    if (container) container.innerHTML = renderProgramPaymentConstantTokens();
+  }
+
+  function renderProgramAuthorPaymentRow(item = {}, index = 0) {
+    return `
+      <div class="program-author-payment-row" data-program-author-payment-row>
+        <input type="hidden" data-program-author-payment-field="id" name="programAuthorPayment_${index}_id" value="${escapeAttr(item.id || "")}">
+        <strong class="program-author-payment-number" data-program-author-row-number>${index + 1}</strong>
+        <input data-program-author-payment-field="recipient" name="programAuthorPayment_${index}_recipient" value="${escapeAttr(item.recipient || "")}" placeholder="ФИО автора">
+        <input data-program-author-payment-field="amountFormula" name="programAuthorPayment_${index}_amountFormula" type="hidden" value="${escapeAttr(item.amountFormula || "")}">
+        <div
+          class="payment-formula-editor"
+          contenteditable="true"
+          data-payment-formula-editor
+          data-placeholder="[АвторскаяСтавка] или 25%"
+          role="textbox"
+          aria-label="Формула оплаты автора"
+          spellcheck="false"
+        >${renderPaymentFormulaEditorContent(item.amountFormula || "")}</div>
+        <button class="payment-row-delete" data-action="delete-program-author-payment-row" type="button" title="Удалить автора" aria-label="Удалить автора">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 14h10l1-14"></path><path d="M9 7V4h6v3"></path></svg>
+        </button>
+      </div>
+    `;
+  }
+
+  function renderPaymentFormulaEditorContent(formula) {
+    const constants = new Map(getPaymentConstantSettings().map((setting) => [
+      normalizePaymentConstantMarker(setting.marker).toLocaleLowerCase("ru-RU"),
+      setting
+    ]));
+    return String(formula || "")
+      .split(/([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)/gu)
+      .map((part) => {
+        if (!/^[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*$/u.test(part)) {
+          return escapeHtml(part);
+        }
+        const setting = constants.get(part.toLocaleLowerCase("ru-RU"));
+        const title = setting
+          ? `Константа: ${setting.label}. Значение: ${formatPaymentConstantValue(setting)}. Правый щелчок: редактировать`
+          : "Неизвестная константа. Правый щелчок: создать или удалить из формулы";
+        return `<span class="communication-template-block payment-formula-constant ${setting ? "is-known" : "is-unresolved"}" contenteditable="false" data-template-token="${escapeAttr(part)}" data-payment-constant-marker="${escapeAttr(part)}" title="${escapeAttr(title)}">${escapeHtml(part)}</span>`;
+      })
+      .join("");
   }
 
   function renderProgramTrainingPlanSection(record) {
@@ -5372,18 +7767,38 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderField(item, record) {
-    const value = record[item.key] ?? "";
+    const layoutOptions = item.options && !Array.isArray(item.options) ? item.options : {};
+    const value = layoutOptions.list
+      ? normalizeProgramListValue(record[item.key] ?? "")
+      : (record[item.key] ?? "");
     const required = item.required ? "required" : "";
-    const label = `<label><span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>`;
+    const labelClasses = [
+      layoutOptions.list ? "program-list-field" : "",
+      layoutOptions.wide ? "program-field-wide" : ""
+    ].filter(Boolean).join(" ");
+    const label = `<label data-field-key="${escapeAttr(item.key)}"${labelClasses ? ` class="${labelClasses}"` : ""}><span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>`;
     if (item.type === "checkbox") {
       return `${label}<input name="${item.key}" type="checkbox" value="Да" ${isChecked(value) ? "checked" : ""}></label>`;
     }
     if (item.type === "textarea") {
-      return `${label}<textarea name="${item.key}" ${required}>${escapeHtml(value)}</textarea></label>`;
+      const rows = Number(layoutOptions.rows || (layoutOptions.list ? 3 : 0));
+      const hint = layoutOptions.list
+        ? '<small class="program-list-hint">Каждый элемент списка с новой строки</small>'
+        : "";
+      return `${label}<textarea name="${item.key}" ${rows ? `rows="${rows}"` : ""} ${required}>${escapeHtml(value)}</textarea>${hint}</label>`;
     }
     if (item.type === "select") {
-      const dictionaryOptions = item.options || state.data.dictionaries[item.dict] || [];
-      const options = item.required ? dictionaryOptions : ["", ...dictionaryOptions];
+      const dictionaryOptions = Array.isArray(item.options)
+        ? item.options
+        : (state.data.dictionaries[item.dict] || []);
+      const normalizedOptions = unique([
+        ...dictionaryOptions.map((option) => String(option ?? "").trim()),
+        String(value ?? "").trim()
+      ].filter(Boolean));
+      if (item.key === "status") {
+        return `${label}<select name="${item.key}" ${required}>${renderStudentStatusOptions(normalizedOptions, value, !item.required)}</select></label>`;
+      }
+      const options = item.required ? normalizedOptions : ["", ...normalizedOptions];
       return `${label}<select name="${item.key}" ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
     if (state.modal?.config === "programs" && item.key === "hours") {
@@ -5410,25 +7825,40 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${programTitle ? `<p>${escapeHtml(programTitle)}</p>` : ""}
               </div>
               <div class="modal-head-actions">
-                ${renderStudentHeaderStatus(record)}
-                <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
-                <button class="primary-button" type="submit">Сохранить карточку</button>
-                <div class="student-card-nav" aria-label="Переход между карточками слушателей">
-                  <button class="icon-button student-card-nav-button" data-action="navigate-student-card" data-direction="-1" type="button" title="Предыдущая карточка" aria-label="Предыдущая карточка" ${navigation.hasPrev ? "" : "disabled"}>
-                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
-                  </button>
-                  <button class="icon-button student-card-nav-button" data-action="navigate-student-card" data-direction="1" type="button" title="Следующая карточка" aria-label="Следующая карточка" ${navigation.hasNext ? "" : "disabled"}>
-                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6l6 6-6 6"></path></svg>
-                  </button>
+                <div class="student-card-primary-actions">
+                  ${renderStudentHeaderStatus(record)}
+                  <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
+                  <button class="primary-button" type="submit">Сохранить карточку</button>
+                </div>
+                <div class="student-card-secondary-actions">
+                  ${renderStudentHeaderQuickActions(record)}
+                  <div class="student-card-nav" aria-label="Переход между карточками слушателей">
+                    <button class="icon-button student-card-nav-button" data-action="navigate-student-card" data-direction="-1" type="button" title="Предыдущая карточка" aria-label="Предыдущая карточка" ${navigation.hasPrev ? "" : "disabled"}>
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
+                    </button>
+                    <button class="icon-button student-card-nav-button" data-action="navigate-student-card" data-direction="1" type="button" title="Следующая карточка" aria-label="Следующая карточка" ${navigation.hasNext ? "" : "disabled"}>
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6l6 6-6 6"></path></svg>
+                    </button>
+                  </div>
                 </div>
               </div>
             </header>
 
             <div class="student-card-layout">
               <section class="student-card-main">
-                <div class="student-tabs" data-student-tabs role="tablist">
+                <div class="student-tabs" data-student-tabs data-orderable-tabs="student-card" role="tablist">
                   ${orderedTabs.map((tab) => `
-                    <button class="${activeTab.id === tab.id ? "active" : ""}" data-student-tab="${tab.id}" draggable="true" type="button" role="tab">
+                    <button
+                      class="${activeTab.id === tab.id ? "active" : ""}"
+                      data-student-tab="${tab.id}"
+                      data-orderable-tab="${escapeAttr(tab.id)}"
+                      data-orderable-tab-default-index="${tab.defaultTabIndex}"
+                      draggable="true"
+                      type="button"
+                      role="tab"
+                      aria-selected="${activeTab.id === tab.id ? "true" : "false"}"
+                      tabindex="${activeTab.id === tab.id ? "0" : "-1"}"
+                    >
                       ${escapeHtml(tab.label)}
                     </button>
                   `).join("")}
@@ -5450,18 +7880,32 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderStudentStatusOptions(options, selectedValue = "", allowEmpty = false) {
+    const value = String(selectedValue || "").trim();
+    const values = unique([
+      ...options,
+      ...(value ? [value] : [])
+    ].map((option) => String(option || "").trim()).filter(Boolean));
+    const emptyCurrentOption = allowEmpty && !value
+      ? `<option value="" selected hidden></option>`
+      : "";
+    return emptyCurrentOption + values.map((option) => (
+      `<option value="${escapeAttr(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`
+    )).join("");
+  }
+
   function renderStudentHeaderStatus(record) {
     const value = String(record.status || "");
     const options = unique([
-      value,
-      ...(state.data.dictionaries.statuses || [])
+      ...(state.data.dictionaries.statuses || []),
+      value
     ].map((option) => String(option || "").trim()).filter(Boolean));
     if (!options.length) {
       return `<input class="student-status student-status-input" name="status" value="${escapeAttr(value)}" placeholder="Статус" required>`;
     }
     return `
       <select class="student-status student-status-select" name="status" title="Статус" aria-label="Статус" required>
-        ${options.map((option) => `<option value="${escapeAttr(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+        ${renderStudentStatusOptions(options, value, true)}
       </select>
     `;
   }
@@ -5470,7 +7914,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const uid = String(record.uid || "").trim();
     const name = String(record.name || "").trim() || (state.modal.id ? "Без ФИО" : "Новая запись");
     const uidPart = uid ? ` [${uid}]` : "";
-    return `Карточка слушателя${uidPart} - ${name}`;
+    return `${name}${uidPart}`;
   }
 
   function getStudentCardProgramTitle(record) {
@@ -5509,11 +7953,11 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderEducationDocumentActions(record) {
     return `
       <div class="education-document-actions">
-        <button class="ghost-button student-document-generate-button education-document-open-button" data-action="open-student-education-document" type="button" title="${escapeAttr(getEducationDocumentButtonTitle(record))}" aria-label="Документ об образовании">
+        <button class="ghost-button student-document-generate-button education-document-open-button" data-action="open-student-education-document" data-document-context-kind="education" type="button" title="${escapeAttr(getEducationDocumentButtonTitle(record))}" aria-label="Документ об образовании">
           ${renderOrdersSdoIcon("documentText")}
           <span>Документ об образовании</span>
         </button>
-        <button class="ghost-button student-document-generate-button education-document-open-button" data-action="open-student-postal-envelope-document" type="button" title="Сформировать почтовый конверт" aria-label="Почтовый конверт">
+        <button class="ghost-button student-document-generate-button education-document-open-button" data-action="open-student-postal-envelope-document" data-document-context-kind="postalEnvelope" type="button" title="Сформировать почтовый конверт&#10;Правый щелчок: параметры формирования и отправки" aria-label="Почтовый конверт">
           ${renderOrdersSdoIcon("mail")}
           <span>Конверт</span>
         </button>
@@ -5558,9 +8002,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
 
   function renderStudentContractButton() {
-    const title = "Сформировать договор\nShift + щелчок: выбрать документ";
+    const title = "Сформировать договор\nShift + щелчок: выбрать документ\nПравый щелчок: параметры формирования и отправки";
     return `
-      <button class="primary-button student-document-generate-button student-contract-button orders-sdo-contract-button" data-action="open-student-contract-document" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">
+      <button class="primary-button student-document-generate-button student-contract-button orders-sdo-contract-button" data-action="open-student-contract-document" data-document-context-kind="contract" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">
         ${renderOrdersSdoIcon("document")}
         <span>Договор</span>
       </button>
@@ -5676,7 +8120,7 @@ MAX - https://bizvmax.ru/zifra_plus
               ${renderOrdersSdoIcon("laptop")}
               <span>Экспорт в СДО</span>
             </button>
-            <button class="ghost-button orders-sdo-tool-button" data-action="email-portal-access" type="button">
+            <button class="ghost-button orders-sdo-tool-button" data-action="email-portal-access" type="button" title="Отправить слушателю&#10;Shift + щелчок: отправить на системный ящик">
               ${renderOrdersSdoIcon("mail")}
               <span>Отправить</span>
             </button>
@@ -5749,19 +8193,25 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (tool === "document") {
       const title = fieldName === "enrollmentOrderNo"
-        ? "Сформировать приказ на зачисление"
+        ? "Сформировать приказ на зачисление\nПравый щелчок: параметры формирования и отправки"
         : fieldName === "expulsionOrderNo"
-          ? "Сформировать приказ на отчисление"
+          ? "Сформировать приказ на отчисление\nПравый щелчок: параметры формирования и отправки"
           : "Документ";
       const action = fieldName === "enrollmentOrderNo"
         ? "open-student-enrollment-order-document"
         : fieldName === "expulsionOrderNo"
           ? "open-student-expulsion-order-document"
           : "";
+      const contextKind = fieldName === "enrollmentOrderNo"
+        ? "enrollmentOrder"
+        : fieldName === "expulsionOrderNo"
+          ? "expulsionOrder"
+          : "";
       return `
         <button
           class="orders-sdo-icon-button student-document-generate-button"
           ${action ? `data-action="${escapeAttr(action)}"` : ""}
+          ${contextKind ? `data-document-context-kind="${escapeAttr(contextKind)}"` : ""}
           type="button"
           title="${escapeAttr(title)}"
           aria-label="${escapeAttr(title)}"
@@ -5775,8 +8225,9 @@ MAX - https://bizvmax.ru/zifra_plus
         <button
           class="orders-sdo-icon-button student-document-generate-button"
           data-action="open-student-study-certificate-document"
+          data-document-context-kind="studyCertificate"
           type="button"
-          title="Сформировать справку об обучении"
+          title="Сформировать справку об обучении&#10;Правый щелчок: параметры формирования и отправки"
           aria-label="Сформировать справку об обучении"
         >
           ${renderOrdersSdoIcon("documentText")}
@@ -6270,7 +8721,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${renderCommunicationActionIcon("restore")}
                   <span>Восстановить</span>
                 </button>
-                <button data-action="email-communication-message" data-message-key="${item.key}" type="button">
+                <button data-action="email-communication-message" data-message-key="${item.key}" type="button" title="Отправить слушателю&#10;Shift + щелчок: отправить на системный ящик">
                   ${renderCommunicationActionIcon("mail")}
                   <span>Отправить по почте</span>
                 </button>
@@ -6296,12 +8747,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderStudentMainIdentity(section, record) {
-    const hiddenKeys = new Set(["name", "nameEnglish", "noDeclension", "addressByFirstName", "uid", "photoPath", "status", "program", "studyForm", "educationType", "hours", "registrationAddress", "mailingAddress", "workPlace", "position", "employmentCategory", "ovzStatus", "internship", "group", "source", "tags"]);
+    const hiddenKeys = new Set(["name", "nameEnglish", "noDeclension", "addressByFirstName", "uid", "photoPath", "status", "additionalStatus", "program", "studyForm", "educationType", "hours", "registrationAddress", "mailingAddress", "workPlace", "position", "employmentCategory", "ovzStatus", "internship", "group", "source", "tags"]);
     const nameField = section.fields.find((item) => item.key === "name");
     const nameEnglishField = section.fields.find((item) => item.key === "nameEnglish");
     const uidField = section.fields.find((item) => item.key === "uid");
     const photoPathField = section.fields.find((item) => item.key === "photoPath");
     const statusField = section.fields.find((item) => item.key === "status");
+    const additionalStatusField = section.fields.find((item) => item.key === "additionalStatus");
     const programField = section.fields.find((item) => item.key === "program");
     const studyFormField = section.fields.find((item) => item.key === "studyForm");
     const educationTypeField = section.fields.find((item) => item.key === "educationType");
@@ -6339,6 +8791,9 @@ MAX - https://bizvmax.ru/zifra_plus
           ${renderStudentField(uidField, record)}
         </div>
         ${renderStudentPhotoPathField(photoPathField, record)}
+        <div class="student-form-grid student-additional-status-grid">
+          ${renderStudentField(additionalStatusField, record)}
+        </div>
         <div class="student-form-grid student-agent-manager-grid">
           ${section.fields.filter((item) => !hiddenKeys.has(item.key)).sort(orderStudentMainField).map((item) => renderStudentField(item, record)).join("")}
         </div>
@@ -6418,7 +8873,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="student-name-options" aria-label="Настройки ФИО">
         <label>
           <input name="noDeclension" type="checkbox" value="Да" ${isChecked(record.noDeclension) ? "checked" : ""}>
-          <span>Не склоняется ФИО</span>
+          <span>Не склоняется фамилия</span>
         </label>
         <label>
           <input name="addressByFirstName" type="checkbox" value="Да" ${isChecked(record.addressByFirstName) ? "checked" : ""}>
@@ -6484,9 +8939,24 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderMessengerButton(messenger, label, icon) {
+  function renderStudentHeaderQuickActions(record) {
+    const copyTooltip = "Скопировать данные слушателя: ФИО, телефон, email, организация, должность";
     return `
-      <button class="icon-button student-messenger-button ${messenger}" data-action="open-student-messenger" data-messenger="${messenger}" type="button" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}">
+      <div class="student-card-quick-actions" aria-label="Документы и мессенджеры слушателя">
+        ${renderStudentDocumentsFolderLink(record, "student-card-header-action")}
+        <button class="icon-button student-copy-details-button student-card-header-action" data-action="copy-student-details" type="button" title="${escapeAttr(copyTooltip)}" aria-label="${escapeAttr(copyTooltip)}">
+          ${renderOrdersSdoIcon("copy")}
+        </button>
+        ${renderMessengerButton("max", "Открыть Max", renderMaxIcon(), "student-card-header-action")}
+        ${renderMessengerButton("telegram", "Открыть Telegram", renderTelegramIcon(), "student-card-header-action")}
+        ${renderMessengerButton("whatsapp", "Открыть WhatsApp", renderWhatsAppIcon(), "student-card-header-action")}
+      </div>
+    `;
+  }
+
+  function renderMessengerButton(messenger, label, icon, extraClass = "") {
+    return `
+      <button class="icon-button student-messenger-button ${messenger} ${escapeAttr(extraClass)}" data-action="open-student-messenger" data-messenger="${messenger}" type="button" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}">
         ${icon}
       </button>
     `;
@@ -6594,10 +9064,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderStudentPhotoPathField(item, record) {
     if (!item) return "";
     const value = String(record.photoPath || "").trim();
-    const documentsFolder = getStudentYandexDocumentsFolder(record);
-    const folderUrl = getStudentYandexDocumentsFolderUrl(record);
     const tooltip = "Относительный путь к фото или папке документов в WebDAV. Префикс [-1]\\ означает переход в папку уровнем выше.";
-    const folderTooltip = "Открыть папку на Яндекс-Диске. Shift + щелчок: открыть в Проводнике.";
     return `
       <label class="student-photo-path-field" title="${escapeAttr(tooltip)}">
         <div class="student-photo-path-control">
@@ -6611,22 +9078,7 @@ MAX - https://bizvmax.ru/zifra_plus
             title="${escapeAttr(tooltip)}"
             aria-label="${escapeAttr(tooltip)}"
           >
-          <a
-            class="icon-button student-documents-folder-link"
-            data-student-documents-folder-link
-            data-student-documents-folder="${escapeAttr(documentsFolder)}"
-            href="${escapeAttr(folderUrl || "#")}"
-            target="_blank"
-            rel="noopener noreferrer"
-            title="${escapeAttr(folderTooltip)}"
-            aria-label="${escapeAttr(folderTooltip)}"
-            ${folderUrl ? "" : 'aria-disabled="true" tabindex="-1"'}
-          >
-            <svg class="student-folder-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M3 6.5h7l2 2h9v10H3z"></path>
-              <path d="M3 9h18"></path>
-            </svg>
-          </a>
+          ${renderStudentDocumentsFolderLink(record)}
           <button
             class="icon-button student-documents-folder-create"
             data-action="create-student-documents-folder"
@@ -6638,6 +9090,30 @@ MAX - https://bizvmax.ru/zifra_plus
           </button>
         </div>
       </label>
+    `;
+  }
+
+  function renderStudentDocumentsFolderLink(record, extraClass = "") {
+    const documentsFolder = getStudentYandexDocumentsFolder(record);
+    const folderUrl = getStudentYandexDocumentsFolderUrl(record);
+    const tooltip = getStudentDocumentsOpenTooltip();
+    return `
+      <a
+        class="icon-button student-documents-folder-link ${escapeAttr(extraClass)}"
+        data-student-documents-folder-link
+        data-student-documents-folder="${escapeAttr(documentsFolder)}"
+        href="${escapeAttr(folderUrl || "#")}"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="${escapeAttr(tooltip)}"
+        aria-label="${escapeAttr(tooltip)}"
+        ${folderUrl ? "" : 'aria-disabled="true" tabindex="-1"'}
+      >
+        <svg class="student-folder-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M3 6.5h7l2 2h9v10H3z"></path>
+          <path d="M3 9h18"></path>
+        </svg>
+      </a>
     `;
   }
 
@@ -6653,19 +9129,17 @@ MAX - https://bizvmax.ru/zifra_plus
       <section class="student-events-block">
         <div class="student-side-head">
           <h3>Перечень событий</h3>
-        </div>
-        <div class="student-events-top">
-          <div class="student-events-head" aria-hidden="true">
-            <span></span>
-            <span>Дата</span>
-            <span>Событие</span>
-          </div>
           <button class="icon-button event-add-button" data-action="add-student-event" type="button" title="Добавить событие" aria-label="Добавить событие">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="M12 5v14"></path>
               <path d="M5 12h14"></path>
             </svg>
           </button>
+        </div>
+        <div class="student-events-head" aria-hidden="true">
+          <span></span>
+          <span>Дата</span>
+          <span>Событие</span>
         </div>
         <input type="hidden" name="eventOrder" data-event-order value="${escapeAttr(orderedEvents.map((event) => event.key).join(","))}">
         <input type="hidden" name="eventDeleted" data-event-deleted value="${escapeAttr(csvList(record.eventDeleted).join(","))}">
@@ -6705,6 +9179,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const dateKey = `event_${event.key}_date`;
     const labelKey = `event_${event.key}_label`;
     const stateValue = normalizeEventState(record[stateKey], record[dateKey]);
+    const storedStateValue = isExplicitUncheckedEventState(record[stateKey]) ? "unchecked" : stateValue;
     const dateValue = record[dateKey] || "";
     const labelValue = record[labelKey] || event.label;
     return `
@@ -6715,7 +9190,7 @@ MAX - https://bizvmax.ru/zifra_plus
           aria-hidden="true"
           ${stateValue ? "checked" : ""}
         >
-        <input type="hidden" name="${stateKey}" data-event-state="${escapeAttr(event.key)}" value="${escapeAttr(stateValue)}">
+        <input type="hidden" name="${stateKey}" data-event-state="${escapeAttr(event.key)}" value="${escapeAttr(storedStateValue)}">
         <input type="hidden" name="${dateKey}" data-event-date="${escapeAttr(event.key)}" value="${escapeAttr(dateValue)}">
         <input type="hidden" name="${labelKey}" data-event-label-value="${escapeAttr(event.key)}" value="${escapeAttr(labelValue)}">
         <span class="event-date" data-event-date-label="${escapeAttr(event.key)}">${stateValue === "dated" ? escapeHtml(dateRu(dateValue)) : ""}</span>
@@ -6940,6 +9415,9 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (item.key === "discountDescription") {
       return renderDiscountDescriptionField(label, value);
+    }
+    if (item.key === "discount") {
+      return `${label}<input name="${item.key}" type="number" value="${escapeAttr(normalizeDiscountPercent(value, record.discountUnit))}" min="0" max="100" step="0.01" inputmode="decimal"></label>`;
     }
     if (item.key === "finalGrade") {
       const options = ["", ...getFinalAttestationGradeOptions(value)];
@@ -7236,6 +9714,51 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
       </label>
     `;
+  }
+
+  function positionFieldLookupPanel(panel) {
+    const field = panel?.closest(".lookup-field");
+    if (!field) return;
+
+    const fieldRect = field.getBoundingClientRect();
+    const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+    const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+    const margin = 8;
+    const gap = 5;
+    const availableWidth = Math.max(0, viewportWidth - margin * 2);
+    const panelWidth = Math.min(Math.max(fieldRect.width, 640), availableWidth);
+    const panelLeft = Math.min(
+      Math.max(fieldRect.left, margin),
+      Math.max(margin, viewportWidth - panelWidth - margin)
+    );
+    const spaceBelow = Math.max(0, viewportHeight - fieldRect.bottom - gap - margin);
+    const spaceAbove = Math.max(0, fieldRect.top - gap - margin);
+    const openAbove = spaceBelow < 220 && spaceAbove > spaceBelow;
+    const preferredSpace = openAbove ? spaceAbove : spaceBelow;
+    const fullViewportHeight = Math.max(80, viewportHeight - margin * 2);
+    const panelMaxHeight = preferredSpace >= 120
+      ? Math.min(360, preferredSpace)
+      : fullViewportHeight;
+
+    panel.style.left = `${panelLeft}px`;
+    panel.style.width = `${panelWidth}px`;
+    panel.style.setProperty("--lookup-panel-max-height", `${panelMaxHeight}px`);
+    panel.style.setProperty("--lookup-list-max-height", `${Math.max(48, panelMaxHeight - 64)}px`);
+
+    if (preferredSpace < 120) {
+      panel.style.top = `${margin}px`;
+      panel.style.bottom = "auto";
+    } else if (openAbove) {
+      panel.style.top = "auto";
+      panel.style.bottom = `${viewportHeight - fieldRect.top + gap}px`;
+    } else {
+      panel.style.top = `${fieldRect.bottom + gap}px`;
+      panel.style.bottom = "auto";
+    }
+  }
+
+  function repositionOpenFieldLookupPanels() {
+    document.querySelectorAll(".lookup-panel.is-open").forEach(positionFieldLookupPanel);
   }
 
   function getProgramRows() {
@@ -7543,7 +10066,12 @@ MAX - https://bizvmax.ru/zifra_plus
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   }
 
+  function isExplicitUncheckedEventState(stateValue) {
+    return ["unchecked", "none", "false", "0"].includes(String(stateValue || "").trim().toLowerCase());
+  }
+
   function normalizeEventState(stateValue, dateValue = "") {
+    if (isExplicitUncheckedEventState(stateValue)) return "";
     if (stateValue === "dated" || stateValue === "checked") return stateValue;
     if (dateValue) return "dated";
     return "";
@@ -7694,9 +10222,18 @@ MAX - https://bizvmax.ru/zifra_plus
       .find((index) => !paymentRowHasData(record, index) && !openRows.has(index)) || "";
   }
 
-  function renderFinanceRowDragHandle(label) {
+  function renderFinanceRowDragHandle(label, options = {}) {
+    const disabled = Boolean(options.disabled);
     return `
-      <button class="finance-row-drag-handle" data-finance-row-drag draggable="true" type="button" title="Перетащите строку" aria-label="${escapeAttr(label)}">
+      <button
+        class="finance-row-drag-handle"
+        data-finance-row-drag
+        draggable="${disabled ? "false" : "true"}"
+        type="button"
+        title="${escapeAttr(disabled ? label : "Перетащите строку")}"
+        aria-label="${escapeAttr(label)}"
+        ${disabled ? "disabled" : ""}
+      >
         <span></span><span></span><span></span><span></span><span></span><span></span>
       </button>
     `;
@@ -7784,6 +10321,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = document.getElementById("recordForm");
     if (!form || form.dataset.config !== "students") return;
     const values = calculateStudentFinance(collectStudentFormDraft());
+    (values.directExpenses || []).forEach((expense, index) => {
+      if (!isAutomaticProgramAuthorExpense(expense)) return;
+      const amountInput = form.elements[`directExpense${index}Amount`];
+      if (amountInput instanceof HTMLInputElement) amountInput.value = String(expense.amount ?? 0);
+    });
     const expenses = Math.round(sumStudentExpenses(values) * 100) / 100;
     const financialResult = Math.round((values.paidAmount - expenses) * 100) / 100;
     ["paidAmount", "balance"].forEach((fieldName) => {
@@ -7906,7 +10448,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function formatStudentExpenseInventoryOption(item) {
     const details = [
       Number(item?.amount || 0) ? money(Number(item.amount)) : "",
-      `остаток: ${getInventoryBalance(item)}`,
+      `остаток: ${pieces(getInventoryBalance(item))}`,
       String(item?.note || "").trim()
     ].filter(Boolean);
     return `[Запас] ${String(item?.itemType || "").trim()}${details.length ? ` · ${details.join(" · ")}` : ""}`;
@@ -8120,7 +10662,10 @@ MAX - https://bizvmax.ru/zifra_plus
       <section class="form-section">
         <div class="payment-section-head">
           <h3>Расходы</h3>
-          <button class="ghost-button payment-add-button" data-action="add-expense-row" type="button">Добавить</button>
+          <div class="payment-section-actions">
+            <button class="ghost-button payment-add-button" data-action="add-typical-expenses" type="button">Добавить типовые расходы</button>
+            <button class="ghost-button payment-add-button" data-action="add-expense-row" type="button">Добавить</button>
+          </div>
         </div>
         ${rowCount ? `<div class="editable-grid expense-grid" data-student-finance-grid="expenses">
           <div class="editable-grid-head">№</div>
@@ -8163,7 +10708,21 @@ MAX - https://bizvmax.ru/zifra_plus
                     attrs: `data-expense-index="${n}"`
                   })}
                 </div>
-                <div class="editable-grid-cell row-action-cell" data-label="Удалить">
+                <div class="editable-grid-cell row-action-cell expense-row-actions" data-label="Действия">
+                  <button
+                    class="payment-row-duplicate"
+                    data-action="duplicate-expense-row"
+                    data-expense-index="${n}"
+                    type="button"
+                    title="Дублировать расход с текущей датой"
+                    aria-label="Дублировать расход ${n} с текущей датой"
+                    ${hasExpense ? "" : "disabled"}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <rect x="8" y="8" width="11" height="11" rx="2"></rect>
+                      <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>
+                    </svg>
+                  </button>
                   <button
                     class="payment-row-delete"
                     data-action="delete-expense-row"
@@ -8220,7 +10779,20 @@ MAX - https://bizvmax.ru/zifra_plus
                     attrs: `data-direct-expense-index="${index}"`
                   })}
                 </div>
-                <div class="editable-grid-cell row-action-cell" data-label="Удалить">
+                <div class="editable-grid-cell row-action-cell expense-row-actions" data-label="Действия">
+                  <button
+                    class="payment-row-duplicate"
+                    data-action="duplicate-direct-expense-row"
+                    data-direct-expense-index="${index}"
+                    type="button"
+                    title="Дублировать расход с текущей датой"
+                    aria-label="Дублировать расход ${rowNumber} с текущей датой"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <rect x="8" y="8" width="11" height="11" rx="2"></rect>
+                      <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>
+                    </svg>
+                  </button>
                   <button
                     class="payment-row-delete"
                     data-action="delete-direct-expense-row"
@@ -8328,6 +10900,45 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
+  function duplicateStudentExpenseRow(index, direct = false) {
+    if (!state.modal) return;
+    const draft = collectStudentFormDraft();
+    const directExpenses = Array.isArray(draft.directExpenses) ? draft.directExpenses : [];
+    const expenseIndex = Number(index);
+    const source = direct
+      ? directExpenses[expenseIndex]
+      : (Number.isInteger(expenseIndex) && expenseRowHasData(draft, expenseIndex)
+        ? {
+            type: draft[`expense${expenseIndex}Type`] || "",
+            amount: draft[`expense${expenseIndex}Amount`] || "",
+            isPaid: draft[`expense${expenseIndex}IsPaid`] || "",
+            note: draft[`expense${expenseIndex}Note`] || "",
+            inventoryId: draft[`expense${expenseIndex}InventoryId`] || "",
+            inventoryLink: draft[`expense${expenseIndex}InventoryLink`] || ""
+          }
+        : null);
+    if (!source) return;
+    const nextIndex = directExpenses.length;
+    const duplicate = {
+      ...source,
+      id: makeId("direct-expense"),
+      uid: draft.uid || source.uid || "",
+      date: todayIso()
+    };
+    state.modal.draft = {
+      ...draft,
+      directExpenses: [...directExpenses, duplicate]
+    };
+    state.modal.hasDraftChanges = true;
+    render();
+    requestAnimationFrame(() => {
+      const amountInput = document.querySelector(`[name="directExpense${nextIndex}Amount"]`);
+      amountInput?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      amountInput?.focus({ preventScroll: true });
+      amountInput?.select();
+    });
+  }
+
   function addStudentExpenseRow() {
     if (!state.modal) return;
     const draft = collectStudentFormDraft();
@@ -8355,6 +10966,25 @@ MAX - https://bizvmax.ru/zifra_plus
     requestAnimationFrame(() => {
       document.querySelector(`[name="directExpense${nextIndex}Amount"]`)?.focus({ preventScroll: true });
     });
+  }
+
+  function addStudentTypicalExpenses() {
+    if (!state.modal) return;
+    const draft = calculateStudentFinance(collectStudentFormDraft());
+    const program = findProgramByName(draft.program);
+    const result = addAutomaticStudentExpenses(draft, program);
+    if (!result.additions.length) {
+      alert("Новых типовых расходов не найдено. Проверьте оплаты, настройки программы и уже добавленные расходы.");
+      return;
+    }
+    state.modal.draft = calculateStudentFinance(result.record);
+    state.modal.hasDraftChanges = true;
+    addAudit(
+      "Добавлены типовые расходы",
+      draft.name || "Карточка слушателя",
+      `${result.additions.length} записей`
+    );
+    render();
   }
 
   function reorderStudentPayments(rowKeys) {
@@ -8725,6 +11355,40 @@ MAX - https://bizvmax.ru/zifra_plus
     }, 900);
   }
 
+  async function copyStudentDetails(event) {
+    const button = event.currentTarget;
+    const record = collectStudentFormDraft();
+    const lines = [
+      record.name,
+      record.phone,
+      record.email,
+      record.workPlace || record.organization,
+      record.position
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    if (!lines.length) {
+      alert("В карточке нет заполненных данных для копирования.");
+      return;
+    }
+
+    await copyTextToClipboard(lines.join("\r\n"));
+    const initialTitle = button.title;
+    const initialLabel = button.getAttribute("aria-label") || initialTitle;
+    const initialIcon = button.innerHTML;
+    button.classList.add("is-complete");
+    button.title = "Данные скопированы";
+    button.setAttribute("aria-label", "Данные скопированы");
+    button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 12 4 4L19 6"></path></svg>';
+    window.setTimeout(() => {
+      if (!button.isConnected) return;
+      button.classList.remove("is-complete");
+      button.title = initialTitle;
+      button.setAttribute("aria-label", initialLabel);
+      button.innerHTML = initialIcon;
+    }, 1000);
+  }
+
   function editStudentCommunicationMessage(messageKey) {
     const textarea = getStudentCommunicationTextarea(messageKey);
     if (!textarea) return;
@@ -8744,13 +11408,75 @@ MAX - https://bizvmax.ru/zifra_plus
     textarea.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  async function sendServerEmail({ email, subject, message, confirmText, button }) {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      alert("Укажите корректный Email слушателя.");
-      document.querySelector("[name='email']")?.focus({ preventScroll: true });
+  async function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => {
+        const encoded = String(reader.result || "").split(",", 2)[1] || "";
+        if (!encoded) {
+          reject(new Error("Сформированный файл пуст."));
+          return;
+        }
+        resolve(encoded);
+      });
+      reader.addEventListener("error", () => reject(reader.error || new Error("Не удалось прочитать сформированный файл.")));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function normalizeServerEmailSubject(value) {
+    const subject = String(value || "")
+      .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim();
+    const characters = Array.from(subject);
+    if (characters.length <= 200) return subject;
+    return `${characters.slice(0, 197).join("").trimEnd()}...`;
+  }
+
+  function resolveServerEmailRecipient(email, event = null, recipientMode = "") {
+    const explicitMode = ["student", "system"].includes(String(recipientMode || "").trim())
+      ? String(recipientMode).trim()
+      : "";
+    const sendToSystemMailbox = explicitMode
+      ? explicitMode === "system"
+      : Boolean(event?.shiftKey);
+    return {
+      sendToSystemMailbox,
+      recipient: String(
+        sendToSystemMailbox ? getStudentApplicationsEmailLogin() : email
+      ).trim()
+    };
+  }
+
+  async function sendServerEmail({
+    email,
+    subject,
+    message,
+    confirmText,
+    button,
+    event,
+    prepareAttachment,
+    attachment = null,
+    recipientMode = "",
+    skipConfirmation = false
+  }) {
+    const normalizedSubject = normalizeServerEmailSubject(subject);
+    const { sendToSystemMailbox, recipient } = resolveServerEmailRecipient(
+      email,
+      event,
+      recipientMode
+    );
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+      alert(sendToSystemMailbox
+        ? "Укажите корректный системный почтовый ящик в админке."
+        : "Укажите корректный Email слушателя.");
+      if (!sendToSystemMailbox) {
+        document.querySelector("[name='email']")?.focus({ preventScroll: true });
+      }
       return false;
     }
-    if (!String(subject || "").trim()) {
+    if (!normalizedSubject) {
       alert("Не указана тема письма.");
       return false;
     }
@@ -8758,11 +11484,20 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Текст письма пуст.");
       return false;
     }
-    if (!confirm(confirmText || `Отправить письмо на адрес ${email}?`)) return false;
+    const recipientDescription = sendToSystemMailbox
+      ? `системный ящик ${recipient}`
+      : `адрес слушателя ${recipient}`;
+    if (
+      !skipConfirmation
+      && !confirm(`${confirmText || "Отправить письмо?"}\n\nПолучатель: ${recipientDescription}.`)
+    ) return false;
 
     const originalDisabled = Boolean(button?.disabled);
     if (button) button.disabled = true;
     try {
+      const resolvedAttachment = typeof prepareAttachment === "function"
+        ? await prepareAttachment()
+        : attachment;
       const response = await fetch("send-mail.php", {
         method: "POST",
         headers: {
@@ -8770,16 +11505,17 @@ MAX - https://bizvmax.ru/zifra_plus
           "X-Requested-With": "AIS-Web"
         },
         body: JSON.stringify({
-          to: email,
-          subject: String(subject).trim(),
-          message: String(message).trim()
+          to: recipient,
+          subject: normalizedSubject,
+          message: String(message).trim(),
+          ...(resolvedAttachment ? { attachment: resolvedAttachment } : {})
         })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       }
-      alert(`Письмо отправлено на адрес ${email}.`);
+      alert(`Письмо отправлено на адрес ${recipient}.`);
       return true;
     } catch (error) {
       alert(`Не удалось отправить письмо через сервер: ${error.message}`);
@@ -8789,7 +11525,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
-  async function emailStudentCommunicationMessage(messageKey, button) {
+  async function emailStudentCommunicationMessage(messageKey, button, event) {
     const textarea = getStudentCommunicationTextarea(messageKey);
     const email = getCurrentStudentCardValue("email");
     const message = studentCommunicationMessages.find((item) => item.key === messageKey);
@@ -8798,8 +11534,9 @@ MAX - https://bizvmax.ru/zifra_plus
       email,
       subject,
       message: textarea?.value || "",
-      confirmText: `Отправить сообщение «${message?.label || "Сообщение от учебного центра"}» на адрес ${email}?`,
-      button
+      confirmText: `Отправить сообщение «${message?.label || "Сообщение от учебного центра"}»?`,
+      button,
+      event
     });
   }
 
@@ -8817,8 +11554,9 @@ MAX - https://bizvmax.ru/zifra_plus
       email,
       subject,
       message,
-      confirmText: `Отправить письмо с доступом к порталу на адрес ${email}?`,
-      button: event?.currentTarget
+      confirmText: "Отправить письмо с доступом к порталу?",
+      button: event?.currentTarget,
+      event
     });
   }
 
@@ -8852,12 +11590,12 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function bindStudentProgramTypeFilterOutsideClick() {
-    if (studentProgramTypeFilterOutsideClickBound) return;
-    studentProgramTypeFilterOutsideClickBound = true;
+  function bindProgramTypeFilterOutsideClick() {
+    if (programTypeFilterOutsideClickBound) return;
+    programTypeFilterOutsideClickBound = true;
     document.addEventListener("pointerdown", (event) => {
-      const filter = document.querySelector("[data-student-program-type-filter][open]");
-      if (!filter || event.target.closest("[data-student-program-type-filter]")) return;
+      const filter = document.querySelector("[data-program-type-filter][open]");
+      if (!filter || event.target.closest("[data-program-type-filter]")) return;
       filter.open = false;
     });
   }
@@ -8898,17 +11636,21 @@ MAX - https://bizvmax.ru/zifra_plus
       removePostalIndexPopup();
       return true;
     }
-    if (document.querySelector("[data-student-tab-menu]")) {
-      closeStudentTabMenu();
+    if (document.querySelector("[data-student-document-action-menu]")) {
+      closeStudentDocumentActionMenu();
+      return true;
+    }
+    if (document.querySelector("[data-orderable-tab-menu]")) {
+      closeOrderableTabMenu();
       return true;
     }
     if (document.querySelector("[data-nav-item-menu]")) {
       closeNavItemMenu();
       return true;
     }
-    const studentProgramTypeFilter = document.querySelector("[data-student-program-type-filter][open]");
-    if (studentProgramTypeFilter) {
-      studentProgramTypeFilter.open = false;
+    const programTypeFilter = document.querySelector("[data-program-type-filter][open]");
+    if (programTypeFilter) {
+      programTypeFilter.open = false;
       return true;
     }
     if (document.querySelector("[data-combo-field].is-open")) {
@@ -8959,7 +11701,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function bindEvents() {
     bindGlobalEscapeKey();
     bindSidebarOutsideClick();
-    bindStudentProgramTypeFilterOutsideClick();
+    bindProgramTypeFilterOutsideClick();
     bindNavItemOrderControls();
     bindFieldUndoShortcut();
     bindStudentApplicationsImportEvents();
@@ -8972,6 +11714,7 @@ MAX - https://bizvmax.ru/zifra_plus
         state.search = "";
         state.statusFilter = getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
+        state.programRegistryTypeFilter = [];
         state.studentImportedViewIds = [];
         state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
@@ -8985,6 +11728,7 @@ MAX - https://bizvmax.ru/zifra_plus
         state.search = "";
         state.statusFilter = getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
+        state.programRegistryTypeFilter = [];
         state.studentImportedViewIds = [];
         state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
@@ -9013,10 +11757,14 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", importStudentsFromDatabase);
     });
     document.querySelector("[data-action='sync-students-database']")?.addEventListener("click", exportStudentsToDatabase);
-    document.querySelector("form[data-action='save-student-database-settings']")?.addEventListener("submit", saveStudentDatabaseSettings);
+    const studentDatabaseSettingsForm = document.querySelector("form[data-action='save-student-database-settings']");
+    studentDatabaseSettingsForm?.addEventListener("submit", saveStudentDatabaseSettings);
+    bindAutomaticDocumentSaveHint(studentDatabaseSettingsForm);
     document.querySelector("[data-action='test-yandex-disk']")?.addEventListener("click", testYandexDiskConnection);
     document.querySelector("[data-action='test-student-applications-email']")
       ?.addEventListener("click", testStudentApplicationsEmailConnection);
+    document.querySelector("[data-action='download-audit-log']")
+      ?.addEventListener("click", downloadAuditLog);
 
     document.querySelector("[data-action='transliterate-student-name']")?.addEventListener("click", () => {
       const source = document.querySelector("[name='name']");
@@ -9064,6 +11812,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='copy-communication-message']").forEach((button) => {
       button.addEventListener("click", () => copyStudentCommunicationMessage(button));
     });
+    document.querySelector("[data-action='copy-student-details']")?.addEventListener("click", copyStudentDetails);
     document.querySelectorAll("[data-action='edit-communication-message']").forEach((button) => {
       button.addEventListener("click", () => editStudentCommunicationMessage(button.dataset.messageKey));
     });
@@ -9071,7 +11820,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", () => restoreStudentCommunicationMessage(button.dataset.messageKey));
     });
     document.querySelectorAll("[data-action='email-communication-message']").forEach((button) => {
-      button.addEventListener("click", () => emailStudentCommunicationMessage(button.dataset.messageKey, button));
+      button.addEventListener("click", (event) => emailStudentCommunicationMessage(button.dataset.messageKey, button, event));
     });
     document.querySelectorAll("[data-action='copy-address-to']").forEach((button) => {
       button.addEventListener("click", () => copyStudentAddressToField(button.dataset.source, button.dataset.target));
@@ -9105,8 +11854,21 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='delete-direct-expense-row']").forEach((button) => {
       button.addEventListener("click", () => clearStudentDirectExpenseRow(button.dataset.directExpenseIndex));
     });
+    document.querySelectorAll("[data-action='duplicate-expense-row']").forEach((button) => {
+      button.addEventListener("click", () => duplicateStudentExpenseRow(button.dataset.expenseIndex));
+    });
+    document.querySelectorAll("[data-action='duplicate-direct-expense-row']").forEach((button) => {
+      button.addEventListener("click", () => duplicateStudentExpenseRow(button.dataset.directExpenseIndex, true));
+    });
+    document.querySelector("[data-action='add-typical-expenses']")?.addEventListener("click", addStudentTypicalExpenses);
     document.querySelector("[data-action='add-expense-row']")?.addEventListener("click", addStudentExpenseRow);
     document.querySelectorAll("[data-student-finance-grid]").forEach(bindStudentFinanceRowDrag);
+    document.querySelector("[data-action='add-program-author-payment-row']")?.addEventListener("click", addProgramAuthorPaymentRow);
+    bindProgramAuthorPaymentListActions(document.querySelector("[data-program-author-payment-list]"));
+    document.querySelectorAll("[data-action='open-program-op-resource']").forEach((button) => {
+      button.addEventListener("click", openProgramOperationalDocumentResource);
+    });
+    bindPaymentFormulaEditors();
     document.querySelector("[data-action='add-program-training-plan-row']")?.addEventListener("click", addProgramTrainingPlanRow);
     const programTrainingPlanBody = document.querySelector("[data-program-training-plan-body]");
     programTrainingPlanBody?.addEventListener("click", (event) => {
@@ -9132,6 +11894,9 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.querySelectorAll("[data-action='navigate-student-card']").forEach((button) => {
       button.addEventListener("click", () => navigateStudentCard(button.dataset.direction));
+    });
+    document.querySelectorAll("[data-action='navigate-program-card']").forEach((button) => {
+      button.addEventListener("click", () => navigateProgramCard(button.dataset.direction));
     });
     document.querySelectorAll("[data-payment-index]").forEach((input) => {
       input.addEventListener("input", () => {
@@ -9177,6 +11942,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
     document.getElementById("statusFilter")?.addEventListener("change", (event) => {
       state.statusFilter = event.target.value;
+      if (state.view === "students") state.sort = getStudentStatusTableSort(state.statusFilter);
       state.tablePages[state.view] = 1;
       render();
     });
@@ -9196,6 +11962,22 @@ MAX - https://bizvmax.ru/zifra_plus
       state.tablePages.students = 1;
       render();
     });
+    document.querySelectorAll("[data-program-registry-type-filter-option]").forEach((input) => {
+      input.addEventListener("change", () => {
+        state.programRegistryTypeFilter = Array.from(
+          document.querySelectorAll("[data-program-registry-type-filter-option]:checked")
+        ).map((item) => item.value);
+        state.tablePages.programs = 1;
+        render();
+        const filter = document.querySelector("[data-program-registry-type-filter]");
+        if (filter) filter.open = true;
+      });
+    });
+    document.querySelector("[data-action='clear-program-registry-type-filter']")?.addEventListener("click", () => {
+      state.programRegistryTypeFilter = [];
+      state.tablePages.programs = 1;
+      render();
+    });
     document.querySelector("[data-action='clear-student-imported-view']")?.addEventListener("click", () => {
       state.studentImportedViewIds = [];
       state.statusFilter = getDefaultStatusFilter("students");
@@ -9213,13 +11995,14 @@ MAX - https://bizvmax.ru/zifra_plus
         input.setSelectionRange(cursor, cursor);
       }
     });
+    document.getElementById("dictionarySearch")?.addEventListener("keydown", focusDictionaryListFromSearch);
 
     document.querySelectorAll("[data-action='select-dictionary']").forEach((button) => {
       button.addEventListener("click", () => {
-        state.selectedDictionary = button.dataset.dict;
-        render();
+        selectDictionary(button.dataset.dict, { focus: true });
       });
     });
+    document.querySelector(".dictionary-list")?.addEventListener("keydown", handleDictionaryListKeydown);
 
     document.querySelectorAll("[data-action='sort']").forEach((button) => {
       button.addEventListener("click", () => {
@@ -9233,6 +12016,21 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
 
+    document.querySelectorAll("[data-action='sort-inventory-students']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = String(button.dataset.key || "");
+        if (!key) return;
+        state.inventoryStudentSort = {
+          key,
+          dir: state.inventoryStudentSort?.key === key
+            && state.inventoryStudentSort?.dir === "asc"
+            ? "desc"
+            : "asc"
+        };
+        render();
+      });
+    });
+
     document.querySelectorAll("[data-student-status-shortcut]").forEach((button) => {
       button.addEventListener("click", () => {
         const status = button.dataset.studentStatusShortcut || "Все";
@@ -9242,7 +12040,7 @@ MAX - https://bizvmax.ru/zifra_plus
         state.statusFilter = status;
         state.studentProgramTypeFilter = [];
         state.studentImportedViewIds = [];
-        state.sort = getDefaultTableSort("students");
+        state.sort = getStudentStatusTableSort(status);
         state.tablePages.students = 1;
         state.tableOptions = null;
         render();
@@ -9283,6 +12081,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='create']").forEach((button) => {
       button.addEventListener("click", () => {
         if (button.dataset.config === "students") state.studentCardTab = "main";
+        if (button.dataset.config === "programs") state.programCardTab = "main";
         if (button.dataset.config === "students") state.openPaymentRows = [];
         if (button.dataset.config === "students") state.openExpenseRows = [];
         if (button.dataset.config === "students") state.discountPickerOpen = false;
@@ -9302,6 +12101,7 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         setTablePageForRow(button.dataset.config, button.dataset.id);
         if (button.dataset.config === "students") state.studentCardTab = "main";
+        if (button.dataset.config === "programs") state.programCardTab = "main";
         if (button.dataset.config === "students") state.openPaymentRows = [];
         if (button.dataset.config === "students") state.openExpenseRows = [];
         if (button.dataset.config === "students") state.discountPickerOpen = false;
@@ -9430,6 +12230,12 @@ MAX - https://bizvmax.ru/zifra_plus
       input.addEventListener("input", syncProgramType);
       input.addEventListener("change", syncProgramType);
     });
+    const studentSourceInput = document.querySelector("form[data-config='students'] [name='source']");
+    if (studentSourceInput) {
+      const syncAgent = (event) => syncStudentAgentFromSource(event.target.value);
+      studentSourceInput.addEventListener("input", syncAgent);
+      studentSourceInput.addEventListener("change", syncAgent);
+    }
 
     bindStudentEventReorderKeys();
     document.querySelectorAll("[data-action='toggle-student-event']").forEach(bindStudentEventRow);
@@ -9463,15 +12269,20 @@ MAX - https://bizvmax.ru/zifra_plus
 
     document.querySelectorAll("[data-action='open-field-lookup']").forEach((button) => {
       button.addEventListener("click", () => {
-        const panel = document.querySelector(`[data-lookup-panel="${button.dataset.field}"]`);
+        const panel = button.closest(".lookup-field")?.querySelector(".lookup-panel");
         if (!panel) return;
         document.querySelectorAll(".lookup-panel.is-open").forEach((item) => {
           if (item !== panel) item.classList.remove("is-open");
         });
         panel.classList.toggle("is-open");
-        panel.querySelector(".lookup-search")?.focus();
+        if (panel.classList.contains("is-open")) {
+          positionFieldLookupPanel(panel);
+          panel.querySelector(".lookup-search")?.focus();
+        }
       });
     });
+
+    document.querySelector(".student-tab-body")?.addEventListener("scroll", repositionOpenFieldLookupPanels, { passive: true });
 
     document.querySelectorAll(".lookup-field").forEach((field) => {
       field.addEventListener("pointerdown", (event) => {
@@ -9552,22 +12363,14 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
 
-    bindStudentTabOrderControls();
     document.querySelectorAll("[data-student-tab]").forEach((button) => {
-      button.addEventListener("click", () => {
-        if (button.dataset.wasDragged === "true" || Date.now() - lastStudentTabDragEndedAt < 200) {
-          button.dataset.wasDragged = "";
-          return;
-        }
-        switchStudentTab(button.dataset.studentTab);
-      });
+      button.addEventListener("click", () => switchStudentTab(button.dataset.studentTab));
     });
 
     document.getElementById("studentPhotoInput")?.addEventListener("change", handleStudentPhoto);
-    document.querySelector("[data-student-documents-folder-link]")?.addEventListener(
-      "click",
-      openStudentDocumentsFolder
-    );
+    document.querySelectorAll("[data-student-documents-folder-link]").forEach((link) => {
+      link.addEventListener("click", openStudentDocumentsFolder);
+    });
     document.querySelector("[data-action='create-student-documents-folder']")
       ?.addEventListener("click", createMissingStudentDocumentsFolder);
     document.getElementById("studentPhotoPath")?.addEventListener("change", (event) => {
@@ -9611,6 +12414,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='open-student-study-certificate-document']")?.addEventListener("click", openStudentStudyCertificateDocument);
     document.querySelector("[data-action='open-student-enrollment-order-document']")?.addEventListener("click", openStudentEnrollmentOrderDocument);
     document.querySelector("[data-action='open-student-expulsion-order-document']")?.addEventListener("click", openStudentExpulsionOrderDocument);
+    bindStudentDocumentActionMenus();
 
     document.querySelectorAll("[data-action='export-json']").forEach((button) => {
       button.addEventListener("click", exportJson);
@@ -9683,6 +12487,11 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='refresh-document-template-fields']")?.addEventListener("click", (event) => {
       refreshActiveDocumentTemplateFields(event.currentTarget);
     });
+    document.querySelectorAll("[data-action='switch-document-template-settings-tab']").forEach((button) => {
+      button.addEventListener("click", () => {
+        switchDocumentTemplateSettingsTab(button.dataset.documentTemplateSettingsTab);
+      });
+    });
     document.querySelectorAll("[data-active-contract-name-input]").forEach((input) => {
       input.addEventListener("input", syncActiveContractTemplateFieldControls);
       input.addEventListener("change", syncActiveContractTemplateFieldControls);
@@ -9708,9 +12517,22 @@ MAX - https://bizvmax.ru/zifra_plus
         handleContractTemplateFieldNavigation(event, button.dataset.contractFieldId);
       });
     });
+    bindDocumentSaveFolderEditor();
     bindContractTemplateConstructor();
+    bindDocumentEmailTemplateEditors();
     document.querySelector("form[data-action='save-sdo-settings']")?.addEventListener("submit", saveSdoSettings);
     document.querySelector("[data-action='reset-sdo-settings']")?.addEventListener("click", resetSdoSettings);
+    document.querySelector("form[data-action='save-payment-settings']")?.addEventListener("submit", savePaymentSettings);
+    document.querySelector("[data-action='reset-payment-settings']")?.addEventListener("click", resetPaymentSettings);
+    document.querySelector("[data-action='add-payment-constant']")?.addEventListener("click", addPaymentConstantRow);
+    const paymentConstantList = document.querySelector("[data-payment-constant-list]");
+    bindPaymentConstantListActions(paymentConstantList);
+    bindPaymentConstantRowDrag(paymentConstantList);
+    bindPaymentSettingsTabs();
+    bindOrderableTabs();
+    document.querySelector("form[data-action='save-document-path-settings']")?.addEventListener("submit", saveDocumentPathSettings);
+    document.querySelector("[data-action='reset-document-path-settings']")?.addEventListener("click", resetDocumentPathSettings);
+    bindDocumentPathSettingsEditor();
     document.querySelector("form[data-action='save-education-registration-type-codes']")?.addEventListener("submit", saveEducationRegistrationTypeCodes);
     document.querySelector("[data-action='reset-education-registration-type-codes']")?.addEventListener("click", resetEducationRegistrationTypeCodes);
     document.querySelector("form[data-action='save-final-attestation-settings']")?.addEventListener("submit", saveFinalAttestationSettings);
@@ -9862,17 +12684,19 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function syncStudentCardTabOrderFromDom() {
-    const order = [...document.querySelectorAll("[data-student-tab]")]
-      .map((button) => button.dataset.studentTab)
+  function syncOrderableTabOrderFromDom(container) {
+    const groupId = String(container?.dataset.orderableTabs || "").trim();
+    if (!groupId) return;
+    const order = [...container.querySelectorAll("[data-orderable-tab]")]
+      .map((button) => String(button.dataset.orderableTab || "").trim())
       .filter(Boolean);
     if (!order.length) return;
-    state.studentCardTabOrder = order;
-    persistStudentCardTabOrder(order);
+    state.tabOrders = { ...(state.tabOrders || {}), [groupId]: order };
+    persistTabOrders();
   }
 
-  function getStudentTabDragAfterElement(container, x) {
-    return [...container.querySelectorAll("[data-student-tab]:not(.is-dragging)")].reduce((closest, child) => {
+  function getOrderableTabDragAfterElement(container, x) {
+    return [...container.querySelectorAll("[data-orderable-tab]:not(.is-dragging)")].reduce((closest, child) => {
       const box = child.getBoundingClientRect();
       const offset = x - box.left - box.width / 2;
       if (offset < 0 && offset > closest.offset) {
@@ -9882,90 +12706,130 @@ MAX - https://bizvmax.ru/zifra_plus
     }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
   }
 
-  function closeStudentTabMenu() {
-    document.removeEventListener("pointerdown", closeStudentTabMenuOnOutsideClick, { capture: true });
-    document.querySelector("[data-student-tab-menu]")?.remove();
+  function closeOrderableTabMenu() {
+    document.removeEventListener("pointerdown", closeOrderableTabMenuOnOutsideClick, { capture: true });
+    document.querySelector("[data-orderable-tab-menu]")?.remove();
   }
 
-  function closeStudentTabMenuOnOutsideClick(event) {
-    if (event.target.closest("[data-student-tab-menu]")) {
-      document.addEventListener("pointerdown", closeStudentTabMenuOnOutsideClick, { capture: true, once: true });
+  function closeOrderableTabMenuOnOutsideClick(event) {
+    if (event.target.closest("[data-orderable-tab-menu]")) {
+      document.addEventListener("pointerdown", closeOrderableTabMenuOnOutsideClick, { capture: true, once: true });
       return;
     }
-    closeStudentTabMenu();
+    closeOrderableTabMenu();
   }
 
-  function resetStudentCardTabOrder() {
-    if (state.modal) {
-      state.modal.draft = collectStudentFormDraft();
-      state.modal.hasDraftChanges = true;
-    }
-    state.studentCardTabOrder = [];
-    localStorage.removeItem(STUDENT_CARD_TAB_ORDER_KEY);
-    closeStudentTabMenu();
-    render();
+  function resetOrderableTabOrder(container) {
+    const groupId = String(container?.dataset.orderableTabs || "").trim();
+    if (!groupId) return;
+    const buttons = [...container.querySelectorAll("[data-orderable-tab]")];
+    buttons
+      .sort((left, right) => (
+        Number(left.dataset.orderableTabDefaultIndex || 0)
+        - Number(right.dataset.orderableTabDefaultIndex || 0)
+      ))
+      .forEach((button) => container.appendChild(button));
+    state.tabOrders = { ...(state.tabOrders || {}) };
+    delete state.tabOrders[groupId];
+    persistTabOrders();
+    closeOrderableTabMenu();
+    const activeButton = buttons.find((button) => button.classList.contains("active"));
+    activeButton?.focus({ preventScroll: true });
   }
 
-  function showStudentTabMenu(x, y) {
-    closeStudentTabMenu();
+  function showOrderableTabMenu(x, y, container) {
+    closeOrderableTabMenu();
     const menu = document.createElement("div");
-    menu.className = "student-tab-menu";
-    menu.dataset.studentTabMenu = "";
+    menu.className = "orderable-tab-menu";
+    menu.dataset.orderableTabMenu = "";
     menu.innerHTML = `
-      <button data-action="reset-student-tab-order" type="button">Восстановить порядок вкладок</button>
+      <button data-action="reset-orderable-tab-order" type="button">Восстановить исходный порядок</button>
     `;
     document.body.appendChild(menu);
     const rect = menu.getBoundingClientRect();
     menu.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;
     menu.style.top = `${clamp(y, 8, Math.max(8, window.innerHeight - rect.height - 8))}px`;
-    menu.querySelector("[data-action='reset-student-tab-order']")?.addEventListener("click", resetStudentCardTabOrder);
+    menu.querySelector("[data-action='reset-orderable-tab-order']")
+      ?.addEventListener("click", () => resetOrderableTabOrder(container));
     setTimeout(() => {
-      document.addEventListener("pointerdown", closeStudentTabMenuOnOutsideClick, { capture: true, once: true });
+      document.addEventListener("pointerdown", closeOrderableTabMenuOnOutsideClick, { capture: true, once: true });
     });
   }
 
-  function bindStudentTabOrderControls() {
-    const container = document.querySelector("[data-student-tabs]");
-    if (!container) return;
-    container.addEventListener("contextmenu", (event) => {
-      if (!event.target.closest("[data-student-tab]")) return;
-      event.preventDefault();
-      showStudentTabMenu(event.clientX, event.clientY);
-    });
-    container.addEventListener("dragover", (event) => {
-      event.preventDefault();
-      const dragging = container.querySelector(".is-dragging[data-student-tab]");
-      if (!dragging) return;
-      const afterElement = getStudentTabDragAfterElement(container, event.clientX);
-      if (afterElement) {
-        container.insertBefore(dragging, afterElement);
-      } else {
-        container.appendChild(dragging);
-      }
-      syncStudentCardTabOrderFromDom();
-    });
-    container.addEventListener("drop", (event) => {
-      event.preventDefault();
-      syncStudentCardTabOrderFromDom();
-    });
-    container.querySelectorAll("[data-student-tab]").forEach((button) => {
-      button.addEventListener("dragstart", (event) => {
-        draggedStudentTabId = button.dataset.studentTab || "";
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", draggedStudentTabId);
-        button.classList.add("is-dragging");
-        document.body.classList.add("student-tab-dragging");
+  function bindOrderableTabs() {
+    document.querySelectorAll("[data-orderable-tabs]").forEach((container) => {
+      const groupId = String(container.dataset.orderableTabs || "").trim();
+      const buttons = [...container.querySelectorAll("[data-orderable-tab]")];
+      if (!groupId || !buttons.length) return;
+      buttons.forEach((button, index) => {
+        button.draggable = true;
+        if (!button.dataset.orderableTabDefaultIndex) {
+          button.dataset.orderableTabDefaultIndex = String(index);
+        }
       });
-      button.addEventListener("dragend", () => {
-        button.classList.remove("is-dragging");
-        document.body.classList.remove("student-tab-dragging");
-        if (draggedStudentTabId) button.dataset.wasDragged = "true";
-        lastStudentTabDragEndedAt = Date.now();
-        draggedStudentTabId = "";
-        syncStudentCardTabOrderFromDom();
-        setTimeout(() => {
-          if (button.dataset.wasDragged === "true") button.dataset.wasDragged = "";
-        }, 0);
+      container.addEventListener("contextmenu", (event) => {
+        if (!event.target.closest("[data-orderable-tab]")) return;
+        event.preventDefault();
+        showOrderableTabMenu(event.clientX, event.clientY, container);
+      });
+      container.addEventListener("dragover", (event) => {
+        const dragging = container.querySelector(".is-dragging[data-orderable-tab]");
+        if (!dragging) return;
+        event.preventDefault();
+        const afterElement = getOrderableTabDragAfterElement(container, event.clientX);
+        if (afterElement) container.insertBefore(dragging, afterElement);
+        else container.appendChild(dragging);
+      });
+      container.addEventListener("drop", (event) => {
+        event.preventDefault();
+        syncOrderableTabOrderFromDom(container);
+      });
+      buttons.forEach((button) => {
+        button.addEventListener("click", (event) => {
+          if (button.dataset.wasDragged !== "true") return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          button.dataset.wasDragged = "";
+        }, { capture: true });
+        button.addEventListener("dragstart", (event) => {
+          closeOrderableTabMenu();
+          if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", button.dataset.orderableTab || "");
+          }
+          button.classList.add("is-dragging");
+          document.body.classList.add("orderable-tab-dragging");
+        });
+        button.addEventListener("dragend", () => {
+          button.classList.remove("is-dragging");
+          document.body.classList.remove("orderable-tab-dragging");
+          button.dataset.wasDragged = "true";
+          syncOrderableTabOrderFromDom(container);
+          setTimeout(() => {
+            if (button.dataset.wasDragged === "true") button.dataset.wasDragged = "";
+          }, 200);
+        });
+        button.addEventListener("keydown", (event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+          const currentButtons = [...container.querySelectorAll("[data-orderable-tab]")];
+          const currentIndex = currentButtons.indexOf(button);
+          let nextIndex = currentIndex;
+          if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + currentButtons.length) % currentButtons.length;
+          if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % currentButtons.length;
+          if (event.key === "Home") nextIndex = 0;
+          if (event.key === "End") nextIndex = currentButtons.length - 1;
+          const nextButton = currentButtons[nextIndex];
+          if (!nextButton) return;
+          event.preventDefault();
+          const nextTabId = nextButton.dataset.orderableTab || "";
+          nextButton.click();
+          requestAnimationFrame(() => {
+            const nextContainer = document.querySelector(`[data-orderable-tabs="${CSS.escape(groupId)}"]`);
+            nextContainer
+              ?.querySelector(`[data-orderable-tab="${CSS.escape(nextTabId)}"]`)
+              ?.focus({ preventScroll: true });
+          });
+        });
       });
     });
   }
@@ -10037,6 +12901,57 @@ MAX - https://bizvmax.ru/zifra_plus
     const target = getStudentNavigationTarget(currentId, direction);
     if (!target) return;
     openStudentCardById(target.id);
+  }
+
+  function getProgramNavigationRows() {
+    const visibleRows = getVisibleRows(configs.programs);
+    return visibleRows.length ? visibleRows : (state.data.collections.programs || []);
+  }
+
+  function getProgramCardNavigation(record = {}) {
+    const rows = getProgramNavigationRows();
+    const index = rows.findIndex((row) => row.id === record.id);
+    return {
+      index,
+      total: rows.length,
+      hasPrev: Boolean(record.id) && index > 0,
+      hasNext: Boolean(record.id) && index >= 0 && index < rows.length - 1
+    };
+  }
+
+  function getProgramNavigationTarget(currentId, direction) {
+    const rows = getProgramNavigationRows();
+    const index = rows.findIndex((row) => row.id === currentId);
+    if (index < 0) return null;
+    return rows[index + (Number(direction) < 0 ? -1 : 1)] || null;
+  }
+
+  function openProgramCardById(id) {
+    if (!id) return;
+    state.lastEditedRow = { config: "programs", id };
+    setTablePageForRow("programs", id);
+    state.modal = { config: "programs", id };
+    render();
+  }
+
+  function navigateProgramCard(direction) {
+    const formElement = document.getElementById("recordForm");
+    if (!formElement || formElement.dataset.config !== "programs" || !state.modal?.id) return;
+    let currentId = formElement.dataset.id || state.modal.id;
+    const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
+    if (hasChanges) {
+      if (confirm("Сохранить изменения перед переходом к другой карточке?")) {
+        const savedId = saveFormRecord(formElement);
+        if (!savedId) return;
+        persist();
+        currentId = savedId;
+      } else if (!confirm("Перейти без сохранения изменений?")) {
+        return;
+      }
+    }
+    const target = getProgramNavigationTarget(currentId, direction);
+    if (!target) return;
+    openProgramCardById(target.id);
   }
 
   function findDiscountOptionByKey(key) {
@@ -10177,6 +13092,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const raw = formData.get(item.key);
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
+    values.discountUnit = "percent";
     values.directExpenses = collectStudentDirectExpenses(formElement, values);
     formData.forEach((raw, key) => {
       if (/^event_[A-Za-z0-9_-]+_(state|date|label)$/.test(key)) {
@@ -10491,14 +13407,479 @@ MAX - https://bizvmax.ru/zifra_plus
     body.querySelector(`[name="trainingPlan_${index}_discipline"]`)?.focus({ preventScroll: true });
   }
 
+  function updateProgramAuthorPaymentRowNames(list) {
+    const rows = [...(list || document).querySelectorAll("[data-program-author-payment-row]")];
+    rows.forEach((row, index) => {
+      const rowNumber = row.querySelector("[data-program-author-row-number]");
+      if (rowNumber) rowNumber.textContent = String(index + 1);
+      row.querySelectorAll("[data-program-author-payment-field]").forEach((input) => {
+        const key = input.dataset.programAuthorPaymentField;
+        if (key) input.name = `programAuthorPayment_${index}_${key}`;
+      });
+    });
+    if (list) list.dataset.nextIndex = String(rows.length);
+  }
+
+  function addProgramAuthorPaymentRow() {
+    const list = document.querySelector("[data-program-author-payment-list]");
+    if (!list) return;
+    const index = Number(list.dataset.nextIndex || list.querySelectorAll("[data-program-author-payment-row]").length || 0);
+    list.insertAdjacentHTML("beforeend", renderProgramAuthorPaymentRow({
+      id: makeId("program-author"),
+      amountFormula: "[АвторскаяСтавка]"
+    }, index));
+    updateProgramAuthorPaymentRowNames(list);
+    list.closest(".program-author-section")?.querySelector("[data-program-author-payment-empty]")?.remove();
+    bindPaymentFormulaEditors(list);
+    list.querySelector(`[name="programAuthorPayment_${index}_recipient"]`)?.focus({ preventScroll: true });
+  }
+
+  function deleteProgramAuthorPaymentRow(button) {
+    const list = button?.closest("[data-program-author-payment-list]");
+    button?.closest("[data-program-author-payment-row]")?.remove();
+    updateProgramAuthorPaymentRowNames(list);
+    if (list && !list.querySelector("[data-program-author-payment-row]")) {
+      list.insertAdjacentHTML(
+        "afterend",
+        `<p class="payment-empty" data-program-author-payment-empty>Авторы пока не указаны.</p>`
+      );
+    }
+  }
+
+  function bindProgramAuthorPaymentListActions(list) {
+    if (!list || list.dataset.programAuthorActionsBound === "true") return;
+    list.dataset.programAuthorActionsBound = "true";
+    list.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-action='delete-program-author-payment-row']");
+      if (!button || !list.contains(button)) return;
+      deleteProgramAuthorPaymentRow(button);
+    });
+  }
+
+  function syncPaymentFormulaEditor(editor) {
+    const row = editor?.closest("[data-program-author-payment-row]");
+    const hiddenInput = row?.querySelector('[data-program-author-payment-field="amountFormula"]');
+    if (hiddenInput) hiddenInput.value = serializeCommunicationTemplateEditor(editor).trim();
+  }
+
+  function refreshPaymentFormulaEditor(editor, preserveCaret = false) {
+    if (!editor) return;
+    const formula = serializeCommunicationTemplateEditor(editor).trim();
+    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
+    editor.innerHTML = renderPaymentFormulaEditorContent(formula);
+    syncPaymentFormulaEditor(editor);
+    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
+  }
+
+  function deletePaymentFormulaConstantToken(token) {
+    const editor = token?.closest("[data-payment-formula-editor]");
+    hideCommunicationTemplateFieldMenu();
+    if (!editor) return;
+    token.remove();
+    syncPaymentFormulaEditor(editor);
+    editor.focus({ preventScroll: true });
+  }
+
+  function replacePaymentConstantMarkerInFormula(formula, previousMarker, nextMarker) {
+    const previous = normalizePaymentConstantMarker(previousMarker);
+    const next = normalizePaymentConstantMarker(nextMarker);
+    return String(formula || "")
+      .split(/([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)/gu)
+      .map((part) => part === previous ? next : part)
+      .join("");
+  }
+
+  function formulaUsesPaymentConstant(formula, marker) {
+    const normalizedMarker = normalizePaymentConstantMarker(marker);
+    return String(formula || "")
+      .split(/[^A-Za-zА-Яа-яЁё0-9_]+/gu)
+      .includes(normalizedMarker);
+  }
+
+  function getProgramsUsingPaymentConstant(marker) {
+    return (state.data.collections.programs || []).filter((program) => (
+      normalizeProgramAuthorPayments(
+        program.authorPayments,
+        program.authorSource,
+        program.defaultAuthorPaymentPercent || state.data.meta.defaultAuthorPaymentPercent || 50
+      ).some((author) => formulaUsesPaymentConstant(author.amountFormula, marker))
+    ));
+  }
+
+  function renamePaymentConstantReferences(previousMarker, nextMarker) {
+    const previous = normalizePaymentConstantMarker(previousMarker);
+    const next = normalizePaymentConstantMarker(nextMarker);
+    if (!previous || !next || previous === next) return;
+    (state.data.collections.programs || []).forEach((program) => {
+      const authorPayments = normalizeProgramAuthorPayments(
+        program.authorPayments,
+        program.authorSource,
+        program.defaultAuthorPaymentPercent || state.data.meta.defaultAuthorPaymentPercent || 50
+      ).map((author) => ({
+        ...author,
+        amountFormula: replacePaymentConstantMarkerInFormula(author.amountFormula, previous, next)
+      }));
+      program.authorPayments = authorPayments;
+      program.authorSource = formatProgramAuthorPaymentSource(authorPayments);
+      program.author = program.authorSource;
+    });
+    state.data.dictionaries.paymentSettings = normalizePaymentSettings(
+      state.data.dictionaries.paymentSettings
+    ).map((setting) => (
+      setting.key === "automaticExpenseRules"
+        ? { ...setting, value: replacePaymentConstantMarkerInFormula(setting.value, previous, next) }
+        : setting
+    ));
+    document.querySelectorAll("[data-payment-formula-editor]").forEach((editor) => {
+      const formula = replacePaymentConstantMarkerInFormula(
+        serializeCommunicationTemplateEditor(editor),
+        previous,
+        next
+      );
+      editor.innerHTML = renderPaymentFormulaEditorContent(formula);
+      syncPaymentFormulaEditor(editor);
+    });
+  }
+
+  function refreshVisiblePaymentFormulaEditors() {
+    document.querySelectorAll("[data-payment-formula-editor]").forEach((editor) => {
+      refreshPaymentFormulaEditor(editor);
+    });
+  }
+
+  function openPaymentConstantEditor(marker, options = {}) {
+    const requestedMarker = normalizePaymentConstantMarker(marker);
+    const currentSetting = findPaymentConstantSetting(requestedMarker);
+    const create = Boolean(options.create || !currentSetting);
+    const custom = create || Boolean(currentSetting?.custom);
+    const unit = getPaymentConstantUnit(currentSetting);
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop payment-constant-dialog-backdrop";
+    backdrop.dataset.paymentConstantDialog = "";
+    backdrop.innerHTML = `
+      <section class="modal payment-constant-dialog" role="dialog" aria-modal="true" aria-label="${escapeAttr(create ? "Новая константа оплаты" : `Редактирование константы ${requestedMarker}`)}">
+        <header class="modal-head">
+          <div>
+            <p class="eyebrow">Оплата</p>
+            <h2>${create ? "Новая константа" : escapeHtml(`[${currentSetting.marker}]`)}</h2>
+          </div>
+          <button class="icon-button" data-action="close-payment-constant-dialog" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <form data-action="save-payment-constant-dialog">
+          <div class="payment-constant-dialog-fields">
+            <label>
+              <span>Имя константы</span>
+              <div class="payment-constant-dialog-marker">
+                <span>[</span>
+                <input name="marker" value="${escapeAttr(currentSetting?.marker || requestedMarker)}" autocomplete="off" ${custom ? "" : "readonly"} required>
+                <span>]</span>
+              </div>
+            </label>
+            <label>
+              <span>Описание</span>
+              <input name="label" value="${escapeAttr(currentSetting?.label || requestedMarker)}" required>
+            </label>
+            <label>
+              <span>Значение</span>
+              <div class="payment-constant-dialog-value-control">
+                <input name="value" type="number" min="0" step="10" value="${escapeAttr(currentSetting?.value ?? "0")}" required>
+                ${unit ? `<span class="payment-constant-unit" aria-hidden="true">${escapeHtml(unit)}</span>` : ""}
+              </div>
+            </label>
+          </div>
+          <footer class="modal-actions">
+            <button class="ghost-button" data-action="close-payment-constant-dialog" type="button">Отмена</button>
+            <button class="primary-button" type="submit">${create ? "Создать" : "Сохранить"}</button>
+          </footer>
+        </form>
+      </section>
+    `;
+    document.body.appendChild(backdrop);
+    const close = () => {
+      document.removeEventListener("keydown", handleKeydown, true);
+      backdrop.remove();
+    };
+    const handleKeydown = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    };
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) close();
+    });
+    backdrop.querySelectorAll("[data-action='close-payment-constant-dialog']").forEach((button) => {
+      button.addEventListener("click", close);
+    });
+    backdrop.querySelector("form[data-action='save-payment-constant-dialog']")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const nextMarker = normalizePaymentConstantMarker(form.elements.marker.value);
+      const label = String(form.elements.label.value || "").trim() || nextMarker;
+      const value = Number(String(form.elements.value.value || "").replace(",", "."));
+      if (!isValidPaymentConstantMarker(nextMarker)) {
+        alert("Имя константы должно начинаться с буквы или знака подчеркивания и содержать только буквы, цифры и знак подчеркивания.");
+        form.elements.marker.focus();
+        return;
+      }
+      const duplicate = findPaymentConstantSetting(nextMarker);
+      if (duplicate && (!currentSetting || duplicate.key !== currentSetting.key)) {
+        alert(`Константа [${nextMarker}] уже существует.`);
+        form.elements.marker.focus();
+        return;
+      }
+      if (!isPaymentRateValueValid(value)) {
+        alert("Значение должно быть неотрицательным и кратным 10.");
+        form.elements.value.focus();
+        return;
+      }
+      const previousAuthorRate = currentSetting?.key === "authorRate"
+        ? normalizePaymentRateValue(currentSetting.value)
+        : "";
+      const previousMarker = currentSetting?.marker || "";
+      if (previousMarker && previousMarker !== nextMarker) {
+        renamePaymentConstantReferences(previousMarker, nextMarker);
+      }
+      const settings = normalizePaymentSettings(state.data.dictionaries.paymentSettings);
+      const nextSetting = {
+        key: currentSetting?.key || makeId("payment-constant"),
+        marker: nextMarker,
+        label,
+        type: "number",
+        value: String(normalizePaymentRateValue(value)),
+        ...((currentSetting?.custom || create) ? { custom: true } : {})
+      };
+      const nextSettings = currentSetting
+        ? settings.map((setting) => setting.key === currentSetting.key ? nextSetting : setting)
+        : [...settings, nextSetting];
+      state.data.dictionaries.paymentSettings = normalizePaymentSettings(nextSettings);
+      if (nextSetting.key === "authorRate") {
+        const nextAuthorRate = normalizePaymentRateValue(nextSetting.value);
+        state.data.collections.programs = applyGlobalAuthorRateToPrograms(
+          state.data.collections.programs,
+          previousAuthorRate,
+          nextAuthorRate
+        );
+        state.data.meta.defaultAuthorPaymentPercent = nextAuthorRate;
+        syncVisibleGlobalAuthorRate(previousAuthorRate, nextAuthorRate);
+        refreshAllProgramAuthorExpensesForStudents();
+      } else {
+        const affectedPrograms = unique([
+          ...getProgramsUsingPaymentConstant(previousMarker || nextMarker),
+          ...getProgramsUsingPaymentConstant(nextMarker)
+        ].map((program) => program.id))
+          .map((id) => (state.data.collections.programs || []).find((program) => program.id === id))
+          .filter(Boolean);
+        affectedPrograms.forEach(refreshProgramAuthorExpensesForStudents);
+      }
+      addAudit(
+        create ? "Создана константа оплаты" : "Изменена константа оплаты",
+        `[${nextMarker}]`,
+        formatPaymentConstantValue(nextSetting)
+      );
+      persist();
+      refreshVisiblePaymentFormulaEditors();
+      refreshProgramPaymentConstantPalette();
+      close();
+    });
+    document.addEventListener("keydown", handleKeydown, true);
+    requestAnimationFrame(() => {
+      const input = backdrop.querySelector(create ? "[name='marker']" : "[name='value']");
+      input?.focus({ preventScroll: true });
+      input?.select?.();
+    });
+  }
+
+  function showPaymentFormulaConstantMenu(token, x, y) {
+    hideCommunicationTemplateFieldMenu();
+    const marker = normalizePaymentConstantMarker(token?.dataset.paymentConstantMarker);
+    const setting = findPaymentConstantSetting(marker);
+    const popup = document.createElement("div");
+    popup.className = "communication-template-field-menu";
+    popup.dataset.communicationTemplateFieldMenu = "";
+    popup.innerHTML = `
+      <button data-action="edit-payment-formula-constant" type="button">
+        ${renderCommunicationTemplateFieldActionIcon(setting ? "edit" : "add")}
+        <span>${setting ? "Редактировать константу" : "Создать константу"}</span>
+      </button>
+      <button class="is-danger" data-action="delete-payment-formula-constant" type="button">
+        ${renderCommunicationTemplateFieldActionIcon("delete")}
+        <span>Удалить из формулы</span>
+      </button>
+    `;
+    document.body.appendChild(popup);
+    const rect = popup.getBoundingClientRect();
+    popup.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;
+    popup.style.top = `${clamp(y, 8, Math.max(8, window.innerHeight - rect.height - 8))}px`;
+    popup.querySelector("[data-action='edit-payment-formula-constant']")?.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      hideCommunicationTemplateFieldMenu();
+      openPaymentConstantEditor(marker, { create: !setting });
+    });
+    popup.querySelector("[data-action='delete-payment-formula-constant']")?.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      deletePaymentFormulaConstantToken(token);
+    });
+    window.setTimeout(() => document.addEventListener("pointerdown", closeCommunicationTemplateFieldMenuOnOutsideClick, { capture: true, once: true }));
+  }
+
+  function showProgramPaymentConstantMenu(token, x, y) {
+    hideCommunicationTemplateFieldMenu();
+    const marker = normalizePaymentConstantMarker(token?.dataset.programPaymentConstantToken);
+    const setting = findPaymentConstantSetting(marker);
+    if (!setting) return;
+    const popup = document.createElement("div");
+    popup.className = "communication-template-field-menu";
+    popup.dataset.communicationTemplateFieldMenu = "";
+    popup.innerHTML = `
+      <button data-action="edit-program-payment-constant" type="button">
+        ${renderCommunicationTemplateFieldActionIcon("edit")}
+        <span>Редактировать константу</span>
+      </button>
+    `;
+    document.body.appendChild(popup);
+    const rect = popup.getBoundingClientRect();
+    popup.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;
+    popup.style.top = `${clamp(y, 8, Math.max(8, window.innerHeight - rect.height - 8))}px`;
+    popup.querySelector("[data-action='edit-program-payment-constant']")?.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      hideCommunicationTemplateFieldMenu();
+      openPaymentConstantEditor(marker);
+    });
+    window.setTimeout(() => document.addEventListener("pointerdown", closeCommunicationTemplateFieldMenuOnOutsideClick, { capture: true, once: true }));
+  }
+
+  function bindPaymentFormulaEditors(root = document) {
+    root.querySelectorAll("[data-payment-formula-editor]").forEach((editor) => {
+      if (editor.dataset.paymentFormulaBound === "true") return;
+      editor.dataset.paymentFormulaBound = "true";
+      let highlightTimer = 0;
+      editor.addEventListener("input", () => {
+        syncPaymentFormulaEditor(editor);
+        window.clearTimeout(highlightTimer);
+        highlightTimer = window.setTimeout(() => refreshPaymentFormulaEditor(editor, true), 180);
+      });
+      editor.addEventListener("blur", () => {
+        window.clearTimeout(highlightTimer);
+        refreshPaymentFormulaEditor(editor);
+      });
+      editor.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+      });
+      editor.addEventListener("contextmenu", (event) => {
+        const token = event.target.closest("[data-payment-constant-marker]");
+        if (!token) return;
+        event.preventDefault();
+        event.stopPropagation();
+        showPaymentFormulaConstantMenu(token, event.clientX, event.clientY);
+      });
+      editor.addEventListener("dragover", (event) => {
+        if (!Array.from(event.dataTransfer?.types || []).includes(PAYMENT_FORMULA_CONSTANT_MIME)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        editor.classList.add("is-drop-target");
+      });
+      editor.addEventListener("dragleave", () => editor.classList.remove("is-drop-target"));
+      editor.addEventListener("drop", (event) => {
+        const marker = normalizePaymentConstantMarker(
+          event.dataTransfer?.getData(PAYMENT_FORMULA_CONSTANT_MIME)
+        );
+        if (!marker || !findPaymentConstantSetting(marker)) return;
+        event.preventDefault();
+        editor.classList.remove("is-drop-target");
+        const range = getPaymentFormulaDropRange(editor, event.clientX, event.clientY, event.target);
+        insertPaymentFormulaConstant(editor, marker, range);
+      });
+    });
+    bindProgramPaymentConstantPalette(root);
+  }
+
+  function getPaymentFormulaDropRange(editor, clientX, clientY, target) {
+    const token = target?.closest?.("[data-payment-constant-marker]");
+    if (!token || !editor.contains(token)) {
+      return getCommunicationTemplateDropRange(editor, clientX, clientY);
+    }
+    const range = document.createRange();
+    const insertAfter = clientX > token.getBoundingClientRect().left + (token.getBoundingClientRect().width / 2);
+    if (insertAfter) {
+      const nextNode = token.nextSibling;
+      if (nextNode?.nodeType === Node.TEXT_NODE && nextNode.nodeValue?.startsWith("]")) {
+        range.setStart(nextNode, 1);
+      } else {
+        range.setStartAfter(token);
+      }
+    } else {
+      const previousNode = token.previousSibling;
+      if (previousNode?.nodeType === Node.TEXT_NODE && previousNode.nodeValue?.endsWith("[")) {
+        range.setStart(previousNode, Math.max(0, previousNode.nodeValue.length - 1));
+      } else {
+        range.setStartBefore(token);
+      }
+    }
+    range.collapse(true);
+    return range;
+  }
+
+  function insertPaymentFormulaConstant(editor, marker, range = null) {
+    const normalizedMarker = normalizePaymentConstantMarker(marker);
+    if (!editor || !normalizedMarker) return;
+    const textNode = document.createTextNode(`[${normalizedMarker}]`);
+    if (range) range.insertNode(textNode);
+    else editor.append(textNode);
+    editor.focus({ preventScroll: true });
+    const selection = window.getSelection?.();
+    if (selection) {
+      const caret = document.createRange();
+      caret.setStartAfter(textNode);
+      caret.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(caret);
+    }
+    refreshPaymentFormulaEditor(editor, true);
+  }
+
+  function bindProgramPaymentConstantPalette(root = document) {
+    root.querySelectorAll("[data-program-payment-constant-palette]").forEach((palette) => {
+      if (palette.dataset.paymentConstantPaletteBound === "true") return;
+      palette.dataset.paymentConstantPaletteBound = "true";
+      palette.addEventListener("dragstart", (event) => {
+        const token = event.target.closest("[data-program-payment-constant-token]");
+        const marker = normalizePaymentConstantMarker(token?.dataset.programPaymentConstantToken);
+        if (!token || !marker || !event.dataTransfer) return;
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData(PAYMENT_FORMULA_CONSTANT_MIME, marker);
+        event.dataTransfer.setData("text/plain", `[${marker}]`);
+        token.classList.add("is-dragging");
+      });
+      palette.addEventListener("dragend", (event) => {
+        event.target.closest("[data-program-payment-constant-token]")?.classList.remove("is-dragging");
+        document.querySelectorAll("[data-payment-formula-editor].is-drop-target")
+          .forEach((editor) => editor.classList.remove("is-drop-target"));
+      });
+      palette.addEventListener("contextmenu", (event) => {
+        const token = event.target.closest("[data-program-payment-constant-token]");
+        if (!token || !palette.contains(token)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        showProgramPaymentConstantMenu(token, event.clientX, event.clientY);
+      });
+    });
+  }
+
   function switchProgramTab(tabId) {
     const target = String(tabId || "").trim();
     const modal = document.querySelector(".program-modal");
     if (!modal || !target) return;
+    state.programCardTab = target;
     modal.querySelectorAll("[data-action='switch-program-tab']").forEach((button) => {
       const isActive = button.dataset.programTab === target;
       button.classList.toggle("active", isActive);
       button.setAttribute("aria-selected", isActive ? "true" : "false");
+      button.tabIndex = isActive ? 0 : -1;
     });
     modal.querySelectorAll("[data-program-tab-panel]").forEach((panel) => {
       const isActive = panel.dataset.programTabPanel === target;
@@ -10687,7 +14068,29 @@ MAX - https://bizvmax.ru/zifra_plus
       const raw = formData.get(item.key);
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
+    if (isProgramCard) {
+      PROGRAM_LIST_FIELD_KEYS.forEach((key) => {
+        if (formData.has(key)) values[key] = normalizeProgramListValue(formData.get(key));
+      });
+      values.programOrderDate = normalizeProgramOrderDate(values.programOrderDate);
+      values.authorPayments = collectProgramAuthorPayments(formElement);
+      const incompleteAuthorPayment = values.authorPayments.find((item) => !item.amountFormula);
+      if (incompleteAuthorPayment) {
+        alert(`Укажите формулу оплаты для автора «${incompleteAuthorPayment.recipient}».`);
+        const row = [...formElement.querySelectorAll("[data-program-author-payment-row]")]
+          .find((item) => item.querySelector('[data-program-author-payment-field="recipient"]')?.value.trim() === incompleteAuthorPayment.recipient);
+        row?.querySelector("[data-payment-formula-editor]")?.focus();
+        return "";
+      }
+      values.authorSource = formatProgramAuthorPaymentSource(values.authorPayments);
+      values.author = values.authorSource;
+      values.defaultAuthorPaymentPercent = normalizePaymentPercent(
+        currentRecord.defaultAuthorPaymentPercent,
+        state.data.meta.defaultAuthorPaymentPercent || 50
+      );
+    }
     if (isStudentCard) {
+      values.discountUnit = "percent";
       values.directExpenses = collectStudentDirectExpenses(formElement, values);
       formData.forEach((raw, key) => {
         if (/^event_[A-Za-z0-9_-]+_(state|date|label)$/.test(key)) {
@@ -10721,9 +14124,8 @@ MAX - https://bizvmax.ru/zifra_plus
         values.educationType = selectedProgram.type || values.educationType || "";
         values.hours = selectedProgram.hours || values.hours || "";
       }
-      const expenseTotal = sumStudentExpenses(values);
       Object.assign(values, calculateStudentFinance(values));
-      values.expenseTotal = expenseTotal;
+      values.expenseTotal = Math.round(sumStudentExpenses(values) * 100) / 100;
       if (!applyStudentInventoryAllocationChanges(currentRecord, values)) return "";
     }
 
@@ -10746,6 +14148,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (isProgramCard) {
       syncProgramTrainingPlanRows(formElement, savedId, values, currentRecord);
+      refreshProgramAuthorExpensesForStudents(rows.find((row) => row.id === savedId) || values);
     }
     return savedId;
   }
@@ -10831,6 +14234,41 @@ MAX - https://bizvmax.ru/zifra_plus
     return window.location.protocol === "file:" ? pathname.replace(/^\/+/, "") : pathname;
   }
 
+  function collectProgramAuthorPayments(formElement) {
+    return [...formElement.querySelectorAll("[data-program-author-payment-row]")]
+      .map((row) => {
+        const values = {};
+        row.querySelectorAll("[data-program-author-payment-field]").forEach((input) => {
+          const key = input.dataset.programAuthorPaymentField;
+          if (!key) return;
+          values[key] = String(input.value || "").trim();
+        });
+        if (!values.recipient) return null;
+        return {
+          id: values.id || makeId("program-author"),
+          recipient: values.recipient,
+          percent: "",
+          amountFormula: values.amountFormula
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function formatProgramAuthorPaymentSource(values) {
+    return normalizeProgramAuthorPayments(values).map((item) => {
+      const formula = String(item.amountFormula || "").trim();
+      if (
+        formula.replace(/^\[+|\]+$/g, "").trim().toLocaleLowerCase("ru-RU")
+        === "АвторскаяСтавка".toLocaleLowerCase("ru-RU")
+      ) {
+        return item.recipient;
+      }
+      if (formula.endsWith("%")) return `${item.recipient} (${formula})`;
+      if (formula) return `${item.recipient} (${formula} руб.)`;
+      return item.recipient;
+    }).join(", ");
+  }
+
   function isStudentSourcePhotoPath(value) {
     const source = String(value || "").trim();
     if (!/\.(png|jpe?g|webp|gif)$/i.test(source)) return false;
@@ -10855,7 +14293,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function openStudentDocumentsFolder(event) {
-    if (!event.shiftKey) return;
+    const openLocally = event.shiftKey ? !getOpenDocumentsLocally() : getOpenDocumentsLocally();
+    if (!openLocally) return;
     event.preventDefault();
     const link = event.currentTarget;
     const folder = String(link.dataset.studentDocumentsFolder || "").trim();
@@ -10878,6 +14317,83 @@ MAX - https://bizvmax.ru/zifra_plus
       alert(`Не удалось открыть папку в Проводнике: ${error.message}`);
     } finally {
       link.removeAttribute("aria-busy");
+    }
+  }
+
+  function getProgramOperationalDocumentOpenUrl(folderValue, fileName = "") {
+    let folder = normalizeStudentDocumentsFolderSource(folderValue);
+    if (!folder) return "";
+    const useParentFolder = /^\[-1\](?:[\\/]+|$)/u.test(folder);
+    folder = folder.replace(/^\[-1\][\\/]+/u, "");
+    const baseParts = getYandexDiskBasePath()
+      .replace(/\\/g, "/")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (useParentFolder) baseParts.pop();
+    const folderParts = folder
+      .replace(/\\/g, "/")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    let resourceName = String(fileName || "").trim();
+    if (resourceName && !/\.[A-Za-zА-Яа-яЁё0-9]{1,8}$/u.test(resourceName)) {
+      resourceName = `${resourceName}.docx`;
+    }
+    const fullPath = [...baseParts, ...folderParts, ...(resourceName ? [resourceName] : [])];
+    if (
+      !fullPath.length
+      || fullPath.some((part) => part === "." || part === ".." || /[\\/]/u.test(part))
+    ) return "";
+    return `https://disk.yandex.ru/client/disk/${fullPath.map(encodeURIComponent).join("/")}`;
+  }
+
+  async function openProgramOperationalDocumentResource(event) {
+    event.preventDefault();
+    const button = event.currentTarget;
+    const resourceType = button.dataset.programOpResource === "file" ? "file" : "folder";
+    const form = button.closest("form");
+    const folder = String(form?.elements.opFolder?.value || "").trim();
+    const fileName = resourceType === "file"
+      ? String(form?.elements.opFileName?.value || "").trim()
+      : "";
+    if (!folder) {
+      alert("Укажите папку ОП.");
+      form?.elements.opFolder?.focus();
+      return;
+    }
+    if (resourceType === "file" && !fileName) {
+      alert("Укажите имя файла ОП.");
+      form?.elements.opFileName?.focus();
+      return;
+    }
+    const openLocally = event.shiftKey ? !getOpenDocumentsLocally() : getOpenDocumentsLocally();
+    if (!openLocally) {
+      const url = getProgramOperationalDocumentOpenUrl(folder, fileName);
+      if (!url) {
+        alert("Не удалось определить путь ОП на Яндекс-Диске.");
+        return;
+      }
+      openExternalUrl(url);
+      return;
+    }
+    button.setAttribute("aria-busy", "true");
+    button.disabled = true;
+    try {
+      const response = await fetch(photoApiUrl("/api/local-documents/open-resource"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder, fileName })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Не удалось открыть ресурс ОП.");
+      }
+    } catch (error) {
+      alert(`Не удалось открыть ${resourceType === "file" ? "файл" : "папку"} ОП: ${error.message}`);
+    } finally {
+      button.removeAttribute("aria-busy");
+      button.disabled = false;
     }
   }
 
@@ -10949,8 +14465,7 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     const folderUrl = getStudentYandexDocumentsFolderUrl(folderRecord);
     const documentsFolder = getStudentYandexDocumentsFolder(folderRecord);
-    const link = document.querySelector("[data-student-documents-folder-link]");
-    if (link) {
+    document.querySelectorAll("[data-student-documents-folder-link]").forEach((link) => {
       link.dataset.studentDocumentsFolder = documentsFolder;
       if (folderUrl) {
         link.href = folderUrl;
@@ -10961,7 +14476,7 @@ MAX - https://bizvmax.ru/zifra_plus
         link.setAttribute("aria-disabled", "true");
         link.setAttribute("tabindex", "-1");
       }
-    }
+    });
     if (!refreshPreview || !photoUrl) return;
     const preview = document.getElementById("studentPhotoPreview");
     if (!preview) return;
@@ -11192,6 +14707,8 @@ MAX - https://bizvmax.ru/zifra_plus
       };
     }
     form?.querySelectorAll("[data-contract-formula-editor]").forEach(syncContractFormulaEditor);
+    form?.querySelectorAll("[data-document-save-folder-editor]").forEach(syncDocumentSaveFolderEditor);
+    form?.querySelectorAll("[data-document-email-editor]").forEach(syncDocumentEmailTemplateEditor);
     const documents = getDocumentTemplates();
     const activeId = form?.dataset.documentId || state.activeDocumentTemplateId;
     const activeIndex = Math.max(0, documents.findIndex((item) => item.id === activeId));
@@ -11215,6 +14732,20 @@ MAX - https://bizvmax.ru/zifra_plus
       templateUrl: String(form?.elements.templateUrl?.value || "").trim(),
       templatePath: String(form?.elements.templatePath?.value || currentDocument.templatePath || "").trim(),
       fileNameTemplate: String(form?.elements.fileNameTemplate?.value || currentDocument.fileNameTemplate || "").trim(),
+      saveFolderTemplate: String(form?.elements.saveFolderTemplate?.value || currentDocument.saveFolderTemplate || "").trim(),
+      generationFormat: normalizeDocumentGenerationFormat(
+        form?.elements.generationFormat?.value || currentDocument.generationFormat
+      ),
+      emailDeliveryMode: normalizeDocumentEmailDeliveryMode(
+        form?.elements.emailDeliveryMode?.value || currentDocument.emailDeliveryMode,
+        currentDocument
+      ),
+      emailSubjectTemplate: String(
+        form?.elements.emailSubjectTemplate?.value ?? currentDocument.emailSubjectTemplate ?? ""
+      ),
+      emailMessageTemplate: String(
+        form?.elements.emailMessageTemplate?.value ?? currentDocument.emailMessageTemplate ?? ""
+      ),
       useCustomDocumentProperties: useCustomDocumentProperties ? "1" : "0",
       source: String(form?.elements.documentSource?.value || currentDocument.source || ""),
       fileName: String(form?.elements.documentFileName?.value || currentDocument.fileName || ""),
@@ -11326,6 +14857,12 @@ MAX - https://bizvmax.ru/zifra_plus
       templateUrl: normalized.templateUrl,
       templatePath: normalized.templatePath,
       fileNameTemplate: normalized.fileNameTemplate,
+      saveFolderTemplate: normalized.saveFolderTemplate,
+      generationFormat: normalized.generationFormat,
+      emailDeliveryMode: normalized.emailDeliveryMode,
+      emailSubjectTemplate: normalized.emailSubjectTemplate,
+      emailMessageTemplate: normalized.emailMessageTemplate,
+      emailTemplateValues: normalized.emailTemplateValues,
       useCustomDocumentProperties: normalized.useCustomDocumentProperties,
       source: normalized.source,
       fileName: normalized.fileName,
@@ -11353,25 +14890,50 @@ MAX - https://bizvmax.ru/zifra_plus
     const { documents, document, fields } = collectContractTemplateForm(event.currentTarget);
     if (!document.title) {
       alert("Укажите название документа.");
+      switchDocumentTemplateSettingsTab("main");
+      event.currentTarget.elements.documentTitle?.focus();
       return;
     }
     if (!document.templateUrl.trim() && !document.templatePath.trim()) {
       alert("Укажите ссылку на шаблон или загрузите файл Word.");
+      switchDocumentTemplateSettingsTab("main");
+      event.currentTarget.elements.templateUrl?.focus();
+      return;
+    }
+    if (!document.saveFolderTemplate.trim()) {
+      alert("Укажите папку сохранения документа.");
+      switchDocumentTemplateSettingsTab("main");
+      event.currentTarget.querySelector("[data-document-save-folder-editor]")?.focus();
+      return;
+    }
+    if (document.emailDeliveryMode !== "off" && !document.emailSubjectTemplate.trim()) {
+      alert("Заполните тему сообщения или отключите отправку по почте.");
+      switchDocumentTemplateSettingsTab("email");
+      event.currentTarget.querySelector("[data-document-email-field='emailSubjectTemplate']")?.focus();
+      return;
+    }
+    if (document.emailDeliveryMode !== "off" && !document.emailMessageTemplate.trim()) {
+      alert("Заполните текст сообщения или отключите отправку по почте.");
+      switchDocumentTemplateSettingsTab("email");
+      event.currentTarget.querySelector("[data-document-email-field='emailMessageTemplate']")?.focus();
       return;
     }
     const duplicate = fields.find((field, index) => fields.findIndex((item) => item.name === field.name) !== index);
     if (duplicate) {
       alert(`Имя поля документа повторяется: ${duplicate.name}`);
+      switchDocumentTemplateSettingsTab("fields");
       return;
     }
     const formulaGraphError = validateContractTemplateFormulaGraph(fields);
     if (formulaGraphError) {
       alert(formulaGraphError);
+      switchDocumentTemplateSettingsTab("fields");
       return;
     }
     commitDocumentTemplates(documents, document);
     addAudit("Изменен конструктор документов", document.title, "Сохранены настройки, поля и формулы");
     state.documentTemplateDialogId = "";
+    state.documentTemplateSettingsTab = "main";
     state.activeContractTemplateFieldId = "";
     state.pendingContractTemplateFieldFocus = "";
     persist();
@@ -11390,6 +14952,7 @@ MAX - https://bizvmax.ru/zifra_plus
       custom: true
     };
     fields.push(newField);
+    state.documentTemplateSettingsTab = "fields";
     state.activeContractTemplateFieldId = newField.id;
     document.fields = normalizeDocumentTemplateFieldList(document, fields);
     commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
@@ -11404,6 +14967,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (state.activeContractTemplateFieldId === target.id) {
       state.activeContractTemplateFieldId = fields[Number(index) + 1]?.id || fields[Number(index) - 1]?.id || "";
     }
+    state.documentTemplateSettingsTab = "fields";
     document.fields = normalizeDocumentTemplateFieldList(document, fields.filter((_, itemIndex) => itemIndex !== Number(index)));
     commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
     render();
@@ -11414,6 +14978,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const { documents, document } = collectContractTemplateForm();
     const originalFields = normalizeDocumentTemplateFieldList(document, document.originalFields?.length ? document.originalFields : []);
     document.fields = originalFields;
+    state.documentTemplateSettingsTab = "fields";
     state.activeContractTemplateFieldId = "";
     commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
     addAudit("Изменен конструктор документов", document.title, "Восстановлены исходные имена полей и формулы");
@@ -11425,6 +14990,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const { documents, document, fields } = collectContractTemplateForm();
     const target = fields.find((field, index) => String(field.id) === String(indexOrId) || String(index) === String(indexOrId));
     if (!target) return;
+    state.documentTemplateSettingsTab = "fields";
     state.activeContractTemplateFieldId = target.id;
     if (options.focusToken) state.pendingContractTemplateFieldFocus = target.id;
     document.fields = normalizeDocumentTemplateFieldList(document, fields);
@@ -11469,11 +15035,34 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  function switchDocumentTemplateSettingsTab(tabName, options = {}) {
+    const form = document.querySelector("form[data-action='save-contract-template-fields']");
+    if (!form) return;
+    const tabs = Array.from(form.querySelectorAll("[data-document-template-settings-tab]"));
+    const panels = Array.from(form.querySelectorAll("[data-document-template-settings-panel]"));
+    const requestedTab = String(tabName || "");
+    const activeTab = tabs.some((tab) => tab.dataset.documentTemplateSettingsTab === requestedTab)
+      ? requestedTab
+      : "main";
+    state.documentTemplateSettingsTab = activeTab;
+    tabs.forEach((tab) => {
+      const selected = tab.dataset.documentTemplateSettingsTab === activeTab;
+      tab.classList.toggle("active", selected);
+      tab.setAttribute("aria-selected", selected ? "true" : "false");
+      tab.tabIndex = selected ? 0 : -1;
+      if (selected && options.focusTab) tab.focus({ preventScroll: true });
+    });
+    panels.forEach((panel) => {
+      panel.hidden = panel.dataset.documentTemplateSettingsPanel !== activeTab;
+    });
+  }
+
   function selectDocumentTemplate(id) {
     const { documents, document } = collectContractTemplateForm();
     commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
     state.activeDocumentTemplateId = id;
     state.documentTemplateDialogId = id;
+    state.documentTemplateSettingsTab = "main";
     state.activeContractTemplateFieldId = "";
     render();
   }
@@ -11488,6 +15077,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!confirm("Закрыть карточку документа без сохранения изменений?")) return;
     }
     state.documentTemplateDialogId = "";
+    state.documentTemplateSettingsTab = "main";
     state.activeContractTemplateFieldId = "";
     state.pendingContractTemplateFieldFocus = "";
     render();
@@ -11581,12 +15171,80 @@ MAX - https://bizvmax.ru/zifra_plus
     ].join("|");
   }
 
+  function normalizeDocumentCustomPropertyName(value) {
+    return String(value || "")
+      .normalize("NFKC")
+      .replace(/\u00a0/g, " ")
+      .replace(/[\s_]+/g, " ")
+      .trim()
+      .toLocaleLowerCase("ru-RU");
+  }
+
+  function normalizeDocumentCustomPropertyValue(value) {
+    return String(value ?? "")
+      .replace(/_x000d_\r?\n?/gi, "\n")
+      .replace(/_x000a_\r?\n?/gi, "\n")
+      .replace(/\r\n|\r/g, "\n");
+  }
+
+  function getDocumentInspectionCustomProperties(inspection) {
+    const customProperties = new Map();
+    const addProperties = (properties, valueKey) => {
+      (Array.isArray(properties) ? properties : []).forEach((property) => {
+        const name = normalizeDocumentCustomPropertyName(property?.name);
+        if (!name) return;
+        customProperties.set(name, normalizeDocumentCustomPropertyValue(property?.[valueKey]));
+      });
+    };
+    addProperties(inspection?.properties, "formula");
+    addProperties(inspection?.customProperties, "value");
+    return customProperties;
+  }
+
+  function getDocumentEmailPropertiesFromInspection(inspection) {
+    const customProperties = getDocumentInspectionCustomProperties(inspection);
+    const findProperty = (aliases) => {
+      const key = aliases
+        .map((alias) => normalizeDocumentCustomPropertyName(alias))
+        .find((alias) => customProperties.has(alias));
+      return key
+        ? { found: true, name: key, value: customProperties.get(key) }
+        : { found: false, name: "", value: "" };
+    };
+    const templateValues = {};
+    (Array.isArray(inspection?.customProperties) ? inspection.customProperties : []).forEach((property) => {
+      const rawName = String(property?.name || "").replace(/^\[|\]$/g, "").trim();
+      const normalizedName = normalizeDocumentCustomPropertyName(rawName);
+      if (
+        !rawName
+        || (
+          property?.source !== "assistant-constant"
+          && normalizedName !== normalizeDocumentCustomPropertyName("Логотип")
+        )
+      ) return;
+      templateValues[rawName] = normalizeDocumentCustomPropertyValue(property?.value);
+    });
+    return {
+      subject: findProperty(["Тема сообщения", "Тема письма", "Тема email", "Тема e-mail"]),
+      message: findProperty(["Шаблон", "Текст сообщения", "Текст письма", "Шаблон сообщения"]),
+      templateValues
+    };
+  }
+
   function applyDocumentTemplateInspection(documentTemplate, inspection, baseFields = documentTemplate?.fields || []) {
+    const emailProperties = getDocumentEmailPropertiesFromInspection(inspection);
     const nextDocument = {
       ...documentTemplate,
       fields: mergeDocumentTemplateFieldsFromInspection(inspection, baseFields),
       originalFields: mergeDocumentTemplateFieldsFromInspection(inspection, []),
       fieldsMode: "document-markers",
+      ...(emailProperties.subject.found
+        ? { emailSubjectTemplate: emailProperties.subject.value }
+        : {}),
+      ...(emailProperties.message.found
+        ? { emailMessageTemplate: emailProperties.message.value }
+        : {}),
+      emailTemplateValues: normalizeDocumentEmailTemplateValues(emailProperties.templateValues),
       lastInspectedSignature: getDocumentTemplateInspectionSignature(documentTemplate),
       updatedAt: new Date().toISOString()
     };
@@ -11690,6 +15348,7 @@ MAX - https://bizvmax.ru/zifra_plus
         templateUrl: source,
         templatePath: "",
         fileNameTemplate: `${title}_#ФИО_обуч#`,
+        saveFolderTemplate: studentDocumentsFolderTemplateMarker,
         useCustomDocumentProperties: "1",
         fields: [],
         originalFields: [],
@@ -11701,6 +15360,7 @@ MAX - https://bizvmax.ru/zifra_plus
       commitDocumentTemplates([...documents.map((item) => item.id === document.id ? document : item), newDocument], newDocument);
       state.documentTemplateLinkDialog = false;
       state.documentTemplateDialogId = newDocument.id;
+      state.documentTemplateSettingsTab = "main";
       state.activeContractTemplateFieldId = "";
       addAudit("Изменен конструктор документов", newDocument.title, "Добавлен источник документа");
       persist();
@@ -11731,6 +15391,7 @@ MAX - https://bizvmax.ru/zifra_plus
         templatePath: uploaded.templatePath || "",
         fileName: uploaded.fileName || file.name,
         fileNameTemplate: `${title}_#ФИО_обуч#`,
+        saveFolderTemplate: studentDocumentsFolderTemplateMarker,
         useCustomDocumentProperties: "1",
         fields: [],
         originalFields: [],
@@ -11741,6 +15402,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const newDocument = applyDocumentTemplateInspection(newDocumentBase, uploaded, []);
       commitDocumentTemplates([...documents.map((item) => item.id === document.id ? document : item), newDocument], newDocument);
       state.documentTemplateDialogId = newDocument.id;
+      state.documentTemplateSettingsTab = "main";
       state.activeContractTemplateFieldId = "";
       addAudit("Изменен конструктор документов", newDocument.title, "Файл Word загружен");
       persist();
@@ -11752,9 +15414,34 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
-  function openActiveDocumentTemplateSource(event = null) {
+  async function openActiveDocumentTemplateSource(event = null) {
     event?.preventDefault?.();
     const { document } = collectContractTemplateForm();
+    if (event?.shiftKey && getOpenDocumentsLocally()) {
+      const button = event.currentTarget;
+      button?.setAttribute("aria-busy", "true");
+      if (button) button.disabled = true;
+      try {
+        const response = await fetch(photoApiUrl("/api/documents/template-reveal-local"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            templateUrl: document.templateUrl,
+            templatePath: document.templatePath
+          })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.error || "Не удалось показать шаблон в Проводнике.");
+        }
+      } catch (error) {
+        alert(`Не удалось показать шаблон в Проводнике: ${error.message}`);
+      } finally {
+        button?.removeAttribute("aria-busy");
+        if (button) button.disabled = false;
+      }
+      return;
+    }
     const url = getDocumentTemplateOpenUrl(document);
     if (!url) {
       alert("У документа не задана ссылка и не загружен файл.");
@@ -11847,7 +15534,7 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Укажите ссылку на шаблон или загрузите файл Word.");
       return;
     }
-    if (!confirm("Обновить поля из файла Word? Поля будут перечитаны по маркерам #...# и свойствам документа.")) return;
+    if (!confirm("Обновить поля и параметры отправки из файла Word? Данные будут перечитаны по маркерам #...# и CustomProperties документа.")) return;
     const wasDisabled = Boolean(button?.disabled);
     if (button) button.disabled = true;
     try {
@@ -11855,6 +15542,7 @@ MAX - https://bizvmax.ru/zifra_plus
         templateUrl: document.templateUrl,
         templatePath: document.templatePath
       });
+      const emailProperties = getDocumentEmailPropertiesFromInspection(inspection);
       const nextDocument = applyDocumentTemplateInspection(document, inspection, document.fields);
       const loadedFieldsCount = nextDocument.fields.length;
       const markerCount = unique((inspection?.markers || []).map((marker) => (
@@ -11862,10 +15550,27 @@ MAX - https://bizvmax.ru/zifra_plus
       )).filter(Boolean)).length;
       commitDocumentTemplates(documents.map((item) => item.id === document.id ? nextDocument : item), nextDocument);
       state.activeContractTemplateFieldId = "";
-      addAudit("Изменен конструктор документов", nextDocument.title, "Поля обновлены из файла Word");
+      const loadedEmailPropertyNames = [
+        emailProperties.subject.found ? "тема сообщения" : "",
+        emailProperties.message.found ? "текст сообщения" : "",
+        ...Object.keys(emailProperties.templateValues || {}).map((name) => `поле [${name}]`)
+      ].filter(Boolean);
+      if (loadedEmailPropertyNames.length) {
+        state.documentTemplateSettingsTab = "email";
+      }
+      addAudit(
+        "Изменен конструктор документов",
+        nextDocument.title,
+        loadedEmailPropertyNames.length
+          ? `Поля и параметры отправки обновлены из файла Word: ${loadedEmailPropertyNames.join(", ")}`
+          : "Поля обновлены из файла Word; почтовые CustomProperties не найдены"
+      );
       persist();
       render();
-      alert(`Загружено полей: ${loadedFieldsCount}${markerCount !== loadedFieldsCount ? ` (маркеров в Word: ${markerCount})` : ""}.`);
+      const emailSummary = loadedEmailPropertyNames.length
+        ? `Загружены параметры отправки: ${loadedEmailPropertyNames.join(", ")}.`
+        : "Параметры отправки не изменены: в CustomProperties не найдены «Тема сообщения» и «Шаблон».";
+      alert(`Загружено полей: ${loadedFieldsCount}${markerCount !== loadedFieldsCount ? ` (маркеров в Word: ${markerCount})` : ""}.\n${emailSummary}`);
     } catch (error) {
       alert(`Не удалось обновить поля: ${error.message}`);
     } finally {
@@ -11912,6 +15617,362 @@ MAX - https://bizvmax.ru/zifra_plus
     editor.focus({ preventScroll: true });
   }
 
+  function createDocumentSaveFolderToken(token) {
+    const block = document.createElement("span");
+    block.className = "document-save-folder-token";
+    block.contentEditable = "false";
+    block.dataset.templateToken = token;
+    block.dataset.documentSaveFolderToken = "";
+    const label = document.createElement("span");
+    label.textContent = token;
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.dataset.action = "remove-document-save-folder-token";
+    removeButton.title = "Удалить поле";
+    removeButton.setAttribute("aria-label", `Удалить поле ${token}`);
+    removeButton.textContent = "×";
+    block.append(label, removeButton);
+    return block;
+  }
+
+  function syncDocumentSaveFolderEditor(editor) {
+    if (!editor) return;
+    if (editor.matches("input, textarea")) return;
+    const hiddenInput = editor.closest("form")?.elements.saveFolderTemplate;
+    if (hiddenInput) hiddenInput.value = serializeCommunicationTemplateEditor(editor).trim();
+  }
+
+  function refreshDocumentSaveFolderEditor(editor) {
+    if (!editor) return;
+    if (editor.matches("input, textarea")) {
+      editor.value = editor.value.trim();
+      return;
+    }
+    const value = serializeCommunicationTemplateEditor(editor).trim();
+    editor.innerHTML = renderDocumentSaveFolderEditorContent(value);
+    syncDocumentSaveFolderEditor(editor);
+  }
+
+  function insertDocumentSaveFolderToken(editor, token) {
+    if (!editor || !token) return;
+    if (editor.matches("input, textarea")) {
+      editor.value = token;
+      editor.focus({ preventScroll: true });
+      editor.setSelectionRange(token.length, token.length);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+    const block = createDocumentSaveFolderToken(token);
+    editor.replaceChildren(block);
+    syncDocumentSaveFolderEditor(editor);
+    editor.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.setStartAfter(block);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  }
+
+  function bindDocumentSaveFolderEditor() {
+    const form = document.querySelector("form[data-action='save-contract-template-fields']");
+    const editor = form?.querySelector("[data-document-save-folder-editor]");
+    const select = form?.querySelector("[data-document-save-folder-token-select]");
+    if (!editor || !select) return;
+    editor.addEventListener("input", () => syncDocumentSaveFolderEditor(editor));
+    editor.addEventListener("blur", () => refreshDocumentSaveFolderEditor(editor));
+    editor.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") event.preventDefault();
+    });
+    editor.addEventListener("mousedown", (event) => {
+      if (event.target.closest?.("[data-action='remove-document-save-folder-token']")) event.preventDefault();
+    });
+    editor.addEventListener("click", (event) => {
+      const removeButton = event.target.closest?.("[data-action='remove-document-save-folder-token']");
+      if (!removeButton || !editor.contains(removeButton)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      removeButton.closest("[data-document-save-folder-token]")?.remove();
+      syncDocumentSaveFolderEditor(editor);
+      editor.focus({ preventScroll: true });
+    });
+    editor.addEventListener("paste", () => {
+      window.setTimeout(() => refreshDocumentSaveFolderEditor(editor));
+    });
+    select.addEventListener("change", () => {
+      const token = select.value;
+      select.value = "";
+      insertDocumentSaveFolderToken(editor, token);
+    });
+  }
+
+  function syncDocumentEmailTemplateEditor(editor) {
+    if (!editor) return;
+    const fieldName = editor.dataset.documentEmailField || "";
+    const hiddenInput = fieldName ? editor.closest("form")?.elements[fieldName] : null;
+    if (!hiddenInput) return;
+    let value = serializeCommunicationTemplateEditor(editor);
+    if (fieldName === "emailSubjectTemplate") {
+      value = value.replace(/\s*\n+\s*/g, " ").trim();
+    }
+    hiddenInput.value = value;
+  }
+
+  function refreshDocumentEmailTemplateEditor(editor) {
+    if (!editor) return;
+    const form = editor.closest("form");
+    const documentTemplate = collectContractTemplateForm(form).document;
+    const tokens = getDocumentEmailTemplateTokens(documentTemplate);
+    let value = serializeCommunicationTemplateEditor(editor);
+    if (editor.dataset.documentEmailField === "emailSubjectTemplate") {
+      value = value.replace(/\s*\n+\s*/g, " ").trim();
+    }
+    editor.innerHTML = renderDocumentEmailEditorContent(value, tokens);
+    syncDocumentEmailTemplateEditor(editor);
+  }
+
+  function createDocumentEmailTemplateBlock(token) {
+    const block = document.createElement("span");
+    const tokenDefinition = getDocumentEmailTemplateTokens(getActiveDocumentTemplate())
+      .find((item) => item.token === token);
+    const type = tokenDefinition?.type || (String(token).startsWith("#") ? "document" : "source");
+    block.className = `communication-template-block document-email-template-block is-${type}`;
+    block.contentEditable = "false";
+    block.draggable = true;
+    block.dataset.templateToken = String(token || "");
+    block.dataset.documentEmailToken = "";
+    if (tokenDefinition?.fieldId) {
+      block.dataset.contractFieldId = tokenDefinition.fieldId;
+      block.dataset.contractDocumentFieldName = tokenDefinition.label;
+    }
+    if (tokenDefinition?.templateValueName) {
+      block.dataset.documentEmailTemplateValueName = tokenDefinition.templateValueName;
+    }
+    block.title = "Правый щелчок: действия с полем";
+    block.textContent = String(token || "");
+    return block;
+  }
+
+  function insertDocumentEmailTemplateToken(editor, token, range = null, existingBlock = null) {
+    if (!editor || !token) return;
+    const block = existingBlock || createDocumentEmailTemplateBlock(token);
+    if (range && !block.contains(range.startContainer)) range.insertNode(block);
+    else editor.append(block);
+    syncDocumentEmailTemplateEditor(editor);
+    editor.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    if (selection) {
+      const caret = document.createRange();
+      caret.setStartAfter(block);
+      caret.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(caret);
+    }
+  }
+
+  function bindDocumentEmailTemplateEditors() {
+    const form = document.querySelector("form[data-action='save-contract-template-fields']");
+    if (!form) return;
+    const tokenMime = "application/x-ais-contract-template-token";
+    const editors = Array.from(form.querySelectorAll("[data-document-email-editor]"));
+    const tokenButtons = Array.from(form.querySelectorAll("[data-action='insert-document-email-token']"));
+    const markerSearch = form.querySelector("[data-document-email-marker-search]");
+    if (!editors.length) return;
+    let activeEditor = editors[0];
+    let draggedEmailBlock = null;
+
+    markerSearch?.addEventListener("input", () => {
+      const query = String(markerSearch.value || "").trim().toLocaleLowerCase("ru-RU");
+      form.querySelectorAll("[data-document-email-marker-group]").forEach((group) => {
+        const groupButtons = Array.from(group.querySelectorAll("[data-document-email-marker-label]"));
+        groupButtons.forEach((button) => {
+          button.hidden = Boolean(query) && !String(button.dataset.documentEmailMarkerLabel || "").includes(query);
+        });
+        const visibleCount = groupButtons.filter((button) => !button.hidden).length;
+        const empty = group.querySelector(".document-template-email-marker-empty");
+        if (empty) {
+          empty.hidden = visibleCount > 0;
+          empty.textContent = query ? "Совпадений нет" : "Поля не найдены";
+        }
+      });
+    });
+    markerSearch?.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !markerSearch.value) return;
+      event.stopPropagation();
+      markerSearch.value = "";
+      markerSearch.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    form.addEventListener("dragstart", (event) => {
+      const block = event.target.closest?.(".document-email-template-block");
+      draggedEmailBlock = block && form.contains(block) ? block : null;
+      if (draggedEmailBlock && event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+      }
+    });
+    form.addEventListener("dragend", () => {
+      editors.forEach((editor) => {
+        editor.classList.remove("is-drop-target");
+        syncDocumentEmailTemplateEditor(editor);
+      });
+      draggedEmailBlock = null;
+    });
+    tokenButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        insertDocumentEmailTemplateToken(activeEditor, button.dataset.templateToken || "");
+      });
+    });
+    editors.forEach((editor) => {
+      editor.addEventListener("focus", () => {
+        editors.forEach((item) => item.classList.toggle("is-active-editor", item === editor));
+        activeEditor = editor;
+      });
+      editor.addEventListener("input", () => syncDocumentEmailTemplateEditor(editor));
+      editor.addEventListener("blur", () => refreshDocumentEmailTemplateEditor(editor));
+      editor.addEventListener("keydown", (event) => {
+        if (editor.dataset.documentEmailField === "emailSubjectTemplate" && event.key === "Enter") {
+          event.preventDefault();
+        }
+      });
+      editor.addEventListener("paste", () => {
+        window.setTimeout(() => refreshDocumentEmailTemplateEditor(editor));
+      });
+      editor.addEventListener("dragover", (event) => {
+        if (!Array.from(event.dataTransfer?.types || []).includes(tokenMime)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = draggedEmailBlock ? "move" : "copy";
+        editor.classList.add("is-drop-target");
+      });
+      editor.addEventListener("dragleave", (event) => {
+        if (!editor.contains(event.relatedTarget)) editor.classList.remove("is-drop-target");
+      });
+      editor.addEventListener("drop", (event) => {
+        const token = event.dataTransfer?.getData(tokenMime)
+          || event.dataTransfer?.getData("text/plain")
+          || "";
+        if (!token) return;
+        event.preventDefault();
+        editor.classList.remove("is-drop-target");
+        const range = getCommunicationTemplateDropRange(editor, event.clientX, event.clientY);
+        if (draggedEmailBlock?.contains(range?.startContainer)) return;
+        insertDocumentEmailTemplateToken(editor, token, range, draggedEmailBlock);
+        draggedEmailBlock = null;
+      });
+    });
+  }
+
+  function syncDocumentPathValueEditor(editor) {
+    if (!editor) return;
+    const settingKey = editor.dataset.documentPathSettingKey || "";
+    const hiddenInput = settingKey ? editor.closest("form")?.elements[settingKey] : null;
+    if (hiddenInput) hiddenInput.value = serializeCommunicationTemplateEditor(editor).trim();
+  }
+
+  function refreshDocumentPathValueEditor(editor) {
+    if (!editor) return;
+    const value = serializeCommunicationTemplateEditor(editor).trim();
+    editor.innerHTML = renderDocumentPathValueEditorContent(value);
+    syncDocumentPathValueEditor(editor);
+  }
+
+  function insertDocumentPathMarker(editor, token, range = null) {
+    if (!editor || !token) return;
+    if (serializeCommunicationTemplateEditor(editor).includes(token)) {
+      refreshDocumentPathValueEditor(editor);
+    }
+    const duplicate = Array.from(editor.querySelectorAll("[data-document-save-folder-token]"))
+      .find((block) => block.dataset.templateToken === token);
+    if (duplicate) {
+      duplicate.scrollIntoView({ block: "nearest", inline: "nearest" });
+      editor.focus({ preventScroll: true });
+      return;
+    }
+    const block = createDocumentSaveFolderToken(token);
+    if (range) range.insertNode(block);
+    else editor.append(block);
+    syncDocumentPathValueEditor(editor);
+    editor.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    if (selection) {
+      const caret = document.createRange();
+      caret.setStartAfter(block);
+      caret.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(caret);
+    }
+  }
+
+  function bindDocumentPathSettingsEditor() {
+    const form = document.querySelector("form[data-action='save-document-path-settings']");
+    if (!form) return;
+    const markerMime = "application/x-ais-document-path-marker";
+    const editors = Array.from(form.querySelectorAll("[data-document-path-value-editor]"));
+    const markers = Array.from(form.querySelectorAll("[data-document-path-marker]"));
+    let draggedMarkerToken = "";
+    markers.forEach((marker) => {
+      marker.addEventListener("click", () => {
+        insertDocumentPathMarker(editors[0], marker.dataset.templateToken || "");
+      });
+      marker.addEventListener("dragstart", (event) => {
+        if (!event.dataTransfer) return;
+        const token = marker.dataset.templateToken || "";
+        draggedMarkerToken = token;
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData(markerMime, token);
+        event.dataTransfer.setData("text/plain", token);
+        marker.classList.add("is-dragging");
+      });
+      marker.addEventListener("dragend", () => {
+        draggedMarkerToken = "";
+        marker.classList.remove("is-dragging");
+        editors.forEach((editor) => editor.classList.remove("is-drop-target"));
+      });
+    });
+    editors.forEach((editor) => {
+      editor.addEventListener("input", () => syncDocumentPathValueEditor(editor));
+      editor.addEventListener("blur", () => refreshDocumentPathValueEditor(editor));
+      editor.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") event.preventDefault();
+      });
+      editor.addEventListener("mousedown", (event) => {
+        if (event.target.closest?.("[data-action='remove-document-save-folder-token']")) event.preventDefault();
+      });
+      editor.addEventListener("click", (event) => {
+        const removeButton = event.target.closest?.("[data-action='remove-document-save-folder-token']");
+        if (!removeButton || !editor.contains(removeButton)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        removeButton.closest("[data-document-save-folder-token]")?.remove();
+        syncDocumentPathValueEditor(editor);
+        editor.focus({ preventScroll: true });
+      });
+      editor.addEventListener("paste", () => {
+        window.setTimeout(() => refreshDocumentPathValueEditor(editor));
+      });
+      editor.addEventListener("dragover", (event) => {
+        if (!draggedMarkerToken) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        editor.classList.add("is-drop-target");
+      });
+      editor.addEventListener("dragleave", (event) => {
+        if (!editor.contains(event.relatedTarget)) editor.classList.remove("is-drop-target");
+      });
+      editor.addEventListener("drop", (event) => {
+        const token = event.dataTransfer?.getData(markerMime)
+          || event.dataTransfer?.getData("text/plain")
+          || draggedMarkerToken
+          || "";
+        if (!documentPathMarkerDefinitions.some((marker) => marker.token === token)) return;
+        event.preventDefault();
+        editor.classList.remove("is-drop-target");
+        const range = getCommunicationTemplateDropRange(editor, event.clientX, event.clientY);
+        insertDocumentPathMarker(editor, token, range);
+      });
+    });
+  }
+
   function bindContractTemplateConstructor() {
     const form = document.querySelector("form[data-action='save-contract-template-fields']");
     if (!form) return;
@@ -11920,6 +15981,7 @@ MAX - https://bizvmax.ru/zifra_plus
     let draggedRow = null;
     let draggedFormulaBlock = null;
 
+    form.addEventListener("click", openTemplateEditorLink);
     form.addEventListener("dragstart", (event) => {
       const handle = event.target.closest?.("[data-contract-field-drag-handle]");
       if (handle) {
@@ -11954,8 +16016,15 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     form.addEventListener("contextmenu", (event) => {
-      const token = event.target.closest?.("[data-contract-formula-token]");
+      const token = event.target.closest?.("[data-contract-formula-token], [data-document-email-token]");
       if (!token || !form.contains(token)) return;
+      const isEmbeddedEmailToken = Boolean(token.closest("[data-document-email-editor]"));
+      if (
+        token.matches("[data-document-email-token]")
+        && !token.dataset.contractFieldId
+        && !token.dataset.documentEmailTemplateValueName
+        && !isEmbeddedEmailToken
+      ) return;
       event.preventDefault();
       event.stopPropagation();
       showContractFormulaTokenMenu(token, event.clientX, event.clientY);
@@ -12143,28 +16212,41 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function showContractFormulaTokenMenu(token, x, y) {
     hideCommunicationTemplateFieldMenu();
-    const editor = token.closest("[data-contract-formula-editor]");
+    const formulaEditor = token.closest("[data-contract-formula-editor]");
+    const emailEditor = token.closest("[data-document-email-editor]");
+    const form = token.closest("form[data-action='save-contract-template-fields']");
+    const fieldId = token.dataset.contractFieldId || "";
     const fieldName = token.dataset.contractDocumentFieldName || "";
-    const fields = collectContractTemplateForm(editor?.closest("form")).document.fields;
-    const field = fields.find((item) => item.name === fieldName);
+    const templateValueName = token.dataset.documentEmailTemplateValueName || "";
+    const fields = collectContractTemplateForm(form).document.fields;
+    const field = fields.find((item) => (
+      (fieldId && item.id === fieldId)
+      || (fieldName && item.name === fieldName)
+    ));
     const defaultField = field ? contractTemplateFieldDefaults.find((item) => item.name === field.name) : null;
     const canRestore = Boolean(defaultField && String(defaultField.formula || "").trim() !== String(field?.formula || "").trim());
+    const deleteLabel = emailEditor ? "Удалить из сообщения" : "Удалить из формулы";
+    const editLabel = templateValueName ? "Редактировать значение" : "Редактировать";
     const popup = document.createElement("div");
     popup.className = "communication-template-field-menu";
     popup.dataset.communicationTemplateFieldMenu = "";
     popup.innerHTML = `
-      <button data-action="edit-contract-template-field" type="button" ${field ? "" : "disabled"}>
+      <button data-action="edit-contract-template-field" type="button" ${field || templateValueName ? "" : "disabled"}>
         ${renderCommunicationTemplateFieldActionIcon("edit")}
-        <span>Редактировать</span>
+        <span>${editLabel}</span>
       </button>
+      ${(formulaEditor || emailEditor) ? `
       <button class="is-danger" data-action="delete-contract-template-token" type="button">
         ${renderCommunicationTemplateFieldActionIcon("delete")}
-        <span>Удалить из формулы</span>
+        <span>${deleteLabel}</span>
       </button>
+      ` : ""}
+      ${field ? `
       <button data-action="restore-contract-template-field" type="button" ${canRestore ? "" : "disabled"}>
         ${renderCommunicationTemplateFieldActionIcon("restore")}
         <span>Восстановить</span>
       </button>
+      ` : ""}
     `;
     document.body.appendChild(popup);
     const rect = popup.getBoundingClientRect();
@@ -12179,11 +16261,127 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     bindMenuAction("[data-action='edit-contract-template-field']", () => {
       hideCommunicationTemplateFieldMenu();
-      if (field) selectContractTemplateField(field.id, { focusToken: true });
+      if (templateValueName) openDocumentEmailTemplateValueEditor(templateValueName);
+      else if (field) selectContractTemplateField(field.id, { focusToken: true });
     });
-    bindMenuAction("[data-action='delete-contract-template-token']", () => deleteContractFormulaToken(token));
+    bindMenuAction("[data-action='delete-contract-template-token']", () => {
+      if (emailEditor) deleteDocumentEmailTemplateToken(token);
+      else deleteContractFormulaToken(token);
+    });
     bindMenuAction("[data-action='restore-contract-template-field']", () => restoreContractTemplateFieldFormula(field));
     window.setTimeout(() => document.addEventListener("pointerdown", closeCommunicationTemplateFieldMenuOnOutsideClick, { capture: true, once: true }));
+  }
+
+  function refreshTemplateLinkEditor(editor, preserveCaret = false) {
+    if (!editor) return;
+    const value = serializeCommunicationTemplateEditor(editor);
+    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
+    editor.innerHTML = renderCommunicationTemplateLinks(value);
+    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
+  }
+
+  function openDocumentEmailTemplateValueEditor(fieldName) {
+    const normalizedName = String(fieldName || "").replace(/^\[|\]$/g, "").trim();
+    if (!normalizedName) return;
+    const { documents, document: documentTemplate } = collectContractTemplateForm();
+    const currentValues = normalizeDocumentEmailTemplateValues(documentTemplate.emailTemplateValues);
+    const backdrop = window.document.createElement("div");
+    backdrop.className = "modal-backdrop document-email-template-value-backdrop";
+    backdrop.dataset.documentEmailTemplateValueDialog = "";
+    backdrop.innerHTML = `
+      <section class="modal document-email-template-value-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(`Редактирование поля ${normalizedName}`)}">
+        <header class="modal-head">
+          <div>
+            <p class="eyebrow">Константы</p>
+            <h2>${escapeHtml(`[${normalizedName}]`)}</h2>
+          </div>
+          <button class="icon-button" data-action="close-document-email-template-value" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <form data-action="save-document-email-template-value">
+          <label class="document-email-template-value-field">
+            <span>Значение поля</span>
+            <div
+              class="document-email-template-value-editor"
+              contenteditable="true"
+              data-document-email-template-value-editor
+              spellcheck="false"
+              role="textbox"
+              aria-multiline="true"
+              aria-label="${escapeAttr(`Значение поля ${normalizedName}`)}"
+            ></div>
+            <small>Поддерживаются HTML, ссылки и изображения в формате data:image. Ctrl + щелчок открывает подсвеченную ссылку.</small>
+          </label>
+          <footer class="modal-actions">
+            <button class="ghost-button" data-action="close-document-email-template-value" type="button">Отмена</button>
+            <button class="primary-button" type="submit">Сохранить</button>
+          </footer>
+        </form>
+      </section>
+    `;
+    window.document.body.appendChild(backdrop);
+    const form = backdrop.querySelector("form[data-action='save-document-email-template-value']");
+    const editor = backdrop.querySelector("[data-document-email-template-value-editor]");
+    let highlightTimer = null;
+    if (editor) {
+      editor.innerHTML = renderCommunicationTemplateLinks(currentValues[normalizedName] || "");
+      editor.focus({ preventScroll: true });
+      setCommunicationTemplateEditorCaretOffset(editor, 0);
+      editor.addEventListener("click", openTemplateEditorLink);
+      editor.addEventListener("input", () => {
+        window.clearTimeout(highlightTimer);
+        highlightTimer = window.setTimeout(() => refreshTemplateLinkEditor(editor, true), 180);
+      });
+      editor.addEventListener("blur", () => {
+        window.clearTimeout(highlightTimer);
+        refreshTemplateLinkEditor(editor);
+      });
+    }
+    const close = () => {
+      window.clearTimeout(highlightTimer);
+      window.document.removeEventListener("keydown", handleKeydown, true);
+      backdrop.remove();
+    };
+    const handleKeydown = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    };
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) close();
+    });
+    backdrop.querySelectorAll("[data-action='close-document-email-template-value']").forEach((button) => {
+      button.addEventListener("click", close);
+    });
+    form?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      window.clearTimeout(highlightTimer);
+      const nextValue = editor
+        ? serializeCommunicationTemplateEditor(editor)
+        : String(currentValues[normalizedName] || "");
+      const nextDocument = {
+        ...documentTemplate,
+        emailTemplateValues: {
+          ...currentValues,
+          [normalizedName]: nextValue
+        },
+        updatedAt: new Date().toISOString()
+      };
+      commitDocumentTemplates(
+        documents.map((item) => item.id === nextDocument.id ? nextDocument : item),
+        nextDocument
+      );
+      state.documentTemplateSettingsTab = "email";
+      addAudit(
+        "Изменен параметр отправки документа",
+        `${nextDocument.title}: [${normalizedName}]`,
+        `${nextValue.length} символов`
+      );
+      persist();
+      close();
+      render();
+    });
+    window.document.addEventListener("keydown", handleKeydown, true);
   }
 
   function deleteContractFormulaToken(token) {
@@ -12195,6 +16393,18 @@ MAX - https://bizvmax.ru/zifra_plus
     commitCommunicationTemplateEditorChange(editor, beforeValue);
     syncContractFormulaEditor(editor);
     refreshContractFormulaEditor(editor, true);
+    editor.focus({ preventScroll: true });
+  }
+
+  function deleteDocumentEmailTemplateToken(token) {
+    const editor = token?.closest?.("[data-document-email-editor]");
+    hideCommunicationTemplateFieldMenu();
+    if (!editor) return;
+    const beforeValue = serializeCommunicationTemplateEditor(editor);
+    token.remove();
+    commitCommunicationTemplateEditorChange(editor, beforeValue);
+    syncDocumentEmailTemplateEditor(editor);
+    refreshDocumentEmailTemplateEditor(editor);
     editor.focus({ preventScroll: true });
   }
 
@@ -12244,6 +16454,125 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!confirm("Восстановить исходные настройки СДО?")) return;
     state.data.dictionaries.sdoSettings = normalizeSdoSettings([]);
     addAudit("Изменен справочник", dictionaryTitle("sdoSettings"), "Восстановлены исходные настройки СДО");
+    persist();
+    render();
+  }
+
+  function savePaymentSettings(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const previousAuthorRate = normalizePaymentRateValue(getPaymentSettingValue("authorRate"));
+    const constantsResult = collectPaymentConstantSettings(form);
+    if (constantsResult.error) {
+      alert(constantsResult.error);
+      switchPaymentSettingsTab("rates");
+      constantsResult.input?.focus({ preventScroll: true });
+      return;
+    }
+    const otherSettings = paymentSettingDefaults.filter((setting) => setting.type !== "number").map((setting) => {
+      const input = form.elements[setting.key];
+      const rawValue = String(input?.value || "").trim();
+      return {
+        ...setting,
+        value: rawValue
+      };
+    });
+    const settings = [...constantsResult.settings, ...otherSettings];
+    const automaticRules = settings.find((setting) => setting.key === "automaticExpenseRules");
+    const invalidRule = String(automaticRules?.value || "").split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .find((line) => line.split(",").length < 2);
+    if (invalidRule) {
+      alert(`Некорректная строка автоматической оплаты:\n${invalidRule}`);
+      switchPaymentSettingsTab("assignment");
+      form.elements.automaticExpenseRules?.focus();
+      return;
+    }
+    const sourceAssignments = settings.find((setting) => setting.key === "sourceAgentAssignments");
+    const invalidAssignment = String(sourceAssignments?.value || "").split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .find((line) => !line.includes("="));
+    if (invalidAssignment) {
+      alert(`Некорректное назначение агента:\n${invalidAssignment}`);
+      switchPaymentSettingsTab("agents");
+      form.elements.sourceAgentAssignments?.focus();
+      return;
+    }
+    state.data.dictionaries.paymentSettings = normalizePaymentSettings(settings);
+    const nextAuthorRate = normalizePaymentPercent(
+      state.data.dictionaries.paymentSettings.find((setting) => setting.key === "authorRate")?.value,
+      state.data.meta.defaultAuthorPaymentPercent || 50
+    );
+    state.data.collections.programs = applyGlobalAuthorRateToPrograms(
+      state.data.collections.programs,
+      previousAuthorRate,
+      nextAuthorRate
+    );
+    state.data.meta.defaultAuthorPaymentPercent = nextAuthorRate;
+    syncVisibleGlobalAuthorRate(previousAuthorRate, nextAuthorRate);
+    refreshAllProgramAuthorExpensesForStudents();
+    const mappedAgents = parseSourceAgentAssignments(sourceAssignments?.value)
+      .map((item) => item.agent)
+      .filter(Boolean);
+    state.data.dictionaries.agents = unique([
+      ...(state.data.dictionaries.agents || []),
+      ...mappedAgents
+    ]);
+    addAudit("Изменен справочник", dictionaryTitle("paymentSettings"), "Сохранены ставки и правила автоматических расходов");
+    persist();
+    render();
+  }
+
+  function resetPaymentSettings() {
+    if (!confirm("Восстановить исходные ставки и правила оплаты?")) return;
+    const previousAuthorRate = normalizePaymentRateValue(getPaymentSettingValue("authorRate"));
+    state.data.dictionaries.paymentSettings = normalizePaymentSettings([]);
+    const nextAuthorRate = 50;
+    state.data.collections.programs = applyGlobalAuthorRateToPrograms(
+      state.data.collections.programs,
+      previousAuthorRate,
+      nextAuthorRate
+    );
+    state.data.meta.defaultAuthorPaymentPercent = nextAuthorRate;
+    syncVisibleGlobalAuthorRate(previousAuthorRate, nextAuthorRate);
+    refreshAllProgramAuthorExpensesForStudents();
+    addAudit("Изменен справочник", dictionaryTitle("paymentSettings"), "Восстановлены исходные настройки оплаты");
+    persist();
+    render();
+  }
+
+  function saveDocumentPathSettings(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    form.querySelectorAll("[data-document-path-value-editor]").forEach(syncDocumentPathValueEditor);
+    const settings = documentPathSettingDefaults.map((setting) => ({
+      ...setting,
+      value: String(form.elements[setting.key]?.value || "").trim()
+    }));
+    const emptySetting = settings.find((setting) => !setting.value);
+    if (emptySetting) {
+      alert(`Заполните настройку: ${emptySetting.label}.`);
+      form.elements[emptySetting.key]?.focus();
+      return;
+    }
+    const recursiveSetting = settings.find((setting) => setting.value.includes(setting.label));
+    if (recursiveSetting) {
+      alert(`${recursiveSetting.label} не может содержать ссылку на самого себя.`);
+      form.elements[recursiveSetting.key]?.focus();
+      return;
+    }
+    state.data.dictionaries.documentPathSettings = settings;
+    addAudit("Изменен справочник", dictionaryTitle("documentPathSettings"), "Сохранены пути документов");
+    persist();
+    render();
+  }
+
+  function resetDocumentPathSettings() {
+    if (!confirm("Восстановить исходные пути документов?")) return;
+    state.data.dictionaries.documentPathSettings = normalizeDocumentPathSettings([]);
+    addAudit("Изменен справочник", dictionaryTitle("documentPathSettings"), "Восстановлены исходные пути документов");
     persist();
     render();
   }
@@ -13055,6 +17384,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!form) return;
     let draggedTemplateBlock = null;
 
+    form.addEventListener("click", openTemplateEditorLink);
     form.addEventListener("dragstart", (event) => {
       const token = event.target.closest?.("[data-template-token]");
       if (!token || !event.dataTransfer) return;
@@ -13167,7 +17497,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const container = range.startContainer.nodeType === Node.ELEMENT_NODE
       ? range.startContainer
       : range.startContainer.parentElement;
-    const tokenBlock = container?.closest?.(".communication-template-block");
+    const tokenBlock = container?.closest?.(".communication-template-block, .document-save-folder-token");
     if (tokenBlock) {
       const blockRect = tokenBlock.getBoundingClientRect();
       if (clientX > blockRect.left + (blockRect.width / 2)) range.setStartAfter(tokenBlock);
@@ -13417,6 +17747,48 @@ MAX - https://bizvmax.ru/zifra_plus
     ).trim();
   }
 
+  function getOpenDocumentsLocally() {
+    return state.data.meta?.openDocumentsLocally !== false;
+  }
+
+  function getAutomaticDocumentSaveHint(
+    openLocally = getOpenDocumentsLocally(),
+    localRoot = getLocalDocumentsRoot()
+  ) {
+    if (openLocally) {
+      const root = String(localRoot || "").trim();
+      return `Откроется системное окно сохранения с папкой и именем файла из настроек документа${root ? ` на диске ${root}` : ""}. После подтверждения файл сохраняется один раз.`;
+    }
+    return "Документы автоматически сохраняются через WebDAV в рекомендуемые папки без дополнительного подтверждения.";
+  }
+
+  function updateAutomaticDocumentSaveHint(form) {
+    const hint = form?.querySelector("[data-document-autosave-hint]");
+    if (!hint) return;
+    hint.textContent = getAutomaticDocumentSaveHint(
+      Boolean(form.elements.openDocumentsLocally?.checked),
+      form.elements.localDocumentsRoot?.value
+    );
+  }
+
+  function bindAutomaticDocumentSaveHint(form) {
+    if (!form) return;
+    form.elements.openDocumentsLocally?.addEventListener(
+      "change",
+      () => updateAutomaticDocumentSaveHint(form)
+    );
+    form.elements.localDocumentsRoot?.addEventListener(
+      "input",
+      () => updateAutomaticDocumentSaveHint(form)
+    );
+  }
+
+  function getStudentDocumentsOpenTooltip() {
+    return getOpenDocumentsLocally()
+      ? "Открыть документы на локальном компьютере. Shift + щелчок: открыть в облаке."
+      : "Открыть документы в облаке. Shift + щелчок: открыть на локальном компьютере.";
+  }
+
   function getYandexDiskLogin() {
     return String(state.data.meta?.yandexDiskLogin || "").trim();
   }
@@ -13428,6 +17800,18 @@ MAX - https://bizvmax.ru/zifra_plus
   function getStudentApplicationsEmailPort() {
     const port = Number(state.data.meta?.studentApplicationsEmailPort || 993);
     return Number.isInteger(port) && port > 0 && port <= 65535 ? port : 993;
+  }
+
+  function getStudentApplicationsEmailSmtpHost() {
+    return String(
+      state.data.meta?.studentApplicationsEmailSmtpHost
+        || getStudentApplicationsEmailHost().replace(/^imap(?=\.)/i, "smtp")
+    ).trim();
+  }
+
+  function getStudentApplicationsEmailSmtpPort() {
+    const port = Number(state.data.meta?.studentApplicationsEmailSmtpPort || 465);
+    return Number.isInteger(port) && port > 0 && port <= 65535 ? port : 465;
   }
 
   function getStudentApplicationsEmailLogin() {
@@ -13470,10 +17854,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const localDocumentsRootIsSystemParent = Boolean(
       form.elements.localDocumentsRootIsSystemParent?.checked
     );
+    const openDocumentsLocally = Boolean(form.elements.openDocumentsLocally?.checked);
     const login = String(form.elements.yandexDiskLogin?.value || "").trim();
     const password = String(form.elements.yandexDiskPassword?.value || "");
     const emailHost = String(form.elements.studentApplicationsEmailHost?.value || "").trim();
     const emailPort = Number(form.elements.studentApplicationsEmailPort?.value || 993);
+    const emailSmtpHost = String(form.elements.studentApplicationsEmailSmtpHost?.value || "").trim();
+    const emailSmtpPort = Number(form.elements.studentApplicationsEmailSmtpPort?.value || 465);
     const emailLogin = String(form.elements.studentApplicationsEmailLogin?.value || "").trim();
     const emailPassword = String(form.elements.studentApplicationsEmailPassword?.value || "");
     if (!databasePath) throw new Error("Укажите WebDAV-путь или ссылку на базу слушателей.");
@@ -13482,6 +17869,10 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!emailHost) throw new Error("Укажите IMAP-сервер.");
     if (!Number.isInteger(emailPort) || emailPort < 1 || emailPort > 65535) {
       throw new Error("Укажите корректный порт IMAP.");
+    }
+    if (!emailSmtpHost) throw new Error("Укажите SMTP-сервер.");
+    if (!Number.isInteger(emailSmtpPort) || emailSmtpPort < 1 || emailSmtpPort > 65535) {
+      throw new Error("Укажите корректный порт SMTP.");
     }
     if (!emailLogin) throw new Error("Укажите логин электронной почты.");
     const response = await fetch(photoApiUrl("/api/settings/system-documents"), {
@@ -13492,11 +17883,14 @@ MAX - https://bizvmax.ru/zifra_plus
         basePath,
         localDocumentsRoot,
         localDocumentsRootIsSystemParent,
+        openDocumentsLocally,
         login,
         password,
         autoSave: Boolean(form.elements.yandexDiskAutoSave?.checked),
         emailHost,
         emailPort,
+        emailSmtpHost,
+        emailSmtpPort,
         emailLogin,
         emailPassword
       })
@@ -13521,6 +17915,7 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.meta.localDocumentsRootIsSystemParent = Boolean(
       payload.localDocumentsRootIsSystemParent
     );
+    state.data.meta.openDocumentsLocally = payload.openDocumentsLocally !== false;
     state.data.meta.yandexDiskLogin = String(payload.login ?? getYandexDiskLogin()).trim();
     state.data.meta.yandexDiskHasPassword = Boolean(payload.hasPassword);
     state.data.meta.yandexDiskAutoSave = Boolean(payload.autoSave);
@@ -13529,6 +17924,12 @@ MAX - https://bizvmax.ru/zifra_plus
     ).trim();
     state.data.meta.studentApplicationsEmailPort = Number(
       payload.emailPort || getStudentApplicationsEmailPort()
+    );
+    state.data.meta.studentApplicationsEmailSmtpHost = String(
+      payload.emailSmtpHost ?? getStudentApplicationsEmailSmtpHost()
+    ).trim();
+    state.data.meta.studentApplicationsEmailSmtpPort = Number(
+      payload.emailSmtpPort || getStudentApplicationsEmailSmtpPort()
     );
     state.data.meta.studentApplicationsEmailLogin = String(
       payload.emailLogin ?? getStudentApplicationsEmailLogin()
@@ -13591,11 +17992,14 @@ MAX - https://bizvmax.ru/zifra_plus
           basePath: getYandexDiskBasePath(),
           localDocumentsRoot: getLocalDocumentsRoot(),
           localDocumentsRootIsSystemParent: state.data.meta.localDocumentsRootIsSystemParent,
+          openDocumentsLocally: getOpenDocumentsLocally(),
           login: getYandexDiskLogin(),
           hasPassword: state.data.meta.yandexDiskHasPassword,
           autoSave: state.data.meta.yandexDiskAutoSave,
           emailHost: getStudentApplicationsEmailHost(),
           emailPort: getStudentApplicationsEmailPort(),
+          emailSmtpHost: getStudentApplicationsEmailSmtpHost(),
+          emailSmtpPort: getStudentApplicationsEmailSmtpPort(),
           emailLogin: getStudentApplicationsEmailLogin(),
           emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword
         });
@@ -13605,11 +18009,14 @@ MAX - https://bizvmax.ru/zifra_plus
           basePath: getYandexDiskBasePath(),
           localDocumentsRoot: getLocalDocumentsRoot(),
           localDocumentsRootIsSystemParent: state.data.meta.localDocumentsRootIsSystemParent,
+          openDocumentsLocally: getOpenDocumentsLocally(),
           login: getYandexDiskLogin(),
           hasPassword: state.data.meta.yandexDiskHasPassword,
           autoSave: state.data.meta.yandexDiskAutoSave,
           emailHost: getStudentApplicationsEmailHost(),
           emailPort: getStudentApplicationsEmailPort(),
+          emailSmtpHost: getStudentApplicationsEmailSmtpHost(),
+          emailSmtpPort: getStudentApplicationsEmailSmtpPort(),
           emailLogin: getStudentApplicationsEmailLogin(),
           emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword
         });
@@ -13758,6 +18165,16 @@ MAX - https://bizvmax.ru/zifra_plus
     return [...linkedExpenses, ...unlinkedExpenses, ...manualExpenses];
   }
 
+  function buildStudentDatabaseExportPaymentConstants() {
+    return getPaymentConstantSettings().map((setting) => ({
+      key: String(setting.key || "").trim(),
+      marker: normalizePaymentConstantMarker(setting.marker),
+      label: String(setting.label || setting.marker || "").trim(),
+      value: Number(setting.value || 0),
+      custom: Boolean(setting.custom)
+    }));
+  }
+
   function getDownloadFileNameFromResponse(response, fallback) {
     const disposition = String(response.headers.get("Content-Disposition") || "");
     const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
@@ -13794,10 +18211,12 @@ MAX - https://bizvmax.ru/zifra_plus
     try {
       const students = buildStudentDatabaseExportStudents();
       const directExpenses = buildStudentDatabaseExportDirectExpenses();
+      const paymentConstants = buildStudentDatabaseExportPaymentConstants();
       const response = await runStudentDatabaseExport({
         databasePath: getStudentDatabaseWebDavPath(),
         students,
-        directExpenses
+        directExpenses,
+        paymentConstants
       });
       const blob = await response.blob();
       const date = new Date().toISOString().slice(0, 10);
@@ -13831,12 +18250,84 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  function mergeImportedPaymentRates(settings, rates = {}, importedConstants = []) {
+    const rateValues = {
+      ...(rates && typeof rates === "object" ? rates : {})
+    };
+    if (
+      !Object.prototype.hasOwnProperty.call(rateValues, "authorRate")
+      && Object.prototype.hasOwnProperty.call(rateValues, "defaultAuthorPercent")
+    ) {
+      rateValues.authorRate = rateValues.defaultAuthorPercent;
+    }
+    const mergedSettings = normalizePaymentSettings(settings).map((setting) => {
+      if (setting.type !== "number" || !Object.prototype.hasOwnProperty.call(rateValues, setting.key)) {
+        return setting;
+      }
+      const value = Number(rateValues[setting.key]);
+      if (!Number.isFinite(value)) return setting;
+      return {
+        ...setting,
+        value: String(Math.max(0, value))
+      };
+    });
+    const settingsByMarker = new Map(mergedSettings
+      .filter((setting) => setting.type === "number" && setting.marker)
+      .map((setting) => [
+        normalizePaymentConstantMarker(setting.marker).toLocaleLowerCase("ru-RU"),
+        setting
+      ]));
+    (Array.isArray(importedConstants) ? importedConstants : []).forEach((imported, index) => {
+      const marker = normalizePaymentConstantMarker(imported?.marker || imported?.label);
+      const normalizedMarker = marker.toLocaleLowerCase("ru-RU");
+      const value = Number(imported?.value);
+      if (!marker || !isValidPaymentConstantMarker(marker) || !Number.isFinite(value) || value < 0) return;
+      const existing = settingsByMarker.get(normalizedMarker);
+      if (existing) {
+        existing.value = String(value);
+        return;
+      }
+      const setting = {
+        key: String(imported?.key || `xlsbPaymentConstant-${index + 1}-${marker}`).trim(),
+        marker,
+        label: String(imported?.label || marker).trim() || marker,
+        type: "number",
+        value: String(value),
+        custom: true
+      };
+      mergedSettings.push(setting);
+      settingsByMarker.set(normalizedMarker, setting);
+    });
+    return normalizePaymentSettings(mergedSettings);
+  }
+
+  function mergeImportedProgramPaymentSettings(programs, importedSettings, defaultAuthorPercent) {
+    const importedByName = new Map((Array.isArray(importedSettings) ? importedSettings : [])
+      .map((item) => [normalizeProgramName(item?.name), item])
+      .filter(([name]) => name));
+    return (Array.isArray(programs) ? programs : []).map((program) => {
+      const imported = importedByName.get(normalizeProgramName(program?.name));
+      if (!imported) return program;
+      const authorSource = String(imported.authorSource || "").trim();
+      const importedFields = clone(imported);
+      delete importedFields.name;
+      return {
+        ...program,
+        ...importedFields,
+        author: authorSource,
+        authorSource,
+        authorPayments: parseProgramAuthorPayments(authorSource, defaultAuthorPercent),
+        defaultAuthorPaymentPercent: defaultAuthorPercent
+      };
+    });
+  }
+
   async function importStudentsFromDatabase(event) {
     if (state.databaseExport.running) {
       alert("Дождитесь завершения синхронизации и скачивания XLSB.");
       return;
     }
-    if (!confirm("Данные по всем слушателям и прямым затратам будут перезаписаны данными из базы АИС Допобразование.xlsb. Продолжить?")) return;
+    if (!confirm("Данные по всем слушателям, прямым затратам и запасам будут перезаписаны данными из базы АИС Допобразование.xlsb. Продолжить?")) return;
     if (state.databaseImport.running) return;
     const startedAt = performance.now();
     updateDatabaseImportIndicator({
@@ -13855,9 +18346,66 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!Array.isArray(payload.directExpenses)) {
         throw new Error("Не удалось прочитать лист «Прямые затраты».");
       }
+      if (!Array.isArray(payload.inventory)) {
+        throw new Error("Не удалось прочитать лист «Запасы».");
+      }
+      if (!payload.paymentRates || !Array.isArray(payload.programPaymentSettings)) {
+        throw new Error("Не удалось прочитать настройки оплаты и реестр программ.");
+      }
       const previousData = state.data;
-      const nextStudents = payload.students.map((student) => normalizeStudentRecord(student));
+      const nextStudents = payload.students.map((student) => applyMappedAgentToStudentRecord(
+        normalizeStudentRecord(student),
+        { onlyWhenEmpty: true }
+      ));
       const nextDirectExpenses = payload.directExpenses.map((expense) => ({ ...expense }));
+      const nextInventory = payload.inventory.map((item) => ({
+        ...item,
+        amount: Number(item.amount || 0),
+        balance: Number(item.balance || 0)
+      }));
+      const previousAuthorRate = normalizePaymentRateValue(
+        normalizePaymentSettings(previousData.dictionaries.paymentSettings)
+          .find((setting) => setting.key === "authorRate")?.value
+          ?? previousData.meta.defaultAuthorPaymentPercent
+      );
+      const defaultAuthorPaymentPercent = normalizePaymentPercent(
+        payload.paymentRates.authorRate ?? payload.paymentRates.defaultAuthorPercent,
+        previousData.meta.defaultAuthorPaymentPercent || 50
+      );
+      const nextPaymentSettings = mergeImportedPaymentRates(
+        previousData.dictionaries.paymentSettings,
+        payload.paymentRates,
+        payload.paymentConstants
+      );
+      const nextPrograms = applyGlobalAuthorRateToPrograms(
+        mergeImportedProgramPaymentSettings(
+          previousData.collections.programs,
+          payload.programPaymentSettings,
+          defaultAuthorPaymentPercent
+        ),
+        previousAuthorRate,
+        defaultAuthorPaymentPercent
+      );
+      const nextProgramDictionaries = {};
+      Object.entries(PROGRAM_DICTIONARY_FIELDS).forEach(([fieldKey, dictionaryKey]) => {
+        const settingsValues = payload.programDictionaries?.[dictionaryKey];
+        const usesSettingsSheet = Array.isArray(settingsValues);
+        const importedValues = (
+          usesSettingsSheet
+            ? settingsValues.flatMap((value) => getProgramDictionaryFieldValues(value))
+            : payload.programPaymentSettings
+              .flatMap((program) => getProgramDictionaryFieldValues(program[fieldKey]))
+        );
+        nextProgramDictionaries[dictionaryKey] = unique([
+          ...(usesSettingsSheet ? [] : (previousData.dictionaries[dictionaryKey] || [])),
+          ...importedValues
+        ]);
+      });
+      const nextAdditionalStatuses = unique(
+        (payload.studentSectionTitles || [])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      );
       const linkedDirectExpenseCount = Number(
         payload.linkedDirectExpenseCount
         ?? nextStudents.reduce((sum, student) => sum + (student.directExpenses?.length || 0), 0)
@@ -13865,8 +18413,10 @@ MAX - https://bizvmax.ru/zifra_plus
       const totalDirectExpenseCount = Number(
         payload.totalDirectExpenseCount ?? linkedDirectExpenseCount + nextDirectExpenses.length
       );
+      const inventoryLinkedExpenseCount = Number(payload.inventoryLinkedExpenseCount || 0);
+      const inventoryGeneratedExpenseCount = Number(payload.inventoryGeneratedExpenseCount || 0);
       updateDatabaseImportIndicator({
-        status: `Применение данных: ${nextStudents.length} слушателей, ${totalDirectExpenseCount} расходов...`,
+        status: `Применение данных: ${nextStudents.length} слушателей, ${totalDirectExpenseCount} расходов, ${nextInventory.length} позиций запасов...`,
         progress: 100
       });
       state.data = ensureDataShape({
@@ -13874,27 +18424,42 @@ MAX - https://bizvmax.ru/zifra_plus
         meta: {
           ...previousData.meta,
           sourceWorkbook: payload.sourceName || "АИС Допобразование.xlsb",
-          studentDatabaseLastImportedAt: payload.importedAt || new Date().toISOString()
+          studentDatabaseLastImportedAt: payload.importedAt || new Date().toISOString(),
+          defaultAuthorPaymentPercent
+        },
+        dictionaries: {
+          ...previousData.dictionaries,
+          ...nextProgramDictionaries,
+          studentAdditionalStatuses: nextAdditionalStatuses,
+          paymentSettings: nextPaymentSettings
         },
         collections: {
           ...previousData.collections,
+          programs: nextPrograms,
           students: nextStudents,
           directExpenses: nextDirectExpenses,
+          inventory: nextInventory,
           audit: [...(previousData.collections.audit || [])]
         }
       });
       state.selected.students = [];
       state.selected.directExpenses = [];
+      state.selected.inventory = [];
       state.tablePages.students = 1;
       state.tablePages.directExpenses = 1;
+      state.tablePages.inventory = 1;
       state.lastEditedRow = { config: "", id: "" };
       state.search = "";
       const duration = formatDatabaseOperationDuration(startedAt);
       addAudit(
         "Загрузка из базы",
-        "Слушатели и прямые затраты",
+        "Слушатели, прямые затраты и запасы",
         `${payload.count || nextStudents.length} слушателей; ${linkedDirectExpenseCount} расходов привязано; `
-        + `${nextDirectExpenses.length} не привязано; время выполнения: ${duration}`
+        + `${nextDirectExpenses.length} не привязано; ${nextInventory.length} позиций запасов; `
+        + `${payload.programPaymentSettings.length} программ с характеристиками и ставками; `
+        + `${inventoryLinkedExpenseCount} выдач связано с карточками`
+        + `${inventoryGeneratedExpenseCount ? `, ${inventoryGeneratedExpenseCount} восстановлено` : ""}; `
+        + `время выполнения: ${duration}`
       );
       updateDatabaseImportIndicator({
         status: "Сохранение импортированных данных...",
@@ -13910,17 +18475,23 @@ MAX - https://bizvmax.ru/zifra_plus
       finishDatabaseImportIndicator(
         "success",
         `Готово: ${linkedDirectExpenseCount} расходов привязано, ${nextDirectExpenses.length} оставлено в разделе. `
+        + `Запасы: ${nextInventory.length} позиций, ${inventoryLinkedExpenseCount} выдач связано. `
+        + `Оплата: ${payload.programPaymentSettings.length} программ. `
         + `Время выполнения: ${duration}`
       );
       alert(
         `Загрузка завершена. Перезаписано слушателей: ${payload.count || nextStudents.length}; `
         + `затрат привязано к карточкам: ${linkedDirectExpenseCount}; `
         + `не привязано и оставлено в разделе: ${nextDirectExpenses.length}. `
+        + `Загружено позиций запасов: ${nextInventory.length}; `
+        + `настроек оплаты программ: ${payload.programPaymentSettings.length}; `
+        + `выдач запасов связано с карточками: ${inventoryLinkedExpenseCount}`
+        + `${inventoryGeneratedExpenseCount ? ` (восстановлено из листа «Запасы»: ${inventoryGeneratedExpenseCount})` : ""}. `
         + `Время выполнения: ${duration}.`
       );
     } catch (error) {
       finishDatabaseImportIndicator("error", `Ошибка: ${error.message}`, 6500);
-      alert(`Не удалось загрузить слушателей и прямые затраты из базы: ${error.message}`);
+      alert(`Не удалось загрузить слушателей, прямые затраты и запасы из базы: ${error.message}`);
     }
   }
 
@@ -13960,6 +18531,36 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
+  function downloadAuditLog() {
+    const rows = [...(state.data.collections.audit || [])].reverse();
+    if (!rows.length) return;
+    const columns = [
+      ["date", "Дата"],
+      ["user", "Пользователь"],
+      ["action", "Действие"],
+      ["area", "Раздел"],
+      ["details", "Подробности"]
+    ];
+    const header = columns.map(([, label]) => csvCell(label)).join(";");
+    const body = rows
+      .map((row) => columns.map(([key]) => csvCell(row[key])).join(";"))
+      .join("\n");
+    const now = new Date();
+    const timestamp = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0")
+    ].join("-") + "_" + [
+      String(now.getHours()).padStart(2, "0"),
+      String(now.getMinutes()).padStart(2, "0")
+    ].join("-");
+    download(
+      `Журнал_последних_действий_${timestamp}.csv`,
+      `\ufeff${header}\n${body}`,
+      "text/csv;charset=utf-8"
+    );
+  }
+
   function addAudit(action, area, details) {
     const audit = state.data.collections.audit || [];
     audit.push({
@@ -13996,13 +18597,48 @@ MAX - https://bizvmax.ru/zifra_plus
       .reduce((sum, value) => sum + value, 0);
   }
 
-  function calculateStudentFinance(record) {
-    const paidAmount = Math.round(sumStudentPayments(record) * 100) / 100;
-    const values = { ...record, paidAmount };
+  function calculateStudentFinance(record, programOverride = null) {
+    const reconciledRecord = recalculateAutomaticProgramAuthorExpenses(record, programOverride);
+    const paidAmount = Math.round(sumStudentPayments(reconciledRecord) * 100) / 100;
+    const values = { ...reconciledRecord, paidAmount };
     return {
       ...values,
       balance: calculateStudentBalance(values)
     };
+  }
+
+  function refreshProgramAuthorExpensesForStudents(program) {
+    if (!program || !String(program.name || "").trim()) return;
+    const programNames = new Set([program.name, program.shortName]
+      .map(normalizeProgramName)
+      .filter(Boolean));
+    (state.data.collections.students || []).forEach((student, index, students) => {
+      if (!programNames.has(normalizeProgramName(student.program))) return;
+      const updated = calculateStudentFinance(student, program);
+      students[index] = {
+        ...updated,
+        expenseTotal: Math.round(sumStudentExpenses(updated) * 100) / 100
+      };
+    });
+  }
+
+  function refreshAllProgramAuthorExpensesForStudents() {
+    const programsByName = new Map();
+    (state.data.collections.programs || []).forEach((program) => {
+      [program.name, program.shortName].forEach((name) => {
+        const key = normalizeProgramName(name);
+        if (key && !programsByName.has(key)) programsByName.set(key, program);
+      });
+    });
+    (state.data.collections.students || []).forEach((student, index, students) => {
+      const program = programsByName.get(normalizeProgramName(student.program));
+      if (!program) return;
+      const updated = calculateStudentFinance(student, program);
+      students[index] = {
+        ...updated,
+        expenseTotal: Math.round(sumStudentExpenses(updated) * 100) / 100
+      };
+    });
   }
 
   function calculateStudentBalance(record) {
@@ -14221,43 +18857,341 @@ MAX - https://bizvmax.ru/zifra_plus
   function getEducationDocumentButtonTitle(record) {
     const documentTemplate = getEducationDocumentTemplateForRecord(record);
     const programType = getStudentProgramTypeCode(record);
-    if (!programType) return "Сформировать документ об образовании\nСначала выберите образовательную программу";
-    if (!documentTemplate) return `Сформировать документ об образовании\nДля вида программы ${programType} шаблон не найден`;
+    const contextHint = "Правый щелчок: параметры формирования и отправки";
+    if (!programType) return `Сформировать документ об образовании\nСначала выберите образовательную программу\n${contextHint}`;
+    if (!documentTemplate) return `Сформировать документ об образовании\nДля вида программы ${programType} шаблон не найден\n${contextHint}`;
     const source = documentTemplate.templateUrl || documentTemplate.templatePath || documentTemplate.fileName || "";
     return source
-      ? `Сформировать документ об образовании\n${documentTemplate.title}\n${source}`
-      : `Сформировать документ об образовании\n${documentTemplate.title}`;
+      ? `Сформировать документ об образовании\n${documentTemplate.title}\n${source}\n${contextHint}`
+      : `Сформировать документ об образовании\n${documentTemplate.title}\n${contextHint}`;
   }
 
-  function validateStudentEducationDocumentRequiredFields(record, programType) {
-    const program = findProgramByName(record?.program);
-    const requiredFields = [
-      { key: "diplomaBlankNo", label: "номер бланка" },
-      { key: "registrationNo", label: "рег. номер" },
-      { key: "diplomaIssueDate", label: "дату выдачи" }
+  function getStudentDocumentTemplateForContext(kind, record) {
+    if (kind === "contract") return getAutomaticStudentContractTemplate(record);
+    if (kind === "education") {
+      return getEducationDocumentTemplateForRecord(record)
+        || getDocumentTemplates().find((documentTemplate) => documentTemplate.documentKind === "education")
+        || null;
+    }
+    return getStudentCardDocumentTemplate(kind);
+  }
+
+  function closeStudentDocumentActionMenu() {
+    document.removeEventListener("pointerdown", closeStudentDocumentActionMenuOnOutsideClick, { capture: true });
+    document.querySelector("[data-student-document-action-menu]")?.remove();
+  }
+
+  function closeStudentDocumentActionMenuOnOutsideClick(event) {
+    if (event.target.closest("[data-student-document-action-menu]")) {
+      document.addEventListener("pointerdown", closeStudentDocumentActionMenuOnOutsideClick, { capture: true, once: true });
+      return;
+    }
+    closeStudentDocumentActionMenu();
+  }
+
+  function updateDocumentTemplateActionSetting(documentTemplateId, patch, auditDetails) {
+    const documents = getDocumentTemplates();
+    const index = documents.findIndex((documentTemplate) => documentTemplate.id === documentTemplateId);
+    if (index < 0) return;
+    const nextDocument = normalizeDocumentTemplate({
+      ...documents[index],
+      ...patch
+    }, index);
+    const nextDocuments = documents.map((documentTemplate, documentIndex) => (
+      documentIndex === index ? nextDocument : documentTemplate
+    ));
+    commitDocumentTemplates(nextDocuments, nextDocument);
+    addAudit("Изменены параметры документа", nextDocument.title, auditDetails);
+    persist();
+    closeStudentDocumentActionMenu();
+  }
+
+  function editStudentDocumentTemplateParameters(documentTemplateId) {
+    const documentTemplate = getDocumentTemplates().find((item) => item.id === documentTemplateId);
+    if (!documentTemplate) return;
+    if (state.modal) {
+      state.modal.draft = collectStudentFormDraft();
+      state.modal.hasDraftChanges = true;
+    }
+    closeStudentDocumentActionMenu();
+    state.activeDocumentTemplateId = documentTemplate.id;
+    state.documentTemplateDialogId = documentTemplate.id;
+    state.documentTemplateSettingsTab = "main";
+    state.activeContractTemplateFieldId = "";
+    render();
+  }
+
+  function showStudentDocumentActionMenu(x, y, documentTemplate) {
+    closeStudentDocumentActionMenu();
+    const format = normalizeDocumentGenerationFormat(documentTemplate.generationFormat);
+    const deliveryMode = normalizeDocumentEmailDeliveryMode(
+      documentTemplate.emailDeliveryMode,
+      documentTemplate
+    );
+    const menu = document.createElement("div");
+    menu.className = "student-tab-menu student-document-action-menu";
+    menu.dataset.studentDocumentActionMenu = "";
+    menu.innerHTML = `
+      <div class="student-document-action-menu-title">${escapeHtml(documentTemplate.title)}</div>
+      <div class="student-document-action-menu-label">Формат</div>
+      <button data-document-format="pdf" type="button" aria-pressed="${format === "pdf"}">
+        <span class="student-document-action-menu-check" aria-hidden="true">${format === "pdf" ? "✓" : ""}</span>
+        <span>Формировать PDF</span>
+      </button>
+      <button data-document-format="docx" type="button" aria-pressed="${format === "docx"}">
+        <span class="student-document-action-menu-check" aria-hidden="true">${format === "docx" ? "✓" : ""}</span>
+        <span>Формировать DOCX</span>
+      </button>
+      <div class="student-document-action-menu-label">Отправка по почте</div>
+      <button data-document-email-mode="off" type="button" aria-pressed="${deliveryMode === "off"}">
+        <span class="student-document-action-menu-check" aria-hidden="true">${deliveryMode === "off" ? "✓" : ""}</span>
+        <span>Не отправлять email</span>
+      </button>
+      <button data-document-email-mode="student" type="button" aria-pressed="${deliveryMode === "student"}">
+        <span class="student-document-action-menu-check" aria-hidden="true">${deliveryMode === "student" ? "✓" : ""}</span>
+        <span>Отправить email слушателю</span>
+      </button>
+      <button data-document-email-mode="system" type="button" aria-pressed="${deliveryMode === "system"}">
+        <span class="student-document-action-menu-check" aria-hidden="true">${deliveryMode === "system" ? "✓" : ""}</span>
+        <span>Отправить email системе</span>
+      </button>
+      <div class="student-document-action-menu-separator"></div>
+      <button data-action="edit-student-document-template" type="button">
+        <span class="student-document-action-menu-check" aria-hidden="true"></span>
+        <span>Редактировать параметры</span>
+      </button>
+    `;
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;
+    menu.style.top = `${clamp(y, 8, Math.max(8, window.innerHeight - rect.height - 8))}px`;
+    menu.querySelectorAll("[data-document-format]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const nextFormat = normalizeDocumentGenerationFormat(button.dataset.documentFormat);
+        updateDocumentTemplateActionSetting(
+          documentTemplate.id,
+          { generationFormat: nextFormat },
+          `Формат: ${nextFormat.toUpperCase()}`
+        );
+      });
+    });
+    menu.querySelectorAll("[data-document-email-mode]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const nextMode = normalizeDocumentEmailDeliveryMode(
+          button.dataset.documentEmailMode,
+          documentTemplate
+        );
+        const labels = {
+          off: "Email выключен",
+          student: "Email слушателю",
+          system: "Email системе"
+        };
+        updateDocumentTemplateActionSetting(
+          documentTemplate.id,
+          { emailDeliveryMode: nextMode },
+          labels[nextMode]
+        );
+      });
+    });
+    menu.querySelector("[data-action='edit-student-document-template']")?.addEventListener("click", () => {
+      editStudentDocumentTemplateParameters(documentTemplate.id);
+    });
+    setTimeout(() => {
+      document.addEventListener("pointerdown", closeStudentDocumentActionMenuOnOutsideClick, { capture: true, once: true });
+    });
+  }
+
+  function bindStudentDocumentActionMenus() {
+    document.querySelectorAll("[data-document-context-kind]").forEach((button) => {
+      button.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const record = collectStudentFormDraft();
+        const documentTemplate = getStudentDocumentTemplateForContext(
+          button.dataset.documentContextKind,
+          record
+        );
+        if (!documentTemplate) {
+          alert("Не найден соответствующий шаблон в Конструкторе документов.");
+          return;
+        }
+        showStudentDocumentActionMenu(event.clientX, event.clientY, documentTemplate);
+      });
+    });
+  }
+
+  function getStudentDocumentRequiredFields(documentKind, record, programType = "") {
+    const common = [
+      { key: "name", label: "ФИО" },
+      { key: "program", label: "Программа" }
     ];
+    const byKind = {
+      contract: [
+        ...common,
+        { key: "studyForm", label: "Форма обучения" },
+        { key: "hours", label: "Количество часов", value: getStudentProgramHours(record) },
+        { key: "registrationAddress", label: "Адрес места регистрации" },
+        { key: "mailingAddress", label: "Адрес с почтовым индексом" },
+        { key: "phone", label: "Телефон" },
+        { key: "email", label: "Email" },
+        { key: "birthDate", label: "Дата рождения" },
+        { key: "citizenship", label: "Гражданство" },
+        { key: "passportType", label: "Вид документа" },
+        { key: "passportDate", label: "Дата выдачи паспорта" },
+        { key: "passportNumber", label: "Серия и номер паспорта" },
+        { key: "passportIssuer", label: "Кем выдан паспорт" },
+        { key: "educationDocument", label: "Документ об образовании" },
+        { key: "educationDocumentNumber", label: "Номер документа об образовании" },
+        { key: "educationDocumentDate", label: "Дата выдачи документа об образовании" },
+        { key: "educationDocumentIssuer", label: "Кем выдан документ об образовании" },
+        { key: "fundingSource", label: "Источник финансирования" },
+        { key: "contractAmount", label: "Сумма договора", positive: true },
+        { key: "contractNo", label: "Номер договора" },
+        { key: "contractDate", label: "Дата договора" },
+        { key: "startDate", label: "Дата начала обучения" },
+        { key: "endDate", label: "Дата окончания обучения" }
+      ],
+      application: [
+        ...common,
+        { key: "studyForm", label: "Форма обучения" },
+        { key: "hours", label: "Количество часов", value: getStudentProgramHours(record) },
+        { key: "registrationAddress", label: "Адрес места регистрации" },
+        { key: "mailingAddress", label: "Адрес с почтовым индексом" },
+        { key: "phone", label: "Телефон" },
+        { key: "email", label: "Email" },
+        { key: "birthDate", label: "Дата рождения" },
+        { key: "citizenship", label: "Гражданство" },
+        { key: "passportType", label: "Вид документа" },
+        { key: "passportDate", label: "Дата выдачи паспорта" },
+        { key: "passportNumber", label: "Серия и номер паспорта" },
+        { key: "passportIssuer", label: "Кем выдан паспорт" },
+        { key: "educationDocument", label: "Документ об образовании" },
+        { key: "educationDocumentNumber", label: "Номер документа об образовании" },
+        { key: "educationDocumentDate", label: "Дата выдачи документа об образовании" },
+        { key: "educationDocumentIssuer", label: "Кем выдан документ об образовании" },
+        { key: "startDate", label: "Дата начала обучения" },
+        { key: "endDate", label: "Дата окончания обучения" }
+      ],
+      studyCertificate: [
+        ...common,
+        { key: "hours", label: "Количество часов", value: getStudentProgramHours(record) },
+        { key: "birthDate", label: "Дата рождения" },
+        { key: "enrollmentOrderNo", label: "Номер приказа о зачислении" },
+        { key: "enrollmentDate", label: "Дата зачисления" },
+        { key: "startDate", label: "Дата начала обучения" },
+        { key: "endDate", label: "Дата окончания обучения" }
+      ],
+      postalEnvelope: [
+        { key: "name", label: "ФИО" },
+        { key: "mailingAddress", label: "Адрес с почтовым индексом" },
+        { key: "phone", label: "Телефон" }
+      ],
+      enrollmentOrder: [
+        ...common,
+        { key: "startDate", label: "Дата начала обучения" },
+        { key: "enrollmentDate", label: "Дата зачисления" },
+        { key: "enrollmentOrderNo", label: "Номер приказа о зачислении" }
+      ],
+      expulsionOrder: [
+        ...common,
+        { key: "expulsionDate", label: "Дата отчисления" },
+        { key: "expulsionOrderNo", label: "Номер приказа об отчислении" }
+      ],
+      education: [
+        ...common,
+        { key: "hours", label: "Количество часов", value: getStudentProgramHours(record) },
+        { key: "startDate", label: "Дата начала обучения" },
+        { key: "endDate", label: "Дата окончания обучения" },
+        { key: "expulsionDate", label: "Дата приказа об отчислении" },
+        { key: "diplomaBlankNo", label: "Номер бланка" },
+        { key: "registrationNo", label: "Рег. номер" },
+        { key: "diplomaIssueDate", label: "Дата выдачи" }
+      ]
+    };
+    const requiredFields = [...(byKind[documentKind] || common)];
     if (programType === "ППП" || programType === "КПК") {
-      requiredFields.push({ key: "finalGrade", label: "оценку ИА" });
+      requiredFields.push({ key: "finalGrade", label: "Оценка ИА" });
     }
     if (programType === "ППП") {
+      const program = findProgramByName(record?.program);
       requiredFields.push(
-        { key: "protocolNo", label: "номер протокола" },
+        { key: "protocolNo", label: "Номер протокола" },
         {
           key: "qualification",
-          label: "квалификацию",
+          label: "Квалификация",
           value: String(record?.qualification || program?.qualification || "").trim()
         }
       );
     }
+    if (documentKind === "education") {
+      requiredFields.push({
+        key: "program",
+        focusKey: "program",
+        label: "Учебный план программы",
+        value: formatEducationDocumentTrainingPlan(record)
+      });
+    }
+    return requiredFields;
+  }
+
+  function getStudentDocumentFieldTab(fieldName) {
+    const key = String(fieldName || "");
+    const preferredTabs = {
+      contractNo: "ordersSdo",
+      contractDate: "ordersSdo",
+      enrollmentDate: "ordersSdo",
+      enrollmentOrderNo: "ordersSdo",
+      expulsionDate: "ordersSdo",
+      expulsionOrderNo: "ordersSdo",
+      diplomaBlankNo: "results",
+      registrationNo: "results",
+      diplomaIssueDate: "results",
+      finalGrade: "results",
+      protocolNo: "results",
+      qualification: "results",
+      contractAmount: "income",
+      fundingSource: "income"
+    };
+    if (preferredTabs[key]) return preferredTabs[key];
+    return visibleStudentCardTabs.find((tab) => (
+      tab.sections.some((section) => section.fields.some((fieldItem) => fieldItem.key === key))
+    ))?.id || "main";
+  }
+
+  function focusStudentDocumentField(fieldName, record) {
+    const key = String(fieldName || "").trim();
+    if (!key) return;
+    const tabId = getStudentDocumentFieldTab(key);
+    if (state.studentCardTab !== tabId) {
+      if (state.modal) state.modal.draft = { ...(state.modal.draft || {}), ...record };
+      state.studentCardTab = tabId;
+      render();
+    }
+    requestAnimationFrame(() => {
+      const input = document.querySelector(`[name="${CSS.escape(key)}"]`);
+      input?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+      input?.focus({ preventScroll: true });
+    });
+  }
+
+  function validateStudentDocumentRequiredFields(record, documentTemplate, programType = "") {
+    const documentKind = String(documentTemplate?.documentKind || "").trim();
+    const requiredFields = getStudentDocumentRequiredFields(documentKind, record, programType);
     const missing = requiredFields.filter((item) => {
       const value = item.value ?? record?.[item.key];
-      return !String(value || "").trim();
+      if (item.positive) return !(Number(value) > 0);
+      return !String(value ?? "").trim();
     });
     if (!missing.length) return true;
     const firstMissing = missing[0];
-    alert(`Документ об образовании не сформирован. Заполните ${missing.map((item) => item.label).join(", ")}.`);
-    document.querySelector(`[name='${firstMissing.key}']`)?.focus({ preventScroll: true });
+    const title = String(documentTemplate?.title || "Документ").trim();
+    alert(`Документ «${title}» не сформирован.\nНе заполнены поля: ${missing.map((item) => item.label).join(", ")}.`);
+    focusStudentDocumentField(firstMissing.focusKey || firstMissing.key, record);
     return false;
+  }
+
+  function validateStudentEducationDocumentRequiredFields(record, programType, documentTemplate) {
+    return validateStudentDocumentRequiredFields(record, documentTemplate, programType);
   }
 
   function getStudentCardDocumentTemplate(documentKind) {
@@ -14289,8 +19223,8 @@ MAX - https://bizvmax.ru/zifra_plus
       .slice(0, 80);
   }
 
-  function getStudentYandexDocumentsFolder(record) {
-    let source = String(record?.photoPath || "")
+  function normalizeStudentDocumentsFolderSource(value, stripFileName = false) {
+    let source = String(value || "")
       .trim()
       .replace(/\\/g, "/")
       .replace(/^[a-z]:\/+/i, "");
@@ -14299,13 +19233,28 @@ MAX - https://bizvmax.ru/zifra_plus
     const rootMarker = "аис допобразование/";
     const rootIndex = source.toLocaleLowerCase("ru-RU").indexOf(rootMarker);
     if (rootIndex >= 0) source = source.slice(rootIndex + rootMarker.length);
-    const parts = source.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
-    if (parts.length && /\.[a-z0-9]{2,5}$/i.test(parts.at(-1))) parts.pop();
-    if (parts.length && !parts.some((part) => part === "." || part === "..")) {
-      return `${useParentFolder ? "[-1]/" : ""}${parts.join("/")}`;
-    }
+    const parts = source
+      .replace(/^\/+|\/+$/g, "")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (stripFileName && parts.length && /\.[a-z0-9]{2,5}$/i.test(parts.at(-1))) parts.pop();
+    if (!parts.length || parts.some((part) => part === "." || part === "..")) return "";
+    return `${useParentFolder ? "[-1]/" : ""}${parts.join("/")}`;
+  }
+
+  function getStudentYandexDocumentsFolder(record) {
     const studentName = getStudentCompactFolderName(record?.name) || "БезФИО";
-    return `Слушатели/${studentName}/Документы`;
+    const individualFolder = normalizeStudentDocumentsFolderSource(record?.photoPath, true);
+    if (individualFolder) return individualFolder;
+    const configuredTemplate = getDocumentPathSettingValue("studentDocumentsFolder")
+      || documentPathSettingDefaults[0].value;
+    const configuredFolder = normalizeStudentDocumentsFolderSource(applyContractTemplateMarkers(configuredTemplate, {
+      "ФамилияИО": studentName,
+      "ФИО": String(record?.name || "").trim(),
+      "UID": String(record?.uid || record?.id || "").trim()
+    }));
+    return configuredFolder || `Слушатели/${studentName}/Документы`;
   }
 
   function getStudentYandexDocumentsFolderUrl(record) {
@@ -14328,11 +19277,80 @@ MAX - https://bizvmax.ru/zifra_plus
     return `https://disk.yandex.ru/client/disk/${fullPath.map(encodeURIComponent).join("/")}`;
   }
 
-  function getStudentDocumentStorageRequest(record) {
+  function getStudentDocumentStorageFolder(record, documentTemplate = {}) {
+    const studentFolder = getStudentYandexDocumentsFolder(record);
+    const configuredTemplate = getDefaultDocumentSaveFolderTemplate(documentTemplate);
+    const sourceValues = collectContractTemplateSourceValues(record);
+    const pathValues = {
+      ...sourceValues,
+      "Папка документов слушателя": studentFolder
+    };
+    normalizeDocumentPathSettings(state.data.dictionaries.documentPathSettings).forEach((setting) => {
+      const fieldName = String(setting.label || "").replace(/^#|#$/g, "");
+      if (!fieldName || fieldName === "Папка документов слушателя") return;
+      pathValues[fieldName] = applyContractTemplateMarkers(setting.value, pathValues);
+    });
+    const resolvedFolder = applyContractTemplateMarkers(configuredTemplate, pathValues);
+    const useParentFolder = /^\s*\[-1\](?:[\\/]+|$)/u.test(resolvedFolder);
+    const parts = String(resolvedFolder || "")
+      .trim()
+      .replace(/^\s*\[-1\][\\/]+/u, "")
+      .replace(/\\/g, "/")
+      .replace(/^\/+|\/+$/g, "")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (!parts.length || parts.some((part) => part === "." || part === "..")) return studentFolder;
+    return `${useParentFolder ? "[-1]/" : ""}${parts.join("/")}`;
+  }
+
+  function getStudentDocumentStorageRequest(record, documentTemplate = {}) {
+    const configuredFolder = getDefaultDocumentSaveFolderTemplate(documentTemplate);
+    const useBrowserDownloads = configuredFolder === downloadsFolderTemplateMarker;
+    if (useBrowserDownloads) {
+      return {
+        saveToYandexDisk: false,
+        promptLocalSave: false,
+        useBrowserDownloads: true,
+        studentFolder: "",
+        studentName: String(record?.name || "")
+      };
+    }
+    const recommendedSaveEnabled = Boolean(state.data.meta.yandexDiskAutoSave);
+    const useLocalDocuments = getOpenDocumentsLocally();
     return {
-      saveToYandexDisk: Boolean(state.data.meta.yandexDiskAutoSave),
-      studentFolder: getStudentYandexDocumentsFolder(record),
+      saveToYandexDisk: recommendedSaveEnabled && !useLocalDocuments,
+      promptLocalSave: useLocalDocuments,
+      useBrowserDownloads: false,
+      studentFolder: getStudentDocumentStorageFolder(record, documentTemplate),
       studentName: String(record?.name || "")
+    };
+  }
+
+  async function prepareStudentDocumentStorageRequest(record, documentTemplate, fileName) {
+    return getStudentDocumentStorageRequest(record, documentTemplate);
+  }
+
+  function readLocalDocumentSaveResult(response, requested) {
+    if (!requested) return null;
+    const saved = response.headers.get("X-Local-Document-Saved");
+    const decodeHeader = (name) => {
+      const value = response.headers.get(name) || "";
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return value;
+      }
+    };
+    if (saved === "true") {
+      return { saved: true, path: decodeHeader("X-Local-Document-Path") };
+    }
+    if (response.headers.get("X-Local-Document-Cancelled") === "true") {
+      return { saved: false, cancelled: true };
+    }
+    return {
+      saved: false,
+      error: decodeHeader("X-Local-Document-Error") || "Сервер не подтвердил локальное сохранение файла."
     };
   }
 
@@ -14361,7 +19379,159 @@ MAX - https://bizvmax.ru/zifra_plus
     alert(`Документ скачан, но не сохранён на Яндекс-Диск: ${result.error}`);
   }
 
-  async function downloadStudentDocumentFromTemplate(documentTemplate, record, button, errorTitle) {
+  const activeDocumentGenerationTasks = new Map();
+  let documentGenerationTaskSequence = 0;
+
+  function getDocumentGenerationIndicator() {
+    let indicator = document.querySelector("[data-document-generation-indicator]");
+    if (indicator) return indicator;
+    indicator = document.createElement("div");
+    indicator.className = "document-generation-indicator";
+    indicator.dataset.documentGenerationIndicator = "";
+    indicator.setAttribute("role", "status");
+    indicator.setAttribute("aria-live", "polite");
+    indicator.hidden = true;
+    indicator.innerHTML = `
+      <span class="document-generation-spinner" aria-hidden="true"></span>
+      <div class="document-generation-indicator-body">
+        <strong>Формирование документа</strong>
+        <span data-document-generation-status>Подготовка...</span>
+        <div class="document-generation-progress" aria-hidden="true"><span></span></div>
+      </div>
+    `;
+    document.body.appendChild(indicator);
+    return indicator;
+  }
+
+  function updateDocumentGenerationIndicator() {
+    const indicator = getDocumentGenerationIndicator();
+    const tasks = [...activeDocumentGenerationTasks.values()];
+    if (!tasks.length) {
+      indicator.hidden = true;
+      return;
+    }
+    const title = tasks.at(-1) || "Документ";
+    const status = indicator.querySelector("[data-document-generation-status]");
+    if (status) status.textContent = `Формируется: ${title}`;
+    indicator.hidden = false;
+  }
+
+  function beginDocumentGeneration(title) {
+    const taskId = `document-generation-${++documentGenerationTaskSequence}`;
+    activeDocumentGenerationTasks.set(taskId, String(title || "Документ").trim() || "Документ");
+    updateDocumentGenerationIndicator();
+    return taskId;
+  }
+
+  function endDocumentGeneration(taskId) {
+    activeDocumentGenerationTasks.delete(taskId);
+    updateDocumentGenerationIndicator();
+  }
+
+  async function finishStudentDocumentGeneration(response, fileName, storageRequest) {
+    const localSaveResult = readLocalDocumentSaveResult(
+      response,
+      storageRequest.promptLocalSave
+    );
+    const yandexSaveResult = readYandexDocumentSaveResult(
+      response,
+      storageRequest.saveToYandexDisk
+    );
+    const blob = await response.blob();
+    if (localSaveResult?.saved || localSaveResult?.cancelled) return;
+    if (yandexSaveResult?.saved) return;
+    downloadBlob(fileName, blob);
+    if (localSaveResult && !localSaveResult.saved) {
+      alert(`Не удалось сохранить документ по выбранному локальному пути: ${localSaveResult.error}`);
+      return;
+    }
+    showYandexDocumentSaveWarning(yandexSaveResult);
+  }
+
+  function applyDocumentEmailTemplateMarkers(template, values) {
+    const source = String(template || "");
+    const replaceMarker = (match, fieldName) => (
+      Object.prototype.hasOwnProperty.call(values, String(fieldName || "").trim())
+        ? String(values[String(fieldName || "").trim()] ?? "")
+        : match
+    );
+    return source
+      .replace(/#([^#\r\n]+)#/g, replaceMarker)
+      .replace(/\[([^\]\r\n]+)\]/g, replaceMarker)
+      .replace(/\{([^{}\r\n]+)\}/g, replaceMarker);
+  }
+
+  function prepareStudentDocumentEmailRequest(documentTemplate, record, fieldValues, sourceValues) {
+    const recipientMode = normalizeDocumentEmailDeliveryMode(
+      documentTemplate.emailDeliveryMode,
+      documentTemplate
+    );
+    if (recipientMode === "off") return null;
+    const values = {
+      ...normalizeDocumentEmailTemplateValues(documentTemplate.emailTemplateValues),
+      ...sourceValues,
+      ...fieldValues
+    };
+    const subject = normalizeServerEmailSubject(applyDocumentEmailTemplateMarkers(
+      documentTemplate.emailSubjectTemplate,
+      values
+    ));
+    const message = applyDocumentEmailTemplateMarkers(
+      documentTemplate.emailMessageTemplate,
+      values
+    ).trim();
+    const { sendToSystemMailbox, recipient } = resolveServerEmailRecipient(
+      String(record.email || "").trim(),
+      null,
+      recipientMode
+    );
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+      alert(sendToSystemMailbox
+        ? "Укажите корректный системный почтовый ящик в админке."
+        : "Укажите корректный Email слушателя.");
+      if (!sendToSystemMailbox) {
+        document.querySelector("[name='email']")?.focus({ preventScroll: true });
+      }
+      return false;
+    }
+    if (!subject) {
+      alert(`В параметрах документа «${documentTemplate.title}» не заполнена тема сообщения.`);
+      return false;
+    }
+    if (!message) {
+      alert(`В параметрах документа «${documentTemplate.title}» не заполнен текст сообщения.`);
+      return false;
+    }
+    const recipientDescription = sendToSystemMailbox
+      ? `системный ящик ${recipient}`
+      : `адрес слушателя ${recipient}`;
+    if (!confirm(`Сформировать документ «${documentTemplate.title}» и отправить его по почте?\n\nПолучатель: ${recipientDescription}.`)) {
+      return false;
+    }
+    return {
+      recipientMode,
+      subject,
+      message
+    };
+  }
+
+  async function createStudentDocumentEmailAttachment(response, fileName, outputFormat) {
+    const blob = await response.blob();
+    return {
+      fileName,
+      contentType: blob.type || (outputFormat === "docx"
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : "application/pdf"),
+      base64: await blobToBase64(blob)
+    };
+  }
+
+  async function downloadStudentDocumentFromTemplate(
+    documentTemplate,
+    record,
+    button,
+    errorTitle
+  ) {
     const templateUrl = documentTemplate.templateUrl || "";
     const templatePath = documentTemplate.templatePath || "";
     const useCustomDocumentProperties = isChecked(documentTemplate.useCustomDocumentProperties);
@@ -14371,13 +19541,36 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     const wasDisabled = Boolean(button?.disabled);
-    if (button) button.disabled = true;
+    const wasAriaBusy = button?.getAttribute("aria-busy");
+    const hadGeneratingClass = Boolean(button?.classList.contains("is-document-generating"));
+    const generationTaskId = beginDocumentGeneration(documentTemplate.title || "Документ");
+    if (button) {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      button.classList.add("is-document-generating");
+    }
     try {
       const fieldValues = evaluateContractTemplateFields(record, documentTemplate.fields);
       const sourceValues = collectContractTemplateSourceValues(record);
       const fileNameValues = { ...sourceValues, ...fieldValues };
-      const fileName = ensureDocxFileName(applyContractTemplateMarkers(fileNameTemplate, fileNameValues));
-      const storageRequest = getStudentDocumentStorageRequest(record);
+      const outputFormat = normalizeDocumentGenerationFormat(documentTemplate.generationFormat);
+      const fileName = ensureGeneratedDocumentFileName(
+        applyContractTemplateMarkers(fileNameTemplate, fileNameValues),
+        outputFormat
+      );
+      const emailRequest = prepareStudentDocumentEmailRequest(
+        documentTemplate,
+        record,
+        fieldValues,
+        sourceValues
+      );
+      if (emailRequest === false) return;
+      const storageRequest = await prepareStudentDocumentStorageRequest(
+        record,
+        documentTemplate,
+        fileName
+      );
+      if (!storageRequest) return;
       const response = await fetch(photoApiUrl("/api/contracts/student-document"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -14388,6 +19581,7 @@ MAX - https://bizvmax.ru/zifra_plus
           fieldValues,
           sourceValues,
           useCustomDocumentProperties,
+          outputFormat,
           ...storageRequest
         })
       });
@@ -14395,14 +19589,34 @@ MAX - https://bizvmax.ru/zifra_plus
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       }
-      const yandexSaveResult = readYandexDocumentSaveResult(response, storageRequest.saveToYandexDisk);
-      const blob = await response.blob();
-      downloadBlob(fileName, blob);
-      showYandexDocumentSaveWarning(yandexSaveResult);
+      const emailResponse = emailRequest ? response.clone() : null;
+      await finishStudentDocumentGeneration(response, fileName, storageRequest);
+      if (emailRequest && emailResponse) {
+        const attachment = await createStudentDocumentEmailAttachment(
+          emailResponse,
+          fileName,
+          outputFormat
+        );
+        await sendServerEmail({
+          email: String(record.email || "").trim(),
+          subject: emailRequest.subject,
+          message: emailRequest.message,
+          button,
+          attachment,
+          recipientMode: emailRequest.recipientMode,
+          skipConfirmation: true
+        });
+      }
     } catch (error) {
       alert(`${errorTitle}: ${error.message}`);
     } finally {
-      if (button) button.disabled = wasDisabled;
+      endDocumentGeneration(generationTaskId);
+      if (button) {
+        button.disabled = wasDisabled;
+        if (wasAriaBusy === null) button.removeAttribute("aria-busy");
+        else button.setAttribute("aria-busy", wasAriaBusy);
+        if (!hadGeneratingClass) button.classList.remove("is-document-generating");
+      }
     }
   }
 
@@ -14420,7 +19634,7 @@ MAX - https://bizvmax.ru/zifra_plus
       alert(`Для вида программы ${programType} не найден шаблон документа об образовании в конструкторе документов.`);
       return;
     }
-    if (!validateStudentEducationDocumentRequiredFields(record, programType)) return;
+    if (!validateStudentEducationDocumentRequiredFields(record, programType, documentTemplate)) return;
     await downloadStudentDocumentFromTemplate(
       documentTemplate,
       record,
@@ -14437,6 +19651,7 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("В конструкторе документов не найден шаблон «Справка об обучении».");
       return;
     }
+    if (!validateStudentDocumentRequiredFields(record, documentTemplate)) return;
     await downloadStudentDocumentFromTemplate(
       documentTemplate,
       record,
@@ -14462,7 +19677,13 @@ MAX - https://bizvmax.ru/zifra_plus
       alert(missingMessage);
       return;
     }
-    await downloadStudentDocumentFromTemplate(documentTemplate, record, button, errorTitle);
+    if (!validateStudentDocumentRequiredFields(record, documentTemplate)) return;
+    await downloadStudentDocumentFromTemplate(
+      documentTemplate,
+      record,
+      button,
+      errorTitle
+    );
   }
 
   function ensureStudentOrderNumber(record, fieldName, message) {
@@ -14493,6 +19714,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function openStudentEnrollmentOrderDocument(event) {
     const record = collectStudentFormDraft();
+    const documentTemplate = getStudentCardDocumentTemplate("enrollmentOrder");
+    if (documentTemplate && !validateStudentDocumentRequiredFields(record, documentTemplate)) return;
     if (!ensureStudentOrderDocumentDate(
       record,
       "enrollmentOrderNo",
@@ -14518,6 +19741,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function openStudentExpulsionOrderDocument(event) {
     const record = collectStudentFormDraft();
+    const documentTemplate = getStudentCardDocumentTemplate("expulsionOrder");
+    if (documentTemplate && !validateStudentDocumentRequiredFields(record, documentTemplate)) return;
     if (!ensureStudentOrderDocumentDate(
       record,
       "expulsionOrderNo",
@@ -14542,6 +19767,12 @@ MAX - https://bizvmax.ru/zifra_plus
       .toLocaleLowerCase("ru-RU");
     return /за\s+сч[её]т\s+организац/u.test(fundingSource)
       || /юр(?:идическ[\p{L}\p{N}_]*\s+лиц[\p{L}\p{N}_]*|лиц[\p{L}\p{N}_]*)/u.test(fundingSource);
+  }
+
+  function getAutomaticStudentContractTemplate(record) {
+    return isStudentFundedByLegalEntity(record)
+      ? getLegalEntityApplicationDocumentTemplate()
+      : getPrimaryDocumentTemplate();
   }
 
   function chooseStudentContractDocument(documentTemplates, selectedDocumentId) {
@@ -14607,55 +19838,18 @@ MAX - https://bizvmax.ru/zifra_plus
   async function openStudentContractDocument(event) {
     const button = event?.currentTarget;
     const record = collectStudentFormDraft();
-    const automaticTemplate = isStudentFundedByLegalEntity(record)
-      ? getLegalEntityApplicationDocumentTemplate()
-      : getPrimaryDocumentTemplate();
+    const automaticTemplate = getAutomaticStudentContractTemplate(record);
     const documentTemplate = event?.shiftKey
       ? await chooseStudentContractDocument(getStudentContractDocumentTemplates(), automaticTemplate.id)
       : automaticTemplate;
     if (!documentTemplate) return;
-    const fields = documentTemplate.fields;
-    const templateUrl = documentTemplate.templateUrl || "";
-    const templatePath = documentTemplate.templatePath || "";
-    const useCustomDocumentProperties = isChecked(documentTemplate.useCustomDocumentProperties);
-    const fileNameTemplate = documentTemplate.fileNameTemplate || "договор_#ФИО_обуч#";
-    if (!templateUrl.trim() && !templatePath.trim()) {
-      alert("В конструкторе документов не указана ссылка на шаблон и не загружен файл Word.");
-      return;
-    }
-    const wasDisabled = Boolean(button?.disabled);
-    if (button) button.disabled = true;
-    try {
-      const fieldValues = evaluateContractTemplateFields(record, fields);
-      const sourceValues = collectContractTemplateSourceValues(record);
-      const fileName = ensureDocxFileName(applyContractTemplateMarkers(fileNameTemplate, fieldValues));
-      const storageRequest = getStudentDocumentStorageRequest(record);
-      const response = await fetch(photoApiUrl("/api/contracts/student-document"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          templateUrl,
-          templatePath,
-          fileName,
-          fieldValues,
-          sourceValues,
-          useCustomDocumentProperties,
-          ...storageRequest
-        })
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
-      }
-      const yandexSaveResult = readYandexDocumentSaveResult(response, storageRequest.saveToYandexDisk);
-      const blob = await response.blob();
-      downloadBlob(fileName, blob);
-      showYandexDocumentSaveWarning(yandexSaveResult);
-    } catch (error) {
-      alert(`Не удалось сформировать документ «${documentTemplate.title}»: ${error.message}`);
-    } finally {
-      if (button) button.disabled = wasDisabled;
-    }
+    if (!validateStudentDocumentRequiredFields(record, documentTemplate)) return;
+    await downloadStudentDocumentFromTemplate(
+      documentTemplate,
+      record,
+      button,
+      `Не удалось сформировать документ «${documentTemplate.title}»`
+    );
   }
 
   function evaluateContractTemplateFields(record, fields) {
@@ -14797,6 +19991,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function evaluateContractTemplateField(field, record, values, evaluateByName = null) {
     const fieldName = String(field.name || "").trim();
+    if (fieldName === "Прогр обуч факт") return getContractTemplateSourceValue("Прогр обуч факт", record);
+    if (fieldName === "Вид курсов") return formatContractProgramTitle(record);
     if (fieldName === "Номер приказа зачисления") return getContractTemplateSourceValue("Номер приказа зачисления", record);
     if (fieldName === "Дата приказа зачисления") return getContractTemplateSourceValue("Дата приказа зачисления", record);
     if (fieldName === "Дата начала обучения") return getContractTemplateSourceValue("Дата начала обучения", record);
@@ -14839,7 +20035,7 @@ MAX - https://bizvmax.ru/zifra_plus
       case "СрокС": return formatContractDate(raw("Дата начала обучения"));
       case "Сумма": return formatContractMoneyWithWords(raw("Сумма  по договору (руб)"));
       case "Фамилия": return nameParts.surname;
-      case "ФИО_обуч_род": return isChecked(record.noDeclension) ? record.name || "" : inflectFioGenitive(record.name || "");
+      case "ФИО_обуч_род": return inflectFioGenitive(record.name || "", isChecked(record.noDeclension));
       case "Фото": return raw("Фото") || "";
       case "Стажировка": return isChecked(record.internship) ? "(со стажировкой)" : "";
       case "Форма обучения": return formatContractStudyForm(raw("Форма обучения"));
@@ -15123,11 +20319,11 @@ MAX - https://bizvmax.ru/zifra_plus
     return { surname, firstName, patronymic };
   }
 
-  function inflectFioGenitive(name) {
+  function inflectFioGenitive(name, preserveSurname = false) {
     const parts = splitFullName(name);
     const gender = inferStudentGender(name);
     return [
-      inflectRussianNamePart(parts.surname, gender, "surname"),
+      preserveSurname ? parts.surname : inflectRussianNamePart(parts.surname, gender, "surname"),
       inflectRussianNamePart(parts.firstName, gender, "firstName"),
       inflectRussianNamePart(parts.patronymic, gender, "patronymic")
     ].filter(Boolean).join(" ");
@@ -15166,13 +20362,15 @@ MAX - https://bizvmax.ru/zifra_plus
     ));
   }
 
-  function ensureDocxFileName(value) {
+  function ensureGeneratedDocumentFileName(value, format = "pdf") {
+    const extension = normalizeDocumentGenerationFormat(format);
     const cleaned = String(value || "договор")
       .trim()
+      .replace(/\.(?:pdf|docx)$/i, "")
       .replace(/[\\/:*?"<>|]+/g, "")
       .replace(/\s+/g, "_")
       .replace(/^[_\-.]+|[_\-.]+$/g, "") || "договор";
-    return /\.docx$/i.test(cleaned) ? cleaned : `${cleaned}.docx`;
+    return `${cleaned}.${extension}`;
   }
 
   function downloadBlob(fileName, blob) {
@@ -15465,7 +20663,13 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function ensureRecordUid(config, record = {}) {
     if (state.modal?.id || !config.fields?.some((item) => item.key === "uid")) return record;
-    return { ...record, uid: record.uid || getNextUid() };
+    return {
+      ...record,
+      uid: record.uid || getNextUid(),
+      ...(config.collection === "students"
+        ? { additionalStatus: record.additionalStatus || DEFAULT_STUDENT_ADDITIONAL_STATUS }
+        : {})
+    };
   }
 
   function download(filename, content, type) {
@@ -15491,13 +20695,18 @@ MAX - https://bizvmax.ru/zifra_plus
       expenseTypes: "Виды затрат",
       inventoryTypes: "Виды ТМЦ",
       managers: "Ответственные",
+      agents: "Агенты",
       sources: "Источники",
+      studentAdditionalStatuses: "Дополнительные статусы слушателей",
       citizenships: "Гражданство",
       documentTypes: "Виды документов",
       passportIssuers: "Кем выдан документ",
       educationLevels: "Уровни образования",
       educationDocumentTypes: "Виды документов об образовании",
       educationDocumentIssuers: "Кем выдан документ об образовании",
+      frdoProfessionalAreas: "Области профессиональной деятельности (ФРДО)",
+      economicActivities: "Виды экономической деятельности (1-ПК)",
+      minimumEducationLevels: "Минимальные уровни образования слушателей",
       trainingPlanAttestationTypes: "Формы аттестации учебного плана",
       workPlaces: "Места работы",
       positions: "Должности",
@@ -15505,7 +20714,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ovzStatuses: "Статусы ОВЗ",
       fundingSources: "Источники финансирования",
       expenseNotes: "Типовые примечания расходов",
+      paymentSettings: "Оплата",
       sdoSettings: "Настройки СДО",
+      documentPathSettings: "Пути сохранения документов",
       educationRegistrationTypeCodes: "Сокращения типов программ в рег. номере",
       finalAttestationSettings: "Итоговая аттестация: оценки и шкала",
       discountRules: "Скидки",
@@ -15546,6 +20757,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   bindStudentStatusHistoryNavigation();
+  window.addEventListener("resize", repositionOpenFieldLookupPanels, { passive: true });
   render();
   syncServerConnectionSettings();
   window.setTimeout(() => {

@@ -1,0 +1,15 @@
+services:
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    container_name: ais-onlyoffice
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:80"
+    environment:
+      JWT_ENABLED: "true"
+      JWT_IN_BODY: "true"
+      JWT_SECRET: "${ONLYOFFICE_JWT_SECRET:?Set ONLYOFFICE_JWT_SECRET}"
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      EXAMPLE_ENABLED: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

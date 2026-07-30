@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory = $true)]
   [string]$InputPath,
 
@@ -131,6 +131,199 @@ function Convert-CellValue {
   return $Value
 }
 
+function Get-WorkbookDefinedName {
+  param(
+    [object]$Workbook,
+    [object[]]$Names
+  )
+  foreach ($candidate in @($Names)) {
+    $name = ([string]$candidate).Trim()
+    if (-not $name) { continue }
+    $definedName = $null
+    try {
+      $definedName = $Workbook.Names.Item($name)
+    } catch {}
+    if ($null -ne $definedName) { return $definedName }
+  }
+  return $null
+}
+
+function Get-ExcelRangeReference {
+  param(
+    [object]$Sheet,
+    [object]$Range
+  )
+  $sheetName = ([string]$Sheet.Name).Replace("'", "''")
+  return "='$sheetName'!$($Range.Address())"
+}
+
+function Set-WorkbookDefinedName {
+  param(
+    [object]$Workbook,
+    [string]$Name,
+    [string]$Reference
+  )
+  $definedName = Get-WorkbookDefinedName $Workbook @($Name)
+  if ($null -ne $definedName) {
+    try {
+      $definedName.RefersTo = $Reference
+    } finally {
+      Release-ComObject $definedName
+    }
+    return
+  }
+  $createdName = $null
+  try {
+    $createdName = $Workbook.Names.Add($Name, $Reference)
+  } finally {
+    Release-ComObject $createdName
+  }
+}
+
+function Set-ExcelCellValue {
+  param(
+    [object]$Sheet,
+    [int]$Row,
+    [int]$Column,
+    [string]$Value
+  )
+  $cell = $null
+  try {
+    $cell = $Sheet.Cells.Item($Row, $Column)
+    $cell.Value2 = $Value
+  } finally {
+    Release-ComObject $cell
+  }
+}
+
+function Update-PaymentSettings {
+  param(
+    [object]$Workbook,
+    [object]$Payload
+  )
+  if (-not [bool](Get-ObjectProperty $Payload "paymentConstantsProvided")) {
+    return [pscustomobject]@{ Count = 0; Skipped = $true }
+  }
+  $sheet = $null
+  try {
+    $sheet = $Workbook.Worksheets.Item("Настройки")
+    $constants = @($Payload.paymentConstants)
+    $builtInConstants = @($constants | Where-Object { -not [bool](Get-ObjectProperty $_ "custom") })
+    foreach ($constant in $builtInConstants) {
+      $marker = ([string](Get-ObjectProperty $constant "marker")).Trim()
+      if (-not $marker) { continue }
+      $legacyNames = @((Get-ObjectProperty $constant "legacyNames"))
+      $compatibleNames = @($marker) + $legacyNames
+      $definedName = Get-WorkbookDefinedName $Workbook $compatibleNames
+      $targetRange = $null
+      try {
+        if ($null -ne $definedName) {
+          try { $targetRange = $definedName.RefersToRange } catch {}
+        }
+        if ($null -eq $targetRange) {
+          $legacyRow = [int](Get-ObjectProperty $constant "legacyRow")
+          if ($legacyRow -lt 2) { continue }
+          $targetRange = $sheet.Cells.Item($legacyRow, 1)
+        }
+        $value = [double](Get-ObjectProperty $constant "value")
+        if ([bool](Get-ObjectProperty $constant "percent")) {
+          $value = $value / 100
+          try { $targetRange.NumberFormat = "0.##%" } catch {}
+        }
+        $targetRange.Value2 = $value
+        $reference = Get-ExcelRangeReference $sheet $targetRange
+        Set-WorkbookDefinedName $Workbook $marker $reference
+        foreach ($legacyName in $legacyNames) {
+          $existingLegacyName = Get-WorkbookDefinedName $Workbook @($legacyName)
+          if ($null -eq $existingLegacyName) { continue }
+          try {
+            $existingLegacyName.RefersTo = $reference
+          } finally {
+            Release-ComObject $existingLegacyName
+          }
+        }
+      } finally {
+        Release-ComObject $targetRange
+        Release-ComObject $definedName
+      }
+    }
+
+    $markerColumn = 50
+    $valueColumn = 51
+    $markerHeader = "Константы оплаты веб-АИС"
+    $valueHeader = "Значение"
+    $currentMarkerHeader = ([string]$sheet.Cells.Item(1, $markerColumn).Value2).Trim()
+    $currentValueHeader = ([string]$sheet.Cells.Item(1, $valueColumn).Value2).Trim()
+    if (
+      ($currentMarkerHeader -and $currentMarkerHeader -ne $markerHeader) -or
+      ($currentValueHeader -and $currentValueHeader -ne $valueHeader)
+    ) {
+      throw "Колонки AX:AY листа 'Настройки' заняты и не могут использоваться для констант оплаты."
+    }
+    $lastMarkerRow = [int]$sheet.Cells.Item($sheet.Rows.Count, $markerColumn).End(-4162).Row
+    $lastValueRow = [int]$sheet.Cells.Item($sheet.Rows.Count, $valueColumn).End(-4162).Row
+    $lastManagedRow = [Math]::Max(1, [Math]::Max($lastMarkerRow, $lastValueRow))
+    for ($row = 2; $row -le $lastManagedRow; $row += 1) {
+      $oldMarker = ([string]$sheet.Cells.Item($row, $markerColumn).Value2).Trim()
+      if (-not $oldMarker) { continue }
+      $oldName = Get-WorkbookDefinedName $Workbook @($oldMarker)
+      if ($null -eq $oldName) { continue }
+      $oldRange = $null
+      try {
+        try { $oldRange = $oldName.RefersToRange } catch {}
+        if (
+          $null -ne $oldRange -and
+          ([string]$oldRange.Worksheet.Name) -eq "Настройки" -and
+          [int]$oldRange.Column -eq $valueColumn
+        ) {
+          $oldName.Delete() | Out-Null
+        }
+      } finally {
+        Release-ComObject $oldRange
+        Release-ComObject $oldName
+      }
+    }
+    $clearRange = $null
+    try {
+      $clearRange = $sheet.Range(
+        $sheet.Cells.Item(1, $markerColumn),
+        $sheet.Cells.Item([Math]::Max(2, $lastManagedRow), $valueColumn)
+      )
+      $clearRange.ClearContents() | Out-Null
+    } finally {
+      Release-ComObject $clearRange
+    }
+    Set-ExcelCellValue $sheet 1 $markerColumn $markerHeader
+    Set-ExcelCellValue $sheet 1 $valueColumn $valueHeader
+
+    $customConstants = @($constants | Where-Object { [bool](Get-ObjectProperty $_ "custom") })
+    for ($index = 0; $index -lt $customConstants.Count; $index += 1) {
+      $constant = $customConstants[$index]
+      $marker = ([string](Get-ObjectProperty $constant "marker")).Trim()
+      if (-not $marker) { continue }
+      $row = $index + 2
+      Set-ExcelCellValue $sheet $row $markerColumn $marker
+      $valueRange = $null
+      try {
+        $valueRange = $sheet.Cells.Item($row, $valueColumn)
+        $valueRange.Value2 = [double](Get-ObjectProperty $constant "value")
+        $reference = Get-ExcelRangeReference $sheet $valueRange
+        Set-WorkbookDefinedName $Workbook $marker $reference
+      } finally {
+        Release-ComObject $valueRange
+      }
+    }
+    return [pscustomobject]@{
+      Count = $constants.Count
+      Skipped = $false
+    }
+  } catch {
+    throw "Ошибка обновления ставок и констант оплаты: $($_.Exception.Message)`n$($_.ScriptStackTrace)"
+  } finally {
+    Release-ComObject $sheet
+  }
+}
+
 function Encode-StudentEventValue {
   param([object]$Value)
   $text = ([string]$Value).Trim()
@@ -252,7 +445,7 @@ function Build-StudentEventSettings {
 
   $selectedIndexes = [Collections.Generic.List[string]]::new()
   for ($index = 0; $index -lt $eventBlocks.Count; $index += 1) {
-    if ($eventBlocks[$index].Selected) { $selectedIndexes.Add([string]($index + 1)) }
+    if ($eventBlocks[$index].Selected) { $selectedIndexes.Add([string]$index) }
   }
   $eventLines = [Collections.Generic.List[string]]::new()
   $eventLines.Add("[КарточкаСлушателя\События]")
@@ -426,7 +619,11 @@ function Insert-StudentTemplateRows {
     $insertEndRow = $InsertRow + $Count - 1
     $insertedRows = $Sheet.Rows.Item("${InsertRow}:${insertEndRow}")
     $insertedRows.Insert(-4121, 0) | Out-Null
-    $sourceRange = $Sheet.Range($Sheet.Cells.Item($SourceRow, 1), $Sheet.Cells.Item($SourceRow, $LastColumn))
+    $effectiveSourceRow = if ($SourceRow -ge $InsertRow) { $SourceRow + $Count } else { $SourceRow }
+    $sourceRange = $Sheet.Range(
+      $Sheet.Cells.Item($effectiveSourceRow, 1),
+      $Sheet.Cells.Item($effectiveSourceRow, $LastColumn)
+    )
     $targetRange = $Sheet.Range(
       $Sheet.Cells.Item($InsertRow, 1),
       $Sheet.Cells.Item($insertEndRow, $LastColumn)
@@ -446,6 +643,127 @@ function Insert-StudentTemplateRows {
   }
 }
 
+function Test-StudentSectionHeading {
+  param(
+    [object]$Sheet,
+    [int]$Row,
+    [int]$NameColumn
+  )
+  $cell = $null
+  $font = $null
+  try {
+    $cell = $Sheet.Cells.Item($Row, $NameColumn)
+    $font = $cell.Font
+    return [bool]$font.Bold -and [double]$font.Size -ge 14
+  } finally {
+    Release-ComObject $font
+    Release-ComObject $cell
+  }
+}
+
+function Get-StudentSectionLayout {
+  param(
+    [object]$Sheet,
+    [int]$StartRow,
+    [int]$LastRow,
+    [int]$UidColumn,
+    [int]$NameColumn,
+    [int]$FirstSectionRowHint = 0
+  )
+  $uidRange = $null
+  $nameRange = $null
+  try {
+    $uidRange = $Sheet.Range(
+      $Sheet.Cells.Item($StartRow, $UidColumn),
+      $Sheet.Cells.Item($LastRow, $UidColumn)
+    )
+    $nameRange = $Sheet.Range(
+      $Sheet.Cells.Item($StartRow, $NameColumn),
+      $Sheet.Cells.Item($LastRow, $NameColumn)
+    )
+    $uidValues = $uidRange.Value2
+    $nameValues = $nameRange.Value2
+    $candidates = [Collections.Generic.List[object]]::new()
+    $firstStudentRow = 0
+    for ($row = $StartRow; $row -le $LastRow; $row += 1) {
+      $offset = $row - $StartRow + 1
+      $uid = Convert-Uid (Get-MatrixValue $uidValues $offset 1)
+      $name = ([string](Get-MatrixValue $nameValues $offset 1)).Trim()
+      if ($uid -and $name -and $firstStudentRow -le 0) {
+        $firstStudentRow = $row
+      }
+      if (-not $uid -and $name) {
+        $candidates.Add([pscustomobject]@{
+          Row = [int]$row
+          Title = $name
+        }) | Out-Null
+      }
+    }
+    if ($firstStudentRow -le 0) {
+      throw "На листе не найдены строки слушателей с uid и ФИО."
+    }
+
+    $firstSection = $null
+    if ($FirstSectionRowHint -gt 0) {
+      $firstSection = $candidates | Where-Object { $_.Row -eq $FirstSectionRowHint } | Select-Object -First 1
+    } else {
+      foreach ($candidate in $candidates) {
+        if ($candidate.Row -ge $firstStudentRow) { break }
+        if (Test-StudentSectionHeading $Sheet $candidate.Row $NameColumn) {
+          $firstSection = $candidate
+        }
+      }
+    }
+    if ($null -eq $firstSection) {
+      throw "Не найден первый крупный жирный заголовок раздела слушателей."
+    }
+
+    $sections = [Collections.Generic.List[object]]::new()
+    foreach ($candidate in $candidates) {
+      if ($candidate.Row -lt $firstSection.Row) { continue }
+      if (Test-StudentSectionHeading $Sheet $candidate.Row $NameColumn) {
+        $sections.Add($candidate) | Out-Null
+      }
+    }
+    if ($sections.Count -le 0) {
+      throw "Не найдены крупные жирные заголовки разделов слушателей."
+    }
+
+    $lastSectionRow = [int]$sections[$sections.Count - 1].Row
+    $lastMovableRow = $LastRow
+    foreach ($candidate in $candidates) {
+      if ($candidate.Row -le $lastSectionRow) { continue }
+      $lastMovableRow = $candidate.Row - 1
+      break
+    }
+    return [pscustomobject]@{
+      Sections = @($sections)
+      FirstSectionRow = [int]$firstSection.Row
+      LastMovableRow = [int]$lastMovableRow
+    }
+  } finally {
+    Release-ComObject $uidRange
+    Release-ComObject $nameRange
+  }
+}
+
+function Remove-StudentRows {
+  param(
+    [object]$Sheet,
+    [int]$StartRow,
+    [int]$Count
+  )
+  if ($Count -le 0) { return }
+  $rows = $null
+  try {
+    $endRow = $StartRow + $Count - 1
+    $rows = $Sheet.Rows.Item("${StartRow}:${endRow}")
+    $rows.Delete(-4162) | Out-Null
+  } finally {
+    Release-ComObject $rows
+  }
+}
+
 function Update-StudentSheet {
   param(
     [object]$Workbook,
@@ -462,148 +780,210 @@ function Update-StudentSheet {
     $nameColumn = Find-MappedColumn $columns "name"
     $startRow = $header.Row + 1
     $lastRow = [int]$header.LastRow
-    $targetSectionTitle = "На зачисление (пока без документов)"
-    $nextSectionTitle = "Заявки (без оплаты)"
+    $layout = Get-StudentSectionLayout $sheet $startRow $lastRow $uidColumn $nameColumn
+    $sections = @($layout.Sections)
+    $defaultSectionTitle = ([string](Get-ObjectProperty $Payload "defaultStudentAdditionalStatus")).Trim()
+    if (-not $defaultSectionTitle) {
+      $defaultSectionTitle = "На зачисление (пока без документов)"
+    }
 
+    $sectionByKey = @{}
+    $recordsBySection = @{}
+    foreach ($section in $sections) {
+      $key = ([string]$section.Title).Trim().ToLowerInvariant()
+      if (-not $sectionByKey.ContainsKey($key)) {
+        $sectionByKey[$key] = $section
+        $recordsBySection[$key] = [Collections.Generic.List[object]]::new()
+      }
+    }
+    $defaultSectionKey = $defaultSectionTitle.ToLowerInvariant()
+    if (-not $sectionByKey.ContainsKey($defaultSectionKey)) {
+      throw "На листе 'База' не найден раздел '$defaultSectionTitle'."
+    }
+
+    $fixedUidCounts = @{}
+    $existingSectionByUid = @{}
     $uidRange = $null
-    $nameRange = $null
-    $existingUidCounts = @{}
-    $targetSectionRow = 0
-    $nextSectionRow = 0
-    $targetSeparatorBlankRowCount = 0
-    $targetBlankRows = [Collections.Generic.List[int]]::new()
     try {
-      $uidRange = $sheet.Range($sheet.Cells.Item($startRow, $uidColumn), $sheet.Cells.Item($lastRow, $uidColumn))
-      $nameRange = $sheet.Range($sheet.Cells.Item($startRow, $nameColumn), $sheet.Cells.Item($lastRow, $nameColumn))
+      $uidRange = $sheet.Range(
+        $sheet.Cells.Item($startRow, $uidColumn),
+        $sheet.Cells.Item($lastRow, $uidColumn)
+      )
       $uidValues = $uidRange.Value2
-      $nameValues = $nameRange.Value2
       for ($row = $startRow; $row -le $lastRow; $row += 1) {
         $offset = $row - $startRow + 1
         $uid = Convert-Uid (Get-MatrixValue $uidValues $offset 1)
-        $name = ([string](Get-MatrixValue $nameValues $offset 1)).Trim()
-        if ($uid) {
-          if (-not $existingUidCounts.ContainsKey($uid)) {
-            $existingUidCounts[$uid] = 0
-          }
-          $existingUidCounts[$uid] += 1
+        if (-not $uid) { continue }
+        if ($row -lt $layout.FirstSectionRow -or $row -gt $layout.LastMovableRow) {
+          if (-not $fixedUidCounts.ContainsKey($uid)) { $fixedUidCounts[$uid] = 0 }
+          $fixedUidCounts[$uid] += 1
+          continue
         }
-        if ([string]::Equals($name, $targetSectionTitle, [StringComparison]::InvariantCultureIgnoreCase)) {
-          $targetSectionRow = $row
-        } elseif (
-          $targetSectionRow -gt 0 -and
-          [string]::Equals($name, $nextSectionTitle, [StringComparison]::InvariantCultureIgnoreCase)
-        ) {
-          $nextSectionRow = $row
+        for ($sectionIndex = 0; $sectionIndex -lt $sections.Count; $sectionIndex += 1) {
+          $sectionStart = [int]$sections[$sectionIndex].Row + 1
+          $sectionEnd = if ($sectionIndex + 1 -lt $sections.Count) {
+            [int]$sections[$sectionIndex + 1].Row - 1
+          } else {
+            [int]$layout.LastMovableRow
+          }
+          if ($row -lt $sectionStart -or $row -gt $sectionEnd) { continue }
+          if (-not $existingSectionByUid.ContainsKey($uid)) {
+            $existingSectionByUid[$uid] = [Collections.Generic.Queue[string]]::new()
+          }
+          $existingSectionByUid[$uid].Enqueue([string]$sections[$sectionIndex].Title)
           break
         }
       }
-      if ($targetSectionRow -le 0 -or $nextSectionRow -le $targetSectionRow) {
-        throw "Не найдены границы раздела '$targetSectionTitle' на листе 'База'."
-      }
-      for ($row = $nextSectionRow - 1; $row -gt $targetSectionRow; $row -= 1) {
-        $offset = $row - $startRow + 1
-        $uid = Convert-Uid (Get-MatrixValue $uidValues $offset 1)
-        $name = ([string](Get-MatrixValue $nameValues $offset 1)).Trim()
-        if ($uid -or $name) { break }
-        $targetSeparatorBlankRowCount += 1
-      }
-      $targetSeparatorStartRow = $nextSectionRow - $targetSeparatorBlankRowCount
-      for ($row = $targetSectionRow + 1; $row -lt $nextSectionRow; $row += 1) {
-        $offset = $row - $startRow + 1
-        $uid = Convert-Uid (Get-MatrixValue $uidValues $offset 1)
-        $name = ([string](Get-MatrixValue $nameValues $offset 1)).Trim()
-        if (-not $uid -and -not $name -and $row -lt $targetSeparatorStartRow) {
-          $targetBlankRows.Add([int]$row) | Out-Null
-        }
-      }
     } finally {
       Release-ComObject $uidRange
-      Release-ComObject $nameRange
-      $uidRange = $null
-      $nameRange = $null
     }
 
-    $remainingUidCounts = @{}
-    foreach ($entry in $existingUidCounts.GetEnumerator()) {
-      $remainingUidCounts[$entry.Key] = [int]$entry.Value
-    }
-    $newStudentCount = 0
+    $fixedRecords = [Collections.Generic.List[object]]::new()
     foreach ($student in @($Payload.students)) {
       $uid = Convert-Uid (Get-ObjectProperty $student "uid")
       if (-not $uid) { continue }
-      if ($remainingUidCounts.ContainsKey($uid) -and $remainingUidCounts[$uid] -gt 0) {
-        $remainingUidCounts[$uid] -= 1
+      if ($fixedUidCounts.ContainsKey($uid) -and $fixedUidCounts[$uid] -gt 0) {
+        $fixedUidCounts[$uid] -= 1
+        $fixedRecords.Add($student) | Out-Null
+        continue
+      }
+      $additionalStatus = ([string](Get-ObjectProperty $student "additionalStatus")).Trim()
+      if (
+        -not $additionalStatus -and
+        $existingSectionByUid.ContainsKey($uid) -and
+        $existingSectionByUid[$uid].Count -gt 0
+      ) {
+        $additionalStatus = $existingSectionByUid[$uid].Dequeue()
+      }
+      $sectionKey = if ($additionalStatus) {
+        $additionalStatus.ToLowerInvariant()
       } else {
-        $newStudentCount += 1
+        $defaultSectionKey
+      }
+      if (-not $recordsBySection.ContainsKey($sectionKey)) {
+        $sectionKey = $defaultSectionKey
+      }
+      $recordsBySection[$sectionKey].Add($student) | Out-Null
+    }
+
+    $totalRowDelta = 0
+    for ($sectionIndex = $sections.Count - 1; $sectionIndex -ge 0; $sectionIndex -= 1) {
+      $section = $sections[$sectionIndex]
+      $sectionKey = ([string]$section.Title).Trim().ToLowerInvariant()
+      $sectionStart = [int]$section.Row + 1
+      $sectionEnd = if ($sectionIndex + 1 -lt $sections.Count) {
+        [int]$sections[$sectionIndex + 1].Row - 1
+      } else {
+        [int]$layout.LastMovableRow
+      }
+      $currentCount = 0
+      if ($sectionEnd -ge $sectionStart) {
+        try {
+          $uidRange = $sheet.Range(
+            $sheet.Cells.Item($sectionStart, $uidColumn),
+            $sheet.Cells.Item($sectionEnd, $uidColumn)
+          )
+          $uidValues = $uidRange.Value2
+          for ($row = $sectionStart; $row -le $sectionEnd; $row += 1) {
+            $offset = $row - $sectionStart + 1
+            $uid = Convert-Uid (Get-MatrixValue $uidValues $offset 1)
+            if (-not $uid) { continue }
+            if ($row -ne $sectionStart + $currentCount) {
+              throw "Строки слушателей в разделе '$($section.Title)' идут не подряд."
+            }
+            $currentCount += 1
+          }
+        } finally {
+          Release-ComObject $uidRange
+          $uidRange = $null
+        }
+      }
+      $targetCount = $recordsBySection[$sectionKey].Count
+      $delta = $targetCount - $currentCount
+      if ($delta -gt 0) {
+        $insertRow = $sectionStart + $currentCount
+        $templateRow = if ($currentCount -gt 0) {
+          $insertRow - 1
+        } else {
+          $sectionStart
+        }
+        Write-SyncProgress 9 "Добавление $delta строк в раздел '$($section.Title)'..."
+        Insert-StudentTemplateRows $sheet $templateRow $insertRow $header.LastColumn $delta
+        $totalRowDelta += $delta
+      } elseif ($delta -lt 0) {
+        $rowsToRemove = -$delta
+        $removeStartRow = $sectionStart + $targetCount
+        Write-SyncProgress 9 "Удаление $rowsToRemove строк из раздела '$($section.Title)'..."
+        Remove-StudentRows $sheet $removeStartRow $rowsToRemove
+        $totalRowDelta -= $rowsToRemove
+      }
+    }
+    $lastRow += $totalRowDelta
+
+    $finalLayout = Get-StudentSectionLayout `
+      $sheet $startRow $lastRow $uidColumn $nameColumn $layout.FirstSectionRow
+    $finalSections = @($finalLayout.Sections)
+    $recordByRow = @{}
+    foreach ($section in $finalSections) {
+      $sectionKey = ([string]$section.Title).Trim().ToLowerInvariant()
+      if (-not $recordsBySection.ContainsKey($sectionKey)) { continue }
+      $sectionRecords = $recordsBySection[$sectionKey]
+      for ($index = 0; $index -lt $sectionRecords.Count; $index += 1) {
+        $recordByRow[[int]$section.Row + 1 + $index] = $sectionRecords[$index]
       }
     }
 
-    if ($newStudentCount -gt $targetBlankRows.Count) {
-      $insertRow = $nextSectionRow - $targetSeparatorBlankRowCount
-      $templateRow = if ($targetBlankRows.Count -gt 0) {
-        $targetBlankRows[$targetBlankRows.Count - 1]
-      } elseif ($targetSeparatorBlankRowCount -gt 0) {
-        $insertRow
-      } else {
-        $targetSectionRow + 1
+    $fixedRowsByUid = @{}
+    try {
+      $uidRange = $sheet.Range(
+        $sheet.Cells.Item($startRow, $uidColumn),
+        $sheet.Cells.Item($lastRow, $uidColumn)
+      )
+      $uidValues = $uidRange.Value2
+      for ($row = $startRow; $row -le $lastRow; $row += 1) {
+        if ($row -ge $finalLayout.FirstSectionRow -and $row -le $finalLayout.LastMovableRow) {
+          continue
+        }
+        $offset = $row - $startRow + 1
+        $uid = Convert-Uid (Get-MatrixValue $uidValues $offset 1)
+        if (-not $uid) { continue }
+        if (-not $fixedRowsByUid.ContainsKey($uid)) {
+          $fixedRowsByUid[$uid] = [Collections.Generic.Queue[int]]::new()
+        }
+        $fixedRowsByUid[$uid].Enqueue([int]$row)
       }
-      $rowsToInsert = $newStudentCount - $targetBlankRows.Count
-      Write-SyncProgress 9 "Добавление $rowsToInsert строк в раздел '$targetSectionTitle'..."
-      Insert-StudentTemplateRows $sheet $templateRow $insertRow $header.LastColumn $rowsToInsert
-      for ($index = 0; $index -lt $rowsToInsert; $index += 1) {
-        $targetBlankRows.Add([int]($insertRow + $index)) | Out-Null
+    } finally {
+      Release-ComObject $uidRange
+      $uidRange = $null
+    }
+    foreach ($student in $fixedRecords) {
+      $uid = Convert-Uid (Get-ObjectProperty $student "uid")
+      if (
+        -not $fixedRowsByUid.ContainsKey($uid) -or
+        $fixedRowsByUid[$uid].Count -le 0
+      ) {
+        throw "Не найдена сохраненная служебная строка слушателя с uid '$uid'."
       }
-      $nextSectionRow += $rowsToInsert
-      $lastRow += $rowsToInsert
+      $recordByRow[$fixedRowsByUid[$uid].Dequeue()] = $student
     }
 
     $preserveRows = [Collections.Generic.HashSet[int]]::new()
-    $rowsByUid = @{}
-    $newStudentRows = [Collections.Generic.Queue[int]]::new()
-    $targetSeparatorStartRow = $nextSectionRow - $targetSeparatorBlankRowCount
     try {
-      $uidRange = $sheet.Range($sheet.Cells.Item($startRow, $uidColumn), $sheet.Cells.Item($lastRow, $uidColumn))
-      $nameRange = $sheet.Range($sheet.Cells.Item($startRow, $nameColumn), $sheet.Cells.Item($lastRow, $nameColumn))
+      $uidRange = $sheet.Range(
+        $sheet.Cells.Item($startRow, $uidColumn),
+        $sheet.Cells.Item($lastRow, $uidColumn)
+      )
       $uidValues = $uidRange.Value2
-      $nameValues = $nameRange.Value2
       for ($row = $startRow; $row -le $lastRow; $row += 1) {
+        if ($recordByRow.ContainsKey($row)) { continue }
         $offset = $row - $startRow + 1
         $uid = Convert-Uid (Get-MatrixValue $uidValues $offset 1)
-        $name = ([string](Get-MatrixValue $nameValues $offset 1)).Trim()
-        if ($uid) {
-          if (-not $rowsByUid.ContainsKey($uid)) {
-            $rowsByUid[$uid] = [Collections.Generic.Queue[int]]::new()
-          }
-          $rowsByUid[$uid].Enqueue($row)
-        } else {
-          $preserveRows.Add($row) | Out-Null
-          if (
-            $row -gt $targetSectionRow -and
-            $row -lt $targetSeparatorStartRow -and
-            -not $name
-          ) {
-            $newStudentRows.Enqueue($row)
-          }
+        if (-not $uid) {
+          $preserveRows.Add([int]$row) | Out-Null
         }
       }
     } finally {
       Release-ComObject $uidRange
-      Release-ComObject $nameRange
-    }
-
-    $recordByRow = @{}
-    foreach ($student in @($Payload.students)) {
-      $uid = Convert-Uid (Get-ObjectProperty $student "uid")
-      if (-not $uid) { continue }
-      if ($rowsByUid.ContainsKey($uid) -and $rowsByUid[$uid].Count -gt 0) {
-        $row = $rowsByUid[$uid].Dequeue()
-      } elseif ($newStudentRows.Count -gt 0) {
-        $row = $newStudentRows.Dequeue()
-        $preserveRows.Remove($row) | Out-Null
-      } else {
-        throw "Недостаточно строк в разделе '$targetSectionTitle' для новых слушателей."
-      }
-      $recordByRow[$row] = $student
     }
 
     $processedColumns = 0
@@ -685,6 +1065,8 @@ try {
   Write-SyncProgress 8 "Книга открыта. Обновление слушателей..."
   $studentResult = Update-StudentSheet $workbook $payload $dateFields $numberFields
   $expenseResult = Update-DirectExpenseSheet $workbook $payload $dateFields $numberFields
+  Write-SyncProgress 91 "Обновление ставок и констант оплаты..."
+  $paymentResult = Update-PaymentSettings $workbook $payload
 
   Write-SyncProgress 92 "Сохранение обновлённой книги..."
   try { $workbook.ForceFullCalculation = $true } catch {}
@@ -697,6 +1079,7 @@ try {
     type = "result"
     students = $studentResult.Count
     directExpenses = $expenseResult.Count
+    paymentConstants = $paymentResult.Count
     outputPath = $OutputPath
   } | ConvertTo-Json -Compress | Write-Output
 } finally {

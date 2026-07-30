@@ -20,20 +20,105 @@ const STUDENT_APPLICATIONS_QUERY_SCRIPT = path.join(ROOT, "scripts", "query-stud
 const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH = "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
 const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
 const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
+const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
 let serverSettings = {};
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
+const DEFAULT_DOCUMENT_CONVERTER_URL = "http://127.0.0.1:8082";
+const DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL = `http://host.docker.internal:${PORT}`;
 const MAX_JSON_BYTES = 40 * 1024 * 1024;
 const MAX_DOCX_BYTES = 24 * 1024 * 1024;
 const MAX_STUDENT_DATABASE_BYTES = 24 * 1024 * 1024;
 const MAX_STUDENT_PHOTO_BYTES = 16 * 1024 * 1024;
 const MAX_STUDENT_DATABASE_EXPORT_STUDENTS = 20000;
 const MAX_STUDENT_DATABASE_EXPORT_EXPENSES = 100000;
+const MAX_PAYMENT_DATABASE_CONSTANTS = 200;
+const MAX_EMAIL_SUBJECT_LENGTH = 200;
 const STUDENT_IMPORT_JOB_TTL_MS = 15 * 60 * 1000;
 const studentImportJobs = new Map();
 const studentExportJobs = new Map();
+const serverEmailRateLimits = new Map();
+const documentConversionSources = new Map();
+const DOCUMENT_CONVERSION_SOURCE_TTL_MS = 5 * 60 * 1000;
 const WORD_TEMPLATE_EXTENSIONS = new Set(["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"]);
 const OPENXML_WORD_EXTENSIONS = new Set(["docx", "docm", "dotx", "dotm"]);
+const PAYMENT_DATABASE_CONSTANT_DEFINITIONS = Object.freeze([
+  {
+    key: "employeeRate",
+    marker: "СтавкаОплатыСотруднику",
+    legacyNames: ["СтавкаОплатыСотрудника"],
+    legacyRow: 2
+  },
+  {
+    key: "teacherRate",
+    marker: "СтавкаОплатыПреподавателю",
+    legacyNames: ["СтавкаОплатыПреподавателя", "СтавкаПреподавателя"],
+    legacyRow: 3
+  },
+  {
+    key: "commissionChairRate",
+    marker: "СтавкаОплатыИАК",
+    legacyNames: ["СтавкаИАК", "СтавкаОплатыПредседателюИАК"],
+    legacyRow: 4
+  },
+  {
+    key: "practiceReviewRate",
+    marker: "СтавкаОплатыПроверкаПрактики",
+    legacyNames: ["СтавкаПроверкиПрактики"],
+    legacyRow: 5
+  },
+  {
+    key: "authorRate",
+    marker: "АвторскаяСтавка",
+    legacyNames: ["СтавкаАвтора"],
+    legacyRow: 6,
+    percent: true
+  }
+]);
+const PROGRAM_DATABASE_COLUMN_MAP = Object.freeze({
+  "Автор": "authorSource",
+  "Квалификация": "qualification",
+  "Сфера деятельности": "activityScope",
+  "ФГОС": "fgos",
+  "ФГОС компетенция": "fgosCompetency",
+  "Профстандарт": "professionalStandard",
+  "Профстандарт трудовые функции": "professionalStandardFunctions",
+  "Область профессиональной деятельности (для ФРДО)": "frdoProfessionalArea",
+  "Вид экономической деятельности (для 1-ПК)": "economicActivity",
+  "Минимальный уровень образования слушателя": "minimumEducationLevel",
+  "Номер приказа": "programOrderNo",
+  "Дата приказа": "programOrderDate",
+  "Папка ОП": "opFolder",
+  "Имя файла ОП": "opFileName",
+  "Председатель": "commissionChair",
+  "Член1": "commissionMember1",
+  "Член2": "commissionMember2",
+  "Секретарь": "secretary",
+  "Разработчик": "developer",
+  "Менеджер": "manager",
+  "Преподаватели": "teachers",
+  "Литература ОП": "literature"
+});
+const PROGRAM_DATABASE_LIST_FIELDS = new Set([
+  "qualification",
+  "activityScope",
+  "fgos",
+  "fgosCompetency",
+  "professionalStandard",
+  "professionalStandardFunctions",
+  "teachers",
+  "literature"
+]);
+const PROGRAM_DATABASE_DICTIONARY_RANGES = Object.freeze({
+  frdoProfessionalAreas: {
+    names: ["Деятельность"],
+    header: "Область профессиональной деятельности (для ФРДО)"
+  },
+  economicActivities: {
+    names: ["ВидыДеятПК1"],
+    header: "Вид экономической деятельности (для 1-ПК)"
+  }
+});
 const STUDENT_DATABASE_COLUMN_MAP = Object.freeze({
   "uid": "uid",
   "ФИО": "name",
@@ -205,6 +290,13 @@ const DIRECT_EXPENSE_DATABASE_COLUMN_MAP = Object.freeze({
   "Рекомендация оплаты": "recommendation",
   "Дополнительная информация": "additionalInfo"
 });
+const INVENTORY_DATABASE_COLUMN_MAP = Object.freeze({
+  "Дата": "date",
+  "Вид ТМЦ": "itemType",
+  "Сумма": "amount",
+  "Примечание": "note",
+  "uid": "uid"
+});
 const STUDENT_EVENT_IMPORT_TEMPLATES = Object.freeze([
   { key: "docsListNotice", label: "Уведомление с перечнем документов" },
   { key: "sourceDocsReceived", label: "Получен пакет исходных документов" },
@@ -233,7 +325,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Expose-Headers": "Content-Disposition, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error"
+  "Access-Control-Expose-Headers": "Content-Disposition, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled"
 };
 
 const MIME_TYPES = {
@@ -270,15 +362,32 @@ async function ensureStorage() {
     yandexDiskBasePath: DEFAULT_YANDEX_DISK_BASE_PATH,
     localDocumentsRoot: DEFAULT_LOCAL_DOCUMENTS_ROOT,
     localDocumentsRootIsSystemParent: false,
+    openDocumentsLocally: true,
     studentApplicationsMySqlConnectionString: "",
     studentApplicationsEmailHost: "",
     studentApplicationsEmailPort: 993,
     studentApplicationsEmailSecure: true,
+    studentApplicationsEmailSmtpHost: "",
+    studentApplicationsEmailSmtpPort: 465,
+    studentApplicationsEmailSmtpSecure: true,
     studentApplicationsEmailLogin: "",
+    documentConverterUrl: DEFAULT_DOCUMENT_CONVERTER_URL,
+    documentConverterSourceUrl: DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL,
     yandexDiskLogin: "",
     yandexDiskAutoSave: false,
     ...serverSettings
   };
+  if (
+    !String(serverSettings.documentConverterJwtSecret || "").trim()
+    && !String(process.env.ONLYOFFICE_JWT_SECRET || "").trim()
+  ) {
+    serverSettings.documentConverterJwtSecret = crypto.randomBytes(32).toString("hex");
+    await fs.writeFile(
+      SERVER_SETTINGS_PATH,
+      `${JSON.stringify(serverSettings, null, 2)}\n`,
+      "utf8"
+    );
+  }
   delete serverSettings.systemDocumentsPublicUrl;
   delete serverSettings.systemDocumentsPublicPassword;
   delete serverSettings.studentDatabaseUrl;
@@ -336,9 +445,23 @@ function escapeXmlAttribute(value) {
   return escapeXmlText(value).replace(/'/g, "&apos;");
 }
 
-function safeDocumentFileName(value) {
-  const base = safeNamePart(String(value || "договор").replace(/\.docx$/i, ""), "договор");
-  return `${base}.docx`;
+function normalizeGeneratedDocumentFormat(value) {
+  return String(value || "").trim().toLowerCase() === "docx" ? "docx" : "pdf";
+}
+
+function safeDocumentFileName(value, format = "") {
+  const source = String(value || "документ");
+  const extension = format
+    ? normalizeGeneratedDocumentFormat(format)
+    : (/\.docx$/i.test(source) ? "docx" : "pdf");
+  const base = safeNamePart(source.replace(/\.(?:pdf|docx)$/i, ""), "документ");
+  return `${base}.${extension}`;
+}
+
+function generatedDocumentContentType(format) {
+  return normalizeGeneratedDocumentFormat(format) === "docx"
+    ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    : "application/pdf";
 }
 
 const CRC_TABLE = (() => {
@@ -912,14 +1035,75 @@ function isAssistantReservePropertyName(name) {
   return /^(?:Резерв|ДатаРезерва)\d+$/u.test(String(name || ""));
 }
 
-function parseAssistantDocumentFieldProperties(properties) {
+function getAssistantOptionConfigText(properties) {
   const optionProperties = (Array.isArray(properties) ? properties : [])
     .filter((property) => isAssistantOptionPropertyName(property?.name))
     .sort((a, b) => (
       Number(String(a.name).replace(/^Опции/, "")) - Number(String(b.name).replace(/^Опции/, ""))
     ));
-  if (!optionProperties.length) return [];
-  const configText = decodeAssistantOptionText(optionProperties.map((property) => property.value || "").join(""));
+  return optionProperties.length
+    ? decodeAssistantOptionText(optionProperties.map((property) => property.value || "").join(""))
+    : "";
+}
+
+function normalizeAssistantOptionKey(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/[\s_-]+/g, "")
+    .trim()
+    .toLocaleLowerCase("ru-RU");
+}
+
+function parseAssistantEmailProperties(properties) {
+  const configText = getAssistantOptionConfigText(properties);
+  if (!configText) return [];
+  const aliases = new Map([
+    ["шаблон", "Шаблон"],
+    ["шаблонсообщения", "Шаблон"],
+    ["текстсообщения", "Шаблон"],
+    ["текстписьма", "Шаблон"],
+    ["темасообщ", "Тема сообщения"],
+    ["темасообщения", "Тема сообщения"],
+    ["темаписьма", "Тема сообщения"],
+    ["темаemail", "Тема сообщения"],
+    ["темаe-mail", "Тема сообщения"]
+  ]);
+  const values = new Map();
+  String(configText).split("\n").forEach((line) => {
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) return;
+    const sourceName = line.slice(0, separatorIndex).trim();
+    const targetName = aliases.get(normalizeAssistantOptionKey(sourceName));
+    if (!targetName || values.has(targetName)) return;
+    values.set(
+      targetName,
+      line.slice(separatorIndex + 1).replace(/\u000b/g, "\n")
+    );
+  });
+  const emailProperties = Array.from(values, ([name, value]) => ({
+    name,
+    value,
+    source: "assistant-options"
+  }));
+  const constants = [];
+  const seenConstants = new Set();
+  const constantPattern = /\[([^\]\r\n]+)\]=\{([\s\S]*?)\}/g;
+  for (const match of configText.matchAll(constantPattern)) {
+    const name = String(match[1] || "").trim();
+    if (!name || seenConstants.has(name)) continue;
+    constants.push({
+      name,
+      value: String(match[2] || "").replace(/\u000b/g, "\n"),
+      source: "assistant-constant"
+    });
+    seenConstants.add(name);
+  }
+  return [...emailProperties, ...constants];
+}
+
+function parseAssistantDocumentFieldProperties(properties) {
+  const configText = getAssistantOptionConfigText(properties);
+  if (!configText) return [];
   const fields = [];
   const seen = new Set();
   const sectionPattern = /^\[Поля\\([^\]]+)\]\s*\n([\s\S]*?)(?=^\[[^\]]+\]\s*$|(?![\s\S]))/gm;
@@ -953,8 +1137,10 @@ function parseAssistantDocumentFieldProperties(properties) {
   return fields;
 }
 
-function getDocumentFormulaPropertiesFromEntries(entries) {
-  const properties = parseCustomDocumentProperties(entries);
+function getDocumentFormulaPropertiesFromEntries(entries, customProperties = null) {
+  const properties = Array.isArray(customProperties)
+    ? customProperties
+    : parseCustomDocumentProperties(entries);
   return [
     ...properties.filter((property) => (
       !isAssistantOptionPropertyName(property.name)
@@ -1343,15 +1529,15 @@ function evaluateDocumentFormulaFunction(name, args, context) {
     return numberToRussianWords(Number(String(text(0)).replace(/\s+/g, "").replace(",", ".")) || 0);
   }
   if (upperName === "СКЛОНЕНИЕ_ФИО") {
-    const grammaticalCase = text(1).toUpperCase();
-    const mode = text(2).toUpperCase();
-    if (mode === "ИО") {
-      const parts = splitFullName(text(0));
-      return [parts.firstName, parts.patronymic].filter(Boolean).join(" ");
-    }
-    if (grammaticalCase === "И") return text(0);
-    if (grammaticalCase === "Д") return inflectFioDative(text(0));
-    return inflectFioGenitive(text(0));
+    const extendedSignature = args.length >= 5;
+    const grammaticalCase = text(extendedSignature ? 2 : 1).toUpperCase();
+    const mode = text(extendedSignature ? 4 : 2).toUpperCase();
+    return inflectFio(
+      text(0),
+      grammaticalCase,
+      mode,
+      formulaValueToBoolean(getFormulaContextValue("ФИО_несклон", context))
+    );
   }
   return `${name}(${args.map((arg) => formulaValueToString(evaluateDocumentFormulaExpression(arg, context))).join(";")})`;
 }
@@ -1429,24 +1615,34 @@ function inferGenderFromFio(name) {
   return "male";
 }
 
-function inflectFioGenitive(name) {
+function inflectFio(name, grammaticalCase = "Р", mode = "ФИО", preserveSurname = false) {
   const gender = inferGenderFromFio(name);
   const parts = splitFullName(name);
-  return [
-    inflectRussianNamePart(parts.surname, gender, "surname"),
-    inflectRussianNamePart(parts.firstName, gender, "firstName"),
-    inflectRussianNamePart(parts.patronymic, gender, "patronymic")
-  ].filter(Boolean).join(" ");
+  const normalizedCase = String(grammaticalCase || "Р").toUpperCase();
+  const normalizedMode = String(mode || "ФИО").toUpperCase();
+  const inflectPart = normalizedCase === "Д"
+    ? inflectRussianNamePartDative
+    : inflectRussianNamePart;
+  const surname = normalizedCase === "И" || preserveSurname
+    ? parts.surname
+    : inflectPart(parts.surname, gender, "surname");
+  const firstName = normalizedCase === "И"
+    ? parts.firstName
+    : inflectPart(parts.firstName, gender, "firstName");
+  const patronymic = normalizedCase === "И"
+    ? parts.patronymic
+    : inflectPart(parts.patronymic, gender, "patronymic");
+  if (normalizedMode === "Ф") return surname;
+  if (normalizedMode === "ИО") return [firstName, patronymic].filter(Boolean).join(" ");
+  return [surname, firstName, patronymic].filter(Boolean).join(" ");
 }
 
-function inflectFioDative(name) {
-  const gender = inferGenderFromFio(name);
-  const parts = splitFullName(name);
-  return [
-    inflectRussianNamePartDative(parts.surname, gender, "surname"),
-    inflectRussianNamePartDative(parts.firstName, gender, "firstName"),
-    inflectRussianNamePartDative(parts.patronymic, gender, "patronymic")
-  ].filter(Boolean).join(" ");
+function inflectFioGenitive(name, preserveSurname = false) {
+  return inflectFio(name, "Р", "ФИО", preserveSurname);
+}
+
+function inflectFioDative(name, preserveSurname = false) {
+  return inflectFio(name, "Д", "ФИО", preserveSurname);
 }
 
 function inflectRussianNamePart(value, gender, role) {
@@ -2320,7 +2516,7 @@ function resolveYandexDiskSourcePath(source) {
   );
 }
 
-function resolveLocalDocumentsFolder(source) {
+function resolveLocalDocumentsPath(source, missingPathMessage = "Не удалось определить папку документов слушателя.") {
   const rootSource = String(
     serverSettings.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
   ).trim();
@@ -2328,7 +2524,7 @@ function resolveLocalDocumentsFolder(source) {
     throw new Error("Укажите абсолютный путь к локальной папке документов.");
   }
   const relativePath = normalizeSystemDocumentsRelativePath(source);
-  if (!relativePath) throw new Error("Не удалось определить папку документов слушателя.");
+  if (!relativePath) throw new Error(missingPathMessage);
   const relativeParts = relativePath.split("/").filter(Boolean);
   if (relativeParts.some((part) => /[<>:"|?*\u0000-\u001f]/u.test(part))) {
     throw new Error("Путь к папке документов содержит недопустимые символы.");
@@ -2349,6 +2545,52 @@ function resolveLocalDocumentsFolder(source) {
   return folderPath;
 }
 
+function resolveLocalDocumentsFolder(source) {
+  return resolveLocalDocumentsPath(source);
+}
+
+function resolveLocalDocumentFile(source, fileName) {
+  const folderPath = resolveLocalDocumentsFolder(source);
+  const targetPath = path.resolve(folderPath, safeDocumentFileName(fileName));
+  const pathFromFolder = path.relative(folderPath, targetPath);
+  if (pathFromFolder.startsWith("..") || path.isAbsolute(pathFromFolder)) {
+    throw new Error("Файл документа находится за пределами выбранной папки.");
+  }
+  return targetPath;
+}
+
+async function resolveLocalDocumentTemplateFile(templateUrl, templatePath) {
+  const candidates = [];
+  const remoteSource = String(templateUrl || "").trim();
+  const normalizedRemoteSource = normalizeSystemDocumentsRelativePath(remoteSource);
+  if (normalizedRemoteSource) {
+    candidates.push(resolveLocalDocumentsPath(
+      normalizedRemoteSource,
+      "Не удалось определить локальный путь к шаблону."
+    ));
+  }
+  const storedSource = String(templatePath || "").trim();
+  if (storedSource) {
+    candidates.push(path.isAbsolute(storedSource)
+      ? path.resolve(storedSource)
+      : path.resolve(ROOT, storedSource));
+  }
+  if (!candidates.length) {
+    throw new Error("Для шаблона не задан локальный путь.");
+  }
+  for (const candidate of [...new Set(candidates)]) {
+    const extension = path.extname(candidate).replace(/^\./, "").toLowerCase();
+    if (!WORD_TEMPLATE_EXTENSIONS.has(extension)) continue;
+    try {
+      const stats = await fs.stat(candidate);
+      if (stats.isFile()) return candidate;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  throw new Error("Локальный файл шаблона не найден.");
+}
+
 function openFolderInExplorer(folderPath) {
   if (process.platform !== "win32") {
     return Promise.reject(new Error("Открытие папки в Проводнике доступно только в Windows."));
@@ -2367,6 +2609,84 @@ function openFolderInExplorer(folderPath) {
   });
 }
 
+function revealFileInExplorer(filePath) {
+  if (process.platform !== "win32") {
+    return Promise.reject(new Error("Выделение файла в Проводнике доступно только в Windows."));
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn("explorer.exe", ["/select,", filePath], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
+
+function openFileInDefaultApplication(filePath) {
+  if (process.platform !== "win32") {
+    return Promise.reject(new Error("Открытие файла доступно только в Windows."));
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn("explorer.exe", [filePath], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
+
+async function resolveLocalOperationalDocumentFile(folderPath, requestedFileName) {
+  const fileName = String(requestedFileName || "").trim();
+  if (
+    !fileName
+    || fileName !== path.basename(fileName)
+    || /[<>:"/\\|?*\u0000-\u001f]/u.test(fileName)
+  ) {
+    throw new Error("Имя файла ОП содержит недопустимые символы.");
+  }
+  const candidates = [fileName];
+  if (!path.extname(fileName)) {
+    candidates.push(`${fileName}.docx`, `${fileName}.pdf`, `${fileName}.doc`);
+  }
+  for (const candidate of candidates) {
+    const filePath = path.resolve(folderPath, candidate);
+    const relativePath = path.relative(folderPath, filePath);
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) continue;
+    try {
+      const stats = await fs.stat(filePath);
+      if (stats.isFile()) return filePath;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  if (!path.extname(fileName)) {
+    const entries = await fs.readdir(folderPath, { withFileTypes: true });
+    const requestedStem = fileName.toLocaleLowerCase("ru-RU");
+    const extensionPriority = new Map([[".docx", 0], [".pdf", 1], [".doc", 2]]);
+    const matchingEntry = entries
+      .filter((entry) => (
+        entry.isFile()
+        && path.parse(entry.name).name.toLocaleLowerCase("ru-RU") === requestedStem
+      ))
+      .sort((left, right) => (
+        (extensionPriority.get(path.extname(left.name).toLowerCase()) ?? 9)
+        - (extensionPriority.get(path.extname(right.name).toLowerCase()) ?? 9)
+      ))[0];
+    if (matchingEntry) return path.join(folderPath, matchingEntry.name);
+  }
+  throw new Error(`Файл «${fileName}» не найден в папке ОП.`);
+}
+
 async function handleOpenLocalDocumentsFolder(req, res) {
   try {
     const body = await readJsonBody(req);
@@ -2377,6 +2697,163 @@ async function handleOpenLocalDocumentsFolder(req, res) {
   } catch (error) {
     sendError(res, 400, error.message);
   }
+}
+
+async function handleOpenLocalDocumentResource(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const folderPath = resolveLocalDocumentsFolder(body.folder);
+    const folderStats = await fs.stat(folderPath).catch((error) => {
+      if (error.code === "ENOENT") throw new Error("Папка ОП не найдена на локальном диске.");
+      throw error;
+    });
+    if (!folderStats.isDirectory()) throw new Error("Указанный путь ОП не является папкой.");
+    const fileName = String(body.fileName || "").trim();
+    if (!fileName) {
+      await openFolderInExplorer(folderPath);
+      sendJson(res, 200, { ok: true, path: folderPath, type: "folder" });
+      return;
+    }
+    const filePath = await resolveLocalOperationalDocumentFile(folderPath, fileName);
+    await openFileInDefaultApplication(filePath);
+    sendJson(res, 200, { ok: true, path: filePath, type: "file" });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleResolveLocalDocumentFile(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const filePath = resolveLocalDocumentFile(body.folder, body.fileName || "документ.docx");
+    let exists = false;
+    try {
+      const stats = await fs.stat(filePath);
+      exists = stats.isFile();
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    sendJson(res, 200, { path: filePath, exists });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleRevealLocalDocumentTemplate(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    if (!serverSettings.openDocumentsLocally) {
+      throw new Error("Включите режим открытия документов на локальном компьютере.");
+    }
+    const filePath = await resolveLocalDocumentTemplateFile(body.templateUrl, body.templatePath);
+    await revealFileInExplorer(filePath);
+    sendJson(res, 200, { ok: true, path: filePath });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+function showLocalDocumentSaveDialog(initialPath, outputFormat) {
+  if (process.platform !== "win32") {
+    return Promise.reject(new Error("Диалог сохранения доступен только на локальном сервере Windows."));
+  }
+  const powershellPath = process.env.SystemRoot
+    ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    : "powershell.exe";
+  const launcher = [
+    "$ErrorActionPreference = 'Stop'",
+    "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "$dialog = New-Object System.Windows.Forms.SaveFileDialog",
+    "$dialog.Title = 'Сохранить сформированный документ'",
+    "$dialog.InitialDirectory = [IO.Path]::GetDirectoryName($env:AIS_SAVE_INITIAL_PATH)",
+    "$dialog.FileName = [IO.Path]::GetFileName($env:AIS_SAVE_INITIAL_PATH)",
+    "$dialog.Filter = if ($env:AIS_SAVE_FORMAT -eq 'pdf') { 'Документ PDF (*.pdf)|*.pdf' } else { 'Документ Word (*.docx)|*.docx' }",
+    "$dialog.DefaultExt = $env:AIS_SAVE_FORMAT",
+    "$dialog.AddExtension = $true",
+    "$dialog.OverwritePrompt = $true",
+    "$dialog.RestoreDirectory = $true",
+    "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {",
+    "  $selectedPath = [IO.Path]::ChangeExtension($dialog.FileName, '.' + $env:AIS_SAVE_FORMAT)",
+    "  [Console]::Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($selectedPath)))",
+    "}"
+  ].join("; ");
+  const args = [
+    "-NoLogo",
+    "-NoProfile",
+    "-STA",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-EncodedCommand",
+    Buffer.from(launcher, "utf16le").toString("base64")
+  ];
+  return new Promise((resolve, reject) => {
+    const child = spawn(powershellPath, args, {
+      windowsHide: true,
+      env: {
+        ...process.env,
+        AIS_SAVE_INITIAL_PATH: initialPath,
+        AIS_SAVE_FORMAT: outputFormat
+      }
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error("Окно сохранения не было закрыто в течение 10 минут."));
+    }, 10 * 60 * 1000);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      if (stdout.length < 64 * 1024) stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      if (stderr.length < 256 * 1024) stderr += chunk;
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (code !== 0) {
+        reject(new Error(String(stderr || stdout || "").trim() || "Не удалось открыть окно сохранения."));
+        return;
+      }
+      const encodedPath = String(stdout || "").replace(/^\uFEFF/, "").trim();
+      if (!encodedPath) {
+        resolve("");
+        return;
+      }
+      try {
+        resolve(Buffer.from(encodedPath, "base64").toString("utf8"));
+      } catch {
+        reject(new Error("Окно сохранения вернуло некорректный путь."));
+      }
+    });
+  });
+}
+
+async function promptAndSaveStudentDocumentLocally(bytes, fileName, body, outputFormat) {
+  const initialPath = resolveLocalDocumentFile(body.studentFolder, fileName);
+  await fs.mkdir(path.dirname(initialPath), { recursive: true });
+  const selectedPath = await showLocalDocumentSaveDialog(initialPath, outputFormat);
+  if (!selectedPath) return { saved: false, cancelled: true, path: initialPath };
+  await fs.mkdir(path.dirname(selectedPath), { recursive: true });
+  await fs.writeFile(selectedPath, bytes);
+  try {
+    await revealFileInExplorer(selectedPath);
+  } catch (error) {
+    console.warn(`Не удалось показать сохранённый документ в Проводнике: ${error.message}`);
+  }
+  return { saved: true, cancelled: false, path: selectedPath };
 }
 
 async function loadSystemDocumentFromYandexDisk(relativePath) {
@@ -2450,6 +2927,9 @@ function requestBuffer(url, options = {}, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     const transport = target.protocol === "http:" ? http : https;
+    const requestBody = options.body === undefined || options.body === null
+      ? null
+      : (Buffer.isBuffer(options.body) ? options.body : Buffer.from(options.body));
     const req = transport.request(target, {
       method: options.method || "GET",
       headers: {
@@ -2461,29 +2941,46 @@ function requestBuffer(url, options = {}, redirectCount = 0) {
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && location) {
         res.resume();
         if (redirectCount >= 5) {
-          reject(new Error("Слишком много перенаправлений при загрузке шаблона."));
+          reject(new Error(options.redirectError || "Слишком много перенаправлений при выполнении запроса."));
           return;
         }
-        resolve(requestBuffer(new URL(location, target).toString(), options, redirectCount + 1));
+        const preserveBody = [307, 308].includes(res.statusCode);
+        const nextOptions = preserveBody
+          ? options
+          : {
+              ...options,
+              method: "GET",
+              body: null,
+              headers: Object.fromEntries(
+                Object.entries(options.headers || {}).filter(([name]) => (
+                  !["content-length", "content-type"].includes(name.toLowerCase())
+                ))
+              )
+            };
+        resolve(requestBuffer(new URL(location, target).toString(), nextOptions, redirectCount + 1));
         return;
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {
         const chunks = [];
         res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => reject(new Error(`Не удалось скачать шаблон: HTTP ${res.statusCode} ${Buffer.concat(chunks).toString("utf8").slice(0, 200)}`)));
+        res.on("end", () => reject(new Error(
+          `${options.errorPrefix || "HTTP-запрос завершился с ошибкой"}: HTTP ${res.statusCode} `
+          + Buffer.concat(chunks).toString("utf8").slice(0, 500)
+        )));
         return;
       }
       const chunks = [];
       let size = 0;
       const totalSize = Number(res.headers["content-length"]) || 0;
+      const maxResponseBytes = Number(options.maxResponseBytes) || MAX_DOCX_BYTES;
       res.on("data", (chunk) => {
         size += chunk.length;
         options.onProgress?.({
           receivedBytes: size,
           totalBytes: totalSize
         });
-        if (size > MAX_DOCX_BYTES) {
-          req.destroy(new Error("Скачанный шаблон договора слишком большой."));
+        if (size > maxResponseBytes) {
+          req.destroy(new Error(options.sizeError || "Ответ сервера превышает допустимый размер."));
           return;
         }
         chunks.push(chunk);
@@ -2491,8 +2988,11 @@ function requestBuffer(url, options = {}, redirectCount = 0) {
       res.on("end", () => resolve(Buffer.concat(chunks)));
     });
     req.on("error", reject);
-    req.setTimeout(30000, () => req.destroy(new Error("Истекло время загрузки шаблона договора.")));
-    req.end();
+    req.setTimeout(
+      Number(options.timeoutMs) || 30000,
+      () => req.destroy(new Error(options.timeoutError || "Истекло время ожидания ответа сервера."))
+    );
+    req.end(requestBody);
   });
 }
 
@@ -2754,15 +3254,16 @@ function resolveStudentDocumentRelativeFolder(body) {
 }
 
 async function uploadStudentDocumentToYandexDisk(bytes, fileName, body) {
+  const outputFormat = normalizeGeneratedDocumentFormat(body.outputFormat);
   const { relativeFolder, useParentFolder } = resolveStudentDocumentRelativeFolder(body);
   const basePath = resolveYandexDiskBasePath(useParentFolder);
   const folderPath = normalizeWebDavPath(`${basePath}/${relativeFolder}`);
   await ensureYandexDiskFolder(folderPath);
-  const targetPath = normalizeWebDavPath(`${folderPath}/${safeDocumentFileName(fileName)}`);
+  const targetPath = normalizeWebDavPath(`${folderPath}/${safeDocumentFileName(fileName, outputFormat)}`);
   await requestYandexWebDav("PUT", targetPath, {
     acceptedStatuses: [200, 201, 204],
     body: bytes,
-    contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    contentType: generatedDocumentContentType(outputFormat)
   });
   return targetPath;
 }
@@ -3004,7 +3505,7 @@ function parseStudentEventSettings(value) {
     if (!currentEvent && key === "Выд") {
       block.selected = rawValue.split(",")
         .map((item) => Number(item.trim()))
-        .filter((item) => Number.isInteger(item) && item > 0);
+        .filter((item) => Number.isInteger(item) && item >= 0);
       return;
     }
     if (!currentEvent) return;
@@ -3036,11 +3537,12 @@ function parseStudentEventSettings(value) {
         customKeys.push(eventKey);
       }
       const date = normalizeImportedStudentEventDate(event.date);
-      const isSelected = selected.has(event.index);
+      const isSelected = selected.has(event.index - 1);
       eventOrder.push(eventKey);
       result[`event_${eventKey}_label`] = event.label;
       if (date) result[`event_${eventKey}_date`] = date;
       if (isSelected) result[`event_${eventKey}_state`] = date ? "dated" : "checked";
+      if (!isSelected && date) result[`event_${eventKey}_state`] = "unchecked";
     });
   result.eventOrder = eventOrder.join(",");
   result.eventCustomKeys = customKeys.join(",");
@@ -3081,10 +3583,302 @@ function buildDirectExpenseDatabaseRecordId(expense, rowNumber) {
   return `direct-expense-db-${hash}`;
 }
 
+function parseWorkbookNamedCellReference(reference) {
+  const source = String(reference || "").trim().replace(/^=/, "");
+  const separatorIndex = source.lastIndexOf("!");
+  if (separatorIndex < 0) return null;
+  let sheetName = source.slice(0, separatorIndex).trim();
+  if (sheetName.startsWith("'") && sheetName.endsWith("'")) {
+    sheetName = sheetName.slice(1, -1).replace(/''/g, "'");
+  }
+  const addresses = source.slice(separatorIndex + 1).split(":")
+    .map((address) => address.replace(/\$/g, "").trim().toUpperCase());
+  if (!/^[A-Z]{1,3}[1-9]\d*$/.test(addresses[0]) || (addresses[1] && addresses[1] !== addresses[0])) {
+    return null;
+  }
+  const match = /^([A-Z]{1,3})([1-9]\d*)$/.exec(addresses[0]);
+  return {
+    sheetName,
+    cellAddress: addresses[0],
+    column: match[1],
+    row: Number(match[2])
+  };
+}
+
+function getWorkbookNamedCell(workbook, names) {
+  const requestedNames = (Array.isArray(names) ? names : [names])
+    .map((name) => String(name || "").trim().toLocaleLowerCase("ru-RU"))
+    .filter(Boolean);
+  const namedRange = (workbook.Workbook?.Names || []).find((item) => (
+    requestedNames.includes(String(item?.Name || "").trim().toLocaleLowerCase("ru-RU"))
+  ));
+  const reference = parseWorkbookNamedCellReference(namedRange?.Ref);
+  if (!namedRange || !reference) return null;
+  return {
+    name: String(namedRange.Name || "").trim(),
+    ...reference,
+    value: workbook.Sheets[reference.sheetName]?.[reference.cellAddress]?.v ?? ""
+  };
+}
+
+function parseWorkbookNamedRangeReference(reference) {
+  const source = String(reference || "").trim().replace(/^=/, "");
+  const separatorIndex = source.lastIndexOf("!");
+  if (separatorIndex < 0) return null;
+  let sheetName = source.slice(0, separatorIndex).trim();
+  if (sheetName.startsWith("'") && sheetName.endsWith("'")) {
+    sheetName = sheetName.slice(1, -1).replace(/''/g, "'");
+  }
+  const addresses = source.slice(separatorIndex + 1).split(":")
+    .map((address) => address.replace(/\$/g, "").trim().toUpperCase());
+  if (
+    addresses.length > 2
+    || !addresses.every((address) => /^[A-Z]{1,3}[1-9]\d*$/.test(address))
+  ) {
+    return null;
+  }
+  const rangeAddress = addresses.length === 2
+    ? `${addresses[0]}:${addresses[1]}`
+    : addresses[0];
+  try {
+    return {
+      sheetName,
+      rangeAddress,
+      range: XLSX.utils.decode_range(rangeAddress)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getWorkbookNamedRangeValues(workbook, names) {
+  const requestedNames = (Array.isArray(names) ? names : [names])
+    .map((name) => String(name || "").trim().toLocaleLowerCase("ru-RU"))
+    .filter(Boolean);
+  const namedRange = (workbook.Workbook?.Names || []).find((item) => (
+    requestedNames.includes(String(item?.Name || "").trim().toLocaleLowerCase("ru-RU"))
+  ));
+  const reference = parseWorkbookNamedRangeReference(namedRange?.Ref);
+  const worksheet = reference && workbook.Sheets[reference.sheetName];
+  if (!namedRange || !reference || !worksheet) return null;
+  const values = [];
+  const seen = new Set();
+  for (let row = reference.range.s.r; row <= reference.range.e.r; row += 1) {
+    for (let column = reference.range.s.c; column <= reference.range.e.c; column += 1) {
+      const address = XLSX.utils.encode_cell({ r: row, c: column });
+      const value = String(worksheet[address]?.v ?? "").trim();
+      const normalized = value.toLocaleLowerCase("ru-RU");
+      if (!value || seen.has(normalized)) continue;
+      seen.add(normalized);
+      values.push(value);
+    }
+  }
+  return {
+    name: String(namedRange.Name || "").trim(),
+    sheetName: reference.sheetName,
+    rangeAddress: reference.rangeAddress,
+    values
+  };
+}
+
+function getSettingsColumnValuesByHeader(workbook, header) {
+  const worksheet = workbook.Sheets["Настройки"];
+  if (!worksheet?.["!ref"]) return [];
+  const usedRange = XLSX.utils.decode_range(worksheet["!ref"]);
+  let headerCell = null;
+  for (let row = usedRange.s.r; row <= usedRange.e.r && !headerCell; row += 1) {
+    for (let column = usedRange.s.c; column <= usedRange.e.c; column += 1) {
+      const address = XLSX.utils.encode_cell({ r: row, c: column });
+      if (String(worksheet[address]?.v ?? "").trim() === header) {
+        headerCell = { row, column };
+        break;
+      }
+    }
+  }
+  if (!headerCell) return [];
+  const values = [];
+  const seen = new Set();
+  for (let row = headerCell.row + 1; row <= usedRange.e.r; row += 1) {
+    const address = XLSX.utils.encode_cell({ r: row, c: headerCell.column });
+    const value = String(worksheet[address]?.v ?? "").trim();
+    const normalized = value.toLocaleLowerCase("ru-RU");
+    if (!value || seen.has(normalized)) continue;
+    seen.add(normalized);
+    values.push(value);
+  }
+  return values;
+}
+
+function normalizePaymentDatabaseRate(value, percent = false) {
+  if (value === "" || value === null || value === undefined) return null;
+  const number = Number(String(value).replace(",", "."));
+  if (!Number.isFinite(number)) return null;
+  const normalized = percent && Math.abs(number) <= 1 ? number * 100 : number;
+  return Math.round(Math.max(0, normalized) / 10) * 10;
+}
+
+function isPaymentDatabaseConstantMarker(value) {
+  const marker = String(value || "").trim();
+  return marker.length <= 255
+    && /^[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*$/u.test(marker)
+    && !/^[A-Z]{1,3}[1-9]\d*$/i.test(marker)
+    && !/^R[1-9]\d*C[1-9]\d*$/i.test(marker)
+    && !/^[RC]$/i.test(marker);
+}
+
+function parsePaymentDatabaseSettings(workbook, onProgress = () => {}) {
+  if (!workbook.Sheets["Настройки"]) {
+    throw new Error("В файле не найден лист «Настройки».");
+  }
+  onProgress({ progress: 65, message: "Чтение ставок оплаты с листа «Настройки»..." });
+  const paymentRates = {};
+  const paymentConstants = [];
+  const usedMarkers = new Set();
+  const knownMarkers = new Set(PAYMENT_DATABASE_CONSTANT_DEFINITIONS.flatMap((definition) => (
+    [definition.marker, ...(definition.legacyNames || [])]
+      .map((marker) => marker.toLocaleLowerCase("ru-RU"))
+  )));
+  PAYMENT_DATABASE_CONSTANT_DEFINITIONS.forEach((definition) => {
+    const namedCell = getWorkbookNamedCell(
+      workbook,
+      [definition.marker, ...(definition.legacyNames || [])]
+    );
+    const value = normalizePaymentDatabaseRate(namedCell?.value, definition.percent);
+    if (value === null) return;
+    paymentRates[definition.key] = value;
+    if (definition.key === "authorRate") paymentRates.defaultAuthorPercent = value;
+    const normalizedMarker = definition.marker.toLocaleLowerCase("ru-RU");
+    usedMarkers.add(normalizedMarker);
+    paymentConstants.push({
+      key: definition.key,
+      marker: definition.marker,
+      value,
+      custom: false
+    });
+  });
+  (workbook.Workbook?.Names || []).forEach((namedRange) => {
+    const marker = String(namedRange?.Name || "").trim();
+    const normalizedMarker = marker.toLocaleLowerCase("ru-RU");
+    if (
+      !isPaymentDatabaseConstantMarker(marker)
+      || knownMarkers.has(normalizedMarker)
+      || usedMarkers.has(normalizedMarker)
+    ) {
+      return;
+    }
+    const reference = parseWorkbookNamedCellReference(namedRange.Ref);
+    const isLegacyConstantCell = reference?.sheetName === "Настройки"
+      && reference.column === "A"
+      && reference.row >= 7;
+    const isManagedConstantCell = reference?.sheetName === "Настройки"
+      && reference.column === "AY"
+      && reference.row >= 2;
+    if (!isLegacyConstantCell && !isManagedConstantCell) return;
+    const value = normalizePaymentDatabaseRate(
+      workbook.Sheets[reference.sheetName]?.[reference.cellAddress]?.v
+    );
+    if (value === null) return;
+    usedMarkers.add(normalizedMarker);
+    paymentConstants.push({
+      key: `xlsbPaymentConstant-${marker}`,
+      marker,
+      value,
+      custom: true
+    });
+  });
+  return {
+    paymentRates,
+    paymentConstants,
+    paymentSettingsSheetName: "Настройки"
+  };
+}
+
+function parseProgramDictionaryDatabaseSettings(workbook, onProgress = () => {}) {
+  if (!workbook.Sheets["Настройки"]) {
+    throw new Error("В файле не найден лист «Настройки».");
+  }
+  onProgress({ progress: 66, message: "Чтение списков программы с листа «Настройки»..." });
+  const programDictionaries = {};
+  const programDictionarySources = {};
+  Object.entries(PROGRAM_DATABASE_DICTIONARY_RANGES).forEach(([dictionaryKey, definition]) => {
+    const namedRange = getWorkbookNamedRangeValues(workbook, definition.names);
+    const values = namedRange?.values?.length
+      ? namedRange.values
+      : getSettingsColumnValuesByHeader(workbook, definition.header);
+    programDictionaries[dictionaryKey] = values;
+    programDictionarySources[dictionaryKey] = namedRange?.rangeAddress || definition.header;
+  });
+  return {
+    programDictionaries,
+    programDictionarySources,
+    programDictionarySheetName: "Настройки"
+  };
+}
+
+function normalizeProgramDatabaseListValue(value) {
+  return [...new Set((Array.isArray(value) ? value : [value])
+    .flatMap((item) => String(item ?? "").split(/\r?\n|;\s*/u))
+    .map((item) => item.trim())
+    .filter(Boolean))]
+    .join("\n");
+}
+
+function normalizeProgramDatabaseValue(fieldName, value) {
+  if (fieldName === "programOrderDate") return normalizeStudentDatabaseDate(value);
+  if (PROGRAM_DATABASE_LIST_FIELDS.has(fieldName)) {
+    return normalizeProgramDatabaseListValue(value);
+  }
+  return String(value ?? "").trim();
+}
+
+function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}) {
+  const worksheet = workbook.Sheets["Реестр программ"];
+  if (!worksheet) throw new Error("В файле не найден лист «Реестр программ».");
+  onProgress({ progress: 67, message: "Чтение характеристик и настроек программ..." });
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: "",
+    raw: true,
+    UTC: true
+  });
+  const programHeaders = new Set(["Наименование программы", "Программа", "Наименование"]);
+  const headerRowIndex = rows.findIndex((row) => (
+    row.some((value) => programHeaders.has(String(value || "").trim()))
+    && row.some((value) => String(value || "").trim() === "Автор")
+  ));
+  if (headerRowIndex < 0) {
+    throw new Error("На листе «Реестр программ» не найдены колонки программы и автора.");
+  }
+  const headers = rows[headerRowIndex].map((value) => String(value || "").trim());
+  const programColumn = headers.findIndex((header) => programHeaders.has(header));
+  const mappedColumns = headers
+    .map((header, index) => ({
+      index,
+      fieldName: PROGRAM_DATABASE_COLUMN_MAP[header] || ""
+    }))
+    .filter((item) => item.fieldName);
+  const programPaymentSettings = rows.slice(headerRowIndex + 1)
+    .map((row) => {
+      const record = {
+        name: String(row[programColumn] ?? "").trim()
+      };
+      mappedColumns.forEach(({ index, fieldName }) => {
+        record[fieldName] = normalizeProgramDatabaseValue(fieldName, row[index]);
+      });
+      return record;
+    })
+    .filter((item) => item.name);
+  return {
+    programPaymentSettings,
+    programPaymentSheetName: "Реестр программ",
+    programPaymentSourceRows: Math.max(0, rows.length - headerRowIndex - 1)
+  };
+}
+
 function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}) {
   const worksheet = workbook.Sheets["Прямые затраты"];
   if (!worksheet) throw new Error("В файле не найден лист «Прямые затраты».");
-  onProgress({ progress: 68, message: "Чтение листа «Прямые затраты»..." });
+  onProgress({ progress: 74, message: "Чтение листа «Прямые затраты»..." });
   const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: true, UTC: true });
   const headerRowIndex = rows.findIndex((row) => (
     row.some((value) => String(value || "").trim() === "Дата")
@@ -3108,7 +3902,7 @@ function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}) {
     const processedRows = rowIndex - headerRowIndex;
     if (processedRows === 1 || processedRows % progressStep === 0 || processedRows === sourceRowCount) {
       onProgress({
-        progress: 70 + Math.floor((processedRows / Math.max(1, sourceRowCount)) * 25),
+        progress: 76 + Math.floor((processedRows / Math.max(1, sourceRowCount)) * 18),
         message: `Обработка прямых затрат: ${processedRows} из ${sourceRowCount}`,
         processedRows,
         totalRows: sourceRowCount
@@ -3142,6 +3936,228 @@ function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}) {
   };
 }
 
+function normalizeInventoryDatabaseValue(value, fieldName) {
+  if (fieldName === "date") return normalizeStudentDatabaseDate(value);
+  if (fieldName === "amount") return normalizeStudentDatabaseNumber(value);
+  if (fieldName === "uid") return String(value ?? "").trim().replace(/\.0+$/, "");
+  if (typeof value === "string") return value.trim();
+  if (value === null || value === undefined) return "";
+  return value;
+}
+
+function normalizeInventoryLookupValue(value) {
+  return String(value || "")
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildInventoryDatabaseRecordId(itemType) {
+  const hash = crypto.createHash("sha1")
+    .update(normalizeInventoryLookupValue(itemType))
+    .digest("hex")
+    .slice(0, 16);
+  return `inventory-db-${hash}`;
+}
+
+function buildInventoryGeneratedExpenseId(unit) {
+  const fingerprint = [
+    unit.uid,
+    unit.date,
+    unit.itemType,
+    unit.amount,
+    unit.note,
+    unit.sourceRow
+  ].map((value) => String(value ?? "").trim()).join(":");
+  const hash = crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 16);
+  return `direct-expense-inventory-${hash}`;
+}
+
+function parseInventoryDatabaseSheet(workbook, onProgress = () => {}) {
+  const worksheet = workbook.Sheets["Запасы"];
+  if (!worksheet) throw new Error("В файле не найден лист «Запасы».");
+  onProgress({ progress: 66, message: "Чтение листа «Запасы»..." });
+  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: true, UTC: true });
+  const headerRowIndex = rows.findIndex((row) => (
+    row.some((value) => String(value || "").trim() === "Вид ТМЦ")
+    && row.some((value) => String(value || "").trim() === "Сумма")
+    && row.some((value) => String(value || "").trim() === "uid")
+  ));
+  if (headerRowIndex < 0) {
+    throw new Error("На листе «Запасы» не найдены колонки Вид ТМЦ, Сумма и uid.");
+  }
+  const headers = rows[headerRowIndex].map((value) => String(value || "").trim());
+  const mappedColumns = headers
+    .map((header, index) => ({ index, fieldName: INVENTORY_DATABASE_COLUMN_MAP[header] || "" }))
+    .filter((column) => column.fieldName);
+  const itemTypeColumn = headers.indexOf("Вид ТМЦ");
+  const inventoryUnits = [];
+  const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
+  const progressStep = Math.max(1, Math.floor(sourceRowCount / 100));
+  for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    const processedRows = rowIndex - headerRowIndex;
+    if (processedRows === 1 || processedRows % progressStep === 0 || processedRows === sourceRowCount) {
+      onProgress({
+        progress: 67 + Math.floor((processedRows / Math.max(1, sourceRowCount)) * 5),
+        message: `Обработка запасов: ${processedRows} из ${sourceRowCount}`,
+        processedRows,
+        totalRows: sourceRowCount
+      });
+    }
+    const row = rows[rowIndex] || [];
+    const itemType = String(row[itemTypeColumn] ?? "").trim();
+    if (!itemType) continue;
+    const unit = { sourceRow: rowIndex + 1 };
+    mappedColumns.forEach((column) => {
+      const value = normalizeInventoryDatabaseValue(row[column.index], column.fieldName);
+      if (value === "") return;
+      unit[column.fieldName] = value;
+    });
+    unit.itemType = itemType;
+    unit.uid = String(unit.uid || "").trim();
+    unit.amount = unit.amount === "" || unit.amount === undefined ? "" : Number(unit.amount);
+    inventoryUnits.push(unit);
+  }
+  if (!inventoryUnits.length) {
+    throw new Error("На листе «Запасы» не найдено ни одной позиции.");
+  }
+
+  const unitsByType = new Map();
+  inventoryUnits.forEach((unit) => {
+    const key = normalizeInventoryLookupValue(unit.itemType);
+    if (!unitsByType.has(key)) unitsByType.set(key, []);
+    unitsByType.get(key).push(unit);
+  });
+  const inventory = [...unitsByType.values()]
+    .map((units) => {
+      const availableUnits = units.filter((unit) => !unit.uid);
+      const representativeUnits = availableUnits.length ? availableUnits : units;
+      const representative = [...representativeUnits].reverse().find((unit) => (
+        unit.date || unit.amount !== "" || unit.note
+      )) || representativeUnits[representativeUnits.length - 1];
+      const id = buildInventoryDatabaseRecordId(units[0].itemType);
+      units.forEach((unit) => {
+        unit.inventoryId = id;
+      });
+      return {
+        id,
+        date: representative?.date || "",
+        itemType: units[0].itemType,
+        amount: representative?.amount === "" || representative?.amount === undefined
+          ? 0
+          : Number(representative.amount),
+        note: representative?.note || "",
+        uid: "",
+        balance: availableUnits.length
+      };
+    })
+    .sort((left, right) => left.itemType.localeCompare(right.itemType, "ru", {
+      numeric: true,
+      sensitivity: "base"
+    }));
+
+  return {
+    inventory,
+    inventoryUnits,
+    inventorySheetName: "Запасы",
+    inventorySourceRows: sourceRowCount,
+    inventorySkippedRows: Math.max(0, sourceRowCount - inventoryUnits.length),
+    inventoryUnitCount: inventoryUnits.length,
+    inventoryAvailableUnitCount: inventoryUnits.filter((unit) => !unit.uid).length,
+    inventoryAllocatedUnitCount: inventoryUnits.filter((unit) => unit.uid).length
+  };
+}
+
+function getInventoryExpenseGroupKey(uid, itemType) {
+  return [
+    String(uid || "").trim().replace(/\.0+$/, ""),
+    normalizeInventoryLookupValue(itemType)
+  ].join("|");
+}
+
+function getInventoryExpenseMatchScore(expense, unit) {
+  let score = String(expense.inventoryLink || "").trim() ? 100 : 0;
+  if (
+    unit.amount !== ""
+    && unit.amount !== undefined
+    && expense.amount !== ""
+    && expense.amount !== undefined
+    && Number(unit.amount) === Number(expense.amount)
+  ) {
+    score += 10;
+  }
+  if (normalizeInventoryLookupValue(unit.note) === normalizeInventoryLookupValue(expense.note)) score += 5;
+  if (unit.date && unit.date === expense.date) score += 1;
+  return score;
+}
+
+function linkInventoryToDirectExpenses(inventory, inventoryUnits, directExpenses) {
+  const inventoryById = new Map(inventory.map((item) => [String(item.id), item]));
+  const expenses = directExpenses.map((expense) => ({ ...expense }));
+  const expenseIndexesByGroup = new Map();
+  expenses.forEach((expense, index) => {
+    const key = getInventoryExpenseGroupKey(expense.uid, expense.type);
+    if (!expenseIndexesByGroup.has(key)) expenseIndexesByGroup.set(key, []);
+    expenseIndexesByGroup.get(key).push(index);
+  });
+  const usedExpenseIndexes = new Set();
+  let inventoryMatchedExpenseCount = 0;
+  let inventoryGeneratedExpenseCount = 0;
+
+  inventoryUnits.filter((unit) => unit.uid).forEach((unit) => {
+    const inventoryItem = inventoryById.get(String(unit.inventoryId));
+    if (!inventoryItem) return;
+    const groupKey = getInventoryExpenseGroupKey(unit.uid, unit.itemType);
+    const candidateIndexes = (expenseIndexesByGroup.get(groupKey) || [])
+      .filter((index) => !usedExpenseIndexes.has(index));
+    const matchedIndex = candidateIndexes.reduce((bestIndex, index) => {
+      if (bestIndex < 0) return index;
+      return getInventoryExpenseMatchScore(expenses[index], unit)
+        > getInventoryExpenseMatchScore(expenses[bestIndex], unit)
+        ? index
+        : bestIndex;
+    }, -1);
+
+    if (matchedIndex >= 0) {
+      usedExpenseIndexes.add(matchedIndex);
+      expenses[matchedIndex].type = inventoryItem.itemType;
+      expenses[matchedIndex].inventoryId = inventoryItem.id;
+      expenses[matchedIndex].inventoryLink = inventoryItem.itemType;
+      inventoryMatchedExpenseCount += 1;
+      return;
+    }
+
+    expenses.push({
+      id: buildInventoryGeneratedExpenseId(unit),
+      uid: unit.uid,
+      date: unit.date || "",
+      type: inventoryItem.itemType,
+      amount: unit.amount === "" || unit.amount === undefined ? 0 : Number(unit.amount),
+      note: unit.note || "",
+      inventoryId: inventoryItem.id,
+      inventoryLink: inventoryItem.itemType
+    });
+    inventoryGeneratedExpenseCount += 1;
+  });
+
+  const inventoryUnmatchedExpenseCount = expenses.filter((expense) => (
+    String(expense.inventoryLink || "").trim()
+    && !String(expense.inventoryId || "").trim()
+    && inventory.some((item) => (
+      normalizeInventoryLookupValue(item.itemType) === normalizeInventoryLookupValue(expense.type)
+    ))
+  )).length;
+
+  return {
+    directExpenses: expenses,
+    inventoryLinkedExpenseCount: inventoryMatchedExpenseCount + inventoryGeneratedExpenseCount,
+    inventoryMatchedExpenseCount,
+    inventoryGeneratedExpenseCount,
+    inventoryUnmatchedExpenseCount
+  };
+}
+
 function attachDirectExpensesToStudents(students, directExpenses) {
   const studentsByUid = new Map();
   students.forEach((student) => {
@@ -3168,6 +4184,51 @@ function attachDirectExpensesToStudents(students, directExpenses) {
   };
 }
 
+function getStudentDatabaseRowHeight(worksheet, rowIndex) {
+  const rowSettings = worksheet?.["!rows"]?.[rowIndex];
+  return Number(rowSettings?.hpt || rowSettings?.hpx || 0);
+}
+
+function detectStudentDatabaseSections(worksheet, rows, headerRowIndex, uidColumn, nameColumn) {
+  const candidates = [];
+  let firstStudentRowIndex = -1;
+  for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex] || [];
+    const uid = String(row[uidColumn] ?? "").trim().replace(/\.0+$/, "");
+    const name = String(row[nameColumn] ?? "").trim();
+    if (uid && name && firstStudentRowIndex < 0) firstStudentRowIndex = rowIndex;
+    if (!uid && name) {
+      candidates.push({
+        rowIndex,
+        title: name,
+        height: getStudentDatabaseRowHeight(worksheet, rowIndex)
+      });
+    }
+  }
+  if (firstStudentRowIndex < 0) return [];
+
+  const firstSection = candidates
+    .filter((candidate) => (
+      candidate.rowIndex < firstStudentRowIndex
+      && candidate.height >= 17
+    ))
+    .at(-1);
+  if (!firstSection) return [];
+
+  const lastSection = candidates
+    .filter((candidate) => (
+      candidate.rowIndex >= firstSection.rowIndex
+      && candidate.height >= 17
+    ))
+    .at(-1);
+  if (!lastSection) return [];
+
+  return candidates.filter((candidate) => (
+    candidate.rowIndex >= firstSection.rowIndex
+    && candidate.rowIndex <= lastSection.rowIndex
+  ));
+}
+
 function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
   let workbook;
   onProgress({ progress: 0, message: "Чтение структуры XLSB..." });
@@ -3192,6 +4253,14 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
   const uidColumn = headers.indexOf("uid");
   const nameColumn = headers.indexOf("ФИО");
   const eventSettingsColumn = headers.indexOf("ДопНастрСлушат");
+  const studentSections = detectStudentDatabaseSections(
+    worksheet,
+    rows,
+    headerRowIndex,
+    uidColumn,
+    nameColumn
+  );
+  let currentSectionIndex = -1;
   const students = [];
   const usedIds = new Map();
   const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
@@ -3207,6 +4276,12 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
       });
     }
     const row = rows[rowIndex] || [];
+    while (
+      currentSectionIndex + 1 < studentSections.length
+      && studentSections[currentSectionIndex + 1].rowIndex <= rowIndex
+    ) {
+      currentSectionIndex += 1;
+    }
     const uid = String(row[uidColumn] ?? "").trim().replace(/\.0+$/, "");
     const name = String(row[nameColumn] ?? "").trim();
     if (!uid || !name) continue;
@@ -3225,25 +4300,52 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
     student.id = duplicateNumber === 1 ? baseId : `${baseId}-${duplicateNumber}`;
     student.uid = uid;
     student.name = name;
+    student.additionalStatus = studentSections[currentSectionIndex]?.title
+      || DEFAULT_STUDENT_ADDITIONAL_STATUS;
     if (student.enrollmentDate) student.enrollmentOrderDate = student.enrollmentDate;
     if (student.expulsionDate) student.expulsionOrderDate = student.expulsionDate;
     students.push(student);
   }
   if (!students.length) throw new Error("На листе «База» не найдено ни одного слушателя с uid и ФИО.");
+  const paymentSettingsResult = parsePaymentDatabaseSettings(workbook, onProgress);
+  const programDictionaryResult = parseProgramDictionaryDatabaseSettings(workbook, onProgress);
+  const programPaymentResult = parseProgramPaymentDatabaseSheet(workbook, onProgress);
+  const inventoryResult = parseInventoryDatabaseSheet(workbook, onProgress);
   const directExpenseResult = parseDirectExpenseDatabaseSheet(workbook, onProgress);
-  onProgress({ progress: 97, message: "Привязка прямых затрат к слушателям..." });
+  onProgress({ progress: 95, message: "Сопоставление запасов с расходами..." });
+  const inventoryLinkResult = linkInventoryToDirectExpenses(
+    inventoryResult.inventory,
+    inventoryResult.inventoryUnits,
+    directExpenseResult.directExpenses
+  );
+  onProgress({ progress: 98, message: "Привязка прямых затрат к слушателям..." });
   const {
     unlinkedDirectExpenses,
     linkedDirectExpenseCount,
     totalDirectExpenseCount
-  } = attachDirectExpensesToStudents(students, directExpenseResult.directExpenses);
+  } = attachDirectExpensesToStudents(students, inventoryLinkResult.directExpenses);
   onProgress({ progress: 100, message: "Обработка базы завершена." });
   return {
     students,
     sheetName: "База",
+    studentSectionTitles: studentSections.map((section) => section.title),
     sourceRows: sourceRowCount,
     skippedRows: Math.max(0, sourceRowCount - students.length),
+    ...paymentSettingsResult,
+    ...programDictionaryResult,
+    ...programPaymentResult,
     ...directExpenseResult,
+    inventory: inventoryResult.inventory,
+    inventorySheetName: inventoryResult.inventorySheetName,
+    inventorySourceRows: inventoryResult.inventorySourceRows,
+    inventorySkippedRows: inventoryResult.inventorySkippedRows,
+    inventoryUnitCount: inventoryResult.inventoryUnitCount,
+    inventoryAvailableUnitCount: inventoryResult.inventoryAvailableUnitCount,
+    inventoryAllocatedUnitCount: inventoryResult.inventoryAllocatedUnitCount,
+    inventoryLinkedExpenseCount: inventoryLinkResult.inventoryLinkedExpenseCount,
+    inventoryMatchedExpenseCount: inventoryLinkResult.inventoryMatchedExpenseCount,
+    inventoryGeneratedExpenseCount: inventoryLinkResult.inventoryGeneratedExpenseCount,
+    inventoryUnmatchedExpenseCount: inventoryLinkResult.inventoryUnmatchedExpenseCount,
     directExpenses: unlinkedDirectExpenses,
     linkedDirectExpenseCount,
     totalDirectExpenseCount
@@ -3495,11 +4597,24 @@ function getStudentApplicationsEmailSettings() {
   const password = String(
     serverSettings.studentApplicationsEmailPassword
       || process.env.STUDENT_APPLICATIONS_EMAIL_PASSWORD
+    || ""
+  );
+  const smtpHost = String(
+    serverSettings.studentApplicationsEmailSmtpHost
+      || process.env.STUDENT_APPLICATIONS_EMAIL_SMTP_HOST
+      || host.replace(/^imap(?=\.)/i, "smtp")
       || ""
+  ).trim();
+  const smtpPort = Number(
+    serverSettings.studentApplicationsEmailSmtpPort
+      || process.env.STUDENT_APPLICATIONS_EMAIL_SMTP_PORT
+      || 465
   );
   return {
     host,
     port: Number.isInteger(port) && port > 0 && port <= 65535 ? port : 993,
+    smtpHost,
+    smtpPort: Number.isInteger(smtpPort) && smtpPort > 0 && smtpPort <= 65535 ? smtpPort : 465,
     login,
     password
   };
@@ -3508,6 +4623,237 @@ function getStudentApplicationsEmailSettings() {
 function hasStudentApplicationsEmailSettings() {
   const settings = getStudentApplicationsEmailSettings();
   return Boolean(settings.host && settings.login && settings.password);
+}
+
+function createSmtpResponseReader(socket) {
+  let buffer = "";
+  let pending = null;
+  let closedError = null;
+
+  const readResponse = () => {
+    const lines = buffer.split("\r\n");
+    if (lines.length < 2) return null;
+    const firstMatch = /^(\d{3})([ -])/.exec(lines[0]);
+    if (!firstMatch) throw new Error("SMTP-сервер вернул некорректный ответ.");
+    const code = Number(firstMatch[1]);
+    let lastLineIndex = firstMatch[2] === " " ? 0 : -1;
+    if (lastLineIndex < 0) {
+      for (let index = 1; index < lines.length - 1; index += 1) {
+        if (lines[index].startsWith(`${firstMatch[1]} `)) {
+          lastLineIndex = index;
+          break;
+        }
+      }
+    }
+    if (lastLineIndex < 0) return null;
+    const responseLines = lines.slice(0, lastLineIndex + 1);
+    buffer = lines.slice(lastLineIndex + 1).join("\r\n");
+    return {
+      code,
+      message: responseLines.join("\n")
+    };
+  };
+
+  const checkPending = () => {
+    if (!pending) return;
+    let response;
+    try {
+      response = readResponse();
+    } catch (error) {
+      const current = pending;
+      pending = null;
+      clearTimeout(current.timer);
+      current.reject(error);
+      return;
+    }
+    if (!response) return;
+    const current = pending;
+    pending = null;
+    clearTimeout(current.timer);
+    current.resolve(response);
+  };
+
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk) => {
+    buffer += chunk;
+    if (buffer.length > 1024 * 1024) {
+      socket.destroy(new Error("Ответ SMTP-сервера превышает допустимый размер."));
+      return;
+    }
+    checkPending();
+  });
+  socket.on("error", (error) => {
+    closedError = error;
+    if (!pending) return;
+    const current = pending;
+    pending = null;
+    clearTimeout(current.timer);
+    current.reject(error);
+  });
+  socket.on("close", () => {
+    closedError ||= new Error("SMTP-сервер закрыл соединение.");
+    if (!pending) return;
+    const current = pending;
+    pending = null;
+    clearTimeout(current.timer);
+    current.reject(closedError);
+  });
+
+  return {
+    waitForResponse(timeout = 30000) {
+      if (pending) return Promise.reject(new Error("Предыдущая команда SMTP ещё не завершена."));
+      if (closedError) return Promise.reject(closedError);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          if (!pending) return;
+          pending = null;
+          reject(new Error("SMTP-сервер не ответил вовремя."));
+          socket.destroy();
+        }, timeout);
+        pending = { resolve, reject, timer };
+        checkPending();
+      });
+    }
+  };
+}
+
+function assertSmtpResponse(response, expectedCodes, action) {
+  const codes = Array.isArray(expectedCodes) ? expectedCodes : [expectedCodes];
+  if (codes.includes(response.code)) return response;
+  throw new Error(`${action}: ${response.message || `код SMTP ${response.code}`}`);
+}
+
+async function runAuthenticatedSmtpSession(action) {
+  const settings = getStudentApplicationsEmailSettings();
+  if (!settings.smtpHost || !settings.login || !settings.password) {
+    throw new Error("В админке не настроен SMTP для исходящей почты.");
+  }
+  const trustedCertificates = typeof tls.getCACertificates === "function"
+    ? [
+      ...tls.getCACertificates("default"),
+      ...tls.getCACertificates("system")
+    ]
+    : [];
+  const socket = tls.connect({
+    host: settings.smtpHost,
+    port: settings.smtpPort,
+    servername: settings.smtpHost,
+    rejectUnauthorized: true,
+    ...(trustedCertificates.length ? { ca: trustedCertificates } : {})
+  });
+  const reader = createSmtpResponseReader(socket);
+  const writeCommand = async (command, expectedCodes, actionLabel) => {
+    socket.write(`${command}\r\n`);
+    return assertSmtpResponse(await reader.waitForResponse(), expectedCodes, actionLabel);
+  };
+  try {
+    assertSmtpResponse(await reader.waitForResponse(), 220, "Подключение к SMTP");
+    await writeCommand("EHLO ais-dopobrazovanie.local", 250, "Инициализация SMTP");
+    await writeCommand("AUTH LOGIN", 334, "Авторизация SMTP");
+    await writeCommand(Buffer.from(settings.login, "utf8").toString("base64"), 334, "Передача логина SMTP");
+    await writeCommand(Buffer.from(settings.password, "utf8").toString("base64"), 235, "Передача пароля SMTP");
+    return await action({ settings, socket, reader, writeCommand });
+  } finally {
+    if (!socket.destroyed) {
+      try {
+        socket.write("QUIT\r\n");
+      } catch {
+        // The connection may already be closing after a server error.
+      }
+      socket.end();
+    }
+  }
+}
+
+function encodeEmailHeader(value) {
+  return `=?UTF-8?B?${Buffer.from(String(value || ""), "utf8").toString("base64")}?=`;
+}
+
+function normalizeEmailSubject(value) {
+  const subject = String(value || "")
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const characters = Array.from(subject);
+  if (characters.length <= MAX_EMAIL_SUBJECT_LENGTH) return subject;
+  return `${characters.slice(0, MAX_EMAIL_SUBJECT_LENGTH - 3).join("").trimEnd()}...`;
+}
+
+function wrapEmailBase64(value) {
+  return String(value || "").match(/.{1,76}/g)?.join("\r\n") || "";
+}
+
+function encodeEmailFileName(value) {
+  return encodeURIComponent(String(value || "document"))
+    .replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function containsHtmlMarkup(value) {
+  return /<\s*\/?\s*[a-z][a-z0-9:-]*(?:\s[^<>]*?)?\s*\/?\s*>/iu.test(String(value || ""));
+}
+
+function createEmailMessage({ from, to, subject, message, attachment }) {
+  const domain = String(from).split("@")[1] || "localhost";
+  const messageId = `${Date.now()}.${crypto.randomBytes(8).toString("hex")}@${domain}`;
+  const bodyContentType = containsHtmlMarkup(message) ? "text/html" : "text/plain";
+  const encodedBody = wrapEmailBase64(
+    Buffer.from(String(message || "").replace(/\r\n|\r|\n/g, "\r\n"), "utf8").toString("base64")
+  );
+  const headers = [
+    `From: ${encodeEmailHeader("Цифровизация Плюс")} <${from}>`,
+    `To: <${to}>`,
+    `Subject: ${encodeEmailHeader(subject)}`,
+    `Date: ${new Date().toUTCString()}`,
+    `Message-ID: <${messageId}>`,
+    "MIME-Version: 1.0",
+    "X-Mailer: AIS-Dopobrazovanie"
+  ];
+  if (!attachment) {
+    return [
+      ...headers,
+      `Content-Type: ${bodyContentType}; charset=UTF-8`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      encodedBody
+    ].join("\r\n");
+  }
+
+  const boundary = `ais-${crypto.randomBytes(18).toString("hex")}`;
+  const fallbackFileName = attachment.fileName.replace(/[^\x20-\x7E]+/g, "_").replace(/["\\]/g, "_");
+  return [
+    ...headers,
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    `Content-Type: ${bodyContentType}; charset=UTF-8`,
+    "Content-Transfer-Encoding: base64",
+    "",
+    encodedBody,
+    `--${boundary}`,
+    `Content-Type: ${attachment.contentType}; name="${fallbackFileName}"`,
+    "Content-Transfer-Encoding: base64",
+    `Content-Disposition: attachment; filename="${fallbackFileName}"; filename*=UTF-8''${encodeEmailFileName(attachment.fileName)}`,
+    "",
+    wrapEmailBase64(attachment.bytes.toString("base64")),
+    `--${boundary}--`
+  ].join("\r\n");
+}
+
+async function sendEmailThroughConfiguredMailbox({ to, subject, message, attachment }) {
+  return runAuthenticatedSmtpSession(async ({ settings, socket, reader, writeCommand }) => {
+    await writeCommand(`MAIL FROM:<${settings.login}>`, 250, "Адрес отправителя");
+    await writeCommand(`RCPT TO:<${to}>`, [250, 251], "Адрес получателя");
+    await writeCommand("DATA", 354, "Подготовка письма");
+    socket.write(`${createEmailMessage({
+      from: settings.login,
+      to,
+      subject,
+      message,
+      attachment
+    })}\r\n.\r\n`);
+    assertSmtpResponse(await reader.waitForResponse(60000), 250, "Отправка письма");
+    return settings;
+  });
 }
 
 function quoteImapValue(value) {
@@ -4080,7 +5426,7 @@ async function runStudentApplicationsEmailQuery(filters) {
 async function testStudentApplicationsEmailConnection() {
   const client = await connectStudentApplicationsImap();
   await client.close();
-  return getStudentApplicationsEmailSettings();
+  return runAuthenticatedSmtpSession(async ({ settings }) => settings);
 }
 
 function parseStudentApplicationsQueryFilters(body = {}) {
@@ -4180,6 +5526,44 @@ async function handleStudentApplicationsQuery(req, res) {
   }
 }
 
+function sanitizePaymentDatabaseConstants(values) {
+  if (!Array.isArray(values)) return [];
+  if (values.length > MAX_PAYMENT_DATABASE_CONSTANTS) {
+    throw new Error(`Число констант оплаты превышает допустимый предел ${MAX_PAYMENT_DATABASE_CONSTANTS}.`);
+  }
+  const usedMarkers = new Set();
+  return values.map((setting) => {
+    const requestedKey = String(setting?.key || "").trim();
+    const requestedMarker = String(setting?.marker || setting?.label || "").trim();
+    const normalizedMarker = requestedMarker.toLocaleLowerCase("ru-RU");
+    const definition = PAYMENT_DATABASE_CONSTANT_DEFINITIONS.find((item) => (
+      item.key === requestedKey
+      || item.marker.toLocaleLowerCase("ru-RU") === normalizedMarker
+      || (item.legacyNames || []).some((name) => name.toLocaleLowerCase("ru-RU") === normalizedMarker)
+    ));
+    const marker = definition?.marker || requestedMarker;
+    if (!isPaymentDatabaseConstantMarker(marker)) {
+      throw new Error(`Некорректное имя константы оплаты для Excel: ${marker || "без имени"}.`);
+    }
+    const markerKey = marker.toLocaleLowerCase("ru-RU");
+    if (usedMarkers.has(markerKey)) return null;
+    const value = Number(String(setting?.value ?? "").replace(",", "."));
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`Некорректное значение константы оплаты «${marker}».`);
+    }
+    usedMarkers.add(markerKey);
+    return {
+      key: definition?.key || requestedKey || `xlsbPaymentConstant-${marker}`,
+      marker,
+      value: Math.round(value / 10) * 10,
+      custom: !definition,
+      legacyNames: definition?.legacyNames || [],
+      legacyRow: definition?.legacyRow || 0,
+      percent: Boolean(definition?.percent)
+    };
+  }).filter(Boolean);
+}
+
 function sanitizeStudentDatabaseExportPayload(body) {
   if (!Array.isArray(body.students) || !body.students.length) {
     throw new Error("В облачной базе нет слушателей для синхронизации.");
@@ -4210,6 +5594,9 @@ function sanitizeStudentDatabaseExportPayload(body) {
   return {
     students,
     directExpenses,
+    paymentConstants: sanitizePaymentDatabaseConstants(body.paymentConstants),
+    paymentConstantsProvided: Array.isArray(body.paymentConstants),
+    defaultStudentAdditionalStatus: DEFAULT_STUDENT_ADDITIONAL_STATUS,
     studentColumnMap: {
       ...STUDENT_DATABASE_COLUMN_MAP,
       "ДопНастрСлушат": "__eventSettings"
@@ -4547,7 +5934,9 @@ function mapIndexedFieldsToDocumentProperties(indexedFields, properties) {
 
 function inspectDocxTemplate(templateBytes) {
   const entries = readDocxZipEntries(templateBytes);
-  const formulaProperties = getDocumentFormulaPropertiesFromEntries(entries);
+  const customProperties = parseCustomDocumentProperties(entries);
+  const assistantEmailProperties = parseAssistantEmailProperties(customProperties);
+  const formulaProperties = getDocumentFormulaPropertiesFromEntries(entries, customProperties);
   const properties = formulaProperties
     .map((property) => ({
       name: property.name,
@@ -4560,6 +5949,20 @@ function inspectDocxTemplate(templateBytes) {
     }))
     .filter((property) => property.name);
   return {
+    customProperties: customProperties
+      .filter((property) => (
+        !isAssistantOptionPropertyName(property.name)
+        && !isAssistantReservePropertyName(property.name)
+      ))
+      .map((property) => ({
+        name: property.name,
+        value: property.value
+      }))
+      .concat(assistantEmailProperties.map((property) => ({
+        name: property.name,
+        value: property.value,
+        source: property.source
+      }))),
     properties,
     subjectFields: mapIndexedFieldsToDocumentProperties(parseDocxIndexedFields(entries), formulaProperties),
     markers: parseDocxTextMarkers(entries)
@@ -4883,6 +6286,184 @@ function handleStudentDatabaseImportResult(res, requestUrl) {
   sendJson(res, 200, job.result);
 }
 
+function normalizeDocumentServiceUrl(value, fallback, label) {
+  const source = String(value || fallback || "").trim();
+  let result;
+  try {
+    result = new URL(source);
+  } catch {
+    throw new Error(`${label}: укажите корректный адрес HTTP или HTTPS.`);
+  }
+  if (!["http:", "https:"].includes(result.protocol)) {
+    throw new Error(`${label}: поддерживаются только адреса HTTP и HTTPS.`);
+  }
+  result.hash = "";
+  result.search = "";
+  result.pathname = result.pathname.replace(/\/+$/u, "");
+  return result;
+}
+
+function getOnlyOfficeConverterSettings() {
+  const converterUrl = normalizeDocumentServiceUrl(
+    process.env.ONLYOFFICE_CONVERTER_URL || serverSettings.documentConverterUrl,
+    DEFAULT_DOCUMENT_CONVERTER_URL,
+    "Адрес ONLYOFFICE"
+  );
+  const sourceUrl = normalizeDocumentServiceUrl(
+    process.env.ONLYOFFICE_SOURCE_URL || serverSettings.documentConverterSourceUrl,
+    DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL,
+    "Адрес приложения для ONLYOFFICE"
+  );
+  const jwtSecret = String(
+    process.env.ONLYOFFICE_JWT_SECRET || serverSettings.documentConverterJwtSecret || ""
+  ).trim();
+  if (!jwtSecret) {
+    throw new Error("Для конвертера ONLYOFFICE не настроен JWT-секрет.");
+  }
+  return { converterUrl, sourceUrl, jwtSecret };
+}
+
+function encodeJwtPart(value) {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+function signOnlyOfficeJwt(payload, secret) {
+  const encodedHeader = encodeJwtPart({ alg: "HS256", typ: "JWT" });
+  const encodedPayload = encodeJwtPart(payload);
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest("base64url");
+  return `${encodedHeader}.${encodedPayload}.${signature}`;
+}
+
+function pruneDocumentConversionSources(now = Date.now()) {
+  for (const [token, source] of documentConversionSources) {
+    if (source.expiresAt <= now) documentConversionSources.delete(token);
+  }
+}
+
+function registerDocumentConversionSource(bytes) {
+  pruneDocumentConversionSources();
+  const token = crypto.randomBytes(24).toString("base64url");
+  documentConversionSources.set(token, {
+    bytes,
+    expiresAt: Date.now() + DOCUMENT_CONVERSION_SOURCE_TTL_MS
+  });
+  return token;
+}
+
+function buildDocumentConversionSourceUrl(baseUrl, token) {
+  const result = new URL(baseUrl);
+  result.pathname = `${result.pathname.replace(/\/+$/u, "")}/api/document-conversion/source/${token}`;
+  return result.toString();
+}
+
+function onlyOfficeConversionError(code) {
+  const messages = new Map([
+    [-1, "неизвестная ошибка"],
+    [-2, "истекло время конвертации"],
+    [-3, "ошибка конвертации документа"],
+    [-4, "не удалось скачать исходный документ"],
+    [-5, "некорректный пароль документа"],
+    [-6, "ошибка базы данных конвертера"],
+    [-7, "ошибка входных данных"],
+    [-8, "недействительный JWT-токен"]
+  ]);
+  return messages.get(Number(code)) || `код ошибки ${code}`;
+}
+
+async function requestOnlyOfficeConversion(payload, converterUrl, jwtSecret) {
+  const endpoint = new URL(converterUrl);
+  endpoint.pathname = `${endpoint.pathname.replace(/\/+$/u, "")}/converter`;
+  endpoint.searchParams.set("shardkey", payload.key);
+  const bodyToken = signOnlyOfficeJwt(payload, jwtSecret);
+  const headerToken = signOnlyOfficeJwt({ payload }, jwtSecret);
+  const requestBody = Buffer.from(JSON.stringify({ ...payload, token: bodyToken }), "utf8");
+  const deadline = Date.now() + 2 * 60 * 1000;
+  do {
+    const responseBytes = await requestBuffer(endpoint, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${headerToken}`,
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": requestBody.length
+      },
+      body: requestBody,
+      maxResponseBytes: 1024 * 1024,
+      timeoutMs: 30000,
+      errorPrefix: "ONLYOFFICE отклонил запрос конвертации",
+      timeoutError: "ONLYOFFICE не ответил на запрос конвертации."
+    });
+    let response;
+    try {
+      response = JSON.parse(responseBytes.toString("utf8"));
+    } catch {
+      throw new Error("ONLYOFFICE вернул некорректный ответ.");
+    }
+    if (response.error !== undefined) {
+      throw new Error(`ONLYOFFICE: ${onlyOfficeConversionError(response.error)}.`);
+    }
+    if (response.endConvert && response.fileUrl) return response.fileUrl;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  } while (Date.now() < deadline);
+  throw new Error("ONLYOFFICE не завершил преобразование в PDF за 2 минуты.");
+}
+
+async function convertDocxBytesToPdf(docxBytes) {
+  const { converterUrl, sourceUrl, jwtSecret } = getOnlyOfficeConverterSettings();
+  const sourceToken = registerDocumentConversionSource(docxBytes);
+  const key = crypto
+    .createHash("sha256")
+    .update(docxBytes)
+    .update(sourceToken)
+    .digest("hex")
+    .slice(0, 32);
+  const payload = {
+    async: true,
+    filetype: "docx",
+    key,
+    outputtype: "pdf",
+    title: "document.docx",
+    url: buildDocumentConversionSourceUrl(sourceUrl, sourceToken)
+  };
+  try {
+    const pdfUrl = await requestOnlyOfficeConversion(payload, converterUrl, jwtSecret);
+    const pdfBytes = await requestBuffer(pdfUrl, {
+      maxResponseBytes: MAX_DOCX_BYTES,
+      timeoutMs: 60000,
+      errorPrefix: "Не удалось скачать PDF из ONLYOFFICE",
+      timeoutError: "Истекло время скачивания PDF из ONLYOFFICE."
+    });
+    if (!pdfBytes.length || pdfBytes.subarray(0, 5).toString("ascii") !== "%PDF-") {
+      throw new Error("ONLYOFFICE не создал корректный PDF-файл.");
+    }
+    return pdfBytes;
+  } finally {
+    documentConversionSources.delete(sourceToken);
+  }
+}
+
+function handleDocumentConversionSource(req, res, requestUrl) {
+  pruneDocumentConversionSources();
+  const prefix = "/api/document-conversion/source/";
+  const token = decodeURIComponent(requestUrl.pathname.slice(prefix.length));
+  const source = documentConversionSources.get(token);
+  if (!source || !token || token.includes("/")) {
+    sendError(res, 404, "Временный документ не найден или срок ссылки истёк.");
+    return;
+  }
+  const headers = {
+    "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "Content-Length": source.bytes.length,
+    "Cache-Control": "no-store, private",
+    "X-Content-Type-Options": "nosniff"
+  };
+  res.writeHead(200, headers);
+  res.end(req.method === "HEAD" ? undefined : source.bytes);
+}
+
 async function handleContractDocument(req, res) {
   try {
     const body = await readJsonBody(req);
@@ -4901,14 +6482,38 @@ async function handleContractDocument(req, res) {
     });
     const outputFieldValues = { ...fieldValues, "Фото": "" };
     if (!photo) outputFieldValues["ПутьСохр"] = "";
-    const result = fillDocxMarkers(templateBytes, outputFieldValues, photo ? { "Фото": photo } : { "Фото": null }, propertyUpdateNames);
+    const docxResult = fillDocxMarkers(templateBytes, outputFieldValues, photo ? { "Фото": photo } : { "Фото": null }, propertyUpdateNames);
+    const outputFormat = normalizeGeneratedDocumentFormat(body.outputFormat);
+    const result = outputFormat === "pdf"
+      ? await convertDocxBytesToPdf(docxResult)
+      : docxResult;
+    const outputFileName = safeDocumentFileName(body.fileName || "документ", outputFormat);
     const extraHeaders = {};
+    if (body.promptLocalSave) {
+      try {
+        const localSaveResult = await promptAndSaveStudentDocumentLocally(
+          result,
+          outputFileName,
+          body,
+          outputFormat
+        );
+        if (localSaveResult.cancelled) {
+          extraHeaders["X-Local-Document-Cancelled"] = "true";
+        } else {
+          extraHeaders["X-Local-Document-Saved"] = "true";
+          extraHeaders["X-Local-Document-Path"] = encodeURIComponent(localSaveResult.path);
+        }
+      } catch (saveError) {
+        extraHeaders["X-Local-Document-Saved"] = "false";
+        extraHeaders["X-Local-Document-Error"] = encodeURIComponent(saveError.message);
+      }
+    }
     if (body.saveToYandexDisk) {
       try {
         const uploadedPath = await uploadStudentDocumentToYandexDisk(
           result,
-          body.fileName || "договор",
-          body
+          outputFileName,
+          { ...body, outputFormat }
         );
         extraHeaders["X-Yandex-Disk-Saved"] = "true";
         extraHeaders["X-Yandex-Disk-Path"] = encodeURIComponent(uploadedPath);
@@ -4921,8 +6526,8 @@ async function handleContractDocument(req, res) {
       res,
       200,
       result,
-      safeDocumentFileName(body.fileName || "договор"),
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      outputFileName,
+      generatedDocumentContentType(outputFormat),
       extraHeaders
     );
   } catch (error) {
@@ -5114,6 +6719,7 @@ function publicSystemDocumentSettings() {
     localDocumentsRootIsSystemParent: Boolean(
       serverSettings.localDocumentsRootIsSystemParent
     ),
+    openDocumentsLocally: serverSettings.openDocumentsLocally !== false,
     login: String(serverSettings.yandexDiskLogin || process.env.YANDEX_DISK_LOGIN || "").trim(),
     hasPassword: Boolean(
       serverSettings.yandexDiskPassword || process.env.YANDEX_DISK_PASSWORD
@@ -5121,6 +6727,11 @@ function publicSystemDocumentSettings() {
     autoSave: Boolean(serverSettings.yandexDiskAutoSave),
     emailHost: String(serverSettings.studentApplicationsEmailHost || "").trim(),
     emailPort: Number(serverSettings.studentApplicationsEmailPort || 993),
+    emailSmtpHost: String(
+      serverSettings.studentApplicationsEmailSmtpHost
+        || String(serverSettings.studentApplicationsEmailHost || "").replace(/^imap(?=\.)/i, "smtp")
+    ).trim(),
+    emailSmtpPort: Number(serverSettings.studentApplicationsEmailSmtpPort || 465),
     emailLogin: String(serverSettings.studentApplicationsEmailLogin || "").trim(),
     emailHasPassword: Boolean(
       serverSettings.studentApplicationsEmailPassword
@@ -5151,21 +6762,33 @@ async function handleSystemDocumentSettings(req, res) {
     const password = String(body.password || "");
     const emailHost = String(body.emailHost || "").trim();
     const emailPort = Number(body.emailPort || 993);
+    const emailSmtpHost = String(
+      body.emailSmtpHost || emailHost.replace(/^imap(?=\.)/i, "smtp")
+    ).trim();
+    const emailSmtpPort = Number(body.emailSmtpPort || 465);
     const emailLogin = String(body.emailLogin || "").trim();
     const emailPassword = String(body.emailPassword || "");
     if (!Number.isInteger(emailPort) || emailPort < 1 || emailPort > 65535) {
       throw new Error("Укажите корректный порт IMAP.");
+    }
+    if (!emailSmtpHost) throw new Error("Укажите SMTP-сервер.");
+    if (!Number.isInteger(emailSmtpPort) || emailSmtpPort < 1 || emailSmtpPort > 65535) {
+      throw new Error("Укажите корректный порт SMTP.");
     }
     const patch = {
       studentDatabaseWebDavPath: databasePath,
       yandexDiskBasePath: basePath.replace(/^\/+/, ""),
       localDocumentsRoot: path.resolve(localDocumentsRoot),
       localDocumentsRootIsSystemParent: Boolean(body.localDocumentsRootIsSystemParent),
+      openDocumentsLocally: body.openDocumentsLocally !== false,
       yandexDiskLogin: login,
       yandexDiskAutoSave: Boolean(body.autoSave),
       studentApplicationsEmailHost: emailHost,
       studentApplicationsEmailPort: emailPort,
       studentApplicationsEmailSecure: true,
+      studentApplicationsEmailSmtpHost: emailSmtpHost,
+      studentApplicationsEmailSmtpPort: emailSmtpPort,
+      studentApplicationsEmailSmtpSecure: true,
       studentApplicationsEmailLogin: emailLogin
     };
     if (password) patch.yandexDiskPassword = password;
@@ -5198,10 +6821,83 @@ async function handleStudentApplicationsEmailConnectionTest(req, res) {
     sendJson(res, 200, {
       ok: true,
       host: settings.host,
-      message: "Подключение к почтовому ящику по IMAP работает."
+      smtpHost: settings.smtpHost,
+      message: "Подключение к почтовому ящику по IMAP и SMTP работает."
     });
   } catch (error) {
     sendError(res, 400, error.message);
+  }
+}
+
+async function handleServerEmail(req, res) {
+  try {
+    if (String(req.headers["x-requested-with"] || "") !== "AIS-Web") {
+      sendError(res, 403, "Запрос отправки письма отклонён сервером.");
+      return;
+    }
+    const remoteAddress = String(req.socket.remoteAddress || "unknown");
+    const now = Date.now();
+    const recentAttempts = (serverEmailRateLimits.get(remoteAddress) || [])
+      .filter((timestamp) => timestamp > now - 60 * 1000);
+    if (recentAttempts.length >= 20) {
+      sendError(res, 429, "Слишком много писем. Повторите отправку через минуту.");
+      return;
+    }
+    recentAttempts.push(now);
+    serverEmailRateLimits.set(remoteAddress, recentAttempts);
+
+    const body = await readJsonBody(req);
+    const to = String(body.to || "").trim();
+    const subject = normalizeEmailSubject(body.subject);
+    const message = String(body.message || "").trim();
+    if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(to) || /[\r\n]/u.test(to)) {
+      throw new Error("Некорректный адрес получателя.");
+    }
+    if (!subject || Array.from(subject).length > MAX_EMAIL_SUBJECT_LENGTH) {
+      throw new Error("Некорректная тема письма.");
+    }
+    if (!message || Buffer.byteLength(message, "utf8") > 100000) {
+      throw new Error("Некорректный текст письма.");
+    }
+    let attachment = null;
+    if (body.attachment !== undefined && body.attachment !== null) {
+      const fileName = String(body.attachment.fileName || "").trim();
+      const contentType = String(body.attachment.contentType || "").trim().toLowerCase();
+      const base64 = String(body.attachment.base64 || "").replace(/\s+/g, "");
+      const allowedAttachments = new Map([
+        ["application/pdf", ".pdf"],
+        ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"]
+      ]);
+      const requiredExtension = allowedAttachments.get(contentType);
+      if (!fileName || fileName.length > 180 || /[\r\n\\/:*?"<>|]/u.test(fileName)) {
+        throw new Error("Некорректное имя вложения.");
+      }
+      if (!requiredExtension || path.extname(fileName).toLowerCase() !== requiredExtension) {
+        throw new Error("Недопустимый формат вложения.");
+      }
+      if (!base64 || !/^[A-Za-z0-9+/]*={0,2}$/u.test(base64)) {
+        throw new Error("Некорректные данные вложения.");
+      }
+      const bytes = Buffer.from(base64, "base64");
+      if (!bytes.length || bytes.length > MAX_DOCX_BYTES) {
+        throw new Error("Вложение пустое или превышает допустимый размер.");
+      }
+      if (
+        (requiredExtension === ".pdf" && bytes.subarray(0, 5).toString("ascii") !== "%PDF-")
+        || (requiredExtension === ".docx" && bytes.subarray(0, 2).toString("ascii") !== "PK")
+      ) {
+        throw new Error("Содержимое вложения не соответствует указанному формату.");
+      }
+      attachment = { fileName, contentType, bytes };
+    }
+    const settings = await sendEmailThroughConfiguredMailbox({ to, subject, message, attachment });
+    sendJson(res, 200, {
+      ok: true,
+      from: settings.login
+    });
+  } catch (error) {
+    console.warn(`Не удалось отправить письмо через настроенный ящик: ${error.message}`);
+    sendError(res, 502, error.message);
   }
 }
 
@@ -5265,6 +6961,13 @@ async function route(req, res) {
     sendJson(res, 200, { ok: true, storage: "yandex-disk" });
     return;
   }
+  if (
+    ["GET", "HEAD"].includes(req.method)
+    && requestUrl.pathname.startsWith("/api/document-conversion/source/")
+  ) {
+    handleDocumentConversionSource(req, res, requestUrl);
+    return;
+  }
   if (req.method === "POST" && req.url === "/api/photos") {
     await handlePhotoUpload(req, res);
     return;
@@ -5286,6 +6989,18 @@ async function route(req, res) {
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/local-documents/open-folder") {
     await handleOpenLocalDocumentsFolder(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/local-documents/open-resource") {
+    await handleOpenLocalDocumentResource(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/local-documents/resolve-file") {
+    await handleResolveLocalDocumentFile(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/documents/template-reveal-local") {
+    await handleRevealLocalDocumentTemplate(req, res);
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/yandex-disk/test") {
@@ -5349,7 +7064,7 @@ async function route(req, res) {
     return;
   }
   if (req.method === "POST" && req.url === "/send-mail.php") {
-    sendError(res, 501, "PHP-отправщик доступен только на веб-сервере с настроенным PHP mail().");
+    await handleServerEmail(req, res);
     return;
   }
   if (req.method === "GET" || req.method === "HEAD") {
