@@ -1,15 +1,66 @@
 (() => {
+  const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
+  let authenticatedUser = window.AIS_AUTH_USER && typeof window.AIS_AUTH_USER === "object"
+    ? { ...window.AIS_AUTH_USER }
+    : null;
+  window.addEventListener("ais:auth-refreshed", (event) => {
+    if (event.detail?.user && typeof event.detail.user === "object") {
+      authenticatedUser = { ...event.detail.user };
+    }
+  });
+  const MANAGER_RESTRICTED_VIEWS = new Set(["settings", "admin"]);
   const STORAGE_KEY = "ais-dopobr-web-state-v1";
   const TABLE_SETTINGS_KEY = "ais-dopobr-web-table-settings-v1";
   const STUDENT_CARD_TAB_ORDER_KEY = "ais-dopobr-student-card-tab-order-v1";
   const TAB_ORDER_SETTINGS_KEY = "ais-dopobr-tab-orders-v1";
   const NAV_ITEM_ORDER_KEY = "ais-dopobr-nav-item-order-v1";
+  const DASHBOARD_STATUS_ORDER_KEY = "ais-dopobr-dashboard-status-order-v1";
+  const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-dashboard-status-layout-v1";
+  const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION = "enrollment-study-first";
   const START_VIEW_KEY = "ais-dopobr-start-view-v1";
   const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH =
     "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
   const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
   const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
   const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
+  const AUDIT_FILTER_DEFAULTS = Object.freeze({
+    q: "",
+    from: "",
+    to: "",
+    user: "",
+    userName: "",
+    role: "",
+    action: "",
+    area: "",
+    entityType: "",
+    entityId: "",
+    entityLabel: "",
+    field: "",
+    before: "",
+    after: "",
+    details: "",
+    ip: "",
+    userAgent: "",
+    source: ""
+  });
+  const STUDENT_AUDIT_FILTER_DEFAULTS = Object.freeze({
+    q: "",
+    from: "",
+    to: "",
+    user: "",
+    userName: "",
+    role: "",
+    action: "",
+    area: "",
+    field: "",
+    before: "",
+    after: "",
+    details: "",
+    ip: "",
+    userAgent: "",
+    source: ""
+  });
+  const AUDIT_CLIENT_MAX_CHANGES = 40;
   const PAYMENT_FORMULA_CONSTANT_MIME = "application/x-ais-payment-constant";
   const STUDENT_STATUS_ORDER = Object.freeze([
     "Намерение",
@@ -21,7 +72,8 @@
     "Отказ",
     "На восстановление",
     "На отчисление",
-    "Новый набор"
+    "Новый набор",
+    "Архив"
   ]);
   const TABLE_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
   const DEFAULT_TABLE_PAGE_SIZE = 50;
@@ -543,7 +595,7 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: "storage/document-templates/Диплом о переподготовке_v1.docx",
       fileName: "Диплом о переподготовке_v1.docx",
       fileNameTemplate: "Диплом_#ФИО#_#РегНомер#",
-      saveFolderTemplate: "Дипломы ПП",
+      saveFolderTemplate: "Документы/Дипломы ПП",
       programTypes: ["ППП"],
       markers: [
         "Дата выдачи", "Дата начала", "Дата окончания", "Дата приказа", "ДокументОбОбразовании",
@@ -558,7 +610,7 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: "storage/document-templates/Удостоверение о повышении квалификации_v1.docx",
       fileName: "Удостоверение о повышении квалификации_v1.docx",
       fileNameTemplate: "Удостоверение_#ФИО#_#РегНомер#",
-      saveFolderTemplate: "Удостоверения ПК",
+      saveFolderTemplate: "Документы/Удостоверения ПК",
       programTypes: ["КПК"],
       markers: [
         "Дата выдачи", "Дата начала", "Дата окончания", "ДокументОбОбразовании", "ИО",
@@ -573,7 +625,7 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: "storage/document-templates/Сертификат ПРО.docx",
       fileName: "Сертификат ПРО.docx",
       fileNameTemplate: "Сертификат_#ФИО#_#РегНомер#",
-      saveFolderTemplate: "Сертификаты мероприятия",
+      saveFolderTemplate: "Документы/Сертификаты мероприятия",
       programTypes: ["ДОП", "ПРО"],
       markers: [
         "Дата выдачи", "ИО", "Номер бланка", "Прогр обуч факт", "Прогр обуч факт_ENG",
@@ -763,6 +815,31 @@ MAX - https://bizvmax.ru/zifra_plus
     const configured = String(documentTemplate?.saveFolderTemplate || "").trim();
     const templateId = String(documentTemplate?.id || "").trim();
     const documentKind = String(documentTemplate?.documentKind || "").trim();
+    const programTypes = Array.isArray(documentTemplate?.programTypes)
+      ? documentTemplate.programTypes.map((value) => normalizeEducationProgramType(value))
+      : [];
+    if (
+      (templateId === "education-document-diploma-ppp"
+        || (documentKind === "education" && programTypes.includes("ППП")))
+      && /^(?:АИС Допобразование[\\/]+Документы[\\/]+)?Дипломы ПП$/iu.test(configured)
+    ) {
+      return "Документы/Дипломы ПП";
+    }
+    if (
+      (templateId === "education-document-certificate-kpk"
+        || (documentKind === "education" && programTypes.includes("КПК")))
+      && /^(?:АИС Допобразование[\\/]+Документы[\\/]+)?Удостоверения ПК$/iu.test(configured)
+    ) {
+      return "Документы/Удостоверения ПК";
+    }
+    if (
+      (templateId === "education-document-certificate-dop-pro"
+        || (documentKind === "education"
+          && (programTypes.includes("ПРО") || programTypes.includes("ДОП"))))
+      && /^(?:АИС Допобразование[\\/]+Документы[\\/]+)?Сертификаты мероприятия$/iu.test(configured)
+    ) {
+      return "Документы/Сертификаты мероприятия";
+    }
     if (
       (templateId === postalEnvelopeDocumentTemplateId || documentKind === "postalEnvelope")
       && configured === studentDocumentsFolderTemplateMarker
@@ -780,21 +857,18 @@ MAX - https://bizvmax.ru/zifra_plus
       [postalEnvelopeDocumentTemplateId]: downloadsFolderTemplateMarker,
       "document-enrollment-order": "Документы/Приказы о зачислении",
       "document-expulsion-order": "Документы/Приказы об отчислении",
-      "education-document-diploma-ppp": "Дипломы ПП",
-      "education-document-certificate-kpk": "Удостоверения ПК",
-      "education-document-certificate-dop-pro": "Сертификаты мероприятия"
+      "education-document-diploma-ppp": "Документы/Дипломы ПП",
+      "education-document-certificate-kpk": "Документы/Удостоверения ПК",
+      "education-document-certificate-dop-pro": "Документы/Сертификаты мероприятия"
     };
     if (defaultsById[templateId]) return defaultsById[templateId];
     if (documentKind === "postalEnvelope") return downloadsFolderTemplateMarker;
     if (documentKind === "enrollmentOrder") return "Документы/Приказы о зачислении";
     if (documentKind === "expulsionOrder") return "Документы/Приказы об отчислении";
     if (documentKind === "education") {
-      const programTypes = Array.isArray(documentTemplate?.programTypes)
-        ? documentTemplate.programTypes.map((value) => normalizeEducationProgramType(value))
-        : [];
-      if (programTypes.includes("ППП")) return "Дипломы ПП";
-      if (programTypes.includes("КПК")) return "Удостоверения ПК";
-      if (programTypes.includes("ПРО") || programTypes.includes("ДОП")) return "Сертификаты мероприятия";
+      if (programTypes.includes("ППП")) return "Документы/Дипломы ПП";
+      if (programTypes.includes("КПК")) return "Документы/Удостоверения ПК";
+      if (programTypes.includes("ПРО") || programTypes.includes("ДОП")) return "Документы/Сертификаты мероприятия";
     }
     return studentDocumentsFolderTemplateMarker;
   }
@@ -946,9 +1020,22 @@ MAX - https://bizvmax.ru/zifra_plus
   const defaultPhotoServerOrigin = "http://localhost:8081";
   const financeMetrics = [
     { key: "revenue", label: "Поступления", tone: "income" },
-    { key: "direct", label: "Прямые затраты", tone: "direct" },
-    { key: "general", label: "Общие затраты", tone: "general" }
+    { key: "direct", label: "Прямые затраты", tone: "direct" }
   ];
+  const financeDetailMetrics = [
+    { key: "all", label: "Все операции" },
+    { key: "revenue", label: "Поступления" },
+    { key: "receivable", label: "Дебиторская задолженность" },
+    { key: "direct", label: "Прямые затраты" },
+    { key: "general", label: "Общие затраты" },
+    { key: "profit", label: "Прибыль" }
+  ];
+  const GENERAL_EXPENSE_SECTIONS = Object.freeze(["Физлица", "Организации"]);
+  const CONTRACT_SECTIONS = Object.freeze([
+    "ДЕЙСТВУЮЩИЕ ДОГОВОРА",
+    "ПАРТНЕРСКАЯ ПРОГРАММА",
+    "ИСТЕКШИЕ ДОГОВОРА"
+  ]);
   const dictionaryDefaults = {
     statuses: [...STUDENT_STATUS_ORDER],
     managers: [],
@@ -1122,19 +1209,53 @@ MAX - https://bizvmax.ru/zifra_plus
       collection: "contracts",
       accent: "blue",
       fields: [
-        field("name", "ФИО / контрагент", "text", true),
+        field("section", "Раздел", "select", true, null, CONTRACT_SECTIONS),
+        field("name", "ФИО / контрагент", "text", true, null, { wide: true }),
+        field("position", "Должность"),
+        field("degree", "Ученая степень"),
+        field("academicTitle", "Ученое звание"),
+        field("phone", "Телефон", "tel"),
+        field("email", "Email", "email"),
+        field("telegram", "Аккаунт Telegram"),
+        field("photoPath", "Путь к фотографии", "text", false, null, { wide: true }),
+        field("coupon", "Персональный купон"),
+        field("couponId", "ID купона"),
+        field("notificationEmail", "Уведомления по email", "checkbox"),
         field("contractNo", "Номер договора", "text", true),
         field("contractDate", "Дата договора", "date"),
+        field("type", "Вид договора", "select", false, "contractTypes"),
         field("startDate", "Срок с", "date"),
         field("endDate", "Срок по", "date"),
-        field("amount", "Сумма", "number"),
-        field("paid", "Оплачено", "number"),
-        field("balance", "Остаток", "number"),
-        field("type", "Вид договора", "select", false, "contractTypes"),
-        field("subject", "Предмет", "textarea"),
-        field("status", "Статус")
+        field("subject", "Предмет договора", "textarea", false, null, { wide: true, rows: 3 }),
+        field("paymentTerms", "Сумма / условия оплаты", "textarea", false, null, { wide: true, rows: 3 }),
+        field("accountingRecorded", "Договор передан в бухгалтерию", "checkbox"),
+        field("amount", "Выплата", "number", false, null, { readOnly: true }),
+        field("paid", "Услуги", "number", false, null, { readOnly: true }),
+        field("agencyAmount", "Агентские", "number", false, null, { readOnly: true }),
+        field("balance", "Остаток", "number", false, null, { readOnly: true }),
+        field("bank", "Банк", "text", false, null, { wide: true }),
+        field("settlementAccount", "Расчетный счет"),
+        field("correspondentAccount", "Корреспондентский счет"),
+        field("bic", "БИК"),
+        field("citizenship", "Гражданство", "select", false, "citizenships"),
+        field("birthDate", "Дата рождения", "date"),
+        field("identityDocumentType", "Документ", "select", false, "documentTypes"),
+        field("identityDocument", "Серия и номер"),
+        field("identityIssueDate", "Дата выдачи", "date"),
+        field("identityDepartmentCode", "Код подразделения"),
+        field("identityIssuer", "Кем выдан", "select", false, "passportIssuers", { wide: true }),
+        field("address", "Адрес регистрации", "textarea", false, null, { wide: true, rows: 2 }),
+        field("snils", "СНИЛС"),
+        field("inn", "ИНН"),
+        field("login", "Логин СДО"),
+        field("password", "Пароль СДО"),
+        field("portalCredentials", "Сообщение о доступе к порталу обучения", "textarea", false, null, { wide: true, rows: 7 }),
+        field("note", "Примечание", "textarea", false, null, { wide: true, rows: 4 }),
+        ...Array.from({ length: 9 }, (_, index) => (
+          field(`message${index + 1}`, `Сообщение ${index + 1}`, "textarea", false, null, { wide: true, rows: 4 })
+        ))
       ],
-      table: ["name", "contractNo", "type", "amount", "paid", "balance", "endDate", "status"]
+      table: ["name", "contractNo", "type", "amount", "paid", "balance", "endDate"]
     },
     programs: {
       title: "Реестр программ",
@@ -1246,6 +1367,7 @@ MAX - https://bizvmax.ru/zifra_plus
       collection: "generalExpenses",
       accent: "orange",
       fields: [
+        field("section", "Раздел", "select", true, null, GENERAL_EXPENSE_SECTIONS),
         field("counterparty", "Контрагент", "text", true),
         field("date", "Дата", "date"),
         field("workType", "Вид работ", "select", true, "expenseTypes"),
@@ -1256,7 +1378,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("bkExpenseNo", "Номер в расходах БК"),
         field("otherExpenses", "Прочие затраты")
       ],
-      table: ["counterparty", "date", "workType", "amount", "paid", "accountingClosed"]
+      table: ["section", "counterparty", "date", "workType", "amount", "paid", "accountingClosed"]
     },
     inventory: {
       title: "Запасы",
@@ -1348,6 +1470,7 @@ MAX - https://bizvmax.ru/zifra_plus
           fields: [
             field("name", "ФИО", "text", true),
             field("nameEnglish", "ФИО анг."),
+            field("gender", "Пол"),
             field("noDeclension", "Не склоняется фамилия", "checkbox"),
             field("addressByFirstName", "Обращаться по имени", "checkbox"),
             field("uid", "uid"),
@@ -1396,7 +1519,7 @@ MAX - https://bizvmax.ru/zifra_plus
             field("passportDate", "Дата выдачи", "date"),
             field("passportNumber", "Серия и номер"),
             field("passportCode", "Код подразд."),
-            field("passportIssuer", "Кем выдан", "textarea"),
+            field("passportIssuer", "Кем выдан"),
             field("snils", "СНИЛС"),
             field("inn", "ИНН")
           ]
@@ -1407,11 +1530,12 @@ MAX - https://bizvmax.ru/zifra_plus
           fields: [
             field("customer", "ФИО заказчика"),
             field("customerBirthDate", "Дата рождения", "date"),
+            field("customerPhone", "Мобильный телефон"),
             field("customerPassportType", "Вид документа"),
             field("customerPassportDate", "Дата выдачи", "date"),
             field("customerPassportNumber", "Серия и номер"),
             field("customerPassportCode", "Код подразд."),
-            field("customerPassportIssuer", "Кем выдан", "textarea"),
+            field("customerPassportIssuer", "Кем выдан"),
             field("customerSnils", "СНИЛС"),
             field("customerInn", "ИНН")
           ]
@@ -1424,7 +1548,10 @@ MAX - https://bizvmax.ru/zifra_plus
             field("educationDocumentSeries", "Серия"),
             field("educationDocumentNumber", "Номер"),
             field("educationDocumentDate", "Дата выдачи", "date"),
-            field("educationDocumentIssuer", "Кем выдан", "textarea")
+            field("educationDocumentIssuer", "Кем выдан"),
+            field("educationSpecialty", "Специальность"),
+            field("educationQualification", "Квалификация"),
+            field("educationDocumentSurname", "Фамилия в документе")
           ]
         }
       ]
@@ -1694,6 +1821,11 @@ MAX - https://bizvmax.ru/zifra_plus
     ...expenseFields
   ];
 
+  const shouldBootstrapHostedDatabase = (
+    !localStorage.getItem(STORAGE_KEY)
+    && window.location.hostname.toLowerCase() === "edu-plus.ru"
+    && /^\/lms(?:\/|$)/i.test(window.location.pathname)
+  );
   const initialView = loadStartView();
   let state = {
     view: initialView,
@@ -1701,11 +1833,14 @@ MAX - https://bizvmax.ru/zifra_plus
     statusFilter: getDefaultStatusFilter(initialView),
     studentProgramTypeFilter: [],
     programRegistryTypeFilter: [],
+    contractSectionFilter: [],
     studentImportedViewIds: [],
     sort: { key: "", dir: "asc" },
     navItemOrder: loadNavItemOrder(),
+    dashboardStudentStatusOrder: loadDashboardStudentStatusOrder(),
     studentCardTab: "main",
     programCardTab: "main",
+    contractCardTab: "main",
     tabOrders: loadTabOrders(),
     discountPickerOpen: false,
     discountPicker: null,
@@ -1767,18 +1902,68 @@ MAX - https://bizvmax.ru/zifra_plus
     activeContractTemplateFieldId: "",
     pendingContractTemplateFieldFocus: "",
     financeChart: { revenue: true, direct: true, general: true },
+    financeDetails: {
+      open: false,
+      metric: "all",
+      query: "",
+      dateFrom: "",
+      dateTo: "",
+      sort: { key: "date", dir: "desc" }
+    },
+    profileOpen: false,
+    userManagementOpen: false,
+    authUsers: [],
+    authUsersLoading: false,
+    authUsersError: "",
+    authUserEditorId: "",
+    adminSettingsDirty: false,
+    adminSettingsDraft: null,
+    adminSettingsBaseline: "",
+    adminSettingsSaving: false,
+    auditLog: {
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 50,
+      pages: 1,
+      filters: { ...AUDIT_FILTER_DEFAULTS },
+      options: {},
+      loading: false,
+      loaded: false,
+      error: ""
+    },
+    studentAuditLog: {
+      open: false,
+      studentId: "",
+      studentName: "",
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 50,
+      pages: 1,
+      filters: { ...STUDENT_AUDIT_FILTER_DEFAULTS },
+      options: {},
+      loading: false,
+      loaded: false,
+      error: ""
+    },
     modal: null,
     data: loadState()
   };
   let sidebarOutsideClickBound = false;
   let programTypeFilterOutsideClickBound = false;
+  let systemHelpTooltipBound = false;
   let fieldUndoKeyBound = false;
   let globalEscapeKeyBound = false;
+  let adminBeforeUnloadBound = false;
   let lastDeletedControlState = null;
+  let lastKnownClipboardText = "";
   let draggedNavItemId = "";
+  let draggedDashboardStudentStatus = "";
   let databaseImportHideTimer = 0;
   let databaseExportHideTimer = 0;
   let lastNavItemDragEndedAt = 0;
+  let lastDashboardStatusDragEndedAt = 0;
   let documentTemplateAutoInspectionStarted = false;
   const communicationTemplateEditorHistories = new WeakMap();
 
@@ -1868,6 +2053,7 @@ MAX - https://bizvmax.ru/zifra_plus
       data.meta.localDocumentsRootIsSystemParent
     );
     data.meta.openDocumentsLocally = data.meta.openDocumentsLocally !== false;
+    data.meta.localDocumentsAvailable = data.meta.localDocumentsAvailable !== false;
     data.meta.yandexDiskLogin = String(data.meta.yandexDiskLogin || "").trim();
     data.meta.yandexDiskHasPassword = Boolean(data.meta.yandexDiskHasPassword);
     data.meta.yandexDiskAutoSave = Boolean(data.meta.yandexDiskAutoSave);
@@ -1988,6 +2174,12 @@ MAX - https://bizvmax.ru/zifra_plus
     );
     data.collections.trainingPlans = linkTrainingPlanRecordsToPrograms(data.collections.trainingPlans, data.collections.programs);
     data.collections.students = (data.collections.students || []).map((student) => normalizeStudentRecord(student));
+    data.collections.contracts = (data.collections.contracts || [])
+      .filter((contract) => contract && typeof contract === "object")
+      .map((contract) => normalizeContractRecord(contract));
+    data.collections.generalExpenses = (data.collections.generalExpenses || [])
+      .filter((expense) => expense && typeof expense === "object")
+      .map((expense) => normalizeGeneralExpenseRecord(expense));
     data.dictionaries.studentAdditionalStatuses = unique([
       ...(data.dictionaries.studentAdditionalStatuses || []),
       ...data.collections.students.map((student) => student.additionalStatus)
@@ -2844,7 +3036,10 @@ MAX - https://bizvmax.ru/zifra_plus
       studyForm: normalizeStudyForm(student.studyForm),
       gender: normalizeStudentGender(student.gender),
       discount: normalizeDiscountPercent(student.discount, student.discountUnit),
-      discountUnit: "percent"
+      discountUnit: "percent",
+      documentRecognitionResult: normalizeStudentDocumentRecognitionResult(
+        student.documentRecognitionResult
+      )
     };
     studentCommunicationMessages.forEach((message, index) => {
       if (message.importValue === false) return;
@@ -2858,6 +3053,64 @@ MAX - https://bizvmax.ru/zifra_plus
       if (importedValue !== undefined) normalized[message.key] = importedValue;
     });
     return normalized;
+  }
+
+  function normalizeGeneralExpenseSection(value, counterparty = "") {
+    const normalized = String(value || "")
+      .trim()
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е")
+      .replace(/\s+/g, " ");
+    if (["физлица", "физические лица"].includes(normalized)) return GENERAL_EXPENSE_SECTIONS[0];
+    if (["организации", "юридические лица", "юрлица"].includes(normalized)) return GENERAL_EXPENSE_SECTIONS[1];
+    const name = String(counterparty || "").trim();
+    const looksLikeFullName = /^[А-ЯЁ][А-ЯЁа-яё-]+\s+[А-ЯЁ][А-ЯЁа-яё-]+\s+[А-ЯЁ][А-ЯЁа-яё-]+$/u.test(name)
+      && /(?:вич|вна|ична|оглы|кызы)$/iu.test(name);
+    return looksLikeFullName ? GENERAL_EXPENSE_SECTIONS[0] : GENERAL_EXPENSE_SECTIONS[1];
+  }
+
+  function normalizeContractSection(value, status = "") {
+    const normalized = String(value || status || "")
+      .trim()
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е")
+      .replace(/\s+/g, " ");
+    if (["действующие договора", "действующие договоры", "действует", "активный"].includes(normalized)) {
+      return CONTRACT_SECTIONS[0];
+    }
+    if (["партнерская программа", "партнеры", "партнерский"].includes(normalized)) {
+      return CONTRACT_SECTIONS[1];
+    }
+    if (["истекшие договора", "истекшие договоры", "истек", "истекший"].includes(normalized)) {
+      return CONTRACT_SECTIONS[2];
+    }
+    return CONTRACT_SECTIONS[0];
+  }
+
+  function normalizeContractRecord(contract = {}) {
+    const section = normalizeContractSection(contract.section, contract.status);
+    const status = section === CONTRACT_SECTIONS[0]
+      ? "Действует"
+      : section === CONTRACT_SECTIONS[1]
+        ? "Партнерская программа"
+        : "Истек";
+    return {
+      ...contract,
+      section,
+      status,
+      amount: Number(contract.amount || 0),
+      paid: Number(contract.paid || 0),
+      agencyAmount: Number(contract.agencyAmount || 0),
+      balance: Number(contract.balance || 0)
+    };
+  }
+
+  function normalizeGeneralExpenseRecord(expense = {}) {
+    return {
+      ...expense,
+      section: normalizeGeneralExpenseSection(expense.section, expense.counterparty),
+      amount: Number(expense.amount || 0)
+    };
   }
 
   function normalizeDiscountPercent(value, unit = "") {
@@ -3197,9 +3450,48 @@ MAX - https://bizvmax.ru/zifra_plus
     localStorage.setItem(TABLE_SETTINGS_KEY, JSON.stringify(state.tableSettings));
   }
 
+  function getCurrentAuthUser() {
+    return authenticatedUser || {};
+  }
+
+  function getCurrentUserLogin() {
+    return String(getCurrentAuthUser().login || "").trim();
+  }
+
+  function isAdminUser() {
+    return String(getCurrentAuthUser().role || "") === "admin";
+  }
+
+  function canAccessView(viewId) {
+    return isAdminUser() || !MANAGER_RESTRICTED_VIEWS.has(String(viewId || ""));
+  }
+
+  function getAuthRoleLabel(role = getCurrentAuthUser().role) {
+    return String(role || "") === "admin" ? "Администратор" : "Менеджер";
+  }
+
+  async function authRequest(pathname, options = {}) {
+    if (window.AIS_AUTH_API?.request) {
+      return window.AIS_AUTH_API.request(pathname, options);
+    }
+    const response = await fetch(photoApiUrl(pathname), {
+      credentials: "same-origin",
+      cache: "no-store",
+      ...options,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        "X-Requested-With": "AIS-Web",
+        ...(options.headers || {})
+      }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+    return payload;
+  }
+
   function loadStartView() {
     const saved = String(localStorage.getItem(START_VIEW_KEY) || "").trim();
-    return navItems.some((item) => item.id === saved) ? saved : "dashboard";
+    return navItems.some((item) => item.id === saved) && canAccessView(saved) ? saved : "dashboard";
   }
 
   function getDefaultStatusFilter(viewId) {
@@ -3208,7 +3500,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function setStartView(viewId) {
     const id = String(viewId || "").trim();
-    if (!navItems.some((item) => item.id === id)) return;
+    if (!navItems.some((item) => item.id === id) || !canAccessView(id)) return;
     localStorage.setItem(START_VIEW_KEY, id);
     closeNavItemMenu();
   }
@@ -3230,7 +3522,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getOrderedNavItems() {
-    const availableIds = navItems.map((item) => item.id);
+    const availableIds = navItems.filter((item) => canAccessView(item.id)).map((item) => item.id);
     const orderedIds = [
       ...(state.navItemOrder || []).filter((id) => availableIds.includes(id)),
       ...availableIds.filter((id) => !(state.navItemOrder || []).includes(id))
@@ -3238,6 +3530,49 @@ MAX - https://bizvmax.ru/zifra_plus
     return orderedIds
       .map((id) => navItems.find((item) => item.id === id))
       .filter(Boolean);
+  }
+
+  function loadDashboardStudentStatusOrder() {
+    const saved = localStorage.getItem(DASHBOARD_STATUS_ORDER_KEY);
+    if (!saved) {
+      localStorage.setItem(DASHBOARD_STATUS_ORDER_LAYOUT_VERSION_KEY, DASHBOARD_STATUS_ORDER_LAYOUT_VERSION);
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(saved);
+      const order = Array.isArray(parsed) ? parsed.filter((status) => typeof status === "string") : [];
+      if (localStorage.getItem(DASHBOARD_STATUS_ORDER_LAYOUT_VERSION_KEY) !== DASHBOARD_STATUS_ORDER_LAYOUT_VERSION) {
+        const firstStatuses = ["На зачисление", "Учится"];
+        const migratedOrder = [
+          ...firstStatuses,
+          ...order.filter((status) => !firstStatuses.includes(status))
+        ];
+        localStorage.setItem(DASHBOARD_STATUS_ORDER_KEY, JSON.stringify(migratedOrder));
+        localStorage.setItem(DASHBOARD_STATUS_ORDER_LAYOUT_VERSION_KEY, DASHBOARD_STATUS_ORDER_LAYOUT_VERSION);
+        return migratedOrder;
+      }
+      return order;
+    } catch (error) {
+      console.warn("Не удалось прочитать порядок статусов рабочего стола", error);
+      return [];
+    }
+  }
+
+  function persistDashboardStudentStatusOrder(order = state.dashboardStudentStatusOrder) {
+    localStorage.setItem(DASHBOARD_STATUS_ORDER_KEY, JSON.stringify(order));
+  }
+
+  function getOrderedDashboardStudentStatuses() {
+    const saved = state.dashboardStudentStatusOrder || [];
+    const defaultOrder = [
+      "На зачисление",
+      "Учится",
+      ...STUDENT_STATUS_ORDER.filter((status) => !["На зачисление", "Учится"].includes(status))
+    ];
+    return [
+      ...saved.filter((status) => defaultOrder.includes(status)),
+      ...defaultOrder.filter((status) => !saved.includes(status))
+    ];
   }
 
   function loadTabOrders() {
@@ -3293,6 +3628,11 @@ MAX - https://bizvmax.ru/zifra_plus
     return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(num);
   }
 
+  function percent(value) {
+    const num = Number(value || 0);
+    return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(num)}%`;
+  }
+
   function pieces(value) {
     const num = Number(value || 0);
     return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 }).format(num)} шт.`;
@@ -3307,6 +3647,13 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function valueForDisplay(key, value, configId = "") {
     if (value === undefined || value === null || value === "") return "—";
+    if (key === "daysRemaining") {
+      const days = Number(value);
+      if (!Number.isFinite(days)) return "—";
+      if (days < 0) return `${Math.abs(days)} дн. просрочено`;
+      if (days === 0) return "Сегодня";
+      return `${days} дн.`;
+    }
     if (configId === "inventory" && key === "balance" && !Number.isNaN(Number(value))) return pieces(value);
     if (["amount", "price", "oldPrice", "paid", "balance", "contractAmount", "paidAmount"].includes(key) && !Number.isNaN(Number(value))) return money(value);
     if (key.toLowerCase().includes("date") || key.endsWith("At") || key === "paid") return dateRu(value);
@@ -3360,11 +3707,14 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function render() {
+    hideSystemHelpTooltip();
     hideCommunicationTemplateFieldMenu();
     closeNavItemMenu();
     document.querySelector("[data-communication-template-field-dialog]")?.remove();
+    if (!canAccessView(state.view)) state.view = "dashboard";
     const current = navItems.find((item) => item.id === state.view) || navItems[0];
     const orderedNavItems = getOrderedNavItems();
+    const authUser = getCurrentAuthUser();
     app.innerHTML = `
       <aside class="sidebar">
         <div class="brand">
@@ -3390,20 +3740,35 @@ MAX - https://bizvmax.ru/zifra_plus
           <div>
             <h1>${current.label}</h1>
           </div>
+          <div class="top-actions">
+            <button class="account-button" data-action="open-profile" type="button" title="Открыть личный кабинет">
+              <span class="account-avatar">${escapeHtml(initials(authUser.name || authUser.login || "П"))}</span>
+              <span class="account-copy">
+                <strong>${escapeHtml(authUser.name || authUser.login || "Пользователь")}</strong>
+                <small>${escapeHtml(authUser.login || "")} · ${escapeHtml(getAuthRoleLabel())}</small>
+              </span>
+            </button>
+          </div>
         </header>
         <section class="content">
           ${renderView()}
         </section>
       </main>
       ${state.studentApplicationsImport.open ? renderStudentApplicationsImport() : ""}
+      ${state.financeDetails.open ? renderFinanceDetailsDialog() : ""}
       ${state.modal ? renderModal() : ""}
       ${state.documentTemplateDialogId ? renderDocumentTemplateDialog() : ""}
+      ${state.profileOpen ? renderProfileDialog() : ""}
+      ${state.userManagementOpen && isAdminUser() ? renderUserManagementDialog() : ""}
       ${renderDatabaseImportIndicator()}
       ${renderDatabaseExportIndicator()}
     `;
     bindEvents();
     restoreDictionaryAddFocus();
     focusPendingContractTemplateField();
+    if (state.view === "admin" && isAdminUser() && !state.auditLog.loaded && !state.auditLog.loading) {
+      queueMicrotask(() => loadAdminAuditLog());
+    }
   }
 
   function focusPendingContractTemplateField() {
@@ -3419,6 +3784,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderView() {
+    if (!canAccessView(state.view)) return renderDashboard();
     if (state.view === "dashboard") return renderDashboard();
     if (state.view === "documentConstructor") return renderDocumentConstructor();
     if (state.view === "settings") return renderSettings();
@@ -3433,16 +3799,16 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderDashboard() {
     const students = state.data.collections.students;
-    const programs = state.data.collections.programs;
-    const contracts = state.data.collections.contracts;
     const direct = sumBy(getAllDirectExpenses(), "amount");
     const general = sumBy(state.data.collections.generalExpenses, "amount");
     const revenue = sumBy(students, "paidAmount");
+    const profitSummary = calculateDashboardStudentProfitSummary(students);
     const financeSeries = buildFinanceSeries();
-    const receivable = sumBy(students, "balance");
-    const activeStudents = students.filter((item) => ["Учится", "На зачисление", "В работе"].includes(item.status)).length;
+    const receivable = Math.round(
+      students.reduce((sum, student) => sum + calculateDashboardStudentReceivable(student), 0) * 100
+    ) / 100;
     const statusCounts = countBy(students, "status");
-    const studentStatusItems = STUDENT_STATUS_ORDER.map((status) => ({
+    const studentStatusItems = getOrderedDashboardStudentStatuses().map((status) => ({
       label: status,
       count: Number(statusCounts[status]) || 0
     }));
@@ -3450,16 +3816,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const dueSoon = students
       .filter((item) => String(item.status || "").trim() === "Учится" && item.endDate)
       .sort((a, b) => new Date(a.endDate) - new Date(b.endDate))
-      .slice(0, 5);
+      .slice(0, 5)
+      .map((item) => ({ ...item, daysRemaining: calculateDaysUntilDate(item.endDate) }));
 
     return `
-      <div class="dashboard-grid">
-        ${metric("Активные слушатели", activeStudents, "Из листа «База»", "teal")}
-        ${metric("Программы", programs.length, "Реестр программ", "green")}
-        ${metric("Договоры", contracts.length, "Действующие записи", "blue")}
-        ${metric("Дебиторка", money(receivable), "Остаток к оплате", "red")}
-      </div>
-
       <section class="panel">
         <div class="panel-head">
           <div>
@@ -3467,7 +3827,18 @@ MAX - https://bizvmax.ru/zifra_plus
             <h2>Ближайшие окончания обучения</h2>
           </div>
         </div>
-        ${miniTable(dueSoon, ["name", "program", "endDate", "balance"], { config: "students" })}
+        ${miniTable(dueSoon, ["name", "program", "endDate", "balance", "daysRemaining"], {
+          config: "students",
+          headers: {
+            name: "Слушатель",
+            program: "Программа",
+            endDate: "Дата окончания",
+            balance: "Остаток",
+            daysRemaining: "Срок"
+          },
+          warningKey: "daysRemaining",
+          warningBelow: 10
+        })}
       </section>
 
       <div class="split-layout">
@@ -3479,16 +3850,18 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
             <button class="icon-button" data-view-shortcut="students" type="button" title="Открыть слушателей">↗</button>
           </div>
-          <div class="bar-list">
+          <div class="bar-list dashboard-status-list" data-dashboard-status-list>
             ${studentStatusItems.map(({ label, count }) => `
               <button
-                class="bar-row bar-row-link ${label === "На зачисление" && count > 0 ? "is-alert" : ""}"
+                class="bar-row bar-row-link ${label === "На зачисление" && count > 0 ? "is-alert" : ""} ${count === 0 ? "is-empty" : ""}"
                 data-student-status-shortcut="${escapeAttr(label)}"
+                data-dashboard-student-status-item="${escapeAttr(label)}"
                 type="button"
-                title="Открыть слушателей со статусом «${escapeAttr(label)}»"
+                draggable="true"
+                title="Открыть слушателей со статусом «${escapeAttr(label)}». Перетащите строку для изменения порядка"
               >
                 <span>${escapeHtml(label)}</span>
-                <span class="bar-track"><i style="width:${Math.max(8, (count / maxStatus) * 100)}%"></i></span>
+                <span class="bar-track"><i style="width:${count > 0 ? Math.max(8, (count / maxStatus) * 100) : 0}%"></i></span>
                 <strong>${count}</strong>
               </button>
             `).join("")}
@@ -3499,15 +3872,19 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="panel-head">
             <div>
               <p class="eyebrow">Финансы</p>
-              <h2>Поступления и затраты</h2>
+              <h2><button class="dashboard-panel-title-link" data-action="open-finance-details" data-finance-metric="all" type="button" title="Открыть детализацию поступлений и затрат">Поступления и затраты</button></h2>
             </div>
-            <button class="icon-button" data-view-shortcut="directExpenses" type="button" title="Открыть затраты">↗</button>
+            <button class="icon-button" data-action="open-finance-details" data-finance-metric="all" type="button" title="Открыть детализацию поступлений и затрат">↗</button>
           </div>
           <div class="finance-summary">
-            <div><span>Внесено слушателями</span><strong>${money(revenue)}</strong></div>
-            <div><span>Прямые затраты</span><strong>${money(direct)}</strong></div>
-            <div><span>Общие затраты</span><strong>${money(general)}</strong></div>
-            <div><span>Маржинальный остаток</span><strong>${money(revenue - direct - general)}</strong></div>
+            <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="revenue" type="button"><span>Внесено слушателями</span><strong>${money(revenue)}</strong></button>
+            <button class="finance-summary-row is-receivable" data-action="open-finance-details" data-finance-metric="receivable" type="button"><span>Дебиторская задолженность</span><strong>${money(receivable)}</strong></button>
+            <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="direct" type="button"><span>Прямые затраты</span><strong>${money(direct)}</strong></button>
+            <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="general" type="button"><span>Общие затраты</span><strong>${money(general)}</strong></button>
+            <button class="finance-summary-row finance-summary-profit ${profitSummary.profit < 0 ? "is-negative" : ""}" data-action="open-finance-details" data-finance-metric="profit" type="button">
+              <span class="finance-summary-label"><span>Прибыль</span><small>Средняя прибыльность: ${percent(profitSummary.averageProfitability)}</small></span>
+              <strong>${money(profitSummary.profit)}</strong>
+            </button>
           </div>
           ${renderFinanceChart(financeSeries)}
         </section>
@@ -3515,30 +3892,438 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function metric(label, value, hint, tone) {
+  function calculateDashboardStudentReceivable(record) {
+    if (!String(record?.enrollmentDate || "").trim()) return 0;
+    const contractAmount = Number(record?.contractAmount || 0);
+    if (!Number.isFinite(contractAmount) || contractAmount <= 0) return 0;
+    const detailedPayments = sumStudentPayments(record);
+    const storedPayments = Number(record?.paidAmount || 0);
+    const received = detailedPayments > 0
+      ? detailedPayments
+      : (Number.isFinite(storedPayments) ? storedPayments : 0);
+    return Math.max(0, Math.round((contractAmount - received) * 100) / 100);
+  }
+
+  function calculateDashboardStudentProfit(record) {
+    const detailedIncome = sumStudentPayments(record);
+    const storedIncome = Number(record?.paidAmount || 0);
+    const income = Math.round((detailedIncome > 0
+      ? detailedIncome
+      : (Number.isFinite(storedIncome) ? storedIncome : 0)) * 100) / 100;
+    const expenses = Math.round(sumStudentExpenses(record) * 100) / 100;
+    const profit = Math.round((income - expenses) * 100) / 100;
+    const profitability = income > 0
+      ? Math.round((profit / income) * 1000) / 10
+      : null;
+    return { income, expenses, profit, profitability };
+  }
+
+  function calculateDashboardStudentProfitSummary(students = []) {
+    const results = students.map((student) => calculateDashboardStudentProfit(student));
+    const profit = Math.round(results.reduce((sum, item) => sum + item.profit, 0) * 100) / 100;
+    const profitabilityValues = results
+      .map((item) => item.profitability)
+      .filter((value) => Number.isFinite(value));
+    const averageProfitability = profitabilityValues.length
+      ? Math.round((profitabilityValues.reduce((sum, value) => sum + value, 0) / profitabilityValues.length) * 10) / 10
+      : 0;
+    return { profit, averageProfitability };
+  }
+
+  function calculateDaysUntilDate(value) {
+    const endTime = parseTableSortDate(value);
+    if (endTime === null) return "";
+    const today = new Date();
+    const todayTime = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    return Math.round((endTime - todayTime) / 86400000);
+  }
+
+  function getFinanceMetricLabel(metric = state.financeDetails.metric) {
+    return financeDetailMetrics.find((item) => item.key === metric)?.label || "Все операции";
+  }
+
+  function getFinanceReceiptRows() {
+    return (state.data.collections.students || []).flatMap((student) => {
+      const paymentRows = Array.from({ length: 8 }, (_, index) => {
+        const number = index + 1;
+        const amount = Number(student[`payment${number}Amount`] || 0);
+        if (!amount) return null;
+        return {
+          id: `revenue:${student.id || student.uid}:${number}`,
+          date: student[`payment${number}Date`] || student.applicationDate || student.startDate || "",
+          category: "Поступление",
+          uid: student.uid || "",
+          subject: student.name || "",
+          context: student.program || "",
+          description: student[`payment${number}Note`] || `Оплата ${number}`,
+          amount,
+          sourceConfig: "students",
+          sourceId: student.id || ""
+        };
+      }).filter(Boolean);
+      const expectedAmount = Number(student.paidAmount || 0);
+      const detailedAmount = paymentRows.reduce((sum, row) => sum + row.amount, 0);
+      const difference = Math.round((expectedAmount - detailedAmount) * 100) / 100;
+      if (!paymentRows.length && expectedAmount) {
+        paymentRows.push({
+          id: `revenue:${student.id || student.uid}:total`,
+          date: student.applicationDate || student.startDate || student.endDate || "",
+          category: "Поступление",
+          uid: student.uid || "",
+          subject: student.name || "",
+          context: student.program || "",
+          description: "Итоговая внесённая сумма",
+          amount: expectedAmount,
+          sourceConfig: "students",
+          sourceId: student.id || ""
+        });
+      } else if (paymentRows.length && Math.abs(difference) >= 0.01) {
+        paymentRows.push({
+          id: `revenue:${student.id || student.uid}:adjustment`,
+          date: student.applicationDate || student.startDate || student.endDate || "",
+          category: "Поступление",
+          uid: student.uid || "",
+          subject: student.name || "",
+          context: student.program || "",
+          description: "Корректировка до итоговой внесённой суммы",
+          amount: difference,
+          sourceConfig: "students",
+          sourceId: student.id || ""
+        });
+      }
+      return paymentRows;
+    });
+  }
+
+  function getFinanceReceivableRows() {
+    return (state.data.collections.students || []).flatMap((student) => {
+      const amount = calculateDashboardStudentReceivable(student);
+      if (!amount) return [];
+      const contractAmount = Number(student.contractAmount || 0);
+      const paidAmount = Math.max(0, contractAmount - amount);
+      return [{
+        id: `receivable:${student.id || student.uid}`,
+        date: student.enrollmentDate || student.contractDate || student.startDate || "",
+        category: "Дебиторская задолженность",
+        uid: student.uid || "",
+        subject: student.name || "",
+        context: student.program || "",
+        description: `Сумма договора: ${money(contractAmount)}; внесено: ${money(paidAmount)}`,
+        amount,
+        sourceConfig: "students",
+        sourceId: student.id || ""
+      }];
+    });
+  }
+
+  function getFinanceDirectExpenseRows() {
+    const linkedRows = (state.data.collections.students || []).flatMap((student) => (
+      (Array.isArray(student.directExpenses) ? student.directExpenses : []).map((expense, index) => ({
+        id: `direct:student:${student.id || student.uid}:${expense.id || index}`,
+        date: expense.date || "",
+        category: "Прямые затраты",
+        uid: student.uid || expense.uid || "",
+        subject: student.name || "",
+        context: expense.type || student.program || "",
+        description: expense.note || "",
+        amount: Number(expense.amount || 0),
+        sourceConfig: "students",
+        sourceId: student.id || ""
+      }))
+    ));
+    const unlinkedRows = (state.data.collections.directExpenses || []).map((expense, index) => ({
+      id: `direct:unlinked:${expense.id || index}`,
+      date: expense.date || "",
+      category: "Прямые затраты",
+      uid: expense.uid || "",
+      subject: expense.note || "Без привязки к слушателю",
+      context: expense.type || "",
+      description: expense.note || "",
+      amount: Number(expense.amount || 0),
+      sourceConfig: "directExpenses",
+      sourceId: expense.id || ""
+    }));
+    return [...linkedRows, ...unlinkedRows].filter((row) => row.amount);
+  }
+
+  function getFinanceGeneralExpenseRows() {
+    return (state.data.collections.generalExpenses || []).map((expense, index) => ({
+      id: `general:${expense.id || index}`,
+      date: expense.date || expense.paid || "",
+      category: "Общие затраты",
+      uid: "",
+      subject: expense.counterparty || "",
+      context: expense.workType || "",
+      description: expense.description || expense.otherExpenses || "",
+      amount: Number(expense.amount || 0),
+      sourceConfig: "generalExpenses",
+      sourceId: expense.id || ""
+    })).filter((row) => row.amount);
+  }
+
+  function getFinanceStudentProfitRows() {
+    return (state.data.collections.students || []).flatMap((student) => {
+      const result = calculateDashboardStudentProfit(student);
+      if (result.income === 0 && result.expenses === 0) return [];
+      return [{
+        id: `profit:${student.id || student.uid}`,
+        date: student.endDate || student.startDate || student.applicationDate || "",
+        category: "Прибыль",
+        uid: student.uid || "",
+        subject: student.name || "",
+        context: student.program || "",
+        description: `Доходы: ${money(result.income)}; расходы: ${money(result.expenses)}; прибыльность: ${result.profitability === null ? "—" : percent(result.profitability)}`,
+        amount: result.profit,
+        sourceConfig: "students",
+        sourceId: student.id || ""
+      }];
+    });
+  }
+
+  function getFinanceDetailRows(metric = state.financeDetails.metric) {
+    if (metric === "revenue") return getFinanceReceiptRows();
+    if (metric === "receivable") return getFinanceReceivableRows();
+    if (metric === "direct") return getFinanceDirectExpenseRows();
+    if (metric === "general") return getFinanceGeneralExpenseRows();
+    if (metric === "profit") return getFinanceStudentProfitRows();
+    return [
+      ...getFinanceReceiptRows(),
+      ...getFinanceDirectExpenseRows().map((row) => ({ ...row, amount: -Math.abs(row.amount) })),
+      ...getFinanceGeneralExpenseRows().map((row) => ({ ...row, amount: -Math.abs(row.amount) }))
+    ];
+  }
+
+  function getFilteredFinanceDetailRows() {
+    const details = state.financeDetails;
+    const query = String(details.query || "").trim().toLocaleLowerCase("ru-RU");
+    const fromTime = details.dateFrom ? parseTableSortDate(details.dateFrom) : null;
+    const toTime = details.dateTo ? parseTableSortDate(details.dateTo) : null;
+    const filtered = getFinanceDetailRows(details.metric).filter((row) => {
+      const rowTime = parseTableSortDate(row.date);
+      if (fromTime !== null && (rowTime === null || rowTime < fromTime)) return false;
+      if (toTime !== null && (rowTime === null || rowTime > toTime)) return false;
+      if (!query) return true;
+      return [row.date, row.category, row.uid, row.subject, row.context, row.description, row.amount]
+        .some((value) => String(value ?? "").toLocaleLowerCase("ru-RU").includes(query));
+    });
+    const sort = details.sort || { key: "date", dir: "desc" };
+    const direction = sort.dir === "asc" ? 1 : -1;
+    return filtered.sort((left, right) => {
+      if (sort.key === "date") {
+        const leftDate = parseTableSortDate(left.date);
+        const rightDate = parseTableSortDate(right.date);
+        if (leftDate === null && rightDate !== null) return 1;
+        if (leftDate !== null && rightDate === null) return -1;
+        if (leftDate !== null && rightDate !== null && leftDate !== rightDate) {
+          return (leftDate - rightDate) * direction;
+        }
+      }
+      if (sort.key === "amount") return (Number(left.amount || 0) - Number(right.amount || 0)) * direction;
+      return String(left[sort.key] || "").localeCompare(String(right[sort.key] || ""), "ru") * direction;
+    });
+  }
+
+  function renderFinanceDetailsSortButton(key, label) {
+    const sort = state.financeDetails.sort || {};
+    const marker = sort.key === key ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
+    return `<button data-action="sort-finance-details" data-key="${escapeAttr(key)}" type="button">${escapeHtml(label)}${marker}</button>`;
+  }
+
+  function renderFinanceDetailsDialog() {
+    const rows = getFilteredFinanceDetailRows();
+    const pagination = getTablePagination("financeDetails", rows.length);
+    const pageRows = rows.slice(pagination.start, pagination.end);
+    const total = Math.round(rows.reduce((sum, row) => sum + Number(row.amount || 0), 0) * 100) / 100;
+    const metricLabel = getFinanceMetricLabel();
     return `
-      <section class="metric ${tone}">
-        <span>${label}</span>
-        <strong>${value}</strong>
-        <small>${hint}</small>
-      </section>
+      <div class="modal-backdrop finance-details-backdrop ${state.modal ? "is-background" : ""}" data-action="close-finance-details" ${state.modal ? 'aria-hidden="true"' : ""}>
+        <section class="modal finance-details-modal" role="dialog" aria-modal="${state.modal ? "false" : "true"}" aria-label="Детализация поступлений и затрат">
+          <header class="modal-head">
+            <div>
+              <p class="eyebrow">Финансы</p>
+              <h2>Поступления и затраты</h2>
+              <small>${escapeHtml(metricLabel)}</small>
+            </div>
+            <button class="icon-button" data-action="close-finance-details" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+          </header>
+          <div class="finance-details-content">
+            <div class="finance-details-tabs" role="tablist" aria-label="Раздел финансов">
+              ${financeDetailMetrics.map((metric) => `
+                <button class="${state.financeDetails.metric === metric.key ? "active" : ""}" data-action="select-finance-detail-metric" data-finance-metric="${metric.key}" type="button" role="tab" aria-selected="${state.financeDetails.metric === metric.key ? "true" : "false"}">${escapeHtml(metric.label)}</button>
+              `).join("")}
+            </div>
+            <div class="toolbar finance-details-toolbar">
+              <label class="search-box finance-details-search">
+                <span>⌕</span>
+                <input name="financeDetailsQuery" value="${escapeAttr(state.financeDetails.query)}" placeholder="Поиск по операциям" autocomplete="off">
+              </label>
+              <label class="finance-details-date-filter"><span>Дата с</span><input name="financeDetailsDateFrom" type="date" value="${escapeAttr(state.financeDetails.dateFrom)}"></label>
+              <label class="finance-details-date-filter"><span>по</span><input name="financeDetailsDateTo" type="date" value="${escapeAttr(state.financeDetails.dateTo)}"></label>
+              <button class="ghost-button" data-action="reset-finance-detail-filters" type="button">Сбросить</button>
+              <button class="ghost-button" data-action="export-finance-details" type="button">CSV</button>
+            </div>
+            <div class="finance-details-summary" role="status">
+              <span>Найдено записей: <strong>${rows.length}</strong></span>
+              <span>${state.financeDetails.metric === "receivable" ? "Задолженность по выборке" : "Итого по выборке"}: <strong class="${total < 0 ? "is-negative" : ""}">${money(total)}</strong></span>
+            </div>
+            ${rows.length ? `
+              <div class="table-wrap finance-details-table-wrap">
+                <table class="data-table finance-details-table">
+                  <thead><tr>
+                    <th>${renderFinanceDetailsSortButton("date", "Дата")}</th>
+                    <th>${renderFinanceDetailsSortButton("category", "Категория")}</th>
+                    <th>${renderFinanceDetailsSortButton("uid", "UID")}</th>
+                    <th>${renderFinanceDetailsSortButton("subject", "Слушатель / контрагент")}</th>
+                    <th>${renderFinanceDetailsSortButton("context", "Программа / вид затрат")}</th>
+                    <th>${renderFinanceDetailsSortButton("description", "Описание")}</th>
+                    <th class="finance-details-amount-head">${renderFinanceDetailsSortButton("amount", "Сумма")}</th>
+                  </tr></thead>
+                  <tbody>
+                    ${pageRows.map((row) => `
+                      <tr>
+                        <td>${escapeHtml(dateRu(row.date) || "—")}</td>
+                        <td>${escapeHtml(row.category || "—")}</td>
+                        <td>${escapeHtml(row.uid || "—")}</td>
+                        <td>${row.sourceId ? `<button class="table-edit-link" data-action="open-finance-detail-source" data-row-id="${escapeAttr(row.id)}" type="button">${escapeHtml(row.subject || "Открыть запись")}</button>` : escapeHtml(row.subject || "—")}</td>
+                        <td>${escapeHtml(row.context || "—")}</td>
+                        <td>${escapeHtml(row.description || "—")}</td>
+                        <td class="finance-details-amount ${Number(row.amount) < 0 ? "is-negative" : "is-positive"}">${money(row.amount)}</td>
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>
+              </div>
+              ${renderTablePagination("financeDetails", rows.length, pagination)}
+            ` : `<div class="empty-state"><strong>Записей нет</strong><span>Измените фильтры или период.</span></div>`}
+          </div>
+        </section>
+      </div>
     `;
+  }
+
+  function openFinanceDetails(metric = "all") {
+    const validMetric = financeDetailMetrics.some((item) => item.key === metric) ? metric : "all";
+    state.financeDetails = {
+      open: true,
+      metric: validMetric,
+      query: "",
+      dateFrom: "",
+      dateTo: "",
+      sort: { key: "date", dir: "desc" }
+    };
+    state.tablePages.financeDetails = 1;
+    render();
+  }
+
+  function closeFinanceDetails() {
+    state.financeDetails.open = false;
+    render();
+  }
+
+  function exportFinanceDetails() {
+    const rows = getFilteredFinanceDetailRows();
+    const fields = [
+      ["date", "Дата"], ["category", "Категория"], ["uid", "UID"],
+      ["subject", "Слушатель / контрагент"], ["context", "Программа / вид затрат"],
+      ["description", "Описание"], ["amount", "Сумма"]
+    ];
+    const header = fields.map(([, label]) => csvCell(label)).join(";");
+    const body = rows.map((row) => fields.map(([key]) => csvCell(row[key])).join(";")).join("\n");
+    const date = new Date().toISOString().slice(0, 10);
+    download(`finance-${state.financeDetails.metric}-${date}.csv`, `\ufeff${header}\n${body}`, "text/csv;charset=utf-8");
+  }
+
+  function openFinanceDetailSource(rowId) {
+    const row = getFilteredFinanceDetailRows().find((item) => String(item.id) === String(rowId));
+    if (!row?.sourceConfig || !row.sourceId || !configs[row.sourceConfig]) return;
+    const keepFinanceInBackground = row.sourceConfig === "students";
+    if (!keepFinanceInBackground) state.financeDetails.open = false;
+    state.lastEditedRow = { config: row.sourceConfig, id: row.sourceId };
+    if (row.sourceConfig === "students") {
+      state.studentCardTab = "income";
+      state.openPaymentRows = [];
+      state.openExpenseRows = [];
+    }
+    state.modal = {
+      config: row.sourceConfig,
+      id: row.sourceId,
+      ...(keepFinanceInBackground ? { studentNavigationIds: getFinanceDetailStudentNavigationIds() } : {})
+    };
+    render();
+  }
+
+  function getFinanceDetailStudentNavigationIds() {
+    return unique(getFilteredFinanceDetailRows()
+      .filter((row) => row.sourceConfig === "students" && row.sourceId)
+      .map((row) => String(row.sourceId)));
+  }
+
+  function bindFinanceDetailsEvents() {
+    document.querySelectorAll("[data-action='open-finance-details']").forEach((button) => {
+      button.addEventListener("click", () => openFinanceDetails(button.dataset.financeMetric));
+    });
+    if (!state.financeDetails.open) return;
+    document.querySelectorAll("[data-action='close-finance-details']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (element.matches("button") || event.target === element) closeFinanceDetails();
+      });
+    });
+    document.querySelectorAll("[data-action='select-finance-detail-metric']").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.financeDetails.metric = button.dataset.financeMetric || "all";
+        state.tablePages.financeDetails = 1;
+        render();
+      });
+    });
+    const queryInput = document.querySelector("[name='financeDetailsQuery']");
+    queryInput?.addEventListener("input", (event) => {
+      const cursor = event.currentTarget.selectionStart;
+      state.financeDetails.query = event.currentTarget.value;
+      state.tablePages.financeDetails = 1;
+      render();
+      const nextInput = document.querySelector("[name='financeDetailsQuery']");
+      nextInput?.focus({ preventScroll: true });
+      nextInput?.setSelectionRange(cursor, cursor);
+    });
+    ["financeDetailsDateFrom", "financeDetailsDateTo"].forEach((name) => {
+      document.querySelector(`[name='${name}']`)?.addEventListener("change", (event) => {
+        const key = name === "financeDetailsDateFrom" ? "dateFrom" : "dateTo";
+        state.financeDetails[key] = event.currentTarget.value;
+        state.tablePages.financeDetails = 1;
+        render();
+      });
+    });
+    document.querySelector("[data-action='reset-finance-detail-filters']")?.addEventListener("click", () => {
+      state.financeDetails.query = "";
+      state.financeDetails.dateFrom = "";
+      state.financeDetails.dateTo = "";
+      state.tablePages.financeDetails = 1;
+      render();
+    });
+    document.querySelector("[data-action='export-finance-details']")?.addEventListener("click", exportFinanceDetails);
+    document.querySelectorAll("[data-action='sort-finance-details']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = button.dataset.key || "date";
+        state.financeDetails.sort = {
+          key,
+          dir: state.financeDetails.sort.key === key && state.financeDetails.sort.dir === "asc" ? "desc" : "asc"
+        };
+        state.tablePages.financeDetails = 1;
+        render();
+      });
+    });
+    document.querySelectorAll("[data-action='open-finance-detail-source']").forEach((button) => {
+      button.addEventListener("click", () => openFinanceDetailSource(button.dataset.rowId));
+    });
   }
 
   function renderFinanceChart(series) {
     if (!series.length) return `<div class="empty-state compact"><span>Нет данных для графика</span></div>`;
     const activeMetrics = getActiveFinanceMetrics();
-    const sortedSeries = sortFinanceSeries(series, activeMetrics);
+    const sortedSeries = sortFinanceSeries(series);
     const maxValue = Math.max(...sortedSeries.flatMap((item) => activeMetrics.map((metric) => item[metric.key])), 1);
     return `
       <div class="finance-chart">
-        <div class="finance-chart-filters" aria-label="Фильтр показателей графика">
-          ${financeMetrics.map((metric) => `
-            <button class="chart-filter ${state.financeChart[metric.key] ? "active" : ""}" data-action="toggle-finance-metric" data-metric="${metric.key}" type="button" aria-pressed="${state.financeChart[metric.key] ? "true" : "false"}">
-              <i class="${metric.tone}"></i>${escapeHtml(metric.label)}
-            </button>
-          `).join("")}
-        </div>
         ${activeMetrics.length ? `
           <div class="finance-bars">
             ${sortedSeries.map((item) => `
@@ -3551,6 +4336,13 @@ MAX - https://bizvmax.ru/zifra_plus
             `).join("")}
           </div>
         ` : `<div class="empty-state compact"><span>Выберите хотя бы один показатель</span></div>`}
+        <div class="finance-chart-filters" aria-label="Фильтр показателей графика">
+          ${financeMetrics.map((metric) => `
+            <button class="chart-filter ${state.financeChart[metric.key] ? "active" : ""}" data-action="toggle-finance-metric" data-metric="${metric.key}" type="button" aria-pressed="${state.financeChart[metric.key] ? "true" : "false"}">
+              <i class="${metric.tone}"></i>${escapeHtml(metric.label)}
+            </button>
+          `).join("")}
+        </div>
       </div>
     `;
   }
@@ -3559,21 +4351,23 @@ MAX - https://bizvmax.ru/zifra_plus
     return financeMetrics.filter((metric) => state.financeChart[metric.key]);
   }
 
-  function sortFinanceSeries(series, activeMetrics = getActiveFinanceMetrics()) {
+  function sortFinanceSeries(series) {
     return series
       .slice()
-      .sort((a, b) => financeMetricTotal(b, activeMetrics) - financeMetricTotal(a, activeMetrics) || b.key.localeCompare(a.key))
+      .sort((a, b) => b.key.localeCompare(a.key))
       .slice(0, 12);
-  }
-
-  function financeMetricTotal(item, activeMetrics) {
-    return activeMetrics.reduce((sum, metric) => sum + Number(item[metric.key] || 0), 0);
   }
 
   function financeBar(kind, value, maxValue, label) {
     const amount = Number(value || 0);
     const height = amount > 0 ? Math.max(4, (amount / maxValue) * 100) : 0;
-    return `<span class="finance-bar ${kind}" style="height:${height}%" title="${escapeAttr(`${label}: ${money(amount)}`)}"></span>`;
+    const thousands = `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(amount / 1000)} т.р.`;
+    return `
+      <span class="finance-bar-column" title="${escapeAttr(`${label}: ${money(amount)}`)}">
+        <small class="finance-bar-value">${escapeHtml(thousands)}</small>
+        <span class="finance-bar-area"><i class="finance-bar ${kind}" style="height:${height}%"></i></span>
+      </span>
+    `;
   }
 
   function renderCollection(config) {
@@ -3606,9 +4400,12 @@ MAX - https://bizvmax.ru/zifra_plus
             ` : ""}
             ${state.view === "students" ? renderStudentProgramTypeFilter() : ""}
             ${state.view === "programs" ? renderProgramRegistryTypeFilter() : ""}
-            ${state.view === "students" ? `<button class="ghost-button student-applications-import-button" data-action="open-student-applications-import" type="button">Импорт слушателей</button>` : ""}
-            <button class="ghost-button" data-action="export-csv" data-config="${state.view}" type="button">CSV</button>
-            <button class="primary-button" data-action="create" data-config="${state.view}" type="button">Добавить</button>
+            ${state.view === "contracts" ? renderContractSectionFilter() : ""}
+            <div class="collection-toolbar-actions">
+              ${state.view === "students" ? `<button class="ghost-button student-applications-import-button" data-action="open-student-applications-import" type="button">Импорт слушателей</button>` : ""}
+              <button class="ghost-button" data-action="export-csv" data-config="${state.view}" type="button">CSV</button>
+              <button class="primary-button" data-action="create" data-config="${state.view}" type="button">Добавить</button>
+            </div>
           </div>
         </div>
         ${importedViewIds.length ? `
@@ -3894,6 +4691,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <button class="icon-button" data-action="close-student-applications-import" type="button" title="Закрыть" aria-label="Закрыть">×</button>
             </header>
 
+            <div class="student-applications-import-body">
             <div class="student-applications-import-filters">
               <label class="student-applications-program-filter">
                 <span>Программа обучения</span>
@@ -4013,6 +4811,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <div class="student-applications-import-detail">
               <h3>Информация о выбранной заявке</h3>
               ${renderStudentApplicationDetail(activeRow, importedLookup)}
+            </div>
             </div>
 
             <div class="modal-actions student-applications-import-actions">
@@ -4543,7 +5342,7 @@ MAX - https://bizvmax.ru/zifra_plus
       position: String(row.position || "").trim(),
       source: String(row.source || "Сайт").trim(),
       agent: getApplicationSourceAgent(row.source || "Сайт"),
-      manager: String(program?.manager || ""),
+      manager: getCurrentUserLogin() || String(program?.manager || ""),
       discount: couponDiscount.percent,
       discountUnit: "percent",
       discountDescription: couponDiscount.description,
@@ -4639,10 +5438,20 @@ MAX - https://bizvmax.ru/zifra_plus
       ...(state.data.dictionaries.agents || []),
       ...imported.map((record) => String(record.agent || "").trim()).filter(Boolean)
     ]);
+    state.data.dictionaries.managers = unique([
+      ...(state.data.dictionaries.managers || []),
+      getCurrentUserLogin()
+    ].filter(Boolean));
     addAudit(
       "Импортированы слушатели",
       "Слушатели и заявки",
-      `Добавлено: ${imported.length}${skipped ? `, пропущено без ФИО: ${skipped}` : ""}`
+      `Добавлено: ${imported.length}${skipped ? `, пропущено без ФИО: ${skipped}` : ""}`,
+      {
+        entityType: "students",
+        entityId: imported.map((record) => record.id).join(", "),
+        entityLabel: imported.map((record) => record.name).filter(Boolean).join(", "),
+        source: "applications-import"
+      }
     );
     state.lastEditedRow = { config: "students", id: imported[0].id };
     state.view = "students";
@@ -4882,6 +5691,33 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderContractSectionFilter() {
+    const selected = CONTRACT_SECTIONS.filter((item) => state.contractSectionFilter.includes(item));
+    const selectionLabel = selected.length ? selected.join(", ") : `Все разделы (${getRowsForConfig(configs.contracts).length})`;
+    return `
+      <details class="student-program-type-filter ${selected.length ? "is-active" : ""}" data-program-type-filter data-contract-section-filter>
+        <summary title="Фильтр по разделу реестра договоров">
+          <span>Раздел</span>
+          <strong>${escapeHtml(selectionLabel)}</strong>
+          <svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5"></path></svg>
+        </summary>
+        <div class="student-program-type-filter-panel">
+          ${CONTRACT_SECTIONS.map((item) => {
+            const count = getRowsForConfig(configs.contracts)
+              .filter((contract) => normalizeContractSection(contract.section, contract.status) === item).length;
+            return `
+              <label>
+                <input type="checkbox" value="${escapeAttr(item)}" data-contract-section-filter-option ${selected.includes(item) ? "checked" : ""}>
+                <span>${escapeHtml(item)} (${count})</span>
+              </label>
+            `;
+          }).join("")}
+          <button class="student-program-type-filter-clear" data-action="clear-contract-section-filter" type="button" ${selected.length ? "" : "disabled"}>Сбросить</button>
+        </div>
+      </details>
+    `;
+  }
+
   function updateDatabaseImportIndicator(patch) {
     window.clearTimeout(databaseImportHideTimer);
     state.databaseImport = { ...state.databaseImport, ...patch };
@@ -4954,7 +5790,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (label) {
         label.textContent = state.databaseExport.running
           ? "Синхронизация..."
-          : "Синхронизировать и скачать XLSB";
+          : "Синхронизировать с базой";
       }
     }
   }
@@ -5009,6 +5845,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ? getProgramRegistryTypeFilterOptions()
         .filter((item) => state.programRegistryTypeFilter.includes(item))
       : [];
+    const selectedContractSections = state.view === "contracts"
+      ? CONTRACT_SECTIONS.filter((item) => state.contractSectionFilter.includes(item))
+      : [];
     const importedViewIds = state.view === "students"
       ? new Set((state.studentImportedViewIds || []).map(String))
       : new Set();
@@ -5030,11 +5869,15 @@ MAX - https://bizvmax.ru/zifra_plus
       const registryProgramType = String(row.type || "").trim() || "Не задано";
       const matchRegistryProgramType = !selectedRegistryProgramTypes.length
         || selectedRegistryProgramTypes.includes(registryProgramType);
+      const contractSection = normalizeContractSection(row.section, row.status);
+      const matchContractSection = !selectedContractSections.length
+        || selectedContractSections.includes(contractSection);
       const matchImportedView = !importedViewIds.size || importedViewIds.has(String(row.id));
       return matchQuery
         && matchStatus
         && matchProgramType
         && matchRegistryProgramType
+        && matchContractSection
         && matchImportedView;
     });
     if (state.sort.key) {
@@ -5058,6 +5901,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getFilterOptions(config) {
+    if (config.collection === "contracts") return [];
     const rows = getRowsForConfig(config);
     const keys = ["status", "type", "workType", "itemType"];
     const key = keys.find((item) => rows.some((row) => Object.prototype.hasOwnProperty.call(row, item)));
@@ -6522,7 +7366,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   <span>Укажите рекомендуемую папку или выберите системное поле.</span>
                 </div>
               </header>
-              <label class="document-template-main-wide-field" title="Можно ввести путь относительно папки системы или добавить поле. Поле «Папка Загрузки» использует стандартную папку загрузок браузера на компьютере.">
+              <div class="document-template-main-wide-field" title="Можно ввести путь относительно папки системы или добавить поле. Поле «Папка Загрузки» использует стандартную папку загрузок браузера на компьютере.">
                 <span>Папка сохранения</span>
                 <div class="document-save-folder-control">
                   <div
@@ -6541,7 +7385,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   </select>
                   <input name="saveFolderTemplate" type="hidden" value="${escapeAttr(activeDocument.saveFolderTemplate)}">
                 </div>
-              </label>
+              </div>
             </section>
           </div>
           <input name="useCustomDocumentProperties" type="hidden" value="1">
@@ -7042,8 +7886,449 @@ MAX - https://bizvmax.ru/zifra_plus
     return `<button class="communication-template-token communication-template-field-token ${field.custom ? "is-custom" : ""}" data-template-token="${escapeAttr(token)}" data-template-field-name="${escapeAttr(field.name)}" draggable="true" type="button" title="${escapeAttr(title)}">${escapeHtml(token)}</button>`;
   }
 
-  function renderAdmin() {
+  function auditFilterValue(key) {
+    return String(state.auditLog.filters?.[key] || "");
+  }
+
+  function auditFilterOptions(key) {
+    return Array.isArray(state.auditLog.options?.[key]) ? state.auditLog.options[key] : [];
+  }
+
+  function renderAuditFilterSelect(key, label, labelMap = {}) {
+    const selected = auditFilterValue(key);
+    const options = unique([selected, ...auditFilterOptions(key)].filter(Boolean));
     return `
+      <label>
+        <span>${escapeHtml(label)}</span>
+        <select name="${escapeAttr(key)}">
+          <option value="">Все</option>
+          ${options.map((value) => `<option value="${escapeAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(labelMap[value] || value)}</option>`).join("")}
+        </select>
+      </label>
+    `;
+  }
+
+  function renderAuditChanges(row) {
+    const changes = Array.isArray(row.changes) ? row.changes : [];
+    if (!changes.length) {
+      if (!row.field && !row.before && !row.after) return '<span class="muted">—</span>';
+      return `
+        <div class="admin-audit-single-change">
+          <strong>${escapeHtml(row.field || "Изменение")}</strong>
+          <span title="Было">${escapeHtml(row.before || "∅")}</span>
+          <span aria-hidden="true">→</span>
+          <span title="Стало">${escapeHtml(row.after || "∅")}</span>
+        </div>
+      `;
+    }
+    return `
+      <details class="admin-audit-changes">
+        <summary>${changes.length} ${pluralizeRu(changes.length, "поле", "поля", "полей")}</summary>
+        <div class="admin-audit-change-list">
+          ${changes.map((change) => `
+            <div class="admin-audit-change-item">
+              <strong>${escapeHtml(change.label || change.field || "Поле")}</strong>
+              <span class="is-before" title="Было">${escapeHtml(change.before || "∅")}</span>
+              <span aria-hidden="true">→</span>
+              <span class="is-after" title="Стало">${escapeHtml(change.after || "∅")}</span>
+            </div>
+          `).join("")}
+        </div>
+      </details>
+    `;
+  }
+
+  function pluralizeRu(value, one, few, many) {
+    const number = Math.abs(Number(value) || 0) % 100;
+    const remainder = number % 10;
+    if (number > 10 && number < 20) return many;
+    if (remainder === 1) return one;
+    if (remainder >= 2 && remainder <= 4) return few;
+    return many;
+  }
+
+  function renderAuditObject(row) {
+    const title = [row.entityLabel, row.entityType, row.entityId].filter(Boolean).join(" · ");
+    if (!title) return '<span class="muted">—</span>';
+    return `
+      <div class="admin-audit-object" title="${escapeAttr(title)}">
+        <strong>${escapeHtml(row.entityLabel || row.entityType || "Объект")}</strong>
+        ${row.entityId ? `<small>ID: ${escapeHtml(row.entityId)}</small>` : ""}
+        ${row.entityType ? `<small>${escapeHtml(row.entityType)}</small>` : ""}
+      </div>
+    `;
+  }
+
+  function renderAdminAuditTable() {
+    const audit = state.auditLog;
+    if (audit.loading && !audit.loaded) {
+      return '<div class="empty-state compact"><span>Загрузка журнала изменений...</span></div>';
+    }
+    if (audit.error) {
+      return `<div class="admin-audit-error" role="alert">${escapeHtml(audit.error)} <button class="ghost-button" data-action="refresh-audit-log" type="button">Повторить</button></div>`;
+    }
+    if (!audit.items.length) {
+      return '<div class="empty-state compact"><span>По заданным фильтрам записей нет</span></div>';
+    }
+    return `
+      <div class="table-wrap admin-audit-table-wrap">
+        <table class="data-table admin-audit-table">
+          <thead>
+            <tr>
+              <th>Дата и время</th>
+              <th>Пользователь</th>
+              <th>Действие</th>
+              <th>Раздел</th>
+              <th>Объект</th>
+              <th>Изменения</th>
+              <th>Подробности</th>
+              <th>IP</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${audit.items.map((row) => `
+              <tr>
+                <td class="admin-audit-date">${escapeHtml(formatDateTimeRu(row.createdAt || row.date))}</td>
+                <td>
+                  <div class="admin-audit-user">
+                    <strong>${escapeHtml(row.user || "system")}</strong>
+                    ${row.userName ? `<span>${escapeHtml(row.userName)}</span>` : ""}
+                    ${row.role ? `<small>${escapeHtml(getAuthRoleLabel(row.role))}</small>` : ""}
+                  </div>
+                </td>
+                <td><strong>${escapeHtml(row.action || "—")}</strong></td>
+                <td>${escapeHtml(row.area || "—")}</td>
+                <td>${renderAuditObject(row)}</td>
+                <td>${renderAuditChanges(row)}</td>
+                <td>
+                  <div class="admin-audit-details" title="${escapeAttr(row.details || "")}">${escapeHtml(row.details || "—")}</div>
+                  ${row.source ? `<small class="admin-audit-source">${escapeHtml(row.source)}</small>` : ""}
+                </td>
+                <td class="admin-audit-ip" title="${escapeAttr(row.userAgent || "")}">${escapeHtml(row.ip || "—")}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function renderAdminAuditPagination() {
+    const audit = state.auditLog;
+    return `
+      <div class="admin-audit-pagination">
+        <span>Показано ${audit.items.length} из ${audit.total}</span>
+        <label>
+          <span>Строк на странице</span>
+          <select data-action="audit-page-size">
+            ${[25, 50, 100, 200].map((size) => `<option value="${size}" ${size === audit.pageSize ? "selected" : ""}>${size}</option>`).join("")}
+          </select>
+        </label>
+        <button class="icon-button" data-action="audit-page" data-page="${Math.max(1, audit.page - 1)}" type="button" title="Предыдущая страница" ${audit.page <= 1 ? "disabled" : ""}>‹</button>
+        <strong>${audit.page} / ${audit.pages}</strong>
+        <button class="icon-button" data-action="audit-page" data-page="${Math.min(audit.pages, audit.page + 1)}" type="button" title="Следующая страница" ${audit.page >= audit.pages ? "disabled" : ""}>›</button>
+      </div>
+    `;
+  }
+
+  function studentAuditFilterValue(key) {
+    return String(state.studentAuditLog.filters?.[key] || "");
+  }
+
+  function studentAuditFilterOptions(key) {
+    return Array.isArray(state.studentAuditLog.options?.[key])
+      ? state.studentAuditLog.options[key]
+      : [];
+  }
+
+  function renderStudentAuditFilterSelect(key, label, labelMap = {}) {
+    const selected = studentAuditFilterValue(key);
+    const options = unique([selected, ...studentAuditFilterOptions(key)].filter(Boolean));
+    return `
+      <label>
+        <span>${escapeHtml(label)}</span>
+        <select name="${escapeAttr(key)}">
+          <option value="">Все</option>
+          ${options.map((value) => `<option value="${escapeAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(labelMap[value] || value)}</option>`).join("")}
+        </select>
+      </label>
+    `;
+  }
+
+  function renderStudentAuditTable() {
+    const audit = state.studentAuditLog;
+    if (audit.loading && !audit.loaded) {
+      return '<div class="empty-state compact"><span>Загрузка журнала действий...</span></div>';
+    }
+    if (audit.error) {
+      return `<div class="admin-audit-error" role="alert">${escapeHtml(audit.error)} <button class="ghost-button" data-action="refresh-student-audit-log" type="button">Повторить</button></div>`;
+    }
+    if (!audit.items.length) {
+      return '<div class="empty-state compact"><span>По заданным фильтрам записей нет</span></div>';
+    }
+    return `
+      <div class="table-wrap admin-audit-table-wrap student-audit-table-wrap">
+        <table class="data-table admin-audit-table student-audit-table">
+          <thead>
+            <tr>
+              <th>Дата и время</th>
+              <th>Пользователь</th>
+              <th>Действие</th>
+              <th>Раздел</th>
+              <th>Изменения</th>
+              <th>Подробности</th>
+              <th>Источник</th>
+              <th>IP</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${audit.items.map((row) => `
+              <tr>
+                <td class="admin-audit-date">${escapeHtml(formatDateTimeRu(row.createdAt || row.date))}</td>
+                <td>
+                  <div class="admin-audit-user">
+                    <strong>${escapeHtml(row.user || "system")}</strong>
+                    ${row.userName ? `<span>${escapeHtml(row.userName)}</span>` : ""}
+                    ${row.role ? `<small>${escapeHtml(getAuthRoleLabel(row.role))}</small>` : ""}
+                  </div>
+                </td>
+                <td><strong>${escapeHtml(row.action || "—")}</strong></td>
+                <td>${escapeHtml(row.area || "—")}</td>
+                <td>${renderAuditChanges(row)}</td>
+                <td><div class="admin-audit-details" title="${escapeAttr(row.details || "")}">${escapeHtml(row.details || "—")}</div></td>
+                <td><span class="admin-audit-source">${escapeHtml(row.source || "—")}</span></td>
+                <td class="admin-audit-ip" title="${escapeAttr(row.userAgent || "")}">${escapeHtml(row.ip || "—")}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function renderStudentAuditPagination() {
+    const audit = state.studentAuditLog;
+    return `
+      <div class="admin-audit-pagination student-audit-pagination">
+        <span>Показано ${audit.items.length} из ${audit.total}</span>
+        <label>
+          <span>Строк на странице</span>
+          <select data-action="student-audit-page-size">
+            ${[25, 50, 100, 200].map((size) => `<option value="${size}" ${size === audit.pageSize ? "selected" : ""}>${size}</option>`).join("")}
+          </select>
+        </label>
+        <button class="icon-button" data-action="student-audit-page" data-page="${Math.max(1, audit.page - 1)}" type="button" title="Предыдущая страница" ${audit.page <= 1 ? "disabled" : ""}>&lsaquo;</button>
+        <strong>${audit.page} / ${audit.pages}</strong>
+        <button class="icon-button" data-action="student-audit-page" data-page="${Math.min(audit.pages, audit.page + 1)}" type="button" title="Следующая страница" ${audit.page >= audit.pages ? "disabled" : ""}>&rsaquo;</button>
+      </div>
+    `;
+  }
+
+  function renderStudentAuditDialog(record) {
+    const audit = state.studentAuditLog;
+    const roleLabels = { admin: "Администратор", manager: "Менеджер" };
+    const studentName = audit.studentName || String(record?.name || "").trim() || "Слушатель";
+    const uid = String(record?.uid || "").trim();
+    const title = `${studentName}${uid ? ` [${uid}]` : ""}`;
+    const advancedFiltersActive = Object.entries(audit.filters || {}).some(([key, value]) => (
+      !["q", "from", "to", "user", "role", "action", "area"].includes(key) && value
+    ));
+    return `
+      <div class="modal-backdrop student-audit-backdrop" data-action="close-student-audit-log">
+        <section class="modal student-audit-modal" role="dialog" aria-modal="true" aria-label="Журнал действий по слушателю">
+          <header class="modal-head student-audit-head">
+            <div>
+              <p class="eyebrow">История карточки</p>
+              <h2>Журнал действий</h2>
+              <p>${escapeHtml(title)} · ${audit.total} ${pluralizeRu(audit.total, "запись", "записи", "записей")}</p>
+            </div>
+            <div class="student-audit-head-actions">
+              <button class="icon-button" data-action="refresh-student-audit-log" type="button" title="Обновить журнал" aria-label="Обновить журнал">↻</button>
+              <button
+                class="ghost-button admin-audit-download-button"
+                data-action="download-student-audit-log"
+                type="button"
+                title="Скачать отфильтрованный журнал в CSV"
+                ${audit.total ? "" : "disabled"}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M12 3v12"></path>
+                  <path d="m7 10 5 5 5-5"></path>
+                  <path d="M5 20h14"></path>
+                </svg>
+                <span>Скачать CSV</span>
+              </button>
+              <button class="icon-button" data-action="close-student-audit-log" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+            </div>
+          </header>
+          <div class="student-audit-content">
+            <form class="admin-audit-filter-form student-audit-filter-form" data-action="filter-student-audit-log">
+              <div class="admin-audit-filter-grid student-audit-filter-grid">
+                <label class="admin-audit-query-filter">
+                  <span>Поиск по всем параметрам</span>
+                  <input name="q" type="search" value="${escapeAttr(studentAuditFilterValue("q"))}" placeholder="Действие, пользователь, значение, письмо...">
+                </label>
+                <label><span>Дата с</span><input name="from" type="date" value="${escapeAttr(studentAuditFilterValue("from"))}"></label>
+                <label><span>Дата по</span><input name="to" type="date" value="${escapeAttr(studentAuditFilterValue("to"))}"></label>
+                ${renderStudentAuditFilterSelect("user", "Логин")}
+                ${renderStudentAuditFilterSelect("role", "Роль", roleLabels)}
+                ${renderStudentAuditFilterSelect("action", "Действие")}
+                ${renderStudentAuditFilterSelect("area", "Раздел")}
+              </div>
+              <details class="admin-audit-advanced-filters" ${advancedFiltersActive ? "open" : ""}>
+                <summary>Все параметры фильтрации</summary>
+                <div class="admin-audit-filter-grid is-advanced">
+                  <label><span>Имя пользователя</span><input name="userName" value="${escapeAttr(studentAuditFilterValue("userName"))}"></label>
+                  <label><span>Поле</span><input name="field" value="${escapeAttr(studentAuditFilterValue("field"))}"></label>
+                  <label><span>Было</span><input name="before" value="${escapeAttr(studentAuditFilterValue("before"))}"></label>
+                  <label><span>Стало</span><input name="after" value="${escapeAttr(studentAuditFilterValue("after"))}"></label>
+                  <label><span>Подробности</span><input name="details" value="${escapeAttr(studentAuditFilterValue("details"))}"></label>
+                  <label><span>IP</span><input name="ip" value="${escapeAttr(studentAuditFilterValue("ip"))}"></label>
+                  <label><span>Клиент</span><input name="userAgent" value="${escapeAttr(studentAuditFilterValue("userAgent"))}"></label>
+                  ${renderStudentAuditFilterSelect("source", "Источник")}
+                </div>
+              </details>
+              <div class="admin-audit-filter-actions">
+                <button class="primary-button" type="submit">Применить фильтры</button>
+                <button class="ghost-button" data-action="reset-student-audit-filters" type="button">Сбросить</button>
+              </div>
+            </form>
+            ${renderStudentAuditTable()}
+            ${renderStudentAuditPagination()}
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderAdminAuditPanel() {
+    const roleLabels = { admin: "Администратор", manager: "Менеджер" };
+    return `
+      <section class="panel admin-audit-panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Контроль изменений</p>
+            <h2>Журнал действий пользователей</h2>
+            <p>Единая серверная история: ${state.auditLog.total} ${pluralizeRu(state.auditLog.total, "запись", "записи", "записей")} по текущему фильтру.</p>
+          </div>
+          <div class="admin-audit-head-actions">
+            <button class="icon-button" data-action="refresh-audit-log" type="button" title="Обновить журнал" aria-label="Обновить журнал">↻</button>
+            <button
+              class="ghost-button admin-audit-download-button"
+              data-action="download-audit-log"
+              type="button"
+              title="Скачать отфильтрованный журнал в CSV"
+              ${state.auditLog.total ? "" : "disabled"}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 3v12"></path>
+                <path d="m7 10 5 5 5-5"></path>
+                <path d="M5 20h14"></path>
+              </svg>
+              <span>Скачать CSV</span>
+            </button>
+          </div>
+        </div>
+        <form class="admin-audit-filter-form" data-action="filter-audit-log">
+          <div class="admin-audit-filter-grid">
+            <label class="admin-audit-query-filter">
+              <span>Поиск по всем параметрам</span>
+              <input name="q" type="search" value="${escapeAttr(auditFilterValue("q"))}" placeholder="Пользователь, действие, объект, значение...">
+            </label>
+            <label><span>Дата с</span><input name="from" type="date" value="${escapeAttr(auditFilterValue("from"))}"></label>
+            <label><span>Дата по</span><input name="to" type="date" value="${escapeAttr(auditFilterValue("to"))}"></label>
+            ${renderAuditFilterSelect("user", "Логин")}
+            ${renderAuditFilterSelect("role", "Роль", roleLabels)}
+            ${renderAuditFilterSelect("action", "Действие")}
+            ${renderAuditFilterSelect("area", "Раздел")}
+          </div>
+          <details class="admin-audit-advanced-filters" ${Object.entries(state.auditLog.filters || {}).some(([key, value]) => !["q", "from", "to", "user", "role", "action", "area"].includes(key) && value) ? "open" : ""}>
+            <summary>Все параметры фильтрации</summary>
+            <div class="admin-audit-filter-grid is-advanced">
+              <label><span>Имя пользователя</span><input name="userName" value="${escapeAttr(auditFilterValue("userName"))}"></label>
+              ${renderAuditFilterSelect("entityType", "Тип объекта")}
+              <label><span>ID объекта</span><input name="entityId" value="${escapeAttr(auditFilterValue("entityId"))}"></label>
+              <label><span>Название объекта</span><input name="entityLabel" value="${escapeAttr(auditFilterValue("entityLabel"))}"></label>
+              <label><span>Поле</span><input name="field" value="${escapeAttr(auditFilterValue("field"))}"></label>
+              <label><span>Было</span><input name="before" value="${escapeAttr(auditFilterValue("before"))}"></label>
+              <label><span>Стало</span><input name="after" value="${escapeAttr(auditFilterValue("after"))}"></label>
+              <label><span>Подробности</span><input name="details" value="${escapeAttr(auditFilterValue("details"))}"></label>
+              <label><span>IP</span><input name="ip" value="${escapeAttr(auditFilterValue("ip"))}"></label>
+              <label><span>Клиент</span><input name="userAgent" value="${escapeAttr(auditFilterValue("userAgent"))}"></label>
+              ${renderAuditFilterSelect("source", "Источник")}
+            </div>
+          </details>
+          <div class="admin-audit-filter-actions">
+            <button class="primary-button" type="submit">Применить фильтры</button>
+            <button class="ghost-button" data-action="reset-audit-filters" type="button">Сбросить</button>
+          </div>
+        </form>
+        ${renderAdminAuditTable()}
+        ${renderAdminAuditPagination()}
+      </section>
+    `;
+  }
+
+  function getAdminSettingRenderValue(name, fallback) {
+    const draft = state.adminSettingsDirty ? state.adminSettingsDraft : null;
+    return draft && Object.prototype.hasOwnProperty.call(draft, name)
+      ? draft[name]
+      : fallback;
+  }
+
+  function renderAdmin() {
+    const databasePath = getAdminSettingRenderValue("studentDatabaseWebDavPath", getStudentDatabaseWebDavPath());
+    const basePath = getAdminSettingRenderValue("yandexDiskBasePath", getYandexDiskBasePath());
+    const localDocumentsRoot = getAdminSettingRenderValue("localDocumentsRoot", getLocalDocumentsRoot());
+    const localDocumentsRootIsSystemParent = Boolean(getAdminSettingRenderValue(
+      "localDocumentsRootIsSystemParent",
+      state.data.meta.localDocumentsRootIsSystemParent
+    ));
+    const openDocumentsLocally = Boolean(getAdminSettingRenderValue(
+      "openDocumentsLocally",
+      getOpenDocumentsLocally()
+    ));
+    const yandexDiskLogin = getAdminSettingRenderValue("yandexDiskLogin", getYandexDiskLogin());
+    const yandexDiskPassword = getAdminSettingRenderValue("yandexDiskPassword", "");
+    const yandexDiskAutoSave = Boolean(getAdminSettingRenderValue(
+      "yandexDiskAutoSave",
+      state.data.meta.yandexDiskAutoSave
+    ));
+    const emailHost = getAdminSettingRenderValue(
+      "studentApplicationsEmailHost",
+      getStudentApplicationsEmailHost()
+    );
+    const emailPort = getAdminSettingRenderValue(
+      "studentApplicationsEmailPort",
+      getStudentApplicationsEmailPort()
+    );
+    const emailSmtpHost = getAdminSettingRenderValue(
+      "studentApplicationsEmailSmtpHost",
+      getStudentApplicationsEmailSmtpHost()
+    );
+    const emailSmtpPort = getAdminSettingRenderValue(
+      "studentApplicationsEmailSmtpPort",
+      getStudentApplicationsEmailSmtpPort()
+    );
+    const emailLogin = getAdminSettingRenderValue(
+      "studentApplicationsEmailLogin",
+      getStudentApplicationsEmailLogin()
+    );
+    const emailPassword = getAdminSettingRenderValue("studentApplicationsEmailPassword", "");
+    const saveButtonTitle = state.adminSettingsDirty
+      ? "Есть несохранённые изменения. Сохранить подключение"
+      : "Сохранить подключение";
+    return `
+      <section class="panel admin-users-panel">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Доступ к системе</p>
+            <h2>Пользователи и роли</h2>
+            <p>Учётные записи администраторов и менеджеров, контакты и состояние доступа.</p>
+          </div>
+          <button class="primary-button" data-action="open-user-management" type="button">Управление пользователями</button>
+        </div>
+      </section>
       <section class="panel admin-connection-panel">
         <div class="section-head">
           <div>
@@ -7056,17 +8341,17 @@ MAX - https://bizvmax.ru/zifra_plus
               <div class="admin-database-settings-head">
                 <h3>База АИС Допобразование</h3>
                 <div class="sdo-settings-actions admin-database-actions">
-                  <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" ${state.databaseImport.running ? "disabled" : ""}>
+                  <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseImportTooltip())}" ${state.databaseImport.running ? "disabled" : ""}>
                     <span data-import-button-label>${state.databaseImport.running ? "Импорт..." : "Загрузить из базы"}</span>
                   </button>
-                  <button class="ghost-button ${state.databaseExport.running ? "is-loading" : ""}" data-action="sync-students-database" type="button" ${state.databaseExport.running ? "disabled" : ""}>
-                    <span data-database-export-button-label>${state.databaseExport.running ? "Синхронизация..." : "Синхронизировать и скачать XLSB"}</span>
+                  <button class="ghost-button ${state.databaseExport.running ? "is-loading" : ""}" data-action="sync-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseSyncTooltip())}" ${state.databaseExport.running ? "disabled" : ""}>
+                    <span data-database-export-button-label>${state.databaseExport.running ? "Синхронизация..." : "Синхронизировать с базой"}</span>
                   </button>
                   <button
-                    class="primary-button icon-only admin-save-connection-button"
+                    class="primary-button icon-only admin-save-connection-button ${state.adminSettingsDirty ? "is-unsaved" : ""}"
                     type="submit"
-                    title="Сохранить подключение"
-                    aria-label="Сохранить подключение"
+                    title="${escapeAttr(saveButtonTitle)}"
+                    aria-label="${escapeAttr(saveButtonTitle)}"
                   >
                     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                       <path d="M5 3h12l2 2v16H5z"></path>
@@ -7079,7 +8364,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <div class="sdo-settings-fields">
                 <label>
                   <span>WebDAV-путь или ссылка на АИС Допобразование.xlsb</span>
-                  <input name="studentDatabaseWebDavPath" type="text" value="${escapeAttr(getStudentDatabaseWebDavPath())}" required spellcheck="false" placeholder="ООО .../АИС Допобразование.xlsb или ссылка Яндекс-Диска">
+                  <input name="studentDatabaseWebDavPath" type="text" value="${escapeAttr(databasePath)}" required spellcheck="false" placeholder="ООО .../АИС Допобразование.xlsb или ссылка Яндекс-Диска">
                   <small class="sdo-settings-hint">Можно использовать путь в подключенном WebDAV или публичную ссылку Яндекс-Диска.</small>
                 </label>
                 <div class="admin-system-documents-head">
@@ -7088,46 +8373,55 @@ MAX - https://bizvmax.ru/zifra_plus
                 </div>
                 <label>
                   <span>Путь папки в Яндекс-Диске</span>
-                  <input name="yandexDiskBasePath" type="text" value="${escapeAttr(getYandexDiskBasePath())}" required spellcheck="false">
+                  <input name="yandexDiskBasePath" type="text" value="${escapeAttr(basePath)}" required spellcheck="false">
                 </label>
                 <div class="admin-local-documents-root-row">
                   <label>
                     <span>Расположение всех документов на локальном диске</span>
-                    <input name="localDocumentsRoot" type="text" value="${escapeAttr(getLocalDocumentsRoot())}" required spellcheck="false" placeholder="Y:\">
-                    <small class="sdo-settings-hint">${getOpenDocumentsLocally()
+                    <input name="localDocumentsRoot" type="text" value="${escapeAttr(localDocumentsRoot)}" required spellcheck="false" placeholder="Y:\">
+                    <small class="sdo-settings-hint">${openDocumentsLocally
                       ? "Используется при обычном щелчке по кнопке документов."
                       : "Используется при Shift + щелчке по кнопке документов."}</small>
                   </label>
                   <label class="admin-local-documents-root-mode">
-                    <input name="localDocumentsRootIsSystemParent" type="checkbox" ${state.data.meta.localDocumentsRootIsSystemParent ? "checked" : ""}>
+                    <input name="localDocumentsRootIsSystemParent" type="checkbox" ${localDocumentsRootIsSystemParent ? "checked" : ""}>
                     <span>Корневая папка документов системы</span>
                   </label>
                 </div>
-                <label class="admin-open-documents-mode">
-                  <input name="openDocumentsLocally" type="checkbox" ${getOpenDocumentsLocally() ? "checked" : ""}>
-                  <span>Открывать документы на локальном компьютере</span>
+                <label class="admin-open-documents-mode admin-local-mode-default ${isLocalDocumentsAvailable() ? "is-available" : "is-unavailable"}">
+                  <input name="openDocumentsLocally" type="checkbox" ${openDocumentsLocally ? "checked" : ""}>
+                  <span class="admin-local-mode-default-copy">
+                    <strong>Использовать режим работы с локальным компьютером по умолчанию</strong>
+                    <small>${isLocalDocumentsAvailable()
+                      ? "Папка системы доступна. Shift + щелчок переключает операцию на WebDAV."
+                      : "Папка системы недоступна на локальном компьютере. Автоматически используется WebDAV."}</small>
+                  </span>
                 </label>
                 <label>
                   <span>Логин Яндекс</span>
-                  <input name="yandexDiskLogin" type="text" value="${escapeAttr(getYandexDiskLogin())}" autocomplete="username">
+                  <input name="yandexDiskLogin" type="text" value="${escapeAttr(yandexDiskLogin)}" autocomplete="username">
                 </label>
                 <label>
                   <span>Пароль приложения WebDAV</span>
                   <input
                     name="yandexDiskPassword"
                     type="password"
-                    value=""
+                    value="${escapeAttr(yandexDiskPassword)}"
                     placeholder="${state.data.meta.yandexDiskHasPassword ? "Пароль сохранён на сервере" : "Введите пароль приложения"}"
                     autocomplete="new-password"
                   >
                   <small class="sdo-settings-hint">Обычный пароль Яндекс ID для WebDAV не подходит.</small>
                 </label>
                 <label class="admin-yandex-autosave">
-                  <input name="yandexDiskAutoSave" type="checkbox" ${state.data.meta.yandexDiskAutoSave ? "checked" : ""}>
+                  <input name="yandexDiskAutoSave" type="checkbox" ${yandexDiskAutoSave ? "checked" : ""}>
                   <span class="admin-yandex-autosave-copy">
                     <span>Автоматически сохранять сформированные документы в рекомендуемые папки</span>
                     <small class="sdo-settings-hint" data-document-autosave-hint>
-                      ${escapeHtml(getAutomaticDocumentSaveHint())}
+                      ${escapeHtml(getAutomaticDocumentSaveHint(
+                        openDocumentsLocally,
+                        localDocumentsRoot,
+                        isLocalDocumentsAvailable()
+                      ))}
                     </small>
                   </span>
                 </label>
@@ -7138,30 +8432,30 @@ MAX - https://bizvmax.ru/zifra_plus
                 <div class="admin-email-settings-grid">
                   <label>
                     <span>IMAP-сервер</span>
-                    <input name="studentApplicationsEmailHost" type="text" value="${escapeAttr(getStudentApplicationsEmailHost())}" required spellcheck="false" placeholder="imap.example.ru">
+                    <input name="studentApplicationsEmailHost" type="text" value="${escapeAttr(emailHost)}" required spellcheck="false" placeholder="imap.example.ru">
                   </label>
                   <label>
                     <span>Порт IMAP</span>
-                    <input name="studentApplicationsEmailPort" type="number" min="1" max="65535" value="${escapeAttr(getStudentApplicationsEmailPort())}" required>
+                    <input name="studentApplicationsEmailPort" type="number" min="1" max="65535" value="${escapeAttr(emailPort)}" required>
                   </label>
                   <label>
                     <span>SMTP-сервер</span>
-                    <input name="studentApplicationsEmailSmtpHost" type="text" value="${escapeAttr(getStudentApplicationsEmailSmtpHost())}" required spellcheck="false" placeholder="smtp.example.ru">
+                    <input name="studentApplicationsEmailSmtpHost" type="text" value="${escapeAttr(emailSmtpHost)}" required spellcheck="false" placeholder="smtp.example.ru">
                   </label>
                   <label>
                     <span>Порт SMTP</span>
-                    <input name="studentApplicationsEmailSmtpPort" type="number" min="1" max="65535" value="${escapeAttr(getStudentApplicationsEmailSmtpPort())}" required>
+                    <input name="studentApplicationsEmailSmtpPort" type="number" min="1" max="65535" value="${escapeAttr(emailSmtpPort)}" required>
                   </label>
                   <label class="admin-email-credential-field">
                     <span>Логин электронной почты</span>
-                    <input name="studentApplicationsEmailLogin" type="email" value="${escapeAttr(getStudentApplicationsEmailLogin())}" required autocomplete="username">
+                    <input name="studentApplicationsEmailLogin" type="email" value="${escapeAttr(emailLogin)}" required autocomplete="username">
                   </label>
                   <label class="admin-email-credential-field">
                     <span>Пароль электронной почты</span>
                     <input
                       name="studentApplicationsEmailPassword"
                       type="password"
-                      value=""
+                      value="${escapeAttr(emailPassword)}"
                       placeholder="${state.data.meta.studentApplicationsEmailHasPassword ? "Пароль сохранён на сервере" : "Введите пароль"}"
                       autocomplete="new-password"
                     >
@@ -7169,9 +8463,15 @@ MAX - https://bizvmax.ru/zifra_plus
                 </div>
                 <small class="sdo-settings-hint">IMAP используется для загрузки заявок. Все исходящие сообщения отправляются через SMTP от имени указанного ящика.</small>
               </div>
-              <div class="admin-database-copy">
-                <p>Загрузка заменяет текущие списки слушателей и расходов данными с листов «База» и «Прямые затраты».</p>
-                <p>Синхронизация переносит данные веб-базы в исходный XLSB и скачивает обновлённую копию.</p>
+              <div class="admin-database-copy system-action-notes">
+                <section class="system-action-note">
+                  <strong>Загрузить из базы</strong>
+                  <p>Заменяет текущие списки слушателей, прямых и общих затрат, а также запасов данными из XLSB. Обычный щелчок использует выбранный режим хранения, Shift + щелчок — альтернативный источник.</p>
+                </section>
+                <section class="system-action-note">
+                  <strong>Синхронизировать с базой</strong>
+                  <p>Переносит данные веб-системы в XLSB по выбранному пути. Перед заменой исходного файла создаётся резервная копия в папке «_Резерв».</p>
+                </section>
               </div>
               <div class="admin-database-history" aria-label="Статистика обмена с базой">
                 <p>
@@ -7190,30 +8490,333 @@ MAX - https://bizvmax.ru/zifra_plus
             </form>
           </div>
       </section>
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">Журнал</p>
-            <h2>Последние действия</h2>
-          </div>
-          <button
-            class="ghost-button admin-audit-download-button"
-            data-action="download-audit-log"
-            type="button"
-            title="Скачать весь журнал последних действий в CSV"
-            ${state.data.collections.audit.length ? "" : "disabled"}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M12 3v12"></path>
-              <path d="m7 10 5 5 5-5"></path>
-              <path d="M5 20h14"></path>
-            </svg>
-            <span>Скачать журнал</span>
-          </button>
-        </div>
-        ${miniTable(state.data.collections.audit.slice().reverse().slice(0, 12), ["date", "user", "action", "area", "details"])}
-      </section>
+      ${renderAdminAuditPanel()}
     `;
+  }
+
+  function renderProfileDialog() {
+    const user = getCurrentAuthUser();
+    return `
+      <div class="modal-backdrop account-modal-backdrop" data-action="close-profile">
+        <section class="modal account-profile-modal" role="dialog" aria-modal="true" aria-label="Личный кабинет">
+          <header class="modal-head">
+            <div>
+              <p class="eyebrow">Учётная запись</p>
+              <h2>Личный кабинет</h2>
+            </div>
+            <button class="icon-button" data-action="close-profile" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+          </header>
+          <div class="account-profile-content">
+            <section class="account-profile-summary">
+              <span class="account-profile-avatar">${escapeHtml(initials(user.name || user.login || "П"))}</span>
+              <div>
+                <strong>${escapeHtml(user.name || user.login || "Пользователь")}</strong>
+                <span>${escapeHtml(user.login || "")}</span>
+                <small>${escapeHtml(getAuthRoleLabel(user.role))}</small>
+              </div>
+            </section>
+            <form class="account-profile-form" data-action="save-profile">
+              <h3>Контактные данные</h3>
+              <div class="account-form-grid">
+                <label>
+                  <span>Email</span>
+                  <input name="email" type="email" value="${escapeAttr(user.email || "")}" autocomplete="email">
+                </label>
+                <label>
+                  <span>Телефон</span>
+                  <input name="phone" type="tel" value="${escapeAttr(user.phone || "")}" autocomplete="tel">
+                </label>
+              </div>
+              <div class="account-section-actions">
+                <button class="primary-button" type="submit">Сохранить контакты</button>
+              </div>
+            </form>
+            <form class="account-password-form" data-action="change-password">
+              <h3>Смена пароля</h3>
+              <div class="account-form-grid is-password">
+                <label>
+                  <span>Текущий пароль</span>
+                  <input name="currentPassword" type="password" autocomplete="current-password" required>
+                </label>
+                <label>
+                  <span>Новый пароль</span>
+                  <input name="newPassword" type="password" minlength="6" autocomplete="new-password" required>
+                </label>
+                <label>
+                  <span>Повторите новый пароль</span>
+                  <input name="confirmPassword" type="password" minlength="6" autocomplete="new-password" required>
+                </label>
+              </div>
+              <div class="account-section-actions">
+                <button class="ghost-button" type="submit">Изменить пароль</button>
+              </div>
+            </form>
+          </div>
+          <footer class="modal-actions account-modal-actions">
+            <button class="danger-button" data-action="logout" type="button">Выйти из системы</button>
+            <button class="ghost-button" data-action="close-profile" type="button">Закрыть</button>
+          </footer>
+        </section>
+      </div>
+    `;
+  }
+
+  function getAuthUserEditorRecord() {
+    if (state.authUserEditorId === "new") {
+      return { id: "", login: "", name: "", email: "", phone: "", role: "manager", status: "active" };
+    }
+    return state.authUsers.find((user) => user.id === state.authUserEditorId) || null;
+  }
+
+  function renderUserManagementDialog() {
+    const editor = getAuthUserEditorRecord();
+    return `
+      <div class="modal-backdrop user-management-backdrop" data-action="close-user-management">
+        <section class="modal user-management-modal" role="dialog" aria-modal="true" aria-label="Управление пользователями">
+          <header class="modal-head">
+            <div>
+              <p class="eyebrow">Администрирование доступа</p>
+              <h2>Пользователи</h2>
+            </div>
+            <div class="modal-head-actions">
+              <button class="primary-button" data-action="create-auth-user" type="button">Добавить пользователя</button>
+              <button class="icon-button" data-action="close-user-management" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+            </div>
+          </header>
+          <div class="user-management-content">
+            ${state.authUsersError ? `<div class="user-management-message is-error">${escapeHtml(state.authUsersError)}</div>` : ""}
+            ${state.authUsersLoading ? `
+              <div class="user-management-message">Загрузка пользователей...</div>
+            ` : `
+              <div class="user-management-table-wrap">
+                <table class="data-table user-management-table">
+                  <thead>
+                    <tr>
+                      <th>Логин</th>
+                      <th>Пользователь</th>
+                      <th>Роль</th>
+                      <th>Контакты</th>
+                      <th>Последний вход</th>
+                      <th>Статус</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${state.authUsers.map((user) => `
+                      <tr class="${state.authUserEditorId === user.id ? "is-active" : ""}">
+                        <td><strong>${escapeHtml(user.login)}</strong></td>
+                        <td>${escapeHtml(user.name)}</td>
+                        <td>${escapeHtml(getAuthRoleLabel(user.role))}</td>
+                        <td>
+                          <span class="user-contact-stack">
+                            <span>${escapeHtml(user.email || "—")}</span>
+                            <small>${escapeHtml(user.phone || "")}</small>
+                          </span>
+                        </td>
+                        <td>${escapeHtml(user.lastLoginAt ? formatDateTimeRu(user.lastLoginAt) : "Не выполнялся")}</td>
+                        <td><span class="user-status-badge is-${user.status === "active" ? "active" : "blocked"}">${user.status === "active" ? "Активен" : "Заблокирован"}</span></td>
+                        <td><button class="ghost-button compact-button" data-action="edit-auth-user" data-user-id="${escapeAttr(user.id)}" type="button">Изменить</button></td>
+                      </tr>
+                    `).join("") || `<tr><td colspan="7">Пользователи не найдены.</td></tr>`}
+                  </tbody>
+                </table>
+              </div>
+            `}
+            ${editor ? renderAuthUserEditor(editor) : `
+              <div class="user-editor-placeholder">Выберите пользователя для редактирования или добавьте новую учётную запись.</div>
+            `}
+          </div>
+          <footer class="modal-actions">
+            <button class="ghost-button" data-action="close-user-management" type="button">Закрыть</button>
+          </footer>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderAuthUserEditor(user) {
+    const isNew = !user.id;
+    const isCurrent = user.id && user.id === getCurrentAuthUser().id;
+    return `
+      <form class="auth-user-editor" data-action="save-auth-user" data-user-id="${escapeAttr(user.id || "")}">
+        <div class="auth-user-editor-head">
+          <div>
+            <h3>${isNew ? "Новая учётная запись" : `Редактирование: ${escapeHtml(user.login)}`}</h3>
+            <p>${isNew ? "Для нового менеджера без указанного пароля будет установлен пароль 123." : "Пустое поле пароля оставит текущий пароль без изменений."}</p>
+          </div>
+        </div>
+        <div class="auth-user-editor-grid">
+          <label>
+            <span>Логин *</span>
+            <input name="login" value="${escapeAttr(user.login || "")}" required autocomplete="off">
+          </label>
+          <label>
+            <span>ФИО *</span>
+            <input name="name" value="${escapeAttr(user.name || "")}" required autocomplete="off">
+          </label>
+          <label>
+            <span>Роль *</span>
+            <select name="role" ${isCurrent ? "disabled" : ""}>
+              <option value="manager" ${user.role === "manager" ? "selected" : ""}>Менеджер</option>
+              <option value="admin" ${user.role === "admin" ? "selected" : ""}>Администратор</option>
+            </select>
+            ${isCurrent ? `<input name="role" type="hidden" value="admin">` : ""}
+          </label>
+          <label>
+            <span>Статус *</span>
+            <select name="status" ${isCurrent ? "disabled" : ""}>
+              <option value="active" ${user.status === "active" ? "selected" : ""}>Активен</option>
+              <option value="blocked" ${user.status === "blocked" ? "selected" : ""}>Заблокирован</option>
+            </select>
+            ${isCurrent ? `<input name="status" type="hidden" value="active">` : ""}
+          </label>
+          <label>
+            <span>Email</span>
+            <input name="email" type="email" value="${escapeAttr(user.email || "")}" autocomplete="off">
+          </label>
+          <label>
+            <span>Телефон</span>
+            <input name="phone" type="tel" value="${escapeAttr(user.phone || "")}" autocomplete="off">
+          </label>
+          <label class="auth-user-password-field">
+            <span>${isNew ? "Пароль" : "Новый пароль"}</span>
+            <input name="password" type="password" value="" autocomplete="new-password" placeholder="${isNew && user.role === "manager" ? "По умолчанию 123" : "Оставьте пустым без изменения"}">
+          </label>
+        </div>
+        <div class="account-section-actions">
+          <button class="primary-button" type="submit">Сохранить пользователя</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function closeProfile() {
+    state.profileOpen = false;
+    render();
+  }
+
+  async function saveProfile(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector("button[type='submit']");
+    button.disabled = true;
+    try {
+      const payload = await authRequest("api/auth/profile", {
+        method: "POST",
+        body: JSON.stringify({
+          email: String(form.elements.email?.value || "").trim(),
+          phone: String(form.elements.phone?.value || "").trim()
+        })
+      });
+      authenticatedUser = { ...payload.user };
+      window.AIS_AUTH_USER = authenticatedUser;
+      state.profileOpen = false;
+      render();
+    } catch (error) {
+      alert(`Не удалось сохранить контактные данные: ${error.message}`);
+      button.disabled = false;
+    }
+  }
+
+  async function changeCurrentUserPassword(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const currentPassword = String(form.elements.currentPassword?.value || "");
+    const newPassword = String(form.elements.newPassword?.value || "");
+    const confirmPassword = String(form.elements.confirmPassword?.value || "");
+    if (newPassword !== confirmPassword) {
+      alert("Новый пароль и его подтверждение не совпадают.");
+      form.elements.confirmPassword?.focus();
+      return;
+    }
+    const button = form.querySelector("button[type='submit']");
+    button.disabled = true;
+    try {
+      await authRequest("api/auth/password", {
+        method: "POST",
+        body: JSON.stringify({ currentPassword, newPassword })
+      });
+      form.reset();
+      alert("Пароль изменён.");
+    } catch (error) {
+      alert(`Не удалось изменить пароль: ${error.message}`);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function logoutCurrentUser() {
+    if (!confirm("Выйти из системы?")) return;
+    if (!await saveAdminSettingsBeforeExit("logout")) return;
+    try {
+      await authRequest("api/auth/logout", { method: "POST", body: "{}" });
+    } catch (error) {
+      console.warn("Не удалось завершить сессию на сервере", error);
+    }
+    window.location.reload();
+  }
+
+  async function openUserManagement() {
+    if (!isAdminUser()) return;
+    state.userManagementOpen = true;
+    state.authUsersLoading = true;
+    state.authUsersError = "";
+    state.authUserEditorId = "";
+    render();
+    try {
+      const payload = await authRequest("api/admin/users");
+      state.authUsers = Array.isArray(payload.users) ? payload.users : [];
+    } catch (error) {
+      state.authUsersError = error.message;
+    } finally {
+      state.authUsersLoading = false;
+      render();
+    }
+  }
+
+  function closeUserManagement() {
+    state.userManagementOpen = false;
+    state.authUserEditorId = "";
+    state.authUsersError = "";
+    render();
+  }
+
+  async function saveAuthUser(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const button = form.querySelector("button[type='submit']");
+    button.disabled = true;
+    state.authUsersError = "";
+    try {
+      const payload = await authRequest("api/admin/users", {
+        method: "POST",
+        body: JSON.stringify({
+          id: String(form.dataset.userId || ""),
+          login: String(data.get("login") || "").trim(),
+          name: String(data.get("name") || "").trim(),
+          role: String(data.get("role") || "manager"),
+          status: String(data.get("status") || "active"),
+          email: String(data.get("email") || "").trim(),
+          phone: String(data.get("phone") || "").trim(),
+          password: String(data.get("password") || "")
+        })
+      });
+      const saved = payload.user;
+      const existingIndex = state.authUsers.findIndex((user) => user.id === saved.id);
+      if (existingIndex >= 0) state.authUsers[existingIndex] = saved;
+      else state.authUsers.push(saved);
+      state.authUsers.sort((left, right) => String(left.login).localeCompare(String(right.login), "ru"));
+      state.authUserEditorId = saved.id;
+      if (saved.id === getCurrentAuthUser().id) {
+        authenticatedUser = { ...saved };
+        window.AIS_AUTH_USER = authenticatedUser;
+      }
+      render();
+    } catch (error) {
+      state.authUsersError = error.message;
+      render();
+    }
   }
 
   function renderModal() {
@@ -7223,6 +8826,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const record = state.modal.draft ? { ...(baseRecord || {}), ...state.modal.draft } : baseRecord;
     if (state.modal.config === "students") return renderStudentModal(record || {});
     if (state.modal.config === "programs") return renderProgramModal(record || {});
+    if (state.modal.config === "contracts") return renderContractModal(record || {});
     if (state.modal.config === "inventory") return renderInventoryModal(record || {});
     const title = state.modal.id ? "Редактирование" : "Новая запись";
     return `
@@ -7241,6 +8845,149 @@ MAX - https://bizvmax.ru/zifra_plus
             </header>
             <div class="form-grid">
               ${config.fields.map((item) => renderField(item, record || {})).join("")}
+            </div>
+          </form>
+        </section>
+      </div>
+    `;
+  }
+
+  function getContractField(key) {
+    return configs.contracts.fields.find((item) => item.key === key);
+  }
+
+  function renderContractFieldList(keys, record, className = "") {
+    const fields = keys.map(getContractField).filter(Boolean);
+    return `
+      <div class="form-grid contract-form-grid ${className}">
+        ${fields.map((item) => renderField(item, record)).join("")}
+      </div>
+    `;
+  }
+
+  function renderContractSection(title, keys, record, className = "") {
+    return `
+      <section class="form-section contract-card-section ${className}">
+        <div class="form-section-head"><h3>${escapeHtml(title)}</h3></div>
+        ${renderContractFieldList(keys, record)}
+      </section>
+    `;
+  }
+
+  function getContractCardTitle(record = {}) {
+    const name = String(record.name || "").trim();
+    const contractNo = String(record.contractNo || "").trim();
+    if (!name && !contractNo) return "Новый договор";
+    if (name && contractNo) return `${name} [${contractNo}]`;
+    return name || `Договор ${contractNo}`;
+  }
+
+  function renderContractModal(record) {
+    const title = getContractCardTitle(record);
+    const tabs = getOrderedTabs("contract-card", [
+      { id: "main", label: "Основное" },
+      { id: "contract", label: "Договор и оплата" },
+      { id: "documents", label: "Документы, СДО" },
+      { id: "communications", label: "Коммуникации" }
+    ]);
+    const activeTab = tabs.find((tab) => tab.id === state.contractCardTab) || tabs[0];
+    const navigation = getContractCardNavigation(record);
+    const subtitle = [record.section, record.type].map((value) => String(value || "").trim()).filter(Boolean).join(" · ");
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <section class="modal contract-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
+          <form id="recordForm" data-config="contracts" data-id="${escapeAttr(record.id || "")}">
+            <header class="modal-head contract-modal-head">
+              <div class="contract-modal-title">
+                <p class="eyebrow">${escapeHtml(configs.contracts.title)}</p>
+                <h2>${escapeHtml(title)}</h2>
+                ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
+              </div>
+              <div class="modal-head-actions contract-modal-actions">
+                <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
+                <button class="primary-button" type="submit">Сохранить</button>
+                <div class="student-card-nav contract-card-nav" aria-label="Переход между карточками договоров">
+                  <button class="icon-button student-card-nav-button" data-action="navigate-contract-card" data-direction="-1" type="button" title="Предыдущий договор" aria-label="Предыдущий договор" ${navigation.hasPrev ? "" : "disabled"}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
+                  </button>
+                  <button class="icon-button student-card-nav-button" data-action="navigate-contract-card" data-direction="1" type="button" title="Следующий договор" aria-label="Следующий договор" ${navigation.hasNext ? "" : "disabled"}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6l6 6-6 6"></path></svg>
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            <div class="contract-modal-body">
+              <div class="student-tabs contract-tabs" data-orderable-tabs="contract-card" role="tablist" aria-label="Разделы карточки договора">
+                ${tabs.map((tab) => `
+                  <button
+                    class="${tab.id === activeTab.id ? "active" : ""}"
+                    data-action="switch-contract-tab"
+                    data-contract-tab="${escapeAttr(tab.id)}"
+                    data-orderable-tab="${escapeAttr(tab.id)}"
+                    data-orderable-tab-default-index="${tab.defaultTabIndex}"
+                    draggable="true"
+                    type="button"
+                    role="tab"
+                    aria-selected="${tab.id === activeTab.id ? "true" : "false"}"
+                    tabindex="${tab.id === activeTab.id ? "0" : "-1"}"
+                  >${escapeHtml(tab.label)}</button>
+                `).join("")}
+              </div>
+
+              <div class="contract-card-layout">
+                <main class="contract-card-main">
+                  <div class="contract-tab-panel ${activeTab.id === "main" ? "is-active" : ""}" data-contract-tab-panel="main" role="tabpanel" ${activeTab.id === "main" ? "" : "hidden"}>
+                    ${renderContractSection("Контрагент", [
+                      "section", "name", "position", "degree", "academicTitle", "phone", "email", "telegram", "photoPath"
+                    ], record)}
+                    ${renderContractSection("Партнерская программа", [
+                      "coupon", "couponId", "notificationEmail"
+                    ], record)}
+                  </div>
+
+                  <div class="contract-tab-panel ${activeTab.id === "contract" ? "is-active" : ""}" data-contract-tab-panel="contract" role="tabpanel" ${activeTab.id === "contract" ? "" : "hidden"}>
+                    ${renderContractSection("Договор", [
+                      "contractDate", "contractNo", "type", "startDate", "endDate", "subject", "paymentTerms", "accountingRecorded"
+                    ], record)}
+                    <div class="contract-section-columns">
+                      ${renderContractSection("Финансовые показатели", [
+                        "amount", "paid", "agencyAmount", "balance"
+                      ], record, "contract-finance-section")}
+                      ${renderContractSection("Данные для оплаты", [
+                        "bank", "settlementAccount", "correspondentAccount", "bic"
+                      ], record, "contract-payment-details-section")}
+                    </div>
+                  </div>
+
+                  <div class="contract-tab-panel ${activeTab.id === "documents" ? "is-active" : ""}" data-contract-tab-panel="documents" role="tabpanel" ${activeTab.id === "documents" ? "" : "hidden"}>
+                    ${renderContractSection("Паспортные данные", [
+                      "citizenship", "birthDate", "identityDocumentType", "identityDocument", "identityIssueDate",
+                      "identityDepartmentCode", "identityIssuer", "address", "snils", "inn"
+                    ], record)}
+                    ${renderContractSection("Система дистанционного обучения", [
+                      "login", "password", "portalCredentials"
+                    ], record)}
+                  </div>
+
+                  <div class="contract-tab-panel ${activeTab.id === "communications" ? "is-active" : ""}" data-contract-tab-panel="communications" role="tabpanel" ${activeTab.id === "communications" ? "" : "hidden"}>
+                    ${renderContractSection("Шаблоны сообщений", Array.from({ length: 9 }, (_, index) => `message${index + 1}`), record, "contract-messages-section")}
+                  </div>
+                </main>
+
+                <aside class="contract-side-panel">
+                  ${renderContractSection("Примечание", ["note"], record, "contract-note-section")}
+                  <section class="form-section contract-card-summary">
+                    <div class="form-section-head"><h3>Карточка договора</h3></div>
+                    <dl>
+                      <div><dt>Раздел</dt><dd>${escapeHtml(record.section || "Не указан")}</dd></div>
+                      <div><dt>Номер</dt><dd>${escapeHtml(record.contractNo || "Не указан")}</dd></div>
+                      <div><dt>Срок</dt><dd>${escapeHtml([valueForDisplay("startDate", record.startDate), valueForDisplay("endDate", record.endDate)].filter((value) => value && value !== "—").join(" — ") || "Не указан")}</dd></div>
+                      <div><dt>Остаток</dt><dd>${escapeHtml(money(record.balance || 0))}</dd></div>
+                    </dl>
+                  </section>
+                </aside>
+              </div>
             </div>
           </form>
         </section>
@@ -7462,7 +9209,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getProgramOperationalDocumentTooltip(resourceType) {
     const resourceLabel = resourceType === "file" ? "файл ОП" : "папку ОП";
-    return getOpenDocumentsLocally()
+    return getEffectiveLocalDocumentsMode()
       ? `Открыть ${resourceLabel} на локальном компьютере. Shift + щелчок: открыть на Яндекс-Диске.`
       : `Открыть ${resourceLabel} на Яндекс-Диске. Shift + щелчок: открыть на локальном компьютере.`;
   }
@@ -7804,7 +9551,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (state.modal?.config === "programs" && item.key === "hours") {
       return renderProgramHoursField(label, value, required);
     }
-    return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required}></label>`;
+    return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${layoutOptions.readOnly ? "readonly" : ""}></label>`;
   }
 
   function renderStudentModal(record) {
@@ -7828,7 +9575,17 @@ MAX - https://bizvmax.ru/zifra_plus
                 <div class="student-card-primary-actions">
                   ${renderStudentHeaderStatus(record)}
                   <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
-                  <button class="primary-button" type="submit">Сохранить карточку</button>
+                  <button class="primary-button" type="submit">Сохранить</button>
+                  <button
+                    class="icon-button student-audit-log-button"
+                    data-action="open-student-audit-log"
+                    type="button"
+                    title="Журнал действий по слушателю"
+                    aria-label="Журнал действий по слушателю"
+                    ${record.id ? "" : "disabled"}
+                  >
+                    ${renderOrdersSdoIcon("history")}
+                  </button>
                 </div>
                 <div class="student-card-secondary-actions">
                   ${renderStudentHeaderQuickActions(record)}
@@ -7877,6 +9634,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </form>
         </section>
       </div>
+      ${state.studentAuditLog.open ? renderStudentAuditDialog(record) : ""}
     `;
   }
 
@@ -7951,13 +9709,18 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderEducationDocumentActions(record) {
+    const educationDocumentTitle = getEducationDocumentButtonTitle(record);
+    const postalEnvelopeTitle = buildStudentDocumentGenerationTooltip(
+      "Почтовый конверт",
+      "Сформировать почтовый конверт по данным карточки слушателя."
+    );
     return `
       <div class="education-document-actions">
-        <button class="ghost-button student-document-generate-button education-document-open-button" data-action="open-student-education-document" data-document-context-kind="education" type="button" title="${escapeAttr(getEducationDocumentButtonTitle(record))}" aria-label="Документ об образовании">
+        <button class="ghost-button student-document-generate-button education-document-open-button" data-action="open-student-education-document" data-document-context-kind="education" type="button" title="${escapeMultilineAttr(educationDocumentTitle)}" aria-label="Документ об образовании">
           ${renderOrdersSdoIcon("documentText")}
           <span>Документ об образовании</span>
         </button>
-        <button class="ghost-button student-document-generate-button education-document-open-button" data-action="open-student-postal-envelope-document" data-document-context-kind="postalEnvelope" type="button" title="Сформировать почтовый конверт&#10;Правый щелчок: параметры формирования и отправки" aria-label="Почтовый конверт">
+        <button class="ghost-button student-document-generate-button education-document-open-button" data-action="open-student-postal-envelope-document" data-document-context-kind="postalEnvelope" type="button" title="${escapeMultilineAttr(postalEnvelopeTitle)}" aria-label="Почтовый конверт">
           ${renderOrdersSdoIcon("mail")}
           <span>Конверт</span>
         </button>
@@ -7965,9 +9728,72 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderStudentDocumentRecognitionToolbar(record) {
+    const folder = getStudentYandexDocumentsFolder(record);
+    const savedResult = normalizeStudentDocumentRecognitionResult(
+      record.documentRecognitionResult
+    );
+    const primarySource = getStudentDocumentsSource() === "local"
+      ? "локальной папки"
+      : "Яндекс-Диска";
+    const alternateSource = primarySource === "локальной папки"
+      ? "Яндекс-Диска"
+      : "локальной папки";
+    const title = [
+      `Распознать паспорт, ИНН, СНИЛС и диплом из ${primarySource}.`,
+      `Shift + щелчок: использовать файлы из ${alternateSource}.`,
+      folder
+    ].filter(Boolean).join("\n");
+    return `
+      <section class="form-section student-document-recognition-toolbar">
+        <div class="student-document-recognition-info">
+          <span class="student-document-recognition-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M7 3H4a1 1 0 0 0-1 1v3"></path>
+              <path d="M17 3h3a1 1 0 0 1 1 1v3"></path>
+              <path d="M7 21H4a1 1 0 0 1-1-1v-3"></path>
+              <path d="M17 21h3a1 1 0 0 0 1-1v-3"></path>
+              <path d="M7 8h10"></path>
+              <path d="M7 12h10"></path>
+              <path d="M7 16h7"></path>
+            </svg>
+          </span>
+          <div>
+            <strong>Распознавание документов</strong>
+            <small>Локальная обработка файлов JPG, PNG и PDF без передачи во внешние сервисы</small>
+          </div>
+        </div>
+        <div class="student-document-recognition-actions">
+          <button
+            class="icon-button student-document-recognition-result-button"
+            data-action="show-student-document-recognition-result"
+            type="button"
+            title="${escapeAttr(savedResult
+              ? `Показать результат распознавания от ${formatDateTimeRu(savedResult.recognizedAt)}`
+              : "Сохранённый результат распознавания отсутствует")}"
+            aria-label="Показать результат распознавания"
+            ${savedResult ? "" : "disabled"}
+          >
+            ${renderOrdersSdoIcon("history")}
+          </button>
+          <button
+            class="ghost-button student-document-recognition-button"
+            data-action="recognize-student-documents"
+            type="button"
+            title="${escapeAttr(title)}"
+          >
+            ${renderOrdersSdoIcon("wand")}
+            <span>Распознать из папки</span>
+          </button>
+        </div>
+      </section>
+    `;
+  }
+
   function renderStudentTabContent(tab, record) {
     if (tab.id === "ordersSdo") return renderStudentOrdersSdoTab(record);
     return `
+      ${tab.id === "documents" ? renderStudentDocumentRecognitionToolbar(record) : ""}
       ${tab.sections.filter((section) => !(tab.id === "main" && !section.fields.some((item) => item.key === "name"))).map((section) => `
         <section class="form-section ${section.reviewPanel ? "student-review-section" : ""}">
           <div class="form-section-head">
@@ -7990,7 +9816,7 @@ MAX - https://bizvmax.ru/zifra_plus
               ? renderStudentCommunicationMessages(section, record)
             : section.reviewPanel
               ? renderStudentReviewPanel(record)
-            : `<div class="student-form-grid">${section.fields.map((item) => renderStudentField(item, record)).join("")}</div>`}
+            : `<div class="student-form-grid ${section.customerPassport ? "student-customer-passport-grid" : ""}">${renderStudentSectionFields(section.fields, record)}</div>`}
           ${section.educationDocument ? renderEducationDocumentActions(record) : ""}
         </section>
       `).join("")}
@@ -8000,35 +9826,82 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderStudentSectionFields(fields, record) {
+    const items = Array.isArray(fields) ? fields : [];
+    const educationMetaKeys = [
+      "educationDocumentSeries",
+      "educationDocumentNumber",
+      "educationDocumentDate"
+    ];
+    const itemByKey = new Map(items.map((item) => [item.key, item]));
+    const canGroupEducationMeta = educationMetaKeys.every((key) => itemByKey.has(key));
+    return items.map((item) => {
+      if (!canGroupEducationMeta || !educationMetaKeys.includes(item.key)) {
+        return renderStudentField(item, record);
+      }
+      if (item.key !== educationMetaKeys[0]) return "";
+      return `
+        <div class="student-education-document-meta-row">
+          ${educationMetaKeys.map((key) => renderStudentField(itemByKey.get(key), record)).join("")}
+        </div>
+      `;
+    }).join("");
+  }
+
 
   function renderStudentContractButton() {
-    const title = "Сформировать договор\nShift + щелчок: выбрать документ\nПравый щелчок: параметры формирования и отправки";
+    const title = buildStudentDocumentGenerationTooltip(
+      "Договор",
+      "Сформировать договор по данным карточки слушателя.",
+      ["Shift + щелчок: выбрать другой документ."]
+    );
     return `
-      <button class="primary-button student-document-generate-button student-contract-button orders-sdo-contract-button" data-action="open-student-contract-document" data-document-context-kind="contract" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">
+      <button class="primary-button student-document-generate-button student-contract-button orders-sdo-contract-button" data-action="open-student-contract-document" data-document-context-kind="contract" type="button" title="${escapeMultilineAttr(title)}" aria-label="Договор">
         ${renderOrdersSdoIcon("document")}
         <span>Договор</span>
       </button>
     `;
   }
   function renderStudentReviewPanel(record) {
-    const courseUrl = getProgramPromoUrl(findProgramByName(record.program));
+    const program = findProgramByName(record.program);
+    const courseUrl = getProgramPromoUrl(program);
+    const gradeReportUrl = getProgramGradeReportUrl(program);
+    const activityLogUrl = getProgramActivityLogUrl(program);
     const buttonTitle = courseUrl
       ? `Открыть страницу курса\n${courseUrl}`
       : "Открыть страницу курса";
+    const gradeReportTitle = gradeReportUrl
+      ? `Открыть отчет по оценкам\n${gradeReportUrl}`
+      : "Открыть отчет по оценкам";
+    const activityLogTitle = activityLogUrl
+      ? `Открыть журнал активности\n${activityLogUrl}`
+      : "Открыть журнал активности";
     return `
       <div class="student-review-panel">
         <label class="student-review-text">
           <textarea name="review">${escapeHtml(record.review || "")}</textarea>
         </label>
         <div class="student-review-actions">
-          <button class="ghost-button student-course-page-button" data-action="open-student-course-page" type="button" title="${escapeAttr(buttonTitle)}" aria-label="${escapeAttr(buttonTitle)}">
-            ${renderExternalLinkIcon()}
-            <span>Открыть страницу курса</span>
-          </button>
-          <label class="student-review-published">
-            <input name="reviewPublished" type="checkbox" value="Да" ${isChecked(record.reviewPublished) ? "checked" : ""}>
-            <span>Отзыв размещен на сайте</span>
-          </label>
+          <div class="student-review-main-actions">
+            <button class="ghost-button student-course-page-button" data-action="open-student-course-page" type="button" title="${escapeAttr(buttonTitle)}" aria-label="${escapeAttr(buttonTitle)}">
+              ${renderExternalLinkIcon()}
+              <span>Открыть страницу курса</span>
+            </button>
+            <label class="student-review-published">
+              <input name="reviewPublished" type="checkbox" value="Да" ${isChecked(record.reviewPublished) ? "checked" : ""}>
+              <span>Отзыв размещен на сайте</span>
+            </label>
+          </div>
+          <div class="student-review-report-actions" aria-label="Отчеты по обучению">
+            <button class="ghost-button student-course-page-button" data-action="open-student-grade-report" type="button" title="${escapeAttr(gradeReportTitle)}" aria-label="${escapeAttr(gradeReportTitle)}">
+              ${renderExternalLinkIcon()}
+              <span>Отчет по оценкам</span>
+            </button>
+            <button class="ghost-button student-course-page-button" data-action="open-student-activity-log" type="button" title="${escapeAttr(activityLogTitle)}" aria-label="${escapeAttr(activityLogTitle)}">
+              ${renderExternalLinkIcon()}
+              <span>Журнал активности</span>
+            </button>
+          </div>
         </div>
       </div>
     `;
@@ -8143,6 +10016,7 @@ MAX - https://bizvmax.ru/zifra_plus
       document: '<path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h5"></path>',
       documentText: '<path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h4"></path>',
       globe: '<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a14 14 0 0 1 0 18"></path><path d="M12 3a14 14 0 0 0 0 18"></path>',
+      history: '<path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5"></path><path d="M12 7v5l3 2"></path>',
       key: '<circle cx="8" cy="15" r="3"></circle><path d="m10.5 13.5 8-8"></path><path d="m16 8 2 2"></path><path d="m14 10 2 2"></path>',
       laptop: '<rect x="5" y="4" width="14" height="11" rx="1.5"></rect><path d="M3 18h18"></path><path d="m5 15-2 3"></path><path d="m19 15 2 3"></path><path d="M9 18h6"></path>',
       lock: '<rect x="5" y="10" width="14" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="M12 14v3"></path>',
@@ -8193,9 +10067,15 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (tool === "document") {
       const title = fieldName === "enrollmentOrderNo"
-        ? "Сформировать приказ на зачисление\nПравый щелчок: параметры формирования и отправки"
+        ? buildStudentDocumentGenerationTooltip(
+          "Приказ на зачисление",
+          "Сформировать общий приказ для слушателей с одинаковым номером приказа."
+        )
         : fieldName === "expulsionOrderNo"
-          ? "Сформировать приказ на отчисление\nПравый щелчок: параметры формирования и отправки"
+          ? buildStudentDocumentGenerationTooltip(
+            "Приказ об отчислении",
+            "Сформировать общий приказ для слушателей с одинаковым номером приказа."
+          )
           : "Документ";
       const action = fieldName === "enrollmentOrderNo"
         ? "open-student-enrollment-order-document"
@@ -8213,22 +10093,26 @@ MAX - https://bizvmax.ru/zifra_plus
           ${action ? `data-action="${escapeAttr(action)}"` : ""}
           ${contextKind ? `data-document-context-kind="${escapeAttr(contextKind)}"` : ""}
           type="button"
-          title="${escapeAttr(title)}"
-          aria-label="${escapeAttr(title)}"
+          title="${escapeMultilineAttr(title)}"
+          aria-label="${fieldName === "enrollmentOrderNo" ? "Приказ на зачисление" : "Приказ об отчислении"}"
         >
           ${renderOrdersSdoIcon("document")}
         </button>
       `;
     }
     if (tool === "educationCertificate") {
+      const title = buildStudentDocumentGenerationTooltip(
+        "Справка об обучении",
+        "Сформировать справку по данным карточки слушателя."
+      );
       return `
         <button
           class="orders-sdo-icon-button student-document-generate-button"
           data-action="open-student-study-certificate-document"
           data-document-context-kind="studyCertificate"
           type="button"
-          title="Сформировать справку об обучении&#10;Правый щелчок: параметры формирования и отправки"
-          aria-label="Сформировать справку об обучении"
+          title="${escapeMultilineAttr(title)}"
+          aria-label="Справка об обучении"
         >
           ${renderOrdersSdoIcon("documentText")}
         </button>
@@ -8548,25 +10432,31 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Для выбранной программы в реестре не указан индекс группы.");
       return;
     }
+    const enteredContractDate = String(
+      context.form.elements.contractDate?.value || context.record.contractDate || ""
+    ).trim();
+    const parsedContractDate = parseOrdersSdoDate(enteredContractDate);
+    const baseDate = parsedContractDate || new Date();
+    const baseDateValue = formatOrdersSdoDate(baseDate);
+    const baseDateLabel = baseDate.toLocaleDateString("ru-RU");
     const confirmed = confirm(
-      "Заполнить текущей датой дату договора, начала обучения и зачисления, "
+      `Использовать ${parsedContractDate ? "дату договора" : "текущую дату"} ${baseDateLabel} `
+      + "для даты договора, начала обучения и зачисления, "
       + "автоматически сформировать дату окончания, номер договора, номер приказа, номер группы, "
       + "а также данные СДО: логин, пароль и сообщение о доступе?"
     );
     if (!confirmed) return;
 
-    const today = new Date();
-    const currentDate = formatOrdersSdoDate(today);
-    const endDate = getTrainingEndDate(currentDate, context.hours);
-    const contract = getGeneratedNumberFromDataFormula("contractNumber", today, context.form.dataset.id);
-    const enrollmentOrder = getGeneratedNumberFromDataFormula("enrollmentOrderNumber", today, context.form.dataset.id);
-    const group = getStudentGroupNumber(context.programName, currentDate);
+    const endDate = getTrainingEndDate(baseDateValue, context.hours);
+    const contract = getGeneratedNumberFromDataFormula("contractNumber", baseDate, context.form.dataset.id);
+    const enrollmentOrder = getGeneratedNumberFromDataFormula("enrollmentOrderNumber", baseDate, context.form.dataset.id);
+    const group = getStudentGroupNumber(context.programName, baseDateValue);
     const portalCredentials = getPortalCredentialsForAutofill(context.form);
     if (!portalCredentials) return;
 
-    setOrdersSdoFieldValue(context.form, "contractDate", currentDate);
-    setOrdersSdoFieldValue(context.form, "startDate", currentDate);
-    setOrdersSdoFieldValue(context.form, "enrollmentDate", currentDate);
+    setOrdersSdoFieldValue(context.form, "contractDate", baseDateValue);
+    setOrdersSdoFieldValue(context.form, "startDate", baseDateValue);
+    setOrdersSdoFieldValue(context.form, "enrollmentDate", baseDateValue);
     setOrdersSdoFieldValue(context.form, "endDate", formatOrdersSdoDate(endDate));
     setOrdersSdoFieldValue(context.form, "contractNo", contract.value);
     setOrdersSdoFieldValue(context.form, "enrollmentOrderNo", enrollmentOrder.value);
@@ -8747,7 +10637,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderStudentMainIdentity(section, record) {
-    const hiddenKeys = new Set(["name", "nameEnglish", "noDeclension", "addressByFirstName", "uid", "photoPath", "status", "additionalStatus", "program", "studyForm", "educationType", "hours", "registrationAddress", "mailingAddress", "workPlace", "position", "employmentCategory", "ovzStatus", "internship", "group", "source", "tags"]);
+    const hiddenKeys = new Set(["name", "nameEnglish", "gender", "noDeclension", "addressByFirstName", "uid", "photoPath", "status", "additionalStatus", "program", "studyForm", "educationType", "hours", "registrationAddress", "mailingAddress", "workPlace", "position", "employmentCategory", "ovzStatus", "internship", "group", "source", "tags"]);
     const nameField = section.fields.find((item) => item.key === "name");
     const nameEnglishField = section.fields.find((item) => item.key === "nameEnglish");
     const uidField = section.fields.find((item) => item.key === "uid");
@@ -9102,10 +10992,11 @@ MAX - https://bizvmax.ru/zifra_plus
         class="icon-button student-documents-folder-link ${escapeAttr(extraClass)}"
         data-student-documents-folder-link
         data-student-documents-folder="${escapeAttr(documentsFolder)}"
+        data-student-name="${escapeAttr(record?.name || "")}"
         href="${escapeAttr(folderUrl || "#")}"
         target="_blank"
         rel="noopener noreferrer"
-        title="${escapeAttr(tooltip)}"
+        title="${escapeMultilineAttr(tooltip)}"
         aria-label="${escapeAttr(tooltip)}"
         ${folderUrl ? "" : 'aria-disabled="true" tabindex="-1"'}
       >
@@ -9370,10 +11261,14 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderStudentField(item, record) {
-    const value = record[item.key] ?? "";
+    const value = item.key === "manager"
+      ? (getCurrentUserLogin() || record[item.key] || "")
+      : (record[item.key] ?? "");
     const required = item.required ? "required" : "";
     const isCalculatedFinanceField = ["paidAmount", "balance"].includes(item.key);
-    const isWide = item.type === "textarea" || item.key === "program";
+    const isIssuerField = ["passportIssuer", "customerPassportIssuer", "educationDocumentIssuer"]
+      .includes(item.key);
+    const isWide = item.type === "textarea" || item.key === "program" || isIssuerField;
     const classes = [
       isWide ? "wide-field" : "",
       item.key === "manager" ? "manager-field" : "",
@@ -9381,6 +11276,8 @@ MAX - https://bizvmax.ru/zifra_plus
       item.key === "finalGrade" ? "student-final-grade-field" : "",
       ["finalWorkTopic", "finalWorkNotes"].includes(item.key) ? "student-final-work-field" : "",
       item.key === "discountDescription" ? "discount-description-label" : "",
+      item.key === "educationDocumentSurname" ? "student-document-surname-field" : "",
+      isIssuerField ? "student-issuer-field" : "",
       ["workPlace", "employmentCategory"].includes(item.key) ? "long-label-field" : ""
     ].filter(Boolean).join(" ");
     const tooltip = item.key === "finalGrade"
@@ -9396,7 +11293,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (searchableStudentFields[item.key]) {
       return renderSearchableStudentField(label, item, value, required);
     }
-    if (["passportIssuer", "customerPassportIssuer", "educationDocumentIssuer"].includes(item.key)) {
+    if (isIssuerField) {
       return renderIssuerLookupField(label, item, value, required);
     }
     if (item.key === "educationType") {
@@ -9416,6 +11313,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (item.key === "discountDescription") {
       return renderDiscountDescriptionField(label, value);
     }
+    if (item.key === "manager") {
+      return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" readonly title="Ответственный определяется по текущей учётной записи"></label>`;
+    }
     if (item.key === "discount") {
       return `${label}<input name="${item.key}" type="number" value="${escapeAttr(normalizeDiscountPercent(value, record.discountUnit))}" min="0" max="100" step="0.01" inputmode="decimal"></label>`;
     }
@@ -9423,16 +11323,32 @@ MAX - https://bizvmax.ru/zifra_plus
       const options = ["", ...getFinalAttestationGradeOptions(value)];
       return `${label}<select name="${item.key}">${options.map((option) => `<option value="${escapeAttr(option)}" ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
+    if (item.key === "educationDocumentSurname") {
+      const copyTitle = "Скопировать фамилию слушателя";
+      return `
+        ${label}
+          <div class="student-document-surname-control">
+            <input name="${item.key}" type="text" value="${escapeAttr(value)}" ${required}>
+            <button class="icon-button student-document-surname-copy" data-action="copy-student-surname-to-document" type="button" title="${copyTitle}" aria-label="${copyTitle}">
+              ${renderOrdersSdoIcon("copy")}
+            </button>
+          </div>
+        </label>
+      `;
+    }
     if (item.key === "frdoDate") {
       const enabled = isFrdoProgramType(getProgramType(record.program, record));
       const title = enabled ? "" : "Дата выгрузки в ФРДО доступна только для КПК и ППП";
       return `${label}<input name="${item.key}" type="date" value="${escapeAttr(value)}" ${enabled ? "" : "disabled"} title="${escapeAttr(title)}"></label>`;
     }
     if (["inn", "customerInn"].includes(item.key)) {
-      return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" inputmode="numeric" maxlength="12" pattern="\\d{10}|\\d{12}" autocomplete="off"></label>`;
+      return renderStudentIdentityInput(label, item.key, value, {
+        maxLength: 12,
+        pattern: "\\d{10}|\\d{12}"
+      });
     }
     if (["snils", "customerSnils"].includes(item.key)) {
-      return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" inputmode="numeric" maxlength="14" autocomplete="off"></label>`;
+      return renderStudentIdentityInput(label, item.key, value, { maxLength: 14 });
     }
     if (item.type === "checkbox") {
       return `${label}<input name="${item.key}" type="checkbox" value="Да" ${isChecked(value) ? "checked" : ""}></label>`;
@@ -9446,6 +11362,32 @@ MAX - https://bizvmax.ru/zifra_plus
       return `${label}<select name="${item.key}" ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
     return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${isCalculatedFinanceField ? 'readonly class="calculated-finance-field"' : ""}></label>`;
+  }
+
+  function renderStudentIdentityInput(label, field, value, { maxLength, pattern = "" }) {
+    const statusId = `student-${field}-validation`;
+    return `
+      ${label}
+        <div class="student-identity-control" data-student-identity-control>
+          <input
+            name="${escapeAttr(field)}"
+            type="text"
+            value="${escapeAttr(value)}"
+            inputmode="numeric"
+            maxlength="${maxLength}"
+            ${pattern ? `pattern="${escapeAttr(pattern)}"` : ""}
+            autocomplete="off"
+            aria-describedby="${escapeAttr(statusId)}"
+          >
+          <span
+            class="student-identity-status"
+            id="${escapeAttr(statusId)}"
+            data-student-identity-status
+            aria-live="polite"
+          ></span>
+        </div>
+      </label>
+    `;
   }
 
   function renderDiscountDescriptionField(label, value) {
@@ -9694,7 +11636,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       ${label}
         <div class="lookup-field">
-          <textarea name="${item.key}" ${required}>${escapeHtml(value)}</textarea>
+          <input name="${item.key}" type="text" value="${escapeAttr(value)}" ${required} autocomplete="off">
           <button class="icon-button lookup-trigger" data-action="open-field-lookup" data-field="${item.key}" type="button" title="Найти в базе" aria-label="Найти в базе">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6"></circle><path d="M16 16l4 4"></path></svg>
           </button>
@@ -10012,6 +11954,34 @@ MAX - https://bizvmax.ru/zifra_plus
       program["Промо сайт"]
     ].find((value) => String(value || "").trim());
     return normalizeExternalUrl(rawValue);
+  }
+
+  function getProgramGradeReportUrl(program) {
+    if (!program) return "";
+    const rawValue = [
+      program.gradeReportUrl,
+      program.reportUrl,
+      program.gradeUrl,
+      program["Ссылка на отчет по оценкам"]
+    ].find((value) => String(value || "").trim());
+    return normalizeExternalUrl(rawValue);
+  }
+
+  function getProgramActivityLogUrl(program) {
+    const gradeReportUrl = getProgramGradeReportUrl(program);
+    if (!gradeReportUrl) return "";
+    try {
+      const url = new URL(gradeReportUrl);
+      const courseId = String(url.searchParams.get("id") || "").trim();
+      if (!courseId) return "";
+      url.pathname = "/report/log/index.php";
+      url.search = "";
+      url.searchParams.set("id", courseId);
+      url.hash = "";
+      return url.href;
+    } catch (error) {
+      return "";
+    }
   }
 
   function getProgramPromoButtonTitle(url) {
@@ -10982,7 +12952,12 @@ MAX - https://bizvmax.ru/zifra_plus
     addAudit(
       "Добавлены типовые расходы",
       draft.name || "Карточка слушателя",
-      `${result.additions.length} записей`
+      `${result.additions.length} записей`,
+      {
+        entityType: "students",
+        entityId: String(state.modal?.id || ""),
+        entityLabel: draft.name || String(state.modal?.id || "")
+      }
     );
     render();
   }
@@ -11459,6 +13434,7 @@ MAX - https://bizvmax.ru/zifra_plus
     prepareAttachment,
     attachment = null,
     recipientMode = "",
+    messageType = "",
     skipConfirmation = false
   }) {
     const normalizedSubject = normalizeServerEmailSubject(subject);
@@ -11508,7 +13484,13 @@ MAX - https://bizvmax.ru/zifra_plus
           to: recipient,
           subject: normalizedSubject,
           message: String(message).trim(),
-          ...(resolvedAttachment ? { attachment: resolvedAttachment } : {})
+          ...(resolvedAttachment ? { attachment: resolvedAttachment } : {}),
+          auditContext: {
+            studentId: String(state.modal?.id || state.modal?.draft?.id || "").trim(),
+            studentName: getCurrentStudentCardValue("name"),
+            messageType: String(messageType || confirmText || normalizedSubject).trim(),
+            recipientMode: sendToSystemMailbox ? "system" : "student"
+          }
         })
       });
       const payload = await response.json().catch(() => ({}));
@@ -11536,7 +13518,8 @@ MAX - https://bizvmax.ru/zifra_plus
       message: textarea?.value || "",
       confirmText: `Отправить сообщение «${message?.label || "Сообщение от учебного центра"}»?`,
       button,
-      event
+      event,
+      messageType: message?.label || "Сообщение от учебного центра"
     });
   }
 
@@ -11556,7 +13539,8 @@ MAX - https://bizvmax.ru/zifra_plus
       message,
       confirmText: "Отправить письмо с доступом к порталу?",
       button: event?.currentTarget,
-      event
+      event,
+      messageType: "Доступ к порталу дистанционного обучения"
     });
   }
 
@@ -11600,6 +13584,143 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function parseSystemHelpTooltip(value) {
+    const source = String(value || "").replace(/\r\n?/g, "\n").trim();
+    if (!source) return null;
+    const lines = source.split("\n");
+    const title = String(lines.shift() || "").trim();
+    while (lines.length && !String(lines[0] || "").trim()) lines.shift();
+    let details = lines.join("\n").trim();
+    let purpose = title;
+    if (!details) {
+      const split = /^(.+?[.!?])\s+((?:Shift|Ctrl|Alt|Правый|Левый|Обычный|Перед|После|Удерживайте|Префикс)\b[\s\S]*)$/u.exec(title);
+      if (split) {
+        purpose = split[1].trim();
+        details = split[2].trim();
+      }
+    }
+    return purpose ? { purpose, details } : null;
+  }
+
+  function getSystemHelpTooltipElement() {
+    let tooltip = document.querySelector("[data-system-help-tooltip]");
+    if (tooltip) return tooltip;
+    tooltip = document.createElement("div");
+    tooltip.className = "system-help-tooltip";
+    tooltip.dataset.systemHelpTooltip = "true";
+    tooltip.id = "system-help-tooltip";
+    tooltip.setAttribute("role", "tooltip");
+    tooltip.hidden = true;
+    tooltip.innerHTML = `
+      <strong class="system-help-tooltip-purpose" data-system-help-purpose></strong>
+      <span class="system-help-tooltip-details" data-system-help-details></span>
+    `;
+    document.body.appendChild(tooltip);
+    return tooltip;
+  }
+
+  function getSystemHelpTarget(node) {
+    if (!(node instanceof Element)) return null;
+    return node.closest("[title], [data-system-help-source]");
+  }
+
+  function positionSystemHelpTooltip(tooltip, target) {
+    const margin = 10;
+    const targetRect = target.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const left = Math.max(
+      margin,
+      Math.min(
+        window.innerWidth - tooltipRect.width - margin,
+        targetRect.left + targetRect.width / 2 - tooltipRect.width / 2
+      )
+    );
+    let top = targetRect.bottom + 8;
+    if (top + tooltipRect.height > window.innerHeight - margin) {
+      top = Math.max(margin, targetRect.top - tooltipRect.height - 8);
+      tooltip.classList.add("is-above");
+    } else {
+      tooltip.classList.remove("is-above");
+    }
+    tooltip.style.left = `${Math.round(left)}px`;
+    tooltip.style.top = `${Math.round(top)}px`;
+  }
+
+  function removeSystemHelpDescription(target) {
+    if (!(target instanceof Element)) return;
+    const describedBy = String(target.getAttribute("aria-describedby") || "")
+      .split(/\s+/)
+      .filter((id) => id && id !== "system-help-tooltip");
+    if (describedBy.length) target.setAttribute("aria-describedby", describedBy.join(" "));
+    else target.removeAttribute("aria-describedby");
+  }
+
+  function showSystemHelpTooltip(target) {
+    if (!(target instanceof Element)) return;
+    const currentTitle = String(target.getAttribute("title") || "");
+    if (currentTitle) {
+      target.dataset.systemHelpSource = currentTitle;
+      target.removeAttribute("title");
+    }
+    const content = parseSystemHelpTooltip(target.dataset.systemHelpSource);
+    if (!content) return;
+    const tooltip = getSystemHelpTooltipElement();
+    tooltip.querySelector("[data-system-help-purpose]").textContent = content.purpose;
+    const details = tooltip.querySelector("[data-system-help-details]");
+    details.textContent = content.details;
+    details.hidden = !content.details;
+    tooltip.hidden = false;
+    const describedBy = String(target.getAttribute("aria-describedby") || "")
+      .split(/\s+/)
+      .filter(Boolean);
+    if (!describedBy.includes(tooltip.id)) describedBy.push(tooltip.id);
+    target.setAttribute("aria-describedby", describedBy.join(" "));
+    document.querySelectorAll("[data-system-help-active]").forEach((element) => {
+      if (element !== target) {
+        element.removeAttribute("data-system-help-active");
+        removeSystemHelpDescription(element);
+      }
+    });
+    target.dataset.systemHelpActive = "true";
+    positionSystemHelpTooltip(tooltip, target);
+  }
+
+  function hideSystemHelpTooltip(target = null) {
+    const tooltip = document.querySelector("[data-system-help-tooltip]");
+    if (tooltip) tooltip.hidden = true;
+    const active = target?.matches?.("[data-system-help-active]")
+      ? target
+      : document.querySelector("[data-system-help-active]");
+    active?.removeAttribute("data-system-help-active");
+    removeSystemHelpDescription(active);
+  }
+
+  function bindSystemHelpTooltips() {
+    if (systemHelpTooltipBound) return;
+    systemHelpTooltipBound = true;
+    document.addEventListener("pointerover", (event) => {
+      const target = getSystemHelpTarget(event.target);
+      if (!target || target.contains(event.relatedTarget)) return;
+      showSystemHelpTooltip(target);
+    });
+    document.addEventListener("pointerout", (event) => {
+      const target = getSystemHelpTarget(event.target);
+      if (!target || target.contains(event.relatedTarget)) return;
+      hideSystemHelpTooltip(target);
+    });
+    document.addEventListener("focusin", (event) => {
+      const target = getSystemHelpTarget(event.target);
+      if (target) showSystemHelpTooltip(target);
+    });
+    document.addEventListener("focusout", (event) => {
+      const target = getSystemHelpTarget(event.target);
+      if (target) hideSystemHelpTooltip(target);
+    });
+    document.addEventListener("pointerdown", () => hideSystemHelpTooltip(), { capture: true });
+    window.addEventListener("resize", () => hideSystemHelpTooltip());
+    window.addEventListener("scroll", () => hideSystemHelpTooltip(), { capture: true });
+  }
+
   function bindGlobalEscapeKey() {
     if (globalEscapeKeyBound) return;
     globalEscapeKeyBound = true;
@@ -11614,6 +13735,23 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeTopmostWindowByEscape() {
+    if (state.userManagementOpen) {
+      closeUserManagement();
+      return true;
+    }
+    if (state.profileOpen) {
+      closeProfile();
+      return true;
+    }
+    const studentWebDavBrowser = document.querySelector("[data-student-webdav-browser]");
+    if (studentWebDavBrowser) {
+      studentWebDavBrowser.closeStudentWebDavBrowser?.();
+      return true;
+    }
+    if (document.querySelector("[data-student-document-recognition-dialog]")) {
+      closeStudentDocumentRecognitionDialog();
+      return true;
+    }
     const studentDocumentChoiceDialog = document.querySelector("[data-student-document-choice-dialog]");
     if (studentDocumentChoiceDialog) {
       studentDocumentChoiceDialog.closeStudentDocumentChoice?.();
@@ -11687,8 +13825,16 @@ MAX - https://bizvmax.ru/zifra_plus
       closeStudentApplicationsImport();
       return true;
     }
+    if (state.studentAuditLog.open) {
+      closeStudentAuditLog();
+      return true;
+    }
     if (state.modal) {
       closeModalWithUnsavedCheck();
+      return true;
+    }
+    if (state.financeDetails.open) {
+      closeFinanceDetails();
       return true;
     }
     if (document.body.classList.contains("sidebar-open")) {
@@ -11702,19 +13848,55 @@ MAX - https://bizvmax.ru/zifra_plus
     bindGlobalEscapeKey();
     bindSidebarOutsideClick();
     bindProgramTypeFilterOutsideClick();
+    bindSystemHelpTooltips();
     bindNavItemOrderControls();
+    bindDashboardStudentStatusOrderControls();
     bindFieldUndoShortcut();
     bindStudentApplicationsImportEvents();
+    bindFinanceDetailsEvents();
     initializeRecordFormSnapshot(document.getElementById("recordForm"));
 
-    document.querySelectorAll("[data-view]").forEach((button) => {
+    document.querySelector("[data-action='open-profile']")?.addEventListener("click", () => {
+      state.profileOpen = true;
+      render();
+    });
+    document.querySelectorAll("[data-action='close-profile']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (element.matches("button") || event.target === element) closeProfile();
+      });
+    });
+    document.querySelector("form[data-action='save-profile']")?.addEventListener("submit", saveProfile);
+    document.querySelector("form[data-action='change-password']")?.addEventListener("submit", changeCurrentUserPassword);
+    document.querySelector("[data-action='logout']")?.addEventListener("click", logoutCurrentUser);
+    document.querySelector("[data-action='open-user-management']")?.addEventListener("click", openUserManagement);
+    document.querySelectorAll("[data-action='close-user-management']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (element.matches("button") || event.target === element) closeUserManagement();
+      });
+    });
+    document.querySelector("[data-action='create-auth-user']")?.addEventListener("click", () => {
+      state.authUserEditorId = "new";
+      render();
+    });
+    document.querySelectorAll("[data-action='edit-auth-user']").forEach((button) => {
       button.addEventListener("click", () => {
+        state.authUserEditorId = button.dataset.userId || "";
+        render();
+      });
+    });
+    document.querySelector("form[data-action='save-auth-user']")?.addEventListener("submit", saveAuthUser);
+
+    document.querySelectorAll("[data-view]").forEach((button) => {
+      button.addEventListener("click", async () => {
         if (button.dataset.wasDragged === "true" || Date.now() - lastNavItemDragEndedAt < 150) return;
+        if (!canAccessView(button.dataset.view)) return;
+        if (!await saveAdminSettingsBeforeExit(button.dataset.view)) return;
         state.view = button.dataset.view;
         state.search = "";
         state.statusFilter = getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
         state.programRegistryTypeFilter = [];
+        state.contractSectionFilter = [];
         state.studentImportedViewIds = [];
         state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
@@ -11723,12 +13905,15 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     document.querySelectorAll("[data-view-shortcut]").forEach((button) => {
-      button.addEventListener("click", () => {
+      button.addEventListener("click", async () => {
+        if (!canAccessView(button.dataset.viewShortcut)) return;
+        if (!await saveAdminSettingsBeforeExit(button.dataset.viewShortcut)) return;
         state.view = button.dataset.viewShortcut;
         state.search = "";
         state.statusFilter = getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
         state.programRegistryTypeFilter = [];
+        state.contractSectionFilter = [];
         state.studentImportedViewIds = [];
         state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
@@ -11759,12 +13944,57 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='sync-students-database']")?.addEventListener("click", exportStudentsToDatabase);
     const studentDatabaseSettingsForm = document.querySelector("form[data-action='save-student-database-settings']");
     studentDatabaseSettingsForm?.addEventListener("submit", saveStudentDatabaseSettings);
+    bindAdminSettingsDirtyState(studentDatabaseSettingsForm);
+    bindAdminSettingsBeforeUnload();
     bindAutomaticDocumentSaveHint(studentDatabaseSettingsForm);
     document.querySelector("[data-action='test-yandex-disk']")?.addEventListener("click", testYandexDiskConnection);
     document.querySelector("[data-action='test-student-applications-email']")
       ?.addEventListener("click", testStudentApplicationsEmailConnection);
     document.querySelector("[data-action='download-audit-log']")
       ?.addEventListener("click", downloadAuditLog);
+    document.querySelector("form[data-action='filter-audit-log']")
+      ?.addEventListener("submit", applyAuditFilters);
+    document.querySelector("[data-action='reset-audit-filters']")
+      ?.addEventListener("click", resetAuditFilters);
+    document.querySelectorAll("[data-action='refresh-audit-log']").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.auditLog.loaded = false;
+        loadAdminAuditLog();
+      });
+    });
+    document.querySelectorAll("[data-action='audit-page']").forEach((button) => {
+      button.addEventListener("click", () => loadAdminAuditLog({ page: Number(button.dataset.page) || 1 }));
+    });
+    document.querySelector("[data-action='audit-page-size']")?.addEventListener("change", (event) => {
+      state.auditLog.pageSize = Number(event.target.value) || 50;
+      loadAdminAuditLog({ page: 1 });
+    });
+    document.querySelector("[data-action='open-student-audit-log']")
+      ?.addEventListener("click", openStudentAuditLog);
+    document.querySelectorAll("[data-action='close-student-audit-log']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (element.matches("button") || event.target === element) closeStudentAuditLog();
+      });
+    });
+    document.querySelector("form[data-action='filter-student-audit-log']")
+      ?.addEventListener("submit", applyStudentAuditFilters);
+    document.querySelector("[data-action='reset-student-audit-filters']")
+      ?.addEventListener("click", resetStudentAuditFilters);
+    document.querySelector("[data-action='download-student-audit-log']")
+      ?.addEventListener("click", downloadStudentAuditLog);
+    document.querySelectorAll("[data-action='refresh-student-audit-log']").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.studentAuditLog.loaded = false;
+        loadStudentAuditLog();
+      });
+    });
+    document.querySelectorAll("[data-action='student-audit-page']").forEach((button) => {
+      button.addEventListener("click", () => loadStudentAuditLog({ page: Number(button.dataset.page) || 1 }));
+    });
+    document.querySelector("[data-action='student-audit-page-size']")?.addEventListener("change", (event) => {
+      state.studentAuditLog.pageSize = Number(event.target.value) || 50;
+      loadStudentAuditLog({ page: 1 });
+    });
 
     document.querySelector("[data-action='transliterate-student-name']")?.addEventListener("click", () => {
       const source = document.querySelector("[name='name']");
@@ -11787,6 +14017,8 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='open-student-messenger-url']")?.addEventListener("click", openStudentMessengerUrl);
     document.querySelector("[data-action='open-student-program-promo']")?.addEventListener("click", openStudentProgramPromo);
     document.querySelector("[data-action='open-student-course-page']")?.addEventListener("click", openStudentCoursePage);
+    document.querySelector("[data-action='open-student-grade-report']")?.addEventListener("click", openStudentGradeReport);
+    document.querySelector("[data-action='open-student-activity-log']")?.addEventListener("click", openStudentActivityLog);
     document.querySelectorAll("[data-action='shift-orders-sdo-date']").forEach((button) => {
       button.addEventListener("click", (event) => {
         shiftOrdersSdoDate(button.dataset.field, button.dataset.direction, event.altKey);
@@ -11813,6 +14045,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", () => copyStudentCommunicationMessage(button));
     });
     document.querySelector("[data-action='copy-student-details']")?.addEventListener("click", copyStudentDetails);
+    document.querySelector("[data-action='copy-student-surname-to-document']")?.addEventListener("click", copyStudentSurnameToDocument);
     document.querySelectorAll("[data-action='edit-communication-message']").forEach((button) => {
       button.addEventListener("click", () => editStudentCommunicationMessage(button.dataset.messageKey));
     });
@@ -11892,12 +14125,25 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='switch-program-tab']").forEach((button) => {
       button.addEventListener("click", () => switchProgramTab(button.dataset.programTab));
     });
+    document.querySelectorAll("[data-action='switch-contract-tab']").forEach((button) => {
+      button.addEventListener("click", () => switchContractTab(button.dataset.contractTab));
+    });
     document.querySelectorAll("[data-action='navigate-student-card']").forEach((button) => {
       button.addEventListener("click", () => navigateStudentCard(button.dataset.direction));
     });
     document.querySelectorAll("[data-action='navigate-program-card']").forEach((button) => {
       button.addEventListener("click", () => navigateProgramCard(button.dataset.direction));
     });
+    document.querySelectorAll("[data-action='navigate-contract-card']").forEach((button) => {
+      button.addEventListener("click", () => navigateContractCard(button.dataset.direction));
+    });
+    const contractForm = document.querySelector("#recordForm[data-config='contracts']");
+    contractForm?.addEventListener("invalid", (event) => {
+      const panel = event.target.closest("[data-contract-tab-panel]");
+      if (!panel?.dataset.contractTabPanel) return;
+      switchContractTab(panel.dataset.contractTabPanel);
+      requestAnimationFrame(() => event.target.focus({ preventScroll: false }));
+    }, true);
     document.querySelectorAll("[data-payment-index]").forEach((input) => {
       input.addEventListener("input", () => {
         syncPaymentRowDeleteButton(input.dataset.paymentIndex);
@@ -11978,6 +14224,22 @@ MAX - https://bizvmax.ru/zifra_plus
       state.tablePages.programs = 1;
       render();
     });
+    document.querySelectorAll("[data-contract-section-filter-option]").forEach((input) => {
+      input.addEventListener("change", () => {
+        state.contractSectionFilter = Array.from(
+          document.querySelectorAll("[data-contract-section-filter-option]:checked")
+        ).map((item) => item.value);
+        state.tablePages.contracts = 1;
+        render();
+        const filter = document.querySelector("[data-contract-section-filter]");
+        if (filter) filter.open = true;
+      });
+    });
+    document.querySelector("[data-action='clear-contract-section-filter']")?.addEventListener("click", () => {
+      state.contractSectionFilter = [];
+      state.tablePages.contracts = 1;
+      render();
+    });
     document.querySelector("[data-action='clear-student-imported-view']")?.addEventListener("click", () => {
       state.studentImportedViewIds = [];
       state.statusFilter = getDefaultStatusFilter("students");
@@ -12033,6 +14295,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
     document.querySelectorAll("[data-student-status-shortcut]").forEach((button) => {
       button.addEventListener("click", () => {
+        if (button.dataset.wasDragged === "true" || Date.now() - lastDashboardStatusDragEndedAt < 180) return;
         const status = button.dataset.studentStatusShortcut || "Все";
         pushStudentStatusHistory(status);
         state.view = "students";
@@ -12082,6 +14345,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", () => {
         if (button.dataset.config === "students") state.studentCardTab = "main";
         if (button.dataset.config === "programs") state.programCardTab = "main";
+        if (button.dataset.config === "contracts") state.contractCardTab = "main";
         if (button.dataset.config === "students") state.openPaymentRows = [];
         if (button.dataset.config === "students") state.openExpenseRows = [];
         if (button.dataset.config === "students") state.discountPickerOpen = false;
@@ -12102,6 +14366,7 @@ MAX - https://bizvmax.ru/zifra_plus
         setTablePageForRow(button.dataset.config, button.dataset.id);
         if (button.dataset.config === "students") state.studentCardTab = "main";
         if (button.dataset.config === "programs") state.programCardTab = "main";
+        if (button.dataset.config === "contracts") state.contractCardTab = "main";
         if (button.dataset.config === "students") state.openPaymentRows = [];
         if (button.dataset.config === "students") state.openExpenseRows = [];
         if (button.dataset.config === "students") state.discountPickerOpen = false;
@@ -12373,6 +14638,10 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.querySelector("[data-action='create-student-documents-folder']")
       ?.addEventListener("click", createMissingStudentDocumentsFolder);
+    document.querySelector("[data-action='recognize-student-documents']")
+      ?.addEventListener("click", startStudentDocumentRecognition);
+    document.querySelector("[data-action='show-student-document-recognition-result']")
+      ?.addEventListener("click", showStoredStudentDocumentRecognitionResult);
     document.getElementById("studentPhotoPath")?.addEventListener("change", (event) => {
       const hidden = document.getElementById("studentPhotoData");
       const urlInput = document.getElementById("studentPhotoUrl");
@@ -12684,6 +14953,93 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function syncDashboardStudentStatusOrderFromDom(container) {
+    const order = [...(container?.querySelectorAll("[data-dashboard-student-status-item]") || [])]
+      .map((button) => String(button.dataset.dashboardStudentStatusItem || "").trim())
+      .filter(Boolean);
+    if (!order.length) return;
+    state.dashboardStudentStatusOrder = order;
+    persistDashboardStudentStatusOrder(order);
+  }
+
+  function getDashboardStatusDragAfterElement(container, y) {
+    return [...container.querySelectorAll("[data-dashboard-student-status-item]:not(.is-dragging)")]
+      .reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+        return offset < 0 && offset > closest.offset
+          ? { offset, element: child }
+          : closest;
+      }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+  }
+
+  function resetDashboardStudentStatusOrder() {
+    state.dashboardStudentStatusOrder = [];
+    localStorage.removeItem(DASHBOARD_STATUS_ORDER_KEY);
+    closeNavItemMenu();
+    render();
+  }
+
+  function showDashboardStatusOrderMenu(x, y) {
+    closeNavItemMenu();
+    const menu = document.createElement("div");
+    menu.className = "student-tab-menu nav-item-menu";
+    menu.dataset.navItemMenu = "";
+    menu.innerHTML = `<button data-action="reset-dashboard-status-order" type="button">Восстановить исходный порядок</button>`;
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;
+    menu.style.top = `${clamp(y, 8, Math.max(8, window.innerHeight - rect.height - 8))}px`;
+    menu.querySelector("[data-action='reset-dashboard-status-order']")
+      ?.addEventListener("click", resetDashboardStudentStatusOrder);
+    setTimeout(() => {
+      document.addEventListener("pointerdown", closeNavItemMenuOnOutsideClick, { capture: true, once: true });
+    });
+  }
+
+  function bindDashboardStudentStatusOrderControls() {
+    const container = document.querySelector("[data-dashboard-status-list]");
+    if (!container) return;
+    container.addEventListener("contextmenu", (event) => {
+      if (!event.target.closest("[data-dashboard-student-status-item]")) return;
+      event.preventDefault();
+      showDashboardStatusOrderMenu(event.clientX, event.clientY);
+    });
+    container.addEventListener("dragover", (event) => {
+      const dragging = container.querySelector("[data-dashboard-student-status-item].is-dragging");
+      if (!dragging) return;
+      event.preventDefault();
+      const afterElement = getDashboardStatusDragAfterElement(container, event.clientY);
+      if (afterElement) container.insertBefore(dragging, afterElement);
+      else container.appendChild(dragging);
+    });
+    container.addEventListener("drop", (event) => {
+      event.preventDefault();
+      syncDashboardStudentStatusOrderFromDom(container);
+    });
+    container.querySelectorAll("[data-dashboard-student-status-item]").forEach((button) => {
+      button.addEventListener("dragstart", (event) => {
+        closeNavItemMenu();
+        draggedDashboardStudentStatus = button.dataset.dashboardStudentStatusItem || "";
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", draggedDashboardStudentStatus);
+        button.classList.add("is-dragging");
+        document.body.classList.add("dashboard-status-dragging");
+      });
+      button.addEventListener("dragend", () => {
+        button.classList.remove("is-dragging");
+        document.body.classList.remove("dashboard-status-dragging");
+        if (draggedDashboardStudentStatus) button.dataset.wasDragged = "true";
+        lastDashboardStatusDragEndedAt = Date.now();
+        draggedDashboardStudentStatus = "";
+        syncDashboardStudentStatusOrderFromDom(container);
+        setTimeout(() => {
+          if (button.dataset.wasDragged === "true") button.dataset.wasDragged = "";
+        }, 180);
+      });
+    });
+  }
+
   function syncOrderableTabOrderFromDom(container) {
     const groupId = String(container?.dataset.orderableTabs || "").trim();
     if (!groupId) return;
@@ -12845,6 +15201,15 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentNavigationRows() {
+    const contextIds = Array.isArray(state.modal?.studentNavigationIds)
+      ? state.modal.studentNavigationIds
+      : [];
+    if (contextIds.length) {
+      const studentsById = new Map((state.data.collections.students || [])
+        .map((student) => [String(student.id), student]));
+      const contextRows = contextIds.map((id) => studentsById.get(String(id))).filter(Boolean);
+      if (contextRows.length) return contextRows;
+    }
     const visibleRows = getVisibleRows(configs.students);
     return visibleRows.length ? visibleRows : (state.data.collections.students || []);
   }
@@ -12876,10 +15241,17 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function openStudentCardById(id) {
     if (!id) return;
+    const studentNavigationIds = Array.isArray(state.modal?.studentNavigationIds)
+      ? [...state.modal.studentNavigationIds]
+      : [];
     resetStudentCardTransientState();
     state.lastEditedRow = { config: "students", id };
     setTablePageForRow("students", id);
-    state.modal = { config: "students", id };
+    state.modal = {
+      config: "students",
+      id,
+      ...(studentNavigationIds.length ? { studentNavigationIds } : {})
+    };
     render();
   }
 
@@ -12952,6 +15324,57 @@ MAX - https://bizvmax.ru/zifra_plus
     const target = getProgramNavigationTarget(currentId, direction);
     if (!target) return;
     openProgramCardById(target.id);
+  }
+
+  function getContractNavigationRows() {
+    const visibleRows = getVisibleRows(configs.contracts);
+    return visibleRows.length ? visibleRows : (state.data.collections.contracts || []);
+  }
+
+  function getContractCardNavigation(record = {}) {
+    const rows = getContractNavigationRows();
+    const index = rows.findIndex((row) => row.id === record.id);
+    return {
+      index,
+      total: rows.length,
+      hasPrev: Boolean(record.id) && index > 0,
+      hasNext: Boolean(record.id) && index >= 0 && index < rows.length - 1
+    };
+  }
+
+  function getContractNavigationTarget(currentId, direction) {
+    const rows = getContractNavigationRows();
+    const index = rows.findIndex((row) => row.id === currentId);
+    if (index < 0) return null;
+    return rows[index + (Number(direction) < 0 ? -1 : 1)] || null;
+  }
+
+  function openContractCardById(id) {
+    if (!id) return;
+    state.lastEditedRow = { config: "contracts", id };
+    setTablePageForRow("contracts", id);
+    state.modal = { config: "contracts", id };
+    render();
+  }
+
+  function navigateContractCard(direction) {
+    const formElement = document.getElementById("recordForm");
+    if (!formElement || formElement.dataset.config !== "contracts" || !state.modal?.id) return;
+    let currentId = formElement.dataset.id || state.modal.id;
+    const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
+    if (hasChanges) {
+      if (confirm("Сохранить изменения перед переходом к другой карточке?")) {
+        const savedId = saveFormRecord(formElement);
+        if (!savedId) return;
+        persist();
+        currentId = savedId;
+      } else if (!confirm("Перейти без сохранения изменений?")) {
+        return;
+      }
+    }
+    const target = getContractNavigationTarget(currentId, direction);
+    if (!target) return;
+    openContractCardById(target.id);
   }
 
   function findDiscountOptionByKey(key) {
@@ -13193,6 +15616,15 @@ MAX - https://bizvmax.ru/zifra_plus
         </svg>
         <span>Копировать</span>
       </button>
+      <button class="field-paste-button" data-action="paste-field-value" type="button" disabled title="Буфер обмена пуст или недоступен">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <rect x="6" y="5" width="12" height="16" rx="2"></rect>
+          <path d="M9 5.5V3h6v2.5"></path>
+          <path d="M12 9v7"></path>
+          <path d="m9 13 3 3 3-3"></path>
+        </svg>
+        <span>Вставить</span>
+      </button>
       <span class="field-copy-divider" aria-hidden="true"></span>
       <button class="field-delete-button" data-action="delete-field-value" type="button">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -13231,6 +15663,28 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     copyButton.addEventListener("pointerdown", copyNow);
     copyButton.addEventListener("click", copyNow);
+    const pasteButton = popup.querySelector("[data-action='paste-field-value']");
+    let pasteValue = lastKnownClipboardText;
+    const updatePasteButton = (value) => {
+      if (!popup.isConnected) return;
+      pasteValue = String(value ?? "");
+      const enabled = canPasteControlValue(control, pasteValue);
+      pasteButton.disabled = !enabled;
+      pasteButton.title = enabled ? "Вставить значение из буфера обмена" : "Буфер обмена пуст, недоступен или значение не подходит полю";
+    };
+    updatePasteButton(pasteValue);
+    readFieldClipboardText().then(updatePasteButton);
+    let pasteStarted = false;
+    const pasteNow = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (pasteStarted || pasteButton.disabled) return;
+      pasteStarted = true;
+      if (pasteTextIntoControl(control, pasteValue)) hideFieldCopyPopup();
+      else pasteStarted = false;
+    };
+    pasteButton.addEventListener("pointerdown", pasteNow);
+    pasteButton.addEventListener("click", pasteNow);
     const deleteButton = popup.querySelector("[data-action='delete-field-value']");
     let deleteStarted = false;
     const deleteNow = (event) => {
@@ -13292,6 +15746,10 @@ MAX - https://bizvmax.ru/zifra_plus
   function bindFieldUndoShortcut() {
     if (fieldUndoKeyBound) return;
     fieldUndoKeyBound = true;
+    document.addEventListener("paste", (event) => {
+      const value = event.clipboardData?.getData("text/plain");
+      if (typeof value === "string") lastKnownClipboardText = value;
+    });
     document.addEventListener("keydown", (event) => {
       if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.key.toLowerCase() !== "z") return;
       if (!lastDeletedControlState) return;
@@ -13375,8 +15833,74 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  async function readFieldClipboardText() {
+    if (!navigator.clipboard?.readText) return lastKnownClipboardText;
+    try {
+      const value = await navigator.clipboard.readText();
+      lastKnownClipboardText = String(value ?? "");
+    } catch (error) {
+      // Reading can be denied by browser policy; keep the last value copied inside the application.
+    }
+    return lastKnownClipboardText;
+  }
+
+  function findPastedSelectOption(control, value) {
+    const normalized = String(value ?? "").trim().toLocaleLowerCase("ru-RU");
+    if (!normalized) return null;
+    return Array.from(control.options || []).find((option) => (
+      String(option.value || "").trim().toLocaleLowerCase("ru-RU") === normalized
+      || String(option.textContent || "").trim().toLocaleLowerCase("ru-RU") === normalized
+    )) || null;
+  }
+
+  function canPasteControlValue(control, value) {
+    if (!control || control.disabled || control.readOnly || !String(value ?? "").length) return false;
+    if (control.tagName === "SELECT") return Boolean(findPastedSelectOption(control, value));
+    return true;
+  }
+
+  function normalizePastedInputValue(control, value) {
+    const source = String(value ?? "");
+    if (control.type === "number") return source.trim().replace(",", ".");
+    if (control.type === "date") {
+      const normalized = source.trim();
+      const match = /^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$/u.exec(normalized);
+      if (!match) return normalized;
+      return `${match[3]}-${String(match[2]).padStart(2, "0")}-${String(match[1]).padStart(2, "0")}`;
+    }
+    return source;
+  }
+
+  function pasteTextIntoControl(control, value) {
+    if (!canPasteControlValue(control, value)) return false;
+    if (control.type === "checkbox" || control.type === "radio") {
+      const normalized = String(value || "").trim().toLocaleLowerCase("ru-RU");
+      control.checked = !["нет", "не", "false", "0", "off"].includes(normalized);
+    } else if (control.tagName === "SELECT") {
+      const option = findPastedSelectOption(control, value);
+      if (!option) return false;
+      if (control.multiple) option.selected = true;
+      else control.value = option.value;
+    } else {
+      const pastedValue = normalizePastedInputValue(control, value);
+      const supportsSelection = control.tagName === "TEXTAREA" || ["text", "search", "tel", "url", "password"].includes(control.type);
+      if (supportsSelection && typeof control.setRangeText === "function") {
+        const start = typeof control.selectionStart === "number" ? control.selectionStart : control.value.length;
+        const end = typeof control.selectionEnd === "number" ? control.selectionEnd : start;
+        control.setRangeText(pastedValue, start, end, "end");
+      } else {
+        control.value = pastedValue;
+      }
+    }
+    control.dispatchEvent(new Event("input", { bubbles: true }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+    control.focus({ preventScroll: true });
+    return true;
+  }
+
   async function copyTextToClipboard(text) {
     const value = String(text ?? "");
+    lastKnownClipboardText = value;
     if (navigator.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(value);
@@ -13888,6 +16412,24 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function switchContractTab(tabId) {
+    const target = String(tabId || "").trim();
+    const modal = document.querySelector(".contract-modal");
+    if (!modal || !target) return;
+    state.contractCardTab = target;
+    modal.querySelectorAll("[data-action='switch-contract-tab']").forEach((button) => {
+      const isActive = button.dataset.contractTab === target;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-selected", isActive ? "true" : "false");
+      button.tabIndex = isActive ? 0 : -1;
+    });
+    modal.querySelectorAll("[data-contract-tab-panel]").forEach((panel) => {
+      const isActive = panel.dataset.contractTabPanel === target;
+      panel.classList.toggle("is-active", isActive);
+      panel.hidden = !isActive;
+    });
+  }
+
   function toggleProgramTrainingPlanHiddenColumns(button) {
     const body = button?.closest("[data-program-training-plan-body]");
     if (!body) return;
@@ -14055,6 +16597,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const formData = new FormData(formElement);
     const isStudentCard = formElement.dataset.config === "students";
     const isProgramCard = formElement.dataset.config === "programs";
+    const isContractCard = formElement.dataset.config === "contracts";
     const currentRecord = formElement.dataset.id ? rows.find((row) => row.id === formElement.dataset.id) || {} : {};
     const values = isStudentCard ? { ...currentRecord, ...(state.modal?.draft || {}) } : {};
     const fields = isStudentCard ? studentAllFields : config.fields;
@@ -14068,6 +16611,13 @@ MAX - https://bizvmax.ru/zifra_plus
       const raw = formData.get(item.key);
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
+    if (fields.some((item) => item.key === "manager") && getCurrentUserLogin()) {
+      values.manager = getCurrentUserLogin();
+      state.data.dictionaries.managers = unique([
+        ...(state.data.dictionaries.managers || []),
+        values.manager
+      ]);
+    }
     if (isProgramCard) {
       PROGRAM_LIST_FIELD_KEYS.forEach((key) => {
         if (formData.has(key)) values[key] = normalizeProgramListValue(formData.get(key));
@@ -14128,16 +16678,42 @@ MAX - https://bizvmax.ru/zifra_plus
       values.expenseTotal = Math.round(sumStudentExpenses(values) * 100) / 100;
       if (!applyStudentInventoryAllocationChanges(currentRecord, values)) return "";
     }
+    if (isContractCard) {
+      values.inn = normalizeInn(values.inn);
+      values.snils = formatSnils(values.snils);
+      const innInput = formElement.querySelector("[name='inn']");
+      const snilsInput = formElement.querySelector("[name='snils']");
+      if (innInput) innInput.value = values.inn;
+      if (snilsInput) snilsInput.value = values.snils;
+      if (!validateStudentIdentityValue("inn", values.inn, innInput)
+        || !validateStudentIdentityValue("snils", values.snils, snilsInput)) return "";
+      Object.assign(values, normalizeContractRecord({ ...currentRecord, ...values }));
+    }
 
     let savedId = formElement.dataset.id;
     if (formElement.dataset.id) {
       const index = rows.findIndex((row) => row.id === formElement.dataset.id);
-      rows[index] = { ...rows[index], ...values };
-      addAudit("Изменена запись", config.title, values.name || values.contractNo || values.code || values.itemType || "");
+      const beforeRecord = { ...rows[index] };
+      const nextRecord = { ...rows[index], ...values };
+      rows[index] = nextRecord;
+      const entityLabel = values.name || values.contractNo || values.code || values.itemType || savedId;
+      addAudit("Изменена запись", config.title, entityLabel, {
+        entityType: config.collection,
+        entityId: savedId,
+        entityLabel,
+        changes: buildAuditChanges(beforeRecord, nextRecord, fields)
+      });
     } else {
       savedId = makeId(config.collection);
-      rows.unshift({ id: savedId, ...values });
-      addAudit("Создана запись", config.title, values.name || values.contractNo || values.code || values.itemType || "");
+      const nextRecord = { id: savedId, ...values };
+      rows.unshift(nextRecord);
+      const entityLabel = values.name || values.contractNo || values.code || values.itemType || savedId;
+      addAudit("Создана запись", config.title, entityLabel, {
+        entityType: config.collection,
+        entityId: savedId,
+        entityLabel,
+        changes: buildAuditChanges({}, nextRecord, fields)
+      });
     }
     if (isStudentCard || formElement.dataset.config === "directExpenses") {
       const partition = attachDirectExpensesToStudentRecords(
@@ -14217,13 +16793,16 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function photoServerOrigin() {
-    return window.location.protocol === "http:" || window.location.protocol === "https:"
-      ? window.location.origin
-      : defaultPhotoServerOrigin;
+    return window.location.protocol === "file:"
+      ? defaultPhotoServerOrigin
+      : APP_BASE_URL.href.replace(/\/$/, "");
   }
 
   function photoApiUrl(pathname) {
-    return `${photoServerOrigin()}${pathname}`;
+    const relativePath = String(pathname || "").replace(/^\/+/, "");
+    return window.location.protocol === "file:"
+      ? `${defaultPhotoServerOrigin}/${relativePath}`
+      : new URL(relativePath, APP_BASE_URL).toString();
   }
 
   function photoPublicUrl(pathOrUrl) {
@@ -14231,7 +16810,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!value) return "";
     if (/^https?:\/\//i.test(value) || value.startsWith("data:")) return value;
     const pathname = value.startsWith("/") ? value : `/${value}`;
-    return window.location.protocol === "file:" ? pathname.replace(/^\/+/, "") : pathname;
+    return window.location.protocol === "file:"
+      ? pathname.replace(/^\/+/, "")
+      : photoApiUrl(pathname);
   }
 
   function collectProgramAuthorPayments(formElement) {
@@ -14293,8 +16874,6 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function openStudentDocumentsFolder(event) {
-    const openLocally = event.shiftKey ? !getOpenDocumentsLocally() : getOpenDocumentsLocally();
-    if (!openLocally) return;
     event.preventDefault();
     const link = event.currentTarget;
     const folder = String(link.dataset.studentDocumentsFolder || "").trim();
@@ -14302,22 +16881,317 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Не удалось определить папку документов слушателя.");
       return;
     }
+    const source = getStudentDocumentsSource(Boolean(event.shiftKey));
+    const studentName = String(link.dataset.studentName || "").trim();
     link.setAttribute("aria-busy", "true");
     try {
-      const response = await fetch(photoApiUrl("/api/local-documents/open-folder"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folder })
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.error || "Не удалось открыть папку в Проводнике.");
+      if (source === "local") {
+        try {
+          const response = await fetch(photoApiUrl("/api/local-documents/open-folder"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ folder })
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload.error || "Не удалось открыть папку в Проводнике.");
+          }
+          return;
+        } catch (error) {
+          state.data.meta.localDocumentsAvailable = false;
+          persist();
+          await openStudentWebDavDocumentsManager(folder, studentName, {
+            notice: `Локальная папка недоступна. Используется WebDAV. ${error.message}`
+          });
+          return;
+        }
       }
+      await openStudentWebDavDocumentsManager(folder, studentName);
     } catch (error) {
-      alert(`Не удалось открыть папку в Проводнике: ${error.message}`);
+      alert(`Не удалось открыть документы слушателя: ${error.message}`);
     } finally {
       link.removeAttribute("aria-busy");
     }
+  }
+
+  function getStudentWebDavDocumentFileUrl(folder, relativePath, downloadFile = false) {
+    const params = new URLSearchParams({
+      folder: String(folder || ""),
+      path: String(relativePath || "")
+    });
+    if (downloadFile) params.set("download", "1");
+    return photoApiUrl(`/api/students/webdav-documents/file?${params.toString()}`);
+  }
+
+  function getStudentWebDavParentPath(value) {
+    const parts = String(value || "").split("/").filter(Boolean);
+    parts.pop();
+    return parts.join("/");
+  }
+
+  function formatStudentWebDavModifiedAt(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleString("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  async function openStudentWebDavDocumentsManager(folder, studentName = "", options = {}) {
+    document.querySelector("[data-student-webdav-browser]")?.remove();
+    const backdrop = document.createElement("div");
+    backdrop.className = "student-webdav-browser-backdrop";
+    backdrop.dataset.studentWebdavBrowser = "";
+    backdrop.innerHTML = `
+      <section class="student-webdav-browser-dialog" role="dialog" aria-modal="true" aria-labelledby="studentWebDavBrowserTitle">
+        <header class="student-webdav-browser-head">
+          <div>
+            <h2 id="studentWebDavBrowserTitle">Документы${studentName ? `: ${escapeHtml(studentName)}` : " слушателя"}</h2>
+            <p>Яндекс-Диск · WebDAV</p>
+          </div>
+          <button class="icon-button" type="button" data-action="close-student-webdav-browser" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <div class="student-webdav-browser-toolbar">
+          <button class="ghost-button" type="button" data-action="student-webdav-up" title="На уровень выше" aria-label="На уровень выше">←</button>
+          <nav class="student-webdav-browser-path" data-student-webdav-path aria-label="Текущая папка"></nav>
+          <button class="ghost-button" type="button" data-action="student-webdav-refresh">Обновить</button>
+          <button class="primary-button" type="button" data-action="student-webdav-select-files">Загрузить</button>
+          <input type="file" hidden multiple data-student-webdav-file-input>
+        </div>
+        <div class="student-webdav-browser-notice" data-student-webdav-notice ${options.notice ? "" : "hidden"}>${escapeHtml(options.notice || "")}</div>
+        <div class="student-webdav-browser-status" data-student-webdav-status aria-live="polite"></div>
+        <div class="student-webdav-browser-workspace" data-student-webdav-dropzone>
+          <section class="student-webdav-browser-files" aria-label="Файлы и папки">
+            <div class="student-webdav-browser-list" data-student-webdav-list></div>
+            <p class="student-webdav-browser-drop-hint">Перетащите сюда файлы, чтобы загрузить их в текущую папку</p>
+          </section>
+          <aside class="student-webdav-browser-preview" data-student-webdav-preview>
+            <div class="student-webdav-browser-preview-empty">Выберите файл для просмотра</div>
+          </aside>
+        </div>
+      </section>
+    `;
+    document.body.appendChild(backdrop);
+
+    const dialog = backdrop.querySelector(".student-webdav-browser-dialog");
+    const list = backdrop.querySelector("[data-student-webdav-list]");
+    const preview = backdrop.querySelector("[data-student-webdav-preview]");
+    const status = backdrop.querySelector("[data-student-webdav-status]");
+    const pathNode = backdrop.querySelector("[data-student-webdav-path]");
+    const upButton = backdrop.querySelector("[data-action='student-webdav-up']");
+    const fileInput = backdrop.querySelector("[data-student-webdav-file-input]");
+    const dropzone = backdrop.querySelector("[data-student-webdav-dropzone]");
+    let currentPath = "";
+    let currentEntries = [];
+    let loading = false;
+
+    const close = () => backdrop.remove();
+    backdrop.closeStudentWebDavBrowser = close;
+    backdrop.addEventListener("pointerdown", (event) => {
+      if (event.target === backdrop) close();
+    });
+    backdrop.querySelector("[data-action='close-student-webdav-browser']")
+      ?.addEventListener("click", close);
+
+    const setStatus = (message = "", kind = "") => {
+      status.textContent = message;
+      status.dataset.kind = kind;
+      status.hidden = !message;
+    };
+
+    const renderPath = () => {
+      const parts = currentPath.split("/").filter(Boolean);
+      const crumbs = [{ label: "Документы", path: "" }];
+      parts.forEach((part, index) => crumbs.push({
+        label: part,
+        path: parts.slice(0, index + 1).join("/")
+      }));
+      pathNode.innerHTML = crumbs.map((crumb, index) => `
+        ${index ? '<span aria-hidden="true">/</span>' : ""}
+        <button type="button" data-webdav-browser-breadcrumb="${escapeAttr(crumb.path)}" ${index === crumbs.length - 1 ? 'aria-current="page"' : ""}>${escapeHtml(crumb.label)}</button>
+      `).join("");
+      upButton.disabled = !currentPath;
+      pathNode.querySelectorAll("[data-webdav-browser-breadcrumb]").forEach((button) => {
+        button.addEventListener("click", () => loadDirectory(button.dataset.webdavBrowserBreadcrumb || ""));
+      });
+    };
+
+    const downloadEntry = async (entry) => {
+      setStatus(`Скачивание «${entry.name}»...`);
+      try {
+        const response = await fetch(getStudentWebDavDocumentFileUrl(folder, entry.path, true));
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || "Не удалось скачать файл.");
+        }
+        downloadBlob(entry.name, await response.blob());
+        setStatus(`Файл «${entry.name}» передан в загрузки браузера.`, "success");
+      } catch (error) {
+        setStatus(error.message, "error");
+      }
+    };
+
+    const showPreview = (entry) => {
+      if (!entry || entry.isDirectory) return;
+      const fileUrl = getStudentWebDavDocumentFileUrl(folder, entry.path);
+      const modified = formatStudentWebDavModifiedAt(entry.modifiedAt);
+      let content = '<div class="student-webdav-browser-preview-empty">Предпросмотр для этого формата недоступен</div>';
+      if (String(entry.contentType || "").startsWith("image/")) {
+        content = `<img src="${escapeAttr(fileUrl)}" alt="${escapeAttr(entry.name)}">`;
+      } else if (entry.previewable) {
+        content = `<iframe sandbox src="${escapeAttr(fileUrl)}" title="${escapeAttr(entry.name)}"></iframe>`;
+      }
+      preview.innerHTML = `
+        <div class="student-webdav-browser-preview-head">
+          <div>
+            <strong>${escapeHtml(entry.name)}</strong>
+            <small>${escapeHtml([formatBytes(entry.size), modified].filter(Boolean).join(" · "))}</small>
+          </div>
+          <div class="student-webdav-browser-preview-actions">
+            ${entry.previewable ? `<a class="ghost-button" href="${escapeAttr(fileUrl)}" target="_blank" rel="noopener noreferrer">Открыть</a>` : ""}
+            <button class="primary-button" type="button" data-action="student-webdav-download">Скачать</button>
+          </div>
+        </div>
+        <div class="student-webdav-browser-preview-body">${content}</div>
+      `;
+      preview.querySelector("[data-action='student-webdav-download']")
+        ?.addEventListener("click", () => downloadEntry(entry));
+    };
+
+    const renderEntries = () => {
+      if (!currentEntries.length) {
+        list.innerHTML = '<div class="student-webdav-browser-empty">Папка пуста. Перетащите сюда файлы для загрузки.</div>';
+        return;
+      }
+      list.innerHTML = currentEntries.map((entry) => `
+        <button
+          class="student-webdav-browser-entry ${entry.isDirectory ? "is-directory" : "is-file"}"
+          type="button"
+          data-webdav-browser-entry="${escapeAttr(entry.path)}"
+          ${entry.isDirectory ? "" : 'draggable="true"'}
+        >
+          <span class="student-webdav-browser-entry-icon" aria-hidden="true">${entry.isDirectory ? "▰" : "▤"}</span>
+          <span class="student-webdav-browser-entry-name">${escapeHtml(entry.name)}</span>
+          <span class="student-webdav-browser-entry-meta">${entry.isDirectory ? "Папка" : escapeHtml(formatBytes(entry.size))}</span>
+          <span class="student-webdav-browser-entry-date">${escapeHtml(formatStudentWebDavModifiedAt(entry.modifiedAt))}</span>
+        </button>
+      `).join("");
+      list.querySelectorAll("[data-webdav-browser-entry]").forEach((button) => {
+        const entry = currentEntries.find((item) => item.path === button.dataset.webdavBrowserEntry);
+        if (!entry) return;
+        button.addEventListener("click", () => {
+          list.querySelectorAll(".is-selected").forEach((item) => item.classList.remove("is-selected"));
+          button.classList.add("is-selected");
+          if (entry.isDirectory) loadDirectory(entry.path);
+          else showPreview(entry);
+        });
+        if (!entry.isDirectory) {
+          button.addEventListener("dblclick", () => downloadEntry(entry));
+          button.addEventListener("dragstart", (event) => {
+            const url = getStudentWebDavDocumentFileUrl(folder, entry.path, true);
+            event.dataTransfer?.setData("DownloadURL", `${entry.contentType || "application/octet-stream"}:${entry.name}:${url}`);
+            event.dataTransfer?.setData("text/uri-list", url);
+          });
+        }
+      });
+    };
+
+    async function loadDirectory(nextPath = "") {
+      if (loading) return;
+      loading = true;
+      list.setAttribute("aria-busy", "true");
+      setStatus("Загрузка содержимого папки...");
+      try {
+        const response = await fetch(photoApiUrl("/api/students/webdav-documents/list"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folder, path: nextPath })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || "Не удалось прочитать папку WebDAV.");
+        currentPath = String(payload.path || "");
+        currentEntries = Array.isArray(payload.entries) ? payload.entries : [];
+        renderPath();
+        renderEntries();
+        preview.innerHTML = '<div class="student-webdav-browser-preview-empty">Выберите файл для просмотра</div>';
+        setStatus(payload.truncated ? "Показаны первые 1000 элементов." : "", payload.truncated ? "warning" : "");
+      } catch (error) {
+        list.innerHTML = `<div class="student-webdav-browser-empty is-error">${escapeHtml(error.message)}</div>`;
+        setStatus(error.message, "error");
+      } finally {
+        loading = false;
+        list.removeAttribute("aria-busy");
+      }
+    }
+
+    async function uploadFiles(files) {
+      const candidates = Array.from(files || []).filter((file) => file instanceof File);
+      if (!candidates.length) return;
+      const existingNames = new Set(currentEntries.map((entry) => entry.name.toLocaleLowerCase("ru-RU")));
+      for (let index = 0; index < candidates.length; index += 1) {
+        const file = candidates[index];
+        if (!file.size) {
+          setStatus(`Файл «${file.name}» пуст и пропущен.`, "warning");
+          continue;
+        }
+        if (file.size > 24 * 1024 * 1024) {
+          setStatus(`Файл «${file.name}» превышает 24 МБ и пропущен.`, "error");
+          continue;
+        }
+        if (existingNames.has(file.name.toLocaleLowerCase("ru-RU"))
+          && !confirm(`Файл «${file.name}» уже существует. Заменить его?`)) continue;
+        setStatus(`Загрузка ${index + 1} из ${candidates.length}: ${file.name}`);
+        try {
+          const dataUrl = String(await readFileAsDataUrl(file));
+          const response = await fetch(photoApiUrl("/api/students/webdav-documents/upload"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              folder,
+              path: currentPath,
+              fileName: file.name,
+              contentType: file.type,
+              dataBase64: dataUrl.split(",", 2)[1] || ""
+            })
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.error || `Не удалось загрузить «${file.name}».`);
+          existingNames.add(file.name.toLocaleLowerCase("ru-RU"));
+        } catch (error) {
+          setStatus(error.message, "error");
+          return;
+        }
+      }
+      setStatus(`Загружено файлов: ${candidates.length}.`, "success");
+      fileInput.value = "";
+      await loadDirectory(currentPath);
+    }
+
+    backdrop.querySelector("[data-action='student-webdav-up']")
+      ?.addEventListener("click", () => loadDirectory(getStudentWebDavParentPath(currentPath)));
+    backdrop.querySelector("[data-action='student-webdav-refresh']")
+      ?.addEventListener("click", () => loadDirectory(currentPath));
+    backdrop.querySelector("[data-action='student-webdav-select-files']")
+      ?.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => uploadFiles(fileInput.files));
+    ["dragenter", "dragover"].forEach((type) => dropzone.addEventListener(type, (event) => {
+      event.preventDefault();
+      if (event.dataTransfer?.types?.includes("Files")) dropzone.classList.add("is-dragover");
+    }));
+    ["dragleave", "drop"].forEach((type) => dropzone.addEventListener(type, (event) => {
+      event.preventDefault();
+      if (type === "dragleave" && dialog.contains(event.relatedTarget)) return;
+      dropzone.classList.remove("is-dragover");
+      if (type === "drop" && event.dataTransfer?.files?.length) uploadFiles(event.dataTransfer.files);
+    }));
+
+    await loadDirectory("");
+    backdrop.querySelector("[data-action='close-student-webdav-browser']")?.focus();
   }
 
   function getProgramOperationalDocumentOpenUrl(folderValue, fileName = "") {
@@ -14367,7 +17241,7 @@ MAX - https://bizvmax.ru/zifra_plus
       form?.elements.opFileName?.focus();
       return;
     }
-    const openLocally = event.shiftKey ? !getOpenDocumentsLocally() : getOpenDocumentsLocally();
+    const openLocally = getStudentDocumentsSource(Boolean(event.shiftKey)) === "local";
     if (!openLocally) {
       const url = getProgramOperationalDocumentOpenUrl(folder, fileName);
       if (!url) {
@@ -14390,7 +17264,14 @@ MAX - https://bizvmax.ru/zifra_plus
         throw new Error(payload.error || "Не удалось открыть ресурс ОП.");
       }
     } catch (error) {
-      alert(`Не удалось открыть ${resourceType === "file" ? "файл" : "папку"} ОП: ${error.message}`);
+      state.data.meta.localDocumentsAvailable = false;
+      persist();
+      const url = getProgramOperationalDocumentOpenUrl(folder, fileName);
+      if (url) {
+        openExternalUrl(url);
+      } else {
+        alert(`Не удалось открыть ${resourceType === "file" ? "файл" : "папку"} ОП: ${error.message}`);
+      }
     } finally {
       button.removeAttribute("aria-busy");
       button.disabled = false;
@@ -14488,6 +17369,1556 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!image.parentElement) preview.prepend(image);
   }
 
+  const studentDocumentRecognitionFieldGroups = [
+    {
+      id: "passport",
+      label: "Паспортные данные",
+      keys: [
+        "name",
+        "birthDate",
+        "gender",
+        "citizenship",
+        "passportType",
+        "passportNumber",
+        "passportDate",
+        "passportCode",
+        "passportIssuer",
+        "registrationAddress"
+      ]
+    },
+    {
+      id: "identity",
+      label: "ИНН и СНИЛС",
+      keys: ["inn", "snils"]
+    },
+    {
+      id: "education",
+      label: "Документ об образовании",
+      keys: [
+        "educationLevel",
+        "educationDocument",
+        "educationDocumentSeries",
+        "educationDocumentNumber",
+        "educationDocumentDate",
+        "educationDocumentIssuer",
+        "educationSpecialty",
+        "educationQualification",
+        "educationDocumentSurname"
+      ]
+    }
+  ];
+
+  const studentDocumentRecognitionTypeLabels = {
+    passport: "Паспорт",
+    snils: "СНИЛС",
+    inn: "ИНН",
+    education: "Документ об образовании"
+  };
+
+  function formatStudentDocumentRecognitionDuration(value) {
+    const totalSeconds = Math.max(0, Math.floor((Number(value) || 0) / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return hours
+      ? [hours, minutes, seconds].map((item) => String(item).padStart(2, "0")).join(":")
+      : [minutes, seconds].map((item) => String(item).padStart(2, "0")).join(":");
+  }
+
+  function normalizeStudentDocumentRecognitionPreview(value) {
+    if (!value || typeof value !== "object") return null;
+    const mimeType = String(value.mimeType || "").toLowerCase();
+    const base64 = String(value.base64 || "").replace(/\s+/g, "");
+    if (
+      mimeType !== "image/jpeg"
+      || !base64
+      || base64.length > 320_000
+      || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)
+    ) return null;
+    const normalized = {
+      page: Math.max(1, Math.min(99, Number(value.page) || 1)),
+      mimeType,
+      base64
+    };
+    const sourceBox = value.box;
+    if (sourceBox && typeof sourceBox === "object") {
+      const box = {
+        x: clamp(Number(sourceBox.x) || 0, 0, 1),
+        y: clamp(Number(sourceBox.y) || 0, 0, 1),
+        width: clamp(Number(sourceBox.width) || 0, 0, 1),
+        height: clamp(Number(sourceBox.height) || 0, 0, 1)
+      };
+      if (box.width > 0 && box.height > 0) normalized.box = box;
+    }
+    return normalized;
+  }
+
+  function normalizeStudentDocumentRecognitionPagePreview(value) {
+    if (!value || typeof value !== "object") return null;
+    const mimeType = String(value.mimeType || "").toLowerCase();
+    const base64 = String(value.base64 || "").replace(/\s+/g, "");
+    if (
+      mimeType !== "image/jpeg"
+      || !base64
+      || base64.length > 420_000
+      || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)
+    ) return null;
+    return {
+      page: Math.max(1, Math.min(99, Number(value.page) || 1)),
+      mimeType,
+      base64
+    };
+  }
+
+  function normalizeStudentDocumentRecognitionPhotoCandidate(value) {
+    const preview = normalizeStudentDocumentRecognitionPreview(value);
+    if (!preview) return null;
+    return {
+      ...preview,
+      confidence: clamp(Number(value?.confidence) || 0, 0, 1),
+      method: String(value?.method || "face").trim().slice(0, 40),
+      sourceFile: String(value?.sourceFile || "").trim().slice(0, 260)
+    };
+  }
+
+  function normalizeStudentDocumentRecognitionResult(value, { keepPreviews = false } = {}) {
+    if (!value || typeof value !== "object") return null;
+    const recognizedAt = String(value.recognizedAt || "").trim();
+    if (!recognizedAt || Number.isNaN(new Date(recognizedAt).getTime())) return null;
+    const files = Array.isArray(value.files)
+      ? value.files.slice(0, 40).map((file) => {
+        const normalizedFile = { ...file };
+        delete normalizedFile.fields;
+        const pagePreviews = keepPreviews && Array.isArray(file?.pagePreviews)
+          ? file.pagePreviews
+            .slice(0, 20)
+            .map(normalizeStudentDocumentRecognitionPagePreview)
+            .filter(Boolean)
+          : [];
+        if (pagePreviews.length) normalizedFile.pagePreviews = pagePreviews;
+        else delete normalizedFile.pagePreviews;
+        return normalizedFile;
+      })
+      : [];
+    const fields = Array.isArray(value.fields)
+      ? value.fields.slice(0, 40).map((field) => {
+        const normalizedField = { ...field };
+        const preview = keepPreviews
+          ? normalizeStudentDocumentRecognitionPreview(field?.preview)
+          : null;
+        if (preview) normalizedField.preview = preview;
+        else delete normalizedField.preview;
+        return normalizedField;
+      })
+      : [];
+    const photoCandidates = keepPreviews && Array.isArray(value.photoCandidates)
+      ? value.photoCandidates
+        .slice(0, 16)
+        .map(normalizeStudentDocumentRecognitionPhotoCandidate)
+        .filter(Boolean)
+      : [];
+    const processedCount = Math.max(
+      0,
+      Number(value.documentCount ?? value.processedCount) || 0
+    );
+    return {
+      ...value,
+      recognizedAt,
+      durationMs: Math.max(0, Number(value.durationMs) || 0),
+      documentCount: processedCount,
+      processedCount,
+      failedCount: Math.max(0, Number(value.failedCount) || 0),
+      skippedCount: Math.max(0, Number(value.skippedCount) || 0),
+      fields,
+      photoCandidates,
+      files
+    };
+  }
+
+  function storeStudentDocumentRecognitionResult(payload) {
+    const result = normalizeStudentDocumentRecognitionResult({
+      ...payload,
+      recognizedAt: payload?.recognizedAt || new Date().toISOString()
+    }, { keepPreviews: true });
+    if (!result) throw new Error("Сервер вернул некорректный результат распознавания.");
+    const storedResult = normalizeStudentDocumentRecognitionResult(result);
+    const currentDraft = collectStudentFormDraft();
+    state.modal.draft = {
+      ...currentDraft,
+      documentRecognitionResult: storedResult
+    };
+    const studentId = String(state.modal?.id || "");
+    state.studentDocumentRecognitionPreviewCache = {
+      studentId,
+      recognizedAt: result.recognizedAt,
+      result
+    };
+    const index = (state.data.collections.students || [])
+      .findIndex((student) => String(student.id || "") === studentId);
+    if (index >= 0) {
+      state.data.collections.students[index] = {
+        ...state.data.collections.students[index],
+        documentRecognitionResult: storedResult
+      };
+      addAudit(
+        "Распознаны документы",
+        "Слушатели",
+        `${result.documentCount} документов; время ${formatStudentDocumentRecognitionDuration(result.durationMs)}`,
+        {
+          entityType: "students",
+          entityId: studentId,
+          entityLabel: currentDraft.name || studentId,
+          source: "ocr"
+        }
+      );
+      persist();
+    }
+    const resultButton = document.querySelector(
+      "[data-action='show-student-document-recognition-result']"
+    );
+    if (resultButton) {
+      resultButton.disabled = false;
+      resultButton.title = `Показать результат распознавания от ${formatDateTimeRu(result.recognizedAt)}`;
+    }
+    return result;
+  }
+
+  function showStoredStudentDocumentRecognitionResult() {
+    const currentRecord = collectStudentFormDraft();
+    let result = normalizeStudentDocumentRecognitionResult(
+      currentRecord.documentRecognitionResult
+    );
+    if (!result) {
+      alert("Сохранённый результат распознавания отсутствует.");
+      return;
+    }
+    const previewCache = state.studentDocumentRecognitionPreviewCache;
+    if (
+      previewCache
+      && String(previewCache.studentId || "") === String(state.modal?.id || "")
+      && String(previewCache.recognizedAt || "") === result.recognizedAt
+    ) {
+      result = normalizeStudentDocumentRecognitionResult(
+        previewCache.result,
+        { keepPreviews: true }
+      ) || result;
+    }
+    const dialog = createStudentDocumentRecognitionDialog();
+    renderStudentDocumentRecognitionResults(dialog, result, currentRecord);
+  }
+
+  function closeStudentDocumentRecognitionDialog() {
+    const dialog = document.querySelector("[data-student-document-recognition-dialog]");
+    if (!dialog) return false;
+    document.querySelector("[data-student-document-photo-cropper]")?.remove();
+    dialog.closeStudentDocumentRecognitionDialog?.();
+    return true;
+  }
+
+  function createStudentDocumentRecognitionDialog() {
+    closeStudentDocumentRecognitionDialog();
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop student-document-recognition-backdrop";
+    backdrop.dataset.studentDocumentRecognitionDialog = "";
+    let closed = false;
+    let timerId = 0;
+    const timerStartedAt = performance.now();
+    backdrop.closeStudentDocumentRecognitionDialog = () => {
+      closed = true;
+      if (timerId) window.clearInterval(timerId);
+      document.querySelector("[data-student-document-photo-cropper]")?.remove();
+      backdrop.remove();
+    };
+    backdrop.stopStudentDocumentRecognitionTimer = () => {
+      if (!timerId) return;
+      window.clearInterval(timerId);
+      timerId = 0;
+    };
+    backdrop.isStudentDocumentRecognitionClosed = () => closed || !backdrop.isConnected;
+    backdrop.innerHTML = `
+      <section class="modal student-document-recognition-modal" role="dialog" aria-modal="true" aria-label="Распознавание документов">
+        <header class="modal-head">
+          <div>
+            <h2>Распознавание документов</h2>
+            <p>Паспорт, ИНН, СНИЛС, документ об образовании и фото слушателя</p>
+          </div>
+          <button class="icon-button" data-action="close-student-document-recognition" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <div class="student-document-recognition-progress" data-ocr-progress-panel>
+          <div class="student-document-recognition-progress-head">
+            <strong data-ocr-progress-label>Подготовка...</strong>
+            <div class="student-document-recognition-progress-metrics">
+              <span data-ocr-progress-timer>00:00</span>
+              <span data-ocr-progress-value>0%</span>
+            </div>
+          </div>
+          <div class="student-document-recognition-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <span data-ocr-progress-bar style="width:0%"></span>
+          </div>
+          <p data-ocr-progress-detail>Определяется папка документов слушателя.</p>
+          <small>Распознавание выполняется локально. Документы не передаются во внешние облачные сервисы.</small>
+        </div>
+      </section>
+    `;
+    backdrop.querySelector("[data-action='close-student-document-recognition']")
+      ?.addEventListener("click", backdrop.closeStudentDocumentRecognitionDialog);
+    backdrop.addEventListener("pointerdown", (event) => {
+      if (event.target === backdrop) backdrop.closeStudentDocumentRecognitionDialog();
+    });
+    document.body.appendChild(backdrop);
+    timerId = window.setInterval(() => {
+      const timer = backdrop.querySelector("[data-ocr-progress-timer]");
+      if (timer) {
+        timer.textContent = formatStudentDocumentRecognitionDuration(
+          performance.now() - timerStartedAt
+        );
+      }
+    }, 250);
+    return backdrop;
+  }
+
+  function updateStudentDocumentRecognitionProgress(dialog, status = {}) {
+    if (!dialog?.isConnected) return;
+    const progress = Math.max(0, Math.min(100, Number(status.progress) || 0));
+    const stage = String(status.stage || "Распознавание документов");
+    const processed = Number(status.processedFiles) || 0;
+    const total = Number(status.totalFiles) || 0;
+    const label = dialog.querySelector("[data-ocr-progress-label]");
+    const value = dialog.querySelector("[data-ocr-progress-value]");
+    const bar = dialog.querySelector("[data-ocr-progress-bar]");
+    const track = dialog.querySelector("[role='progressbar']");
+    const detail = dialog.querySelector("[data-ocr-progress-detail]");
+    if (label) label.textContent = stage;
+    if (value) value.textContent = `${Math.round(progress)}%`;
+    if (bar) bar.style.width = `${progress}%`;
+    track?.setAttribute("aria-valuenow", String(Math.round(progress)));
+    if (detail) {
+      detail.textContent = total
+        ? `Обработано файлов: ${processed} из ${total}`
+        : "Получение списка файлов JPG, PNG и PDF.";
+    }
+  }
+
+  function renderStudentDocumentRecognitionError(dialog, message) {
+    const modal = dialog?.querySelector(".student-document-recognition-modal");
+    if (!modal) return;
+    dialog.stopStudentDocumentRecognitionTimer?.();
+    modal.querySelector("[data-ocr-progress-panel]")?.remove();
+    modal.insertAdjacentHTML("beforeend", `
+      <div class="student-document-recognition-error" role="alert">
+        <strong>Распознавание не выполнено</strong>
+        <p>${escapeHtml(message || "Неизвестная ошибка.")}</p>
+        <p>Проверьте наличие поддерживаемых файлов в папке и работу локального OCR-сервиса.</p>
+      </div>
+      <footer class="modal-actions">
+        <button class="ghost-button" data-action="close-student-document-recognition" type="button">Закрыть</button>
+      </footer>
+    `);
+    modal.querySelector("footer [data-action='close-student-document-recognition']")
+      ?.addEventListener("click", dialog.closeStudentDocumentRecognitionDialog);
+  }
+
+  function normalizeRecognitionComparisonValue(key, value) {
+    const source = String(value || "").trim();
+    if (["inn", "snils", "passportNumber", "passportCode"].includes(key)) {
+      return source.replace(/\D/g, "");
+    }
+    return source.replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
+  }
+
+  function renderStudentDocumentRecognitionField(field, currentRecord) {
+    const key = String(field.key || "");
+    const manualEntry = field.manualEntry === true && !String(field.value || "").trim();
+    const isIdentityNumber = ["inn", "snils"].includes(key);
+    const currentValue = String(currentRecord[key] || "").trim();
+    const sameValue = Boolean(
+      currentValue
+      && normalizeRecognitionComparisonValue(key, currentValue)
+        === normalizeRecognitionComparisonValue(key, field.value)
+    );
+    const conflict = Boolean(currentValue && !sameValue);
+    const confidence = Math.round((Number(field.confidence) || 0) * 100);
+    const confidenceTone = confidence >= 85 ? "high" : confidence >= 65 ? "medium" : "low";
+    const selected = !currentValue && confidence >= 60;
+    const alternatives = Array.isArray(field.alternatives) ? field.alternatives : [];
+    const listId = alternatives.length ? `ocr-options-${key}-${Math.random().toString(36).slice(2)}` : "";
+    const status = conflict
+      ? '<span class="student-document-recognition-conflict">Есть другое значение</span>'
+      : sameValue
+        ? '<span class="student-document-recognition-match">Совпадает</span>'
+        : "";
+    return `
+      <div class="student-document-recognition-field ${conflict ? "has-conflict" : ""}" data-ocr-recognition-field="${escapeAttr(key)}">
+        <label class="student-document-recognition-field-select">
+          <input type="checkbox" data-ocr-field-enabled ${selected ? "checked" : ""}>
+          <span>${escapeHtml(field.label || key)}</span>
+        </label>
+        <div class="student-document-recognition-field-value">
+          <input
+            type="text"
+            data-ocr-field-value
+            value="${escapeAttr(field.value || "")}"
+            ${manualEntry ? 'placeholder="Введите адрес по фрагменту паспорта"' : ""}
+            ${listId ? `list="${escapeAttr(listId)}"` : ""}
+            aria-label="${escapeAttr(field.label || key)}"
+          >
+          ${listId ? `
+            <datalist id="${escapeAttr(listId)}">
+              ${alternatives.map((item) => `<option value="${escapeAttr(item.value || "")}"></option>`).join("")}
+            </datalist>
+          ` : ""}
+          <div class="student-document-recognition-field-meta">
+            <span class="student-document-recognition-confidence is-${confidenceTone}">${manualEntry ? "Требуется проверка" : `Уверенность ${confidence}%`}</span>
+            ${isIdentityNumber ? '<span class="student-document-recognition-identity-status" data-ocr-identity-status aria-live="polite"></span>' : ""}
+            ${status}
+            <span title="${escapeAttr(field.evidence || "")}">Источник: ${escapeHtml(field.sourceFile || "документ")}</span>
+          </div>
+          ${currentValue ? `<small>Сейчас в карточке: <strong>${escapeHtml(currentValue)}</strong></small>` : ""}
+          ${alternatives.length ? `<small>Другие варианты доступны в списке поля: ${alternatives.length}</small>` : ""}
+        </div>
+      </div>
+    `;
+  }
+
+  function getStudentDocumentPhotoCandidateMethodLabel(method) {
+    if (method === "manual") return "Ручное выделение";
+    if (method === "passport") return "Фото в паспорте";
+    if (method === "photo-file") return "Файл фото";
+    return "Распознано лицо";
+  }
+
+  function renderStudentDocumentPhotoCandidate(candidate, index, checked = false) {
+    const confidence = Math.round((Number(candidate.confidence) || 0) * 100);
+    const source = candidate.sourceFile || "Документ";
+    return `
+      <label class="student-document-photo-candidate">
+        <input type="radio" name="ocr-student-photo-candidate" value="${index}" ${checked ? "checked" : ""}>
+        <span class="student-document-photo-candidate-image">
+          <img src="data:${escapeAttr(candidate.mimeType)};base64,${candidate.base64}" alt="Вариант фото слушателя">
+        </span>
+        <span class="student-document-photo-candidate-meta">
+          <strong>${escapeHtml(getStudentDocumentPhotoCandidateMethodLabel(candidate.method))}</strong>
+          <small>${escapeHtml(source)}, стр. ${Number(candidate.page) || 1}${confidence ? ` · ${confidence}%` : ""}</small>
+        </span>
+      </label>
+    `;
+  }
+
+  function renderStudentDocumentPhotoCandidates(candidates) {
+    return `
+      <section class="student-document-recognition-group student-document-photo-group" data-ocr-photo-group>
+        <div class="student-document-photo-group-head">
+          <div>
+            <h3>Фото слушателя</h3>
+            <p>Выберите найденный портрет или выделите произвольную область в любом документе.</p>
+          </div>
+          <label class="student-document-photo-enable">
+            <input type="checkbox" data-ocr-photo-enabled ${candidates.length ? "" : "disabled"}>
+            <span>Сохранить в карточку</span>
+          </label>
+        </div>
+        <div class="student-document-photo-candidates" data-ocr-photo-candidates>
+          ${candidates.map((candidate, index) => renderStudentDocumentPhotoCandidate(candidate, index, index === 0)).join("")}
+        </div>
+        <p class="student-document-photo-empty" data-ocr-photo-empty ${candidates.length ? "hidden" : ""}>
+          Автоматически фото не найдено. Используйте кнопку «Выделить фото» у нужного файла.
+        </p>
+      </section>
+    `;
+  }
+
+  function renderStudentDocumentRecognitionFiles(files) {
+    const rows = (files || []).map((file, fileIndex) => {
+      const types = (file.documentTypes || [])
+        .map((type) => studentDocumentRecognitionTypeLabels[type] || type)
+        .filter(Boolean);
+      const result = file.error
+        ? `<span class="is-error">${escapeHtml(file.error)}</span>`
+        : types.length
+          ? escapeHtml(types.join(", "))
+          : "Тип не определён";
+      return `
+        <details class="student-document-recognition-file ${file.error ? "has-error" : ""}">
+          <summary>
+            <span>${escapeHtml(file.relativeName || file.fileName || "Документ")}</span>
+            <small>${Number(file.pageCount) || 0} стр. · ${result} · ${formatStudentDocumentRecognitionDuration(file.durationMs)}</small>
+          </summary>
+          ${file.error ? "" : `
+            <div class="student-document-recognition-file-actions">
+              <button class="ghost-button" data-action="select-student-photo-area" data-ocr-file-index="${fileIndex}" type="button">Выделить фото</button>
+            </div>
+          `}
+          ${file.textPreview
+            ? `<pre>${escapeHtml(file.textPreview)}</pre>`
+            : `<p>${file.error ? escapeHtml(file.error) : "Текст не распознан."}</p>`}
+        </details>
+      `;
+    }).join("");
+    return `
+      <details class="student-document-recognition-files">
+        <summary>Обработанные файлы (${(files || []).length})</summary>
+        <div>${rows || '<p>Файлы отсутствуют.</p>'}</div>
+      </details>
+    `;
+  }
+
+  function renderStudentDocumentRecognitionResults(dialog, payload, currentRecord) {
+    const modal = dialog?.querySelector(".student-document-recognition-modal");
+    if (!modal) return;
+    dialog.stopStudentDocumentRecognitionTimer?.();
+    const fields = Array.isArray(payload.fields) ? payload.fields : [];
+    const photoCandidates = Array.isArray(payload.photoCandidates)
+      ? payload.photoCandidates.map(normalizeStudentDocumentRecognitionPhotoCandidate).filter(Boolean)
+      : [];
+    dialog.studentDocumentPhotoCandidates = photoCandidates;
+    const groupedFields = studentDocumentRecognitionFieldGroups.map((group) => ({
+      ...group,
+      fields: group.keys.map((key) => fields.find((field) => field.key === key)).filter(Boolean)
+    })).filter((group) => group.fields.length);
+    modal.querySelector("[data-ocr-progress-panel]")?.remove();
+    modal.insertAdjacentHTML("beforeend", `
+      <div class="student-document-recognition-result">
+        <div class="student-document-recognition-summary">
+          <strong>${fields.length
+            ? `Найдено полей: ${fields.length}`
+            : "Реквизиты документов не найдены"}</strong>
+          <span>Дата распознавания: ${escapeHtml(formatDateTimeRu(payload.recognizedAt))}</span>
+          <span>Время работы: ${escapeHtml(formatStudentDocumentRecognitionDuration(payload.durationMs))}</span>
+          <span>Источник: ${escapeHtml(payload.sourceLabel || "Папка слушателя")}</span>
+          <span>Распознано документов: ${Number(payload.documentCount ?? payload.processedCount) || 0}</span>
+          ${payload.failedCount ? `<span class="is-error">С ошибками: ${Number(payload.failedCount)}</span>` : ""}
+          ${payload.skippedCount ? `<span>Пропущено: ${Number(payload.skippedCount)}</span>` : ""}
+        </div>
+        ${renderStudentDocumentPhotoCandidates(photoCandidates)}
+        ${groupedFields.length ? groupedFields.map((group) => `
+          <section class="student-document-recognition-group">
+            <h3>${escapeHtml(group.label)}</h3>
+            ${group.fields.map((field) => renderStudentDocumentRecognitionField(field, currentRecord)).join("")}
+          </section>
+        `).join("") : `
+          <div class="student-document-recognition-empty">
+            Проверьте качество сканов и названия файлов. Полный распознанный текст доступен ниже.
+          </div>
+        `}
+        ${renderStudentDocumentRecognitionFiles(payload.files)}
+      </div>
+      <aside class="student-document-recognition-preview" data-ocr-field-preview hidden aria-live="polite" aria-label="Просмотр документа">
+        <div class="student-document-recognition-preview-head" data-ocr-preview-drag-handle title="Перетащить окно">
+          <div class="student-document-recognition-preview-caption">
+            <strong data-ocr-field-preview-title>Документ</strong>
+            <span data-ocr-field-preview-meta></span>
+          </div>
+          <div class="student-document-recognition-preview-head-actions">
+            <button class="student-document-recognition-preview-position" type="button" data-ocr-preview-position title="Разместить рядом с проверяемым полем" aria-label="Разместить рядом с проверяемым полем">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3v18M3 12h18M12 3l-3 3m3-3 3 3M21 12l-3-3m3 3-3 3M12 21l3-3m-3 3-3-3M3 12l3 3m-3-3 3-3" />
+              </svg>
+            </button>
+            <button class="student-document-recognition-preview-close" type="button" data-ocr-preview-close title="Закрыть просмотр" aria-label="Закрыть просмотр">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="student-document-recognition-preview-controls" aria-label="Масштаб изображения">
+          <button type="button" data-ocr-preview-zoom-out title="Уменьшить" aria-label="Уменьшить">−</button>
+          <span data-ocr-preview-zoom>100%</span>
+          <button type="button" data-ocr-preview-zoom-in title="Увеличить" aria-label="Увеличить">+</button>
+          <button type="button" data-ocr-preview-focus title="Перейти к найденной области">Область</button>
+          <button type="button" data-ocr-preview-fit title="Показать весь лист">Вписать</button>
+        </div>
+        <div
+          class="student-document-recognition-preview-viewport"
+          data-ocr-preview-viewport
+          tabindex="0"
+          title="Удерживайте левую кнопку мыши и перемещайте изображение"
+        >
+          <img data-ocr-field-preview-image alt="Страница документа с распознанным полем" draggable="false">
+        </div>
+        <small class="student-document-recognition-preview-hint">Изображение можно перемещать · правый нижний угол меняет размер окна</small>
+        <button class="student-document-recognition-preview-resize" type="button" data-ocr-preview-resize title="Изменить размер окна" aria-label="Изменить размер окна">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 20h11V9M14 20l6-6M18 20l2-2" />
+          </svg>
+        </button>
+      </aside>
+      <footer class="modal-actions">
+        <button class="ghost-button" data-action="close-student-document-recognition" type="button">Закрыть</button>
+        <button class="primary-button" data-action="apply-student-document-recognition" type="button" ${fields.length || photoCandidates.length ? "" : "disabled"}>Применить выбранное</button>
+      </footer>
+    `);
+    modal.querySelector("footer [data-action='close-student-document-recognition']")
+      ?.addEventListener("click", dialog.closeStudentDocumentRecognitionDialog);
+    modal.querySelector("[data-action='apply-student-document-recognition']")
+      ?.addEventListener("click", (event) => applyStudentDocumentRecognition(dialog, event.currentTarget));
+    modal.querySelectorAll("[data-action='select-student-photo-area']").forEach((button) => {
+      button.addEventListener("click", () => openStudentDocumentPhotoCropper(
+        dialog,
+        payload,
+        Number(button.dataset.ocrFileIndex) || 0
+      ));
+    });
+    bindStudentDocumentRecognitionIdentityValidation(modal);
+    bindStudentDocumentRecognitionFieldPreviews(modal, fields, payload.files);
+  }
+
+  function bindStudentDocumentRecognitionIdentityValidation(modal) {
+    modal?.querySelectorAll("[data-ocr-recognition-field='inn'], [data-ocr-recognition-field='snils']")
+      .forEach((row) => {
+        const input = row.querySelector("[data-ocr-field-value]");
+        if (!input) return;
+        const update = (autoSelect = false) => updateStudentDocumentRecognitionIdentityValidation(row, autoSelect);
+        input.addEventListener("input", () => update(true));
+        input.addEventListener("blur", () => {
+          const key = String(row.dataset.ocrRecognitionField || "");
+          input.value = key === "inn" ? normalizeInn(input.value) : formatSnils(input.value);
+          update(true);
+        });
+        update();
+      });
+  }
+
+  function updateStudentDocumentRecognitionIdentityValidation(row, autoSelect = false) {
+    const key = String(row?.dataset.ocrRecognitionField || "");
+    const input = row?.querySelector("[data-ocr-field-value]");
+    const status = row?.querySelector("[data-ocr-identity-status]");
+    if (!input || !status || !["inn", "snils"].includes(key)) return true;
+    const result = getStudentIdentityValidation(key, input.value);
+    input.classList.toggle("field-valid", result.state === "valid");
+    input.classList.toggle("field-invalid", result.state === "invalid");
+    input.classList.toggle("field-incomplete", result.state === "incomplete");
+    input.setAttribute("aria-invalid", ["invalid", "incomplete"].includes(result.state) ? "true" : "false");
+    input.setCustomValidity(result.valid ? "" : result.message);
+    status.dataset.validationState = result.state;
+    status.textContent = result.text;
+    status.title = result.message;
+    if (autoSelect && result.state === "valid") {
+      const checkbox = row.querySelector("[data-ocr-field-enabled]");
+      if (checkbox) checkbox.checked = true;
+    }
+    return result.valid;
+  }
+
+  const STUDENT_DOCUMENT_RECOGNITION_PREVIEW_POSITION_KEY = "ais.student-document-recognition-preview-position.v1";
+  const STUDENT_DOCUMENT_RECOGNITION_PREVIEW_SIZE_KEY = "ais.student-document-recognition-preview-size.v1";
+
+  function clampStudentDocumentRecognitionPreviewPosition(popup, left, top) {
+    const margin = window.innerWidth <= 760 ? 4 : 8;
+    const rect = popup.getBoundingClientRect();
+    const width = rect.width || Math.min(390, window.innerWidth - margin * 2);
+    const height = rect.height || Math.min(300, window.innerHeight - margin * 2);
+    return {
+      left: clamp(Number(left) || margin, margin, Math.max(margin, window.innerWidth - width - margin)),
+      top: clamp(Number(top) || margin, margin, Math.max(margin, window.innerHeight - height - margin)),
+      width,
+      height
+    };
+  }
+
+  function getStudentDocumentRecognitionPreviewOverlap(first, second) {
+    const width = Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left));
+    const height = Math.max(0, Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top));
+    return width * height;
+  }
+
+  function setStudentDocumentRecognitionPreviewPosition(popup, left, top) {
+    const position = clampStudentDocumentRecognitionPreviewPosition(popup, left, top);
+    popup.style.left = `${Math.round(position.left)}px`;
+    popup.style.top = `${Math.round(position.top)}px`;
+    return { left: position.left, top: position.top };
+  }
+
+  function positionStudentDocumentRecognitionPreview(popup, input, manualPosition = null) {
+    if (!popup || !input) return null;
+    const gap = 10;
+    const inputRect = input.getBoundingClientRect();
+    const popupRect = popup.getBoundingClientRect();
+    const width = popupRect.width || Math.min(390, window.innerWidth - 16);
+    const height = popupRect.height || Math.min(300, window.innerHeight - 16);
+    const protectedRect = {
+      left: inputRect.left - 6,
+      top: inputRect.top - 6,
+      right: inputRect.right + 6,
+      bottom: inputRect.bottom + 6
+    };
+    const makePositionRect = (position) => ({
+      left: position.left,
+      top: position.top,
+      right: position.left + width,
+      bottom: position.top + height
+    });
+
+    if (manualPosition && Number.isFinite(manualPosition.left) && Number.isFinite(manualPosition.top)) {
+      const clamped = clampStudentDocumentRecognitionPreviewPosition(
+        popup,
+        manualPosition.left,
+        manualPosition.top
+      );
+      if (!getStudentDocumentRecognitionPreviewOverlap(makePositionRect(clamped), protectedRect)) {
+        return setStudentDocumentRecognitionPreviewPosition(popup, clamped.left, clamped.top);
+      }
+    }
+
+    const candidates = [
+      { left: inputRect.right + gap, top: inputRect.top - 34 },
+      { left: inputRect.left - width - gap, top: inputRect.top - 34 },
+      { left: inputRect.right - width, top: inputRect.bottom + gap },
+      { left: inputRect.right - width, top: inputRect.top - height - gap }
+    ].map((candidate, index) => {
+      const clamped = clampStudentDocumentRecognitionPreviewPosition(popup, candidate.left, candidate.top);
+      const overlap = getStudentDocumentRecognitionPreviewOverlap(makePositionRect(clamped), protectedRect);
+      const displacement = Math.abs(clamped.left - candidate.left) + Math.abs(clamped.top - candidate.top);
+      return { ...clamped, score: overlap * 100000 + displacement + index / 10 };
+    });
+    candidates.sort((first, second) => first.score - second.score);
+    return setStudentDocumentRecognitionPreviewPosition(popup, candidates[0].left, candidates[0].top);
+  }
+
+  function findStudentDocumentRecognitionPagePreview(field, files) {
+    const fieldPreview = normalizeStudentDocumentRecognitionPreview(field?.preview);
+    if (!fieldPreview) return { fieldPreview: null, pagePreview: null };
+    const sourceNames = String(field?.sourceFile || "")
+      .split(/;\s*/g)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const sourceFile = (files || []).find((file) => sourceNames.some((sourceName) => (
+      sourceName === String(file?.relativeName || "")
+      || sourceName === String(file?.fileName || "")
+    )));
+    const pagePreview = (sourceFile?.pagePreviews || [])
+      .map(normalizeStudentDocumentRecognitionPagePreview)
+      .find((preview) => preview.page === fieldPreview.page) || null;
+    return { fieldPreview, pagePreview };
+  }
+
+  function bindStudentDocumentRecognitionFieldPreviews(modal, fields, files) {
+    const popup = modal?.querySelector("[data-ocr-field-preview]");
+    const image = popup?.querySelector("[data-ocr-field-preview-image]");
+    const title = popup?.querySelector("[data-ocr-field-preview-title]");
+    const meta = popup?.querySelector("[data-ocr-field-preview-meta]");
+    const viewport = popup?.querySelector("[data-ocr-preview-viewport]");
+    const zoomLabel = popup?.querySelector("[data-ocr-preview-zoom]");
+    const zoomOutButton = popup?.querySelector("[data-ocr-preview-zoom-out]");
+    const zoomInButton = popup?.querySelector("[data-ocr-preview-zoom-in]");
+    const focusButton = popup?.querySelector("[data-ocr-preview-focus]");
+    const fitButton = popup?.querySelector("[data-ocr-preview-fit]");
+    const positionButton = popup?.querySelector("[data-ocr-preview-position]");
+    const closeButton = popup?.querySelector("[data-ocr-preview-close]");
+    const resizeHandle = popup?.querySelector("[data-ocr-preview-resize]");
+    const dragHandle = popup?.querySelector("[data-ocr-preview-drag-handle]");
+    const result = modal?.querySelector(".student-document-recognition-result");
+    if (!popup || !image || !title || !meta || !viewport || !zoomLabel) return;
+    let activeInput = null;
+    let activeBox = null;
+    let showingFullPage = false;
+    let manualPosition = null;
+    let storedSizes = {};
+    try {
+      const storedPosition = JSON.parse(localStorage.getItem(STUDENT_DOCUMENT_RECOGNITION_PREVIEW_POSITION_KEY) || "null");
+      if (Number.isFinite(storedPosition?.left) && Number.isFinite(storedPosition?.top)) {
+        manualPosition = storedPosition;
+      }
+    } catch {
+      manualPosition = null;
+    }
+    try {
+      const parsedSizes = JSON.parse(localStorage.getItem(STUDENT_DOCUMENT_RECOGNITION_PREVIEW_SIZE_KEY) || "{}");
+      if (parsedSizes && typeof parsedSizes === "object") storedSizes = parsedSizes;
+    } catch {
+      storedSizes = {};
+    }
+    const drag = {
+      pointerId: null,
+      startPointerX: 0,
+      startPointerY: 0,
+      startLeft: 0,
+      startTop: 0
+    };
+    const resize = {
+      pointerId: null,
+      startPointerX: 0,
+      startPointerY: 0,
+      startWidth: 0,
+      startHeight: 0
+    };
+    const view = {
+      baseWidth: 0,
+      baseHeight: 0,
+      zoom: 1,
+      x: 0,
+      y: 0,
+      pointerId: null,
+      pointerX: 0,
+      pointerY: 0,
+      startX: 0,
+      startY: 0
+    };
+    const getPreviewSizeMode = () => (window.innerWidth <= 760 ? "mobile" : "desktop");
+    let activeSizeMode = getPreviewSizeMode();
+    let manualSize = null;
+    const readStoredPreviewSize = (mode = getPreviewSizeMode()) => {
+      const size = storedSizes?.[mode];
+      const width = Number(size?.width);
+      const height = Number(size?.height);
+      return Number.isFinite(width) && Number.isFinite(height) ? { width, height } : null;
+    };
+    manualSize = readStoredPreviewSize(activeSizeMode);
+
+    const clampView = () => {
+      const viewportWidth = viewport.clientWidth;
+      const viewportHeight = viewport.clientHeight;
+      const imageWidth = view.baseWidth * view.zoom;
+      const imageHeight = view.baseHeight * view.zoom;
+      view.x = imageWidth <= viewportWidth
+        ? (viewportWidth - imageWidth) / 2
+        : clamp(view.x, viewportWidth - imageWidth, 0);
+      view.y = imageHeight <= viewportHeight
+        ? (viewportHeight - imageHeight) / 2
+        : clamp(view.y, viewportHeight - imageHeight, 0);
+    };
+    const paintView = () => {
+      clampView();
+      image.style.width = `${view.baseWidth}px`;
+      image.style.height = `${view.baseHeight}px`;
+      image.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`;
+      zoomLabel.textContent = `${Math.round(view.zoom * 100)}%`;
+      viewport.classList.toggle("can-pan", (
+        view.baseWidth * view.zoom > viewport.clientWidth + 1
+        || view.baseHeight * view.zoom > viewport.clientHeight + 1
+      ));
+    };
+    const getPreviewSizeBounds = () => {
+      const mobile = getPreviewSizeMode() === "mobile";
+      const margin = mobile ? 4 : 8;
+      const maxWidth = Math.max(180, window.innerWidth - margin * 2);
+      const maxHeight = Math.max(180, window.innerHeight - margin * 2);
+      return {
+        minWidth: Math.min(mobile ? 260 : 300, maxWidth),
+        minHeight: Math.min(mobile ? 220 : 240, maxHeight),
+        maxWidth,
+        maxHeight
+      };
+    };
+    const applyPreviewSize = (width, height, repaint = true) => {
+      const bounds = getPreviewSizeBounds();
+      manualSize = {
+        width: clamp(Number(width) || bounds.minWidth, bounds.minWidth, bounds.maxWidth),
+        height: clamp(Number(height) || bounds.minHeight, bounds.minHeight, bounds.maxHeight)
+      };
+      popup.style.width = `${Math.round(manualSize.width)}px`;
+      popup.style.height = `${Math.round(manualSize.height)}px`;
+      if (!popup.hidden) {
+        const rect = popup.getBoundingClientRect();
+        const clampedPosition = setStudentDocumentRecognitionPreviewPosition(popup, rect.left, rect.top);
+        if (manualPosition) manualPosition = clampedPosition;
+      }
+      if (repaint && view.baseWidth && view.baseHeight) requestAnimationFrame(paintView);
+      return manualSize;
+    };
+    const persistPreviewSize = () => {
+      if (manualSize) storedSizes[activeSizeMode] = manualSize;
+      else delete storedSizes[activeSizeMode];
+      try {
+        localStorage.setItem(STUDENT_DOCUMENT_RECOGNITION_PREVIEW_SIZE_KEY, JSON.stringify(storedSizes));
+      } catch {
+        // The selected size is retained for the current window.
+      }
+    };
+    const syncPreviewSizeToViewport = () => {
+      const nextMode = getPreviewSizeMode();
+      if (nextMode !== activeSizeMode) {
+        activeSizeMode = nextMode;
+        manualSize = readStoredPreviewSize(activeSizeMode);
+        popup.style.removeProperty("width");
+        popup.style.removeProperty("height");
+      }
+      if (manualSize) applyPreviewSize(manualSize.width, manualSize.height, false);
+    };
+    const fitView = () => {
+      if (!image.naturalWidth || !image.naturalHeight) return;
+      const viewportWidth = Math.max(1, viewport.clientWidth);
+      const viewportHeight = Math.max(1, viewport.clientHeight);
+      const fitScale = Math.min(
+        viewportWidth / image.naturalWidth,
+        viewportHeight / image.naturalHeight
+      );
+      view.baseWidth = Math.max(1, image.naturalWidth * fitScale);
+      view.baseHeight = Math.max(1, image.naturalHeight * fitScale);
+      view.zoom = 1;
+      view.x = (viewportWidth - view.baseWidth) / 2;
+      view.y = (viewportHeight - view.baseHeight) / 2;
+      paintView();
+    };
+    const setZoom = (nextZoom, clientX, clientY) => {
+      if (!view.baseWidth || !view.baseHeight) return;
+      const rect = viewport.getBoundingClientRect();
+      const anchorX = Number.isFinite(clientX) ? clientX - rect.left : viewport.clientWidth / 2;
+      const anchorY = Number.isFinite(clientY) ? clientY - rect.top : viewport.clientHeight / 2;
+      const imageX = (anchorX - view.x) / view.zoom;
+      const imageY = (anchorY - view.y) / view.zoom;
+      view.zoom = clamp(nextZoom, 1, 6);
+      view.x = anchorX - imageX * view.zoom;
+      view.y = anchorY - imageY * view.zoom;
+      paintView();
+    };
+    const focusRecognizedArea = () => {
+      if (!showingFullPage || !activeBox || !view.baseWidth || !view.baseHeight) return;
+      const boxWidth = Math.max(1, view.baseWidth * activeBox.width);
+      const boxHeight = Math.max(1, view.baseHeight * activeBox.height);
+      view.zoom = clamp(Math.min(
+        viewport.clientWidth / (boxWidth * 1.2),
+        viewport.clientHeight / (boxHeight * 1.5)
+      ), 1, 5);
+      const centerX = view.baseWidth * (activeBox.x + activeBox.width / 2);
+      const centerY = view.baseHeight * (activeBox.y + activeBox.height / 2);
+      view.x = viewport.clientWidth / 2 - centerX * view.zoom;
+      view.y = viewport.clientHeight / 2 - centerY * view.zoom;
+      paintView();
+    };
+    const hide = () => {
+      activeInput = null;
+      activeBox = null;
+      showingFullPage = false;
+      view.pointerId = null;
+      popup.hidden = true;
+      viewport.classList.remove("is-panning", "can-pan");
+      image.removeAttribute("src");
+      image.removeAttribute("style");
+    };
+    const placePopup = (useManualPosition = true) => {
+      if (!activeInput) return;
+      positionStudentDocumentRecognitionPreview(
+        popup,
+        activeInput,
+        useManualPosition ? manualPosition : null
+      );
+    };
+    fields.forEach((field) => {
+      const key = String(field?.key || "");
+      const { fieldPreview, pagePreview } = findStudentDocumentRecognitionPagePreview(field, files);
+      const row = key
+        ? modal.querySelector(`[data-ocr-recognition-field="${CSS.escape(key)}"]`)
+        : null;
+      const input = row?.querySelector("[data-ocr-field-value]");
+      if (!input || !fieldPreview) return;
+      input.addEventListener("focus", () => {
+        syncPreviewSizeToViewport();
+        activeInput = input;
+        activeBox = fieldPreview.box || null;
+        showingFullPage = Boolean(pagePreview);
+        title.textContent = String(field.label || key || "Распознанное поле");
+        meta.textContent = `${field.sourceFile || "Документ"}, стр. ${fieldPreview.page} · ${showingFullPage ? "весь лист" : "фрагмент"}`;
+        focusButton.disabled = !showingFullPage || !activeBox;
+        const displayedPreview = pagePreview || fieldPreview;
+        image.src = `data:${displayedPreview.mimeType};base64,${displayedPreview.base64}`;
+        popup.hidden = false;
+        requestAnimationFrame(() => {
+          if (image.complete && image.naturalWidth) {
+            fitView();
+            if (showingFullPage && activeBox) focusRecognizedArea();
+          }
+          placePopup();
+        });
+      });
+      input.addEventListener("blur", () => {
+        window.setTimeout(() => {
+          if (document.activeElement !== activeInput && !popup.contains(document.activeElement)) hide();
+        }, 0);
+      });
+    });
+    image.addEventListener("load", () => {
+      fitView();
+      if (showingFullPage && activeBox) focusRecognizedArea();
+      placePopup();
+    });
+    image.addEventListener("dragstart", (event) => event.preventDefault());
+    zoomOutButton?.addEventListener("click", () => setZoom(view.zoom / 1.35));
+    zoomInButton?.addEventListener("click", () => setZoom(view.zoom * 1.35));
+    fitButton?.addEventListener("click", fitView);
+    focusButton?.addEventListener("click", focusRecognizedArea);
+    closeButton?.addEventListener("click", hide);
+    positionButton?.addEventListener("click", () => {
+      manualPosition = null;
+      try {
+        localStorage.removeItem(STUDENT_DOCUMENT_RECOGNITION_PREVIEW_POSITION_KEY);
+      } catch {
+        // The preview remains usable when browser storage is unavailable.
+      }
+      placePopup(false);
+    });
+    resizeHandle?.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = popup.getBoundingClientRect();
+      resize.pointerId = event.pointerId;
+      resize.startPointerX = event.clientX;
+      resize.startPointerY = event.clientY;
+      resize.startWidth = rect.width;
+      resize.startHeight = rect.height;
+      resizeHandle.setPointerCapture(event.pointerId);
+      popup.classList.add("is-resizing");
+    });
+    resizeHandle?.addEventListener("pointermove", (event) => {
+      if (resize.pointerId !== event.pointerId) return;
+      applyPreviewSize(
+        resize.startWidth + event.clientX - resize.startPointerX,
+        resize.startHeight + event.clientY - resize.startPointerY
+      );
+    });
+    const stopResizingPreview = (event) => {
+      if (resize.pointerId !== event.pointerId) return;
+      if (resizeHandle.hasPointerCapture(event.pointerId)) resizeHandle.releasePointerCapture(event.pointerId);
+      resize.pointerId = null;
+      popup.classList.remove("is-resizing");
+      persistPreviewSize();
+      if (manualPosition) {
+        const rect = popup.getBoundingClientRect();
+        manualPosition = setStudentDocumentRecognitionPreviewPosition(popup, rect.left, rect.top);
+        try {
+          localStorage.setItem(
+            STUDENT_DOCUMENT_RECOGNITION_PREVIEW_POSITION_KEY,
+            JSON.stringify(manualPosition)
+          );
+        } catch {
+          // The selected position is retained for the current window.
+        }
+      }
+    };
+    resizeHandle?.addEventListener("pointerup", stopResizingPreview);
+    resizeHandle?.addEventListener("pointercancel", stopResizingPreview);
+    resizeHandle?.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      manualSize = null;
+      popup.style.removeProperty("width");
+      popup.style.removeProperty("height");
+      persistPreviewSize();
+      requestAnimationFrame(() => {
+        placePopup();
+        fitView();
+      });
+    });
+    resizeHandle?.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+      event.preventDefault();
+      const rect = popup.getBoundingClientRect();
+      const step = event.shiftKey ? 40 : 12;
+      const width = rect.width + (event.key === "ArrowRight" ? step : event.key === "ArrowLeft" ? -step : 0);
+      const height = rect.height + (event.key === "ArrowDown" ? step : event.key === "ArrowUp" ? -step : 0);
+      applyPreviewSize(width, height);
+      persistPreviewSize();
+    });
+    dragHandle?.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.target.closest("button")) return;
+      event.preventDefault();
+      const rect = popup.getBoundingClientRect();
+      drag.pointerId = event.pointerId;
+      drag.startPointerX = event.clientX;
+      drag.startPointerY = event.clientY;
+      drag.startLeft = rect.left;
+      drag.startTop = rect.top;
+      dragHandle.setPointerCapture(event.pointerId);
+      popup.classList.add("is-moving");
+    });
+    dragHandle?.addEventListener("pointermove", (event) => {
+      if (drag.pointerId !== event.pointerId) return;
+      manualPosition = setStudentDocumentRecognitionPreviewPosition(
+        popup,
+        drag.startLeft + event.clientX - drag.startPointerX,
+        drag.startTop + event.clientY - drag.startPointerY
+      );
+    });
+    const stopMovingPreview = (event) => {
+      if (drag.pointerId !== event.pointerId) return;
+      if (dragHandle.hasPointerCapture(event.pointerId)) dragHandle.releasePointerCapture(event.pointerId);
+      drag.pointerId = null;
+      popup.classList.remove("is-moving");
+      if (!manualPosition) return;
+      if (activeInput) {
+        manualPosition = positionStudentDocumentRecognitionPreview(popup, activeInput, manualPosition);
+      }
+      try {
+        localStorage.setItem(
+          STUDENT_DOCUMENT_RECOGNITION_PREVIEW_POSITION_KEY,
+          JSON.stringify(manualPosition)
+        );
+      } catch {
+        // The manually selected position is kept for the current window.
+      }
+    };
+    dragHandle?.addEventListener("pointerup", stopMovingPreview);
+    dragHandle?.addEventListener("pointercancel", stopMovingPreview);
+    viewport.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      setZoom(view.zoom * (event.deltaY < 0 ? 1.18 : 1 / 1.18), event.clientX, event.clientY);
+    }, { passive: false });
+    viewport.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || !view.baseWidth) return;
+      event.preventDefault();
+      viewport.focus({ preventScroll: true });
+      view.pointerId = event.pointerId;
+      view.pointerX = event.clientX;
+      view.pointerY = event.clientY;
+      view.startX = view.x;
+      view.startY = view.y;
+      viewport.setPointerCapture(event.pointerId);
+      viewport.classList.add("is-panning");
+    });
+    viewport.addEventListener("pointermove", (event) => {
+      if (view.pointerId !== event.pointerId) return;
+      view.x = view.startX + event.clientX - view.pointerX;
+      view.y = view.startY + event.clientY - view.pointerY;
+      paintView();
+    });
+    const stopPanning = (event) => {
+      if (view.pointerId !== event.pointerId) return;
+      if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
+      view.pointerId = null;
+      viewport.classList.remove("is-panning");
+    };
+    viewport.addEventListener("pointerup", stopPanning);
+    viewport.addEventListener("pointercancel", stopPanning);
+    viewport.addEventListener("keydown", (event) => {
+      const step = event.shiftKey ? 90 : 35;
+      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "+", "=", "-", "0"].includes(event.key)) {
+        event.preventDefault();
+      }
+      if (event.key === "ArrowLeft") view.x += step;
+      else if (event.key === "ArrowRight") view.x -= step;
+      else if (event.key === "ArrowUp") view.y += step;
+      else if (event.key === "ArrowDown") view.y -= step;
+      else if (["+", "="].includes(event.key)) setZoom(view.zoom * 1.35);
+      else if (event.key === "-") setZoom(view.zoom / 1.35);
+      else if (event.key === "0") fitView();
+      else return;
+      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) paintView();
+    });
+    popup.addEventListener("focusout", () => {
+      window.setTimeout(() => {
+        if (document.activeElement !== activeInput && !popup.contains(document.activeElement)) hide();
+      }, 0);
+    });
+    result?.addEventListener("scroll", () => {
+      if (activeInput && !popup.hidden) placePopup();
+    }, { passive: true });
+    if ("ResizeObserver" in window) {
+      let resizeFrame = 0;
+      const previewResizeObserver = new ResizeObserver(() => {
+        if (popup.hidden || !popup.isConnected || resize.pointerId !== null) return;
+        if (resizeFrame) cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(() => {
+          resizeFrame = 0;
+          syncPreviewSizeToViewport();
+          const rect = popup.getBoundingClientRect();
+          setStudentDocumentRecognitionPreviewPosition(popup, rect.left, rect.top);
+          if (view.baseWidth && view.baseHeight) paintView();
+        });
+      });
+      previewResizeObserver.observe(popup);
+    }
+  }
+
+  function addStudentDocumentPhotoCandidate(dialog, candidate) {
+    const normalized = normalizeStudentDocumentRecognitionPhotoCandidate(candidate);
+    if (!normalized) return false;
+    const candidates = Array.isArray(dialog.studentDocumentPhotoCandidates)
+      ? dialog.studentDocumentPhotoCandidates
+      : [];
+    candidates.push(normalized);
+    dialog.studentDocumentPhotoCandidates = candidates;
+    const grid = dialog.querySelector("[data-ocr-photo-candidates]");
+    grid?.insertAdjacentHTML(
+      "beforeend",
+      renderStudentDocumentPhotoCandidate(normalized, candidates.length - 1, true)
+    );
+    grid?.querySelectorAll("input[type='radio']").forEach((radio) => {
+      radio.checked = Number(radio.value) === candidates.length - 1;
+    });
+    const enabled = dialog.querySelector("[data-ocr-photo-enabled]");
+    if (enabled) {
+      enabled.disabled = false;
+      enabled.checked = true;
+    }
+    const empty = dialog.querySelector("[data-ocr-photo-empty]");
+    if (empty) empty.hidden = true;
+    const applyButton = dialog.querySelector("[data-action='apply-student-document-recognition']");
+    if (applyButton) applyButton.disabled = false;
+    return true;
+  }
+
+  async function loadStudentDocumentPhotoCropPage(payload, file, page) {
+    const response = await fetch(photoApiUrl("/api/students/recognize-documents/page"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "AIS-Web"
+      },
+      body: JSON.stringify({
+        folder: payload.folder,
+        source: payload.source,
+        relativeName: file.relativeName || file.fileName,
+        page
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Не удалось загрузить страницу документа.");
+    const preview = normalizeStudentDocumentRecognitionPagePreview(result.preview);
+    if (!preview) throw new Error("Сервер вернул некорректное изображение страницы.");
+    return { ...result, preview };
+  }
+
+  function openStudentDocumentPhotoCropper(dialog, payload, fileIndex) {
+    const file = (payload.files || [])[fileIndex];
+    if (!file || file.error) return;
+    document.querySelector("[data-student-document-photo-cropper]")?.remove();
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop student-document-photo-cropper-backdrop";
+    backdrop.dataset.studentDocumentPhotoCropper = "";
+    backdrop.innerHTML = `
+      <section class="modal student-document-photo-cropper" role="dialog" aria-modal="true" aria-label="Выделение фото слушателя">
+        <header class="modal-head">
+          <div>
+            <h2>Выделение фото</h2>
+            <p>${escapeHtml(file.relativeName || file.fileName || "Документ")}</p>
+          </div>
+          <button class="icon-button" data-action="close-student-photo-cropper" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <div class="student-document-photo-cropper-toolbar">
+          <button class="ghost-button" data-ocr-crop-page-prev type="button" title="Предыдущая страница">‹</button>
+          <span>Страница <strong data-ocr-crop-page>1</strong> из <strong data-ocr-crop-pages>${Math.max(1, Number(file.pageCount) || 1)}</strong></span>
+          <button class="ghost-button" data-ocr-crop-page-next type="button" title="Следующая страница">›</button>
+          <small>Проведите мышью по фотографии, чтобы задать любую область.</small>
+        </div>
+        <div class="student-document-photo-cropper-viewport" data-ocr-crop-viewport>
+          <div class="student-document-photo-cropper-loading" data-ocr-crop-loading>Загрузка страницы...</div>
+          <div class="student-document-photo-cropper-stage" data-ocr-crop-stage hidden>
+            <img data-ocr-crop-image alt="Страница документа" draggable="false">
+            <div class="student-document-photo-cropper-selection" data-ocr-crop-selection></div>
+          </div>
+        </div>
+        <footer class="modal-actions">
+          <button class="ghost-button" data-action="close-student-photo-cropper" type="button">Отмена</button>
+          <button class="primary-button" data-action="use-student-photo-crop" type="button" disabled>Использовать выделение</button>
+        </footer>
+      </section>
+    `;
+    document.body.appendChild(backdrop);
+    const stage = backdrop.querySelector("[data-ocr-crop-stage]");
+    const image = backdrop.querySelector("[data-ocr-crop-image]");
+    const selectionElement = backdrop.querySelector("[data-ocr-crop-selection]");
+    const loading = backdrop.querySelector("[data-ocr-crop-loading]");
+    const pageLabel = backdrop.querySelector("[data-ocr-crop-page]");
+    const pagesLabel = backdrop.querySelector("[data-ocr-crop-pages]");
+    const previousButton = backdrop.querySelector("[data-ocr-crop-page-prev]");
+    const nextButton = backdrop.querySelector("[data-ocr-crop-page-next]");
+    const useButton = backdrop.querySelector("[data-action='use-student-photo-crop']");
+    const pageCache = new Map();
+    const selections = new Map();
+    let currentPage = 1;
+    let pageCount = Math.max(1, Number(file.pageCount) || 1);
+    let pointerId = null;
+    let startPoint = null;
+
+    const close = () => backdrop.remove();
+    const paintSelection = () => {
+      const selection = selections.get(currentPage);
+      if (!selection) {
+        selectionElement.hidden = true;
+        useButton.disabled = true;
+        return;
+      }
+      selectionElement.hidden = false;
+      selectionElement.style.left = `${selection.x * 100}%`;
+      selectionElement.style.top = `${selection.y * 100}%`;
+      selectionElement.style.width = `${selection.width * 100}%`;
+      selectionElement.style.height = `${selection.height * 100}%`;
+      useButton.disabled = selection.width < 0.015 || selection.height < 0.015;
+    };
+    const updateNavigation = () => {
+      pageLabel.textContent = String(currentPage);
+      pagesLabel.textContent = String(pageCount);
+      previousButton.disabled = currentPage <= 1;
+      nextButton.disabled = currentPage >= pageCount;
+    };
+    const loadPage = async (page) => {
+      currentPage = clamp(Number(page) || 1, 1, pageCount);
+      updateNavigation();
+      loading.hidden = false;
+      loading.textContent = "Загрузка страницы...";
+      stage.hidden = true;
+      useButton.disabled = true;
+      try {
+        let result = pageCache.get(currentPage);
+        if (!result) {
+          result = await loadStudentDocumentPhotoCropPage(payload, file, currentPage);
+          pageCache.set(currentPage, result);
+        }
+        pageCount = Math.max(1, Number(result.pageCount) || pageCount);
+        updateNavigation();
+        image.onload = () => {
+          loading.hidden = true;
+          stage.hidden = false;
+          if (!selections.has(currentPage)) {
+            selections.set(currentPage, { x: 0.22, y: 0.08, width: 0.56, height: 0.84 });
+          }
+          paintSelection();
+        };
+        image.src = `data:${result.preview.mimeType};base64,${result.preview.base64}`;
+      } catch (error) {
+        loading.hidden = false;
+        loading.textContent = error.message;
+      }
+    };
+    const pointFromEvent = (event) => {
+      const rect = image.getBoundingClientRect();
+      return {
+        x: clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1),
+        y: clamp((event.clientY - rect.top) / Math.max(1, rect.height), 0, 1)
+      };
+    };
+    stage.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || stage.hidden || !image.naturalWidth) return;
+      event.preventDefault();
+      pointerId = event.pointerId;
+      startPoint = pointFromEvent(event);
+      stage.setPointerCapture(pointerId);
+      selections.set(currentPage, { x: startPoint.x, y: startPoint.y, width: 0, height: 0 });
+      paintSelection();
+    });
+    stage.addEventListener("pointermove", (event) => {
+      if (pointerId !== event.pointerId || !startPoint) return;
+      const point = pointFromEvent(event);
+      selections.set(currentPage, {
+        x: Math.min(startPoint.x, point.x),
+        y: Math.min(startPoint.y, point.y),
+        width: Math.abs(point.x - startPoint.x),
+        height: Math.abs(point.y - startPoint.y)
+      });
+      paintSelection();
+    });
+    const stopSelection = (event) => {
+      if (pointerId !== event.pointerId) return;
+      if (stage.hasPointerCapture(pointerId)) stage.releasePointerCapture(pointerId);
+      pointerId = null;
+      startPoint = null;
+      paintSelection();
+    };
+    stage.addEventListener("pointerup", stopSelection);
+    stage.addEventListener("pointercancel", stopSelection);
+    previousButton.addEventListener("click", () => loadPage(currentPage - 1));
+    nextButton.addEventListener("click", () => loadPage(currentPage + 1));
+    backdrop.querySelectorAll("[data-action='close-student-photo-cropper']").forEach((button) => {
+      button.addEventListener("click", close);
+    });
+    backdrop.addEventListener("pointerdown", (event) => {
+      if (event.target === backdrop) close();
+    });
+    backdrop.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") close();
+    });
+    useButton.addEventListener("click", () => {
+      const selection = selections.get(currentPage);
+      if (!selection || !image.naturalWidth || !image.naturalHeight) return;
+      const sourceX = Math.round(selection.x * image.naturalWidth);
+      const sourceY = Math.round(selection.y * image.naturalHeight);
+      const sourceWidth = Math.max(1, Math.round(selection.width * image.naturalWidth));
+      const sourceHeight = Math.max(1, Math.round(selection.height * image.naturalHeight));
+      const scale = Math.min(1, 1200 / Math.max(sourceWidth, sourceHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+      canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+      canvas.getContext("2d")?.drawImage(
+        image,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+      const base64 = dataUrl.split(",")[1] || "";
+      if (!addStudentDocumentPhotoCandidate(dialog, {
+        page: currentPage,
+        mimeType: "image/jpeg",
+        base64,
+        confidence: 1,
+        method: "manual",
+        sourceFile: file.relativeName || file.fileName
+      })) {
+        alert("Не удалось подготовить выделенное фото.");
+        return;
+      }
+      close();
+    });
+    backdrop.querySelector("[data-action='close-student-photo-cropper']")?.focus({ preventScroll: true });
+    loadPage(1);
+  }
+
+  async function applyStudentDocumentRecognition(dialog, applyButton = null) {
+    const updates = {};
+    let invalidRow = null;
+    dialog.querySelectorAll("[data-ocr-recognition-field]").forEach((row) => {
+      const checkbox = row.querySelector("[data-ocr-field-enabled]");
+      if (!checkbox?.checked) return;
+      const key = String(row.dataset.ocrRecognitionField || "");
+      let value = String(row.querySelector("[data-ocr-field-value]")?.value || "").trim();
+      if (!key || !value) return;
+      if (key === "inn") {
+        value = normalizeInn(value);
+        row.querySelector("[data-ocr-field-value]").value = value;
+        if (!updateStudentDocumentRecognitionIdentityValidation(row)) invalidRow ||= row;
+      }
+      if (key === "snils") {
+        value = formatSnils(value);
+        row.querySelector("[data-ocr-field-value]").value = value;
+        if (!updateStudentDocumentRecognitionIdentityValidation(row)) invalidRow ||= row;
+      }
+      if (["birthDate", "passportDate", "educationDocumentDate"].includes(key) && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        invalidRow ||= row;
+      }
+      updates[key] = value;
+    });
+    if (invalidRow) {
+      alert("Проверьте выбранное значение: формат или контрольное число некорректны.");
+      invalidRow.querySelector("[data-ocr-field-value]")?.focus({ preventScroll: true });
+      invalidRow.scrollIntoView({ block: "center", behavior: "smooth" });
+      return;
+    }
+    const photoEnabled = Boolean(dialog.querySelector("[data-ocr-photo-enabled]")?.checked);
+    const selectedPhotoIndex = Number(
+      dialog.querySelector("input[name='ocr-student-photo-candidate']:checked")?.value
+    );
+    const photoCandidate = photoEnabled && Number.isInteger(selectedPhotoIndex)
+      ? dialog.studentDocumentPhotoCandidates?.[selectedPhotoIndex]
+      : null;
+    const updateKeys = Object.keys(updates);
+    if (photoEnabled && !photoCandidate) {
+      alert("Выберите вариант фото или выделите его в документе.");
+      return;
+    }
+    if (!updateKeys.length && !photoCandidate) {
+      alert("Выберите хотя бы одно найденное поле или фото.");
+      return;
+    }
+    const currentDraft = collectStudentFormDraft();
+    if (applyButton) {
+      applyButton.disabled = true;
+      applyButton.setAttribute("aria-busy", "true");
+    }
+    try {
+      if (photoCandidate) {
+        const dataUrl = `data:${photoCandidate.mimeType};base64,${photoCandidate.base64}`;
+        const uploadedPhoto = await uploadStoredPhoto(dataUrl, currentDraft.photoPath || "", {
+          studentName: updates.name || currentDraft.name || ""
+        });
+        updates.photoPath = uploadedPhoto.photoPath || "";
+        updates.photoUrl = uploadedPhoto.photoUrl || "";
+        updates.photoData = "";
+        updateKeys.push("photoPath", "photoUrl", "photoData");
+      }
+    state.modal.draft = { ...currentDraft, ...updates };
+    state.modal.hasDraftChanges = true;
+    if (updateKeys.some((key) => studentDocumentRecognitionFieldGroups
+      .filter((group) => ["passport", "identity", "education"].includes(group.id))
+      .flatMap((group) => group.keys)
+      .filter((key) => !["name", "gender", "registrationAddress"].includes(key))
+      .includes(key))) {
+      state.studentCardTab = "documents";
+    } else if (updateKeys.includes("registrationAddress")) {
+      state.studentCardTab = "main";
+    }
+    dialog.closeStudentDocumentRecognitionDialog?.();
+    render();
+    requestAnimationFrame(() => {
+      const firstVisibleField = updateKeys
+        .map((key) => document.querySelector(`[name="${CSS.escape(key)}"]`))
+        .find(Boolean);
+      firstVisibleField?.focus({ preventScroll: true });
+    });
+    } catch (error) {
+      alert(`Не удалось сохранить фото: ${error.message}`);
+    } finally {
+      if (applyButton?.isConnected) {
+        applyButton.disabled = false;
+        applyButton.removeAttribute("aria-busy");
+      }
+    }
+  }
+
+  async function startStudentDocumentRecognition(event) {
+    const button = event?.currentTarget;
+    const currentRecord = collectStudentFormDraft();
+    const folder = getStudentYandexDocumentsFolder(currentRecord);
+    const source = getStudentDocumentsSource(Boolean(event?.shiftKey));
+    if (!folder) {
+      alert("Не удалось определить папку документов слушателя.");
+      return;
+    }
+    state.modal.draft = currentRecord;
+    const dialog = createStudentDocumentRecognitionDialog();
+    if (button) {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+    }
+    try {
+      const startResponse = await fetch(photoApiUrl("/api/students/recognize-documents/start"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({ folder, source })
+      });
+      const startPayload = await startResponse.json().catch(() => ({}));
+      if (!startResponse.ok) {
+        throw new Error(startPayload.error || "Не удалось запустить распознавание.");
+      }
+      const jobId = String(startPayload.jobId || "");
+      if (!jobId) throw new Error("Сервер не вернул номер задания распознавания.");
+      let status = startPayload;
+      while (!["completed", "failed"].includes(status.status)) {
+        if (dialog.isStudentDocumentRecognitionClosed?.()) return;
+        updateStudentDocumentRecognitionProgress(dialog, status);
+        await waitForStudentImportPoll(650);
+        const statusResponse = await fetch(
+          photoApiUrl(`/api/students/recognize-documents/status?jobId=${encodeURIComponent(jobId)}`)
+        );
+        status = await statusResponse.json().catch(() => ({}));
+        if (!statusResponse.ok) {
+          throw new Error(status.error || "Не удалось получить состояние распознавания.");
+        }
+      }
+      updateStudentDocumentRecognitionProgress(dialog, status);
+      if (status.status === "failed") {
+        throw new Error(status.error || "Распознавание завершилось с ошибкой.");
+      }
+      const resultResponse = await fetch(
+        photoApiUrl(`/api/students/recognize-documents/result?jobId=${encodeURIComponent(jobId)}`)
+      );
+      const result = await resultResponse.json().catch(() => ({}));
+      if (!resultResponse.ok) {
+        throw new Error(result.error || "Не удалось получить результаты распознавания.");
+      }
+      if (!dialog.isStudentDocumentRecognitionClosed?.()) {
+        const storedResult = storeStudentDocumentRecognitionResult(result);
+        renderStudentDocumentRecognitionResults(dialog, storedResult, currentRecord);
+      }
+    } catch (error) {
+      if (!dialog.isStudentDocumentRecognitionClosed?.()) {
+        renderStudentDocumentRecognitionError(dialog, error.message);
+      }
+    } finally {
+      if (button?.isConnected) {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+      }
+    }
+  }
+
   async function uploadStoredPhoto(dataUrl, previousPath = "", meta = {}) {
     let response;
     try {
@@ -14561,7 +18992,13 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (configId === "students") releaseStudentDirectExpenses([record]);
     state.data.collections[config.collection] = rows.filter((row) => row.id !== id);
-    addAudit("Удалена запись", config.title, record.name || record.contractNo || record.code || record.itemType || id);
+    const entityLabel = record.name || record.contractNo || record.code || record.itemType || id;
+    addAudit("Удалена запись", config.title, entityLabel, {
+      entityType: config.collection,
+      entityId: id,
+      entityLabel,
+      changes: buildAuditChanges(record, {}, configId === "students" ? studentAllFields : config.fields)
+    });
     persist();
     render();
   }
@@ -14591,7 +19028,11 @@ MAX - https://bizvmax.ru/zifra_plus
       const nextActive = nextDocuments.find((item) => item.id === state.activeDocumentTemplateId) || nextDocuments[0];
       commitDocumentTemplates(nextDocuments, nextActive);
       state.selected[configId] = [];
-      addAudit("Массовое удаление", config.title, `${removed.length} документов`);
+      addAudit("Массовое удаление", config.title, `${removed.length} документов`, {
+        entityType: config.collection,
+        entityId: removed.map((item) => item.id).join(", "),
+        entityLabel: removed.map((item) => item.title || item.id).join(", ")
+      });
       persist();
       render();
       return;
@@ -14610,7 +19051,10 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     state.data.collections[config.collection] = (state.data.collections[config.collection] || []).filter((row) => !selectedSet.has(row.id));
     state.selected[configId] = [];
-    addAudit("Массовое удаление", config.title, `${selected.length} записей`);
+    addAudit("Массовое удаление", config.title, `${selected.length} записей`, {
+      entityType: config.collection,
+      entityId: selected.join(", ")
+    });
     persist();
     render();
   }
@@ -14624,7 +19068,13 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.collections[config.collection] = (state.data.collections[config.collection] || []).map((row) => (
       selectedSet.has(row.id) ? { ...row, status } : row
     ));
-    addAudit("Массовое изменение статуса", config.title, `${selected.length} записей: ${status}`);
+    addAudit("Массовое изменение статуса", config.title, `${selected.length} записей: ${status}`, {
+      entityType: config.collection,
+      entityId: selected.join(", "),
+      field: "status",
+      before: "Разные значения",
+      after: status
+    });
     persist();
     render();
   }
@@ -15417,7 +19867,7 @@ MAX - https://bizvmax.ru/zifra_plus
   async function openActiveDocumentTemplateSource(event = null) {
     event?.preventDefault?.();
     const { document } = collectContractTemplateForm();
-    if (event?.shiftKey && getOpenDocumentsLocally()) {
+    if (event?.shiftKey && getEffectiveLocalDocumentsMode()) {
       const button = event.currentTarget;
       button?.setAttribute("aria-busy", "true");
       if (button) button.disabled = true;
@@ -17751,11 +22201,71 @@ MAX - https://bizvmax.ru/zifra_plus
     return state.data.meta?.openDocumentsLocally !== false;
   }
 
+  function isLocalDocumentsAvailable() {
+    return state.data.meta?.localDocumentsAvailable !== false;
+  }
+
+  function getEffectiveLocalDocumentsMode() {
+    return getOpenDocumentsLocally() && isLocalDocumentsAvailable();
+  }
+
+  function getStudentDocumentsSource(useAlternate = false) {
+    if (!isLocalDocumentsAvailable()) return "webdav";
+    const useLocal = useAlternate ? !getOpenDocumentsLocally() : getOpenDocumentsLocally();
+    return useLocal ? "local" : "webdav";
+  }
+
+  function getStudentDatabaseSourceLabel(source) {
+    return source === "local"
+      ? "локальный компьютер"
+      : "Яндекс-Диск через WebDAV";
+  }
+
+  function getStudentDatabaseImportTooltip() {
+    if (!isLocalDocumentsAvailable()) {
+      return [
+        "Загрузить из базы",
+        "",
+        "Локальная папка системы недоступна.",
+        "Данные будут загружены через WebDAV независимо от Shift."
+      ].join("\n");
+    }
+    return [
+      "Загрузить из базы",
+      "",
+      `Обычный щелчок: источник — ${getStudentDatabaseSourceLabel(getStudentDocumentsSource())}.`,
+      `Shift + щелчок: источник — ${getStudentDatabaseSourceLabel(getStudentDocumentsSource(true))}.`,
+      "Данные системы будут заменены содержимым XLSB по указанному пути."
+    ].join("\n");
+  }
+
+  function getStudentDatabaseSyncTooltip() {
+    if (!isLocalDocumentsAvailable()) {
+      return [
+        "Синхронизировать с базой",
+        "",
+        "Локальная папка системы недоступна.",
+        "Синхронизация будет выполнена через WebDAV независимо от Shift."
+      ].join("\n");
+    }
+    return [
+      "Синхронизировать с базой",
+      "",
+      `Обычный щелчок: источник — ${getStudentDatabaseSourceLabel(getStudentDocumentsSource())}.`,
+      `Shift + щелчок: источник — ${getStudentDatabaseSourceLabel(getStudentDocumentsSource(true))}.`,
+      "Перед обновлением создаётся резервная копия исходного XLSB."
+    ].join("\n");
+  }
+
   function getAutomaticDocumentSaveHint(
-    openLocally = getOpenDocumentsLocally(),
-    localRoot = getLocalDocumentsRoot()
+    preferLocal = getOpenDocumentsLocally(),
+    localRoot = getLocalDocumentsRoot(),
+    localAvailable = isLocalDocumentsAvailable()
   ) {
-    if (openLocally) {
+    if (preferLocal && !localAvailable) {
+      return "Локальная папка системы недоступна. Документы будут сохраняться через WebDAV.";
+    }
+    if (preferLocal) {
       const root = String(localRoot || "").trim();
       return `Откроется системное окно сохранения с папкой и именем файла из настроек документа${root ? ` на диске ${root}` : ""}. После подтверждения файл сохраняется один раз.`;
     }
@@ -17767,7 +22277,8 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!hint) return;
     hint.textContent = getAutomaticDocumentSaveHint(
       Boolean(form.elements.openDocumentsLocally?.checked),
-      form.elements.localDocumentsRoot?.value
+      form.elements.localDocumentsRoot?.value,
+      isLocalDocumentsAvailable()
     );
   }
 
@@ -17784,7 +22295,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentDocumentsOpenTooltip() {
-    return getOpenDocumentsLocally()
+    if (!isLocalDocumentsAvailable()) {
+      return "Открыть документы\n\nЛокальная папка системы недоступна. Будет открыт встроенный просмотр WebDAV.";
+    }
+    return getEffectiveLocalDocumentsMode()
       ? "Открыть документы на локальном компьютере. Shift + щелчок: открыть в облаке."
       : "Открыть документы в облаке. Shift + щелчок: открыть на локальном компьютере.";
   }
@@ -17823,27 +22337,112 @@ MAX - https://bizvmax.ru/zifra_plus
     return Number.isNaN(date.getTime()) ? String(value || "") : date.toLocaleString("ru-RU");
   }
 
+  function collectAdminSettingsDraft(form) {
+    return Array.from(form?.elements || []).reduce((draft, control) => {
+      if (!control.name || isSnapshotIgnoredControl(control)) return draft;
+      const type = String(control.type || "").toLowerCase();
+      draft[control.name] = type === "checkbox" || type === "radio"
+        ? Boolean(control.checked)
+        : control.value;
+      return draft;
+    }, {});
+  }
+
+  function updateAdminSettingsSaveButton(form = null) {
+    const button = (form || document)?.querySelector?.(".admin-save-connection-button");
+    if (!button) return;
+    const title = state.adminSettingsDirty
+      ? "Есть несохранённые изменения. Сохранить подключение"
+      : "Сохранить подключение";
+    button.classList.toggle("is-unsaved", state.adminSettingsDirty);
+    button.title = title;
+    button.setAttribute("aria-label", title);
+  }
+
+  function setAdminSettingsDirty(dirty, form = null) {
+    state.adminSettingsDirty = Boolean(dirty);
+    window.__AIS_HAS_UNSAVED_ADMIN_SETTINGS__ = state.adminSettingsDirty;
+    updateAdminSettingsSaveButton(form);
+  }
+
+  function clearAdminSettingsDirtyState(form = null) {
+    state.adminSettingsDraft = null;
+    state.adminSettingsBaseline = form ? captureFormSnapshot(form) : "";
+    setAdminSettingsDirty(false, form);
+  }
+
+  function bindAdminSettingsDirtyState(form) {
+    if (!form) return;
+    if (!state.adminSettingsDirty) {
+      state.adminSettingsBaseline = captureFormSnapshot(form);
+      state.adminSettingsDraft = null;
+    }
+    const trackChanges = () => {
+      const snapshot = captureFormSnapshot(form);
+      const dirty = snapshot !== state.adminSettingsBaseline;
+      state.adminSettingsDraft = dirty ? collectAdminSettingsDraft(form) : null;
+      setAdminSettingsDirty(dirty, form);
+    };
+    form.addEventListener("input", trackChanges);
+    form.addEventListener("change", trackChanges);
+    updateAdminSettingsSaveButton(form);
+  }
+
+  function bindAdminSettingsBeforeUnload() {
+    if (adminBeforeUnloadBound) return;
+    window.addEventListener("beforeunload", (event) => {
+      if (!state.adminSettingsDirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+    adminBeforeUnloadBound = true;
+  }
+
+  async function saveAdminSettingsBeforeExit(targetView) {
+    if (
+      state.view !== "admin"
+      || targetView === "admin"
+      || !state.adminSettingsDirty
+    ) return true;
+    if (state.adminSettingsSaving) return false;
+    const form = document.querySelector("form[data-action='save-student-database-settings']");
+    if (!form) return false;
+    if (!confirm("В админке есть несохранённые изменения. Сохранить их перед выходом?")) {
+      return false;
+    }
+    return persistStudentDatabaseSettings(form, { renderAfterSave: false });
+  }
+
   async function saveStudentDatabaseSettings(event) {
     event.preventDefault();
-    const form = event.currentTarget;
+    await persistStudentDatabaseSettings(event.currentTarget);
+  }
+
+  async function persistStudentDatabaseSettings(form, { renderAfterSave = true } = {}) {
     const databasePath = String(form.elements.studentDatabaseWebDavPath?.value || "").trim();
     if (!databasePath) {
       alert("Укажите WebDAV-путь или ссылку на базу слушателей.");
       form.elements.studentDatabaseWebDavPath?.focus();
-      return;
+      return false;
     }
     const submitButton = form.querySelector("button[type='submit']");
     if (submitButton) submitButton.disabled = true;
+    state.adminSettingsSaving = true;
     try {
       const yandexSettings = await saveYandexDiskSettings(form);
       applyYandexDiskSettings(yandexSettings);
+      clearAdminSettingsDirtyState(form);
       addAudit("Изменено подключение", "Админка", "База слушателей и WebDAV");
       persist();
-      render();
+      if (renderAfterSave) render();
+      return true;
     } catch (error) {
       alert(`Не удалось сохранить настройки: ${error.message}`);
       form.elements.studentDatabaseWebDavPath?.focus();
       if (submitButton) submitButton.disabled = false;
+      return false;
+    } finally {
+      state.adminSettingsSaving = false;
     }
   }
 
@@ -17916,6 +22515,7 @@ MAX - https://bizvmax.ru/zifra_plus
       payload.localDocumentsRootIsSystemParent
     );
     state.data.meta.openDocumentsLocally = payload.openDocumentsLocally !== false;
+    state.data.meta.localDocumentsAvailable = payload.localDocumentsAvailable !== false;
     state.data.meta.yandexDiskLogin = String(payload.login ?? getYandexDiskLogin()).trim();
     state.data.meta.yandexDiskHasPassword = Boolean(payload.hasPassword);
     state.data.meta.yandexDiskAutoSave = Boolean(payload.autoSave);
@@ -17945,6 +22545,8 @@ MAX - https://bizvmax.ru/zifra_plus
     try {
       const settings = await saveYandexDiskSettings(form);
       applyYandexDiskSettings(settings);
+      clearAdminSettingsDirtyState(form);
+      addAudit("Изменено подключение", "Админка", "Параметры WebDAV сохранены перед проверкой");
       persist();
       const response = await fetch(photoApiUrl("/api/yandex-disk/test"), {
         method: "POST"
@@ -17967,6 +22569,8 @@ MAX - https://bizvmax.ru/zifra_plus
     try {
       const settings = await saveYandexDiskSettings(form);
       applyYandexDiskSettings(settings);
+      clearAdminSettingsDirtyState(form);
+      addAudit("Изменено подключение", "Админка", "Параметры почты сохранены перед проверкой");
       persist();
       const response = await fetch(photoApiUrl("/api/student-applications-email/test"), {
         method: "POST"
@@ -17993,6 +22597,7 @@ MAX - https://bizvmax.ru/zifra_plus
           localDocumentsRoot: getLocalDocumentsRoot(),
           localDocumentsRootIsSystemParent: state.data.meta.localDocumentsRootIsSystemParent,
           openDocumentsLocally: getOpenDocumentsLocally(),
+          localDocumentsAvailable: isLocalDocumentsAvailable(),
           login: getYandexDiskLogin(),
           hasPassword: state.data.meta.yandexDiskHasPassword,
           autoSave: state.data.meta.yandexDiskAutoSave,
@@ -18010,6 +22615,7 @@ MAX - https://bizvmax.ru/zifra_plus
           localDocumentsRoot: getLocalDocumentsRoot(),
           localDocumentsRootIsSystemParent: state.data.meta.localDocumentsRootIsSystemParent,
           openDocumentsLocally: getOpenDocumentsLocally(),
+          localDocumentsAvailable: isLocalDocumentsAvailable(),
           login: getYandexDiskLogin(),
           hasPassword: state.data.meta.yandexDiskHasPassword,
           autoSave: state.data.meta.yandexDiskAutoSave,
@@ -18050,18 +22656,18 @@ MAX - https://bizvmax.ru/zifra_plus
     return payload;
   }
 
-  async function runStudentDatabaseImport(databasePath) {
-    const startResponse = await fetch("/api/students/import-database/start", {
+  async function runStudentDatabaseImport(databasePath, source = "webdav") {
+    const startResponse = await fetch(photoApiUrl("/api/students/import-database/start"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ databasePath })
+      body: JSON.stringify({ databasePath, source })
     });
     const job = await readStudentImportResponse(startResponse);
     if (!job.id) throw new Error("Сервер не вернул идентификатор задачи импорта.");
 
     while (true) {
       const statusResponse = await fetch(
-        `/api/students/import-database/status?id=${encodeURIComponent(job.id)}`,
+        photoApiUrl(`/api/students/import-database/status?id=${encodeURIComponent(job.id)}`),
         { cache: "no-store" }
       );
       const status = await readStudentImportResponse(statusResponse);
@@ -18078,14 +22684,14 @@ MAX - https://bizvmax.ru/zifra_plus
     }
 
     const resultResponse = await fetch(
-      `/api/students/import-database/result?id=${encodeURIComponent(job.id)}`,
+      photoApiUrl(`/api/students/import-database/result?id=${encodeURIComponent(job.id)}`),
       { cache: "no-store" }
     );
     return readStudentImportResponse(resultResponse);
   }
 
   async function runStudentDatabaseExport(body) {
-    const startResponse = await fetch("/api/students/export-database/start", {
+    const startResponse = await fetch(photoApiUrl("/api/students/export-database/start"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
@@ -18095,7 +22701,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
     while (true) {
       const statusResponse = await fetch(
-        `/api/students/export-database/status?id=${encodeURIComponent(job.id)}`,
+        photoApiUrl(`/api/students/export-database/status?id=${encodeURIComponent(job.id)}`),
         { cache: "no-store" }
       );
       const status = await readStudentImportResponse(statusResponse);
@@ -18112,14 +22718,10 @@ MAX - https://bizvmax.ru/zifra_plus
     }
 
     const resultResponse = await fetch(
-      `/api/students/export-database/result?id=${encodeURIComponent(job.id)}`,
+      photoApiUrl(`/api/students/export-database/result?id=${encodeURIComponent(job.id)}`),
       { cache: "no-store" }
     );
-    if (!resultResponse.ok) {
-      const payload = await resultResponse.json().catch(() => ({}));
-      throw new Error(payload.error || `Ошибка сервера: ${resultResponse.status}`);
-    }
-    return resultResponse;
+    return readStudentImportResponse(resultResponse);
   }
 
   function buildStudentDatabaseExportStudents() {
@@ -18165,6 +22767,18 @@ MAX - https://bizvmax.ru/zifra_plus
     return [...linkedExpenses, ...unlinkedExpenses, ...manualExpenses];
   }
 
+  function buildStudentDatabaseExportGeneralExpenses() {
+    return (state.data.collections.generalExpenses || [])
+      .filter((expense) => expense && typeof expense === "object")
+      .map((expense) => normalizeGeneralExpenseRecord(expense));
+  }
+
+  function buildStudentDatabaseExportContracts() {
+    return (state.data.collections.contracts || [])
+      .filter((contract) => contract && typeof contract === "object")
+      .map((contract) => normalizeContractRecord(contract));
+  }
+
   function buildStudentDatabaseExportPaymentConstants() {
     return getPaymentConstantSettings().map((setting) => ({
       key: String(setting.key || "").trim(),
@@ -18187,16 +22801,20 @@ MAX - https://bizvmax.ru/zifra_plus
     return quotedMatch?.[1] || fallback;
   }
 
-  async function exportStudentsToDatabase() {
+  async function exportStudentsToDatabase(event) {
     if (state.databaseExport.running) return;
     if (state.databaseImport.running) {
       alert("Дождитесь завершения загрузки данных из базы.");
       return;
     }
+    const syncSource = getStudentDocumentsSource(Boolean(event?.shiftKey));
+    const sourceLabel = syncSource === "local"
+      ? "на локальном компьютере"
+      : "на Яндекс-Диске через WebDAV";
     const confirmed = confirm(
-      "Текущие данные веб-базы будут перенесены в листы «База» и «Прямые затраты» исходного XLSB. "
+      "Текущие данные веб-базы будут перенесены в листы «База», «Реестр договоров», «Прямые затраты» и «Общие затраты» исходного XLSB. "
       + "Строки слушателей, которых больше нет в веб-базе, будут очищены. "
-      + "После синхронизации обновлённый файл будет скачан. Продолжить?"
+      + `Перед обновлением будет создана резервная копия, затем база ${sourceLabel} будет заменена. Продолжить?`
     );
     if (!confirmed) return;
     const startedAt = performance.now();
@@ -18210,43 +22828,43 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     try {
       const students = buildStudentDatabaseExportStudents();
+      const contracts = buildStudentDatabaseExportContracts();
       const directExpenses = buildStudentDatabaseExportDirectExpenses();
+      const generalExpenses = buildStudentDatabaseExportGeneralExpenses();
       const paymentConstants = buildStudentDatabaseExportPaymentConstants();
-      const response = await runStudentDatabaseExport({
+      const result = await runStudentDatabaseExport({
         databasePath: getStudentDatabaseWebDavPath(),
+        source: syncSource,
         students,
+        contracts,
         directExpenses,
+        generalExpenses,
         paymentConstants
       });
-      const blob = await response.blob();
-      const date = new Date().toISOString().slice(0, 10);
-      const fileName = getDownloadFileNameFromResponse(
-        response,
-        `АИС Допобразование_${date}.xlsb`
-      );
-      downloadBlob(fileName, blob);
       const duration = formatDatabaseOperationDuration(startedAt);
       state.data.meta.studentDatabaseLastExportedAt = new Date().toISOString();
       addAudit(
         "Синхронизация с базой",
-        "Слушатели и прямые затраты",
-        `${students.length} слушателей; ${directExpenses.length} расходов; время выполнения: ${duration}`
+        "Слушатели, договоры и затраты",
+        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${sourceLabel}; резервная копия: ${result.backupPath || "создана"}; время выполнения: ${duration}`,
+        { entityType: "database", entityLabel: "АИС Допобразование.xlsb", source: `xlsb-sync-${syncSource}` }
       );
       persist();
       state.databaseExport.running = false;
       render();
       finishDatabaseExportIndicator(
         "success",
-        `Готово: ${students.length} слушателей, ${directExpenses.length} расходов. Время выполнения: ${duration}`
+        `Готово: ${students.length} слушателей, ${contracts.length} договоров, ${directExpenses.length} прямых и ${generalExpenses.length} общих затрат. Резервная копия создана. Время выполнения: ${duration}`
       );
       alert(
         `Синхронизация завершена. В XLSB перенесено слушателей: ${students.length}; `
-        + `прямых затрат: ${directExpenses.length}. Обновлённый файл скачан. `
+        + `договоров: ${contracts.length}; прямых затрат: ${directExpenses.length}; общих затрат: ${generalExpenses.length}. База обновлена ${sourceLabel}. `
+        + `Резервная копия: ${result.backupPath || "создана в папке _Резерв"}. `
         + `Время выполнения: ${duration}.`
       );
     } catch (error) {
       finishDatabaseExportIndicator("error", `Ошибка: ${error.message}`, 6500);
-      alert(`Не удалось синхронизировать базу и сформировать XLSB: ${error.message}`);
+      alert(`Не удалось синхронизировать базу: ${error.message}`);
     }
   }
 
@@ -18324,27 +22942,40 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function importStudentsFromDatabase(event) {
     if (state.databaseExport.running) {
-      alert("Дождитесь завершения синхронизации и скачивания XLSB.");
+      alert("Дождитесь завершения синхронизации базы.");
       return;
     }
-    if (!confirm("Данные по всем слушателям, прямым затратам и запасам будут перезаписаны данными из базы АИС Допобразование.xlsb. Продолжить?")) return;
+    const importSource = getStudentDocumentsSource(Boolean(event?.shiftKey));
+    const sourceLabel = importSource === "local"
+      ? "с локального компьютера"
+      : "с Яндекс-Диска через WebDAV";
+    if (!event?.skipConfirmation && !confirm(
+      `Данные по всем слушателям, договорам, прямым и общим затратам, а также запасам будут перезаписаны `
+      + `данными из базы АИС Допобразование.xlsb ${sourceLabel}. Продолжить?`
+    )) return;
     if (state.databaseImport.running) return;
     const startedAt = performance.now();
     updateDatabaseImportIndicator({
       running: true,
       visible: true,
-      status: "Подготовка импорта...",
+      status: `Подготовка импорта ${sourceLabel}...`,
       progress: 0,
       tone: "active",
       indeterminate: false
     });
     try {
-      const payload = await runStudentDatabaseImport(getStudentDatabaseWebDavPath());
+      const payload = await runStudentDatabaseImport(getStudentDatabaseWebDavPath(), importSource);
       if (!Array.isArray(payload.students) || !payload.students.length) {
         throw new Error("В базе не найдено ни одного слушателя.");
       }
       if (!Array.isArray(payload.directExpenses)) {
         throw new Error("Не удалось прочитать лист «Прямые затраты».");
+      }
+      if (!Array.isArray(payload.generalExpenses)) {
+        throw new Error("Не удалось прочитать лист «Общие затраты».");
+      }
+      if (!Array.isArray(payload.contracts)) {
+        throw new Error("Не удалось прочитать лист «Реестр договоров».");
       }
       if (!Array.isArray(payload.inventory)) {
         throw new Error("Не удалось прочитать лист «Запасы».");
@@ -18353,11 +22984,20 @@ MAX - https://bizvmax.ru/zifra_plus
         throw new Error("Не удалось прочитать настройки оплаты и реестр программ.");
       }
       const previousData = state.data;
-      const nextStudents = payload.students.map((student) => applyMappedAgentToStudentRecord(
-        normalizeStudentRecord(student),
-        { onlyWhenEmpty: true }
-      ));
+      const responsibleLogin = getCurrentUserLogin();
+      const nextStudents = payload.students.map((student) => {
+        const normalized = applyMappedAgentToStudentRecord(
+          normalizeStudentRecord(student),
+          { onlyWhenEmpty: true }
+        );
+        return {
+          ...normalized,
+          manager: responsibleLogin
+        };
+      });
       const nextDirectExpenses = payload.directExpenses.map((expense) => ({ ...expense }));
+      const nextGeneralExpenses = payload.generalExpenses.map((expense) => normalizeGeneralExpenseRecord(expense));
+      const nextContracts = payload.contracts.map((contract) => normalizeContractRecord(contract));
       const nextInventory = payload.inventory.map((item) => ({
         ...item,
         amount: Number(item.amount || 0),
@@ -18416,7 +23056,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const inventoryLinkedExpenseCount = Number(payload.inventoryLinkedExpenseCount || 0);
       const inventoryGeneratedExpenseCount = Number(payload.inventoryGeneratedExpenseCount || 0);
       updateDatabaseImportIndicator({
-        status: `Применение данных: ${nextStudents.length} слушателей, ${totalDirectExpenseCount} расходов, ${nextInventory.length} позиций запасов...`,
+        status: `Применение данных: ${nextStudents.length} слушателей, ${nextContracts.length} договоров, ${totalDirectExpenseCount} прямых и ${nextGeneralExpenses.length} общих затрат, ${nextInventory.length} позиций запасов...`,
         progress: 100
       });
       state.data = ensureDataShape({
@@ -18430,6 +23070,11 @@ MAX - https://bizvmax.ru/zifra_plus
         dictionaries: {
           ...previousData.dictionaries,
           ...nextProgramDictionaries,
+          managers: unique([
+            ...(previousData.dictionaries.managers || []),
+            ...nextStudents.map((student) => String(student.manager || "").trim()),
+            getCurrentUserLogin()
+          ].filter(Boolean)),
           studentAdditionalStatuses: nextAdditionalStatuses,
           paymentSettings: nextPaymentSettings
         },
@@ -18437,29 +23082,36 @@ MAX - https://bizvmax.ru/zifra_plus
           ...previousData.collections,
           programs: nextPrograms,
           students: nextStudents,
+          contracts: nextContracts,
           directExpenses: nextDirectExpenses,
+          generalExpenses: nextGeneralExpenses,
           inventory: nextInventory,
           audit: [...(previousData.collections.audit || [])]
         }
       });
       state.selected.students = [];
+      state.selected.contracts = [];
       state.selected.directExpenses = [];
+      state.selected.generalExpenses = [];
       state.selected.inventory = [];
       state.tablePages.students = 1;
+      state.tablePages.contracts = 1;
       state.tablePages.directExpenses = 1;
+      state.tablePages.generalExpenses = 1;
       state.tablePages.inventory = 1;
       state.lastEditedRow = { config: "", id: "" };
       state.search = "";
       const duration = formatDatabaseOperationDuration(startedAt);
       addAudit(
         "Загрузка из базы",
-        "Слушатели, прямые затраты и запасы",
-        `${payload.count || nextStudents.length} слушателей; ${linkedDirectExpenseCount} расходов привязано; `
-        + `${nextDirectExpenses.length} не привязано; ${nextInventory.length} позиций запасов; `
+        "Слушатели, договоры, затраты и запасы",
+        `${sourceLabel}; ${payload.count || nextStudents.length} слушателей; ${nextContracts.length} договоров; ${linkedDirectExpenseCount} расходов привязано; `
+        + `${nextDirectExpenses.length} не привязано; ${nextGeneralExpenses.length} общих затрат; ${nextInventory.length} позиций запасов; `
         + `${payload.programPaymentSettings.length} программ с характеристиками и ставками; `
         + `${inventoryLinkedExpenseCount} выдач связано с карточками`
         + `${inventoryGeneratedExpenseCount ? `, ${inventoryGeneratedExpenseCount} восстановлено` : ""}; `
-        + `время выполнения: ${duration}`
+        + `время выполнения: ${duration}`,
+        { entityType: "database", entityLabel: "АИС Допобразование.xlsb", source: `xlsb-${importSource}` }
       );
       updateDatabaseImportIndicator({
         status: "Сохранение импортированных данных...",
@@ -18474,15 +23126,18 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
       finishDatabaseImportIndicator(
         "success",
-        `Готово: ${linkedDirectExpenseCount} расходов привязано, ${nextDirectExpenses.length} оставлено в разделе. `
+        `Готово: ${nextContracts.length} договоров, ${linkedDirectExpenseCount} расходов привязано, ${nextDirectExpenses.length} оставлено в разделе, `
+        + `${nextGeneralExpenses.length} общих затрат загружено. `
         + `Запасы: ${nextInventory.length} позиций, ${inventoryLinkedExpenseCount} выдач связано. `
         + `Оплата: ${payload.programPaymentSettings.length} программ. `
         + `Время выполнения: ${duration}`
       );
       alert(
         `Загрузка завершена. Перезаписано слушателей: ${payload.count || nextStudents.length}; `
+        + `договоров: ${nextContracts.length}; `
         + `затрат привязано к карточкам: ${linkedDirectExpenseCount}; `
         + `не привязано и оставлено в разделе: ${nextDirectExpenses.length}. `
+        + `Загружено общих затрат: ${nextGeneralExpenses.length}. `
         + `Загружено позиций запасов: ${nextInventory.length}; `
         + `настроек оплаты программ: ${payload.programPaymentSettings.length}; `
         + `выдач запасов связано с карточками: ${inventoryLinkedExpenseCount}`
@@ -18491,7 +23146,7 @@ MAX - https://bizvmax.ru/zifra_plus
       );
     } catch (error) {
       finishDatabaseImportIndicator("error", `Ошибка: ${error.message}`, 6500);
-      alert(`Не удалось загрузить слушателей, прямые затраты и запасы из базы: ${error.message}`);
+      alert(`Не удалось загрузить слушателей, договоры, прямые и общие затраты, а также запасы из базы: ${error.message}`);
     }
   }
 
@@ -18531,61 +23186,335 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
-  function downloadAuditLog() {
-    const rows = [...(state.data.collections.audit || [])].reverse();
-    if (!rows.length) return;
-    const columns = [
-      ["date", "Дата"],
-      ["user", "Пользователь"],
-      ["action", "Действие"],
-      ["area", "Раздел"],
-      ["details", "Подробности"]
-    ];
-    const header = columns.map(([, label]) => csvCell(label)).join(";");
-    const body = rows
-      .map((row) => columns.map(([key]) => csvCell(row[key])).join(";"))
-      .join("\n");
-    const now = new Date();
-    const timestamp = [
-      now.getFullYear(),
-      String(now.getMonth() + 1).padStart(2, "0"),
-      String(now.getDate()).padStart(2, "0")
-    ].join("-") + "_" + [
-      String(now.getHours()).padStart(2, "0"),
-      String(now.getMinutes()).padStart(2, "0")
-    ].join("-");
-    download(
-      `Журнал_последних_действий_${timestamp}.csv`,
-      `\ufeff${header}\n${body}`,
-      "text/csv;charset=utf-8"
-    );
+  function buildAuditQueryParams({ includePage = true } = {}) {
+    const params = new URLSearchParams();
+    Object.entries(state.auditLog.filters || {}).forEach(([key, value]) => {
+      const normalized = String(value || "").trim();
+      if (normalized) params.set(key, normalized);
+    });
+    if (includePage) {
+      params.set("page", String(state.auditLog.page || 1));
+      params.set("pageSize", String(state.auditLog.pageSize || 50));
+    }
+    return params;
   }
 
-  function addAudit(action, area, details) {
+  async function loadAdminAuditLog({ page = state.auditLog.page } = {}) {
+    if (!isAdminUser() || state.auditLog.loading) return;
+    state.auditLog.page = Math.max(1, Number(page) || 1);
+    state.auditLog.loading = true;
+    state.auditLog.error = "";
+    render();
+    try {
+      const params = buildAuditQueryParams();
+      const payload = await authRequest(`api/admin/audit?${params.toString()}`);
+      state.auditLog.items = Array.isArray(payload.items) ? payload.items : [];
+      state.auditLog.total = Number(payload.total) || 0;
+      state.auditLog.page = Number(payload.page) || 1;
+      state.auditLog.pageSize = Number(payload.pageSize) || state.auditLog.pageSize;
+      state.auditLog.pages = Number(payload.pages) || 1;
+      state.auditLog.options = payload.options && typeof payload.options === "object" ? payload.options : {};
+      state.auditLog.loaded = true;
+    } catch (error) {
+      state.auditLog.items = [];
+      state.auditLog.total = 0;
+      state.auditLog.pages = 1;
+      state.auditLog.loaded = true;
+      state.auditLog.error = `Не удалось загрузить журнал: ${error.message}`;
+    } finally {
+      state.auditLog.loading = false;
+      render();
+    }
+  }
+
+  function collectAuditFilters(form) {
+    const data = new FormData(form);
+    return Object.fromEntries(Object.keys(AUDIT_FILTER_DEFAULTS).map((key) => [
+      key,
+      String(data.get(key) || "").trim()
+    ]));
+  }
+
+  function applyAuditFilters(event) {
+    event.preventDefault();
+    state.auditLog.filters = collectAuditFilters(event.currentTarget);
+    state.auditLog.page = 1;
+    loadAdminAuditLog({ page: 1 });
+  }
+
+  function resetAuditFilters() {
+    state.auditLog.filters = { ...AUDIT_FILTER_DEFAULTS };
+    state.auditLog.page = 1;
+    loadAdminAuditLog({ page: 1 });
+  }
+
+  async function downloadAuditLog() {
+    if (!state.auditLog.total) return;
+    const button = document.querySelector("[data-action='download-audit-log']");
+    if (button) button.disabled = true;
+    try {
+      const params = buildAuditQueryParams({ includePage: false });
+      const response = await fetch(photoApiUrl(`/api/admin/audit/export?${params.toString()}`), {
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      }
+      const blob = await response.blob();
+      const fileName = getDownloadFileNameFromResponse(response, `Журнал_изменений_${new Date().toISOString().slice(0, 10)}.csv`);
+      downloadBlob(fileName, blob);
+    } catch (error) {
+      alert(`Не удалось скачать журнал: ${error.message}`);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  function buildStudentAuditQueryParams({ includePage = true } = {}) {
+    const params = new URLSearchParams({ studentId: state.studentAuditLog.studentId });
+    Object.entries(state.studentAuditLog.filters || {}).forEach(([key, value]) => {
+      const normalized = String(value || "").trim();
+      if (normalized) params.set(key, normalized);
+    });
+    if (includePage) {
+      params.set("page", String(state.studentAuditLog.page || 1));
+      params.set("pageSize", String(state.studentAuditLog.pageSize || 50));
+    }
+    return params;
+  }
+
+  async function loadStudentAuditLog({ page = state.studentAuditLog.page } = {}) {
+    const audit = state.studentAuditLog;
+    const studentId = String(audit.studentId || "").trim();
+    if (!audit.open || !studentId || audit.loading) return;
+    audit.page = Math.max(1, Number(page) || 1);
+    audit.loading = true;
+    audit.error = "";
+    render();
+    try {
+      const params = buildStudentAuditQueryParams();
+      const payload = await authRequest(`api/students/audit?${params.toString()}`);
+      if (!state.studentAuditLog.open || state.studentAuditLog.studentId !== studentId) return;
+      audit.items = Array.isArray(payload.items) ? payload.items : [];
+      audit.total = Number(payload.total) || 0;
+      audit.page = Number(payload.page) || 1;
+      audit.pageSize = Number(payload.pageSize) || audit.pageSize;
+      audit.pages = Number(payload.pages) || 1;
+      audit.options = payload.options && typeof payload.options === "object" ? payload.options : {};
+      audit.loaded = true;
+    } catch (error) {
+      if (!state.studentAuditLog.open || state.studentAuditLog.studentId !== studentId) return;
+      audit.items = [];
+      audit.total = 0;
+      audit.pages = 1;
+      audit.loaded = true;
+      audit.error = `Не удалось загрузить журнал: ${error.message}`;
+    } finally {
+      if (state.studentAuditLog.open && state.studentAuditLog.studentId === studentId) {
+        audit.loading = false;
+        render();
+      }
+    }
+  }
+
+  function collectStudentAuditFilters(form) {
+    const data = new FormData(form);
+    return Object.fromEntries(Object.keys(STUDENT_AUDIT_FILTER_DEFAULTS).map((key) => [
+      key,
+      String(data.get(key) || "").trim()
+    ]));
+  }
+
+  function preserveStudentCardDraft() {
+    if (state.modal?.config !== "students") return;
+    const form = document.getElementById("recordForm");
+    const hasChanges = state.modal.hasDraftChanges || hasUnsavedFormChanges(form);
+    state.modal.draft = collectStudentFormDraft();
+    state.modal.hasDraftChanges = Boolean(hasChanges);
+  }
+
+  function openStudentAuditLog() {
+    const studentId = String(state.modal?.id || "").trim();
+    if (!studentId) return;
+    preserveStudentCardDraft();
+    const record = (state.data.collections.students || []).find((item) => item.id === studentId) || {};
+    const pageSize = Number(state.studentAuditLog.pageSize) || 50;
+    state.studentAuditLog = {
+      open: true,
+      studentId,
+      studentName: String(state.modal?.draft?.name || record.name || "").trim(),
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize,
+      pages: 1,
+      filters: { ...STUDENT_AUDIT_FILTER_DEFAULTS },
+      options: {},
+      loading: false,
+      loaded: false,
+      error: ""
+    };
+    render();
+    queueMicrotask(() => loadStudentAuditLog({ page: 1 }));
+  }
+
+  function closeStudentAuditLog() {
+    if (!state.studentAuditLog.open) return;
+    state.studentAuditLog.open = false;
+    state.studentAuditLog.loading = false;
+    render();
+    queueMicrotask(() => document.querySelector("[data-action='open-student-audit-log']")?.focus({ preventScroll: true }));
+  }
+
+  function applyStudentAuditFilters(event) {
+    event.preventDefault();
+    state.studentAuditLog.filters = collectStudentAuditFilters(event.currentTarget);
+    state.studentAuditLog.page = 1;
+    loadStudentAuditLog({ page: 1 });
+  }
+
+  function resetStudentAuditFilters() {
+    state.studentAuditLog.filters = { ...STUDENT_AUDIT_FILTER_DEFAULTS };
+    state.studentAuditLog.page = 1;
+    loadStudentAuditLog({ page: 1 });
+  }
+
+  async function downloadStudentAuditLog() {
+    const audit = state.studentAuditLog;
+    if (!audit.open || !audit.studentId || !audit.total) return;
+    const button = document.querySelector("[data-action='download-student-audit-log']");
+    if (button) button.disabled = true;
+    try {
+      const params = buildStudentAuditQueryParams({ includePage: false });
+      const response = await fetch(photoApiUrl(`/api/students/audit/export?${params.toString()}`), {
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      }
+      const blob = await response.blob();
+      const fallback = `Журнал_действий_слушателя_${new Date().toISOString().slice(0, 10)}.csv`;
+      downloadBlob(getDownloadFileNameFromResponse(response, fallback), blob);
+    } catch (error) {
+      alert(`Не удалось скачать журнал слушателя: ${error.message}`);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  function isAuditSensitiveField(field) {
+    return /(?:password|passwd|парол|secret|token|credential|jwt|photoData|authorization)/iu
+      .test(String(field || ""));
+  }
+
+  function auditValue(value, field = "") {
+    if (isAuditSensitiveField(field)) return "[скрыто]";
+    if (value === null || value === undefined) return "";
+    let result = value;
+    if (typeof result === "object") {
+      try {
+        result = JSON.stringify(result);
+      } catch {
+        result = "";
+      }
+    }
+    return String(result).slice(0, 1200);
+  }
+
+  function buildAuditChanges(before = {}, after = {}, fields = []) {
+    const labels = new Map((fields || []).map((item) => [item.key, item.label || item.key]));
+    const ignored = new Set(["id", "photoData"]);
+    const keys = unique([...Object.keys(before || {}), ...Object.keys(after || {})]);
+    return keys.flatMap((key) => {
+      if (ignored.has(key)) return [];
+      const oldValue = auditValue(before?.[key], key);
+      const newValue = auditValue(after?.[key], key);
+      if (oldValue === newValue) return [];
+      return [{ field: key, label: labels.get(key) || key, before: oldValue, after: newValue }];
+    }).slice(0, AUDIT_CLIENT_MAX_CHANGES);
+  }
+
+  async function postAuditEntry(entry) {
+    try {
+      const response = await fetch(photoApiUrl("/api/audit/log"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        keepalive: true,
+        body: JSON.stringify(entry)
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      }
+      if (state.view === "admin" && isAdminUser() && state.auditLog.loaded && !state.auditLog.loading) {
+        state.auditLog.loaded = false;
+        loadAdminAuditLog({ page: 1 });
+      }
+    } catch (error) {
+      console.warn("Не удалось передать запись в серверный журнал", error);
+    }
+  }
+
+  function addAudit(action, area, details, context = {}) {
+    const createdAt = new Date().toISOString();
+    const entry = {
+      action: String(action || "").trim(),
+      area: String(area || "").trim(),
+      details: String(details || "").trim(),
+      entityType: String(context.entityType || "").trim(),
+      entityId: String(context.entityId || "").trim(),
+      entityLabel: String(context.entityLabel || "").trim(),
+      field: String(context.field || "").trim(),
+      before: auditValue(context.before, context.field),
+      after: auditValue(context.after, context.field),
+      changes: Array.isArray(context.changes) ? context.changes.slice(0, AUDIT_CLIENT_MAX_CHANGES) : [],
+      source: String(context.source || "web").trim()
+    };
     const audit = state.data.collections.audit || [];
     audit.push({
       id: makeId("log"),
-      date: new Date().toLocaleString("ru-RU"),
-      user: "Администратор",
-      action,
-      area,
-      details
+      date: new Date(createdAt).toLocaleString("ru-RU"),
+      createdAt,
+      user: getCurrentUserLogin() || "system",
+      ...entry
     });
     state.data.collections.audit = audit.slice(-200);
+    void postAuditEntry(entry);
   }
 
   function miniTable(rows, keys, options = {}) {
     if (!rows.length) return `<div class="empty-state compact"><span>Нет данных</span></div>`;
     const config = String(options.config || "");
+    const headers = options.headers && typeof options.headers === "object" ? options.headers : null;
+    const warningThreshold = Number(options.warningBelow);
     return `
       <div class="table-wrap compact">
         <table class="data-table mini">
+          ${headers ? `
+            <thead><tr>${keys.map((key) => `<th>${escapeHtml(headers[key] || key)}</th>`).join("")}</tr></thead>
+          ` : ""}
           <tbody>
-            ${rows.map((row) => `
-              <tr ${config && row.id ? `class="mini-table-link-row" data-action="edit" data-config="${escapeAttr(config)}" data-id="${escapeAttr(row.id)}" role="button" tabindex="0" title="Открыть карточку слушателя"` : ""}>
+            ${rows.map((row) => {
+              const isLink = Boolean(config && row.id);
+              const warningValue = Number(row[options.warningKey]);
+              const isWarning = options.warningKey
+                && Number.isFinite(warningThreshold)
+                && Number.isFinite(warningValue)
+                && warningValue < warningThreshold;
+              const classes = [isLink ? "mini-table-link-row" : "", isWarning ? "is-deadline-warning" : ""]
+                .filter(Boolean)
+                .join(" ");
+              return `
+              <tr class="${classes}" ${isLink ? `data-action="edit" data-config="${escapeAttr(config)}" data-id="${escapeAttr(row.id)}" role="button" tabindex="0" title="Открыть карточку слушателя"` : ""}>
                 ${keys.map((key) => `<td>${escapeHtml(valueForDisplay(key, row[key]))}</td>`).join("")}
               </tr>
-            `).join("")}
+            `;
+            }).join("")}
           </tbody>
         </table>
       </div>
@@ -18754,35 +23683,67 @@ MAX - https://bizvmax.ru/zifra_plus
     const input = document.querySelector(`[name="${field}"]`);
     if (!input) return;
     input.addEventListener("input", () => {
-      input.setCustomValidity("");
-      input.classList.remove("field-invalid");
+      updateStudentIdentityValidation(field, input.value, input);
     });
     input.addEventListener("blur", () => {
       const value = field.toLowerCase().includes("inn") ? normalizeInn(input.value) : formatSnils(input.value);
       input.value = value;
-      validateStudentIdentityValue(field, value, input);
+      updateStudentIdentityValidation(field, value, input);
     });
+    updateStudentIdentityValidation(field, input.value, input);
+  }
+
+  function getStudentIdentityValidation(field, value) {
+    const isInn = field.toLowerCase().includes("inn");
+    const normalizedValue = isInn ? normalizeInn(value) : normalizeSnils(value);
+    const expectedLengths = isInn ? [10, 12] : [11];
+    const fieldLabel = isInn ? "ИНН" : "СНИЛС";
+    const lengthHint = isInn ? "10 или 12 цифр" : "11 цифр";
+    if (!normalizedValue) {
+      return { state: "empty", text: "", message: "", valid: true };
+    }
+    if (!expectedLengths.includes(normalizedValue.length)) {
+      return {
+        state: "incomplete",
+        text: "Неполный",
+        message: `${fieldLabel}: требуется ${lengthHint}.`,
+        valid: false
+      };
+    }
+    const valid = isInn ? isValidInn(normalizedValue) : isValidSnils(normalizedValue);
+    return {
+      state: valid ? "valid" : "invalid",
+      text: valid ? "Верно" : "Неверно",
+      message: valid ? `${fieldLabel}: номер корректен.` : `${fieldLabel}: неверное контрольное число.`,
+      valid
+    };
+  }
+
+  function updateStudentIdentityValidation(field, value, input, report = false) {
+    const result = getStudentIdentityValidation(field, value);
+    const control = input?.closest("[data-student-identity-control]");
+    const status = control?.querySelector("[data-student-identity-status]");
+    input?.classList.toggle("field-valid", result.state === "valid");
+    input?.classList.toggle("field-invalid", result.state === "invalid");
+    input?.classList.toggle("field-incomplete", result.state === "incomplete");
+    input?.setAttribute("aria-invalid", ["invalid", "incomplete"].includes(result.state) ? "true" : "false");
+    input?.setCustomValidity(result.valid ? "" : result.message);
+    if (control) control.dataset.validationState = result.state;
+    if (status) {
+      status.textContent = result.text;
+      status.title = result.message;
+    }
+    if (report && !result.valid) input?.reportValidity();
+    return result.valid;
   }
 
   function validateStudentIdentityValue(field, value, input = null) {
-    if (!value) {
-      input?.setCustomValidity("");
-      input?.classList.remove("field-invalid");
-      return true;
-    }
-    const isInn = field.toLowerCase().includes("inn");
-    const valid = isInn ? isValidInn(value) : isValidSnils(value);
-    const message = isInn
-      ? "ИНН заполнен неверно. Проверьте количество цифр и контрольное число."
-      : "СНИЛС заполнен неверно. Проверьте количество цифр и контрольное число.";
     if (input) {
-      input.setCustomValidity(valid ? "" : message);
-      input.classList.toggle("field-invalid", !valid);
-      if (!valid) input.reportValidity();
-    } else if (!valid) {
-      alert(message);
+      return updateStudentIdentityValidation(field, value, input, true);
     }
-    return valid;
+    const result = getStudentIdentityValidation(field, value);
+    if (!result.valid) alert(result.message);
+    return result.valid;
   }
 
   function normalizeMessengerPhone(value) {
@@ -18845,6 +23806,36 @@ MAX - https://bizvmax.ru/zifra_plus
     openExternalUrl(url);
   }
 
+  function openStudentGradeReport() {
+    const input = document.querySelector("[name='program']");
+    const program = findProgramByName(input?.value || state.modal?.draft?.program || "");
+    const url = getProgramGradeReportUrl(program);
+    if (!url) {
+      alert("Для выбранной программы не заполнено поле «Ссылка на отчет по оценкам».");
+      input?.focus({ preventScroll: true });
+      return;
+    }
+    openExternalUrl(url);
+  }
+
+  function openStudentActivityLog() {
+    const input = document.querySelector("[name='program']");
+    const program = findProgramByName(input?.value || state.modal?.draft?.program || "");
+    const gradeReportUrl = getProgramGradeReportUrl(program);
+    if (!gradeReportUrl) {
+      alert("Для выбранной программы не заполнено поле «Ссылка на отчет по оценкам».");
+      input?.focus({ preventScroll: true });
+      return;
+    }
+    const url = getProgramActivityLogUrl(program);
+    if (!url) {
+      alert("В ссылке на отчет по оценкам не указан идентификатор курса id.");
+      input?.focus({ preventScroll: true });
+      return;
+    }
+    openExternalUrl(url);
+  }
+
   function getEducationDocumentTemplateForRecord(record) {
     const programType = getStudentProgramTypeCode(record);
     if (!programType) return null;
@@ -18857,13 +23848,37 @@ MAX - https://bizvmax.ru/zifra_plus
   function getEducationDocumentButtonTitle(record) {
     const documentTemplate = getEducationDocumentTemplateForRecord(record);
     const programType = getStudentProgramTypeCode(record);
-    const contextHint = "Правый щелчок: параметры формирования и отправки";
-    if (!programType) return `Сформировать документ об образовании\nСначала выберите образовательную программу\n${contextHint}`;
-    if (!documentTemplate) return `Сформировать документ об образовании\nДля вида программы ${programType} шаблон не найден\n${contextHint}`;
+    const description = "Сформировать документ по данным карточки слушателя.";
+    if (!programType) {
+      return buildStudentDocumentGenerationTooltip(
+        "Документ об образовании",
+        description,
+        ["Сначала выберите образовательную программу."]
+      );
+    }
+    if (!documentTemplate) {
+      return buildStudentDocumentGenerationTooltip(
+        "Документ об образовании",
+        description,
+        [`Для вида программы ${programType} шаблон не найден.`]
+      );
+    }
     const source = documentTemplate.templateUrl || documentTemplate.templatePath || documentTemplate.fileName || "";
-    return source
-      ? `Сформировать документ об образовании\n${documentTemplate.title}\n${source}\n${contextHint}`
-      : `Сформировать документ об образовании\n${documentTemplate.title}\n${contextHint}`;
+    return buildStudentDocumentGenerationTooltip(
+      "Документ об образовании",
+      `Сформировать «${documentTemplate.title}» по данным карточки слушателя.`,
+      source ? [`Шаблон: ${source}`] : []
+    );
+  }
+
+  function buildStudentDocumentGenerationTooltip(title, description, details = []) {
+    return [
+      String(title || "Документ").trim(),
+      "",
+      String(description || "Сформировать документ по данным карточки слушателя.").trim(),
+      ...details.map((item) => String(item || "").trim()).filter(Boolean),
+      "Правый щелчок: параметры формирования и отправки."
+    ].join("\n");
   }
 
   function getStudentDocumentTemplateForContext(kind, record) {
@@ -19029,6 +24044,7 @@ MAX - https://bizvmax.ru/zifra_plus
       contract: [
         ...common,
         { key: "studyForm", label: "Форма обучения" },
+        { key: "employmentCategory", label: "Категория занятости" },
         { key: "hours", label: "Количество часов", value: getStudentProgramHours(record) },
         { key: "registrationAddress", label: "Адрес места регистрации" },
         { key: "mailingAddress", label: "Адрес с почтовым индексом" },
@@ -19054,6 +24070,7 @@ MAX - https://bizvmax.ru/zifra_plus
       application: [
         ...common,
         { key: "studyForm", label: "Форма обучения" },
+        { key: "employmentCategory", label: "Категория занятости" },
         { key: "hours", label: "Количество часов", value: getStudentProgramHours(record) },
         { key: "registrationAddress", label: "Адрес места регистрации" },
         { key: "mailingAddress", label: "Адрес с почтовым индексом" },
@@ -19317,7 +24334,7 @@ MAX - https://bizvmax.ru/zifra_plus
       };
     }
     const recommendedSaveEnabled = Boolean(state.data.meta.yandexDiskAutoSave);
-    const useLocalDocuments = getOpenDocumentsLocally();
+    const useLocalDocuments = getEffectiveLocalDocumentsMode();
     return {
       saveToYandexDisk: recommendedSaveEnabled && !useLocalDocuments,
       promptLocalSave: useLocalDocuments,
@@ -19591,6 +24608,17 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       const emailResponse = emailRequest ? response.clone() : null;
       await finishStudentDocumentGeneration(response, fileName, storageRequest);
+      addAudit(
+        "Сформирован документ",
+        "Документы слушателя",
+        `${documentTemplate.title || fileName}; формат ${String(outputFormat || "").toUpperCase()}`,
+        {
+          entityType: "students",
+          entityId: String(record.id || state.modal?.id || ""),
+          entityLabel: record.name || String(record.id || state.modal?.id || ""),
+          source: "document-generation"
+        }
+      );
       if (emailRequest && emailResponse) {
         const attachment = await createStudentDocumentEmailAttachment(
           emailResponse,
@@ -19604,6 +24632,7 @@ MAX - https://bizvmax.ru/zifra_plus
           button,
           attachment,
           recipientMode: emailRequest.recipientMode,
+          messageType: documentTemplate.title || "Документ слушателя",
           skipConfirmation: true
         });
       }
@@ -20408,6 +25437,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const fieldPairs = [
       ["name", "customer"],
       ["birthDate", "customerBirthDate"],
+      ["phone", "customerPhone"],
       ["snils", "customerSnils"],
       ["inn", "customerInn"],
       ["passportType", "customerPassportType"],
@@ -20430,6 +25460,23 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     if (!copied) return;
     closeComboPanels();
+  }
+
+  function copyStudentSurnameToDocument() {
+    const target = document.querySelector("[name='educationDocumentSurname']");
+    if (!target) return;
+    const surname = splitFullName(collectStudentFormDraft().name).surname;
+    if (!surname) {
+      alert("Сначала укажите ФИО слушателя.");
+      return;
+    }
+    target.value = surname;
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+    state.modal.draft = collectStudentFormDraft();
+    state.modal.hasDraftChanges = true;
+    target.focus({ preventScroll: true });
+    target.select();
   }
 
   async function checkStudentAddressPostIndex(sourceKey) {
@@ -20495,7 +25542,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function findPostalIndexInYandexSearch(query) {
     try {
-      const response = await fetch(`/api/postal-index?query=${encodeURIComponent(query)}`);
+      const response = await fetch(photoApiUrl(`/api/postal-index?query=${encodeURIComponent(query)}`));
       if (!response.ok) return "";
       const result = await response.json();
       return normalizePostalIndex(result.index || "");
@@ -20662,13 +25709,23 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function ensureRecordUid(config, record = {}) {
-    if (state.modal?.id || !config.fields?.some((item) => item.key === "uid")) return record;
-    return {
+    if (state.modal?.id) return record;
+    const recordWithDefaults = {
       ...record,
-      uid: record.uid || getNextUid(),
       ...(config.collection === "students"
         ? { additionalStatus: record.additionalStatus || DEFAULT_STUDENT_ADDITIONAL_STATUS }
+        : {}),
+      ...(config.collection === "contracts"
+        ? { section: normalizeContractSection(record.section, record.status) }
+        : {}),
+      ...(config.collection === "generalExpenses"
+        ? { section: normalizeGeneralExpenseSection(record.section, record.counterparty) }
         : {})
+    };
+    if (!config.fields?.some((item) => item.key === "uid")) return recordWithDefaults;
+    return {
+      ...recordWithDefaults,
+      uid: record.uid || getNextUid()
     };
   }
 
@@ -20756,10 +25813,23 @@ MAX - https://bizvmax.ru/zifra_plus
     return escapeHtml(value).replaceAll("\n", " ");
   }
 
+  function escapeMultilineAttr(value) {
+    return escapeHtml(value)
+      .replaceAll("\r", "")
+      .replaceAll("\n", "&#10;");
+  }
+
   bindStudentStatusHistoryNavigation();
   window.addEventListener("resize", repositionOpenFieldLookupPanels, { passive: true });
   render();
-  syncServerConnectionSettings();
+  const connectionSettingsSync = syncServerConnectionSettings();
+  if (shouldBootstrapHostedDatabase) {
+    connectionSettingsSync.finally(() => {
+      window.setTimeout(() => {
+        importStudentsFromDatabase({ shiftKey: false, skipConfirmation: true });
+      }, 100);
+    });
+  }
   window.setTimeout(() => {
     autoInspectDocumentTemplates();
   }, 250);

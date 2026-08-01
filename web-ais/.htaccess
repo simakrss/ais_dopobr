@@ -1,0 +1,21 @@
+DirectoryIndex index.html
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^(?:storage|scripts|services|tmp|\.runtime)(?:/|$) - [R=404,L]
+  RewriteRule ^data/(?:program-registry|program-payment-registry|seed)\.js$ gateway.php [QSA,L]
+  RewriteRule ^data(?:/|$) - [R=404,L]
+  RewriteRule ^api(?:/|$) gateway.php [QSA,L]
+</IfModule>
+
+<FilesMatch "^(?:\.htpasswd|auth-lib\.php|audit-lib\.php|app-server\.js|server-cli\.js)$">
+  Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "no-referrer"
+  Header always set Cache-Control "no-store"
+</IfModule>

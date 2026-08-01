@@ -10,6 +10,40 @@ const AIS_MAIL_MAX_SUBJECT_LENGTH = 200;
 const AIS_MAIL_RATE_LIMIT = 20;
 const AIS_MAIL_RATE_WINDOW = 60;
 
+$authLibraryCandidates = [
+    dirname(__DIR__, 2) . '/lms-runtime/app/auth-lib.php',
+    __DIR__ . '/auth-lib.php',
+];
+$authLibrary = null;
+foreach ($authLibraryCandidates as $candidate) {
+    if (is_file($candidate)) {
+        $authLibrary = $candidate;
+        break;
+    }
+}
+if ($authLibrary === null) {
+    http_response_code(500);
+    exit('Authentication service is unavailable.');
+}
+require_once $authLibrary;
+
+$auditLibraryCandidates = [
+    dirname(__DIR__, 2) . '/lms-runtime/app/audit-lib.php',
+    __DIR__ . '/audit-lib.php',
+];
+$auditLibrary = null;
+foreach ($auditLibraryCandidates as $candidate) {
+    if (is_file($candidate)) {
+        $auditLibrary = $candidate;
+        break;
+    }
+}
+if ($auditLibrary === null) {
+    http_response_code(500);
+    exit('Audit service is unavailable.');
+}
+require_once $auditLibrary;
+
 function send_json(int $status, array $payload): void
 {
     http_response_code($status);
@@ -301,6 +335,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     send_json(405, ['ok' => false, 'error' => 'Разрешен только POST-запрос.']);
 }
 
+try {
+    $currentUser = ais_auth_current_user();
+    if ($currentUser === null) {
+        send_json(401, ['ok' => false, 'error' => 'Требуется вход в систему.']);
+    }
+} catch (Throwable $error) {
+    send_json(500, ['ok' => false, 'error' => 'Служба авторизации недоступна.']);
+}
+
 if (($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') !== 'AIS-Web') {
     send_json(403, ['ok' => false, 'error' => 'Запрос отклонен сервером.']);
 }
@@ -321,6 +364,11 @@ if (!is_array($data)) {
 $to = trim((string) ($data['to'] ?? ''));
 $subject = normalize_mail_subject((string) ($data['subject'] ?? ''));
 $message = trim((string) ($data['message'] ?? ''));
+$auditContext = is_array($data['auditContext'] ?? null) ? $data['auditContext'] : [];
+$studentId = ais_audit_text($auditContext['studentId'] ?? '', 240);
+$studentName = ais_audit_text($auditContext['studentName'] ?? '', 500);
+$messageType = ais_audit_text($auditContext['messageType'] ?? 'Письмо', 240);
+$recipientMode = ($auditContext['recipientMode'] ?? '') === 'system' ? 'системный ящик' : 'слушатель';
 
 if (!filter_var($to, FILTER_VALIDATE_EMAIL) || preg_match('/[\r\n]/', $to)) {
     send_json(400, ['ok' => false, 'error' => 'Некорректный адрес получателя.']);
@@ -333,6 +381,7 @@ if ($message === '' || strlen($message) > AIS_MAIL_MAX_MESSAGE_BYTES) {
 }
 
 $attachment = null;
+$attachmentFileName = '';
 if (array_key_exists('attachment', $data) && $data['attachment'] !== null) {
     if (!is_array($data['attachment'])) {
         send_json(400, ['ok' => false, 'error' => 'Некорректные данные вложения.']);
@@ -377,13 +426,48 @@ if (array_key_exists('attachment', $data) && $data['attachment'] !== null) {
         'contentType' => $contentType,
         'bytes' => $attachmentBytes,
     ];
+    $attachmentFileName = $fileName;
 }
 
 try {
     $settings = load_mail_settings();
     send_smtp_mail($settings, $to, $subject, $message, $attachment);
+    ais_audit_try_append([
+        'action' => 'Отправлено письмо',
+        'area' => 'Электронная почта',
+        'entityType' => $studentId !== '' ? 'students' : 'email',
+        'entityId' => $studentId,
+        'entityLabel' => $studentName !== '' ? $studentName : $to,
+        'field' => 'email',
+        'after' => $to,
+        'details' => implode('; ', [
+            'Тип: ' . $messageType,
+            'Получатель: ' . $to . ' (' . $recipientMode . ')',
+            'Тема: ' . $subject,
+            $attachmentFileName !== '' ? 'Вложение: ' . $attachmentFileName : 'Без вложения',
+            'Отправитель: ' . $settings['login'],
+        ]),
+        'source' => 'smtp',
+    ], $currentUser);
 } catch (Throwable $error) {
     error_log('AIS mail sender failed for recipient: ' . $to);
+    ais_audit_try_append([
+        'action' => 'Ошибка отправки письма',
+        'area' => 'Электронная почта',
+        'entityType' => $studentId !== '' ? 'students' : 'email',
+        'entityId' => $studentId,
+        'entityLabel' => $studentName !== '' ? $studentName : $to,
+        'field' => 'email',
+        'after' => $to,
+        'details' => implode('; ', [
+            'Тип: ' . $messageType,
+            'Получатель: ' . $to . ' (' . $recipientMode . ')',
+            'Тема: ' . $subject,
+            $attachmentFileName !== '' ? 'Вложение: ' . $attachmentFileName : 'Без вложения',
+            'Ошибка: ' . ais_audit_text($error->getMessage(), 1000),
+        ]),
+        'source' => 'smtp',
+    ], $currentUser);
     send_json(502, [
         'ok' => false,
         'error' => $error->getMessage()

@@ -1,2 +1,24 @@
 web-ais/storage/photos/*
 web-ais/storage/server-settings.json
+web-ais/storage/jobs/*
+web-ais/storage/users.json
+web-ais/storage/auth-sessions.json
+web-ais/storage/php-sessions/*
+web-ais/storage/audit-log.jsonl
+web-ais/.htpasswd
+.git.bak-*/
+*.lnk
+*.url
+web-ais/tmp/
+web-ais/*.log
+web-ais/storage/*.log
+web-ais/* (2).js
+web-ais/* (2).css
+web-ais/*.broken-encoding.bak
+web-ais/*.bak-*
+web-ais/app-server-[0-9]*.js
+web-ais/app-server-server.js
+web-ais/styles-server.css
+web-ais/services/**/__pycache__/
+web-ais/services/**/*.pyc
+web-ais/services/ocr/runtime/

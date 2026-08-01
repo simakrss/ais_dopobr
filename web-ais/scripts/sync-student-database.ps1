@@ -122,6 +122,12 @@ function Convert-CellValue {
     if ($gender -eq "женский" -or $gender -eq "ж") { return "Ж" }
     if ($gender -eq "мужской" -or $gender -eq "м") { return "М" }
   }
+  if ($FieldName -in @("accountingRecorded", "notificationEmail")) {
+    if ($Value -is [bool]) { return $Value }
+    $flag = ([string]$Value).Trim().ToLowerInvariant()
+    if ($flag -in @("да", "true", "1")) { return $true }
+    if ($flag -in @("нет", "false", "0")) { return $false }
+  }
   if ($FieldName -eq "uid") { return Convert-Uid $Value }
   if ($Value -is [bool]) { return $(if ($Value) { "Да" } else { "" }) }
   if ($Value -is [string]) {
@@ -1041,6 +1047,304 @@ function Update-DirectExpenseSheet {
   }
 }
 
+function Find-ContractSectionRows {
+  param(
+    [object]$Sheet,
+    [object]$Sections
+  )
+  $usedRange = $null
+  $nameRange = $null
+  try {
+    $usedRange = $Sheet.UsedRange
+    $lastRow = [int]$usedRange.Row + [int]$usedRange.Rows.Count - 1
+    $nameRange = $Sheet.Range($Sheet.Cells.Item(1, 1), $Sheet.Cells.Item($lastRow, 1))
+    $values = $nameRange.Value2
+    $names = @{
+      active = (Normalize-Header (Get-ObjectProperty $Sections "active")).ToUpperInvariant()
+      partners = (Normalize-Header (Get-ObjectProperty $Sections "partners")).ToUpperInvariant()
+      expired = (Normalize-Header (Get-ObjectProperty $Sections "expired")).ToUpperInvariant()
+    }
+    $rows = @{}
+    for ($row = 1; $row -le $lastRow; $row += 1) {
+      $value = (Normalize-Header (Get-MatrixValue $values $row 1)).ToUpperInvariant()
+      foreach ($key in @("active", "partners", "expired")) {
+        if ($value -and $value -eq $names[$key]) { $rows[$key] = $row }
+      }
+    }
+    foreach ($key in @("active", "partners", "expired")) {
+      if (-not $rows.ContainsKey($key)) {
+        throw "На листе не найден раздел '$($names[$key])'."
+      }
+    }
+    if ([int]$rows.active -ge [int]$rows.partners -or [int]$rows.partners -ge [int]$rows.expired) {
+      throw "Разделы реестра договоров расположены в неверном порядке."
+    }
+    return $rows
+  } finally {
+    Release-ComObject $nameRange
+    Release-ComObject $usedRange
+  }
+}
+
+function Get-ContractSectionGap {
+  param(
+    [object]$Sheet,
+    [int]$SectionRow,
+    [int]$NextSectionRow
+  )
+  $range = $null
+  try {
+    if ($NextSectionRow -le $SectionRow + 1) { return 0 }
+    $range = $Sheet.Range(
+      $Sheet.Cells.Item($SectionRow + 1, 1),
+      $Sheet.Cells.Item($NextSectionRow - 1, 1)
+    )
+    $values = $range.Value2
+    $lastRecordRow = $SectionRow
+    for ($row = $SectionRow + 1; $row -lt $NextSectionRow; $row += 1) {
+      $offset = $row - $SectionRow
+      if (Normalize-Header (Get-MatrixValue $values $offset 1)) { $lastRecordRow = $row }
+    }
+    return [Math]::Max(0, [Math]::Min(50, $NextSectionRow - $lastRecordRow - 1))
+  } finally {
+    Release-ComObject $range
+  }
+}
+
+function Ensure-ContractFormulaRows {
+  param(
+    [object]$Sheet,
+    [object[]]$Columns,
+    [int]$TemplateRow,
+    [int]$StartRow,
+    [int]$Count
+  )
+  if ($Count -le 0) { return }
+  foreach ($column in $Columns) {
+    $templateCell = $null
+    try {
+      $templateCell = $Sheet.Cells.Item($TemplateRow, [int]$column.Column)
+      $formula = [string]$templateCell.FormulaR1C1
+      if (-not $formula.StartsWith("=")) { continue }
+      for ($offset = 0; $offset -lt $Count; $offset += 1) {
+        $targetCell = $null
+        try {
+          $targetCell = $Sheet.Cells.Item($StartRow + $offset, [int]$column.Column)
+          $targetFormula = [string]$targetCell.FormulaR1C1
+          if (-not $targetFormula.StartsWith("=")) {
+            $targetCell.FormulaR1C1 = $formula
+          }
+        } finally {
+          Release-ComObject $targetCell
+        }
+      }
+    } finally {
+      Release-ComObject $templateCell
+    }
+  }
+}
+
+function Update-ContractSheet {
+  param(
+    [object]$Workbook,
+    [object]$Payload,
+    [Collections.Generic.HashSet[string]]$DateFields,
+    [Collections.Generic.HashSet[string]]$NumberFields
+  )
+  $sheet = $null
+  try {
+    $sheet = $Workbook.Worksheets.Item("Реестр договоров")
+    $header = Find-HeaderRow $sheet @("ФИО", "Договор", "Вид договора")
+    $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn $Payload.contractColumnMap)
+    $sections = $Payload.contractSections
+    $sectionRows = Find-ContractSectionRows $sheet $sections
+    $contracts = @($Payload.contracts)
+    $records = @{
+      active = @($contracts | Where-Object { ([string](Get-ObjectProperty $_ "section")).Trim() -eq ([string](Get-ObjectProperty $sections "active")).Trim() })
+      partners = @($contracts | Where-Object { ([string](Get-ObjectProperty $_ "section")).Trim() -eq ([string](Get-ObjectProperty $sections "partners")).Trim() })
+      expired = @($contracts | Where-Object { ([string](Get-ObjectProperty $_ "section")).Trim() -eq ([string](Get-ObjectProperty $sections "expired")).Trim() })
+    }
+
+    $activeGap = Get-ContractSectionGap $sheet ([int]$sectionRows.active) ([int]$sectionRows.partners)
+    $desiredPartnerRow = [int]$sectionRows.active + 1 + $records.active.Count + $activeGap
+    $activeDelta = $desiredPartnerRow - [int]$sectionRows.partners
+    if ($activeDelta -gt 0) {
+      Insert-StudentTemplateRows $sheet ([int]$sectionRows.active + 1) ([int]$sectionRows.partners) $header.LastColumn $activeDelta
+    } elseif ($activeDelta -lt 0) {
+      Remove-StudentRows $sheet $desiredPartnerRow (-$activeDelta)
+    }
+
+    $sectionRows = Find-ContractSectionRows $sheet $sections
+    $partnerGap = Get-ContractSectionGap $sheet ([int]$sectionRows.partners) ([int]$sectionRows.expired)
+    $desiredExpiredRow = [int]$sectionRows.partners + 1 + $records.partners.Count + $partnerGap
+    $partnerDelta = $desiredExpiredRow - [int]$sectionRows.expired
+    if ($partnerDelta -gt 0) {
+      Insert-StudentTemplateRows $sheet ([int]$sectionRows.partners + 1) ([int]$sectionRows.expired) $header.LastColumn $partnerDelta
+    } elseif ($partnerDelta -lt 0) {
+      Remove-StudentRows $sheet $desiredExpiredRow (-$partnerDelta)
+    }
+
+    $sectionRows = Find-ContractSectionRows $sheet $sections
+    $refreshedHeader = Find-HeaderRow $sheet @("ФИО", "Договор", "Вид договора")
+    $activeStart = [int]$sectionRows.active + 1
+    $partnerStart = [int]$sectionRows.partners + 1
+    $expiredStart = [int]$sectionRows.expired + 1
+    $lastRow = [Math]::Max([int]$refreshedHeader.LastRow, $expiredStart + $records.expired.Count - 1)
+
+    $recordByRow = @{}
+    foreach ($key in @("active", "partners", "expired")) {
+      $start = if ($key -eq "active") { $activeStart } elseif ($key -eq "partners") { $partnerStart } else { $expiredStart }
+      for ($index = 0; $index -lt $records[$key].Count; $index += 1) {
+        $recordByRow[$start + $index] = $records[$key][$index]
+      }
+    }
+
+    Ensure-ContractFormulaRows $sheet $columns $activeStart $activeStart $records.active.Count
+    Ensure-ContractFormulaRows $sheet $columns $partnerStart $partnerStart $records.partners.Count
+    Ensure-ContractFormulaRows $sheet $columns $expiredStart $expiredStart $records.expired.Count
+
+    $processedColumns = 0
+    foreach ($column in $columns) {
+      Update-MappedColumn $sheet $activeStart ([int]$sectionRows.partners - 1) $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null
+      Update-MappedColumn $sheet $partnerStart ([int]$sectionRows.expired - 1) $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null
+      Update-MappedColumn $sheet $expiredStart $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null
+      $processedColumns += 1
+      Write-SyncProgress 95 "Обновление договоров: $processedColumns из $($columns.Count) колонок"
+    }
+    return [pscustomobject]@{
+      Count = $contracts.Count
+      Active = $records.active.Count
+      Partners = $records.partners.Count
+      Expired = $records.expired.Count
+      LastRow = $lastRow
+    }
+  } catch {
+    throw "Ошибка обновления листа 'Реестр договоров': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
+  } finally {
+    Release-ComObject $sheet
+  }
+}
+
+function Update-GeneralExpenseSheet {
+  param(
+    [object]$Workbook,
+    [object]$Payload,
+    [Collections.Generic.HashSet[string]]$DateFields,
+    [Collections.Generic.HashSet[string]]$NumberFields
+  )
+  $sheet = $null
+  $counterpartyRange = $null
+  try {
+    $sheet = $Workbook.Worksheets.Item("Общие затраты")
+    $header = Find-HeaderRow $sheet @("Контрагент", "Дата", "Вид работ", "Сумма")
+    $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn $Payload.generalExpenseColumnMap)
+    $counterpartyColumn = Find-MappedColumn $columns "counterparty"
+    $individualSectionName = ([string](Get-ObjectProperty $Payload.generalExpenseSections "individuals")).Trim()
+    $organizationSectionName = ([string](Get-ObjectProperty $Payload.generalExpenseSections "organizations")).Trim()
+    if (-not $individualSectionName -or -not $organizationSectionName) {
+      throw "Не переданы названия разделов общих затрат."
+    }
+
+    $sectionRows = @{}
+    $scanStartRow = $header.Row + 1
+    $scanEndRow = [int]$header.LastRow
+    $counterpartyRange = $sheet.Range(
+      $sheet.Cells.Item($scanStartRow, $counterpartyColumn),
+      $sheet.Cells.Item($scanEndRow, $counterpartyColumn)
+    )
+    $counterpartyValues = $counterpartyRange.Value2
+    for ($row = $scanStartRow; $row -le $scanEndRow; $row += 1) {
+      $offset = $row - $scanStartRow + 1
+      $value = (Normalize-Header (Get-MatrixValue $counterpartyValues $offset 1)).ToUpperInvariant()
+      if ($value -eq $individualSectionName.ToUpperInvariant()) { $sectionRows.individuals = $row }
+      if ($value -eq $organizationSectionName.ToUpperInvariant()) { $sectionRows.organizations = $row }
+    }
+    if (-not $sectionRows.ContainsKey("individuals") -or -not $sectionRows.ContainsKey("organizations")) {
+      throw "На листе не найдены разделы '$individualSectionName' и '$organizationSectionName'."
+    }
+    $individualSectionRow = [int]$sectionRows.individuals
+    $organizationSectionRow = [int]$sectionRows.organizations
+    if ($individualSectionRow -ge $organizationSectionRow) {
+      throw "Разделы общих затрат расположены в неверном порядке."
+    }
+
+    $expenses = @($Payload.generalExpenses)
+    $individualExpenses = @($expenses | Where-Object {
+      ([string](Get-ObjectProperty $_ "section")).Trim() -eq $individualSectionName
+    })
+    $organizationExpenses = @($expenses | Where-Object {
+      ([string](Get-ObjectProperty $_ "section")).Trim() -eq $organizationSectionName
+    })
+
+    $lastExistingIndividualRow = $individualSectionRow
+    for ($row = $individualSectionRow + 1; $row -lt $organizationSectionRow; $row += 1) {
+      $offset = $row - $scanStartRow + 1
+      if ((Normalize-Header (Get-MatrixValue $counterpartyValues $offset 1))) {
+        $lastExistingIndividualRow = $row
+      }
+    }
+    $sectionGap = [Math]::Max(0, [Math]::Min(20, $organizationSectionRow - $lastExistingIndividualRow - 1))
+    $individualStartRow = $individualSectionRow + 1
+    $desiredOrganizationSectionRow = $individualStartRow + $individualExpenses.Count + $sectionGap
+    $sectionRowDelta = $desiredOrganizationSectionRow - $organizationSectionRow
+    if ($sectionRowDelta -gt 0) {
+      $templateRow = if ($lastExistingIndividualRow -gt $individualSectionRow) {
+        $lastExistingIndividualRow
+      } else {
+        $organizationSectionRow + 1
+      }
+      Insert-StudentTemplateRows $sheet $templateRow $organizationSectionRow $header.LastColumn $sectionRowDelta
+    } elseif ($sectionRowDelta -lt 0) {
+      Remove-StudentRows $sheet $desiredOrganizationSectionRow (-$sectionRowDelta)
+    }
+    $organizationSectionRow = $desiredOrganizationSectionRow
+    $organizationStartRow = $organizationSectionRow + 1
+    $lastExistingRow = [Math]::Max($organizationSectionRow, [int]$header.LastRow + $sectionRowDelta)
+    $desiredLastOrganizationRow = $organizationStartRow + $organizationExpenses.Count - 1
+    if ($desiredLastOrganizationRow -gt $lastExistingRow) {
+      $templateRow = if ($lastExistingRow -ge $organizationStartRow) {
+        $lastExistingRow
+      } elseif ($individualExpenses.Count -gt 0) {
+        $individualStartRow
+      } else {
+        $organizationSectionRow
+      }
+      Insert-StudentTemplateRows $sheet $templateRow ($lastExistingRow + 1) $header.LastColumn ($desiredLastOrganizationRow - $lastExistingRow)
+      $lastExistingRow = $desiredLastOrganizationRow
+    }
+
+    $individualRecordByRow = @{}
+    for ($index = 0; $index -lt $individualExpenses.Count; $index += 1) {
+      $individualRecordByRow[$individualStartRow + $index] = $individualExpenses[$index]
+    }
+    $organizationRecordByRow = @{}
+    for ($index = 0; $index -lt $organizationExpenses.Count; $index += 1) {
+      $organizationRecordByRow[$organizationStartRow + $index] = $organizationExpenses[$index]
+    }
+
+    $processedColumns = 0
+    foreach ($column in $columns) {
+      Update-MappedColumn $sheet $individualStartRow ($organizationSectionRow - 1) $column.Column $column.FieldName $individualRecordByRow $DateFields $NumberFields @() $null
+      Update-MappedColumn $sheet $organizationStartRow $lastExistingRow $column.Column $column.FieldName $organizationRecordByRow $DateFields $NumberFields @() $null
+      $processedColumns += 1
+      Write-SyncProgress (
+        90 + [Math]::Floor(($processedColumns / [Math]::Max(1, $columns.Count)) * 5)
+      ) "Обновление общих затрат: $processedColumns из $($columns.Count) колонок"
+    }
+    return [pscustomobject]@{
+      Count = $expenses.Count
+      Individuals = $individualExpenses.Count
+      Organizations = $organizationExpenses.Count
+      LastRow = $lastExistingRow
+    }
+  } catch {
+    throw "Ошибка обновления листа 'Общие затраты': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
+  } finally {
+    Release-ComObject $counterpartyRange
+    Release-ComObject $sheet
+  }
+}
+
 $excel = $null
 $workbook = $null
 try {
@@ -1048,9 +1352,12 @@ try {
   $payload = Get-Content -LiteralPath $PayloadPath -Raw -Encoding UTF8 | ConvertFrom-Json
   $dateFields = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
   foreach ($field in @($payload.studentDateFields)) { [void]$dateFields.Add([string]$field) }
+  foreach ($field in @($payload.contractDateFields)) { [void]$dateFields.Add([string]$field) }
   [void]$dateFields.Add("date")
+  [void]$dateFields.Add("paid")
   $numberFields = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
   foreach ($field in @($payload.studentNumberFields)) { [void]$numberFields.Add([string]$field) }
+  foreach ($field in @($payload.contractNumberFields)) { [void]$numberFields.Add([string]$field) }
   [void]$numberFields.Add("amount")
 
   Write-SyncProgress 3 "Запуск Microsoft Excel..."
@@ -1065,10 +1372,12 @@ try {
   Write-SyncProgress 8 "Книга открыта. Обновление слушателей..."
   $studentResult = Update-StudentSheet $workbook $payload $dateFields $numberFields
   $expenseResult = Update-DirectExpenseSheet $workbook $payload $dateFields $numberFields
-  Write-SyncProgress 91 "Обновление ставок и констант оплаты..."
+  $generalExpenseResult = Update-GeneralExpenseSheet $workbook $payload $dateFields $numberFields
+  $contractResult = Update-ContractSheet $workbook $payload $dateFields $numberFields
+  Write-SyncProgress 96 "Обновление ставок и констант оплаты..."
   $paymentResult = Update-PaymentSettings $workbook $payload
 
-  Write-SyncProgress 92 "Сохранение обновлённой книги..."
+  Write-SyncProgress 97 "Сохранение обновлённой книги..."
   try { $workbook.ForceFullCalculation = $true } catch {}
   try { $workbook.FullCalculationOnLoad = $true } catch {}
   try { $workbook.CalculateBeforeSave = $true } catch {}
@@ -1078,7 +1387,9 @@ try {
   [pscustomobject]@{
     type = "result"
     students = $studentResult.Count
+    contracts = $contractResult.Count
     directExpenses = $expenseResult.Count
+    generalExpenses = $generalExpenseResult.Count
     paymentConstants = $paymentResult.Count
     outputPath = $OutputPath
   } | ConvertTo-Json -Compress | Write-Output

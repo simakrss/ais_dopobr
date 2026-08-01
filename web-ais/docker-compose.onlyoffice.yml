@@ -13,3 +13,23 @@ services:
       EXAMPLE_ENABLED: "false"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  ocr:
+    build:
+      context: ./services/ocr
+    container_name: ais-ocr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8083:8083"
+    environment:
+      OCR_PORT: "8083"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json, urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8083/health', timeout=3))['ok']"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

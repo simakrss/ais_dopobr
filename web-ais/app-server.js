@@ -9,12 +9,21 @@ const os = require("node:os");
 const { spawn } = require("node:child_process");
 const { Worker, isMainThread } = require("node:worker_threads");
 const { TextDecoder } = require("node:util");
-const XLSX = require("./vendor/sheetjs/xlsx.full.min.js");
 
-const ROOT = __dirname;
+const SERVER_CODE_ROOT = __dirname;
+const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
+const XLSX = require(path.join(ROOT, "vendor", "sheetjs", "xlsx.full.min.js"));
 const STORAGE_ROOT = path.join(ROOT, "storage");
 const PHOTO_ROOT = path.join(STORAGE_ROOT, "photos");
 const SERVER_SETTINGS_PATH = path.join(STORAGE_ROOT, "server-settings.json");
+const AUTH_USERS_PATH = path.join(STORAGE_ROOT, "users.json");
+const AUTH_SESSIONS_PATH = path.join(STORAGE_ROOT, "auth-sessions.json");
+const AUDIT_LOG_PATH = path.join(STORAGE_ROOT, "audit-log.jsonl");
+const AUTH_COOKIE_NAME = "AIS_SESSION";
+const AUTH_PASSWORD_ITERATIONS = 210000;
+const AUTH_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const AUDIT_MAX_ROWS = 100000;
+const AUDIT_MAX_CHANGES = 100;
 const STUDENT_DATABASE_SYNC_SCRIPT = path.join(ROOT, "scripts", "sync-student-database.ps1");
 const STUDENT_APPLICATIONS_QUERY_SCRIPT = path.join(ROOT, "scripts", "query-student-applications.ps1");
 const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH = "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
@@ -26,22 +35,91 @@ const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
 const DEFAULT_DOCUMENT_CONVERTER_URL = "http://127.0.0.1:8082";
 const DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL = `http://host.docker.internal:${PORT}`;
+const DEFAULT_OCR_SERVICE_URL = "http://127.0.0.1:8083";
+const OCR_CLI_SCRIPT = path.join(SERVER_CODE_ROOT, "services", "ocr", "server.py");
+const OCR_CLI_RUNTIME_ROOT = path.join(SERVER_CODE_ROOT, "services", "ocr", "runtime");
 const MAX_JSON_BYTES = 40 * 1024 * 1024;
 const MAX_DOCX_BYTES = 24 * 1024 * 1024;
 const MAX_STUDENT_DATABASE_BYTES = 24 * 1024 * 1024;
 const MAX_STUDENT_PHOTO_BYTES = 16 * 1024 * 1024;
+const MAX_OCR_DOCUMENT_BYTES = 24 * 1024 * 1024;
+const MAX_WEBDAV_BROWSER_FILE_BYTES = 24 * 1024 * 1024;
+const MAX_WEBDAV_BROWSER_ENTRIES = 1000;
+const MAX_OCR_DOCUMENT_FILES = 40;
+const MAX_OCR_TOTAL_BYTES = 160 * 1024 * 1024;
 const MAX_STUDENT_DATABASE_EXPORT_STUDENTS = 20000;
 const MAX_STUDENT_DATABASE_EXPORT_EXPENSES = 100000;
+const MAX_STUDENT_DATABASE_EXPORT_CONTRACTS = 20000;
 const MAX_PAYMENT_DATABASE_CONSTANTS = 200;
 const MAX_EMAIL_SUBJECT_LENGTH = 200;
 const STUDENT_IMPORT_JOB_TTL_MS = 15 * 60 * 1000;
+const STUDENT_DOCUMENT_RECOGNITION_JOB_TTL_MS = 30 * 60 * 1000;
 const studentImportJobs = new Map();
 const studentExportJobs = new Map();
+const studentDocumentRecognitionJobs = new Map();
 const serverEmailRateLimits = new Map();
 const documentConversionSources = new Map();
 const DOCUMENT_CONVERSION_SOURCE_TTL_MS = 5 * 60 * 1000;
 const WORD_TEMPLATE_EXTENSIONS = new Set(["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"]);
 const OPENXML_WORD_EXTENSIONS = new Set(["docx", "docm", "dotx", "dotm"]);
+const OCR_DOCUMENT_CONTENT_TYPES = Object.freeze({
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".pdf": "application/pdf"
+});
+const WEBDAV_BROWSER_CONTENT_TYPES = Object.freeze({
+  ".bmp": "image/bmp",
+  ".csv": "text/csv; charset=utf-8",
+  ".doc": "application/msword",
+  ".docm": "application/vnd.ms-word.document.macroEnabled.12",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".gif": "image/gif",
+  ".htm": "text/html; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".json": "application/json; charset=utf-8",
+  ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+  ".odt": "application/vnd.oasis.opendocument.text",
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".rtf": "application/rtf",
+  ".svg": "image/svg+xml; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".webp": "image/webp",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsb": "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+  ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".xml": "application/xml; charset=utf-8",
+  ".zip": "application/zip"
+});
+const OCR_DOCUMENT_FIELD_LABELS = Object.freeze({
+  name: "ФИО",
+  birthDate: "Дата рождения",
+  gender: "Пол",
+  citizenship: "Гражданство",
+  passportType: "Вид документа",
+  passportNumber: "Серия и номер паспорта",
+  passportDate: "Дата выдачи паспорта",
+  passportCode: "Код подразделения",
+  passportIssuer: "Кем выдан паспорт",
+  registrationAddress: "Адрес места регистрации",
+  snils: "СНИЛС",
+  inn: "ИНН",
+  educationLevel: "Уровень образования",
+  educationDocument: "Документ об образовании",
+  educationDocumentSeries: "Серия документа об образовании",
+  educationDocumentNumber: "Номер документа об образовании",
+  educationDocumentDate: "Дата выдачи документа об образовании",
+  educationDocumentIssuer: "Кем выдан документ об образовании",
+  educationSpecialty: "Специальность",
+  educationQualification: "Квалификация",
+  educationDocumentSurname: "Фамилия в документе"
+});
 const PAYMENT_DATABASE_CONSTANT_DEFINITIONS = Object.freeze([
   {
     key: "employeeRate",
@@ -290,6 +368,106 @@ const DIRECT_EXPENSE_DATABASE_COLUMN_MAP = Object.freeze({
   "Рекомендация оплаты": "recommendation",
   "Дополнительная информация": "additionalInfo"
 });
+const GENERAL_EXPENSE_DATABASE_COLUMN_MAP = Object.freeze({
+  "Контрагент": "counterparty",
+  "Дата": "date",
+  "Вид работ": "workType",
+  "Описание": "description",
+  "Сумма": "amount",
+  "Оплачено": "paid",
+  "Закрыто в бухгалтерии": "accountingClosed",
+  "Номер в расходах БК": "bkExpenseNo",
+  "Прочие затраты": "otherExpenses"
+});
+const GENERAL_EXPENSE_DATABASE_SECTIONS = Object.freeze({
+  individuals: "Физлица",
+  organizations: "Организации"
+});
+const CONTRACT_DATABASE_COLUMN_MAP = Object.freeze({
+  "ФИО": "name",
+  "Выплата": "amount",
+  "Услуги": "paid",
+  "Агентские": "agencyAmount",
+  "Остаток": "balance",
+  "Купон": "coupon",
+  "Договор": "contractNo",
+  "Дата договора": "contractDate",
+  "Срок с": "startDate",
+  "Срок по": "endDate",
+  "Сумма": "paymentTerms",
+  "Вид договора": "type",
+  "ДоговорВбухг": "accountingRecorded",
+  "Предмет": "subject",
+  "Должность": "position",
+  "Степень": "degree",
+  "Звание": "academicTitle",
+  "Примечание": "note",
+  "Телефон": "phone",
+  "WhatsApp": "whatsapp",
+  "Email": "email",
+  "АккаунтTelegram": "telegram",
+  "Логин": "login",
+  "Пароль": "password",
+  "ДатаРождения": "birthDate",
+  "Адрес": "address",
+  "СНИЛСф": "snils",
+  "ИННф": "inn",
+  "Гражданство": "citizenship",
+  "ДокумВид": "identityDocumentType",
+  "ДокумСерияНомер": "identityDocument",
+  "ДокумДатаВыдачи": "identityIssueDate",
+  "ДокумКемВыдан": "identityIssuer",
+  "ДокумКодПодразд": "identityDepartmentCode",
+  "Примечание1": "message1",
+  "Примечание2": "message2",
+  "Примечание3": "message3",
+  "Примечание4": "message4",
+  "Примечание5": "message5",
+  "Примечание6": "message6",
+  "Примечание7": "message7",
+  "Примечание8": "message8",
+  "Примечание9": "message9",
+  "Фото": "photoPath",
+  "РасчСч": "settlementAccount",
+  "Банк": "bank",
+  "КорСчет": "correspondentAccount",
+  "БИК": "bic",
+  "EmailУвед": "notificationEmail",
+  "СпрСудДата": "courtCertificateDate",
+  "СпрСудНомер": "courtCertificateNo",
+  "ФлюорогрДата": "fluorographyDate",
+  "СпрСработыДата": "employmentCertificateDate",
+  "КопияТрудовойДата": "employmentRecordCopyDate",
+  "Обр_Вид образования": "educationType",
+  "Обр_Уровень": "educationLevel",
+  "Обр_Серия": "educationSeries",
+  "Обр_Номер": "educationNumber",
+  "Обр_Дата выдачи": "educationIssueDate",
+  "Обр_Кем выдан": "educationIssuer",
+  "Обр_Специальность": "educationSpecialty",
+  "Обр_Квалификация": "educationQualification",
+  "Купон_ID": "couponId",
+  "РеквизитыПортала": "portalCredentials",
+  "ДопНастрКонтр": "additionalSettings"
+});
+const CONTRACT_DATABASE_SECTIONS = Object.freeze({
+  active: "ДЕЙСТВУЮЩИЕ ДОГОВОРА",
+  partners: "ПАРТНЕРСКАЯ ПРОГРАММА",
+  expired: "ИСТЕКШИЕ ДОГОВОРА"
+});
+const CONTRACT_DATABASE_DATE_FIELDS = new Set([
+  "contractDate",
+  "startDate",
+  "endDate",
+  "birthDate",
+  "identityIssueDate",
+  "courtCertificateDate",
+  "fluorographyDate",
+  "employmentCertificateDate",
+  "employmentRecordCopyDate",
+  "educationIssueDate"
+]);
+const CONTRACT_DATABASE_NUMBER_FIELDS = new Set(["amount", "paid", "agencyAmount", "balance"]);
 const INVENTORY_DATABASE_COLUMN_MAP = Object.freeze({
   "Дата": "date",
   "Вид ТМЦ": "itemType",
@@ -351,6 +529,7 @@ const MIME_TYPES = {
 async function ensureStorage() {
   await fs.mkdir(PHOTO_ROOT, { recursive: true });
   await fs.mkdir(DOCUMENT_TEMPLATE_ROOT, { recursive: true });
+  if (process.env.AIS_TRUST_GATEWAY !== "1") await ensureAuthUsers();
   try {
     serverSettings = JSON.parse(await fs.readFile(SERVER_SETTINGS_PATH, "utf8"));
   } catch (error) {
@@ -394,6 +573,673 @@ async function ensureStorage() {
   delete serverSettings.studentPhotoBasePath;
 }
 
+function authBase64UrlEncode(value) {
+  return Buffer.from(value).toString("base64url");
+}
+
+function authHashPassword(password) {
+  const salt = crypto.randomBytes(18);
+  const hash = crypto.pbkdf2Sync(
+    String(password),
+    salt,
+    AUTH_PASSWORD_ITERATIONS,
+    32,
+    "sha256"
+  );
+  return `pbkdf2_sha256$${AUTH_PASSWORD_ITERATIONS}$${authBase64UrlEncode(salt)}$${authBase64UrlEncode(hash)}`;
+}
+
+function authVerifyPassword(password, encoded) {
+  const parts = String(encoded || "").split("$");
+  if (parts.length !== 4 || parts[0] !== "pbkdf2_sha256") return false;
+  const iterations = Number(parts[1]);
+  if (!Number.isInteger(iterations) || iterations < 100000 || iterations > 1000000) return false;
+  try {
+    const salt = Buffer.from(parts[2], "base64url");
+    const expected = Buffer.from(parts[3], "base64url");
+    const actual = crypto.pbkdf2Sync(String(password), salt, iterations, expected.length, "sha256");
+    return expected.length > 0 && crypto.timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
+}
+
+function defaultAuthUsers() {
+  const now = new Date().toISOString();
+  const adminPassword = String(process.env.AIS_INITIAL_ADMIN_PASSWORD || "").trim();
+  if (adminPassword.length < 12) {
+    throw new Error("Для первичного запуска задайте AIS_INITIAL_ADMIN_PASSWORD длиной не менее 12 символов.");
+  }
+  return [
+    { login: "admin", name: "Администратор", role: "admin", password: adminPassword },
+    { login: "simak.varvara", name: "Симак Варвара", role: "manager", password: "123" },
+    { login: "simak.yuriy", name: "Симак Юрий", role: "manager", password: "123" }
+  ].map((item) => ({
+    id: crypto.randomBytes(12).toString("hex"),
+    login: item.login,
+    name: item.name,
+    role: item.role,
+    status: "active",
+    email: "",
+    phone: "",
+    passwordHash: authHashPassword(item.password),
+    createdAt: now,
+    updatedAt: now,
+    lastLoginAt: ""
+  }));
+}
+
+async function writeJsonAtomic(filePath, value) {
+  const temporaryPath = `${filePath}.tmp-${crypto.randomBytes(6).toString("hex")}`;
+  await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await fs.rename(temporaryPath, filePath);
+}
+
+async function ensureAuthUsers() {
+  try {
+    const payload = JSON.parse(await fs.readFile(AUTH_USERS_PATH, "utf8"));
+    if (Array.isArray(payload?.users) && payload.users.length) return payload.users;
+  } catch (error) {
+    if (error.code !== "ENOENT") console.warn(`Не удалось прочитать пользователей: ${error.message}`);
+  }
+  const users = defaultAuthUsers();
+  await writeJsonAtomic(AUTH_USERS_PATH, { version: 1, users });
+  return users;
+}
+
+async function loadAuthUsers() {
+  const payload = JSON.parse(await fs.readFile(AUTH_USERS_PATH, "utf8"));
+  if (!Array.isArray(payload?.users) || !payload.users.length) {
+    throw new Error("Список пользователей пуст или повреждён.");
+  }
+  return payload.users;
+}
+
+async function saveAuthUsers(users) {
+  await writeJsonAtomic(AUTH_USERS_PATH, { version: 1, users });
+}
+
+function normalizeAuthLogin(value) {
+  return String(value || "").trim().toLocaleLowerCase("ru-RU");
+}
+
+function validateAuthLogin(value) {
+  const login = normalizeAuthLogin(value);
+  if (!/^[\p{L}\p{N}._-]{3,64}$/u.test(login)) {
+    throw new Error("Логин должен содержать от 3 до 64 букв, цифр, точек, дефисов или знаков подчёркивания.");
+  }
+  return login;
+}
+
+function publicAuthUser(user) {
+  return {
+    id: String(user?.id || ""),
+    login: String(user?.login || ""),
+    name: String(user?.name || ""),
+    role: String(user?.role || "manager"),
+    status: String(user?.status || "blocked"),
+    email: String(user?.email || ""),
+    phone: String(user?.phone || ""),
+    createdAt: String(user?.createdAt || ""),
+    updatedAt: String(user?.updatedAt || ""),
+    lastLoginAt: String(user?.lastLoginAt || "")
+  };
+}
+
+function auditText(value, limit = 2000) {
+  let text = value;
+  if (text && typeof text === "object") {
+    try {
+      text = JSON.stringify(text);
+    } catch {
+      text = "";
+    }
+  }
+  return Array.from(String(text ?? "").replaceAll("\0", "").trim()).slice(0, limit).join("");
+}
+
+function isAuditSecretField(field) {
+  return /(?:password|passwd|парол|secret|token|credential|jwt|photoData|authorization)/iu
+    .test(String(field || ""));
+}
+
+function normalizeAuditChanges(source) {
+  if (!Array.isArray(source)) return [];
+  return source.slice(0, AUDIT_MAX_CHANGES).flatMap((change) => {
+    if (!change || typeof change !== "object") return [];
+    const field = auditText(change.field, 160);
+    const label = auditText(change.label || field, 240);
+    if (!field && !label) return [];
+    const secret = isAuditSecretField(`${field} ${label}`);
+    return [{
+      field,
+      label,
+      before: secret ? "[скрыто]" : auditText(change.before, 4000),
+      after: secret ? "[скрыто]" : auditText(change.after, 4000)
+    }];
+  });
+}
+
+function getAuditClientIp(req) {
+  const realIp = String(req.headers["x-real-ip"] || "").trim();
+  if (realIp) return realIp.slice(0, 80);
+  return String(req.socket?.remoteAddress || "").trim().slice(0, 80);
+}
+
+async function appendAuditEntry(payload, user, req) {
+  const action = auditText(payload?.action, 240);
+  if (!action) throw new Error("Не указано действие для журнала изменений.");
+  const changes = normalizeAuditChanges(payload?.changes);
+  const entry = {
+    id: crypto.randomBytes(16).toString("hex"),
+    createdAt: new Date().toISOString(),
+    userId: String(user?.id || ""),
+    user: String(user?.login || "system"),
+    userName: String(user?.name || ""),
+    role: String(user?.role || ""),
+    action,
+    area: auditText(payload?.area, 240),
+    entityType: auditText(payload?.entityType, 160),
+    entityId: auditText(payload?.entityId, 240),
+    entityLabel: auditText(payload?.entityLabel, 500),
+    field: auditText(payload?.field, 240),
+    before: auditText(payload?.before, 4000),
+    after: auditText(payload?.after, 4000),
+    details: auditText(payload?.details, 4000),
+    changes,
+    ip: getAuditClientIp(req),
+    userAgent: auditText(req.headers["user-agent"], 500),
+    source: auditText(payload?.source || "web", 80)
+  };
+  if (changes.length) {
+    if (!entry.field) {
+      entry.field = [...new Set(changes.map((change) => change.label || change.field))].join(", ");
+    }
+    if (changes.length === 1) {
+      entry.before = changes[0].before;
+      entry.after = changes[0].after;
+    }
+  }
+  if (isAuditSecretField(entry.field)) {
+    entry.before = "[скрыто]";
+    entry.after = "[скрыто]";
+  }
+  await fs.appendFile(AUDIT_LOG_PATH, `${JSON.stringify(entry)}\n`, { encoding: "utf8", mode: 0o600 });
+  return entry;
+}
+
+async function safelyAppendAuditEntry(payload, user, req) {
+  try {
+    return await appendAuditEntry(payload, user, req);
+  } catch (error) {
+    console.warn(`Не удалось записать журнал изменений: ${error.message}`);
+    return null;
+  }
+}
+
+async function readAuditRows() {
+  let text = "";
+  try {
+    text = await fs.readFile(AUDIT_LOG_PATH, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  return text.split(/\r?\n/)
+    .filter(Boolean)
+    .slice(-AUDIT_MAX_ROWS)
+    .flatMap((line) => {
+      try {
+        const row = JSON.parse(line);
+        return row && typeof row === "object" ? [row] : [];
+      } catch {
+        return [];
+      }
+    })
+    .reverse();
+}
+
+function auditFilterText(filters, key) {
+  return String(filters?.[key] || "").trim().toLocaleLowerCase("ru-RU");
+}
+
+function auditRowSearchText(row) {
+  const changes = normalizeAuditChanges(row?.changes)
+    .map((change) => Object.values(change).join(" ")).join(" ");
+  return [
+    row?.createdAt, row?.user, row?.userName, row?.role, row?.action, row?.area,
+    row?.entityType, row?.entityId, row?.entityLabel, row?.field, row?.before,
+    row?.after, row?.details, row?.ip, row?.userAgent, row?.source, changes
+  ].map((value) => String(value || "")).join(" ").toLocaleLowerCase("ru-RU");
+}
+
+function parseAuditBoundary(value, endOfDay) {
+  let source = String(value || "").trim();
+  if (!source) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(source)) source += endOfDay ? "T23:59:59" : "T00:00:00";
+  const timestamp = Date.parse(source);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function auditRowMatches(row, filters) {
+  const exactEntityType = String(filters?.entityTypeExact || "").trim();
+  const exactEntityId = String(filters?.entityIdExact || "").trim();
+  if (exactEntityType && String(row?.entityType || "") !== exactEntityType) return false;
+  if (exactEntityId && String(row?.entityId || "") !== exactEntityId) return false;
+  const from = parseAuditBoundary(filters.from, false);
+  const to = parseAuditBoundary(filters.to, true);
+  const createdAt = Date.parse(String(row.createdAt || "")) || 0;
+  if (from !== null && createdAt < from) return false;
+  if (to !== null && createdAt > to) return false;
+  const keys = {
+    user: "user", userName: "userName", role: "role", action: "action", area: "area",
+    entityType: "entityType", entityId: "entityId", entityLabel: "entityLabel",
+    field: "field", before: "before", after: "after", details: "details", ip: "ip",
+    userAgent: "userAgent", source: "source"
+  };
+  for (const [filterKey, rowKey] of Object.entries(keys)) {
+    const needle = auditFilterText(filters, filterKey);
+    if (!needle) continue;
+    const haystack = auditText(row[rowKey], 12000).toLocaleLowerCase("ru-RU");
+    if (haystack.includes(needle)) continue;
+    const changes = normalizeAuditChanges(row.changes);
+    let changeValues = "";
+    if (filterKey === "field") {
+      changeValues = changes.map((change) => `${change.field} ${change.label}`).join(" ");
+    } else if (["before", "after"].includes(filterKey)) {
+      changeValues = changes.map((change) => change[filterKey]).join(" ");
+    } else {
+      return false;
+    }
+    if (!changeValues.toLocaleLowerCase("ru-RU").includes(needle)) return false;
+  }
+  const query = auditFilterText(filters, "q");
+  return !query || auditRowSearchText(row).includes(query);
+}
+
+function getAuditFilters(searchParams) {
+  const filters = {};
+  for (const key of [
+    "q", "from", "to", "user", "userName", "role", "action", "area", "entityType",
+    "entityId", "entityLabel", "field", "before", "after", "details", "ip",
+    "userAgent", "source"
+  ]) filters[key] = String(searchParams.get(key) || "");
+  return filters;
+}
+
+function getAuditFilterOptions(rows) {
+  const options = {};
+  for (const key of ["user", "role", "action", "area", "entityType", "source"]) {
+    options[key] = [...new Set(rows.map((row) => String(row[key] || "").trim()).filter(Boolean))]
+      .sort((left, right) => left.localeCompare(right, "ru", { numeric: true, sensitivity: "base" }));
+  }
+  return options;
+}
+
+function auditCsvCell(value) {
+  return `"${auditText(value, 32000).replaceAll('"', '""')}"`;
+}
+
+function auditChangesColumn(row, key) {
+  return normalizeAuditChanges(row.changes).map((change) => {
+    const label = change.label || change.field;
+    return `${label}${change[key] ? `: ${change[key]}` : ""}`;
+  }).join("\n");
+}
+
+function buildAuditCsv(rows) {
+  const columns = [
+    ["createdAt", "Дата и время"], ["user", "Логин"], ["userName", "Пользователь"],
+    ["role", "Роль"], ["action", "Действие"], ["area", "Раздел"],
+    ["entityType", "Тип объекта"], ["entityId", "ID объекта"], ["entityLabel", "Объект"],
+    ["field", "Поля"], ["before", "Было"], ["after", "Стало"],
+    ["details", "Подробности"], ["ip", "IP"], ["userAgent", "Клиент"], ["source", "Источник"]
+  ];
+  const lines = [columns.map(([, label]) => auditCsvCell(label)).join(";")];
+  rows.forEach((row) => {
+    lines.push(columns.map(([key]) => {
+      if (key === "before" && row.changes?.length) return auditCsvCell(auditChangesColumn(row, "before"));
+      if (key === "after" && row.changes?.length) return auditCsvCell(auditChangesColumn(row, "after"));
+      return auditCsvCell(row[key]);
+    }).join(";"));
+  });
+  return Buffer.from(`\ufeff${lines.join("\r\n")}`, "utf8");
+}
+
+async function handleAuditRequest(req, res, user, requestUrl) {
+  if (req.method === "POST" && requestUrl.pathname === "/api/audit/log") {
+    const entry = await appendAuditEntry(await readJsonBody(req), user, req);
+    sendJson(res, 201, { ok: true, entry });
+    return true;
+  }
+  const adminPaths = new Set(["/api/admin/audit", "/api/admin/audit/export"]);
+  const studentPaths = new Set(["/api/students/audit", "/api/students/audit/export"]);
+  if (!adminPaths.has(requestUrl.pathname) && !studentPaths.has(requestUrl.pathname)) return false;
+  if (adminPaths.has(requestUrl.pathname) && user.role !== "admin") {
+    sendError(res, 403, "Раздел доступен только администратору.");
+    return true;
+  }
+  if (req.method !== "GET") {
+    sendError(res, 405, "Method not allowed");
+    return true;
+  }
+  const rows = await readAuditRows();
+  const filters = getAuditFilters(requestUrl.searchParams);
+  let scopedRows = rows;
+  let exportPrefix = "audit-log";
+  if (studentPaths.has(requestUrl.pathname)) {
+    const studentId = String(requestUrl.searchParams.get("studentId") || "").trim();
+    if (!studentId || studentId.length > 240) {
+      sendError(res, 400, "Не указан слушатель для просмотра журнала.");
+      return true;
+    }
+    const scope = { entityTypeExact: "students", entityIdExact: studentId };
+    scopedRows = rows.filter((row) => auditRowMatches(row, scope));
+    filters.entityTypeExact = "students";
+    filters.entityIdExact = studentId;
+    exportPrefix = `student-audit-${studentId.replace(/[^A-Za-z0-9_-]+/g, "-").slice(0, 80) || "log"}`;
+  }
+  const filtered = rows.filter((row) => auditRowMatches(row, filters));
+  if (requestUrl.pathname.endsWith("/export")) {
+    sendFile(
+      res,
+      200,
+      buildAuditCsv(filtered),
+      `${exportPrefix}-${new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19)}.csv`,
+      "text/csv; charset=utf-8"
+    );
+    return true;
+  }
+  const pageSize = Math.max(10, Math.min(200, Number(requestUrl.searchParams.get("pageSize")) || 50));
+  const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const page = Math.max(1, Math.min(pages, Number(requestUrl.searchParams.get("page")) || 1));
+  sendJson(res, 200, {
+    items: filtered.slice((page - 1) * pageSize, page * pageSize),
+    total: filtered.length,
+    page,
+    pageSize,
+    pages,
+    options: getAuditFilterOptions(scopedRows)
+  });
+  return true;
+}
+
+async function loadAuthSessions() {
+  try {
+    const payload = JSON.parse(await fs.readFile(AUTH_SESSIONS_PATH, "utf8"));
+    return Array.isArray(payload?.sessions) ? payload.sessions : [];
+  } catch (error) {
+    if (error.code !== "ENOENT") console.warn(`Не удалось прочитать сессии: ${error.message}`);
+    return [];
+  }
+}
+
+async function saveAuthSessions(sessions) {
+  await writeJsonAtomic(AUTH_SESSIONS_PATH, { version: 1, sessions });
+}
+
+function parseRequestCookies(req) {
+  return String(req.headers.cookie || "").split(";").reduce((result, item) => {
+    const separator = item.indexOf("=");
+    if (separator < 1) return result;
+    const name = item.slice(0, separator).trim();
+    const value = item.slice(separator + 1).trim();
+    if (name) result[name] = decodeURIComponent(value);
+    return result;
+  }, {});
+}
+
+function authCookieHeader(token, req, maxAge = null) {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").toLowerCase();
+  const secure = forwardedProto === "https" || Boolean(req.socket?.encrypted);
+  const parts = [
+    `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Strict"
+  ];
+  if (secure) parts.push("Secure");
+  if (maxAge !== null) parts.push(`Max-Age=${Math.max(0, Number(maxAge) || 0)}`);
+  return parts.join("; ");
+}
+
+async function createAuthSession(userId) {
+  const token = crypto.randomBytes(32).toString("base64url");
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const now = Date.now();
+  const expiresAt = now + AUTH_SESSION_TTL_MS;
+  const sessions = (await loadAuthSessions()).filter((session) => Number(session.expiresAt) > now);
+  sessions.push({ tokenHash, userId, createdAt: now, expiresAt });
+  await saveAuthSessions(sessions);
+  return { token, expiresAt };
+}
+
+async function destroyAuthSession(req) {
+  const token = parseRequestCookies(req)[AUTH_COOKIE_NAME] || "";
+  if (!token) return;
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const sessions = (await loadAuthSessions()).filter((session) => session.tokenHash !== tokenHash);
+  await saveAuthSessions(sessions);
+}
+
+async function getRequestAuthUser(req) {
+  if (process.env.AIS_TRUST_GATEWAY === "1") {
+    return { id: "gateway", login: "gateway", name: "Gateway", role: "admin", status: "active" };
+  }
+  const token = parseRequestCookies(req)[AUTH_COOKIE_NAME] || "";
+  if (!token) return null;
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const now = Date.now();
+  const sessions = await loadAuthSessions();
+  const session = sessions.find((item) => item.tokenHash === tokenHash && Number(item.expiresAt) > now);
+  if (!session) return null;
+  const users = await loadAuthUsers();
+  const user = users.find((item) => item.id === session.userId && item.status === "active");
+  return user
+    ? { ...publicAuthUser(user), sessionExpiresAt: Number(session.expiresAt) || 0 }
+    : null;
+}
+
+function validateAuthEmail(value) {
+  const email = String(value || "").trim();
+  if (email && !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(email)) {
+    throw new Error("Укажите корректный email.");
+  }
+  return email.slice(0, 160);
+}
+
+function validateAuthPhone(value) {
+  const phone = String(value || "").trim();
+  if (Array.from(phone).length > 40) throw new Error("Номер телефона слишком длинный.");
+  return phone;
+}
+
+async function handleAuthLogin(req, res) {
+  const body = await readJsonBody(req);
+  const users = await loadAuthUsers();
+  const login = normalizeAuthLogin(body.login);
+  const index = users.findIndex((user) => normalizeAuthLogin(user.login) === login);
+  if (index < 0 || users[index].status !== "active" || !authVerifyPassword(body.password, users[index].passwordHash)) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    sendError(res, 401, "Неверный логин или пароль.");
+    return;
+  }
+  users[index].lastLoginAt = new Date().toISOString();
+  await saveAuthUsers(users);
+  const session = await createAuthSession(users[index].id);
+  await safelyAppendAuditEntry({
+    action: "Вход в систему",
+    area: "Авторизация",
+    entityType: "user",
+    entityId: users[index].id,
+    entityLabel: users[index].login
+  }, publicAuthUser(users[index]), req);
+  sendJson(res, 200, {
+    ok: true,
+    user: publicAuthUser(users[index]),
+    sessionExpiresAt: session.expiresAt
+  }, {
+    "Set-Cookie": authCookieHeader(session.token, req)
+  });
+}
+
+async function handleAuthMe(req, res, user) {
+  if (!user) {
+    sendError(res, 401, "Требуется вход в систему.");
+    return;
+  }
+  sendJson(res, 200, {
+    ok: true,
+    user: publicAuthUser(user),
+    sessionExpiresAt: Number(user.sessionExpiresAt) || 0
+  });
+}
+
+async function handleAuthLogout(req, res) {
+  const user = await getRequestAuthUser(req);
+  if (user) {
+    await safelyAppendAuditEntry({
+      action: "Выход из системы",
+      area: "Авторизация",
+      entityType: "user",
+      entityId: user.id,
+      entityLabel: user.login
+    }, user, req);
+  }
+  await destroyAuthSession(req);
+  sendJson(res, 200, { ok: true }, {
+    "Set-Cookie": authCookieHeader("", req, 0)
+  });
+}
+
+async function handleAuthProfile(req, res, user) {
+  const body = await readJsonBody(req);
+  const users = await loadAuthUsers();
+  const index = users.findIndex((item) => item.id === user.id);
+  if (index < 0) throw new Error("Пользователь не найден.");
+  users[index].email = validateAuthEmail(body.email);
+  users[index].phone = validateAuthPhone(body.phone);
+  users[index].updatedAt = new Date().toISOString();
+  await saveAuthUsers(users);
+  await safelyAppendAuditEntry({
+    action: "Изменён личный кабинет",
+    area: "Пользователи",
+    entityType: "user",
+    entityId: user.id,
+    entityLabel: user.login,
+    changes: [
+      { field: "email", label: "Email", before: user.email, after: users[index].email },
+      { field: "phone", label: "Телефон", before: user.phone, after: users[index].phone }
+    ]
+  }, publicAuthUser(users[index]), req);
+  sendJson(res, 200, { ok: true, user: publicAuthUser(users[index]) });
+}
+
+async function handleAuthPassword(req, res, user) {
+  const body = await readJsonBody(req);
+  const newPassword = String(body.newPassword || "");
+  if (Array.from(newPassword).length < 6) throw new Error("Новый пароль должен содержать не менее 6 символов.");
+  const users = await loadAuthUsers();
+  const index = users.findIndex((item) => item.id === user.id);
+  if (index < 0) throw new Error("Пользователь не найден.");
+  if (!authVerifyPassword(body.currentPassword, users[index].passwordHash)) {
+    sendError(res, 400, "Текущий пароль указан неверно.");
+    return;
+  }
+  users[index].passwordHash = authHashPassword(newPassword);
+  users[index].updatedAt = new Date().toISOString();
+  await saveAuthUsers(users);
+  await safelyAppendAuditEntry({
+    action: "Изменён пароль",
+    area: "Пользователи",
+    entityType: "user",
+    entityId: user.id,
+    entityLabel: user.login,
+    field: "password",
+    before: "[скрыто]",
+    after: "[скрыто]"
+  }, user, req);
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleAdminUsers(req, res, user) {
+  if (user.role !== "admin") {
+    sendError(res, 403, "Раздел доступен только администратору.");
+    return;
+  }
+  if (req.method === "GET") {
+    sendJson(res, 200, { users: (await loadAuthUsers()).map(publicAuthUser) });
+    return;
+  }
+  if (req.method !== "POST") {
+    sendError(res, 405, "Method not allowed");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const users = await loadAuthUsers();
+  const id = String(body.id || "").trim();
+  const before = users.find((item) => item.id === id);
+  const login = validateAuthLogin(body.login);
+  const name = String(body.name || "").trim();
+  const role = String(body.role || "manager");
+  const status = String(body.status || "active");
+  let password = String(body.password || "");
+  if (!name || Array.from(name).length > 120) throw new Error("Укажите имя пользователя.");
+  if (!new Set(["admin", "manager"]).has(role)) throw new Error("Выбрана неизвестная роль.");
+  if (!new Set(["active", "blocked"]).has(status)) throw new Error("Выбран неизвестный статус.");
+  if (users.some((item) => item.id !== id && normalizeAuthLogin(item.login) === login)) {
+    throw new Error("Пользователь с таким логином уже существует.");
+  }
+  const now = new Date().toISOString();
+  let index = users.findIndex((item) => item.id === id);
+  if (index < 0) {
+    if (!password) password = role === "manager" ? "123" : "";
+    if (Array.from(password).length < 3) throw new Error("Для новой учётной записи укажите пароль.");
+    users.push({
+      id: crypto.randomBytes(12).toString("hex"), login, name, role, status,
+      email: validateAuthEmail(body.email), phone: validateAuthPhone(body.phone),
+      passwordHash: authHashPassword(password), createdAt: now, updatedAt: now, lastLoginAt: ""
+    });
+    index = users.length - 1;
+  } else {
+    if (users[index].id === user.id && (role !== "admin" || status !== "active")) {
+      throw new Error("Нельзя ограничить доступ текущей учётной записи администратора.");
+    }
+    users[index] = {
+      ...users[index], login, name, role, status,
+      email: validateAuthEmail(body.email), phone: validateAuthPhone(body.phone), updatedAt: now
+    };
+    if (password) {
+      if (Array.from(password).length < 3) throw new Error("Пароль должен содержать не менее 3 символов.");
+      users[index].passwordHash = authHashPassword(password);
+    }
+  }
+  const activeAdmins = users.filter((item) => item.role === "admin" && item.status === "active").length;
+  if (!activeAdmins) throw new Error("В системе должен оставаться хотя бы один активный администратор.");
+  await saveAuthUsers(users);
+  const saved = publicAuthUser(users[index]);
+  const changes = [];
+  for (const [key, label] of Object.entries({
+    login: "Логин", name: "Имя", role: "Роль", status: "Статус", email: "Email", phone: "Телефон"
+  })) {
+    const oldValue = String(before?.[key] || "");
+    const newValue = String(saved[key] || "");
+    if (oldValue !== newValue) changes.push({ field: key, label, before: oldValue, after: newValue });
+  }
+  if (String(body.password || "")) {
+    changes.push({ field: "password", label: "Пароль", before: "[скрыто]", after: "[скрыто]" });
+  }
+  await safelyAppendAuditEntry({
+    action: before ? "Изменён пользователь" : "Создан пользователь",
+    area: "Пользователи",
+    entityType: "user",
+    entityId: saved.id,
+    entityLabel: saved.login,
+    changes
+  }, user, req);
+  sendJson(res, 200, { ok: true, user: saved });
+}
+
 async function saveServerSettings(patch) {
   serverSettings = {
     ...serverSettings,
@@ -407,11 +1253,12 @@ async function saveServerSettings(patch) {
   return serverSettings;
 }
 
-function sendJson(res, status, payload) {
+function sendJson(res, status, payload, extraHeaders = {}) {
   res.writeHead(status, {
     ...CORS_HEADERS,
     "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store"
+    "Cache-Control": "no-store",
+    ...extraHeaders
   });
   res.end(JSON.stringify(payload));
 }
@@ -2545,6 +3392,37 @@ function resolveLocalDocumentsPath(source, missingPathMessage = "Не удало
   return folderPath;
 }
 
+function resolveLocalSystemDocumentsFolder() {
+  const rootSource = String(
+    serverSettings.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
+  ).trim();
+  if (!rootSource || !path.isAbsolute(rootSource)) return "";
+  const baseParts = normalizeWebDavPath(
+    serverSettings.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+  ).split("/").filter(Boolean);
+  if (serverSettings.localDocumentsRootIsSystemParent && baseParts.length > 1) {
+    baseParts.splice(0, baseParts.length - 1);
+  }
+  return path.resolve(rootSource, ...baseParts);
+}
+
+async function getLocalSystemDocumentsAvailability() {
+  const folderPath = resolveLocalSystemDocumentsFolder();
+  if (!folderPath) return { available: false, path: "" };
+  try {
+    const stats = await fs.stat(folderPath);
+    return { available: stats.isDirectory(), path: folderPath };
+  } catch {
+    return { available: false, path: folderPath };
+  }
+}
+
+async function useWebDavWhenLocalDocumentsUnavailable(source) {
+  if (source !== "local") return source;
+  const localDocuments = await getLocalSystemDocumentsAvailability();
+  return localDocuments.available ? "local" : "webdav";
+}
+
 function resolveLocalDocumentsFolder(source) {
   return resolveLocalDocumentsPath(source);
 }
@@ -2771,11 +3649,44 @@ function showLocalDocumentSaveDialog(initialPath, outputFormat) {
     "$dialog.Filter = if ($env:AIS_SAVE_FORMAT -eq 'pdf') { 'Документ PDF (*.pdf)|*.pdf' } else { 'Документ Word (*.docx)|*.docx' }",
     "$dialog.DefaultExt = $env:AIS_SAVE_FORMAT",
     "$dialog.AddExtension = $true",
-    "$dialog.OverwritePrompt = $true",
+    "$dialog.OverwritePrompt = $false",
     "$dialog.RestoreDirectory = $true",
-    "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {",
+    "function Confirm-RussianFileReplacement([string]$FilePath) {",
+    "  $form = New-Object System.Windows.Forms.Form",
+    "  $form.Text = 'Подтверждение замены'",
+    "  $form.ClientSize = New-Object System.Drawing.Size(460, 150)",
+    "  $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen",
+    "  $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog",
+    "  $form.MaximizeBox = $false",
+    "  $form.MinimizeBox = $false",
+    "  $form.ShowInTaskbar = $true",
+    "  $form.TopMost = $true",
+    "  $label = New-Object System.Windows.Forms.Label",
+    "  $label.AutoSize = $false",
+    "  $label.Location = New-Object System.Drawing.Point(20, 18)",
+    "  $label.Size = New-Object System.Drawing.Size(420, 62)",
+    "  $label.Text = 'Файл «' + [IO.Path]::GetFileName($FilePath) + '» уже существует.' + [Environment]::NewLine + 'Заменить его?'",
+    "  $yesButton = New-Object System.Windows.Forms.Button",
+    "  $yesButton.Text = 'Да'",
+    "  $yesButton.DialogResult = [System.Windows.Forms.DialogResult]::Yes",
+    "  $yesButton.Location = New-Object System.Drawing.Point(270, 98)",
+    "  $yesButton.Size = New-Object System.Drawing.Size(80, 30)",
+    "  $noButton = New-Object System.Windows.Forms.Button",
+    "  $noButton.Text = 'Нет'",
+    "  $noButton.DialogResult = [System.Windows.Forms.DialogResult]::No",
+    "  $noButton.Location = New-Object System.Drawing.Point(360, 98)",
+    "  $noButton.Size = New-Object System.Drawing.Size(80, 30)",
+    "  $form.Controls.AddRange(@($label, $yesButton, $noButton))",
+    "  $form.AcceptButton = $yesButton",
+    "  $form.CancelButton = $noButton",
+    "  return $form.ShowDialog() -eq [System.Windows.Forms.DialogResult]::Yes",
+    "}",
+    "while ($true) {",
+    "  if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { break }",
     "  $selectedPath = [IO.Path]::ChangeExtension($dialog.FileName, '.' + $env:AIS_SAVE_FORMAT)",
+    "  if ((Test-Path -LiteralPath $selectedPath -PathType Leaf) -and -not (Confirm-RussianFileReplacement $selectedPath)) { continue }",
     "  [Console]::Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($selectedPath)))",
+    "  break",
     "}"
   ].join("; ");
   const args = [
@@ -3146,8 +4057,14 @@ function requestYandexWebDav(method, davPath, options = {}) {
           ));
           return;
         }
+        let targetPath = target.pathname;
+        try {
+          targetPath = decodeURIComponent(targetPath);
+        } catch {
+          // Keep the encoded path when it contains a malformed escape sequence.
+        }
         reject(new Error(
-          `Яндекс-Диск вернул HTTP ${response.statusCode}: ${Buffer.concat(chunks).toString("utf8").slice(0, 240)}`
+          `Яндекс-Диск вернул HTTP ${response.statusCode} для ${targetPath}: ${Buffer.concat(chunks).toString("utf8").slice(0, 240)}`
         ));
       });
     });
@@ -3227,6 +4144,1028 @@ async function handleEnsureStudentDocumentFolders(req, res) {
     });
   } catch (error) {
     sendError(res, 400, error.message);
+  }
+}
+
+function decodeXmlEntities(value) {
+  return String(value || "")
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#([0-9]+);/g, (_, code) => String.fromCodePoint(Number.parseInt(code, 10)))
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&");
+}
+
+function webDavXmlTagValue(block, localName) {
+  const expression = new RegExp(
+    `<(?:(?:[\\w.-]+):)?${localName}\\b[^>]*>([\\s\\S]*?)<\\/(?:(?:[\\w.-]+):)?${localName}>`,
+    "i"
+  );
+  const match = expression.exec(block);
+  return match ? decodeXmlEntities(match[1].replace(/<[^>]*>/g, "")).trim() : "";
+}
+
+function decodeWebDavHref(value) {
+  try {
+    return normalizeWebDavPath(decodeURIComponent(
+      new URL(String(value || ""), "https://webdav.yandex.ru").pathname
+    ));
+  } catch {
+    return normalizeWebDavPath(String(value || ""));
+  }
+}
+
+function parseWebDavDirectoryEntries(xml) {
+  const responseBlocks = String(xml || "").match(
+    /<(?:(?:[\w.-]+):)?response\b[\s\S]*?<\/(?:(?:[\w.-]+):)?response>/gi
+  ) || [];
+  return responseBlocks.map((block) => {
+    const href = decodeWebDavHref(webDavXmlTagValue(block, "href"));
+    const displayName = webDavXmlTagValue(block, "displayname");
+    const contentLength = Number(webDavXmlTagValue(block, "getcontentlength")) || 0;
+    const modifiedAt = webDavXmlTagValue(block, "getlastmodified");
+    const isCollection = /<(?:(?:[\w.-]+):)?collection(?:\s[^>]*)?\/?>/i.test(block);
+    return {
+      href,
+      displayName: displayName || path.posix.basename(href),
+      contentLength,
+      modifiedAt,
+      isCollection
+    };
+  }).filter((entry) => entry.href);
+}
+
+function getOcrDocumentContentType(fileName) {
+  return OCR_DOCUMENT_CONTENT_TYPES[path.extname(String(fileName || "")).toLowerCase()] || "";
+}
+
+async function collectLocalOcrDocuments(folderSource) {
+  const rootPath = resolveLocalDocumentsFolder(folderSource);
+  const rootStat = await fs.stat(rootPath);
+  if (!rootStat.isDirectory()) throw new Error("Локальный путь слушателя не является папкой.");
+  const documents = [];
+  let skippedCount = 0;
+  let totalBytes = 0;
+  const pending = [{ folderPath: rootPath, relativeFolder: "", depth: 0 }];
+  while (pending.length && documents.length < MAX_OCR_DOCUMENT_FILES) {
+    const current = pending.shift();
+    const entries = await fs.readdir(current.folderPath, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name, "ru", {
+      numeric: true,
+      sensitivity: "base"
+    }));
+    for (const entry of entries) {
+      if (documents.length >= MAX_OCR_DOCUMENT_FILES) {
+        skippedCount += 1;
+        continue;
+      }
+      if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
+      const entryPath = path.join(current.folderPath, entry.name);
+      const relativeName = current.relativeFolder
+        ? `${current.relativeFolder}/${entry.name}`
+        : entry.name;
+      if (entry.isDirectory()) {
+        if (current.depth < 2) {
+          pending.push({
+            folderPath: entryPath,
+            relativeFolder: relativeName,
+            depth: current.depth + 1
+          });
+        }
+        continue;
+      }
+      const contentType = getOcrDocumentContentType(entry.name);
+      if (!entry.isFile() || !contentType) continue;
+      const stat = await fs.stat(entryPath);
+      if (
+        !stat.size
+        || stat.size > MAX_OCR_DOCUMENT_BYTES
+        || totalBytes + stat.size > MAX_OCR_TOTAL_BYTES
+      ) {
+        skippedCount += 1;
+        continue;
+      }
+      totalBytes += stat.size;
+      documents.push({
+        source: "local",
+        fileName: entry.name,
+        relativeName,
+        contentType,
+        size: stat.size,
+        localPath: entryPath
+      });
+    }
+  }
+  return {
+    source: "local",
+    sourceLabel: "Локальная папка",
+    documents,
+    skippedCount,
+    totalBytes
+  };
+}
+
+async function readWebDavDirectory(davPath) {
+  const response = await requestYandexWebDav("PROPFIND", davPath, {
+    acceptedStatuses: [207],
+    headers: { Depth: "1" },
+    contentType: "application/xml; charset=utf-8",
+    body: '<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><displayname/><resourcetype/><getcontentlength/><getlastmodified/></prop></propfind>',
+    maxResponseBytes: 4 * 1024 * 1024
+  });
+  return parseWebDavDirectoryEntries(response.body.toString("utf8"));
+}
+
+function normalizeStudentWebDavRelativePath(value, allowEmpty = true) {
+  const source = String(value || "").trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!source) {
+    if (allowEmpty) return "";
+    throw new Error("Не указан путь к файлу.");
+  }
+  const parts = source.split("/").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length || parts.some((part) => part === "." || part === "..")) {
+    throw new Error("Путь содержит недопустимые сегменты.");
+  }
+  return parts.join("/");
+}
+
+function resolveStudentWebDavBrowserResource(folderSource, relativePath = "", allowEmpty = true) {
+  const rootPath = normalizeWebDavPath(resolveConfiguredYandexWebDavPath(folderSource)).replace(/\/+$/g, "");
+  if (!rootPath) throw new Error("Не удалось определить папку документов слушателя.");
+  const normalizedRelativePath = normalizeStudentWebDavRelativePath(relativePath, allowEmpty);
+  const targetPath = normalizedRelativePath
+    ? normalizeWebDavPath(`${rootPath}/${normalizedRelativePath}`).replace(/\/+$/g, "")
+    : rootPath;
+  const rootKey = rootPath.toLocaleLowerCase("ru-RU");
+  const targetKey = targetPath.toLocaleLowerCase("ru-RU");
+  if (targetKey !== rootKey && !targetKey.startsWith(`${rootKey}/`)) {
+    throw new Error("Запрошенный путь находится за пределами папки слушателя.");
+  }
+  return { rootPath, targetPath, relativePath: normalizedRelativePath };
+}
+
+function getWebDavBrowserContentType(fileName) {
+  return WEBDAV_BROWSER_CONTENT_TYPES[path.extname(String(fileName || "")).toLowerCase()]
+    || "application/octet-stream";
+}
+
+function isWebDavBrowserPreviewable(contentType) {
+  const type = String(contentType || "").toLowerCase();
+  return type.startsWith("image/")
+    || type.startsWith("text/")
+    || type.startsWith("application/json")
+    || type.startsWith("application/xml")
+    || type === "application/pdf";
+}
+
+function safeWebDavUploadFileName(value) {
+  const source = path.posix.basename(String(value || "").trim().replace(/\\/g, "/"));
+  const cleaned = source
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .replace(/[. ]+$/g, "")
+    .slice(0, 180)
+    .trim();
+  if (!cleaned || cleaned === "." || cleaned === "..") {
+    throw new Error("У файла отсутствует корректное имя.");
+  }
+  return cleaned;
+}
+
+async function handleStudentWebDavDocumentsList(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const location = resolveStudentWebDavBrowserResource(body.folder, body.path || "");
+    const targetKey = location.targetPath.toLocaleLowerCase("ru-RU");
+    const entries = (await readWebDavDirectory(location.targetPath))
+      .filter((entry) => {
+        const entryPath = normalizeWebDavPath(entry.href).replace(/\/+$/g, "");
+        const entryKey = entryPath.toLocaleLowerCase("ru-RU");
+        if (entryKey === targetKey || !entryKey.startsWith(`${targetKey}/`)) return false;
+        return !path.posix.relative(location.targetPath, entryPath).includes("/");
+      })
+      .slice(0, MAX_WEBDAV_BROWSER_ENTRIES)
+      .map((entry) => {
+        const name = String(path.posix.basename(normalizeWebDavPath(entry.href))).trim();
+        const relativePath = normalizeStudentWebDavRelativePath(
+          [location.relativePath, name].filter(Boolean).join("/"),
+          false
+        );
+        const contentType = entry.isCollection ? "" : getWebDavBrowserContentType(name);
+        return {
+          name,
+          path: relativePath,
+          isDirectory: Boolean(entry.isCollection),
+          size: Number(entry.contentLength || 0),
+          modifiedAt: String(entry.modifiedAt || ""),
+          contentType,
+          previewable: !entry.isCollection && isWebDavBrowserPreviewable(contentType)
+        };
+      })
+      .sort((left, right) => (
+        Number(right.isDirectory) - Number(left.isDirectory)
+        || left.name.localeCompare(right.name, "ru", { numeric: true, sensitivity: "base" })
+      ));
+    sendJson(res, 200, {
+      path: location.relativePath,
+      entries,
+      truncated: entries.length >= MAX_WEBDAV_BROWSER_ENTRIES
+    });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleStudentWebDavDocumentFile(req, res, requestUrl) {
+  try {
+    const folder = String(requestUrl.searchParams.get("folder") || "");
+    const relativePath = String(requestUrl.searchParams.get("path") || "");
+    const location = resolveStudentWebDavBrowserResource(folder, relativePath, false);
+    const fileName = path.posix.basename(location.relativePath);
+    const response = await requestYandexWebDav("GET", location.targetPath, {
+      acceptedStatuses: [200],
+      maxResponseBytes: MAX_WEBDAV_BROWSER_FILE_BYTES
+    });
+    if (!response.body.length) throw new Error("Файл пустой.");
+    const disposition = requestUrl.searchParams.get("download") === "1" ? "attachment" : "inline";
+    const encodedName = encodeURIComponent(fileName).replace(/['()]/g, escape);
+    const contentType = getWebDavBrowserContentType(fileName);
+    const securityHeaders = {
+      "Content-Disposition": `${disposition}; filename*=UTF-8''${encodedName}`,
+      "X-Content-Type-Options": "nosniff"
+    };
+    if (/^(?:text\/html|image\/svg\+xml|application\/(?:xml|xhtml\+xml))/iu.test(contentType)) {
+      securityHeaders["Content-Security-Policy"] = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:";
+    }
+    sendFile(res, 200, response.body, fileName, contentType, securityHeaders);
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleStudentWebDavDocumentUpload(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const directory = resolveStudentWebDavBrowserResource(body.folder, body.path || "");
+    const fileName = safeWebDavUploadFileName(body.fileName);
+    const encoded = String(body.dataBase64 || "").replace(/\s+/g, "");
+    if (!/^[a-z0-9+/]*={0,2}$/i.test(encoded)) throw new Error("Файл передан в некорректном формате.");
+    const bytes = Buffer.from(encoded, "base64");
+    if (!bytes.length) throw new Error("Нельзя загрузить пустой файл.");
+    if (bytes.length > MAX_WEBDAV_BROWSER_FILE_BYTES) {
+      throw new Error("Размер одного файла не должен превышать 24 МБ.");
+    }
+    await ensureYandexDiskFolder(directory.targetPath);
+    const target = resolveStudentWebDavBrowserResource(
+      body.folder,
+      [directory.relativePath, fileName].filter(Boolean).join("/"),
+      false
+    );
+    const contentType = String(body.contentType || "").trim() || getWebDavBrowserContentType(fileName);
+    await requestYandexWebDav("PUT", target.targetPath, {
+      acceptedStatuses: [200, 201, 204],
+      body: bytes,
+      contentType
+    });
+    sendJson(res, 201, {
+      name: fileName,
+      path: target.relativePath,
+      size: bytes.length,
+      contentType,
+      previewable: isWebDavBrowserPreviewable(contentType)
+    });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function collectWebDavOcrDocuments(folderSource) {
+  const rootPath = resolveConfiguredYandexWebDavPath(folderSource);
+  const rootKey = normalizeWebDavPath(rootPath).replace(/\/+$/g, "").toLocaleLowerCase("ru-RU");
+  const documents = [];
+  let skippedCount = 0;
+  let totalBytes = 0;
+  const visited = new Set();
+  const pending = [{ davPath: rootPath, relativeFolder: "", depth: 0 }];
+  while (pending.length && documents.length < MAX_OCR_DOCUMENT_FILES) {
+    const current = pending.shift();
+    const currentKey = normalizeWebDavPath(current.davPath).replace(/\/+$/g, "").toLocaleLowerCase("ru-RU");
+    if (visited.has(currentKey)) continue;
+    visited.add(currentKey);
+    const entries = await readWebDavDirectory(current.davPath);
+    for (const entry of entries) {
+      const entryKey = normalizeWebDavPath(entry.href).replace(/\/+$/g, "").toLocaleLowerCase("ru-RU");
+      if (
+        entryKey === currentKey
+        || (entryKey !== rootKey && !entryKey.startsWith(`${rootKey}/`))
+      ) continue;
+      const relativeName = current.relativeFolder
+        ? `${current.relativeFolder}/${entry.displayName}`
+        : entry.displayName;
+      if (entry.isCollection) {
+        if (current.depth < 2 && !visited.has(entryKey)) {
+          pending.push({
+            davPath: entry.href,
+            relativeFolder: relativeName,
+            depth: current.depth + 1
+          });
+        }
+        continue;
+      }
+      const contentType = getOcrDocumentContentType(entry.displayName);
+      if (!contentType) continue;
+      if (documents.length >= MAX_OCR_DOCUMENT_FILES) {
+        skippedCount += 1;
+        continue;
+      }
+      if (
+        entry.contentLength > MAX_OCR_DOCUMENT_BYTES
+        || totalBytes + entry.contentLength > MAX_OCR_TOTAL_BYTES
+      ) {
+        skippedCount += 1;
+        continue;
+      }
+      totalBytes += entry.contentLength;
+      documents.push({
+        source: "webdav",
+        fileName: entry.displayName,
+        relativeName,
+        contentType,
+        size: entry.contentLength,
+        davPath: entry.href
+      });
+    }
+  }
+  documents.sort((left, right) => left.relativeName.localeCompare(right.relativeName, "ru", {
+    numeric: true,
+    sensitivity: "base"
+  }));
+  return {
+    source: "webdav",
+    sourceLabel: "Яндекс-Диск",
+    documents,
+    skippedCount,
+    totalBytes
+  };
+}
+
+function normalizeStudentOcrSource(value) {
+  const fallback = serverSettings.openDocumentsLocally !== false ? "local" : "webdav";
+  const source = String(value || fallback).trim().toLowerCase();
+  if (!["local", "webdav"].includes(source)) {
+    throw new Error("Указан неподдерживаемый источник документов слушателя.");
+  }
+  return source;
+}
+
+function getStudentOcrSourceLabel(source) {
+  return source === "local" ? "Локальная папка" : "Яндекс-Диск";
+}
+
+async function findStudentOcrDocuments(folderSource, source) {
+  const normalizedSource = normalizeStudentOcrSource(source);
+  return normalizedSource === "local"
+    ? collectLocalOcrDocuments(folderSource)
+    : collectWebDavOcrDocuments(folderSource);
+}
+
+async function loadOcrDocumentBytes(document) {
+  if (document.source === "local") {
+    const bytes = await fs.readFile(document.localPath);
+    if (!bytes.length || bytes.length > MAX_OCR_DOCUMENT_BYTES) {
+      throw new Error("Файл пустой или превышает 24 МБ.");
+    }
+    return bytes;
+  }
+  const response = await requestYandexWebDav("GET", document.davPath, {
+    acceptedStatuses: [200],
+    maxResponseBytes: MAX_OCR_DOCUMENT_BYTES
+  });
+  if (!response.body.length) throw new Error("Файл пустой.");
+  return response.body;
+}
+
+function shouldUseOcrCli() {
+  return ["1", "true", "yes"].includes(String(process.env.AIS_OCR_CLI || "").trim().toLowerCase());
+}
+
+function runOcrCli(argumentsList, payload = null, timeoutMs = 6 * 60 * 1000) {
+  return new Promise((resolve, reject) => {
+    const pythonBinary = String(process.env.OCR_PYTHON_BINARY || (
+      process.platform === "win32" ? "python" : "/usr/bin/python3"
+    )).trim();
+    const binaryRoot = path.join(OCR_CLI_RUNTIME_ROOT, "bin");
+    const libraryRoot = path.join(OCR_CLI_RUNTIME_ROOT, "lib");
+    const tessdataRoot = path.join(OCR_CLI_RUNTIME_ROOT, "tessdata");
+    const child = spawn(pythonBinary, [OCR_CLI_SCRIPT, ...argumentsList], {
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        PATH: `${binaryRoot}${path.delimiter}${process.env.PATH || ""}`,
+        LD_LIBRARY_PATH: `${libraryRoot}${path.delimiter}${process.env.LD_LIBRARY_PATH || ""}`,
+        TESSDATA_PREFIX: tessdataRoot,
+        OCR_TESSERACT_BINARY: path.join(binaryRoot, process.platform === "win32" ? "tesseract.exe" : "tesseract"),
+        OCR_CONVERT_BINARY: process.env.OCR_CONVERT_BINARY || "convert",
+        OCR_IDENTIFY_BINARY: process.env.OCR_IDENTIFY_BINARY || "identify",
+        OCR_PDFTOPPM_BINARY: process.env.OCR_PDFTOPPM_BINARY || "pdftoppm"
+      }
+    });
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let settled = false;
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(() => reject(new Error("OCR-сервис не завершил распознавание вовремя.")));
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > 8 * 1024 * 1024) {
+        child.kill("SIGKILL");
+        finish(() => reject(new Error("Ответ OCR-сервиса превышает допустимый размер.")));
+        return;
+      }
+      stdoutChunks.push(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      if (stderrBytes >= 512 * 1024) return;
+      stderrBytes += chunk.length;
+      stderrChunks.push(chunk);
+    });
+    child.on("error", (error) => {
+      finish(() => reject(new Error(`Не удалось запустить OCR-сервис: ${error.message}`)));
+    });
+    child.on("close", (code) => {
+      finish(() => {
+        const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim();
+        const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+        let response = null;
+        try {
+          response = JSON.parse(code === 0 ? stdout : stderr || stdout);
+        } catch {
+          response = null;
+        }
+        if (code !== 0) {
+          reject(new Error(response?.error || stderr || `OCR-сервис завершился с кодом ${code}.`));
+          return;
+        }
+        if (!response || typeof response !== "object") {
+          reject(new Error("OCR-сервис вернул некорректный ответ."));
+          return;
+        }
+        resolve(response);
+      });
+    });
+    if (payload === null) {
+      child.stdin.end();
+    } else {
+      child.stdin.end(Buffer.from(JSON.stringify(payload), "utf8"));
+    }
+  });
+}
+
+async function recognizeOcrDocument(document) {
+  const bytes = await loadOcrDocumentBytes(document);
+  const requestPayload = {
+    fileName: document.fileName,
+    mimeType: document.contentType,
+    base64: bytes.toString("base64")
+  };
+  if (shouldUseOcrCli()) {
+    return runOcrCli(["--recognize-stdin"], requestPayload);
+  }
+  const body = Buffer.from(JSON.stringify(requestPayload), "utf8");
+  const serviceUrl = String(
+    process.env.OCR_SERVICE_URL || DEFAULT_OCR_SERVICE_URL
+  ).trim().replace(/\/+$/g, "");
+  const response = await requestBuffer(`${serviceUrl}/v1/recognize`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Length": body.length
+    },
+    body,
+    timeoutMs: 6 * 60 * 1000,
+    maxResponseBytes: 8 * 1024 * 1024,
+    errorPrefix: "Локальный OCR-сервис отклонил файл",
+    timeoutError: "Локальный OCR-сервис не завершил распознавание вовремя"
+  });
+  let payload;
+  try {
+    payload = JSON.parse(response.toString("utf8"));
+  } catch {
+    throw new Error("Локальный OCR-сервис вернул некорректный ответ.");
+  }
+  if (!payload?.ok) throw new Error(payload?.error || "Не удалось распознать файл.");
+  return payload;
+}
+
+async function renderOcrDocumentPage(document, page) {
+  const bytes = await loadOcrDocumentBytes(document);
+  const requestPayload = {
+    fileName: document.fileName,
+    mimeType: document.contentType,
+    page: Math.max(1, Math.min(20, Number(page) || 1)),
+    base64: bytes.toString("base64")
+  };
+  if (shouldUseOcrCli()) {
+    return runOcrCli(["--render-page-stdin"], requestPayload, 2 * 60 * 1000);
+  }
+  const body = Buffer.from(JSON.stringify(requestPayload), "utf8");
+  const serviceUrl = String(
+    process.env.OCR_SERVICE_URL || DEFAULT_OCR_SERVICE_URL
+  ).trim().replace(/\/+$/g, "");
+  const response = await requestBuffer(`${serviceUrl}/v1/render-page`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Length": body.length
+    },
+    body,
+    timeoutMs: 2 * 60 * 1000,
+    maxResponseBytes: 1024 * 1024,
+    errorPrefix: "OCR-сервис не смог подготовить страницу",
+    timeoutError: "OCR-сервис не подготовил страницу вовремя"
+  });
+  const payload = JSON.parse(response.toString("utf8"));
+  if (!payload?.ok) throw new Error(payload?.error || "Не удалось подготовить страницу документа.");
+  return payload;
+}
+
+function normalizeOcrFieldPreview(value) {
+  if (!value || typeof value !== "object") return null;
+  if (String(value.mimeType || "").toLowerCase() !== "image/jpeg") return null;
+  const encoded = String(value.base64 || "").replace(/\s+/g, "");
+  if (!encoded || encoded.length > 320_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return null;
+  let bytes;
+  try {
+    bytes = Buffer.from(encoded, "base64");
+  } catch {
+    return null;
+  }
+  if (
+    !bytes.length
+    || bytes.length > 220 * 1024
+    || bytes[0] !== 0xFF
+    || bytes[1] !== 0xD8
+    || bytes[2] !== 0xFF
+  ) return null;
+  const normalized = {
+    page: Math.max(1, Math.min(99, Number(value.page) || 1)),
+    mimeType: "image/jpeg",
+    base64: bytes.toString("base64")
+  };
+  const sourceBox = value.box;
+  if (sourceBox && typeof sourceBox === "object") {
+    const box = {
+      x: Math.max(0, Math.min(1, Number(sourceBox.x) || 0)),
+      y: Math.max(0, Math.min(1, Number(sourceBox.y) || 0)),
+      width: Math.max(0, Math.min(1, Number(sourceBox.width) || 0)),
+      height: Math.max(0, Math.min(1, Number(sourceBox.height) || 0))
+    };
+    if (box.width > 0 && box.height > 0) normalized.box = box;
+  }
+  return normalized;
+}
+
+function normalizeOcrPagePreview(value) {
+  if (!value || typeof value !== "object") return null;
+  if (String(value.mimeType || "").toLowerCase() !== "image/jpeg") return null;
+  const encoded = String(value.base64 || "").replace(/\s+/g, "");
+  if (!encoded || encoded.length > 420_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return null;
+  let bytes;
+  try {
+    bytes = Buffer.from(encoded, "base64");
+  } catch {
+    return null;
+  }
+  if (
+    !bytes.length
+    || bytes.length > 280 * 1024
+    || bytes[0] !== 0xFF
+    || bytes[1] !== 0xD8
+    || bytes[2] !== 0xFF
+  ) return null;
+  return {
+    page: Math.max(1, Math.min(99, Number(value.page) || 1)),
+    mimeType: "image/jpeg",
+    base64: bytes.toString("base64")
+  };
+}
+
+function normalizeOcrPhotoCandidate(value, sourceFile) {
+  const preview = normalizeOcrFieldPreview(value);
+  if (!preview) return null;
+  return {
+    ...preview,
+    confidence: Math.round(Math.max(0, Math.min(1, Number(value?.confidence) || 0)) * 100) / 100,
+    method: String(value?.method || "face").trim().slice(0, 40),
+    sourceFile: String(sourceFile || "").trim().slice(0, 260)
+  };
+}
+
+function normalizeOcrFieldCandidate(field, sourceFile) {
+  const key = String(field?.key || "").trim();
+  if (!Object.hasOwn(OCR_DOCUMENT_FIELD_LABELS, key)) return null;
+  const value = String(field?.value || "").replace(/\s+/g, " ").trim().slice(0, 2000);
+  const manualEntry = key === "registrationAddress" && field?.manualEntry === true;
+  if (!value && !manualEntry) return null;
+  const confidence = Math.max(0, Math.min(1, Number(field?.confidence) || 0));
+  const candidate = {
+    key,
+    label: OCR_DOCUMENT_FIELD_LABELS[key],
+    value,
+    confidence: Math.round(confidence * 100) / 100,
+    evidence: String(field?.evidence || "").replace(/\s+/g, " ").trim().slice(0, 280),
+    sourceFile: String(sourceFile || "").slice(0, 260),
+    manualEntry
+  };
+  const preview = normalizeOcrFieldPreview(field?.preview);
+  if (preview) candidate.preview = preview;
+  return candidate;
+}
+
+function aggregateOcrFieldCandidates(fileResults) {
+  const candidatesByKey = new Map();
+  fileResults.forEach((fileResult) => {
+    (fileResult.fields || []).forEach((field) => {
+      const candidate = normalizeOcrFieldCandidate(field, fileResult.relativeName);
+      if (!candidate) return;
+      const candidates = candidatesByKey.get(candidate.key) || [];
+      const duplicate = candidates.find((item) => (
+        item.value.toLocaleLowerCase("ru-RU") === candidate.value.toLocaleLowerCase("ru-RU")
+      ));
+      if (duplicate) {
+        if (candidate.confidence > duplicate.confidence) {
+          Object.assign(duplicate, candidate);
+        } else if (!duplicate.sourceFile.includes(candidate.sourceFile)) {
+          duplicate.sourceFile = `${duplicate.sourceFile}; ${candidate.sourceFile}`.slice(0, 260);
+        }
+      } else {
+        candidates.push(candidate);
+      }
+      candidatesByKey.set(candidate.key, candidates);
+    });
+  });
+  return Object.keys(OCR_DOCUMENT_FIELD_LABELS).flatMap((key) => {
+    const candidates = (candidatesByKey.get(key) || [])
+      .sort((left, right) => right.confidence - left.confidence);
+    if (!candidates.length) return [];
+    return [{
+      ...candidates[0],
+      alternatives: candidates.slice(1).map((item) => ({
+        value: item.value,
+        confidence: item.confidence,
+        sourceFile: item.sourceFile,
+        evidence: item.evidence
+      }))
+    }];
+  });
+}
+
+function cleanupStudentDocumentRecognitionJobs() {
+  const expiresBefore = Date.now() - STUDENT_DOCUMENT_RECOGNITION_JOB_TTL_MS;
+  studentDocumentRecognitionJobs.forEach((job, jobId) => {
+    if (job.createdAt < expiresBefore) studentDocumentRecognitionJobs.delete(jobId);
+  });
+}
+
+function publicStudentDocumentRecognitionJob(job) {
+  const finishedAt = job.completedAt || Date.now();
+  return {
+    jobId: job.id,
+    status: job.status,
+    progress: job.progress,
+    stage: job.stage,
+    source: job.source,
+    sourceLabel: job.sourceLabel,
+    startedAt: new Date(job.startedAt || job.createdAt).toISOString(),
+    completedAt: job.completedAt ? new Date(job.completedAt).toISOString() : "",
+    elapsedMs: Math.max(0, finishedAt - (job.startedAt || job.createdAt)),
+    processedFiles: job.processedFiles,
+    totalFiles: job.totalFiles,
+    error: job.error || ""
+  };
+}
+
+function isTrustedBrowserOrigin(req) {
+  const origin = String(req.headers.origin || "").trim();
+  if (!origin || origin === "null") return true;
+  try {
+    return new URL(origin).host.toLocaleLowerCase("en-US")
+      === String(req.headers.host || "").trim().toLocaleLowerCase("en-US");
+  } catch {
+    return false;
+  }
+}
+
+async function runStudentDocumentRecognitionJob(job, options) {
+  try {
+    job.startedAt = Date.now();
+    job.status = "running";
+    job.progress = 2;
+    job.stage = `Поиск документов: ${job.sourceLabel}`;
+    const sourceResult = await findStudentOcrDocuments(options.folder, job.source);
+    const documents = sourceResult.documents;
+    if (!documents.length) {
+      throw new Error("В папке слушателя не найдены файлы JPG, PNG или PDF.");
+    }
+    job.totalFiles = documents.length;
+    job.progress = 8;
+    job.stage = `Найдено файлов: ${documents.length}`;
+    const fileResults = [];
+    for (let index = 0; index < documents.length; index += 1) {
+      const document = documents[index];
+      const fileStartedAt = Date.now();
+      job.stage = `Распознавание ${index + 1} из ${documents.length}: ${document.relativeName}`;
+      job.progress = Math.min(94, 10 + Math.round((index / documents.length) * 84));
+      try {
+        const payload = await recognizeOcrDocument(document);
+        fileResults.push({
+          fileName: document.fileName,
+          relativeName: document.relativeName,
+          pageCount: Number(payload.pageCount) || 1,
+          documentTypes: Array.isArray(payload.documentTypes)
+            ? payload.documentTypes.map((item) => String(item || "")).filter(Boolean)
+            : [],
+          fields: Array.isArray(payload.fields) ? payload.fields : [],
+          pagePreviews: Array.isArray(payload.pagePreviews)
+            ? payload.pagePreviews.map(normalizeOcrPagePreview).filter(Boolean)
+            : [],
+          photoCandidates: Array.isArray(payload.photoCandidates)
+            ? payload.photoCandidates
+              .map((candidate) => normalizeOcrPhotoCandidate(candidate, document.relativeName))
+              .filter(Boolean)
+            : [],
+          textPreview: String(payload.textPreview || "").slice(0, 3000),
+          durationMs: Number(payload.durationMs) || Date.now() - fileStartedAt,
+          error: ""
+        });
+      } catch (error) {
+        fileResults.push({
+          fileName: document.fileName,
+          relativeName: document.relativeName,
+          pageCount: 0,
+          documentTypes: [],
+          fields: [],
+          pagePreviews: [],
+          photoCandidates: [],
+          textPreview: "",
+          durationMs: Date.now() - fileStartedAt,
+          error: error.message
+        });
+      }
+      job.processedFiles = index + 1;
+    }
+    const successfulFiles = fileResults.filter((item) => !item.error);
+    if (!successfulFiles.length) {
+      const firstError = fileResults.find((item) => item.error)?.error;
+      throw new Error(firstError || "Не удалось распознать документы в папке.");
+    }
+    job.completedAt = Date.now();
+    const durationMs = job.completedAt - job.startedAt;
+    const aggregatedFields = aggregateOcrFieldCandidates(successfulFiles);
+    const photoCandidates = successfulFiles
+      .flatMap((fileResult) => fileResult.photoCandidates || [])
+      .sort((left, right) => right.confidence - left.confidence)
+      .slice(0, 16);
+    const previewSourceFiles = new Set(aggregatedFields.flatMap((field) => (
+      String(field.sourceFile || "").split(/;\s*/g).map((item) => item.trim()).filter(Boolean)
+    )));
+    job.result = {
+      folder: options.folder,
+      source: sourceResult.source,
+      sourceLabel: sourceResult.sourceLabel,
+      recognizedAt: new Date(job.completedAt).toISOString(),
+      durationMs,
+      documentCount: successfulFiles.length,
+      processedCount: successfulFiles.length,
+      failedCount: fileResults.length - successfulFiles.length,
+      skippedCount: sourceResult.skippedCount,
+      fields: aggregatedFields,
+      photoCandidates,
+      files: fileResults.map(({ fields, photoCandidates: ignoredPhotoCandidates, ...fileResult }) => {
+        if (!previewSourceFiles.has(fileResult.relativeName)) delete fileResult.pagePreviews;
+        return fileResult;
+      })
+    };
+    job.status = "completed";
+    job.progress = 100;
+    job.stage = "Распознавание завершено";
+  } catch (error) {
+    job.completedAt = Date.now();
+    job.status = "failed";
+    job.error = error.message;
+    job.stage = "Распознавание не выполнено";
+  }
+}
+
+async function handleStudentDocumentRecognitionStart(req, res) {
+  try {
+    if (
+      String(req.headers["x-requested-with"] || "") !== "AIS-Web"
+      || !isTrustedBrowserOrigin(req)
+    ) {
+      sendError(res, 403, "Запрос распознавания документов отклонён сервером.");
+      return;
+    }
+    const body = await readJsonBody(req);
+    const folder = String(body.folder || "").trim();
+    if (!folder || folder.length > 600) {
+      throw new Error("Не удалось определить папку документов слушателя.");
+    }
+    if (!normalizeSystemDocumentsRelativePath(folder)) {
+      throw new Error("Путь к папке документов слушателя содержит недопустимые элементы.");
+    }
+    const source = await useWebDavWhenLocalDocumentsUnavailable(
+      normalizeStudentOcrSource(body.source)
+    );
+    cleanupStudentDocumentRecognitionJobs();
+    const jobId = crypto.randomBytes(18).toString("hex");
+    const job = {
+      id: jobId,
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+      completedAt: 0,
+      status: "queued",
+      progress: 0,
+      stage: "Подготовка",
+      source,
+      sourceLabel: getStudentOcrSourceLabel(source),
+      processedFiles: 0,
+      totalFiles: 0,
+      result: null,
+      error: ""
+    };
+    studentDocumentRecognitionJobs.set(jobId, job);
+    setImmediate(() => {
+      runStudentDocumentRecognitionJob(job, { folder, source }).catch((error) => {
+        job.status = "failed";
+        job.error = error.message;
+      });
+    });
+    sendJson(res, 202, publicStudentDocumentRecognitionJob(job));
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleStudentDocumentRecognitionDirect(req, res) {
+  try {
+    if (
+      String(req.headers["x-requested-with"] || "") !== "AIS-Web"
+      || !isTrustedBrowserOrigin(req)
+    ) {
+      sendError(res, 403, "Запрос распознавания документов отклонён сервером.");
+      return;
+    }
+    const body = await readJsonBody(req);
+    const folder = String(body.folder || "").trim();
+    if (!folder || folder.length > 600) {
+      throw new Error("Не удалось определить папку документов слушателя.");
+    }
+    if (!normalizeSystemDocumentsRelativePath(folder)) {
+      throw new Error("Путь к папке документов слушателя содержит недопустимые элементы.");
+    }
+    const source = shouldUseOcrCli()
+      ? "webdav"
+      : await useWebDavWhenLocalDocumentsUnavailable(normalizeStudentOcrSource(body.source));
+    const job = {
+      id: crypto.randomBytes(18).toString("hex"),
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+      completedAt: 0,
+      status: "queued",
+      progress: 0,
+      stage: "Подготовка",
+      source,
+      sourceLabel: getStudentOcrSourceLabel(source),
+      processedFiles: 0,
+      totalFiles: 0,
+      result: null,
+      error: ""
+    };
+    await runStudentDocumentRecognitionJob(job, { folder, source });
+    if (job.status !== "completed" || !job.result) {
+      sendError(res, 400, job.error || "Распознавание документов не выполнено.");
+      return;
+    }
+    sendJson(res, 200, job.result);
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleStudentDocumentRecognitionPage(req, res) {
+  try {
+    if (
+      String(req.headers["x-requested-with"] || "") !== "AIS-Web"
+      || !isTrustedBrowserOrigin(req)
+    ) {
+      sendError(res, 403, "Запрос страницы документа отклонён сервером.");
+      return;
+    }
+    const body = await readJsonBody(req);
+    const folder = String(body.folder || "").trim();
+    const relativeName = String(body.relativeName || "").replace(/\\/g, "/").trim();
+    const page = Math.max(1, Math.min(20, Number(body.page) || 1));
+    if (!folder || folder.length > 600 || !normalizeSystemDocumentsRelativePath(folder)) {
+      throw new Error("Некорректно указана папка документов слушателя.");
+    }
+    if (!relativeName || relativeName.length > 600 || relativeName.split("/").some((part) => !part || part === "." || part === "..")) {
+      throw new Error("Некорректно указан файл документа.");
+    }
+    const source = await useWebDavWhenLocalDocumentsUnavailable(
+      normalizeStudentOcrSource(body.source)
+    );
+    const sourceResult = await findStudentOcrDocuments(folder, source);
+    const document = sourceResult.documents.find((item) => (
+      String(item.relativeName || "").replace(/\\/g, "/") === relativeName
+    ));
+    if (!document) throw new Error("Файл не найден в папке слушателя.");
+    const payload = await renderOcrDocumentPage(document, page);
+    const preview = normalizeOcrPagePreview(payload.preview);
+    if (!preview) throw new Error("Сервер не смог сформировать изображение страницы.");
+    sendJson(res, 200, {
+      fileName: document.fileName,
+      relativeName: document.relativeName,
+      page: Math.max(1, Number(payload.page) || page),
+      pageCount: Math.max(1, Number(payload.pageCount) || 1),
+      preview
+    });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+function getStudentDocumentRecognitionJob(requestUrl) {
+  cleanupStudentDocumentRecognitionJobs();
+  const jobId = String(requestUrl.searchParams.get("jobId") || "").trim();
+  return jobId ? studentDocumentRecognitionJobs.get(jobId) : null;
+}
+
+function handleStudentDocumentRecognitionStatus(req, res, requestUrl) {
+  if (!isTrustedBrowserOrigin(req)) {
+    sendError(res, 403, "Запрос состояния распознавания отклонён сервером.");
+    return;
+  }
+  const job = getStudentDocumentRecognitionJob(requestUrl);
+  if (!job) {
+    sendError(res, 404, "Задание распознавания не найдено.");
+    return;
+  }
+  sendJson(res, 200, publicStudentDocumentRecognitionJob(job));
+}
+
+function handleStudentDocumentRecognitionResult(req, res, requestUrl) {
+  if (!isTrustedBrowserOrigin(req)) {
+    sendError(res, 403, "Запрос результата распознавания отклонён сервером.");
+    return;
+  }
+  const job = getStudentDocumentRecognitionJob(requestUrl);
+  if (!job) {
+    sendError(res, 404, "Задание распознавания не найдено.");
+    return;
+  }
+  if (job.status === "failed") {
+    sendError(res, 400, job.error || "Распознавание завершилось с ошибкой.");
+    return;
+  }
+  if (job.status !== "completed" || !job.result) {
+    sendError(res, 409, "Распознавание ещё не завершено.");
+    return;
+  }
+  sendJson(res, 200, job.result);
+}
+
+async function handleOcrHealth(req, res) {
+  try {
+    if (shouldUseOcrCli()) {
+      sendJson(res, 200, await runOcrCli(["--health"], null, 30 * 1000));
+      return;
+    }
+    const serviceUrl = String(
+      process.env.OCR_SERVICE_URL || DEFAULT_OCR_SERVICE_URL
+    ).trim().replace(/\/+$/g, "");
+    const response = await requestBuffer(`${serviceUrl}/health`, {
+      timeoutMs: 5000,
+      maxResponseBytes: 64 * 1024,
+      errorPrefix: "OCR-сервис недоступен",
+      timeoutError: "OCR-сервис не ответил"
+    });
+    const payload = JSON.parse(response.toString("utf8"));
+    sendJson(res, 200, payload);
+  } catch (error) {
+    sendError(res, 503, error.message);
   }
 }
 
@@ -3583,6 +5522,82 @@ function buildDirectExpenseDatabaseRecordId(expense, rowNumber) {
   return `direct-expense-db-${hash}`;
 }
 
+function normalizeGeneralExpenseDatabaseSection(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ");
+  if (["физлица", "физические лица"].includes(normalized)) {
+    return GENERAL_EXPENSE_DATABASE_SECTIONS.individuals;
+  }
+  if (["организации", "юридические лица", "юрлица"].includes(normalized)) {
+    return GENERAL_EXPENSE_DATABASE_SECTIONS.organizations;
+  }
+  return "";
+}
+
+function normalizeGeneralExpenseDatabaseValue(value, fieldName) {
+  if (fieldName === "date" || fieldName === "paid") return normalizeStudentDatabaseDate(value);
+  if (fieldName === "amount") return normalizeStudentDatabaseNumber(value);
+  if (typeof value === "string") return value.trim();
+  if (value === null || value === undefined) return "";
+  return value;
+}
+
+function buildGeneralExpenseDatabaseRecordId(expense, rowNumber) {
+  const fingerprint = [
+    expense.section,
+    expense.counterparty,
+    expense.date,
+    expense.workType,
+    expense.amount,
+    expense.description,
+    rowNumber
+  ].map((value) => String(value ?? "").trim()).join(":");
+  const hash = crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 16);
+  return `general-expense-db-${hash}`;
+}
+
+function normalizeContractDatabaseSection(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ");
+  if (["действующие договора", "действующие договоры", "действует", "активный"].includes(normalized)) {
+    return CONTRACT_DATABASE_SECTIONS.active;
+  }
+  if (["партнерская программа", "партнеры", "партнерский"].includes(normalized)) {
+    return CONTRACT_DATABASE_SECTIONS.partners;
+  }
+  if (["истекшие договора", "истекшие договоры", "истек", "истекший"].includes(normalized)) {
+    return CONTRACT_DATABASE_SECTIONS.expired;
+  }
+  return "";
+}
+
+function normalizeContractDatabaseValue(value, fieldName) {
+  if (CONTRACT_DATABASE_DATE_FIELDS.has(fieldName)) return normalizeStudentDatabaseDate(value);
+  if (CONTRACT_DATABASE_NUMBER_FIELDS.has(fieldName)) return normalizeStudentDatabaseNumber(value);
+  if (fieldName === "contractNo") return String(value ?? "").trim().replace(/\.0+$/, "");
+  if (typeof value === "string") return value.trim();
+  if (value === null || value === undefined) return "";
+  return value;
+}
+
+function buildContractDatabaseRecordId(contract, rowNumber) {
+  const fingerprint = [
+    contract.section,
+    contract.name,
+    contract.contractNo,
+    contract.contractDate,
+    rowNumber
+  ].map((value) => String(value ?? "").trim()).join(":");
+  const hash = crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 16);
+  return `contract-db-${hash}`;
+}
+
 function parseWorkbookNamedCellReference(reference) {
   const source = String(reference || "").trim().replace(/^=/, "");
   const separatorIndex = source.lastIndexOf("!");
@@ -3933,6 +5948,164 @@ function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}) {
     directExpenseSheetName: "Прямые затраты",
     directExpenseSourceRows: sourceRowCount,
     directExpenseSkippedRows: Math.max(0, sourceRowCount - directExpenses.length)
+  };
+}
+
+function parseGeneralExpenseDatabaseSheet(workbook, onProgress = () => {}) {
+  const worksheet = workbook.Sheets["Общие затраты"];
+  if (!worksheet) throw new Error("В файле не найден лист «Общие затраты».");
+  onProgress({ progress: 96, message: "Чтение листа «Общие затраты»..." });
+  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: true, UTC: true });
+  const headerRowIndex = rows.findIndex((row) => (
+    row.some((value) => String(value || "").trim() === "Контрагент")
+    && row.some((value) => String(value || "").trim() === "Вид работ")
+    && row.some((value) => String(value || "").trim() === "Сумма")
+  ));
+  if (headerRowIndex < 0) {
+    throw new Error("На листе «Общие затраты» не найдены колонки Контрагент, Вид работ и Сумма.");
+  }
+  const headers = rows[headerRowIndex].map((value) => String(value || "").trim());
+  const mappedColumns = headers
+    .map((header, index) => ({ index, fieldName: GENERAL_EXPENSE_DATABASE_COLUMN_MAP[header] || "" }))
+    .filter((column) => column.fieldName);
+  const counterpartyColumn = headers.indexOf("Контрагент");
+  const workTypeColumn = headers.indexOf("Вид работ");
+  const amountColumn = headers.indexOf("Сумма");
+  const generalExpenses = [];
+  const detectedSections = new Set();
+  let currentSection = "";
+  const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
+  const progressStep = Math.max(1, Math.floor(sourceRowCount / 50));
+  for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    const processedRows = rowIndex - headerRowIndex;
+    if (processedRows === 1 || processedRows % progressStep === 0 || processedRows === sourceRowCount) {
+      onProgress({
+        progress: 96 + Math.floor((processedRows / Math.max(1, sourceRowCount)) * 2),
+        message: `Обработка общих затрат: ${processedRows} из ${sourceRowCount}`,
+        processedRows,
+        totalRows: sourceRowCount
+      });
+    }
+    const row = rows[rowIndex] || [];
+    const section = normalizeGeneralExpenseDatabaseSection(row[counterpartyColumn]);
+    if (section) {
+      currentSection = section;
+      detectedSections.add(section);
+      continue;
+    }
+    const counterparty = String(row[counterpartyColumn] ?? "").trim();
+    const workType = String(row[workTypeColumn] ?? "").trim();
+    const amount = normalizeStudentDatabaseNumber(row[amountColumn]);
+    if (!counterparty || !workType || amount === "" || !Number.isFinite(Number(amount))) continue;
+    if (!currentSection) {
+      throw new Error(`На листе «Общие затраты» строка ${rowIndex + 1} находится вне разделов «Физлица» и «Организации».`);
+    }
+    const expense = { section: currentSection };
+    mappedColumns.forEach((column) => {
+      const value = normalizeGeneralExpenseDatabaseValue(row[column.index], column.fieldName);
+      if (value === "") return;
+      expense[column.fieldName] = value;
+    });
+    expense.id = buildGeneralExpenseDatabaseRecordId(expense, rowIndex + 1);
+    expense.counterparty = counterparty;
+    expense.workType = workType;
+    expense.amount = Number(amount);
+    generalExpenses.push(expense);
+  }
+  const missingSections = Object.values(GENERAL_EXPENSE_DATABASE_SECTIONS)
+    .filter((section) => !detectedSections.has(section));
+  if (missingSections.length) {
+    throw new Error(`На листе «Общие затраты» не найдены разделы: ${missingSections.join(", ")}.`);
+  }
+  return {
+    generalExpenses,
+    generalExpenseSheetName: "Общие затраты",
+    generalExpenseSourceRows: sourceRowCount,
+    generalExpenseSectionCounts: Object.fromEntries(Object.values(GENERAL_EXPENSE_DATABASE_SECTIONS)
+      .map((section) => [section, generalExpenses.filter((expense) => expense.section === section).length]))
+  };
+}
+
+function parseContractDatabaseSheet(workbook, onProgress = () => {}) {
+  const worksheet = workbook.Sheets["Реестр договоров"];
+  if (!worksheet) throw new Error("В файле не найден лист «Реестр договоров».");
+  onProgress({ progress: 94, message: "Чтение листа «Реестр договоров»..." });
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: "",
+    raw: true,
+    UTC: true,
+    blankrows: true
+  });
+  const headerRowIndex = rows.findIndex((row) => (
+    row.some((value) => String(value || "").trim() === "ФИО")
+    && row.some((value) => String(value || "").trim() === "Договор")
+    && row.some((value) => String(value || "").trim() === "Вид договора")
+  ));
+  if (headerRowIndex < 0) {
+    throw new Error("На листе «Реестр договоров» не найдены колонки ФИО, Договор и Вид договора.");
+  }
+  const headers = rows[headerRowIndex].map((value) => String(value || "").trim());
+  const mappedColumns = headers
+    .map((header, index) => ({ index, fieldName: CONTRACT_DATABASE_COLUMN_MAP[header] || "" }))
+    .filter((column) => column.fieldName);
+  const nameColumn = headers.indexOf("ФИО");
+  const contracts = [];
+  const detectedSections = new Set();
+  let currentSection = "";
+  const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
+  const progressStep = Math.max(1, Math.floor(sourceRowCount / 40));
+  for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    const processedRows = rowIndex - headerRowIndex;
+    if (processedRows === 1 || processedRows % progressStep === 0 || processedRows === sourceRowCount) {
+      onProgress({
+        progress: 94 + Math.floor((processedRows / Math.max(1, sourceRowCount)) * 2),
+        message: `Обработка договоров: ${processedRows} из ${sourceRowCount}`,
+        processedRows,
+        totalRows: sourceRowCount
+      });
+    }
+    const row = rows[rowIndex] || [];
+    const section = normalizeContractDatabaseSection(row[nameColumn]);
+    if (section) {
+      currentSection = section;
+      detectedSections.add(section);
+      continue;
+    }
+    if (!currentSection) continue;
+    const name = String(row[nameColumn] ?? "").trim();
+    const hasSourceData = mappedColumns.some((column) => {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: column.index })];
+      if (cell?.f || cell?.F) return false;
+      return normalizeContractDatabaseValue(row[column.index], column.fieldName) !== "";
+    });
+    if (!hasSourceData) continue;
+    const contract = { section: currentSection };
+    mappedColumns.forEach((column) => {
+      const value = normalizeContractDatabaseValue(row[column.index], column.fieldName);
+      if (value === "") return;
+      contract[column.fieldName] = value;
+    });
+    contract.id = buildContractDatabaseRecordId(contract, rowIndex + 1);
+    contract.name = name;
+    contract.status = currentSection === CONTRACT_DATABASE_SECTIONS.active
+      ? "Действует"
+      : currentSection === CONTRACT_DATABASE_SECTIONS.partners
+        ? "Партнерская программа"
+        : "Истек";
+    contracts.push(contract);
+  }
+  const missingSections = Object.values(CONTRACT_DATABASE_SECTIONS)
+    .filter((section) => !detectedSections.has(section));
+  if (missingSections.length) {
+    throw new Error(`На листе «Реестр договоров» не найдены разделы: ${missingSections.join(", ")}.`);
+  }
+  return {
+    contracts,
+    contractSheetName: "Реестр договоров",
+    contractSourceRows: sourceRowCount,
+    contractSectionCounts: Object.fromEntries(Object.values(CONTRACT_DATABASE_SECTIONS)
+      .map((section) => [section, contracts.filter((contract) => contract.section === section).length]))
   };
 }
 
@@ -4312,13 +6485,15 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
   const programPaymentResult = parseProgramPaymentDatabaseSheet(workbook, onProgress);
   const inventoryResult = parseInventoryDatabaseSheet(workbook, onProgress);
   const directExpenseResult = parseDirectExpenseDatabaseSheet(workbook, onProgress);
-  onProgress({ progress: 95, message: "Сопоставление запасов с расходами..." });
+  const contractResult = parseContractDatabaseSheet(workbook, onProgress);
+  const generalExpenseResult = parseGeneralExpenseDatabaseSheet(workbook, onProgress);
+  onProgress({ progress: 98, message: "Сопоставление запасов с расходами..." });
   const inventoryLinkResult = linkInventoryToDirectExpenses(
     inventoryResult.inventory,
     inventoryResult.inventoryUnits,
     directExpenseResult.directExpenses
   );
-  onProgress({ progress: 98, message: "Привязка прямых затрат к слушателям..." });
+  onProgress({ progress: 99, message: "Привязка прямых затрат к слушателям..." });
   const {
     unlinkedDirectExpenses,
     linkedDirectExpenseCount,
@@ -4335,6 +6510,8 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
     ...programDictionaryResult,
     ...programPaymentResult,
     ...directExpenseResult,
+    ...generalExpenseResult,
+    ...contractResult,
     inventory: inventoryResult.inventory,
     inventorySheetName: inventoryResult.inventorySheetName,
     inventorySourceRows: inventoryResult.inventorySourceRows,
@@ -4352,13 +6529,63 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
   };
 }
 
-async function loadStudentDatabaseBytes(databasePath, onProgress = null) {
+function normalizeStudentDatabaseSource(value) {
+  const source = String(value || "webdav").trim().toLowerCase();
+  if (!["webdav", "local"].includes(source)) {
+    throw new Error("Указан неподдерживаемый источник базы слушателей.");
+  }
+  return source;
+}
+
+function getStudentDatabaseSourceSetting(databasePath) {
   const source = String(
     databasePath
     || serverSettings.studentDatabaseWebDavPath
     || DEFAULT_STUDENT_DATABASE_WEBDAV_PATH
   ).trim();
   if (!source) throw new Error("Не указан WebDAV-путь или ссылка на базу слушателей.");
+  return source;
+}
+
+function resolveLocalStudentDatabaseFile(databasePath) {
+  const source = getStudentDatabaseSourceSetting(databasePath);
+  const configuredPath = normalizeYandexDiskResourceSetting(source);
+  if (!configuredPath || /^https?:/i.test(configuredPath)) {
+    throw new Error("Для работы с локального диска укажите WebDAV-путь к базе в настройках подключения.");
+  }
+  const localPath = resolveLocalDocumentsPath(
+    configuredPath,
+    "Не удалось определить локальный путь к базе слушателей."
+  );
+  if (path.extname(localPath).toLowerCase() !== ".xlsb") {
+    throw new Error("Локальная база слушателей должна быть файлом XLSB.");
+  }
+  return localPath;
+}
+
+async function loadStudentDatabaseBytes(databasePath, onProgress = null, options = {}) {
+  const source = getStudentDatabaseSourceSetting(databasePath);
+  const sourceType = normalizeStudentDatabaseSource(options.source);
+  if (sourceType === "local") {
+    const localPath = resolveLocalStudentDatabaseFile(source);
+    let fileStats;
+    try {
+      fileStats = await fs.stat(localPath);
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        throw new Error(`Локальная база не найдена: ${localPath}`);
+      }
+      throw error;
+    }
+    if (!fileStats.isFile()) throw new Error(`Локальный путь не является файлом: ${localPath}`);
+    if (!fileStats.size) throw new Error("Локальный файл базы пуст.");
+    if (fileStats.size > MAX_STUDENT_DATABASE_BYTES) {
+      throw new Error("Файл базы превышает допустимый размер 24 МБ.");
+    }
+    const bytes = await fs.readFile(localPath);
+    onProgress?.({ receivedBytes: bytes.length, totalBytes: fileStats.size });
+    return bytes;
+  }
   const remoteUrl = parseHttpResourceUrl(source);
   let bytes;
   if (remoteUrl && isYandexDiskHost(remoteUrl.hostname.toLowerCase())) {
@@ -4383,17 +6610,86 @@ function countWorksheetFormulaCells(worksheet) {
     .length;
 }
 
+function countGeneralExpenseWorksheetRecords(worksheet) {
+  if (!worksheet) return 0;
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    raw: true,
+    defval: "",
+    blankrows: true
+  });
+  let sectionFound = false;
+  let count = 0;
+  rows.forEach((row) => {
+    if (normalizeGeneralExpenseDatabaseSection(row[0])) {
+      sectionFound = true;
+      return;
+    }
+    if (!sectionFound) return;
+    const hasRecord = [row[0], row[2], row[4]]
+      .some((value) => String(value ?? "").trim() !== "");
+    if (hasRecord) count += 1;
+  });
+  return count;
+}
+
+function countContractWorksheetRecords(worksheet) {
+  if (!worksheet) return 0;
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    raw: true,
+    defval: "",
+    blankrows: true
+  });
+  const headerRowIndex = rows.findIndex((row) => (
+    row.some((value) => String(value || "").trim() === "ФИО")
+    && row.some((value) => String(value || "").trim() === "Договор")
+    && row.some((value) => String(value || "").trim() === "Вид договора")
+  ));
+  if (headerRowIndex < 0) return 0;
+  const headers = rows[headerRowIndex].map((value) => String(value || "").trim());
+  const mappedColumns = headers
+    .map((header, index) => ({ index, fieldName: CONTRACT_DATABASE_COLUMN_MAP[header] || "" }))
+    .filter((column) => column.fieldName);
+  const nameColumn = headers.indexOf("ФИО");
+  let sectionFound = false;
+  let count = 0;
+  rows.forEach((row, rowIndex) => {
+    if (rowIndex <= headerRowIndex) return;
+    if (normalizeContractDatabaseSection(row[nameColumn])) {
+      sectionFound = true;
+      return;
+    }
+    if (!sectionFound) return;
+    const hasSourceData = mappedColumns.some((column) => {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: column.index })];
+      if (cell?.f || cell?.F) return false;
+      return normalizeContractDatabaseValue(row[column.index], column.fieldName) !== "";
+    });
+    if (hasSourceData) count += 1;
+  });
+  return count;
+}
+
 function inspectStudentDatabaseBinary(bytes) {
   const workbook = XLSX.read(bytes, { type: "buffer", bookVBA: true });
   const baseSheet = workbook.Sheets["База"];
   const directExpenseSheet = workbook.Sheets["Прямые затраты"];
+  const generalExpenseSheet = workbook.Sheets["Общие затраты"];
+  const contractSheet = workbook.Sheets["Реестр договоров"];
   if (!baseSheet) throw new Error("В файле не найден лист «База».");
   if (!directExpenseSheet) throw new Error("В файле не найден лист «Прямые затраты».");
+  if (!generalExpenseSheet) throw new Error("В файле не найден лист «Общие затраты».");
+  if (!contractSheet) throw new Error("В файле не найден лист «Реестр договоров».");
   return {
     hasVba: Boolean(workbook.vbaraw?.length),
     vbaBytes: Number(workbook.vbaraw?.length || 0),
     baseFormulaCount: countWorksheetFormulaCells(baseSheet),
-    directExpenseFormulaCount: countWorksheetFormulaCells(directExpenseSheet)
+    directExpenseFormulaCount: countWorksheetFormulaCells(directExpenseSheet),
+    generalExpenseFormulaCount: countWorksheetFormulaCells(generalExpenseSheet),
+    generalExpenseRecordCount: countGeneralExpenseWorksheetRecords(generalExpenseSheet),
+    contractFormulaCount: countWorksheetFormulaCells(contractSheet),
+    contractRecordCount: countContractWorksheetRecords(contractSheet)
   };
 }
 
@@ -5571,11 +7867,23 @@ function sanitizeStudentDatabaseExportPayload(body) {
   if (body.students.length > MAX_STUDENT_DATABASE_EXPORT_STUDENTS) {
     throw new Error(`Число слушателей превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_STUDENTS}.`);
   }
+  if (!Array.isArray(body.contracts)) {
+    throw new Error("Не передан реестр договоров.");
+  }
+  if (body.contracts.length > MAX_STUDENT_DATABASE_EXPORT_CONTRACTS) {
+    throw new Error(`Число договоров превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_CONTRACTS}.`);
+  }
   if (!Array.isArray(body.directExpenses)) {
     throw new Error("Не передан список прямых затрат.");
   }
   if (body.directExpenses.length > MAX_STUDENT_DATABASE_EXPORT_EXPENSES) {
     throw new Error(`Число прямых затрат превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_EXPENSES}.`);
+  }
+  if (!Array.isArray(body.generalExpenses)) {
+    throw new Error("Не передан список общих затрат.");
+  }
+  if (body.generalExpenses.length > MAX_STUDENT_DATABASE_EXPORT_EXPENSES) {
+    throw new Error(`Число общих затрат превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_EXPENSES}.`);
   }
   const students = body.students
     .filter((student) => student && typeof student === "object" && !Array.isArray(student))
@@ -5588,12 +7896,36 @@ function sanitizeStudentDatabaseExportPayload(body) {
       } = student;
       return databaseFields;
     });
+  const contracts = body.contracts
+    .filter((contract) => contract && typeof contract === "object" && !Array.isArray(contract))
+    .map((contract) => {
+      const section = normalizeContractDatabaseSection(contract.section || contract.status)
+        || CONTRACT_DATABASE_SECTIONS.active;
+      return {
+        ...contract,
+        section,
+        status: section === CONTRACT_DATABASE_SECTIONS.active
+          ? "Действует"
+          : section === CONTRACT_DATABASE_SECTIONS.partners
+            ? "Партнерская программа"
+            : "Истек"
+      };
+    });
   const directExpenses = body.directExpenses
     .filter((expense) => expense && typeof expense === "object" && !Array.isArray(expense))
     .map((expense) => ({ ...expense }));
+  const generalExpenses = body.generalExpenses
+    .filter((expense) => expense && typeof expense === "object" && !Array.isArray(expense))
+    .map((expense) => ({
+      ...expense,
+      section: normalizeGeneralExpenseDatabaseSection(expense.section)
+        || GENERAL_EXPENSE_DATABASE_SECTIONS.organizations
+    }));
   return {
     students,
+    contracts,
     directExpenses,
+    generalExpenses,
     paymentConstants: sanitizePaymentDatabaseConstants(body.paymentConstants),
     paymentConstantsProvided: Array.isArray(body.paymentConstants),
     defaultStudentAdditionalStatus: DEFAULT_STUDENT_ADDITIONAL_STATUS,
@@ -5604,6 +7936,12 @@ function sanitizeStudentDatabaseExportPayload(body) {
     studentDateFields: [...STUDENT_DATABASE_DATE_FIELDS],
     studentNumberFields: [...STUDENT_DATABASE_NUMBER_FIELDS],
     directExpenseColumnMap: DIRECT_EXPENSE_DATABASE_COLUMN_MAP,
+    generalExpenseColumnMap: GENERAL_EXPENSE_DATABASE_COLUMN_MAP,
+    generalExpenseSections: GENERAL_EXPENSE_DATABASE_SECTIONS,
+    contractColumnMap: CONTRACT_DATABASE_COLUMN_MAP,
+    contractSections: CONTRACT_DATABASE_SECTIONS,
+    contractDateFields: [...CONTRACT_DATABASE_DATE_FIELDS],
+    contractNumberFields: [...CONTRACT_DATABASE_NUMBER_FIELDS],
     studentEventTemplates: STUDENT_EVENT_IMPORT_TEMPLATES
   };
 }
@@ -5616,19 +7954,86 @@ async function safelyRemoveStudentDatabaseExportDirectory(directoryPath) {
   await fs.rm(resolvedPath, { recursive: true, force: true });
 }
 
-function buildStudentDatabaseExportFileName() {
-  const now = new Date();
-  const stamp = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0")
-  ].join("-")
-    + "_"
-    + [
-      String(now.getHours()).padStart(2, "0"),
-      String(now.getMinutes()).padStart(2, "0")
-    ].join("-");
-  return `АИС Допобразование_${stamp}.xlsb`;
+function buildStudentDatabaseBackupFileName(now = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(now).map((part) => [part.type, part.value]));
+  return `АИС Допобразование_${parts.year}-${parts.month}-${parts.day} ${parts.hour}-${parts.minute}-${parts.second}.xlsb`;
+}
+
+function resolveYandexStudentDatabaseFile(databasePath) {
+  const source = getStudentDatabaseSourceSetting(databasePath);
+  const parsed = parseHttpResourceUrl(source);
+  if (parsed && !isYandexWebDavHost(parsed.hostname)) {
+    throw new Error("Для синхронизации через WebDAV укажите путь к XLSB на Яндекс-Диске, а не публичную ссылку.");
+  }
+  const remotePath = resolveConfiguredYandexWebDavPath(source);
+  if (path.posix.extname(remotePath).toLowerCase() !== ".xlsb") {
+    throw new Error("Путь базы на Яндекс-Диске должен вести к файлу XLSB.");
+  }
+  return remotePath;
+}
+
+async function saveStudentDatabaseSyncResult(
+  databasePath,
+  sourceType,
+  sourceBytes,
+  outputBytes,
+  onProgress = () => {}
+) {
+  const backupFileName = buildStudentDatabaseBackupFileName();
+  if (sourceType === "local") {
+    const targetPath = resolveLocalStudentDatabaseFile(databasePath);
+    const backupFolder = path.join(path.dirname(targetPath), "_Резерв");
+    const backupPath = path.join(backupFolder, backupFileName);
+    onProgress({ progress: 96, stage: "backup", message: "Создание локальной резервной копии XLSB..." });
+    await fs.mkdir(backupFolder, { recursive: true });
+    await fs.writeFile(backupPath, sourceBytes, { flag: "wx" });
+    onProgress({ progress: 98, stage: "save", message: "Обновление локальной базы XLSB..." });
+    try {
+      await fs.writeFile(targetPath, outputBytes);
+    } catch (error) {
+      throw new Error(`Резервная копия создана: ${backupPath}. Не удалось обновить исходную базу: ${error.message}`);
+    }
+    return {
+      source: sourceType,
+      targetPath,
+      backupPath
+    };
+  }
+
+  const targetPath = resolveYandexStudentDatabaseFile(databasePath);
+  const backupFolder = normalizeWebDavPath(`${path.posix.dirname(targetPath)}/_Резерв`);
+  const backupPath = normalizeWebDavPath(`${backupFolder}/${backupFileName}`);
+  onProgress({ progress: 96, stage: "backup", message: "Создание резервной копии XLSB на Яндекс-Диске..." });
+  await ensureYandexDiskFolder(backupFolder);
+  await requestYandexWebDav("PUT", backupPath, {
+    acceptedStatuses: [200, 201, 204],
+    body: sourceBytes,
+    contentType: "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
+  });
+  onProgress({ progress: 98, stage: "save", message: "Обновление базы XLSB на Яндекс-Диске..." });
+  try {
+    await requestYandexWebDav("PUT", targetPath, {
+      acceptedStatuses: [200, 201, 204],
+      body: outputBytes,
+      contentType: "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
+    });
+  } catch (error) {
+    throw new Error(`Резервная копия создана: ${backupPath}. Не удалось обновить исходную базу: ${error.message}`);
+  }
+  return {
+    source: sourceType,
+    targetPath: targetPath.replace(/^\/+/, ""),
+    backupPath: backupPath.replace(/^\/+/, "")
+  };
 }
 
 function formatImportBytes(bytes) {
@@ -5640,7 +8045,7 @@ function formatImportBytes(bytes) {
 
 function parseStudentDatabaseInWorker(bytes, onProgress = () => {}) {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(path.join(ROOT, "student-import-worker.js"), {
+    const worker = new Worker(path.join(SERVER_CODE_ROOT, "student-import-worker.js"), {
       workerData: bytes
     });
     let settled = false;
@@ -5670,14 +8075,17 @@ function parseStudentDatabaseInWorker(bytes, onProgress = () => {}) {
   });
 }
 
-function buildStudentDatabaseImportResult(result) {
+function buildStudentDatabaseImportResult(result, source = "webdav") {
   return {
     ...result,
     count: result.students.length,
+    contractCount: result.contracts.length,
     directExpenseCount: result.directExpenses.length,
+    generalExpenseCount: result.generalExpenses.length,
     linkedDirectExpenseCount: result.linkedDirectExpenseCount,
     totalDirectExpenseCount: result.totalDirectExpenseCount,
     sourceName: "АИС Допобразование.xlsb",
+    source: normalizeStudentDatabaseSource(source),
     importedAt: new Date().toISOString()
   };
 }
@@ -5716,11 +8124,14 @@ function publicStudentImportJob(job) {
   };
 }
 
-async function runStudentImportJob(job, databasePath) {
+async function runStudentImportJob(job, databasePath, source = "webdav") {
   try {
+    const sourceType = normalizeStudentDatabaseSource(source);
+    const isLocal = sourceType === "local";
+    const transferStage = isLocal ? "read" : "download";
     updateStudentImportJob(job, {
-      stage: "download",
-      message: "Получение файла через WebDAV...",
+      stage: transferStage,
+      message: isLocal ? "Чтение базы с локального диска..." : "Получение файла через WebDAV...",
       progress: 0
     });
     const bytes = await loadStudentDatabaseBytes(databasePath, ({ receivedBytes, totalBytes }) => {
@@ -5728,17 +8139,17 @@ async function runStudentImportJob(job, databasePath) {
         ? Math.min(100, Math.floor((receivedBytes / totalBytes) * 100))
         : 0;
       updateStudentImportJob(job, {
-        stage: "download",
+        stage: transferStage,
         progress: totalBytes > 0 ? downloadPercent / 2 : job.progress,
         message: totalBytes > 0
-          ? `Скачивание файла: ${downloadPercent}% (${formatImportBytes(receivedBytes)} из ${formatImportBytes(totalBytes)})`
-          : `Скачано ${formatImportBytes(receivedBytes)}`
+          ? `${isLocal ? "Чтение" : "Скачивание"} файла: ${downloadPercent}% (${formatImportBytes(receivedBytes)} из ${formatImportBytes(totalBytes)})`
+          : `${isLocal ? "Прочитано" : "Скачано"} ${formatImportBytes(receivedBytes)}`
       });
-    });
+    }, { source: sourceType });
     updateStudentImportJob(job, {
       stage: "parse",
       progress: 50,
-      message: `Файл загружен (${formatImportBytes(bytes.length)}). Чтение XLSB...`
+      message: `Файл ${isLocal ? "прочитан" : "загружен"} (${formatImportBytes(bytes.length)}). Чтение XLSB...`
     });
     const result = await parseStudentDatabaseInWorker(bytes, (parseProgress) => {
       const value = Math.max(0, Math.min(100, Number(parseProgress.progress) || 0));
@@ -5748,7 +8159,7 @@ async function runStudentImportJob(job, databasePath) {
         message: parseProgress.message || "Обработка данных Excel..."
       });
     });
-    job.result = buildStudentDatabaseImportResult(result);
+    job.result = buildStudentDatabaseImportResult(result, sourceType);
     updateStudentImportJob(job, {
       status: "completed",
       stage: "complete",
@@ -6011,9 +8422,12 @@ async function handleDocumentTemplateUpload(req, res) {
 async function handleStudentDatabaseImport(req, res) {
   try {
     const body = await readJsonBody(req);
-    const bytes = await loadStudentDatabaseBytes(body.databasePath);
+    const source = await useWebDavWhenLocalDocumentsUnavailable(
+      normalizeStudentDatabaseSource(body.source)
+    );
+    const bytes = await loadStudentDatabaseBytes(body.databasePath, null, { source });
     const result = await parseStudentDatabaseInWorker(bytes);
-    sendJson(res, 200, buildStudentDatabaseImportResult(result));
+    sendJson(res, 200, buildStudentDatabaseImportResult(result, source));
   } catch (error) {
     sendError(res, 400, error.message);
   }
@@ -6022,21 +8436,29 @@ async function handleStudentDatabaseImport(req, res) {
 async function buildStudentDatabaseExport(body, onProgress = () => {}) {
   let tempDirectory = "";
   try {
+    const sourceType = await useWebDavWhenLocalDocumentsUnavailable(
+      normalizeStudentDatabaseSource(body.source)
+    );
+    const isLocal = sourceType === "local";
     onProgress({ progress: 1, stage: "prepare", message: "Подготовка данных веб-базы..." });
     const payload = sanitizeStudentDatabaseExportPayload(body);
-    onProgress({ progress: 2, stage: "download", message: "Получение исходного XLSB..." });
+    onProgress({
+      progress: 2,
+      stage: isLocal ? "read" : "download",
+      message: isLocal ? "Чтение исходного XLSB с локального диска..." : "Получение исходного XLSB через WebDAV..."
+    });
     const sourceBytes = await loadStudentDatabaseBytes(body.databasePath, ({ receivedBytes, totalBytes }) => {
       const downloadPercent = totalBytes > 0
         ? Math.min(100, Math.floor((receivedBytes / totalBytes) * 100))
         : 0;
       onProgress({
         progress: totalBytes > 0 ? 2 + downloadPercent * 0.13 : 2,
-        stage: "download",
+        stage: isLocal ? "read" : "download",
         message: totalBytes > 0
-          ? `Скачивание исходной базы: ${downloadPercent}%`
-          : `Скачано ${formatImportBytes(receivedBytes)}`
+          ? `${isLocal ? "Чтение" : "Скачивание"} исходной базы: ${downloadPercent}%`
+          : `${isLocal ? "Прочитано" : "Скачано"} ${formatImportBytes(receivedBytes)}`
       });
-    });
+    }, { source: sourceType });
     onProgress({ progress: 16, stage: "inspect", message: "Проверка структуры исходной книги..." });
     const sourceInspection = inspectStudentDatabaseBinary(sourceBytes);
     tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ais-student-database-export-"));
@@ -6068,21 +8490,50 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     const directExpenseFormulaLoss = (
       sourceInspection.directExpenseFormulaCount - outputInspection.directExpenseFormulaCount
     );
-    if (baseFormulaLoss > 5 || directExpenseFormulaLoss > 5) {
+    const generalExpenseFormulaLoss = (
+      sourceInspection.generalExpenseFormulaCount - outputInspection.generalExpenseFormulaCount
+    );
+    const contractFormulaLoss = sourceInspection.contractFormulaCount - outputInspection.contractFormulaCount;
+    const removedGeneralExpenseRows = Math.max(
+      0,
+      sourceInspection.generalExpenseRecordCount - outputInspection.generalExpenseRecordCount
+    );
+    const generalExpenseFormulaLossLimit = 5 + removedGeneralExpenseRows;
+    const removedContractRows = Math.max(
+      0,
+      sourceInspection.contractRecordCount - outputInspection.contractRecordCount
+    );
+    const contractFormulaLossLimit = 5 + removedContractRows * 15;
+    if (
+      baseFormulaLoss > 5
+      || directExpenseFormulaLoss > 5
+      || generalExpenseFormulaLoss > generalExpenseFormulaLossLimit
+      || contractFormulaLoss > contractFormulaLossLimit
+    ) {
       throw new Error(
         "Проверка сформированной книги не пройдена: потеряно слишком много формул "
         + `(База: ${sourceInspection.baseFormulaCount} → ${outputInspection.baseFormulaCount}; `
-        + `Прямые затраты: ${sourceInspection.directExpenseFormulaCount} → ${outputInspection.directExpenseFormulaCount}).`
+        + `Прямые затраты: ${sourceInspection.directExpenseFormulaCount} → ${outputInspection.directExpenseFormulaCount}; `
+        + `Общие затраты: ${sourceInspection.generalExpenseFormulaCount} → ${outputInspection.generalExpenseFormulaCount}; `
+        + `Реестр договоров: ${sourceInspection.contractFormulaCount} → ${outputInspection.contractFormulaCount}).`
       );
     }
-    onProgress({ progress: 99, stage: "complete", message: "Подготовка XLSB к скачиванию..." });
+    const savedResult = await saveStudentDatabaseSyncResult(
+      body.databasePath,
+      sourceType,
+      sourceBytes,
+      outputBytes,
+      onProgress
+    );
+    onProgress({ progress: 99, stage: "complete", message: "База XLSB обновлена, резервная копия сохранена." });
     await safelyRemoveStudentDatabaseExportDirectory(tempDirectory);
     tempDirectory = "";
     return {
-      bytes: outputBytes,
-      fileName: buildStudentDatabaseExportFileName(),
+      ...savedResult,
       studentCount: payload.students.length,
-      directExpenseCount: payload.directExpenses.length
+      contractCount: payload.contracts.length,
+      directExpenseCount: payload.directExpenses.length,
+      generalExpenseCount: payload.generalExpenses.length
     };
   } finally {
     if (tempDirectory) {
@@ -6095,13 +8546,7 @@ async function handleStudentDatabaseExport(req, res) {
   try {
     const body = await readJsonBody(req);
     const result = await buildStudentDatabaseExport(body);
-    sendFile(
-      res,
-      200,
-      result.bytes,
-      result.fileName,
-      "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
-    );
+    sendJson(res, 200, result);
   } catch (error) {
     sendError(res, 400, error.message);
   }
@@ -6150,7 +8595,7 @@ async function runStudentExportJob(job, body) {
       status: "completed",
       stage: "complete",
       progress: 100,
-      message: `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} расходов`
+      message: `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} прямых и ${job.result.generalExpenseCount} общих затрат`
     });
   } catch (error) {
     updateStudentExportJob(job, {
@@ -6211,22 +8656,19 @@ function handleStudentDatabaseExportResult(res, requestUrl) {
     sendError(res, 400, job.error || "Синхронизация завершилась с ошибкой.");
     return;
   }
-  if (job.status !== "completed" || !job.result?.bytes) {
+  if (job.status !== "completed" || !job.result) {
     sendError(res, 409, "Синхронизация ещё не завершена.");
     return;
   }
-  sendFile(
-    res,
-    200,
-    job.result.bytes,
-    job.result.fileName,
-    "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
-  );
+  sendJson(res, 200, job.result);
 }
 
 async function handleStudentDatabaseImportStart(req, res) {
   try {
     const body = await readJsonBody(req);
+    const source = await useWebDavWhenLocalDocumentsUnavailable(
+      normalizeStudentDatabaseSource(body.source)
+    );
     const databasePath = String(
       body.databasePath
       || serverSettings.studentDatabaseWebDavPath
@@ -6243,11 +8685,12 @@ async function handleStudentDatabaseImportStart(req, res) {
       progress: 0,
       error: "",
       result: null,
+      source,
       createdAt: now,
       updatedAt: now
     };
     studentImportJobs.set(job.id, job);
-    setImmediate(() => runStudentImportJob(job, databasePath));
+    setImmediate(() => runStudentImportJob(job, databasePath, source));
     sendJson(res, 202, publicStudentImportJob(job));
   } catch (error) {
     sendError(res, 400, error.message);
@@ -6704,7 +9147,8 @@ async function handleStudentSourcePhoto(req, res, requestUrl) {
   }
 }
 
-function publicSystemDocumentSettings() {
+async function publicSystemDocumentSettings() {
+  const localDocuments = await getLocalSystemDocumentsAvailability();
   return {
     databasePath: normalizeYandexDiskResourceSetting(
       serverSettings.studentDatabaseWebDavPath,
@@ -6720,6 +9164,7 @@ function publicSystemDocumentSettings() {
       serverSettings.localDocumentsRootIsSystemParent
     ),
     openDocumentsLocally: serverSettings.openDocumentsLocally !== false,
+    localDocumentsAvailable: Boolean(localDocuments.available),
     login: String(serverSettings.yandexDiskLogin || process.env.YANDEX_DISK_LOGIN || "").trim(),
     hasPassword: Boolean(
       serverSettings.yandexDiskPassword || process.env.YANDEX_DISK_PASSWORD
@@ -6742,7 +9187,7 @@ function publicSystemDocumentSettings() {
 
 async function handleSystemDocumentSettings(req, res) {
   if (req.method === "GET") {
-    sendJson(res, 200, publicSystemDocumentSettings());
+    sendJson(res, 200, await publicSystemDocumentSettings());
     return;
   }
   try {
@@ -6796,7 +9241,7 @@ async function handleSystemDocumentSettings(req, res) {
     if (emailPassword) patch.studentApplicationsEmailPassword = emailPassword;
     if (body.clearEmailPassword) patch.studentApplicationsEmailPassword = "";
     await saveServerSettings(patch);
-    sendJson(res, 200, publicSystemDocumentSettings());
+    sendJson(res, 200, await publicSystemDocumentSettings());
   } catch (error) {
     sendError(res, 400, error.message);
   }
@@ -6829,7 +9274,26 @@ async function handleStudentApplicationsEmailConnectionTest(req, res) {
   }
 }
 
-async function handleServerEmail(req, res) {
+async function handleServerEmail(req, res, authUser) {
+  let auditContext = {};
+  let auditRecipient = "";
+  let auditSubject = "";
+  let auditAttachmentName = "";
+  const writeEmailAudit = async (action, details, source = "smtp") => {
+    const studentId = auditText(auditContext.studentId, 240);
+    const studentName = auditText(auditContext.studentName, 500);
+    await safelyAppendAuditEntry({
+      action,
+      area: "Электронная почта",
+      entityType: studentId ? "students" : "email",
+      entityId: studentId,
+      entityLabel: studentName || auditRecipient,
+      field: "email",
+      after: auditRecipient,
+      details,
+      source
+    }, authUser, req);
+  };
   try {
     if (String(req.headers["x-requested-with"] || "") !== "AIS-Web") {
       sendError(res, 403, "Запрос отправки письма отклонён сервером.");
@@ -6847,9 +9311,14 @@ async function handleServerEmail(req, res) {
     serverEmailRateLimits.set(remoteAddress, recentAttempts);
 
     const body = await readJsonBody(req);
+    auditContext = body.auditContext && typeof body.auditContext === "object"
+      ? body.auditContext
+      : {};
     const to = String(body.to || "").trim();
     const subject = normalizeEmailSubject(body.subject);
     const message = String(body.message || "").trim();
+    auditRecipient = to;
+    auditSubject = subject;
     if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(to) || /[\r\n]/u.test(to)) {
       throw new Error("Некорректный адрес получателя.");
     }
@@ -6889,14 +9358,37 @@ async function handleServerEmail(req, res) {
         throw new Error("Содержимое вложения не соответствует указанному формату.");
       }
       attachment = { fileName, contentType, bytes };
+      auditAttachmentName = fileName;
     }
     const settings = await sendEmailThroughConfiguredMailbox({ to, subject, message, attachment });
+    const messageType = auditText(auditContext.messageType, 240) || "Письмо";
+    const recipientMode = auditContext.recipientMode === "system" ? "системный ящик" : "слушатель";
+    await writeEmailAudit(
+      "Отправлено письмо",
+      [
+        `Тип: ${messageType}`,
+        `Получатель: ${auditRecipient} (${recipientMode})`,
+        `Тема: ${auditSubject}`,
+        auditAttachmentName ? `Вложение: ${auditAttachmentName}` : "Без вложения",
+        `Отправитель: ${settings.login}`
+      ].join("; ")
+    );
     sendJson(res, 200, {
       ok: true,
       from: settings.login
     });
   } catch (error) {
     console.warn(`Не удалось отправить письмо через настроенный ящик: ${error.message}`);
+    await writeEmailAudit(
+      "Ошибка отправки письма",
+      [
+        auditContext.messageType ? `Тип: ${auditText(auditContext.messageType, 240)}` : "Тип: письмо",
+        auditRecipient ? `Получатель: ${auditRecipient}` : "Получатель не определён",
+        auditSubject ? `Тема: ${auditSubject}` : "Тема не определена",
+        auditAttachmentName ? `Вложение: ${auditAttachmentName}` : "Без вложения",
+        `Ошибка: ${auditText(error.message, 1000)}`
+      ].join("; ")
+    );
     sendError(res, 502, error.message);
   }
 }
@@ -6931,7 +9423,11 @@ async function serveStatic(req, res) {
       return;
     }
     const ext = path.extname(fullPath).toLowerCase();
-    const headers = { ...CORS_HEADERS, "Content-Type": MIME_TYPES[ext] || "application/octet-stream" };
+    const headers = {
+      ...CORS_HEADERS,
+      "Content-Type": MIME_TYPES[ext] || "application/octet-stream",
+      "Cache-Control": "no-store"
+    };
     if (decodedPath.startsWith("/storage/photos/")) headers["Cache-Control"] = "public, max-age=31536000, immutable";
     if (req.method === "HEAD") {
       res.writeHead(200, headers);
@@ -6953,8 +9449,44 @@ async function serveStatic(req, res) {
 async function route(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   if (req.method === "OPTIONS") {
-    res.writeHead(204, CORS_HEADERS);
+    const headers = requestUrl.pathname.startsWith("/api/students/recognize-documents/")
+      ? { ...CORS_HEADERS, "Access-Control-Allow-Headers": "Content-Type, X-Requested-With" }
+      : CORS_HEADERS;
+    res.writeHead(204, headers);
     res.end();
+    return;
+  }
+  if (requestUrl.pathname.startsWith("/api/auth/")) {
+    try {
+      if (req.method === "POST" && requestUrl.pathname === "/api/auth/login") {
+        await handleAuthLogin(req, res);
+        return;
+      }
+      const authUser = await getRequestAuthUser(req);
+      if (req.method === "GET" && requestUrl.pathname === "/api/auth/me") {
+        await handleAuthMe(req, res, authUser);
+        return;
+      }
+      if (req.method === "POST" && requestUrl.pathname === "/api/auth/logout") {
+        await handleAuthLogout(req, res);
+        return;
+      }
+      if (!authUser) {
+        sendError(res, 401, "Требуется вход в систему.");
+        return;
+      }
+      if (req.method === "POST" && requestUrl.pathname === "/api/auth/profile") {
+        await handleAuthProfile(req, res, authUser);
+        return;
+      }
+      if (req.method === "POST" && requestUrl.pathname === "/api/auth/password") {
+        await handleAuthPassword(req, res, authUser);
+        return;
+      }
+      sendError(res, 405, "Method not allowed");
+    } catch (error) {
+      sendError(res, 400, error.message);
+    }
     return;
   }
   if (req.method === "GET" && req.url === "/api/health") {
@@ -6966,6 +9498,41 @@ async function route(req, res) {
     && requestUrl.pathname.startsWith("/api/document-conversion/source/")
   ) {
     handleDocumentConversionSource(req, res, requestUrl);
+    return;
+  }
+  const authUser = await getRequestAuthUser(req);
+  const protectedRequest = requestUrl.pathname.startsWith("/api/")
+    || requestUrl.pathname.startsWith("/data/")
+    || requestUrl.pathname === "/send-mail.php";
+  if (protectedRequest && !authUser) {
+    sendError(res, 401, "Требуется вход в систему.");
+    return;
+  }
+  try {
+    if (await handleAuditRequest(req, res, authUser, requestUrl)) return;
+  } catch (error) {
+    sendError(res, 400, error.message);
+    return;
+  }
+  if (requestUrl.pathname === "/api/admin/users") {
+    try {
+      await handleAdminUsers(req, res, authUser);
+    } catch (error) {
+      sendError(res, 400, error.message);
+    }
+    return;
+  }
+  const adminOnlyRequest = (
+    (req.method === "POST" && requestUrl.pathname === "/api/settings/system-documents")
+    || [
+      "/api/yandex-disk/test",
+      "/api/student-applications-email/test"
+    ].includes(requestUrl.pathname)
+    || requestUrl.pathname === "/api/students/export-database"
+    || requestUrl.pathname.startsWith("/api/students/export-database/")
+  );
+  if (adminOnlyRequest && authUser?.role !== "admin") {
+    sendError(res, 403, "Раздел доступен только администратору.");
     return;
   }
   if (req.method === "POST" && req.url === "/api/photos") {
@@ -7019,6 +9586,42 @@ async function route(req, res) {
     await handleEnsureStudentDocumentFolders(req, res);
     return;
   }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/webdav-documents/list") {
+    await handleStudentWebDavDocumentsList(req, res);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/students/webdav-documents/file") {
+    await handleStudentWebDavDocumentFile(req, res, requestUrl);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/webdav-documents/upload") {
+    await handleStudentWebDavDocumentUpload(req, res);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/ocr/health") {
+    await handleOcrHealth(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/recognize-documents/start") {
+    await handleStudentDocumentRecognitionStart(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/recognize-documents/direct") {
+    await handleStudentDocumentRecognitionDirect(req, res);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/students/recognize-documents/status") {
+    handleStudentDocumentRecognitionStatus(req, res, requestUrl);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/students/recognize-documents/result") {
+    handleStudentDocumentRecognitionResult(req, res, requestUrl);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/recognize-documents/page") {
+    await handleStudentDocumentRecognitionPage(req, res);
+    return;
+  }
   if (req.method === "POST" && req.url === "/api/documents/template-inspect") {
     await handleDocumentTemplateInspect(req, res);
     return;
@@ -7064,7 +9667,7 @@ async function route(req, res) {
     return;
   }
   if (req.method === "POST" && req.url === "/send-mail.php") {
-    await handleServerEmail(req, res);
+    await handleServerEmail(req, res, authUser);
     return;
   }
   if (req.method === "GET" || req.method === "HEAD") {
@@ -7074,7 +9677,7 @@ async function route(req, res) {
   sendError(res, 405, "Method not allowed");
 }
 
-if (isMainThread) {
+if (isMainThread && require.main === module) {
   ensureStorage()
     .then(() => {
       http.createServer((req, res) => {
@@ -7091,5 +9694,9 @@ if (isMainThread) {
 }
 
 module.exports = {
-  parseStudentDatabaseWorkbook
+  ensureStorage,
+  parseStudentDatabaseWorkbook,
+  sanitizeStudentDatabaseExportPayload,
+  inspectStudentDatabaseBinary,
+  route
 };
