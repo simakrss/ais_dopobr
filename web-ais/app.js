@@ -9563,7 +9563,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const programTitle = getStudentCardProgramTitle(record);
     const navigation = getStudentCardNavigation(record);
     return `
-      <div class="modal-backdrop" data-action="close-modal">
+      <div class="modal-backdrop student-modal-backdrop" data-action="close-modal">
         <section class="modal student-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
           <form id="recordForm" data-config="students" data-id="${record.id || ""}">
             <header class="modal-head student-modal-head">
@@ -9625,9 +9625,15 @@ MAX - https://bizvmax.ru/zifra_plus
                 </div>
               </section>
 
-              <aside class="student-side-panel">
-                ${renderStudentSidePanel(record)}
-              </aside>
+              <details class="student-side-panel" ${window.matchMedia("(max-width: 720px)").matches ? "" : "open"}>
+                <summary class="student-side-panel-mobile-summary">
+                  <span>Примечание и события</span>
+                  <small>Показать</small>
+                </summary>
+                <div class="student-side-panel-content">
+                  ${renderStudentSidePanel(record)}
+                </div>
+              </details>
             </div>
 
             ${state.discountPickerOpen ? renderDiscountPicker(record) : ""}
@@ -10929,7 +10935,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="photo-preview ${photo ? "has-photo" : ""}" id="studentPhotoPreview">
         ${photo ? `<img src="${escapeAttr(photo)}" alt="Фото слушателя">` : `<span>${initials(record.name || "Слушатель")}</span>`}
         <div class="photo-actions" aria-label="Действия с фото">
-          <label class="photo-icon-button" title="Прикрепить фото" aria-label="Прикрепить фото">
+          <label class="photo-icon-button" title="Прикрепить и кадрировать фото" aria-label="Прикрепить и кадрировать фото">
             <input id="studentPhotoInput" type="file" accept="image/*">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="M21.4 11.6l-8.9 8.9a6 6 0 0 1-8.5-8.5l9.8-9.8a4 4 0 0 1 5.7 5.7l-9.8 9.8a2 2 0 0 1-2.8-2.8l8.8-8.8"></path>
@@ -13743,6 +13749,11 @@ MAX - https://bizvmax.ru/zifra_plus
       closeProfile();
       return true;
     }
+    const studentPhotoCropEditor = document.querySelector("[data-student-photo-crop-editor]");
+    if (studentPhotoCropEditor) {
+      studentPhotoCropEditor.closeStudentPhotoCropEditor?.();
+      return true;
+    }
     const studentWebDavBrowser = document.querySelector("[data-student-webdav-browser]");
     if (studentWebDavBrowser) {
       studentWebDavBrowser.closeStudentWebDavBrowser?.();
@@ -13900,6 +13911,9 @@ MAX - https://bizvmax.ru/zifra_plus
         state.studentImportedViewIds = [];
         state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
+        if (window.matchMedia("(max-width: 1120px)").matches) {
+          document.body.classList.remove("sidebar-open");
+        }
         render();
       });
     });
@@ -16742,6 +16756,403 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
+  function openStudentPhotoCropEditor(dataUrl, options = {}) {
+    return new Promise((resolve, reject) => {
+      const previousEditor = document.querySelector("[data-student-photo-crop-editor]");
+      if (previousEditor) {
+        previousEditor.closeStudentPhotoCropEditor?.();
+        if (previousEditor.isConnected) previousEditor.remove();
+      }
+      const backdrop = document.createElement("div");
+      backdrop.className = "modal-backdrop student-photo-crop-editor-backdrop";
+      backdrop.dataset.studentPhotoCropEditor = "";
+      backdrop.innerHTML = `
+        <section class="modal student-photo-crop-editor" role="dialog" aria-modal="true" aria-label="Кадрирование фото слушателя">
+          <header class="modal-head">
+            <div>
+              <h2>Выбор области фото</h2>
+              <p>${escapeHtml(options.fileName || "Изображение слушателя")}</p>
+            </div>
+            <button class="icon-button" data-action="close-student-photo-editor" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+          </header>
+          <div class="student-photo-crop-editor-toolbar">
+            <div class="student-photo-crop-editor-modes" role="group" aria-label="Режим редактора">
+              <button class="ghost-button is-active" data-photo-crop-mode="frame" type="button">Область фото</button>
+              <button class="ghost-button" data-photo-crop-mode="pan" type="button">Двигать снимок</button>
+            </div>
+            <div class="student-photo-crop-editor-zoom" role="group" aria-label="Масштаб изображения">
+              <span class="student-photo-crop-editor-zoom-title">Масштаб</span>
+              <button class="ghost-button" data-photo-crop-zoom-out type="button" title="Уменьшить">−</button>
+              <input data-photo-crop-zoom type="range" min="25" max="400" step="5" value="100" aria-label="Масштаб изображения">
+              <strong data-photo-crop-zoom-label>100%</strong>
+              <button class="ghost-button" data-photo-crop-zoom-in type="button" title="Увеличить">+</button>
+            </div>
+            <button class="ghost-button" data-photo-crop-fit type="button">Вписать</button>
+            <button class="ghost-button" data-photo-crop-focus type="button">К рамке</button>
+            <button class="ghost-button" data-photo-crop-full type="button">Весь снимок</button>
+          </div>
+          <div class="student-photo-crop-editor-hint">
+            <span><strong>1. Область фото:</strong> перетаскивайте рамку за центр, а за круглые маркеры по углам меняйте её размер.</span>
+            <span><strong>2. Снимок:</strong> нажмите «Двигать снимок», чтобы сдвигать его пальцем; масштаб меняется ползунком «− / +».</span>
+          </div>
+          <div class="student-photo-crop-editor-viewport" data-photo-crop-viewport tabindex="0">
+            <div class="student-photo-crop-editor-loading" data-photo-crop-loading>Загрузка изображения...</div>
+            <img data-photo-crop-image alt="Выбранное фото слушателя" draggable="false">
+            <div class="student-photo-crop-editor-selection" data-photo-crop-selection hidden tabindex="0" aria-label="Выбранная область фото">
+              <span class="student-photo-crop-editor-move-label">Переместить</span>
+              <span class="student-photo-crop-editor-size" data-photo-crop-size></span>
+              ${["nw", "n", "ne", "e", "se", "s", "sw", "w"].map((direction) => (
+                `<span class="student-photo-crop-editor-handle is-${direction}" data-photo-crop-handle="${direction}" aria-hidden="true"></span>`
+              )).join("")}
+            </div>
+          </div>
+          <footer class="modal-actions">
+            <button class="ghost-button" data-action="close-student-photo-editor" type="button">Отмена</button>
+            <button class="primary-button" data-action="use-student-photo-crop" type="button" disabled>Использовать выделение</button>
+          </footer>
+        </section>
+      `;
+      document.body.appendChild(backdrop);
+
+      const viewport = backdrop.querySelector("[data-photo-crop-viewport]");
+      const image = backdrop.querySelector("[data-photo-crop-image]");
+      const selectionElement = backdrop.querySelector("[data-photo-crop-selection]");
+      const selectionSize = backdrop.querySelector("[data-photo-crop-size]");
+      const loading = backdrop.querySelector("[data-photo-crop-loading]");
+      const zoomInput = backdrop.querySelector("[data-photo-crop-zoom]");
+      const zoomLabel = backdrop.querySelector("[data-photo-crop-zoom-label]");
+      const useButton = backdrop.querySelector("[data-action='use-student-photo-crop']");
+      let naturalWidth = 0;
+      let naturalHeight = 0;
+      let fitScale = 1;
+      let zoomRatio = 1;
+      let scale = 1;
+      let panX = 0;
+      let panY = 0;
+      let mode = "frame";
+      let selection = null;
+      let interaction = null;
+      let settled = false;
+      let resizeObserver = null;
+
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resizeObserver?.disconnect();
+        backdrop.remove();
+        resolve(value);
+      };
+      backdrop.closeStudentPhotoCropEditor = () => finish(null);
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        resizeObserver?.disconnect();
+        backdrop.remove();
+        reject(error);
+      };
+      const viewportSize = () => ({
+        width: Math.max(1, viewport.clientWidth),
+        height: Math.max(1, viewport.clientHeight)
+      });
+      const updateFitScale = () => {
+        if (!naturalWidth || !naturalHeight) return;
+        const size = viewportSize();
+        fitScale = Math.max(0.01, Math.min(
+          (size.width - 28) / naturalWidth,
+          (size.height - 28) / naturalHeight
+        ));
+        scale = fitScale * zoomRatio;
+      };
+      const clampPan = () => {
+        if (!naturalWidth || !naturalHeight) return;
+        const size = viewportSize();
+        const displayWidth = naturalWidth * scale;
+        const displayHeight = naturalHeight * scale;
+        const visible = 48;
+        panX = displayWidth <= visible * 2
+          ? (size.width - displayWidth) / 2
+          : clamp(panX, visible - displayWidth, size.width - visible);
+        panY = displayHeight <= visible * 2
+          ? (size.height - displayHeight) / 2
+          : clamp(panY, visible - displayHeight, size.height - visible);
+      };
+      const isUsableSelection = () => Boolean(
+        selection
+        && selection.width >= Math.min(naturalWidth, Math.max(12, naturalWidth * 0.01))
+        && selection.height >= Math.min(naturalHeight, Math.max(12, naturalHeight * 0.01))
+      );
+      const renderEditor = () => {
+        if (!naturalWidth || !naturalHeight) return;
+        clampPan();
+        image.style.left = `${panX}px`;
+        image.style.top = `${panY}px`;
+        image.style.width = `${naturalWidth * scale}px`;
+        image.style.height = `${naturalHeight * scale}px`;
+        zoomInput.value = String(Math.round(zoomRatio * 100));
+        zoomLabel.textContent = `${Math.round(zoomRatio * 100)}%`;
+        viewport.classList.toggle("is-pan-mode", mode === "pan");
+        backdrop.querySelectorAll("[data-photo-crop-mode]").forEach((button) => {
+          button.classList.toggle("is-active", button.dataset.photoCropMode === mode);
+        });
+        if (!selection) {
+          selectionElement.hidden = true;
+          useButton.disabled = true;
+          return;
+        }
+        selectionElement.hidden = false;
+        selectionElement.style.left = `${panX + selection.x * scale}px`;
+        selectionElement.style.top = `${panY + selection.y * scale}px`;
+        selectionElement.style.width = `${selection.width * scale}px`;
+        selectionElement.style.height = `${selection.height * scale}px`;
+        selectionSize.textContent = `${Math.round(selection.width)} × ${Math.round(selection.height)} px`;
+        useButton.disabled = !isUsableSelection();
+      };
+      const centerImage = () => {
+        const size = viewportSize();
+        panX = (size.width - naturalWidth * scale) / 2;
+        panY = (size.height - naturalHeight * scale) / 2;
+      };
+      const focusSelection = () => {
+        if (!selection) return;
+        const size = viewportSize();
+        panX = size.width / 2 - (selection.x + selection.width / 2) * scale;
+        panY = size.height / 2 - (selection.y + selection.height / 2) * scale;
+        renderEditor();
+      };
+      const fitImage = () => {
+        zoomRatio = 1;
+        updateFitScale();
+        centerImage();
+        renderEditor();
+      };
+      const setZoom = (nextRatio, anchorClientX = null, anchorClientY = null) => {
+        if (!naturalWidth || !naturalHeight) return;
+        const rect = viewport.getBoundingClientRect();
+        const anchorX = anchorClientX === null ? rect.width / 2 : anchorClientX - rect.left;
+        const anchorY = anchorClientY === null ? rect.height / 2 : anchorClientY - rect.top;
+        const imageX = (anchorX - panX) / scale;
+        const imageY = (anchorY - panY) / scale;
+        zoomRatio = clamp(Number(nextRatio) || 1, 0.25, 4);
+        scale = fitScale * zoomRatio;
+        panX = anchorX - imageX * scale;
+        panY = anchorY - imageY * scale;
+        renderEditor();
+      };
+      const imagePointFromEvent = (event) => ({
+        x: clamp((event.clientX - viewport.getBoundingClientRect().left - panX) / scale, 0, naturalWidth),
+        y: clamp((event.clientY - viewport.getBoundingClientRect().top - panY) / scale, 0, naturalHeight)
+      });
+      const setFullSelection = () => {
+        selection = { x: 0, y: 0, width: naturalWidth, height: naturalHeight };
+        renderEditor();
+      };
+
+      image.addEventListener("load", () => {
+        naturalWidth = image.naturalWidth;
+        naturalHeight = image.naturalHeight;
+        if (!naturalWidth || !naturalHeight) {
+          fail(new Error("Не удалось определить размер изображения."));
+          return;
+        }
+        loading.hidden = true;
+        image.hidden = false;
+        const initialWidth = naturalWidth * 0.68;
+        const initialHeight = Math.min(naturalHeight * 0.84, initialWidth * 4 / 3);
+        const adjustedWidth = Math.min(initialWidth, initialHeight * 3 / 4);
+        selection = {
+          x: (naturalWidth - adjustedWidth) / 2,
+          y: (naturalHeight - initialHeight) / 2,
+          width: adjustedWidth,
+          height: initialHeight
+        };
+        fitImage();
+        resizeObserver = new ResizeObserver(() => {
+          updateFitScale();
+          focusSelection();
+        });
+        resizeObserver.observe(viewport);
+      }, { once: true });
+      image.addEventListener("error", () => fail(new Error("Не удалось открыть выбранное изображение.")), { once: true });
+      image.src = dataUrl;
+
+      backdrop.querySelectorAll("[data-photo-crop-mode]").forEach((button) => {
+        button.addEventListener("click", () => {
+          mode = button.dataset.photoCropMode === "pan" ? "pan" : "frame";
+          renderEditor();
+        });
+      });
+      backdrop.querySelector("[data-photo-crop-zoom-out]")?.addEventListener("click", () => setZoom(zoomRatio - 0.15));
+      backdrop.querySelector("[data-photo-crop-zoom-in]")?.addEventListener("click", () => setZoom(zoomRatio + 0.15));
+      zoomInput.addEventListener("input", () => setZoom(Number(zoomInput.value) / 100));
+      backdrop.querySelector("[data-photo-crop-fit]")?.addEventListener("click", fitImage);
+      backdrop.querySelector("[data-photo-crop-focus]")?.addEventListener("click", focusSelection);
+      backdrop.querySelector("[data-photo-crop-full]")?.addEventListener("click", setFullSelection);
+      viewport.addEventListener("wheel", (event) => {
+        if (!naturalWidth) return;
+        event.preventDefault();
+        setZoom(zoomRatio * Math.exp(-event.deltaY * 0.0015), event.clientX, event.clientY);
+      }, { passive: false });
+
+      viewport.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || !naturalWidth || event.target.closest("[data-photo-crop-selection]")) return;
+        event.preventDefault();
+        viewport.setPointerCapture(event.pointerId);
+        if (mode === "pan") {
+          interaction = {
+            type: "pan",
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            panX,
+            panY
+          };
+          viewport.classList.add("is-panning");
+          return;
+        }
+        const point = imagePointFromEvent(event);
+        interaction = {
+          type: "draw",
+          pointerId: event.pointerId,
+          startPoint: point,
+          previousSelection: selection ? { ...selection } : null
+        };
+        selection = { x: point.x, y: point.y, width: 0, height: 0 };
+        renderEditor();
+      });
+      viewport.addEventListener("pointermove", (event) => {
+        if (!interaction || interaction.pointerId !== event.pointerId) return;
+        if (interaction.type === "pan") {
+          panX = interaction.panX + event.clientX - interaction.startX;
+          panY = interaction.panY + event.clientY - interaction.startY;
+          renderEditor();
+          return;
+        }
+        if (interaction.type === "draw") {
+          const point = imagePointFromEvent(event);
+          selection = {
+            x: Math.min(interaction.startPoint.x, point.x),
+            y: Math.min(interaction.startPoint.y, point.y),
+            width: Math.abs(point.x - interaction.startPoint.x),
+            height: Math.abs(point.y - interaction.startPoint.y)
+          };
+          renderEditor();
+        }
+      });
+      const finishViewportInteraction = (event) => {
+        if (!interaction || interaction.pointerId !== event.pointerId) return;
+        if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
+        if (interaction.type === "draw" && !isUsableSelection()) selection = interaction.previousSelection;
+        interaction = null;
+        viewport.classList.remove("is-panning");
+        renderEditor();
+      };
+      viewport.addEventListener("pointerup", finishViewportInteraction);
+      viewport.addEventListener("pointercancel", finishViewportInteraction);
+
+      selectionElement.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || mode !== "frame" || !selection) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const handle = event.target.closest("[data-photo-crop-handle]")?.dataset.photoCropHandle || "move";
+        selectionElement.setPointerCapture(event.pointerId);
+        interaction = {
+          type: handle === "move" ? "move" : "resize",
+          handle,
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          selection: { ...selection }
+        };
+      });
+      selectionElement.addEventListener("pointermove", (event) => {
+        if (!interaction || interaction.pointerId !== event.pointerId || !["move", "resize"].includes(interaction.type)) return;
+        const dx = (event.clientX - interaction.startX) / scale;
+        const dy = (event.clientY - interaction.startY) / scale;
+        const start = interaction.selection;
+        if (interaction.type === "move") {
+          selection = {
+            ...start,
+            x: clamp(start.x + dx, 0, naturalWidth - start.width),
+            y: clamp(start.y + dy, 0, naturalHeight - start.height)
+          };
+          renderEditor();
+          return;
+        }
+        const minWidth = Math.min(naturalWidth, Math.max(12, naturalWidth * 0.01));
+        const minHeight = Math.min(naturalHeight, Math.max(12, naturalHeight * 0.01));
+        let left = start.x;
+        let right = start.x + start.width;
+        let top = start.y;
+        let bottom = start.y + start.height;
+        if (interaction.handle.includes("w")) left = clamp(start.x + dx, 0, right - minWidth);
+        if (interaction.handle.includes("e")) right = clamp(start.x + start.width + dx, left + minWidth, naturalWidth);
+        if (interaction.handle.includes("n")) top = clamp(start.y + dy, 0, bottom - minHeight);
+        if (interaction.handle.includes("s")) bottom = clamp(start.y + start.height + dy, top + minHeight, naturalHeight);
+        selection = { x: left, y: top, width: right - left, height: bottom - top };
+        renderEditor();
+      });
+      const finishSelectionInteraction = (event) => {
+        if (!interaction || interaction.pointerId !== event.pointerId || !["move", "resize"].includes(interaction.type)) return;
+        if (selectionElement.hasPointerCapture(event.pointerId)) selectionElement.releasePointerCapture(event.pointerId);
+        interaction = null;
+        renderEditor();
+      };
+      selectionElement.addEventListener("pointerup", finishSelectionInteraction);
+      selectionElement.addEventListener("pointercancel", finishSelectionInteraction);
+      selectionElement.addEventListener("keydown", (event) => {
+        if (!selection || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+        event.preventDefault();
+        const step = event.shiftKey ? 10 : 1;
+        const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+        const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+        selection.x = clamp(selection.x + dx, 0, naturalWidth - selection.width);
+        selection.y = clamp(selection.y + dy, 0, naturalHeight - selection.height);
+        renderEditor();
+      });
+
+      backdrop.querySelectorAll("[data-action='close-student-photo-editor']").forEach((button) => {
+        button.addEventListener("click", () => finish(null));
+      });
+      backdrop.addEventListener("pointerdown", (event) => {
+        if (event.target === backdrop) finish(null);
+      });
+      backdrop.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") finish(null);
+      });
+      useButton.addEventListener("click", () => {
+        if (!isUsableSelection()) return;
+        const sourceX = Math.round(selection.x);
+        const sourceY = Math.round(selection.y);
+        const sourceWidth = Math.max(1, Math.round(selection.width));
+        const sourceHeight = Math.max(1, Math.round(selection.height));
+        const outputScale = Math.min(1, 1600 / Math.max(sourceWidth, sourceHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(sourceWidth * outputScale));
+        canvas.height = Math.max(1, Math.round(sourceHeight * outputScale));
+        const context = canvas.getContext("2d");
+        if (!context) {
+          fail(new Error("Браузер не смог подготовить выбранную область фото."));
+          return;
+        }
+        context.fillStyle = "#fff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(
+          image,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          0,
+          0,
+          canvas.width,
+          canvas.height
+        );
+        finish(canvas.toDataURL("image/jpeg", 0.92));
+      });
+      backdrop.querySelector("[data-action='close-student-photo-editor']")?.focus({ preventScroll: true });
+    });
+  }
+
   async function handleStudentPhoto(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -16762,8 +17173,10 @@ MAX - https://bizvmax.ru/zifra_plus
       const urlInput = document.getElementById("studentPhotoUrl");
       const preview = document.getElementById("studentPhotoPreview");
       try {
+        const croppedPhoto = await openStudentPhotoCropEditor(reader.result, { fileName: file.name });
+        if (!croppedPhoto) return;
         preview?.classList.add("is-loading");
-        const uploaded = await uploadStoredPhoto(reader.result, pathInput?.value || "", {
+        const uploaded = await uploadStoredPhoto(croppedPhoto, pathInput?.value || "", {
           studentName,
           name: studentName
         });
@@ -16789,6 +17202,10 @@ MAX - https://bizvmax.ru/zifra_plus
         event.target.value = "";
       }
     };
+    reader.addEventListener("error", () => {
+      alert("Не удалось прочитать выбранное изображение.");
+      event.target.value = "";
+    }, { once: true });
     reader.readAsDataURL(file);
   }
 
@@ -17748,7 +18165,11 @@ MAX - https://bizvmax.ru/zifra_plus
         ? '<span class="student-document-recognition-match">Совпадает</span>'
         : "";
     return `
-      <div class="student-document-recognition-field ${conflict ? "has-conflict" : ""}" data-ocr-recognition-field="${escapeAttr(key)}">
+      <div
+        class="student-document-recognition-field ${conflict ? "has-conflict" : ""}"
+        data-ocr-recognition-field="${escapeAttr(key)}"
+        data-ocr-field-source="${escapeAttr(field.sourceFile || "")}"
+      >
         <label class="student-document-recognition-field-select">
           <input type="checkbox" data-ocr-field-enabled ${selected ? "checked" : ""}>
           <span>${escapeHtml(field.label || key)}</span>
@@ -17875,6 +18296,15 @@ MAX - https://bizvmax.ru/zifra_plus
       ...group,
       fields: group.keys.map((key) => fields.find((field) => field.key === key)).filter(Boolean)
     })).filter((group) => group.fields.length);
+    const fieldDocuments = [];
+    const fieldDocumentKeys = new Set();
+    fields.forEach((field) => {
+      const source = String(field.sourceFile || "Документ").trim() || "Документ";
+      const sourceKey = source.replace(/\\/g, "/").toLocaleLowerCase("ru-RU");
+      if (fieldDocumentKeys.has(sourceKey)) return;
+      fieldDocumentKeys.add(sourceKey);
+      fieldDocuments.push({ source, sourceKey });
+    });
     modal.querySelector("[data-ocr-progress-panel]")?.remove();
     modal.insertAdjacentHTML("beforeend", `
       <div class="student-document-recognition-result">
@@ -17889,10 +18319,43 @@ MAX - https://bizvmax.ru/zifra_plus
           ${payload.failedCount ? `<span class="is-error">С ошибками: ${Number(payload.failedCount)}</span>` : ""}
           ${payload.skippedCount ? `<span>Пропущено: ${Number(payload.skippedCount)}</span>` : ""}
         </div>
+        ${fields.length ? `
+          <div class="student-document-recognition-selection-tools">
+            <div class="student-document-recognition-selection-all">
+              <label>
+                <input type="checkbox" data-ocr-select-all-fields>
+                <span>Все поля всех документов</span>
+              </label>
+              <span data-ocr-selected-fields-count></span>
+            </div>
+            <div class="student-document-recognition-document-selectors">
+              ${fieldDocuments.map((document) => `
+                <label title="${escapeAttr(document.source)}">
+                  <input
+                    type="checkbox"
+                    data-ocr-select-document-fields
+                    data-ocr-document-source="${escapeAttr(document.sourceKey)}"
+                  >
+                  <span>
+                    <strong>${escapeHtml(document.source)}</strong>
+                    <small>Выбрать все поля документа</small>
+                  </span>
+                  <em data-ocr-document-selected-count></em>
+                </label>
+              `).join("")}
+            </div>
+          </div>
+        ` : ""}
         ${renderStudentDocumentPhotoCandidates(photoCandidates)}
         ${groupedFields.length ? groupedFields.map((group) => `
-          <section class="student-document-recognition-group">
-            <h3>${escapeHtml(group.label)}</h3>
+          <section class="student-document-recognition-group student-document-recognition-field-group" data-ocr-field-group="${escapeAttr(group.id)}">
+            <div class="student-document-recognition-group-select">
+              <label>
+                <input type="checkbox" data-ocr-select-group-fields>
+                <span>${escapeHtml(group.label)}</span>
+              </label>
+              <small data-ocr-group-selected-count></small>
+            </div>
             ${group.fields.map((field) => renderStudentDocumentRecognitionField(field, currentRecord)).join("")}
           </section>
         `).join("") : `
@@ -17959,8 +18422,92 @@ MAX - https://bizvmax.ru/zifra_plus
         Number(button.dataset.ocrFileIndex) || 0
       ));
     });
+    bindStudentDocumentRecognitionSelectAll(modal);
     bindStudentDocumentRecognitionIdentityValidation(modal);
     bindStudentDocumentRecognitionFieldPreviews(modal, fields, payload.files);
+  }
+
+  function bindStudentDocumentRecognitionSelectAll(modal) {
+    const toggle = modal?.querySelector("[data-ocr-select-all-fields]");
+    const count = modal?.querySelector("[data-ocr-selected-fields-count]");
+    if (!toggle) return;
+    const getRows = () => Array.from(modal.querySelectorAll("[data-ocr-recognition-field]"));
+    const isSelectable = (row) => Boolean(String(row.querySelector("[data-ocr-field-value]")?.value || "").trim());
+    const normalizeSource = (value) => String(value || "Документ")
+      .trim()
+      .replace(/\\/g, "/")
+      .toLocaleLowerCase("ru-RU");
+    const documentToggles = Array.from(modal.querySelectorAll("[data-ocr-select-document-fields]"));
+    const groupToggles = Array.from(modal.querySelectorAll("[data-ocr-select-group-fields]"));
+    const getDocumentRows = (documentToggle) => {
+      const source = normalizeSource(documentToggle.dataset.ocrDocumentSource);
+      return getRows().filter((row) => normalizeSource(row.dataset.ocrFieldSource) === source && isSelectable(row));
+    };
+    const getGroupRows = (groupToggle) => Array.from(
+      groupToggle.closest("[data-ocr-field-group]")?.querySelectorAll("[data-ocr-recognition-field]") || []
+    ).filter(isSelectable);
+    const sync = () => {
+      const rows = getRows().filter(isSelectable);
+      const selected = rows.filter((row) => row.querySelector("[data-ocr-field-enabled]")?.checked).length;
+      toggle.disabled = rows.length === 0;
+      toggle.checked = rows.length > 0 && selected === rows.length;
+      toggle.indeterminate = selected > 0 && selected < rows.length;
+      if (count) count.textContent = `Выбрано ${selected} из ${rows.length}`;
+      documentToggles.forEach((documentToggle) => {
+        const documentRows = getDocumentRows(documentToggle);
+        const documentSelected = documentRows.filter((row) => row.querySelector("[data-ocr-field-enabled]")?.checked).length;
+        documentToggle.disabled = documentRows.length === 0;
+        documentToggle.checked = documentRows.length > 0 && documentSelected === documentRows.length;
+        documentToggle.indeterminate = documentSelected > 0 && documentSelected < documentRows.length;
+        const documentCount = documentToggle.closest("label")?.querySelector("[data-ocr-document-selected-count]");
+        if (documentCount) documentCount.textContent = `${documentSelected} из ${documentRows.length}`;
+      });
+      groupToggles.forEach((groupToggle) => {
+        const groupRows = getGroupRows(groupToggle);
+        const groupSelected = groupRows.filter((row) => row.querySelector("[data-ocr-field-enabled]")?.checked).length;
+        groupToggle.disabled = groupRows.length === 0;
+        groupToggle.checked = groupRows.length > 0 && groupSelected === groupRows.length;
+        groupToggle.indeterminate = groupSelected > 0 && groupSelected < groupRows.length;
+        const groupCount = groupToggle.closest("[data-ocr-field-group]")?.querySelector("[data-ocr-group-selected-count]");
+        if (groupCount) groupCount.textContent = `${groupSelected} из ${groupRows.length}`;
+      });
+    };
+    toggle.addEventListener("change", () => {
+      const checked = toggle.checked;
+      getRows().forEach((row) => {
+        const checkbox = row.querySelector("[data-ocr-field-enabled]");
+        if (!checkbox) return;
+        checkbox.checked = checked && isSelectable(row);
+      });
+      sync();
+    });
+    documentToggles.forEach((documentToggle) => {
+      documentToggle.addEventListener("change", () => {
+        const checked = documentToggle.checked;
+        getDocumentRows(documentToggle).forEach((row) => {
+          const checkbox = row.querySelector("[data-ocr-field-enabled]");
+          if (checkbox) checkbox.checked = checked;
+        });
+        sync();
+      });
+    });
+    groupToggles.forEach((groupToggle) => {
+      groupToggle.addEventListener("change", () => {
+        const checked = groupToggle.checked;
+        getGroupRows(groupToggle).forEach((row) => {
+          const checkbox = row.querySelector("[data-ocr-field-enabled]");
+          if (checkbox) checkbox.checked = checked;
+        });
+        sync();
+      });
+    });
+    modal.addEventListener("change", (event) => {
+      if (event.target.matches("[data-ocr-field-enabled]")) sync();
+    });
+    modal.addEventListener("input", (event) => {
+      if (event.target.matches("[data-ocr-field-value]")) sync();
+    });
+    sync();
   }
 
   function bindStudentDocumentRecognitionIdentityValidation(modal) {
@@ -18588,13 +19135,18 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="ghost-button" data-ocr-crop-page-prev type="button" title="Предыдущая страница">‹</button>
           <span>Страница <strong data-ocr-crop-page>1</strong> из <strong data-ocr-crop-pages>${Math.max(1, Number(file.pageCount) || 1)}</strong></span>
           <button class="ghost-button" data-ocr-crop-page-next type="button" title="Следующая страница">›</button>
-          <small>Проведите мышью по фотографии, чтобы задать любую область.</small>
+          <small><strong>Как выделить:</strong> проведите пальцем по нужной области. Готовую рамку двигайте за центр, размер меняйте за круглые углы.</small>
         </div>
         <div class="student-document-photo-cropper-viewport" data-ocr-crop-viewport>
           <div class="student-document-photo-cropper-loading" data-ocr-crop-loading>Загрузка страницы...</div>
           <div class="student-document-photo-cropper-stage" data-ocr-crop-stage hidden>
             <img data-ocr-crop-image alt="Страница документа" draggable="false">
-            <div class="student-document-photo-cropper-selection" data-ocr-crop-selection></div>
+            <div class="student-document-photo-cropper-selection" data-ocr-crop-selection tabindex="0" aria-label="Выбранная область фото">
+              <span class="student-document-photo-cropper-move-label">Переместить</span>
+              ${["nw", "ne", "se", "sw"].map((direction) => (
+                `<span class="student-document-photo-cropper-handle is-${direction}" data-ocr-crop-handle="${direction}" aria-hidden="true"></span>`
+              )).join("")}
+            </div>
           </div>
         </div>
         <footer class="modal-actions">
@@ -18617,10 +19169,12 @@ MAX - https://bizvmax.ru/zifra_plus
     const selections = new Map();
     let currentPage = 1;
     let pageCount = Math.max(1, Number(file.pageCount) || 1);
-    let pointerId = null;
-    let startPoint = null;
+    let interaction = null;
 
     const close = () => backdrop.remove();
+    const selectionIsUsable = (selection) => Boolean(
+      selection && selection.width >= 0.015 && selection.height >= 0.015
+    );
     const paintSelection = () => {
       const selection = selections.get(currentPage);
       if (!selection) {
@@ -18633,7 +19187,7 @@ MAX - https://bizvmax.ru/zifra_plus
       selectionElement.style.top = `${selection.y * 100}%`;
       selectionElement.style.width = `${selection.width * 100}%`;
       selectionElement.style.height = `${selection.height * 100}%`;
-      useButton.disabled = selection.width < 0.015 || selection.height < 0.015;
+      useButton.disabled = !selectionIsUsable(selection);
     };
     const updateNavigation = () => {
       pageLabel.textContent = String(currentPage);
@@ -18678,34 +19232,110 @@ MAX - https://bizvmax.ru/zifra_plus
       };
     };
     stage.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || stage.hidden || !image.naturalWidth) return;
+      if (
+        event.button !== 0
+        || stage.hidden
+        || !image.naturalWidth
+        || event.target.closest("[data-ocr-crop-selection]")
+      ) return;
       event.preventDefault();
-      pointerId = event.pointerId;
-      startPoint = pointFromEvent(event);
-      stage.setPointerCapture(pointerId);
+      const startPoint = pointFromEvent(event);
+      stage.setPointerCapture(event.pointerId);
+      interaction = {
+        type: "draw",
+        pointerId: event.pointerId,
+        startPoint,
+        previousSelection: selections.has(currentPage) ? { ...selections.get(currentPage) } : null,
+        captureTarget: stage
+      };
       selections.set(currentPage, { x: startPoint.x, y: startPoint.y, width: 0, height: 0 });
       paintSelection();
     });
     stage.addEventListener("pointermove", (event) => {
-      if (pointerId !== event.pointerId || !startPoint) return;
+      if (!interaction || interaction.type !== "draw" || interaction.pointerId !== event.pointerId) return;
       const point = pointFromEvent(event);
       selections.set(currentPage, {
-        x: Math.min(startPoint.x, point.x),
-        y: Math.min(startPoint.y, point.y),
-        width: Math.abs(point.x - startPoint.x),
-        height: Math.abs(point.y - startPoint.y)
+        x: Math.min(interaction.startPoint.x, point.x),
+        y: Math.min(interaction.startPoint.y, point.y),
+        width: Math.abs(point.x - interaction.startPoint.x),
+        height: Math.abs(point.y - interaction.startPoint.y)
       });
       paintSelection();
     });
+    selectionElement.addEventListener("pointerdown", (event) => {
+      const selection = selections.get(currentPage);
+      if (event.button !== 0 || !selectionIsUsable(selection)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const handle = event.target.closest("[data-ocr-crop-handle]")?.dataset.ocrCropHandle || "move";
+      selectionElement.setPointerCapture(event.pointerId);
+      interaction = {
+        type: handle === "move" ? "move" : "resize",
+        handle,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        selection: { ...selection },
+        captureTarget: selectionElement
+      };
+    });
+    selectionElement.addEventListener("pointermove", (event) => {
+      if (!interaction || interaction.pointerId !== event.pointerId || !["move", "resize"].includes(interaction.type)) return;
+      const rect = image.getBoundingClientRect();
+      const dx = (event.clientX - interaction.startX) / Math.max(1, rect.width);
+      const dy = (event.clientY - interaction.startY) / Math.max(1, rect.height);
+      const start = interaction.selection;
+      if (interaction.type === "move") {
+        selections.set(currentPage, {
+          ...start,
+          x: clamp(start.x + dx, 0, 1 - start.width),
+          y: clamp(start.y + dy, 0, 1 - start.height)
+        });
+        paintSelection();
+        return;
+      }
+      let left = start.x;
+      let right = start.x + start.width;
+      let top = start.y;
+      let bottom = start.y + start.height;
+      if (interaction.handle.includes("w")) left = clamp(start.x + dx, 0, right - 0.015);
+      if (interaction.handle.includes("e")) right = clamp(start.x + start.width + dx, left + 0.015, 1);
+      if (interaction.handle.includes("n")) top = clamp(start.y + dy, 0, bottom - 0.015);
+      if (interaction.handle.includes("s")) bottom = clamp(start.y + start.height + dy, top + 0.015, 1);
+      selections.set(currentPage, { x: left, y: top, width: right - left, height: bottom - top });
+      paintSelection();
+    });
     const stopSelection = (event) => {
-      if (pointerId !== event.pointerId) return;
-      if (stage.hasPointerCapture(pointerId)) stage.releasePointerCapture(pointerId);
-      pointerId = null;
-      startPoint = null;
+      if (!interaction || interaction.pointerId !== event.pointerId) return;
+      const activeInteraction = interaction;
+      interaction = null;
+      if (activeInteraction.captureTarget?.hasPointerCapture(event.pointerId)) {
+        activeInteraction.captureTarget.releasePointerCapture(event.pointerId);
+      }
+      if (activeInteraction.type === "draw" && !selectionIsUsable(selections.get(currentPage))) {
+        if (activeInteraction.previousSelection) selections.set(currentPage, activeInteraction.previousSelection);
+        else selections.delete(currentPage);
+      }
       paintSelection();
     };
     stage.addEventListener("pointerup", stopSelection);
     stage.addEventListener("pointercancel", stopSelection);
+    selectionElement.addEventListener("pointerup", stopSelection);
+    selectionElement.addEventListener("pointercancel", stopSelection);
+    selectionElement.addEventListener("keydown", (event) => {
+      const selection = selections.get(currentPage);
+      if (!selection || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+      event.preventDefault();
+      const step = event.shiftKey ? 0.02 : 0.005;
+      const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+      const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+      selections.set(currentPage, {
+        ...selection,
+        x: clamp(selection.x + dx, 0, 1 - selection.width),
+        y: clamp(selection.y + dy, 0, 1 - selection.height)
+      });
+      paintSelection();
+    });
     previousButton.addEventListener("click", () => loadPage(currentPage - 1));
     nextButton.addEventListener("click", () => loadPage(currentPage + 1));
     backdrop.querySelectorAll("[data-action='close-student-photo-cropper']").forEach((button) => {
