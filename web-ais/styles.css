@@ -9652,6 +9652,54 @@ body.card-window-moving {
   min-width: 0;
 }
 
+.employee-payment-sort-button {
+  min-width: 0;
+  width: 100%;
+  display: inline-flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.employee-payment-sort-button > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.employee-payment-sort-button:hover,
+.employee-payment-sort-button.is-active {
+  color: var(--teal);
+}
+
+.employee-payment-sort-button:focus-visible {
+  outline: 2px solid rgba(15, 118, 110, 0.35);
+  outline-offset: 2px;
+}
+
+.employee-payment-sort-indicator {
+  flex: 0 0 auto;
+  min-width: 10px;
+  color: #78968f;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+.employee-payment-sort-button.is-active .employee-payment-sort-indicator {
+  color: var(--teal);
+}
+
 .employee-payment-column-resize-handle {
   top: -6px;
   right: -9px;

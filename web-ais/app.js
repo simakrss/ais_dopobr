@@ -1,10 +1,19 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.18",
+    version: "1.7.19",
     releasedAt: "2026-08-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.19",
+      releasedAt: "2026-08-09",
+      changes: [
+        "В учёте выплат сотрудникам добавлена сортировка по всем содержательным колонкам с корректной обработкой дат, сумм, отметок и статусов.",
+        "По умолчанию выплаты расположены по дате от новых к старым; повторные нажатия на заголовок переключают направление и возвращают ручной порядок.",
+        "Сортировка работает совместно с фильтрами и сразу обновляет порядок после изменения данных строки, не изменяя сохранённые значения выплат."
+      ]
+    },
     {
       version: "1.7.18",
       releasedAt: "2026-08-09",
@@ -440,17 +449,21 @@
     payment: "",
     act: ""
   });
+  const EMPLOYEE_PAYMENT_SORT_DEFAULTS = Object.freeze({
+    key: "date",
+    direction: "desc"
+  });
   const EMPLOYEE_PAYMENT_TABLE_COLUMNS = Object.freeze([
-    { key: "date", label: "Дата", className: "employee-payment-date-column", defaultWidth: 92 },
-    { key: "source", label: "Источник", className: "employee-payment-source-column", defaultWidth: 88 },
-    { key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 84 },
-    { key: "description", label: "Основание", className: "employee-payment-basis-column", defaultWidth: 88 },
-    { key: "amount", label: "Сумма", className: "employee-payment-amount-column", defaultWidth: 60 },
-    { key: "recommendation", label: "Рекомендация", className: "employee-payment-recommendation-column", defaultWidth: 56 },
-    { key: "act", label: "Акт", className: "employee-payment-act-column", defaultWidth: 32 },
-    { key: "actStatus", label: "Статус акта", className: "employee-payment-act-status-column", defaultWidth: 72 },
-    { key: "paid", label: "Оплачено", className: "employee-payment-paid-column", defaultWidth: 82 },
-    { key: "status", label: "Статус выплаты", className: "employee-payment-status-column", defaultWidth: 78 },
+    { key: "date", label: "Дата", className: "employee-payment-date-column", defaultWidth: 92, sortType: "date" },
+    { key: "source", label: "Источник", className: "employee-payment-source-column", defaultWidth: 88, sortType: "text" },
+    { key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 84, sortType: "text" },
+    { key: "description", label: "Основание", className: "employee-payment-basis-column", defaultWidth: 88, sortType: "text" },
+    { key: "amount", label: "Сумма", className: "employee-payment-amount-column", defaultWidth: 60, sortType: "number" },
+    { key: "recommendation", label: "Рекомендация", className: "employee-payment-recommendation-column", defaultWidth: 56, sortType: "boolean" },
+    { key: "act", label: "Акт", className: "employee-payment-act-column", defaultWidth: 32, sortType: "boolean" },
+    { key: "actStatus", label: "Статус акта", className: "employee-payment-act-status-column", defaultWidth: 72, sortType: "text" },
+    { key: "paid", label: "Оплачено", className: "employee-payment-paid-column", defaultWidth: 82, sortType: "date" },
+    { key: "status", label: "Статус выплаты", className: "employee-payment-status-column", defaultWidth: 78, sortType: "text" },
     { key: "actions", label: "Действия", className: "employee-payment-actions-column", defaultWidth: 78 }
   ]);
   const DIRECT_EXPENSES_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-direct-expenses-table-layout-v1";
@@ -2595,6 +2608,7 @@ MAX - https://bizvmax.ru/zifra_plus
       contract: false
     },
     employeePaymentFilters: { ...EMPLOYEE_PAYMENT_FILTER_DEFAULTS },
+    employeePaymentSort: { ...EMPLOYEE_PAYMENT_SORT_DEFAULTS },
     cardWindow: {
       minimized: false,
       fullscreen: false,
@@ -12161,7 +12175,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const title = !available
       ? "Строку нельзя переместить"
       : orderingDisabled
-        ? "Сбросьте фильтры, чтобы изменить порядок строк"
+        ? "Сбросьте фильтры и сортировку, чтобы изменить порядок строк"
         : "Перетащите строку или используйте клавиши ↑ и ↓";
     return `
       <button
@@ -12225,6 +12239,199 @@ MAX - https://bizvmax.ru/zifra_plus
       payment,
       act
     };
+  }
+
+  function getEmployeePaymentSort() {
+    const sort = state.employeePaymentSort && typeof state.employeePaymentSort === "object"
+      ? state.employeePaymentSort
+      : EMPLOYEE_PAYMENT_SORT_DEFAULTS;
+    const column = EMPLOYEE_PAYMENT_TABLE_COLUMNS.find((item) => (
+      item.key === String(sort.key || "") && item.sortType
+    ));
+    if (!column) return { key: "", direction: "" };
+    return {
+      key: column.key,
+      direction: sort.direction === "asc" ? "asc" : "desc"
+    };
+  }
+
+  function getEmployeePaymentSortValue(row = {}, key = "") {
+    if (key === "source") {
+      return String(row.source || getEmployeePaymentDefaultSourceLabel(row.sourceType) || "").trim();
+    }
+    if (key === "status") {
+      return String(row.statusText || getEmployeePaymentRowStatus(row) || "").trim();
+    }
+    if (key === "amount") {
+      const rawAmount = row.amount;
+      if (rawAmount === "" || rawAmount === null || rawAmount === undefined) return Number.NaN;
+      return Number(rawAmount);
+    }
+    if (key === "recommendation" || key === "act") return Boolean(row[key]);
+    return String(row[key] || "").trim();
+  }
+
+  function compareEmployeePaymentSortValues(leftValue, rightValue, sortType, direction) {
+    const leftMissing = sortType === "number"
+      ? !Number.isFinite(leftValue)
+      : sortType === "boolean"
+        ? false
+        : !String(leftValue || "").trim();
+    const rightMissing = sortType === "number"
+      ? !Number.isFinite(rightValue)
+      : sortType === "boolean"
+        ? false
+        : !String(rightValue || "").trim();
+    if (leftMissing !== rightMissing) return leftMissing ? 1 : -1;
+    if (leftMissing && rightMissing) return 0;
+    let comparison = 0;
+    if (sortType === "number") comparison = leftValue - rightValue;
+    else if (sortType === "boolean") comparison = Number(leftValue) - Number(rightValue);
+    else {
+      comparison = String(leftValue).localeCompare(String(rightValue), "ru", {
+        numeric: true,
+        sensitivity: "base"
+      });
+    }
+    return direction === "desc" ? -comparison : comparison;
+  }
+
+  function sortEmployeePaymentRows(rows = [], sort = getEmployeePaymentSort()) {
+    const indexedRows = rows.map((row, index) => ({ row, index }));
+    if (!sort.key) {
+      const hasManualOrder = rows.some((row) => Number(row.order) > 0);
+      return indexedRows.sort((left, right) => {
+        if (hasManualOrder) {
+          const leftOrder = Number(left.row.order) > 0 ? Number(left.row.order) : Number.MAX_SAFE_INTEGER;
+          const rightOrder = Number(right.row.order) > 0 ? Number(right.row.order) : Number.MAX_SAFE_INTEGER;
+          if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+        }
+        return String(right.row.date || "").localeCompare(String(left.row.date || ""), "ru")
+          || left.index - right.index;
+      }).map(({ row }) => row);
+    }
+    const column = EMPLOYEE_PAYMENT_TABLE_COLUMNS.find((item) => item.key === sort.key && item.sortType);
+    if (!column) return rows;
+    return indexedRows.sort((left, right) => (
+      compareEmployeePaymentSortValues(
+        getEmployeePaymentSortValue(left.row, sort.key),
+        getEmployeePaymentSortValue(right.row, sort.key),
+        column.sortType,
+        sort.direction
+      ) || left.index - right.index
+    )).map(({ row }) => row);
+  }
+
+  function getEmployeePaymentInitialSortDirection(column) {
+    return column?.sortType === "date" ? "desc" : "asc";
+  }
+
+  function getEmployeePaymentNextSortDirection(column, currentDirection = "") {
+    const initialDirection = getEmployeePaymentInitialSortDirection(column);
+    if (!currentDirection) return initialDirection;
+    if (currentDirection === initialDirection) return initialDirection === "asc" ? "desc" : "asc";
+    return "";
+  }
+
+  function renderEmployeePaymentSortButton(column, sort = getEmployeePaymentSort()) {
+    if (!column.sortType) return `<span>${escapeHtml(column.label)}</span>`;
+    const active = sort.key === column.key;
+    const direction = active ? sort.direction : "";
+    const directionLabel = direction === "asc" ? "по возрастанию" : "по убыванию";
+    const nextDirection = getEmployeePaymentNextSortDirection(column, direction);
+    const nextDirectionLabel = nextDirection === "desc"
+      ? "по убыванию"
+      : nextDirection === "asc"
+        ? "по возрастанию"
+        : "сбросить сортировку";
+    const nextActionLabel = nextDirection ? `отсортировать ${nextDirectionLabel}` : nextDirectionLabel;
+    return `
+      <button
+        class="employee-payment-sort-button ${active ? "is-active" : ""}"
+        data-action="sort-employee-payments"
+        data-sort-key="${escapeAttr(column.key)}"
+        type="button"
+        title="${active ? `Сортировка ${directionLabel}. Нажмите, чтобы ${nextActionLabel}` : `Сортировать колонку «${escapeAttr(column.label)}» ${nextDirectionLabel}`}"
+        aria-label="${active ? `${column.label}: сортировка ${directionLabel}. ${nextDirection ? "Изменить направление" : "Сбросить сортировку"}` : `${column.label}: включить сортировку ${nextDirectionLabel}`}"
+      >
+        <span>${escapeHtml(column.label)}</span>
+        <span class="employee-payment-sort-indicator" aria-hidden="true">${direction === "asc" ? "↑" : direction === "desc" ? "↓" : "↕"}</span>
+      </button>
+    `;
+  }
+
+  function syncEmployeePaymentSortHeader(section) {
+    if (!section) return;
+    const sort = getEmployeePaymentSort();
+    section.querySelectorAll(".employee-payment-column-head").forEach((header) => {
+      const key = String(header.dataset.columnKey || "");
+      const column = EMPLOYEE_PAYMENT_TABLE_COLUMNS.find((item) => item.key === key && item.sortType);
+      if (!column) return;
+      const button = header.querySelector("[data-action='sort-employee-payments']");
+      if (!(button instanceof HTMLButtonElement)) return;
+      const active = sort.key === key;
+      const direction = active ? sort.direction : "";
+      const directionLabel = direction === "asc" ? "по возрастанию" : "по убыванию";
+      const nextDirection = getEmployeePaymentNextSortDirection(column, direction);
+      const nextDirectionLabel = nextDirection === "desc"
+        ? "по убыванию"
+        : nextDirection === "asc"
+          ? "по возрастанию"
+          : "сбросить сортировку";
+      const nextActionLabel = nextDirection ? `отсортировать ${nextDirectionLabel}` : nextDirectionLabel;
+      header.setAttribute("aria-sort", active ? (direction === "asc" ? "ascending" : "descending") : "none");
+      button.classList.toggle("is-active", active);
+      button.title = active
+        ? `Сортировка ${directionLabel}. Нажмите, чтобы ${nextActionLabel}`
+        : `Сортировать колонку «${column.label}» ${nextDirectionLabel}`;
+      button.setAttribute("aria-label", active
+        ? `${column.label}: сортировка ${directionLabel}. ${nextDirection ? "Изменить направление" : "Сбросить сортировку"}`
+        : `${column.label}: включить сортировку ${nextDirectionLabel}`);
+      const indicator = button.querySelector(".employee-payment-sort-indicator");
+      if (indicator) indicator.textContent = direction === "asc" ? "↑" : direction === "desc" ? "↓" : "↕";
+    });
+  }
+
+  function applyEmployeePaymentSortToDom(section = document.querySelector("[data-employee-payment-accounting]")) {
+    const tbody = section?.querySelector(".employee-payment-table tbody");
+    if (!tbody) return;
+    const sort = getEmployeePaymentSort();
+    const emptyRow = tbody.querySelector("[data-employee-payment-filter-empty]");
+    const rows = [...tbody.querySelectorAll("[data-employee-payment-row]")];
+    const models = rows.map((row) => ({
+      row,
+      model: getEmployeePaymentDomRowFilterModel(row)
+    }));
+    const rowByModel = new Map(models.map(({ row, model }) => [model, row]));
+    sortEmployeePaymentRows(models.map(({ model }) => model), sort).forEach((model) => {
+      const row = rowByModel.get(model);
+      if (row) tbody.insertBefore(row, emptyRow || null);
+    });
+    syncEmployeePaymentSortHeader(section);
+    applyEmployeePaymentFiltersToDom(section);
+  }
+
+  function updateEmployeePaymentSort(event, section) {
+    const button = event.target.closest("[data-action='sort-employee-payments']");
+    if (!button || !section?.contains(button)) return;
+    const key = String(button.dataset.sortKey || "");
+    const column = EMPLOYEE_PAYMENT_TABLE_COLUMNS.find((item) => item.key === key && item.sortType);
+    if (!column) return;
+    const current = getEmployeePaymentSort();
+    const nextDirection = getEmployeePaymentNextSortDirection(
+      column,
+      current.key === key ? current.direction : ""
+    );
+    state.employeePaymentSort = nextDirection
+      ? { key, direction: nextDirection }
+      : { key: "", direction: "" };
+    applyEmployeePaymentSortToDom(section);
+  }
+
+  function clearEmployeePaymentSortForManualOrder(section) {
+    if (!getEmployeePaymentSort().key) return;
+    state.employeePaymentSort = { key: "", direction: "" };
+    syncEmployeePaymentSortHeader(section);
   }
 
   function getEmployeePaymentActFilterValue(row = {}) {
@@ -12465,17 +12672,8 @@ MAX - https://bizvmax.ru/zifra_plus
       ...normalizeEmployeePaymentSourceRow("partner", source),
       amount
     }));
-    const rows = [...directRows, ...generalRows, ...partnerRows];
-    const hasManualOrder = rows.some((row) => Number(row.order) > 0);
-    rows.sort((left, right) => {
-      if (hasManualOrder) {
-        const leftOrder = Number(left.order) > 0 ? Number(left.order) : Number.MAX_SAFE_INTEGER;
-        const rightOrder = Number(right.order) > 0 ? Number(right.order) : Number.MAX_SAFE_INTEGER;
-        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-      }
-      return String(right.date || "").localeCompare(String(left.date || ""), "ru")
-        || String(left.description || "").localeCompare(String(right.description || ""), "ru");
-    });
+    const sort = getEmployeePaymentSort();
+    const rows = sortEmployeePaymentRows([...directRows, ...generalRows, ...partnerRows], sort);
     const filters = getEmployeePaymentFilters();
     const filterFacets = getEmployeePaymentFilterFacets(rows, filters);
     const filtersActive = employeePaymentFiltersAreActive(filters);
@@ -12509,9 +12707,14 @@ MAX - https://bizvmax.ru/zifra_plus
             <thead data-employee-payment-filters>
               <tr>
                 ${EMPLOYEE_PAYMENT_TABLE_COLUMNS.map((column) => `
-                  <th class="employee-payment-column-head" ${columnDataAttrs(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, column.key)} ${employeePaymentColumnStyleAttr(column)}>
+                  <th
+                    class="employee-payment-column-head"
+                    ${columnDataAttrs(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, column.key)}
+                    ${column.sortType ? `aria-sort="${sort.key === column.key ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}"` : ""}
+                    ${employeePaymentColumnStyleAttr(column)}
+                  >
                     <div class="table-head-cell employee-payment-table-head-cell">
-                      <span>${escapeHtml(column.label)}</span>
+                      ${renderEmployeePaymentSortButton(column, sort)}
                       <span
                         class="column-resize-handle employee-payment-column-resize-handle"
                         data-action="resize-column"
@@ -12543,9 +12746,9 @@ MAX - https://bizvmax.ru/zifra_plus
                 const deletable = editable && row.deletable !== false;
                 const sourceLabel = row.source || getEmployeePaymentDefaultSourceLabel(row.sourceType);
                 return `
-                  <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
+                  <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
                     <td class="employee-payment-date-cell">
-                      ${renderEmployeePaymentRowDragHandle(row.sourceType, row.sourceId, filtersActive)}
+                      ${renderEmployeePaymentRowDragHandle(row.sourceType, row.sourceId, filtersActive || Boolean(sort.key))}
                       <input data-employee-payment-field="date" type="date" value="${escapeAttr(row.date)}" ${row.dateReadOnly ? 'readonly title="Дата проведённой выплаты изменяется в колонке «Оплачено»"' : (editable ? "" : "disabled")}>
                     </td>
                     <td title="${escapeAttr([sourceLabel, row.details].filter(Boolean).join(" · "))}">
@@ -12639,9 +12842,11 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getEmployeePaymentDomRowFilterModel(row) {
     const field = (name) => row.querySelector(`[data-employee-payment-field="${name}"]`);
+    const dateControl = field("date");
     const sourceControl = field("source");
     const commentControl = field("comment");
     const descriptionControl = field("description");
+    const amountControl = field("amount");
     const paidControl = field("paid");
     const recommendationControl = field("recommendation");
     const actControl = field("act");
@@ -12655,8 +12860,11 @@ MAX - https://bizvmax.ru/zifra_plus
         : String(row.dataset.paymentSource || ""),
       source: String(sourceText || ""),
       details: String(row.querySelector("td:nth-child(2) small")?.textContent || ""),
+      order: Number(row.dataset.paymentOrder) || 0,
+      date: String(dateControl?.value || ""),
       comment: String(commentControl?.value || ""),
       description: String(descriptionControl?.value || ""),
+      amount: String(amountControl?.value ?? ""),
       paid: String(paidControl?.value || ""),
       recommendation: Boolean(recommendationControl?.checked),
       act: Boolean(actControl?.checked),
@@ -12712,6 +12920,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!section) return;
     const filters = getEmployeePaymentFilters();
     const active = employeePaymentFiltersAreActive(filters);
+    const sortActive = Boolean(getEmployeePaymentSort().key);
     const rows = [...section.querySelectorAll("[data-employee-payment-row]")];
     const rowModels = rows.map((row) => ({ row, model: getEmployeePaymentDomRowFilterModel(row) }));
     refreshEmployeePaymentFilterOptions(section, rowModels.map(({ model }) => model), filters);
@@ -12723,11 +12932,11 @@ MAX - https://bizvmax.ru/zifra_plus
       const handle = row.querySelector(".employee-payment-row-drag-handle");
       if (handle instanceof HTMLButtonElement) {
         const available = Boolean(String(row.dataset.paymentSourceId || "").trim());
-        handle.disabled = !available || active;
+        handle.disabled = !available || active || sortActive;
         handle.title = !available
           ? "Строку нельзя переместить"
-          : active
-            ? "Сбросьте фильтры, чтобы изменить порядок строк"
+          : active || sortActive
+            ? "Сбросьте фильтры и сортировку, чтобы изменить порядок строк"
             : "Перетащите строку или используйте клавиши ↑ и ↓";
       }
     });
@@ -19704,11 +19913,17 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", generateEmployeeCouponFromLogin);
     const employeePaymentAccounting = document.querySelector("[data-employee-payment-accounting]");
     employeePaymentAccounting?.addEventListener("input", previewEmployeePaymentAccountingField);
-    employeePaymentAccounting?.addEventListener("change", updateEmployeePaymentAccountingField);
+    employeePaymentAccounting?.addEventListener("change", (event) => {
+      updateEmployeePaymentAccountingField(event);
+      window.requestAnimationFrame(() => {
+        applyEmployeePaymentSortToDom(document.querySelector("[data-employee-payment-accounting]"));
+      });
+    });
     employeePaymentAccounting?.addEventListener("click", duplicateEmployeePaymentAccountingRow);
     employeePaymentAccounting?.addEventListener("click", deleteEmployeePaymentAccountingRow);
     employeePaymentAccounting?.addEventListener("click", openEmployeeExpenseEditor);
     const employeePaymentFilters = employeePaymentAccounting?.querySelector("[data-employee-payment-filters]");
+    employeePaymentFilters?.addEventListener("click", (event) => updateEmployeePaymentSort(event, employeePaymentAccounting));
     employeePaymentFilters?.addEventListener("input", () => updateEmployeePaymentFilters(employeePaymentFilters));
     employeePaymentFilters?.addEventListener("change", () => updateEmployeePaymentFilters(employeePaymentFilters));
     employeePaymentFilters?.querySelector("[data-action='reset-employee-payment-filters']")
@@ -21393,7 +21608,9 @@ MAX - https://bizvmax.ru/zifra_plus
       const sourceType = String(row.dataset.paymentSource || "");
       const sourceId = String(row.dataset.paymentSourceId || "");
       const source = sourceLookup.get(`${sourceType}\u0000${sourceId}`);
-      if (source) changed = setEmployeePaymentSourceOrder(sourceType, source, (index + 1) * 10) || changed;
+      const order = (index + 1) * 10;
+      row.dataset.paymentOrder = String(order);
+      if (source) changed = setEmployeePaymentSourceOrder(sourceType, source, order) || changed;
     });
     return changed;
   }
@@ -21512,6 +21729,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const originalOrder = tbody.dataset.originalEmployeePaymentOrder || "";
       delete tbody.dataset.originalEmployeePaymentOrder;
       if (!originalOrder || nextOrder === originalOrder) return;
+      clearEmployeePaymentSortForManualOrder(section);
       commitEmployeePaymentOrderFromTable(tbody);
     });
     tbody.addEventListener("keydown", (event) => {
@@ -21527,6 +21745,7 @@ MAX - https://bizvmax.ru/zifra_plus
         { animateDraggedRow: true }
       );
       if (moved) {
+        clearEmployeePaymentSortForManualOrder(section);
         commitEmployeePaymentOrderFromTable(tbody);
         handle.focus({ preventScroll: true });
       }
@@ -21546,7 +21765,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     const tbody = row.closest("tbody");
-    if (tbody) syncEmployeePaymentOrderFromTable(tbody);
+    if (tbody && !getEmployeePaymentSort().key) syncEmployeePaymentOrderFromTable(tbody);
     const nextId = makeId(sourceType === "general" ? "general-expense" : "direct-expense");
     const duplicate = {
       ...source,
