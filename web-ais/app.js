@@ -1,10 +1,20 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.16",
+    version: "1.7.17",
     releasedAt: "2026-08-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.17",
+      releasedAt: "2026-08-09",
+      changes: [
+        "Суммы в учёте выплат сотруднику пересчитываются сразу при вводе и стабильно обновляются после последовательного редактирования старых записей.",
+        "Полученный акт или заполненная дата оплаты присваивают выплате статус «Оплачено» и исключают её из текущей суммы к выплате.",
+        "При получении акта по агентскому начислению выплата переносится в историю с датой получения, поэтому синхронизация с колонками АгентДата1/2 остаётся согласованной.",
+        "Для старых строк прямых и общих затрат автоматически создаются постоянные идентификаторы, поэтому связь с записью не теряется после изменения суммы или основания."
+      ]
+    },
     {
       version: "1.7.16",
       releasedAt: "2026-08-09",
@@ -2705,6 +2715,8 @@ MAX - https://bizvmax.ru/zifra_plus
   let lastSystemHelpTouchAt = 0;
   let systemHelpTouchHideTimer = 0;
   let employeePaymentPersistTimer = 0;
+  let employeePaymentPreviewFrame = 0;
+  let pendingEmployeePaymentPreview = null;
   let fieldUndoKeyBound = false;
   let globalEscapeKeyBound = false;
   let shiftDragRequirementBound = false;
@@ -3167,7 +3179,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .map((contract) => normalizeContractRecord(contract));
     data.collections.generalExpenses = (data.collections.generalExpenses || [])
       .filter((expense) => expense && typeof expense === "object")
-      .map((expense) => normalizeGeneralExpenseRecord(expense));
+      .map((expense, index) => normalizeGeneralExpenseRecord(expense, index));
     data.dictionaries.studentAdditionalStatuses = unique([
       ...(data.dictionaries.studentAdditionalStatuses || []),
       ...data.collections.students.map((student) => student.additionalStatus)
@@ -4399,13 +4411,17 @@ MAX - https://bizvmax.ru/zifra_plus
       getEmployeePartnerPaymentRows(student, collections, paymentSettings)
     ));
     const unpaidGeneralTotal = generalEntries.reduce((sum, { expense }) => (
-      String(expense?.paid || "").trim() ? sum : sum + Number(expense?.amount || 0)
+      isEmployeePaymentSettled(expense) ? sum : sum + Number(expense?.amount || 0)
     ), 0);
     const directWithoutActTotal = directEntries.reduce((sum, { expense }) => (
-      String(expense?.act || "").trim() ? sum : sum + Number(expense?.amount || 0)
+      isEmployeePaymentSettled(expense) || String(expense?.act || "").trim()
+        ? sum
+        : sum + Number(expense?.amount || 0)
     ), 0);
     const recommendedDirectTotal = directEntries.reduce((sum, { expense }) => (
-      !String(expense?.act || "").trim() && String(expense?.recommendation || "").trim() === "+"
+      !isEmployeePaymentSettled(expense)
+        && !String(expense?.act || "").trim()
+        && String(expense?.recommendation || "").trim() === "+"
         ? sum + Number(expense?.amount || 0)
         : sum
     ), 0);
@@ -4461,9 +4477,18 @@ MAX - https://bizvmax.ru/zifra_plus
     }).join("; ");
   }
 
-  function normalizeGeneralExpenseRecord(expense = {}) {
+  function normalizeGeneralExpenseRecord(expense = {}, index = 0) {
     return {
       ...expense,
+      id: String(expense.id || "").trim() || buildLegacyRecordId("general-expense", [
+        expense.section,
+        expense.counterparty,
+        expense.date,
+        expense.workType,
+        expense.description,
+        expense.amount,
+        index
+      ]),
       section: normalizeGeneralExpenseSection(expense.section, expense.counterparty),
       amount: Number(expense.amount || 0)
     };
@@ -4486,6 +4511,26 @@ MAX - https://bizvmax.ru/zifra_plus
       expense?.note,
       index
     ].map((value) => String(value ?? "").trim()).join("|");
+  }
+
+  function buildLegacyRecordId(prefix, values = []) {
+    const source = (Array.isArray(values) ? values : [values])
+      .map((value) => String(value ?? "").trim())
+      .join("\u001f");
+    let hash = 2166136261;
+    for (let index = 0; index < source.length; index += 1) {
+      hash ^= source.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `${prefix}-legacy-${(hash >>> 0).toString(36)}`;
+  }
+
+  function ensureDirectExpenseId(expense, scope = "", index = 0) {
+    if (!expense || typeof expense !== "object") return "";
+    const currentId = String(expense.id || "").trim();
+    if (currentId) return currentId;
+    expense.id = buildLegacyRecordId("direct-expense", [scope, directExpenseIdentity(expense, index)]);
+    return expense.id;
   }
 
   function attachDirectExpensesToStudentRecords(students = [], directExpenses = []) {
@@ -4520,6 +4565,13 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       linkedDirectExpenseCount += 1;
     });
+    students.forEach((student) => {
+      const scope = `student:${String(student?.id || student?.uid || "").trim()}`;
+      (Array.isArray(student?.directExpenses) ? student.directExpenses : []).forEach((expense, index) => {
+        ensureDirectExpenseId(expense, scope, index);
+      });
+    });
+    unlinkedDirectExpenses.forEach((expense, index) => ensureDirectExpenseId(expense, "global", index));
     return { unlinkedDirectExpenses, linkedDirectExpenseCount };
   }
 
@@ -11916,13 +11968,19 @@ MAX - https://bizvmax.ru/zifra_plus
     return Number.isNaN(date.getTime()) ? "" : formatOrdersSdoDate(date);
   }
 
+  function isEmployeePaymentSettled(row = {}) {
+    return Boolean(
+      row.historicalPayment
+      || normalizeEmployeePaymentDateInput(row.paid)
+      || String(row.actStatus || "").trim() === "Получен"
+    );
+  }
+
   function getEmployeePaymentRowStatus(row = {}) {
+    if (isEmployeePaymentSettled(row)) return "Оплачено";
     if (row.paymentDateMissing) return "Дата оплаты не указана";
-    if (row.historicalPayment) return "Оплачено";
-    if (row.paid) return "Оплачено";
     if (Number(row.amount || 0) < 0) return "Переплата";
     const actStatus = String(row.actStatus || "").trim();
-    if (actStatus === "Получен") return "Акт получен";
     if (actStatus === "Отправлен") return "Акт отправлен";
     if (row.act) return "Акт сформирован";
     if (row.recommendation) return "К выплате";
@@ -12117,7 +12175,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderEmployeePaymentStatus(row = {}) {
     const status = getEmployeePaymentRowStatus(row);
-    const tone = status.startsWith("Оплачено") || status === "Акт получен"
+    const tone = status.startsWith("Оплачено")
       ? "is-complete"
       : status === "Ожидает рекомендации" || status === "Переплата" || status === "Дата оплаты не указана"
         ? "is-warning"
@@ -12136,7 +12194,6 @@ MAX - https://bizvmax.ru/zifra_plus
       "payable",
       "actFormed",
       "actSent",
-      "actReceived",
       "paid",
       "overpayment",
       "missingPaymentDate",
@@ -12182,7 +12239,6 @@ MAX - https://bizvmax.ru/zifra_plus
     if (status === "К выплате") return "payable";
     if (status === "Акт сформирован") return "actFormed";
     if (status === "Акт отправлен") return "actSent";
-    if (status === "Акт получен") return "actReceived";
     if (status === "Переплата") return "overpayment";
     if (status === "Дата оплаты не указана") return "missingPaymentDate";
     return "awaitingRecommendation";
@@ -12229,7 +12285,6 @@ MAX - https://bizvmax.ru/zifra_plus
       ["payable", "К выплате"],
       ["actFormed", "Акт сформирован"],
       ["actSent", "Акт отправлен"],
-      ["actReceived", "Акт получен"],
       ["paid", "Оплачено"],
       ["overpayment", "Переплата"],
       ["missingPaymentDate", "Дата не указана"],
@@ -19590,6 +19645,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='generate-employee-coupon']")
       ?.addEventListener("click", generateEmployeeCouponFromLogin);
     const employeePaymentAccounting = document.querySelector("[data-employee-payment-accounting]");
+    employeePaymentAccounting?.addEventListener("input", previewEmployeePaymentAccountingField);
     employeePaymentAccounting?.addEventListener("change", updateEmployeePaymentAccountingField);
     employeePaymentAccounting?.addEventListener("click", duplicateEmployeePaymentAccountingRow);
     employeePaymentAccounting?.addEventListener("click", deleteEmployeePaymentAccountingRow);
@@ -20616,6 +20672,16 @@ MAX - https://bizvmax.ru/zifra_plus
     return `paid${number}`;
   }
 
+  function settleReceivedEmployeePartnerPayment(source, paidDate = "") {
+    const student = source?.__partnerStudent;
+    if (!student || String(source.__agentPaymentSlot || "due") !== "due") return "";
+    if (String(student.agentPaymentActStatus || "").trim() !== "Получен") return "";
+    const date = normalizeEmployeePaymentDateInput(paidDate) || todayIso();
+    const settledSlot = settleStudentAgentCommission(student, date);
+    if (settledSlot) source.__settledSlot = settledSlot;
+    return settledSlot;
+  }
+
   function setEmployeePaymentSourceField(sourceType, source, field, input) {
     const partnerStudent = sourceType === "partner" ? (source.__partnerStudent || source) : null;
     const partnerSlot = sourceType === "partner" ? String(source.__agentPaymentSlot || "due") : "";
@@ -20943,7 +21009,25 @@ MAX - https://bizvmax.ru/zifra_plus
       setEmployeePaymentSourceField(sourceType, source, "act", paymentInputs.act);
       setEmployeePaymentSourceField(sourceType, source, "actStatus", paymentInputs.actStatus);
     }
-    if (paymentInputs.paid) setEmployeePaymentSourceField(sourceType, source, "paid", paymentInputs.paid);
+    let settledSourceId = "";
+    if (
+      sourceType === "partner"
+      && String(source.__agentPaymentSlot || "due") === "due"
+      && String(paymentInputs.actStatus?.value || "").trim() === "Получен"
+    ) {
+      const settledSlot = settleReceivedEmployeePartnerPayment(source, paymentInputs.paid?.value);
+      if (settledSlot) settledSourceId = getEmployeePartnerPaymentSourceId(source.__partnerStudent, settledSlot);
+    }
+    if (paymentInputs.paid && !settledSourceId) {
+      setEmployeePaymentSourceField(sourceType, source, "paid", paymentInputs.paid);
+      if (sourceType === "partner" && source.__settledSlot) {
+        settledSourceId = getEmployeePartnerPaymentSourceId(source.__partnerStudent, source.__settledSlot);
+      }
+    }
+    if (settledSourceId) {
+      sourceId = settledSourceId;
+      source = findEmployeePaymentSourceRecord(sourceType, sourceId) || source;
+    }
     if (sourceType === "general") Object.assign(source, normalizeGeneralExpenseRecord(source));
     rememberEmployeePaymentBasis(paymentInputs.description?.value);
     synchronizeEmployeePaymentAgencyDraft(draft, sourceType, source);
@@ -21088,7 +21172,35 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  function previewEmployeePaymentAccountingField(event) {
+    const input = event.target.closest("[data-employee-payment-field='amount']");
+    const row = input?.closest("[data-employee-payment-row]");
+    if (!input || !row) return;
+    const sourceType = String(row.dataset.paymentSource || "");
+    const sourceId = String(row.dataset.paymentSourceId || "");
+    const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
+    if (!source) return;
+    setEmployeePaymentSourceField(sourceType, source, "amount", input);
+    pendingEmployeePaymentPreview = { sourceType, source, sourceId };
+    if (employeePaymentPreviewFrame) return;
+    employeePaymentPreviewFrame = window.requestAnimationFrame(() => {
+      employeePaymentPreviewFrame = 0;
+      const pending = pendingEmployeePaymentPreview;
+      pendingEmployeePaymentPreview = null;
+      if (!pending) return;
+      const draft = getEmployeePaymentAccountingDraft();
+      synchronizeEmployeePaymentAgencyDraft(draft, pending.sourceType, pending.source);
+      commitEmployeePaymentAccountingChange(draft, {
+        sourceId: pending.sourceId,
+        field: "amount"
+      });
+    });
+  }
+
   function updateEmployeePaymentAccountingField(event) {
+    if (employeePaymentPreviewFrame) window.cancelAnimationFrame(employeePaymentPreviewFrame);
+    employeePaymentPreviewFrame = 0;
+    pendingEmployeePaymentPreview = null;
     const input = event.target.closest("[data-employee-payment-field]");
     const row = input?.closest("[data-employee-payment-row]");
     if (!input || !row) return;
@@ -21124,12 +21236,21 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     setEmployeePaymentSourceField(sourceType, source, field, input);
+    if (sourceType === "partner" && field === "actStatus" && String(input.value || "").trim() === "Получен") {
+      settleReceivedEmployeePartnerPayment(
+        source,
+        row.querySelector('[data-employee-payment-field="paid"]')?.value
+      );
+    }
     const settledSourceId = sourceType === "partner" && source.__settledSlot
       ? getEmployeePartnerPaymentSourceId(source.__partnerStudent, source.__settledSlot)
       : "";
-    synchronizeEmployeePaymentAgencyDraft(draft, sourceType, source);
+    const effectiveSource = settledSourceId
+      ? (findEmployeePaymentSourceRecord(sourceType, settledSourceId) || source)
+      : source;
+    synchronizeEmployeePaymentAgencyDraft(draft, sourceType, effectiveSource);
     if (field === "description") rememberEmployeePaymentBasis(input.value);
-    const sourceValues = getEmployeePaymentSourceValues(sourceType, source);
+    const sourceValues = getEmployeePaymentSourceValues(sourceType, effectiveSource);
     addAudit(
       "Изменён учёт выплаты",
       "Договоры сотрудников",
@@ -34333,6 +34454,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const seen = new Set();
     const directRows = getAllDirectExpenses().reduce((rows, expense, index) => {
       if (normalizeEmployeeActPersonName(expense?.note) !== employeeName) return rows;
+      if (isEmployeePaymentSettled(expense)) return rows;
       if (String(expense?.act || "").trim()) return rows;
       if (String(expense?.recommendation || "").trim() !== "+") return rows;
       const amount = Number(expense?.amount || 0);
@@ -34353,7 +34475,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }, []);
     const generalRows = (state.data.collections.generalExpenses || []).reduce((rows, expense) => {
       if (normalizeEmployeeActPersonName(expense?.counterparty) !== employeeName) return rows;
-      if (String(expense?.paid || "").trim()) return rows;
+      if (isEmployeePaymentSettled(expense)) return rows;
       if (String(expense?.act || "").trim()) return rows;
       const amount = Number(expense?.amount || 0);
       if (!amount) return rows;
@@ -34374,7 +34496,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!row.payable || row.slot !== "due") return result;
       const values = normalizeEmployeePaymentSourceRow("partner", row.source);
       const payableAmount = Number(row.calculation?.payableAmount ?? values.amount ?? 0);
-      if (!values.recommendation || values.paid || values.act || !(payableAmount > 0)) return result;
+      if (!values.recommendation || isEmployeePaymentSettled(values) || values.act || !(payableAmount > 0)) return result;
       result.push({
         description: [
           `Агентское вознаграждение за слушателя ${String(row.student.name || "").trim()}`,
@@ -34691,6 +34813,7 @@ MAX - https://bizvmax.ru/zifra_plus
     let changed = 0;
     getDirectExpenseEntriesFromCollections(state.data.collections).forEach(({ expense }) => {
       if (normalizeEmployeeActPersonName(expense?.note) !== employeeName) return;
+      if (isEmployeePaymentSettled(expense)) return;
       if (String(expense?.act || "").trim()) return;
       if (String(expense?.recommendation || "").trim() !== "+") return;
       expense.act = "+";
@@ -34699,7 +34822,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     (state.data.collections.generalExpenses || []).forEach((expense) => {
       if (normalizeEmployeeActPersonName(expense?.counterparty) !== employeeName) return;
-      if (String(expense?.paid || "").trim() || String(expense?.act || "").trim()) return;
+      if (isEmployeePaymentSettled(expense) || String(expense?.act || "").trim()) return;
       expense.act = "+";
       expense.actStatus = "Отправлен";
       changed += 1;
@@ -34707,7 +34830,7 @@ MAX - https://bizvmax.ru/zifra_plus
     getEmployeePaymentAccounting(record, state.data.collections).partnerRows.forEach((row) => {
       if (!row.payable || row.slot !== "due") return;
       const values = normalizeEmployeePaymentSourceRow("partner", row.source);
-      if (!values.recommendation || values.paid || values.act || !(values.amount > 0)) return;
+      if (!values.recommendation || isEmployeePaymentSettled(values) || values.act || !(values.amount > 0)) return;
       const student = row.student;
       student.agentPaymentAct = "+";
       student.agentPaymentActStatus = "Отправлен";
