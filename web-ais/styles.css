@@ -1475,6 +1475,14 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   min-width: 0;
 }
 
+.section-head > .direct-expenses-section-heading {
+  flex: 0 0 auto;
+}
+
+.direct-expenses-section-heading h2 {
+  white-space: nowrap;
+}
+
 [data-dashboard-student-statuses] {
   scroll-margin-top: 12px;
 }

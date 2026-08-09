@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.14",
+    version: "1.7.15",
     releasedAt: "2026-08-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.15",
+      releasedAt: "2026-08-09",
+      changes: [
+        "Заголовок «Прямые затраты» в шапке раздела теперь всегда отображается в одну строку."
+      ]
+    },
     {
       version: "1.7.14",
       releasedAt: "2026-08-09",
@@ -6619,7 +6626,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <section class="panel">
         <div class="section-head">
-          <div>
+          <div class="${state.view === "directExpenses" ? "direct-expenses-section-heading" : ""}">
             <p class="eyebrow">${config.subtitle}</p>
             <h2>${config.title}</h2>
           </div>
