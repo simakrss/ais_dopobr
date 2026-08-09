@@ -22,3 +22,34 @@ web-ais/styles-server.css
 web-ais/services/**/__pycache__/
 web-ais/services/**/*.pyc
 web-ais/services/ocr/runtime/
+
+# Runtime copies of the shared database and local LevelDB caches.
+web-ais/storage/shared-application-state*.json
+web-ais/storage/shared-record-locks*.json*
+web-ais/storage/shared-state-backups/
+web-ais/storage/users.before-*.json
+/-/
+/x/
+
+# Duplicate files produced by Windows/browser downloads.
+/* (2)
+/* (3)
+/* (4)
+/* (2).*
+/* (3).*
+/* (4).*
+/web-ais/* (2)
+/web-ais/* (3)
+/web-ais/* (4)
+/web-ais/* (2).*
+/web-ais/* (3).*
+/web-ais/* (4).*
+/web-ais/scripts/* (2).*
+/web-ais/services/ocr/* (2)
+/web-ais/services/ocr/* (2).*
+/web-ais/storage/users (2).json
+
+# Stamped employee-contract templates contain private signature/seal assets.
+# They remain on the protected local/WebDAV storage and are never published.
+web-ais/storage/document-templates/employee-contract-education.docx
+web-ais/storage/document-templates/employee-contract-general.docx

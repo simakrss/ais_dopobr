@@ -7,6 +7,7 @@ import base64
 import binascii
 import csv
 import difflib
+import html
 import io
 import json
 import os
@@ -16,6 +17,7 @@ import sys
 import tempfile
 import time
 import unicodedata
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,10 +35,11 @@ TESSERACT_BINARY = os.environ.get("OCR_TESSERACT_BINARY", "tesseract")
 CONVERT_BINARY = os.environ.get("OCR_CONVERT_BINARY", "convert")
 IDENTIFY_BINARY = os.environ.get("OCR_IDENTIFY_BINARY", "identify")
 PDFTOPPM_BINARY = os.environ.get("OCR_PDFTOPPM_BINARY", "pdftoppm")
+PDFTOTEXT_BINARY = os.environ.get("OCR_PDFTOTEXT_BINARY", "pdftotext")
 MAX_REQUEST_BYTES = 36 * 1024 * 1024
 MAX_FILE_BYTES = 24 * 1024 * 1024
 MAX_PDF_PAGES = 20
-MAX_TEXT_CHARS = 60_000
+MAX_TEXT_CHARS = 240_000
 PDF_RENDER_MAX_DIMENSION = 2600
 OCR_PAGE_WORKERS = max(1, min(2, int(os.environ.get("OCR_PAGE_WORKERS", "2"))))
 PAGE_PREVIEW_MAX_BYTES = 220 * 1024
@@ -79,6 +82,19 @@ FIELD_LABELS = {
     "educationSpecialty": "Специальность",
     "educationQualification": "Квалификация",
     "educationDocumentSurname": "Фамилия в документе",
+    "mailingAddress": "Адрес для отправки документов",
+    "phone": "Мобильный телефон",
+    "email": "Адрес электронной почты",
+    "workPlace": "Место работы",
+    "position": "Должность",
+    "program": "Программа обучения",
+    "studyForm": "Форма обучения",
+    "hours": "Количество часов",
+    "applicationDate": "Дата подачи заявления",
+    "startDate": "Дата начала обучения",
+    "endDate": "Дата окончания обучения",
+    "contractNo": "Номер договора",
+    "contractDate": "Дата договора",
 }
 
 
@@ -117,6 +133,126 @@ def merge_ocr_text(primary: str, secondary: str) -> str:
         seen.add(key)
         merged.append(line)
     return "\n".join(merged)
+
+
+def decode_text_bytes(file_bytes: bytes) -> str:
+    """Decode a plain-text document without replacing valid Cyrillic characters."""
+    candidates: list[tuple[int, str]] = []
+    for encoding in ("utf-8-sig", "utf-16", "cp1251"):
+        try:
+            decoded = file_bytes.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        normalized = normalize_text(decoded)
+        if not normalized:
+            continue
+        letters = len(re.findall(r"[A-Za-zА-ЯЁа-яё]", normalized))
+        controls = len(re.findall(r"[\x00-\x08\x0b\x0e-\x1f]", decoded))
+        candidates.append((letters * 3 - controls * 20, normalized))
+    return max(candidates, key=lambda item: item[0])[1] if candidates else ""
+
+
+def extract_rtf_text(file_bytes: bytes) -> str:
+    source = file_bytes.decode("latin1", "replace")
+    codepage_match = re.search(r"\\ansicpg(\d+)", source)
+    codepage = f"cp{codepage_match.group(1)}" if codepage_match else "cp1251"
+
+    def decode_hex(match: re.Match[str]) -> str:
+        try:
+            return bytes.fromhex(match.group(1)).decode(codepage, "replace")
+        except (LookupError, UnicodeDecodeError, ValueError):
+            return ""
+
+    source = re.sub(r"\\'([0-9a-fA-F]{2})", decode_hex, source)
+
+    def decode_unicode(match: re.Match[str]) -> str:
+        value = int(match.group(1))
+        if value < 0:
+            value += 65536
+        try:
+            return chr(value)
+        except ValueError:
+            return ""
+
+    source = re.sub(r"\\u(-?\d+)\??", decode_unicode, source)
+    source = re.sub(r"\\(?:par|line|page)\b", "\n", source)
+    source = re.sub(r"\\tab\b", "\t", source)
+    source = re.sub(r"\{\\\*[^{}]*\}", " ", source)
+    source = re.sub(r"\\[a-zA-Z]+-?\d*\s?", "", source)
+    source = source.replace(r"\{", "{").replace(r"\}", "}").replace(r"\\", "\\")
+    source = source.replace("{", " ").replace("}", " ")
+    return normalize_text(source)
+
+
+def extract_openxml_text(file_bytes: bytes, mime_type: str) -> str:
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
+            if mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                names = [
+                    name
+                    for name in archive.namelist()
+                    if re.fullmatch(r"word/(?:document|header\d+|footer\d+)\.xml", name)
+                ]
+            else:
+                names = ["content.xml"] if "content.xml" in archive.namelist() else []
+            blocks: list[str] = []
+            for name in names:
+                xml = archive.read(name).decode("utf-8", "replace")
+                xml = re.sub(r"<w:(?:br|cr|tab)\b[^>]*/?>", "\n", xml, flags=re.IGNORECASE)
+                xml = re.sub(r"</(?:w:p|text:p|text:h)>", "\n", xml, flags=re.IGNORECASE)
+                xml = re.sub(r"<[^>]+>", "", xml)
+                blocks.append(html.unescape(xml))
+            return normalize_text("\n".join(blocks))
+    except (KeyError, OSError, zipfile.BadZipFile):
+        return ""
+
+
+def extract_text_document(file_bytes: bytes, mime_type: str) -> str:
+    if mime_type in {"text/plain", "text/csv"}:
+        return decode_text_bytes(file_bytes)
+    if mime_type == "application/rtf":
+        return extract_rtf_text(file_bytes)
+    if mime_type in {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.oasis.opendocument.text",
+    }:
+        return extract_openxml_text(file_bytes, mime_type)
+    return ""
+
+
+def is_usable_text_layer(value: str) -> bool:
+    normalized = normalize_text(value)
+    letters = len(re.findall(r"[A-Za-zА-ЯЁа-яё]", normalized))
+    replacement_count = normalized.count("\ufffd")
+    return len(normalized) >= 40 and letters >= 20 and replacement_count <= max(2, len(normalized) // 200)
+
+
+def extract_pdf_text_pages(source_path: Path) -> list[str]:
+    try:
+        completed = subprocess.run(
+            [
+                PDFTOTEXT_BINARY,
+                "-f",
+                "1",
+                "-l",
+                str(MAX_PDF_PAGES),
+                "-enc",
+                "UTF-8",
+                "-layout",
+                str(source_path),
+                "-",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+        )
+        if completed.returncode:
+            return []
+        decoded = completed.stdout.decode("utf-8", "replace")
+        return [normalize_text(page) for page in decoded.split("\x0c")]
+    except (OSError, subprocess.SubprocessError):
+        return []
 
 
 def tesseract_text(
@@ -796,6 +932,12 @@ def classify_document(text: str, file_name: str) -> list[str]:
         "education": sum(marker in source for marker in (
             "диплом", "документ об образовании", "квалификац", "специальност"
         )),
+        "application": sum(marker in source for marker in (
+            "заявление поступающего", "персональные данные", "дата подачи заявления"
+        )),
+        "contract": sum(marker in source for marker in (
+            "договор №", "предмет договора", "стороны заключили настоящий договор"
+        )),
     }
     return [name for name, score in scores.items() if score > 0]
 
@@ -822,6 +964,253 @@ def add_field(
         fields[key] = candidate
 
 
+def extract_address_after_label(
+    lines: list[str],
+    label_pattern: str,
+    stop_pattern: str,
+) -> tuple[str, str]:
+    label = re.compile(label_pattern, re.IGNORECASE)
+    stop = re.compile(stop_pattern, re.IGNORECASE)
+    address_marker = re.compile(
+        r"(?:\b\d{6}\b|\bг\.|\bгород\b|\bул\.|\bулиц|\bпр-?кт|\bпроспект|"
+        r"\bд\.|\bдом\b|\bкв\.|\bквартир|\bобл\.|\bобласт|\bкрай\b|\bрайон)",
+        re.IGNORECASE,
+    )
+    for index, line in enumerate(lines):
+        if not label.search(line):
+            continue
+        candidates: list[str] = []
+        evidence = [line]
+        for candidate in lines[index + 1:index + 12]:
+            if stop.search(candidate):
+                break
+            evidence.append(candidate)
+            folded = candidate.casefold()
+            has_postal_address = bool(re.search(r"\b\d{6}\b", candidate))
+            if (
+                (candidate.startswith("(") and not has_postal_address)
+                or "гражданство" in folded
+                or "паспорту" in folded
+                or ("например" in folded and not has_postal_address)
+            ):
+                continue
+            if address_marker.search(candidate) and re.search(r"\d", candidate):
+                value = candidate.strip(" ,;")
+                value_start = re.search(r"(?:\b\d{6}\b|\bг\.)", value, re.IGNORECASE)
+                if value_start:
+                    value = value[value_start.start():].strip(" ,;")
+                candidates.append(value)
+        if candidates:
+            value = max(candidates, key=len)
+            return value, " ".join(evidence)
+    return "", ""
+
+
+def extract_application_fields(
+    text: str,
+    lines: list[str],
+    fields: dict[str, dict[str, Any]],
+) -> None:
+    surname, surname_evidence = value_after_label(lines, r"^\s*фамили[яи]\b")
+    first_name, first_name_evidence = value_after_label(lines, r"^\s*им[яи]\b")
+    patronymic, patronymic_evidence = value_after_label(lines, r"^\s*отчеств[оа]\b")
+    name_parts = [clean_person_part(value) for value in (surname, first_name, patronymic)]
+    full_name = " ".join(value for value in name_parts if value)
+    if len(name_parts[0]) >= 2 and len(name_parts[1]) >= 2:
+        add_field(
+            fields,
+            "name",
+            full_name,
+            0.99,
+            " ".join((surname_evidence, first_name_evidence, patronymic_evidence)),
+        )
+
+    birth_date, birth_evidence = find_labeled_date(lines, ("дата рождения",))
+    if birth_date:
+        add_field(fields, "birthDate", birth_date, 0.99, birth_evidence)
+
+    citizenship, citizenship_evidence = value_after_label(lines, r"^\s*гражданство\b")
+    if citizenship:
+        add_field(fields, "citizenship", citizenship, 0.98, citizenship_evidence)
+
+    registration_address, registration_evidence = extract_address_after_label(
+        lines,
+        r"адрес\s+постоянного\s+места|жительств[ао]\s*\(регистрац",
+        r"адрес\s+для\s+отправки|мобильн\w*\s+телефон|электронн\w*\s+почт",
+    )
+    if registration_address:
+        add_field(fields, "registrationAddress", registration_address, 0.98, registration_evidence)
+
+    mailing_address, mailing_evidence = extract_address_after_label(
+        lines,
+        r"адрес\s+для\s+отправки\s+документ",
+        r"мобильн\w*\s+телефон|электронн\w*\s+почт|снилс",
+    )
+    if mailing_address:
+        add_field(fields, "mailingAddress", mailing_address, 0.98, mailing_evidence)
+
+    phone_match = re.search(
+        r"(?:мобильн\w*\s+телефон|телефон)\s*[:.]?\s*(\+?\d[\d\s()\-]{8,18}\d)",
+        text,
+        re.IGNORECASE,
+    )
+    if phone_match:
+        phone = "+" + only_digits(phone_match.group(1)) if phone_match.group(1).strip().startswith("+") else only_digits(phone_match.group(1))
+        add_field(fields, "phone", phone, 0.99, phone_match.group(0))
+
+    email_match = re.search(
+        r"(?:адрес\s+электронной\s+почты|e-?mail)\s*[:.]?\s*"
+        r"([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})",
+        text,
+        re.IGNORECASE,
+    )
+    if email_match:
+        add_field(fields, "email", email_match.group(1).lower(), 0.99, email_match.group(0))
+
+    passport_type, passport_type_evidence = value_after_label(lines, r"^\s*вид\s+документа\b")
+    if passport_type:
+        add_field(fields, "passportType", passport_type, 0.99, passport_type_evidence)
+    passport_number_match = re.search(
+        r"(?:серия\s*,?\s*номер|паспорт\s*:)\s*([0-9]{2})\s*([0-9]{2})\s*([0-9]{6})",
+        text,
+        re.IGNORECASE,
+    )
+    if passport_number_match:
+        passport_number = " ".join(passport_number_match.groups())
+        add_field(fields, "passportNumber", passport_number, 0.99, passport_number_match.group(0))
+    passport_date, passport_date_evidence = find_labeled_date(lines, ("дата выдачи",))
+    if passport_date:
+        add_field(fields, "passportDate", passport_date, 0.98, passport_date_evidence)
+    passport_issuer, passport_issuer_evidence = value_after_label(lines, r"^\s*кем\s+выдан\b")
+    normalized_issuer = normalize_passport_issuer(passport_issuer)
+    if not re.search(r"\b(?:МВД|ФМС|ОВД|ОТДЕЛ|УПРАВЛЕНИЕ)\b", normalized_issuer, re.IGNORECASE):
+        normalized_issuer = ""
+        for index, line in enumerate(lines):
+            if not re.match(r"^\s*кем\s+выдан\b", line, re.IGNORECASE):
+                continue
+            nearby_lines = lines[max(0, index - 2):index] + lines[index + 1:index + 3]
+            authority_line = next(
+                (
+                    candidate
+                    for candidate in nearby_lines
+                    if re.search(r"\b(?:ГУ|УМВД|ОМВД|МВД|УФМС|ФМС|ОВД|ОТДЕЛ|УПРАВЛЕНИЕ)\b", candidate, re.IGNORECASE)
+                ),
+                "",
+            )
+            if authority_line:
+                normalized_issuer = normalize_passport_issuer(authority_line)
+                passport_issuer_evidence = " ".join(lines[max(0, index - 2):index + 3])
+            break
+    if normalized_issuer:
+        add_field(fields, "passportIssuer", normalized_issuer, 0.98, passport_issuer_evidence)
+
+    work_place, work_place_evidence = value_after_label(lines, r"^\s*место\s+работы\s*\(.*\)\s*[:.]?")
+    if work_place:
+        add_field(fields, "workPlace", work_place, 0.96, work_place_evidence)
+    position, position_evidence = value_after_label(lines, r"^\s*должность\b")
+    inline_position = re.search(
+        r"специальность\s+или\s+([^\n]{3,120})$",
+        position,
+        re.IGNORECASE,
+    )
+    if inline_position and "направление обучения" not in inline_position.group(1).casefold():
+        position = inline_position.group(1).strip(" :(),")
+    if position and "специальность или" not in position.casefold():
+        add_field(fields, "position", position, 0.95, position_evidence)
+    else:
+        for index, line in enumerate(lines):
+            if not re.match(r"^\s*должность\b", line, re.IGNORECASE):
+                continue
+            for candidate in lines[index + 1:index + 5]:
+                candidate_value = candidate.strip(" :(),")
+                candidate_folded = candidate_value.casefold()
+                if not candidate_value or "направление обучения" in candidate_folded:
+                    continue
+                if re.search(r"[А-ЯЁа-яёA-Za-z]{3,}", candidate_value):
+                    add_field(
+                        fields,
+                        "position",
+                        candidate_value,
+                        0.95,
+                        " ".join(lines[index:index + 5]),
+                    )
+                    break
+            break
+
+    program_match = re.search(
+        r"дополнительн\w*\s+профессиональн\w*\s+программе\s*:\s*\n\s*([^\n]{6,300})",
+        text,
+        re.IGNORECASE,
+    )
+    if program_match:
+        program = re.sub(r"\s*\(\d{2,4}\s*ч\.?\)\s*$", "", program_match.group(1)).strip()
+        add_field(fields, "program", program, 0.99, program_match.group(0))
+        hours_match = re.search(r"\((\d{2,4})\s*ч", program_match.group(1), re.IGNORECASE)
+        if hours_match:
+            add_field(fields, "hours", hours_match.group(1), 0.99, program_match.group(1))
+
+    study_form_match = re.search(r"форма\s+обучения\s*[–—:\-]?\s*([^\n)]{3,100})", text, re.IGNORECASE)
+    if study_form_match:
+        source = study_form_match.group(1).casefold()
+        study_form = "Дистанционная" if "дистанц" in source else "Очно-заочная" if "очно" in source else "Заочная" if "заоч" in source else ""
+        if study_form:
+            add_field(fields, "studyForm", study_form, 0.98, study_form_match.group(0))
+
+    training_period = re.search(
+        r"(?:срок\s+обучения\s+с|\bс)\s*([0-3]?\d[./-][01]?\d[./-](?:19|20)\d{2})\s*(?:г\.?\s*)?по\s*"
+        r"([0-3]?\d[./-][01]?\d[./-](?:19|20)\d{2})",
+        text,
+        re.IGNORECASE,
+    )
+    if training_period:
+        add_field(fields, "startDate", parse_date(training_period.group(1)), 0.99, training_period.group(0))
+        add_field(fields, "endDate", parse_date(training_period.group(2)), 0.99, training_period.group(0))
+
+    application_date, application_evidence = find_labeled_date(lines, ("дата подачи заявления",))
+    if application_date:
+        add_field(fields, "applicationDate", application_date, 0.99, application_evidence)
+
+    contract_number = re.search(
+        r"договор\s*(?:№|no\.?)\s*([A-ZА-ЯЁ0-9/\-]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if contract_number:
+        add_field(fields, "contractNo", contract_number.group(1), 0.99, contract_number.group(0))
+        contract_tail = text[contract_number.end():contract_number.end() + 500]
+        contract_date = parse_date(contract_tail)
+        if contract_date:
+            add_field(fields, "contractDate", contract_date, 0.97, contract_tail[:200])
+
+    education_match = re.search(
+        r"сведения\s+о\s+предыдущем\s+уровне\s+образования([\s\S]{0,1200}?)(?:\n\s*я\s*,|ознакомлен)",
+        text,
+        re.IGNORECASE,
+    )
+    if education_match:
+        education_text = education_match.group(1)
+        document_match = re.search(r"вид\s+документа\s+об\s+образовании\s+([^\n]{4,180})", education_text, re.IGNORECASE)
+        if document_match:
+            add_field(fields, "educationDocument", document_match.group(1), 0.99, document_match.group(0))
+        series_match = re.search(r"\bсерия\s+([A-ZА-ЯЁ0-9\-]{2,20})", education_text, re.IGNORECASE)
+        number_match = re.search(r"номер\s+документа\s+([A-ZА-ЯЁ0-9\-]{3,30})", education_text, re.IGNORECASE)
+        if series_match:
+            add_field(fields, "educationDocumentSeries", series_match.group(1), 0.99, series_match.group(0))
+        if number_match:
+            add_field(fields, "educationDocumentNumber", number_match.group(1), 0.99, number_match.group(0))
+        education_date, education_date_evidence = find_labeled_date(
+            normalize_text(education_text).splitlines(),
+            ("дата выдачи",),
+        )
+        if education_date:
+            add_field(fields, "educationDocumentDate", education_date, 0.99, education_date_evidence)
+        education_issuer = re.search(r"кем\s+выдан\s*:?\s*([^\n]{4,240})", education_text, re.IGNORECASE)
+        if education_issuer:
+            add_field(fields, "educationDocumentIssuer", education_issuer.group(1), 0.99, education_issuer.group(0))
+        if name_parts[0]:
+            add_field(fields, "educationDocumentSurname", name_parts[0], 0.98, surname_evidence)
+
+
 def extract_identity_numbers(
     text: str,
     lines: list[str],
@@ -830,17 +1219,20 @@ def extract_identity_numbers(
 ) -> None:
     for line in lines:
         folded = line.casefold()
-        if "снилс" in folded or "snils" in folded or "snils" in kinds:
+        if "снилс" in folded or "snils" in folded:
             match = re.search(r"([0-9OОЗзБбS]{3})\D{0,3}([0-9OОЗзБбS]{3})\D{0,3}([0-9OОЗзБбS]{3})\D{0,3}([0-9OОЗзБбS]{2})", line)
             if match:
                 value = format_snils("".join(match.groups()))
                 add_field(fields, "snils", value, 0.99 if is_valid_snils(value) else 0.55, line)
-        if "инн" in folded or "inn" in folded or "inn" in kinds:
-            digit_line = only_digits(line)
-            for length in (12, 10):
-                for match in re.finditer(rf"(?<!\d)(\d{{{length}}})(?!\d)", digit_line):
-                    value = match.group(1)
-                    add_field(fields, "inn", value, 0.99 if is_valid_inn(value) else 0.55, line)
+        if "инн" in folded or "inn" in folded:
+            if "инн/кпп" in folded or "инн / кпп" in folded:
+                continue
+            allowed_lengths = {12} if "application" in kinds or "contract" in kinds else {10, 12}
+            for match in re.finditer(r"(?<!\d)(\d(?:[\s-]?\d){9,11})(?!\d)", line):
+                value = only_digits(match.group(1))
+                if len(value) not in allowed_lengths:
+                    continue
+                add_field(fields, "inn", value, 0.99 if is_valid_inn(value) else 0.55, line)
 
     snils_candidates = re.finditer(
         r"(?<!\d)([0-9OОЗзБбS]{3})[-\s]([0-9OОЗзБбS]{3})[-\s]([0-9OОЗзБбS]{3})[\s-]([0-9OОЗзБбS]{2})(?!\d)",
@@ -981,7 +1373,11 @@ def extract_passport(
             add_field(fields, "passportNumber", value, 0.9, match.group(0))
             break
 
-    code_match = re.search(r"(?<!\d)([0-9OОЗз]{3})\s*[-–—]\s*([0-9OОЗз]{3})(?!\d)", text)
+    code_match = re.search(
+        r"код\s+подразделения\s*[:.]?\s*([0-9OОЗз]{3})\s*[-–—]\s*([0-9OОЗз]{3})(?!\d)",
+        text,
+        re.IGNORECASE,
+    )
     if code_match:
         code = f"{only_digits(code_match.group(1))}-{only_digits(code_match.group(2))}"
         add_field(fields, "passportCode", code, 0.96, code_match.group(0))
@@ -1214,6 +1610,9 @@ def extract_fields(text: str, file_name: str) -> tuple[list[str], list[dict[str,
     kinds = classify_document(text, file_name)
     fields: dict[str, dict[str, Any]] = {}
     extract_identity_numbers(text, lines, kinds, fields)
+    is_application_document = "application" in kinds or "contract" in kinds
+    if is_application_document:
+        extract_application_fields(text, lines, fields)
     if "passport" in kinds:
         extract_passport(text, lines, fields)
         passport_source = f"{file_name}\n{text}".casefold()
@@ -1225,8 +1624,13 @@ def extract_fields(text: str, file_name: str) -> tuple[list[str], list[dict[str,
         ))
         if passport_file_hint or passport_identity_score >= 2:
             extract_registration_address(lines, fields)
-    if "education" in kinds:
+    if "education" in kinds and not is_application_document:
         extract_education(text, lines, fields)
+    kinds = [
+        kind
+        for kind in kinds
+        if kind not in {"inn", "snils"} or kind in fields
+    ]
     return kinds, list(fields.values())
 
 
@@ -1603,7 +2007,15 @@ def attach_field_previews(fields: list[dict[str, Any]], page_results: list[dict[
         targets = field_preview_targets(field)
         key = str(field.get("key") or "")
         candidate_pages = page_results
-        best_page = candidate_pages[0]
+        evidence_page = int(field.get("evidencePage") or 0)
+        best_page = next(
+            (
+                page_result
+                for page_result in candidate_pages
+                if int(page_result.get("page") or 0) == evidence_page
+            ),
+            candidate_pages[0],
+        )
         if key == "registrationAddress":
             best_page = next(
                 (
@@ -1635,6 +2047,36 @@ def attach_field_previews(fields: list[dict[str, Any]], page_results: list[dict[
             continue
 
 
+def assign_field_evidence_pages(
+    fields: list[dict[str, Any]],
+    page_results: list[dict[str, Any]],
+) -> None:
+    for field in fields:
+        evidence = normalize_preview_match_text(str(field.get("evidence") or ""))
+        value = normalize_preview_match_text(str(field.get("value") or ""))
+        targets = [target for target in (evidence, value) if len(target.replace(" ", "")) >= 4]
+        if not targets:
+            continue
+        best_page = 0
+        best_score = 0.0
+        for page_result in page_results:
+            page_text = normalize_preview_match_text(str(page_result.get("text") or ""))
+            if not page_text:
+                continue
+            score = max(
+                (
+                    1.0 if target in page_text else difflib.SequenceMatcher(None, target, page_text).ratio()
+                    for target in targets
+                ),
+                default=0.0,
+            )
+            if score > best_score:
+                best_score = score
+                best_page = int(page_result.get("page") or 0)
+        if best_page and best_score >= 0.18:
+            field["evidencePage"] = best_page
+
+
 def render_referenced_page_previews(
     fields: list[dict[str, Any]],
     page_results: list[dict[str, Any]],
@@ -1657,14 +2099,19 @@ def render_referenced_page_previews(
 
 def decode_document_payload(payload: dict[str, Any]) -> tuple[str, str, str, bytes]:
     file_name = Path(str(payload.get("fileName") or "document")).name[:180]
-    mime_type = str(payload.get("mimeType") or "").lower().strip()
+    mime_type = str(payload.get("mimeType") or "").split(";", 1)[0].lower().strip()
     allowed_types = {
         "image/jpeg": ".jpg",
         "image/png": ".png",
         "application/pdf": ".pdf",
+        "text/plain": ".txt",
+        "text/csv": ".csv",
+        "application/rtf": ".rtf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        "application/vnd.oasis.opendocument.text": ".odt",
     }
     if mime_type not in allowed_types:
-        raise ValueError("Поддерживаются только JPG, PNG и PDF.")
+        raise ValueError("Поддерживаются JPG, PNG, PDF, TXT, CSV, RTF, DOCX и ODT.")
     try:
         file_bytes = base64.b64decode(str(payload.get("base64") or ""), validate=True)
     except (ValueError, binascii.Error) as error:
@@ -1677,11 +2124,20 @@ def decode_document_payload(payload: dict[str, Any]) -> tuple[str, str, str, byt
         raise ValueError("Содержимое файла не является PNG.")
     if mime_type == "image/jpeg" and not file_bytes.startswith(b"\xff\xd8\xff"):
         raise ValueError("Содержимое файла не является JPG.")
+    if mime_type == "application/rtf" and not file_bytes.lstrip().startswith(b"{\\rtf"):
+        raise ValueError("Содержимое файла не является RTF.")
+    if mime_type in {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.oasis.opendocument.text",
+    } and not file_bytes.startswith(b"PK"):
+        raise ValueError("Содержимое текстового документа имеет некорректный формат.")
     return file_name, mime_type, allowed_types[mime_type], file_bytes
 
 
 def render_document_page(payload: dict[str, Any]) -> dict[str, Any]:
     file_name, mime_type, extension, file_bytes = decode_document_payload(payload)
+    if not (mime_type.startswith("image/") or mime_type == "application/pdf"):
+        raise ValueError("Для текстового файла выбор области изображения недоступен.")
     requested_page = max(1, min(MAX_PDF_PAGES, int(payload.get("page") or 1)))
     with tempfile.TemporaryDirectory(prefix="ais-ocr-page-") as temp_dir:
         workdir = Path(temp_dir)
@@ -1712,13 +2168,52 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
         workdir = Path(temp_dir)
         source_path = workdir / f"source{extension}"
         source_path.write_bytes(file_bytes)
+        is_visual_document = mime_type.startswith("image/") or mime_type == "application/pdf"
+        if not is_visual_document:
+            text = extract_text_document(file_bytes, mime_type)
+            if not is_usable_text_layer(text):
+                raise ValueError("В текстовом файле не найден пригодный для обработки текст.")
+            document_types, fields = extract_fields(text, file_name)
+            return {
+                "ok": True,
+                "fileName": file_name,
+                "mimeType": mime_type,
+                "pageCount": 1,
+                "pages": [{
+                    "page": 1,
+                    "characters": len(text),
+                    "durationMs": 0,
+                    "method": "text",
+                }],
+                "documentTypes": document_types,
+                "fields": fields,
+                "pagePreviews": [],
+                "photoCandidates": [],
+                "textPreview": text[:3000],
+                "textExtraction": "text",
+                "durationMs": round((time.perf_counter() - started_at) * 1000),
+            }
+
         page_paths = render_pages(source_path, mime_type, workdir)
+        pdf_text_pages = extract_pdf_text_pages(source_path) if mime_type == "application/pdf" else []
         passport_hint = bool(re.search(r"(?:паспорт|passport)", file_name, re.IGNORECASE))
 
         def recognize_page(item: tuple[int, Path]) -> dict[str, Any]:
             page_number, page_path = item
             page_started_at = time.perf_counter()
-            page_text, prepared_path, words = ocr_image(page_path)
+            text_layer = (
+                pdf_text_pages[page_number - 1]
+                if page_number <= len(pdf_text_pages)
+                else ""
+            )
+            if is_usable_text_layer(text_layer):
+                page_text = text_layer
+                prepared_path = page_path
+                words: list[dict[str, Any]] = []
+                extraction_method = "text-layer"
+            else:
+                page_text, prepared_path, words = ocr_image(page_path)
+                extraction_method = "ocr"
             page_source = page_text.casefold()
             registration_hint = (
                 page_number > 1
@@ -1732,9 +2227,9 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                     ))
                 )
             )
-            if passport_hint and page_number == 1 and not registration_hint:
+            if extraction_method == "ocr" and passport_hint and page_number == 1 and not registration_hint:
                 page_text = merge_ocr_text(page_text, ocr_passport_regions(page_path))
-            if passport_hint and registration_hint:
+            if extraction_method == "ocr" and passport_hint and registration_hint:
                 page_text = merge_ocr_text(page_text, ocr_passport_registration_region(page_path))
             return {
                 "page": page_number,
@@ -1743,6 +2238,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 "imagePath": str(prepared_path),
                 "sourceImagePath": str(page_path),
                 "words": words,
+                "method": extraction_method,
             }
 
         page_items = list(enumerate(page_paths, 1))
@@ -1754,6 +2250,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 "page": item["page"],
                 "characters": len(item["text"]),
                 "durationMs": item["durationMs"],
+                "method": item["method"],
             }
             for item in recognized_pages
         ]
@@ -1778,6 +2275,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 "evidence": "Место жительства",
                 "manualEntry": True,
             })
+        assign_field_evidence_pages(fields, recognized_pages)
         attach_field_previews(fields, recognized_pages)
         page_previews = render_referenced_page_previews(fields, recognized_pages)
         photo_candidates = detect_photo_candidates(
@@ -1786,9 +2284,16 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
             file_name,
             mime_type,
         )
+        extraction_methods = {str(item.get("method") or "ocr") for item in recognized_pages}
+        text_extraction = (
+            next(iter(extraction_methods))
+            if len(extraction_methods) == 1
+            else "mixed"
+        )
         return {
             "ok": True,
             "fileName": file_name,
+            "mimeType": mime_type,
             "pageCount": len(page_paths),
             "pages": page_results,
             "documentTypes": document_types,
@@ -1796,6 +2301,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
             "pagePreviews": page_previews,
             "photoCandidates": photo_candidates,
             "textPreview": text[:3000],
+            "textExtraction": text_extraction,
             "durationMs": round((time.perf_counter() - started_at) * 1000),
         }
 

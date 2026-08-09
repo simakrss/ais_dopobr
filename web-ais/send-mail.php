@@ -367,8 +367,25 @@ $message = trim((string) ($data['message'] ?? ''));
 $auditContext = is_array($data['auditContext'] ?? null) ? $data['auditContext'] : [];
 $studentId = ais_audit_text($auditContext['studentId'] ?? '', 240);
 $studentName = ais_audit_text($auditContext['studentName'] ?? '', 500);
+$contractId = ais_audit_text($auditContext['contractId'] ?? '', 240);
+$contractName = ais_audit_text($auditContext['contractName'] ?? '', 500);
+$requestedEntityType = ais_audit_text($auditContext['entityType'] ?? '', 40);
+$entityType = in_array($requestedEntityType, ['students', 'contracts'], true)
+    ? $requestedEntityType
+    : ($contractId !== '' ? 'contracts' : ($studentId !== '' ? 'students' : 'email'));
+$entityId = ais_audit_text(
+    $auditContext['entityId'] ?? ($entityType === 'contracts' ? $contractId : $studentId),
+    240
+);
+$entityLabel = ais_audit_text(
+    $auditContext['entityName'] ?? ($entityType === 'contracts' ? $contractName : $studentName),
+    500
+);
 $messageType = ais_audit_text($auditContext['messageType'] ?? 'Письмо', 240);
-$recipientMode = ($auditContext['recipientMode'] ?? '') === 'system' ? 'системный ящик' : 'слушатель';
+$recipientModeValue = (string) ($auditContext['recipientMode'] ?? '');
+$recipientMode = $recipientModeValue === 'system'
+    ? 'системный ящик'
+    : ($recipientModeValue === 'employee' ? 'сотрудник' : 'слушатель');
 
 if (!filter_var($to, FILTER_VALIDATE_EMAIL) || preg_match('/[\r\n]/', $to)) {
     send_json(400, ['ok' => false, 'error' => 'Некорректный адрес получателя.']);
@@ -435,9 +452,9 @@ try {
     ais_audit_try_append([
         'action' => 'Отправлено письмо',
         'area' => 'Электронная почта',
-        'entityType' => $studentId !== '' ? 'students' : 'email',
-        'entityId' => $studentId,
-        'entityLabel' => $studentName !== '' ? $studentName : $to,
+        'entityType' => $entityType,
+        'entityId' => $entityId,
+        'entityLabel' => $entityLabel !== '' ? $entityLabel : $to,
         'field' => 'email',
         'after' => $to,
         'details' => implode('; ', [
@@ -454,9 +471,9 @@ try {
     ais_audit_try_append([
         'action' => 'Ошибка отправки письма',
         'area' => 'Электронная почта',
-        'entityType' => $studentId !== '' ? 'students' : 'email',
-        'entityId' => $studentId,
-        'entityLabel' => $studentName !== '' ? $studentName : $to,
+        'entityType' => $entityType,
+        'entityId' => $entityId,
+        'entityLabel' => $entityLabel !== '' ? $entityLabel : $to,
         'field' => 'email',
         'after' => $to,
         'details' => implode('; ', [

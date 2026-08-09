@@ -1,8 +1,12 @@
+import io
 import unittest
+import zipfile
 
 from server import (
+    decode_text_bytes,
     expand_face_photo_box,
     extract_fields,
+    extract_text_document,
     is_valid_inn,
     is_valid_snils,
     photo_box_overlap,
@@ -43,28 +47,116 @@ class OcrExtractionTests(unittest.TestCase):
         МЕСТО ЖИТЕЛЬСТВА
         ЗАРЕГИСТРИРОВАНА ПО МЕСТУ ЖИТЕЛЬСТВА
         10 декабря 2013 г.
-        обл. Рязанская
-        г. Рязань
-        ул. Быстрецкая, д. 27, кв. 102
-        ОТДЕЛ УФМС РОССИИ ПО РЯЗАНСКОЙ ОБЛАСТИ
+        обл. Тестовая
+        г. Тестоград
+        ул. Учебная, д. 10, кв. 20
+        ОТДЕЛ УФМС РОССИИ ПО ТЕСТОВОЙ ОБЛАСТИ
         """
         kinds, fields = self.field_map(text, "Паспорт с пропиской.pdf")
         self.assertIn("passport", kinds)
         self.assertEqual(
             fields["registrationAddress"],
-            "обл. Рязанская, г. Рязань, ул. Быстрецкая, д. 27, кв. 102",
+            "обл. Тестовая, г. Тестоград, ул. Учебная, д. 10, кв. 20",
         )
 
     def test_contract_addresses_are_not_passport_registration(self):
         text = """
         ДОГОВОР ОБ ОКАЗАНИИ ОБРАЗОВАТЕЛЬНЫХ УСЛУГ
         Паспорт заказчика: серия 61 20 номер 123456
-        Адрес места жительства: г. Рязань, ул. Быстрецкая, д. 27, кв. 102
-        ИНН/КПП 5506198724/780201001
-        Юридический адрес: г. Санкт-Петербург, пр-кт Лесной, д. 1
+        Адрес места жительства: г. Тестоград, ул. Учебная, д. 10, кв. 20
+        ИНН/КПП 7707083893/770201001
+        Юридический адрес: г. Тестоград, ул. Примерная, д. 1
         """
         _, fields = self.field_map(text, "Заявление и договор.pdf")
         self.assertNotIn("registrationAddress", fields)
+
+    def test_application_text_layer_fields_are_extracted_without_ocr_artifacts(self):
+        text = """
+        Заявление поступающего
+        Прошу зачислить меня в число слушателей (форма обучения – заочная дистанционная) по
+        дополнительной профессиональной программе:
+        Разработка конструкторской документации в САПР Компас-3D (300 ч)
+        Срок обучения с 01.08.2026 г. по 19.09.2026 г.
+        Персональные данные
+        Фамилия Иванова
+        Имя Анна
+        Отчество Сергеевна
+        Дата рождения 01.02.1990
+        Адрес постоянного места
+        жительства (регистрации по
+        паспорту)
+        Гражданство Российская Федерация
+        г. Тестоград, ул. Учебная, д. 10, кв. 20
+        Адрес для отправки документов
+        (например, фактический адрес места жительства или работы)
+        000000, г. Тестоград, ул. Примерная, д. 1
+        Мобильный телефон +70000000000
+        Адрес электронной почты student@example.org
+        СНИЛС 112-233-445 95
+        Вид документа Паспорт гражданина РФ
+        Серия, номер 45 18 123456
+        Дата выдачи: 15.06.2018
+        Кем Выдан ОТДЕЛОМ МВД РОССИИ ПО ТЕСТОВОМУ РАЙОНУ
+        Место работы(учебы): ТЕСТОВЫЙ УНИВЕРСИТЕТ
+        Должность (специальность или
+        направление обучения):
+        студент магистратуры
+        Сведения о предыдущем уровне образования
+        Вид документа об образовании Диплом о высшем образовании
+        Серия 000000
+        Номер документа 0000000
+        Дата выдачи: 30.06.2015
+        Кем выдан: Тестовый государственный университет
+        Я, Иванова Анна Сергеевна, ознакомлен (а)
+        Дата подачи заявления: 29.07.2026 г.
+        Договор No 001-01/ДО-1
+        г. Санкт-Петербург 01.08.2026 г.
+        Предмет договора
+        """
+        kinds, fields = self.field_map(
+            text,
+            "Заявление+договор_Иванова_Анна_Сергеевна_001-01_ДО-1.pdf",
+        )
+        self.assertIn("application", kinds)
+        self.assertIn("contract", kinds)
+        self.assertEqual(fields["name"], "Иванова Анна Сергеевна")
+        self.assertEqual(fields["registrationAddress"], "г. Тестоград, ул. Учебная, д. 10, кв. 20")
+        self.assertEqual(fields["mailingAddress"], "000000, г. Тестоград, ул. Примерная, д. 1")
+        self.assertEqual(fields["phone"], "+70000000000")
+        self.assertEqual(fields["email"], "student@example.org")
+        self.assertEqual(fields["passportNumber"], "45 18 123456")
+        self.assertEqual(fields["position"], "студент магистратуры")
+        self.assertEqual(fields["program"], "Разработка конструкторской документации в САПР Компас-3D")
+        self.assertEqual(fields["hours"], "300")
+        self.assertEqual(fields["educationDocument"], "Диплом о высшем образовании")
+        self.assertEqual(fields["educationDocumentSeries"], "000000")
+        self.assertEqual(fields["educationDocumentNumber"], "0000000")
+        self.assertEqual(fields["educationDocumentDate"], "2015-06-30")
+        self.assertEqual(fields["contractNo"], "001-01/ДО-1")
+        self.assertNotIn("inn", fields)
+        self.assertNotIn("passportCode", fields)
+        self.assertNotIn("educationLevel", fields)
+        self.assertNotIn("educationSpecialty", fields)
+
+    def test_cp1251_plain_text_is_decoded(self):
+        source = "Заявление поступающего\nФамилия Иванова"
+        self.assertEqual(decode_text_bytes(source.encode("cp1251")), source)
+
+    def test_docx_text_is_extracted(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr(
+                "word/document.xml",
+                "<w:document xmlns:w='urn:test'><w:body><w:p><w:r><w:t>"
+                "Заявление поступающего"
+                "</w:t></w:r></w:p><w:p><w:r><w:t>Фамилия Иванова"
+                "</w:t></w:r></w:p></w:body></w:document>",
+            )
+        text = extract_text_document(
+            buffer.getvalue(),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        self.assertEqual(text, "Заявление поступающего\nФамилия Иванова")
 
     def test_education_document_fields(self):
         text = """
@@ -93,16 +185,16 @@ class OcrExtractionTests(unittest.TestCase):
         text = """
         ПРИЛОЖЕНИЕ К ДИПЛОМУ О ВЫСШЕМ ОБРАЗОВАНИИ
         Фамилия
-        КОРОЛЬКОВА
+        ИВАНОВА
         Имя
-        ОЛЬГА
+        АННА
         Отчество
-        ВИКТОРОВНА
+        СЕРГЕЕВНА
         Квалификация Бакалавр
         """
         kinds, fields = self.field_map(text, "Диплом об образовании.pdf")
         self.assertEqual(kinds, ["education"])
-        self.assertEqual(fields["educationDocumentSurname"], "Королькова")
+        self.assertEqual(fields["educationDocumentSurname"], "Иванова")
 
     def test_education_document_surname_from_full_name_row(self):
         text = """
@@ -119,16 +211,16 @@ class OcrExtractionTests(unittest.TestCase):
         text = """
         ПАСПОРТ РОССИЙСКАЯ ФЕДЕРАЦИЯ
         Паспорт выдан: > ry МВД РОССИИ ПО Г. MOCKBE _
-        Дата выдачи паспорта: 10.07.2023
-        Код подразделения: 770-101
-        MRZ: 4526053601RUSOZ05233F<<<<<<<3230710770101<08
+        Дата выдачи паспорта: 15.06.2018
+        Код подразделения: 770-001
+        MRZ: 4511234569RUS9002018M<<<<<<<8<<<<<<<<<<<<
         """
         kinds, fields = self.field_map(text, "Паспорт с пропиской.pdf")
         self.assertIn("passport", kinds)
-        self.assertEqual(fields["passportNumber"], "45 23 605360")
-        self.assertEqual(fields["passportDate"], "2023-07-10")
-        self.assertEqual(fields["birthDate"], "2003-05-23")
-        self.assertEqual(fields["passportCode"], "770-101")
+        self.assertEqual(fields["passportNumber"], "45 18 123456")
+        self.assertEqual(fields["passportDate"], "2018-06-15")
+        self.assertEqual(fields["birthDate"], "1990-02-01")
+        self.assertEqual(fields["passportCode"], "770-001")
         self.assertEqual(fields["passportIssuer"], "ГУ МВД РОССИИ ПО Г. МОСКВЕ")
 
     def test_control_numbers(self):

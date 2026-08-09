@@ -13,12 +13,19 @@ const { TextDecoder } = require("node:util");
 const SERVER_CODE_ROOT = __dirname;
 const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
 const XLSX = require(path.join(ROOT, "vendor", "sheetjs", "xlsx.full.min.js"));
+const MYSQL2_BUNDLE_PATH = path.join(ROOT, "vendor", "mysql2-bundle.cjs");
 const STORAGE_ROOT = path.join(ROOT, "storage");
 const PHOTO_ROOT = path.join(STORAGE_ROOT, "photos");
 const SERVER_SETTINGS_PATH = path.join(STORAGE_ROOT, "server-settings.json");
 const AUTH_USERS_PATH = path.join(STORAGE_ROOT, "users.json");
 const AUTH_SESSIONS_PATH = path.join(STORAGE_ROOT, "auth-sessions.json");
 const AUDIT_LOG_PATH = path.join(STORAGE_ROOT, "audit-log.jsonl");
+const SHARED_APPLICATION_STATE_CACHE_PATH = path.join(STORAGE_ROOT, "shared-application-state.json");
+const SHARED_APPLICATION_STATE_PENDING_PATH = path.join(STORAGE_ROOT, "shared-application-state-pending.json");
+const SHARED_APPLICATION_STATE_BACKUP_ROOT = path.join(STORAGE_ROOT, "shared-state-backups");
+const SHARED_RECORD_LOCKS_CACHE_PATH = path.join(STORAGE_ROOT, "shared-record-locks.json");
+const SHARED_APPLICATION_STATE_RELATIVE_PATH = "Системные данные/Общая база АИС.json.gz";
+const SHARED_RECORD_LOCKS_RELATIVE_PATH = `${SHARED_APPLICATION_STATE_RELATIVE_PATH}.locks.json`;
 const AUTH_COOKIE_NAME = "AIS_SESSION";
 const AUTH_PASSWORD_ITERATIONS = 210000;
 const AUTH_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -33,18 +40,28 @@ const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока �
 let serverSettings = {};
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
+const HOST = process.env.HOST || "127.0.0.1";
 const DEFAULT_DOCUMENT_CONVERTER_URL = "http://127.0.0.1:8082";
 const DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL = `http://host.docker.internal:${PORT}`;
 const DEFAULT_OCR_SERVICE_URL = "http://127.0.0.1:8083";
 const OCR_CLI_SCRIPT = path.join(SERVER_CODE_ROOT, "services", "ocr", "server.py");
 const OCR_CLI_RUNTIME_ROOT = path.join(SERVER_CODE_ROOT, "services", "ocr", "runtime");
 const MAX_JSON_BYTES = 40 * 1024 * 1024;
+const MAX_SHARED_APPLICATION_STATE_BYTES = 36 * 1024 * 1024;
+const MAX_SHARED_RECORD_LOCKS_BYTES = 1024 * 1024;
+const SHARED_RECORD_LOCK_TTL_MS = 30 * 1000;
+const SHARED_RECORD_LOCK_MAX_COUNT = 5000;
+const SHARED_STATE_MIRROR_INTERVAL_MS = 2000;
+const SHARED_STATE_MYSQL_KEY = String(process.env.AIS_SHARED_STATE_KEY || "main").trim().slice(0, 64) || "main";
+const SHARED_STATE_OFFLINE_QUEUE_MAX_OPERATIONS = 5000;
+const SHARED_STATE_MYSQL_OFFLINE_RETRY_MS = 15 * 1000;
 const MAX_DOCX_BYTES = 24 * 1024 * 1024;
 const MAX_STUDENT_DATABASE_BYTES = 24 * 1024 * 1024;
 const MAX_STUDENT_PHOTO_BYTES = 16 * 1024 * 1024;
 const MAX_OCR_DOCUMENT_BYTES = 24 * 1024 * 1024;
 const MAX_WEBDAV_BROWSER_FILE_BYTES = 24 * 1024 * 1024;
 const MAX_WEBDAV_BROWSER_ENTRIES = 1000;
+const MAX_WEBDAV_BROWSER_PREVIEW_TEXT_CHARS = 400000;
 const MAX_OCR_DOCUMENT_FILES = 40;
 const MAX_OCR_TOTAL_BYTES = 160 * 1024 * 1024;
 const MAX_STUDENT_DATABASE_EXPORT_STUDENTS = 20000;
@@ -59,6 +76,19 @@ const studentExportJobs = new Map();
 const studentDocumentRecognitionJobs = new Map();
 const serverEmailRateLimits = new Map();
 const documentConversionSources = new Map();
+let sharedApplicationStateWriteQueue = Promise.resolve();
+let sharedRecordLocksWriteQueue = Promise.resolve();
+let sharedRecordLocksMySqlPool = null;
+let sharedRecordLocksMySqlInitialization = null;
+let sharedStateMirrorRunning = false;
+let sharedStateMirrorVersionTag = "";
+let sharedStateMirrorLastError = "";
+let sharedStateOfflineSyncPromise = null;
+let sharedStateMySqlUnavailableUntil = 0;
+let sharedApplicationStateCacheMemory = null;
+let sharedApplicationStateCacheLoaded = false;
+let sharedApplicationStatePendingMemory = null;
+let sharedApplicationStatePendingLoaded = false;
 const DOCUMENT_CONVERSION_SOURCE_TTL_MS = 5 * 60 * 1000;
 const WORD_TEMPLATE_EXTENSIONS = new Set(["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"]);
 const OPENXML_WORD_EXTENSIONS = new Set(["docx", "docm", "dotx", "dotm"]);
@@ -66,7 +96,12 @@ const OCR_DOCUMENT_CONTENT_TYPES = Object.freeze({
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
-  ".pdf": "application/pdf"
+  ".pdf": "application/pdf",
+  ".txt": "text/plain",
+  ".csv": "text/csv",
+  ".rtf": "application/rtf",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".odt": "application/vnd.oasis.opendocument.text"
 });
 const WEBDAV_BROWSER_CONTENT_TYPES = Object.freeze({
   ".bmp": "image/bmp",
@@ -80,6 +115,9 @@ const WEBDAV_BROWSER_CONTENT_TYPES = Object.freeze({
   ".jpeg": "image/jpeg",
   ".jpg": "image/jpeg",
   ".json": "application/json; charset=utf-8",
+  ".log": "text/plain; charset=utf-8",
+  ".md": "text/markdown; charset=utf-8",
+  ".ini": "text/plain; charset=utf-8",
   ".ods": "application/vnd.oasis.opendocument.spreadsheet",
   ".odt": "application/vnd.oasis.opendocument.text",
   ".pdf": "application/pdf",
@@ -89,12 +127,16 @@ const WEBDAV_BROWSER_CONTENT_TYPES = Object.freeze({
   ".rtf": "application/rtf",
   ".svg": "image/svg+xml; charset=utf-8",
   ".txt": "text/plain; charset=utf-8",
+  ".tsv": "text/tab-separated-values; charset=utf-8",
   ".webp": "image/webp",
   ".xls": "application/vnd.ms-excel",
   ".xlsb": "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
   ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   ".xml": "application/xml; charset=utf-8",
+  ".yaml": "text/yaml; charset=utf-8",
+  ".yml": "text/yaml; charset=utf-8",
+  ".eml": "message/rfc822",
   ".zip": "application/zip"
 });
 const OCR_DOCUMENT_FIELD_LABELS = Object.freeze({
@@ -118,7 +160,20 @@ const OCR_DOCUMENT_FIELD_LABELS = Object.freeze({
   educationDocumentIssuer: "Кем выдан документ об образовании",
   educationSpecialty: "Специальность",
   educationQualification: "Квалификация",
-  educationDocumentSurname: "Фамилия в документе"
+  educationDocumentSurname: "Фамилия в документе",
+  mailingAddress: "Адрес для отправки документов",
+  phone: "Мобильный телефон",
+  email: "Адрес электронной почты",
+  workPlace: "Место работы",
+  position: "Должность",
+  program: "Программа обучения",
+  studyForm: "Форма обучения",
+  hours: "Количество часов",
+  applicationDate: "Дата подачи заявления",
+  startDate: "Дата начала обучения",
+  endDate: "Дата окончания обучения",
+  contractNo: "Номер договора",
+  contractDate: "Дата договора"
 });
 const PAYMENT_DATABASE_CONSTANT_DEFINITIONS = Object.freeze([
   {
@@ -152,6 +207,22 @@ const PAYMENT_DATABASE_CONSTANT_DEFINITIONS = Object.freeze([
     legacyRow: 6,
     percent: true
   }
+]);
+const DEFAULT_AGENT_PAYMENT_RATES = Object.freeze({
+  withAuthorPercent: 10,
+  withoutAuthorPercent: 25
+});
+const AGENT_PAYMENT_RATE_DEFINITIONS = Object.freeze([
+  Object.freeze({
+    key: "withAuthorPercent",
+    definedName: "AIS_AgentRateWithAuthor",
+    defaultPercent: DEFAULT_AGENT_PAYMENT_RATES.withAuthorPercent
+  }),
+  Object.freeze({
+    key: "withoutAuthorPercent",
+    definedName: "AIS_AgentRateWithoutAuthor",
+    defaultPercent: DEFAULT_AGENT_PAYMENT_RATES.withoutAuthorPercent
+  })
 ]);
 const PROGRAM_DATABASE_COLUMN_MAP = Object.freeze({
   "Автор": "authorSource",
@@ -205,6 +276,11 @@ const STUDENT_DATABASE_COLUMN_MAP = Object.freeze({
   "Источник": "source",
   "Теги": "tags",
   "Агент": "agent",
+  "АгентСумма": "agentAmount",
+  "АгентСумма1": "agentPayment1Amount",
+  "АгентДата1": "agentPayment1Date",
+  "АгентСумма2": "agentPayment2Amount",
+  "АгентДата2": "agentPayment2Date",
   "Скидка": "discount",
   "Вид программы ДПО": "educationType",
   "Вид  программы ДПО": "educationType",
@@ -324,6 +400,8 @@ const STUDENT_DATABASE_DATE_FIELDS = new Set([
   "customerBirthDate",
   "customerPassportDate",
   "contractDate",
+  "agentPayment1Date",
+  "agentPayment2Date",
   "payment1Date",
   "payment2Date",
   "payment3Date",
@@ -347,6 +425,9 @@ const STUDENT_DATABASE_NUMBER_FIELDS = new Set([
   "monthlyAmount",
   "balance",
   "paidAmount",
+  "agentAmount",
+  "agentPayment1Amount",
+  "agentPayment2Amount",
   "payment1Amount",
   "payment2Amount",
   "payment3Amount",
@@ -503,7 +584,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Expose-Headers": "Content-Disposition, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled"
+  "Access-Control-Expose-Headers": "Content-Disposition, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled"
 };
 
 const MIME_TYPES = {
@@ -542,6 +623,13 @@ async function ensureStorage() {
     localDocumentsRoot: DEFAULT_LOCAL_DOCUMENTS_ROOT,
     localDocumentsRootIsSystemParent: false,
     openDocumentsLocally: true,
+    sharedRecordLocksMySqlConnectionString: "",
+    sharedRecordLocksMySqlUseApplicationsConnection: true,
+    sharedRecordLocksMySqlHost: "",
+    sharedRecordLocksMySqlPort: 3306,
+    sharedRecordLocksMySqlDatabase: "",
+    sharedRecordLocksMySqlUser: "",
+    sharedRecordLocksMySqlPassword: "",
     studentApplicationsMySqlConnectionString: "",
     studentApplicationsEmailHost: "",
     studentApplicationsEmailPort: 993,
@@ -629,9 +717,9 @@ function defaultAuthUsers() {
   }));
 }
 
-async function writeJsonAtomic(filePath, value) {
+async function writeJsonAtomic(filePath, value, compact = false) {
   const temporaryPath = `${filePath}.tmp-${crypto.randomBytes(6).toString("hex")}`;
-  await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, compact ? 0 : 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await fs.rename(temporaryPath, filePath);
 }
 
@@ -928,16 +1016,22 @@ async function handleAuditRequest(req, res, user, requestUrl) {
   let scopedRows = rows;
   let exportPrefix = "audit-log";
   if (studentPaths.has(requestUrl.pathname)) {
-    const studentId = String(requestUrl.searchParams.get("studentId") || "").trim();
-    if (!studentId || studentId.length > 240) {
-      sendError(res, 400, "Не указан слушатель для просмотра журнала.");
+    const legacyStudentId = String(requestUrl.searchParams.get("studentId") || "").trim();
+    const requestedEntityType = String(requestUrl.searchParams.get("entityType") || "").trim();
+    const entityType = requestedEntityType === "contracts" ? "contracts" : "students";
+    const entityId = String(requestUrl.searchParams.get("entityId") || legacyStudentId).trim();
+    if (!entityId || entityId.length > 240) {
+      sendError(res, 400, entityType === "contracts"
+        ? "Не указан сотрудник для просмотра журнала."
+        : "Не указан слушатель для просмотра журнала.");
       return true;
     }
-    const scope = { entityTypeExact: "students", entityIdExact: studentId };
+    const scope = { entityTypeExact: entityType, entityIdExact: entityId };
     scopedRows = rows.filter((row) => auditRowMatches(row, scope));
-    filters.entityTypeExact = "students";
-    filters.entityIdExact = studentId;
-    exportPrefix = `student-audit-${studentId.replace(/[^A-Za-z0-9_-]+/g, "-").slice(0, 80) || "log"}`;
+    filters.entityTypeExact = entityType;
+    filters.entityIdExact = entityId;
+    const exportEntity = entityType === "contracts" ? "employee" : "student";
+    exportPrefix = `${exportEntity}-audit-${entityId.replace(/[^A-Za-z0-9_-]+/g, "-").slice(0, 80) || "log"}`;
   }
   const filtered = rows.filter((row) => auditRowMatches(row, filters));
   if (requestUrl.pathname.endsWith("/export")) {
@@ -1024,7 +1118,13 @@ async function destroyAuthSession(req) {
 
 async function getRequestAuthUser(req) {
   if (process.env.AIS_TRUST_GATEWAY === "1") {
-    return { id: "gateway", login: "gateway", name: "Gateway", role: "admin", status: "active" };
+    return {
+      id: String(req.headers["x-ais-user-id"] || "gateway").slice(0, 160),
+      login: String(req.headers["x-ais-user-login"] || "gateway").slice(0, 160),
+      name: String(req.headers["x-ais-user-name"] || "Gateway").slice(0, 240),
+      role: String(req.headers["x-ais-user-role"] || "admin") === "manager" ? "manager" : "admin",
+      status: "active"
+    };
   }
   const token = parseRequestCookies(req)[AUTH_COOKIE_NAME] || "";
   if (!token) return null;
@@ -1241,6 +1341,11 @@ async function handleAdminUsers(req, res, user) {
 }
 
 async function saveServerSettings(patch) {
+  const resetsSharedRecordLocksMySql = Object.keys(patch || {}).some((key) => {
+    const isMySqlSetting = key.startsWith("sharedRecordLocksMySql")
+      || key === "studentApplicationsMySqlConnectionString";
+    return isMySqlSetting && serverSettings[key] !== patch[key];
+  });
   serverSettings = {
     ...serverSettings,
     ...patch
@@ -1250,6 +1355,10 @@ async function saveServerSettings(patch) {
     `${JSON.stringify(serverSettings, null, 2)}\n`,
     "utf8"
   );
+  if (resetsSharedRecordLocksMySql) {
+    sharedStateMySqlUnavailableUntil = 0;
+    await closeSharedRecordLocksStorage();
+  }
   return serverSettings;
 }
 
@@ -2320,6 +2429,15 @@ function evaluateDocumentFormulaExpression(expression, context) {
     if (!Number.isFinite(left) || !Number.isFinite(right)) throw new Error("Некорректное арифметическое выражение");
     return additive.operator === "+" ? left + right : left - right;
   }
+  const multiplicative = findTopLevelMultiplicativeOperator(text);
+  if (multiplicative) {
+    const left = Number(evaluateDocumentFormulaExpression(text.slice(0, multiplicative.index), context));
+    const right = Number(evaluateDocumentFormulaExpression(text.slice(multiplicative.index + 1), context));
+    if (!Number.isFinite(left) || !Number.isFinite(right) || (multiplicative.operator === "/" && right === 0)) {
+      throw new Error("Некорректное арифметическое выражение");
+    }
+    return multiplicative.operator === "*" ? left * right : left / right;
+  }
   const hashRef = /^#([^#]+)#$/.exec(text);
   if (hashRef) return getFormulaContextValue(hashRef[1], context);
   const sourceRef = /^\[([^\]]+)\]$/.exec(text);
@@ -2366,6 +2484,21 @@ function evaluateDocumentFormulaFunction(name, args, context) {
   }
   if (upperName === "СЖПРОБЕЛЫ") return text(0).replace(/\s+/g, " ").trim();
   if (upperName === "ТЕКСТ") return formatDocumentFormulaDate(text(0));
+  if (compactName === "ОКРУГЛВНИЗ") {
+    const number = Number(String(value(0)).replace(",", "."));
+    const digitsValue = Number(String(value(1)).replace(",", "."));
+    if (!Number.isFinite(number) || !Number.isFinite(digitsValue)) {
+      throw new Error("ОКРУГЛВНИЗ: некорректное числовое значение");
+    }
+    const digits = Math.trunc(digitsValue);
+    const factor = 10 ** Math.abs(digits);
+    if (!Number.isFinite(factor) || factor === 0) {
+      throw new Error("ОКРУГЛВНИЗ: некорректное количество разрядов");
+    }
+    return digits >= 0
+      ? Math.trunc(number * factor) / factor
+      : Math.trunc(number / factor) * factor;
+  }
   if (upperName === "ПОЛУЧИТЬSQLЗАПРОС" || upperName === "ПОЛУЧИТЬ_SQL_ЗАПРОС") return "";
   if (upperName === "ПОЛУЧИТЬ_ЭЛЕМЕНТ") {
     const delimiter = text(2) || " ";
@@ -2655,6 +2788,10 @@ const ORDER_LIST_DOCUMENT_FIELDS = new Set([
   "\u0421\u043f\u0438\u0441\u043e\u043a\u0411\u0435\u0437\u0412\u044b\u0434\u0430\u0447\u0438"
 ]);
 const EDUCATION_TRAINING_PLAN_FIELD = "\u0423\u0447\u0435\u0431\u043d\u044b\u0439\u041f\u043b\u0430\u043d";
+const EMPLOYEE_ACT_PAYMENT_FIELDS = new Set([
+  "\u041f\u0435\u0440\u0435\u043c\u0435\u043d\u043d\u044b\u0435 \u0432\u044b\u043f\u043b\u0430\u0442\u044b",
+  "\u041f\u0430\u0440\u0442\u043d\u0435\u0440\u0441\u043a\u0430\u044f \u043f\u0440\u043e\u0433\u0440\u0430\u043c\u043c\u0430"
+]);
 
 function shouldRenderDocumentFieldAsParagraphs(fieldName, value) {
   return ORDER_LIST_DOCUMENT_FIELDS.has(String(fieldName || "").trim()) && /\r|\n/.test(String(value ?? ""));
@@ -2682,6 +2819,19 @@ function parseEducationTrainingPlanTableRows(value) {
       };
     })
     .filter((row) => row && (row.discipline || row.hours || row.grade));
+}
+
+function parseEmployeeActPaymentTableRows(value) {
+  return splitEducationTrainingPlanLines(value)
+    .map((line) => {
+      const parts = String(line || "").split("\t").map((part) => part.trim());
+      if (!parts.some(Boolean)) return null;
+      return {
+        description: parts[0] || "",
+        amount: parts.slice(1).join(" ").trim()
+      };
+    })
+    .filter((row) => row && (row.description || row.amount));
 }
 
 function isEmptyDocumentFieldValue(value) {
@@ -2959,6 +3109,81 @@ function applyEducationTrainingPlanTableRows(xml, fieldValues, fieldPositionMap)
     changed = true;
   }
   return changed ? result + sourceXml.slice(cursor) : sourceXml;
+}
+
+function buildEmployeeActPaymentTableRow(rowXml, row, rowIndex, fieldCellIndex) {
+  const cells = splitWordTableRowCells(rowXml);
+  if (!cells.length) return rowXml;
+  const descriptionIndex = fieldCellIndex >= 0 ? fieldCellIndex : (cells.length >= 3 ? 1 : 0);
+  const numberIndex = descriptionIndex > 0 ? descriptionIndex - 1 : -1;
+  const amountIndex = descriptionIndex + 1 < cells.length ? descriptionIndex + 1 : -1;
+  const cellValues = new Map();
+  if (numberIndex >= 0) {
+    cellValues.set(numberIndex, /<w:numPr\b/.test(cells[numberIndex].xml) ? "" : String(rowIndex + 1));
+  }
+  cellValues.set(descriptionIndex, row.description || "");
+  if (amountIndex >= 0) cellValues.set(amountIndex, row.amount || "");
+  const nextCells = cells.map((cell, index) => (
+    cellValues.has(index) ? buildWordTableCellValueXml(cell.xml, cellValues.get(index)) : cell.xml
+  ));
+  return replaceWordTableRowCells(rowXml, nextCells);
+}
+
+function applyEmployeeActPaymentTableFieldRows(xml, fieldName, value, fieldPositionMap) {
+  const rows = parseEmployeeActPaymentTableRows(value);
+  const sourceXml = String(xml || "");
+  const tableRows = [...sourceXml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
+  if (!tableRows.length) return sourceXml;
+  let cursor = 0;
+  let result = "";
+  let changed = false;
+  for (let index = 0; index < tableRows.length; index += 1) {
+    const match = tableRows[index];
+    const rowXml = match[0];
+    const cells = splitWordTableRowCells(rowXml);
+    if (cells.length < 2) continue;
+    const fieldCellIndex = cells.findIndex((cell) => paragraphHasDocumentField(
+      cell.xml,
+      fieldName,
+      fieldPositionMap
+    ));
+    if (fieldCellIndex < 0) continue;
+    result += sourceXml.slice(cursor, match.index);
+    result += rows.map((row, rowIndex) => (
+      buildEmployeeActPaymentTableRow(rowXml, row, rowIndex, fieldCellIndex)
+    )).join("");
+    let lastDataRowIndex = index;
+    for (let nextIndex = index + 1; nextIndex < tableRows.length; nextIndex += 1) {
+      const previousMatch = tableRows[nextIndex - 1];
+      const nextMatch = tableRows[nextIndex];
+      const betweenRows = sourceXml.slice(
+        previousMatch.index + previousMatch[0].length,
+        nextMatch.index
+      );
+      if (/<\/?w:tbl\b/.test(betweenRows)) break;
+      if (splitWordTableRowCells(nextMatch[0]).length !== cells.length) break;
+      lastDataRowIndex = nextIndex;
+    }
+    const lastDataRow = tableRows[lastDataRowIndex];
+    cursor = lastDataRow.index + lastDataRow[0].length;
+    index = lastDataRowIndex;
+    changed = true;
+  }
+  return changed ? result + sourceXml.slice(cursor) : sourceXml;
+}
+
+function applyEmployeeActPaymentTableRows(xml, fieldValues, fieldPositionMap) {
+  let result = String(xml || "");
+  EMPLOYEE_ACT_PAYMENT_FIELDS.forEach((fieldName) => {
+    if (!Object.prototype.hasOwnProperty.call(fieldValues || {}, fieldName)) return;
+    result = applyEmployeeActPaymentTableFieldRows(
+      result,
+      fieldName,
+      fieldValues[fieldName],
+      fieldPositionMap
+    );
+  });
+  return result;
 }
 
 function trimDanglingWordRunStartXml(xml) {
@@ -3309,6 +3534,7 @@ function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyU
     let xml = entry.content.toString("utf8");
     xml = applyExpulsionOrderConditionalBlocks(xml, fieldValues, indexedFieldPositionMap);
     xml = applyEducationTrainingPlanTableRows(xml, fieldValues, indexedFieldPositionMap);
+    xml = applyEmployeeActPaymentTableRows(xml, fieldValues, indexedFieldPositionMap);
     replacements.forEach(({ marker, value, renderAsParagraphs }) => {
       xml = renderAsParagraphs
         ? replaceTextMarkerWithParagraphs(xml, marker, value)
@@ -3347,6 +3573,54 @@ function usesParentSystemDocumentsFolder(value) {
   return /^\s*\[-1\](?:[\\/]+|$)/u.test(String(value || ""));
 }
 
+function getAbsoluteFileSystemPathApi(value) {
+  const source = String(value || "").trim();
+  if (/^[a-z]:[\\/]/i.test(source) || /^\\\\[^\\/]+[\\/][^\\/]+/u.test(source)) {
+    return path.win32;
+  }
+  if (path.posix.isAbsolute(source)) return path.posix;
+  return null;
+}
+
+function findTopLevelMultiplicativeOperator(value) {
+  const text = String(value || "");
+  let depth = 0;
+  let squareDepth = 0;
+  let quoted = false;
+  for (let index = text.length - 1; index >= 0; index -= 1) {
+    const char = text[index];
+    if (char === '"') {
+      if (quoted && text[index - 1] === '"') {
+        index -= 1;
+        continue;
+      }
+      quoted = !quoted;
+      continue;
+    }
+    if (quoted) continue;
+    if (char === ")") depth += 1;
+    else if (char === "(") depth = Math.max(0, depth - 1);
+    else if (char === "]") squareDepth += 1;
+    else if (char === "[") squareDepth = Math.max(0, squareDepth - 1);
+    else if (depth === 0 && squareDepth === 0 && (char === "*" || char === "/")) {
+      return { index, operator: char };
+    }
+  }
+  return null;
+}
+
+function normalizeAbsoluteFileSystemPath(value) {
+  const source = String(value || "").trim();
+  const pathApi = getAbsoluteFileSystemPathApi(source);
+  return pathApi ? pathApi.normalize(source) : "";
+}
+
+function getRuntimeFileSystemPathApi(value) {
+  const pathApi = getAbsoluteFileSystemPathApi(value);
+  if (process.platform === "win32") return pathApi === path.win32 ? pathApi : null;
+  return pathApi === path.posix ? pathApi : null;
+}
+
 function resolveYandexDiskBasePath(useParentFolder = false) {
   const parts = normalizeWebDavPath(
     serverSettings.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
@@ -3367,7 +3641,8 @@ function resolveLocalDocumentsPath(source, missingPathMessage = "Не удало
   const rootSource = String(
     serverSettings.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
   ).trim();
-  if (!rootSource || !path.isAbsolute(rootSource)) {
+  const pathApi = getRuntimeFileSystemPathApi(rootSource);
+  if (!pathApi) {
     throw new Error("Укажите абсолютный путь к локальной папке документов.");
   }
   const relativePath = normalizeSystemDocumentsRelativePath(source);
@@ -3383,10 +3658,10 @@ function resolveLocalDocumentsPath(source, missingPathMessage = "Не удало
     baseParts.splice(0, baseParts.length - 1);
   }
   if (usesParentSystemDocumentsFolder(source)) baseParts.pop();
-  const rootPath = path.resolve(rootSource);
-  const folderPath = path.resolve(rootPath, ...baseParts, ...relativeParts);
-  const pathFromRoot = path.relative(rootPath, folderPath);
-  if (pathFromRoot.startsWith("..") || path.isAbsolute(pathFromRoot)) {
+  const rootPath = pathApi.resolve(rootSource);
+  const folderPath = pathApi.resolve(rootPath, ...baseParts, ...relativeParts);
+  const pathFromRoot = pathApi.relative(rootPath, folderPath);
+  if (pathFromRoot.startsWith("..") || pathApi.isAbsolute(pathFromRoot)) {
     throw new Error("Папка документов находится за пределами локального хранилища.");
   }
   return folderPath;
@@ -3396,14 +3671,15 @@ function resolveLocalSystemDocumentsFolder() {
   const rootSource = String(
     serverSettings.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
   ).trim();
-  if (!rootSource || !path.isAbsolute(rootSource)) return "";
+  const pathApi = getRuntimeFileSystemPathApi(rootSource);
+  if (!pathApi) return "";
   const baseParts = normalizeWebDavPath(
     serverSettings.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
   ).split("/").filter(Boolean);
   if (serverSettings.localDocumentsRootIsSystemParent && baseParts.length > 1) {
     baseParts.splice(0, baseParts.length - 1);
   }
-  return path.resolve(rootSource, ...baseParts);
+  return pathApi.resolve(rootSource, ...baseParts);
 }
 
 async function getLocalSystemDocumentsAvailability() {
@@ -4069,7 +4345,8 @@ function requestYandexWebDav(method, davPath, options = {}) {
       });
     });
     request.on("error", reject);
-    request.setTimeout(30000, () => request.destroy(new Error("Истекло время ожидания ответа Яндекс-Диска.")));
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 30000);
+    request.setTimeout(timeoutMs, () => request.destroy(new Error("Истекло время ожидания ответа Яндекс-Диска.")));
     if (body) request.write(body);
     request.end();
   });
@@ -4100,11 +4377,1857 @@ async function ensureYandexDiskFolder(davPath) {
   let currentPath = "";
   for (const part of parts) {
     currentPath += `/${part}`;
-    await requestYandexWebDav("MKCOL", currentPath, {
-      acceptedStatuses: [201, 405]
+    const existing = await requestYandexWebDav("PROPFIND", currentPath, {
+      acceptedStatuses: [207, 404],
+      headers: { Depth: "0" },
+      contentType: "application/xml; charset=utf-8",
+      body: '<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><resourcetype/></prop></propfind>',
+      maxResponseBytes: 64 * 1024
     });
+    if (existing.statusCode === 207) continue;
+    const created = await requestYandexWebDav("MKCOL", currentPath, {
+      acceptedStatuses: [201, 405, 423]
+    });
+    if (created.statusCode === 423) {
+      await requestYandexWebDav("PROPFIND", currentPath, {
+        acceptedStatuses: [207],
+        headers: { Depth: "0" },
+        contentType: "application/xml; charset=utf-8",
+        body: '<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><resourcetype/></prop></propfind>',
+        maxResponseBytes: 64 * 1024
+      });
+    }
   }
   return currentPath || "/";
+}
+
+function getSharedApplicationStateWebDavPath() {
+  const basePath = normalizeWebDavPath(
+    serverSettings.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+  );
+  return normalizeWebDavPath(`${basePath}/${SHARED_APPLICATION_STATE_RELATIVE_PATH}`);
+}
+
+function getSharedApplicationStateLocalPath() {
+  return path.resolve(
+    process.env.AIS_SHARED_STATE_LOCAL_PATH || SHARED_APPLICATION_STATE_CACHE_PATH
+  );
+}
+
+function getSharedRecordLocksLocalPath() {
+  return path.resolve(
+    process.env.AIS_SHARED_RECORD_LOCKS_LOCAL_PATH || SHARED_RECORD_LOCKS_CACHE_PATH
+  );
+}
+
+function normalizeSharedApplicationData(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Общая база передана в некорректном формате.");
+  }
+  if (!value.collections || typeof value.collections !== "object" || Array.isArray(value.collections)) {
+    throw new Error("В общей базе отсутствуют коллекции данных.");
+  }
+  if (!value.dictionaries || typeof value.dictionaries !== "object" || Array.isArray(value.dictionaries)) {
+    throw new Error("В общей базе отсутствуют справочники.");
+  }
+  const serialized = JSON.stringify(value);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_SHARED_APPLICATION_STATE_BYTES) {
+    throw new Error("Общая база превышает допустимый размер 36 МБ.");
+  }
+  return JSON.parse(serialized);
+}
+
+function normalizeSharedApplicationStatePatch(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const serialized = JSON.stringify(value);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_SHARED_APPLICATION_STATE_BYTES) {
+    throw new Error("Пакет синхронизации общей базы превышает допустимый размер.");
+  }
+  const source = JSON.parse(serialized);
+  const patch = { collections: {}, dictionaries: {}, meta: {}, root: {} };
+  const collections = source.collections && typeof source.collections === "object" && !Array.isArray(source.collections)
+    ? source.collections
+    : {};
+  for (const [collectionName, rawChange] of Object.entries(collections)) {
+    if (!/^[A-Za-z0-9_-]{1,120}$/.test(collectionName) || !rawChange || typeof rawChange !== "object") continue;
+    if (Array.isArray(rawChange.replace)) {
+      patch.collections[collectionName] = { replace: rawChange.replace };
+      continue;
+    }
+    const upserts = Array.isArray(rawChange.upserts)
+      ? rawChange.upserts.filter((record) => record && typeof record === "object" && !Array.isArray(record) && String(record.id || "").trim())
+      : [];
+    const deletes = Array.isArray(rawChange.deletes)
+      ? [...new Set(rawChange.deletes.map((id) => String(id || "").trim()).filter(Boolean))]
+      : [];
+    const order = Array.isArray(rawChange.order)
+      ? [...new Set(rawChange.order.map((id) => String(id || "").trim()).filter(Boolean))]
+      : [];
+    if (upserts.length || deletes.length || order.length) {
+      patch.collections[collectionName] = { upserts, deletes, order };
+    }
+  }
+  for (const key of ["dictionaries", "meta", "root"]) {
+    const values = source[key];
+    if (!values || typeof values !== "object" || Array.isArray(values)) continue;
+    for (const [name, nextValue] of Object.entries(values)) {
+      if (String(name).length > 160) continue;
+      patch[key][name] = nextValue;
+    }
+  }
+  return patch;
+}
+
+function applySharedApplicationStatePatch(currentData, patch) {
+  const next = normalizeSharedApplicationData(currentData);
+  next.collections = next.collections && typeof next.collections === "object" ? next.collections : {};
+  next.dictionaries = next.dictionaries && typeof next.dictionaries === "object" ? next.dictionaries : {};
+  next.meta = next.meta && typeof next.meta === "object" ? next.meta : {};
+  for (const [collectionName, change] of Object.entries(patch?.collections || {})) {
+    if (Array.isArray(change.replace)) {
+      next.collections[collectionName] = JSON.parse(JSON.stringify(change.replace));
+      continue;
+    }
+    const currentRows = Array.isArray(next.collections[collectionName]) ? next.collections[collectionName] : [];
+    const rowsById = new Map(currentRows
+      .filter((record) => record && typeof record === "object" && String(record.id || "").trim())
+      .map((record) => [String(record.id), record]));
+    for (const id of change.deletes || []) rowsById.delete(String(id));
+    for (const record of change.upserts || []) rowsById.set(String(record.id), record);
+    const ordered = [];
+    const used = new Set();
+    for (const id of change.order || []) {
+      const record = rowsById.get(String(id));
+      if (!record || used.has(String(id))) continue;
+      ordered.push(record);
+      used.add(String(id));
+    }
+    for (const record of rowsById.values()) {
+      const id = String(record.id || "");
+      if (used.has(id)) continue;
+      ordered.push(record);
+    }
+    next.collections[collectionName] = ordered;
+  }
+  Object.assign(next.dictionaries, patch?.dictionaries || {});
+  Object.assign(next.meta, patch?.meta || {});
+  for (const [name, value] of Object.entries(patch?.root || {})) {
+    if (["collections", "dictionaries", "meta"].includes(name)) continue;
+    next[name] = value;
+  }
+  return normalizeSharedApplicationData(next);
+}
+
+function getSharedApplicationStatePatchRecordKeys(patch) {
+  const keys = [];
+  for (const [collectionName, change] of Object.entries(patch?.collections || {})) {
+    for (const record of change.upserts || []) {
+      if (record?.id) keys.push(`${collectionName}:${record.id}`);
+    }
+    for (const id of change.deletes || []) {
+      if (id) keys.push(`${collectionName}:${id}`);
+    }
+  }
+  return [...new Set(keys)];
+}
+
+function normalizeSharedApplicationStateDocument(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Файл общей базы повреждён.");
+  }
+  const revision = Math.max(0, Math.floor(Number(value.revision) || 0));
+  if (!revision) throw new Error("В файле общей базы отсутствует ревизия.");
+  return {
+    schemaVersion: 1,
+    revision,
+    updatedAt: String(value.updatedAt || ""),
+    updatedBy: String(value.updatedBy || "").slice(0, 160),
+    data: normalizeSharedApplicationData(value.data)
+  };
+}
+
+function sharedApplicationStateVersionTag(value) {
+  return String(value || "").trim().slice(0, 240);
+}
+
+function gzipSharedApplicationState(value) {
+  return new Promise((resolve, reject) => {
+    zlib.gzip(value, { level: zlib.constants.Z_BEST_COMPRESSION }, (error, result) => {
+      if (error) reject(error);
+      else resolve(result);
+    });
+  });
+}
+
+function gunzipSharedApplicationState(value) {
+  return new Promise((resolve, reject) => {
+    zlib.gunzip(value, { maxOutputLength: MAX_SHARED_APPLICATION_STATE_BYTES + 1024 * 1024 }, (error, result) => {
+      if (error) reject(error);
+      else resolve(result);
+    });
+  });
+}
+
+async function writeSharedApplicationStateCache(document) {
+  const cachePath = getSharedApplicationStateLocalPath();
+  if (!sharedApplicationStateCacheLoaded) await readSharedApplicationStateCache();
+  if (Number(sharedApplicationStateCacheMemory?.revision) === Number(document?.revision)) return;
+  await writeJsonAtomic(cachePath, document, true);
+  sharedApplicationStateCacheMemory = document;
+  sharedApplicationStateCacheLoaded = true;
+}
+
+async function readSharedApplicationStateCache() {
+  if (sharedApplicationStateCacheLoaded) return sharedApplicationStateCacheMemory;
+  try {
+    sharedApplicationStateCacheMemory = normalizeSharedApplicationStateDocument(
+      JSON.parse(await fs.readFile(getSharedApplicationStateLocalPath(), "utf8"))
+    );
+    sharedApplicationStateCacheLoaded = true;
+    return sharedApplicationStateCacheMemory;
+  } catch {
+    sharedApplicationStateCacheMemory = null;
+    sharedApplicationStateCacheLoaded = true;
+    return null;
+  }
+}
+
+async function readLegacySharedApplicationStateDocument(options = {}) {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+    const localPath = getSharedApplicationStateLocalPath();
+    try {
+      const document = normalizeSharedApplicationStateDocument(
+        JSON.parse(await fs.readFile(localPath, "utf8"))
+      );
+      return {
+        exists: true,
+        document,
+        versionTag: `local-${document.revision}`,
+        source: "local-test",
+        offline: false
+      };
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        return { exists: false, document: null, versionTag: "", source: "local-test", offline: false };
+      }
+      throw error;
+    }
+  }
+
+  const davPath = getSharedApplicationStateWebDavPath();
+  try {
+    const response = await requestYandexWebDav("GET", davPath, {
+      acceptedStatuses: [200, 404],
+      maxResponseBytes: MAX_SHARED_APPLICATION_STATE_BYTES + 1024 * 1024
+    });
+    if (response.statusCode === 404) {
+      return { exists: false, document: null, versionTag: "", source: "webdav", offline: false };
+    }
+    const decompressed = await gunzipSharedApplicationState(response.body);
+    const document = normalizeSharedApplicationStateDocument(JSON.parse(decompressed.toString("utf8")));
+    await writeSharedApplicationStateCache(document).catch(() => {});
+    return {
+      exists: true,
+      document,
+      versionTag: sharedApplicationStateVersionTag(response.headers.etag) || `revision-${document.revision}`,
+      source: "webdav",
+      offline: false
+    };
+  } catch (error) {
+    if (options.allowCache === false) throw error;
+    const cachedDocument = await readSharedApplicationStateCache();
+    if (!cachedDocument) throw error;
+    return {
+      exists: true,
+      document: cachedDocument,
+      versionTag: `cache-${cachedDocument.revision}`,
+      source: "cache",
+      offline: true,
+      warning: error.message
+    };
+  }
+}
+
+async function readLegacySharedApplicationStateMetadata() {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+    const result = await readLegacySharedApplicationStateDocument({ allowCache: false });
+    return {
+      exists: result.exists,
+      revision: result.document?.revision || 0,
+      updatedAt: result.document?.updatedAt || "",
+      updatedBy: result.document?.updatedBy || "",
+      versionTag: result.versionTag,
+      offline: false
+    };
+  }
+  let response;
+  try {
+    response = await requestYandexWebDav("HEAD", getSharedApplicationStateWebDavPath(), {
+      acceptedStatuses: [200, 404],
+      maxResponseBytes: 16 * 1024
+    });
+  } catch {
+    const result = await readLegacySharedApplicationStateDocument();
+    return {
+      exists: result.exists,
+      revision: result.document?.revision || 0,
+      updatedAt: result.document?.updatedAt || "",
+      updatedBy: result.document?.updatedBy || "",
+      versionTag: result.versionTag,
+      offline: result.offline
+    };
+  }
+  if (response.statusCode === 404) {
+    return { exists: false, revision: 0, updatedAt: "", updatedBy: "", versionTag: "", offline: false };
+  }
+  const versionTag = sharedApplicationStateVersionTag(response.headers.etag);
+  if (versionTag) {
+    return { exists: true, revision: 0, updatedAt: "", updatedBy: "", versionTag, offline: false };
+  }
+  const result = await readLegacySharedApplicationStateDocument();
+  return {
+    exists: result.exists,
+    revision: result.document?.revision || 0,
+    updatedAt: result.document?.updatedAt || "",
+    updatedBy: result.document?.updatedBy || "",
+    versionTag: result.versionTag,
+    offline: result.offline
+  };
+}
+
+async function refreshSharedApplicationStateMirror() {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1" || sharedStateMirrorRunning) return;
+  sharedStateMirrorRunning = true;
+  try {
+    await flushSharedApplicationStateOfflineQueue();
+    const metadata = await readSharedApplicationStateMetadata();
+    if (!metadata.exists) return;
+    const cached = await readSharedApplicationStateCache();
+    const unchangedByRevision = Number(metadata.revision) > 0
+      && Number(cached?.revision || 0) === Number(metadata.revision);
+    const unchangedByVersion = Boolean(
+      metadata.versionTag
+      && sharedStateMirrorVersionTag
+      && metadata.versionTag === sharedStateMirrorVersionTag
+    );
+    if (unchangedByRevision || unchangedByVersion) return;
+    const result = await readSharedApplicationStateDocument({ allowCache: false });
+    sharedStateMirrorVersionTag = String(result.versionTag || metadata.versionTag || "");
+    sharedStateMirrorLastError = "";
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (message !== sharedStateMirrorLastError) {
+      console.warn(`Обновление локального зеркала общей базы отложено: ${message}`);
+      sharedStateMirrorLastError = message;
+    }
+  } finally {
+    sharedStateMirrorRunning = false;
+  }
+}
+
+function startSharedApplicationStateMirror() {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") return;
+  refreshSharedApplicationStateMirror().catch(() => {});
+  const timer = setInterval(() => {
+    refreshSharedApplicationStateMirror().catch(() => {});
+  }, SHARED_STATE_MIRROR_INTERVAL_MS);
+  timer.unref?.();
+}
+
+async function maybeBackupSharedApplicationState(document) {
+  if (!document || process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") return;
+  await fs.mkdir(SHARED_APPLICATION_STATE_BACKUP_ROOT, { recursive: true });
+  const existing = (await fs.readdir(SHARED_APPLICATION_STATE_BACKUP_ROOT, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && /^shared-state-.*\.json$/i.test(entry.name))
+    .map((entry) => entry.name)
+    .sort()
+    .reverse();
+  if (existing.length) {
+    const latest = await fs.stat(path.join(SHARED_APPLICATION_STATE_BACKUP_ROOT, existing[0]));
+    if (Date.now() - latest.mtimeMs < 15 * 60 * 1000) return;
+  }
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = path.join(
+    SHARED_APPLICATION_STATE_BACKUP_ROOT,
+    `shared-state-${timestamp}-r${document.revision}.json`
+  );
+  await writeJsonAtomic(backupPath, document);
+  const stale = existing.slice(49);
+  await Promise.all(stale.map((name) => fs.unlink(
+    path.join(SHARED_APPLICATION_STATE_BACKUP_ROOT, name)
+  ).catch(() => {})));
+}
+
+async function writeLegacySharedApplicationStateDocument(current, document) {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+    const localPath = getSharedApplicationStateLocalPath();
+    await fs.mkdir(path.dirname(localPath), { recursive: true });
+    await writeJsonAtomic(localPath, document);
+    return { saved: true, versionTag: `local-${document.revision}` };
+  }
+  const davPath = getSharedApplicationStateWebDavPath();
+  await ensureYandexDiskFolder(path.posix.dirname(davPath));
+  const compressedDocument = await gzipSharedApplicationState(Buffer.from(`${JSON.stringify(document)}\n`, "utf8"));
+  const headers = current.exists
+    ? { "If-Match": current.versionTag && !current.versionTag.startsWith("revision-") ? current.versionTag : "*" }
+    : { "If-None-Match": "*" };
+  const response = await requestYandexWebDav("PUT", davPath, {
+    acceptedStatuses: [200, 201, 204, 412],
+    contentType: "application/gzip",
+    headers,
+    body: compressedDocument,
+    maxResponseBytes: 64 * 1024,
+    timeoutMs: 120000
+  });
+  if (response.statusCode === 412) return { saved: false, versionTag: "" };
+  await writeSharedApplicationStateCache(document).catch(() => {});
+  let versionTag = sharedApplicationStateVersionTag(response.headers.etag);
+  if (!versionTag) {
+    const metadata = await readLegacySharedApplicationStateMetadata().catch(() => null);
+    versionTag = metadata?.versionTag || `revision-${document.revision}`;
+  }
+  return { saved: true, versionTag };
+}
+
+function enqueueSharedApplicationStateWrite(operation) {
+  const result = sharedApplicationStateWriteQueue.catch(() => {}).then(operation);
+  sharedApplicationStateWriteQueue = result.catch(() => {});
+  return result;
+}
+
+function parseSharedRecordLocksMySqlConnectionString(value) {
+  const result = {};
+  const source = String(value || "");
+  const expression = /(?:^|;)\s*([^=;]+)\s*=\s*(\{[^}]*\}|[^;]*)/g;
+  let match;
+  while ((match = expression.exec(source))) {
+    const key = String(match[1] || "").trim().toLowerCase();
+    let item = String(match[2] || "").trim();
+    if (item.startsWith("{") && item.endsWith("}")) item = item.slice(1, -1);
+    result[key] = item;
+  }
+  return result;
+}
+
+function getSharedRecordLocksMySqlConnectionString() {
+  const environmentConnection = String(
+    process.env.AIS_RECORD_LOCKS_MYSQL_CONNECTION_STRING || ""
+  ).trim();
+  if (environmentConnection) return environmentConnection;
+  const legacyConnection = String(
+    serverSettings.sharedRecordLocksMySqlConnectionString || ""
+  ).trim();
+  if (legacyConnection) return legacyConnection;
+  if (serverSettings.sharedRecordLocksMySqlUseApplicationsConnection !== false) {
+    return String(
+      serverSettings.studentApplicationsMySqlConnectionString
+        || process.env.STUDENT_APPLICATIONS_MYSQL_CONNECTION_STRING
+        || ""
+    ).trim();
+  }
+  const values = {
+    Server: String(serverSettings.sharedRecordLocksMySqlHost || "").trim(),
+    Port: Math.max(1, Number(serverSettings.sharedRecordLocksMySqlPort) || 3306),
+    Database: String(serverSettings.sharedRecordLocksMySqlDatabase || "").trim(),
+    Uid: String(serverSettings.sharedRecordLocksMySqlUser || "").trim(),
+    Pwd: String(serverSettings.sharedRecordLocksMySqlPassword || "")
+  };
+  if (!values.Server || !values.Database || !values.Uid || !values.Pwd) return "";
+  const encode = (value) => `{${String(value)}}`;
+  return Object.entries(values).map(([key, value]) => `${key}=${encode(value)}`).join(";");
+}
+
+function publicSharedRecordLocksMySqlSettings() {
+  const useApplicationsConnection = serverSettings.sharedRecordLocksMySqlUseApplicationsConnection !== false;
+  const connectionString = getSharedRecordLocksMySqlConnectionString();
+  const connection = parseSharedRecordLocksMySqlConnectionString(connectionString);
+  return {
+    mysqlUseApplicationsConnection: useApplicationsConnection,
+    mysqlHost: String(connection.server || connection.host || "").trim(),
+    mysqlPort: Math.max(1, Number(connection.port) || 3306),
+    mysqlDatabase: String(connection.database || connection.initialcatalog || "").trim(),
+    mysqlUser: String(connection.uid || connection.user || connection.userid || "").trim(),
+    mysqlHasPassword: Boolean(connection.pwd || connection.password),
+    mysqlConfigured: Boolean(connectionString),
+    mysqlManagedByEnvironment: Boolean(process.env.AIS_RECORD_LOCKS_MYSQL_CONNECTION_STRING),
+    mysqlSource: process.env.AIS_RECORD_LOCKS_MYSQL_CONNECTION_STRING
+      ? "environment"
+      : useApplicationsConnection ? "applications" : "dedicated"
+  };
+}
+
+async function getSharedRecordLocksMySqlPool() {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") return null;
+  const connectionString = getSharedRecordLocksMySqlConnectionString();
+  if (!connectionString) return null;
+  if (sharedRecordLocksMySqlPool) return sharedRecordLocksMySqlPool;
+  if (sharedRecordLocksMySqlInitialization) return sharedRecordLocksMySqlInitialization;
+  sharedRecordLocksMySqlInitialization = (async () => {
+    const connection = parseSharedRecordLocksMySqlConnectionString(connectionString);
+    let host = String(connection.server || connection.host || "").trim();
+    const database = String(connection.database || connection.initialcatalog || "").trim();
+    const user = String(connection.uid || connection.user || connection.userid || "").trim();
+    const password = String(connection.pwd || connection.password || "");
+    if (!host || !database || !user || !password) {
+      throw new Error("Не настроено подключение MySQL для блокировок записей.");
+    }
+    if (process.platform !== "win32" && /\.timeweb\.ru$/i.test(host)) host = "127.0.0.1";
+    let mysql;
+    try {
+      mysql = require(MYSQL2_BUNDLE_PATH);
+    } catch (error) {
+      throw new Error(`Драйвер MySQL для блокировок не установлен: ${error.message}`);
+    }
+    const pool = mysql.createPool({
+      host,
+      port: Math.max(1, Number(connection.port) || 3306),
+      database,
+      user,
+      password,
+      charset: "utf8mb4",
+      timezone: "Z",
+      waitForConnections: true,
+      connectionLimit: 4,
+      maxIdle: 2,
+      idleTimeout: 30000,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 0,
+      connectTimeout: 2500
+    });
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ais_record_locks (
+          entity_type VARCHAR(120) NOT NULL,
+          entity_id VARCHAR(160) NOT NULL,
+          client_id VARCHAR(160) NOT NULL,
+          owner_login VARCHAR(160) NOT NULL DEFAULT '',
+          owner_name VARCHAR(240) NOT NULL DEFAULT '',
+          acquired_at DATETIME(3) NOT NULL,
+          expires_at DATETIME(3) NOT NULL,
+          updated_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (entity_type, entity_id),
+          KEY ais_record_locks_expires_at (expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ais_shared_state_meta (
+          state_key VARCHAR(64) NOT NULL,
+          revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
+          updated_at DATETIME(3) NOT NULL,
+          updated_by VARCHAR(160) NOT NULL DEFAULT '',
+          PRIMARY KEY (state_key)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ais_shared_state_entries (
+          state_key VARCHAR(64) NOT NULL,
+          entry_type VARCHAR(32) NOT NULL,
+          group_name VARCHAR(120) NOT NULL DEFAULT '',
+          item_key VARCHAR(191) NOT NULL,
+          sort_order INT NOT NULL DEFAULT 0,
+          data_json LONGTEXT NOT NULL,
+          updated_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (state_key, entry_type, group_name, item_key),
+          KEY ais_shared_state_entries_order (state_key, entry_type, group_name, sort_order)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+    } catch (error) {
+      await pool.end().catch(() => {});
+      throw error;
+    }
+    sharedRecordLocksMySqlPool = pool;
+    return pool;
+  })();
+  try {
+    return await sharedRecordLocksMySqlInitialization;
+  } finally {
+    sharedRecordLocksMySqlInitialization = null;
+  }
+}
+
+function isMySqlConnectivityError(error) {
+  const code = String(error?.code || "").toUpperCase();
+  if ([
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "ENETUNREACH",
+    "EHOSTUNREACH",
+    "ENOTFOUND",
+    "PROTOCOL_CONNECTION_LOST",
+    "PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR"
+  ].includes(code)) return true;
+  return /connect|connection|network|socket|timeout|closed/i.test(String(error?.message || ""));
+}
+
+function getSharedApplicationStatePendingPath() {
+  return path.resolve(
+    process.env.AIS_SHARED_STATE_PENDING_PATH || SHARED_APPLICATION_STATE_PENDING_PATH
+  );
+}
+
+function sharedApplicationStateMySqlVersionTag(revision) {
+  return `mysql-${Math.max(0, Math.floor(Number(revision) || 0))}`;
+}
+
+function parseSharedApplicationStateEntryValue(row) {
+  const source = Buffer.isBuffer(row?.data_json)
+    ? row.data_json.toString("utf8")
+    : String(row?.data_json ?? "null");
+  return JSON.parse(source);
+}
+
+async function readSharedApplicationStateMySqlDocument(pool, connection = null) {
+  const queryable = connection || pool;
+  const [metaRows] = await queryable.query(
+    `SELECT revision, updated_at, updated_by
+       FROM ais_shared_state_meta
+      WHERE state_key = ?
+      LIMIT 1`,
+    [SHARED_STATE_MYSQL_KEY]
+  );
+  if (!metaRows.length) {
+    return { exists: false, document: null, versionTag: "", source: "mysql", offline: false };
+  }
+  const [rows] = await queryable.query(
+    `SELECT entry_type, group_name, item_key, sort_order, data_json
+       FROM ais_shared_state_entries
+      WHERE state_key = ?
+      ORDER BY entry_type, group_name, sort_order, item_key`,
+    [SHARED_STATE_MYSQL_KEY]
+  );
+  const data = { collections: {}, dictionaries: {}, meta: {} };
+  const collectionRows = new Map();
+  const collectionReplacements = new Map();
+  for (const row of rows) {
+    const entryType = String(row.entry_type || "");
+    const groupName = String(row.group_name || "");
+    const itemKey = String(row.item_key || "");
+    if (entryType === "collection_meta") {
+      if (!collectionRows.has(groupName)) collectionRows.set(groupName, []);
+      continue;
+    }
+    if (entryType === "collection_replace") {
+      collectionReplacements.set(groupName, parseSharedApplicationStateEntryValue(row));
+      continue;
+    }
+    if (entryType === "collection") {
+      if (!collectionRows.has(groupName)) collectionRows.set(groupName, []);
+      collectionRows.get(groupName).push({
+        order: Number(row.sort_order) || 0,
+        key: itemKey,
+        value: parseSharedApplicationStateEntryValue(row)
+      });
+      continue;
+    }
+    if (entryType === "dictionary") data.dictionaries[itemKey] = parseSharedApplicationStateEntryValue(row);
+    else if (entryType === "meta") data.meta[itemKey] = parseSharedApplicationStateEntryValue(row);
+    else if (entryType === "root") data[itemKey] = parseSharedApplicationStateEntryValue(row);
+  }
+  for (const [name, items] of collectionRows) {
+    data.collections[name] = items
+      .sort((left, right) => left.order - right.order || left.key.localeCompare(right.key))
+      .map((item) => item.value);
+  }
+  for (const [name, value] of collectionReplacements) data.collections[name] = value;
+  const meta = metaRows[0];
+  const revision = Math.max(0, Math.floor(Number(meta.revision) || 0));
+  const updatedAt = meta.updated_at instanceof Date
+    ? meta.updated_at.toISOString()
+    : new Date(String(meta.updated_at || "").replace(" ", "T") + "Z").toISOString();
+  const document = normalizeSharedApplicationStateDocument({
+    schemaVersion: 2,
+    revision,
+    updatedAt,
+    updatedBy: String(meta.updated_by || ""),
+    data
+  });
+  return {
+    exists: true,
+    document,
+    versionTag: sharedApplicationStateMySqlVersionTag(revision),
+    source: "mysql",
+    offline: false
+  };
+}
+
+function buildSharedApplicationStateMySqlEntries(data) {
+  const entries = [];
+  for (const [collectionName, value] of Object.entries(data.collections || {})) {
+    const rows = Array.isArray(value) ? value : [];
+    entries.push(["collection_meta", collectionName, "__collection__", 0, "null"]);
+    const rowsHaveIds = rows.every((record) => (
+      record && typeof record === "object" && !Array.isArray(record) && String(record.id || "").trim()
+    ));
+    if (!rowsHaveIds) {
+      entries.push(["collection_replace", collectionName, "__replace__", 0, JSON.stringify(rows)]);
+      continue;
+    }
+    rows.forEach((record, index) => {
+      entries.push(["collection", collectionName, String(record.id), index, JSON.stringify(record)]);
+    });
+  }
+  for (const [name, value] of Object.entries(data.dictionaries || {})) {
+    entries.push(["dictionary", "", name, 0, JSON.stringify(value)]);
+  }
+  for (const [name, value] of Object.entries(data.meta || {})) {
+    entries.push(["meta", "", name, 0, JSON.stringify(value)]);
+  }
+  for (const [name, value] of Object.entries(data)) {
+    if (["collections", "dictionaries", "meta"].includes(name)) continue;
+    entries.push(["root", "", name, 0, JSON.stringify(value)]);
+  }
+  return entries;
+}
+
+async function upsertSharedApplicationStateMySqlEntries(connection, entries, preserveExistingOrder = false) {
+  const chunks = [];
+  let currentChunk = [];
+  let currentBytes = 0;
+  for (const entry of entries) {
+    const entryBytes = Buffer.byteLength(String(entry[4] || ""), "utf8") + 1024;
+    if (currentChunk.length && (currentChunk.length >= 200 || currentBytes + entryBytes > 8 * 1024 * 1024)) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+      currentBytes = 0;
+    }
+    currentChunk.push(entry);
+    currentBytes += entryBytes;
+  }
+  if (currentChunk.length) chunks.push(currentChunk);
+  for (const chunk of chunks) {
+    const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))").join(", ");
+    const parameters = chunk.flatMap(([entryType, groupName, itemKey, sortOrder, dataJson]) => [
+      SHARED_STATE_MYSQL_KEY,
+      entryType,
+      groupName,
+      itemKey,
+      sortOrder,
+      dataJson
+    ]);
+    await connection.query(
+      `INSERT INTO ais_shared_state_entries
+        (state_key, entry_type, group_name, item_key, sort_order, data_json, updated_at)
+       VALUES ${placeholders}
+       ON DUPLICATE KEY UPDATE
+         sort_order = ${preserveExistingOrder ? "ais_shared_state_entries.sort_order" : "VALUES(sort_order)"},
+         data_json = VALUES(data_json),
+         updated_at = VALUES(updated_at)`,
+      parameters
+    );
+  }
+}
+
+async function replaceSharedApplicationStateMySqlEntries(connection, data) {
+  await connection.query(
+    "DELETE FROM ais_shared_state_entries WHERE state_key = ?",
+    [SHARED_STATE_MYSQL_KEY]
+  );
+  await upsertSharedApplicationStateMySqlEntries(
+    connection,
+    buildSharedApplicationStateMySqlEntries(data)
+  );
+}
+
+async function updateSharedApplicationStateMySqlOrder(connection, collectionName, order) {
+  for (let offset = 0; offset < order.length; offset += 100) {
+    const chunk = order.slice(offset, offset + 100);
+    if (!chunk.length) continue;
+    const caseSql = chunk.map(() => "WHEN ? THEN ?").join(" ");
+    const itemPlaceholders = chunk.map(() => "?").join(", ");
+    const parameters = [];
+    chunk.forEach((itemKey, index) => parameters.push(itemKey, offset + index));
+    parameters.push(SHARED_STATE_MYSQL_KEY, collectionName, ...chunk);
+    await connection.query(
+      `UPDATE ais_shared_state_entries
+          SET sort_order = CASE item_key ${caseSql} ELSE sort_order END,
+              updated_at = UTC_TIMESTAMP(3)
+        WHERE state_key = ?
+          AND entry_type = 'collection'
+          AND group_name = ?
+          AND item_key IN (${itemPlaceholders})`,
+      parameters
+    );
+  }
+}
+
+async function applySharedApplicationStateMySqlPatch(connection, patch) {
+  for (const [collectionName, change] of Object.entries(patch?.collections || {})) {
+    if (Array.isArray(change.replace)) {
+      await connection.query(
+        `DELETE FROM ais_shared_state_entries
+          WHERE state_key = ? AND group_name = ?
+            AND entry_type IN ('collection', 'collection_meta', 'collection_replace')`,
+        [SHARED_STATE_MYSQL_KEY, collectionName]
+      );
+      await upsertSharedApplicationStateMySqlEntries(
+        connection,
+        buildSharedApplicationStateMySqlEntries({
+          collections: { [collectionName]: change.replace },
+          dictionaries: {},
+          meta: {}
+        })
+      );
+      continue;
+    }
+    await upsertSharedApplicationStateMySqlEntries(connection, [
+      ["collection_meta", collectionName, "__collection__", 0, "null"]
+    ]);
+    await connection.query(
+      `DELETE FROM ais_shared_state_entries
+        WHERE state_key = ? AND group_name = ? AND entry_type = 'collection_replace'`,
+      [SHARED_STATE_MYSQL_KEY, collectionName]
+    );
+    if ((change.deletes || []).length) {
+      for (let offset = 0; offset < change.deletes.length; offset += 200) {
+        const chunk = change.deletes.slice(offset, offset + 200);
+        await connection.query(
+          `DELETE FROM ais_shared_state_entries
+            WHERE state_key = ? AND entry_type = 'collection' AND group_name = ?
+              AND item_key IN (${chunk.map(() => "?").join(", ")})`,
+          [SHARED_STATE_MYSQL_KEY, collectionName, ...chunk]
+        );
+      }
+    }
+    if ((change.upserts || []).length) {
+      const orderById = new Map((change.order || []).map((id, index) => [String(id), index]));
+      await upsertSharedApplicationStateMySqlEntries(
+        connection,
+        change.upserts.map((record, index) => [
+          "collection",
+          collectionName,
+          String(record.id),
+          orderById.has(String(record.id)) ? orderById.get(String(record.id)) : 1000000000 + index,
+          JSON.stringify(record)
+        ]),
+        !(change.order || []).length
+      );
+    }
+    if ((change.order || []).length) {
+      await updateSharedApplicationStateMySqlOrder(connection, collectionName, change.order);
+    }
+  }
+  for (const [entryType, values] of [
+    ["dictionary", patch?.dictionaries || {}],
+    ["meta", patch?.meta || {}],
+    ["root", patch?.root || {}]
+  ]) {
+    const entries = Object.entries(values).map(([name, value]) => [
+      entryType,
+      "",
+      name,
+      0,
+      JSON.stringify(value)
+    ]);
+    if (entries.length) await upsertSharedApplicationStateMySqlEntries(connection, entries);
+  }
+}
+
+async function ensureSharedApplicationStateMySqlDocument(pool) {
+  let current = await readSharedApplicationStateMySqlDocument(pool);
+  if (current.exists || process.env.AIS_SHARED_STATE_DISABLE_LEGACY_MIGRATION === "1") return current;
+  const legacy = await readLegacySharedApplicationStateDocument().catch(() => null);
+  if (!legacy?.exists || !legacy.document) return current;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [insert] = await connection.query(
+      `INSERT IGNORE INTO ais_shared_state_meta
+        (state_key, revision, updated_at, updated_by)
+       VALUES (?, ?, ?, ?)`,
+      [
+        SHARED_STATE_MYSQL_KEY,
+        legacy.document.revision,
+        new Date(legacy.document.updatedAt || Date.now()),
+        legacy.document.updatedBy || "migration"
+      ]
+    );
+    if (insert.affectedRows) {
+      await replaceSharedApplicationStateMySqlEntries(connection, legacy.document.data);
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
+  current = await readSharedApplicationStateMySqlDocument(pool);
+  if (current.document) await writeSharedApplicationStateCache(current.document).catch(() => {});
+  return current;
+}
+
+async function readSharedApplicationStatePendingDocument() {
+  if (sharedApplicationStatePendingLoaded) return sharedApplicationStatePendingMemory;
+  try {
+    const parsed = JSON.parse(await fs.readFile(getSharedApplicationStatePendingPath(), "utf8"));
+    const operations = Array.isArray(parsed?.operations) ? parsed.operations : [];
+    sharedApplicationStatePendingMemory = { schemaVersion: 1, operations };
+  } catch {
+    sharedApplicationStatePendingMemory = { schemaVersion: 1, operations: [] };
+  }
+  sharedApplicationStatePendingLoaded = true;
+  return sharedApplicationStatePendingMemory;
+}
+
+async function writeSharedApplicationStatePendingDocument(document) {
+  const pendingPath = getSharedApplicationStatePendingPath();
+  sharedApplicationStatePendingMemory = document;
+  sharedApplicationStatePendingLoaded = true;
+  if (!document.operations.length) {
+    await fs.unlink(pendingPath).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+    return;
+  }
+  await writeJsonAtomic(pendingPath, {
+    schemaVersion: 1,
+    updatedAt: new Date().toISOString(),
+    operations: document.operations
+  }, true);
+}
+
+async function saveSharedApplicationStateMySqlOperation(pool, operation, authUser = null, options = {}) {
+  const requestedRevision = Math.max(0, Math.floor(Number(operation.baseRevision) || 0));
+  const patch = normalizeSharedApplicationStatePatch(operation.patch);
+  const suppliedData = operation.data ? normalizeSharedApplicationData(operation.data) : null;
+  const clientId = operation.clientId
+    ? normalizeRecordLockIdentifier(operation.clientId, "Идентификатор клиента")
+    : "";
+  if (patch) {
+    const lockedRecord = await findSharedRecordLockConflict(patch, clientId);
+    if (lockedRecord) {
+      return {
+        conflict: false,
+        locked: true,
+        lock: publicSharedRecordLock(lockedRecord, clientId)
+      };
+    }
+  }
+  const connection = await pool.getConnection();
+  let currentRevision = 0;
+  let updatedAt = "";
+  let updatedBy = "";
+  try {
+    await connection.beginTransaction();
+    const [metaRows] = await connection.query(
+      `SELECT revision, updated_at, updated_by
+         FROM ais_shared_state_meta
+        WHERE state_key = ?
+        FOR UPDATE`,
+      [SHARED_STATE_MYSQL_KEY]
+    );
+    currentRevision = Math.max(0, Math.floor(Number(metaRows[0]?.revision) || 0));
+    if (requestedRevision !== currentRevision && !patch) {
+      await connection.rollback();
+      return {
+        conflict: true,
+        locked: false,
+        revision: currentRevision,
+        versionTag: sharedApplicationStateMySqlVersionTag(currentRevision),
+        updatedAt: metaRows[0]?.updated_at || "",
+        updatedBy: String(metaRows[0]?.updated_by || "")
+      };
+    }
+    if (!metaRows.length && !suppliedData) {
+      throw new Error("Общая база ещё не создана.");
+    }
+    if (suppliedData) await replaceSharedApplicationStateMySqlEntries(connection, suppliedData);
+    else await applySharedApplicationStateMySqlPatch(connection, patch);
+    const nextRevision = currentRevision + 1;
+    updatedAt = new Date().toISOString();
+    updatedBy = String(
+      operation.updatedBy || authUser?.login || authUser?.name || "system"
+    ).slice(0, 160);
+    await connection.query(
+      `INSERT INTO ais_shared_state_meta
+        (state_key, revision, updated_at, updated_by)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         revision = VALUES(revision),
+         updated_at = VALUES(updated_at),
+         updated_by = VALUES(updated_by)`,
+      [SHARED_STATE_MYSQL_KEY, nextRevision, new Date(updatedAt), updatedBy]
+    );
+    await connection.commit();
+    const merged = Boolean(patch && requestedRevision !== currentRevision);
+    let mergedData = null;
+    if (!options.skipCache) {
+      const cached = await readSharedApplicationStateCache();
+      let nextData = suppliedData;
+      if (!nextData && patch && cached && cached.revision === currentRevision) {
+        nextData = applySharedApplicationStatePatch(cached.data, patch);
+      }
+      if (nextData) {
+        await writeSharedApplicationStateCache({
+          schemaVersion: 2,
+          revision: nextRevision,
+          updatedAt,
+          updatedBy,
+          data: nextData
+        }).catch(() => {});
+      }
+      if (merged || !nextData) {
+        const latest = await readSharedApplicationStateMySqlDocument(pool);
+        mergedData = merged ? latest.document?.data || null : null;
+        if (latest.document) await writeSharedApplicationStateCache(latest.document).catch(() => {});
+      }
+    }
+    return {
+      conflict: false,
+      locked: false,
+      merged,
+      revision: nextRevision,
+      versionTag: sharedApplicationStateMySqlVersionTag(nextRevision),
+      updatedAt,
+      updatedBy,
+      source: "mysql",
+      offline: false,
+      pendingCount: 0,
+      data: mergedData
+    };
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function queueSharedApplicationStateOfflineOperation(operation, authUser, options = {}) {
+  const pending = await readSharedApplicationStatePendingDocument();
+  if (pending.operations.length >= SHARED_STATE_OFFLINE_QUEUE_MAX_OPERATIONS) {
+    throw new Error("Очередь автономных изменений переполнена. Подключите интернет для синхронизации.");
+  }
+  const current = await readSharedApplicationStateCache();
+  const patch = normalizeSharedApplicationStatePatch(operation.patch);
+  const suppliedData = operation.data ? normalizeSharedApplicationData(operation.data) : null;
+  const baseData = current?.data || suppliedData;
+  if (!baseData) throw new Error("Нет локальной копии общей базы для автономной работы.");
+  const data = patch ? applySharedApplicationStatePatch(baseData, patch) : suppliedData;
+  const revision = Math.max(0, Number(current?.revision) || Number(operation.baseRevision) || 0) + 1;
+  const updatedAt = new Date().toISOString();
+  const updatedBy = String(authUser?.login || authUser?.name || operation.updatedBy || "offline").slice(0, 160);
+  pending.operations.push({
+    id: crypto.randomUUID(),
+    createdAt: updatedAt,
+    baseRevision: Math.max(0, Number(operation.baseRevision) || 0),
+    clientId: String(operation.clientId || "").slice(0, 160),
+    updatedBy,
+    ...(patch ? { patch } : { data: suppliedData })
+  });
+  await writeSharedApplicationStateCache({
+    schemaVersion: 2,
+    revision,
+    updatedAt,
+    updatedBy,
+    data
+  });
+  await writeSharedApplicationStatePendingDocument(pending);
+  return {
+    conflict: false,
+    locked: false,
+    merged: false,
+    revision,
+    versionTag: `offline-${revision}-${pending.operations.length}`,
+    updatedAt,
+    updatedBy,
+    source: "local-queue",
+    offline: options.offline !== false,
+    syncPending: true,
+    syncBlockedReason: String(options.syncBlockedReason || ""),
+    writable: true,
+    pendingCount: pending.operations.length,
+    data: null
+  };
+}
+
+async function flushSharedApplicationStateOfflineQueue(options = {}) {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") return null;
+  const pending = await readSharedApplicationStatePendingDocument();
+  if (!pending.operations.length) return { flushed: 0, pendingCount: 0 };
+  if (sharedStateOfflineSyncPromise) return sharedStateOfflineSyncPromise;
+  if (!options.force && Date.now() < sharedStateMySqlUnavailableUntil) {
+    return { flushed: 0, pendingCount: pending.operations.length, deferred: true };
+  }
+  const syncPromise = (async () => {
+    let flushed = 0;
+    let syncBlockedReason = "";
+    let syncBlockedLock = null;
+    try {
+      const pool = await getSharedRecordLocksMySqlPool();
+      if (!pool) throw new Error("MySQL не настроен.");
+      await ensureSharedApplicationStateMySqlDocument(pool);
+      while (pending.operations.length) {
+        const operation = pending.operations[0];
+        const result = await saveSharedApplicationStateMySqlOperation(pool, operation, {
+          login: operation.updatedBy || "offline"
+        }, { skipCache: true });
+        if (result.conflict) {
+          syncBlockedReason = "conflict";
+          break;
+        }
+        if (result.locked) {
+          syncBlockedReason = "locked";
+          syncBlockedLock = result.lock || null;
+          break;
+        }
+        pending.operations.shift();
+        flushed += 1;
+        await writeSharedApplicationStatePendingDocument(pending);
+      }
+      if (!pending.operations.length) {
+        const latest = await readSharedApplicationStateMySqlDocument(pool);
+        if (latest.document) await writeSharedApplicationStateCache(latest.document);
+      }
+      sharedStateMySqlUnavailableUntil = 0;
+      return {
+        flushed,
+        pendingCount: pending.operations.length,
+        syncBlockedReason,
+        syncBlockedLock
+      };
+    } catch (error) {
+      sharedStateMySqlUnavailableUntil = Date.now() + SHARED_STATE_MYSQL_OFFLINE_RETRY_MS;
+      if (isMySqlConnectivityError(error)) await closeSharedRecordLocksStorage();
+      throw error;
+    }
+  })();
+  sharedStateOfflineSyncPromise = syncPromise;
+  try {
+    return await syncPromise;
+  } finally {
+    if (sharedStateOfflineSyncPromise === syncPromise) sharedStateOfflineSyncPromise = null;
+  }
+}
+
+async function readSharedApplicationStateCacheResult(error, options = {}) {
+  const cached = await readSharedApplicationStateCache();
+  if (!cached) throw (error || new Error("Локальная копия общей базы недоступна."));
+  const pending = await readSharedApplicationStatePendingDocument();
+  const offline = options.offline !== false;
+  const source = offline ? "local-cache" : "local-queue";
+  const versionTag = `${offline ? "offline" : "pending"}-${cached.revision}-${pending.operations.length}`;
+  const common = {
+    exists: true,
+    versionTag,
+    source,
+    offline,
+    writable: true,
+    pendingCount: pending.operations.length,
+    syncPending: pending.operations.length > 0,
+    syncBlockedReason: String(options.syncResult?.syncBlockedReason || ""),
+    syncBlockedLock: options.syncResult?.syncBlockedLock || null,
+    warning: offline ? String(error?.message || "") : ""
+  };
+  if (options.metadata) {
+    return {
+      ...common,
+      revision: cached.revision,
+      updatedAt: cached.updatedAt,
+      updatedBy: cached.updatedBy
+    };
+  }
+  return { ...common, document: cached };
+}
+
+async function readSharedApplicationStateDocument(options = {}) {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+    return readLegacySharedApplicationStateDocument(options);
+  }
+  if (Date.now() < sharedStateMySqlUnavailableUntil) {
+    const error = new Error("MySQL временно недоступен.");
+    if (options.allowCache === false) throw error;
+    return readSharedApplicationStateCacheResult(error);
+  }
+  try {
+    const syncResult = await flushSharedApplicationStateOfflineQueue();
+    const pool = await getSharedRecordLocksMySqlPool();
+    if (!pool) throw new Error("MySQL для общей базы не настроен.");
+    const result = await ensureSharedApplicationStateMySqlDocument(pool);
+    const pending = await readSharedApplicationStatePendingDocument();
+    if (pending.operations.length) {
+      return readSharedApplicationStateCacheResult(null, { offline: false, syncResult });
+    }
+    sharedStateMySqlUnavailableUntil = 0;
+    const cached = await readSharedApplicationStateCache();
+    if (result.document && Number(cached?.revision || 0) !== Number(result.document.revision || 0)) {
+      await writeSharedApplicationStateCache(result.document).catch(() => {});
+    }
+    return {
+      ...result,
+      offline: false,
+      writable: true,
+      pendingCount: 0,
+      syncPending: false,
+      syncBlockedReason: "",
+      syncBlockedLock: null
+    };
+  } catch (error) {
+    sharedStateMySqlUnavailableUntil = Date.now() + SHARED_STATE_MYSQL_OFFLINE_RETRY_MS;
+    if (isMySqlConnectivityError(error)) await closeSharedRecordLocksStorage();
+    if (options.allowCache === false) throw error;
+    return readSharedApplicationStateCacheResult(error);
+  }
+}
+
+async function readSharedApplicationStateMetadata() {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+    return readLegacySharedApplicationStateMetadata();
+  }
+  if (Date.now() < sharedStateMySqlUnavailableUntil) {
+    return readSharedApplicationStateCacheResult(
+      new Error("MySQL временно недоступен."),
+      { metadata: true }
+    );
+  }
+  try {
+    const syncResult = await flushSharedApplicationStateOfflineQueue();
+    const pool = await getSharedRecordLocksMySqlPool();
+    if (!pool) throw new Error("MySQL для общей базы не настроен.");
+    const [rows] = await pool.query(
+      `SELECT revision, updated_at, updated_by
+         FROM ais_shared_state_meta
+        WHERE state_key = ?
+        LIMIT 1`,
+      [SHARED_STATE_MYSQL_KEY]
+    );
+    const pending = await readSharedApplicationStatePendingDocument();
+    if (pending.operations.length) {
+      return readSharedApplicationStateCacheResult(null, {
+        metadata: true,
+        offline: false,
+        syncResult
+      });
+    }
+    sharedStateMySqlUnavailableUntil = 0;
+    if (!rows.length) {
+      return {
+        exists: false,
+        revision: 0,
+        updatedAt: "",
+        updatedBy: "",
+        versionTag: "",
+        source: "mysql",
+        offline: false,
+        writable: true,
+        pendingCount: 0,
+        syncPending: false,
+        syncBlockedReason: "",
+        syncBlockedLock: null
+      };
+    }
+    const revision = Math.max(0, Number(rows[0].revision) || 0);
+    return {
+      exists: true,
+      revision,
+      updatedAt: rows[0].updated_at instanceof Date ? rows[0].updated_at.toISOString() : String(rows[0].updated_at || ""),
+      updatedBy: String(rows[0].updated_by || ""),
+      versionTag: sharedApplicationStateMySqlVersionTag(revision),
+      source: "mysql",
+      offline: false,
+      writable: true,
+      pendingCount: 0,
+      syncPending: false,
+      syncBlockedReason: "",
+      syncBlockedLock: null
+    };
+  } catch (error) {
+    sharedStateMySqlUnavailableUntil = Date.now() + SHARED_STATE_MYSQL_OFFLINE_RETRY_MS;
+    if (isMySqlConnectivityError(error)) await closeSharedRecordLocksStorage();
+    return readSharedApplicationStateCacheResult(error, { metadata: true });
+  }
+}
+
+function sharedRecordLockFromMySqlRow(row) {
+  if (!row) return null;
+  const acquiredAt = row.acquired_at instanceof Date
+    ? row.acquired_at
+    : new Date(String(row.acquired_at || "").replace(" ", "T") + "Z");
+  const expiresAt = row.expires_at instanceof Date
+    ? row.expires_at
+    : new Date(String(row.expires_at || "").replace(" ", "T") + "Z");
+  const entityType = String(row.entity_type || "");
+  const entityId = String(row.entity_id || "");
+  return {
+    key: `${entityType}:${entityId}`,
+    entityType,
+    entityId,
+    clientId: String(row.client_id || ""),
+    ownerLogin: String(row.owner_login || ""),
+    ownerName: String(row.owner_name || ""),
+    acquiredAt: acquiredAt.toISOString(),
+    expiresAt: expiresAt.toISOString()
+  };
+}
+
+async function readSharedRecordLocksMySqlDocument(pool) {
+  const [rows] = await pool.query(`
+    SELECT entity_type, entity_id, client_id, owner_login, owner_name, acquired_at, expires_at
+    FROM ais_record_locks
+    WHERE expires_at > UTC_TIMESTAMP(3)
+    ORDER BY updated_at DESC
+    LIMIT ${SHARED_RECORD_LOCK_MAX_COUNT}
+  `);
+  return {
+    exists: true,
+    document: {
+      schemaVersion: 1,
+      revision: Date.now(),
+      updatedAt: new Date().toISOString(),
+      locks: rows.map(sharedRecordLockFromMySqlRow).filter(Boolean)
+    },
+    versionTag: `mysql-locks-${Date.now()}`,
+    source: "mysql"
+  };
+}
+
+async function mutateSharedRecordLockMySql(pool, action, entityType, entityId, clientId, authUser) {
+  const key = `${entityType}:${entityId}`;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute(`
+        SELECT entity_type, entity_id, client_id, owner_login, owner_name, acquired_at, expires_at
+        FROM ais_record_locks
+        WHERE entity_type = ? AND entity_id = ?
+        FOR UPDATE
+      `, [entityType, entityId]);
+      const now = Date.now();
+      const existing = sharedRecordLockFromMySqlRow(rows[0]);
+      const existingActive = existing && new Date(existing.expiresAt).getTime() > now;
+      if (existingActive && existing.clientId !== clientId) {
+        await connection.commit();
+        return { locked: true, lock: publicSharedRecordLock(existing, clientId), source: "mysql" };
+      }
+      if (action === "release") {
+        await connection.execute(
+          "DELETE FROM ais_record_locks WHERE entity_type = ? AND entity_id = ? AND client_id = ?",
+          [entityType, entityId, clientId]
+        );
+        await connection.commit();
+        return { locked: false, released: true, lock: null, revision: now, ttlMs: SHARED_RECORD_LOCK_TTL_MS, source: "mysql" };
+      }
+      const acquiredAt = existingActive && existing.clientId === clientId
+        ? new Date(existing.acquiredAt)
+        : new Date(now);
+      const expiresAt = new Date(now + SHARED_RECORD_LOCK_TTL_MS);
+      const ownerLogin = String(authUser?.login || "").slice(0, 160);
+      const ownerName = String(authUser?.name || authUser?.login || "Пользователь").slice(0, 240);
+      await connection.execute(`
+        INSERT INTO ais_record_locks (
+          entity_type, entity_id, client_id, owner_login, owner_name, acquired_at, expires_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          client_id = VALUES(client_id),
+          owner_login = VALUES(owner_login),
+          owner_name = VALUES(owner_name),
+          acquired_at = VALUES(acquired_at),
+          expires_at = VALUES(expires_at),
+          updated_at = VALUES(updated_at)
+      `, [entityType, entityId, clientId, ownerLogin, ownerName, acquiredAt, expiresAt, new Date(now)]);
+      await connection.commit();
+      const lock = {
+        key,
+        entityType,
+        entityId,
+        clientId,
+        ownerLogin,
+        ownerName,
+        acquiredAt: acquiredAt.toISOString(),
+        expiresAt: expiresAt.toISOString()
+      };
+      return {
+        locked: false,
+        released: false,
+        lock: publicSharedRecordLock(lock, clientId),
+        revision: now,
+        ttlMs: SHARED_RECORD_LOCK_TTL_MS,
+        source: "mysql"
+      };
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      if (["ER_LOCK_DEADLOCK", "ER_LOCK_WAIT_TIMEOUT", "ER_DUP_ENTRY"].includes(error.code) && attempt < 3) {
+        continue;
+      }
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+  throw new Error("Блокировка записи была одновременно изменена. Повторите действие.");
+}
+
+async function closeSharedRecordLocksStorage() {
+  const pool = sharedRecordLocksMySqlPool;
+  sharedRecordLocksMySqlPool = null;
+  if (pool) await pool.end().catch(() => {});
+}
+
+function getSharedRecordLocksWebDavPath() {
+  const basePath = normalizeWebDavPath(
+    serverSettings.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+  );
+  return normalizeWebDavPath(`${basePath}/${SHARED_RECORD_LOCKS_RELATIVE_PATH}`);
+}
+
+function normalizeRecordLockIdentifier(value, label) {
+  const text = String(value || "").trim();
+  if (!text || text.length > 160 || !/^[A-Za-z0-9_.:@-]+$/.test(text)) {
+    throw new Error(`${label} блокировки указан некорректно.`);
+  }
+  return text;
+}
+
+function normalizeSharedRecordLocksDocument(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const locks = Array.isArray(source.locks) ? source.locks : [];
+  return {
+    schemaVersion: 1,
+    revision: Math.max(0, Math.floor(Number(source.revision) || 0)),
+    updatedAt: String(source.updatedAt || ""),
+    locks: locks.slice(0, SHARED_RECORD_LOCK_MAX_COUNT).flatMap((lock) => {
+      try {
+        const entityType = normalizeRecordLockIdentifier(lock?.entityType, "Раздел");
+        const entityId = normalizeRecordLockIdentifier(lock?.entityId, "Идентификатор записи");
+        const clientId = normalizeRecordLockIdentifier(lock?.clientId, "Идентификатор клиента");
+        const expiresAt = new Date(lock?.expiresAt || 0).getTime();
+        if (!Number.isFinite(expiresAt)) return [];
+        return [{
+          key: `${entityType}:${entityId}`,
+          entityType,
+          entityId,
+          clientId,
+          ownerLogin: String(lock?.ownerLogin || "").slice(0, 160),
+          ownerName: String(lock?.ownerName || "").slice(0, 240),
+          acquiredAt: String(lock?.acquiredAt || ""),
+          expiresAt: new Date(expiresAt).toISOString()
+        }];
+      } catch {
+        return [];
+      }
+    })
+  };
+}
+
+function activeSharedRecordLocks(document, now = Date.now()) {
+  return (document?.locks || []).filter((lock) => new Date(lock.expiresAt).getTime() > now);
+}
+
+async function readSharedRecordLocksDocument(forceLocal = false) {
+  let mysqlPool = null;
+  if (!forceLocal) {
+    try {
+      mysqlPool = await getSharedRecordLocksMySqlPool();
+    } catch {
+      forceLocal = true;
+    }
+  }
+  if (mysqlPool) {
+    try {
+      return await readSharedRecordLocksMySqlDocument(mysqlPool);
+    } catch (error) {
+      if (!isMySqlConnectivityError(error)) throw error;
+      forceLocal = true;
+    }
+  }
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1" || forceLocal) {
+    const localPath = getSharedRecordLocksLocalPath();
+    try {
+      const document = normalizeSharedRecordLocksDocument(
+        JSON.parse(await fs.readFile(localPath, "utf8"))
+      );
+      return { exists: true, document, versionTag: `local-locks-${document.revision}`, source: "local" };
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        return {
+          exists: false,
+          document: normalizeSharedRecordLocksDocument({}),
+          versionTag: "",
+          source: "local"
+        };
+      }
+      throw error;
+    }
+  }
+  const response = await requestYandexWebDav("GET", getSharedRecordLocksWebDavPath(), {
+    acceptedStatuses: [200, 404],
+    maxResponseBytes: MAX_SHARED_RECORD_LOCKS_BYTES,
+    timeoutMs: 30000
+  });
+  if (response.statusCode === 404) {
+    return {
+      exists: false,
+      document: normalizeSharedRecordLocksDocument({}),
+      versionTag: ""
+    };
+  }
+  return {
+    exists: true,
+    document: normalizeSharedRecordLocksDocument(JSON.parse(response.body.toString("utf8"))),
+    versionTag: sharedApplicationStateVersionTag(response.headers.etag)
+  };
+}
+
+async function writeSharedRecordLocksDocument(current, document, forceLocal = false) {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1" || forceLocal) {
+    const localPath = getSharedRecordLocksLocalPath();
+    await fs.mkdir(path.dirname(localPath), { recursive: true });
+    await writeJsonAtomic(localPath, document);
+    return { saved: true, versionTag: `local-locks-${document.revision}` };
+  }
+  const davPath = getSharedRecordLocksWebDavPath();
+  await ensureYandexDiskFolder(path.posix.dirname(davPath));
+  const headers = current.exists
+    ? { "If-Match": current.versionTag || "*" }
+    : { "If-None-Match": "*" };
+  const response = await requestYandexWebDav("PUT", davPath, {
+    acceptedStatuses: [200, 201, 204, 412],
+    contentType: "application/json; charset=utf-8",
+    headers,
+    body: Buffer.from(`${JSON.stringify(document)}\n`, "utf8"),
+    maxResponseBytes: 64 * 1024,
+    timeoutMs: 30000
+  });
+  return {
+    saved: response.statusCode !== 412,
+    versionTag: sharedApplicationStateVersionTag(response.headers.etag)
+  };
+}
+
+function enqueueSharedRecordLocksWrite(operation) {
+  const result = sharedRecordLocksWriteQueue.catch(() => {}).then(operation);
+  sharedRecordLocksWriteQueue = result.catch(() => {});
+  return result;
+}
+
+function publicSharedRecordLock(lock, clientId = "") {
+  return {
+    entityType: lock.entityType,
+    entityId: lock.entityId,
+    ownerLogin: lock.ownerLogin,
+    ownerName: lock.ownerName,
+    acquiredAt: lock.acquiredAt,
+    expiresAt: lock.expiresAt,
+    ownedByClient: Boolean(clientId && lock.clientId === clientId)
+  };
+}
+
+async function mutateSharedRecordLock(body, authUser) {
+  const action = String(body?.action || "acquire").trim().toLowerCase();
+  if (!new Set(["acquire", "renew", "release"]).has(action)) {
+    throw new Error("Неизвестное действие с блокировкой записи.");
+  }
+  const entityType = normalizeRecordLockIdentifier(body?.entityType, "Раздел");
+  const entityId = normalizeRecordLockIdentifier(body?.entityId, "Идентификатор записи");
+  const clientId = normalizeRecordLockIdentifier(body?.clientId, "Идентификатор клиента");
+  let mysqlPool = null;
+  let forceLocal = false;
+  try {
+    mysqlPool = await getSharedRecordLocksMySqlPool();
+  } catch {
+    forceLocal = true;
+  }
+  if (mysqlPool) {
+    try {
+      return await mutateSharedRecordLockMySql(mysqlPool, action, entityType, entityId, clientId, authUser);
+    } catch (error) {
+      if (!isMySqlConnectivityError(error)) throw error;
+      forceLocal = true;
+    }
+  }
+  const key = `${entityType}:${entityId}`;
+  return enqueueSharedRecordLocksWrite(async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const current = await readSharedRecordLocksDocument(forceLocal);
+      const now = Date.now();
+      const locks = activeSharedRecordLocks(current.document, now);
+      const existing = locks.find((lock) => lock.key === key);
+      if (action !== "release" && existing && existing.clientId !== clientId) {
+        return { locked: true, lock: publicSharedRecordLock(existing, clientId) };
+      }
+      let nextLocks = locks.filter((lock) => lock.key !== key);
+      let lock = null;
+      if (action !== "release") {
+        const acquiredAt = existing?.acquiredAt || new Date(now).toISOString();
+        lock = {
+          key,
+          entityType,
+          entityId,
+          clientId,
+          ownerLogin: String(authUser?.login || "").slice(0, 160),
+          ownerName: String(authUser?.name || authUser?.login || "Пользователь").slice(0, 240),
+          acquiredAt,
+          expiresAt: new Date(now + SHARED_RECORD_LOCK_TTL_MS).toISOString()
+        };
+        nextLocks.push(lock);
+      } else if (existing && existing.clientId !== clientId) {
+        return { locked: true, lock: publicSharedRecordLock(existing, clientId) };
+      }
+      const document = {
+        schemaVersion: 1,
+        revision: current.document.revision + 1,
+        updatedAt: new Date(now).toISOString(),
+        locks: nextLocks
+      };
+      const written = await writeSharedRecordLocksDocument(current, document, forceLocal);
+      if (!written.saved) continue;
+      return {
+        locked: false,
+        released: action === "release",
+        lock: lock ? publicSharedRecordLock(lock, clientId) : null,
+        revision: document.revision,
+        ttlMs: SHARED_RECORD_LOCK_TTL_MS,
+        source: forceLocal || process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1" ? "local" : "webdav"
+      };
+    }
+    throw new Error("Блокировка записи была одновременно изменена. Повторите действие.");
+  });
+}
+
+async function findSharedRecordLockConflict(patch, clientId) {
+  const affectedKeys = new Set(getSharedApplicationStatePatchRecordKeys(patch));
+  if (!affectedKeys.size) return null;
+  const current = await readSharedRecordLocksDocument();
+  return activeSharedRecordLocks(current.document)
+    .find((lock) => affectedKeys.has(lock.key) && lock.clientId !== clientId) || null;
+}
+
+async function handleSharedRecordLocks(req, res, authUser, requestUrl) {
+  try {
+    if (req.method === "GET") {
+      const clientId = String(requestUrl.searchParams.get("clientId") || "").trim();
+      const current = await readSharedRecordLocksDocument();
+      sendJson(res, 200, {
+        locks: activeSharedRecordLocks(current.document).map((lock) => publicSharedRecordLock(lock, clientId)),
+        revision: current.document.revision,
+        ttlMs: SHARED_RECORD_LOCK_TTL_MS,
+        pollIntervalMs: 1000,
+        source: current.source || "webdav"
+      });
+      return;
+    }
+    if (req.method === "POST") {
+      const result = await mutateSharedRecordLock(await readJsonBody(req), authUser);
+      if (result.locked) {
+        sendJson(res, 423, {
+          error: "Запись уже редактируется другим пользователем.",
+          ...result
+        });
+        return;
+      }
+      sendJson(res, 200, { ok: true, ...result });
+      return;
+    }
+    sendError(res, 405, "Method not allowed");
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function saveLegacySharedApplicationState(body, authUser) {
+  const requestedRevision = Math.max(0, Math.floor(Number(body.baseRevision) || 0));
+  const patch = normalizeSharedApplicationStatePatch(body.patch);
+  const suppliedData = body.data ? normalizeSharedApplicationData(body.data) : null;
+  if (!patch && !suppliedData) throw new Error("Не переданы изменения общей базы.");
+  let clientId = "";
+  if (body.clientId) clientId = normalizeRecordLockIdentifier(body.clientId, "Идентификатор клиента");
+  return enqueueSharedApplicationStateWrite(async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const current = await readLegacySharedApplicationStateDocument({ allowCache: false });
+      const currentRevision = current.document?.revision || 0;
+      if (requestedRevision !== currentRevision && !patch) {
+        return {
+          conflict: true,
+          revision: currentRevision,
+          versionTag: current.versionTag,
+          updatedAt: current.document?.updatedAt || "",
+          updatedBy: current.document?.updatedBy || ""
+        };
+      }
+      if (patch) {
+        const lockedRecord = await findSharedRecordLockConflict(patch, clientId);
+        if (lockedRecord) {
+          return {
+            conflict: false,
+            locked: true,
+            lock: publicSharedRecordLock(lockedRecord, clientId),
+            revision: currentRevision,
+            versionTag: current.versionTag,
+            updatedAt: current.document?.updatedAt || "",
+            updatedBy: current.document?.updatedBy || ""
+          };
+        }
+      }
+      const baseData = current.document?.data || suppliedData;
+      if (!baseData) throw new Error("Общая база ещё не создана.");
+      const data = patch
+        ? applySharedApplicationStatePatch(baseData, patch)
+        : suppliedData;
+      const merged = Boolean(patch && requestedRevision !== currentRevision);
+      const document = {
+        schemaVersion: 1,
+        revision: currentRevision + 1,
+        updatedAt: new Date().toISOString(),
+        updatedBy: String(authUser?.login || authUser?.name || "system").slice(0, 160),
+        data
+      };
+      if (current.document) await maybeBackupSharedApplicationState(current.document);
+      const writeResult = await writeLegacySharedApplicationStateDocument(current, document);
+      if (!writeResult.saved) {
+        if (patch) continue;
+        const latest = await readLegacySharedApplicationStateDocument({ allowCache: false });
+        return {
+          conflict: true,
+          revision: latest.document?.revision || currentRevision,
+          versionTag: latest.versionTag,
+          updatedAt: latest.document?.updatedAt || "",
+          updatedBy: latest.document?.updatedBy || ""
+        };
+      }
+      return {
+        conflict: false,
+        locked: false,
+        merged,
+        revision: document.revision,
+        versionTag: writeResult.versionTag,
+        updatedAt: document.updatedAt,
+        updatedBy: document.updatedBy,
+        data: merged ? document.data : null
+      };
+    }
+    const latest = await readLegacySharedApplicationStateDocument({ allowCache: false });
+    return {
+      conflict: true,
+      revision: latest.document?.revision || 0,
+      versionTag: latest.versionTag,
+      updatedAt: latest.document?.updatedAt || "",
+      updatedBy: latest.document?.updatedBy || ""
+    };
+  });
+}
+
+async function saveSharedApplicationState(body, authUser) {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+    return saveLegacySharedApplicationState(body, authUser);
+  }
+  const operation = {
+    baseRevision: Math.max(0, Math.floor(Number(body.baseRevision) || 0)),
+    clientId: String(body.clientId || "").slice(0, 160),
+    ...(body.patch ? { patch: normalizeSharedApplicationStatePatch(body.patch) } : {}),
+    ...(body.data ? { data: normalizeSharedApplicationData(body.data) } : {})
+  };
+  if (!operation.patch && !operation.data) {
+    throw new Error("Не переданы изменения общей базы.");
+  }
+  try {
+    if (Date.now() < sharedStateMySqlUnavailableUntil) {
+      return queueSharedApplicationStateOfflineOperation(operation, authUser);
+    }
+    const syncResult = await flushSharedApplicationStateOfflineQueue();
+    const pending = await readSharedApplicationStatePendingDocument();
+    if (pending.operations.length) {
+      return queueSharedApplicationStateOfflineOperation(operation, authUser, {
+        offline: false,
+        syncBlockedReason: syncResult?.syncBlockedReason || ""
+      });
+    }
+    const pool = await getSharedRecordLocksMySqlPool();
+    if (!pool) throw new Error("MySQL для общей базы не настроен.");
+    await ensureSharedApplicationStateMySqlDocument(pool);
+    const result = await saveSharedApplicationStateMySqlOperation(pool, operation, authUser);
+    sharedStateMySqlUnavailableUntil = 0;
+    return result;
+  } catch (error) {
+    sharedStateMySqlUnavailableUntil = Date.now() + SHARED_STATE_MYSQL_OFFLINE_RETRY_MS;
+    console.warn(`Общая MySQL-база недоступна, изменение поставлено в очередь: ${error.message}`);
+    return queueSharedApplicationStateOfflineOperation(operation, authUser);
+  }
+}
+
+async function handleSharedApplicationState(req, res, authUser, requestUrl) {
+  try {
+    if (req.method === "GET") {
+      if (requestUrl.searchParams.get("metadata") === "1") {
+        const metadata = await readSharedApplicationStateMetadata();
+        sendJson(res, 200, metadata);
+        return;
+      }
+      const result = await readSharedApplicationStateDocument();
+      sendJson(res, 200, {
+        exists: result.exists,
+        revision: result.document?.revision || 0,
+        versionTag: result.versionTag,
+        updatedAt: result.document?.updatedAt || "",
+        updatedBy: result.document?.updatedBy || "",
+        source: result.source,
+        offline: Boolean(result.offline),
+        writable: result.writable !== false,
+        pendingCount: Math.max(0, Number(result.pendingCount) || 0),
+        syncPending: Boolean(result.syncPending),
+        syncBlockedReason: String(result.syncBlockedReason || ""),
+        syncBlockedLock: result.syncBlockedLock || null,
+        warning: result.warning || "",
+        data: result.document?.data || null
+      });
+      return;
+    }
+    if (req.method === "POST") {
+      const result = await saveSharedApplicationState(await readJsonBody(req), authUser);
+      if (result.locked) {
+        sendJson(res, 423, {
+          error: "Одна из изменяемых записей сейчас заблокирована другим пользователем.",
+          ...result
+        });
+        return;
+      }
+      if (result.conflict) {
+        sendJson(res, 409, {
+          error: "Общая база уже изменена другим пользователем.",
+          conflict: true,
+          ...result
+        });
+        return;
+      }
+      sendJson(res, 200, { ok: true, ...result });
+      return;
+    }
+    if (
+      req.method === "DELETE"
+      && process.env.AIS_SHARED_STATE_TEST_MODE === "1"
+      && SHARED_STATE_MYSQL_KEY.startsWith("test-")
+    ) {
+      const pool = await getSharedRecordLocksMySqlPool();
+      if (pool) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          await connection.query(
+            "DELETE FROM ais_shared_state_entries WHERE state_key = ?",
+            [SHARED_STATE_MYSQL_KEY]
+          );
+          await connection.query(
+            "DELETE FROM ais_shared_state_meta WHERE state_key = ?",
+            [SHARED_STATE_MYSQL_KEY]
+          );
+          await connection.commit();
+        } catch (error) {
+          await connection.rollback().catch(() => {});
+          throw error;
+        } finally {
+          connection.release();
+        }
+      }
+      await fs.unlink(getSharedApplicationStatePendingPath()).catch(() => {});
+      await fs.unlink(getSharedApplicationStateLocalPath()).catch(() => {});
+      sendJson(res, 200, { ok: true, deleted: true });
+      return;
+    }
+    sendError(res, 405, "Method not allowed");
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
 }
 
 async function handleEnsureStudentDocumentFolders(req, res) {
@@ -4320,6 +6443,188 @@ function isWebDavBrowserPreviewable(contentType) {
     || type === "application/pdf";
 }
 
+function getWebDavBrowserPreviewKind(fileName, contentType = "") {
+  const extension = path.extname(String(fileName || "")).toLowerCase();
+  const type = String(contentType || getWebDavBrowserContentType(fileName)).toLowerCase();
+  if (type.startsWith("image/")) return "image";
+  if (type === "application/pdf") return "pdf";
+  if ([".doc", ".docm", ".docx", ".odt", ".rtf"].includes(extension)) return "document";
+  if ([".ods", ".xls", ".xlsb", ".xlsm", ".xlsx"].includes(extension)) return "spreadsheet";
+  if ([".ppt", ".pptx"].includes(extension)) return "presentation";
+  if (type.startsWith("text/")
+    || type.startsWith("application/json")
+    || type.startsWith("application/xml")
+    || type === "message/rfc822") return "text";
+  return "";
+}
+
+function getWebDavBrowserIconKind(fileName, isDirectory = false) {
+  if (isDirectory) return "folder";
+  const extension = path.extname(String(fileName || "")).toLowerCase();
+  if ([".bmp", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"].includes(extension)) return "image";
+  if (extension === ".pdf") return "pdf";
+  if ([".doc", ".docm", ".docx", ".odt", ".rtf"].includes(extension)) return "word";
+  if ([".ods", ".xls", ".xlsb", ".xlsm", ".xlsx"].includes(extension)) return "spreadsheet";
+  if ([".ppt", ".pptx"].includes(extension)) return "presentation";
+  if ([".zip", ".7z", ".rar"].includes(extension)) return "archive";
+  if ([".csv", ".eml", ".htm", ".html", ".ini", ".json", ".log", ".md", ".txt", ".tsv", ".xml", ".yaml", ".yml"].includes(extension)) return "text";
+  return "file";
+}
+
+function normalizeWebDavBrowserPreviewText(value) {
+  return String(value || "")
+    .replace(/\u0000/g, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
+}
+
+function limitWebDavBrowserPreviewText(value) {
+  const text = normalizeWebDavBrowserPreviewText(value);
+  const truncated = text.length > MAX_WEBDAV_BROWSER_PREVIEW_TEXT_CHARS;
+  return {
+    text: truncated ? `${text.slice(0, MAX_WEBDAV_BROWSER_PREVIEW_TEXT_CHARS)}\n\n… Предпросмотр сокращён …` : text,
+    truncated
+  };
+}
+
+function decodeWebDavBrowserTextBytes(bytes) {
+  const buffer = Buffer.from(bytes || "");
+  if (buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xFE) {
+    return buffer.subarray(2).toString("utf16le");
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xFE && buffer[1] === 0xFF) {
+    const swapped = Buffer.alloc(Math.max(0, buffer.length - 2));
+    for (let index = 2; index + 1 < buffer.length; index += 2) {
+      swapped[index - 2] = buffer[index + 1];
+      swapped[index - 1] = buffer[index];
+    }
+    return swapped.toString("utf16le");
+  }
+  if (buffer.length >= 3 && buffer.subarray(0, 3).equals(Buffer.from([0xEF, 0xBB, 0xBF]))) {
+    return buffer.subarray(3).toString("utf8");
+  }
+  const oddNulls = buffer.subarray(0, Math.min(buffer.length, 4000)).filter((value, index) => index % 2 === 1 && value === 0).length;
+  if (oddNulls > Math.min(buffer.length, 4000) / 8) return buffer.toString("utf16le");
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder("windows-1251").decode(buffer);
+  }
+}
+
+function extractXmlPreviewText(xml) {
+  return normalizeWebDavBrowserPreviewText(decodeXmlEntities(String(xml || "")
+    .replace(/<(?:w:tab|text:tab)\b[^>]*\/?\s*>/giu, "\t")
+    .replace(/<(?:w:br|a:br)\b[^>]*\/?\s*>/giu, "\n")
+    .replace(/<\/(?:w:p|a:p|text:p|text:h|table:table-row)>/giu, "\n")
+    .replace(/<\/(?:w:tc|table:table-cell)>/giu, "\t")
+    .replace(/<[^>]+>/g, "")));
+}
+
+function extractOpenXmlWordPreviewText(bytes) {
+  const entries = readDocxZipEntries(Buffer.from(bytes));
+  const names = [
+    "word/document.xml",
+    ...entries.map((entry) => entry.name).filter((name) => /^word\/(?:header|footer|footnotes|endnotes)\d*\.xml$/i.test(name))
+  ];
+  return names.map((name) => {
+    const entry = entries.find((item) => item.name === name);
+    return entry ? extractXmlPreviewText(entry.content.toString("utf8")) : "";
+  }).filter(Boolean).join("\n\n");
+}
+
+function extractOdtPreviewText(bytes) {
+  const entries = readDocxZipEntries(Buffer.from(bytes));
+  const content = entries.find((entry) => entry.name === "content.xml");
+  if (!content) throw new Error("В документе ODT не найден текстовый слой.");
+  return extractXmlPreviewText(content.content.toString("utf8"));
+}
+
+function extractPresentationPreviewText(bytes) {
+  const entries = readDocxZipEntries(Buffer.from(bytes));
+  return entries
+    .filter((entry) => /^ppt\/slides\/slide\d+\.xml$/i.test(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name, "ru", { numeric: true }))
+    .map((entry, index) => `Слайд ${index + 1}\n${extractXmlPreviewText(entry.content.toString("utf8"))}`)
+    .join("\n\n");
+}
+
+function extractRtfPreviewText(bytes) {
+  const decoder = new TextDecoder("windows-1251");
+  return normalizeWebDavBrowserPreviewText(decoder.decode(Buffer.from(bytes))
+    .replace(/\\u(-?\d+)\??/g, (match, value) => String.fromCharCode((Number(value) + 65536) % 65536))
+    .replace(/\\'([0-9a-f]{2})/gi, (match, hex) => decoder.decode(Uint8Array.from([Number.parseInt(hex, 16)])))
+    .replace(/\\(?:par|line)\b/gi, "\n")
+    .replace(/\\tab\b/gi, "\t")
+    .replace(/\\[a-z]+-?\d*\s?/gi, "")
+    .replace(/\\([{}\\])/g, "$1")
+    .replace(/[{}]/g, ""));
+}
+
+function extractLegacyOfficePreviewText(bytes) {
+  const buffer = Buffer.from(bytes || "");
+  const candidates = [
+    buffer.toString("utf16le"),
+    new TextDecoder("windows-1251").decode(buffer)
+  ];
+  const lines = [];
+  const seen = new Set();
+  candidates.forEach((candidate) => {
+    const normalized = candidate.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]+/g, "\n");
+    const matches = normalized.match(/[\p{L}\p{N}][\p{L}\p{N}\s.,:;!?()«»"'№%+\-–—/\\]{3,500}/gu) || [];
+    matches.forEach((match) => {
+      const line = match.replace(/\s+/g, " ").trim();
+      if (line.length < 4 || !/(?:[А-Яа-яЁё]{2}|[A-Za-z]{3})/u.test(line)) return;
+      const key = line.toLocaleLowerCase("ru-RU");
+      if (seen.has(key)) return;
+      seen.add(key);
+      lines.push(line);
+    });
+  });
+  return lines.join("\n");
+}
+
+function extractSpreadsheetPreviewText(bytes) {
+  const workbook = XLSX.read(Buffer.from(bytes), { type: "buffer", cellDates: true });
+  return workbook.SheetNames.slice(0, 8).map((sheetName) => {
+    const sheet = workbook.Sheets[sheetName];
+    const body = XLSX.utils.sheet_to_csv(sheet, { FS: "\t", RS: "\n", blankrows: false });
+    return `Лист: ${sheetName}\n${body}`;
+  }).join("\n\n");
+}
+
+function convertHtmlPreviewToText(value) {
+  return normalizeWebDavBrowserPreviewText(decodeXmlEntities(String(value || "")
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+    .replace(/<(?:br|hr)\b[^>]*>/gi, "\n")
+    .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, "\n")
+    .replace(/<\/(?:td|th)>/gi, "\t")
+    .replace(/<[^>]+>/g, "")));
+}
+
+function extractWebDavBrowserPreviewText(fileName, bytes) {
+  const extension = path.extname(String(fileName || "")).toLowerCase();
+  if ([".docm", ".docx"].includes(extension)) return extractOpenXmlWordPreviewText(bytes);
+  if (extension === ".odt") return extractOdtPreviewText(bytes);
+  if (extension === ".rtf") return extractRtfPreviewText(bytes);
+  if (extension === ".doc" || extension === ".ppt") return extractLegacyOfficePreviewText(bytes);
+  if (extension === ".pptx") return extractPresentationPreviewText(bytes);
+  if ([".ods", ".xls", ".xlsb", ".xlsm", ".xlsx"].includes(extension)) return extractSpreadsheetPreviewText(bytes);
+  if (extension === ".eml") {
+    const extracted = extractMimeText(Buffer.from(bytes));
+    return extracted.plain || convertHtmlPreviewToText(extracted.html || "");
+  }
+  let text = decodeWebDavBrowserTextBytes(bytes);
+  if ([".htm", ".html"].includes(extension)) text = convertHtmlPreviewToText(text);
+  if (extension === ".json") {
+    try { text = JSON.stringify(JSON.parse(text), null, 2); } catch { /* keep source text */ }
+  }
+  return text;
+}
+
 function safeWebDavUploadFileName(value) {
   const source = path.posix.basename(String(value || "").trim().replace(/\\/g, "/"));
   const cleaned = source
@@ -4353,6 +6658,7 @@ async function handleStudentWebDavDocumentsList(req, res) {
           false
         );
         const contentType = entry.isCollection ? "" : getWebDavBrowserContentType(name);
+        const previewKind = entry.isCollection ? "" : getWebDavBrowserPreviewKind(name, contentType);
         return {
           name,
           path: relativePath,
@@ -4360,7 +6666,9 @@ async function handleStudentWebDavDocumentsList(req, res) {
           size: Number(entry.contentLength || 0),
           modifiedAt: String(entry.modifiedAt || ""),
           contentType,
-          previewable: !entry.isCollection && isWebDavBrowserPreviewable(contentType)
+          previewKind,
+          iconKind: getWebDavBrowserIconKind(name, entry.isCollection),
+          previewable: Boolean(previewKind)
         };
       })
       .sort((left, right) => (
@@ -4404,6 +6712,39 @@ async function handleStudentWebDavDocumentFile(req, res, requestUrl) {
   }
 }
 
+async function handleStudentWebDavDocumentPreview(req, res, requestUrl) {
+  try {
+    const folder = String(requestUrl.searchParams.get("folder") || "");
+    const relativePath = String(requestUrl.searchParams.get("path") || "");
+    const location = resolveStudentWebDavBrowserResource(folder, relativePath, false);
+    const fileName = path.posix.basename(location.relativePath);
+    const contentType = getWebDavBrowserContentType(fileName);
+    const previewKind = getWebDavBrowserPreviewKind(fileName, contentType);
+    if (!previewKind || ["image", "pdf"].includes(previewKind)) {
+      throw new Error("Для этого файла используется прямой предпросмотр.");
+    }
+    const response = await requestYandexWebDav("GET", location.targetPath, {
+      acceptedStatuses: [200],
+      maxResponseBytes: MAX_WEBDAV_BROWSER_FILE_BYTES
+    });
+    if (!response.body.length) throw new Error("Файл пустой.");
+    const preview = limitWebDavBrowserPreviewText(
+      extractWebDavBrowserPreviewText(fileName, response.body)
+    );
+    const extension = path.extname(fileName).toLowerCase();
+    sendJson(res, 200, {
+      fileName,
+      contentType,
+      previewKind,
+      text: preview.text || "Текстовый слой файла не содержит данных для отображения.",
+      truncated: preview.truncated,
+      limitedExtraction: [".doc", ".ppt"].includes(extension)
+    });
+  } catch (error) {
+    sendError(res, 400, `Не удалось подготовить предпросмотр: ${error.message}`);
+  }
+}
+
 async function handleStudentWebDavDocumentUpload(req, res) {
   try {
     const body = await readJsonBody(req);
@@ -4428,12 +6769,15 @@ async function handleStudentWebDavDocumentUpload(req, res) {
       body: bytes,
       contentType
     });
+    const previewKind = getWebDavBrowserPreviewKind(fileName, contentType);
     sendJson(res, 201, {
       name: fileName,
       path: target.relativePath,
       size: bytes.length,
       contentType,
-      previewable: isWebDavBrowserPreviewable(contentType)
+      previewKind,
+      iconKind: getWebDavBrowserIconKind(fileName),
+      previewable: Boolean(previewKind)
     });
   } catch (error) {
     sendError(res, 400, error.message);
@@ -4530,6 +6874,47 @@ async function findStudentOcrDocuments(folderSource, source) {
     : collectWebDavOcrDocuments(folderSource);
 }
 
+function normalizeSelectedOcrDocumentNames(value) {
+  if (value === undefined) return null;
+  if (!Array.isArray(value)) {
+    throw new Error("Список выбранных документов передан в некорректном формате.");
+  }
+  const selectedNames = [];
+  const seen = new Set();
+  value.forEach((item) => {
+    const relativeName = normalizeStudentWebDavRelativePath(item, false);
+    if (relativeName.length > 600) {
+      throw new Error("Путь к выбранному документу слишком длинный.");
+    }
+    const key = relativeName.toLocaleLowerCase("ru-RU");
+    if (seen.has(key)) return;
+    seen.add(key);
+    selectedNames.push(relativeName);
+  });
+  if (!selectedNames.length) {
+    throw new Error("Выберите хотя бы один документ для распознавания.");
+  }
+  if (selectedNames.length > MAX_OCR_DOCUMENT_FILES) {
+    throw new Error(`Для одного распознавания можно выбрать не более ${MAX_OCR_DOCUMENT_FILES} файлов.`);
+  }
+  return selectedNames;
+}
+
+function selectOcrDocuments(documents, selectedNames) {
+  if (selectedNames === null) return documents;
+  const documentsByName = new Map(documents.map((document) => [
+    String(document.relativeName || "").replace(/\\/g, "/").toLocaleLowerCase("ru-RU"),
+    document
+  ]));
+  const selectedDocuments = selectedNames
+    .map((relativeName) => documentsByName.get(relativeName.toLocaleLowerCase("ru-RU")))
+    .filter(Boolean);
+  if (selectedDocuments.length !== selectedNames.length) {
+    throw new Error("Один или несколько выбранных документов больше не доступны. Обновите список файлов.");
+  }
+  return selectedDocuments;
+}
+
 async function loadOcrDocumentBytes(document) {
   if (document.source === "local") {
     const bytes = await fs.readFile(document.localPath);
@@ -4569,7 +6954,8 @@ function runOcrCli(argumentsList, payload = null, timeoutMs = 6 * 60 * 1000) {
         OCR_TESSERACT_BINARY: path.join(binaryRoot, process.platform === "win32" ? "tesseract.exe" : "tesseract"),
         OCR_CONVERT_BINARY: process.env.OCR_CONVERT_BINARY || "convert",
         OCR_IDENTIFY_BINARY: process.env.OCR_IDENTIFY_BINARY || "identify",
-        OCR_PDFTOPPM_BINARY: process.env.OCR_PDFTOPPM_BINARY || "pdftoppm"
+        OCR_PDFTOPPM_BINARY: process.env.OCR_PDFTOPPM_BINARY || "pdftoppm",
+        OCR_PDFTOTEXT_BINARY: process.env.OCR_PDFTOTEXT_BINARY || "pdftotext"
       }
     });
     const stdoutChunks = [];
@@ -4875,9 +7261,9 @@ async function runStudentDocumentRecognitionJob(job, options) {
     job.progress = 2;
     job.stage = `Поиск документов: ${job.sourceLabel}`;
     const sourceResult = await findStudentOcrDocuments(options.folder, job.source);
-    const documents = sourceResult.documents;
+    const documents = selectOcrDocuments(sourceResult.documents, options.selectedFiles);
     if (!documents.length) {
-      throw new Error("В папке слушателя не найдены файлы JPG, PNG или PDF.");
+      throw new Error("В папке слушателя не найдены файлы JPG, PNG, PDF, TXT, CSV, RTF, DOCX или ODT.");
     }
     job.totalFiles = documents.length;
     job.progress = 8;
@@ -4893,6 +7279,7 @@ async function runStudentDocumentRecognitionJob(job, options) {
         fileResults.push({
           fileName: document.fileName,
           relativeName: document.relativeName,
+          contentType: document.contentType,
           pageCount: Number(payload.pageCount) || 1,
           documentTypes: Array.isArray(payload.documentTypes)
             ? payload.documentTypes.map((item) => String(item || "")).filter(Boolean)
@@ -4907,6 +7294,7 @@ async function runStudentDocumentRecognitionJob(job, options) {
               .filter(Boolean)
             : [],
           textPreview: String(payload.textPreview || "").slice(0, 3000),
+          textExtraction: String(payload.textExtraction || "ocr").slice(0, 24),
           durationMs: Number(payload.durationMs) || Date.now() - fileStartedAt,
           error: ""
         });
@@ -4914,12 +7302,14 @@ async function runStudentDocumentRecognitionJob(job, options) {
         fileResults.push({
           fileName: document.fileName,
           relativeName: document.relativeName,
+          contentType: document.contentType,
           pageCount: 0,
           documentTypes: [],
           fields: [],
           pagePreviews: [],
           photoCandidates: [],
           textPreview: "",
+          textExtraction: "",
           durationMs: Date.now() - fileStartedAt,
           error: error.message
         });
@@ -4969,6 +7359,44 @@ async function runStudentDocumentRecognitionJob(job, options) {
   }
 }
 
+async function handleStudentDocumentRecognitionFiles(req, res) {
+  try {
+    if (
+      String(req.headers["x-requested-with"] || "") !== "AIS-Web"
+      || !isTrustedBrowserOrigin(req)
+    ) {
+      sendError(res, 403, "Запрос списка документов отклонён сервером.");
+      return;
+    }
+    const body = await readJsonBody(req);
+    const folder = String(body.folder || "").trim();
+    if (!folder || folder.length > 600) {
+      throw new Error("Не удалось определить папку документов слушателя.");
+    }
+    if (!normalizeSystemDocumentsRelativePath(folder)) {
+      throw new Error("Путь к папке документов слушателя содержит недопустимые элементы.");
+    }
+    const source = await useWebDavWhenLocalDocumentsUnavailable(
+      normalizeStudentOcrSource(body.source)
+    );
+    const sourceResult = await findStudentOcrDocuments(folder, source);
+    sendJson(res, 200, {
+      source: sourceResult.source,
+      sourceLabel: sourceResult.sourceLabel,
+      skippedCount: sourceResult.skippedCount,
+      totalBytes: sourceResult.totalBytes,
+      files: sourceResult.documents.map((document) => ({
+        fileName: document.fileName,
+        relativeName: document.relativeName,
+        contentType: document.contentType,
+        size: document.size
+      }))
+    });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
 async function handleStudentDocumentRecognitionStart(req, res) {
   try {
     if (
@@ -4989,6 +7417,7 @@ async function handleStudentDocumentRecognitionStart(req, res) {
     const source = await useWebDavWhenLocalDocumentsUnavailable(
       normalizeStudentOcrSource(body.source)
     );
+    const selectedFiles = normalizeSelectedOcrDocumentNames(body.selectedFiles);
     cleanupStudentDocumentRecognitionJobs();
     const jobId = crypto.randomBytes(18).toString("hex");
     const job = {
@@ -5008,7 +7437,7 @@ async function handleStudentDocumentRecognitionStart(req, res) {
     };
     studentDocumentRecognitionJobs.set(jobId, job);
     setImmediate(() => {
-      runStudentDocumentRecognitionJob(job, { folder, source }).catch((error) => {
+      runStudentDocumentRecognitionJob(job, { folder, source, selectedFiles }).catch((error) => {
         job.status = "failed";
         job.error = error.message;
       });
@@ -5039,6 +7468,7 @@ async function handleStudentDocumentRecognitionDirect(req, res) {
     const source = shouldUseOcrCli()
       ? "webdav"
       : await useWebDavWhenLocalDocumentsUnavailable(normalizeStudentOcrSource(body.source));
+    const selectedFiles = normalizeSelectedOcrDocumentNames(body.selectedFiles);
     const job = {
       id: crypto.randomBytes(18).toString("hex"),
       createdAt: Date.now(),
@@ -5054,7 +7484,7 @@ async function handleStudentDocumentRecognitionDirect(req, res) {
       result: null,
       error: ""
     };
-    await runStudentDocumentRecognitionJob(job, { folder, source });
+    await runStudentDocumentRecognitionJob(job, { folder, source, selectedFiles });
     if (job.status !== "completed" || !job.result) {
       sendError(res, 400, job.error || "Распознавание документов не выполнено.");
       return;
@@ -5577,6 +8007,51 @@ function normalizeContractDatabaseSection(value) {
   return "";
 }
 
+function normalizeContractDatabaseSectionHeading(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ");
+  return Object.values(CONTRACT_DATABASE_SECTIONS).find((section) => (
+    section.toLocaleLowerCase("ru-RU").replace(/ё/g, "е") === normalized
+  )) || "";
+}
+
+function findContractDatabaseSectionRanges(rows, nameColumn, headerRowIndex) {
+  const sectionRows = new Map();
+  for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    const section = normalizeContractDatabaseSectionHeading(rows[rowIndex]?.[nameColumn]);
+    if (!section) continue;
+    if (sectionRows.has(section)) {
+      throw new Error(
+        `На листе «Реестр договоров» раздел «${section}» встречается несколько раз `
+        + `(строки ${sectionRows.get(section) + 1} и ${rowIndex + 1}).`
+      );
+    }
+    sectionRows.set(section, rowIndex);
+  }
+  const missingSections = Object.values(CONTRACT_DATABASE_SECTIONS)
+    .filter((section) => !sectionRows.has(section));
+  if (missingSections.length) {
+    throw new Error(`На листе «Реестр договоров» не найдены разделы: ${missingSections.join(", ")}.`);
+  }
+  const orderedSections = Object.values(CONTRACT_DATABASE_SECTIONS);
+  const orderedRows = orderedSections.map((section) => sectionRows.get(section));
+  if (orderedRows.some((rowIndex, index) => index > 0 && rowIndex <= orderedRows[index - 1])) {
+    throw new Error(
+      "Разделы листа «Реестр договоров» должны идти по порядку: «ДЕЙСТВУЮЩИЕ ДОГОВОРА», "
+      + "«ПАРТНЕРСКАЯ ПРОГРАММА», «ИСТЕКШИЕ ДОГОВОРА»."
+    );
+  }
+  return orderedSections.map((section, index) => ({
+    section,
+    headingRowIndex: orderedRows[index],
+    firstDataRowIndex: orderedRows[index] + 1,
+    endRowIndex: index + 1 < orderedRows.length ? orderedRows[index + 1] : rows.length
+  }));
+}
+
 function normalizeContractDatabaseValue(value, fieldName) {
   if (CONTRACT_DATABASE_DATE_FIELDS.has(fieldName)) return normalizeStudentDatabaseDate(value);
   if (CONTRACT_DATABASE_NUMBER_FIELDS.has(fieldName)) return normalizeStudentDatabaseNumber(value);
@@ -5633,6 +8108,70 @@ function getWorkbookNamedCell(workbook, names) {
     name: String(namedRange.Name || "").trim(),
     ...reference,
     value: workbook.Sheets[reference.sheetName]?.[reference.cellAddress]?.v ?? ""
+  };
+}
+
+function normalizeAgentPaymentWorkbookRate(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const number = Number(String(value).replace(",", ".").trim());
+  if (!Number.isFinite(number)) return null;
+  const percent = Math.abs(number) <= 1 ? number * 100 : number;
+  if (percent < 0 || percent > 100) return null;
+  return Math.round(percent * 10000) / 10000;
+}
+
+function parseAgentPaymentRatesFromFormula(formula) {
+  const source = String(formula || "").trim();
+  if (!/VLOOKUP/iu.test(source)) return null;
+  const percentMatch = /VLOOKUP[\s\S]*?<>\s*""\s*[,;]\s*(\d+(?:[.,]\d+)?)\s*%\s*[,;]\s*(\d+(?:[.,]\d+)?)\s*%/iu.exec(source);
+  if (percentMatch) {
+    const withAuthorPercent = Number(percentMatch[1].replace(",", "."));
+    const withoutAuthorPercent = Number(percentMatch[2].replace(",", "."));
+    if (
+      Number.isFinite(withAuthorPercent)
+      && Number.isFinite(withoutAuthorPercent)
+      && withAuthorPercent >= 0
+      && withAuthorPercent <= 100
+      && withoutAuthorPercent >= 0
+      && withoutAuthorPercent <= 100
+    ) {
+      return { withAuthorPercent, withoutAuthorPercent };
+    }
+  }
+  const fractionMatch = /VLOOKUP[\s\S]*?<>\s*""\s*[,;]\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*[,;]\s*(0(?:\.\d+)?|1(?:\.0+)?)/iu.exec(source);
+  if (!fractionMatch) return null;
+  return {
+    withAuthorPercent: Math.round(Number(fractionMatch[1]) * 1000000) / 10000,
+    withoutAuthorPercent: Math.round(Number(fractionMatch[2]) * 1000000) / 10000
+  };
+}
+
+function parseAgentPaymentDatabaseRates(workbook, worksheet, headerRowIndex, headers) {
+  const namedRates = {};
+  AGENT_PAYMENT_RATE_DEFINITIONS.forEach((definition) => {
+    const namedCell = getWorkbookNamedCell(workbook, definition.definedName);
+    const percent = normalizeAgentPaymentWorkbookRate(namedCell?.value);
+    if (percent !== null) namedRates[definition.key] = percent;
+  });
+
+  let formulaRates = null;
+  if (Object.keys(namedRates).length < AGENT_PAYMENT_RATE_DEFINITIONS.length) {
+    const agentAmountColumn = headers.indexOf("АгентСумма");
+    const usedRange = worksheet?.["!ref"] ? XLSX.utils.decode_range(worksheet["!ref"]) : null;
+    if (agentAmountColumn >= 0 && usedRange) {
+      for (let rowIndex = headerRowIndex + 1; rowIndex <= usedRange.e.r; rowIndex += 1) {
+        const address = XLSX.utils.encode_cell({ r: rowIndex, c: agentAmountColumn });
+        formulaRates = parseAgentPaymentRatesFromFormula(worksheet[address]?.f);
+        if (formulaRates) break;
+      }
+    }
+  }
+
+  return {
+    agentPaymentRates: sanitizeAgentPaymentRates({
+      ...(formulaRates || {}),
+      ...namedRates
+    })
   };
 }
 
@@ -6050,11 +8589,11 @@ function parseContractDatabaseSheet(workbook, onProgress = () => {}) {
     .map((header, index) => ({ index, fieldName: CONTRACT_DATABASE_COLUMN_MAP[header] || "" }))
     .filter((column) => column.fieldName);
   const nameColumn = headers.indexOf("ФИО");
+  const sectionRanges = findContractDatabaseSectionRanges(rows, nameColumn, headerRowIndex);
   const contracts = [];
-  const detectedSections = new Set();
-  let currentSection = "";
   const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
   const progressStep = Math.max(1, Math.floor(sourceRowCount / 40));
+  let sectionRangeIndex = 0;
   for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
     const processedRows = rowIndex - headerRowIndex;
     if (processedRows === 1 || processedRows % progressStep === 0 || processedRows === sourceRowCount) {
@@ -6066,13 +8605,18 @@ function parseContractDatabaseSheet(workbook, onProgress = () => {}) {
       });
     }
     const row = rows[rowIndex] || [];
-    const section = normalizeContractDatabaseSection(row[nameColumn]);
-    if (section) {
-      currentSection = section;
-      detectedSections.add(section);
-      continue;
+    while (
+      sectionRangeIndex + 1 < sectionRanges.length
+      && rowIndex >= sectionRanges[sectionRangeIndex + 1].headingRowIndex
+    ) {
+      sectionRangeIndex += 1;
     }
-    if (!currentSection) continue;
+    const sectionRange = sectionRanges[sectionRangeIndex];
+    if (
+      !sectionRange
+      || rowIndex < sectionRange.firstDataRowIndex
+      || rowIndex >= sectionRange.endRowIndex
+    ) continue;
     const name = String(row[nameColumn] ?? "").trim();
     const hasSourceData = mappedColumns.some((column) => {
       const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: column.index })];
@@ -6080,7 +8624,7 @@ function parseContractDatabaseSheet(workbook, onProgress = () => {}) {
       return normalizeContractDatabaseValue(row[column.index], column.fieldName) !== "";
     });
     if (!hasSourceData) continue;
-    const contract = { section: currentSection };
+    const contract = { section: sectionRange.section };
     mappedColumns.forEach((column) => {
       const value = normalizeContractDatabaseValue(row[column.index], column.fieldName);
       if (value === "") return;
@@ -6088,22 +8632,19 @@ function parseContractDatabaseSheet(workbook, onProgress = () => {}) {
     });
     contract.id = buildContractDatabaseRecordId(contract, rowIndex + 1);
     contract.name = name;
-    contract.status = currentSection === CONTRACT_DATABASE_SECTIONS.active
+    contract.status = sectionRange.section === CONTRACT_DATABASE_SECTIONS.active
       ? "Действует"
-      : currentSection === CONTRACT_DATABASE_SECTIONS.partners
+      : sectionRange.section === CONTRACT_DATABASE_SECTIONS.partners
         ? "Партнерская программа"
         : "Истек";
     contracts.push(contract);
-  }
-  const missingSections = Object.values(CONTRACT_DATABASE_SECTIONS)
-    .filter((section) => !detectedSections.has(section));
-  if (missingSections.length) {
-    throw new Error(`На листе «Реестр договоров» не найдены разделы: ${missingSections.join(", ")}.`);
   }
   return {
     contracts,
     contractSheetName: "Реестр договоров",
     contractSourceRows: sourceRowCount,
+    contractSectionRows: Object.fromEntries(sectionRanges
+      .map((range) => [range.section, range.headingRowIndex + 1])),
     contractSectionCounts: Object.fromEntries(Object.values(CONTRACT_DATABASE_SECTIONS)
       .map((section) => [section, contracts.filter((contract) => contract.section === section).length]))
   };
@@ -6480,6 +9021,12 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
     students.push(student);
   }
   if (!students.length) throw new Error("На листе «База» не найдено ни одного слушателя с uid и ФИО.");
+  const agentPaymentRatesResult = parseAgentPaymentDatabaseRates(
+    workbook,
+    worksheet,
+    headerRowIndex,
+    headers
+  );
   const paymentSettingsResult = parsePaymentDatabaseSettings(workbook, onProgress);
   const programDictionaryResult = parseProgramDictionaryDatabaseSettings(workbook, onProgress);
   const programPaymentResult = parseProgramPaymentDatabaseSheet(workbook, onProgress);
@@ -6506,6 +9053,7 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
     studentSectionTitles: studentSections.map((section) => section.title),
     sourceRows: sourceRowCount,
     skippedRows: Math.max(0, sourceRowCount - students.length),
+    ...agentPaymentRatesResult,
     ...paymentSettingsResult,
     ...programDictionaryResult,
     ...programPaymentResult,
@@ -6652,21 +9200,18 @@ function countContractWorksheetRecords(worksheet) {
     .map((header, index) => ({ index, fieldName: CONTRACT_DATABASE_COLUMN_MAP[header] || "" }))
     .filter((column) => column.fieldName);
   const nameColumn = headers.indexOf("ФИО");
-  let sectionFound = false;
+  const sectionRanges = findContractDatabaseSectionRanges(rows, nameColumn, headerRowIndex);
   let count = 0;
-  rows.forEach((row, rowIndex) => {
-    if (rowIndex <= headerRowIndex) return;
-    if (normalizeContractDatabaseSection(row[nameColumn])) {
-      sectionFound = true;
-      return;
+  sectionRanges.forEach((range) => {
+    for (let rowIndex = range.firstDataRowIndex; rowIndex < range.endRowIndex; rowIndex += 1) {
+      const row = rows[rowIndex] || [];
+      const hasSourceData = mappedColumns.some((column) => {
+        const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: column.index })];
+        if (cell?.f || cell?.F) return false;
+        return normalizeContractDatabaseValue(row[column.index], column.fieldName) !== "";
+      });
+      if (hasSourceData) count += 1;
     }
-    if (!sectionFound) return;
-    const hasSourceData = mappedColumns.some((column) => {
-      const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: column.index })];
-      if (cell?.f || cell?.F) return false;
-      return normalizeContractDatabaseValue(row[column.index], column.fieldName) !== "";
-    });
-    if (hasSourceData) count += 1;
   });
   return count;
 }
@@ -7860,6 +10405,37 @@ function sanitizePaymentDatabaseConstants(values) {
   }).filter(Boolean);
 }
 
+function sanitizeAgentPaymentRates(value) {
+  if (value !== undefined && value !== null && (
+    typeof value !== "object" || Array.isArray(value)
+  )) {
+    throw new Error("Некорректные настройки ставок агентских выплат.");
+  }
+  const source = value || {};
+  const readPercent = (fieldName, fallback, label) => {
+    if (source[fieldName] === undefined || source[fieldName] === null || source[fieldName] === "") {
+      return fallback;
+    }
+    const percent = Number(String(source[fieldName]).replace(",", ".").trim());
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      throw new Error(`Некорректная ставка агентских выплат «${label}».`);
+    }
+    return Math.round(percent * 10000) / 10000;
+  };
+  return {
+    withAuthorPercent: readPercent(
+      "withAuthorPercent",
+      DEFAULT_AGENT_PAYMENT_RATES.withAuthorPercent,
+      "для программы с автором"
+    ),
+    withoutAuthorPercent: readPercent(
+      "withoutAuthorPercent",
+      DEFAULT_AGENT_PAYMENT_RATES.withoutAuthorPercent,
+      "для программы без автора"
+    )
+  };
+}
+
 function sanitizeStudentDatabaseExportPayload(body) {
   if (!Array.isArray(body.students) || !body.students.length) {
     throw new Error("В облачной базе нет слушателей для синхронизации.");
@@ -7928,6 +10504,7 @@ function sanitizeStudentDatabaseExportPayload(body) {
     generalExpenses,
     paymentConstants: sanitizePaymentDatabaseConstants(body.paymentConstants),
     paymentConstantsProvided: Array.isArray(body.paymentConstants),
+    agentPaymentRates: sanitizeAgentPaymentRates(body.agentPaymentRates),
     defaultStudentAdditionalStatus: DEFAULT_STUDENT_ADDITIONAL_STATUS,
     studentColumnMap: {
       ...STUDENT_DATABASE_COLUMN_MAP,
@@ -8218,6 +10795,63 @@ async function loadTemplateBytes(templateUrl, templatePath) {
   }
 }
 
+function resolveLocalTemplatePathFromWebDavSource(templateUrl) {
+  const source = String(templateUrl || "").trim();
+  const parsed = parseHttpResourceUrl(source);
+  const host = parsed?.hostname.toLowerCase() || "";
+  if (parsed && !isYandexWebDavHost(host)) return "";
+  const rootSource = String(serverSettings.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT).trim();
+  const pathApi = getRuntimeFileSystemPathApi(rootSource);
+  if (!pathApi) throw new Error("Укажите абсолютный путь к локальной папке документов.");
+  const targetParts = normalizeWebDavPath(resolveConfiguredYandexWebDavPath(source)).split("/").filter(Boolean);
+  const baseParts = normalizeWebDavPath(
+    serverSettings.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+  ).split("/").filter(Boolean);
+  const mappedPrefix = serverSettings.localDocumentsRootIsSystemParent
+    ? baseParts.slice(0, -1)
+    : [];
+  const matchesPrefix = mappedPrefix.every((part, index) => (
+    String(targetParts[index] || "").toLocaleLowerCase("ru-RU") === part.toLocaleLowerCase("ru-RU")
+  ));
+  if (!matchesPrefix) {
+    throw new Error("WebDAV-путь шаблона находится за пределами локальной папки документов.");
+  }
+  const relativeParts = targetParts.slice(mappedPrefix.length);
+  if (!relativeParts.length || relativeParts.some((part) => /[<>:"|?*\u0000-\u001f]/u.test(part))) {
+    throw new Error("WebDAV-путь шаблона содержит недопустимые сегменты.");
+  }
+  const rootPath = pathApi.resolve(rootSource);
+  const fullPath = pathApi.resolve(rootPath, ...relativeParts);
+  const pathFromRoot = pathApi.relative(rootPath, fullPath);
+  if (pathFromRoot.startsWith("..") || pathApi.isAbsolute(pathFromRoot)) {
+    throw new Error("Локальный шаблон находится за пределами папки документов.");
+  }
+  return fullPath;
+}
+
+async function loadTemplateBytesForRequest(body) {
+  const templateUrl = String(body?.templateUrl || "").trim();
+  const templatePath = String(body?.templatePath || "").trim();
+  if (!body?.preferLocalTemplate) return loadTemplateBytes(templateUrl, templatePath);
+  const errors = [];
+  if (templateUrl) {
+    try {
+      const localTemplatePath = resolveLocalTemplatePathFromWebDavSource(templateUrl);
+      if (localTemplatePath) return await loadLocalTemplateBytes(localTemplatePath);
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+  if (templatePath) {
+    try {
+      return await loadLocalTemplateBytes(templatePath);
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+  throw new Error(errors.filter(Boolean).join(" ") || "Не удалось найти шаблон документа на локальном диске.");
+}
+
 function getWordTemplateExtension(fileName) {
   return String(fileName || "").split(".").pop()?.toLowerCase() || "";
 }
@@ -8395,7 +11029,7 @@ function inspectWordTemplate(templateBytes, fileName = "") {
 async function handleDocumentTemplateInspect(req, res) {
   try {
     const body = await readJsonBody(req);
-    const templateBytes = await loadTemplateBytes(body.templateUrl, body.templatePath);
+    const templateBytes = await loadTemplateBytesForRequest(body);
     sendJson(res, 200, inspectWordTemplate(templateBytes, body.fileName || body.templateUrl || body.templatePath || ""));
   } catch (error) {
     sendError(res, 400, error.message);
@@ -8518,14 +11152,27 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         + `Реестр договоров: ${sourceInspection.contractFormulaCount} → ${outputInspection.contractFormulaCount}).`
       );
     }
-    const savedResult = await saveStudentDatabaseSyncResult(
-      body.databasePath,
-      sourceType,
-      sourceBytes,
-      outputBytes,
-      onProgress
-    );
-    onProgress({ progress: 99, stage: "complete", message: "База XLSB обновлена, резервная копия сохранена." });
+    const downloadOnly = body.downloadOnly === true;
+    const savedResult = downloadOnly
+      ? {
+          source: sourceType,
+          fileName: buildStudentDatabaseBackupFileName(),
+          outputBytes
+        }
+      : await saveStudentDatabaseSyncResult(
+          body.databasePath,
+          sourceType,
+          sourceBytes,
+          outputBytes,
+          onProgress
+        );
+    onProgress({
+      progress: 99,
+      stage: "complete",
+      message: downloadOnly
+        ? "База XLSB сформирована и готова к скачиванию."
+        : "База XLSB обновлена, резервная копия сохранена."
+    });
     await safelyRemoveStudentDatabaseExportDirectory(tempDirectory);
     tempDirectory = "";
     return {
@@ -8546,6 +11193,16 @@ async function handleStudentDatabaseExport(req, res) {
   try {
     const body = await readJsonBody(req);
     const result = await buildStudentDatabaseExport(body);
+    if (body.downloadOnly === true && Buffer.isBuffer(result.outputBytes)) {
+      sendFile(
+        res,
+        200,
+        result.outputBytes,
+        result.fileName || buildStudentDatabaseBackupFileName(),
+        "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
+      );
+      return;
+    }
     sendJson(res, 200, result);
   } catch (error) {
     sendError(res, 400, error.message);
@@ -8588,9 +11245,21 @@ function publicStudentExportJob(job) {
 
 async function runStudentExportJob(job, body) {
   try {
-    job.result = await buildStudentDatabaseExport(body, (progress) => {
+    const result = await buildStudentDatabaseExport(body, (progress) => {
       updateStudentExportJob(job, progress);
     });
+    if (Buffer.isBuffer(result.outputBytes)) {
+      job.downloadBytes = result.outputBytes;
+      job.downloadFileName = result.fileName || buildStudentDatabaseBackupFileName();
+      const { outputBytes, ...publicResult } = result;
+      job.result = {
+        ...publicResult,
+        fileName: job.downloadFileName,
+        downloadReady: true
+      };
+    } else {
+      job.result = result;
+    }
     updateStudentExportJob(job, {
       status: "completed",
       stage: "complete",
@@ -8620,6 +11289,8 @@ async function handleStudentDatabaseExportStart(req, res) {
       progress: 0,
       error: "",
       result: null,
+      downloadBytes: null,
+      downloadFileName: "",
       createdAt: now,
       updatedAt: now
     };
@@ -8661,6 +11332,29 @@ function handleStudentDatabaseExportResult(res, requestUrl) {
     return;
   }
   sendJson(res, 200, job.result);
+}
+
+function handleStudentDatabaseExportDownload(res, requestUrl) {
+  const job = getStudentExportJob(requestUrl);
+  if (!job) {
+    sendError(res, 404, "Задача экспорта не найдена или срок ее хранения истек.");
+    return;
+  }
+  if (job.status === "failed") {
+    sendError(res, 400, job.error || "Экспорт завершился с ошибкой.");
+    return;
+  }
+  if (job.status !== "completed" || !Buffer.isBuffer(job.downloadBytes)) {
+    sendError(res, 409, "Файл экспорта еще не сформирован.");
+    return;
+  }
+  sendFile(
+    res,
+    200,
+    job.downloadBytes,
+    job.downloadFileName || buildStudentDatabaseBackupFileName(),
+    "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
+  );
 }
 
 async function handleStudentDatabaseImportStart(req, res) {
@@ -8910,14 +11604,25 @@ function handleDocumentConversionSource(req, res, requestUrl) {
 async function handleContractDocument(req, res) {
   try {
     const body = await readJsonBody(req);
-    const templateBytes = await loadTemplateBytes(body.templateUrl, body.templatePath);
+    let templateBytes;
+    try {
+      templateBytes = await loadTemplateBytesForRequest(body);
+    } catch (primaryTemplateError) {
+      if (!String(body.fallbackTemplatePath || "").trim()) throw primaryTemplateError;
+      templateBytes = await loadTemplateBytes("", body.fallbackTemplatePath);
+    }
     const inputFieldValues = body.fieldValues || {};
     const fieldValues = body.useCustomDocumentProperties
       ? applyCustomDocumentPropertyFormulas(templateBytes, inputFieldValues, body.sourceValues || {})
       : inputFieldValues;
     const propertyUpdateNames = new Set(Object.keys(inputFieldValues || {}));
     const sourceValues = body.sourceValues || {};
-    const photo = await loadContractPhoto({
+    const documentIdentity = [body.templateUrl, body.templatePath, body.fileName]
+      .map((value) => String(value || "").toLocaleLowerCase("ru-RU"))
+      .join("\n");
+    const omitDocumentPhoto = String(body.documentKind || "").trim() === "employeeAct"
+      || documentIdentity.includes("акт оказанных услуг");
+    const photo = omitDocumentPhoto ? null : await loadContractPhoto({
       ...fieldValues,
       "Фото": sourceValues["Фото"] || fieldValues["Фото"] || "",
       photo: sourceValues.photo || fieldValues.photo || "",
@@ -8926,12 +11631,25 @@ async function handleContractDocument(req, res) {
     const outputFieldValues = { ...fieldValues, "Фото": "" };
     if (!photo) outputFieldValues["ПутьСохр"] = "";
     const docxResult = fillDocxMarkers(templateBytes, outputFieldValues, photo ? { "Фото": photo } : { "Фото": null }, propertyUpdateNames);
-    const outputFormat = normalizeGeneratedDocumentFormat(body.outputFormat);
-    const result = outputFormat === "pdf"
-      ? await convertDocxBytesToPdf(docxResult)
-      : docxResult;
-    const outputFileName = safeDocumentFileName(body.fileName || "документ", outputFormat);
+    const requestedOutputFormat = normalizeGeneratedDocumentFormat(body.outputFormat);
+    let outputFormat = requestedOutputFormat;
+    let result = docxResult;
     const extraHeaders = {};
+    if (requestedOutputFormat === "pdf") {
+      try {
+        result = await convertDocxBytesToPdf(docxResult);
+      } catch (conversionError) {
+        outputFormat = "docx";
+        result = docxResult;
+        extraHeaders["X-Document-Conversion-Fallback"] = "true";
+        extraHeaders["X-Document-Conversion-Error"] = encodeURIComponent(
+          String(conversionError?.message || "PDF-конвертер недоступен").slice(0, 500)
+        );
+      }
+    }
+    const outputFileName = safeDocumentFileName(body.fileName || "документ", outputFormat);
+    extraHeaders["X-Generated-Document-Format"] = outputFormat;
+    extraHeaders["X-Generated-Document-File-Name"] = encodeURIComponent(outputFileName);
     if (body.promptLocalSave) {
       try {
         const localSaveResult = await promptAndSaveStudentDocumentLocally(
@@ -9033,7 +11751,7 @@ function buildStudentCompactName(value) {
 function managedStudentPhotoRelativePath(value) {
   if (usesParentSystemDocumentsFolder(value)) return "";
   const relativePath = normalizeSystemDocumentsRelativePath(value);
-  return /^Слушатели\/[^/]+\/Документы\/[^/]+\.(?:png|jpe?g|webp|gif)$/iu.test(relativePath)
+  return /^(?:Слушатели|Сотрудники)\/[^/]+\/Документы\/[^/]+\.(?:png|jpe?g|webp|gif)$/iu.test(relativePath)
     ? relativePath
     : "";
 }
@@ -9041,6 +11759,19 @@ function managedStudentPhotoRelativePath(value) {
 async function deleteManagedStudentPhoto(photoPath) {
   const relativePath = managedStudentPhotoRelativePath(photoPath);
   if (!relativePath) return false;
+  if (serverSettings.openDocumentsLocally !== false) {
+    const localDocuments = await getLocalSystemDocumentsAvailability();
+    if (localDocuments.available) {
+      const localPath = resolveLocalDocumentsPath(relativePath, "Не удалось определить путь к фотографии.");
+      try {
+        await fs.unlink(localPath);
+        return true;
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        return false;
+      }
+    }
+  }
   const remotePath = normalizeWebDavPath(`${resolveYandexDiskBasePath(false)}/${relativePath}`);
   const response = await requestYandexWebDav("DELETE", remotePath, {
     acceptedStatuses: [200, 204, 404]
@@ -9071,23 +11802,41 @@ async function handlePhotoUpload(req, res) {
   try {
     const body = await readJsonBody(req);
     const { bytes, ext, mime } = parseDataUrl(body.dataUrl);
-    const studentName = String(
-      body.studentName || body.studentFio || body.fio || body.fullName || body.name || ""
+    const entityType = String(body.entityType || "").trim().toLowerCase() === "contract"
+      ? "contract"
+      : "student";
+    const personName = String(
+      body.employeeName || body.contractName || body.studentName || body.studentFio
+      || body.fio || body.fullName || body.name || ""
     ).trim();
-    const compactName = buildStudentCompactName(studentName);
-    if (!compactName) throw new Error("Сначала укажите ФИО слушателя.");
-    const relativeFolder = `Слушатели/${compactName}/Документы`;
+    const compactName = buildStudentCompactName(personName);
+    if (!compactName) {
+      throw new Error(entityType === "contract"
+        ? "Сначала укажите ФИО сотрудника."
+        : "Сначала укажите ФИО слушателя.");
+    }
+    const relativeRoot = entityType === "contract" ? "Сотрудники" : "Слушатели";
+    const relativeFolder = `${relativeRoot}/${compactName}/Документы`;
     const relativePath = `${relativeFolder}/${compactName}.${ext}`;
-    const folderPath = normalizeWebDavPath(
-      `${resolveYandexDiskBasePath(false)}/${relativeFolder}`
-    );
-    await ensureYandexDiskFolder(folderPath);
-    const targetPath = normalizeWebDavPath(`${resolveYandexDiskBasePath(false)}/${relativePath}`);
-    await requestYandexWebDav("PUT", targetPath, {
-      acceptedStatuses: [200, 201, 204],
-      body: bytes,
-      contentType: mime
-    });
+    const localDocuments = serverSettings.openDocumentsLocally !== false
+      ? await getLocalSystemDocumentsAvailability()
+      : { available: false };
+    if (localDocuments.available) {
+      const targetPath = resolveLocalDocumentsPath(relativePath, "Не удалось определить путь к фотографии.");
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await fs.writeFile(targetPath, bytes);
+    } else {
+      const folderPath = normalizeWebDavPath(
+        `${resolveYandexDiskBasePath(false)}/${relativeFolder}`
+      );
+      await ensureYandexDiskFolder(folderPath);
+      const targetPath = normalizeWebDavPath(`${resolveYandexDiskBasePath(false)}/${relativePath}`);
+      await requestYandexWebDav("PUT", targetPath, {
+        acceptedStatuses: [200, 201, 204],
+        body: bytes,
+        contentType: mime
+      });
+    }
     const previousPath = String(body.previousPath || "").trim();
     if (previousPath && previousPath !== relativePath) {
       try {
@@ -9124,7 +11873,20 @@ async function handleStudentSourcePhoto(req, res, requestUrl) {
     return;
   }
   try {
-    const bytes = await loadSystemDocumentFromYandexDisk(sourcePath);
+    const relativePath = normalizeSystemDocumentsRelativePath(sourcePath);
+    const localDocuments = serverSettings.openDocumentsLocally !== false
+      ? await getLocalSystemDocumentsAvailability()
+      : { available: false };
+    let bytes = null;
+    if (relativePath && localDocuments.available) {
+      const localPath = resolveLocalDocumentsPath(sourcePath, "Не удалось определить путь к фотографии.");
+      const stats = await fs.stat(localPath);
+      if (stats.isFile() && stats.size > 0 && stats.size <= MAX_STUDENT_PHOTO_BYTES) {
+        bytes = await fs.readFile(localPath);
+      }
+    } else {
+      bytes = await loadSystemDocumentFromYandexDisk(sourcePath);
+    }
     if (!bytes) {
       sendError(res, 404, "Фото не найдено.");
       return;
@@ -9147,9 +11909,9 @@ async function handleStudentSourcePhoto(req, res, requestUrl) {
   }
 }
 
-async function publicSystemDocumentSettings() {
+async function publicSystemDocumentSettings(includeAdminSettings = false) {
   const localDocuments = await getLocalSystemDocumentsAvailability();
-  return {
+  const settings = {
     databasePath: normalizeYandexDiskResourceSetting(
       serverSettings.studentDatabaseWebDavPath,
       DEFAULT_STUDENT_DATABASE_WEBDAV_PATH
@@ -9183,11 +11945,14 @@ async function publicSystemDocumentSettings() {
         || process.env.STUDENT_APPLICATIONS_EMAIL_PASSWORD
     )
   };
+  if (includeAdminSettings) Object.assign(settings, publicSharedRecordLocksMySqlSettings());
+  return settings;
 }
 
-async function handleSystemDocumentSettings(req, res) {
+async function handleSystemDocumentSettings(req, res, authUser) {
+  const includeAdminSettings = authUser?.role === "admin";
   if (req.method === "GET") {
-    sendJson(res, 200, await publicSystemDocumentSettings());
+    sendJson(res, 200, await publicSystemDocumentSettings(includeAdminSettings));
     return;
   }
   try {
@@ -9200,7 +11965,8 @@ async function handleSystemDocumentSettings(req, res) {
     const localDocumentsRoot = String(
       body.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
     ).trim();
-    if (!path.isAbsolute(localDocumentsRoot)) {
+    const normalizedLocalDocumentsRoot = normalizeAbsoluteFileSystemPath(localDocumentsRoot);
+    if (!normalizedLocalDocumentsRoot) {
       throw new Error("Укажите абсолютный путь к локальной папке документов.");
     }
     const login = String(body.login || "").trim();
@@ -9213,6 +11979,12 @@ async function handleSystemDocumentSettings(req, res) {
     const emailSmtpPort = Number(body.emailSmtpPort || 465);
     const emailLogin = String(body.emailLogin || "").trim();
     const emailPassword = String(body.emailPassword || "");
+    const mysqlUseApplicationsConnection = body.mysqlUseApplicationsConnection !== false;
+    const mysqlHost = String(body.mysqlHost || "").trim();
+    const mysqlPort = Number(body.mysqlPort || 3306);
+    const mysqlDatabase = String(body.mysqlDatabase || "").trim();
+    const mysqlUser = String(body.mysqlUser || "").trim();
+    const mysqlPassword = String(body.mysqlPassword || "");
     if (!Number.isInteger(emailPort) || emailPort < 1 || emailPort > 65535) {
       throw new Error("Укажите корректный порт IMAP.");
     }
@@ -9220,10 +11992,30 @@ async function handleSystemDocumentSettings(req, res) {
     if (!Number.isInteger(emailSmtpPort) || emailSmtpPort < 1 || emailSmtpPort > 65535) {
       throw new Error("Укажите корректный порт SMTP.");
     }
+    if (!mysqlUseApplicationsConnection) {
+      if (!mysqlHost || mysqlHost.length > 255 || !/^[A-Za-z0-9.-]+$/.test(mysqlHost)) {
+        throw new Error("Укажите корректный сервер MySQL.");
+      }
+      if (!Number.isInteger(mysqlPort) || mysqlPort < 1 || mysqlPort > 65535) {
+        throw new Error("Укажите корректный порт MySQL.");
+      }
+      if (!mysqlDatabase || mysqlDatabase.length > 128 || /[;{}]/.test(mysqlDatabase)) {
+        throw new Error("Укажите корректное имя базы MySQL.");
+      }
+      if (!mysqlUser || mysqlUser.length > 128 || /[;{}]/.test(mysqlUser)) {
+        throw new Error("Укажите корректного пользователя MySQL.");
+      }
+      if (!mysqlPassword && !String(serverSettings.sharedRecordLocksMySqlPassword || "")) {
+        throw new Error("Введите пароль MySQL для отдельного подключения блокировок.");
+      }
+      if (mysqlPassword.includes("}")) {
+        throw new Error("Пароль MySQL не должен содержать символ «}».");
+      }
+    }
     const patch = {
       studentDatabaseWebDavPath: databasePath,
       yandexDiskBasePath: basePath.replace(/^\/+/, ""),
-      localDocumentsRoot: path.resolve(localDocumentsRoot),
+      localDocumentsRoot: normalizedLocalDocumentsRoot,
       localDocumentsRootIsSystemParent: Boolean(body.localDocumentsRootIsSystemParent),
       openDocumentsLocally: body.openDocumentsLocally !== false,
       yandexDiskLogin: login,
@@ -9234,14 +12026,75 @@ async function handleSystemDocumentSettings(req, res) {
       studentApplicationsEmailSmtpHost: emailSmtpHost,
       studentApplicationsEmailSmtpPort: emailSmtpPort,
       studentApplicationsEmailSmtpSecure: true,
-      studentApplicationsEmailLogin: emailLogin
+      studentApplicationsEmailLogin: emailLogin,
+      sharedRecordLocksMySqlUseApplicationsConnection: mysqlUseApplicationsConnection
     };
+    if (!mysqlUseApplicationsConnection) {
+      Object.assign(patch, {
+        sharedRecordLocksMySqlConnectionString: "",
+        sharedRecordLocksMySqlHost: mysqlHost,
+        sharedRecordLocksMySqlPort: mysqlPort,
+        sharedRecordLocksMySqlDatabase: mysqlDatabase,
+        sharedRecordLocksMySqlUser: mysqlUser
+      });
+      if (mysqlPassword) patch.sharedRecordLocksMySqlPassword = mysqlPassword;
+      if (body.clearMysqlPassword) patch.sharedRecordLocksMySqlPassword = "";
+    }
     if (password) patch.yandexDiskPassword = password;
     if (body.clearPassword) patch.yandexDiskPassword = "";
     if (emailPassword) patch.studentApplicationsEmailPassword = emailPassword;
     if (body.clearEmailPassword) patch.studentApplicationsEmailPassword = "";
     await saveServerSettings(patch);
-    sendJson(res, 200, await publicSystemDocumentSettings());
+    sendJson(res, 200, await publicSystemDocumentSettings(includeAdminSettings));
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleSharedRecordLocksMySqlConnectionTest(req, res) {
+  try {
+    sharedStateMySqlUnavailableUntil = 0;
+    if (sharedStateOfflineSyncPromise) {
+      await sharedStateOfflineSyncPromise.catch(() => {});
+    }
+    let pool = await getSharedRecordLocksMySqlPool();
+    if (!pool) throw new Error("Подключение MySQL для блокировок не настроено.");
+    let rows;
+    try {
+      [rows] = await pool.query("SELECT DATABASE() AS databaseName, VERSION() AS version");
+    } catch (error) {
+      if (!isMySqlConnectivityError(error)) throw error;
+      await closeSharedRecordLocksStorage();
+      sharedStateMySqlUnavailableUntil = 0;
+      pool = await getSharedRecordLocksMySqlPool();
+      if (!pool) throw error;
+      [rows] = await pool.query("SELECT DATABASE() AS databaseName, VERSION() AS version");
+    }
+    const syncResult = await flushSharedApplicationStateOfflineQueue({ force: true });
+    const state = await ensureSharedApplicationStateMySqlDocument(pool);
+    const pending = await readSharedApplicationStatePendingDocument();
+    const settings = publicSharedRecordLocksMySqlSettings();
+    const flushed = Math.max(0, Number(syncResult?.flushed) || 0);
+    const pendingCount = pending.operations.length;
+    const syncBlockedReason = String(syncResult?.syncBlockedReason || "");
+    const message = pendingCount
+      ? "Подключение MySQL работает. Общая база доступна, оставшиеся изменения будут выгружены автоматически."
+      : flushed
+        ? `Подключение MySQL работает. Общая база синхронизирована, выгружено изменений: ${flushed}.`
+        : "Подключение MySQL работает. Общая база данных и таблица блокировок доступны.";
+    sendJson(res, 200, {
+      ok: true,
+      source: "mysql",
+      database: String(rows[0]?.databaseName || settings.mysqlDatabase || ""),
+      version: String(rows[0]?.version || "").slice(0, 80),
+      stateRevision: state.document?.revision || 0,
+      flushed,
+      pendingCount,
+      syncPending: pendingCount > 0,
+      syncBlockedReason,
+      syncBlockedLock: syncResult?.syncBlockedLock || null,
+      message
+    });
   } catch (error) {
     sendError(res, 400, error.message);
   }
@@ -9282,12 +12135,26 @@ async function handleServerEmail(req, res, authUser) {
   const writeEmailAudit = async (action, details, source = "smtp") => {
     const studentId = auditText(auditContext.studentId, 240);
     const studentName = auditText(auditContext.studentName, 500);
+    const contractId = auditText(auditContext.contractId, 240);
+    const contractName = auditText(auditContext.contractName, 500);
+    const requestedEntityType = auditText(auditContext.entityType, 40);
+    const entityType = ["students", "contracts"].includes(requestedEntityType)
+      ? requestedEntityType
+      : (contractId ? "contracts" : (studentId ? "students" : "email"));
+    const entityId = auditText(
+      auditContext.entityId || (entityType === "contracts" ? contractId : studentId),
+      240
+    );
+    const entityLabel = auditText(
+      auditContext.entityName || (entityType === "contracts" ? contractName : studentName),
+      500
+    );
     await safelyAppendAuditEntry({
       action,
       area: "Электронная почта",
-      entityType: studentId ? "students" : "email",
-      entityId: studentId,
-      entityLabel: studentName || auditRecipient,
+      entityType,
+      entityId,
+      entityLabel: entityLabel || auditRecipient,
       field: "email",
       after: auditRecipient,
       details,
@@ -9362,7 +12229,9 @@ async function handleServerEmail(req, res, authUser) {
     }
     const settings = await sendEmailThroughConfiguredMailbox({ to, subject, message, attachment });
     const messageType = auditText(auditContext.messageType, 240) || "Письмо";
-    const recipientMode = auditContext.recipientMode === "system" ? "системный ящик" : "слушатель";
+    const recipientMode = auditContext.recipientMode === "system"
+      ? "системный ящик"
+      : (auditContext.recipientMode === "employee" ? "сотрудник" : "слушатель");
     await writeEmailAudit(
       "Отправлено письмо",
       [
@@ -9490,7 +12359,13 @@ async function route(req, res) {
     return;
   }
   if (req.method === "GET" && req.url === "/api/health") {
-    sendJson(res, 200, { ok: true, storage: "yandex-disk" });
+    sendJson(res, 200, {
+      ok: true,
+      storage: "mysql",
+      sharedStateStorage: "mysql",
+      offlineQueueStorage: "local",
+      sharedStatePollIntervalMs: 1000
+    });
     return;
   }
   if (
@@ -9526,13 +12401,22 @@ async function route(req, res) {
     (req.method === "POST" && requestUrl.pathname === "/api/settings/system-documents")
     || [
       "/api/yandex-disk/test",
-      "/api/student-applications-email/test"
+      "/api/student-applications-email/test",
+      "/api/mysql-locks/test"
     ].includes(requestUrl.pathname)
     || requestUrl.pathname === "/api/students/export-database"
     || requestUrl.pathname.startsWith("/api/students/export-database/")
   );
   if (adminOnlyRequest && authUser?.role !== "admin") {
     sendError(res, 403, "Раздел доступен только администратору.");
+    return;
+  }
+  if (requestUrl.pathname === "/api/shared-state/locks") {
+    await handleSharedRecordLocks(req, res, authUser, requestUrl);
+    return;
+  }
+  if (requestUrl.pathname === "/api/shared-state") {
+    await handleSharedApplicationState(req, res, authUser, requestUrl);
     return;
   }
   if (req.method === "POST" && req.url === "/api/photos") {
@@ -9551,7 +12435,7 @@ async function route(req, res) {
     (req.method === "GET" || req.method === "POST")
     && requestUrl.pathname === "/api/settings/system-documents"
   ) {
-    await handleSystemDocumentSettings(req, res);
+    await handleSystemDocumentSettings(req, res, authUser);
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/local-documents/open-folder") {
@@ -9578,6 +12462,10 @@ async function route(req, res) {
     await handleStudentApplicationsEmailConnectionTest(req, res);
     return;
   }
+  if (req.method === "POST" && requestUrl.pathname === "/api/mysql-locks/test") {
+    await handleSharedRecordLocksMySqlConnectionTest(req, res);
+    return;
+  }
   if (req.method === "POST" && requestUrl.pathname === "/api/students/import-applications/query") {
     await handleStudentApplicationsQuery(req, res);
     return;
@@ -9594,12 +12482,20 @@ async function route(req, res) {
     await handleStudentWebDavDocumentFile(req, res, requestUrl);
     return;
   }
+  if (req.method === "GET" && requestUrl.pathname === "/api/students/webdav-documents/preview") {
+    await handleStudentWebDavDocumentPreview(req, res, requestUrl);
+    return;
+  }
   if (req.method === "POST" && requestUrl.pathname === "/api/students/webdav-documents/upload") {
     await handleStudentWebDavDocumentUpload(req, res);
     return;
   }
   if (req.method === "GET" && requestUrl.pathname === "/api/ocr/health") {
     await handleOcrHealth(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/recognize-documents/files") {
+    await handleStudentDocumentRecognitionFiles(req, res);
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/students/recognize-documents/start") {
@@ -9658,6 +12554,10 @@ async function route(req, res) {
     handleStudentDatabaseExportResult(res, requestUrl);
     return;
   }
+  if (req.method === "GET" && requestUrl.pathname === "/api/students/export-database/download") {
+    handleStudentDatabaseExportDownload(res, requestUrl);
+    return;
+  }
   if (req.method === "POST" && req.url === "/api/students/export-database") {
     await handleStudentDatabaseExport(req, res);
     return;
@@ -9680,10 +12580,11 @@ async function route(req, res) {
 if (isMainThread && require.main === module) {
   ensureStorage()
     .then(() => {
+      startSharedApplicationStateMirror();
       http.createServer((req, res) => {
         route(req, res).catch((error) => sendError(res, 500, error.message));
-      }).listen(PORT, () => {
-        console.log(`АИС Допобразование Web: http://localhost:${PORT}`);
+      }).listen(PORT, HOST, () => {
+        console.log(`АИС Допобразование Web: http://${HOST}:${PORT}`);
         console.log(`Фото: ${PHOTO_ROOT}`);
       });
     })
@@ -9695,8 +12596,18 @@ if (isMainThread && require.main === module) {
 
 module.exports = {
   ensureStorage,
+  closeSharedRecordLocksStorage,
   parseStudentDatabaseWorkbook,
   sanitizeStudentDatabaseExportPayload,
   inspectStudentDatabaseBinary,
+  applyCustomDocumentPropertyFormulas,
+  convertDocxBytesToPdf,
+  evaluateDocumentFormula,
+  extractWebDavBrowserPreviewText,
+  fillDocxMarkers,
+  getWebDavBrowserIconKind,
+  getWebDavBrowserPreviewKind,
+  handleDocumentConversionSource,
+  readDocxZipEntries,
   route
 };

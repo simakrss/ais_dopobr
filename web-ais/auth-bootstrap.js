@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260801-field-paste";
+  const AUTH_BUILD = "20260809-agent-payment-history-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

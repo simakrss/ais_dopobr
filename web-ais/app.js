@@ -1,5 +1,362 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
+  const APPLICATION_RELEASE = Object.freeze({
+    version: "1.7.12",
+    releasedAt: "2026-08-09"
+  });
+  const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.12",
+      releasedAt: "2026-08-09",
+      changes: [
+        "Агентская выплата считается проведённой только при заполненной АгентДата1 или АгентДата2; исторические выплаты восстановлены из АИС Допобразование.xlsb.",
+        "Фильтр по статусу выплаты теперь соответствует фактически отображаемому статусу каждой строки.",
+        "В фильтре по основанию добавлен список значений из настроек с сохранением свободного текстового поиска."
+      ]
+    },
+    {
+      version: "1.7.11",
+      releasedAt: "2026-08-09",
+      changes: [
+        "Фильтры перечня выплат сотруднику перенесены непосредственно в заголовки соответствующих колонок.",
+        "Комментарий и основание теперь фильтруются независимо, а источник, статус выплаты и статус акта выбираются в своих колонках.",
+        "Счётчик найденных строк и сброс фильтров компактно размещены в колонке действий."
+      ]
+    },
+    {
+      version: "1.7.10",
+      releasedAt: "2026-08-09",
+      changes: [
+        "Область примечаний и перечня событий в карточках слушателя и сотрудника можно сворачивать и разворачивать без потери несохранённых данных.",
+        "Перечень выплат сотруднику растягивается по доступной высоте карточки и сохраняет отдельную вертикальную прокрутку с закреплённой строкой заголовков.",
+        "Добавлены фильтры выплат по тексту, источнику, статусу выплаты и статусу акта, счётчик найденных строк и быстрый сброс фильтров."
+      ]
+    },
+    {
+      version: "1.7.9",
+      releasedAt: "2026-08-09",
+      changes: [
+        "Для сотрудников автоматически рассчитываются агентские выплаты по каждому связанному слушателю: 10% для авторского курса и 25% для курса без автора; ставки вынесены в настройки.",
+        "Текущий остаток и две проведённые выплаты отображаются отдельными строками, входят в общую сумму выплат и учитываются при формировании акта без повторного начисления.",
+        "Синхронизация XLSB поддерживает колонки Агент, АгентСумма, АгентСумма1, АгентДата1, АгентСумма2 и АгентДата2, а также сохраняет настраиваемые ставки и формулу округления вверх до 50 ₽."
+      ]
+    },
+    {
+      version: "1.7.8",
+      releasedAt: "2026-08-08",
+      changes: [
+        "Ширину всех колонок в перечне выплат сотрудникам можно увеличивать за маркеры в заголовках таблицы.",
+        "Выбранные размеры сохраняются в настройках интерфейса и восстанавливаются после повторного открытия карточки.",
+        "Изменение ширины выполняется плавно по направляющей линии; двойной щелчок сбрасывает размер, стрелки изменяют его с клавиатуры."
+      ]
+    },
+    {
+      version: "1.7.7",
+      releasedAt: "2026-08-08",
+      changes: [
+        "Перенос строк в таблице выплат сотрудникам стал плавным: перестановка выполняется по кадрам с анимацией соседних строк.",
+        "Убраны многократные измерения всей таблицы и полная перерисовка карточки после переноса; новый порядок сохраняется в фоне.",
+        "Добавлена плавная автоматическая прокрутка таблицы при переносе строки к верхней или нижней границе."
+      ]
+    },
+    {
+      version: "1.7.6",
+      releasedAt: "2026-08-08",
+      changes: [
+        "В редакторе записи оплаты поле «Основание» теперь раскрывает тот же список из настроек, что и таблица оплат.",
+        "Сохранены фильтрация вариантов, выбор существующего основания и ввод нового значения с автоматическим добавлением в справочник."
+      ]
+    },
+    {
+      version: "1.7.5",
+      releasedAt: "2026-08-08",
+      changes: [
+        "Записи оплаты сотрудникам теперь полностью редактируются во всплывающем окне для прямых, общих, партнёрских и договорных выплат.",
+        "В редактор добавлены источник, дата, комментарий, основание, сумма, рекомендация, акт, статус акта, дата оплаты и вычисляемый статус выплаты.",
+        "Исправлено сохранение договорных и партнёрских сумм, включая корректное обнуление без появления фантомной выплаты."
+      ]
+    },
+    {
+      version: "1.7.4",
+      releasedAt: "2026-08-08",
+      changes: [
+        "Для кнопок добавления прямого и общего расхода добавлены поясняющие всплывающие подсказки."
+      ]
+    },
+    {
+      version: "1.7.3",
+      releasedAt: "2026-08-08",
+      changes: [
+        "В учёте выплат сотрудникам добавлено дублирование прямых и общих расходов с новой датой и очищенными отметками оплаты и акта.",
+        "Строки выплат можно переносить за специальный маркер мышью или клавишами ↑/↓; выбранный порядок сохраняется в общей базе.",
+        "Таблица выплат стала компактнее: уменьшены внутренние отступы и скрыты лишние внутренние границы ячеек и полей."
+      ]
+    },
+    {
+      version: "1.7.2",
+      releasedAt: "2026-08-08",
+      changes: [
+        "Восстановление подключения к общей MySQL-базе больше не блокируется постоянным продлением паузы повторной попытки.",
+        "Успешная проверка MySQL сразу выгружает накопленные автономные изменения и обновляет состояние подключения в интерфейсе.",
+        "Подключённая MySQL с ожидающими изменениями отображается как синхронизация, а не как автономный режим; очередь сохраняет локальные данные до полной выгрузки."
+      ]
+    },
+    {
+      version: "1.7.1",
+      releasedAt: "2026-08-08",
+      changes: [
+        "Админка разделена на вкладки «Подключение к базе», «Электронная почта», «Журнал действий» и «Пользователи и роли».",
+        "Список пользователей и форма редактирования учётной записи теперь отображаются непосредственно в админке без отдельного всплывающего окна."
+      ]
+    },
+    {
+      version: "1.7.0",
+      releasedAt: "2026-08-08",
+      changes: [
+        "В браузере файлов добавлены индикаторы загрузки и сообщения об ошибке для изображений и PDF.",
+        "Изображения и PDF в предпросмотре можно поворачивать в обе стороны с сохранением масштабирования и навигации.",
+        "Все подсказки появляются через одну секунду с плавной анимацией, а контекстные меню всегда отображаются поверх них.",
+        "Быстрые действия и навигация карточки сотрудника перенесены на отдельную строку под основными кнопками.",
+        "Последняя изменённая строка обозначается синим текстом без жёлтого фона.",
+        "На мобильных устройствах резервная выдача DOCX при недоступном PDF-конвертере сопровождается неблокирующим уведомлением."
+      ]
+    },
+    {
+      version: "1.6.1",
+      releasedAt: "2026-08-08",
+      changes: [
+        "Красным цветом выделяются только слушатели со статусом «Учится», у которых прошла дата окончания обучения."
+      ]
+    },
+    {
+      version: "1.6.0",
+      releasedAt: "2026-08-08",
+      changes: [
+        "Столбец «Основание» в учёте выплат сотрудникам переведён на единый редактируемый выпадающий список.",
+        "Новые основания, введённые пользователем, автоматически сохраняются в справочник «Основания выплат сотрудникам» и становятся доступны во всех строках.",
+        "Справочник оснований доступен в настройках и через стандартный пункт контекстного меню «Редактировать список»."
+      ]
+    },
+    {
+      version: "1.5.1",
+      releasedAt: "2026-08-08",
+      changes: [
+        "Строка быстрых действий с папкой документов, копированием данных и мессенджерами перенесена в верхнюю панель карточек слушателя и сотрудника.",
+        "В мобильном представлении строка быстрых действий сохранена непосредственно под заголовком карточки."
+      ]
+    },
+    {
+      version: "1.5.0",
+      releasedAt: "2026-08-08",
+      changes: [
+        "В браузере файлов слушателей и сотрудников добавлен предпросмотр изображений, PDF, DOCX, DOC, RTF, TXT, таблиц, презентаций и других текстовых форматов.",
+        "Предпросмотр поддерживает переход между файлами, разворачивание, масштабирование, а для изображений — увеличение колесом мыши и перемещение перетаскиванием.",
+        "Для файлов отображаются иконки по типу как в Проводнике, а навигация позволяет подняться из папки «Документы» в папку карточки слушателя или сотрудника."
+      ]
+    },
+    {
+      version: "1.4.0",
+      releasedAt: "2026-08-08",
+      changes: [
+        "При недоступном PDF-конвертере сформированный документ автоматически возвращается в формате DOCX и больше не теряется на мобильных устройствах.",
+        "Слушатели с истекшей датой окончания обучения выделяются в общем списке красным цветом.",
+        "В мобильной карточке строка действий с папкой документов перенесена наверх, а примечание и перечень событий открыты по умолчанию.",
+        "Пояснения к полям, отмеченным значком информации, открываются двойным касанием."
+      ]
+    },
+    {
+      version: "1.3.11",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Из раздела учёта выплат удалена служебная надпись о формулах реестра договоров и связанных строках затрат.",
+        "Кнопки управления выплатами и формирования акта закреплены в правом верхнем углу раздела."
+      ]
+    },
+    {
+      version: "1.3.10",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Из акта оказанных услуг исключена фотография сотрудника, включая ранее сохранённые настройки шаблона.",
+        "Формулы документов поддерживают умножение, деление и ОКРУГЛВНИЗ; сумма для зачисления теперь выводится рассчитанным значением вместо текста формулы."
+      ]
+    },
+    {
+      version: "1.3.9",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Источник затрат сотрудника выбирается стандартным списком из двух вариантов: «Прямые затраты» и «Общие затраты»; при смене источника связанная запись переносится в соответствующий раздел.",
+        "Комментарий к источнику вынесен в отдельную редактируемую колонку, а каждая прямая или общая затрата открывается в отдельном всплывающем редакторе поверх карточки сотрудника.",
+        "Кнопка добавления выплаты по акту переименована в «Добавить прямой расход», а кнопка формирования акта размещена с кнопками добавления в одной строке."
+      ]
+    },
+    {
+      version: "1.3.8",
+      releasedAt: "2026-08-06",
+      changes: [
+        "В учёте выплат сотрудникам источник каждой строки можно редактировать вручную; стандартные названия доступны как подсказки.",
+        "При открытии любых карточек и переходах между ними отображается индикатор загрузки актуальных данных и блокировки записи."
+      ]
+    },
+    {
+      version: "1.3.7",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Справочники настроек автоматически дополнены всеми сохранёнными значениями, которые доступны в связанных полях выбора.",
+        "При локальном режиме фото слушателей и сотрудников загружаются и читаются непосредственно с локального диска.",
+        "Автономная база ускорена за счёт кэша в памяти, компактной записи и паузы между повторными попытками подключения к недоступному MySQL.",
+        "В учёте выплат сотрудников открыто полное редактирование даты, основания, суммы, рекомендации, акта, статуса акта и даты оплаты для всех источников, включая агентские выплаты."
+      ]
+    },
+    {
+      version: "1.3.6",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Всплывающее редактирование связанных списков теперь загружает актуальные значения непосредственно из справочников настроек и использует тот же интерфейс: добавление, сортировку, копирование, очистку, удаление и ручное изменение порядка."
+      ]
+    },
+    {
+      version: "1.3.5",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Новая общая выплата сотруднику наследует сумму предыдущей общей выплаты этого сотрудника.",
+        "Таблица учёта выплат уплотнена: колонки источника, основания, суммы и рекомендации помещаются в рабочей области без лишней горизонтальной прокрутки.",
+        "Карточки слушателя и сотрудника можно свернуть, развернуть на весь экран и перемещать по экрану за заголовок."
+      ]
+    },
+    {
+      version: "1.3.4",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Редактирование связанного списка теперь открывается во всплывающем окне поверх карточки; после сохранения или закрытия пользователь возвращается в ту же карточку и вкладку."
+      ]
+    },
+    {
+      version: "1.3.3",
+      releasedAt: "2026-08-06",
+      changes: [
+        "В контекстное меню выпадающих полей, связанных со справочниками настроек, добавлен пункт «Редактировать список» с переходом к нужному справочнику."
+      ]
+    },
+    {
+      version: "1.3.2",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Во вкладке «Оплата» карточки сотрудника добавлено удаление записей выплат с подтверждением и фоновым сохранением изменений."
+      ]
+    },
+    {
+      version: "1.3.1",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Кнопка «Договор» перенесена в правый верхний угол вкладки «Договор» карточки сотрудника."
+      ]
+    },
+    {
+      version: "1.3.0",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Из карточки сотрудника убран дублирующий раздел «Финансовые показатели», а банковские реквизиты перенесены во вкладку «Договор».",
+        "Редактирование строк учёта выплат ускорено: пересчитывается только текущий сотрудник, интерфейс обновляется без полной перерисовки, сохранение выполняется в фоне.",
+        "Рекомендация к оплате для связанных прямых затрат проставляется автоматически и может быть изменена вручную.",
+        "Кнопка «Акт» переименована в «Акт на оплату» и перенесена в правый верхний угол вкладки «Оплата»."
+      ]
+    },
+    {
+      version: "1.2.3",
+      releasedAt: "2026-08-06",
+      changes: [
+        "В карточке сотрудника объединённая вкладка «Договор и оплата» разделена на самостоятельные вкладки «Договор» и «Оплата».",
+        "Финансовые показатели, банковские реквизиты и таблица учёта выплат перенесены на вкладку «Оплата»."
+      ]
+    },
+    {
+      version: "1.2.2",
+      releasedAt: "2026-08-06",
+      changes: [
+        "В админке кнопка «Экспорт в базу» размещена перед кнопкой «Синхронизировать с базой»."
+      ]
+    },
+    {
+      version: "1.2.1",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Всплывающие подсказки о перетаскивании элементов теперь появляются после задержки в 2 секунды."
+      ]
+    },
+    {
+      version: "1.2.0",
+      releasedAt: "2026-08-06",
+      changes: [
+        "Добавлен учёт выплат сотрудникам по формулам листа «Реестр договоров» книги АИС Допобразование.xlsb.",
+        "В карточке сотрудника появилась связанная таблица общих и прямых затрат с ручными датами оплаты, признаками и статусами актов.",
+        "После отправки сформированного акта по email связанные прямые затраты автоматически получают признак «+» и статус «Отправлен».",
+        "Сотрудники, договоры которых не переданы в бухгалтерию, выделяются в списке жёлтым цветом."
+      ]
+    },
+    {
+      version: "1.1.7",
+      releasedAt: "2026-08-05",
+      changes: [
+        "Для перетаскиваемых вкладок и пунктов меню обычным состоянием курсора стала стрелка.",
+        "При удержании Shift курсор меняется на руку, а во время переноса — на захваченную руку."
+      ]
+    },
+    {
+      version: "1.1.6",
+      releasedAt: "2026-08-05",
+      changes: [
+        "В админку добавлена история версий программы.",
+        "Список изменений открывается рядом с номером текущей версии."
+      ]
+    },
+    {
+      version: "1.1.5",
+      releasedAt: "2026-08-05",
+      changes: [
+        "Колонка «Контрагент» перенесена на первое место в таблице общих затрат.",
+        "Новый порядок применяется поверх ранее сохранённых настроек таблицы."
+      ]
+    },
+    {
+      version: "1.1.4",
+      releasedAt: "2026-08-05",
+      changes: [
+        "Список примечаний в прямых затратах приведён к общему стилю выпадающих списков.",
+        "Добавлены подсветка выбранного значения, фильтрация вариантов и управление с клавиатуры."
+      ]
+    },
+    {
+      version: "1.1.3",
+      releasedAt: "2026-08-05",
+      changes: [
+        "В фильтр по примечанию добавлен список уникальных значений из прямых затрат.",
+        "Сохранена возможность вводить произвольный фрагмент примечания."
+      ]
+    },
+    {
+      version: "1.1.2",
+      releasedAt: "2026-08-05",
+      changes: [
+        "Перетаскивание вкладок и пунктов меню выполняется только с нажатой клавишей Shift."
+      ]
+    },
+    {
+      version: "1.1.1",
+      releasedAt: "2026-08-05",
+      changes: [
+        "Примечание сделано главной колонкой прямых затрат.",
+        "UID слушателя перенесён в конец таблицы прямых затрат.",
+        "Добавлена фильтрация прямых затрат по примечанию."
+      ]
+    },
+    {
+      version: "1.1.0",
+      releasedAt: "2026-08-05",
+      changes: [
+        "В админке добавлены сведения о версии и дате релиза программы."
+      ]
+    }
+  ]);
   let authenticatedUser = window.AIS_AUTH_USER && typeof window.AIS_AUTH_USER === "object"
     ? { ...window.AIS_AUTH_USER }
     : null;
@@ -10,7 +367,53 @@
   });
   const MANAGER_RESTRICTED_VIEWS = new Set(["settings", "admin"]);
   const STORAGE_KEY = "ais-dopobr-web-state-v1";
+  const SHARED_STATE_PENDING_STORAGE_KEY = "ais-dopobr-shared-pending-v1";
+  const SHARED_STATE_META_STORAGE_KEY = "ais-dopobr-shared-meta-v1";
+  const BROWSER_OFFLINE_DB_NAME = "ais-dopobr-web-offline-v1";
+  const BROWSER_OFFLINE_STORE_NAME = "snapshots";
+  const BROWSER_OFFLINE_STATE_KEY = "application-state";
+  const BROWSER_OFFLINE_RECOVERY_KEY = "shared-state-recovery";
+  const BROWSER_OFFLINE_MODE_STORAGE_KEY = "ais-dopobr-web-offline-storage-v1";
+  const SHARED_STATE_SAVE_DELAY_MS = 700;
+  const EMPLOYEE_PAYMENT_PERSIST_DELAY_MS = 120;
+  const SHARED_STATE_POLL_INTERVAL_MS = 1000;
+  const RECORD_LOCK_POLL_INTERVAL_MS = 1000;
+  const RECORD_LOCK_HEARTBEAT_INTERVAL_MS = 10000;
+  const RECORD_LOCK_CLIENT_STORAGE_KEY = "ais-record-lock-client-v1";
   const TABLE_SETTINGS_KEY = "ais-dopobr-web-table-settings-v1";
+  const EMPLOYEE_PAYMENT_TABLE_CONFIG_ID = "employeePayments";
+  const EMPLOYEE_PAYMENT_FILTER_DEFAULTS = Object.freeze({
+    comment: "",
+    description: "",
+    source: "",
+    payment: "",
+    act: ""
+  });
+  const EMPLOYEE_PAYMENT_TABLE_COLUMNS = Object.freeze([
+    { key: "date", label: "Дата", className: "employee-payment-date-column", defaultWidth: 92 },
+    { key: "source", label: "Источник", className: "employee-payment-source-column", defaultWidth: 88 },
+    { key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 84 },
+    { key: "description", label: "Основание", className: "employee-payment-basis-column", defaultWidth: 88 },
+    { key: "amount", label: "Сумма", className: "employee-payment-amount-column", defaultWidth: 60 },
+    { key: "recommendation", label: "Рекомендация", className: "employee-payment-recommendation-column", defaultWidth: 56 },
+    { key: "act", label: "Акт", className: "employee-payment-act-column", defaultWidth: 32 },
+    { key: "actStatus", label: "Статус акта", className: "employee-payment-act-status-column", defaultWidth: 72 },
+    { key: "paid", label: "Оплачено", className: "employee-payment-paid-column", defaultWidth: 82 },
+    { key: "status", label: "Статус выплаты", className: "employee-payment-status-column", defaultWidth: 78 },
+    { key: "actions", label: "Действия", className: "employee-payment-actions-column", defaultWidth: 78 }
+  ]);
+  const DIRECT_EXPENSES_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-direct-expenses-table-layout-v1";
+  const DIRECT_EXPENSES_TABLE_LAYOUT_VERSION = "note-primary-uid-last";
+  const GENERAL_EXPENSES_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-general-expenses-table-layout-v1";
+  const GENERAL_EXPENSES_TABLE_LAYOUT_VERSION = "counterparty-first";
+  const SYSTEM_HELP_TOOLTIP_DELAY_MS = 1000;
+  const DRAG_TOOLTIP_DELAY_MS = SYSTEM_HELP_TOOLTIP_DELAY_MS;
+  const SHIFT_DRAG_EXEMPT_SELECTOR = [
+    "[data-finance-row-drag]",
+    "[data-employee-payment-row-drag]",
+    "[data-action='drag-program-training-plan-row']",
+    "[data-contract-field-drag-handle]"
+  ].join(", ");
   const STUDENT_CARD_TAB_ORDER_KEY = "ais-dopobr-student-card-tab-order-v1";
   const TAB_ORDER_SETTINGS_KEY = "ais-dopobr-tab-orders-v1";
   const NAV_ITEM_ORDER_KEY = "ais-dopobr-nav-item-order-v1";
@@ -23,6 +426,13 @@
   const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
   const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
   const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
+  let browserStateIndexedDbMode = false;
+  try {
+    browserStateIndexedDbMode = localStorage.getItem(BROWSER_OFFLINE_MODE_STORAGE_KEY) === "indexeddb";
+  } catch {
+    browserStateIndexedDbMode = true;
+  }
+  let browserOfflineWriteChain = Promise.resolve(true);
   const AUDIT_FILTER_DEFAULTS = Object.freeze({
     q: "",
     from: "",
@@ -233,6 +643,59 @@ www.edu-plus.ru
 
 {СсылкиСоцсети}{{конец}}`
   ];
+  const employeeCommunicationTemplateDefaults = [
+    `{Приветствие}
+
+Меня зовут Симак Роман Сергеевич, я представляю учебный центр Цифровизация Плюс.
+
+Приветствуем Вас в партнерской программе нашего учебного центра. Ваш персональный купон: {КупонКарточки}.`,
+    `{Приветствие}
+
+Далее отправляем Вам тексты базовых информационных сообщений о нашем учебном центре, которые можно распространять по своим каналам.
+
+Выплаты будут производиться по договору после получения результата. В тексты встроен код Вашего купона {КупонКарточки} со скидкой в 15%.`,
+    `Вот тексты базовых информационных сообщений о нашем учебном центре, которые можно распространять по своим каналам.
+
+Персональный купон на дополнительную скидку в 15%: {КупонКарточки}
+
+Учебный центр Цифровизация Плюс
+https://edu-plus.ru`,
+    `Учебный центр Цифровизация Плюс приглашает на программы повышения квалификации (от 36 часов).
+
+Персональный купон на дополнительную скидку в 15%: {КупонКарточки}
+
+Подробнее: https://edu-plus.ru`,
+    `Учебный центр Цифровизация Плюс приглашает на программы профессиональной переподготовки с присвоением квалификации.
+
+Персональный купон на дополнительную скидку в 15%: {КупонКарточки}
+
+Подробнее: https://edu-plus.ru`,
+    `{Приветствие}
+
+Отлично! Будем сотрудничать.
+
+Что касается авторских курсов, Вы можете присылать материалы на адрес mail@edu-plus.ru. После согласования программы и условий оформим договор и разместим курс на площадке учебного центра.`,
+    `Для оформления договора оказания услуг нужны следующие документы:
+1) Копия паспорта с пропиской
+2) Документ о профессиональном образовании
+3) ИНН
+4) СНИЛС
+5) Банковские реквизиты
+6) Выписка о трудовой деятельности`,
+    `Для оформления партнерского договора нужны следующие документы:
+1) Копия паспорта с пропиской
+2) ИНН
+3) СНИЛС
+4) Банковские реквизиты
+5) Адрес электронной почты
+6) Мобильный телефон с привязкой к WhatsApp или Telegram`,
+    `Для оформления договора со слушателем нужны следующие документы:
+1) Копия паспорта с пропиской
+2) СНИЛС (для граждан РФ)
+3) Скан документа об образовании с приложением
+4) Сведения о месте работы и занимаемой должности
+5) Почтовый адрес фактического места жительства с индексом`
+  ];
   const studentCommunicationTemplateFields = [
     "Приветствие", "ПереченьДокументов", "ОпцияБезДокумента", "ДокументПослеОбучения",
     "НапоминаниеОбОплате", "ДокументОбОбразовании", "ТрекКодБлок", "СсылкаРекомендации",
@@ -250,6 +713,16 @@ www.edu-plus.ru
     ...studentCommunicationTemplateFields,
     ...studentCommunicationTemplateCardFields
   ];
+  const employeeCommunicationTemplateCardFields = [
+    "ДолжностьКарточки", "ТелефонКарточки", "ТелеграмКарточки", "КупонКарточки",
+    "IDКупонаКарточки", "НомерДоговораКарточки", "ДатаДоговораКарточки",
+    "ВидДоговораКарточки", "ПредметДоговораКарточки", "УсловияОплатыКарточки",
+    "СообщениеДоступаКарточки"
+  ];
+  const communicationTemplateEditableFields = unique([
+    ...studentCommunicationTemplateEditableFields,
+    ...employeeCommunicationTemplateCardFields
+  ]);
   const studentCommunicationTemplateFieldFormulaDefaults = {
     Приветствие: "{{если:ЕстьИмяОтчество}}Здравствуйте, {ИмяОтчество}!{{иначе}}Здравствуйте!{{конец}}",
     ПереченьДокументов: `{{если:ДПО}}- скан паспорта с пропиской
@@ -312,7 +785,18 @@ MAX - https://bizvmax.ru/zifra_plus
     ЛогинКарточки: "{ЛогинКарточки}",
     ПарольКарточки: "{ПарольКарточки}",
     СрокОбученияПоКарточки: "{СрокОбученияПоКарточки}",
-    ТелеграмГруппаПрограммыКарточки: "{ТелеграмГруппаПрограммыКарточки}"
+    ТелеграмГруппаПрограммыКарточки: "{ТелеграмГруппаПрограммыКарточки}",
+    ДолжностьКарточки: "{ДолжностьКарточки}",
+    ТелефонКарточки: "{ТелефонКарточки}",
+    ТелеграмКарточки: "{ТелеграмКарточки}",
+    КупонКарточки: "{КупонКарточки}",
+    IDКупонаКарточки: "{IDКупонаКарточки}",
+    НомерДоговораКарточки: "{НомерДоговораКарточки}",
+    ДатаДоговораКарточки: "{ДатаДоговораКарточки}",
+    ВидДоговораКарточки: "{ВидДоговораКарточки}",
+    ПредметДоговораКарточки: "{ПредметДоговораКарточки}",
+    УсловияОплатыКарточки: "{УсловияОплатыКарточки}",
+    СообщениеДоступаКарточки: "{СообщениеДоступаКарточки}"
   };
   const communicationTemplateFieldAliasMap = {
     ФИО: "ФИОКарточки",
@@ -540,6 +1024,107 @@ MAX - https://bizvmax.ru/zifra_plus
   const documentTemplateInspectionVersion = "2026-07-29-email-v8";
   const wordTemplateExtensions = ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"];
   const wordTemplateAccept = wordTemplateExtensions.map((ext) => `.${ext}`).join(",");
+  const employeeContractDocumentTemplates = [
+    {
+      id: "employee-contract-education",
+      title: "Шаблон договора (обр. услуги).docx",
+      templateUrl: "[-1]/Договора/Шаблон договора (обр. услуги).docx",
+      templatePath: "Y:\\Договора\\Шаблон договора (обр. услуги).docx",
+      fallbackTemplatePath: "storage/document-templates/employee-contract-education.docx",
+      fileNameTemplate: "Договор_обр_услуги_#ФИО#_#Договор#",
+      useStartDateClause: true
+    },
+    {
+      id: "employee-contract-education-no-stamp",
+      title: "Шаблон договора (обр. услуги)_без печати.docx",
+      templateUrl: "[-1]/Договора/Шаблон договора (обр. услуги)_без печати.docx",
+      templatePath: "Y:\\Договора\\Шаблон договора (обр. услуги)_без печати.docx",
+      fallbackTemplatePath: "storage/document-templates/employee-contract-education-no-stamp.docx",
+      fileNameTemplate: "Договор_обр_услуги_без_печати_#ФИО#_#Договор#",
+      useStartDateClause: false
+    },
+    {
+      id: "employee-contract-general",
+      title: "Шаблон договора (общий).docx",
+      templateUrl: "[-1]/Договора/Шаблон договора (общий).docx",
+      templatePath: "Y:\\Договора\\Шаблон договора (общий).docx",
+      fallbackTemplatePath: "storage/document-templates/employee-contract-general.docx",
+      fileNameTemplate: "Договор_общий_#ФИО#_#Договор#",
+      useStartDateClause: true
+    },
+    {
+      id: "employee-contract-general-no-stamp",
+      title: "Шаблон договора (общий)_без печати.docx",
+      templateUrl: "[-1]/Договора/Шаблон договора (общий)_без печати.docx",
+      templatePath: "Y:\\Договора\\Шаблон договора (общий)_без печати.docx",
+      fallbackTemplatePath: "storage/document-templates/employee-contract-general-no-stamp.docx",
+      fileNameTemplate: "Договор_общий_без_печати_#ФИО#_#Договор#",
+      useStartDateClause: false
+    }
+  ].map((documentTemplate, index) => ({
+    ...documentTemplate,
+    documentKind: "employeeContract",
+    generationFormat: "docx",
+    useCustomDocumentProperties: "",
+    defaultTemplate: index === 0
+  }));
+  const employeeActDocumentTemplateDefinition = {
+    id: "employee-services-act",
+    title: "Акт оказанных услуг",
+    templateUrl: "[-1]/Договора/Акт оказанных услуг.docx",
+    templatePath: "Y:\\Договора\\Акт оказанных услуг.docx",
+    fileName: "Акт оказанных услуг.docx",
+    fileNameTemplate: "Акт_#ФИО#_#ТекДата_Сохр#",
+    saveFolderTemplate: "Сотрудники/#ФИО#/Документы",
+    generationFormat: "pdf",
+    useCustomDocumentProperties: "0",
+    documentKind: "employeeAct",
+    emailDeliveryMode: "off"
+  };
+  const employeeContractDocumentFieldDefinitions = [
+    ["Банк", "=[Банк]"],
+    ["БИК", "=[БИК]"],
+    ["Дата договора", "=[Дата договора]"],
+    ["ДокумВид", "=[ДокумВид]"],
+    ["ДокумДатаВыдачи", "=[ДокумДатаВыдачи]"],
+    ["ДокумКемВыдан", "=[ДокумКемВыдан]"],
+    ["ДокумСерияНомер", "=[ДокумСерияНомер]"],
+    ["ИНН", "=[ИННф]"],
+    ["КорСчет", "=[КорСчет]"],
+    ["Предмет", "=[Предмет]"],
+    ["РасчСч", "=[РасчСч]"],
+    ["СНИЛС", "=[СНИЛСф]"],
+    ["Сумма", "=[Сумма]"],
+    ["ФИО", "=[ФИО]"],
+    ["ФИО_сокр", "=СКЛОНЕНИЕ_ФИО([ФИО]; \"И\"; \"ФИ.О.\")"],
+    ["Срок с", ""],
+    ["Срок по", "=[Срок по]"],
+    ["ДокумВидНР", "=СТРОЧН([ДокумВид])"],
+    ["Адрес", "=[Адрес]"],
+    ["Договор", "=[Договор]"],
+    ["ДатаРождения", "=[ДатаРождения]"],
+    ["ИО", "=СКЛОНЕНИЕ_ФИО([ФИО]; \"И\"; \"И О\")"],
+    ["Фото", "=[Фото]"],
+    ["Email", "=[Email]"]
+  ];
+  const employeeActDocumentFieldDefinitions = [
+    ["ДатаДоговора", "=[Дата договора]"],
+    ["ФИО", "=[ФИО]"],
+    ["Предмет", "=[Предмет]"],
+    ["Сумма", "=[Сумма]"],
+    ["Сумма прописью", "=ЧИСЛО_В_ПРОПИСЬ([Сумма])"],
+    ["ФИО сокр", "=СКЛОНЕНИЕ_ФИО([ФИО]; \"И\"; \"ФИ.О.\")"],
+    ["ТекДата", "=ТЕКСТ(ТДАТА();\"ДД.ММ.ГГГГ\")"],
+    ["Договор", "=[Договор]"],
+    ["Переменные выплаты", "=[Переменные выплаты]"],
+    ["Итого по переменным выплатам", "=[Итого по переменным выплатам]"],
+    ["Email", "=[Email]"],
+    ["ИО", "=СКЛОНЕНИЕ_ФИО([ФИО]; \"И\"; \"И О\")"],
+    ["ТекДата_Сохр", "=ТЕКСТ(ТДАТА();\"ГГГГ.ММ.ДД\")"],
+    ["СуммаЗач", "=[СуммаЗач]"],
+    ["Партнерская программа", "=[Партнерская программа]"],
+    ["Итого по партнерской программе", "=[Итого по партнерской программе]"]
+  ];
   const studentCardDocumentBindingOptions = [
     { value: "", label: "Без привязки" },
     { value: "contract", label: "Карточка слушателя. Договор" },
@@ -548,7 +1133,9 @@ MAX - https://bizvmax.ru/zifra_plus
     { value: "postalEnvelope", label: "Карточка слушателя. Почтовый конверт" },
     { value: "studyCertificate", label: "Карточка слушателя. Справка об обучении" },
     { value: "enrollmentOrder", label: "Карточка слушателя. Приказ на зачисление" },
-    { value: "expulsionOrder", label: "Карточка слушателя. Приказ об отчислении" }
+    { value: "expulsionOrder", label: "Карточка слушателя. Приказ об отчислении" },
+    { value: "employeeContract", label: "Карточка сотрудника. Договор" },
+    { value: "employeeAct", label: "Карточка сотрудника. Акт" }
   ];
 
   function createDefaultDocumentTemplate() {
@@ -798,10 +1385,57 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function createEmployeeContractDocumentTemplate(definition) {
+    const fields = getEmployeeContractDocumentFields(definition);
+    return {
+      id: definition.id,
+      title: definition.title,
+      templateUrl: definition.templateUrl,
+      templatePath: definition.templatePath,
+      fallbackTemplatePath: definition.fallbackTemplatePath,
+      fileNameTemplate: definition.fileNameTemplate,
+      saveFolderTemplate: "Сотрудники/#ФИО#/Документы",
+      generationFormat: "docx",
+      useCustomDocumentProperties: "0",
+      fields,
+      originalFields: fields.map((field) => ({ ...field })),
+      source: "link",
+      documentKind: "employeeContract",
+      programTypes: [],
+      createdAt: "2026-08-05T00:00:00.000Z",
+      lastInspectedSignature: "",
+      updatedAt: ""
+    };
+  }
+
+  function createEmployeeActDocumentTemplate() {
+    const definition = employeeActDocumentTemplateDefinition;
+    const fields = employeeActDocumentFieldDefinitions.map(([name, formula], index) => ({
+      id: `employee-act-field-${index + 1}`,
+      position: index + 1,
+      name,
+      formula,
+      hideEmpty: false
+    }));
+    return {
+      ...definition,
+      fields,
+      originalFields: fields.map((field) => ({ ...field })),
+      fieldsMode: "document-markers",
+      source: "link",
+      programTypes: [],
+      createdAt: "2026-08-05T00:00:00.000Z",
+      lastInspectedSignature: "",
+      updatedAt: ""
+    };
+  }
+
   function getDefaultDocumentTemplates() {
     return [
       createDefaultDocumentTemplate(),
       createLegalEntityApplicationDocumentTemplate(),
+      ...employeeContractDocumentTemplates.map(createEmployeeContractDocumentTemplate),
+      createEmployeeActDocumentTemplate(),
       ...educationDocumentTemplateDefinitions.map(createEducationDocumentTemplate),
       createEducationDocumentTemplate(studyCertificateDocumentTemplateDefinition, educationDocumentTemplateDefinitions.length),
       createEducationDocumentTemplate(postalEnvelopeDocumentTemplateDefinition, educationDocumentTemplateDefinitions.length + 1),
@@ -905,6 +1539,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const documentKind = String(documentTemplate?.documentKind || "").trim();
     if (documentKind === "contract") return "Договор на обучение: #ФИО_обуч#";
     if (documentKind === "education") return "Документ об образовании: #ФИО#";
+    if (documentKind === "employeeContract") return "Договор: #ФИО#";
+    if (documentKind === "employeeAct") return "Акт от ООО Цифровизация Плюс";
     return "";
   }
 
@@ -915,6 +1551,12 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (documentKind === "education") {
       return "Направляем документ об образовании.\n\nС уважением,\nООО «Цифровизация Плюс»";
+    }
+    if (documentKind === "employeeContract") {
+      return "#ИО#, здравствуйте!\n\nНаправляем Вам договор. Проверьте его, пожалуйста, подпишите и отправьте в ответном письме.\n\nС уважением,\nООО «Цифровизация Плюс»";
+    }
+    if (documentKind === "employeeAct") {
+      return "#ИО#, здравствуйте!\n\nОтправляем Вам на подпись акт об оказанных услугах на дату #ТекДата#.\n\nПроверьте его, пожалуйста. Если всё в порядке, подпишите и отправьте в ответном письме.\n\nС уважением,\nООО «Цифровизация Плюс»";
     }
     return "";
   }
@@ -997,6 +1639,20 @@ MAX - https://bizvmax.ru/zifra_plus
       label: "Назначение агентов в зависимости от источника заявки",
       type: "textarea",
       value: "Вконтакте=Симак Варвара Романовна"
+    },
+    {
+      key: "agentRateWithoutAuthor",
+      label: "Курс без автора",
+      type: "percent",
+      unit: "%",
+      value: "25"
+    },
+    {
+      key: "agentRateWithAuthor",
+      label: "Авторский курс",
+      type: "percent",
+      unit: "%",
+      value: "10"
     }
   ];
   const documentPathSettingDefaults = [
@@ -1081,6 +1737,7 @@ MAX - https://bizvmax.ru/zifra_plus
     ],
     ovzStatuses: ["ОВЗ", "ОВЗ Инвалиды", "Инвалиды"],
     expenseNotes: [],
+    employeePaymentBases: ["Оплата сотруднику", "Агентские"],
     discountRules: []
   };
   const discountGroups = [
@@ -1123,7 +1780,7 @@ MAX - https://bizvmax.ru/zifra_plus
   const navItems = [
     { id: "dashboard", label: "Рабочий стол", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M7 16l4-4 3 3 5-7"></path><path d="M16 8h3v3"></path></svg>' },
     { id: "students", label: "Слушатели", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg>' },
-    { id: "contracts", label: "Договоры", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3h7l5 5v13H7z"></path><path d="M14 3v5h5"></path><path d="M10 12h6"></path><path d="M10 16h6"></path></svg>' },
+    { id: "contracts", label: "Сотрудники", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3h7l5 5v13H7z"></path><path d="M14 3v5h5"></path><path d="M10 12h6"></path><path d="M10 16h6"></path></svg>' },
     { id: "programs", label: "Программы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 9l9-5 9 5-9 5z"></path><path d="M7 11v5c3 2 7 2 10 0v-5"></path><path d="M21 9v6"></path></svg>' },
     { id: "directExpenses", label: "Прямые затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3h10v18l-2-1.2-2 1.2-2-1.2-2 1.2-2-1.2z"></path><path d="M10 8h5"></path><path d="M10 12h5"></path><circle cx="8" cy="8" r="0.7"></circle><circle cx="8" cy="12" r="0.7"></circle><path d="M13 16h4"></path><path d="M15 14v4"></path></svg>' },
     { id: "generalExpenses", label: "Общие затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8c0-2 3.6-3.5 8-3.5S20 6 20 8s-3.6 3.5-8 3.5S4 10 4 8z"></path><path d="M4 8v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V8"></path><path d="M4 12v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5v-4"></path></svg>' },
@@ -1249,7 +1906,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("inn", "ИНН"),
         field("login", "Логин СДО"),
         field("password", "Пароль СДО"),
-        field("portalCredentials", "Сообщение о доступе к порталу обучения", "textarea", false, null, { wide: true, rows: 7 }),
+        field("portalCredentials", "Сообщение о доступе к порталу обучения", "textarea", false, null, { wide: true, rows: 7, readOnly: true }),
         field("note", "Примечание", "textarea", false, null, { wide: true, rows: 4 }),
         ...Array.from({ length: 9 }, (_, index) => (
           field(`message${index + 1}`, `Сообщение ${index + 1}`, "textarea", false, null, { wide: true, rows: 4 })
@@ -1359,7 +2016,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("recommendation", "Рекомендация"),
         field("additionalInfo", "Дополнительная информация")
       ],
-      table: ["uid", "date", "type", "amount", "note", "actStatus", "recommendation"]
+      table: ["note", "date", "type", "amount", "actStatus", "recommendation", "uid"]
     },
     generalExpenses: {
       title: "Общие затраты",
@@ -1378,7 +2035,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("bkExpenseNo", "Номер в расходах БК"),
         field("otherExpenses", "Прочие затраты")
       ],
-      table: ["section", "counterparty", "date", "workType", "amount", "paid", "accountingClosed"]
+      table: ["counterparty", "section", "date", "workType", "amount", "paid", "accountingClosed"]
     },
     inventory: {
       title: "Запасы",
@@ -1448,6 +2105,17 @@ MAX - https://bizvmax.ru/zifra_plus
       showInCommunications: false,
       importValue: false
     }
+  ];
+  const employeeCommunicationMessages = [
+    { key: "message1", source: "Примечание1", label: "Приветствие партнера" },
+    { key: "message2", source: "Примечание2", label: "Базовые сообщения" },
+    { key: "message3", source: "Примечание3", label: "Купон партнера" },
+    { key: "message4", source: "Примечание4", label: "Повышение квалификации" },
+    { key: "message5", source: "Примечание5", label: "Профессиональная переподготовка" },
+    { key: "message6", source: "Примечание6", label: "Авторские курсы" },
+    { key: "message7", source: "Примечание7", label: "Документы для договора услуг" },
+    { key: "message8", source: "Примечание8", label: "Документы для партнерского договора" },
+    { key: "message9", source: "Примечание9", label: "Документы для договора со слушателем" }
   ];
   const studentCommunicationContactFields = [
     field("phone", "Телефон обучающегося"),
@@ -1780,6 +2448,15 @@ MAX - https://bizvmax.ru/zifra_plus
     { key: "certificateSent", label: "Отправлена справка об обучении" }
   ];
 
+  const contractEventTemplates = [
+    { key: "portalAccessSent", label: "Отправлены данные для доступа к порталу" },
+    { key: "partnerMessagesSent", label: "Отправлены партнерские сообщения" },
+    { key: "contractPrepared", label: "Сформирован договор" },
+    { key: "contractSigned", label: "Подписан договор" },
+    { key: "employmentCertificate", label: "Справка о трудовой деятельности" },
+    { key: "criminalRecordCertificate", label: "Справка об отсутствии судимости" }
+  ];
+
   const studentCardDefaultTabIds = ["main", "documents", "income", "communications", "ordersSdo", "results"];
   const visibleStudentCardTabs = studentCardDefaultTabIds
     .map((id) => studentCardTabs.find((tab) => tab.id === id))
@@ -1796,6 +2473,17 @@ MAX - https://bizvmax.ru/zifra_plus
     field(`event_${event.key}_date`, `${event.label}: дата`, "date"),
     field(`event_${event.key}_label`, `${event.label}: название`)
   ]);
+  const contractEventFields = [
+    field("eventOrder", "Порядок событий"),
+    field("eventDeleted", "Удаленные события"),
+    field("eventCustomKeys", "Пользовательские события"),
+    ...contractEventTemplates.flatMap((event) => [
+      field(`event_${event.key}_state`, event.label),
+      field(`event_${event.key}_date`, `${event.label}: дата`, "date"),
+      field(`event_${event.key}_label`, `${event.label}: название`)
+    ])
+  ];
+  configs.contracts.fields.push(...contractEventFields);
   const paymentFields = Array.from({ length: 8 }, (_, index) => [
     field(`payment${index + 1}Date`, `Дата ${index + 1}`, "date"),
     field(`payment${index + 1}Amount`, `Оплата ${index + 1}`, "number"),
@@ -1821,19 +2509,22 @@ MAX - https://bizvmax.ru/zifra_plus
     ...expenseFields
   ];
 
-  const shouldBootstrapHostedDatabase = (
-    !localStorage.getItem(STORAGE_KEY)
+  let hadLocalStateAtStartup = Boolean(localStorage.getItem(STORAGE_KEY));
+  let hostedDatabaseBootstrapCandidate = (
+    !hadLocalStateAtStartup
     && window.location.hostname.toLowerCase() === "edu-plus.ru"
     && /^\/lms(?:\/|$)/i.test(window.location.pathname)
   );
+  let shouldBootstrapHostedDatabase = false;
   const initialView = loadStartView();
   let state = {
     view: initialView,
     search: "",
     statusFilter: getDefaultStatusFilter(initialView),
+    directExpenseNoteFilter: "",
     studentProgramTypeFilter: [],
     programRegistryTypeFilter: [],
-    contractSectionFilter: [],
+    contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
     studentImportedViewIds: [],
     sort: { key: "", dir: "asc" },
     navItemOrder: loadNavItemOrder(),
@@ -1841,6 +2532,17 @@ MAX - https://bizvmax.ru/zifra_plus
     studentCardTab: "main",
     programCardTab: "main",
     contractCardTab: "main",
+    cardSidePanelCollapsed: {
+      student: false,
+      contract: false
+    },
+    employeePaymentFilters: { ...EMPLOYEE_PAYMENT_FILTER_DEFAULTS },
+    cardWindow: {
+      minimized: false,
+      fullscreen: false,
+      offsetX: 0,
+      offsetY: 0
+    },
     tabOrders: loadTabOrders(),
     discountPickerOpen: false,
     discountPicker: null,
@@ -1862,7 +2564,8 @@ MAX - https://bizvmax.ru/zifra_plus
       status: "",
       progress: 0,
       tone: "active",
-      indeterminate: false
+      indeterminate: false,
+      operation: "sync"
     },
     studentApplicationsImport: {
       open: false,
@@ -1893,6 +2596,7 @@ MAX - https://bizvmax.ru/zifra_plus
     dictionaryAddFocus: "",
     paymentSettingsTab: "rates",
     communicationTemplateFieldSort: "asc",
+    communicationTemplateAudience: "students",
     documentTemplateSearch: "",
     documentTemplateSort: { key: "title", dir: "asc" },
     documentTemplateLinkDialog: false,
@@ -1912,8 +2616,11 @@ MAX - https://bizvmax.ru/zifra_plus
     },
     profileOpen: false,
     userManagementOpen: false,
+    releaseHistoryOpen: false,
+    adminTab: "database",
     authUsers: [],
     authUsersLoading: false,
+    authUsersLoaded: false,
     authUsersError: "",
     authUserEditorId: "",
     adminSettingsDirty: false,
@@ -1934,6 +2641,9 @@ MAX - https://bizvmax.ru/zifra_plus
     },
     studentAuditLog: {
       open: false,
+      entityType: "students",
+      entityId: "",
+      entityName: "",
       studentId: "",
       studentName: "",
       items: [],
@@ -1947,14 +2657,23 @@ MAX - https://bizvmax.ru/zifra_plus
       loaded: false,
       error: ""
     },
+    employeeExpenseEditor: null,
     modal: null,
     data: loadState()
   };
   let sidebarOutsideClickBound = false;
   let programTypeFilterOutsideClickBound = false;
+  let directExpenseNoteFilterOutsideClickBound = false;
   let systemHelpTooltipBound = false;
+  let systemHelpTooltipShowTimer = 0;
+  let pendingSystemHelpTooltipTarget = null;
+  let lastSystemHelpTouchTarget = null;
+  let lastSystemHelpTouchAt = 0;
+  let systemHelpTouchHideTimer = 0;
+  let employeePaymentPersistTimer = 0;
   let fieldUndoKeyBound = false;
   let globalEscapeKeyBound = false;
+  let shiftDragRequirementBound = false;
   let adminBeforeUnloadBound = false;
   let lastDeletedControlState = null;
   let lastKnownClipboardText = "";
@@ -1965,6 +2684,43 @@ MAX - https://bizvmax.ru/zifra_plus
   let lastNavItemDragEndedAt = 0;
   let lastDashboardStatusDragEndedAt = 0;
   let documentTemplateAutoInspectionStarted = false;
+  const sharedStateRecovery = (() => {
+    try {
+      const pendingPatch = JSON.parse(localStorage.getItem(SHARED_STATE_PENDING_STORAGE_KEY) || "null");
+      const meta = JSON.parse(localStorage.getItem(SHARED_STATE_META_STORAGE_KEY) || "{}");
+      return {
+        pendingPatch: pendingPatch && typeof pendingPatch === "object" ? pendingPatch : null,
+        meta: meta && typeof meta === "object" ? meta : {}
+      };
+    } catch {
+      return { pendingPatch: null, meta: {} };
+    }
+  })();
+  let sharedStateReady = false;
+  let sharedStateOffline = false;
+  let sharedStateRevision = Math.max(0, Number(sharedStateRecovery.meta.revision) || 0);
+  let sharedStateVersionTag = String(sharedStateRecovery.meta.versionTag || "");
+  let sharedStateUpdatedAt = String(sharedStateRecovery.meta.updatedAt || "");
+  let sharedStateUpdatedBy = String(sharedStateRecovery.meta.updatedBy || "");
+  let sharedStateSource = String(sharedStateRecovery.meta.source || "local-browser");
+  let sharedStatePendingCount = Math.max(0, Number(sharedStateRecovery.meta.pendingCount) || 0);
+  let sharedStateSyncBlockedReason = String(sharedStateRecovery.meta.syncBlockedReason || "");
+  let sharedStateDirty = false;
+  let sharedStateConflict = false;
+  let sharedStateConflictShown = false;
+  let sharedStateSaveTimer = 0;
+  let sharedStateSaveRunning = false;
+  let sharedStateSavePromise = null;
+  let sharedStateChangeGeneration = 0;
+  let sharedStatePersistedGeneration = 0;
+  let sharedStatePollRunning = false;
+  let sharedStateBaseData = null;
+  let sharedStatePendingPatch = sharedStateRecovery.pendingPatch;
+  let recordLocks = new Map();
+  let recordLocksPollRunning = false;
+  let activeRecordLock = null;
+  let recordLockHeartbeatTimer = 0;
+  const recordLockClientId = getRecordLockClientId();
   const communicationTemplateEditorHistories = new WeakMap();
 
   const transliterationPairs = [
@@ -1982,6 +2738,82 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function field(key, label, type = "text", required = false, dict = null, options = null) {
     return { key, label, type, required, dict, options };
+  }
+
+  function synchronizeSettingsDictionariesWithSelectableValues(data) {
+    const dictionaries = data.dictionaries || (data.dictionaries = {});
+    const collections = data.collections || {};
+    const additions = new Map();
+    const add = (dictionary, values) => {
+      const key = String(dictionary || "").trim();
+      if (!key) return;
+      const target = additions.get(key) || [];
+      (Array.isArray(values) ? values : [values]).forEach((value) => {
+        const normalized = String(value ?? "").trim();
+        if (normalized) target.push(normalized);
+      });
+      additions.set(key, target);
+    };
+    const collectFields = (collectionName, fields = []) => {
+      fields.forEach((item) => {
+        if (!item?.dict) return;
+        if (Array.isArray(item.options)) add(item.dict, item.options);
+        add(item.dict, (collections[collectionName] || []).map((record) => record?.[item.key]));
+      });
+    };
+
+    Object.values(configs).forEach((config) => collectFields(config.collection, config.fields));
+    studentCardTabs.forEach((tab) => (
+      (tab.sections || []).forEach((section) => collectFields("students", section.fields))
+    ));
+    Object.values(searchableStudentFields).forEach((lookup) => {
+      (lookup.fields || []).forEach(([collectionName, fieldKey]) => {
+        add(lookup.dict, (collections[collectionName] || []).map((record) => record?.[fieldKey]));
+      });
+    });
+    add("passportIssuers", (collections.students || []).flatMap((student) => [
+      student?.passportIssuer,
+      student?.customerPassportIssuer
+    ]));
+    add("educationDocumentIssuers", (collections.students || []).map((student) => student?.educationDocumentIssuer));
+
+    const directExpenses = [
+      ...(collections.directExpenses || []),
+      ...(collections.students || []).flatMap((student) => (
+        Array.isArray(student?.directExpenses) ? student.directExpenses : []
+      ))
+    ];
+    add("expenseTypes", [
+      ...(dictionaries.inventoryTypes || []),
+      ...directExpenses.map((expense) => expense?.type),
+      ...(collections.generalExpenses || []).map((expense) => expense?.workType),
+      ...(collections.inventory || []).flatMap((item) => [item?.itemType, item?.note]),
+      ...(collections.students || []).flatMap((student) => (
+        Array.from({ length: 6 }, (_, index) => student?.[`expense${index + 1}Type`])
+      ))
+    ]);
+    add("expenseNotes", [
+      ...directExpenses.map((expense) => expense?.note),
+      ...(collections.generalExpenses || []).flatMap((expense) => [expense?.description, expense?.otherExpenses]),
+      ...(collections.students || []).flatMap((student) => (
+        Array.from({ length: 6 }, (_, index) => student?.[`expense${index + 1}Note`])
+      ))
+    ]);
+    add("employeePaymentBases", [
+      "Оплата сотруднику",
+      "Агентские",
+      ...directExpenses.map((expense) => expense?.type),
+      ...(collections.generalExpenses || []).map((expense) => expense?.workType),
+      ...(collections.students || []).map((student) => student?.agentPaymentBasis),
+      ...(collections.contracts || []).map((contract) => contract?.agencyPaymentBasis)
+    ]);
+
+    additions.forEach((values, dictionary) => {
+      const current = Array.isArray(dictionaries[dictionary])
+        ? dictionaries[dictionary].filter((value) => typeof value !== "object")
+        : [];
+      dictionaries[dictionary] = unique([...current, ...values]);
+    });
   }
 
   function transliterateStudentName(value) {
@@ -2017,6 +2849,122 @@ MAX - https://bizvmax.ru/zifra_plus
     return JSON.parse(JSON.stringify(value));
   }
 
+  function openBrowserOfflineDatabase() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) {
+        resolve(null);
+        return;
+      }
+      const request = window.indexedDB.open(BROWSER_OFFLINE_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(BROWSER_OFFLINE_STORE_NAME)) {
+          database.createObjectStore(BROWSER_OFFLINE_STORE_NAME);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("Не удалось открыть автономное хранилище браузера."));
+      request.onblocked = () => reject(new Error("Автономное хранилище браузера временно заблокировано другой вкладкой."));
+    });
+  }
+
+  async function readBrowserOfflineValue(key) {
+    const database = await openBrowserOfflineDatabase();
+    if (!database) return null;
+    try {
+      return await new Promise((resolve, reject) => {
+        const transaction = database.transaction(BROWSER_OFFLINE_STORE_NAME, "readonly");
+        const request = transaction.objectStore(BROWSER_OFFLINE_STORE_NAME).get(key);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error || new Error("Не удалось прочитать автономную копию."));
+        transaction.onabort = () => reject(transaction.error || new Error("Чтение автономной копии прервано."));
+      });
+    } finally {
+      database.close();
+    }
+  }
+
+  async function writeBrowserOfflineValue(key, value) {
+    const database = await openBrowserOfflineDatabase();
+    if (!database) return false;
+    try {
+      await new Promise((resolve, reject) => {
+        const transaction = database.transaction(BROWSER_OFFLINE_STORE_NAME, "readwrite");
+        transaction.objectStore(BROWSER_OFFLINE_STORE_NAME).put(value, key);
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error || new Error("Не удалось сохранить автономную копию."));
+        transaction.onabort = () => reject(transaction.error || new Error("Сохранение автономной копии прервано."));
+      });
+      return true;
+    } finally {
+      database.close();
+    }
+  }
+
+  function queueBrowserOfflineWrite(key, value) {
+    const snapshot = clone(value);
+    const operation = browserOfflineWriteChain
+      .catch(() => false)
+      .then(() => writeBrowserOfflineValue(key, snapshot));
+    browserOfflineWriteChain = operation.catch((error) => {
+      console.warn("Не удалось сохранить данные в расширенное автономное хранилище", error);
+      return false;
+    });
+    return operation;
+  }
+
+  function persistStateToIndexedDb(data) {
+    return queueBrowserOfflineWrite(BROWSER_OFFLINE_STATE_KEY, {
+      savedAt: new Date().toISOString(),
+      data
+    });
+  }
+
+  function activateBrowserIndexedDbMode() {
+    browserStateIndexedDbMode = true;
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.setItem(BROWSER_OFFLINE_MODE_STORAGE_KEY, "indexeddb");
+    } catch (error) {
+      console.warn("Не удалось очистить устаревшую локальную копию общей базы", error);
+    }
+  }
+
+  async function initializeBrowserOfflineStorage() {
+    try {
+      const shouldMigrateLocalState = hadLocalStateAtStartup && !browserStateIndexedDbMode;
+      const [stateSnapshot, recoverySnapshot] = await Promise.all([
+        readBrowserOfflineValue(BROWSER_OFFLINE_STATE_KEY),
+        readBrowserOfflineValue(BROWSER_OFFLINE_RECOVERY_KEY)
+      ]);
+      const indexedState = stateSnapshot?.data;
+      if ((browserStateIndexedDbMode || !hadLocalStateAtStartup) && indexedState?.collections) {
+        state.data = ensureDataShape(indexedState);
+        hadLocalStateAtStartup = true;
+        hostedDatabaseBootstrapCandidate = false;
+      }
+      if (!sharedStatePendingPatch && recoverySnapshot?.pendingPatch) {
+        sharedStatePendingPatch = recoverySnapshot.pendingPatch;
+        const meta = recoverySnapshot.meta || {};
+        sharedStateRevision = Math.max(sharedStateRevision, Number(meta.revision) || 0);
+        sharedStateVersionTag = String(meta.versionTag || sharedStateVersionTag || "");
+        sharedStateUpdatedAt = String(meta.updatedAt || sharedStateUpdatedAt || "");
+        sharedStateUpdatedBy = String(meta.updatedBy || sharedStateUpdatedBy || "");
+        sharedStateSource = String(meta.source || sharedStateSource || "indexeddb");
+        sharedStatePendingCount = Math.max(1, Number(meta.pendingCount) || 0);
+        sharedStateSyncBlockedReason = String(meta.syncBlockedReason || sharedStateSyncBlockedReason || "");
+      }
+      if (shouldMigrateLocalState) {
+        const stored = await persistStateToIndexedDb(state.data);
+        if (stored) activateBrowserIndexedDbMode();
+      } else if (!browserStateIndexedDbMode && indexedState?.collections) {
+        activateBrowserIndexedDbMode();
+      }
+    } catch (error) {
+      console.warn("Не удалось подготовить расширенное автономное хранилище", error);
+    }
+  }
+
   function loadState() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -2024,7 +2972,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const parsed = JSON.parse(saved);
         if (parsed && parsed.collections) {
           const normalized = ensureDataShape(parsed);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+          persistStateToLocalStorage(normalized);
           return normalized;
         }
       } catch (error) {
@@ -2097,6 +3045,12 @@ MAX - https://bizvmax.ru/zifra_plus
     data.dictionaries.communicationTemplates = normalizeCommunicationTemplates(data.dictionaries.communicationTemplates);
     data.dictionaries.communicationTemplateDescriptions = normalizeCommunicationTemplateDescriptions(
       data.dictionaries.communicationTemplateDescriptions
+    );
+    data.dictionaries.employeeCommunicationTemplates = normalizeEmployeeCommunicationTemplates(
+      data.dictionaries.employeeCommunicationTemplates
+    );
+    data.dictionaries.employeeCommunicationTemplateDescriptions = normalizeEmployeeCommunicationTemplateDescriptions(
+      data.dictionaries.employeeCommunicationTemplateDescriptions
     );
     data.dictionaries.communicationTemplateFieldOverrides = normalizeCommunicationTemplateFieldOverrides(
       data.dictionaries.communicationTemplateFieldOverrides
@@ -2189,6 +3143,11 @@ MAX - https://bizvmax.ru/zifra_plus
       data.collections.directExpenses || []
     );
     data.collections.directExpenses = directExpensePartition.unlinkedDirectExpenses;
+    refreshContractPaymentAccountingForCollections(
+      data.collections,
+      data.dictionaries.paymentSettings
+    );
+    synchronizeSettingsDictionariesWithSelectableValues(data);
     data.collections.students.forEach((student) => {
       student.expenseTotal = Math.round(sumStudentExpenses(student) * 100) / 100;
     });
@@ -2366,6 +3325,24 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!Number.isFinite(number)) return fallback;
     const percent = Math.abs(number) <= 1 ? number * 100 : number;
     return Math.round(percent * 100) / 100;
+  }
+
+  function normalizeAgentCommissionRate(value, fallback) {
+    const number = Number(String(value ?? fallback).replace(",", "."));
+    if (!Number.isFinite(number)) return Number(fallback) || 0;
+    return Math.round(Math.max(0, Math.min(100, number)) * 100) / 100;
+  }
+
+  function getAgentCommissionRates(settings = state.data?.dictionaries?.paymentSettings) {
+    const normalized = normalizePaymentSettings(settings);
+    const getValue = (key, fallback) => normalizeAgentCommissionRate(
+      normalized.find((setting) => setting.key === key)?.value,
+      fallback
+    );
+    return {
+      withoutAuthor: getValue("agentRateWithoutAuthor", 25),
+      withAuthor: getValue("agentRateWithAuthor", 10)
+    };
   }
 
   function getDocumentPathSettingValue(key) {
@@ -2663,6 +3640,10 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!existing.saveFolderTemplate && defaultTemplate.saveFolderTemplate) existing.saveFolderTemplate = defaultTemplate.saveFolderTemplate;
         if (!existing.fields?.length && defaultTemplate.fields?.length) existing.fields = defaultTemplate.fields.map((field) => ({ ...field }));
         if (!existing.originalFields?.length && defaultTemplate.originalFields?.length) existing.originalFields = defaultTemplate.originalFields.map((field) => ({ ...field }));
+        if (defaultTemplate.documentKind === "employeeAct") {
+          existing.fields = (existing.fields || []).filter((field) => String(field?.name || "").trim() !== "Фото");
+          existing.originalFields = (existing.originalFields || []).filter((field) => String(field?.name || "").trim() !== "Фото");
+        }
         if (defaultTemplate.documentKind === "education" && !existing.programTypes?.length) existing.programTypes = [...defaultTemplate.programTypes];
         if (
           defaultTemplate.generationFormatVersion
@@ -2953,6 +3934,18 @@ MAX - https://bizvmax.ru/zifra_plus
     return studentCommunicationMessages.map((message, index) => String(saved[index] ?? message.label));
   }
 
+  function normalizeEmployeeCommunicationTemplates(values) {
+    const saved = Array.isArray(values) ? values : [];
+    return employeeCommunicationTemplateDefaults.map((template, index) => (
+      replaceCommunicationTemplateFieldAliases(String(saved[index] ?? template))
+    ));
+  }
+
+  function normalizeEmployeeCommunicationTemplateDescriptions(values) {
+    const saved = Array.isArray(values) ? values : [];
+    return employeeCommunicationMessages.map((message, index) => String(saved[index] ?? message.label));
+  }
+
   function normalizeCommunicationTemplateFieldOverrides(values) {
     if (!values || typeof values !== "object" || Array.isArray(values)) return {};
     return Object.fromEntries(Object.entries(values)
@@ -2965,7 +3958,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function normalizeCommunicationTemplateCustomFields(values) {
     if (!Array.isArray(values)) return [];
-    const builtInNames = new Set(studentCommunicationTemplateEditableFields);
+    const builtInNames = new Set(communicationTemplateEditableFields);
     const seen = new Set();
     return values.reduce((result, field) => {
       const name = normalizeCommunicationTemplateFieldName(field?.name);
@@ -3000,7 +3993,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const overrides = normalizeCommunicationTemplateFieldOverrides(
       state.data.dictionaries.communicationTemplateFieldOverrides
     );
-    const builtIns = studentCommunicationTemplateEditableFields.map((name) => ({
+    const builtIns = communicationTemplateEditableFields.map((name) => ({
       name,
       formula: Object.prototype.hasOwnProperty.call(overrides, name)
         ? overrides[name]
@@ -3037,10 +4030,63 @@ MAX - https://bizvmax.ru/zifra_plus
       gender: normalizeStudentGender(student.gender),
       discount: normalizeDiscountPercent(student.discount, student.discountUnit),
       discountUnit: "percent",
+      agentAmount: Number(student.agentAmount || 0),
+      agentPayment1Amount: Number(student.agentPayment1Amount || 0),
+      agentPayment1Date: normalizeEmployeePaymentDateInput(student.agentPayment1Date),
+      agentPayment2Amount: Number(student.agentPayment2Amount || 0),
+      agentPayment2Date: normalizeEmployeePaymentDateInput(student.agentPayment2Date),
       documentRecognitionResult: normalizeStudentDocumentRecognitionResult(
         student.documentRecognitionResult
       )
     };
+    const legacyAgentPaidDate = normalizeEmployeePaymentDateInput(student.agentPaymentPaid);
+    if (legacyAgentPaidDate && normalized.agentAmount > 0) {
+      const firstSlotOccupied = normalized.agentPayment1Amount > 0 || Boolean(normalized.agentPayment1Date);
+      const secondSlotOccupied = normalized.agentPayment2Amount > 0 || Boolean(normalized.agentPayment2Date);
+      const number = firstSlotOccupied ? 2 : 1;
+      const prefix = `agentPayment${number}`;
+      const mergedWithSecondPayment = firstSlotOccupied && secondSlotOccupied;
+      normalized[`${prefix}Amount`] = Math.round((
+        Number(normalized[`${prefix}Amount`] || 0) + normalized.agentAmount
+      ) * 100) / 100;
+      if (!normalized[`${prefix}Date`]) normalized[`${prefix}Date`] = legacyAgentPaidDate;
+      [
+        ["Comment", "agentPaymentComment"],
+        ["Basis", "agentPaymentBasis"],
+        ["Recommendation", "agentPaymentRecommendation"],
+        ["RecommendationManual", "agentPaymentRecommendationManual"],
+        ["Act", "agentPaymentAct"],
+        ["ActStatus", "agentPaymentActStatus"],
+        ["Order", "agentPaymentOrder"]
+      ].forEach(([suffix, sourceKey]) => {
+        if (student[sourceKey] !== undefined && student[sourceKey] !== null && student[sourceKey] !== "") {
+          const targetKey = `${prefix}${suffix}`;
+          if (normalized[targetKey] === undefined || normalized[targetKey] === null || normalized[targetKey] === "") {
+            normalized[targetKey] = student[sourceKey];
+          }
+        }
+      });
+      if (mergedWithSecondPayment) {
+        const mergeNote = `Дополнительная выплата ${legacyAgentPaidDate} объединена со второй выплатой`;
+        normalized.agentPayment2Comment = [normalized.agentPayment2Comment, mergeNote]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+          .join(" · ");
+      }
+      normalized.agentAmount = 0;
+      [
+        "agentPaymentComment",
+        "agentPaymentDate",
+        "agentPaymentBasis",
+        "agentPaymentRecommendation",
+        "agentPaymentRecommendationManual",
+        "agentPaymentAct",
+        "agentPaymentActStatus",
+        "agentPaymentPaid",
+        "agentPaymentOrder",
+        "agentPaymentAmountManual"
+      ].forEach((key) => { delete normalized[key]; });
+    }
     studentCommunicationMessages.forEach((message, index) => {
       if (message.importValue === false) return;
       if (String(normalized[message.key] || "").trim()) return;
@@ -3103,6 +4149,282 @@ MAX - https://bizvmax.ru/zifra_plus
       agencyAmount: Number(contract.agencyAmount || 0),
       balance: Number(contract.balance || 0)
     };
+  }
+
+  function getDirectExpenseEntriesFromCollections(collections = {}) {
+    const entries = [];
+    const seen = new Set();
+    (collections.students || []).forEach((student) => {
+      (Array.isArray(student?.directExpenses) ? student.directExpenses : []).forEach((expense, index) => {
+        if (!expense || typeof expense !== "object") return;
+        const identity = String(expense.id || "").trim()
+          || `student:${String(student.id || student.uid || "").trim()}:${directExpenseIdentity(expense, index)}`;
+        if (seen.has(identity)) return;
+        seen.add(identity);
+        entries.push({ expense, identity, student });
+      });
+    });
+    (collections.directExpenses || []).forEach((expense, index) => {
+      if (!expense || typeof expense !== "object") return;
+      const identity = String(expense.id || "").trim() || `global:${directExpenseIdentity(expense, index)}`;
+      if (seen.has(identity)) return;
+      seen.add(identity);
+      entries.push({ expense, identity, student: null });
+    });
+    return entries;
+  }
+
+  function hasManualEmployeePaymentRecommendation(expense = {}) {
+    return isChecked(expense.recommendationManual);
+  }
+
+  function applyAutomaticEmployeePaymentRecommendationsForCollections(collections = {}) {
+    const employeeNames = new Set((collections.contracts || [])
+      .map((contract) => normalizeEmployeeActPersonName(contract?.name))
+      .filter(Boolean));
+    if (!employeeNames.size) return 0;
+    let changed = 0;
+    getDirectExpenseEntriesFromCollections(collections).forEach(({ expense }) => {
+      if (!employeeNames.has(normalizeEmployeeActPersonName(expense?.note))) return;
+      if (hasManualEmployeePaymentRecommendation(expense)) return;
+      if (String(expense?.recommendation || "").trim() === "+") return;
+      expense.recommendation = "+";
+      changed += 1;
+    });
+    return changed;
+  }
+
+  function getAgentCommissionProgram(student = {}, collections = {}) {
+    return findProgramInRows(collections.programs || [], student.program);
+  }
+
+  function hasAgentCommissionProgramAuthor(program = {}) {
+    return Boolean(String(program?.authorSource || program?.author || "").trim());
+  }
+
+  function getStudentAgentCommissionCalculation(
+    student = {},
+    collections = state.data?.collections || {},
+    paymentSettings = state.data?.dictionaries?.paymentSettings
+  ) {
+    const program = getAgentCommissionProgram(student, collections);
+    const hasAuthor = hasAgentCommissionProgramAuthor(program);
+    const rates = getAgentCommissionRates(paymentSettings);
+    const rate = hasAuthor ? rates.withAuthor : rates.withoutAuthor;
+    const paymentRows = Array.from({ length: 8 }, (_, index) => {
+      const number = index + 1;
+      const rawAmount = student[`payment${number}Amount`];
+      return {
+        number,
+        amount: Number(rawAmount || 0),
+        date: normalizeEmployeePaymentDateInput(student[`payment${number}Date`])
+      };
+    });
+    const hasDetailedReceipts = paymentRows.some((payment) => payment.amount !== 0);
+    const detailedReceiptsTotal = paymentRows.reduce((sum, payment) => sum + payment.amount, 0);
+    const receiptsTotal = Math.round(Math.max(
+      0,
+      hasDetailedReceipts ? detailedReceiptsTotal : Number(student.paidAmount || 0)
+    ) * 100) / 100;
+    const hasAgentLink = Boolean(String(student.name || "").trim() && String(student.agent || "").trim());
+    const roundingStep = 50;
+    const accrued = hasAgentLink && receiptsTotal > 0 && rate > 0
+      ? Math.ceil(((receiptsTotal * rate) / 100) / roundingStep) * roundingStep
+      : 0;
+    const payment1Amount = Math.max(0, Number(student.agentPayment1Amount || 0));
+    const payment1Date = normalizeEmployeePaymentDateInput(student.agentPayment1Date);
+    const payment2Amount = Math.max(0, Number(student.agentPayment2Amount || 0));
+    const payment2Date = normalizeEmployeePaymentDateInput(student.agentPayment2Date);
+    const paidTotal = Math.round((
+      (payment1Date ? payment1Amount : 0)
+      + (payment2Date ? payment2Amount : 0)
+    ) * 100) / 100;
+    const calculatedOutstanding = Math.round((accrued - paidTotal) * 100) / 100;
+    const importedOutstanding = Number(student.agentAmount || student.agencyAmount || student.partnerAmount || 0);
+    const manualAmount = isChecked(student.agentPaymentAmountManual);
+    const outstanding = manualAmount
+      ? importedOutstanding
+      : calculatedOutstanding;
+    const lastReceiptDate = paymentRows
+      .map((payment) => payment.date)
+      .filter(Boolean)
+      .sort((left, right) => right.localeCompare(left, "ru"))[0] || "";
+    return {
+      program,
+      hasAuthor,
+      rate,
+      roundingStep,
+      receiptsTotal,
+      accrued,
+      payment1Amount,
+      payment1Date,
+      payment2Amount,
+      payment2Date,
+      paidTotal,
+      calculatedOutstanding,
+      outstanding: Math.round(outstanding * 100) / 100,
+      payableAmount: Math.max(0, Math.round(outstanding * 100) / 100),
+      overpayment: Math.max(0, Math.round(-calculatedOutstanding * 100) / 100),
+      lastReceiptDate,
+      basis: `Агентские ${rate}%${hasAuthor ? " — авторский курс" : " — курс без автора"}`
+    };
+  }
+
+  function getEmployeePartnerPaymentSourceId(student = {}, slot = "due") {
+    const studentId = String(student.id || student.uid || "").trim();
+    return studentId ? `${studentId}::agent-${slot}` : "";
+  }
+
+  function parseEmployeePartnerPaymentSourceId(sourceId) {
+    const value = String(sourceId || "").trim();
+    const match = /^(.*)::agent-(due|paid1|paid2)$/u.exec(value);
+    return match
+      ? { studentId: match[1], slot: match[2] }
+      : { studentId: value, slot: "due" };
+  }
+
+  function createEmployeePartnerPaymentSource(student, slot, calculation = null) {
+    if (!student) return null;
+    return {
+      __partnerStudent: student,
+      __agentPaymentSlot: slot,
+      __agentPaymentCalculation: calculation || getStudentAgentCommissionCalculation(student)
+    };
+  }
+
+  function getEmployeePartnerPaymentRows(
+    student,
+    collections = state.data?.collections || {},
+    paymentSettings = state.data?.dictionaries?.paymentSettings
+  ) {
+    if (!student) return [];
+    const calculation = getStudentAgentCommissionCalculation(student, collections, paymentSettings);
+    const rows = [];
+    [1, 2].forEach((number) => {
+      const amount = calculation[`payment${number}Amount`];
+      const date = calculation[`payment${number}Date`];
+      if (!amount && !date) return;
+      const slot = `paid${number}`;
+      rows.push({
+        student,
+        slot,
+        sourceId: getEmployeePartnerPaymentSourceId(student, slot),
+        source: createEmployeePartnerPaymentSource(student, slot, calculation),
+        amount,
+        payable: false,
+        affectsAccounting: false,
+        calculation
+      });
+    });
+    const hasDueMetadata = [
+      "agentPaymentDate",
+      "agentPaymentComment",
+      "agentPaymentBasis",
+      "agentPaymentRecommendation",
+      "agentPaymentAct",
+      "agentPaymentActStatus",
+      "agentPaymentPaid"
+    ].some((key) => String(student[key] || "").trim());
+    if (!isChecked(student.agentPaymentAutoDisabled) && (calculation.outstanding !== 0 || hasDueMetadata)) {
+      rows.push({
+        student,
+        slot: "due",
+        sourceId: getEmployeePartnerPaymentSourceId(student, "due"),
+        source: createEmployeePartnerPaymentSource(student, "due", calculation),
+        amount: calculation.outstanding,
+        payable: calculation.outstanding > 0 && !normalizeEmployeePaymentDateInput(student.agentPaymentPaid),
+        affectsAccounting: true,
+        calculation
+      });
+    }
+    return rows;
+  }
+
+  function getEmployeePaymentAccounting(
+    record = {},
+    collections = {},
+    paymentSettings = state.data?.dictionaries?.paymentSettings
+  ) {
+    const employeeName = normalizeEmployeeActPersonName(record.name);
+    const directEntries = employeeName
+      ? getDirectExpenseEntriesFromCollections(collections).filter(({ expense }) => (
+          normalizeEmployeeActPersonName(expense.note) === employeeName
+        ))
+      : [];
+    const generalEntries = employeeName
+      ? (collections.generalExpenses || [])
+          .filter((expense) => normalizeEmployeeActPersonName(expense?.counterparty) === employeeName)
+          .map((expense) => ({ expense, identity: String(expense.id || "").trim() }))
+      : [];
+    const partnerStudents = employeeName
+      ? (collections.students || []).filter((student) => (
+          normalizeEmployeeActPersonName(student?.agent) === employeeName
+        ))
+      : [];
+    const partnerRows = partnerStudents.flatMap((student) => (
+      getEmployeePartnerPaymentRows(student, collections, paymentSettings)
+    ));
+    const unpaidGeneralTotal = generalEntries.reduce((sum, { expense }) => (
+      String(expense?.paid || "").trim() ? sum : sum + Number(expense?.amount || 0)
+    ), 0);
+    const directWithoutActTotal = directEntries.reduce((sum, { expense }) => (
+      String(expense?.act || "").trim() ? sum : sum + Number(expense?.amount || 0)
+    ), 0);
+    const recommendedDirectTotal = directEntries.reduce((sum, { expense }) => (
+      !String(expense?.act || "").trim() && String(expense?.recommendation || "").trim() === "+"
+        ? sum + Number(expense?.amount || 0)
+        : sum
+    ), 0);
+    const hasExpenseSources = directEntries.length > 0 || generalEntries.length > 0;
+    const services = hasExpenseSources
+      ? Math.trunc(unpaidGeneralTotal + recommendedDirectTotal)
+      : Number(record.paid || 0);
+    const calculatedAgencyAmount = partnerRows.reduce((sum, row) => (
+      row.affectsAccounting
+        ? sum + Number(row.calculation?.payableAmount ?? row.amount ?? 0)
+        : sum
+    ), 0);
+    const agencyAmount = calculatedAgencyAmount;
+    const amount = services + agencyAmount;
+    const balance = hasExpenseSources
+      ? Math.trunc(unpaidGeneralTotal + directWithoutActTotal) + agencyAmount - amount
+      : Number(record.balance || 0);
+    return {
+      amount: Math.round(amount * 100) / 100,
+      paid: Math.round(services * 100) / 100,
+      agencyAmount: Math.round(agencyAmount * 100) / 100,
+      balance: Math.round(balance * 100) / 100,
+      directEntries,
+      generalEntries,
+      partnerRows,
+      partnerStudents
+    };
+  }
+
+  function refreshContractPaymentAccountingForCollections(
+    collections = {},
+    paymentSettings = state.data?.dictionaries?.paymentSettings
+  ) {
+    if (!Array.isArray(collections.contracts)) return;
+    applyAutomaticEmployeePaymentRecommendationsForCollections(collections);
+    collections.contracts = collections.contracts.map((contract) => {
+      const accounting = getEmployeePaymentAccounting(contract, collections, paymentSettings);
+      return normalizeContractRecord({
+        ...contract,
+        amount: accounting.amount,
+        paid: accounting.paid,
+        agencyAmount: accounting.agencyAmount,
+        balance: accounting.balance
+      });
+    });
+  }
+
+  function formatContractDatabaseSectionSummary(sectionCounts = {}, sectionRows = {}) {
+    return CONTRACT_SECTIONS.map((section) => {
+      const count = Math.max(0, Number(sectionCounts?.[section]) || 0);
+      const headingRow = Math.max(0, Number(sectionRows?.[section]) || 0);
+      return `${section}${headingRow ? ` (с строки ${headingRow})` : ""}: ${count}`;
+    }).join("; ");
   }
 
   function normalizeGeneralExpenseRecord(expense = {}) {
@@ -3430,20 +4752,848 @@ MAX - https://bizvmax.ru/zifra_plus
     return Number.isFinite(number) ? number : value;
   }
 
+  function getRecordLockClientId() {
+    try {
+      const current = String(sessionStorage.getItem(RECORD_LOCK_CLIENT_STORAGE_KEY) || "").trim();
+      if (current) return current;
+      const generated = globalThis.crypto?.randomUUID?.()
+        || `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      sessionStorage.setItem(RECORD_LOCK_CLIENT_STORAGE_KEY, generated);
+      return generated;
+    } catch {
+      return `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    }
+  }
+
+  function sharedStateValuesEqual(left, right) {
+    if (left === right) return true;
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+
+  function buildSharedApplicationStatePatch(baseData, nextData) {
+    if (!baseData || !nextData) return null;
+    const patch = { collections: {}, dictionaries: {}, meta: {}, root: {} };
+    const collectionNames = new Set([
+      ...Object.keys(baseData.collections || {}),
+      ...Object.keys(nextData.collections || {})
+    ]);
+    collectionNames.forEach((collectionName) => {
+      const beforeRows = Array.isArray(baseData.collections?.[collectionName])
+        ? baseData.collections[collectionName]
+        : [];
+      const afterRows = Array.isArray(nextData.collections?.[collectionName])
+        ? nextData.collections[collectionName]
+        : [];
+      if (sharedStateValuesEqual(beforeRows, afterRows)) return;
+      const beforeHasIds = beforeRows.every((record) => record && typeof record === "object" && String(record.id || "").trim());
+      const afterHasIds = afterRows.every((record) => record && typeof record === "object" && String(record.id || "").trim());
+      if (!beforeHasIds || !afterHasIds) {
+        patch.collections[collectionName] = { replace: afterRows };
+        return;
+      }
+      const beforeById = new Map(beforeRows.map((record) => [String(record.id), record]));
+      const afterById = new Map(afterRows.map((record) => [String(record.id), record]));
+      const upserts = afterRows.filter((record) => (
+        !beforeById.has(String(record.id))
+        || !sharedStateValuesEqual(beforeById.get(String(record.id)), record)
+      ));
+      const deletes = beforeRows
+        .filter((record) => !afterById.has(String(record.id)))
+        .map((record) => String(record.id));
+      const beforeOrder = beforeRows.map((record) => String(record.id));
+      const afterOrder = afterRows.map((record) => String(record.id));
+      patch.collections[collectionName] = {
+        upserts,
+        deletes,
+        ...(sharedStateValuesEqual(beforeOrder, afterOrder) ? {} : { order: afterOrder })
+      };
+    });
+    for (const key of ["dictionaries", "meta"]) {
+      const names = new Set([
+        ...Object.keys(baseData[key] || {}),
+        ...Object.keys(nextData[key] || {})
+      ]);
+      names.forEach((name) => {
+        if (!sharedStateValuesEqual(baseData[key]?.[name], nextData[key]?.[name])) {
+          patch[key][name] = nextData[key]?.[name] ?? null;
+        }
+      });
+    }
+    const rootNames = new Set([...Object.keys(baseData), ...Object.keys(nextData)]);
+    rootNames.forEach((name) => {
+      if (["collections", "dictionaries", "meta"].includes(name)) return;
+      if (!sharedStateValuesEqual(baseData[name], nextData[name])) {
+        patch.root[name] = nextData[name] ?? null;
+      }
+    });
+    const hasChanges = Object.values(patch).some((group) => Object.keys(group).length > 0);
+    return hasChanges ? patch : null;
+  }
+
+  function mergeSharedApplicationStatePatches(previousPatch, nextPatch) {
+    if (!previousPatch) return nextPatch ? clone(nextPatch) : null;
+    if (!nextPatch) return clone(previousPatch);
+    const merged = clone(previousPatch);
+    merged.collections = merged.collections || {};
+    merged.dictionaries = { ...(merged.dictionaries || {}), ...(nextPatch.dictionaries || {}) };
+    merged.meta = { ...(merged.meta || {}), ...(nextPatch.meta || {}) };
+    merged.root = { ...(merged.root || {}), ...(nextPatch.root || {}) };
+    Object.entries(nextPatch.collections || {}).forEach(([collectionName, nextChange]) => {
+      const previousChange = merged.collections[collectionName];
+      if (!previousChange || Array.isArray(nextChange.replace)) {
+        merged.collections[collectionName] = clone(nextChange);
+        return;
+      }
+      if (Array.isArray(previousChange.replace)) {
+        const patched = applySharedApplicationStatePatchLocally(
+          { collections: { [collectionName]: previousChange.replace }, dictionaries: {}, meta: {} },
+          { collections: { [collectionName]: nextChange }, dictionaries: {}, meta: {}, root: {} }
+        );
+        merged.collections[collectionName] = {
+          replace: patched.collections[collectionName] || []
+        };
+        return;
+      }
+      const upserts = new Map((previousChange.upserts || []).map((record) => [String(record.id), clone(record)]));
+      const deletes = new Set((previousChange.deletes || []).map(String));
+      (nextChange.deletes || []).forEach((id) => {
+        const key = String(id);
+        upserts.delete(key);
+        deletes.add(key);
+      });
+      (nextChange.upserts || []).forEach((record) => {
+        const key = String(record.id);
+        deletes.delete(key);
+        upserts.set(key, clone(record));
+      });
+      merged.collections[collectionName] = {
+        upserts: [...upserts.values()],
+        deletes: [...deletes],
+        ...((nextChange.order || previousChange.order)?.length
+          ? { order: clone(nextChange.order || previousChange.order) }
+          : {})
+      };
+    });
+    return merged;
+  }
+
+  function applySharedApplicationStatePatchLocally(currentData, patch) {
+    const next = clone(currentData);
+    next.collections = next.collections || {};
+    next.dictionaries = next.dictionaries || {};
+    next.meta = next.meta || {};
+    Object.entries(patch?.collections || {}).forEach(([collectionName, change]) => {
+      if (Array.isArray(change.replace)) {
+        next.collections[collectionName] = clone(change.replace);
+        return;
+      }
+      const rows = Array.isArray(next.collections[collectionName]) ? next.collections[collectionName] : [];
+      const rowsById = new Map(rows.map((record) => [String(record.id || ""), record]));
+      (change.deletes || []).forEach((id) => rowsById.delete(String(id)));
+      (change.upserts || []).forEach((record) => rowsById.set(String(record.id), clone(record)));
+      const ordered = [];
+      const used = new Set();
+      (change.order || []).forEach((id) => {
+        const key = String(id);
+        if (!rowsById.has(key) || used.has(key)) return;
+        ordered.push(rowsById.get(key));
+        used.add(key);
+      });
+      rowsById.forEach((record, id) => {
+        if (!used.has(id)) ordered.push(record);
+      });
+      next.collections[collectionName] = ordered;
+    });
+    Object.assign(next.dictionaries, patch?.dictionaries || {});
+    Object.assign(next.meta, patch?.meta || {});
+    Object.entries(patch?.root || {}).forEach(([name, value]) => {
+      if (!["collections", "dictionaries", "meta"].includes(name)) next[name] = value;
+    });
+    return ensureDataShape(next);
+  }
+
+  async function requestSharedApplicationState(pathname = "", options = {}) {
+    const suffix = String(pathname || "").replace(/^\?/, "");
+    const response = await fetch(photoApiUrl(`/api/shared-state${suffix ? `?${suffix}` : ""}`), {
+      credentials: "same-origin",
+      cache: "no-store",
+      ...options,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        "X-Requested-With": "AIS-Web",
+        ...(options.headers || {})
+      }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload.error || `Ошибка общей базы: ${response.status}`);
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
+    return payload;
+  }
+
+  function persistSharedStateRecovery() {
+    let recoverySnapshot = null;
+    try {
+      const currentPatch = sharedStateDirty && sharedStateBaseData
+        ? buildSharedApplicationStatePatch(sharedStateBaseData, state.data)
+        : null;
+      sharedStatePendingPatch = mergeSharedApplicationStatePatches(sharedStatePendingPatch, currentPatch);
+      const meta = {
+        revision: sharedStateRevision,
+        versionTag: sharedStateVersionTag,
+        updatedAt: sharedStateUpdatedAt,
+        updatedBy: sharedStateUpdatedBy,
+        source: sharedStateSource,
+        pendingCount: sharedStatePendingCount,
+        syncBlockedReason: sharedStateSyncBlockedReason
+      };
+      recoverySnapshot = {
+        savedAt: new Date().toISOString(),
+        pendingPatch: sharedStatePendingPatch,
+        meta
+      };
+      if (sharedStatePendingPatch) {
+        localStorage.setItem(SHARED_STATE_PENDING_STORAGE_KEY, JSON.stringify(sharedStatePendingPatch));
+      } else {
+        localStorage.removeItem(SHARED_STATE_PENDING_STORAGE_KEY);
+      }
+      localStorage.setItem(SHARED_STATE_META_STORAGE_KEY, JSON.stringify(meta));
+    } catch (error) {
+      console.warn("Не удалось обновить автономную копию общей базы", error);
+    }
+    if (recoverySnapshot) {
+      queueBrowserOfflineWrite(BROWSER_OFFLINE_RECOVERY_KEY, recoverySnapshot).catch((error) => {
+        console.warn("Не удалось сохранить автономную очередь изменений", error);
+      });
+    }
+  }
+
+  function getSharedStateStatusTone() {
+    if (sharedStateConflict) return "conflict";
+    if (sharedStateOffline || !sharedStateReady) return "offline";
+    if (sharedStateDirty || sharedStateSaveRunning) return "saving";
+    if (sharedStatePendingCount) return "pending";
+    return "ready";
+  }
+
+  function getSharedStateStatusLabel(tone = getSharedStateStatusTone()) {
+    if (tone === "conflict") return "Конфликт общей базы";
+    if (tone === "offline") {
+      return sharedStatePendingCount
+        ? `Автономно · ожидают выгрузки: ${sharedStatePendingCount}`
+        : "Автономный режим";
+    }
+    if (tone === "saving") return "Синхронизация общей базы…";
+    if (tone === "pending") return `MySQL подключена · ожидают выгрузки: ${sharedStatePendingCount}`;
+    return "Общая MySQL-база подключена";
+  }
+
+  function updateSharedStateStatusUi() {
+    const pill = document.querySelector(".shared-state-pill");
+    if (!pill) return;
+    const tone = getSharedStateStatusTone();
+    const label = getSharedStateStatusLabel(tone);
+    const dot = document.createElement("span");
+    dot.className = "shared-state-dot";
+    dot.setAttribute("aria-hidden", "true");
+    pill.className = `source-pill shared-state-pill tone-${tone}`;
+    pill.title = [
+      label,
+      sharedStateRevision ? `Ревизия: ${sharedStateRevision}` : "",
+      sharedStateSource ? `Источник: ${sharedStateSource}` : "",
+      sharedStatePendingCount ? `Ожидают выгрузки: ${sharedStatePendingCount}` : "",
+      sharedStateSyncBlockedReason === "locked" ? "Выгрузка ожидает освобождения записи" : "",
+      sharedStateSyncBlockedReason === "conflict" ? "Выгрузка ожидает разрешения конфликта" : "",
+      sharedStateUpdatedBy ? `Последнее изменение: ${sharedStateUpdatedBy}` : "",
+      sharedStateUpdatedAt ? formatDateTimeRu(sharedStateUpdatedAt) : ""
+    ].filter(Boolean).join("\n");
+    pill.replaceChildren(dot, document.createTextNode(label));
+  }
+
+  function applySharedApplicationState(payload, { renderAfter = false } = {}) {
+    if (!payload?.exists || !payload.data) return false;
+    const serverData = ensureDataShape(payload.data);
+    sharedStateBaseData = clone(serverData);
+    state.data = sharedStatePendingPatch
+      ? applySharedApplicationStatePatchLocally(serverData, sharedStatePendingPatch)
+      : serverData;
+    persistStateToLocalStorage(state.data);
+    sharedStateRevision = Math.max(0, Number(payload.revision) || 0);
+    sharedStateVersionTag = String(payload.versionTag || "");
+    sharedStateUpdatedAt = String(payload.updatedAt || "");
+    sharedStateUpdatedBy = String(payload.updatedBy || "");
+    sharedStateSource = String(payload.source || sharedStateSource || "");
+    sharedStatePendingCount = Math.max(0, Number(payload.pendingCount) || 0);
+    sharedStateSyncBlockedReason = String(payload.syncBlockedReason || "");
+    sharedStateOffline = Boolean(payload.offline);
+    sharedStateDirty = Boolean(sharedStatePendingPatch);
+    sharedStateConflict = false;
+    sharedStateConflictShown = false;
+    persistSharedStateRecovery();
+    if (renderAfter) {
+      Object.keys(state.selected || {}).forEach((key) => { state.selected[key] = []; });
+      state.lastEditedRow = { config: "", id: "" };
+      render();
+    }
+    return true;
+  }
+
+  async function createInitialSharedApplicationState() {
+    try {
+      const payload = await requestSharedApplicationState("", {
+        method: "POST",
+        body: JSON.stringify({ baseRevision: 0, data: state.data })
+      });
+      sharedStateRevision = Math.max(0, Number(payload.revision) || 0);
+      sharedStateVersionTag = String(payload.versionTag || "");
+      sharedStateUpdatedAt = String(payload.updatedAt || "");
+      sharedStateUpdatedBy = String(payload.updatedBy || "");
+      sharedStateSource = String(payload.source || "mysql");
+      sharedStatePendingCount = Math.max(0, Number(payload.pendingCount) || 0);
+      sharedStateSyncBlockedReason = String(payload.syncBlockedReason || "");
+      sharedStateOffline = Boolean(payload.offline);
+      sharedStateBaseData = clone(state.data);
+      sharedStatePendingPatch = null;
+      sharedStateDirty = false;
+      persistSharedStateRecovery();
+      return true;
+    } catch (error) {
+      if (error.status !== 409) throw error;
+      const current = await requestSharedApplicationState();
+      applySharedApplicationState(current);
+      return false;
+    }
+  }
+
+  async function initializeSharedApplicationState() {
+    const payload = await requestSharedApplicationState();
+    if (payload.exists) {
+      applySharedApplicationState(payload);
+      sharedStateReady = payload.writable !== false;
+      return;
+    }
+    const created = await createInitialSharedApplicationState();
+    sharedStateReady = true;
+    sharedStateOffline = false;
+    shouldBootstrapHostedDatabase = Boolean(
+      created && hostedDatabaseBootstrapCandidate && !hadLocalStateAtStartup
+    );
+  }
+
+  function scheduleSharedApplicationStateSave(delay = SHARED_STATE_SAVE_DELAY_MS) {
+    if (!sharedStateReady || sharedStateConflict) return;
+    window.clearTimeout(sharedStateSaveTimer);
+    sharedStateSaveTimer = window.setTimeout(() => {
+      sharedStateSaveTimer = 0;
+      flushSharedApplicationState().catch((error) => {
+        console.warn("Не удалось сохранить общую базу", error);
+      });
+    }, Math.max(0, delay));
+  }
+
+  function flushSharedApplicationState() {
+    if (sharedStateSavePromise) return sharedStateSavePromise;
+    const savePromise = performSharedApplicationStateSave();
+    sharedStateSavePromise = savePromise;
+    savePromise.finally(() => {
+      if (sharedStateSavePromise === savePromise) sharedStateSavePromise = null;
+    }).catch(() => {});
+    return savePromise;
+  }
+
+  async function performSharedApplicationStateSave() {
+    if (
+      !sharedStateReady
+      || sharedStateConflict
+      || !sharedStateDirty
+    ) return !sharedStateConflict;
+    sharedStateSaveRunning = true;
+    const generation = sharedStateChangeGeneration;
+    const data = clone(state.data);
+    const baseRevision = sharedStateRevision;
+    const patch = mergeSharedApplicationStatePatches(
+      sharedStatePendingPatch,
+      buildSharedApplicationStatePatch(sharedStateBaseData, data)
+    );
+    if (!patch) {
+      sharedStateDirty = false;
+      sharedStatePendingPatch = null;
+      sharedStatePersistedGeneration = Math.max(sharedStatePersistedGeneration, generation);
+      persistSharedStateRecovery();
+      sharedStateSaveRunning = false;
+      updateSharedStateStatusUi();
+      return true;
+    }
+    let saved = false;
+    try {
+      const payload = await requestSharedApplicationState("", {
+        method: "POST",
+        body: JSON.stringify({ baseRevision, patch, clientId: recordLockClientId })
+      });
+      sharedStateRevision = Math.max(0, Number(payload.revision) || sharedStateRevision);
+      sharedStateVersionTag = String(payload.versionTag || sharedStateVersionTag);
+      sharedStateUpdatedAt = String(payload.updatedAt || "");
+      sharedStateUpdatedBy = String(payload.updatedBy || "");
+      sharedStateSource = String(payload.source || sharedStateSource || "mysql");
+      sharedStatePendingCount = Math.max(0, Number(payload.pendingCount) || 0);
+      sharedStateSyncBlockedReason = String(payload.syncBlockedReason || "");
+      sharedStateOffline = Boolean(payload.offline);
+      if (payload.data) {
+        if (generation === sharedStateChangeGeneration) {
+          state.data = ensureDataShape(payload.data);
+        } else {
+          const pendingPatch = buildSharedApplicationStatePatch(data, state.data);
+          state.data = pendingPatch
+            ? applySharedApplicationStatePatchLocally(payload.data, pendingPatch)
+            : ensureDataShape(payload.data);
+        }
+        persistStateToLocalStorage(state.data);
+      }
+      sharedStateBaseData = clone(payload.data || data);
+      sharedStatePendingPatch = null;
+      sharedStatePersistedGeneration = Math.max(sharedStatePersistedGeneration, generation);
+      if (generation === sharedStateChangeGeneration) {
+        sharedStateDirty = false;
+      }
+      persistSharedStateRecovery();
+      saved = true;
+    } catch (error) {
+      if (error.status === 423) {
+        const lock = error.payload?.lock || {};
+        alert(formatRecordLockMessage(lock, "Изменения не сохранены"));
+        await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
+        return false;
+      }
+      if (error.status === 409) {
+        sharedStateConflict = true;
+        updateSharedStateStatusUi();
+        if (!sharedStateConflictShown) {
+          sharedStateConflictShown = true;
+          alert(
+            "Общая база была изменена на другом компьютере. "
+            + "Ваш вариант сохранён в резервной копии этого браузера и не перезаписал чужие данные. "
+            + "Закройте редактируемую карточку и обновите раздел, затем повторите изменение."
+          );
+        }
+        return false;
+      }
+      sharedStateOffline = true;
+      sharedStateReady = true;
+      sharedStateSource = "local-browser";
+      sharedStatePendingCount = Math.max(1, sharedStatePendingCount);
+      saved = true;
+      sharedStatePersistedGeneration = Math.max(sharedStatePersistedGeneration, generation);
+      persistSharedStateRecovery();
+      window.setTimeout(() => scheduleSharedApplicationStateSave(0), 5000);
+    } finally {
+      sharedStateSaveRunning = false;
+      updateSharedStateStatusUi();
+    }
+    if (sharedStateDirty) scheduleSharedApplicationStateSave(0);
+    return saved;
+  }
+
+  async function flushSharedApplicationStateThroughGeneration(targetGeneration) {
+    const target = Math.max(0, Number(targetGeneration) || 0);
+    while (
+      sharedStateReady
+      && !sharedStateConflict
+      && sharedStatePersistedGeneration < target
+      && sharedStateDirty
+    ) {
+      const saved = await flushSharedApplicationState();
+      if (!saved) return false;
+    }
+    return !sharedStateConflict && sharedStatePersistedGeneration >= target;
+  }
+
+  function saveSharedApplicationStateInBackground({ generation = sharedStateChangeGeneration, lock = null } = {}) {
+    window.setTimeout(async () => {
+      try {
+        await flushSharedApplicationStateThroughGeneration(generation);
+      } catch (error) {
+        console.warn("Изменения остались в фоновой очереди синхронизации", error);
+        scheduleSharedApplicationStateSave(1000);
+      } finally {
+        if (lock) await releaseRecordLock(lock);
+      }
+    }, 0);
+  }
+
+  async function reloadSharedApplicationState({ renderAfter = true } = {}) {
+    const payload = await requestSharedApplicationState();
+    if (!payload.exists) throw new Error("Общая база не найдена.");
+    applySharedApplicationState(payload, { renderAfter });
+    sharedStateReady = payload.writable !== false;
+    return payload;
+  }
+
+  async function pollSharedApplicationState() {
+    if (
+      sharedStatePollRunning
+      || !sharedStateReady
+      || sharedStateDirty
+      || sharedStateSaveRunning
+      || sharedStateConflict
+      || state.adminSettingsDirty
+      || document.visibilityState !== "visible"
+    ) return;
+    sharedStatePollRunning = true;
+    try {
+      const metadata = await requestSharedApplicationState(
+        `metadata=1&versionTag=${encodeURIComponent(sharedStateVersionTag)}`
+      );
+      if (!metadata.exists) return;
+      sharedStateOffline = Boolean(metadata.offline);
+      sharedStatePendingCount = Math.max(0, Number(metadata.pendingCount) || 0);
+      sharedStateSyncBlockedReason = String(metadata.syncBlockedReason || "");
+      sharedStateSource = String(metadata.source || sharedStateSource || "");
+      sharedStateUpdatedAt = String(metadata.updatedAt || sharedStateUpdatedAt || "");
+      sharedStateUpdatedBy = String(metadata.updatedBy || sharedStateUpdatedBy || "");
+      const nextVersionTag = String(metadata.versionTag || "");
+      const hasChanged = nextVersionTag
+        ? nextVersionTag !== sharedStateVersionTag
+        : Number(metadata.revision) > sharedStateRevision;
+      if (hasChanged) await reloadSharedApplicationState({ renderAfter: !state.modal });
+      else {
+        persistSharedStateRecovery();
+        updateSharedStateStatusUi();
+      }
+    } catch (error) {
+      sharedStateOffline = true;
+      sharedStateSource = "local-browser";
+      persistSharedStateRecovery();
+      updateSharedStateStatusUi();
+      console.warn("Не удалось проверить обновления общей базы", error);
+    } finally {
+      sharedStatePollRunning = false;
+    }
+  }
+
+  function recordLockKey(entityType, entityId) {
+    return `${String(entityType || "")}:${String(entityId || "")}`;
+  }
+
+  function recordLockEntityType(configId) {
+    return String(configs[configId]?.collection || configId || "");
+  }
+
+  function getRecordLock(entityType, entityId) {
+    const lock = recordLocks.get(recordLockKey(entityType, entityId));
+    if (!lock || new Date(lock.expiresAt || 0).getTime() <= Date.now()) return null;
+    return lock;
+  }
+
+  function formatRecordLockMessage(lock = {}, prefix = "Запись временно заблокирована") {
+    const owner = String(lock.ownerName || lock.ownerLogin || "другой пользователь").trim();
+    const expiresAt = new Date(lock.expiresAt || 0);
+    const expiresLabel = Number.isFinite(expiresAt.getTime())
+      ? ` Ожидаемое освобождение: ${expiresAt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`
+      : "";
+    return `${prefix}. Сейчас запись редактирует ${owner}.${expiresLabel}`;
+  }
+
+  async function requestSharedRecordLocks(options = {}) {
+    const method = String(options.method || "GET").toUpperCase();
+    const query = method === "GET" ? `?clientId=${encodeURIComponent(recordLockClientId)}` : "";
+    const response = await fetch(photoApiUrl(`/api/shared-state/locks${query}`), {
+      credentials: "same-origin",
+      cache: "no-store",
+      method,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        "X-Requested-With": "AIS-Web"
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      keepalive: Boolean(options.keepalive)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload.error || `Ошибка блокировки записи: ${response.status}`);
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
+    return payload;
+  }
+
+  async function pollSharedRecordLocks({ renderAfter = true } = {}) {
+    if (recordLocksPollRunning || document.visibilityState !== "visible") return;
+    recordLocksPollRunning = true;
+    try {
+      const payload = await requestSharedRecordLocks();
+      const nextLocks = new Map((payload.locks || []).map((lock) => [
+        recordLockKey(lock.entityType, lock.entityId),
+        lock
+      ]));
+      const previousSignature = JSON.stringify([...recordLocks.entries()]);
+      const nextSignature = JSON.stringify([...nextLocks.entries()]);
+      recordLocks = nextLocks;
+      if (renderAfter && previousSignature !== nextSignature && !state.modal) render();
+    } catch (error) {
+      console.warn("Не удалось обновить список заблокированных записей", error);
+    } finally {
+      recordLocksPollRunning = false;
+    }
+  }
+
+  function stopRecordLockHeartbeat() {
+    window.clearInterval(recordLockHeartbeatTimer);
+    recordLockHeartbeatTimer = 0;
+  }
+
+  function markActiveRecordLockLost(lock = activeRecordLock) {
+    if (!lock || activeRecordLock?.key !== lock.key) return;
+    stopRecordLockHeartbeat();
+    activeRecordLock = null;
+    const form = document.getElementById("recordForm");
+    if (form) {
+      form.dataset.recordLockLost = "true";
+      const saveButton = form.querySelector('button[type="submit"]');
+      if (saveButton) saveButton.disabled = true;
+      if (!form.querySelector("[data-record-lock-warning]")) {
+        form.querySelector(".modal-head")?.insertAdjacentHTML("afterend", `
+          <div class="record-lock-warning" data-record-lock-warning role="alert">
+            Запись больше не заблокирована за вами. Сохранение отключено; скопируйте введённые данные и откройте запись повторно.
+          </div>
+        `);
+      }
+    }
+  }
+
+  function startRecordLockHeartbeat() {
+    stopRecordLockHeartbeat();
+    recordLockHeartbeatTimer = window.setInterval(async () => {
+      const lock = activeRecordLock;
+      if (!lock) return;
+      try {
+        const payload = await requestSharedRecordLocks({
+          method: "POST",
+          body: {
+            action: "renew",
+            entityType: lock.entityType,
+            entityId: lock.entityId,
+            clientId: recordLockClientId
+          }
+        });
+        if (activeRecordLock?.key === lock.key && payload.lock) {
+          activeRecordLock = { ...lock, ...payload.lock, key: lock.key };
+        }
+      } catch (error) {
+        markActiveRecordLockLost(lock);
+        alert(formatRecordLockMessage(error.payload?.lock || {}, "Блокировка записи потеряна"));
+      }
+    }, RECORD_LOCK_HEARTBEAT_INTERVAL_MS);
+  }
+
+  async function releaseRecordLock(lock = activeRecordLock, { keepalive = false } = {}) {
+    if (!lock) return;
+    if (activeRecordLock?.key === lock.key) {
+      activeRecordLock = null;
+      stopRecordLockHeartbeat();
+    }
+    recordLocks.delete(lock.key);
+    try {
+      await requestSharedRecordLocks({
+        method: "POST",
+        keepalive,
+        body: {
+          action: "release",
+          entityType: lock.entityType,
+          entityId: lock.entityId,
+          clientId: recordLockClientId
+        }
+      });
+    } catch (error) {
+      if (!keepalive) console.warn("Не удалось снять блокировку записи", error);
+    }
+  }
+
+  const CARD_LOADING_ENTITY_LABELS = Object.freeze({
+    students: "слушателя",
+    contracts: "сотрудника",
+    programs: "программы",
+    trainingPlans: "учебного плана",
+    webinars: "вебинара",
+    directExpenses: "записи прямых затрат",
+    generalExpenses: "записи общих затрат",
+    inventory: "запаса",
+    users: "пользователя",
+    documentTemplates: "шаблона документа"
+  });
+
+  function getCardLoadingRecordLabel(configId, recordId) {
+    const config = configs[configId];
+    const record = (state.data.collections[config?.collection] || [])
+      .find((item) => String(item?.id || "") === String(recordId || ""));
+    if (!record) return "";
+    const labelKeys = ["name", "title", "programName", "discipline", "counterparty", "itemType", "code", "email", "uid"];
+    return labelKeys.map((key) => String(record[key] || "").trim()).find(Boolean) || "";
+  }
+
+  function showCardLoadingIndicator(configId, recordId) {
+    document.querySelectorAll("[data-card-loading-indicator]").forEach((element) => element.remove());
+    const entityLabel = CARD_LOADING_ENTITY_LABELS[configId] || "записи";
+    const recordLabel = getCardLoadingRecordLabel(configId, recordId);
+    const indicator = document.createElement("div");
+    indicator.className = "card-loading-indicator";
+    indicator.dataset.cardLoadingIndicator = "";
+    indicator.setAttribute("role", "status");
+    indicator.setAttribute("aria-live", "polite");
+    indicator.innerHTML = `
+      <div class="card-loading-indicator-dialog">
+        <span class="card-loading-indicator-spinner" aria-hidden="true"></span>
+        <div>
+          <strong>Загрузка карточки ${escapeHtml(entityLabel)}</strong>
+          ${recordLabel ? `<span>${escapeHtml(recordLabel)}</span>` : ""}
+          <small>Получение актуальных данных и блокировки записи…</small>
+        </div>
+      </div>
+    `;
+    document.body.append(indicator);
+    return { element: indicator, shownAt: performance.now() };
+  }
+
+  function hideCardLoadingIndicator(indicator, minimumVisibleMs = 320) {
+    const element = indicator?.element;
+    if (!element) return;
+    const elapsed = performance.now() - Number(indicator.shownAt || 0);
+    window.setTimeout(() => {
+      if (!element.isConnected) return;
+      element.classList.add("is-hiding");
+      window.setTimeout(() => element.remove(), 140);
+    }, Math.max(0, minimumVisibleMs - elapsed));
+  }
+
+  async function withCardLoadingIndicator(configId, recordId, callback) {
+    const indicator = showCardLoadingIndicator(configId, recordId);
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    try {
+      return await callback();
+    } finally {
+      hideCardLoadingIndicator(indicator);
+    }
+  }
+
+  async function acquireRecordLock(entityType, entityId) {
+    const id = String(entityId || "").trim();
+    if (!id) return true;
+    const key = recordLockKey(entityType, id);
+    if (activeRecordLock?.key === key) return true;
+    let payload;
+    try {
+      payload = await requestSharedRecordLocks({
+        method: "POST",
+        body: {
+          action: "acquire",
+          entityType,
+          entityId: id,
+          clientId: recordLockClientId
+        }
+      });
+    } catch (error) {
+      if (error.status === 423) {
+        const lock = error.payload?.lock || {};
+        recordLocks.set(key, lock);
+        alert(formatRecordLockMessage(lock));
+        if (!state.modal) render();
+        return false;
+      }
+      alert(`Не удалось заблокировать запись для редактирования: ${error.message}`);
+      return false;
+    }
+    const previousLock = activeRecordLock;
+    activeRecordLock = {
+      ...(payload.lock || {}),
+      entityType,
+      entityId: id,
+      key
+    };
+    recordLocks.set(key, { ...activeRecordLock, ownedByClient: true });
+    startRecordLockHeartbeat();
+    if (previousLock && previousLock.key !== key) {
+      await releaseRecordLock(previousLock);
+      activeRecordLock = {
+        ...(payload.lock || {}),
+        entityType,
+        entityId: id,
+        key
+      };
+      startRecordLockHeartbeat();
+    }
+    return true;
+  }
+
+  function persistStateToLocalStorage(data = state.data) {
+    const indexedDbWrite = persistStateToIndexedDb(data).catch((error) => {
+      console.warn("Не удалось обновить расширенную автономную копию общей базы", error);
+      return false;
+    });
+    if (browserStateIndexedDbMode) return true;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      return true;
+    } catch (error) {
+      console.warn("Локальная копия общей базы не помещается в хранилище браузера", error);
+      indexedDbWrite.then((stored) => {
+        if (stored) activateBrowserIndexedDbMode();
+      });
+      return false;
+    }
+  }
+
   function persist() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+    persistStateToLocalStorage(state.data);
+    sharedStateDirty = true;
+    sharedStateChangeGeneration += 1;
+    persistSharedStateRecovery();
+    updateSharedStateStatusUi();
+    if (sharedStateReady) scheduleSharedApplicationStateSave();
   }
 
   function loadTableSettings() {
     const saved = localStorage.getItem(TABLE_SETTINGS_KEY);
-    if (!saved) return {};
+    let settings = {};
     try {
-      const parsed = JSON.parse(saved);
-      return parsed && typeof parsed === "object" ? parsed : {};
+      const parsed = saved ? JSON.parse(saved) : {};
+      settings = parsed && typeof parsed === "object" ? parsed : {};
     } catch (error) {
       console.warn("Не удалось прочитать настройки таблиц", error);
-      return {};
     }
+    if (localStorage.getItem(DIRECT_EXPENSES_TABLE_LAYOUT_VERSION_KEY) !== DIRECT_EXPENSES_TABLE_LAYOUT_VERSION) {
+      const current = settings.directExpenses && typeof settings.directExpenses === "object"
+        ? settings.directExpenses
+        : {};
+      settings.directExpenses = {
+        ...current,
+        order: ["note", "date", "type", "amount", "actStatus", "recommendation", "uid"]
+      };
+      try {
+        localStorage.setItem(TABLE_SETTINGS_KEY, JSON.stringify(settings));
+        localStorage.setItem(DIRECT_EXPENSES_TABLE_LAYOUT_VERSION_KEY, DIRECT_EXPENSES_TABLE_LAYOUT_VERSION);
+      } catch (error) {
+        console.warn("Не удалось сохранить новый порядок колонок прямых затрат", error);
+      }
+    }
+    if (localStorage.getItem(GENERAL_EXPENSES_TABLE_LAYOUT_VERSION_KEY) !== GENERAL_EXPENSES_TABLE_LAYOUT_VERSION) {
+      const current = settings.generalExpenses && typeof settings.generalExpenses === "object"
+        ? settings.generalExpenses
+        : {};
+      settings.generalExpenses = {
+        ...current,
+        order: ["counterparty", "section", "date", "workType", "amount", "paid", "accountingClosed"]
+      };
+      try {
+        localStorage.setItem(TABLE_SETTINGS_KEY, JSON.stringify(settings));
+        localStorage.setItem(GENERAL_EXPENSES_TABLE_LAYOUT_VERSION_KEY, GENERAL_EXPENSES_TABLE_LAYOUT_VERSION);
+      } catch (error) {
+        console.warn("Не удалось сохранить новый порядок колонок общих затрат", error);
+      }
+    }
+    return settings;
   }
 
   function persistTableSettings() {
@@ -3679,6 +5829,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const navigation = event.state?.aisStudentStatusNavigation;
       if (!navigation) return;
       state.modal = null;
+      resetCardWindowState();
       state.studentApplicationsImport.open = false;
       state.documentTemplateDialogId = "";
       state.search = "";
@@ -3715,6 +5866,16 @@ MAX - https://bizvmax.ru/zifra_plus
     const current = navItems.find((item) => item.id === state.view) || navItems[0];
     const orderedNavItems = getOrderedNavItems();
     const authUser = getCurrentAuthUser();
+    const sharedStateTone = getSharedStateStatusTone();
+    const sharedStateLabel = getSharedStateStatusLabel(sharedStateTone);
+    const sharedStateTitle = [
+      sharedStateLabel,
+      sharedStateRevision ? `Ревизия: ${sharedStateRevision}` : "",
+      sharedStateSource ? `Источник: ${sharedStateSource}` : "",
+      sharedStatePendingCount ? `Ожидают выгрузки: ${sharedStatePendingCount}` : "",
+      sharedStateUpdatedBy ? `Последнее изменение: ${sharedStateUpdatedBy}` : "",
+      sharedStateUpdatedAt ? formatDateTimeRu(sharedStateUpdatedAt) : ""
+    ].filter(Boolean).join("\n");
     app.innerHTML = `
       <aside class="sidebar">
         <div class="brand">
@@ -3741,6 +5902,10 @@ MAX - https://bizvmax.ru/zifra_plus
             <h1>${current.label}</h1>
           </div>
           <div class="top-actions">
+            <span class="source-pill shared-state-pill tone-${sharedStateTone}" title="${escapeMultilineAttr(sharedStateTitle)}">
+              <span class="shared-state-dot" aria-hidden="true"></span>
+              ${escapeHtml(sharedStateLabel)}
+            </span>
             <button class="account-button" data-action="open-profile" type="button" title="Открыть личный кабинет">
               <span class="account-avatar">${escapeHtml(initials(authUser.name || authUser.login || "П"))}</span>
               <span class="account-copy">
@@ -3757,17 +5922,21 @@ MAX - https://bizvmax.ru/zifra_plus
       ${state.studentApplicationsImport.open ? renderStudentApplicationsImport() : ""}
       ${state.financeDetails.open ? renderFinanceDetailsDialog() : ""}
       ${state.modal ? renderModal() : ""}
+      ${state.employeeExpenseEditor ? renderEmployeeExpenseEditor() : ""}
       ${state.documentTemplateDialogId ? renderDocumentTemplateDialog() : ""}
       ${state.profileOpen ? renderProfileDialog() : ""}
-      ${state.userManagementOpen && isAdminUser() ? renderUserManagementDialog() : ""}
+      ${state.releaseHistoryOpen && isAdminUser() ? renderReleaseHistoryDialog() : ""}
       ${renderDatabaseImportIndicator()}
       ${renderDatabaseExportIndicator()}
     `;
     bindEvents();
     restoreDictionaryAddFocus();
     focusPendingContractTemplateField();
-    if (state.view === "admin" && isAdminUser() && !state.auditLog.loaded && !state.auditLog.loading) {
+    if (state.view === "admin" && state.adminTab === "audit" && isAdminUser() && !state.auditLog.loaded && !state.auditLog.loading) {
       queueMicrotask(() => loadAdminAuditLog());
+    }
+    if (state.view === "admin" && state.adminTab === "users" && isAdminUser() && !state.authUsersLoaded && !state.authUsersLoading) {
+      queueMicrotask(() => loadAuthUsers());
     }
   }
 
@@ -3936,6 +6105,12 @@ MAX - https://bizvmax.ru/zifra_plus
     const today = new Date();
     const todayTime = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
     return Math.round((endTime - todayTime) / 86400000);
+  }
+
+  function isStudentTrainingDeadlinePassed(record) {
+    if (String(record?.status || "").trim() !== "Учится") return false;
+    const daysRemaining = calculateDaysUntilDate(record?.extendedEndDate || record?.endDate);
+    return Number.isFinite(daysRemaining) && daysRemaining < 0;
   }
 
   function getFinanceMetricLabel(metric = state.financeDetails.metric) {
@@ -4233,23 +6408,27 @@ MAX - https://bizvmax.ru/zifra_plus
     download(`finance-${state.financeDetails.metric}-${date}.csv`, `\ufeff${header}\n${body}`, "text/csv;charset=utf-8");
   }
 
-  function openFinanceDetailSource(rowId) {
+  async function openFinanceDetailSource(rowId) {
     const row = getFilteredFinanceDetailRows().find((item) => String(item.id) === String(rowId));
     if (!row?.sourceConfig || !row.sourceId || !configs[row.sourceConfig]) return;
-    const keepFinanceInBackground = row.sourceConfig === "students";
-    if (!keepFinanceInBackground) state.financeDetails.open = false;
-    state.lastEditedRow = { config: row.sourceConfig, id: row.sourceId };
-    if (row.sourceConfig === "students") {
-      state.studentCardTab = "income";
-      state.openPaymentRows = [];
-      state.openExpenseRows = [];
-    }
-    state.modal = {
-      config: row.sourceConfig,
-      id: row.sourceId,
-      ...(keepFinanceInBackground ? { studentNavigationIds: getFinanceDetailStudentNavigationIds() } : {})
-    };
-    render();
+    await withCardLoadingIndicator(row.sourceConfig, row.sourceId, async () => {
+      if (!await acquireRecordLock(recordLockEntityType(row.sourceConfig), row.sourceId)) return;
+      const keepFinanceInBackground = row.sourceConfig === "students";
+      if (!keepFinanceInBackground) state.financeDetails.open = false;
+      state.lastEditedRow = { config: row.sourceConfig, id: row.sourceId };
+      if (row.sourceConfig === "students") {
+        state.studentCardTab = "income";
+        state.openPaymentRows = [];
+        state.openExpenseRows = [];
+      }
+      if (["students", "contracts"].includes(row.sourceConfig)) resetCardWindowState();
+      state.modal = {
+        config: row.sourceConfig,
+        id: row.sourceId,
+        ...(keepFinanceInBackground ? { studentNavigationIds: getFinanceDetailStudentNavigationIds() } : {})
+      };
+      render();
+    });
   }
 
   function getFinanceDetailStudentNavigationIds() {
@@ -4370,9 +6549,25 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function getDirectExpenseNoteFilterOptions() {
+    const valuesByNormalizedNote = new Map();
+    getRowsForConfig(configs.directExpenses).forEach((expense) => {
+      const note = String(expense?.note || "").replace(/\s+/g, " ").trim();
+      if (!note) return;
+      const normalized = note.toLocaleLowerCase("ru-RU");
+      if (!valuesByNormalizedNote.has(normalized)) valuesByNormalizedNote.set(normalized, note);
+    });
+    return [...valuesByNormalizedNote.values()]
+      .sort((left, right) => left.localeCompare(right, "ru", { sensitivity: "base" }));
+  }
+
   function renderCollection(config) {
     const rows = getVisibleRows(config);
     const statuses = getFilterOptions(config);
+    const statusDictionary = config.fields.find((item) => item.key === "status")?.dict || "";
+    const directExpenseNoteOptions = state.view === "directExpenses"
+      ? getDirectExpenseNoteFilterOptions()
+      : [];
     const importedViewIds = state.view === "students"
       ? (state.studentImportedViewIds || [])
       : [];
@@ -4393,8 +6588,59 @@ MAX - https://bizvmax.ru/zifra_plus
               <span>⌕</span>
               <input id="searchInput" value="${escapeAttr(state.search)}" placeholder="Поиск" autocomplete="off">
             </label>
+            ${state.view === "directExpenses" ? `
+              <div class="combo-field direct-expense-note-filter" data-direct-expense-note-filter>
+                <div class="search-box combo-input-wrap">
+                  <span>⌕</span>
+                  <input
+                    id="directExpenseNoteFilter"
+                    value="${escapeAttr(state.directExpenseNoteFilter)}"
+                    placeholder="Примечание"
+                    autocomplete="off"
+                    aria-label="Фильтр по примечанию"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    aria-controls="directExpenseNoteFilterOptions"
+                  >
+                  <button
+                    class="direct-expense-note-filter-toggle"
+                    data-action="toggle-direct-expense-note-filter"
+                    type="button"
+                    title="Показать список примечаний"
+                    aria-label="Показать список примечаний"
+                    tabindex="-1"
+                  >
+                    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7 5 6 5-6"></path></svg>
+                  </button>
+                </div>
+                <div class="combo-options direct-expense-note-filter-options" id="directExpenseNoteFilterOptions" data-direct-expense-note-filter-options role="listbox">
+                  <button
+                    class="${state.directExpenseNoteFilter ? "" : "is-selected"}"
+                    data-action="select-direct-expense-note-filter"
+                    data-value=""
+                    type="button"
+                    role="option"
+                    aria-selected="${state.directExpenseNoteFilter ? "false" : "true"}"
+                  >Все примечания</button>
+                  ${directExpenseNoteOptions.map((value) => {
+                    const selected = value === state.directExpenseNoteFilter;
+                    return `
+                      <button
+                        class="${selected ? "is-selected" : ""}"
+                        data-action="select-direct-expense-note-filter"
+                        data-value="${escapeAttr(value)}"
+                        type="button"
+                        role="option"
+                        aria-selected="${selected ? "true" : "false"}"
+                      >${escapeHtml(value)}</button>
+                    `;
+                  }).join("")}
+                  <div class="combo-empty" data-direct-expense-note-filter-empty hidden>Совпадений не найдено</div>
+                </div>
+              </div>
+            ` : ""}
             ${statuses.length ? `
-              <select id="statusFilter" class="select-control">
+              <select id="statusFilter" class="select-control" ${statusDictionary ? `data-settings-dictionary="${escapeAttr(statusDictionary)}"` : ""}>
                 ${["Все", ...statuses].map((item) => `<option ${state.statusFilter === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
               </select>
             ` : ""}
@@ -4739,7 +6985,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <button class="ghost-button" data-action="clear-student-applications-filters" type="button">Очистить фильтры</button>
               <label class="student-applications-status-filter">
                 <span>Установить статус</span>
-                <select name="importStatus">
+                <select name="importStatus" data-settings-dictionary="statuses">
                   ${renderStudentStatusOptions(statuses, filters.status)}
                 </select>
               </label>
@@ -5542,7 +7788,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="bulk-toolbar ${selected.length ? "active" : ""}">
         <span>Выбрано: <strong>${selected.length}</strong></span>
         ${statusOptions.length ? `
-          <select id="bulkStatusSelect" class="select-control" ${selected.length ? "" : "disabled"}>
+          <select id="bulkStatusSelect" class="select-control" ${statusField?.dict ? `data-settings-dictionary="${escapeAttr(statusField.dict)}"` : ""} ${selected.length ? "" : "disabled"}>
             ${configId === "students"
               ? renderStudentStatusOptions(statusOptions)
               : statusOptions.map((item) => `<option>${escapeHtml(item)}</option>`).join("")}
@@ -5782,15 +8028,32 @@ MAX - https://bizvmax.ru/zifra_plus
         percent.textContent = `${progress}%`;
       }
     }
-    const button = document.querySelector("[data-action='sync-students-database']");
-    if (button) {
-      button.disabled = Boolean(state.databaseExport.running);
-      button.classList.toggle("is-loading", Boolean(state.databaseExport.running));
-      const label = button.querySelector("[data-database-export-button-label]");
+    const syncButton = document.querySelector("[data-action='sync-students-database']");
+    if (syncButton) {
+      syncButton.disabled = Boolean(state.databaseExport.running);
+      syncButton.classList.toggle(
+        "is-loading",
+        Boolean(state.databaseExport.running && state.databaseExport.operation !== "download")
+      );
+      const label = syncButton.querySelector("[data-database-export-button-label]");
       if (label) {
-        label.textContent = state.databaseExport.running
+        label.textContent = state.databaseExport.running && state.databaseExport.operation !== "download"
           ? "Синхронизация..."
           : "Синхронизировать с базой";
+      }
+    }
+    const downloadButton = document.querySelector("[data-action='download-students-database']");
+    if (downloadButton) {
+      downloadButton.disabled = Boolean(state.databaseExport.running);
+      downloadButton.classList.toggle(
+        "is-loading",
+        Boolean(state.databaseExport.running && state.databaseExport.operation === "download")
+      );
+      const label = downloadButton.querySelector("[data-database-download-button-label]");
+      if (label) {
+        label.textContent = state.databaseExport.running && state.databaseExport.operation === "download"
+          ? "Формирование..."
+          : "Экспорт в базу";
       }
     }
   }
@@ -5851,6 +8114,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const importedViewIds = state.view === "students"
       ? new Set((state.studentImportedViewIds || []).map(String))
       : new Set();
+    const directExpenseNoteQuery = state.view === "directExpenses"
+      ? String(state.directExpenseNoteFilter || "").trim().toLocaleLowerCase("ru-RU")
+      : "";
     let filtered = rows.filter((row) => {
       const matchQuery = !query || Object.values(row).some((value) => String(value || "").toLowerCase().includes(query));
       const hasUnassignedStatus = state.statusFilter === "Не задано"
@@ -5873,12 +8139,15 @@ MAX - https://bizvmax.ru/zifra_plus
       const matchContractSection = !selectedContractSections.length
         || selectedContractSections.includes(contractSection);
       const matchImportedView = !importedViewIds.size || importedViewIds.has(String(row.id));
+      const matchDirectExpenseNote = !directExpenseNoteQuery
+        || String(row.note || "").toLocaleLowerCase("ru-RU").includes(directExpenseNoteQuery);
       return matchQuery
         && matchStatus
         && matchProgramType
         && matchRegistryProgramType
         && matchContractSection
-        && matchImportedView;
+        && matchImportedView
+        && matchDirectExpenseNote;
     });
     if (state.sort.key) {
       const dir = state.sort.dir === "asc" ? 1 : -1;
@@ -6002,8 +8271,25 @@ MAX - https://bizvmax.ru/zifra_plus
             </tr>
           </thead>
           <tbody>
-            ${pageRows.map((row) => `
-              <tr class="${lastEdited.config === configId && String(lastEdited.id || "") === String(row.id || "") ? "is-last-edited" : ""}">
+            ${pageRows.map((row) => {
+              const recordLock = getRecordLock(recordLockEntityType(configId), row.id);
+              const lockedByOther = Boolean(recordLock && !recordLock.ownedByClient);
+              const accountingPending = configId === "contracts" && !isChecked(row.accountingRecorded);
+              const trainingDeadlinePassed = configId === "students" && isStudentTrainingDeadlinePassed(row);
+              const rowClasses = [
+                lastEdited.config === configId && String(lastEdited.id || "") === String(row.id || "") ? "is-last-edited" : "",
+                lockedByOther ? "is-record-locked" : "",
+                accountingPending ? "contract-accounting-pending" : "",
+                trainingDeadlinePassed ? "student-training-expired" : ""
+              ].filter(Boolean).join(" ");
+              const lockTitle = lockedByOther ? formatRecordLockMessage(recordLock) : "";
+              const rowTitle = [
+                lockTitle,
+                accountingPending ? "Договор не передан в бухгалтерию" : "",
+                trainingDeadlinePassed ? "Срок окончания обучения истёк" : ""
+              ].filter(Boolean).join("\n");
+              return `
+              <tr class="${rowClasses}" ${lockedByOther ? "data-record-locked" : ""} ${rowTitle ? `title="${escapeAttr(rowTitle)}"` : ""}>
                 <td class="select-col">
                   <input type="checkbox" data-action="toggle-row-selection" data-config="${configId}" data-id="${row.id}" ${selected.includes(row.id) ? "checked" : ""} aria-label="Выбрать строку">
                 </td>
@@ -6014,14 +8300,18 @@ MAX - https://bizvmax.ru/zifra_plus
                   if (index === 0) {
                     return `
                       <td class="table-primary-col" ${attrs} ${style}>
-                        <button class="table-edit-link" data-action="edit" data-config="${configId}" data-id="${row.id}" type="button">${value}</button>
+                        <button class="table-edit-link" data-action="edit" data-config="${configId}" data-id="${row.id}" type="button" ${lockedByOther ? `aria-label="${escapeAttr(lockTitle)}"` : ""}>
+                          ${value}
+                          ${lockedByOther ? '<span class="record-lock-indicator" aria-hidden="true">🔒</span>' : ""}
+                        </button>
                       </td>
                     `;
                   }
                   return `<td ${attrs} ${style}>${value}</td>`;
                 }).join("")}
               </tr>
-            `).join("")}
+            `;
+            }).join("")}
           </tbody>
         </table>
       </div>
@@ -6064,6 +8354,33 @@ MAX - https://bizvmax.ru/zifra_plus
     return state.tableSettings[configId]?.widths?.[key] || "";
   }
 
+  function getColumnWidthBounds(configId, key) {
+    if (configId === EMPLOYEE_PAYMENT_TABLE_CONFIG_ID) {
+      const column = EMPLOYEE_PAYMENT_TABLE_COLUMNS.find((item) => item.key === key);
+      if (column) return { min: column.defaultWidth, max: 640 };
+    }
+    return { min: 80, max: 640 };
+  }
+
+  function getEmployeePaymentColumnWidth(column, overrideKey = "", overrideWidth = 0) {
+    const width = column.key === overrideKey
+      ? Number(overrideWidth)
+      : Number(getColumnWidth(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, column.key));
+    return clamp(width || column.defaultWidth, column.defaultWidth, 640);
+  }
+
+  function employeePaymentColumnStyleAttr(column) {
+    const width = getEmployeePaymentColumnWidth(column);
+    return `style="width:${width}px;min-width:${width}px"`;
+  }
+
+  function getEmployeePaymentTableMinWidth(overrideKey = "", overrideWidth = 0) {
+    const columnsWidth = EMPLOYEE_PAYMENT_TABLE_COLUMNS.reduce((total, column) => (
+      total + getEmployeePaymentColumnWidth(column, overrideKey, overrideWidth)
+    ), 0);
+    return Math.max(820, Math.round(columnsWidth));
+  }
+
   function columnStyleAttr(configId, key) {
     const width = Number(getColumnWidth(configId, key));
     if (!width) return "";
@@ -6103,7 +8420,8 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!raw) {
         delete settings.widths[fieldKey];
       } else {
-        settings.widths[fieldKey] = clamp(Number(raw) || 0, 80, 640);
+        const bounds = getColumnWidthBounds(configId, fieldKey);
+        settings.widths[fieldKey] = clamp(Number(raw) || 0, bounds.min, bounds.max);
       }
       return settings;
     });
@@ -6130,12 +8448,26 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
-  function refreshTableData(configId) {
-    state.data = loadState();
-    state.selected[configId] = [];
-    state.tablePages[configId] = 1;
-    state.tableOptions = null;
-    render();
+  async function refreshTableData(configId) {
+    try {
+      if (sharedStateDirty || sharedStateConflict) {
+        const confirmed = confirm(
+          "Загрузить последнюю общую базу? Несохранённый вариант этого браузера останется в локальной резервной копии."
+        );
+        if (!confirmed) return;
+      }
+      if (sharedStateReady || sharedStateConflict) {
+        await reloadSharedApplicationState({ renderAfter: false });
+      } else {
+        state.data = loadState();
+      }
+      state.selected[configId] = [];
+      state.tablePages[configId] = 1;
+      state.tableOptions = null;
+      render();
+    } catch (error) {
+      alert(`Не удалось обновить общую базу: ${error.message}`);
+    }
   }
 
   function bindTableColumnEvents() {
@@ -6172,7 +8504,13 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     document.querySelectorAll("[data-action='resize-column']").forEach((handle) => {
-      handle.addEventListener("mousedown", startColumnResize);
+      if (handle.dataset.config === EMPLOYEE_PAYMENT_TABLE_CONFIG_ID) {
+        handle.addEventListener("pointerdown", startEmployeePaymentColumnResize);
+        handle.addEventListener("dblclick", resetEmployeePaymentColumnWidth);
+        handle.addEventListener("keydown", resizeEmployeePaymentColumnWithKeyboard);
+      } else {
+        handle.addEventListener("mousedown", startColumnResize);
+      }
       handle.addEventListener("dragstart", (event) => event.preventDefault());
       handle.addEventListener("click", (event) => event.stopPropagation());
     });
@@ -6195,17 +8533,25 @@ MAX - https://bizvmax.ru/zifra_plus
     const configId = handle.dataset.config;
     const fieldKey = handle.dataset.field;
     if (!header || !configId || !fieldKey) return;
+    const bounds = getColumnWidthBounds(configId, fieldKey);
+    const minWidth = clamp(Number(handle.dataset.minWidth) || bounds.min, 32, bounds.max);
     const startWidth = header.getBoundingClientRect().width || Number(getColumnWidth(configId, fieldKey)) || 160;
     const resizeState = {
       configId,
       fieldKey,
       startX: event.clientX,
       startWidth,
-      currentWidth: startWidth
+      currentWidth: startWidth,
+      minWidth,
+      maxWidth: bounds.max
     };
     document.body.classList.add("is-resizing-column");
     const onMove = (moveEvent) => {
-      resizeState.currentWidth = clamp(Math.round(resizeState.startWidth + moveEvent.clientX - resizeState.startX), 80, 640);
+      resizeState.currentWidth = clamp(
+        Math.round(resizeState.startWidth + moveEvent.clientX - resizeState.startX),
+        resizeState.minWidth,
+        resizeState.maxWidth
+      );
       applyColumnWidthToDom(resizeState.configId, resizeState.fieldKey, resizeState.currentWidth);
     };
     const onUp = () => {
@@ -6217,12 +8563,148 @@ MAX - https://bizvmax.ru/zifra_plus
     document.addEventListener("mouseup", onUp, { once: true });
   }
 
+  function startEmployeePaymentColumnResize(event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    if (Number(event.detail) > 1) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    const header = handle.closest("th");
+    const configId = handle.dataset.config;
+    const fieldKey = handle.dataset.field;
+    if (!header || configId !== EMPLOYEE_PAYMENT_TABLE_CONFIG_ID || !fieldKey) return;
+    const bounds = getColumnWidthBounds(configId, fieldKey);
+    const minWidth = clamp(Number(handle.dataset.minWidth) || bounds.min, 32, bounds.max);
+    const startWidth = header.getBoundingClientRect().width
+      || Number(getColumnWidth(configId, fieldKey))
+      || minWidth;
+    const startX = event.clientX;
+    const pointerId = event.pointerId;
+    const tableWrap = header.closest(".employee-payment-table-wrap");
+    const headerBox = header.getBoundingClientRect();
+    const wrapBox = tableWrap?.getBoundingClientRect() || headerBox;
+    const guide = document.createElement("span");
+    guide.className = "employee-payment-column-resize-guide";
+    guide.style.left = `${Math.round(headerBox.right)}px`;
+    guide.style.top = `${Math.max(0, Math.round(wrapBox.top))}px`;
+    guide.style.height = `${Math.max(24, Math.round(Math.min(window.innerHeight, wrapBox.bottom) - Math.max(0, wrapBox.top)))}px`;
+    document.body.appendChild(guide);
+    document.body.classList.add("is-resizing-column");
+    handle.setPointerCapture?.(pointerId);
+    let currentWidth = startWidth;
+    let pendingX = startX;
+    let resizeFrame = 0;
+    let finished = false;
+
+    const updateGuide = () => {
+      resizeFrame = 0;
+      currentWidth = clamp(Math.round(startWidth + pendingX - startX), minWidth, bounds.max);
+      guide.style.transform = `translate3d(${Math.round(currentWidth - startWidth)}px, 0, 0)`;
+      handle.setAttribute("aria-valuenow", String(currentWidth));
+    };
+    const scheduleGuideUpdate = () => {
+      if (!resizeFrame) resizeFrame = window.requestAnimationFrame(updateGuide);
+    };
+    const cleanup = () => {
+      if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = 0;
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onCancel);
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.body.classList.remove("is-resizing-column");
+      guide.remove();
+      try {
+        if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+      } catch (error) {
+        // Pointer capture may already be released after pointerup.
+      }
+    };
+    const finish = (apply) => {
+      if (finished) return;
+      finished = true;
+      if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = 0;
+      updateGuide();
+      cleanup();
+      if (!apply) {
+        handle.setAttribute("aria-valuenow", String(Math.round(startWidth)));
+        return;
+      }
+      applyColumnWidthToDom(configId, fieldKey, currentWidth);
+      setTableColumnWidth(configId, fieldKey, currentWidth);
+      handle.focus({ preventScroll: true });
+    };
+    const onMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      pendingX = moveEvent.clientX;
+      scheduleGuideUpdate();
+    };
+    const onUp = (upEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
+      pendingX = upEvent.clientX;
+      finish(true);
+    };
+    const onCancel = (cancelEvent) => {
+      if (cancelEvent.pointerId !== pointerId) return;
+      finish(false);
+    };
+    const onKeyDown = (keyEvent) => {
+      if (keyEvent.key !== "Escape") return;
+      keyEvent.preventDefault();
+      finish(false);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onCancel);
+    document.addEventListener("keydown", onKeyDown, true);
+  }
+
+  function resetEmployeePaymentColumnWidth(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    const fieldKey = String(handle.dataset.field || "");
+    const column = EMPLOYEE_PAYMENT_TABLE_COLUMNS.find((item) => item.key === fieldKey);
+    if (!column) return;
+    setTableColumnWidth(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, fieldKey, "");
+    applyColumnWidthToDom(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, fieldKey, column.defaultWidth);
+    handle.setAttribute("aria-valuenow", String(column.defaultWidth));
+  }
+
+  function resizeEmployeePaymentColumnWithKeyboard(event) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    const fieldKey = String(handle.dataset.field || "");
+    const column = EMPLOYEE_PAYMENT_TABLE_COLUMNS.find((item) => item.key === fieldKey);
+    if (!column) return;
+    const header = handle.closest("th");
+    const currentWidth = header?.getBoundingClientRect().width
+      || getEmployeePaymentColumnWidth(column);
+    const step = event.shiftKey ? 24 : 8;
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    const nextWidth = clamp(Math.round(currentWidth + step * direction), column.defaultWidth, 640);
+    applyColumnWidthToDom(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, fieldKey, nextWidth);
+    setTableColumnWidth(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, fieldKey, nextWidth);
+    handle.setAttribute("aria-valuenow", String(nextWidth));
+  }
+
   function applyColumnWidthToDom(configId, fieldKey, width) {
-    document.querySelectorAll("[data-table-config][data-column-key]").forEach((cell) => {
+    const scope = configId === EMPLOYEE_PAYMENT_TABLE_CONFIG_ID
+      ? ".employee-payment-table [data-table-config][data-column-key]"
+      : "[data-table-config][data-column-key]";
+    document.querySelectorAll(scope).forEach((cell) => {
       if (cell.dataset.tableConfig !== configId || cell.dataset.columnKey !== fieldKey) return;
       cell.style.width = `${width}px`;
       cell.style.minWidth = `${width}px`;
     });
+    if (configId === EMPLOYEE_PAYMENT_TABLE_CONFIG_ID) {
+      document.querySelectorAll(".employee-payment-table").forEach((table) => {
+        table.style.minWidth = `${getEmployeePaymentTableMinWidth(fieldKey, width)}px`;
+      });
+    }
   }
 
   function getSelected(configId) {
@@ -6287,11 +8769,37 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderSimpleDictionaryEditor(dictionary, values) {
+    const dict = String(dictionary || "").trim();
+    const items = (Array.isArray(values) ? values : [])
+      .filter((value) => typeof value !== "object")
+      .map((value) => String(value || ""));
+    return `
+      <form class="inline-form dictionary-add-form" data-action="dict-add" data-dict="${escapeAttr(dict)}">
+        <input name="value" placeholder="Новое значение или список из буфера обмена" autocomplete="off" data-dictionary-add-input>
+        <button class="ghost-button" type="submit">Добавить</button>
+      </form>
+      ${dict === "discountRules" ? `
+        <p class="dictionary-format-hint">Формат скидок: <code># Название группы</code>, <code>25,50; Описание скидки</code>, <code>или</code>.</p>
+      ` : ""}
+      <div class="chips dictionary-detail-values" data-dictionary-values data-dict="${escapeAttr(dict)}">
+        ${items.length ? items.map((value) => `
+          <span class="chip dictionary-value-chip" draggable="true" data-dict="${escapeAttr(dict)}" data-value="${escapeAttr(value)}" title="Перетащите, чтобы изменить порядок">
+            ${escapeHtml(value)}
+            <button data-action="dict-remove" data-dict="${escapeAttr(dict)}" data-value="${escapeAttr(value)}" type="button">×</button>
+          </span>
+        `).join("") : `<span class="lookup-empty">Значений пока нет</span>`}
+      </div>
+    `;
+  }
+
   function renderSettings() {
     const dictionaries = state.data.dictionaries;
     const dictionaryItems = Object.keys(dictionaries)
       .filter((key) => ![
         "communicationTemplateDescriptions",
+        "employeeCommunicationTemplates",
+        "employeeCommunicationTemplateDescriptions",
         "communicationTemplateFieldOverrides",
         "communicationTemplateCustomFields",
         "contractTemplateFields",
@@ -6343,7 +8851,7 @@ MAX - https://bizvmax.ru/zifra_plus
               ${visibleItems.length ? visibleItems.map((item) => `
                 <button class="dictionary-list-item ${item.key === selectedKey ? "active" : ""}" data-action="select-dictionary" data-dict="${item.key}" type="button" role="option" aria-selected="${item.key === selectedKey ? "true" : "false"}" tabindex="${item.key === selectedKey ? "0" : "-1"}">
                   <span>${escapeHtml(item.title)}</span>
-                  <small>${item.values.length}</small>
+                  <small>${item.key === "communicationTemplates" ? item.values.length + employeeCommunicationMessages.length : item.values.length}</small>
                 </button>
               `).join("") : `<div class="empty-state compact"><span>Справочники не найдены</span></div>`}
             </div>
@@ -6376,7 +8884,7 @@ MAX - https://bizvmax.ru/zifra_plus
                       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v6h6"></path><path d="M12 8v5l3 2"></path></svg>
                     </button>
                   ` : ""}
-                  <span>${selectedValues.length}</span>
+                  <span>${isCommunicationTemplates ? selectedValues.length + employeeCommunicationMessages.length : selectedValues.length}</span>
                 </div>
               </div>
               ${isCommunicationTemplates
@@ -6392,24 +8900,8 @@ MAX - https://bizvmax.ru/zifra_plus
                       : isEducationRegistrationTypeCodes
                         ? renderEducationRegistrationTypeCodesDictionary(selectedValues)
                         : isFinalAttestationSettings
-                          ? renderFinalAttestationSettingsDictionary(selectedValues)
-                  : `
-                <form class="inline-form dictionary-add-form" data-action="dict-add" data-dict="${selectedKey}">
-                  <input name="value" placeholder="Новое значение или список из буфера обмена" autocomplete="off" data-dictionary-add-input>
-                  <button class="ghost-button" type="submit">Добавить</button>
-                </form>
-                ${selectedKey === "discountRules" ? `
-                  <p class="dictionary-format-hint">Формат скидок: <code># Название группы</code>, <code>25,50; Описание скидки</code>, <code>или</code>.</p>
-                ` : ""}
-                <div class="chips dictionary-detail-values" data-dictionary-values data-dict="${selectedKey}">
-                  ${selectedValues.length ? selectedValues.map((value) => `
-                    <span class="chip dictionary-value-chip" draggable="true" data-dict="${selectedKey}" data-value="${escapeAttr(value)}" title="Перетащите, чтобы изменить порядок">
-                      ${escapeHtml(value)}
-                      <button data-action="dict-remove" data-dict="${selectedKey}" data-value="${escapeAttr(value)}" type="button">×</button>
-                    </span>
-                  `).join("") : `<span class="lookup-empty">Значений пока нет</span>`}
-                </div>
-              `}
+                        ? renderFinalAttestationSettingsDictionary(selectedValues)
+                        : renderSimpleDictionaryEditor(selectedKey, selectedValues)}
             ` : `<div class="empty-state"><span>Выберите справочник</span></div>`}
           </section>
         </div>
@@ -6522,6 +9014,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const rateSettings = settings.filter((setting) => setting.type === "number");
     const automaticExpenseRules = settings.find((setting) => setting.key === "automaticExpenseRules");
     const sourceAgentAssignments = settings.find((setting) => setting.key === "sourceAgentAssignments");
+    const agentRateWithoutAuthor = settings.find((setting) => setting.key === "agentRateWithoutAuthor");
+    const agentRateWithAuthor = settings.find((setting) => setting.key === "agentRateWithAuthor");
     const tabs = getOrderedTabs("payment-settings", [
       { id: "rates", label: "Ставки" },
       { id: "assignment", label: "Назначение" },
@@ -6598,11 +9092,28 @@ MAX - https://bizvmax.ru/zifra_plus
           role="tabpanel"
           ${activeTab === "agents" ? "" : "hidden"}
         >
+          <div class="payment-agent-rate-card">
+            <div>
+              <h4>Расчёт агентского вознаграждения</h4>
+              <p>Сумма считается от всех поступлений слушателя и округляется вверх до 50 ₽, как на листе «База».</p>
+            </div>
+            <div class="payment-agent-rate-grid">
+              ${[agentRateWithoutAuthor, agentRateWithAuthor].filter(Boolean).map((setting) => `
+                <label>
+                  <span>${escapeHtml(setting.label)}</span>
+                  <span class="payment-agent-rate-input">
+                    <input name="${escapeAttr(setting.key)}" type="number" min="0" max="100" step="0.01" value="${escapeAttr(setting.value)}" required>
+                    <span aria-hidden="true">%</span>
+                  </span>
+                </label>
+              `).join("")}
+            </div>
+          </div>
           <label class="payment-settings-textarea">
             <span>${escapeHtml(sourceAgentAssignments.label)}</span>
             <textarea name="${escapeAttr(sourceAgentAssignments.key)}" rows="6" spellcheck="false">${escapeHtml(sourceAgentAssignments.value)}</textarea>
           </label>
-          <p class="payment-settings-hint">Каждое соответствие указывается с новой строки в формате <code>Источник=ФИО агента</code>.</p>
+          <p class="payment-settings-hint">Каждое соответствие указывается с новой строки в формате <code>Источник=ФИО агента</code>. Если в «Реестре программ» заполнен автор, применяется ставка авторского курса; иначе — ставка курса без автора.</p>
         </section>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-payment-settings" type="button">Восстановить исходные</button>
@@ -6963,52 +9474,96 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderCommunicationTemplateAudienceForm({ audience, messages, templates, descriptions, templateFields, active }) {
+    const audienceLabel = audience === "employees" ? "сотрудников" : "слушателей";
+    return `
+      <section
+        class="communication-template-audience-panel ${active ? "is-active" : ""}"
+        data-communication-template-panel="${escapeAttr(audience)}"
+        role="tabpanel"
+        ${active ? "" : "hidden"}
+      >
+        <form class="communication-template-form" data-action="save-communication-templates" data-template-audience="${escapeAttr(audience)}">
+          <div class="communication-template-fields">
+            <div class="communication-template-fields-head">
+              <strong>Доступные поля</strong>
+              <button class="communication-template-field-add" data-action="add-communication-template-field" type="button" title="Добавить поле" aria-label="Добавить поле">+</button>
+            </div>
+            <div class="communication-template-field-list">${templateFields.map((field) => (
+              renderCommunicationTemplateFieldToken(field, "Перетащите поле в текст сообщения. Нажмите правой кнопкой мыши для настройки")
+            )).join("")}</div>
+          </div>
+          <div class="communication-template-list">
+            ${messages.map((message, index) => `
+              <section class="communication-template-item">
+                <label class="communication-template-item-head">
+                  <strong>Сообщение ${index + 1}</strong>
+                  <input name="description${index}" value="${escapeAttr(descriptions[index])}" placeholder="Краткое описание" />
+                </label>
+                <div
+                  class="communication-template-editor"
+                  contenteditable="true"
+                  data-template-editor
+                  data-template-index="${index}"
+                  role="textbox"
+                  aria-label="${escapeAttr(`Текст сообщения ${index + 1} для ${audienceLabel}`)}"
+                  aria-multiline="true"
+                >${renderCommunicationTemplateEditorContent(templates[index])}</div>
+                <input name="template${index}" value="${escapeAttr(templates[index])}" type="hidden" />
+              </section>
+            `).join("")}
+          </div>
+          <div class="communication-template-actions">
+            <button class="ghost-button" data-action="reset-communication-templates" data-template-audience="${escapeAttr(audience)}" type="button">Восстановить исходные</button>
+            <button class="primary-button" type="submit">Сохранить шаблоны ${audienceLabel}</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
   function renderCommunicationTemplateDictionary(values) {
-    const templates = normalizeCommunicationTemplates(values);
-    const descriptions = normalizeCommunicationTemplateDescriptions(
+    const studentTemplates = normalizeCommunicationTemplates(values);
+    const studentDescriptions = normalizeCommunicationTemplateDescriptions(
       state.data.dictionaries.communicationTemplateDescriptions
+    );
+    const employeeTemplates = normalizeEmployeeCommunicationTemplates(
+      state.data.dictionaries.employeeCommunicationTemplates
+    );
+    const employeeDescriptions = normalizeEmployeeCommunicationTemplateDescriptions(
+      state.data.dictionaries.employeeCommunicationTemplateDescriptions
     );
     const fieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     const templateFields = sortCommunicationTemplateFieldDefinitions(
       getCommunicationTemplateFieldDefinitions(),
       fieldSortOrder
     );
+    const activeAudience = state.communicationTemplateAudience === "employees" ? "employees" : "students";
     return `
-      <form class="communication-template-form" data-action="save-communication-templates">
-        <div class="communication-template-fields">
-          <div class="communication-template-fields-head">
-            <strong>Доступные поля</strong>
-            <button class="communication-template-field-add" data-action="add-communication-template-field" type="button" title="Добавить поле" aria-label="Добавить поле">+</button>
-          </div>
-          <div class="communication-template-field-list">${templateFields.map((field) => {
-            return renderCommunicationTemplateFieldToken(field, "Перетащите поле в текст сообщения. Нажмите правой кнопкой мыши для настройки");
-          }).join("")}</div>
+      <div class="communication-template-dictionary">
+        <div class="communication-template-audience-tabs" role="tablist" aria-label="Получатели типовых сообщений">
+          <button class="${activeAudience === "students" ? "active" : ""}" data-action="switch-communication-template-audience" data-template-audience="students" type="button" role="tab" aria-selected="${activeAudience === "students" ? "true" : "false"}">Слушатели</button>
+          <button class="${activeAudience === "employees" ? "active" : ""}" data-action="switch-communication-template-audience" data-template-audience="employees" type="button" role="tab" aria-selected="${activeAudience === "employees" ? "true" : "false"}">Сотрудники</button>
         </div>
-        <div class="communication-template-list">
-          ${studentCommunicationMessages.map((message, index) => `
-            <section class="communication-template-item">
-              <label class="communication-template-item-head">
-                <strong>Сообщение ${index + 1}</strong>
-                <input name="description${index}" value="${escapeAttr(descriptions[index])}" placeholder="Краткое описание" />
-              </label>
-              <div
-                class="communication-template-editor"
-                contenteditable="true"
-                data-template-editor
-                data-template-index="${index}"
-                role="textbox"
-                aria-label="${escapeAttr(`Текст сообщения ${index + 1}`)}"
-                aria-multiline="true"
-              >${renderCommunicationTemplateEditorContent(templates[index])}</div>
-              <input name="template${index}" value="${escapeAttr(templates[index])}" type="hidden" />
-            </section>
-          `).join("")}
+        <div class="communication-template-audience-panels">
+          ${renderCommunicationTemplateAudienceForm({
+            audience: "students",
+            messages: studentCommunicationMessages,
+            templates: studentTemplates,
+            descriptions: studentDescriptions,
+            templateFields,
+            active: activeAudience === "students"
+          })}
+          ${renderCommunicationTemplateAudienceForm({
+            audience: "employees",
+            messages: employeeCommunicationMessages,
+            templates: employeeTemplates,
+            descriptions: employeeDescriptions,
+            templateFields,
+            active: activeAudience === "employees"
+          })}
         </div>
-        <div class="communication-template-actions">
-          <button class="ghost-button" data-action="reset-communication-templates" type="button">Восстановить исходные</button>
-          <button class="primary-button" type="submit">Сохранить шаблоны</button>
-        </div>
-      </form>
+      </div>
     `;
   }
 
@@ -8127,15 +10682,21 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderStudentAuditDialog(record) {
     const audit = state.studentAuditLog;
     const roleLabels = { admin: "Администратор", manager: "Менеджер" };
-    const studentName = audit.studentName || String(record?.name || "").trim() || "Слушатель";
-    const uid = String(record?.uid || "").trim();
-    const title = `${studentName}${uid ? ` [${uid}]` : ""}`;
+    const isContract = audit.entityType === "contracts";
+    const personLabel = isContract ? "сотруднику" : "слушателю";
+    const defaultName = isContract ? "Сотрудник" : "Слушатель";
+    const entityName = audit.entityName
+      || audit.studentName
+      || String(record?.name || "").trim()
+      || defaultName;
+    const reference = String(isContract ? record?.contractNo : record?.uid || "").trim();
+    const title = `${entityName}${reference ? ` [${reference}]` : ""}`;
     const advancedFiltersActive = Object.entries(audit.filters || {}).some(([key, value]) => (
       !["q", "from", "to", "user", "role", "action", "area"].includes(key) && value
     ));
     return `
       <div class="modal-backdrop student-audit-backdrop" data-action="close-student-audit-log">
-        <section class="modal student-audit-modal" role="dialog" aria-modal="true" aria-label="Журнал действий по слушателю">
+        <section class="modal student-audit-modal" role="dialog" aria-modal="true" aria-label="Журнал действий по ${personLabel}">
           <header class="modal-head student-audit-head">
             <div>
               <p class="eyebrow">История карточки</p>
@@ -8204,7 +10765,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderAdminAuditPanel() {
     const roleLabels = { admin: "Администратор", manager: "Менеджер" };
     return `
-      <section class="panel admin-audit-panel">
+      <section class="panel admin-audit-panel" id="admin-tab-audit" role="tabpanel">
         <div class="panel-head">
           <div>
             <p class="eyebrow">Контроль изменений</p>
@@ -8315,25 +10876,81 @@ MAX - https://bizvmax.ru/zifra_plus
       getStudentApplicationsEmailLogin()
     );
     const emailPassword = getAdminSettingRenderValue("studentApplicationsEmailPassword", "");
+    const mysqlUseApplicationsConnection = Boolean(getAdminSettingRenderValue(
+      "mysqlUseApplicationsConnection",
+      state.data.meta.mysqlUseApplicationsConnection !== false
+    ));
+    const mysqlHost = getAdminSettingRenderValue("mysqlHost", state.data.meta.mysqlHost || "");
+    const mysqlPort = getAdminSettingRenderValue("mysqlPort", state.data.meta.mysqlPort || 3306);
+    const mysqlDatabase = getAdminSettingRenderValue("mysqlDatabase", state.data.meta.mysqlDatabase || "");
+    const mysqlUser = getAdminSettingRenderValue("mysqlUser", state.data.meta.mysqlUser || "");
+    const mysqlPassword = getAdminSettingRenderValue("mysqlPassword", "");
+    const mysqlFieldsDisabled = mysqlUseApplicationsConnection || state.data.meta.mysqlManagedByEnvironment;
+    const mysqlSourceLabel = state.data.meta.mysqlManagedByEnvironment
+      ? "Настройки заданы переменной окружения сервера."
+      : mysqlUseApplicationsConnection
+        ? "Общая база и блокировки используют подключение MySQL базы заявок."
+        : "Общая база и блокировки используют отдельное подключение MySQL.";
     const saveButtonTitle = state.adminSettingsDirty
       ? "Есть несохранённые изменения. Сохранить подключение"
       : "Сохранить подключение";
+    const releaseDateParts = APPLICATION_RELEASE.releasedAt.split("-");
+    const releaseDateLabel = releaseDateParts.length === 3
+      ? `${releaseDateParts[2]}.${releaseDateParts[1]}.${releaseDateParts[0]}`
+      : APPLICATION_RELEASE.releasedAt;
+    const adminTabs = [
+      { id: "database", label: "Подключение к базе" },
+      { id: "email", label: "Электронная почта" },
+      { id: "audit", label: "Журнал действий" },
+      { id: "users", label: "Пользователи и роли" }
+    ];
+    const adminTab = adminTabs.some((tab) => tab.id === state.adminTab)
+      ? state.adminTab
+      : "database";
     return `
-      <section class="panel admin-users-panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Доступ к системе</p>
-            <h2>Пользователи и роли</h2>
-            <p>Учётные записи администраторов и менеджеров, контакты и состояние доступа.</p>
-          </div>
-          <button class="primary-button" data-action="open-user-management" type="button">Управление пользователями</button>
+      <section class="panel admin-release-panel" aria-labelledby="admin-release-title">
+        <div class="admin-release-copy">
+          <p class="eyebrow">О программе</p>
+          <h2 id="admin-release-title">АИС Допобразование</h2>
+          <p>Сведения о текущем выпуске установленной программы.</p>
         </div>
+        <dl class="admin-release-details">
+          <div>
+            <dt>Версия</dt>
+            <dd class="admin-release-version-value">
+              <span>${escapeHtml(APPLICATION_RELEASE.version)}</span>
+              <button class="ghost-button compact-button" data-action="open-release-history" type="button">Список изменений</button>
+            </dd>
+          </div>
+          <div>
+            <dt>Дата релиза</dt>
+            <dd><time datetime="${escapeAttr(APPLICATION_RELEASE.releasedAt)}">${escapeHtml(releaseDateLabel)}</time></dd>
+          </div>
+        </dl>
       </section>
-      <section class="panel admin-connection-panel">
+      <nav class="admin-tabs" role="tablist" aria-label="Разделы админки">
+        ${adminTabs.map((tab) => `
+          <button
+            class="admin-tab-button ${adminTab === tab.id ? "is-active" : ""}"
+            data-action="switch-admin-tab"
+            data-admin-tab="${escapeAttr(tab.id)}"
+            type="button"
+            role="tab"
+            aria-selected="${adminTab === tab.id ? "true" : "false"}"
+            aria-controls="admin-tab-${escapeAttr(tab.id)}"
+          >${escapeHtml(tab.label)}</button>
+        `).join("")}
+      </nav>
+      <section
+        class="panel admin-connection-panel ${adminTab === "email" ? "is-email-tab" : "is-database-tab"}"
+        id="admin-tab-${adminTab === "email" ? "email" : "database"}"
+        role="tabpanel"
+        ${!["database", "email"].includes(adminTab) ? "hidden" : ""}
+      >
         <div class="section-head">
           <div>
             <p class="eyebrow">Администрирование</p>
-            <h2>Подключение к базе</h2>
+            <h2>${adminTab === "email" ? "Электронная почта" : "Подключение к базе"}</h2>
           </div>
         </div>
           <div class="admin-database-settings">
@@ -8344,8 +10961,11 @@ MAX - https://bizvmax.ru/zifra_plus
                   <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseImportTooltip())}" ${state.databaseImport.running ? "disabled" : ""}>
                     <span data-import-button-label>${state.databaseImport.running ? "Импорт..." : "Загрузить из базы"}</span>
                   </button>
-                  <button class="ghost-button ${state.databaseExport.running ? "is-loading" : ""}" data-action="sync-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseSyncTooltip())}" ${state.databaseExport.running ? "disabled" : ""}>
-                    <span data-database-export-button-label>${state.databaseExport.running ? "Синхронизация..." : "Синхронизировать с базой"}</span>
+                  <button class="ghost-button ${state.databaseExport.running && state.databaseExport.operation === "download" ? "is-loading" : ""}" data-action="download-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseDownloadTooltip())}" ${state.databaseExport.running ? "disabled" : ""}>
+                    <span data-database-download-button-label>${state.databaseExport.running && state.databaseExport.operation === "download" ? "Формирование..." : "Экспорт в базу"}</span>
+                  </button>
+                  <button class="ghost-button ${state.databaseExport.running && state.databaseExport.operation !== "download" ? "is-loading" : ""}" data-action="sync-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseSyncTooltip())}" ${state.databaseExport.running ? "disabled" : ""}>
+                    <span data-database-export-button-label>${state.databaseExport.running && state.databaseExport.operation !== "download" ? "Синхронизация..." : "Синхронизировать с базой"}</span>
                   </button>
                   <button
                     class="primary-button icon-only admin-save-connection-button ${state.adminSettingsDirty ? "is-unsaved" : ""}"
@@ -8362,6 +10982,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 </div>
               </div>
               <div class="sdo-settings-fields">
+                <div class="admin-database-tab-content">
                 <label>
                   <span>WebDAV-путь или ссылка на АИС Допобразование.xlsb</span>
                   <input name="studentDatabaseWebDavPath" type="text" value="${escapeAttr(databasePath)}" required spellcheck="false" placeholder="ООО .../АИС Допобразование.xlsb или ссылка Яндекс-Диска">
@@ -8426,8 +11047,73 @@ MAX - https://bizvmax.ru/zifra_plus
                   </span>
                 </label>
                 <div class="admin-system-documents-head">
+                  <div class="admin-connection-heading-copy">
+                    <strong>MySQL — общая база и блокировки в реальном времени</strong>
+                    <small data-mysql-source-hint>${escapeHtml(mysqlSourceLabel)}</small>
+                  </div>
+                  <button class="ghost-button admin-connection-test-button" data-action="test-mysql-locks" type="button">Проверить MySQL</button>
+                </div>
+                <label class="admin-mysql-source-mode ${state.data.meta.mysqlManagedByEnvironment ? "is-managed" : ""}">
+                  <input
+                    name="mysqlUseApplicationsConnection"
+                    type="checkbox"
+                    ${mysqlUseApplicationsConnection ? "checked" : ""}
+                    ${state.data.meta.mysqlManagedByEnvironment ? "disabled" : ""}
+                  >
+                  <span>
+                    <strong>Использовать подключение базы заявок</strong>
+                    <small>Рекомендуется, если общие данные, блокировки и заявки хранятся на одном сервере MySQL.</small>
+                  </span>
+                </label>
+                <div class="admin-mysql-settings-grid ${mysqlFieldsDisabled ? "is-disabled" : ""}" data-mysql-settings-grid>
+                  <label>
+                    <span>Сервер MySQL</span>
+                    <input name="mysqlHost" type="text" value="${escapeAttr(mysqlHost)}" placeholder="mysql.example.ru" spellcheck="false" ${mysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label>
+                    <span>Порт</span>
+                    <input name="mysqlPort" type="number" min="1" max="65535" value="${escapeAttr(mysqlPort)}" ${mysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label>
+                    <span>Имя базы</span>
+                    <input name="mysqlDatabase" type="text" value="${escapeAttr(mysqlDatabase)}" spellcheck="false" ${mysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label>
+                    <span>Пользователь</span>
+                    <input name="mysqlUser" type="text" value="${escapeAttr(mysqlUser)}" autocomplete="username" spellcheck="false" ${mysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label class="admin-mysql-password-field">
+                    <span>Пароль</span>
+                    <input
+                      name="mysqlPassword"
+                      type="password"
+                      value="${escapeAttr(mysqlPassword)}"
+                      placeholder="${state.data.meta.mysqlHasPassword ? "Пароль сохранён на сервере" : "Введите пароль MySQL"}"
+                      autocomplete="new-password"
+                      ${mysqlFieldsDisabled ? "disabled" : ""}
+                    >
+                  </label>
+                </div>
+                <small class="sdo-settings-hint">Пароль MySQL хранится только в закрытых серверных настройках и никогда не передаётся обратно в браузер. Данные размещаются в таблицах <code>ais_shared_state_meta</code> и <code>ais_shared_state_entries</code>, блокировки — в <code>ais_record_locks</code>.</small>
+                </div>
+                <div class="admin-email-tab-content">
+                <div class="admin-system-documents-head admin-email-settings-head">
                   <strong>Электронная почта (IMAP/SMTP)</strong>
-                  <button class="ghost-button admin-connection-test-button" data-action="test-student-applications-email" type="button">Проверить почту</button>
+                  <div class="admin-email-settings-actions">
+                    <button class="ghost-button admin-connection-test-button" data-action="test-student-applications-email" type="button">Проверить почту</button>
+                    <button
+                      class="primary-button icon-only admin-save-connection-button ${state.adminSettingsDirty ? "is-unsaved" : ""}"
+                      type="submit"
+                      title="${escapeAttr(saveButtonTitle)}"
+                      aria-label="${escapeAttr(saveButtonTitle)}"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M5 3h12l2 2v16H5z"></path>
+                        <path d="M8 3v6h8V3"></path>
+                        <path d="M8 21v-7h8v7"></path>
+                      </svg>
+                    </button>
+                  </div>
                 </div>
                 <div class="admin-email-settings-grid">
                   <label>
@@ -8462,6 +11148,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   </label>
                 </div>
                 <small class="sdo-settings-hint">IMAP используется для загрузки заявок. Все исходящие сообщения отправляются через SMTP от имени указанного ящика.</small>
+                </div>
               </div>
               <div class="admin-database-copy system-action-notes">
                 <section class="system-action-note">
@@ -8471,6 +11158,10 @@ MAX - https://bizvmax.ru/zifra_plus
                 <section class="system-action-note">
                   <strong>Синхронизировать с базой</strong>
                   <p>Переносит данные веб-системы в XLSB по выбранному пути. Перед заменой исходного файла создаётся резервная копия в папке «_Резерв».</p>
+                </section>
+                <section class="system-action-note">
+                  <strong>Экспорт в базу</strong>
+                  <p>Формирует отдельную копию АИС Допобразование.xlsb с текущими данными и скачивает её в «Загрузки» с датой и временем в имени. Рабочая база не изменяется.</p>
                 </section>
               </div>
               <div class="admin-database-history" aria-label="Статистика обмена с базой">
@@ -8486,11 +11177,37 @@ MAX - https://bizvmax.ru/zifra_plus
                     ? escapeHtml(formatDateTimeRu(state.data.meta.studentDatabaseLastExportedAt))
                     : "Ещё не выполнялась"}</strong>
                 </p>
+                <p>
+                  <span>Последний экспорт в файл</span>
+                  <strong>${state.data.meta.studentDatabaseLastDownloadedAt
+                    ? escapeHtml(formatDateTimeRu(state.data.meta.studentDatabaseLastDownloadedAt))
+                    : "Ещё не выполнялся"}</strong>
+                </p>
               </div>
             </form>
           </div>
       </section>
-      ${renderAdminAuditPanel()}
+      ${adminTab === "users" ? renderAdminUsersPanel() : ""}
+      ${adminTab === "audit" ? renderAdminAuditPanel() : ""}
+    `;
+  }
+
+  function renderAdminUsersPanel() {
+    return `
+      <section class="panel admin-users-panel" id="admin-tab-users" role="tabpanel">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Доступ к системе</p>
+            <h2>Пользователи и роли</h2>
+            <p>Учётные записи администраторов и менеджеров, контакты и состояние доступа.</p>
+          </div>
+          <div class="admin-users-actions">
+            <button class="ghost-button" data-action="refresh-auth-users" type="button" ${state.authUsersLoading ? "disabled" : ""}>Обновить</button>
+            <button class="primary-button" data-action="create-auth-user" type="button">Добавить пользователя</button>
+          </div>
+        </div>
+        ${renderAuthUserManagementContent({ inline: true })}
+      </section>
     `;
   }
 
@@ -8561,6 +11278,47 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderReleaseHistoryDialog() {
+    return `
+      <div class="modal-backdrop release-history-backdrop" data-action="close-release-history">
+        <section class="modal release-history-modal" role="dialog" aria-modal="true" aria-labelledby="release-history-title">
+          <header class="modal-head">
+            <div>
+              <p class="eyebrow">О программе</p>
+              <h2 id="release-history-title">История изменений</h2>
+            </div>
+            <button class="icon-button" data-action="close-release-history" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+          </header>
+          <div class="release-history-content">
+            <ol class="release-history-list">
+              ${APPLICATION_RELEASE_HISTORY.map((release, index) => {
+                const dateParts = String(release.releasedAt || "").split("-");
+                const dateLabel = dateParts.length === 3
+                  ? `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}`
+                  : release.releasedAt;
+                return `
+                  <li class="release-history-item ${index === 0 ? "is-current" : ""}">
+                    <div class="release-history-version">
+                      <strong>Версия ${escapeHtml(release.version)}</strong>
+                      ${index === 0 ? `<span>Текущая</span>` : ""}
+                      <time datetime="${escapeAttr(release.releasedAt)}">${escapeHtml(dateLabel)}</time>
+                    </div>
+                    <ul>
+                      ${release.changes.map((change) => `<li>${escapeHtml(change)}</li>`).join("")}
+                    </ul>
+                  </li>
+                `;
+              }).join("")}
+            </ol>
+          </div>
+          <footer class="modal-actions">
+            <button class="ghost-button" data-action="close-release-history" type="button">Закрыть</button>
+          </footer>
+        </section>
+      </div>
+    `;
+  }
+
   function getAuthUserEditorRecord() {
     if (state.authUserEditorId === "new") {
       return { id: "", login: "", name: "", email: "", phone: "", role: "manager", status: "active" };
@@ -8568,8 +11326,56 @@ MAX - https://bizvmax.ru/zifra_plus
     return state.authUsers.find((user) => user.id === state.authUserEditorId) || null;
   }
 
-  function renderUserManagementDialog() {
+  function renderAuthUserManagementContent({ inline = false } = {}) {
     const editor = getAuthUserEditorRecord();
+    return `
+      <div class="user-management-content ${inline ? "is-inline" : ""}">
+        ${state.authUsersError ? `<div class="user-management-message is-error">${escapeHtml(state.authUsersError)}</div>` : ""}
+        ${state.authUsersLoading ? `
+          <div class="user-management-message">Загрузка пользователей...</div>
+        ` : `
+          <div class="user-management-table-wrap">
+            <table class="data-table user-management-table">
+              <thead>
+                <tr>
+                  <th>Логин</th>
+                  <th>Пользователь</th>
+                  <th>Роль</th>
+                  <th>Контакты</th>
+                  <th>Последний вход</th>
+                  <th>Статус</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${state.authUsers.map((user) => `
+                  <tr class="${state.authUserEditorId === user.id ? "is-active" : ""}">
+                    <td><strong>${escapeHtml(user.login)}</strong></td>
+                    <td>${escapeHtml(user.name)}</td>
+                    <td>${escapeHtml(getAuthRoleLabel(user.role))}</td>
+                    <td>
+                      <span class="user-contact-stack">
+                        <span>${escapeHtml(user.email || "—")}</span>
+                        <small>${escapeHtml(user.phone || "")}</small>
+                      </span>
+                    </td>
+                    <td>${escapeHtml(user.lastLoginAt ? formatDateTimeRu(user.lastLoginAt) : "Не выполнялся")}</td>
+                    <td><span class="user-status-badge is-${user.status === "active" ? "active" : "blocked"}">${user.status === "active" ? "Активен" : "Заблокирован"}</span></td>
+                    <td><button class="ghost-button compact-button" data-action="edit-auth-user" data-user-id="${escapeAttr(user.id)}" type="button">Изменить</button></td>
+                  </tr>
+                `).join("") || `<tr><td colspan="7">Пользователи не найдены.</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        `}
+        ${editor ? renderAuthUserEditor(editor) : `
+          <div class="user-editor-placeholder">Выберите пользователя для редактирования или добавьте новую учётную запись.</div>
+        `}
+      </div>
+    `;
+  }
+
+  function renderUserManagementDialog() {
     return `
       <div class="modal-backdrop user-management-backdrop" data-action="close-user-management">
         <section class="modal user-management-modal" role="dialog" aria-modal="true" aria-label="Управление пользователями">
@@ -8583,49 +11389,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <button class="icon-button" data-action="close-user-management" type="button" title="Закрыть" aria-label="Закрыть">×</button>
             </div>
           </header>
-          <div class="user-management-content">
-            ${state.authUsersError ? `<div class="user-management-message is-error">${escapeHtml(state.authUsersError)}</div>` : ""}
-            ${state.authUsersLoading ? `
-              <div class="user-management-message">Загрузка пользователей...</div>
-            ` : `
-              <div class="user-management-table-wrap">
-                <table class="data-table user-management-table">
-                  <thead>
-                    <tr>
-                      <th>Логин</th>
-                      <th>Пользователь</th>
-                      <th>Роль</th>
-                      <th>Контакты</th>
-                      <th>Последний вход</th>
-                      <th>Статус</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${state.authUsers.map((user) => `
-                      <tr class="${state.authUserEditorId === user.id ? "is-active" : ""}">
-                        <td><strong>${escapeHtml(user.login)}</strong></td>
-                        <td>${escapeHtml(user.name)}</td>
-                        <td>${escapeHtml(getAuthRoleLabel(user.role))}</td>
-                        <td>
-                          <span class="user-contact-stack">
-                            <span>${escapeHtml(user.email || "—")}</span>
-                            <small>${escapeHtml(user.phone || "")}</small>
-                          </span>
-                        </td>
-                        <td>${escapeHtml(user.lastLoginAt ? formatDateTimeRu(user.lastLoginAt) : "Не выполнялся")}</td>
-                        <td><span class="user-status-badge is-${user.status === "active" ? "active" : "blocked"}">${user.status === "active" ? "Активен" : "Заблокирован"}</span></td>
-                        <td><button class="ghost-button compact-button" data-action="edit-auth-user" data-user-id="${escapeAttr(user.id)}" type="button">Изменить</button></td>
-                      </tr>
-                    `).join("") || `<tr><td colspan="7">Пользователи не найдены.</td></tr>`}
-                  </tbody>
-                </table>
-              </div>
-            `}
-            ${editor ? renderAuthUserEditor(editor) : `
-              <div class="user-editor-placeholder">Выберите пользователя для редактирования или добавьте новую учётную запись.</div>
-            `}
-          </div>
+          ${renderAuthUserManagementContent()}
           <footer class="modal-actions">
             <button class="ghost-button" data-action="close-user-management" type="button">Закрыть</button>
           </footer>
@@ -8756,12 +11520,11 @@ MAX - https://bizvmax.ru/zifra_plus
     window.location.reload();
   }
 
-  async function openUserManagement() {
-    if (!isAdminUser()) return;
-    state.userManagementOpen = true;
+  async function loadAuthUsers({ clearEditor = false } = {}) {
+    if (!isAdminUser() || state.authUsersLoading) return;
     state.authUsersLoading = true;
     state.authUsersError = "";
-    state.authUserEditorId = "";
+    if (clearEditor) state.authUserEditorId = "";
     render();
     try {
       const payload = await authRequest("api/admin/users");
@@ -8770,8 +11533,17 @@ MAX - https://bizvmax.ru/zifra_plus
       state.authUsersError = error.message;
     } finally {
       state.authUsersLoading = false;
+      state.authUsersLoaded = true;
       render();
     }
+  }
+
+  async function openUserManagement() {
+    if (!isAdminUser()) return;
+    state.adminTab = "users";
+    state.userManagementOpen = false;
+    state.authUsersLoaded = false;
+    await loadAuthUsers({ clearEditor: true });
   }
 
   function closeUserManagement() {
@@ -8803,6 +11575,7 @@ MAX - https://bizvmax.ru/zifra_plus
         })
       });
       const saved = payload.user;
+      state.authUsersLoaded = true;
       const existingIndex = state.authUsers.findIndex((user) => user.id === saved.id);
       if (existingIndex >= 0) state.authUsers[existingIndex] = saved;
       else state.authUsers.push(saved);
@@ -8865,13 +11638,169 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderContractSection(title, keys, record, className = "") {
+  function renderContractSection(title, keys, record, className = "", actions = "") {
     return `
       <section class="form-section contract-card-section ${className}">
-        <div class="form-section-head"><h3>${escapeHtml(title)}</h3></div>
+        <div class="form-section-head">
+          <h3>${escapeHtml(title)}</h3>
+          ${actions}
+        </div>
         ${renderContractFieldList(keys, record)}
       </section>
     `;
+  }
+
+  function renderContractPhotoEditor(record) {
+    const photo = getStudentPhotoSrc(record);
+    return `
+      <div class="contract-photo-editor">
+        <div class="photo-preview contract-photo-preview ${photo ? "has-photo" : ""}" id="contractPhotoPreview">
+          ${photo ? `<img src="${escapeAttr(photo)}" alt="Фото сотрудника">` : `<span>${initials(record.name || "Сотрудник")}</span>`}
+          <div class="photo-actions" aria-label="Действия с фото сотрудника">
+            ${photo ? `
+              <button class="photo-icon-button" data-action="crop-contract-photo" type="button" title="Кадрировать загруженное фото" aria-label="Кадрировать загруженное фото">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M6 3v13a2 2 0 0 0 2 2h13"></path>
+                  <path d="M18 21V8a2 2 0 0 0-2-2H3"></path>
+                </svg>
+              </button>
+            ` : ""}
+            <label class="photo-icon-button" title="Прикрепить и кадрировать фото" aria-label="Прикрепить и кадрировать фото">
+              <input id="contractPhotoInput" type="file" accept="image/*">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M21.4 11.6l-8.9 8.9a6 6 0 0 1-8.5-8.5l9.8-9.8a4 4 0 0 1 5.7 5.7l-9.8 9.8a2 2 0 0 1-2.8-2.8l8.8-8.8"></path>
+              </svg>
+            </label>
+            <button class="photo-icon-button" data-action="clear-contract-photo" type="button" title="Удалить фото" aria-label="Удалить фото">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4 7h16"></path>
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+                <path d="M6 7l1 14h10l1-14"></path>
+                <path d="M9 7V4h6v3"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <small>Фото используется в документах по договору</small>
+      </div>
+    `;
+  }
+
+  function renderContractCounterpartySection(record) {
+    const keys = ["section", "name", "position", "degree", "academicTitle", "phone", "email", "telegram"];
+    return `
+      <section class="form-section contract-card-section contract-counterparty-section">
+        <div class="form-section-head">
+          <h3>Контрагент</h3>
+          <button class="ghost-button contract-import-student-button" data-action="open-contract-student-picker" type="button" title="Заполнить карточку сотрудника данными из базы слушателей">
+            ${renderOrdersSdoIcon("user")}
+            <span>Добавить из базы слушателей</span>
+          </button>
+        </div>
+        <div class="contract-counterparty-layout">
+          ${renderContractPhotoEditor(record)}
+          ${renderContractFieldList(keys, record, "contract-counterparty-fields")}
+        </div>
+        <label class="contract-photo-path-field">
+          <span>Путь к фотографии</span>
+          <input
+            name="photoPath"
+            id="contractPhotoPath"
+            type="text"
+            value="${escapeAttr(record.photoPath || "")}"
+            placeholder="Сотрудники/ИвановИИ/Документы/ИвановИИ.jpg"
+            spellcheck="false"
+          >
+        </label>
+      </section>
+    `;
+  }
+
+  function renderContractPartnerSection(record) {
+    const couponField = getContractField("coupon");
+    const couponIdField = getContractField("couponId");
+    const notificationEmailField = getContractField("notificationEmail");
+    const magicTitle = "Сгенерировать номер купона из логина";
+    return `
+      <section class="form-section contract-card-section contract-partner-section">
+        <div class="form-section-head"><h3>Партнерская программа</h3></div>
+        <div class="form-grid contract-form-grid contract-partner-grid">
+          ${couponField ? renderField(couponField, record) : ""}
+          <div class="contract-coupon-id-control">
+            ${couponIdField ? renderField(couponIdField, record) : ""}
+            <button class="orders-sdo-icon-button is-magic contract-coupon-generate-button" data-action="generate-employee-coupon" type="button" title="${magicTitle}" aria-label="${magicTitle}">
+              ${renderOrdersSdoIcon("wand")}
+            </button>
+          </div>
+          ${notificationEmailField ? renderField(notificationEmailField, record) : ""}
+        </div>
+      </section>
+    `;
+  }
+
+  function buildContractPortalCredentials(record = {}) {
+    if (!String(record.type || "").trim()) return "";
+    return [
+      "Данные для доступа к порталу дистанционного обучения (https://portal.edu-plus.ru):",
+      "",
+      `Логин: ${String(record.login || "")}`,
+      `Пароль: ${String(record.password || "")}`,
+      "",
+      "Учебный центр Цифровизация Плюс",
+      "www.edu-plus.ru"
+    ].join("\n");
+  }
+
+  function renderContractSdoSection(record = {}) {
+    const portalCredentials = buildContractPortalCredentials(record);
+    return `
+      <section class="form-section contract-card-section contract-sdo-section">
+        <div class="form-section-head"><h3>Система дистанционного обучения</h3></div>
+        <fieldset class="orders-sdo-lms contract-sdo-panel">
+          <legend>Доступ сотрудника</legend>
+          <div class="orders-sdo-lms-row">
+            ${renderOrdersSdoControl("login", "Логин", record, "text", {
+              compact: true,
+              attrs: 'autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore data-moodle-credential'
+            })}
+            ${renderOrdersSdoControl("password", "Пароль", record, "text", {
+              compact: true,
+              attrs: 'autocomplete="new-password" data-lpignore="true" data-1p-ignore data-moodle-credential'
+            })}
+            <button class="ghost-button orders-sdo-tool-button" data-action="generate-portal-password" type="button">
+              ${renderOrdersSdoIcon("key")}
+              <span>Сгенерировать</span>
+            </button>
+            <button class="orders-sdo-icon-button" data-action="open-sdo-courses" type="button" title="Перейти в СДО" aria-label="Перейти в СДО">
+              ${renderOrdersSdoIcon("globe")}
+            </button>
+          </div>
+          <div class="orders-sdo-message-head">
+            <span>Сообщение о доступе к порталу обучения</span>
+            <button class="ghost-button orders-sdo-tool-button" data-action="export-employee-to-sdo" type="button">
+              ${renderOrdersSdoIcon("laptop")}
+              <span>Экспорт в СДО</span>
+            </button>
+            <button class="ghost-button orders-sdo-tool-button" data-action="email-employee-portal-access" type="button" title="Отправить сотруднику&#10;Shift + щелчок: отправить на системный ящик">
+              ${renderOrdersSdoIcon("mail")}
+              <span>Отправить</span>
+            </button>
+          </div>
+          <textarea name="portalCredentials" class="orders-sdo-message" rows="7" readonly aria-readonly="true">${escapeHtml(portalCredentials)}</textarea>
+        </fieldset>
+      </section>
+    `;
+  }
+
+  function syncContractPortalCredentials(form = document.querySelector("#recordForm[data-config='contracts']")) {
+    const output = form?.elements?.portalCredentials;
+    if (!form || !output) return;
+    output.value = buildContractPortalCredentials({
+      type: form.elements.type?.value || "",
+      login: form.elements.login?.value || "",
+      password: form.elements.password?.value || ""
+    });
   }
 
   function getContractCardTitle(record = {}) {
@@ -8882,42 +11811,1019 @@ MAX - https://bizvmax.ru/zifra_plus
     return name || `Договор ${contractNo}`;
   }
 
+  function renderEmployeeContractDocumentButtons() {
+    const contractTitle = buildStudentDocumentGenerationTooltip(
+      "Договор",
+      "Сформировать договор по данным карточки сотрудника.",
+      ["После щелчка можно выбрать один из четырёх шаблонов."]
+    );
+    return `
+      <div class="orders-sdo-contract-document-row employee-contract-document-row">
+        <button class="primary-button student-document-generate-button student-contract-button orders-sdo-contract-button" data-action="open-employee-contract-document" type="button" title="${escapeMultilineAttr(contractTitle)}" aria-label="Сформировать договор сотрудника">
+          ${renderOrdersSdoIcon("document")}
+          <span>Договор</span>
+        </button>
+      </div>
+    `;
+  }
+
+  function renderEmployeeActPaymentButton() {
+    const title = buildStudentDocumentGenerationTooltip(
+      "Акт на оплату",
+      "Сформировать акт оказанных услуг по данным карточки сотрудника.",
+      ["Шаблон: Договора/Акт оказанных услуг.docx."]
+    );
+    return `
+      <button class="primary-button student-document-generate-button orders-sdo-contract-button employee-payment-act-button" data-action="open-employee-act-document" type="button" title="${escapeMultilineAttr(title)}" aria-label="Сформировать акт на оплату">
+        ${renderOrdersSdoIcon("document")}
+        <span>Акт на оплату</span>
+      </button>
+    `;
+  }
+
+  function normalizeEmployeePaymentDateInput(value) {
+    const source = String(value || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(source)) return source;
+    const date = new Date(source);
+    return Number.isNaN(date.getTime()) ? "" : formatOrdersSdoDate(date);
+  }
+
+  function getEmployeePaymentRowStatus(row = {}) {
+    if (row.paymentDateMissing) return "Дата оплаты не указана";
+    if (row.historicalPayment) return "Оплачено";
+    if (row.paid) return "Оплачено";
+    if (Number(row.amount || 0) < 0) return "Переплата";
+    const actStatus = String(row.actStatus || "").trim();
+    if (actStatus === "Получен") return "Акт получен";
+    if (actStatus === "Отправлен") return "Акт отправлен";
+    if (row.act) return "Акт сформирован";
+    if (row.recommendation) return "К выплате";
+    return "Ожидает рекомендации";
+  }
+
+  function getEmployeePaymentDefaultSourceLabel(sourceType) {
+    if (sourceType === "direct") return "Прямые затраты";
+    if (sourceType === "general") return "Общие затраты";
+    if (sourceType === "partner") return "База слушателей";
+    return "Реестр договоров";
+  }
+
+  function getEmployeePartnerPaymentAmount(
+    source = {},
+    collections = state.data?.collections || {},
+    paymentSettings = state.data?.dictionaries?.paymentSettings
+  ) {
+    if (source?.__partnerStudent) {
+      return Number(getEmployeePaymentSourceValues("partner", source).amount || 0);
+    }
+    return getStudentAgentCommissionCalculation(source, collections, paymentSettings).payableAmount;
+  }
+
+  function getEmployeePaymentSourceValues(sourceType, source = {}) {
+    if (sourceType === "partner") {
+      const student = source.__partnerStudent || source;
+      const slot = String(source.__agentPaymentSlot || "due");
+      const calculation = source.__agentPaymentCalculation
+        || getStudentAgentCommissionCalculation(student);
+      if (slot === "paid1" || slot === "paid2") {
+        const number = slot === "paid2" ? 2 : 1;
+        const prefix = `agentPayment${number}`;
+        const paymentDate = normalizeEmployeePaymentDateInput(student[`${prefix}Date`]);
+        return {
+          source: `${getEmployeePaymentDefaultSourceLabel(sourceType)} · выплата ${number}`,
+          comment: student[`${prefix}Comment`] || `Проведённая агентская выплата за слушателя ${student.name || ""}`,
+          date: paymentDate,
+          description: student[`${prefix}Basis`] || `Агентская выплата ${number}`,
+          amount: Number(student[`${prefix}Amount`] || 0),
+          recommendation: student[`${prefix}Recommendation`] ?? "+",
+          recommendationManual: student[`${prefix}RecommendationManual`],
+          act: student[`${prefix}Act`],
+          actStatus: student[`${prefix}ActStatus`],
+          paid: paymentDate,
+          historicalPayment: Boolean(paymentDate),
+          paymentDateMissing: Number(student[`${prefix}Amount`] || 0) > 0 && !paymentDate,
+          order: student[`${prefix}Order`]
+        };
+      }
+      const formulaComment = [
+        `Поступления: ${money(calculation.receiptsTotal)}`,
+        `начислено: ${money(calculation.accrued)}`,
+        calculation.paidTotal ? `выплачено ранее: ${money(calculation.paidTotal)}` : "",
+        calculation.overpayment ? `переплата: ${money(calculation.overpayment)}` : ""
+      ].filter(Boolean).join(" · ");
+      return {
+        source: getEmployeePaymentDefaultSourceLabel(sourceType),
+        comment: student.agentPaymentComment || formulaComment,
+        date: student.agentPaymentDate || calculation.lastReceiptDate,
+        description: student.agentPaymentBasis || calculation.basis,
+        amount: calculation.outstanding,
+        recommendation: student.agentPaymentRecommendation ?? "+",
+        recommendationManual: student.agentPaymentRecommendationManual,
+        act: student.agentPaymentAct,
+        actStatus: student.agentPaymentActStatus,
+        paid: student.agentPaymentPaid,
+        order: student.agentPaymentOrder
+      };
+    }
+    if (sourceType === "contract") {
+      return {
+        source: getEmployeePaymentDefaultSourceLabel(sourceType),
+        comment: source.agencyPaymentComment,
+        date: source.agencyPaymentDate,
+        description: source.agencyPaymentBasis || "Агентские",
+        amount: source.agencyAmount,
+        recommendation: source.agencyPaymentRecommendation,
+        recommendationManual: source.agencyPaymentRecommendationManual,
+        act: source.agencyPaymentAct,
+        actStatus: source.agencyPaymentActStatus,
+        paid: source.agencyPaymentPaid,
+        order: source.agencyPaymentOrder
+      };
+    }
+    return {
+      source: getEmployeePaymentDefaultSourceLabel(sourceType),
+      comment: sourceType === "general" ? source.description : source.additionalInfo,
+      date: source.date,
+      description: sourceType === "general"
+        ? (source.workType || "Оплата сотруднику")
+        : (source.type || "Оплата сотруднику"),
+      amount: source.amount,
+      recommendation: source.recommendation,
+      recommendationManual: source.recommendationManual,
+      act: source.act,
+      actStatus: source.actStatus,
+      paid: source.paid,
+      order: source.employeePaymentOrder
+    };
+  }
+
+  function normalizeEmployeePaymentSourceRow(sourceType, source = {}) {
+    const values = getEmployeePaymentSourceValues(sourceType, source);
+    const hasRecommendationValue = values.recommendation !== undefined && values.recommendation !== null;
+    return {
+      source: String(values.source || getEmployeePaymentDefaultSourceLabel(sourceType)).trim(),
+      comment: String(values.comment || "").trim(),
+      date: normalizeEmployeePaymentDateInput(values.date),
+      description: String(values.description || "Оплата сотруднику").trim(),
+      amount: Number(values.amount || 0),
+      recommendation: hasRecommendationValue
+        ? String(values.recommendation || "").trim() === "+"
+        : sourceType !== "direct",
+      recommendationManual: isChecked(values.recommendationManual),
+      act: String(values.act || "").trim() === "+",
+      actStatus: String(values.actStatus || "").trim(),
+      paid: normalizeEmployeePaymentDateInput(values.paid),
+      historicalPayment: Boolean(values.historicalPayment),
+      paymentDateMissing: Boolean(values.paymentDateMissing),
+      order: Math.max(0, Number(values.order) || 0)
+    };
+  }
+
+  function getEmployeePaymentOrderField(sourceType, source = {}) {
+    if (sourceType === "partner") {
+      const slot = String(source.__agentPaymentSlot || "due");
+      return slot === "paid1"
+        ? "agentPayment1Order"
+        : slot === "paid2"
+          ? "agentPayment2Order"
+          : "agentPaymentOrder";
+    }
+    if (sourceType === "contract") return "agencyPaymentOrder";
+    return "employeePaymentOrder";
+  }
+
+  function setEmployeePaymentSourceOrder(sourceType, source, value) {
+    if (!source) return false;
+    const target = sourceType === "partner" ? (source.__partnerStudent || source) : source;
+    const field = getEmployeePaymentOrderField(sourceType, source);
+    const order = Math.max(0, Number(value) || 0);
+    if (Number(target[field] || 0) === order) return false;
+    target[field] = order;
+    return true;
+  }
+
+  function getNextEmployeePaymentOrder(record = {}) {
+    const accounting = getEmployeePaymentAccounting(record, state.data.collections);
+    const orders = [
+      ...accounting.directEntries.map(({ expense }) => Number(expense?.employeePaymentOrder) || 0),
+      ...accounting.generalEntries.map(({ expense }) => Number(expense?.employeePaymentOrder) || 0),
+      ...accounting.partnerRows.map(({ source }) => (
+        Number(normalizeEmployeePaymentSourceRow("partner", source).order) || 0
+      )),
+      Number(record?.agencyPaymentOrder) || 0
+    ].filter((value) => value > 0);
+    return orders.length ? Math.max(...orders) + 10 : 0;
+  }
+
+  function renderEmployeePaymentRowDragHandle(sourceType, sourceId, orderingDisabled = false) {
+    const available = Boolean(sourceId);
+    const enabled = available && !orderingDisabled;
+    const title = !available
+      ? "Строку нельзя переместить"
+      : orderingDisabled
+        ? "Сбросьте фильтры, чтобы изменить порядок строк"
+        : "Перетащите строку или используйте клавиши ↑ и ↓";
+    return `
+      <button
+        class="employee-payment-row-drag-handle"
+        data-employee-payment-row-drag
+        data-payment-source="${escapeAttr(sourceType)}"
+        data-payment-source-id="${escapeAttr(sourceId)}"
+        draggable="${enabled ? "true" : "false"}"
+        type="button"
+        title="${title}"
+        aria-label="Переместить строку выплаты. Используйте стрелки вверх и вниз"
+        ${enabled ? "" : "disabled"}
+      >
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+      </button>
+    `;
+  }
+
+  function getEmployeePaymentBasisOptions(currentValue = "") {
+    return unique([
+      ...(state.data.dictionaries.employeePaymentBases || []),
+      String(currentValue || "").trim()
+    ].map((value) => String(value || "").trim()).filter(Boolean));
+  }
+
+  function renderEmployeePaymentStatus(row = {}) {
+    const status = getEmployeePaymentRowStatus(row);
+    const tone = status.startsWith("Оплачено") || status === "Акт получен"
+      ? "is-complete"
+      : status === "Ожидает рекомендации" || status === "Переплата" || status === "Дата оплаты не указана"
+        ? "is-warning"
+        : "is-active";
+    return `<span class="employee-payment-status ${tone}" data-employee-payment-status>${escapeHtml(status)}</span>`;
+  }
+
+  function getEmployeePaymentFilters() {
+    const filters = state.employeePaymentFilters && typeof state.employeePaymentFilters === "object"
+      ? state.employeePaymentFilters
+      : {};
+    const source = ["direct", "general", "partner"].includes(String(filters.source || ""))
+      ? String(filters.source)
+      : "";
+    const payment = [
+      "payable",
+      "actFormed",
+      "actSent",
+      "actReceived",
+      "paid",
+      "overpayment",
+      "missingPaymentDate",
+      "awaitingRecommendation"
+    ].includes(String(filters.payment || ""))
+      ? String(filters.payment)
+      : "";
+    const act = ["none", "formed", "sent", "received"].includes(String(filters.act || ""))
+      ? String(filters.act)
+      : "";
+    return {
+      comment: String(filters.comment || "").trim(),
+      description: String(filters.description || "").trim(),
+      source,
+      payment,
+      act
+    };
+  }
+
+  function getEmployeePaymentActFilterValue(row = {}) {
+    const status = String(row.actStatus || "").trim().toLocaleLowerCase("ru-RU");
+    if (status === "получен") return "received";
+    if (status === "отправлен") return "sent";
+    if (row.act) return "formed";
+    return "none";
+  }
+
+  function employeePaymentFiltersAreActive(filters = getEmployeePaymentFilters()) {
+    return Boolean(filters.comment || filters.description || filters.source || filters.payment || filters.act);
+  }
+
+  function normalizeEmployeePaymentFilterText(value) {
+    return String(value || "")
+      .trim()
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е")
+      .replace(/\s+/g, " ");
+  }
+
+  function getEmployeePaymentStatusFilterValue(row = {}) {
+    const status = getEmployeePaymentRowStatus(row);
+    if (status.startsWith("Оплачено")) return "paid";
+    if (status === "К выплате") return "payable";
+    if (status === "Акт сформирован") return "actFormed";
+    if (status === "Акт отправлен") return "actSent";
+    if (status === "Акт получен") return "actReceived";
+    if (status === "Переплата") return "overpayment";
+    if (status === "Дата оплаты не указана") return "missingPaymentDate";
+    return "awaitingRecommendation";
+  }
+
+  function employeePaymentRowMatchesFilters(row, filters = getEmployeePaymentFilters()) {
+    if (filters.source && row.sourceType !== filters.source) return false;
+    if (filters.payment && getEmployeePaymentStatusFilterValue(row) !== filters.payment) return false;
+    if (filters.act && getEmployeePaymentActFilterValue(row) !== filters.act) return false;
+    const commentTokens = normalizeEmployeePaymentFilterText(filters.comment).split(" ").filter(Boolean);
+    const descriptionTokens = normalizeEmployeePaymentFilterText(filters.description).split(" ").filter(Boolean);
+    const commentText = normalizeEmployeePaymentFilterText(row.comment);
+    const descriptionText = normalizeEmployeePaymentFilterText(row.description);
+    if (!commentTokens.every((token) => commentText.includes(token))) return false;
+    if (!descriptionTokens.every((token) => descriptionText.includes(token))) return false;
+    return true;
+  }
+
+  function renderEmployeePaymentFilterOptions(options, selectedValue) {
+    return options.map(([value, label]) => (
+      `<option value="${escapeAttr(value)}" ${value === selectedValue ? "selected" : ""}>${escapeHtml(label)}</option>`
+    )).join("");
+  }
+
+  function renderEmployeePaymentColumnFilter(columnKey, filters, visibleRowCount, rowCount) {
+    if (columnKey === "source") {
+      return `
+        <select data-employee-payment-filter="source" aria-label="Фильтр по источнику" title="Фильтр по источнику">
+          ${renderEmployeePaymentFilterOptions([
+            ["", "Все"],
+            ["direct", "Прямые"],
+            ["general", "Общие"],
+            ["partner", "Агентские"]
+          ], filters.source)}
+        </select>
+      `;
+    }
+    if (columnKey === "comment" || columnKey === "description") {
+      const label = columnKey === "comment" ? "комментарию" : "основанию";
+      const basisListId = "employee-payment-basis-filter-values";
+      return `
+        <input
+          data-employee-payment-filter="${columnKey}"
+          type="search"
+          value="${escapeAttr(filters[columnKey])}"
+          placeholder="Поиск"
+          autocomplete="off"
+          ${columnKey === "description" ? `list="${basisListId}"` : ""}
+          ${columnKey === "description" ? 'data-settings-dictionary="employeePaymentBases"' : ""}
+          aria-label="Фильтр по ${label}"
+          title="Фильтр по ${label}"
+        >
+        ${columnKey === "description" ? `
+          <datalist id="${basisListId}">
+            ${getEmployeePaymentBasisOptions().map((value) => `<option value="${escapeAttr(value)}"></option>`).join("")}
+          </datalist>
+        ` : ""}
+      `;
+    }
+    if (columnKey === "actStatus") {
+      return `
+        <select data-employee-payment-filter="act" aria-label="Фильтр по статусу акта" title="Фильтр по статусу акта">
+          ${renderEmployeePaymentFilterOptions([
+            ["", "Все"],
+            ["none", "Без акта"],
+            ["formed", "Сформирован"],
+            ["sent", "Отправлен"],
+            ["received", "Получен"]
+          ], filters.act)}
+        </select>
+      `;
+    }
+    if (columnKey === "status") {
+      return `
+        <select data-employee-payment-filter="payment" aria-label="Фильтр по статусу выплаты" title="Фильтр по статусу выплаты">
+          ${renderEmployeePaymentFilterOptions([
+            ["", "Все"],
+            ["payable", "К выплате"],
+            ["actFormed", "Акт сформирован"],
+            ["actSent", "Акт отправлен"],
+            ["actReceived", "Акт получен"],
+            ["paid", "Оплачено"],
+            ["overpayment", "Переплата"],
+            ["missingPaymentDate", "Дата не указана"],
+            ["awaitingRecommendation", "Ожидает рекомендации"]
+          ], filters.payment)}
+        </select>
+      `;
+    }
+    if (columnKey === "actions") {
+      return `
+        <div class="employee-payment-filter-result">
+          <output data-employee-payment-filter-count title="Показано ${visibleRowCount} из ${rowCount}">${visibleRowCount}/${rowCount}</output>
+          <button
+            class="employee-payment-filter-reset"
+            data-action="reset-employee-payment-filters"
+            type="button"
+            title="Сбросить фильтры"
+            aria-label="Сбросить фильтры"
+            ${employeePaymentFiltersAreActive(filters) ? "" : "disabled"}
+          >×</button>
+        </div>
+      `;
+    }
+    return "";
+  }
+
+  function renderEmployeePaymentAccounting(record) {
+    const accounting = getEmployeePaymentAccounting(record, state.data.collections);
+    const directRows = accounting.directEntries.map(({ expense, identity, student }) => ({
+      sourceType: "direct",
+      sourceId: String(expense.id || identity || "").trim(),
+      details: [
+        student?.name ? `слушатель: ${student.name}` : "",
+        expense.uid ? `UID ${expense.uid}` : ""
+      ].filter(Boolean).join(" · "),
+      ...normalizeEmployeePaymentSourceRow("direct", expense)
+    }));
+    const generalRows = accounting.generalEntries.map(({ expense, identity }) => ({
+      sourceType: "general",
+      sourceId: String(expense.id || identity || "").trim(),
+      details: String(expense.section || "").trim(),
+      ...normalizeEmployeePaymentSourceRow("general", expense)
+    }));
+    const partnerRows = accounting.partnerRows.map(({ student, source, sourceId, slot, amount, calculation }) => ({
+      sourceType: "partner",
+      sourceId,
+      agentPaymentSlot: slot,
+      automaticAmount: slot === "due" && !isChecked(student.agentPaymentAmountManual),
+      dateReadOnly: slot === "paid1" || slot === "paid2",
+      deletable: slot !== "due",
+      details: [
+        student.name ? `слушатель: ${student.name}` : "Партнёрская программа",
+        student.program ? `курс: ${student.program}` : "",
+        slot === "due" ? `${calculation.rate}% от ${money(calculation.receiptsTotal)}` : ""
+      ].filter(Boolean).join(" · "),
+      ...normalizeEmployeePaymentSourceRow("partner", source),
+      amount
+    }));
+    const rows = [...directRows, ...generalRows, ...partnerRows];
+    const hasManualOrder = rows.some((row) => Number(row.order) > 0);
+    rows.sort((left, right) => {
+      if (hasManualOrder) {
+        const leftOrder = Number(left.order) > 0 ? Number(left.order) : Number.MAX_SAFE_INTEGER;
+        const rightOrder = Number(right.order) > 0 ? Number(right.order) : Number.MAX_SAFE_INTEGER;
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+      }
+      return String(right.date || "").localeCompare(String(left.date || ""), "ru")
+        || String(left.description || "").localeCompare(String(right.description || ""), "ru");
+    });
+    const filters = getEmployeePaymentFilters();
+    const filtersActive = employeePaymentFiltersAreActive(filters);
+    const visibleRowCount = rows.filter((row) => employeePaymentRowMatchesFilters(row, filters)).length;
+    return `
+      <section class="form-section contract-card-section employee-payment-accounting-section" data-employee-payment-accounting>
+        <div class="form-section-head employee-payment-accounting-head">
+          <div>
+            <h3>Учёт выплат</h3>
+          </div>
+          <div class="employee-payment-accounting-actions">
+            <button class="ghost-button" data-action="add-employee-direct-payment" type="button" title="Прямой расход напрямую связан с объемом выполняемой работы (обработка заявки, подготовка рекламной статьи и т.д.)">Добавить прямой расход</button>
+            <button class="ghost-button" data-action="add-employee-general-payment" type="button" title="Общий расход это например базовый оклад">Добавить общую выплату</button>
+            ${renderEmployeeActPaymentButton()}
+          </div>
+        </div>
+        <div class="employee-payment-formula-summary" aria-label="Итоги расчёта выплат">
+          <span><small>Выплата</small><strong data-employee-payment-summary="amount">${escapeHtml(money(accounting.amount))}</strong></span>
+          <span><small>Услуги</small><strong data-employee-payment-summary="paid">${escapeHtml(money(accounting.paid))}</strong></span>
+          <span><small>Агентские</small><strong data-employee-payment-summary="agencyAmount">${escapeHtml(money(accounting.agencyAmount))}</strong></span>
+          <span class="${accounting.balance ? "has-balance" : ""}" data-employee-payment-balance-card><small>Остаток</small><strong data-employee-payment-summary="balance">${escapeHtml(money(accounting.balance))}</strong></span>
+        </div>
+        <p class="employee-payment-formula-hint">Выплата = Услуги + Агентские. Агентские — непогашенный остаток по поступлениям слушателей; проведённые выплаты показаны отдельными строками и повторно в итог не входят.</p>
+        <div class="employee-payment-table-wrap">
+          <table class="employee-payment-table" style="min-width:${getEmployeePaymentTableMinWidth()}px">
+            <colgroup>
+              ${EMPLOYEE_PAYMENT_TABLE_COLUMNS.map((column) => `
+                <col class="${column.className}" ${columnDataAttrs(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, column.key)} ${employeePaymentColumnStyleAttr(column)}>
+              `).join("")}
+            </colgroup>
+            <thead data-employee-payment-filters>
+              <tr>
+                ${EMPLOYEE_PAYMENT_TABLE_COLUMNS.map((column) => `
+                  <th class="employee-payment-column-head" ${columnDataAttrs(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, column.key)} ${employeePaymentColumnStyleAttr(column)}>
+                    <div class="table-head-cell employee-payment-table-head-cell">
+                      <span>${escapeHtml(column.label)}</span>
+                      <span
+                        class="column-resize-handle employee-payment-column-resize-handle"
+                        data-action="resize-column"
+                        data-config="${EMPLOYEE_PAYMENT_TABLE_CONFIG_ID}"
+                        data-field="${escapeAttr(column.key)}"
+                        data-min-width="${column.defaultWidth}"
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label="Изменить ширину колонки «${escapeAttr(column.label)}»"
+                        aria-valuemin="${column.defaultWidth}"
+                        aria-valuemax="640"
+                        aria-valuenow="${getEmployeePaymentColumnWidth(column)}"
+                        tabindex="0"
+                        title="Изменить ширину. Двойной щелчок — сбросить"
+                      ></span>
+                    </div>
+                    <div class="employee-payment-column-filter">
+                      ${renderEmployeePaymentColumnFilter(column.key, filters, visibleRowCount, rows.length)}
+                    </div>
+                  </th>
+                `).join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((row) => {
+                const editable = Boolean(row.sourceId);
+                const isExpenseSource = row.sourceType === "direct" || row.sourceType === "general";
+                const amountReadOnly = Boolean(row.automaticAmount);
+                const deletable = editable && row.deletable !== false;
+                const sourceLabel = row.source || getEmployeePaymentDefaultSourceLabel(row.sourceType);
+                return `
+                  <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
+                    <td class="employee-payment-date-cell">
+                      ${renderEmployeePaymentRowDragHandle(row.sourceType, row.sourceId, filtersActive)}
+                      <input data-employee-payment-field="date" type="date" value="${escapeAttr(row.date)}" ${row.dateReadOnly ? 'readonly title="Дата проведённой выплаты изменяется в колонке «Оплачено»"' : (editable ? "" : "disabled")}>
+                    </td>
+                    <td title="${escapeAttr([sourceLabel, row.details].filter(Boolean).join(" · "))}">
+                      ${isExpenseSource ? `
+                        <select data-employee-payment-field="source" aria-label="Источник затраты" title="Источник затраты" ${editable ? "" : "disabled"}>
+                          <option value="direct" ${row.sourceType === "direct" ? "selected" : ""}>Прямые затраты</option>
+                          <option value="general" ${row.sourceType === "general" ? "selected" : ""}>Общие затраты</option>
+                        </select>
+                      ` : `<strong>${escapeHtml(sourceLabel)}</strong>`}
+                      ${row.details ? `<small>${escapeHtml(row.details)}</small>` : ""}
+                    </td>
+                    <td><input data-employee-payment-field="comment" value="${escapeAttr(row.comment)}" title="${escapeAttr(row.comment)}" aria-label="Комментарий к источнику" ${editable ? "" : "disabled"}></td>
+                    <td class="employee-payment-basis-cell">
+                      ${renderComboField({
+                        name: "employeePaymentBasis",
+                        value: row.description,
+                        options: getEmployeePaymentBasisOptions(row.description),
+                        dictionary: "employeePaymentBases",
+                        attrs: `data-employee-payment-field="description" title="${escapeAttr(row.description)}" aria-label="Основание выплаты" ${editable ? "" : "disabled"}`
+                      })}
+                    </td>
+                    <td><input data-employee-payment-field="amount" type="number" min="0" step="0.01" value="${escapeAttr(row.amount)}" ${amountReadOnly ? 'readonly title="Сумма рассчитывается автоматически по поступлениям слушателя"' : (editable ? "" : "disabled")}></td>
+                    <td class="employee-payment-check-cell">
+                      <input data-employee-payment-field="recommendation" type="checkbox" ${row.recommendation ? "checked" : ""} aria-label="Рекомендовать к выплате" title="${escapeAttr(row.recommendationManual ? "Рекомендация изменена вручную" : "Рекомендацию можно изменить вручную")}" ${editable ? "" : "disabled"}>
+                    </td>
+                    <td class="employee-payment-check-cell">
+                      <input data-employee-payment-field="act" type="checkbox" ${row.act ? "checked" : ""} aria-label="Акт сформирован" ${editable ? "" : "disabled"}>
+                    </td>
+                    <td>
+                      <select data-employee-payment-field="actStatus" aria-label="Статус акта" ${editable ? "" : "disabled"}>
+                          <option value="" ${row.actStatus ? "" : "selected"}>Не указан</option>
+                          <option value="Отправлен" ${row.actStatus === "Отправлен" ? "selected" : ""}>Отправлен</option>
+                          <option value="Получен" ${row.actStatus === "Получен" ? "selected" : ""}>Получен</option>
+                      </select>
+                    </td>
+                    <td><input data-employee-payment-field="paid" type="date" value="${escapeAttr(row.paid)}" aria-label="Дата оплаты" ${editable ? "" : "disabled"}></td>
+                    <td>${renderEmployeePaymentStatus(row)}</td>
+                    <td class="employee-payment-delete-cell">
+                      ${editable ? `
+                        <div class="employee-payment-row-actions">
+                          <button class="employee-payment-edit-button" data-action="edit-employee-expense" type="button" title="Редактировать запись оплаты во всплывающем окне" aria-label="Редактировать запись оплаты">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                              <path d="M4 20h4l11-11-4-4L4 16v4z"></path>
+                              <path d="M13.5 6.5l4 4"></path>
+                            </svg>
+                          </button>
+                          ${isExpenseSource ? `
+                            <button class="employee-payment-duplicate-button" data-action="duplicate-employee-payment-row" type="button" title="Дублировать строку с текущей датой" aria-label="Дублировать строку выплаты">
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <rect x="8" y="8" width="11" height="11" rx="2"></rect>
+                                <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>
+                              </svg>
+                            </button>
+                          ` : ""}
+                          ${deletable ? `
+                            <button
+                              class="payment-row-delete employee-payment-delete-button"
+                              data-action="delete-employee-payment-row"
+                              type="button"
+                              title="Удалить запись выплаты"
+                              aria-label="Удалить запись выплаты"
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M3 6h18"></path>
+                                <path d="M8 6V4h8v2"></path>
+                                <path d="M6 6l1 15h10l1-15"></path>
+                                <path d="M10 11v6"></path>
+                                <path d="M14 11v6"></path>
+                              </svg>
+                            </button>
+                          ` : `
+                            <button class="payment-row-delete employee-payment-delete-button" type="button" title="Автоматическое начисление рассчитывается по поступлениям и не удаляется" aria-label="Автоматическое начисление нельзя удалить" disabled>
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path></svg>
+                            </button>
+                          `}
+                        </div>
+                      ` : "—"}
+                    </td>
+                  </tr>
+                `;
+              }).join("")}
+              <tr data-employee-payment-filter-empty ${visibleRowCount ? "hidden" : ""}>
+                <td colspan="11" class="employee-payment-empty">${rows.length ? "По заданным фильтрам выплаты не найдены." : "Выплаты для сотрудника пока не найдены."}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    `;
+  }
+
+  function getEmployeePaymentDomRowFilterModel(row) {
+    const field = (name) => row.querySelector(`[data-employee-payment-field="${name}"]`);
+    const sourceControl = field("source");
+    const commentControl = field("comment");
+    const descriptionControl = field("description");
+    const paidControl = field("paid");
+    const recommendationControl = field("recommendation");
+    const actControl = field("act");
+    const actStatusControl = field("actStatus");
+    const sourceText = sourceControl instanceof HTMLSelectElement
+      ? sourceControl.selectedOptions[0]?.textContent
+      : row.querySelector("td:nth-child(2) strong")?.textContent;
+    return {
+      sourceType: sourceControl instanceof HTMLSelectElement
+        ? String(sourceControl.value || row.dataset.paymentSource || "")
+        : String(row.dataset.paymentSource || ""),
+      source: String(sourceText || ""),
+      details: String(row.querySelector("td:nth-child(2) small")?.textContent || ""),
+      comment: String(commentControl?.value || ""),
+      description: String(descriptionControl?.value || ""),
+      paid: String(paidControl?.value || ""),
+      recommendation: Boolean(recommendationControl?.checked),
+      act: Boolean(actControl?.checked),
+      actStatus: String(actStatusControl?.value || "")
+    };
+  }
+
+  function applyEmployeePaymentFiltersToDom(section = document.querySelector("[data-employee-payment-accounting]")) {
+    if (!section) return;
+    const filters = getEmployeePaymentFilters();
+    const active = employeePaymentFiltersAreActive(filters);
+    const rows = [...section.querySelectorAll("[data-employee-payment-row]")];
+    let visibleCount = 0;
+    rows.forEach((row) => {
+      const visible = employeePaymentRowMatchesFilters(getEmployeePaymentDomRowFilterModel(row), filters);
+      row.hidden = !visible;
+      if (visible) visibleCount += 1;
+      const handle = row.querySelector(".employee-payment-row-drag-handle");
+      if (handle instanceof HTMLButtonElement) {
+        const available = Boolean(String(row.dataset.paymentSourceId || "").trim());
+        handle.disabled = !available || active;
+        handle.title = !available
+          ? "Строку нельзя переместить"
+          : active
+            ? "Сбросьте фильтры, чтобы изменить порядок строк"
+            : "Перетащите строку или используйте клавиши ↑ и ↓";
+      }
+    });
+    const emptyRow = section.querySelector("[data-employee-payment-filter-empty]");
+    if (emptyRow) {
+      emptyRow.hidden = visibleCount > 0;
+      const cell = emptyRow.querySelector("td");
+      if (cell) {
+        cell.textContent = rows.length
+          ? "По заданным фильтрам выплаты не найдены."
+          : "Выплаты для сотрудника пока не найдены.";
+      }
+    }
+    const count = section.querySelector("[data-employee-payment-filter-count]");
+    if (count) {
+      count.textContent = `${visibleCount}/${rows.length}`;
+      count.title = `Показано ${visibleCount} из ${rows.length}`;
+    }
+    const reset = section.querySelector("[data-action='reset-employee-payment-filters']");
+    if (reset instanceof HTMLButtonElement) reset.disabled = !active;
+  }
+
+  function updateEmployeePaymentFilters(panel) {
+    if (!panel) return;
+    const getValue = (key) => String(
+      panel.querySelector(`[data-employee-payment-filter="${key}"]`)?.value || ""
+    );
+    state.employeePaymentFilters = {
+      comment: getValue("comment"),
+      description: getValue("description"),
+      source: getValue("source"),
+      payment: getValue("payment"),
+      act: getValue("act")
+    };
+    applyEmployeePaymentFiltersToDom(panel.closest("[data-employee-payment-accounting]"));
+  }
+
+  function resetEmployeePaymentFilters(panel) {
+    state.employeePaymentFilters = { ...EMPLOYEE_PAYMENT_FILTER_DEFAULTS };
+    panel?.querySelectorAll("[data-employee-payment-filter]").forEach((control) => {
+      control.value = "";
+    });
+    applyEmployeePaymentFiltersToDom(panel?.closest("[data-employee-payment-accounting]"));
+    panel?.querySelector('[data-employee-payment-filter="comment"]')?.focus({ preventScroll: true });
+  }
+
+  function getEmployeeExpenseEditorContext() {
+    const sourceType = String(state.employeeExpenseEditor?.sourceType || "");
+    const sourceId = String(state.employeeExpenseEditor?.sourceId || "");
+    if (!["direct", "general", "partner", "contract"].includes(sourceType) || !sourceId) return null;
+    const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
+    if (!source) return null;
+    return {
+      sourceType,
+      sourceId,
+      source,
+      configId: sourceType === "direct"
+        ? "directExpenses"
+        : sourceType === "general"
+          ? "generalExpenses"
+          : ""
+    };
+  }
+
+  function getEmployeeExpenseEditorFields(context) {
+    if (!context.configId) return [];
+    const config = configs[context.configId];
+    const supplementalKeys = context.sourceType === "direct"
+      ? new Set(["uid", "note", "inventoryLink"])
+      : new Set(["section", "counterparty", "accountingClosed", "bkExpenseNo", "otherExpenses"]);
+    return config.fields.filter((item) => supplementalKeys.has(item.key)).map((item) => {
+      if (context.sourceType === "direct" && item.key === "note") {
+        return { ...item, label: "Сотрудник (связь с карточкой)" };
+      }
+      if (context.sourceType === "general" && item.key === "counterparty") {
+        return { ...item, label: "Сотрудник (связь с карточкой)" };
+      }
+      return item;
+    });
+  }
+
+  function getEmployeePaymentEditorAuditRecord(sourceType, source = {}) {
+    const row = normalizeEmployeePaymentSourceRow(sourceType, source);
+    return {
+      source: getEmployeePaymentDefaultSourceLabel(sourceType),
+      date: row.date,
+      comment: row.comment,
+      description: row.description,
+      amount: row.amount,
+      recommendation: row.recommendation,
+      act: row.act,
+      actStatus: row.actStatus,
+      paid: row.paid
+    };
+  }
+
+  function renderEmployeePaymentEditorFields(context) {
+    const row = normalizeEmployeePaymentSourceRow(context.sourceType, context.source);
+    const expenseSource = context.sourceType === "direct" || context.sourceType === "general";
+    const automaticAgentAmount = context.sourceType === "partner"
+      && String(context.source?.__agentPaymentSlot || "due") === "due"
+      && !isChecked(context.source?.__partnerStudent?.agentPaymentAmountManual);
+    const paidAgentEntry = context.sourceType === "partner"
+      && ["paid1", "paid2"].includes(String(context.source?.__agentPaymentSlot || "due"));
+    const sourceLabel = getEmployeePaymentDefaultSourceLabel(context.sourceType);
+    const status = getEmployeePaymentRowStatus(row);
+    return `
+      <h3 class="employee-payment-editor-section-title">Данные записи оплаты</h3>
+      <label data-field-key="paymentSource">
+        <span>Источник</span>
+        ${expenseSource ? `
+          <select name="paymentSource" aria-label="Источник затраты">
+            <option value="direct" ${context.sourceType === "direct" ? "selected" : ""}>Прямые затраты</option>
+            <option value="general" ${context.sourceType === "general" ? "selected" : ""}>Общие затраты</option>
+          </select>
+        ` : `
+          <input value="${escapeAttr(sourceLabel)}" readonly aria-readonly="true">
+          <input name="paymentSource" type="hidden" value="${escapeAttr(context.sourceType)}">
+        `}
+      </label>
+      <label data-field-key="paymentDate">
+        <span>Дата</span>
+        <input name="paymentDate" type="date" value="${escapeAttr(row.date)}" ${paidAgentEntry ? 'readonly title="Измените дату в поле «Дата оплаты»"' : ""}>
+      </label>
+      <label data-field-key="paymentComment">
+        <span>Комментарий</span>
+        <input name="paymentComment" value="${escapeAttr(row.comment)}">
+      </label>
+      <label data-field-key="paymentDescription">
+        <span>Основание</span>
+        ${renderComboField({
+          name: "paymentDescription",
+          value: row.description,
+          options: getEmployeePaymentBasisOptions(row.description),
+          dictionary: "employeePaymentBases",
+          required: "required",
+          attrs: 'aria-label="Основание выплаты"'
+        })}
+      </label>
+      <label data-field-key="paymentAmount">
+        <span>Сумма</span>
+        <input name="paymentAmount" type="number" min="0" step="0.01" value="${escapeAttr(row.amount)}" ${automaticAgentAmount ? 'readonly title="Сумма рассчитывается автоматически по поступлениям слушателя"' : ""} required>
+      </label>
+      <label class="employee-payment-editor-check" data-field-key="paymentRecommendation">
+        <span>Рекомендация к оплате</span>
+        <input name="paymentRecommendation" type="checkbox" value="Да" ${row.recommendation ? "checked" : ""}>
+      </label>
+      <label class="employee-payment-editor-check" data-field-key="paymentAct">
+        <span>Акт сформирован</span>
+        <input name="paymentAct" type="checkbox" value="Да" ${row.act ? "checked" : ""}>
+      </label>
+      <label data-field-key="paymentActStatus">
+        <span>Статус акта</span>
+        <select name="paymentActStatus">
+          <option value="" ${row.actStatus ? "" : "selected"}>Не указан</option>
+          <option value="Отправлен" ${row.actStatus === "Отправлен" ? "selected" : ""}>Отправлен</option>
+          <option value="Получен" ${row.actStatus === "Получен" ? "selected" : ""}>Получен</option>
+        </select>
+      </label>
+      <label data-field-key="paymentPaid">
+        <span>Дата оплаты</span>
+        <input name="paymentPaid" type="date" value="${escapeAttr(row.paid)}">
+      </label>
+      <label data-field-key="paymentStatus">
+        <span>Статус выплаты</span>
+        <input name="paymentStatus" value="${escapeAttr(status)}" readonly aria-readonly="true">
+      </label>
+    `;
+  }
+
+  function renderEmployeeExpenseEditor() {
+    const context = getEmployeeExpenseEditorContext();
+    if (!context) {
+      return `
+        <div class="modal-backdrop employee-expense-editor-backdrop" data-employee-expense-editor data-action="close-employee-expense-editor">
+          <section class="modal employee-expense-editor" role="dialog" aria-modal="true" aria-labelledby="employee-expense-editor-title">
+            <header class="modal-head">
+              <div><h2 id="employee-expense-editor-title">Запись оплаты не найдена</h2></div>
+              <button class="icon-button" data-action="close-employee-expense-editor" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+            </header>
+            <div class="employee-expense-editor-missing">Запись была удалена или перенесена.</div>
+          </section>
+        </div>
+      `;
+    }
+    const fields = getEmployeeExpenseEditorFields(context);
+    const sourceLabel = getEmployeePaymentDefaultSourceLabel(context.sourceType);
+    const description = normalizeEmployeePaymentSourceRow(context.sourceType, context.source).description;
+    return `
+      <div class="modal-backdrop employee-expense-editor-backdrop" data-employee-expense-editor data-action="close-employee-expense-editor">
+        <section class="modal employee-expense-editor" role="dialog" aria-modal="true" aria-labelledby="employee-expense-editor-title">
+          <form id="employeeExpenseEditorForm" data-source-type="${escapeAttr(context.sourceType)}" data-source-id="${escapeAttr(context.sourceId)}">
+            <header class="modal-head">
+              <div>
+                <p class="eyebrow">${escapeHtml(sourceLabel)}</p>
+                <h2 id="employee-expense-editor-title">Редактирование записи оплаты</h2>
+                <p>${escapeHtml(description)}</p>
+              </div>
+              <button class="icon-button" data-action="close-employee-expense-editor" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+            </header>
+            <div class="form-grid employee-expense-editor-grid employee-payment-editor-grid">
+              ${renderEmployeePaymentEditorFields(context)}
+            </div>
+            ${fields.length ? `
+              <details class="employee-payment-editor-extra">
+                <summary>Дополнительные данные связанной затраты</summary>
+                <div class="form-grid employee-expense-editor-grid employee-payment-editor-extra-grid">
+                  ${fields.map((item) => renderField(item, context.source)).join("")}
+                </div>
+              </details>
+            ` : ""}
+            <footer class="modal-actions employee-expense-editor-actions">
+              <button class="ghost-button" data-action="close-employee-expense-editor" type="button">Отмена</button>
+              <button class="primary-button" type="submit">Сохранить оплату</button>
+            </footer>
+          </form>
+        </section>
+      </div>
+    `;
+  }
+
+  function getCardWindowState() {
+    if (!state.cardWindow || typeof state.cardWindow !== "object") {
+      state.cardWindow = {};
+    }
+    state.cardWindow.minimized = Boolean(state.cardWindow.minimized);
+    state.cardWindow.fullscreen = Boolean(state.cardWindow.fullscreen);
+    state.cardWindow.offsetX = Number.isFinite(Number(state.cardWindow.offsetX))
+      ? Number(state.cardWindow.offsetX)
+      : 0;
+    state.cardWindow.offsetY = Number.isFinite(Number(state.cardWindow.offsetY))
+      ? Number(state.cardWindow.offsetY)
+      : 0;
+    return state.cardWindow;
+  }
+
+  function resetCardWindowState() {
+    state.cardWindow = {
+      minimized: false,
+      fullscreen: false,
+      offsetX: 0,
+      offsetY: 0
+    };
+  }
+
+  function getCardWindowClassName() {
+    const windowState = getCardWindowState();
+    return [
+      windowState.minimized ? "is-window-minimized" : "",
+      windowState.fullscreen ? "is-window-fullscreen" : ""
+    ].filter(Boolean).join(" ");
+  }
+
+  function getCardWindowStyleAttribute() {
+    const windowState = getCardWindowState();
+    return `style="--card-window-offset-x:${windowState.offsetX}px;--card-window-offset-y:${windowState.offsetY}px"`;
+  }
+
+  function renderCardWindowControls() {
+    const windowState = getCardWindowState();
+    const minimizeLabel = windowState.minimized ? "Восстановить карточку" : "Свернуть карточку";
+    const fullscreenLabel = windowState.fullscreen ? "Восстановить размер карточки" : "Развернуть карточку на весь экран";
+    return `
+      <div class="card-window-controls" role="group" aria-label="Управление окном карточки">
+        <button class="icon-button card-window-control" data-action="toggle-card-window-minimize" type="button" title="${minimizeLabel}" aria-label="${minimizeLabel}">
+          ${windowState.minimized
+            ? `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 7h10v10H7z"></path></svg>`
+            : `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 17h14"></path></svg>`}
+        </button>
+        <button class="icon-button card-window-control" data-action="toggle-card-window-fullscreen" type="button" title="${fullscreenLabel}" aria-label="${fullscreenLabel}">
+          ${windowState.fullscreen
+            ? `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 5H5v4"></path><path d="M15 5h4v4"></path><path d="M9 19H5v-4"></path><path d="M15 19h4v-4"></path></svg>`
+            : `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 4H4v4"></path><path d="M16 4h4v4"></path><path d="M8 20H4v-4"></path><path d="M16 20h4v-4"></path></svg>`}
+        </button>
+      </div>
+    `;
+  }
+
   function renderContractModal(record) {
+    const paymentAccounting = getEmployeePaymentAccounting(record, state.data.collections);
+    record = {
+      ...record,
+      amount: paymentAccounting.amount,
+      paid: paymentAccounting.paid,
+      agencyAmount: paymentAccounting.agencyAmount,
+      balance: paymentAccounting.balance,
+      portalCredentials: buildContractPortalCredentials(record)
+    };
     const title = getContractCardTitle(record);
-    const tabs = getOrderedTabs("contract-card", [
+    let tabs = getOrderedTabs("contract-card", [
       { id: "main", label: "Основное" },
-      { id: "contract", label: "Договор и оплата" },
+      { id: "contract", label: "Договор" },
+      { id: "payment", label: "Оплата" },
       { id: "documents", label: "Документы, СДО" },
       { id: "communications", label: "Коммуникации" }
     ]);
+    const savedContractTabOrder = state.tabOrders?.["contract-card"] || [];
+    if (!savedContractTabOrder.includes("payment")) {
+      const paymentTab = tabs.find((tab) => tab.id === "payment");
+      tabs = tabs.filter((tab) => tab.id !== "payment");
+      const contractTabIndex = tabs.findIndex((tab) => tab.id === "contract");
+      tabs.splice(contractTabIndex >= 0 ? contractTabIndex + 1 : tabs.length, 0, paymentTab);
+    }
     const activeTab = tabs.find((tab) => tab.id === state.contractCardTab) || tabs[0];
     const navigation = getContractCardNavigation(record);
     const subtitle = [record.section, record.type].map((value) => String(value || "").trim()).filter(Boolean).join(" · ");
+    const cardWindowClass = getCardWindowClassName();
     return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <section class="modal contract-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
+      <div class="modal-backdrop card-window-backdrop ${cardWindowClass}" data-action="close-modal">
+        <section class="modal contract-modal card-window ${cardWindowClass} ${activeTab.id === "payment" ? "is-payment-tab-active" : ""}" data-card-window ${getCardWindowStyleAttribute()} role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
           <form id="recordForm" data-config="contracts" data-id="${escapeAttr(record.id || "")}">
-            <header class="modal-head contract-modal-head">
+            <header class="modal-head contract-modal-head card-window-drag-handle" data-card-window-drag-handle>
               <div class="contract-modal-title">
                 <p class="eyebrow">${escapeHtml(configs.contracts.title)}</p>
                 <h2>${escapeHtml(title)}</h2>
                 ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
               </div>
               <div class="modal-head-actions contract-modal-actions">
-                <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
-                <button class="primary-button" type="submit">Сохранить</button>
-                <div class="student-card-nav contract-card-nav" aria-label="Переход между карточками договоров">
-                  <button class="icon-button student-card-nav-button" data-action="navigate-contract-card" data-direction="-1" type="button" title="Предыдущий договор" aria-label="Предыдущий договор" ${navigation.hasPrev ? "" : "disabled"}>
-                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
+                <div class="student-card-primary-actions">
+                  <button
+                    class="icon-button student-audit-log-button"
+                    data-action="open-student-audit-log"
+                    type="button"
+                    title="Журнал действий по сотруднику"
+                    aria-label="Журнал действий по сотруднику"
+                    ${record.id ? "" : "disabled"}
+                  >
+                    ${renderOrdersSdoIcon("history")}
                   </button>
-                  <button class="icon-button student-card-nav-button" data-action="navigate-contract-card" data-direction="1" type="button" title="Следующий договор" aria-label="Следующий договор" ${navigation.hasNext ? "" : "disabled"}>
-                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6l6 6-6 6"></path></svg>
-                  </button>
+                  <button class="primary-button" type="submit">Сохранить</button>
+                  <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
+                  ${renderCardWindowControls()}
+                </div>
+                <div class="student-card-secondary-actions">
+                  <div class="card-header-context-actions">
+                    ${renderCardContextActions(record, "contract")}
+                  </div>
+                  <div class="student-card-nav contract-card-nav" aria-label="Переход между карточками договоров">
+                    <button class="icon-button student-card-nav-button" data-action="navigate-contract-card" data-direction="-1" type="button" title="Предыдущий договор" aria-label="Предыдущий договор" ${navigation.hasPrev ? "" : "disabled"}>
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
+                    </button>
+                    <button class="icon-button student-card-nav-button" data-action="navigate-contract-card" data-direction="1" type="button" title="Следующий договор" aria-label="Следующий договор" ${navigation.hasNext ? "" : "disabled"}>
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6l6 6-6 6"></path></svg>
+                    </button>
+                  </div>
                 </div>
               </div>
             </header>
 
             <div class="contract-modal-body">
+              <section class="mobile-card-context-actions" aria-label="Быстрые действия с документами сотрудника">
+                ${renderCardContextActions(record, "contract")}
+                <small class="mobile-field-help-guide">ⓘ Дважды коснитесь поля, чтобы показать примечание</small>
+              </section>
               <div class="student-tabs contract-tabs" data-orderable-tabs="contract-card" role="tablist" aria-label="Разделы карточки договора">
                 ${tabs.map((tab) => `
                   <button
@@ -8935,63 +12841,57 @@ MAX - https://bizvmax.ru/zifra_plus
                 `).join("")}
               </div>
 
-              <div class="contract-card-layout">
+              <div class="contract-card-layout ${isCardSidePanelCollapsed("contract") ? "is-side-panel-collapsed" : ""}">
                 <main class="contract-card-main">
                   <div class="contract-tab-panel ${activeTab.id === "main" ? "is-active" : ""}" data-contract-tab-panel="main" role="tabpanel" ${activeTab.id === "main" ? "" : "hidden"}>
-                    ${renderContractSection("Контрагент", [
-                      "section", "name", "position", "degree", "academicTitle", "phone", "email", "telegram", "photoPath"
-                    ], record)}
-                    ${renderContractSection("Партнерская программа", [
-                      "coupon", "couponId", "notificationEmail"
-                    ], record)}
+                    ${renderContractCounterpartySection(record)}
+                    ${renderContractPartnerSection(record)}
                   </div>
 
                   <div class="contract-tab-panel ${activeTab.id === "contract" ? "is-active" : ""}" data-contract-tab-panel="contract" role="tabpanel" ${activeTab.id === "contract" ? "" : "hidden"}>
                     ${renderContractSection("Договор", [
                       "contractDate", "contractNo", "type", "startDate", "endDate", "subject", "paymentTerms", "accountingRecorded"
-                    ], record)}
-                    <div class="contract-section-columns">
-                      ${renderContractSection("Финансовые показатели", [
-                        "amount", "paid", "agencyAmount", "balance"
-                      ], record, "contract-finance-section")}
-                      ${renderContractSection("Данные для оплаты", [
-                        "bank", "settlementAccount", "correspondentAccount", "bic"
-                      ], record, "contract-payment-details-section")}
-                    </div>
+                    ], record, "employee-contract-details-section", renderEmployeeContractDocumentButtons())}
+                    ${renderContractSection("Данные для оплаты", [
+                      "bank", "settlementAccount", "correspondentAccount", "bic"
+                    ], record, "contract-payment-details-section")}
                   </div>
 
-                  <div class="contract-tab-panel ${activeTab.id === "documents" ? "is-active" : ""}" data-contract-tab-panel="documents" role="tabpanel" ${activeTab.id === "documents" ? "" : "hidden"}>
+                  <div class="contract-tab-panel ${activeTab.id === "payment" ? "is-active" : ""}" data-contract-tab-panel="payment" role="tabpanel" ${activeTab.id === "payment" ? "" : "hidden"}>
+                    ${renderEmployeePaymentAccounting(record)}
+                  </div>
+
+                  <div class="contract-tab-panel contract-documents-tab ${activeTab.id === "documents" ? "is-active" : ""}" data-contract-tab-panel="documents" role="tabpanel" ${activeTab.id === "documents" ? "" : "hidden"}>
+                    ${renderStudentDocumentRecognitionToolbar(record, { entityType: "contract" })}
                     ${renderContractSection("Паспортные данные", [
                       "citizenship", "birthDate", "identityDocumentType", "identityDocument", "identityIssueDate",
                       "identityDepartmentCode", "identityIssuer", "address", "snils", "inn"
                     ], record)}
-                    ${renderContractSection("Система дистанционного обучения", [
-                      "login", "password", "portalCredentials"
-                    ], record)}
+                    ${renderContractSdoSection(record)}
                   </div>
 
                   <div class="contract-tab-panel ${activeTab.id === "communications" ? "is-active" : ""}" data-contract-tab-panel="communications" role="tabpanel" ${activeTab.id === "communications" ? "" : "hidden"}>
-                    ${renderContractSection("Шаблоны сообщений", Array.from({ length: 9 }, (_, index) => `message${index + 1}`), record, "contract-messages-section")}
+                    ${renderContractCommunicationMessages(record)}
                   </div>
                 </main>
 
-                <aside class="contract-side-panel">
-                  ${renderContractSection("Примечание", ["note"], record, "contract-note-section")}
-                  <section class="form-section contract-card-summary">
-                    <div class="form-section-head"><h3>Карточка договора</h3></div>
-                    <dl>
-                      <div><dt>Раздел</dt><dd>${escapeHtml(record.section || "Не указан")}</dd></div>
-                      <div><dt>Номер</dt><dd>${escapeHtml(record.contractNo || "Не указан")}</dd></div>
-                      <div><dt>Срок</dt><dd>${escapeHtml([valueForDisplay("startDate", record.startDate), valueForDisplay("endDate", record.endDate)].filter((value) => value && value !== "—").join(" — ") || "Не указан")}</dd></div>
-                      <div><dt>Остаток</dt><dd>${escapeHtml(money(record.balance || 0))}</dd></div>
-                    </dl>
-                  </section>
+                <aside
+                  id="contract-card-side-panel"
+                  class="contract-side-panel ${isCardSidePanelCollapsed("contract") ? "is-collapsed" : ""}"
+                  data-card-side-panel="contract"
+                >
+                  ${renderStudentSidePanel(record, {
+                    entityType: "contract",
+                    eventTemplates: contractEventTemplates,
+                    notePlaceholder: "Общее примечание по договору"
+                  })}
                 </aside>
               </div>
             </div>
           </form>
         </section>
       </div>
+      ${state.studentAuditLog.open ? renderStudentAuditDialog(record) : ""}
     `;
   }
 
@@ -9497,7 +13397,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const options = unique(["", ...dictionaryValues, selectedValue].map((item) => String(item || "").trim()));
     return `
       <div class="editable-grid-cell">
-        <select data-plan-field="attestation" name="trainingPlan_${index}_attestation">
+        <select data-plan-field="attestation" name="trainingPlan_${index}_attestation" data-settings-dictionary="trainingPlanAttestationTypes">
           ${options.map((option) => `<option value="${escapeAttr(option)}" ${option === selectedValue ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
         </select>
       </div>
@@ -9524,6 +13424,15 @@ MAX - https://bizvmax.ru/zifra_plus
       layoutOptions.wide ? "program-field-wide" : ""
     ].filter(Boolean).join(" ");
     const label = `<label data-field-key="${escapeAttr(item.key)}"${labelClasses ? ` class="${labelClasses}"` : ""}><span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>`;
+    if (state.modal?.config === "contracts" && item.key === "inn") {
+      return renderStudentIdentityInput(label, item.key, value, {
+        maxLength: 12,
+        pattern: "\\d{10}|\\d{12}"
+      });
+    }
+    if (state.modal?.config === "contracts" && item.key === "snils") {
+      return renderStudentIdentityInput(label, item.key, value, { maxLength: 14 });
+    }
     if (item.type === "checkbox") {
       return `${label}<input name="${item.key}" type="checkbox" value="Да" ${isChecked(value) ? "checked" : ""}></label>`;
     }
@@ -9532,7 +13441,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const hint = layoutOptions.list
         ? '<small class="program-list-hint">Каждый элемент списка с новой строки</small>'
         : "";
-      return `${label}<textarea name="${item.key}" ${rows ? `rows="${rows}"` : ""} ${required}>${escapeHtml(value)}</textarea>${hint}</label>`;
+      return `${label}<textarea name="${item.key}" ${rows ? `rows="${rows}"` : ""} ${required} ${layoutOptions.readOnly ? 'readonly aria-readonly="true"' : ""}>${escapeHtml(value)}</textarea>${hint}</label>`;
     }
     if (item.type === "select") {
       const dictionaryOptions = Array.isArray(item.options)
@@ -9543,10 +13452,10 @@ MAX - https://bizvmax.ru/zifra_plus
         String(value ?? "").trim()
       ].filter(Boolean));
       if (item.key === "status") {
-        return `${label}<select name="${item.key}" ${required}>${renderStudentStatusOptions(normalizedOptions, value, !item.required)}</select></label>`;
+        return `${label}<select name="${item.key}" ${item.dict ? `data-settings-dictionary="${escapeAttr(item.dict)}"` : ""} ${required}>${renderStudentStatusOptions(normalizedOptions, value, !item.required)}</select></label>`;
       }
       const options = item.required ? normalizedOptions : ["", ...normalizedOptions];
-      return `${label}<select name="${item.key}" ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
+      return `${label}<select name="${item.key}" ${item.dict ? `data-settings-dictionary="${escapeAttr(item.dict)}"` : ""} ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
     if (state.modal?.config === "programs" && item.key === "hours") {
       return renderProgramHoursField(label, value, required);
@@ -9562,11 +13471,12 @@ MAX - https://bizvmax.ru/zifra_plus
     const title = getStudentCardTitle(record);
     const programTitle = getStudentCardProgramTitle(record);
     const navigation = getStudentCardNavigation(record);
+    const cardWindowClass = getCardWindowClassName();
     return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <section class="modal student-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
+      <div class="modal-backdrop student-modal-backdrop card-window-backdrop ${cardWindowClass}" data-action="close-modal">
+        <section class="modal student-modal card-window ${cardWindowClass}" data-card-window ${getCardWindowStyleAttribute()} role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
           <form id="recordForm" data-config="students" data-id="${record.id || ""}">
-            <header class="modal-head student-modal-head">
+            <header class="modal-head student-modal-head card-window-drag-handle" data-card-window-drag-handle>
               <div class="student-modal-title">
                 <h2>${escapeHtml(title)}</h2>
                 ${programTitle ? `<p>${escapeHtml(programTitle)}</p>` : ""}
@@ -9574,8 +13484,6 @@ MAX - https://bizvmax.ru/zifra_plus
               <div class="modal-head-actions">
                 <div class="student-card-primary-actions">
                   ${renderStudentHeaderStatus(record)}
-                  <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
-                  <button class="primary-button" type="submit">Сохранить</button>
                   <button
                     class="icon-button student-audit-log-button"
                     data-action="open-student-audit-log"
@@ -9586,9 +13494,14 @@ MAX - https://bizvmax.ru/zifra_plus
                   >
                     ${renderOrdersSdoIcon("history")}
                   </button>
+                  <button class="primary-button" type="submit">Сохранить</button>
+                  <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
+                  ${renderCardWindowControls()}
                 </div>
                 <div class="student-card-secondary-actions">
-                  ${renderStudentHeaderQuickActions(record)}
+                  <div class="card-header-context-actions">
+                    ${renderCardContextActions(record, "student")}
+                  </div>
                   <div class="student-card-nav" aria-label="Переход между карточками слушателей">
                     <button class="icon-button student-card-nav-button" data-action="navigate-student-card" data-direction="-1" type="button" title="Предыдущая карточка" aria-label="Предыдущая карточка" ${navigation.hasPrev ? "" : "disabled"}>
                       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
@@ -9601,8 +13514,12 @@ MAX - https://bizvmax.ru/zifra_plus
               </div>
             </header>
 
-            <div class="student-card-layout">
+            <div class="student-card-layout ${isCardSidePanelCollapsed("student") ? "is-side-panel-collapsed" : ""}">
               <section class="student-card-main">
+                <section class="mobile-card-context-actions" aria-label="Быстрые действия с документами слушателя">
+                  ${renderCardContextActions(record, "student")}
+                  <small class="mobile-field-help-guide">ⓘ Дважды коснитесь поля, чтобы показать примечание</small>
+                </section>
                 <div class="student-tabs" data-student-tabs data-orderable-tabs="student-card" role="tablist">
                   ${orderedTabs.map((tab) => `
                     <button
@@ -9625,7 +13542,11 @@ MAX - https://bizvmax.ru/zifra_plus
                 </div>
               </section>
 
-              <aside class="student-side-panel">
+              <aside
+                id="student-card-side-panel"
+                class="student-side-panel ${isCardSidePanelCollapsed("student") ? "is-collapsed" : ""}"
+                data-card-side-panel="student"
+              >
                 ${renderStudentSidePanel(record)}
               </aside>
             </div>
@@ -9662,7 +13583,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return `<input class="student-status student-status-input" name="status" value="${escapeAttr(value)}" placeholder="Статус" required>`;
     }
     return `
-      <select class="student-status student-status-select" name="status" title="Статус" aria-label="Статус" required>
+      <select class="student-status student-status-select" name="status" title="Статус" aria-label="Статус" data-settings-dictionary="statuses" required>
         ${renderStudentStatusOptions(options, value, true)}
       </select>
     `;
@@ -9728,11 +13649,14 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderStudentDocumentRecognitionToolbar(record) {
-    const folder = getStudentYandexDocumentsFolder(record);
-    const savedResult = normalizeStudentDocumentRecognitionResult(
-      record.documentRecognitionResult
-    );
+  function renderStudentDocumentRecognitionToolbar(record, options = {}) {
+    const isContract = options.entityType === "contract";
+    const folder = isContract
+      ? getContractDocumentsFolder(record)
+      : getStudentYandexDocumentsFolder(record);
+    const savedResult = isContract
+      ? normalizeContractDocumentRecognitionResult(record.documentRecognitionResult)
+      : normalizeStudentDocumentRecognitionResult(record.documentRecognitionResult);
     const primarySource = getStudentDocumentsSource() === "local"
       ? "локальной папки"
       : "Яндекс-Диска";
@@ -9740,10 +13664,11 @@ MAX - https://bizvmax.ru/zifra_plus
       ? "Яндекс-Диска"
       : "локальной папки";
     const title = [
-      `Распознать паспорт, ИНН, СНИЛС и диплом из ${primarySource}.`,
+      `Распознать паспорт, ИНН, СНИЛС${isContract ? "" : " и диплом"} из ${primarySource}.`,
       `Shift + щелчок: использовать файлы из ${alternateSource}.`,
       folder
     ].filter(Boolean).join("\n");
+    const actionPrefix = isContract ? "contract" : "student";
     return `
       <section class="form-section student-document-recognition-toolbar">
         <div class="student-document-recognition-info">
@@ -9760,13 +13685,13 @@ MAX - https://bizvmax.ru/zifra_plus
           </span>
           <div>
             <strong>Распознавание документов</strong>
-            <small>Локальная обработка файлов JPG, PNG и PDF без передачи во внешние сервисы</small>
+            <small>Локальная обработка JPG, PNG, PDF, TXT, CSV, RTF, DOCX и ODT без передачи во внешние сервисы</small>
           </div>
         </div>
         <div class="student-document-recognition-actions">
           <button
             class="icon-button student-document-recognition-result-button"
-            data-action="show-student-document-recognition-result"
+            data-action="show-${actionPrefix}-document-recognition-result"
             type="button"
             title="${escapeAttr(savedResult
               ? `Показать результат распознавания от ${formatDateTimeRu(savedResult.recognizedAt)}`
@@ -9778,7 +13703,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </button>
           <button
             class="ghost-button student-document-recognition-button"
-            data-action="recognize-student-documents"
+            data-action="recognize-${actionPrefix}-documents"
             type="button"
             title="${escapeAttr(title)}"
           >
@@ -10021,6 +13946,7 @@ MAX - https://bizvmax.ru/zifra_plus
       laptop: '<rect x="5" y="4" width="14" height="11" rx="1.5"></rect><path d="M3 18h18"></path><path d="m5 15-2 3"></path><path d="m19 15 2 3"></path><path d="M9 18h6"></path>',
       lock: '<rect x="5" y="10" width="14" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="M12 14v3"></path>',
       mail: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m4 7 8 6 8-6"></path>',
+      user: '<circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path>',
       wand: '<path d="m4 20 11-11"></path><path d="m13 7 4 4"></path><path d="m5.5 3 .8 1.7L8 5.5l-1.7.8L5.5 8l-.8-1.7L3 5.5l1.7-.8L5.5 3Z"></path><path d="m18.5 13 .8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8.8-1.7Z"></path><path d="m19 2 .5 1 .9.5-.9.5-.5 1-.5-1-.9-.5.9-.5.5-1Z"></path>',
       zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"></path>'
     };
@@ -10829,11 +14755,13 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderStudentHeaderQuickActions(record) {
-    const copyTooltip = "Скопировать данные слушателя: ФИО, телефон, email, организация, должность";
+  function renderCardContextActions(record, entityType = "student") {
+    const isContract = entityType === "contract";
+    const personLabel = isContract ? "сотрудника" : "слушателя";
+    const copyTooltip = `Скопировать данные ${personLabel}: ФИО, телефон, email, организация, должность`;
     return `
-      <div class="student-card-quick-actions" aria-label="Документы и мессенджеры слушателя">
-        ${renderStudentDocumentsFolderLink(record, "student-card-header-action")}
+      <div class="student-card-quick-actions" aria-label="Контекстные действия ${personLabel}">
+        ${renderStudentDocumentsFolderLink(record, "student-card-header-action", entityType)}
         <button class="icon-button student-copy-details-button student-card-header-action" data-action="copy-student-details" type="button" title="${escapeAttr(copyTooltip)}" aria-label="${escapeAttr(copyTooltip)}">
           ${renderOrdersSdoIcon("copy")}
         </button>
@@ -10841,6 +14769,61 @@ MAX - https://bizvmax.ru/zifra_plus
         ${renderMessengerButton("telegram", "Открыть Telegram", renderTelegramIcon(), "student-card-header-action")}
         ${renderMessengerButton("whatsapp", "Открыть WhatsApp", renderWhatsAppIcon(), "student-card-header-action")}
       </div>
+    `;
+  }
+
+  function renderContractCommunicationMessages(record) {
+    const generatedMessages = generateEmployeeCommunicationMessages(record);
+    const descriptions = normalizeEmployeeCommunicationTemplateDescriptions(
+      state.data.dictionaries.employeeCommunicationTemplateDescriptions
+    );
+    return `
+      <section class="form-section contract-card-section contract-messages-section">
+        <div class="form-section-head"><h3>Сообщения</h3></div>
+        <div class="communication-message-grid">
+          ${employeeCommunicationMessages.map((message, index) => {
+            const label = descriptions[index] || message.label;
+            const generatedValue = generatedMessages[message.key] || "";
+            const savedValue = String(record[message.key] || "");
+            const value = savedValue || generatedValue;
+            const isCustomized = savedValue !== "" && savedValue !== String(generatedValue);
+            return `
+              <article class="communication-message-card ${isCustomized ? "is-customized" : ""}">
+                <div class="communication-message-head">
+                  <strong>Сообщение ${index + 1}</strong>
+                  <span title="${escapeAttr(label)}">${escapeHtml(label)}</span>
+                </div>
+                <textarea
+                  name="${message.key}"
+                  data-communication-message="${message.key}"
+                  data-communication-entity="contract"
+                  data-generated-message="${escapeAttr(encodeURIComponent(generatedValue))}"
+                  placeholder="${escapeAttr(`Значение из столбца ${message.source}`)}"
+                  readonly
+                >${escapeHtml(value)}</textarea>
+                <div class="communication-message-menu" role="menu" aria-label="${escapeAttr(`Действия для сообщения ${index + 1}`)}">
+                  <button data-action="copy-communication-message" data-message-key="${message.key}" type="button">
+                    ${renderCommunicationActionIcon("copy")}
+                    <span>Копировать</span>
+                  </button>
+                  <button data-action="edit-communication-message" data-message-key="${message.key}" type="button">
+                    ${renderCommunicationActionIcon("edit")}
+                    <span>Редактировать</span>
+                  </button>
+                  <button data-action="restore-communication-message" data-message-key="${message.key}" type="button">
+                    ${renderCommunicationActionIcon("restore")}
+                    <span>Восстановить</span>
+                  </button>
+                  <button data-action="email-communication-message" data-message-key="${message.key}" type="button" title="Отправить сотруднику&#10;Shift + щелчок: отправить на системный ящик">
+                    ${renderCommunicationActionIcon("mail")}
+                    <span>Отправить по почте</span>
+                  </button>
+                </div>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      </section>
     `;
   }
 
@@ -10929,7 +14912,15 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="photo-preview ${photo ? "has-photo" : ""}" id="studentPhotoPreview">
         ${photo ? `<img src="${escapeAttr(photo)}" alt="Фото слушателя">` : `<span>${initials(record.name || "Слушатель")}</span>`}
         <div class="photo-actions" aria-label="Действия с фото">
-          <label class="photo-icon-button" title="Прикрепить фото" aria-label="Прикрепить фото">
+          ${photo ? `
+            <button class="photo-icon-button" data-action="crop-stored-photo" type="button" title="Кадрировать загруженное фото" aria-label="Кадрировать загруженное фото">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M6 3v13a2 2 0 0 0 2 2h13"></path>
+                <path d="M18 21V8a2 2 0 0 0-2-2H3"></path>
+              </svg>
+            </button>
+          ` : ""}
+          <label class="photo-icon-button" title="Прикрепить и кадрировать фото" aria-label="Прикрепить и кадрировать фото">
             <input id="studentPhotoInput" type="file" accept="image/*">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="M21.4 11.6l-8.9 8.9a6 6 0 0 1-8.5-8.5l9.8-9.8a4 4 0 0 1 5.7 5.7l-9.8 9.8a2 2 0 0 1-2.8-2.8l8.8-8.8"></path>
@@ -10983,9 +14974,11 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderStudentDocumentsFolderLink(record, extraClass = "") {
-    const documentsFolder = getStudentYandexDocumentsFolder(record);
-    const folderUrl = getStudentYandexDocumentsFolderUrl(record);
+  function renderStudentDocumentsFolderLink(record, extraClass = "", entityType = "student") {
+    const isContract = entityType === "contract";
+    const personLabel = isContract ? "сотрудника" : "слушателя";
+    const documentsFolder = isContract ? getContractDocumentsFolder(record) : getStudentYandexDocumentsFolder(record);
+    const folderUrl = getDocumentsFolderUrl(documentsFolder, record);
     const tooltip = getStudentDocumentsOpenTooltip();
     return `
       <a
@@ -10993,6 +14986,8 @@ MAX - https://bizvmax.ru/zifra_plus
         data-student-documents-folder-link
         data-student-documents-folder="${escapeAttr(documentsFolder)}"
         data-student-name="${escapeAttr(record?.name || "")}"
+        data-person-label="${escapeAttr(personLabel)}"
+        data-context-entity="${escapeAttr(isContract ? "contract" : "student")}"
         href="${escapeAttr(folderUrl || "#")}"
         target="_blank"
         rel="noopener noreferrer"
@@ -11008,14 +15003,74 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderStudentSidePanel(record) {
-    const orderedEvents = getOrderedStudentEvents(record);
+  function isCardSidePanelCollapsed(entityType) {
+    const key = entityType === "contract" ? "contract" : "student";
+    return Boolean(state.cardSidePanelCollapsed?.[key]);
+  }
+
+  function toggleCardSidePanel(button) {
+    const entityType = button?.dataset.cardPanelEntity === "contract" ? "contract" : "student";
+    const collapsed = !isCardSidePanelCollapsed(entityType);
+    state.cardSidePanelCollapsed = {
+      ...(state.cardSidePanelCollapsed || {}),
+      [entityType]: collapsed
+    };
+    const panel = button?.closest("[data-card-side-panel]");
+    const layout = panel?.closest(".student-card-layout, .contract-card-layout");
+    const content = panel?.querySelector("[data-card-side-panel-content]");
+    const label = collapsed
+      ? "Развернуть область примечаний и перечня событий"
+      : "Свернуть область примечаний и перечня событий";
+    layout?.classList.toggle("is-side-panel-collapsed", collapsed);
+    panel?.classList.toggle("is-collapsed", collapsed);
+    if (content) {
+      content.hidden = collapsed;
+      if (collapsed) content.setAttribute("inert", "");
+      else content.removeAttribute("inert");
+    }
+    button.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    button.setAttribute("aria-label", label);
+    button.title = label;
+  }
+
+  function renderStudentSidePanel(record, options = {}) {
+    const entityType = options.entityType === "contract" ? "contract" : "student";
+    const collapsed = isCardSidePanelCollapsed(entityType);
+    const contentId = `${entityType}-card-side-panel-content`;
+    const toggleLabel = collapsed
+      ? "Развернуть область примечаний и перечня событий"
+      : "Свернуть область примечаний и перечня событий";
+    const eventTemplates = Array.isArray(options.eventTemplates) && options.eventTemplates.length
+      ? options.eventTemplates
+      : studentEventTemplates;
+    const notePlaceholder = String(options.notePlaceholder || "Общее примечание по слушателю");
+    const orderedEvents = getOrderedStudentEvents(record, eventTemplates);
     return `
+      <div class="student-side-head card-side-panel-head">
+        <h3>Примечание</h3>
+        <button
+          class="icon-button card-side-panel-toggle"
+          data-action="toggle-card-side-panel"
+          data-card-panel-entity="${entityType}"
+          type="button"
+          title="${toggleLabel}"
+          aria-label="${toggleLabel}"
+          aria-controls="${contentId}"
+          aria-expanded="${collapsed ? "false" : "true"}"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9 6l6 6-6 6"></path>
+          </svg>
+        </button>
+      </div>
+      <div
+        id="${contentId}"
+        class="student-side-panel-content card-side-panel-content"
+        data-card-side-panel-content
+        ${collapsed ? "hidden inert" : ""}
+      >
       <section class="student-note-block">
-        <div class="student-side-head">
-          <h3>Примечание</h3>
-        </div>
-        <textarea name="note" placeholder="Общее примечание по слушателю">${escapeHtml(record.note || "")}</textarea>
+        <textarea name="note" placeholder="${escapeAttr(notePlaceholder)}">${escapeHtml(record.note || "")}</textarea>
       </section>
       <section class="student-events-block">
         <div class="student-side-head">
@@ -11090,8 +15145,8 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function getOrderedStudentEvents(record) {
-    const catalog = getStudentEventCatalog(record);
+  function getOrderedStudentEvents(record, eventTemplates = studentEventTemplates) {
+    const catalog = getStudentEventCatalog(record, eventTemplates);
     const keys = String(record.eventOrder || "")
       .split(",")
       .map((key) => key.trim())
@@ -11105,9 +15160,9 @@ MAX - https://bizvmax.ru/zifra_plus
     ];
   }
 
-  function getStudentEventCatalog(record) {
+  function getStudentEventCatalog(record, eventTemplates = studentEventTemplates) {
     const deleted = new Set(csvList(record.eventDeleted));
-    const baseEvents = studentEventTemplates.filter((event) => !deleted.has(event.key));
+    const baseEvents = eventTemplates.filter((event) => !deleted.has(event.key));
     const customEvents = csvList(record.eventCustomKeys).map((key) => ({
       key,
       label: record[`event_${key}_label`] || "Новое событие",
@@ -11321,7 +15376,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (item.key === "finalGrade") {
       const options = ["", ...getFinalAttestationGradeOptions(value)];
-      return `${label}<select name="${item.key}">${options.map((option) => `<option value="${escapeAttr(option)}" ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
+      return `${label}<select name="${item.key}" data-settings-dictionary="finalAttestationSettings">${options.map((option) => `<option value="${escapeAttr(option)}" ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
     if (item.key === "educationDocumentSurname") {
       const copyTitle = "Скопировать фамилию слушателя";
@@ -11359,7 +15414,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (item.type === "select") {
       const dictionaryOptions = item.options || state.data.dictionaries[item.dict] || [];
       const options = item.required ? dictionaryOptions : ["", ...dictionaryOptions];
-      return `${label}<select name="${item.key}" ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
+      return `${label}<select name="${item.key}" ${item.dict ? `data-settings-dictionary="${escapeAttr(item.dict)}"` : ""} ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
     return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${isCalculatedFinanceField ? 'readonly class="calculated-finance-field"' : ""}></label>`;
   }
@@ -11590,13 +15645,14 @@ MAX - https://bizvmax.ru/zifra_plus
           type: "search",
           value,
           required,
-          options
+          options,
+          dictionary: config.dict
         })}
       </label>
     `;
   }
 
-  function renderComboField({ name, type = "text", value = "", required = "", options = [], action = "", attrs = "" }) {
+  function renderComboField({ name, type = "text", value = "", required = "", options = [], action = "", attrs = "", dictionary = "" }) {
     const normalizedOptions = unique(options.map((option) => String(option)).filter(Boolean));
     return `
       <div class="combo-field" data-combo-field>
@@ -11607,6 +15663,7 @@ MAX - https://bizvmax.ru/zifra_plus
             value="${escapeAttr(value)}"
             autocomplete="off"
             data-combo-input
+            ${dictionary ? `data-settings-dictionary="${escapeAttr(dictionary)}"` : ""}
             ${action ? `data-action="${escapeAttr(action)}"` : ""}
             ${attrs}
             ${required}
@@ -11636,7 +15693,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       ${label}
         <div class="lookup-field">
-          <input name="${item.key}" type="text" value="${escapeAttr(value)}" ${required} autocomplete="off">
+          <input name="${item.key}" type="text" value="${escapeAttr(value)}" data-settings-dictionary="${item.key === "educationDocumentIssuer" ? "educationDocumentIssuers" : "passportIssuers"}" ${required} autocomplete="off">
           <button class="icon-button lookup-trigger" data-action="open-field-lookup" data-field="${item.key}" type="button" title="Найти в базе" aria-label="Найти в базе">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6"></circle><path d="M16 16l4 4"></path></svg>
           </button>
@@ -11783,12 +15840,15 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getPortalLoginFromForm(form) {
-    const currentStudent = (state.data.collections.students || [])
-      .find((student) => student.id === state.modal?.id) || {};
+    const isEmployee = form?.dataset.config === "contracts";
+    const collection = isEmployee
+      ? state.data.collections.contracts || []
+      : state.data.collections.students || [];
+    const currentRecord = collection.find((item) => item.id === state.modal?.id) || {};
     const email = String(
       form?.querySelector("[name='email']")?.value
       || state.modal?.draft?.email
-      || currentStudent.email
+      || currentRecord.email
       || ""
     ).trim();
     const emailParts = email.split("@");
@@ -11832,7 +15892,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!loginInput || !passwordInput) return;
     const generatedLogin = getPortalLoginFromForm(form);
     if (!generatedLogin) {
-      alert("Заполните корректный адрес электронной почты слушателя. Логин формируется из части адреса до символа @.");
+      const recipient = form?.dataset.config === "contracts" ? "сотрудника" : "слушателя";
+      alert(`Заполните корректный адрес электронной почты ${recipient}. Логин формируется из части адреса до символа @.`);
+      form?.querySelector("[name='email']")?.focus({ preventScroll: true });
       return;
     }
     if (passwordInput.value && !confirm("Пароль уже заполнен. Заменить его новым шестизначным паролем?")) return;
@@ -11914,6 +15976,39 @@ MAX - https://bizvmax.ru/zifra_plus
       values.map(sdoCsvCell).join(";")
     ].join("\r\n");
     download(`ЭкспортПользователей_${formatSdoExportDate(new Date())}.csv`, `\ufeff${content}`, "text/csv;charset=utf-8");
+    openExternalUrl(uploadUsersUrl);
+  }
+
+  function exportEmployeeToSdo() {
+    const record = collectContractFormDraft();
+    const uploadUsersUrl = normalizeExternalUrl(getSdoSettingValue("uploadUsersUrl"));
+    if (!uploadUsersUrl) {
+      alert("Укажите корректный адрес страницы загрузки пользователей в справочнике «Настройки СДО».");
+      return;
+    }
+    const login = String(record.login || "").trim();
+    const password = String(record.password || "");
+    const email = String(record.email || "").trim();
+    const nameParts = splitStudentNameForSdo(record.name);
+    const required = [
+      [login, "Заполните логин для портала.", "login"],
+      [password, "Заполните пароль для портала.", "password"],
+      [nameParts.lastname, "Заполните ФИО сотрудника.", "name"],
+      [email, "Заполните Email сотрудника.", "email"]
+    ];
+    const missing = required.find(([value]) => !value);
+    if (missing) {
+      alert(missing[1]);
+      if (missing[2]) document.querySelector(`[name="${missing[2]}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    const columns = ["username", "password", "firstname", "lastname", "email"];
+    const values = [login, password, nameParts.firstname, nameParts.lastname, email];
+    const content = [
+      columns.map(sdoCsvCell).join(";"),
+      values.map(sdoCsvCell).join(";")
+    ].join("\r\n");
+    download(`ЭкспортСотрудникаСДО_${formatSdoExportDate(new Date())}.csv`, `\ufeff${content}`, "text/csv;charset=utf-8");
     openExternalUrl(uploadUsersUrl);
   }
 
@@ -12134,12 +16229,110 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function bindComboFieldEvents(root = document) {
+    root.querySelectorAll("[data-combo-field]").forEach((field) => {
+      if (field.dataset.comboBound === "true") return;
+      const input = field.querySelector("[data-combo-input]");
+      if (!input) return;
+      field.dataset.comboBound = "true";
+      const open = (event) => {
+        closeComboPanels(field);
+        const showAll = event?.type !== "input";
+        filterComboOptions(input, { showAll });
+        field.classList.add("is-open");
+        if (showAll) focusComboSelectedOption(input);
+        if (event?.type === "input" && document.activeElement !== input) {
+          input.focus({ preventScroll: true });
+        }
+      };
+      input.addEventListener("focus", open);
+      input.addEventListener("click", open);
+      input.addEventListener("input", open);
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") field.classList.remove("is-open");
+      });
+      field.addEventListener("pointerdown", (event) => {
+        if (event.target.closest("[data-action='select-combo-value'], [data-action='clear-combo-value']")) {
+          event.preventDefault();
+        }
+      });
+      field.addEventListener("focusout", (event) => {
+        if (event.relatedTarget && field.contains(event.relatedTarget)) return;
+        setTimeout(() => {
+          if (!field.contains(document.activeElement)) field.classList.remove("is-open");
+        }, 0);
+      });
+    });
+
+    root.querySelectorAll("[data-action='select-combo-value']").forEach((button) => {
+      if (button.dataset.comboSelectBound === "true") return;
+      button.dataset.comboSelectBound = "true";
+      button.addEventListener("click", () => {
+        const field = button.closest("[data-combo-field]");
+        const input = field?.querySelector("[data-combo-input]");
+        if (!input) return;
+        input.value = button.dataset.value || "";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        field.classList.remove("is-open");
+        input.focus();
+      });
+    });
+
+    root.querySelectorAll("[data-action='clear-combo-value']").forEach((button) => {
+      if (button.dataset.comboClearBound === "true") return;
+      button.dataset.comboClearBound = "true";
+      button.addEventListener("click", () => {
+        const field = button.closest("[data-combo-field]");
+        const input = field?.querySelector("[data-combo-input]");
+        if (!input) return;
+        input.value = "";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        filterComboOptions(input);
+        field.classList.add("is-open");
+        input.focus();
+      });
+    });
+  }
+
   function filterComboOptions(input, { showAll = false } = {}) {
     const field = input.closest("[data-combo-field]");
     const query = showAll ? "" : input.value.trim().toLowerCase();
     field?.querySelectorAll("[data-action='select-combo-value']").forEach((button) => {
       button.hidden = query && !button.textContent.toLowerCase().includes(query);
     });
+  }
+
+  function closeDirectExpenseNoteFilter() {
+    const field = document.querySelector("[data-direct-expense-note-filter]");
+    if (!field) return;
+    field.classList.remove("is-open");
+    field.querySelector("#directExpenseNoteFilter")?.setAttribute("aria-expanded", "false");
+  }
+
+  function filterDirectExpenseNoteOptions(input, { showAll = false } = {}) {
+    const field = input?.closest("[data-direct-expense-note-filter]");
+    if (!field) return;
+    const query = showAll ? "" : input.value.trim().toLocaleLowerCase("ru-RU");
+    let visibleCount = 0;
+    field.querySelectorAll("[data-action='select-direct-expense-note-filter']").forEach((button) => {
+      const value = String(button.dataset.value || "").toLocaleLowerCase("ru-RU");
+      const visible = !query || (value && value.includes(query));
+      button.hidden = !visible;
+      if (visible) visibleCount += 1;
+    });
+    const empty = field.querySelector("[data-direct-expense-note-filter-empty]");
+    if (empty) empty.hidden = visibleCount > 0;
+  }
+
+  function openDirectExpenseNoteFilter(input, { showAll = false } = {}) {
+    const field = input?.closest("[data-direct-expense-note-filter]");
+    if (!field) return;
+    closeComboPanels();
+    filterDirectExpenseNoteOptions(input, { showAll });
+    field.classList.add("is-open");
+    input.setAttribute("aria-expanded", "true");
   }
 
   function focusComboSelectedOption(input) {
@@ -12448,6 +16641,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ${dataIndex}
         data-student-expense-inventory-choice
         data-expense-prefix="${escapeAttr(prefix)}"
+        data-settings-dictionary="expenseTypes"
         aria-label="Вид затрат или запас"
       >
         <option value=""></option>
@@ -12675,6 +16869,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     type: "search",
                     value: record[`expense${n}Note`] || "",
                     options: noteOptions,
+                    dictionary: "expenseNotes",
                     attrs: `data-expense-index="${n}"`
                   })}
                 </div>
@@ -12746,6 +16941,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     type: "search",
                     value: expense.note || "",
                     options: noteOptions,
+                    dictionary: "expenseNotes",
                     attrs: `data-direct-expense-index="${index}"`
                   })}
                 </div>
@@ -13178,6 +17374,36 @@ MAX - https://bizvmax.ru/zifra_plus
     ]));
   }
 
+  function generateEmployeeCommunicationMessages(record) {
+    const addressee = getStudentCommunicationAddressee(record);
+    const fields = {
+      ИмяОтчество: addressee,
+      ЕстьИмяОтчество: Boolean(addressee),
+      ФИОКарточки: String(record.name || "").trim(),
+      EmailКарточки: String(record.email || "").trim(),
+      ЛогинКарточки: String(record.login || "").trim(),
+      ПарольКарточки: String(record.password || "").trim(),
+      ДолжностьКарточки: String(record.position || "").trim(),
+      ТелефонКарточки: String(record.phone || "").trim(),
+      ТелеграмКарточки: String(record.telegram || "").trim(),
+      КупонКарточки: String(record.coupon || "").trim(),
+      IDКупонаКарточки: String(record.couponId || "").trim(),
+      НомерДоговораКарточки: String(record.contractNo || "").trim(),
+      ДатаДоговораКарточки: formatStudentCommunicationDate(record.contractDate),
+      ВидДоговораКарточки: String(record.type || "").trim(),
+      ПредметДоговораКарточки: String(record.subject || "").trim(),
+      УсловияОплатыКарточки: String(record.paymentTerms || "").trim(),
+      СообщениеДоступаКарточки: buildContractPortalCredentials(record)
+    };
+    const templates = normalizeEmployeeCommunicationTemplates(
+      state.data.dictionaries.employeeCommunicationTemplates
+    );
+    return Object.fromEntries(employeeCommunicationMessages.map((message, index) => [
+      message.key,
+      applyStudentCommunicationTemplate(templates[index], fields)
+    ]));
+  }
+
   function applyStudentCommunicationTemplate(template, fields) {
     const definitions = new Map(getCommunicationTemplateFieldDefinitions().map((field) => [field.name, field]));
     const resolveFormula = (formula, stack = []) => {
@@ -13332,7 +17558,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function copyStudentDetails(event) {
     const button = event.currentTarget;
-    const record = collectStudentFormDraft();
+    const isContract = document.getElementById("recordForm")?.dataset.config === "contracts";
+    const record = isContract ? collectContractFormDraft() : collectStudentFormDraft();
     const lines = [
       record.name,
       record.phone,
@@ -13399,6 +17626,17 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function clearUnchangedGeneratedEmployeeCommunicationMessages(values, formElement) {
+    const generated = generateEmployeeCommunicationMessages(values);
+    employeeCommunicationMessages.forEach((message) => {
+      const control = formElement.elements[message.key];
+      if (!control) return;
+      if (String(control.value || "") === String(generated[message.key] || "")) {
+        values[message.key] = "";
+      }
+    });
+  }
+
   function normalizeServerEmailSubject(value) {
     const subject = String(value || "")
       .replace(/[\u0000-\u001f\u007f]+/gu, " ")
@@ -13410,7 +17648,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function resolveServerEmailRecipient(email, event = null, recipientMode = "") {
-    const explicitMode = ["student", "system"].includes(String(recipientMode || "").trim())
+    const explicitMode = ["student", "employee", "system"].includes(String(recipientMode || "").trim())
       ? String(recipientMode).trim()
       : "";
     const sendToSystemMailbox = explicitMode
@@ -13435,7 +17673,11 @@ MAX - https://bizvmax.ru/zifra_plus
     attachment = null,
     recipientMode = "",
     messageType = "",
-    skipConfirmation = false
+    skipConfirmation = false,
+    recipientLabel = "слушателя",
+    entityType = "students",
+    entityId = "",
+    entityName = ""
   }) {
     const normalizedSubject = normalizeServerEmailSubject(subject);
     const { sendToSystemMailbox, recipient } = resolveServerEmailRecipient(
@@ -13446,7 +17688,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
       alert(sendToSystemMailbox
         ? "Укажите корректный системный почтовый ящик в админке."
-        : "Укажите корректный Email слушателя.");
+        : `Укажите корректный Email ${recipientLabel}.`);
       if (!sendToSystemMailbox) {
         document.querySelector("[name='email']")?.focus({ preventScroll: true });
       }
@@ -13462,7 +17704,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const recipientDescription = sendToSystemMailbox
       ? `системный ящик ${recipient}`
-      : `адрес слушателя ${recipient}`;
+      : `адрес ${recipientLabel} ${recipient}`;
     if (
       !skipConfirmation
       && !confirm(`${confirmText || "Отправить письмо?"}\n\nПолучатель: ${recipientDescription}.`)
@@ -13486,10 +17728,27 @@ MAX - https://bizvmax.ru/zifra_plus
           message: String(message).trim(),
           ...(resolvedAttachment ? { attachment: resolvedAttachment } : {}),
           auditContext: {
-            studentId: String(state.modal?.id || state.modal?.draft?.id || "").trim(),
-            studentName: getCurrentStudentCardValue("name"),
+            entityType,
+            entityId: String(entityId || state.modal?.id || state.modal?.draft?.id || "").trim(),
+            entityName: String(entityName || (entityType === "contracts"
+              ? getCurrentContractCardValue("name")
+              : getCurrentStudentCardValue("name"))).trim(),
+            studentId: entityType === "students"
+              ? String(entityId || state.modal?.id || state.modal?.draft?.id || "").trim()
+              : "",
+            studentName: entityType === "students"
+              ? String(entityName || getCurrentStudentCardValue("name")).trim()
+              : "",
+            contractId: entityType === "contracts"
+              ? String(entityId || state.modal?.id || state.modal?.draft?.id || "").trim()
+              : "",
+            contractName: entityType === "contracts"
+              ? String(entityName || getCurrentContractCardValue("name")).trim()
+              : "",
             messageType: String(messageType || confirmText || normalizedSubject).trim(),
-            recipientMode: sendToSystemMailbox ? "system" : "student"
+            recipientMode: sendToSystemMailbox
+              ? "system"
+              : (entityType === "contracts" ? "employee" : "student")
           }
         })
       });
@@ -13509,8 +17768,10 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function emailStudentCommunicationMessage(messageKey, button, event) {
     const textarea = getStudentCommunicationTextarea(messageKey);
-    const email = getCurrentStudentCardValue("email");
-    const message = studentCommunicationMessages.find((item) => item.key === messageKey);
+    const isEmployee = textarea?.dataset.communicationEntity === "contract";
+    const email = isEmployee ? getCurrentContractCardValue("email") : getCurrentStudentCardValue("email");
+    const message = (isEmployee ? employeeCommunicationMessages : studentCommunicationMessages)
+      .find((item) => item.key === messageKey);
     const subject = message ? `Учебный центр: ${message.label}` : "Сообщение от учебного центра";
     await sendServerEmail({
       email,
@@ -13519,7 +17780,10 @@ MAX - https://bizvmax.ru/zifra_plus
       confirmText: `Отправить сообщение «${message?.label || "Сообщение от учебного центра"}»?`,
       button,
       event,
-      messageType: message?.label || "Сообщение от учебного центра"
+      messageType: message?.label || "Сообщение от учебного центра",
+      recipientLabel: isEmployee ? "сотрудника" : "слушателя",
+      entityType: isEmployee ? "contracts" : "students",
+      entityName: isEmployee ? getCurrentContractCardValue("name") : getCurrentStudentCardValue("name")
     });
   }
 
@@ -13551,6 +17815,13 @@ MAX - https://bizvmax.ru/zifra_plus
     return String(control?.value ?? state.modal?.draft?.[key] ?? record[key] ?? "").trim();
   }
 
+  function getCurrentContractCardValue(key) {
+    const formElement = document.getElementById("recordForm");
+    const control = formElement?.elements[key];
+    const record = (state.data.collections.contracts || []).find((item) => item.id === state.modal?.id) || {};
+    return String(control?.value ?? state.modal?.draft?.[key] ?? record[key] ?? "").trim();
+  }
+
   function getStudentCommunicationTextarea(messageKey) {
     if (!messageKey) return null;
     return document.querySelector(`[data-communication-message="${CSS.escape(messageKey)}"]`);
@@ -13574,6 +17845,31 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  async function emailEmployeePortalAccessMessage(event) {
+    const email = getCurrentContractCardValue("email");
+    const messageInput = document.querySelector("#recordForm[data-config='contracts'] [name='portalCredentials']");
+    const message = String(messageInput?.value || "").trim();
+    if (!message) {
+      alert("Сообщение о доступе к порталу не сформировано. Заполните вид договора, логин и пароль.");
+      messageInput?.focus({ preventScroll: true });
+      return;
+    }
+    const subject = getSdoSettingValue("portalAccessEmailSubject").trim()
+      || "Доступ к порталу дистанционного обучения Цифровизация Плюс";
+    await sendServerEmail({
+      email,
+      subject,
+      message,
+      confirmText: "Отправить сотруднику письмо с доступом к порталу?",
+      button: event?.currentTarget,
+      event,
+      messageType: "Доступ к порталу дистанционного обучения",
+      recipientLabel: "сотрудника",
+      entityType: "contracts",
+      entityName: getCurrentContractCardValue("name")
+    });
+  }
+
   function bindProgramTypeFilterOutsideClick() {
     if (programTypeFilterOutsideClickBound) return;
     programTypeFilterOutsideClickBound = true;
@@ -13581,6 +17877,16 @@ MAX - https://bizvmax.ru/zifra_plus
       const filter = document.querySelector("[data-program-type-filter][open]");
       if (!filter || event.target.closest("[data-program-type-filter]")) return;
       filter.open = false;
+    });
+  }
+
+  function bindDirectExpenseNoteFilterOutsideClick() {
+    if (directExpenseNoteFilterOutsideClickBound) return;
+    directExpenseNoteFilterOutsideClickBound = true;
+    document.addEventListener("pointerdown", (event) => {
+      const field = document.querySelector("[data-direct-expense-note-filter].is-open");
+      if (!field || field.contains(event.target)) return;
+      closeDirectExpenseNoteFilter();
     });
   }
 
@@ -13621,7 +17927,73 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getSystemHelpTarget(node) {
     if (!(node instanceof Element)) return null;
-    return node.closest("[title], [data-system-help-source]");
+    return node.closest("[data-mobile-field-help-source], [title], [data-system-help-source], [data-tooltip]");
+  }
+
+  function prepareSystemHelpTooltipTarget(target) {
+    if (!(target instanceof Element)) return null;
+    const currentTitle = String(target.getAttribute("title") || "");
+    if (currentTitle) {
+      target.dataset.systemHelpSource = currentTitle;
+      target.removeAttribute("title");
+    }
+    return parseSystemHelpTooltip(
+      target.dataset.mobileFieldHelpSource
+      || target.dataset.systemHelpSource
+      || target.dataset.tooltip
+    );
+  }
+
+  function annotateMobileFieldHelpTargets(root = document) {
+    root.querySelectorAll?.("form label").forEach((label) => {
+      const sourceTarget = label.matches("[title], [data-system-help-source], [data-tooltip]")
+        ? label
+        : label.querySelector("[title], [data-system-help-source], [data-tooltip]");
+      if (!sourceTarget) return;
+      const source = String(
+        sourceTarget.getAttribute("title")
+        || sourceTarget.dataset.systemHelpSource
+        || sourceTarget.dataset.tooltip
+        || ""
+      ).trim();
+      if (!parseSystemHelpTooltip(source)) return;
+      label.dataset.mobileFieldHelpSource = source;
+    });
+  }
+
+  function getSystemHelpTooltipDelay(target) {
+    if (!(target instanceof Element)) return SYSTEM_HELP_TOOLTIP_DELAY_MS;
+    const configuredDelay = Number.parseInt(target.dataset.systemHelpDelayMs || "", 10);
+    if (Number.isFinite(configuredDelay) && configuredDelay >= 0) {
+      return Math.max(SYSTEM_HELP_TOOLTIP_DELAY_MS, configuredDelay);
+    }
+    const source = String(target.dataset.systemHelpSource || target.getAttribute("title") || "");
+    return /перетащ|перетаскив/iu.test(source)
+      ? DRAG_TOOLTIP_DELAY_MS
+      : SYSTEM_HELP_TOOLTIP_DELAY_MS;
+  }
+
+  function cancelPendingSystemHelpTooltip() {
+    if (systemHelpTooltipShowTimer) window.clearTimeout(systemHelpTooltipShowTimer);
+    systemHelpTooltipShowTimer = 0;
+    pendingSystemHelpTooltipTarget = null;
+  }
+
+  function scheduleSystemHelpTooltip(target) {
+    const content = prepareSystemHelpTooltipTarget(target);
+    if (!content) return;
+    cancelPendingSystemHelpTooltip();
+    const delay = getSystemHelpTooltipDelay(target);
+    if (!delay) {
+      showSystemHelpTooltip(target);
+      return;
+    }
+    pendingSystemHelpTooltipTarget = target;
+    systemHelpTooltipShowTimer = window.setTimeout(() => {
+      systemHelpTooltipShowTimer = 0;
+      pendingSystemHelpTooltipTarget = null;
+      if (target.isConnected) showSystemHelpTooltip(target);
+    }, delay);
   }
 
   function positionSystemHelpTooltip(tooltip, target) {
@@ -13657,12 +18029,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function showSystemHelpTooltip(target) {
     if (!(target instanceof Element)) return;
-    const currentTitle = String(target.getAttribute("title") || "");
-    if (currentTitle) {
-      target.dataset.systemHelpSource = currentTitle;
-      target.removeAttribute("title");
-    }
-    const content = parseSystemHelpTooltip(target.dataset.systemHelpSource);
+    const content = prepareSystemHelpTooltipTarget(target);
     if (!content) return;
     const tooltip = getSystemHelpTooltipElement();
     tooltip.querySelector("[data-system-help-purpose]").textContent = content.purpose;
@@ -13686,6 +18053,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function hideSystemHelpTooltip(target = null) {
+    cancelPendingSystemHelpTooltip();
+    if (systemHelpTouchHideTimer) window.clearTimeout(systemHelpTouchHideTimer);
+    systemHelpTouchHideTimer = 0;
     const tooltip = document.querySelector("[data-system-help-tooltip]");
     if (tooltip) tooltip.hidden = true;
     const active = target?.matches?.("[data-system-help-active]")
@@ -13696,12 +18066,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function bindSystemHelpTooltips() {
+    annotateMobileFieldHelpTargets();
     if (systemHelpTooltipBound) return;
     systemHelpTooltipBound = true;
     document.addEventListener("pointerover", (event) => {
       const target = getSystemHelpTarget(event.target);
       if (!target || target.contains(event.relatedTarget)) return;
-      showSystemHelpTooltip(target);
+      scheduleSystemHelpTooltip(target);
     });
     document.addEventListener("pointerout", (event) => {
       const target = getSystemHelpTarget(event.target);
@@ -13710,15 +18081,201 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.addEventListener("focusin", (event) => {
       const target = getSystemHelpTarget(event.target);
-      if (target) showSystemHelpTooltip(target);
+      if (target) scheduleSystemHelpTooltip(target);
     });
     document.addEventListener("focusout", (event) => {
       const target = getSystemHelpTarget(event.target);
       if (target) hideSystemHelpTooltip(target);
     });
+    document.addEventListener("pointerup", (event) => {
+      if (event.pointerType !== "touch" || window.innerWidth > 720) return;
+      const rawTarget = getSystemHelpTarget(event.target);
+      const target = rawTarget?.closest("label[data-mobile-field-help-source]") || rawTarget;
+      if (!target || !target.closest("form label")) return;
+      const now = performance.now();
+      const isDoubleTap = target === lastSystemHelpTouchTarget && now - lastSystemHelpTouchAt <= 520;
+      lastSystemHelpTouchTarget = target;
+      lastSystemHelpTouchAt = now;
+      if (!isDoubleTap) return;
+      event.preventDefault();
+      lastSystemHelpTouchTarget = null;
+      lastSystemHelpTouchAt = 0;
+      showSystemHelpTooltip(target);
+      if (systemHelpTouchHideTimer) window.clearTimeout(systemHelpTouchHideTimer);
+      systemHelpTouchHideTimer = window.setTimeout(() => hideSystemHelpTooltip(target), 6500);
+    }, { capture: true });
     document.addEventListener("pointerdown", () => hideSystemHelpTooltip(), { capture: true });
+    document.addEventListener("contextmenu", () => hideSystemHelpTooltip(), { capture: true });
     window.addEventListener("resize", () => hideSystemHelpTooltip());
     window.addEventListener("scroll", () => hideSystemHelpTooltip(), { capture: true });
+  }
+
+  function isShiftDragExemptElement(element) {
+    return element instanceof Element && Boolean(element.closest(SHIFT_DRAG_EXEMPT_SELECTOR));
+  }
+
+  function getShiftRequiredDragElement(node) {
+    if (!(node instanceof Element)) return null;
+    const draggable = node.closest('[draggable="true"]');
+    if (!draggable || isShiftDragExemptElement(node) || isShiftDragExemptElement(draggable)) return null;
+    return draggable;
+  }
+
+  function annotateShiftRequiredDraggableElements(root = document) {
+    root.querySelectorAll?.('[draggable="true"]').forEach((element) => {
+      element.dataset.systemHelpDelayMs = String(DRAG_TOOLTIP_DELAY_MS);
+      if (isShiftDragExemptElement(element)) return;
+      const instruction = "Shift: удерживайте клавишу во время перетаскивания.";
+      const currentTitle = String(
+        element.getAttribute("title")
+        || element.dataset.systemHelpSource
+        || ""
+      ).trim();
+      if (/\bShift\b/u.test(currentTitle)) return;
+      const nextTitle = `${currentTitle || "Перетаскивание элемента."}\n${instruction}`;
+      if (element.dataset.systemHelpSource) element.dataset.systemHelpSource = nextTitle;
+      else element.setAttribute("title", nextTitle);
+    });
+  }
+
+  function bindShiftDragRequirement() {
+    annotateShiftRequiredDraggableElements();
+    if (shiftDragRequirementBound) return;
+    shiftDragRequirementBound = true;
+    const setShiftDragCursorState = (active) => {
+      document.body.classList.toggle("shift-drag-ready", Boolean(active));
+    };
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Shift" || event.shiftKey) setShiftDragCursorState(true);
+    }, { capture: true });
+    document.addEventListener("keyup", (event) => {
+      if (event.key === "Shift" || !event.shiftKey) setShiftDragCursorState(false);
+    }, { capture: true });
+    document.addEventListener("pointermove", (event) => {
+      setShiftDragCursorState(event.shiftKey);
+    }, { capture: true, passive: true });
+    window.addEventListener("blur", () => setShiftDragCursorState(false));
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) setShiftDragCursorState(false);
+    });
+    document.addEventListener("dragstart", (event) => {
+      const draggable = getShiftRequiredDragElement(event.target);
+      if (!draggable || event.shiftKey) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      showSystemHelpTooltip(draggable);
+    }, { capture: true });
+  }
+
+  function applyCardWindowPosition(cardWindow) {
+    if (!cardWindow) return;
+    const windowState = getCardWindowState();
+    cardWindow.style.setProperty("--card-window-offset-x", `${windowState.offsetX}px`);
+    cardWindow.style.setProperty("--card-window-offset-y", `${windowState.offsetY}px`);
+  }
+
+  function clampCardWindowPosition(cardWindow) {
+    const windowState = getCardWindowState();
+    if (!cardWindow || windowState.fullscreen || window.innerWidth <= 720) return;
+    const margin = 8;
+    const rect = cardWindow.getBoundingClientRect();
+    let shiftX = 0;
+    let shiftY = 0;
+    if (rect.left < margin) shiftX = margin - rect.left;
+    else if (rect.right > window.innerWidth - margin) shiftX = window.innerWidth - margin - rect.right;
+    if (rect.top < margin) shiftY = margin - rect.top;
+    else if (rect.bottom > window.innerHeight - margin) shiftY = window.innerHeight - margin - rect.bottom;
+    if (!shiftX && !shiftY) return;
+    windowState.offsetX += shiftX;
+    windowState.offsetY += shiftY;
+    applyCardWindowPosition(cardWindow);
+  }
+
+  function toggleCardWindowMode(mode) {
+    if (!state.modal || !["students", "contracts"].includes(state.modal.config)) return;
+    preserveCardDraftForAudit();
+    const windowState = getCardWindowState();
+    if (mode === "minimize") {
+      windowState.minimized = !windowState.minimized;
+      if (windowState.minimized) windowState.fullscreen = false;
+    } else if (mode === "fullscreen") {
+      windowState.fullscreen = !windowState.fullscreen;
+      windowState.minimized = false;
+    }
+    render();
+    requestAnimationFrame(() => {
+      const action = mode === "minimize"
+        ? "toggle-card-window-minimize"
+        : "toggle-card-window-fullscreen";
+      document.querySelector(`[data-action='${action}']`)?.focus({ preventScroll: true });
+    });
+  }
+
+  function bindCardWindowControls() {
+    const cardWindow = document.querySelector("[data-card-window]");
+    const dragHandle = cardWindow?.querySelector("[data-card-window-drag-handle]");
+    if (!cardWindow || !dragHandle) return;
+    document.querySelector("[data-action='toggle-card-window-minimize']")
+      ?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleCardWindowMode("minimize");
+      });
+    document.querySelector("[data-action='toggle-card-window-fullscreen']")
+      ?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleCardWindowMode("fullscreen");
+      });
+    clampCardWindowPosition(cardWindow);
+    if (getCardWindowState().fullscreen || window.innerWidth <= 720) return;
+
+    dragHandle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest("button, input, select, textarea, a, label, [role='button']")) return;
+      const windowState = getCardWindowState();
+      if (windowState.fullscreen) return;
+      const startRect = cardWindow.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startOffsetX = windowState.offsetX;
+      const startOffsetY = windowState.offsetY;
+      let moved = false;
+
+      const move = (moveEvent) => {
+        const rawDeltaX = moveEvent.clientX - startX;
+        const rawDeltaY = moveEvent.clientY - startY;
+        const minLeft = 8;
+        const maxLeft = Math.max(minLeft, window.innerWidth - startRect.width - 8);
+        const minTop = 8;
+        const maxTop = Math.max(minTop, window.innerHeight - startRect.height - 8);
+        const nextLeft = clamp(startRect.left + rawDeltaX, minLeft, maxLeft);
+        const nextTop = clamp(startRect.top + rawDeltaY, minTop, maxTop);
+        windowState.offsetX = startOffsetX + nextLeft - startRect.left;
+        windowState.offsetY = startOffsetY + nextTop - startRect.top;
+        applyCardWindowPosition(cardWindow);
+        if (!moved && (Math.abs(rawDeltaX) > 2 || Math.abs(rawDeltaY) > 2)) {
+          moved = true;
+          cardWindow.classList.add("is-window-moving");
+          document.body.classList.add("card-window-moving");
+        }
+        if (moved) moveEvent.preventDefault();
+      };
+      const stop = () => {
+        cardWindow.classList.remove("is-window-moving");
+        document.body.classList.remove("card-window-moving");
+        dragHandle.removeEventListener("pointermove", move);
+        dragHandle.removeEventListener("pointerup", stop);
+        dragHandle.removeEventListener("pointercancel", stop);
+        dragHandle.removeEventListener("lostpointercapture", stop);
+      };
+
+      dragHandle.setPointerCapture?.(event.pointerId);
+      dragHandle.addEventListener("pointermove", move);
+      dragHandle.addEventListener("pointerup", stop);
+      dragHandle.addEventListener("pointercancel", stop);
+      dragHandle.addEventListener("lostpointercapture", stop);
+    });
   }
 
   function bindGlobalEscapeKey() {
@@ -13735,6 +18292,20 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeTopmostWindowByEscape() {
+    const settingsListDialog = document.querySelector("[data-settings-list-dialog]");
+    if (settingsListDialog) {
+      settingsListDialog.closeSettingsListDialog?.();
+      return true;
+    }
+    if (state.releaseHistoryOpen) {
+      state.releaseHistoryOpen = false;
+      render();
+      return true;
+    }
+    if (document.querySelector("[data-contract-student-picker]")) {
+      closeContractStudentPicker();
+      return true;
+    }
     if (state.userManagementOpen) {
       closeUserManagement();
       return true;
@@ -13743,13 +18314,36 @@ MAX - https://bizvmax.ru/zifra_plus
       closeProfile();
       return true;
     }
+    const studentPhotoCropEditor = document.querySelector("[data-student-photo-crop-editor]");
+    if (studentPhotoCropEditor) {
+      studentPhotoCropEditor.closeStudentPhotoCropEditor?.();
+      return true;
+    }
+    const studentDocumentRegionSelector = document.querySelector("[data-student-document-photo-cropper]");
+    if (studentDocumentRegionSelector) {
+      studentDocumentRegionSelector.closeStudentDocumentRegionSelector?.();
+      return true;
+    }
+    if (document.querySelector("[data-student-document-recognition-field-menu]")) {
+      hideStudentDocumentRecognitionFieldMenu();
+      return true;
+    }
     const studentWebDavBrowser = document.querySelector("[data-student-webdav-browser]");
     if (studentWebDavBrowser) {
       studentWebDavBrowser.closeStudentWebDavBrowser?.();
       return true;
     }
+    if (document.querySelector("[data-student-document-recognition-selection]")) {
+      closeStudentDocumentRecognitionSelectionDialog();
+      return true;
+    }
     if (document.querySelector("[data-student-document-recognition-dialog]")) {
       closeStudentDocumentRecognitionDialog();
+      return true;
+    }
+    const studentDocumentDataCheckDialog = document.querySelector("[data-student-document-data-check-dialog]");
+    if (studentDocumentDataCheckDialog) {
+      studentDocumentDataCheckDialog.closeStudentDocumentDataCheck?.();
       return true;
     }
     const studentDocumentChoiceDialog = document.querySelector("[data-student-document-choice-dialog]");
@@ -13791,6 +18385,10 @@ MAX - https://bizvmax.ru/zifra_plus
       programTypeFilter.open = false;
       return true;
     }
+    if (document.querySelector("[data-direct-expense-note-filter].is-open")) {
+      closeDirectExpenseNoteFilter();
+      return true;
+    }
     if (document.querySelector("[data-combo-field].is-open")) {
       closeComboPanels();
       return true;
@@ -13829,6 +18427,10 @@ MAX - https://bizvmax.ru/zifra_plus
       closeStudentAuditLog();
       return true;
     }
+    if (state.employeeExpenseEditor) {
+      closeEmployeeExpenseEditor();
+      return true;
+    }
     if (state.modal) {
       closeModalWithUnsavedCheck();
       return true;
@@ -13848,13 +18450,17 @@ MAX - https://bizvmax.ru/zifra_plus
     bindGlobalEscapeKey();
     bindSidebarOutsideClick();
     bindProgramTypeFilterOutsideClick();
+    bindDirectExpenseNoteFilterOutsideClick();
     bindSystemHelpTooltips();
+    bindShiftDragRequirement();
+    bindCardWindowControls();
     bindNavItemOrderControls();
     bindDashboardStudentStatusOrderControls();
     bindFieldUndoShortcut();
     bindStudentApplicationsImportEvents();
     bindFinanceDetailsEvents();
     initializeRecordFormSnapshot(document.getElementById("recordForm"));
+    initializeRecordFormSnapshot(document.getElementById("employeeExpenseEditorForm"));
 
     document.querySelector("[data-action='open-profile']")?.addEventListener("click", () => {
       state.profileOpen = true;
@@ -13869,6 +18475,22 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("form[data-action='change-password']")?.addEventListener("submit", changeCurrentUserPassword);
     document.querySelector("[data-action='logout']")?.addEventListener("click", logoutCurrentUser);
     document.querySelector("[data-action='open-user-management']")?.addEventListener("click", openUserManagement);
+    document.querySelectorAll("[data-action='switch-admin-tab']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const tab = String(button.dataset.adminTab || "");
+        if (!["database", "email", "audit", "users"].includes(tab) || tab === state.adminTab) return;
+        state.adminTab = tab;
+        render();
+        requestAnimationFrame(() => {
+          document.querySelector(`[data-action='switch-admin-tab'][data-admin-tab='${CSS.escape(tab)}']`)
+            ?.focus({ preventScroll: true });
+        });
+      });
+    });
+    document.querySelector("[data-action='refresh-auth-users']")?.addEventListener("click", () => {
+      state.authUsersLoaded = false;
+      loadAuthUsers();
+    });
     document.querySelectorAll("[data-action='close-user-management']").forEach((element) => {
       element.addEventListener("click", (event) => {
         if (element.matches("button") || event.target === element) closeUserManagement();
@@ -13885,6 +18507,21 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
     document.querySelector("form[data-action='save-auth-user']")?.addEventListener("submit", saveAuthUser);
+    document.querySelector("[data-action='open-release-history']")?.addEventListener("click", () => {
+      state.releaseHistoryOpen = true;
+      render();
+      requestAnimationFrame(() => {
+        document.querySelector(".release-history-modal [data-action='close-release-history']")?.focus({ preventScroll: true });
+      });
+    });
+    document.querySelectorAll("[data-action='close-release-history']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (!element.matches("button") && event.target !== element) return;
+        state.releaseHistoryOpen = false;
+        render();
+        document.querySelector("[data-action='open-release-history']")?.focus({ preventScroll: true });
+      });
+    });
 
     document.querySelectorAll("[data-view]").forEach((button) => {
       button.addEventListener("click", async () => {
@@ -13896,10 +18533,13 @@ MAX - https://bizvmax.ru/zifra_plus
         state.statusFilter = getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
         state.programRegistryTypeFilter = [];
-        state.contractSectionFilter = [];
+        state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
         state.studentImportedViewIds = [];
         state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
+        if (window.matchMedia("(max-width: 1120px)").matches) {
+          document.body.classList.remove("sidebar-open");
+        }
         render();
       });
     });
@@ -13913,7 +18553,7 @@ MAX - https://bizvmax.ru/zifra_plus
         state.statusFilter = getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
         state.programRegistryTypeFilter = [];
-        state.contractSectionFilter = [];
+        state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
         state.studentImportedViewIds = [];
         state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
@@ -13942,12 +18582,15 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", importStudentsFromDatabase);
     });
     document.querySelector("[data-action='sync-students-database']")?.addEventListener("click", exportStudentsToDatabase);
+    document.querySelector("[data-action='download-students-database']")?.addEventListener("click", downloadStudentsDatabase);
     const studentDatabaseSettingsForm = document.querySelector("form[data-action='save-student-database-settings']");
     studentDatabaseSettingsForm?.addEventListener("submit", saveStudentDatabaseSettings);
     bindAdminSettingsDirtyState(studentDatabaseSettingsForm);
     bindAdminSettingsBeforeUnload();
     bindAutomaticDocumentSaveHint(studentDatabaseSettingsForm);
+    bindAdminMySqlSettings(studentDatabaseSettingsForm);
     document.querySelector("[data-action='test-yandex-disk']")?.addEventListener("click", testYandexDiskConnection);
+    document.querySelector("[data-action='test-mysql-locks']")?.addEventListener("click", testMySqlLocksConnection);
     document.querySelector("[data-action='test-student-applications-email']")
       ?.addEventListener("click", testStudentApplicationsEmailConnection);
     document.querySelector("[data-action='download-audit-log']")
@@ -14034,7 +18677,9 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='generate-portal-password']")?.addEventListener("click", generatePortalPassword);
     document.querySelector("[data-action='open-sdo-courses']")?.addEventListener("click", openSdoCourses);
     document.querySelector("[data-action='export-student-to-sdo']")?.addEventListener("click", exportStudentToSdo);
+    document.querySelector("[data-action='export-employee-to-sdo']")?.addEventListener("click", exportEmployeeToSdo);
     document.querySelector("[data-action='email-portal-access']")?.addEventListener("click", emailPortalAccessMessage);
+    document.querySelector("[data-action='email-employee-portal-access']")?.addEventListener("click", emailEmployeePortalAccessMessage);
     ["login", "password"].forEach((fieldName) => {
       const input = document.querySelector(`[name="${fieldName}"]`);
       input?.addEventListener("input", updatePortalAccessMessage);
@@ -14128,6 +18773,9 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='switch-contract-tab']").forEach((button) => {
       button.addEventListener("click", () => switchContractTab(button.dataset.contractTab));
     });
+    document.querySelectorAll("[data-action='toggle-card-side-panel']").forEach((button) => {
+      button.addEventListener("click", () => toggleCardSidePanel(button));
+    });
     document.querySelectorAll("[data-action='navigate-student-card']").forEach((button) => {
       button.addEventListener("click", () => navigateStudentCard(button.dataset.direction));
     });
@@ -14144,6 +18792,11 @@ MAX - https://bizvmax.ru/zifra_plus
       switchContractTab(panel.dataset.contractTabPanel);
       requestAnimationFrame(() => event.target.focus({ preventScroll: false }));
     }, true);
+    ["type", "login", "password"].forEach((key) => {
+      const control = contractForm?.elements?.[key];
+      control?.addEventListener("input", () => syncContractPortalCredentials(contractForm));
+      control?.addEventListener("change", () => syncContractPortalCredentials(contractForm));
+    });
     document.querySelectorAll("[data-payment-index]").forEach((input) => {
       input.addEventListener("input", () => {
         syncPaymentRowDeleteButton(input.dataset.paymentIndex);
@@ -14191,6 +18844,81 @@ MAX - https://bizvmax.ru/zifra_plus
       if (state.view === "students") state.sort = getStudentStatusTableSort(state.statusFilter);
       state.tablePages[state.view] = 1;
       render();
+    });
+
+    const directExpenseNoteFilter = document.getElementById("directExpenseNoteFilter");
+    directExpenseNoteFilter?.addEventListener("focus", () => {
+      openDirectExpenseNoteFilter(directExpenseNoteFilter, { showAll: true });
+    });
+    directExpenseNoteFilter?.addEventListener("click", () => {
+      openDirectExpenseNoteFilter(directExpenseNoteFilter, { showAll: true });
+    });
+    directExpenseNoteFilter?.addEventListener("input", (event) => {
+      const cursor = event.target.selectionStart;
+      state.directExpenseNoteFilter = event.target.value;
+      state.tablePages.directExpenses = 1;
+      render();
+      const input = document.getElementById("directExpenseNoteFilter");
+      if (input) {
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(cursor, cursor);
+        openDirectExpenseNoteFilter(input);
+      }
+    });
+    directExpenseNoteFilter?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeDirectExpenseNoteFilter();
+        return;
+      }
+      if (event.key !== "ArrowDown") return;
+      event.preventDefault();
+      openDirectExpenseNoteFilter(directExpenseNoteFilter);
+      document.querySelector("[data-direct-expense-note-filter-options] button:not([hidden])")?.focus();
+    });
+    document.querySelector("[data-action='toggle-direct-expense-note-filter']")?.addEventListener("click", (event) => {
+      const field = event.currentTarget.closest("[data-direct-expense-note-filter]");
+      const input = field?.querySelector("#directExpenseNoteFilter");
+      if (!field || !input) return;
+      const wasOpen = field.classList.contains("is-open");
+      if (wasOpen) {
+        closeDirectExpenseNoteFilter();
+      } else {
+        openDirectExpenseNoteFilter(input, { showAll: true });
+      }
+      input.focus({ preventScroll: true });
+      if (wasOpen) closeDirectExpenseNoteFilter();
+    });
+    document.querySelectorAll("[data-action='select-direct-expense-note-filter']").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.directExpenseNoteFilter = button.dataset.value || "";
+        state.tablePages.directExpenses = 1;
+        render();
+        const input = document.getElementById("directExpenseNoteFilter");
+        input?.focus({ preventScroll: true });
+        closeDirectExpenseNoteFilter();
+      });
+      button.addEventListener("keydown", (event) => {
+        if (!["ArrowDown", "ArrowUp", "Home", "End", "Escape"].includes(event.key)) return;
+        event.preventDefault();
+        const input = document.getElementById("directExpenseNoteFilter");
+        if (event.key === "Escape") {
+          closeDirectExpenseNoteFilter();
+          input?.focus({ preventScroll: true });
+          return;
+        }
+        const options = [...document.querySelectorAll("[data-direct-expense-note-filter-options] button:not([hidden])")];
+        if (!options.length) return;
+        const currentIndex = Math.max(0, options.indexOf(button));
+        const nextIndex = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? options.length - 1
+            : event.key === "ArrowDown"
+              ? (currentIndex + 1) % options.length
+              : (currentIndex - 1 + options.length) % options.length;
+        options[nextIndex]?.focus();
+      });
     });
     document.querySelectorAll("[data-student-program-type-filter-option]").forEach((input) => {
       input.addEventListener("change", () => {
@@ -14351,28 +19079,42 @@ MAX - https://bizvmax.ru/zifra_plus
         if (button.dataset.config === "students") state.discountPickerOpen = false;
         if (button.dataset.config === "students") state.discountPicker = null;
         if (button.dataset.config === "students") state.studentImportedViewIds = [];
+        if (["students", "contracts"].includes(button.dataset.config)) resetCardWindowState();
         state.modal = { config: button.dataset.config, id: "" };
         render();
       });
     });
 
     document.querySelectorAll("[data-action='edit']").forEach((button) => {
-      button.addEventListener("click", () => {
+      button.addEventListener("click", async () => {
         state.lastEditedRow = { config: button.dataset.config || "", id: button.dataset.id || "" };
         if (button.dataset.config === "documentTemplates") {
           selectDocumentTemplate(button.dataset.id);
           return;
         }
-        setTablePageForRow(button.dataset.config, button.dataset.id);
-        if (button.dataset.config === "students") state.studentCardTab = "main";
-        if (button.dataset.config === "programs") state.programCardTab = "main";
-        if (button.dataset.config === "contracts") state.contractCardTab = "main";
-        if (button.dataset.config === "students") state.openPaymentRows = [];
-        if (button.dataset.config === "students") state.openExpenseRows = [];
-        if (button.dataset.config === "students") state.discountPickerOpen = false;
-        if (button.dataset.config === "students") state.discountPicker = null;
-        state.modal = { config: button.dataset.config, id: button.dataset.id };
-        render();
+        button.disabled = true;
+        try {
+          await withCardLoadingIndicator(button.dataset.config, button.dataset.id, async () => {
+            const acquired = await acquireRecordLock(
+              recordLockEntityType(button.dataset.config),
+              button.dataset.id
+            );
+            if (!acquired) return;
+            setTablePageForRow(button.dataset.config, button.dataset.id);
+            if (button.dataset.config === "students") state.studentCardTab = "main";
+            if (button.dataset.config === "programs") state.programCardTab = "main";
+            if (button.dataset.config === "contracts") state.contractCardTab = "main";
+            if (button.dataset.config === "students") state.openPaymentRows = [];
+            if (button.dataset.config === "students") state.openExpenseRows = [];
+            if (button.dataset.config === "students") state.discountPickerOpen = false;
+            if (button.dataset.config === "students") state.discountPicker = null;
+            if (["students", "contracts"].includes(button.dataset.config)) resetCardWindowState();
+            state.modal = { config: button.dataset.config, id: button.dataset.id };
+            render();
+          });
+        } finally {
+          if (button.isConnected) button.disabled = false;
+        }
       });
     });
 
@@ -14421,64 +19163,7 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
 
-    document.querySelectorAll("[data-combo-field]").forEach((field) => {
-      const input = field.querySelector("[data-combo-input]");
-      if (!input) return;
-      const open = (event) => {
-        closeComboPanels(field);
-        const showAll = event?.type !== "input";
-        filterComboOptions(input, { showAll });
-        field.classList.add("is-open");
-        if (showAll) focusComboSelectedOption(input);
-        if (event?.type === "input" && document.activeElement !== input) {
-          input.focus({ preventScroll: true });
-        }
-      };
-      input.addEventListener("focus", open);
-      input.addEventListener("click", open);
-      input.addEventListener("input", open);
-      input.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") field.classList.remove("is-open");
-      });
-      field.addEventListener("pointerdown", (event) => {
-        if (event.target.closest("[data-action='select-combo-value'], [data-action='clear-combo-value']")) {
-          event.preventDefault();
-        }
-      });
-      field.addEventListener("focusout", (event) => {
-        if (event.relatedTarget && field.contains(event.relatedTarget)) return;
-        setTimeout(() => {
-          if (!field.contains(document.activeElement)) field.classList.remove("is-open");
-        }, 0);
-      });
-    });
-
-    document.querySelectorAll("[data-action='select-combo-value']").forEach((button) => {
-      button.addEventListener("click", () => {
-        const field = button.closest("[data-combo-field]");
-        const input = field?.querySelector("[data-combo-input]");
-        if (!input) return;
-        input.value = button.dataset.value || "";
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-        field.classList.remove("is-open");
-        input.focus();
-      });
-    });
-
-    document.querySelectorAll("[data-action='clear-combo-value']").forEach((button) => {
-      button.addEventListener("click", () => {
-        const field = button.closest("[data-combo-field]");
-        const input = field?.querySelector("[data-combo-input]");
-        if (!input) return;
-        input.value = "";
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-        filterComboOptions(input);
-        field.classList.add("is-open");
-        input.focus();
-      });
-    });
+    bindComboFieldEvents();
 
     document.querySelectorAll("[data-action='set-student-program']").forEach((input) => {
       const syncProgramType = (event) => {
@@ -14633,6 +19318,8 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     document.getElementById("studentPhotoInput")?.addEventListener("change", handleStudentPhoto);
+    document.querySelector("[data-action='crop-stored-photo']")
+      ?.addEventListener("click", (event) => recropStoredPersonPhoto("student", event.currentTarget));
     document.querySelectorAll("[data-student-documents-folder-link]").forEach((link) => {
       link.addEventListener("click", openStudentDocumentsFolder);
     });
@@ -14642,6 +19329,10 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", startStudentDocumentRecognition);
     document.querySelector("[data-action='show-student-document-recognition-result']")
       ?.addEventListener("click", showStoredStudentDocumentRecognitionResult);
+    document.querySelector("[data-action='recognize-contract-documents']")
+      ?.addEventListener("click", (event) => startStudentDocumentRecognition(event, { entityType: "contract" }));
+    document.querySelector("[data-action='show-contract-document-recognition-result']")
+      ?.addEventListener("click", showStoredContractDocumentRecognitionResult);
     document.getElementById("studentPhotoPath")?.addEventListener("change", (event) => {
       const hidden = document.getElementById("studentPhotoData");
       const urlInput = document.getElementById("studentPhotoUrl");
@@ -14676,8 +19367,80 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     });
 
+    document.getElementById("contractPhotoInput")?.addEventListener("change", handleContractPhoto);
+    document.querySelector("[data-action='crop-contract-photo']")
+      ?.addEventListener("click", (event) => recropStoredPersonPhoto("contract", event.currentTarget));
+    document.querySelector("[data-action='clear-contract-photo']")?.addEventListener("click", async () => {
+      const photoInput = document.getElementById("contractPhotoInput");
+      const pathInput = document.getElementById("contractPhotoPath");
+      const preview = document.getElementById("contractPhotoPreview");
+      try {
+        await deleteStoredPhoto(pathInput?.value || "");
+      } catch (error) {
+        alert("Не удалось удалить фото сотрудника из хранилища: " + error.message);
+        return;
+      }
+      if (pathInput) {
+        pathInput.value = "";
+        pathInput.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (photoInput) photoInput.value = "";
+      if (preview) {
+        preview.classList.remove("has-photo");
+        preview.querySelector("img")?.remove();
+        if (!preview.querySelector(":scope > span")) {
+          preview.insertAdjacentHTML("afterbegin", `<span>${initials(document.querySelector("#recordForm[data-config='contracts'] [name='name']")?.value || "Сотрудник")}</span>`);
+        }
+      }
+    });
+
     document.getElementById("recordForm")?.addEventListener("submit", saveRecord);
+    document.querySelector("[data-action='open-contract-student-picker']")
+      ?.addEventListener("click", openContractStudentPicker);
+    document.querySelector("[data-action='generate-employee-coupon']")
+      ?.addEventListener("click", generateEmployeeCouponFromLogin);
+    const employeePaymentAccounting = document.querySelector("[data-employee-payment-accounting]");
+    employeePaymentAccounting?.addEventListener("change", updateEmployeePaymentAccountingField);
+    employeePaymentAccounting?.addEventListener("click", duplicateEmployeePaymentAccountingRow);
+    employeePaymentAccounting?.addEventListener("click", deleteEmployeePaymentAccountingRow);
+    employeePaymentAccounting?.addEventListener("click", openEmployeeExpenseEditor);
+    const employeePaymentFilters = employeePaymentAccounting?.querySelector("[data-employee-payment-filters]");
+    employeePaymentFilters?.addEventListener("input", () => updateEmployeePaymentFilters(employeePaymentFilters));
+    employeePaymentFilters?.addEventListener("change", () => updateEmployeePaymentFilters(employeePaymentFilters));
+    employeePaymentFilters?.querySelector("[data-action='reset-employee-payment-filters']")
+      ?.addEventListener("click", () => resetEmployeePaymentFilters(employeePaymentFilters));
+    applyEmployeePaymentFiltersToDom(employeePaymentAccounting);
+    bindEmployeePaymentRowDrag(employeePaymentAccounting);
+    bindEmployeeExpenseEditorEvents();
+    document.querySelector("[data-action='add-employee-direct-payment']")
+      ?.addEventListener("click", () => addEmployeePaymentAccountingRow("direct"));
+    document.querySelector("[data-action='add-employee-general-payment']")
+      ?.addEventListener("click", () => addEmployeePaymentAccountingRow("general"));
     document.querySelector("[data-action='open-student-contract-document']")?.addEventListener("click", openStudentContractDocument);
+    const employeeContractDocumentButton = document.querySelector("[data-action='open-employee-contract-document']");
+    employeeContractDocumentButton?.addEventListener("click", openEmployeeContractDocument);
+    employeeContractDocumentButton?.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      showEmployeeDocumentActionMenu(
+        event.clientX,
+        event.clientY,
+        getEmployeeContractDocumentTemplates()[0],
+        { title: "Договор сотрудника", documentKind: "employeeContract" }
+      );
+    });
+    const employeeActDocumentButton = document.querySelector("[data-action='open-employee-act-document']");
+    employeeActDocumentButton?.addEventListener("click", openEmployeeActDocument);
+    employeeActDocumentButton?.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      showEmployeeDocumentActionMenu(
+        event.clientX,
+        event.clientY,
+        getEmployeeActDocumentTemplate(),
+        { title: "Акт на оплату", documentKind: "employeeAct" }
+      );
+    });
     document.querySelector("[data-action='open-student-education-document']")?.addEventListener("click", openStudentEducationDocument);
     document.querySelector("[data-action='open-student-postal-envelope-document']")?.addEventListener("click", openStudentPostalEnvelopeDocument);
     document.querySelector("[data-action='open-student-study-certificate-document']")?.addEventListener("click", openStudentStudyCertificateDocument);
@@ -14722,8 +19485,14 @@ MAX - https://bizvmax.ru/zifra_plus
       formElement.addEventListener("submit", addDictionaryValue);
       formElement.querySelector("[data-dictionary-add-input]")?.addEventListener("paste", pasteDictionaryValues);
     });
-    document.querySelector("form[data-action='save-communication-templates']")?.addEventListener("submit", saveCommunicationTemplates);
-    document.querySelector("[data-action='reset-communication-templates']")?.addEventListener("click", resetCommunicationTemplates);
+    document.querySelectorAll("form[data-action='save-communication-templates']")
+      .forEach((form) => form.addEventListener("submit", saveCommunicationTemplates));
+    document.querySelectorAll("[data-action='reset-communication-templates']").forEach((button) => {
+      button.addEventListener("click", () => resetCommunicationTemplates(button.dataset.templateAudience));
+    });
+    document.querySelectorAll("[data-action='switch-communication-template-audience']").forEach((button) => {
+      button.addEventListener("click", () => switchCommunicationTemplateAudience(button.dataset.templateAudience));
+    });
     bindCommunicationTemplateDragAndDrop();
     bindCommunicationTemplateFieldActions();
     document.querySelector("form[data-action='save-data-formulas']")?.addEventListener("submit", saveDataFormulas);
@@ -14823,6 +19592,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
     enhanceDatePlaceholders();
     enhanceCopyableFields();
+    enhanceSettingsLinkedDropdowns();
   }
 
   function enhanceDatePlaceholders() {
@@ -15239,23 +20009,26 @@ MAX - https://bizvmax.ru/zifra_plus
     state.discountPicker = null;
   }
 
-  function openStudentCardById(id) {
+  async function openStudentCardById(id) {
     if (!id) return;
-    const studentNavigationIds = Array.isArray(state.modal?.studentNavigationIds)
-      ? [...state.modal.studentNavigationIds]
-      : [];
-    resetStudentCardTransientState();
-    state.lastEditedRow = { config: "students", id };
-    setTablePageForRow("students", id);
-    state.modal = {
-      config: "students",
-      id,
-      ...(studentNavigationIds.length ? { studentNavigationIds } : {})
-    };
-    render();
+    await withCardLoadingIndicator("students", id, async () => {
+      if (!await acquireRecordLock(recordLockEntityType("students"), id)) return;
+      const studentNavigationIds = Array.isArray(state.modal?.studentNavigationIds)
+        ? [...state.modal.studentNavigationIds]
+        : [];
+      resetStudentCardTransientState();
+      state.lastEditedRow = { config: "students", id };
+      setTablePageForRow("students", id);
+      state.modal = {
+        config: "students",
+        id,
+        ...(studentNavigationIds.length ? { studentNavigationIds } : {})
+      };
+      render();
+    });
   }
 
-  function navigateStudentCard(direction) {
+  async function navigateStudentCard(direction) {
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "students" || !state.modal?.id) return;
     let currentId = formElement.dataset.id || state.modal.id;
@@ -15272,7 +20045,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const target = getStudentNavigationTarget(currentId, direction);
     if (!target) return;
-    openStudentCardById(target.id);
+    await openStudentCardById(target.id);
   }
 
   function getProgramNavigationRows() {
@@ -15298,15 +20071,18 @@ MAX - https://bizvmax.ru/zifra_plus
     return rows[index + (Number(direction) < 0 ? -1 : 1)] || null;
   }
 
-  function openProgramCardById(id) {
+  async function openProgramCardById(id) {
     if (!id) return;
-    state.lastEditedRow = { config: "programs", id };
-    setTablePageForRow("programs", id);
-    state.modal = { config: "programs", id };
-    render();
+    await withCardLoadingIndicator("programs", id, async () => {
+      if (!await acquireRecordLock(recordLockEntityType("programs"), id)) return;
+      state.lastEditedRow = { config: "programs", id };
+      setTablePageForRow("programs", id);
+      state.modal = { config: "programs", id };
+      render();
+    });
   }
 
-  function navigateProgramCard(direction) {
+  async function navigateProgramCard(direction) {
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "programs" || !state.modal?.id) return;
     let currentId = formElement.dataset.id || state.modal.id;
@@ -15316,6 +20092,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const savedId = saveFormRecord(formElement);
         if (!savedId) return;
         persist();
+        if (!await flushSharedApplicationState()) return;
         currentId = savedId;
       } else if (!confirm("Перейти без сохранения изменений?")) {
         return;
@@ -15323,7 +20100,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const target = getProgramNavigationTarget(currentId, direction);
     if (!target) return;
-    openProgramCardById(target.id);
+    await openProgramCardById(target.id);
   }
 
   function getContractNavigationRows() {
@@ -15349,15 +20126,18 @@ MAX - https://bizvmax.ru/zifra_plus
     return rows[index + (Number(direction) < 0 ? -1 : 1)] || null;
   }
 
-  function openContractCardById(id) {
+  async function openContractCardById(id) {
     if (!id) return;
-    state.lastEditedRow = { config: "contracts", id };
-    setTablePageForRow("contracts", id);
-    state.modal = { config: "contracts", id };
-    render();
+    await withCardLoadingIndicator("contracts", id, async () => {
+      if (!await acquireRecordLock(recordLockEntityType("contracts"), id)) return;
+      state.lastEditedRow = { config: "contracts", id };
+      setTablePageForRow("contracts", id);
+      state.modal = { config: "contracts", id };
+      render();
+    });
   }
 
-  function navigateContractCard(direction) {
+  async function navigateContractCard(direction) {
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "contracts" || !state.modal?.id) return;
     let currentId = formElement.dataset.id || state.modal.id;
@@ -15367,6 +20147,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const savedId = saveFormRecord(formElement);
         if (!savedId) return;
         persist();
+        if (!await flushSharedApplicationState()) return;
         currentId = savedId;
       } else if (!confirm("Перейти без сохранения изменений?")) {
         return;
@@ -15374,7 +20155,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const target = getContractNavigationTarget(currentId, direction);
     if (!target) return;
-    openContractCardById(target.id);
+    await openContractCardById(target.id);
   }
 
   function findDiscountOptionByKey(key) {
@@ -15532,6 +20313,1260 @@ MAX - https://bizvmax.ru/zifra_plus
     return calculateStudentFinance(values);
   }
 
+  function collectContractFormDraft() {
+    const formElement = document.getElementById("recordForm");
+    if (!formElement || formElement.dataset.config !== "contracts") return state.modal?.draft || {};
+    const rows = state.data.collections.contracts || [];
+    const currentRecord = formElement.dataset.id
+      ? rows.find((row) => row.id === formElement.dataset.id) || {}
+      : {};
+    const values = { ...currentRecord, ...(state.modal?.draft || {}) };
+    const formData = new FormData(formElement);
+    configs.contracts.fields.forEach((item) => {
+      if (item.type === "checkbox") {
+        if (!formElement.elements[item.key]) return;
+        values[item.key] = formData.has(item.key) ? "Да" : "";
+        return;
+      }
+      if (!formData.has(item.key)) return;
+      const raw = formData.get(item.key);
+      values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
+    });
+    formData.forEach((raw, key) => {
+      if (/^event_[A-Za-z0-9_-]+_(state|date|label)$/.test(key)) values[key] = String(raw || "");
+    });
+    clearUnchangedGeneratedEmployeeCommunicationMessages(values, formElement);
+    values.portalCredentials = buildContractPortalCredentials(values);
+    const accounting = getEmployeePaymentAccounting(values, state.data.collections);
+    return normalizeContractRecord({
+      ...values,
+      amount: accounting.amount,
+      paid: accounting.paid,
+      agencyAmount: accounting.agencyAmount,
+      balance: accounting.balance
+    });
+  }
+
+  function findEmployeePaymentSourceRecord(sourceType, sourceId) {
+    const id = String(sourceId || "").trim();
+    if (!id) return null;
+    if (sourceType === "general") {
+      return (state.data.collections.generalExpenses || []).find((expense) => String(expense?.id || "").trim() === id) || null;
+    }
+    if (sourceType === "direct") {
+      return getDirectExpenseEntriesFromCollections(state.data.collections)
+        .find(({ expense, identity }) => String(expense?.id || identity || "").trim() === id)?.expense || null;
+    }
+    if (sourceType === "partner") {
+      const { studentId, slot } = parseEmployeePartnerPaymentSourceId(id);
+      const student = (state.data.collections.students || []).find((item) => (
+        String(item?.id || item?.uid || "").trim() === studentId
+      )) || null;
+      return student ? createEmployeePartnerPaymentSource(student, slot) : null;
+    }
+    if (sourceType === "contract") {
+      const contractId = id === "aggregate" ? String(state.modal?.id || "") : id;
+      return (state.data.collections.contracts || []).find((contract) => (
+        String(contract?.id || "").trim() === contractId
+      )) || null;
+    }
+    return null;
+  }
+
+  function settleStudentAgentCommission(student, paidDate) {
+    const date = normalizeEmployeePaymentDateInput(paidDate);
+    if (!student || !date) return "";
+    const calculation = getStudentAgentCommissionCalculation(student);
+    const amount = Number(calculation.payableAmount || 0);
+    if (!amount) return "";
+    const firstSlotOccupied = Number(student.agentPayment1Amount || 0) > 0
+      || Boolean(String(student.agentPayment1Date || "").trim());
+    const secondSlotOccupied = Number(student.agentPayment2Amount || 0) > 0
+      || Boolean(String(student.agentPayment2Date || "").trim());
+    const number = firstSlotOccupied ? 2 : 1;
+    const mergedWithSecondPayment = firstSlotOccupied && secondSlotOccupied;
+    const amountKey = `agentPayment${number}Amount`;
+    const dateKey = `agentPayment${number}Date`;
+    student[amountKey] = Math.round((Number(student[amountKey] || 0) + amount) * 100) / 100;
+    if (!String(student[dateKey] || "").trim()) student[dateKey] = date;
+    [
+      ["Comment", "agentPaymentComment"],
+      ["Basis", "agentPaymentBasis"],
+      ["Recommendation", "agentPaymentRecommendation"],
+      ["RecommendationManual", "agentPaymentRecommendationManual"],
+      ["Act", "agentPaymentAct"],
+      ["ActStatus", "agentPaymentActStatus"],
+      ["Order", "agentPaymentOrder"]
+    ].forEach(([suffix, sourceKey]) => {
+      if (student[sourceKey] !== undefined && student[sourceKey] !== null && student[sourceKey] !== "") {
+        student[`agentPayment${number}${suffix}`] = student[sourceKey];
+      }
+    });
+    if (mergedWithSecondPayment) {
+      const mergeNote = `Дополнительная выплата ${date} на сумму ${money(amount)} объединена со второй выплатой`;
+      student.agentPayment2Comment = [student.agentPayment2Comment, mergeNote]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join(" · ");
+    }
+    [
+      "agentPaymentComment",
+      "agentPaymentDate",
+      "agentPaymentBasis",
+      "agentPaymentRecommendation",
+      "agentPaymentRecommendationManual",
+      "agentPaymentAct",
+      "agentPaymentActStatus",
+      "agentPaymentPaid",
+      "agentPaymentOrder",
+      "agentPaymentAmountManual",
+      "agentPaymentAutoDisabled"
+    ].forEach((key) => { delete student[key]; });
+    student.agentAmount = getStudentAgentCommissionCalculation(student).calculatedOutstanding;
+    return `paid${number}`;
+  }
+
+  function setEmployeePaymentSourceField(sourceType, source, field, input) {
+    const partnerStudent = sourceType === "partner" ? (source.__partnerStudent || source) : null;
+    const partnerSlot = sourceType === "partner" ? String(source.__agentPaymentSlot || "due") : "";
+    const partnerPrefix = partnerSlot === "paid1"
+      ? "agentPayment1"
+      : partnerSlot === "paid2"
+        ? "agentPayment2"
+        : "agentPayment";
+    const targetSource = partnerStudent || source;
+    const mappedFields = sourceType === "partner"
+      ? {
+          comment: `${partnerPrefix}Comment`,
+          date: partnerSlot === "due" ? "agentPaymentDate" : `${partnerPrefix}Date`,
+          description: `${partnerPrefix}Basis`,
+          amount: partnerSlot === "due" ? "agentAmount" : `${partnerPrefix}Amount`,
+          recommendation: `${partnerPrefix}Recommendation`,
+          recommendationManual: `${partnerPrefix}RecommendationManual`,
+          act: `${partnerPrefix}Act`,
+          actStatus: `${partnerPrefix}ActStatus`,
+          paid: partnerSlot === "due" ? "agentPaymentPaid" : `${partnerPrefix}Date`
+        }
+      : sourceType === "contract"
+        ? {
+            comment: "agencyPaymentComment",
+            date: "agencyPaymentDate",
+            description: "agencyPaymentBasis",
+            amount: "agencyAmount",
+            recommendation: "agencyPaymentRecommendation",
+            recommendationManual: "agencyPaymentRecommendationManual",
+            act: "agencyPaymentAct",
+            actStatus: "agencyPaymentActStatus",
+            paid: "agencyPaymentPaid"
+          }
+        : {
+            comment: sourceType === "general" ? "description" : "additionalInfo",
+            date: "date",
+            amount: "amount",
+            recommendation: "recommendation",
+            recommendationManual: "recommendationManual",
+            act: "act",
+            actStatus: "actStatus",
+            paid: "paid"
+          };
+    if (field === "comment") {
+      targetSource[mappedFields.comment] = String(input.value || "").trim();
+      return;
+    }
+    if (field === "amount" && sourceType === "partner") {
+      if (partnerSlot === "due") return;
+      targetSource[mappedFields.amount] = Math.max(0, Number(input.value || 0));
+      return;
+    }
+    if (field === "description") {
+      if (sourceType === "general") source.workType = String(input.value || "").trim();
+      else if (sourceType === "direct") source.type = String(input.value || "").trim();
+      else targetSource[mappedFields.description] = String(input.value || "").trim();
+      return;
+    }
+    if (field === "amount") {
+      targetSource[mappedFields.amount] = Math.max(0, Number(input.value || 0));
+      return;
+    }
+    if (field === "date" || field === "paid") {
+      if (sourceType === "partner" && partnerSlot === "due" && field === "paid" && input.value) {
+        source.__settledSlot = settleStudentAgentCommission(partnerStudent, input.value);
+        return;
+      }
+      targetSource[mappedFields[field]] = String(input.value || "");
+      return;
+    }
+    if (field === "recommendation") {
+      targetSource[mappedFields.recommendation] = input.checked ? "+" : "";
+      targetSource[mappedFields.recommendationManual] = true;
+      return;
+    }
+    if (field === "act") {
+      targetSource[mappedFields.act] = input.checked ? "+" : "";
+      if (input.checked && !String(targetSource[mappedFields.actStatus] || "").trim()) {
+        targetSource[mappedFields.actStatus] = "Отправлен";
+      }
+      if (!input.checked) targetSource[mappedFields.actStatus] = "";
+      return;
+    }
+    if (field === "actStatus") {
+      targetSource[mappedFields.actStatus] = String(input.value || "");
+      targetSource[mappedFields.act] = targetSource[mappedFields.actStatus] ? "+" : "";
+    }
+  }
+
+  function rememberEmployeePaymentBasis(value) {
+    const basis = String(value || "").trim();
+    if (!basis) return false;
+    const current = Array.isArray(state.data.dictionaries.employeePaymentBases)
+      ? state.data.dictionaries.employeePaymentBases
+      : [];
+    if (current.some((item) => String(item || "").trim() === basis)) return false;
+    state.data.dictionaries.employeePaymentBases = unique([...current, basis]);
+    refreshSettingsLinkedControls("employeePaymentBases");
+    return true;
+  }
+
+  function migrateEmployeeExpenseSource(sourceType, sourceId, targetType, draft = {}) {
+    if (!["direct", "general"].includes(sourceType) || !["direct", "general"].includes(targetType)) return null;
+    const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
+    if (!source) return null;
+    if (sourceType === targetType) {
+      return { sourceType, sourceId: String(source.id || sourceId || "").trim() };
+    }
+    const values = normalizeEmployeePaymentSourceRow(sourceType, source);
+    const employeeName = String(draft.name || "").trim();
+    const nextId = String(source.id || "").trim() || makeId(`${targetType}-expense`);
+    const removed = removeEmployeePaymentSourceRecord(sourceType, sourceId);
+    if (!removed) return null;
+    let nextSource;
+    if (targetType === "general") {
+      nextSource = normalizeGeneralExpenseRecord({
+        id: nextId,
+        section: String(source.section || GENERAL_EXPENSE_SECTIONS[0]),
+        counterparty: employeeName,
+        date: values.date,
+        workType: values.description,
+        description: values.comment,
+        amount: values.amount,
+        recommendation: values.recommendation ? "+" : "",
+        recommendationManual: values.recommendationManual,
+        act: values.act ? "+" : "",
+        actStatus: values.actStatus,
+        paid: values.paid,
+        employeePaymentOrder: values.order,
+        accountingClosed: String(source.accountingClosed || ""),
+        bkExpenseNo: String(source.bkExpenseNo || ""),
+        otherExpenses: String(source.otherExpenses || "")
+      });
+      state.data.collections.generalExpenses = [nextSource, ...(state.data.collections.generalExpenses || [])];
+    } else {
+      nextSource = {
+        id: nextId,
+        uid: String(source.uid || ""),
+        date: values.date,
+        type: values.description,
+        amount: values.amount,
+        note: employeeName,
+        inventoryLink: String(source.inventoryLink || ""),
+        act: values.act ? "+" : "",
+        actStatus: values.actStatus,
+        recommendation: values.recommendation ? "+" : "",
+        recommendationManual: values.recommendationManual,
+        paid: values.paid,
+        employeePaymentOrder: values.order,
+        additionalInfo: values.comment
+      };
+      state.data.collections.directExpenses = [nextSource, ...(state.data.collections.directExpenses || [])];
+    }
+    return { sourceType: targetType, sourceId: nextId, source: nextSource };
+  }
+
+  function openEmployeeExpenseEditor(event) {
+    const button = event.target.closest("[data-action='edit-employee-expense']");
+    const row = button?.closest("[data-employee-payment-row]");
+    if (!button || !row) return;
+    const sourceType = String(row.dataset.paymentSource || "");
+    const sourceId = String(row.dataset.paymentSourceId || "");
+    if (!["direct", "general", "partner", "contract"].includes(sourceType) || !findEmployeePaymentSourceRecord(sourceType, sourceId)) {
+      alert("Запись оплаты не найдена.");
+      return;
+    }
+    const contractForm = document.querySelector("#recordForm[data-config='contracts']");
+    if (state.modal && contractForm) {
+      state.modal.hasDraftChanges = state.modal.hasDraftChanges || hasUnsavedFormChanges(contractForm);
+      state.modal.draft = collectContractFormDraft();
+    }
+    state.employeeExpenseEditor = { sourceType, sourceId };
+    document.querySelector("[data-employee-expense-editor]")?.remove();
+    app.insertAdjacentHTML("beforeend", renderEmployeeExpenseEditor());
+    bindEmployeeExpenseEditorEvents();
+    bindComboFieldEvents(document.querySelector("[data-employee-expense-editor]"));
+    initializeRecordFormSnapshot(document.getElementById("employeeExpenseEditorForm"));
+    enhanceSettingsLinkedDropdowns();
+    requestAnimationFrame(() => document.querySelector("#employeeExpenseEditorForm input, #employeeExpenseEditorForm select")?.focus({ preventScroll: true }));
+  }
+
+  function closeEmployeeExpenseEditor() {
+    if (!state.employeeExpenseEditor) return;
+    const form = document.getElementById("employeeExpenseEditorForm");
+    if (hasUnsavedFormChanges(form) && !confirm("Есть несохранённые изменения записи оплаты. Закрыть без сохранения?")) return;
+    const sourceId = String(state.employeeExpenseEditor.sourceId || "");
+    state.employeeExpenseEditor = null;
+    document.querySelector("[data-employee-expense-editor]")?.remove();
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-employee-payment-row][data-payment-source-id="${CSS.escape(sourceId)}"] [data-action='edit-employee-expense']`)
+        ?.focus({ preventScroll: true });
+    });
+  }
+
+  function bindEmployeeExpenseEditorEvents() {
+    document.querySelectorAll("[data-action='close-employee-expense-editor']").forEach((element) => {
+      if (element.dataset.employeeExpenseCloseBound === "true") return;
+      element.dataset.employeeExpenseCloseBound = "true";
+      element.addEventListener("click", (event) => {
+        if (element.matches("button") || event.target === element) closeEmployeeExpenseEditor();
+      });
+    });
+    const form = document.getElementById("employeeExpenseEditorForm");
+    if (form && form.dataset.employeeExpenseSubmitBound !== "true") {
+      form.dataset.employeeExpenseSubmitBound = "true";
+      form.addEventListener("submit", saveEmployeeExpenseEditor);
+      const actInput = form.elements.paymentAct;
+      const actStatusInput = form.elements.paymentActStatus;
+      const paidInput = form.elements.paymentPaid;
+      const recommendationInput = form.elements.paymentRecommendation;
+      const statusInput = form.elements.paymentStatus;
+      const refreshStatus = () => {
+        if (!(statusInput instanceof HTMLInputElement)) return;
+        statusInput.value = getEmployeePaymentRowStatus({
+          paid: String(paidInput?.value || ""),
+          actStatus: String(actStatusInput?.value || ""),
+          act: Boolean(actInput?.checked),
+          recommendation: Boolean(recommendationInput?.checked)
+        });
+      };
+      actInput?.addEventListener("change", () => {
+        if (!actInput.checked && actStatusInput) actStatusInput.value = "";
+        if (actInput.checked && actStatusInput && !actStatusInput.value) actStatusInput.value = "Отправлен";
+        refreshStatus();
+      });
+      actStatusInput?.addEventListener("change", () => {
+        if (actInput) actInput.checked = Boolean(actStatusInput.value);
+        refreshStatus();
+      });
+      paidInput?.addEventListener("change", refreshStatus);
+      recommendationInput?.addEventListener("change", refreshStatus);
+    }
+  }
+
+  function synchronizeEmployeePaymentAgencyDraft(draft, sourceType, source) {
+    if (sourceType === "contract") {
+      [
+        "agencyAmount",
+        "agencyPaymentComment",
+        "agencyPaymentDate",
+        "agencyPaymentBasis",
+        "agencyPaymentRecommendation",
+        "agencyPaymentRecommendationManual",
+        "agencyPaymentAct",
+        "agencyPaymentActStatus",
+        "agencyPaymentPaid",
+        "agencyPaymentOrder"
+      ].forEach((key) => {
+        draft[key] = key === "agencyAmount"
+          ? Math.max(0, Number(source?.[key] || 0))
+          : (source?.[key] ?? "");
+      });
+      return draft;
+    }
+    if (sourceType !== "partner") return draft;
+    const employeeName = normalizeEmployeeActPersonName(draft.name);
+    draft.agencyAmount = Math.round((state.data.collections.students || []).reduce((sum, student) => (
+      normalizeEmployeeActPersonName(student?.agent) === employeeName
+        ? sum + getEmployeePartnerPaymentAmount(student)
+        : sum
+    ), 0) * 100) / 100;
+    return draft;
+  }
+
+  function saveEmployeeExpenseEditor(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const context = getEmployeeExpenseEditorContext();
+    if (!context) {
+      closeEmployeeExpenseEditor();
+      return;
+    }
+    const fields = getEmployeeExpenseEditorFields(context);
+    const formData = new FormData(form);
+    const beforeSource = { ...context.source };
+    const beforePayment = getEmployeePaymentEditorAuditRecord(context.sourceType, context.source);
+    let sourceType = context.sourceType;
+    let sourceId = context.sourceId;
+    let source = context.source;
+    const draft = getEmployeePaymentAccountingDraft();
+    const targetType = String(formData.get("paymentSource") || sourceType);
+    if (!["direct", "general", "partner", "contract"].includes(targetType)) return;
+    if (!["direct", "general"].includes(sourceType) && targetType !== sourceType) return;
+    fields.forEach((item) => {
+      if (item.type === "checkbox") {
+        source[item.key] = formData.has(item.key) ? "Да" : "";
+        return;
+      }
+      if (!formData.has(item.key)) return;
+      const raw = formData.get(item.key);
+      source[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
+    });
+    if (sourceType === "general") Object.assign(source, normalizeGeneralExpenseRecord(source));
+    if (targetType !== sourceType) {
+      const migrated = migrateEmployeeExpenseSource(sourceType, sourceId, targetType, draft);
+      if (!migrated) {
+        Object.assign(context.source, beforeSource);
+        alert("Не удалось изменить источник затраты.");
+        return;
+      }
+      sourceType = migrated.sourceType;
+      sourceId = migrated.sourceId;
+      source = migrated.source;
+    }
+
+    const paymentInputs = {
+      date: form.elements.paymentDate,
+      comment: form.elements.paymentComment,
+      description: form.elements.paymentDescription,
+      amount: form.elements.paymentAmount,
+      recommendation: form.elements.paymentRecommendation,
+      act: form.elements.paymentAct,
+      actStatus: form.elements.paymentActStatus,
+      paid: form.elements.paymentPaid
+    };
+    ["date", "comment", "description", "amount"].forEach((field) => {
+      if (paymentInputs[field]) setEmployeePaymentSourceField(sourceType, source, field, paymentInputs[field]);
+    });
+    if (paymentInputs.recommendation && Boolean(paymentInputs.recommendation.checked) !== Boolean(beforePayment.recommendation)) {
+      setEmployeePaymentSourceField(sourceType, source, "recommendation", paymentInputs.recommendation);
+    }
+    if (paymentInputs.act && paymentInputs.actStatus) {
+      if (!paymentInputs.act.checked) paymentInputs.actStatus.value = "";
+      else if (paymentInputs.actStatus.value) paymentInputs.act.checked = true;
+      setEmployeePaymentSourceField(sourceType, source, "act", paymentInputs.act);
+      setEmployeePaymentSourceField(sourceType, source, "actStatus", paymentInputs.actStatus);
+    }
+    if (paymentInputs.paid) setEmployeePaymentSourceField(sourceType, source, "paid", paymentInputs.paid);
+    if (sourceType === "general") Object.assign(source, normalizeGeneralExpenseRecord(source));
+    rememberEmployeePaymentBasis(paymentInputs.description?.value);
+    synchronizeEmployeePaymentAgencyDraft(draft, sourceType, source);
+
+    const afterPayment = getEmployeePaymentEditorAuditRecord(sourceType, source);
+    const paymentAuditFields = [
+      { key: "source", label: "Источник" },
+      { key: "date", label: "Дата" },
+      { key: "comment", label: "Комментарий" },
+      { key: "description", label: "Основание" },
+      { key: "amount", label: "Сумма" },
+      { key: "recommendation", label: "Рекомендация к оплате" },
+      { key: "act", label: "Акт сформирован" },
+      { key: "actStatus", label: "Статус акта" },
+      { key: "paid", label: "Дата оплаты" }
+    ];
+    const pickFields = (record, definitions) => Object.fromEntries(
+      definitions.map((item) => [item.key, record?.[item.key] ?? ""])
+    );
+    const changes = [
+      ...buildAuditChanges(beforePayment, afterPayment, paymentAuditFields),
+      ...buildAuditChanges(pickFields(beforeSource, fields), pickFields(source, fields), fields)
+    ].slice(0, AUDIT_CLIENT_MAX_CHANGES);
+    const entityLabel = draft.name || source.note || source.counterparty || sourceId;
+    addAudit("Изменена запись оплаты сотруднику", "Договоры сотрудников", `${entityLabel}: ${afterPayment.description || "оплата"}, ${money(afterPayment.amount)}`, {
+      entityType: "contracts",
+      entityId: String(draft.id || state.modal?.id || ""),
+      entityLabel,
+      changes,
+      source: "employee-payment-editor"
+    });
+    state.employeeExpenseEditor = null;
+    commitEmployeePaymentAccountingChange(draft, { sourceId }, true);
+  }
+
+  function getEmployeePaymentAccountingDraft() {
+    const form = document.querySelector("#recordForm[data-config='contracts']");
+    if (form) return collectContractFormDraft();
+    const id = String(form?.dataset.id || state.modal?.id || "").trim();
+    const stored = (state.data.collections.contracts || [])
+      .find((contract) => String(contract?.id || "").trim() === id) || {};
+    return normalizeContractRecord({
+      ...stored,
+      ...(state.modal?.draft || {}),
+      id: id || stored.id || "",
+      name: String(form?.elements?.name?.value || state.modal?.draft?.name || stored.name || "").trim()
+    });
+  }
+
+  function scheduleEmployeePaymentAccountingPersist(delay = EMPLOYEE_PAYMENT_PERSIST_DELAY_MS) {
+    window.clearTimeout(employeePaymentPersistTimer);
+    employeePaymentPersistTimer = window.setTimeout(() => {
+      employeePaymentPersistTimer = 0;
+      persist();
+    }, Math.max(0, Number(delay) || 0));
+  }
+
+  function updateEmployeePaymentAccountingUi(accounting, focus = {}) {
+    const section = document.querySelector("[data-employee-payment-accounting]");
+    if (!section) return;
+    ["amount", "paid", "agencyAmount", "balance"].forEach((key) => {
+      const output = section.querySelector(`[data-employee-payment-summary="${key}"]`);
+      if (output) output.textContent = money(accounting[key]);
+    });
+    section.querySelector("[data-employee-payment-balance-card]")
+      ?.classList.toggle("has-balance", Boolean(accounting.balance));
+    if (!focus.sourceId) {
+      applyEmployeePaymentFiltersToDom(section);
+      return;
+    }
+    const row = section.querySelector(
+      `[data-employee-payment-row][data-payment-source-id="${CSS.escape(focus.sourceId)}"]`
+    );
+    const sourceType = String(row?.dataset.paymentSource || "");
+    const source = findEmployeePaymentSourceRecord(sourceType, focus.sourceId);
+    if (!row || !source) {
+      applyEmployeePaymentFiltersToDom(section);
+      return;
+    }
+    const values = normalizeEmployeePaymentSourceRow(sourceType, source);
+    const sourceInput = row.querySelector('[data-employee-payment-field="source"]');
+    if (sourceInput instanceof HTMLSelectElement) sourceInput.value = sourceType;
+    const commentInput = row.querySelector('[data-employee-payment-field="comment"]');
+    if (commentInput instanceof HTMLInputElement) {
+      commentInput.value = values.comment;
+      commentInput.title = values.comment;
+    }
+    const recommendation = row.querySelector('[data-employee-payment-field="recommendation"]');
+    if (recommendation instanceof HTMLInputElement) {
+      recommendation.checked = values.recommendation;
+      recommendation.title = values.recommendationManual
+        ? "Рекомендация изменена вручную"
+        : "Рекомендацию можно изменить вручную";
+    }
+    const act = row.querySelector('[data-employee-payment-field="act"]');
+    if (act instanceof HTMLInputElement) act.checked = values.act;
+    const actStatus = row.querySelector('[data-employee-payment-field="actStatus"]');
+    if (actStatus instanceof HTMLSelectElement) actStatus.value = values.actStatus;
+    const statusElement = row.querySelector("[data-employee-payment-status]");
+    if (statusElement) {
+      statusElement.outerHTML = renderEmployeePaymentStatus({
+        sourceType,
+        ...values
+      });
+    }
+    applyEmployeePaymentFiltersToDom(section);
+  }
+
+  function commitEmployeePaymentAccountingChange(draft, focus = {}, renderAfter = false) {
+    const accounting = getEmployeePaymentAccounting(draft, state.data.collections);
+    const metrics = {
+      amount: accounting.amount,
+      paid: accounting.paid,
+      agencyAmount: accounting.agencyAmount,
+      balance: accounting.balance
+    };
+    const contractId = String(draft.id || state.modal?.id || "").trim();
+    const storedContract = (state.data.collections.contracts || [])
+      .find((contract) => String(contract?.id || "").trim() === contractId);
+    if (storedContract) Object.assign(storedContract, metrics);
+    const nextDraft = normalizeContractRecord({
+      ...draft,
+      ...metrics
+    });
+    if (state.modal) {
+      state.modal.draft = renderAfter
+        ? nextDraft
+        : { ...(state.modal.draft || {}), ...metrics };
+    }
+    scheduleEmployeePaymentAccountingPersist();
+    if (renderAfter) {
+      render();
+    } else {
+      updateEmployeePaymentAccountingUi(accounting, focus);
+    }
+    if (renderAfter && focus.sourceId && focus.field) {
+      requestAnimationFrame(() => {
+        document.querySelector(
+          `[data-employee-payment-row][data-payment-source-id="${CSS.escape(focus.sourceId)}"] [data-employee-payment-field="${CSS.escape(focus.field)}"]`
+        )?.focus({ preventScroll: true });
+      });
+    }
+  }
+
+  function updateEmployeePaymentAccountingField(event) {
+    const input = event.target.closest("[data-employee-payment-field]");
+    const row = input?.closest("[data-employee-payment-row]");
+    if (!input || !row) return;
+    const sourceType = String(row.dataset.paymentSource || "");
+    const sourceId = String(row.dataset.paymentSourceId || "");
+    const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
+    if (!source) return;
+    const draft = getEmployeePaymentAccountingDraft();
+    const field = String(input.dataset.employeePaymentField || "");
+    if (field === "source") {
+      const targetType = String(input.value || "");
+      const migrated = migrateEmployeeExpenseSource(sourceType, sourceId, targetType, draft);
+      if (!migrated) {
+        input.value = sourceType;
+        alert("Не удалось изменить источник затраты.");
+        return;
+      }
+      addAudit(
+        "Изменён источник затраты",
+        "Договоры сотрудников",
+        `${draft.name || "Сотрудник"}: ${getEmployeePaymentDefaultSourceLabel(sourceType)} → ${getEmployeePaymentDefaultSourceLabel(targetType)}`,
+        {
+          entityType: "contracts",
+          entityId: String(draft.id || state.modal?.id || ""),
+          entityLabel: draft.name || String(draft.id || ""),
+          source: "employee-payment-accounting"
+        }
+      );
+      commitEmployeePaymentAccountingChange(draft, {
+        sourceId: migrated.sourceId,
+        field: "source"
+      }, true);
+      return;
+    }
+    setEmployeePaymentSourceField(sourceType, source, field, input);
+    const settledSourceId = sourceType === "partner" && source.__settledSlot
+      ? getEmployeePartnerPaymentSourceId(source.__partnerStudent, source.__settledSlot)
+      : "";
+    synchronizeEmployeePaymentAgencyDraft(draft, sourceType, source);
+    if (field === "description") rememberEmployeePaymentBasis(input.value);
+    const sourceValues = getEmployeePaymentSourceValues(sourceType, source);
+    addAudit(
+      "Изменён учёт выплаты",
+      "Договоры сотрудников",
+      `${draft.name || "Сотрудник"}: ${sourceValues.description || "выплата"}`,
+      {
+        entityType: "contracts",
+        entityId: String(draft.id || state.modal?.id || ""),
+        entityLabel: draft.name || String(draft.id || ""),
+        source: "employee-payment-accounting"
+      }
+    );
+    commitEmployeePaymentAccountingChange(
+      draft,
+      { sourceId: settledSourceId || sourceId, field },
+      Boolean(settledSourceId)
+    );
+  }
+
+  function animateEmployeePaymentRowShift(row, offset) {
+    if (!row || !offset || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+    row.employeePaymentShiftAnimation?.cancel();
+    if (typeof row.animate !== "function") return;
+    const animation = row.animate(
+      [
+        { transform: `translate3d(0, ${offset}px, 0)` },
+        { transform: "translate3d(0, 0, 0)" }
+      ],
+      {
+        duration: 160,
+        easing: "cubic-bezier(.2, .8, .2, 1)"
+      }
+    );
+    row.employeePaymentShiftAnimation = animation;
+    const clear = () => {
+      if (row.employeePaymentShiftAnimation === animation) delete row.employeePaymentShiftAnimation;
+    };
+    animation.addEventListener("finish", clear, { once: true });
+    animation.addEventListener("cancel", clear, { once: true });
+  }
+
+  function moveEmployeePaymentRowByOne(tbody, row, direction, { animateDraggedRow = false } = {}) {
+    if (!tbody || !row || (direction !== "up" && direction !== "down")) return false;
+    const sibling = direction === "up" ? row.previousElementSibling : row.nextElementSibling;
+    if (!sibling?.matches("[data-employee-payment-row]")) return false;
+    const rowHeight = row.getBoundingClientRect().height;
+    const siblingHeight = sibling.getBoundingClientRect().height;
+    if (direction === "up") tbody.insertBefore(row, sibling);
+    else tbody.insertBefore(sibling, row);
+    animateEmployeePaymentRowShift(sibling, direction === "up" ? -rowHeight : rowHeight);
+    if (animateDraggedRow) {
+      animateEmployeePaymentRowShift(row, direction === "up" ? siblingHeight : -siblingHeight);
+    }
+    return true;
+  }
+
+  function buildEmployeePaymentSourceLookup() {
+    const lookup = new Map();
+    const add = (sourceType, sourceId, source) => {
+      const id = String(sourceId || "").trim();
+      if (id && source) lookup.set(`${sourceType}\u0000${id}`, source);
+    };
+    getDirectExpenseEntriesFromCollections(state.data.collections).forEach(({ expense, identity }) => {
+      add("direct", expense?.id || identity, expense);
+    });
+    (state.data.collections.generalExpenses || []).forEach((expense) => add("general", expense?.id, expense));
+    (state.data.collections.students || []).forEach((student) => {
+      getEmployeePartnerPaymentRows(student).forEach((row) => add("partner", row.sourceId, row.source));
+      const legacyId = String(student?.id || student?.uid || "").trim();
+      if (legacyId) add("partner", legacyId, createEmployeePartnerPaymentSource(student, "due"));
+    });
+    (state.data.collections.contracts || []).forEach((contract) => add("contract", contract?.id, contract));
+    const activeContract = (state.data.collections.contracts || []).find((contract) => (
+      String(contract?.id || "").trim() === String(state.modal?.id || "").trim()
+    ));
+    if (activeContract) add("contract", "aggregate", activeContract);
+    return lookup;
+  }
+
+  function syncEmployeePaymentOrderFromTable(tbody, sourceLookup = buildEmployeePaymentSourceLookup()) {
+    let changed = false;
+    [...tbody.querySelectorAll("[data-employee-payment-row]")].forEach((row, index) => {
+      const sourceType = String(row.dataset.paymentSource || "");
+      const sourceId = String(row.dataset.paymentSourceId || "");
+      const source = sourceLookup.get(`${sourceType}\u0000${sourceId}`);
+      if (source) changed = setEmployeePaymentSourceOrder(sourceType, source, (index + 1) * 10) || changed;
+    });
+    return changed;
+  }
+
+  function commitEmployeePaymentOrderFromTable(tbody) {
+    const draft = getEmployeePaymentAccountingDraft();
+    const sourceLookup = buildEmployeePaymentSourceLookup();
+    if (!syncEmployeePaymentOrderFromTable(tbody, sourceLookup)) return false;
+    addAudit("Изменён порядок выплат", "Договоры сотрудников", draft.name || "Сотрудник", {
+      entityType: "contracts",
+      entityId: String(draft.id || state.modal?.id || ""),
+      entityLabel: draft.name || String(draft.id || ""),
+      source: "employee-payment-accounting"
+    });
+    const storedContract = sourceLookup.get(`contract\u0000${String(draft.id || state.modal?.id || "").trim()}`)
+      || sourceLookup.get("contract\u0000aggregate");
+    if (state.modal && storedContract) {
+      state.modal.draft = {
+        ...(state.modal.draft || {}),
+        agencyPaymentOrder: storedContract.agencyPaymentOrder
+      };
+    }
+    scheduleEmployeePaymentAccountingPersist(400);
+    return true;
+  }
+
+  function bindEmployeePaymentRowDrag(section) {
+    const tbody = section?.querySelector(".employee-payment-table tbody");
+    if (!tbody || tbody.dataset.employeePaymentDragBound === "true") return;
+    tbody.dataset.employeePaymentDragBound = "true";
+    const scrollContainer = tbody.closest(".employee-payment-table-wrap");
+    let draggingRow = null;
+    let dragFrame = 0;
+    let pointerY = 0;
+
+    const scheduleDragFrame = () => {
+      if (!dragFrame && draggingRow) dragFrame = window.requestAnimationFrame(processDragFrame);
+    };
+    const processDragFrame = () => {
+      dragFrame = 0;
+      if (!draggingRow?.isConnected) return;
+      let didScroll = false;
+      if (scrollContainer) {
+        const box = scrollContainer.getBoundingClientRect();
+        const edge = Math.min(44, Math.max(28, box.height * 0.14));
+        let scrollDelta = 0;
+        if (pointerY >= box.top - 16 && pointerY < box.top + edge) {
+          scrollDelta = -Math.ceil(3 + ((box.top + edge - pointerY) / edge) * 11);
+        } else if (pointerY <= box.bottom + 16 && pointerY > box.bottom - edge) {
+          scrollDelta = Math.ceil(3 + ((pointerY - (box.bottom - edge)) / edge) * 11);
+        }
+        if (scrollDelta) {
+          const previousScrollTop = scrollContainer.scrollTop;
+          scrollContainer.scrollTop += scrollDelta;
+          didScroll = scrollContainer.scrollTop !== previousScrollTop;
+        }
+      }
+
+      const previousRow = draggingRow.previousElementSibling;
+      const nextRow = draggingRow.nextElementSibling;
+      let moved = false;
+      if (previousRow?.matches("[data-employee-payment-row]")) {
+        const previousBox = previousRow.getBoundingClientRect();
+        if (pointerY < previousBox.top + previousBox.height / 2) {
+          moved = moveEmployeePaymentRowByOne(tbody, draggingRow, "up");
+        }
+      }
+      if (!moved && nextRow?.matches("[data-employee-payment-row]")) {
+        const nextBox = nextRow.getBoundingClientRect();
+        if (pointerY > nextBox.top + nextBox.height / 2) {
+          moved = moveEmployeePaymentRowByOne(tbody, draggingRow, "down");
+        }
+      }
+      if (moved || didScroll) scheduleDragFrame();
+    };
+
+    tbody.addEventListener("dragstart", (event) => {
+      const handle = event.target.closest("[data-employee-payment-row-drag]");
+      const row = handle?.closest("[data-employee-payment-row]");
+      if (!handle || !row || !String(row.dataset.paymentSourceId || "").trim()) {
+        event.preventDefault();
+        return;
+      }
+      tbody.dataset.originalEmployeePaymentOrder = [...tbody.querySelectorAll("[data-employee-payment-row]")]
+        .map((item) => `${item.dataset.paymentSource || ""}:${item.dataset.paymentSourceId || ""}`)
+        .join("|");
+      draggingRow = row;
+      pointerY = event.clientY;
+      row.classList.add("is-dragging");
+      tbody.classList.add("is-reordering");
+      document.body.classList.add("employee-payment-row-dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", String(row.dataset.paymentSourceId || ""));
+      }
+    });
+    tbody.addEventListener("dragover", (event) => {
+      if (!draggingRow) return;
+      event.preventDefault();
+      pointerY = event.clientY;
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      scheduleDragFrame();
+    });
+    tbody.addEventListener("drop", (event) => event.preventDefault());
+    tbody.addEventListener("dragend", () => {
+      if (dragFrame) window.cancelAnimationFrame(dragFrame);
+      dragFrame = 0;
+      if (draggingRow) draggingRow.classList.remove("is-dragging");
+      draggingRow = null;
+      tbody.classList.remove("is-reordering");
+      document.body.classList.remove("employee-payment-row-dragging");
+      const rows = [...tbody.querySelectorAll("[data-employee-payment-row]")];
+      const nextOrder = rows
+        .map((item) => `${item.dataset.paymentSource || ""}:${item.dataset.paymentSourceId || ""}`)
+        .join("|");
+      const originalOrder = tbody.dataset.originalEmployeePaymentOrder || "";
+      delete tbody.dataset.originalEmployeePaymentOrder;
+      if (!originalOrder || nextOrder === originalOrder) return;
+      commitEmployeePaymentOrderFromTable(tbody);
+    });
+    tbody.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      const handle = event.target.closest("[data-employee-payment-row-drag]");
+      const row = handle?.closest("[data-employee-payment-row]");
+      if (!handle || !row) return;
+      event.preventDefault();
+      const moved = moveEmployeePaymentRowByOne(
+        tbody,
+        row,
+        event.key === "ArrowUp" ? "up" : "down",
+        { animateDraggedRow: true }
+      );
+      if (moved) {
+        commitEmployeePaymentOrderFromTable(tbody);
+        handle.focus({ preventScroll: true });
+      }
+    });
+  }
+
+  function duplicateEmployeePaymentAccountingRow(event) {
+    const button = event.target.closest("[data-action='duplicate-employee-payment-row']");
+    const row = button?.closest("[data-employee-payment-row]");
+    if (!button || !row) return;
+    const sourceType = String(row.dataset.paymentSource || "");
+    const sourceId = String(row.dataset.paymentSourceId || "");
+    if (!["direct", "general"].includes(sourceType)) return;
+    const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
+    if (!source) {
+      alert("Связанная запись выплаты уже не найдена.");
+      return;
+    }
+    const tbody = row.closest("tbody");
+    if (tbody) syncEmployeePaymentOrderFromTable(tbody);
+    const nextId = makeId(sourceType === "general" ? "general-expense" : "direct-expense");
+    const duplicate = {
+      ...source,
+      id: nextId,
+      date: todayIso(),
+      act: "",
+      actStatus: "",
+      paid: "",
+      isPaid: "",
+      accountingClosed: "",
+      employeePaymentOrder: (Number(source.employeePaymentOrder) || 0) + 5
+    };
+    let inserted = false;
+    if (sourceType === "general") {
+      const expenses = state.data.collections.generalExpenses || [];
+      const sourceIndex = expenses.indexOf(source);
+      if (sourceIndex >= 0) {
+        expenses.splice(sourceIndex + 1, 0, normalizeGeneralExpenseRecord(duplicate));
+        inserted = true;
+      }
+    } else {
+      const entry = getDirectExpenseEntriesFromCollections(state.data.collections)
+        .find(({ expense, identity }) => expense === source || String(expense?.id || identity || "").trim() === sourceId);
+      if (entry) {
+        const expenses = entry.student
+          ? (Array.isArray(entry.student.directExpenses) ? entry.student.directExpenses : [])
+          : (state.data.collections.directExpenses || []);
+        const sourceIndex = expenses.indexOf(entry.expense);
+        if (sourceIndex >= 0) {
+          expenses.splice(sourceIndex + 1, 0, duplicate);
+          inserted = true;
+        }
+      }
+    }
+    if (!inserted) {
+      alert("Не удалось продублировать связанную запись выплаты.");
+      return;
+    }
+    const draft = getEmployeePaymentAccountingDraft();
+    const values = getEmployeePaymentSourceValues(sourceType, source);
+    addAudit(
+      "Продублирована выплата",
+      "Договоры сотрудников",
+      `${draft.name || "Сотрудник"}: ${values.description || "выплата"}, ${money(source.amount)}`,
+      {
+        entityType: "contracts",
+        entityId: String(draft.id || state.modal?.id || ""),
+        entityLabel: draft.name || String(draft.id || ""),
+        source: "employee-payment-accounting"
+      }
+    );
+    commitEmployeePaymentAccountingChange(draft, { sourceId: nextId, field: "amount" }, true);
+  }
+
+  function removeEmployeePaymentSourceRecord(sourceType, sourceId) {
+    const id = String(sourceId || "").trim();
+    if (!id) return null;
+    if (sourceType === "general") {
+      const expenses = state.data.collections.generalExpenses || [];
+      const index = expenses.findIndex((expense) => String(expense?.id || "").trim() === id);
+      return index >= 0 ? expenses.splice(index, 1)[0] : null;
+    }
+    if (sourceType === "direct") {
+      const entry = getDirectExpenseEntriesFromCollections(state.data.collections)
+        .find(({ expense, identity }) => String(expense?.id || identity || "").trim() === id);
+      if (!entry) return null;
+      const expenses = entry.student
+        ? (Array.isArray(entry.student.directExpenses) ? entry.student.directExpenses : [])
+        : (state.data.collections.directExpenses || []);
+      const index = expenses.indexOf(entry.expense);
+      return index >= 0 ? expenses.splice(index, 1)[0] : null;
+    }
+    if (sourceType === "partner") {
+      const source = findEmployeePaymentSourceRecord(sourceType, id);
+      const student = source?.__partnerStudent;
+      const slot = String(source?.__agentPaymentSlot || "due");
+      if (!student || slot === "due") return null;
+      const number = slot === "paid2" ? 2 : 1;
+      [
+        "Amount",
+        "Date",
+        "Comment",
+        "Basis",
+        "Recommendation",
+        "RecommendationManual",
+        "Act",
+        "ActStatus",
+        "Order"
+      ].forEach((suffix) => { delete student[`agentPayment${number}${suffix}`]; });
+      student.agentAmount = Math.max(0, getStudentAgentCommissionCalculation(student).calculatedOutstanding);
+      return source;
+    }
+    if (sourceType === "contract") {
+      const contract = findEmployeePaymentSourceRecord(sourceType, id);
+      if (!contract) return null;
+      contract.agencyAmount = 0;
+      [
+        "agencyPaymentSource",
+        "agencyPaymentComment",
+        "agencyPaymentDate",
+        "agencyPaymentBasis",
+        "agencyPaymentRecommendation",
+        "agencyPaymentRecommendationManual",
+        "agencyPaymentAct",
+        "agencyPaymentActStatus",
+        "agencyPaymentPaid",
+        "agencyPaymentOrder"
+      ].forEach((key) => { delete contract[key]; });
+      return contract;
+    }
+    return null;
+  }
+
+  function deleteEmployeePaymentAccountingRow(event) {
+    const button = event.target.closest("[data-action='delete-employee-payment-row']");
+    const row = button?.closest("[data-employee-payment-row]");
+    if (!button || !row) return;
+    const sourceType = String(row.dataset.paymentSource || "");
+    const sourceId = String(row.dataset.paymentSourceId || "");
+    const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
+    if (!source) {
+      alert("Связанная запись выплаты уже не найдена.");
+      return;
+    }
+    const draft = getEmployeePaymentAccountingDraft();
+    const sourceValues = getEmployeePaymentSourceValues(sourceType, source);
+    const description = String(sourceValues.description || "Выплата").trim();
+    const sourceLabel = sourceType === "direct"
+      ? "Прямые затраты"
+      : sourceType === "general"
+        ? "Общие затраты"
+        : sourceType === "partner"
+          ? "данные слушателя"
+          : "реестр договоров";
+    const confirmed = window.confirm(
+      `Удалить запись выплаты «${description}» на сумму ${money(sourceValues.amount)}?\n\n` +
+      `${sourceType === "direct" || sourceType === "general"
+        ? `Связанная запись будет также удалена из раздела «${sourceLabel}».`
+        : `Сумма и статусы выплаты будут очищены в источнике «${sourceLabel}».`}`
+    );
+    if (!confirmed) return;
+    const removed = removeEmployeePaymentSourceRecord(sourceType, sourceId);
+    if (!removed) {
+      alert("Не удалось удалить связанную запись выплаты.");
+      return;
+    }
+    addAudit(
+      "Удалена выплата",
+      "Договоры сотрудников",
+      `${draft.name || "Сотрудник"}: ${description}, ${money(sourceValues.amount)}`,
+      {
+        entityType: "contracts",
+        entityId: String(draft.id || state.modal?.id || ""),
+        entityLabel: draft.name || String(draft.id || ""),
+        source: "employee-payment-accounting"
+      }
+    );
+    commitEmployeePaymentAccountingChange(draft, {}, true);
+  }
+
+  function addEmployeePaymentAccountingRow(sourceType) {
+    const draft = collectContractFormDraft();
+    const employeeName = String(draft.name || "").trim();
+    if (!employeeName) {
+      alert("Сначала укажите ФИО сотрудника.");
+      document.querySelector("#recordForm[data-config='contracts'] [name='name']")?.focus({ preventScroll: true });
+      return;
+    }
+    let sourceId = "";
+    if (sourceType === "general") {
+      const previousGeneralPayment = getEmployeePaymentAccounting(draft, state.data.collections)
+        .generalEntries[0]?.expense;
+      const previousAmount = Number(previousGeneralPayment?.amount || 0);
+      const expense = normalizeGeneralExpenseRecord({
+        id: makeId("general-expense"),
+        section: GENERAL_EXPENSE_SECTIONS[0],
+        counterparty: employeeName,
+        date: todayIso(),
+        workType: "Оплата сотруднику",
+        description: "",
+        amount: Number.isFinite(previousAmount) ? previousAmount : 0,
+        paid: "",
+        employeePaymentOrder: getNextEmployeePaymentOrder(draft),
+        accountingClosed: ""
+      });
+      state.data.collections.generalExpenses = [expense, ...(state.data.collections.generalExpenses || [])];
+      sourceId = expense.id;
+    } else {
+      const expense = {
+        id: makeId("direct-expense"),
+        uid: "",
+        date: todayIso(),
+        type: "Оплата сотруднику",
+        amount: 0,
+        note: employeeName,
+        inventoryLink: "",
+        act: "",
+        actStatus: "",
+        recommendation: "+",
+        recommendationManual: false,
+        employeePaymentOrder: getNextEmployeePaymentOrder(draft),
+        additionalInfo: ""
+      };
+      state.data.collections.directExpenses = [expense, ...(state.data.collections.directExpenses || [])];
+      sourceId = expense.id;
+    }
+    addAudit("Добавлена выплата", "Договоры сотрудников", employeeName, {
+      entityType: "contracts",
+      entityId: String(draft.id || state.modal?.id || ""),
+      entityLabel: employeeName,
+      source: "employee-payment-accounting"
+    });
+    commitEmployeePaymentAccountingChange(draft, { sourceId, field: "amount" }, true);
+  }
+
+  function generateEmployeeCouponFromLogin() {
+    const formElement = document.querySelector("#recordForm[data-config='contracts']");
+    if (!formElement) return;
+    const login = String(formElement.elements.login?.value || "").trim();
+    const email = String(formElement.elements.email?.value || "").trim();
+    const source = login || String(email.split("@")[0] || "").trim();
+    if (!source) {
+      alert("Укажите логин СДО или Email сотрудника.");
+      state.modal.draft = collectContractFormDraft();
+      state.modal.hasDraftChanges = true;
+      state.contractCardTab = "documents";
+      render();
+      requestAnimationFrame(() => document.querySelector("#recordForm[data-config='contracts'] [name='login']")?.focus());
+      return;
+    }
+    const couponInput = formElement.elements.coupon;
+    if (!couponInput) return;
+    couponInput.value = source.toLocaleUpperCase("ru-RU");
+    couponInput.dispatchEvent(new Event("input", { bubbles: true }));
+    couponInput.dispatchEvent(new Event("change", { bubbles: true }));
+    couponInput.focus();
+    couponInput.select?.();
+  }
+
+  function closeContractStudentPicker() {
+    document.querySelector("[data-contract-student-picker]")?.remove();
+  }
+
+  function getContractStudentDuplicate(student = {}) {
+    const currentId = String(state.modal?.id || "");
+    const email = String(student.email || "").trim().toLocaleLowerCase("ru-RU");
+    const name = String(student.name || "").trim().toLocaleLowerCase("ru-RU");
+    const birthDate = String(student.birthDate || "").trim();
+    return (state.data.collections.contracts || []).find((contract) => {
+      if (String(contract.id || "") === currentId) return false;
+      const contractEmail = String(contract.email || "").trim().toLocaleLowerCase("ru-RU");
+      const contractName = String(contract.name || "").trim().toLocaleLowerCase("ru-RU");
+      const contractBirthDate = String(contract.birthDate || "").trim();
+      const emailMatches = Boolean(email && contractEmail && email === contractEmail);
+      const identityMatches = Boolean(name && birthDate && name === contractName && birthDate === contractBirthDate);
+      return emailMatches || identityMatches || String(contract.sourceStudentId || "") === String(student.id || "");
+    }) || null;
+  }
+
+  function getContractStudentPickerSearchText(student = {}) {
+    return [
+      student.name,
+      student.uid,
+      student.email,
+      student.phone,
+      student.program,
+      student.status
+    ].map((value) => String(value || "").toLocaleLowerCase("ru-RU")).join(" ");
+  }
+
+  function applyStudentToContract(studentId) {
+    const student = (state.data.collections.students || [])
+      .find((row) => String(row.id || "") === String(studentId || ""));
+    if (!student) return;
+    const duplicate = getContractStudentDuplicate(student);
+    if (duplicate && !confirm(`Сотрудник «${duplicate.name || "Без имени"}» уже связан с этим слушателем или имеет такие же данные. Перенести данные в текущую карточку?`)) {
+      return;
+    }
+    const current = collectContractFormDraft();
+    const pick = (...values) => values.find((value) => String(value ?? "").trim()) ?? "";
+    const studentPhotoPath = pick(student.photoPath, student.photoUrl, current.photoPath);
+    state.modal.draft = normalizeContractRecord({
+      ...current,
+      sourceStudentId: student.id,
+      sourceStudentUid: student.uid || current.sourceStudentUid || "",
+      name: pick(student.name, current.name),
+      position: pick(student.position, current.position),
+      phone: pick(student.phone, current.phone),
+      email: pick(student.email, current.email),
+      telegram: pick(student.telegram, student.telegramLogin, current.telegram),
+      photoPath: studentPhotoPath,
+      citizenship: pick(student.citizenship, current.citizenship),
+      birthDate: pick(student.birthDate, current.birthDate),
+      identityDocumentType: pick(student.passportType, current.identityDocumentType),
+      identityDocument: pick(student.passportNumber, current.identityDocument),
+      identityIssueDate: pick(student.passportDate, current.identityIssueDate),
+      identityDepartmentCode: pick(student.passportCode, current.identityDepartmentCode),
+      identityIssuer: pick(student.passportIssuer, current.identityIssuer),
+      address: pick(student.registrationAddress, student.mailingAddress, current.address),
+      snils: pick(student.snils, current.snils),
+      inn: pick(student.inn, current.inn),
+      login: pick(student.login, current.login),
+      password: pick(student.password, current.password),
+      coupon: pick(student.partnerCoupon, student.coupon, current.coupon)
+    });
+    state.modal.hasDraftChanges = true;
+    closeContractStudentPicker();
+    render();
+  }
+
+  function openContractStudentPicker() {
+    if (state.modal?.config !== "contracts") return;
+    const students = [...(state.data.collections.students || [])]
+      .filter((student) => student && student.id)
+      .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "ru"));
+    if (!students.length) {
+      alert("В базе слушателей пока нет записей.");
+      return;
+    }
+    closeContractStudentPicker();
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop contract-student-picker-backdrop";
+    backdrop.dataset.contractStudentPicker = "true";
+    backdrop.innerHTML = `
+      <section class="modal contract-student-picker-dialog" role="dialog" aria-modal="true" aria-label="Добавить сотрудника из базы слушателей">
+        <header class="modal-head">
+          <div>
+            <p class="eyebrow">Карточка сотрудника</p>
+            <h2>Добавить из базы слушателей</h2>
+            <p>Выберите слушателя — его личные данные, контакты, реквизиты документов, доступ СДО и фото будут перенесены в текущую карточку.</p>
+          </div>
+          <button class="icon-button" data-action="close-contract-student-picker" type="button" aria-label="Закрыть">×</button>
+        </header>
+        <div class="contract-student-picker-body">
+          <label class="contract-student-picker-search">
+            <span>Поиск слушателя</span>
+            <input type="search" data-contract-student-search placeholder="ФИО, UID, Email, телефон или программа" autocomplete="off">
+          </label>
+          <div class="contract-student-picker-summary" data-contract-student-summary></div>
+          <div class="contract-student-picker-results" data-contract-student-results role="listbox" aria-label="Слушатели"></div>
+        </div>
+        <footer class="modal-actions">
+          <button class="ghost-button" data-action="close-contract-student-picker" type="button">Отмена</button>
+        </footer>
+      </section>
+    `;
+    document.body.append(backdrop);
+    const searchInput = backdrop.querySelector("[data-contract-student-search]");
+    const results = backdrop.querySelector("[data-contract-student-results]");
+    const summary = backdrop.querySelector("[data-contract-student-summary]");
+    const renderRows = () => {
+      const query = String(searchInput?.value || "").trim().toLocaleLowerCase("ru-RU");
+      const matches = students
+        .filter((student) => !query || getContractStudentPickerSearchText(student).includes(query))
+        .slice(0, 150);
+      if (summary) summary.textContent = `Найдено: ${matches.length}${matches.length === 150 ? " (показаны первые 150)" : ""}`;
+      if (!results) return;
+      results.innerHTML = matches.length
+        ? matches.map((student) => {
+          const duplicate = getContractStudentDuplicate(student);
+          const details = [
+            student.uid ? `UID ${student.uid}` : "",
+            student.program,
+            student.email,
+            student.phone
+          ].map((value) => String(value || "").trim()).filter(Boolean);
+          return `
+            <button class="contract-student-picker-item" data-contract-student-id="${escapeAttr(student.id)}" type="button" role="option">
+              <span class="contract-student-picker-name">${escapeHtml(student.name || "Без имени")}</span>
+              <span class="contract-student-picker-details">${details.map(escapeHtml).join(" · ") || "Дополнительные данные не указаны"}</span>
+              ${duplicate ? `<span class="contract-student-picker-duplicate">Уже есть карточка сотрудника</span>` : ""}
+            </button>
+          `;
+        }).join("")
+        : `<div class="empty-state contract-student-picker-empty">Слушатели по этому запросу не найдены.</div>`;
+      results.querySelectorAll("[data-contract-student-id]").forEach((button) => {
+        button.addEventListener("click", () => applyStudentToContract(button.dataset.contractStudentId));
+      });
+    };
+    searchInput?.addEventListener("input", renderRows);
+    backdrop.querySelectorAll("[data-action='close-contract-student-picker']")
+      .forEach((button) => button.addEventListener("click", closeContractStudentPicker));
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) closeContractStudentPicker();
+    });
+    renderRows();
+    requestAnimationFrame(() => searchInput?.focus());
+  }
+
   function captureFormSnapshot(form) {
     const values = Array.from(form.elements || [])
       .filter((control) => control.name && !isSnapshotIgnoredControl(control))
@@ -15580,12 +21615,18 @@ MAX - https://bizvmax.ru/zifra_plus
     if ((state.modal?.hasDraftChanges || hasUnsavedFormChanges(form)) && !confirm("Есть несохраненные изменения. Закрыть без сохранения?")) {
       return;
     }
+    const lock = activeRecordLock;
+    activeRecordLock = null;
+    stopRecordLockHeartbeat();
+    state.employeeExpenseEditor = null;
     state.modal = null;
+    resetCardWindowState();
     state.discountPickerOpen = false;
     state.discountPicker = null;
     state.openPaymentRows = [];
     state.openExpenseRows = [];
     render();
+    if (lock) releaseRecordLock(lock).catch(() => {});
   }
 
   function enhanceCopyableFields() {
@@ -15603,8 +21644,21 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function enhanceSettingsLinkedDropdowns() {
+    document.querySelectorAll("[data-settings-dictionary]").forEach((control) => {
+      if (control.dataset.copyContextBound === "true") return;
+      control.dataset.copyContextBound = "true";
+      control.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        showFieldCopyPopup(control, event.clientX, event.clientY);
+      });
+    });
+  }
+
   function showFieldCopyPopup(control, x, y) {
     hideFieldCopyPopup();
+    const settingsDictionary = String(control?.dataset?.settingsDictionary || "").trim();
     const popup = document.createElement("div");
     popup.className = "field-copy-popup";
     popup.dataset.fieldCopyPopup = "";
@@ -15643,6 +21697,18 @@ MAX - https://bizvmax.ru/zifra_plus
         </svg>
         <span>Отменить</span>
       </button>
+      ${settingsDictionary ? `
+        <span class="field-copy-divider" aria-hidden="true"></span>
+        <button class="field-edit-list-button" data-action="edit-settings-list" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M5 6h14"></path>
+            <path d="M5 12h9"></path>
+            <path d="M5 18h7"></path>
+            <path d="m16 17 4-4 2 2-4 4-3 1z"></path>
+          </svg>
+          <span>Редактировать список</span>
+        </button>
+      ` : ""}
     `;
     document.body.appendChild(popup);
     const rect = popup.getBoundingClientRect();
@@ -15708,9 +21774,350 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     undoButton.addEventListener("pointerdown", undoNow);
     undoButton.addEventListener("click", undoNow);
+    const editListButton = popup.querySelector("[data-action='edit-settings-list']");
+    let editListStarted = false;
+    const editListNow = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (editListStarted || !settingsDictionary) return;
+      editListStarted = true;
+      hideFieldCopyPopup();
+      if (!openSettingsDictionary(settingsDictionary, control)) editListStarted = false;
+    };
+    editListButton?.addEventListener("pointerdown", editListNow);
+    editListButton?.addEventListener("click", editListNow);
     window.setTimeout(() => {
       document.addEventListener("pointerdown", handleFieldCopyPopupOutside, { once: true });
     }, 0);
+  }
+
+  function openSettingsDictionary(dictionary, sourceControl = null) {
+    const dict = String(dictionary || "").trim();
+    if (!dict || !Array.isArray(state.data.dictionaries?.[dict])) return false;
+    if (!canAccessView("settings")) {
+      alert("Недостаточно прав для редактирования настроек.");
+      return false;
+    }
+    document.querySelector("[data-settings-list-dialog]")?.closeSettingsListDialog?.();
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop settings-list-dialog-backdrop";
+    backdrop.dataset.settingsListDialog = "";
+    backdrop.innerHTML = `
+      <section class="modal settings-list-dialog" role="dialog" aria-modal="true" aria-label="Редактирование списка ${escapeAttr(dictionaryTitle(dict))}">
+        <header class="modal-head settings-list-dialog-head">
+          <div>
+            <p class="eyebrow">Настройки</p>
+            <h2>Настройки системы</h2>
+            <p>Редактирование справочника из карточки</p>
+          </div>
+          <button class="icon-button" data-action="close-settings-list-dialog" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <div class="settings-list-dialog-body" data-settings-list-dialog-body></div>
+      </section>
+    `;
+    document.body.appendChild(backdrop);
+    const body = backdrop.querySelector("[data-settings-list-dialog-body]");
+    let draftValues = dict === "finalAttestationSettings"
+      ? clone(state.data.dictionaries[dict])
+      : [];
+    let settled = false;
+    let savedDuringSession = false;
+
+    const close = ({ saved = savedDuringSession } = {}) => {
+      if (settled) return;
+      settled = true;
+      if (saved) refreshSettingsLinkedControls(dict);
+      backdrop.remove();
+      if (sourceControl?.isConnected) sourceControl.focus({ preventScroll: true });
+    };
+    backdrop.closeSettingsListDialog = close;
+
+    const commitSimpleDictionaryChange = (action, detail) => {
+      savedDuringSession = true;
+      addAudit(action, dictionaryTitle(dict), detail);
+      persist();
+      refreshSettingsLinkedControls(dict);
+    };
+
+    const renderSimpleList = ({ focusAdd = false, preserveScroll = false } = {}) => {
+      const previousScrollTop = preserveScroll
+        ? Number(body.querySelector("[data-dictionary-values]")?.scrollTop || 0)
+        : 0;
+      const values = (state.data.dictionaries[dict] || [])
+        .filter((value) => typeof value !== "object")
+        .map((value) => String(value || ""));
+      body.innerHTML = `
+        <section class="dictionary-detail settings-list-dialog-dictionary-page ${dict === "discountRules" ? "has-format-hint" : ""}">
+          <div class="dictionary-detail-head">
+            <div>
+              <p class="eyebrow">Содержание справочника</p>
+              <h3>${escapeHtml(dictionaryTitle(dict))}</h3>
+            </div>
+            <div class="dictionary-detail-actions">
+              <button class="icon-button dictionary-sort-button" data-action="dialog-dict-sort" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
+              <button class="icon-button dictionary-sort-button" data-action="dialog-dict-sort" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
+              <button class="icon-button dictionary-copy-button" data-action="dialog-dict-copy-all" type="button" title="Скопировать все значения" aria-label="Скопировать все значения">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M5 15V5h10"></path></svg>
+              </button>
+              <button class="icon-button dictionary-clear-button" data-action="dialog-dict-clear" type="button" title="Очистить справочник" aria-label="Очистить справочник">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+              </button>
+              ${dict === "discountRules" ? `
+                <button class="icon-button dictionary-restore-button" data-action="dialog-restore-default-discount-rules" type="button" title="Восстановить исходный перечень скидок" aria-label="Восстановить исходный перечень скидок">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v6h6"></path><path d="M12 8v5l3 2"></path></svg>
+                </button>
+              ` : ""}
+              <span>${values.length}</span>
+            </div>
+          </div>
+          ${renderSimpleDictionaryEditor(dict, values)}
+        </section>
+        <div class="settings-list-dialog-footer">
+          <span>Изменения сохраняются так же, как на странице «Настройки».</span>
+          <button class="primary-button" data-action="close-settings-list-dialog" type="button">Закрыть</button>
+        </div>
+      `;
+      const form = body.querySelector("form[data-action='dict-add']");
+      const addValues = (items) => {
+        const additions = parseDictionaryValues(items.join("\n"), dict);
+        if (!additions.length) return false;
+        const currentValues = state.data.dictionaries[dict] || [];
+        const nextValues = unique([...currentValues, ...additions]);
+        if (nextValues.length === currentValues.length) return false;
+        state.data.dictionaries[dict] = nextValues;
+        commitSimpleDictionaryChange("Изменен справочник", additions.join(", "));
+        renderSimpleList({ focusAdd: true, preserveScroll: true });
+        return true;
+      };
+      form?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const input = form.elements.value;
+        if (addValues([input?.value || ""])) return;
+        input?.focus({ preventScroll: true });
+      });
+      form?.querySelector("[data-dictionary-add-input]")?.addEventListener("paste", (event) => {
+        const text = event.clipboardData?.getData("text") || "";
+        const pastedValues = parseDictionaryValues(text, dict);
+        if (pastedValues.length <= 1 || !confirmDictionaryPaste(pastedValues)) return;
+        event.preventDefault();
+        addValues(pastedValues);
+      });
+      body.querySelectorAll("[data-action='dict-remove']").forEach((button) => {
+        button.addEventListener("click", () => {
+          const value = String(button.dataset.value || "");
+          state.data.dictionaries[dict] = (state.data.dictionaries[dict] || [])
+            .filter((item) => String(item) !== value);
+          commitSimpleDictionaryChange("Изменен справочник", value);
+          renderSimpleList({ preserveScroll: true });
+        });
+      });
+      body.querySelectorAll("[data-action='dialog-dict-sort']").forEach((button) => {
+        button.addEventListener("click", () => {
+          const direction = button.dataset.order === "desc" ? -1 : 1;
+          state.data.dictionaries[dict] = [...(state.data.dictionaries[dict] || [])]
+            .sort((left, right) => direction * String(left).localeCompare(String(right), "ru"));
+          commitSimpleDictionaryChange("Сортировка справочника", direction < 0 ? "Я-А" : "А-Я");
+          renderSimpleList();
+        });
+      });
+      body.querySelector("[data-action='dialog-dict-copy-all']")?.addEventListener("click", () => {
+        copyDictionaryValues(dict);
+      });
+      body.querySelector("[data-action='dialog-dict-clear']")?.addEventListener("click", () => {
+        const currentValues = state.data.dictionaries[dict] || [];
+        if (!currentValues.length) return;
+        if (!confirm(`Очистить справочник "${dictionaryTitle(dict)}"?\n\nБудет удалено значений: ${currentValues.length}`)) return;
+        state.data.dictionaries[dict] = [];
+        commitSimpleDictionaryChange("Очищен справочник", `${currentValues.length} знач.`);
+        renderSimpleList();
+      });
+      body.querySelector("[data-action='dialog-restore-default-discount-rules']")?.addEventListener("click", () => {
+        if (!confirm("Восстановить исходный перечень скидок? Текущий справочник скидок будет заменен.")) return;
+        state.data.dictionaries.discountRules = getDefaultDiscountRuleValues();
+        commitSimpleDictionaryChange("Восстановлен справочник", "Исходный перечень скидок");
+        renderSimpleList();
+      });
+      const valuesList = body.querySelector("[data-dictionary-values]");
+      if (valuesList) {
+        bindDictionaryManualSort(valuesList);
+        valuesList.addEventListener("dragend", () => {
+          savedDuringSession = true;
+          refreshSettingsLinkedControls(dict);
+        });
+      }
+      body.querySelectorAll("[data-action='close-settings-list-dialog']").forEach((button) => {
+        button.addEventListener("click", () => close());
+      });
+      requestAnimationFrame(() => {
+        const list = body.querySelector("[data-dictionary-values]");
+        if (list && preserveScroll) list.scrollTop = previousScrollTop;
+        if (focusAdd) form?.elements.value?.focus({ preventScroll: true });
+      });
+    };
+
+    const renderFinalAttestationList = () => {
+      body.innerHTML = `
+        <section class="dictionary-detail is-communication-templates settings-list-dialog-dictionary-page">
+          <div class="dictionary-detail-head">
+            <div>
+              <p class="eyebrow">Содержание справочника</p>
+              <h3>${escapeHtml(dictionaryTitle(dict))}</h3>
+            </div>
+            <div class="dictionary-detail-actions"><span>${draftValues.length}</span></div>
+          </div>
+          ${renderFinalAttestationSettingsDictionary(draftValues)}
+        </section>
+        <div class="settings-list-dialog-footer">
+          <span>Для применения изменений нажмите «Сохранить настройки».</span>
+          <button class="ghost-button" data-action="close-settings-list-dialog" type="button">Закрыть без сохранения</button>
+        </div>
+      `;
+      const form = body.querySelector("form[data-action='save-final-attestation-settings']");
+      form?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const settings = collectFinalAttestationSettings(form);
+        const validationError = validateFinalAttestationSettings(settings);
+        if (validationError) {
+          alert(validationError);
+          return;
+        }
+        state.data.dictionaries.finalAttestationSettings = normalizeFinalAttestationSettings(settings);
+        addAudit("Изменен справочник", dictionaryTitle(dict), "Сохранены категории и шкала оценок");
+        savedDuringSession = true;
+        persist();
+        close({ saved: true });
+      });
+      form?.querySelector("[data-action='add-attestation-category']")?.addEventListener("click", () => {
+        draftValues = collectFinalAttestationSettings(form);
+        draftValues.push({ kind: "category", id: `grade-${Date.now()}`, label: "Новая категория" });
+        renderFinalAttestationList();
+      });
+      form?.querySelector("[data-action='add-attestation-scale']")?.addEventListener("click", () => {
+        draftValues = collectFinalAttestationSettings(form);
+        draftValues.push({
+          kind: "scale",
+          id: `scale-${Date.now()}`,
+          programType: "",
+          grade: draftValues.find((item) => item.kind === "category")?.label || "",
+          minPercent: "",
+          maxPercent: "100"
+        });
+        renderFinalAttestationList();
+      });
+      form?.querySelectorAll("[data-action='remove-attestation-setting']").forEach((button) => {
+        button.addEventListener("click", () => {
+          draftValues = collectFinalAttestationSettings(form).filter((item) => (
+            item.kind !== button.dataset.kind || item.id !== button.dataset.id
+          ));
+          renderFinalAttestationList();
+        });
+      });
+      form?.querySelector("[data-action='reset-final-attestation-settings']")?.addEventListener("click", () => {
+        if (!confirm("Восстановить исходные категории и шкалу итоговой аттестации?")) return;
+        draftValues = clone(finalAttestationSettingDefaults);
+        renderFinalAttestationList();
+      });
+      form?.querySelectorAll("[data-attestation-category-input]").forEach((input) => {
+        let previousValue = input.value;
+        input.addEventListener("input", () => {
+          form.querySelectorAll("[data-attestation-grade-input]").forEach((gradeInput) => {
+            if (gradeInput.value === previousValue) gradeInput.value = input.value;
+          });
+          previousValue = input.value;
+        });
+      });
+      body.querySelector("[data-action='close-settings-list-dialog']")?.addEventListener("click", () => close());
+    };
+
+    backdrop.querySelectorAll("[data-action='close-settings-list-dialog']").forEach((button) => {
+      button.addEventListener("click", () => close());
+    });
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) close();
+    });
+    if (dict === "finalAttestationSettings") renderFinalAttestationList();
+    else renderSimpleList();
+    requestAnimationFrame(() => (
+      body.querySelector("[data-settings-list-value], input, button")
+        || backdrop.querySelector("[data-action='close-settings-list-dialog']")
+    )?.focus({ preventScroll: true }));
+    return true;
+  }
+
+  function refreshSettingsLinkedControls(dictionary) {
+    const dict = String(dictionary || "").trim();
+    document.querySelectorAll(`[data-settings-dictionary="${CSS.escape(dict)}"]`).forEach((control) => {
+      const currentValue = String(control.value || "");
+      if (control.matches("[data-student-expense-inventory-choice]")) {
+        const selectedType = control.selectedOptions[0]?.dataset.expenseType || "";
+        const group = [...control.querySelectorAll("optgroup")].find((item) => item.label === "Виды затрат");
+        if (!group) return;
+        const record = state.modal?.config === "students" ? collectStudentFormDraft() : {};
+        const options = getStudentExpenseTypeOptions(record);
+        group.innerHTML = options.map((option, index) => (
+          `<option value="type:${index}" data-expense-type="${escapeAttr(option)}">${escapeHtml(option)}</option>`
+        )).join("");
+        const matchingOption = [...group.querySelectorAll("option")]
+          .find((option) => option.dataset.expenseType === selectedType);
+        if (matchingOption) control.value = matchingOption.value;
+        else control.value = currentValue;
+        return;
+      }
+      if (control.tagName === "SELECT") {
+        const hadEmptyOption = [...control.options].some((option) => option.value === "");
+        const values = dict === "finalAttestationSettings"
+          ? getFinalAttestationGradeOptions(currentValue)
+          : unique([
+              ...(state.data.dictionaries[dict] || []).filter((value) => typeof value !== "object"),
+              currentValue
+            ].map((value) => String(value || "").trim()).filter(Boolean));
+        control.innerHTML = `${hadEmptyOption ? '<option value=""></option>' : ""}${values.map((value) => (
+          `<option value="${escapeAttr(value)}">${escapeHtml(value)}</option>`
+        )).join("")}`;
+        control.value = currentValue;
+        return;
+      }
+      if (control.matches("[data-combo-input]")) {
+        const field = control.closest("[data-combo-field]");
+        const panel = field?.querySelector("[data-combo-options]");
+        if (!panel) return;
+        const lookup = searchableStudentFields[control.name];
+        const record = state.modal?.config === "students" ? collectStudentFormDraft() : {};
+        const values = lookup?.dict === dict
+          ? getLookupOptions(lookup, [currentValue])
+          : dict === "expenseNotes"
+            ? getStudentExpenseNoteOptions(record)
+            : unique([...(state.data.dictionaries[dict] || []), currentValue].map((value) => String(value || "").trim()).filter(Boolean));
+        panel.innerHTML = values.map((value) => `
+          <button class="${value === currentValue ? "is-selected" : ""}" data-action="select-combo-value" data-value="${escapeAttr(value)}" type="button" aria-selected="${value === currentValue ? "true" : "false"}">${escapeHtml(value)}</button>
+        `).join("") || `<span class="combo-empty">Нет значений</span>`;
+        panel.querySelectorAll("[data-action='select-combo-value']").forEach((button) => {
+          button.addEventListener("click", () => {
+            control.value = button.dataset.value || "";
+            control.dispatchEvent(new Event("input", { bubbles: true }));
+            control.dispatchEvent(new Event("change", { bubbles: true }));
+            field.classList.remove("is-open");
+            control.focus();
+          });
+        });
+        return;
+      }
+      const lookupList = control.closest(".lookup-field")?.querySelector(".lookup-list");
+      if (lookupList) {
+        const values = dict === "educationDocumentIssuers"
+          ? getEducationDocumentIssuerOptions(currentValue)
+          : getPassportIssuerOptions(currentValue);
+        lookupList.innerHTML = values.map((value) => `
+          <button data-action="select-lookup-value" data-field="${escapeAttr(control.name)}" data-value="${escapeAttr(value)}" type="button">${escapeHtml(value)}</button>
+        `).join("") || `<span class="lookup-empty">Значений пока нет</span>`;
+        lookupList.querySelectorAll("[data-action='select-lookup-value']").forEach((button) => {
+          button.addEventListener("click", () => {
+            control.value = button.dataset.value || "";
+            button.closest(".lookup-panel")?.classList.remove("is-open");
+          });
+        });
+      }
+    });
   }
 
   function clearControlValue(control) {
@@ -16417,6 +22824,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const modal = document.querySelector(".contract-modal");
     if (!modal || !target) return;
     state.contractCardTab = target;
+    modal.classList.toggle("is-payment-tab-active", target === "payment");
     modal.querySelectorAll("[data-action='switch-contract-tab']").forEach((button) => {
       const isActive = button.dataset.contractTab === target;
       button.classList.toggle("active", isActive);
@@ -16599,7 +23007,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const isProgramCard = formElement.dataset.config === "programs";
     const isContractCard = formElement.dataset.config === "contracts";
     const currentRecord = formElement.dataset.id ? rows.find((row) => row.id === formElement.dataset.id) || {} : {};
-    const values = isStudentCard ? { ...currentRecord, ...(state.modal?.draft || {}) } : {};
+    const values = isStudentCard || isContractCard
+      ? { ...currentRecord, ...(state.modal?.draft || {}) }
+      : {};
     const fields = isStudentCard ? studentAllFields : config.fields;
     fields.forEach((item) => {
       if (item.type === "checkbox") {
@@ -16639,15 +23049,20 @@ MAX - https://bizvmax.ru/zifra_plus
         state.data.meta.defaultAuthorPaymentPercent || 50
       );
     }
-    if (isStudentCard) {
-      values.discountUnit = "percent";
-      values.directExpenses = collectStudentDirectExpenses(formElement, values);
+    if (isStudentCard || isContractCard) {
       formData.forEach((raw, key) => {
         if (/^event_[A-Za-z0-9_-]+_(state|date|label)$/.test(key)) {
           values[key] = String(raw || "");
         }
       });
+    }
+    if (isStudentCard) {
+      values.discountUnit = "percent";
+      values.directExpenses = collectStudentDirectExpenses(formElement, values);
       clearUnchangedGeneratedCommunicationMessages(values, formElement);
+    }
+    if (isContractCard) {
+      clearUnchangedGeneratedEmployeeCommunicationMessages(values, formElement);
     }
     if (!formElement.dataset.id && fields.some((item) => item.key === "uid") && !values.uid) {
       values.uid = getNextUid();
@@ -16681,6 +23096,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (isContractCard) {
       values.inn = normalizeInn(values.inn);
       values.snils = formatSnils(values.snils);
+      values.portalCredentials = buildContractPortalCredentials({ ...currentRecord, ...values });
+      const portalCredentialsInput = formElement.querySelector("[name='portalCredentials']");
+      if (portalCredentialsInput) portalCredentialsInput.value = values.portalCredentials;
       const innInput = formElement.querySelector("[name='inn']");
       const snilsInput = formElement.querySelector("[name='snils']");
       if (innInput) innInput.value = values.inn;
@@ -16722,24 +23140,455 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       state.data.collections.directExpenses = partition.unlinkedDirectExpenses;
     }
+    if (["students", "directExpenses", "generalExpenses", "contracts"].includes(formElement.dataset.config)) {
+      refreshContractPaymentAccountingForCollections(state.data.collections);
+    }
     if (isProgramCard) {
       syncProgramTrainingPlanRows(formElement, savedId, values, currentRecord);
       refreshProgramAuthorExpensesForStudents(rows.find((row) => row.id === savedId) || values);
+      refreshContractPaymentAccountingForCollections(state.data.collections);
     }
     return savedId;
   }
 
-  function saveRecord(event) {
+  async function saveRecord(event) {
     event.preventDefault();
     const form = event.currentTarget;
+    const existingId = String(form.dataset.id || "").trim();
+    const expectedLockKey = existingId
+      ? recordLockKey(recordLockEntityType(form.dataset.config), existingId)
+      : "";
+    if (existingId && (form.dataset.recordLockLost === "true" || activeRecordLock?.key !== expectedLockKey)) {
+      alert("Запись не заблокирована за вами и не может быть сохранена. Закройте карточку и откройте её повторно.");
+      return;
+    }
+    const submitButton = form.querySelector('button[type="submit"]');
+    if (submitButton) submitButton.disabled = true;
     const savedId = saveFormRecord(form);
-    if (!savedId) return;
+    if (!savedId) {
+      if (submitButton) submitButton.disabled = false;
+      return;
+    }
     const configId = form.dataset.config;
     state.lastEditedRow = { config: configId || "", id: savedId };
     setTablePageForRow(configId, savedId);
-    state.modal = null;
     persist();
+    const generation = sharedStateChangeGeneration;
+    const lock = activeRecordLock;
+    activeRecordLock = null;
+    stopRecordLockHeartbeat();
+    state.employeeExpenseEditor = null;
+    state.modal = null;
+    resetCardWindowState();
+    state.discountPickerOpen = false;
+    state.discountPicker = null;
+    state.openPaymentRows = [];
+    state.openExpenseRows = [];
     render();
+    saveSharedApplicationStateInBackground({ generation, lock });
+  }
+
+  function openStudentPhotoCropEditor(dataUrl, options = {}) {
+    const personLabel = String(options.personLabel || "слушателя").trim() || "слушателя";
+    return new Promise((resolve, reject) => {
+      const previousEditor = document.querySelector("[data-student-photo-crop-editor]");
+      if (previousEditor) {
+        previousEditor.closeStudentPhotoCropEditor?.();
+        if (previousEditor.isConnected) previousEditor.remove();
+      }
+      const backdrop = document.createElement("div");
+      backdrop.className = "modal-backdrop student-photo-crop-editor-backdrop";
+      backdrop.dataset.studentPhotoCropEditor = "";
+      backdrop.innerHTML = `
+        <section class="modal student-photo-crop-editor" role="dialog" aria-modal="true" aria-label="Кадрирование фото ${escapeAttr(personLabel)}">
+          <header class="modal-head">
+            <div>
+              <h2>Выбор области фото</h2>
+              <p>${escapeHtml(options.fileName || `Изображение ${personLabel}`)}</p>
+            </div>
+            <button class="icon-button" data-action="close-student-photo-editor" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+          </header>
+          <div class="student-photo-crop-editor-toolbar">
+            <div class="student-photo-crop-editor-modes" role="group" aria-label="Режим редактора">
+              <button class="ghost-button is-active" data-photo-crop-mode="frame" type="button">Область фото</button>
+              <button class="ghost-button" data-photo-crop-mode="pan" type="button">Двигать снимок</button>
+            </div>
+            <div class="student-photo-crop-editor-zoom" role="group" aria-label="Масштаб изображения">
+              <span class="student-photo-crop-editor-zoom-title">Масштаб</span>
+              <button class="ghost-button" data-photo-crop-zoom-out type="button" title="Уменьшить">−</button>
+              <input data-photo-crop-zoom type="range" min="25" max="400" step="5" value="100" aria-label="Масштаб изображения">
+              <strong data-photo-crop-zoom-label>100%</strong>
+              <button class="ghost-button" data-photo-crop-zoom-in type="button" title="Увеличить">+</button>
+            </div>
+            <button class="ghost-button" data-photo-crop-fit type="button">Вписать</button>
+            <button class="ghost-button" data-photo-crop-focus type="button">К рамке</button>
+            <button class="ghost-button" data-photo-crop-full type="button">Весь снимок</button>
+          </div>
+          <div class="student-photo-crop-editor-hint">
+            <span><strong>1. Область фото:</strong> перетаскивайте рамку за центр, а за круглые маркеры по углам меняйте её размер.</span>
+            <span><strong>2. Снимок:</strong> колесо мыши меняет масштаб в точке курсора, а зажатое колёсико перемещает изображение. На сенсорном экране используйте «Двигать снимок».</span>
+          </div>
+          <div class="student-photo-crop-editor-viewport" data-photo-crop-viewport tabindex="0">
+            <div class="student-photo-crop-editor-loading" data-photo-crop-loading>Загрузка изображения...</div>
+            <img data-photo-crop-image alt="Выбранное фото ${escapeAttr(personLabel)}" draggable="false">
+            <div class="student-photo-crop-editor-selection" data-photo-crop-selection hidden tabindex="0" aria-label="Выбранная область фото">
+              <span class="student-photo-crop-editor-move-label">Переместить</span>
+              <span class="student-photo-crop-editor-size" data-photo-crop-size></span>
+              ${["nw", "n", "ne", "e", "se", "s", "sw", "w"].map((direction) => (
+                `<span class="student-photo-crop-editor-handle is-${direction}" data-photo-crop-handle="${direction}" aria-hidden="true"></span>`
+              )).join("")}
+            </div>
+          </div>
+          <footer class="modal-actions">
+            <button class="ghost-button" data-action="close-student-photo-editor" type="button">Отмена</button>
+            <button class="primary-button" data-action="use-student-photo-crop" type="button" disabled>Использовать выделение</button>
+          </footer>
+        </section>
+      `;
+      document.body.appendChild(backdrop);
+
+      const viewport = backdrop.querySelector("[data-photo-crop-viewport]");
+      const image = backdrop.querySelector("[data-photo-crop-image]");
+      const selectionElement = backdrop.querySelector("[data-photo-crop-selection]");
+      const selectionSize = backdrop.querySelector("[data-photo-crop-size]");
+      const loading = backdrop.querySelector("[data-photo-crop-loading]");
+      const zoomInput = backdrop.querySelector("[data-photo-crop-zoom]");
+      const zoomLabel = backdrop.querySelector("[data-photo-crop-zoom-label]");
+      const useButton = backdrop.querySelector("[data-action='use-student-photo-crop']");
+      let naturalWidth = 0;
+      let naturalHeight = 0;
+      let fitScale = 1;
+      let zoomRatio = 1;
+      let scale = 1;
+      let panX = 0;
+      let panY = 0;
+      let mode = "frame";
+      let selection = null;
+      let interaction = null;
+      let settled = false;
+      let resizeObserver = null;
+
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resizeObserver?.disconnect();
+        backdrop.remove();
+        resolve(value);
+      };
+      backdrop.closeStudentPhotoCropEditor = () => finish(null);
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        resizeObserver?.disconnect();
+        backdrop.remove();
+        reject(error);
+      };
+      const viewportSize = () => ({
+        width: Math.max(1, viewport.clientWidth),
+        height: Math.max(1, viewport.clientHeight)
+      });
+      const updateFitScale = () => {
+        if (!naturalWidth || !naturalHeight) return;
+        const size = viewportSize();
+        fitScale = Math.max(0.01, Math.min(
+          (size.width - 28) / naturalWidth,
+          (size.height - 28) / naturalHeight
+        ));
+        scale = fitScale * zoomRatio;
+      };
+      const clampPan = () => {
+        if (!naturalWidth || !naturalHeight) return;
+        const size = viewportSize();
+        const displayWidth = naturalWidth * scale;
+        const displayHeight = naturalHeight * scale;
+        const visible = 48;
+        panX = displayWidth <= visible * 2
+          ? (size.width - displayWidth) / 2
+          : clamp(panX, visible - displayWidth, size.width - visible);
+        panY = displayHeight <= visible * 2
+          ? (size.height - displayHeight) / 2
+          : clamp(panY, visible - displayHeight, size.height - visible);
+      };
+      const isUsableSelection = () => Boolean(
+        selection
+        && selection.width >= Math.min(naturalWidth, Math.max(12, naturalWidth * 0.01))
+        && selection.height >= Math.min(naturalHeight, Math.max(12, naturalHeight * 0.01))
+      );
+      const renderEditor = () => {
+        if (!naturalWidth || !naturalHeight) return;
+        clampPan();
+        image.style.left = `${panX}px`;
+        image.style.top = `${panY}px`;
+        image.style.width = `${naturalWidth * scale}px`;
+        image.style.height = `${naturalHeight * scale}px`;
+        zoomInput.value = String(Math.round(zoomRatio * 100));
+        zoomLabel.textContent = `${Math.round(zoomRatio * 100)}%`;
+        viewport.classList.toggle("is-pan-mode", mode === "pan");
+        backdrop.querySelectorAll("[data-photo-crop-mode]").forEach((button) => {
+          button.classList.toggle("is-active", button.dataset.photoCropMode === mode);
+        });
+        if (!selection) {
+          selectionElement.hidden = true;
+          useButton.disabled = true;
+          return;
+        }
+        selectionElement.hidden = false;
+        selectionElement.style.left = `${panX + selection.x * scale}px`;
+        selectionElement.style.top = `${panY + selection.y * scale}px`;
+        selectionElement.style.width = `${selection.width * scale}px`;
+        selectionElement.style.height = `${selection.height * scale}px`;
+        selectionSize.textContent = `${Math.round(selection.width)} × ${Math.round(selection.height)} px`;
+        useButton.disabled = !isUsableSelection();
+      };
+      const centerImage = () => {
+        const size = viewportSize();
+        panX = (size.width - naturalWidth * scale) / 2;
+        panY = (size.height - naturalHeight * scale) / 2;
+      };
+      const focusSelection = () => {
+        if (!selection) return;
+        const size = viewportSize();
+        panX = size.width / 2 - (selection.x + selection.width / 2) * scale;
+        panY = size.height / 2 - (selection.y + selection.height / 2) * scale;
+        renderEditor();
+      };
+      const fitImage = () => {
+        zoomRatio = 1;
+        updateFitScale();
+        centerImage();
+        renderEditor();
+      };
+      const setZoom = (nextRatio, anchorClientX = null, anchorClientY = null) => {
+        if (!naturalWidth || !naturalHeight) return;
+        const rect = viewport.getBoundingClientRect();
+        const anchorX = anchorClientX === null ? rect.width / 2 : anchorClientX - rect.left;
+        const anchorY = anchorClientY === null ? rect.height / 2 : anchorClientY - rect.top;
+        const imageX = (anchorX - panX) / scale;
+        const imageY = (anchorY - panY) / scale;
+        zoomRatio = clamp(Number(nextRatio) || 1, 0.25, 4);
+        scale = fitScale * zoomRatio;
+        panX = anchorX - imageX * scale;
+        panY = anchorY - imageY * scale;
+        renderEditor();
+      };
+      const imagePointFromEvent = (event) => ({
+        x: clamp((event.clientX - viewport.getBoundingClientRect().left - panX) / scale, 0, naturalWidth),
+        y: clamp((event.clientY - viewport.getBoundingClientRect().top - panY) / scale, 0, naturalHeight)
+      });
+      const setFullSelection = () => {
+        selection = { x: 0, y: 0, width: naturalWidth, height: naturalHeight };
+        renderEditor();
+      };
+
+      image.addEventListener("load", () => {
+        naturalWidth = image.naturalWidth;
+        naturalHeight = image.naturalHeight;
+        if (!naturalWidth || !naturalHeight) {
+          fail(new Error("Не удалось определить размер изображения."));
+          return;
+        }
+        loading.hidden = true;
+        image.hidden = false;
+        const initialWidth = naturalWidth * 0.68;
+        const initialHeight = Math.min(naturalHeight * 0.84, initialWidth * 4 / 3);
+        const adjustedWidth = Math.min(initialWidth, initialHeight * 3 / 4);
+        selection = {
+          x: (naturalWidth - adjustedWidth) / 2,
+          y: (naturalHeight - initialHeight) / 2,
+          width: adjustedWidth,
+          height: initialHeight
+        };
+        fitImage();
+        resizeObserver = new ResizeObserver(() => {
+          updateFitScale();
+          focusSelection();
+        });
+        resizeObserver.observe(viewport);
+      }, { once: true });
+      image.addEventListener("error", () => fail(new Error("Не удалось открыть выбранное изображение.")), { once: true });
+      image.src = dataUrl;
+
+      backdrop.querySelectorAll("[data-photo-crop-mode]").forEach((button) => {
+        button.addEventListener("click", () => {
+          mode = button.dataset.photoCropMode === "pan" ? "pan" : "frame";
+          renderEditor();
+        });
+      });
+      backdrop.querySelector("[data-photo-crop-zoom-out]")?.addEventListener("click", () => setZoom(zoomRatio - 0.15));
+      backdrop.querySelector("[data-photo-crop-zoom-in]")?.addEventListener("click", () => setZoom(zoomRatio + 0.15));
+      zoomInput.addEventListener("input", () => setZoom(Number(zoomInput.value) / 100));
+      backdrop.querySelector("[data-photo-crop-fit]")?.addEventListener("click", fitImage);
+      backdrop.querySelector("[data-photo-crop-focus]")?.addEventListener("click", focusSelection);
+      backdrop.querySelector("[data-photo-crop-full]")?.addEventListener("click", setFullSelection);
+      viewport.addEventListener("wheel", (event) => {
+        if (!naturalWidth) return;
+        event.preventDefault();
+        setZoom(zoomRatio * Math.exp(-event.deltaY * 0.0015), event.clientX, event.clientY);
+      }, { passive: false });
+
+      viewport.addEventListener("pointerdown", (event) => {
+        if (![0, 1].includes(event.button) || !naturalWidth) return;
+        const panInteraction = event.button === 1 || mode === "pan";
+        if (!panInteraction && event.target.closest("[data-photo-crop-selection]")) return;
+        event.preventDefault();
+        viewport.setPointerCapture(event.pointerId);
+        if (panInteraction) {
+          interaction = {
+            type: "pan",
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            panX,
+            panY
+          };
+          viewport.classList.add("is-panning");
+          return;
+        }
+        const point = imagePointFromEvent(event);
+        interaction = {
+          type: "draw",
+          pointerId: event.pointerId,
+          startPoint: point,
+          previousSelection: selection ? { ...selection } : null
+        };
+        selection = { x: point.x, y: point.y, width: 0, height: 0 };
+        renderEditor();
+      });
+      viewport.addEventListener("pointermove", (event) => {
+        if (!interaction || interaction.pointerId !== event.pointerId) return;
+        if (interaction.type === "pan") {
+          panX = interaction.panX + event.clientX - interaction.startX;
+          panY = interaction.panY + event.clientY - interaction.startY;
+          renderEditor();
+          return;
+        }
+        if (interaction.type === "draw") {
+          const point = imagePointFromEvent(event);
+          selection = {
+            x: Math.min(interaction.startPoint.x, point.x),
+            y: Math.min(interaction.startPoint.y, point.y),
+            width: Math.abs(point.x - interaction.startPoint.x),
+            height: Math.abs(point.y - interaction.startPoint.y)
+          };
+          renderEditor();
+        }
+      });
+      const finishViewportInteraction = (event) => {
+        if (!interaction || interaction.pointerId !== event.pointerId) return;
+        if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
+        if (interaction.type === "draw" && !isUsableSelection()) selection = interaction.previousSelection;
+        interaction = null;
+        viewport.classList.remove("is-panning");
+        renderEditor();
+      };
+      viewport.addEventListener("pointerup", finishViewportInteraction);
+      viewport.addEventListener("pointercancel", finishViewportInteraction);
+      viewport.addEventListener("auxclick", (event) => {
+        if (event.button === 1) event.preventDefault();
+      });
+
+      selectionElement.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || mode !== "frame" || !selection) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const handle = event.target.closest("[data-photo-crop-handle]")?.dataset.photoCropHandle || "move";
+        selectionElement.setPointerCapture(event.pointerId);
+        interaction = {
+          type: handle === "move" ? "move" : "resize",
+          handle,
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          selection: { ...selection }
+        };
+      });
+      selectionElement.addEventListener("pointermove", (event) => {
+        if (!interaction || interaction.pointerId !== event.pointerId || !["move", "resize"].includes(interaction.type)) return;
+        const dx = (event.clientX - interaction.startX) / scale;
+        const dy = (event.clientY - interaction.startY) / scale;
+        const start = interaction.selection;
+        if (interaction.type === "move") {
+          selection = {
+            ...start,
+            x: clamp(start.x + dx, 0, naturalWidth - start.width),
+            y: clamp(start.y + dy, 0, naturalHeight - start.height)
+          };
+          renderEditor();
+          return;
+        }
+        const minWidth = Math.min(naturalWidth, Math.max(12, naturalWidth * 0.01));
+        const minHeight = Math.min(naturalHeight, Math.max(12, naturalHeight * 0.01));
+        let left = start.x;
+        let right = start.x + start.width;
+        let top = start.y;
+        let bottom = start.y + start.height;
+        if (interaction.handle.includes("w")) left = clamp(start.x + dx, 0, right - minWidth);
+        if (interaction.handle.includes("e")) right = clamp(start.x + start.width + dx, left + minWidth, naturalWidth);
+        if (interaction.handle.includes("n")) top = clamp(start.y + dy, 0, bottom - minHeight);
+        if (interaction.handle.includes("s")) bottom = clamp(start.y + start.height + dy, top + minHeight, naturalHeight);
+        selection = { x: left, y: top, width: right - left, height: bottom - top };
+        renderEditor();
+      });
+      const finishSelectionInteraction = (event) => {
+        if (!interaction || interaction.pointerId !== event.pointerId || !["move", "resize"].includes(interaction.type)) return;
+        if (selectionElement.hasPointerCapture(event.pointerId)) selectionElement.releasePointerCapture(event.pointerId);
+        interaction = null;
+        renderEditor();
+      };
+      selectionElement.addEventListener("pointerup", finishSelectionInteraction);
+      selectionElement.addEventListener("pointercancel", finishSelectionInteraction);
+      selectionElement.addEventListener("keydown", (event) => {
+        if (!selection || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+        event.preventDefault();
+        const step = event.shiftKey ? 10 : 1;
+        const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+        const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+        selection.x = clamp(selection.x + dx, 0, naturalWidth - selection.width);
+        selection.y = clamp(selection.y + dy, 0, naturalHeight - selection.height);
+        renderEditor();
+      });
+
+      backdrop.querySelectorAll("[data-action='close-student-photo-editor']").forEach((button) => {
+        button.addEventListener("click", () => finish(null));
+      });
+      backdrop.addEventListener("pointerdown", (event) => {
+        if (event.target === backdrop) finish(null);
+      });
+      backdrop.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") finish(null);
+      });
+      useButton.addEventListener("click", () => {
+        if (!isUsableSelection()) return;
+        const sourceX = Math.round(selection.x);
+        const sourceY = Math.round(selection.y);
+        const sourceWidth = Math.max(1, Math.round(selection.width));
+        const sourceHeight = Math.max(1, Math.round(selection.height));
+        const outputScale = Math.min(1, 1600 / Math.max(sourceWidth, sourceHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(sourceWidth * outputScale));
+        canvas.height = Math.max(1, Math.round(sourceHeight * outputScale));
+        const context = canvas.getContext("2d");
+        if (!context) {
+          fail(new Error("Браузер не смог подготовить выбранную область фото."));
+          return;
+        }
+        context.fillStyle = "#fff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(
+          image,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          0,
+          0,
+          canvas.width,
+          canvas.height
+        );
+        finish(canvas.toDataURL("image/jpeg", 0.92));
+      });
+      backdrop.querySelector("[data-action='close-student-photo-editor']")?.focus({ preventScroll: true });
+    });
   }
 
   async function handleStudentPhoto(event) {
@@ -16762,8 +23611,10 @@ MAX - https://bizvmax.ru/zifra_plus
       const urlInput = document.getElementById("studentPhotoUrl");
       const preview = document.getElementById("studentPhotoPreview");
       try {
+        const croppedPhoto = await openStudentPhotoCropEditor(reader.result, { fileName: file.name });
+        if (!croppedPhoto) return;
         preview?.classList.add("is-loading");
-        const uploaded = await uploadStoredPhoto(reader.result, pathInput?.value || "", {
+        const uploaded = await uploadStoredPhoto(croppedPhoto, pathInput?.value || "", {
           studentName,
           name: studentName
         });
@@ -16776,9 +23627,9 @@ MAX - https://bizvmax.ru/zifra_plus
           preview.querySelector(":scope > span")?.remove();
           const image = preview.querySelector("img");
           if (image) {
-            image.src = uploaded.photoUrl;
+            image.src = getPhotoPreviewCacheBustedUrl(uploaded.photoUrl);
           } else {
-            preview.insertAdjacentHTML("afterbegin", `<img src="${escapeAttr(uploaded.photoUrl)}" alt="Фото слушателя">`);
+            preview.insertAdjacentHTML("afterbegin", `<img src="${escapeAttr(getPhotoPreviewCacheBustedUrl(uploaded.photoUrl))}" alt="Фото слушателя">`);
           }
         }
       } catch (error) {
@@ -16789,7 +23640,160 @@ MAX - https://bizvmax.ru/zifra_plus
         event.target.value = "";
       }
     };
+    reader.addEventListener("error", () => {
+      alert("Не удалось прочитать выбранное изображение.");
+      event.target.value = "";
+    }, { once: true });
     reader.readAsDataURL(file);
+  }
+
+  async function handleContractPhoto(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      alert("Выберите файл изображения.");
+      event.target.value = "";
+      return;
+    }
+    const employeeName = String(document.querySelector("#recordForm[data-config='contracts'] [name='name']")?.value || "").trim();
+    if (!employeeName) {
+      alert("Сначала укажите ФИО сотрудника.");
+      event.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const pathInput = document.getElementById("contractPhotoPath");
+      const preview = document.getElementById("contractPhotoPreview");
+      try {
+        const croppedPhoto = await openStudentPhotoCropEditor(reader.result, {
+          fileName: file.name,
+          personLabel: "сотрудника"
+        });
+        if (!croppedPhoto) return;
+        preview?.classList.add("is-loading");
+        const uploaded = await uploadStoredPhoto(croppedPhoto, pathInput?.value || "", {
+          entityType: "contract",
+          employeeName,
+          contractName: employeeName,
+          name: employeeName
+        });
+        if (pathInput) {
+          pathInput.value = uploaded.photoPath;
+          pathInput.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        if (preview) {
+          preview.classList.add("has-photo");
+          preview.querySelector(":scope > span")?.remove();
+          const image = preview.querySelector("img");
+          if (image) {
+            image.src = getPhotoPreviewCacheBustedUrl(uploaded.photoUrl);
+          } else {
+            preview.insertAdjacentHTML("afterbegin", `<img src="${escapeAttr(getPhotoPreviewCacheBustedUrl(uploaded.photoUrl))}" alt="Фото сотрудника">`);
+          }
+        }
+      } catch (error) {
+        console.warn("Не удалось сохранить фото сотрудника", error);
+        alert(`Не удалось сохранить фото сотрудника: ${error.message}`);
+      } finally {
+        preview?.classList.remove("is-loading");
+        event.target.value = "";
+      }
+    };
+    reader.addEventListener("error", () => {
+      alert("Не удалось прочитать выбранное изображение.");
+      event.target.value = "";
+    }, { once: true });
+    reader.readAsDataURL(file);
+  }
+
+  async function loadStoredPhotoDataUrl(sourceUrl) {
+    const source = String(sourceUrl || "").trim();
+    if (!source) throw new Error("Ссылка на загруженное фото отсутствует.");
+    if (/^data:image\//i.test(source)) return source;
+    const response = await fetch(source, { cache: "no-store" });
+    if (!response.ok) throw new Error(`не удалось загрузить исходное фото (${response.status})`);
+    const blob = await response.blob();
+    if (!String(blob.type || "").startsWith("image/")) {
+      throw new Error("загруженный файл не является изображением");
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(String(reader.result || "")), { once: true });
+      reader.addEventListener("error", () => reject(reader.error || new Error("не удалось прочитать фото")), { once: true });
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function getPhotoPreviewCacheBustedUrl(value) {
+    const source = String(value || "").trim();
+    if (!source || source.startsWith("data:")) return source;
+    try {
+      const url = new URL(source, window.location.href);
+      url.searchParams.set("photoUpdated", String(Date.now()));
+      return url.toString();
+    } catch {
+      return source;
+    }
+  }
+
+  async function recropStoredPersonPhoto(entityType, button = null) {
+    const isContract = entityType === "contract";
+    const preview = document.getElementById(isContract ? "contractPhotoPreview" : "studentPhotoPreview");
+    const image = preview?.querySelector("img");
+    const pathInput = document.getElementById(isContract ? "contractPhotoPath" : "studentPhotoPath");
+    const urlInput = isContract ? null : document.getElementById("studentPhotoUrl");
+    const hidden = isContract ? null : document.getElementById("studentPhotoData");
+    const nameSelector = isContract
+      ? "#recordForm[data-config='contracts'] [name='name']"
+      : "#recordForm[data-config='students'] [name='name']";
+    const personName = String(document.querySelector(nameSelector)?.value || "").trim();
+    if (!image?.src || !pathInput?.value) {
+      alert(`Сначала загрузите фото ${isContract ? "сотрудника" : "слушателя"}.`);
+      return;
+    }
+    const wasDisabled = Boolean(button?.disabled);
+    if (button) {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+    }
+    try {
+      const sourceDataUrl = await loadStoredPhotoDataUrl(image.currentSrc || image.src);
+      const croppedPhoto = await openStudentPhotoCropEditor(sourceDataUrl, {
+        fileName: `Загруженное фото${personName ? ` · ${personName}` : ""}`,
+        personLabel: isContract ? "сотрудника" : "слушателя"
+      });
+      if (!croppedPhoto) return;
+      preview.classList.add("is-loading");
+      const uploaded = await uploadStoredPhoto(croppedPhoto, pathInput.value, isContract ? {
+        entityType: "contract",
+        employeeName: personName,
+        contractName: personName,
+        name: personName
+      } : {
+        studentName: personName,
+        name: personName
+      });
+      pathInput.value = uploaded.photoPath;
+      pathInput.dispatchEvent(new Event("input", { bubbles: true }));
+      if (isContract) {
+        image.src = getPhotoPreviewCacheBustedUrl(uploaded.photoUrl);
+      } else {
+        if (hidden) hidden.value = "";
+        if (urlInput) urlInput.value = uploaded.photoUrl;
+        syncStudentPhotoPathUi(uploaded.photoPath, false);
+        image.src = getPhotoPreviewCacheBustedUrl(uploaded.photoUrl);
+      }
+    } catch (error) {
+      console.warn("Не удалось повторно кадрировать сохранённое фото", error);
+      alert(`Не удалось кадрировать загруженное фото: ${error.message}`);
+    } finally {
+      preview?.classList.remove("is-loading");
+      if (button?.isConnected) {
+        button.disabled = wasDisabled;
+        button.removeAttribute("aria-busy");
+      }
+    }
   }
 
   function photoServerOrigin() {
@@ -16855,7 +23859,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!/\.(png|jpe?g|webp|gif)$/i.test(source)) return false;
     return /^[a-z]:[\\/]/i.test(source)
       || /^\[-1\][\\/]+/u.test(source)
-      || /^[\\/]*(?:АИС Допобразование[\\/]+)?Слушатели[\\/]/iu.test(source);
+      || /^[\\/]*(?:АИС Допобразование[\\/]+)?(?:Слушатели|Сотрудники)[\\/]/iu.test(source);
   }
 
   function studentSourcePhotoUrl(value) {
@@ -16877,8 +23881,9 @@ MAX - https://bizvmax.ru/zifra_plus
     event.preventDefault();
     const link = event.currentTarget;
     const folder = String(link.dataset.studentDocumentsFolder || "").trim();
+    const personLabel = String(link.dataset.personLabel || "слушателя").trim();
     if (!folder) {
-      alert("Не удалось определить папку документов слушателя.");
+      alert(`Не удалось определить папку документов ${personLabel}.`);
       return;
     }
     const source = getStudentDocumentsSource(Boolean(event.shiftKey));
@@ -16908,7 +23913,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       await openStudentWebDavDocumentsManager(folder, studentName);
     } catch (error) {
-      alert(`Не удалось открыть документы слушателя: ${error.message}`);
+      alert(`Не удалось открыть документы ${personLabel}: ${error.message}`);
     } finally {
       link.removeAttribute("aria-busy");
     }
@@ -16921,6 +23926,55 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     if (downloadFile) params.set("download", "1");
     return photoApiUrl(`/api/students/webdav-documents/file?${params.toString()}`);
+  }
+
+  function getStudentWebDavDocumentPreviewUrl(folder, relativePath) {
+    const params = new URLSearchParams({
+      folder: String(folder || ""),
+      path: String(relativePath || "")
+    });
+    return photoApiUrl(`/api/students/webdav-documents/preview?${params.toString()}`);
+  }
+
+  function getStudentWebDavEntryIconKind(entry) {
+    if (entry?.isDirectory) return "folder";
+    if (entry?.iconKind) return entry.iconKind;
+    const extension = String(entry?.name || "").toLowerCase().match(/\.[^.]+$/)?.[0] || "";
+    if ([".bmp", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"].includes(extension)) return "image";
+    if (extension === ".pdf") return "pdf";
+    if ([".doc", ".docm", ".docx", ".odt", ".rtf"].includes(extension)) return "word";
+    if ([".ods", ".xls", ".xlsb", ".xlsm", ".xlsx"].includes(extension)) return "spreadsheet";
+    if ([".ppt", ".pptx"].includes(extension)) return "presentation";
+    if ([".zip", ".7z", ".rar"].includes(extension)) return "archive";
+    if ([".csv", ".eml", ".htm", ".html", ".ini", ".json", ".log", ".md", ".txt", ".tsv", ".xml", ".yaml", ".yml"].includes(extension)) return "text";
+    return "file";
+  }
+
+  function renderStudentWebDavEntryIcon(entry) {
+    const kind = getStudentWebDavEntryIconKind(entry);
+    if (kind === "folder") {
+      return `
+        <span class="student-webdav-browser-entry-icon is-folder" aria-hidden="true">
+          <svg viewBox="0 0 32 32" focusable="false"><path class="folder-back" d="M2.5 8.5h10l2.7 3H29v15H2.5z"></path><path class="folder-front" d="M2.5 12h27l-2.6 14.5H4.4z"></path></svg>
+        </span>
+      `;
+    }
+    const badge = ({
+      image: "IMG",
+      pdf: "PDF",
+      word: "W",
+      spreadsheet: "X",
+      presentation: "P",
+      archive: "ZIP",
+      text: "TXT",
+      file: ""
+    })[kind] || "";
+    return `
+      <span class="student-webdav-browser-entry-icon is-file-icon is-${escapeAttr(kind)}" aria-hidden="true">
+        <svg viewBox="0 0 32 32" focusable="false"><path class="file-page" d="M6 2.5h13l7 7v20H6z"></path><path class="file-fold" d="M19 2.5v7h7"></path></svg>
+        ${badge ? `<b>${escapeHtml(badge)}</b>` : ""}
+      </span>
+    `;
   }
 
   function getStudentWebDavParentPath(value) {
@@ -16944,6 +23998,13 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function openStudentWebDavDocumentsManager(folder, studentName = "", options = {}) {
     document.querySelector("[data-student-webdav-browser]")?.remove();
+    const normalizedFolder = String(folder || "").trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+    const documentsFolderMatch = /(?:^|\/)Документы$/iu.test(normalizedFolder);
+    const browserRootFolder = documentsFolderMatch
+      ? normalizedFolder.replace(/\/Документы$/iu, "")
+      : normalizedFolder;
+    const initialPath = documentsFolderMatch ? "Документы" : "";
+    const rootLabel = String(studentName || "Папка карточки").trim() || "Папка карточки";
     const backdrop = document.createElement("div");
     backdrop.className = "student-webdav-browser-backdrop";
     backdrop.dataset.studentWebdavBrowser = "";
@@ -16989,6 +24050,13 @@ MAX - https://bizvmax.ru/zifra_plus
     let currentPath = "";
     let currentEntries = [];
     let loading = false;
+    let selectedEntryPath = "";
+    let previewRequestToken = 0;
+    let previewScale = 1;
+    let previewPanX = 0;
+    let previewPanY = 0;
+    let previewRotation = 0;
+    let previewFitMode = true;
 
     const close = () => backdrop.remove();
     backdrop.closeStudentWebDavBrowser = close;
@@ -17006,7 +24074,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
     const renderPath = () => {
       const parts = currentPath.split("/").filter(Boolean);
-      const crumbs = [{ label: "Документы", path: "" }];
+      const crumbs = [{ label: rootLabel, path: "" }];
       parts.forEach((part, index) => crumbs.push({
         label: part,
         path: parts.slice(0, index + 1).join("/")
@@ -17024,7 +24092,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const downloadEntry = async (entry) => {
       setStatus(`Скачивание «${entry.name}»...`);
       try {
-        const response = await fetch(getStudentWebDavDocumentFileUrl(folder, entry.path, true));
+        const response = await fetch(getStudentWebDavDocumentFileUrl(browserRootFolder, entry.path, true));
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
           throw new Error(payload.error || "Не удалось скачать файл.");
@@ -17036,32 +24104,315 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     };
 
-    const showPreview = (entry) => {
+    const getPreviewKind = (entry) => {
+      if (entry?.previewKind) return entry.previewKind;
+      const iconKind = getStudentWebDavEntryIconKind(entry);
+      if (iconKind === "image") return "image";
+      if (iconKind === "pdf") return "pdf";
+      if (iconKind === "word") return "document";
+      if (iconKind === "spreadsheet") return "spreadsheet";
+      if (iconKind === "presentation") return "presentation";
+      if (iconKind === "text") return "text";
+      return "";
+    };
+
+    const markSelectedEntry = () => {
+      list.querySelectorAll("[data-webdav-browser-entry]").forEach((button) => {
+        button.classList.toggle("is-selected", button.dataset.webdavBrowserEntry === selectedEntryPath);
+      });
+    };
+
+    async function showPreview(entry) {
       if (!entry || entry.isDirectory) return;
-      const fileUrl = getStudentWebDavDocumentFileUrl(folder, entry.path);
+      selectedEntryPath = entry.path;
+      markSelectedEntry();
+      const requestToken = ++previewRequestToken;
+      const fileUrl = getStudentWebDavDocumentFileUrl(browserRootFolder, entry.path);
+      const previewKind = getPreviewKind(entry);
       const modified = formatStudentWebDavModifiedAt(entry.modifiedAt);
-      let content = '<div class="student-webdav-browser-preview-empty">Предпросмотр для этого формата недоступен</div>';
-      if (String(entry.contentType || "").startsWith("image/")) {
-        content = `<img src="${escapeAttr(fileUrl)}" alt="${escapeAttr(entry.name)}">`;
-      } else if (entry.previewable) {
-        content = `<iframe sandbox src="${escapeAttr(fileUrl)}" title="${escapeAttr(entry.name)}"></iframe>`;
+      const files = currentEntries.filter((item) => !item.isDirectory);
+      const fileIndex = files.findIndex((item) => item.path === entry.path);
+      const canPreview = Boolean(previewKind);
+      previewScale = 1;
+      previewPanX = 0;
+      previewPanY = 0;
+      previewRotation = 0;
+      previewFitMode = true;
+
+      let content = '<div class="student-webdav-browser-preview-empty">Предпросмотр для этого формата недоступен. Файл можно скачать.</div>';
+      if (previewKind === "image") {
+        content = `
+          <div class="student-webdav-browser-image-stage is-loading" data-student-webdav-image-stage data-student-webdav-media-stage aria-busy="true">
+            <div class="student-webdav-browser-media-loading" data-student-webdav-media-loading>
+              <span class="loading-spinner" aria-hidden="true"></span>
+              <span>Загрузка изображения...</span>
+            </div>
+            <img data-student-webdav-preview-image src="${escapeAttr(fileUrl)}" alt="${escapeAttr(entry.name)}" draggable="false">
+          </div>
+        `;
+      } else if (previewKind === "pdf") {
+        const pdfSource = `${fileUrl}#toolbar=1&navpanes=0&view=FitH`;
+        content = `
+          <div class="student-webdav-browser-pdf-stage is-loading" data-student-webdav-pdf-stage data-student-webdav-media-stage aria-busy="true">
+            <div class="student-webdav-browser-media-loading" data-student-webdav-media-loading>
+              <span class="loading-spinner" aria-hidden="true"></span>
+              <span>Загрузка PDF...</span>
+            </div>
+            <iframe data-student-webdav-preview-pdf data-preview-source="${escapeAttr(pdfSource)}" src="${escapeAttr(pdfSource)}" title="${escapeAttr(entry.name)}"></iframe>
+          </div>
+        `;
+      } else if (canPreview) {
+        content = '<div class="student-webdav-browser-preview-loading" data-student-webdav-preview-loading><span class="loading-spinner" aria-hidden="true"></span><span>Извлечение текста документа...</span></div>';
       }
+
       preview.innerHTML = `
         <div class="student-webdav-browser-preview-head">
-          <div>
+          <div class="student-webdav-browser-preview-title">
             <strong>${escapeHtml(entry.name)}</strong>
             <small>${escapeHtml([formatBytes(entry.size), modified].filter(Boolean).join(" · "))}</small>
           </div>
-          <div class="student-webdav-browser-preview-actions">
-            ${entry.previewable ? `<a class="ghost-button" href="${escapeAttr(fileUrl)}" target="_blank" rel="noopener noreferrer">Открыть</a>` : ""}
+          <div class="student-webdav-browser-preview-commandbar">
+            <div class="student-webdav-browser-preview-navigation" aria-label="Навигация по файлам">
+              <button class="icon-button" type="button" data-action="student-webdav-preview-previous" title="Предыдущий файл" aria-label="Предыдущий файл" ${fileIndex <= 0 ? "disabled" : ""}>‹</button>
+              <span>${fileIndex >= 0 ? `${fileIndex + 1} из ${files.length}` : ""}</span>
+              <button class="icon-button" type="button" data-action="student-webdav-preview-next" title="Следующий файл" aria-label="Следующий файл" ${fileIndex < 0 || fileIndex >= files.length - 1 ? "disabled" : ""}>›</button>
+            </div>
+            ${canPreview ? `
+              <div class="student-webdav-browser-preview-tools" aria-label="Масштаб">
+                <button class="icon-button" type="button" data-action="student-webdav-preview-zoom-out" title="Уменьшить" aria-label="Уменьшить">−</button>
+                <output data-student-webdav-preview-scale>100%</output>
+                <button class="icon-button" type="button" data-action="student-webdav-preview-zoom-in" title="Увеличить" aria-label="Увеличить">+</button>
+                <button class="ghost-button" type="button" data-action="student-webdav-preview-fit" title="Вписать документ в окно">Вписать</button>
+                ${["image", "pdf"].includes(previewKind) ? `
+                  <button class="icon-button" type="button" data-action="student-webdav-preview-rotate-left" title="Повернуть против часовой стрелки" aria-label="Повернуть против часовой стрелки">↶</button>
+                  <button class="icon-button" type="button" data-action="student-webdav-preview-rotate-right" title="Повернуть по часовой стрелке" aria-label="Повернуть по часовой стрелке">↷</button>
+                ` : ""}
+              </div>
+            ` : ""}
+            <button class="icon-button" type="button" data-action="student-webdav-preview-expand" title="Развернуть предпросмотр" aria-label="Развернуть предпросмотр">⛶</button>
+            ${canPreview ? `<a class="ghost-button" href="${escapeAttr(fileUrl)}" target="_blank" rel="noopener noreferrer">Открыть</a>` : ""}
             <button class="primary-button" type="button" data-action="student-webdav-download">Скачать</button>
           </div>
         </div>
-        <div class="student-webdav-browser-preview-body">${content}</div>
+        <div class="student-webdav-browser-preview-body is-${escapeAttr(previewKind || "unsupported")}" data-student-webdav-preview-body>${content}</div>
       `;
+
+      const updateExpandButton = () => {
+        const button = preview.querySelector("[data-action='student-webdav-preview-expand']");
+        if (!button) return;
+        const expanded = dropzone.classList.contains("is-preview-expanded");
+        button.textContent = expanded ? "🗗" : "⛶";
+        button.title = expanded ? "Показать список файлов" : "Развернуть предпросмотр";
+        button.setAttribute("aria-label", button.title);
+      };
+
+      const mediaStage = preview.querySelector("[data-student-webdav-media-stage]");
+      const mediaLoading = preview.querySelector("[data-student-webdav-media-loading]");
+      let mediaLoadingTimeout = 0;
+      const setMediaLoading = (message) => {
+        if (!mediaStage || !mediaLoading) return;
+        mediaStage.classList.add("is-loading");
+        mediaStage.classList.remove("is-load-error");
+        mediaStage.setAttribute("aria-busy", "true");
+        mediaLoading.hidden = false;
+        mediaLoading.classList.remove("is-error");
+        const label = mediaLoading.querySelector("span:last-child");
+        if (label) label.textContent = message;
+        if (mediaLoadingTimeout) window.clearTimeout(mediaLoadingTimeout);
+        mediaLoadingTimeout = window.setTimeout(() => {
+          if (requestToken !== previewRequestToken || !mediaStage.classList.contains("is-loading")) return;
+          if (label) label.textContent = "Файл загружается дольше обычного...";
+        }, 10000);
+      };
+      const markMediaLoaded = () => {
+        if (!mediaStage || requestToken !== previewRequestToken) return;
+        if (mediaLoadingTimeout) window.clearTimeout(mediaLoadingTimeout);
+        mediaLoadingTimeout = 0;
+        mediaStage.classList.remove("is-loading", "is-load-error");
+        mediaStage.removeAttribute("aria-busy");
+        if (mediaLoading) mediaLoading.hidden = true;
+      };
+      const markMediaLoadError = (message) => {
+        if (!mediaStage || !mediaLoading || requestToken !== previewRequestToken) return;
+        if (mediaLoadingTimeout) window.clearTimeout(mediaLoadingTimeout);
+        mediaLoadingTimeout = 0;
+        mediaStage.classList.remove("is-loading");
+        mediaStage.classList.add("is-load-error");
+        mediaStage.removeAttribute("aria-busy");
+        mediaLoading.hidden = false;
+        mediaLoading.classList.add("is-error");
+        const spinner = mediaLoading.querySelector(".loading-spinner");
+        if (spinner) spinner.hidden = true;
+        const label = mediaLoading.querySelector("span:last-child");
+        if (label) label.textContent = message;
+      };
+
+      const applyPreviewScale = ({ fit = false } = {}) => {
+        const scaleOutput = preview.querySelector("[data-student-webdav-preview-scale]");
+        if (scaleOutput) scaleOutput.textContent = `${Math.round(previewScale * 100)}%`;
+        const image = preview.querySelector("[data-student-webdav-preview-image]");
+        if (image) {
+          image.style.transform = `translate(${previewPanX}px, ${previewPanY}px) scale(${previewScale}) rotate(${previewRotation}deg)`;
+        }
+        const text = preview.querySelector("[data-student-webdav-preview-text]");
+        if (text) text.style.fontSize = `${Math.round(13 * previewScale * 10) / 10}px`;
+        const pdf = preview.querySelector("[data-student-webdav-preview-pdf]");
+        if (pdf) {
+          const pdfStage = preview.querySelector("[data-student-webdav-pdf-stage]");
+          const normalizedRotation = ((previewRotation % 360) + 360) % 360;
+          const quarterTurn = normalizedRotation === 90 || normalizedRotation === 270;
+          if (pdfStage) {
+            pdf.style.width = quarterTurn ? `${Math.max(1, pdfStage.clientHeight)}px` : "100%";
+            pdf.style.height = quarterTurn ? `${Math.max(1, pdfStage.clientWidth)}px` : "100%";
+          }
+          pdf.style.transform = `rotate(${previewRotation}deg)`;
+          const fragment = fit ? "toolbar=1&navpanes=0&view=FitH" : `toolbar=1&navpanes=0&zoom=${Math.round(previewScale * 100)}`;
+          const nextSource = `${fileUrl}#${fragment}`;
+          if (pdf.dataset.previewSource !== nextSource) {
+            pdf.dataset.previewSource = nextSource;
+            setMediaLoading("Загрузка PDF...");
+            pdf.src = nextSource;
+          }
+        }
+      };
+
+      const changeScale = (delta) => {
+        const limits = previewKind === "image" ? [0.25, 6] : previewKind === "pdf" ? [0.5, 3] : [0.75, 2.5];
+        previewScale = clamp(previewScale + delta, limits[0], limits[1]);
+        previewFitMode = false;
+        applyPreviewScale();
+      };
+
+      const showSibling = (offset) => {
+        const nextEntry = files[fileIndex + offset];
+        if (nextEntry) showPreview(nextEntry);
+      };
+
+      preview.querySelector("[data-action='student-webdav-preview-previous']")
+        ?.addEventListener("click", () => showSibling(-1));
+      preview.querySelector("[data-action='student-webdav-preview-next']")
+        ?.addEventListener("click", () => showSibling(1));
+      preview.querySelector("[data-action='student-webdav-preview-zoom-out']")
+        ?.addEventListener("click", () => changeScale(previewKind === "image" ? -0.25 : -0.1));
+      preview.querySelector("[data-action='student-webdav-preview-zoom-in']")
+        ?.addEventListener("click", () => changeScale(previewKind === "image" ? 0.25 : 0.1));
+      preview.querySelector("[data-action='student-webdav-preview-fit']")
+        ?.addEventListener("click", () => {
+          previewScale = 1;
+          previewPanX = 0;
+          previewPanY = 0;
+          previewFitMode = true;
+          applyPreviewScale({ fit: true });
+        });
+      const rotatePreview = (delta) => {
+        previewRotation = (previewRotation + delta) % 360;
+        previewPanX = 0;
+        previewPanY = 0;
+        applyPreviewScale({ fit: previewFitMode });
+      };
+      preview.querySelector("[data-action='student-webdav-preview-rotate-left']")
+        ?.addEventListener("click", () => rotatePreview(-90));
+      preview.querySelector("[data-action='student-webdav-preview-rotate-right']")
+        ?.addEventListener("click", () => rotatePreview(90));
+      preview.querySelector("[data-action='student-webdav-preview-expand']")
+        ?.addEventListener("click", () => {
+          dropzone.classList.toggle("is-preview-expanded");
+          updateExpandButton();
+          window.requestAnimationFrame(() => applyPreviewScale({ fit: previewFitMode }));
+        });
       preview.querySelector("[data-action='student-webdav-download']")
         ?.addEventListener("click", () => downloadEntry(entry));
-    };
+      updateExpandButton();
+
+      const imageStage = preview.querySelector("[data-student-webdav-image-stage]");
+      const previewImage = preview.querySelector("[data-student-webdav-preview-image]");
+      if (previewImage) {
+        setMediaLoading("Загрузка изображения...");
+        previewImage.addEventListener("load", markMediaLoaded, { once: true });
+        previewImage.addEventListener("error", () => markMediaLoadError("Не удалось загрузить изображение."), { once: true });
+        if (previewImage.complete) {
+          window.queueMicrotask(() => (
+            previewImage.naturalWidth ? markMediaLoaded() : markMediaLoadError("Не удалось загрузить изображение.")
+          ));
+        }
+      }
+      const previewPdf = preview.querySelector("[data-student-webdav-preview-pdf]");
+      if (previewPdf) {
+        setMediaLoading("Загрузка PDF...");
+        previewPdf.addEventListener("load", markMediaLoaded);
+        previewPdf.addEventListener("error", () => markMediaLoadError("Не удалось загрузить PDF."));
+      }
+      if (imageStage) {
+        let dragState = null;
+        imageStage.addEventListener("wheel", (event) => {
+          event.preventDefault();
+          const previousScale = previewScale;
+          const nextScale = clamp(previousScale * (event.deltaY < 0 ? 1.15 : 0.87), 0.25, 6);
+          const rect = imageStage.getBoundingClientRect();
+          const offsetX = event.clientX - rect.left - rect.width / 2;
+          const offsetY = event.clientY - rect.top - rect.height / 2;
+          const ratio = nextScale / previousScale;
+          previewPanX = offsetX - (offsetX - previewPanX) * ratio;
+          previewPanY = offsetY - (offsetY - previewPanY) * ratio;
+          previewScale = nextScale;
+          previewFitMode = false;
+          applyPreviewScale();
+        }, { passive: false });
+        imageStage.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0) return;
+          dragState = { x: event.clientX, y: event.clientY, panX: previewPanX, panY: previewPanY };
+          imageStage.setPointerCapture?.(event.pointerId);
+          imageStage.classList.add("is-panning");
+        });
+        imageStage.addEventListener("pointermove", (event) => {
+          if (!dragState) return;
+          previewPanX = dragState.panX + event.clientX - dragState.x;
+          previewPanY = dragState.panY + event.clientY - dragState.y;
+          applyPreviewScale();
+        });
+        const stopPanning = (event) => {
+          if (!dragState) return;
+          dragState = null;
+          imageStage.releasePointerCapture?.(event.pointerId);
+          imageStage.classList.remove("is-panning");
+        };
+        imageStage.addEventListener("pointerup", stopPanning);
+        imageStage.addEventListener("pointercancel", stopPanning);
+        imageStage.addEventListener("dblclick", () => {
+          previewScale = 1;
+          previewPanX = 0;
+          previewPanY = 0;
+          previewFitMode = true;
+          applyPreviewScale({ fit: true });
+        });
+      }
+
+      if (canPreview && !["image", "pdf"].includes(previewKind)) {
+        try {
+          const response = await fetch(getStudentWebDavDocumentPreviewUrl(browserRootFolder, entry.path));
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.error || "Не удалось извлечь текст документа.");
+          if (requestToken !== previewRequestToken || selectedEntryPath !== entry.path) return;
+          const body = preview.querySelector("[data-student-webdav-preview-body]");
+          if (!body) return;
+          const notes = [
+            payload.limitedExtraction ? "Для старого формата показан извлечённый текст. Сложное оформление может не сохраниться." : "",
+            payload.truncated ? "Предпросмотр сокращён из-за большого объёма файла." : ""
+          ].filter(Boolean);
+          body.innerHTML = `
+            ${notes.length ? `<div class="student-webdav-browser-preview-note">${notes.map(escapeHtml).join(" ")}</div>` : ""}
+            <pre class="student-webdav-browser-preview-text" data-student-webdav-preview-text>${escapeHtml(payload.text || "В документе не найден текстовый слой.")}</pre>
+          `;
+          applyPreviewScale();
+        } catch (error) {
+          if (requestToken !== previewRequestToken || selectedEntryPath !== entry.path) return;
+          const body = preview.querySelector("[data-student-webdav-preview-body]");
+          if (body) body.innerHTML = `<div class="student-webdav-browser-preview-empty is-error">${escapeHtml(error.message)}</div>`;
+        }
+      } else {
+        applyPreviewScale({ fit: previewFitMode });
+      }
+    }
 
     const renderEntries = () => {
       if (!currentEntries.length) {
@@ -17070,12 +24421,12 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       list.innerHTML = currentEntries.map((entry) => `
         <button
-          class="student-webdav-browser-entry ${entry.isDirectory ? "is-directory" : "is-file"}"
+          class="student-webdav-browser-entry ${entry.isDirectory ? "is-directory" : "is-file"} ${entry.path === selectedEntryPath ? "is-selected" : ""}"
           type="button"
           data-webdav-browser-entry="${escapeAttr(entry.path)}"
           ${entry.isDirectory ? "" : 'draggable="true"'}
         >
-          <span class="student-webdav-browser-entry-icon" aria-hidden="true">${entry.isDirectory ? "▰" : "▤"}</span>
+          ${renderStudentWebDavEntryIcon(entry)}
           <span class="student-webdav-browser-entry-name">${escapeHtml(entry.name)}</span>
           <span class="student-webdav-browser-entry-meta">${entry.isDirectory ? "Папка" : escapeHtml(formatBytes(entry.size))}</span>
           <span class="student-webdav-browser-entry-date">${escapeHtml(formatStudentWebDavModifiedAt(entry.modifiedAt))}</span>
@@ -17085,15 +24436,17 @@ MAX - https://bizvmax.ru/zifra_plus
         const entry = currentEntries.find((item) => item.path === button.dataset.webdavBrowserEntry);
         if (!entry) return;
         button.addEventListener("click", () => {
-          list.querySelectorAll(".is-selected").forEach((item) => item.classList.remove("is-selected"));
-          button.classList.add("is-selected");
           if (entry.isDirectory) loadDirectory(entry.path);
           else showPreview(entry);
         });
         if (!entry.isDirectory) {
-          button.addEventListener("dblclick", () => downloadEntry(entry));
+          button.addEventListener("dblclick", () => {
+            if (!dropzone.classList.contains("is-preview-expanded")) {
+              preview.querySelector("[data-action='student-webdav-preview-expand']")?.click();
+            }
+          });
           button.addEventListener("dragstart", (event) => {
-            const url = getStudentWebDavDocumentFileUrl(folder, entry.path, true);
+            const url = getStudentWebDavDocumentFileUrl(browserRootFolder, entry.path, true);
             event.dataTransfer?.setData("DownloadURL", `${entry.contentType || "application/octet-stream"}:${entry.name}:${url}`);
             event.dataTransfer?.setData("text/uri-list", url);
           });
@@ -17110,12 +24463,14 @@ MAX - https://bizvmax.ru/zifra_plus
         const response = await fetch(photoApiUrl("/api/students/webdav-documents/list"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ folder, path: nextPath })
+          body: JSON.stringify({ folder: browserRootFolder, path: nextPath })
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || "Не удалось прочитать папку WebDAV.");
         currentPath = String(payload.path || "");
         currentEntries = Array.isArray(payload.entries) ? payload.entries : [];
+        selectedEntryPath = "";
+        previewRequestToken += 1;
         renderPath();
         renderEntries();
         preview.innerHTML = '<div class="student-webdav-browser-preview-empty">Выберите файл для просмотра</div>';
@@ -17152,7 +24507,7 @@ MAX - https://bizvmax.ru/zifra_plus
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              folder,
+              folder: browserRootFolder,
               path: currentPath,
               fileName: file.name,
               contentType: file.type,
@@ -17189,8 +24544,22 @@ MAX - https://bizvmax.ru/zifra_plus
       dropzone.classList.remove("is-dragover");
       if (type === "drop" && event.dataTransfer?.files?.length) uploadFiles(event.dataTransfer.files);
     }));
+    dialog.addEventListener("keydown", (event) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (["INPUT", "SELECT", "TEXTAREA"].includes(event.target?.tagName)) return;
+      const files = currentEntries.filter((entry) => !entry.isDirectory);
+      const selectedIndex = files.findIndex((entry) => entry.path === selectedEntryPath);
+      if (event.key === "ArrowLeft" && selectedIndex > 0) {
+        event.preventDefault();
+        showPreview(files[selectedIndex - 1]);
+      }
+      if (event.key === "ArrowRight" && selectedIndex >= 0 && selectedIndex < files.length - 1) {
+        event.preventDefault();
+        showPreview(files[selectedIndex + 1]);
+      }
+    });
 
-    await loadDirectory("");
+    await loadDirectory(initialPath);
     backdrop.querySelector("[data-action='close-student-webdav-browser']")?.focus();
   }
 
@@ -17405,6 +24774,78 @@ MAX - https://bizvmax.ru/zifra_plus
         "educationQualification",
         "educationDocumentSurname"
       ]
+    },
+    {
+      id: "application",
+      label: "Заявление и обучение",
+      keys: [
+        "program",
+        "studyForm",
+        "hours",
+        "applicationDate",
+        "startDate",
+        "endDate",
+        "contractNo",
+        "contractDate",
+        "mailingAddress",
+        "phone",
+        "email",
+        "workPlace",
+        "position"
+      ]
+    }
+  ];
+  const contractDocumentRecognitionFieldKeyMap = Object.freeze({
+    name: "name",
+    birthDate: "birthDate",
+    citizenship: "citizenship",
+    passportType: "identityDocumentType",
+    passportNumber: "identityDocument",
+    passportDate: "identityIssueDate",
+    passportCode: "identityDepartmentCode",
+    passportIssuer: "identityIssuer",
+    registrationAddress: "address",
+    inn: "inn",
+    snils: "snils",
+    phone: "phone",
+    email: "email",
+    position: "position",
+    contractNo: "contractNo",
+    contractDate: "contractDate",
+    startDate: "startDate",
+    endDate: "endDate"
+  });
+
+  const contractDocumentRecognitionFieldGroups = [
+    {
+      id: "passport",
+      label: "Паспортные данные",
+      keys: [
+        "name",
+        "birthDate",
+        "citizenship",
+        "identityDocumentType",
+        "identityDocument",
+        "identityIssueDate",
+        "identityDepartmentCode",
+        "identityIssuer",
+        "address"
+      ]
+    },
+    {
+      id: "identity",
+      label: "ИНН и СНИЛС",
+      keys: ["inn", "snils"]
+    },
+    {
+      id: "contract",
+      label: "Договор",
+      keys: ["contractNo", "contractDate", "startDate", "endDate"]
+    },
+    {
+      id: "contacts",
+      label: "Контактные данные",
+      keys: ["phone", "email", "position"]
     }
   ];
 
@@ -17412,7 +24853,9 @@ MAX - https://bizvmax.ru/zifra_plus
     passport: "Паспорт",
     snils: "СНИЛС",
     inn: "ИНН",
-    education: "Документ об образовании"
+    education: "Документ об образовании",
+    application: "Заявление",
+    contract: "Договор"
   };
 
   function formatStudentDocumentRecognitionDuration(value) {
@@ -17535,6 +24978,36 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function normalizeContractDocumentRecognitionResult(value, { keepPreviews = false } = {}) {
+    const normalized = normalizeStudentDocumentRecognitionResult(value, { keepPreviews });
+    if (!normalized) return null;
+    const supportedKeys = new Set(contractDocumentRecognitionFieldGroups.flatMap((group) => group.keys));
+    const seenKeys = new Set();
+    const fields = normalized.fields.flatMap((field) => {
+      const sourceKey = String(field?.key || "");
+      const key = contractDocumentRecognitionFieldKeyMap[sourceKey]
+        || (supportedKeys.has(sourceKey) ? sourceKey : "");
+      if (!key || seenKeys.has(key)) return [];
+      seenKeys.add(key);
+      return [{
+        ...field,
+        key,
+        label: getContractField(key)?.label || field.label || key
+      }];
+    });
+    return { ...normalized, fields };
+  }
+
+  function isContractDocumentRecognitionDialog(dialog) {
+    return dialog?.dataset?.documentRecognitionEntity === "contract";
+  }
+
+  function getDocumentRecognitionFieldGroups(dialog) {
+    return isContractDocumentRecognitionDialog(dialog)
+      ? contractDocumentRecognitionFieldGroups
+      : studentDocumentRecognitionFieldGroups;
+  }
+
   function storeStudentDocumentRecognitionResult(payload) {
     const result = normalizeStudentDocumentRecognitionResult({
       ...payload,
@@ -17583,6 +25056,54 @@ MAX - https://bizvmax.ru/zifra_plus
     return result;
   }
 
+  function storeContractDocumentRecognitionResult(payload) {
+    const result = normalizeContractDocumentRecognitionResult({
+      ...payload,
+      recognizedAt: payload?.recognizedAt || new Date().toISOString()
+    }, { keepPreviews: true });
+    if (!result) throw new Error("Сервер вернул некорректный результат распознавания.");
+    const storedResult = normalizeContractDocumentRecognitionResult(result);
+    const currentDraft = collectContractFormDraft();
+    state.modal.draft = {
+      ...currentDraft,
+      documentRecognitionResult: storedResult
+    };
+    const contractId = String(state.modal?.id || "");
+    state.contractDocumentRecognitionPreviewCache = {
+      contractId,
+      recognizedAt: result.recognizedAt,
+      result
+    };
+    const index = (state.data.collections.contracts || [])
+      .findIndex((contract) => String(contract.id || "") === contractId);
+    if (index >= 0) {
+      state.data.collections.contracts[index] = {
+        ...state.data.collections.contracts[index],
+        documentRecognitionResult: storedResult
+      };
+      addAudit(
+        "Распознаны документы сотрудника",
+        "Реестр договоров",
+        `${result.documentCount} документов; время ${formatStudentDocumentRecognitionDuration(result.durationMs)}`,
+        {
+          entityType: "contracts",
+          entityId: contractId,
+          entityLabel: currentDraft.name || contractId,
+          source: "ocr"
+        }
+      );
+      persist();
+    }
+    const resultButton = document.querySelector(
+      "[data-action='show-contract-document-recognition-result']"
+    );
+    if (resultButton) {
+      resultButton.disabled = false;
+      resultButton.title = `Показать результат распознавания от ${formatDateTimeRu(result.recognizedAt)}`;
+    }
+    return result;
+  }
+
   function showStoredStudentDocumentRecognitionResult() {
     const currentRecord = collectStudentFormDraft();
     let result = normalizeStudentDocumentRecognitionResult(
@@ -17607,26 +25128,58 @@ MAX - https://bizvmax.ru/zifra_plus
     renderStudentDocumentRecognitionResults(dialog, result, currentRecord);
   }
 
+  function showStoredContractDocumentRecognitionResult() {
+    const currentRecord = collectContractFormDraft();
+    let result = normalizeContractDocumentRecognitionResult(
+      currentRecord.documentRecognitionResult
+    );
+    if (!result) {
+      alert("Сохранённый результат распознавания отсутствует.");
+      return;
+    }
+    const previewCache = state.contractDocumentRecognitionPreviewCache;
+    if (
+      previewCache
+      && String(previewCache.contractId || "") === String(state.modal?.id || "")
+      && String(previewCache.recognizedAt || "") === result.recognizedAt
+    ) {
+      result = normalizeContractDocumentRecognitionResult(
+        previewCache.result,
+        { keepPreviews: true }
+      ) || result;
+    }
+    const dialog = createStudentDocumentRecognitionDialog({ entityType: "contract" });
+    renderStudentDocumentRecognitionResults(dialog, result, currentRecord);
+  }
+
   function closeStudentDocumentRecognitionDialog() {
     const dialog = document.querySelector("[data-student-document-recognition-dialog]");
     if (!dialog) return false;
-    document.querySelector("[data-student-document-photo-cropper]")?.remove();
+    hideStudentDocumentRecognitionFieldMenu();
+    const regionSelector = document.querySelector("[data-student-document-photo-cropper]");
+    regionSelector?.closeStudentDocumentRegionSelector?.();
+    if (regionSelector?.isConnected) regionSelector.remove();
     dialog.closeStudentDocumentRecognitionDialog?.();
     return true;
   }
 
-  function createStudentDocumentRecognitionDialog() {
+  function createStudentDocumentRecognitionDialog(options = {}) {
     closeStudentDocumentRecognitionDialog();
+    const isContract = options.entityType === "contract";
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop student-document-recognition-backdrop";
     backdrop.dataset.studentDocumentRecognitionDialog = "";
+    backdrop.dataset.documentRecognitionEntity = isContract ? "contract" : "student";
     let closed = false;
     let timerId = 0;
     const timerStartedAt = performance.now();
     backdrop.closeStudentDocumentRecognitionDialog = () => {
       closed = true;
       if (timerId) window.clearInterval(timerId);
-      document.querySelector("[data-student-document-photo-cropper]")?.remove();
+      hideStudentDocumentRecognitionFieldMenu();
+      const regionSelector = document.querySelector("[data-student-document-photo-cropper]");
+      regionSelector?.closeStudentDocumentRegionSelector?.();
+      if (regionSelector?.isConnected) regionSelector.remove();
       backdrop.remove();
     };
     backdrop.stopStudentDocumentRecognitionTimer = () => {
@@ -17640,7 +25193,9 @@ MAX - https://bizvmax.ru/zifra_plus
         <header class="modal-head">
           <div>
             <h2>Распознавание документов</h2>
-            <p>Паспорт, ИНН, СНИЛС, документ об образовании и фото слушателя</p>
+            <p>${isContract
+              ? "Паспорт, ИНН, СНИЛС и фото сотрудника"
+              : "Паспорт, ИНН, СНИЛС, документ об образовании и фото слушателя"}</p>
           </div>
           <button class="icon-button" data-action="close-student-document-recognition" type="button" title="Закрыть" aria-label="Закрыть">×</button>
         </header>
@@ -17655,7 +25210,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="student-document-recognition-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <span data-ocr-progress-bar style="width:0%"></span>
           </div>
-          <p data-ocr-progress-detail>Определяется папка документов слушателя.</p>
+          <p data-ocr-progress-detail>Определяется папка документов ${isContract ? "сотрудника" : "слушателя"}.</p>
           <small>Распознавание выполняется локально. Документы не передаются во внешние облачные сервисы.</small>
         </div>
       </section>
@@ -17695,7 +25250,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (detail) {
       detail.textContent = total
         ? `Обработано файлов: ${processed} из ${total}`
-        : "Получение списка файлов JPG, PNG и PDF.";
+        : "Получение списка JPG, PNG, PDF и текстовых документов.";
     }
   }
 
@@ -17720,7 +25275,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function normalizeRecognitionComparisonValue(key, value) {
     const source = String(value || "").trim();
-    if (["inn", "snils", "passportNumber", "passportCode"].includes(key)) {
+    if (["inn", "snils", "passportNumber", "passportCode", "identityDocument", "identityDepartmentCode"].includes(key)) {
       return source.replace(/\D/g, "");
     }
     return source.replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
@@ -17748,7 +25303,11 @@ MAX - https://bizvmax.ru/zifra_plus
         ? '<span class="student-document-recognition-match">Совпадает</span>'
         : "";
     return `
-      <div class="student-document-recognition-field ${conflict ? "has-conflict" : ""}" data-ocr-recognition-field="${escapeAttr(key)}">
+      <div
+        class="student-document-recognition-field ${conflict ? "has-conflict" : ""}"
+        data-ocr-recognition-field="${escapeAttr(key)}"
+        data-ocr-field-source="${escapeAttr(field.sourceFile || "")}"
+      >
         <label class="student-document-recognition-field-select">
           <input type="checkbox" data-ocr-field-enabled ${selected ? "checked" : ""}>
           <span>${escapeHtml(field.label || key)}</span>
@@ -17787,14 +25346,19 @@ MAX - https://bizvmax.ru/zifra_plus
     return "Распознано лицо";
   }
 
-  function renderStudentDocumentPhotoCandidate(candidate, index, checked = false) {
+  function renderStudentDocumentPhotoCandidate(candidate, index, checked = false, options = {}) {
     const confidence = Math.round((Number(candidate.confidence) || 0) * 100);
     const source = candidate.sourceFile || "Документ";
+    const personLabel = options.personLabel || "слушателя";
     return `
-      <label class="student-document-photo-candidate">
+      <label
+        class="student-document-photo-candidate"
+        data-ocr-photo-candidate-index="${index}"
+        title="Правый щелчок: выбрать произвольную область в документе"
+      >
         <input type="radio" name="ocr-student-photo-candidate" value="${index}" ${checked ? "checked" : ""}>
         <span class="student-document-photo-candidate-image">
-          <img src="data:${escapeAttr(candidate.mimeType)};base64,${candidate.base64}" alt="Вариант фото слушателя">
+          <img src="data:${escapeAttr(candidate.mimeType)};base64,${candidate.base64}" alt="Вариант фото ${escapeAttr(personLabel)}">
         </span>
         <span class="student-document-photo-candidate-meta">
           <strong>${escapeHtml(getStudentDocumentPhotoCandidateMethodLabel(candidate.method))}</strong>
@@ -17804,12 +25368,14 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderStudentDocumentPhotoCandidates(candidates) {
+  function renderStudentDocumentPhotoCandidates(candidates, options = {}) {
+    const personLabel = options.personLabel || "слушателя";
+    const hasVisualFiles = options.hasVisualFiles !== false;
     return `
       <section class="student-document-recognition-group student-document-photo-group" data-ocr-photo-group>
         <div class="student-document-photo-group-head">
           <div>
-            <h3>Фото слушателя</h3>
+            <h3>Фото ${escapeHtml(personLabel)}</h3>
             <p>Выберите найденный портрет или выделите произвольную область в любом документе.</p>
           </div>
           <label class="student-document-photo-enable">
@@ -17818,32 +25384,59 @@ MAX - https://bizvmax.ru/zifra_plus
           </label>
         </div>
         <div class="student-document-photo-candidates" data-ocr-photo-candidates>
-          ${candidates.map((candidate, index) => renderStudentDocumentPhotoCandidate(candidate, index, index === 0)).join("")}
+          ${candidates.map((candidate, index) => renderStudentDocumentPhotoCandidate(candidate, index, index === 0, { personLabel })).join("")}
         </div>
         <p class="student-document-photo-empty" data-ocr-photo-empty ${candidates.length ? "hidden" : ""}>
-          Автоматически фото не найдено. Используйте кнопку «Выделить фото» у нужного файла.
+          ${hasVisualFiles
+            ? "Автоматически фото не найдено. Используйте кнопку «Выделить фото» у нужного файла."
+            : "В выбранных текстовых файлах нет изображения для фотографии."}
         </p>
       </section>
+      </div>
     `;
   }
 
-  function renderStudentDocumentRecognitionFiles(files) {
+  function isStudentRecognitionVisualFile(file) {
+    const contentType = String(file?.contentType || "").toLowerCase().split(";", 1)[0].trim();
+    if (contentType) {
+      return contentType.startsWith("image/") || contentType === "application/pdf";
+    }
+    return /\.(?:jpe?g|png|pdf)$/i.test(String(file?.fileName || file?.relativeName || ""));
+  }
+
+  function getStudentRecognitionExtractionLabel(value) {
+    const method = String(value || "").trim().toLowerCase();
+    if (method === "text-layer") return "прочитан текстовый слой";
+    if (method === "text") return "прочитан текстовый файл";
+    if (method === "mixed") return "текстовый слой + OCR";
+    return "OCR изображения";
+  }
+
+  function renderStudentDocumentRecognitionFiles(files, options = {}) {
     const rows = (files || []).map((file, fileIndex) => {
       const types = (file.documentTypes || [])
+        .filter((type) => options.includeEducation !== false || type !== "education")
         .map((type) => studentDocumentRecognitionTypeLabels[type] || type)
         .filter(Boolean);
+      const educationOnly = options.includeEducation === false
+        && (file.documentTypes || []).includes("education")
+        && !types.length;
       const result = file.error
         ? `<span class="is-error">${escapeHtml(file.error)}</span>`
         : types.length
           ? escapeHtml(types.join(", "))
-          : "Тип не определён";
+          : educationOnly
+            ? "Документ об образовании не используется"
+            : "Тип не определён";
+      const visualFile = isStudentRecognitionVisualFile(file);
+      const extractionLabel = file.error ? "" : getStudentRecognitionExtractionLabel(file.textExtraction);
       return `
         <details class="student-document-recognition-file ${file.error ? "has-error" : ""}">
           <summary>
             <span>${escapeHtml(file.relativeName || file.fileName || "Документ")}</span>
-            <small>${Number(file.pageCount) || 0} стр. · ${result} · ${formatStudentDocumentRecognitionDuration(file.durationMs)}</small>
+            <small>${Number(file.pageCount) || 0} стр. · ${result} · ${escapeHtml(extractionLabel)} · ${formatStudentDocumentRecognitionDuration(file.durationMs)}</small>
           </summary>
-          ${file.error ? "" : `
+          ${file.error || !visualFile ? "" : `
             <div class="student-document-recognition-file-actions">
               <button class="ghost-button" data-action="select-student-photo-area" data-ocr-file-index="${fileIndex}" type="button">Выделить фото</button>
             </div>
@@ -17865,16 +25458,29 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderStudentDocumentRecognitionResults(dialog, payload, currentRecord) {
     const modal = dialog?.querySelector(".student-document-recognition-modal");
     if (!modal) return;
+    const isContract = isContractDocumentRecognitionDialog(dialog);
+    const personLabel = isContract ? "сотрудника" : "слушателя";
     dialog.stopStudentDocumentRecognitionTimer?.();
     const fields = Array.isArray(payload.fields) ? payload.fields : [];
     const photoCandidates = Array.isArray(payload.photoCandidates)
       ? payload.photoCandidates.map(normalizeStudentDocumentRecognitionPhotoCandidate).filter(Boolean)
       : [];
     dialog.studentDocumentPhotoCandidates = photoCandidates;
-    const groupedFields = studentDocumentRecognitionFieldGroups.map((group) => ({
+    dialog.studentDocumentSelectedPhotoCandidateIndex = photoCandidates.length ? 0 : null;
+    dialog.studentDocumentCommittedPhotoCandidateIndex = null;
+    const groupedFields = getDocumentRecognitionFieldGroups(dialog).map((group) => ({
       ...group,
       fields: group.keys.map((key) => fields.find((field) => field.key === key)).filter(Boolean)
     })).filter((group) => group.fields.length);
+    const fieldDocuments = [];
+    const fieldDocumentKeys = new Set();
+    fields.forEach((field) => {
+      const source = String(field.sourceFile || "Документ").trim() || "Документ";
+      const sourceKey = source.replace(/\\/g, "/").toLocaleLowerCase("ru-RU");
+      if (fieldDocumentKeys.has(sourceKey)) return;
+      fieldDocumentKeys.add(sourceKey);
+      fieldDocuments.push({ source, sourceKey });
+    });
     modal.querySelector("[data-ocr-progress-panel]")?.remove();
     modal.insertAdjacentHTML("beforeend", `
       <div class="student-document-recognition-result">
@@ -17884,15 +25490,51 @@ MAX - https://bizvmax.ru/zifra_plus
             : "Реквизиты документов не найдены"}</strong>
           <span>Дата распознавания: ${escapeHtml(formatDateTimeRu(payload.recognizedAt))}</span>
           <span>Время работы: ${escapeHtml(formatStudentDocumentRecognitionDuration(payload.durationMs))}</span>
-          <span>Источник: ${escapeHtml(payload.sourceLabel || "Папка слушателя")}</span>
+          <span>Источник: ${escapeHtml(payload.sourceLabel || `Папка ${personLabel}`)}</span>
           <span>Распознано документов: ${Number(payload.documentCount ?? payload.processedCount) || 0}</span>
           ${payload.failedCount ? `<span class="is-error">С ошибками: ${Number(payload.failedCount)}</span>` : ""}
           ${payload.skippedCount ? `<span>Пропущено: ${Number(payload.skippedCount)}</span>` : ""}
         </div>
-        ${renderStudentDocumentPhotoCandidates(photoCandidates)}
+        ${fields.length ? `
+          <div class="student-document-recognition-selection-tools">
+            <div class="student-document-recognition-selection-all">
+              <label>
+                <input type="checkbox" data-ocr-select-all-fields>
+                <span>Все поля всех документов</span>
+              </label>
+              <span data-ocr-selected-fields-count></span>
+            </div>
+            <div class="student-document-recognition-document-selectors">
+              ${fieldDocuments.map((document) => `
+                <label title="${escapeAttr(document.source)}">
+                  <input
+                    type="checkbox"
+                    data-ocr-select-document-fields
+                    data-ocr-document-source="${escapeAttr(document.sourceKey)}"
+                  >
+                  <span>
+                    <strong>${escapeHtml(document.source)}</strong>
+                    <small>Выбрать все поля документа</small>
+                  </span>
+                  <em data-ocr-document-selected-count></em>
+                </label>
+              `).join("")}
+            </div>
+          </div>
+        ` : ""}
+        ${renderStudentDocumentPhotoCandidates(photoCandidates, {
+          personLabel,
+          hasVisualFiles: (payload.files || []).some(isStudentRecognitionVisualFile)
+        })}
         ${groupedFields.length ? groupedFields.map((group) => `
-          <section class="student-document-recognition-group">
-            <h3>${escapeHtml(group.label)}</h3>
+          <section class="student-document-recognition-group student-document-recognition-field-group" data-ocr-field-group="${escapeAttr(group.id)}">
+            <div class="student-document-recognition-group-select">
+              <label>
+                <input type="checkbox" data-ocr-select-group-fields>
+                <span>${escapeHtml(group.label)}</span>
+              </label>
+              <small data-ocr-group-selected-count></small>
+            </div>
             ${group.fields.map((field) => renderStudentDocumentRecognitionField(field, currentRecord)).join("")}
           </section>
         `).join("") : `
@@ -17900,7 +25542,7 @@ MAX - https://bizvmax.ru/zifra_plus
             Проверьте качество сканов и названия файлов. Полный распознанный текст доступен ниже.
           </div>
         `}
-        ${renderStudentDocumentRecognitionFiles(payload.files)}
+        ${renderStudentDocumentRecognitionFiles(payload.files, { includeEducation: !isContract })}
       </div>
       <aside class="student-document-recognition-preview" data-ocr-field-preview hidden aria-live="polite" aria-label="Просмотр документа">
         <div class="student-document-recognition-preview-head" data-ocr-preview-drag-handle title="Перетащить окно">
@@ -17952,15 +25594,173 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", dialog.closeStudentDocumentRecognitionDialog);
     modal.querySelector("[data-action='apply-student-document-recognition']")
       ?.addEventListener("click", (event) => applyStudentDocumentRecognition(dialog, event.currentTarget));
-    modal.querySelectorAll("[data-action='select-student-photo-area']").forEach((button) => {
-      button.addEventListener("click", () => openStudentDocumentPhotoCropper(
+    const photoGroup = modal.querySelector("[data-ocr-photo-group]");
+    photoGroup?.addEventListener("change", async (event) => {
+      const photoEnabled = event.target.closest("[data-ocr-photo-enabled]");
+      const photoCandidateControl = event.target.closest("input[name='ocr-student-photo-candidate']");
+      if (!photoEnabled && !photoCandidateControl) return;
+      if (photoCandidateControl) {
+        const candidateIndex = Number(photoCandidateControl.value);
+        if (!photoCandidateControl.checked || !Number.isInteger(candidateIndex)) return;
+        if (!photoGroup.querySelector("[data-ocr-photo-enabled]")?.checked) {
+          dialog.studentDocumentSelectedPhotoCandidateIndex = candidateIndex;
+          return;
+        }
+        try {
+          await updateStudentCardPhotoFromRecognitionCandidate(dialog, candidateIndex);
+        } catch (error) {
+          alert(`Не удалось обновить фото в карточке: ${error.message}`);
+        }
+        return;
+      }
+      if (!photoEnabled.checked) return;
+      const selectedControl = photoGroup.querySelector("input[name='ocr-student-photo-candidate']:checked");
+      const candidateIndex = Number(selectedControl?.value);
+      if (!selectedControl || !Number.isInteger(candidateIndex)) {
+        photoEnabled.checked = false;
+        alert("Выберите вариант фото или выделите его в документе.");
+        return;
+      }
+      try {
+        await updateStudentCardPhotoFromRecognitionCandidate(dialog, candidateIndex);
+      } catch (error) {
+        photoEnabled.checked = false;
+        alert(`Не удалось обновить фото в карточке: ${error.message}`);
+      }
+    });
+    const findPhotoCandidateFileIndex = (candidate) => {
+      const sourceNames = String(candidate?.sourceFile || "")
+        .split(/;\s*/g)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const matchedIndex = (payload.files || []).findIndex((file) => sourceNames.some((sourceName) => (
+        sourceName === String(file?.relativeName || "")
+        || sourceName === String(file?.fileName || "")
+      )));
+      return Math.max(0, matchedIndex);
+    };
+    const openStudentPhotoAreaSelector = (fileIndex = 0, candidate = null) => {
+      openStudentDocumentPhotoCropper(
         dialog,
         payload,
+        fileIndex,
+        {
+          title: `Выбрать фотографию ${personLabel}`,
+          ariaLabel: `Выбор фотографии ${personLabel} в документах`,
+          useLabel: "Использовать как фото",
+          initialPage: Number(candidate?.page) || 1,
+          initialSource: candidate?.sourceFile || ""
+        }
+      );
+    };
+    modal.querySelectorAll("[data-action='select-student-photo-area']").forEach((button) => {
+      button.addEventListener("click", () => openStudentPhotoAreaSelector(
         Number(button.dataset.ocrFileIndex) || 0
       ));
     });
+    modal.querySelector("[data-ocr-photo-group]")?.addEventListener("contextmenu", (event) => {
+      const candidateCard = event.target.closest("[data-ocr-photo-candidate-index]");
+      const candidatesArea = event.target.closest("[data-ocr-photo-candidates], [data-ocr-photo-empty]");
+      if (!candidateCard && !candidatesArea) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const candidateIndex = Number(candidateCard?.dataset.ocrPhotoCandidateIndex);
+      const candidate = Number.isInteger(candidateIndex)
+        ? dialog.studentDocumentPhotoCandidates?.[candidateIndex]
+        : null;
+      showStudentDocumentRecognitionFieldMenu(
+        event.clientX,
+        event.clientY,
+        () => openStudentPhotoAreaSelector(candidate ? findPhotoCandidateFileIndex(candidate) : 0, candidate),
+        { actionLabel: "Выбрать произвольную область" }
+      );
+    });
+    bindStudentDocumentRecognitionSelectAll(modal);
     bindStudentDocumentRecognitionIdentityValidation(modal);
-    bindStudentDocumentRecognitionFieldPreviews(modal, fields, payload.files);
+    bindStudentDocumentRecognitionFieldPreviews(modal, fields, payload);
+  }
+
+  function bindStudentDocumentRecognitionSelectAll(modal) {
+    const toggle = modal?.querySelector("[data-ocr-select-all-fields]");
+    const count = modal?.querySelector("[data-ocr-selected-fields-count]");
+    if (!toggle) return;
+    const getRows = () => Array.from(modal.querySelectorAll("[data-ocr-recognition-field]"));
+    const isSelectable = (row) => Boolean(String(row.querySelector("[data-ocr-field-value]")?.value || "").trim());
+    const normalizeSource = (value) => String(value || "Документ")
+      .trim()
+      .replace(/\\/g, "/")
+      .toLocaleLowerCase("ru-RU");
+    const documentToggles = Array.from(modal.querySelectorAll("[data-ocr-select-document-fields]"));
+    const groupToggles = Array.from(modal.querySelectorAll("[data-ocr-select-group-fields]"));
+    const getDocumentRows = (documentToggle) => {
+      const source = normalizeSource(documentToggle.dataset.ocrDocumentSource);
+      return getRows().filter((row) => normalizeSource(row.dataset.ocrFieldSource) === source && isSelectable(row));
+    };
+    const getGroupRows = (groupToggle) => Array.from(
+      groupToggle.closest("[data-ocr-field-group]")?.querySelectorAll("[data-ocr-recognition-field]") || []
+    ).filter(isSelectable);
+    const sync = () => {
+      const rows = getRows().filter(isSelectable);
+      const selected = rows.filter((row) => row.querySelector("[data-ocr-field-enabled]")?.checked).length;
+      toggle.disabled = rows.length === 0;
+      toggle.checked = rows.length > 0 && selected === rows.length;
+      toggle.indeterminate = selected > 0 && selected < rows.length;
+      if (count) count.textContent = `Выбрано ${selected} из ${rows.length}`;
+      documentToggles.forEach((documentToggle) => {
+        const documentRows = getDocumentRows(documentToggle);
+        const documentSelected = documentRows.filter((row) => row.querySelector("[data-ocr-field-enabled]")?.checked).length;
+        documentToggle.disabled = documentRows.length === 0;
+        documentToggle.checked = documentRows.length > 0 && documentSelected === documentRows.length;
+        documentToggle.indeterminate = documentSelected > 0 && documentSelected < documentRows.length;
+        const documentCount = documentToggle.closest("label")?.querySelector("[data-ocr-document-selected-count]");
+        if (documentCount) documentCount.textContent = `${documentSelected} из ${documentRows.length}`;
+      });
+      groupToggles.forEach((groupToggle) => {
+        const groupRows = getGroupRows(groupToggle);
+        const groupSelected = groupRows.filter((row) => row.querySelector("[data-ocr-field-enabled]")?.checked).length;
+        groupToggle.disabled = groupRows.length === 0;
+        groupToggle.checked = groupRows.length > 0 && groupSelected === groupRows.length;
+        groupToggle.indeterminate = groupSelected > 0 && groupSelected < groupRows.length;
+        const groupCount = groupToggle.closest("[data-ocr-field-group]")?.querySelector("[data-ocr-group-selected-count]");
+        if (groupCount) groupCount.textContent = `${groupSelected} из ${groupRows.length}`;
+      });
+    };
+    toggle.addEventListener("change", () => {
+      const checked = toggle.checked;
+      getRows().forEach((row) => {
+        const checkbox = row.querySelector("[data-ocr-field-enabled]");
+        if (!checkbox) return;
+        checkbox.checked = checked && isSelectable(row);
+      });
+      sync();
+    });
+    documentToggles.forEach((documentToggle) => {
+      documentToggle.addEventListener("change", () => {
+        const checked = documentToggle.checked;
+        getDocumentRows(documentToggle).forEach((row) => {
+          const checkbox = row.querySelector("[data-ocr-field-enabled]");
+          if (checkbox) checkbox.checked = checked;
+        });
+        sync();
+      });
+    });
+    groupToggles.forEach((groupToggle) => {
+      groupToggle.addEventListener("change", () => {
+        const checked = groupToggle.checked;
+        getGroupRows(groupToggle).forEach((row) => {
+          const checkbox = row.querySelector("[data-ocr-field-enabled]");
+          if (checkbox) checkbox.checked = checked;
+        });
+        sync();
+      });
+    });
+    modal.addEventListener("change", (event) => {
+      if (event.target.matches("[data-ocr-field-enabled]")) sync();
+    });
+    modal.addEventListener("input", (event) => {
+      if (event.target.matches("[data-ocr-field-value]")) sync();
+    });
+    sync();
   }
 
   function bindStudentDocumentRecognitionIdentityValidation(modal) {
@@ -18092,7 +25892,52 @@ MAX - https://bizvmax.ru/zifra_plus
     return { fieldPreview, pagePreview };
   }
 
-  function bindStudentDocumentRecognitionFieldPreviews(modal, fields, files) {
+  function hideStudentDocumentRecognitionFieldMenu() {
+    document.removeEventListener("pointerdown", closeStudentDocumentRecognitionFieldMenuOnOutsideClick, { capture: true });
+    document.querySelector("[data-student-document-recognition-field-menu]")?.remove();
+  }
+
+  function closeStudentDocumentRecognitionFieldMenuOnOutsideClick(event) {
+    if (event.target.closest("[data-student-document-recognition-field-menu]")) {
+      document.addEventListener("pointerdown", closeStudentDocumentRecognitionFieldMenuOnOutsideClick, { capture: true, once: true });
+      return;
+    }
+    hideStudentDocumentRecognitionFieldMenu();
+  }
+
+  function showStudentDocumentRecognitionFieldMenu(x, y, onSelectRegion, options = {}) {
+    hideStudentDocumentRecognitionFieldMenu();
+    const actionLabel = String(options.actionLabel || "Указать область в документе").trim();
+    const menu = document.createElement("div");
+    menu.className = "field-copy-popup student-document-recognition-field-menu";
+    menu.dataset.studentDocumentRecognitionFieldMenu = "";
+    menu.innerHTML = `
+      <button data-action="select-student-document-field-area" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M4 9V5a1 1 0 0 1 1-1h4"></path>
+          <path d="M15 4h4a1 1 0 0 1 1 1v4"></path>
+          <path d="M20 15v4a1 1 0 0 1-1 1h-4"></path>
+          <path d="M9 20H5a1 1 0 0 1-1-1v-4"></path>
+          <rect x="7" y="8" width="10" height="8" rx="1"></rect>
+        </svg>
+        <span>${escapeHtml(actionLabel)}</span>
+      </button>
+    `;
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;
+    menu.style.top = `${clamp(y, 8, Math.max(8, window.innerHeight - rect.height - 8))}px`;
+    menu.querySelector("[data-action='select-student-document-field-area']")?.addEventListener("click", () => {
+      hideStudentDocumentRecognitionFieldMenu();
+      onSelectRegion?.();
+    });
+    window.setTimeout(() => {
+      document.addEventListener("pointerdown", closeStudentDocumentRecognitionFieldMenuOnOutsideClick, { capture: true, once: true });
+    });
+  }
+
+  function bindStudentDocumentRecognitionFieldPreviews(modal, fields, payload = {}) {
+    const files = Array.isArray(payload.files) ? payload.files : [];
     const popup = modal?.querySelector("[data-ocr-field-preview]");
     const image = popup?.querySelector("[data-ocr-field-preview-image]");
     const title = popup?.querySelector("[data-ocr-field-preview-title]");
@@ -18110,6 +25955,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const result = modal?.querySelector(".student-document-recognition-result");
     if (!popup || !image || !title || !meta || !viewport || !zoomLabel) return;
     let activeInput = null;
+    let activeField = null;
     let activeBox = null;
     let showingFullPage = false;
     let manualPosition = null;
@@ -18278,6 +26124,7 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     const hide = () => {
       activeInput = null;
+      activeField = null;
       activeBox = null;
       showingFullPage = false;
       view.pointerId = null;
@@ -18294,38 +26141,122 @@ MAX - https://bizvmax.ru/zifra_plus
         useManualPosition ? manualPosition : null
       );
     };
-    fields.forEach((field) => {
+    const showFieldPreview = (field, input, preserveView = true) => {
       const key = String(field?.key || "");
       const { fieldPreview, pagePreview } = findStudentDocumentRecognitionPagePreview(field, files);
+      if (!input || !fieldPreview) {
+        hide();
+        return;
+      }
+      syncPreviewSizeToViewport();
+      const preserveCurrentView = Boolean(
+        preserveView
+        && activeInput === input
+        && !popup.hidden
+        && image.hasAttribute("src")
+        && view.baseWidth > 0
+        && view.baseHeight > 0
+      );
+      activeInput = input;
+      activeField = field;
+      activeBox = fieldPreview.box || null;
+      showingFullPage = Boolean(pagePreview);
+      title.textContent = String(field.label || key || "Распознанное поле");
+      meta.textContent = `${field.sourceFile || "Документ"}, стр. ${fieldPreview.page} · ${showingFullPage ? "весь лист" : "фрагмент"}`;
+      focusButton.disabled = !showingFullPage || !activeBox;
+      popup.hidden = false;
+      if (preserveCurrentView) {
+        requestAnimationFrame(() => {
+          paintView();
+          placePopup();
+        });
+        return;
+      }
+      const displayedPreview = pagePreview || fieldPreview;
+      image.src = `data:${displayedPreview.mimeType};base64,${displayedPreview.base64}`;
+      requestAnimationFrame(() => {
+        if (image.complete && image.naturalWidth) {
+          fitView();
+          if (showingFullPage && activeBox) focusRecognizedArea();
+        }
+        placePopup();
+      });
+    };
+    const selectFieldDocumentArea = (field, input, row) => {
+      const { fieldPreview } = findStudentDocumentRecognitionPagePreview(field, files);
+      const sourceNames = String(field?.sourceFile || "")
+        .split(/;\s*/g)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const initialFileIndex = Math.max(0, files.findIndex((file) => sourceNames.some((sourceName) => (
+        sourceName === String(file?.relativeName || "")
+        || sourceName === String(file?.fileName || "")
+      ))));
+      openStudentDocumentPhotoCropper(modal.closest("[data-student-document-recognition-dialog]"), payload, initialFileIndex, {
+        title: "Указать область в документе",
+        ariaLabel: `Выбор области для поля ${field?.label || field?.key || ""}`,
+        useLabel: "Использовать область",
+        initialPage: fieldPreview?.page || 1,
+        initialBox: fieldPreview?.box || null,
+        initialSource: field?.sourceFile || "",
+        maxOutputSize: 900,
+        outputQuality: 0.84,
+        onSelect: ({ file, page, selection, cropPreview, pagePreview }) => {
+          const normalizedCrop = normalizeStudentDocumentRecognitionPreview({
+            ...cropPreview,
+            page,
+            box: selection
+          });
+          const normalizedPage = normalizeStudentDocumentRecognitionPagePreview({
+            ...pagePreview,
+            page
+          });
+          if (!normalizedCrop || !normalizedPage) {
+            throw new Error("Не удалось подготовить выбранную область документа.");
+          }
+          const sourceFile = String(file.relativeName || file.fileName || "Документ");
+          field.preview = normalizedCrop;
+          field.sourceFile = sourceFile;
+          field.evidence = "Область указана вручную";
+          const otherPagePreviews = (file.pagePreviews || [])
+            .map(normalizeStudentDocumentRecognitionPagePreview)
+            .filter((preview) => preview && preview.page !== page);
+          file.pagePreviews = [...otherPagePreviews, normalizedPage].sort((first, second) => first.page - second.page);
+          row.dataset.ocrFieldSource = sourceFile;
+          row.classList.add("has-manual-region");
+          showFieldPreview(field, input, false);
+        }
+      });
+    };
+    fields.forEach((field) => {
+      const key = String(field?.key || "");
       const row = key
         ? modal.querySelector(`[data-ocr-recognition-field="${CSS.escape(key)}"]`)
         : null;
       const input = row?.querySelector("[data-ocr-field-value]");
-      if (!input || !fieldPreview) return;
-      input.addEventListener("focus", () => {
-        syncPreviewSizeToViewport();
-        activeInput = input;
-        activeBox = fieldPreview.box || null;
-        showingFullPage = Boolean(pagePreview);
-        title.textContent = String(field.label || key || "Распознанное поле");
-        meta.textContent = `${field.sourceFile || "Документ"}, стр. ${fieldPreview.page} · ${showingFullPage ? "весь лист" : "фрагмент"}`;
-        focusButton.disabled = !showingFullPage || !activeBox;
-        const displayedPreview = pagePreview || fieldPreview;
-        image.src = `data:${displayedPreview.mimeType};base64,${displayedPreview.base64}`;
-        popup.hidden = false;
-        requestAnimationFrame(() => {
-          if (image.complete && image.naturalWidth) {
-            fitView();
-            if (showingFullPage && activeBox) focusRecognizedArea();
-          }
-          placePopup();
-        });
+      if (!input) return;
+      input.addEventListener("focus", () => showFieldPreview(field, input));
+      input.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        showStudentDocumentRecognitionFieldMenu(event.clientX, event.clientY, () => (
+          selectFieldDocumentArea(field, input, row)
+        ));
       });
       input.addEventListener("blur", () => {
         window.setTimeout(() => {
           if (document.activeElement !== activeInput && !popup.contains(document.activeElement)) hide();
         }, 0);
       });
+    });
+    popup.addEventListener("contextmenu", (event) => {
+      if (!activeField || !activeInput) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const row = activeInput.closest("[data-ocr-recognition-field]");
+      showStudentDocumentRecognitionFieldMenu(event.clientX, event.clientY, () => (
+        selectFieldDocumentArea(activeField, activeInput, row)
+      ));
     });
     image.addEventListener("load", () => {
       fitView();
@@ -18530,7 +26461,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const grid = dialog.querySelector("[data-ocr-photo-candidates]");
     grid?.insertAdjacentHTML(
       "beforeend",
-      renderStudentDocumentPhotoCandidate(normalized, candidates.length - 1, true)
+      renderStudentDocumentPhotoCandidate(normalized, candidates.length - 1, true, {
+        personLabel: isContractDocumentRecognitionDialog(dialog) ? "сотрудника" : "слушателя"
+      })
     );
     grid?.querySelectorAll("input[type='radio']").forEach((radio) => {
       radio.checked = Number(radio.value) === candidates.length - 1;
@@ -18545,6 +26478,103 @@ MAX - https://bizvmax.ru/zifra_plus
     const applyButton = dialog.querySelector("[data-action='apply-student-document-recognition']");
     if (applyButton) applyButton.disabled = false;
     return true;
+  }
+
+  async function updateStudentCardPhotoFromRecognitionCandidate(dialog, candidateIndex) {
+    const isContract = isContractDocumentRecognitionDialog(dialog);
+    const normalizedIndex = Number(candidateIndex);
+    const candidate = Number.isInteger(normalizedIndex)
+      ? dialog.studentDocumentPhotoCandidates?.[normalizedIndex]
+      : null;
+    if (!candidate) throw new Error("выбранный вариант фото недоступен");
+    if (
+      dialog.studentDocumentCommittedPhotoCandidateIndex === normalizedIndex
+      && candidate.storedPhotoPath
+      && candidate.storedPhotoUrl
+    ) {
+      dialog.studentDocumentSelectedPhotoCandidateIndex = normalizedIndex;
+      return {
+        photoPath: candidate.storedPhotoPath,
+        photoUrl: candidate.storedPhotoUrl
+      };
+    }
+    if (dialog.studentDocumentPhotoUpdatePromise) {
+      throw new Error("дождитесь завершения текущего обновления фото");
+    }
+    const currentDraft = isContract ? collectContractFormDraft() : collectStudentFormDraft();
+    const personName = String(currentDraft.name || document.querySelector("[name='name']")?.value || "").trim();
+    if (!personName) throw new Error(`сначала укажите ФИО ${isContract ? "сотрудника" : "слушателя"}`);
+    const previousSelectedIndex = Number.isInteger(dialog.studentDocumentSelectedPhotoCandidateIndex)
+      ? dialog.studentDocumentSelectedPhotoCandidateIndex
+      : null;
+    const photoGroup = dialog.querySelector("[data-ocr-photo-group]");
+    const controls = Array.from(photoGroup?.querySelectorAll("input, button") || []);
+    const applyButton = dialog.querySelector("[data-action='apply-student-document-recognition']");
+    if (applyButton) controls.push(applyButton);
+    const disabledStates = new Map(controls.map((control) => [control, control.disabled]));
+    const preview = document.getElementById(isContract ? "contractPhotoPreview" : "studentPhotoPreview");
+    controls.forEach((control) => { control.disabled = true; });
+    photoGroup?.setAttribute("aria-busy", "true");
+    preview?.classList.add("is-loading");
+    const updatePromise = (async () => {
+      const uploadedPhoto = await uploadStoredPhoto(
+        `data:${candidate.mimeType};base64,${candidate.base64}`,
+        currentDraft.photoPath || "",
+        isContract
+          ? { entityType: "contract", employeeName: personName, contractName: personName, name: personName }
+          : { studentName: personName, name: personName }
+      );
+      const photoPath = uploadedPhoto.photoPath || "";
+      const photoUrl = uploadedPhoto.photoUrl || "";
+      const hidden = document.getElementById(isContract ? "" : "studentPhotoData");
+      const pathInput = document.getElementById(isContract ? "contractPhotoPath" : "studentPhotoPath");
+      const urlInput = document.getElementById(isContract ? "" : "studentPhotoUrl");
+      if (hidden) hidden.value = "";
+      if (pathInput) pathInput.value = photoPath;
+      if (urlInput) urlInput.value = photoUrl;
+      if (!isContract) syncStudentPhotoPathUi(photoPath, false);
+      if (preview) {
+        preview.classList.add("has-photo");
+        preview.querySelector(":scope > span")?.remove();
+        const image = preview.querySelector(":scope > img") || document.createElement("img");
+        image.src = getPhotoPreviewCacheBustedUrl(photoUrl);
+        image.alt = `Фото ${isContract ? "сотрудника" : "слушателя"}`;
+        if (!image.parentElement) preview.prepend(image);
+      }
+      state.modal.draft = {
+        ...currentDraft,
+        photoPath,
+        photoUrl,
+        photoData: ""
+      };
+      state.modal.hasDraftChanges = true;
+      candidate.storedPhotoPath = photoPath;
+      candidate.storedPhotoUrl = photoUrl;
+      dialog.studentDocumentCommittedPhotoCandidateIndex = normalizedIndex;
+      dialog.studentDocumentSelectedPhotoCandidateIndex = normalizedIndex;
+      return { photoPath, photoUrl };
+    })();
+    dialog.studentDocumentPhotoUpdatePromise = updatePromise;
+    try {
+      return await updatePromise;
+    } catch (error) {
+      const candidateControls = photoGroup?.querySelectorAll("input[name='ocr-student-photo-candidate']") || [];
+      candidateControls.forEach((control) => {
+        control.checked = previousSelectedIndex !== null && Number(control.value) === previousSelectedIndex;
+      });
+      if (previousSelectedIndex === null) {
+        const enabled = photoGroup?.querySelector("[data-ocr-photo-enabled]");
+        if (enabled) enabled.checked = false;
+      }
+      throw error;
+    } finally {
+      dialog.studentDocumentPhotoUpdatePromise = null;
+      controls.forEach((control) => { control.disabled = disabledStates.get(control) || false; });
+      const enabled = photoGroup?.querySelector("[data-ocr-photo-enabled]");
+      if (enabled && !dialog.studentDocumentPhotoCandidates?.length) enabled.disabled = true;
+      photoGroup?.removeAttribute("aria-busy");
+      preview?.classList.remove("is-loading");
+    }
   }
 
   async function loadStudentDocumentPhotoCropPage(payload, file, page) {
@@ -18568,61 +26598,205 @@ MAX - https://bizvmax.ru/zifra_plus
     return { ...result, preview };
   }
 
-  function openStudentDocumentPhotoCropper(dialog, payload, fileIndex) {
-    const file = (payload.files || [])[fileIndex];
-    if (!file || file.error) return;
+  function openStudentDocumentPhotoCropper(dialog, payload, fileIndex, options = {}) {
+    const availableFiles = (payload.files || [])
+      .map((file, index) => ({ file, index }))
+      .filter(({ file }) => file && !file.error && isStudentRecognitionVisualFile(file));
+    if (!availableFiles.length) return;
+    let currentFilePosition = Math.max(0, availableFiles.findIndex(({ index }) => index === fileIndex));
+    let file = availableFiles[currentFilePosition].file;
+    const selectRegionMode = typeof options.onSelect === "function";
+    const initialSourceNames = String(options.initialSource || "")
+      .split(/;\s*/g)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (initialSourceNames.length) {
+      const sourcePosition = availableFiles.findIndex(({ file: candidate }) => initialSourceNames.some((sourceName) => (
+        sourceName === String(candidate.relativeName || "")
+        || sourceName === String(candidate.fileName || "")
+      )));
+      if (sourcePosition >= 0) {
+        currentFilePosition = sourcePosition;
+        file = availableFiles[currentFilePosition].file;
+      }
+    }
     document.querySelector("[data-student-document-photo-cropper]")?.remove();
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop student-document-photo-cropper-backdrop";
     backdrop.dataset.studentDocumentPhotoCropper = "";
     backdrop.innerHTML = `
-      <section class="modal student-document-photo-cropper" role="dialog" aria-modal="true" aria-label="Выделение фото слушателя">
+      <section class="modal student-document-photo-cropper is-region-selector" role="dialog" aria-modal="true" aria-label="${escapeHtml(options.ariaLabel || "Выделение фото слушателя")}">
         <header class="modal-head">
           <div>
-            <h2>Выделение фото</h2>
-            <p>${escapeHtml(file.relativeName || file.fileName || "Документ")}</p>
+            <h2>${escapeHtml(options.title || "Выделение фото")}</h2>
+            <p data-ocr-crop-file-name>${escapeHtml(file.relativeName || file.fileName || "Документ")}</p>
           </div>
           <button class="icon-button" data-action="close-student-photo-cropper" type="button" title="Закрыть" aria-label="Закрыть">×</button>
         </header>
         <div class="student-document-photo-cropper-toolbar">
-          <button class="ghost-button" data-ocr-crop-page-prev type="button" title="Предыдущая страница">‹</button>
-          <span>Страница <strong data-ocr-crop-page>1</strong> из <strong data-ocr-crop-pages>${Math.max(1, Number(file.pageCount) || 1)}</strong></span>
-          <button class="ghost-button" data-ocr-crop-page-next type="button" title="Следующая страница">›</button>
-          <small>Проведите мышью по фотографии, чтобы задать любую область.</small>
+          <div class="student-document-photo-cropper-document-navigation">
+            <button class="ghost-button" data-ocr-crop-file-prev type="button" title="Предыдущий документ">‹</button>
+            <label>
+              <span>Документ</span>
+              <select data-ocr-crop-file-select aria-label="Документ для выбора области">
+                ${availableFiles.map(({ file: candidate }, index) => `
+                  <option value="${index}"${index === currentFilePosition ? " selected" : ""}>${escapeHtml(candidate.relativeName || candidate.fileName || `Документ ${index + 1}`)}</option>
+                `).join("")}
+              </select>
+            </label>
+            <span class="student-document-photo-cropper-document-count"><strong data-ocr-crop-file-number>${currentFilePosition + 1}</strong> из <strong>${availableFiles.length}</strong></span>
+            <button class="ghost-button" data-ocr-crop-file-next type="button" title="Следующий документ">›</button>
+          </div>
+          <div class="student-document-photo-cropper-page-navigation">
+            <button class="ghost-button" data-ocr-crop-page-prev type="button" title="Предыдущая страница">‹</button>
+            <span>Страница <strong data-ocr-crop-page>1</strong> из <strong data-ocr-crop-pages>${Math.max(1, Number(file.pageCount) || 1)}</strong></span>
+            <button class="ghost-button" data-ocr-crop-page-next type="button" title="Следующая страница">›</button>
+          </div>
+          <div class="student-document-photo-cropper-view-tools" role="group" aria-label="Инструменты просмотра документа">
+            <button class="ghost-button is-active" data-ocr-crop-mode="select" type="button" aria-pressed="true">Выделить область</button>
+            <button class="ghost-button" data-ocr-crop-mode="pan" type="button" aria-pressed="false">Перемещать документ</button>
+            <span class="student-document-photo-cropper-zoom" role="group" aria-label="Масштаб документа">
+              <button class="ghost-button" data-ocr-crop-zoom-out type="button" title="Уменьшить масштаб" aria-label="Уменьшить масштаб">−</button>
+              <input data-ocr-crop-zoom type="range" min="25" max="400" step="5" value="100" aria-label="Масштаб документа">
+              <strong data-ocr-crop-zoom-label>100%</strong>
+              <button class="ghost-button" data-ocr-crop-zoom-in type="button" title="Увеличить масштаб" aria-label="Увеличить масштаб">+</button>
+            </span>
+            <button class="ghost-button" data-ocr-crop-fit type="button">Вписать страницу</button>
+          </div>
+          <small><strong>Как работать:</strong> колесо мыши меняет масштаб в точке курсора; удерживайте колёсико и тяните документ для перемещения. На сенсорном экране используйте режим «Перемещать документ».</small>
         </div>
-        <div class="student-document-photo-cropper-viewport" data-ocr-crop-viewport>
+        <div class="student-document-photo-cropper-viewport" data-ocr-crop-viewport tabindex="0" aria-label="Просмотр страницы документа">
           <div class="student-document-photo-cropper-loading" data-ocr-crop-loading>Загрузка страницы...</div>
           <div class="student-document-photo-cropper-stage" data-ocr-crop-stage hidden>
             <img data-ocr-crop-image alt="Страница документа" draggable="false">
-            <div class="student-document-photo-cropper-selection" data-ocr-crop-selection></div>
+            <div class="student-document-photo-cropper-selection" data-ocr-crop-selection tabindex="0" aria-label="Выбранная область фото">
+              <span class="student-document-photo-cropper-move-label">Переместить</span>
+              ${["nw", "ne", "se", "sw"].map((direction) => (
+                `<span class="student-document-photo-cropper-handle is-${direction}" data-ocr-crop-handle="${direction}" aria-hidden="true"></span>`
+              )).join("")}
+            </div>
           </div>
         </div>
         <footer class="modal-actions">
           <button class="ghost-button" data-action="close-student-photo-cropper" type="button">Отмена</button>
-          <button class="primary-button" data-action="use-student-photo-crop" type="button" disabled>Использовать выделение</button>
+          <button class="primary-button" data-action="use-student-photo-crop" type="button" disabled>${escapeHtml(options.useLabel || "Использовать выделение")}</button>
         </footer>
       </section>
     `;
     document.body.appendChild(backdrop);
+    const viewport = backdrop.querySelector("[data-ocr-crop-viewport]");
     const stage = backdrop.querySelector("[data-ocr-crop-stage]");
     const image = backdrop.querySelector("[data-ocr-crop-image]");
     const selectionElement = backdrop.querySelector("[data-ocr-crop-selection]");
     const loading = backdrop.querySelector("[data-ocr-crop-loading]");
+    const fileNameLabel = backdrop.querySelector("[data-ocr-crop-file-name]");
+    const fileSelect = backdrop.querySelector("[data-ocr-crop-file-select]");
+    const fileNumberLabel = backdrop.querySelector("[data-ocr-crop-file-number]");
+    const previousFileButton = backdrop.querySelector("[data-ocr-crop-file-prev]");
+    const nextFileButton = backdrop.querySelector("[data-ocr-crop-file-next]");
     const pageLabel = backdrop.querySelector("[data-ocr-crop-page]");
     const pagesLabel = backdrop.querySelector("[data-ocr-crop-pages]");
     const previousButton = backdrop.querySelector("[data-ocr-crop-page-prev]");
     const nextButton = backdrop.querySelector("[data-ocr-crop-page-next]");
+    const selectModeButton = backdrop.querySelector("[data-ocr-crop-mode='select']");
+    const panModeButton = backdrop.querySelector("[data-ocr-crop-mode='pan']");
+    const zoomInput = backdrop.querySelector("[data-ocr-crop-zoom]");
+    const zoomLabel = backdrop.querySelector("[data-ocr-crop-zoom-label]");
+    const zoomOutButton = backdrop.querySelector("[data-ocr-crop-zoom-out]");
+    const zoomInButton = backdrop.querySelector("[data-ocr-crop-zoom-in]");
+    const fitButton = backdrop.querySelector("[data-ocr-crop-fit]");
     const useButton = backdrop.querySelector("[data-action='use-student-photo-crop']");
     const pageCache = new Map();
     const selections = new Map();
-    let currentPage = 1;
+    let currentPage = clamp(Number(options.initialPage) || 1, 1, Math.max(1, Number(file.pageCount) || 1));
     let pageCount = Math.max(1, Number(file.pageCount) || 1);
-    let pointerId = null;
-    let startPoint = null;
+    let interaction = null;
+    let loadSequence = 0;
+    let editMode = "select";
+    let zoom = 1;
+    let baseWidth = 0;
+    let baseHeight = 0;
 
-    const close = () => backdrop.remove();
+    const close = () => {
+      if (backdrop.isConnected) backdrop.remove();
+    };
+    backdrop.closeStudentDocumentRegionSelector = close;
+    const currentFileEntry = () => availableFiles[currentFilePosition];
+    const currentPageKey = () => `${currentFileEntry().index}:${currentPage}`;
+    const setEditMode = (mode) => {
+      editMode = mode === "pan" ? "pan" : "select";
+      const panMode = editMode === "pan";
+      selectModeButton.classList.toggle("is-active", !panMode);
+      selectModeButton.setAttribute("aria-pressed", String(!panMode));
+      panModeButton.classList.toggle("is-active", panMode);
+      panModeButton.setAttribute("aria-pressed", String(panMode));
+      stage.classList.toggle("is-pan-mode", panMode);
+      viewport.classList.toggle("is-pan-mode", panMode);
+    };
+    const getDocumentViewAnchor = (anchor = null) => {
+      const stageRect = stage.getBoundingClientRect();
+      const viewportRect = viewport.getBoundingClientRect();
+      const viewportX = Number.isFinite(anchor?.clientX)
+        ? clamp(anchor.clientX - viewportRect.left, 0, viewportRect.width)
+        : viewportRect.width / 2;
+      const viewportY = Number.isFinite(anchor?.clientY)
+        ? clamp(anchor.clientY - viewportRect.top, 0, viewportRect.height)
+        : viewportRect.height / 2;
+      if (!stageRect.width || !stageRect.height) {
+        return { x: 0.5, y: 0.5, viewportX, viewportY };
+      }
+      return {
+        x: clamp((viewportRect.left + viewportX - stageRect.left) / stageRect.width, 0, 1),
+        y: clamp((viewportRect.top + viewportY - stageRect.top) / stageRect.height, 0, 1),
+        viewportX,
+        viewportY
+      };
+    };
+    const paintDocumentView = (preserveAnchor = true, anchor = null) => {
+      if (!baseWidth || !baseHeight) return;
+      const viewAnchor = preserveAnchor
+        ? getDocumentViewAnchor(anchor)
+        : { x: 0.5, y: 0.5, viewportX: viewport.clientWidth / 2, viewportY: viewport.clientHeight / 2 };
+      stage.style.width = `${Math.max(1, baseWidth * zoom)}px`;
+      stage.style.height = `${Math.max(1, baseHeight * zoom)}px`;
+      stage.style.marginTop = `${Math.max(0, (viewport.clientHeight - baseHeight * zoom - 20) / 2)}px`;
+      stage.style.marginBottom = stage.style.marginTop;
+      zoomInput.value = String(Math.round(zoom * 100));
+      zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+      requestAnimationFrame(() => {
+        viewport.scrollLeft = Math.max(
+          0,
+          stage.offsetLeft + stage.offsetWidth * viewAnchor.x - viewAnchor.viewportX
+        );
+        viewport.scrollTop = Math.max(
+          0,
+          stage.offsetTop + stage.offsetHeight * viewAnchor.y - viewAnchor.viewportY
+        );
+      });
+    };
+    const setDocumentZoom = (nextZoom, preserveAnchor = true, anchor = null) => {
+      zoom = clamp(Number(nextZoom) || 1, 0.25, 4);
+      paintDocumentView(preserveAnchor, anchor);
+    };
+    const fitDocumentPage = () => {
+      if (!image.naturalWidth || !image.naturalHeight) return;
+      const availableWidth = Math.max(160, viewport.clientWidth - 20);
+      const availableHeight = Math.max(160, viewport.clientHeight - 20);
+      const fitScale = Math.min(
+        1,
+        availableWidth / image.naturalWidth,
+        availableHeight / image.naturalHeight
+      );
+      baseWidth = Math.max(1, image.naturalWidth * fitScale);
+      baseHeight = Math.max(1, image.naturalHeight * fitScale);
+      zoom = 1;
+      paintDocumentView(false);
+    };
+    const selectionIsUsable = (selection) => Boolean(
+      selection && selection.width >= 0.015 && selection.height >= 0.015
+    );
     const paintSelection = () => {
-      const selection = selections.get(currentPage);
+      const selection = selections.get(currentPageKey());
       if (!selection) {
         selectionElement.hidden = true;
         useButton.disabled = true;
@@ -18633,39 +26807,83 @@ MAX - https://bizvmax.ru/zifra_plus
       selectionElement.style.top = `${selection.y * 100}%`;
       selectionElement.style.width = `${selection.width * 100}%`;
       selectionElement.style.height = `${selection.height * 100}%`;
-      useButton.disabled = selection.width < 0.015 || selection.height < 0.015;
+      useButton.disabled = !selectionIsUsable(selection);
     };
     const updateNavigation = () => {
+      file = currentFileEntry().file;
+      fileNameLabel.textContent = file.relativeName || file.fileName || "Документ";
+      fileSelect.value = String(currentFilePosition);
+      fileNumberLabel.textContent = String(currentFilePosition + 1);
+      previousFileButton.disabled = currentFilePosition <= 0;
+      nextFileButton.disabled = currentFilePosition >= availableFiles.length - 1;
       pageLabel.textContent = String(currentPage);
       pagesLabel.textContent = String(pageCount);
       previousButton.disabled = currentPage <= 1;
       nextButton.disabled = currentPage >= pageCount;
     };
-    const loadPage = async (page) => {
+    const loadPage = async (page, filePosition = currentFilePosition) => {
+      const sequence = ++loadSequence;
+      currentFilePosition = clamp(Number(filePosition) || 0, 0, availableFiles.length - 1);
+      file = currentFileEntry().file;
+      pageCount = Math.max(1, Number(file.pageCount) || 1);
       currentPage = clamp(Number(page) || 1, 1, pageCount);
       updateNavigation();
       loading.hidden = false;
       loading.textContent = "Загрузка страницы...";
       stage.hidden = true;
+      stage.style.removeProperty("width");
+      stage.style.removeProperty("height");
+      stage.style.removeProperty("margin-top");
+      stage.style.removeProperty("margin-bottom");
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+      zoom = 1;
+      baseWidth = 0;
+      baseHeight = 0;
+      zoomInput.value = "100";
+      zoomLabel.textContent = "100%";
       useButton.disabled = true;
       try {
-        let result = pageCache.get(currentPage);
+        const cacheKey = currentPageKey();
+        let result = pageCache.get(cacheKey);
         if (!result) {
           result = await loadStudentDocumentPhotoCropPage(payload, file, currentPage);
-          pageCache.set(currentPage, result);
+          pageCache.set(cacheKey, result);
         }
+        if (sequence !== loadSequence) return;
         pageCount = Math.max(1, Number(result.pageCount) || pageCount);
         updateNavigation();
         image.onload = () => {
           loading.hidden = true;
           stage.hidden = false;
-          if (!selections.has(currentPage)) {
-            selections.set(currentPage, { x: 0.22, y: 0.08, width: 0.56, height: 0.84 });
+          fitDocumentPage();
+          const selectionKey = currentPageKey();
+          if (!selections.has(selectionKey)) {
+            const isInitialRegion = selectRegionMode
+              && currentFilePosition === Math.max(0, availableFiles.findIndex(({ file: candidate }) => initialSourceNames.some((sourceName) => (
+                sourceName === String(candidate.relativeName || "")
+                || sourceName === String(candidate.fileName || "")
+              ))))
+              && currentPage === (Number(options.initialPage) || 1)
+              && options.initialBox;
+            if (isInitialRegion) {
+              const initialX = clamp(Number(options.initialBox.x) || 0, 0, 1);
+              const initialY = clamp(Number(options.initialBox.y) || 0, 0, 1);
+              selections.set(selectionKey, {
+                x: initialX,
+                y: initialY,
+                width: clamp(Number(options.initialBox.width) || 0, 0, 1 - initialX),
+                height: clamp(Number(options.initialBox.height) || 0, 0, 1 - initialY)
+              });
+            } else if (!selectRegionMode) {
+              selections.set(selectionKey, { x: 0.22, y: 0.08, width: 0.56, height: 0.84 });
+            }
           }
           paintSelection();
         };
         image.src = `data:${result.preview.mimeType};base64,${result.preview.base64}`;
       } catch (error) {
+        if (sequence !== loadSequence) return;
         loading.hidden = false;
         loading.textContent = error.message;
       }
@@ -18678,34 +26896,176 @@ MAX - https://bizvmax.ru/zifra_plus
       };
     };
     stage.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || stage.hidden || !image.naturalWidth) return;
+      if (![0, 1].includes(event.button) || stage.hidden || !image.naturalWidth) return;
+      if (event.button === 1 || editMode === "pan") {
+        event.preventDefault();
+        stage.setPointerCapture(event.pointerId);
+        stage.classList.add("is-panning");
+        interaction = {
+          type: "pan",
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          scrollLeft: viewport.scrollLeft,
+          scrollTop: viewport.scrollTop,
+          captureTarget: stage
+        };
+        return;
+      }
+      if (event.button !== 0) return;
+      if (event.target.closest("[data-ocr-crop-selection]")) return;
       event.preventDefault();
-      pointerId = event.pointerId;
-      startPoint = pointFromEvent(event);
-      stage.setPointerCapture(pointerId);
-      selections.set(currentPage, { x: startPoint.x, y: startPoint.y, width: 0, height: 0 });
+      const startPoint = pointFromEvent(event);
+      stage.setPointerCapture(event.pointerId);
+      interaction = {
+        type: "draw",
+        pointerId: event.pointerId,
+        startPoint,
+        previousSelection: selections.has(currentPageKey()) ? { ...selections.get(currentPageKey()) } : null,
+        captureTarget: stage
+      };
+      selections.set(currentPageKey(), { x: startPoint.x, y: startPoint.y, width: 0, height: 0 });
       paintSelection();
     });
     stage.addEventListener("pointermove", (event) => {
-      if (pointerId !== event.pointerId || !startPoint) return;
+      if (!interaction || interaction.pointerId !== event.pointerId) return;
+      if (interaction.type === "pan") {
+        viewport.scrollLeft = interaction.scrollLeft - (event.clientX - interaction.startX);
+        viewport.scrollTop = interaction.scrollTop - (event.clientY - interaction.startY);
+        return;
+      }
+      if (interaction.type !== "draw") return;
       const point = pointFromEvent(event);
-      selections.set(currentPage, {
-        x: Math.min(startPoint.x, point.x),
-        y: Math.min(startPoint.y, point.y),
-        width: Math.abs(point.x - startPoint.x),
-        height: Math.abs(point.y - startPoint.y)
+      selections.set(currentPageKey(), {
+        x: Math.min(interaction.startPoint.x, point.x),
+        y: Math.min(interaction.startPoint.y, point.y),
+        width: Math.abs(point.x - interaction.startPoint.x),
+        height: Math.abs(point.y - interaction.startPoint.y)
       });
       paintSelection();
     });
+    selectionElement.addEventListener("pointerdown", (event) => {
+      const selection = selections.get(currentPageKey());
+      if (editMode !== "select" || event.button !== 0 || !selectionIsUsable(selection)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const handle = event.target.closest("[data-ocr-crop-handle]")?.dataset.ocrCropHandle || "move";
+      selectionElement.setPointerCapture(event.pointerId);
+      interaction = {
+        type: handle === "move" ? "move" : "resize",
+        handle,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        selection: { ...selection },
+        captureTarget: selectionElement
+      };
+    });
+    selectionElement.addEventListener("pointermove", (event) => {
+      if (!interaction || interaction.pointerId !== event.pointerId || !["move", "resize"].includes(interaction.type)) return;
+      const rect = image.getBoundingClientRect();
+      const dx = (event.clientX - interaction.startX) / Math.max(1, rect.width);
+      const dy = (event.clientY - interaction.startY) / Math.max(1, rect.height);
+      const start = interaction.selection;
+      if (interaction.type === "move") {
+        selections.set(currentPageKey(), {
+          ...start,
+          x: clamp(start.x + dx, 0, 1 - start.width),
+          y: clamp(start.y + dy, 0, 1 - start.height)
+        });
+        paintSelection();
+        return;
+      }
+      let left = start.x;
+      let right = start.x + start.width;
+      let top = start.y;
+      let bottom = start.y + start.height;
+      if (interaction.handle.includes("w")) left = clamp(start.x + dx, 0, right - 0.015);
+      if (interaction.handle.includes("e")) right = clamp(start.x + start.width + dx, left + 0.015, 1);
+      if (interaction.handle.includes("n")) top = clamp(start.y + dy, 0, bottom - 0.015);
+      if (interaction.handle.includes("s")) bottom = clamp(start.y + start.height + dy, top + 0.015, 1);
+      selections.set(currentPageKey(), { x: left, y: top, width: right - left, height: bottom - top });
+      paintSelection();
+    });
     const stopSelection = (event) => {
-      if (pointerId !== event.pointerId) return;
-      if (stage.hasPointerCapture(pointerId)) stage.releasePointerCapture(pointerId);
-      pointerId = null;
-      startPoint = null;
+      if (!interaction || interaction.pointerId !== event.pointerId) return;
+      const activeInteraction = interaction;
+      interaction = null;
+      stage.classList.remove("is-panning");
+      if (activeInteraction.captureTarget?.hasPointerCapture(event.pointerId)) {
+        activeInteraction.captureTarget.releasePointerCapture(event.pointerId);
+      }
+      if (activeInteraction.type === "draw" && !selectionIsUsable(selections.get(currentPageKey()))) {
+        if (activeInteraction.previousSelection) selections.set(currentPageKey(), activeInteraction.previousSelection);
+        else selections.delete(currentPageKey());
+      }
       paintSelection();
     };
     stage.addEventListener("pointerup", stopSelection);
     stage.addEventListener("pointercancel", stopSelection);
+    stage.addEventListener("auxclick", (event) => {
+      if (event.button === 1) event.preventDefault();
+    });
+    selectionElement.addEventListener("pointerup", stopSelection);
+    selectionElement.addEventListener("pointercancel", stopSelection);
+    selectionElement.addEventListener("keydown", (event) => {
+      const selection = selections.get(currentPageKey());
+      if (
+        editMode !== "select"
+        || !selection
+        || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+      ) return;
+      event.preventDefault();
+      const step = event.shiftKey ? 0.02 : 0.005;
+      const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+      const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+      selections.set(currentPageKey(), {
+        ...selection,
+        x: clamp(selection.x + dx, 0, 1 - selection.width),
+        y: clamp(selection.y + dy, 0, 1 - selection.height)
+      });
+      paintSelection();
+    });
+    selectModeButton.addEventListener("click", () => setEditMode("select"));
+    panModeButton.addEventListener("click", () => setEditMode("pan"));
+    zoomInput.addEventListener("input", () => setDocumentZoom(Number(zoomInput.value) / 100));
+    zoomOutButton.addEventListener("click", () => setDocumentZoom(zoom - 0.15));
+    zoomInButton.addEventListener("click", () => setDocumentZoom(zoom + 0.15));
+    fitButton.addEventListener("click", fitDocumentPage);
+    viewport.addEventListener("wheel", (event) => {
+      if (!event.deltaY) return;
+      event.preventDefault();
+      const zoomFactor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+      setDocumentZoom(zoom * zoomFactor, true, {
+        clientX: event.clientX,
+        clientY: event.clientY
+      });
+    }, { passive: false });
+    viewport.addEventListener("keydown", (event) => {
+      if (["+", "="].includes(event.key)) {
+        event.preventDefault();
+        setDocumentZoom(zoom + 0.15);
+        return;
+      }
+      if (event.key === "-") {
+        event.preventDefault();
+        setDocumentZoom(zoom - 0.15);
+        return;
+      }
+      if (event.key === "0") {
+        event.preventDefault();
+        fitDocumentPage();
+        return;
+      }
+      if (editMode !== "pan" || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+      event.preventDefault();
+      const step = event.shiftKey ? 120 : 40;
+      viewport.scrollLeft += event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+      viewport.scrollTop += event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+    });
+    previousFileButton.addEventListener("click", () => loadPage(1, currentFilePosition - 1));
+    nextFileButton.addEventListener("click", () => loadPage(1, currentFilePosition + 1));
+    fileSelect.addEventListener("change", () => loadPage(1, Number(fileSelect.value) || 0));
     previousButton.addEventListener("click", () => loadPage(currentPage - 1));
     nextButton.addEventListener("click", () => loadPage(currentPage + 1));
     backdrop.querySelectorAll("[data-action='close-student-photo-cropper']").forEach((button) => {
@@ -18717,14 +27077,15 @@ MAX - https://bizvmax.ru/zifra_plus
     backdrop.addEventListener("keydown", (event) => {
       if (event.key === "Escape") close();
     });
-    useButton.addEventListener("click", () => {
-      const selection = selections.get(currentPage);
+    useButton.addEventListener("click", async () => {
+      const selection = selections.get(currentPageKey());
       if (!selection || !image.naturalWidth || !image.naturalHeight) return;
       const sourceX = Math.round(selection.x * image.naturalWidth);
       const sourceY = Math.round(selection.y * image.naturalHeight);
       const sourceWidth = Math.max(1, Math.round(selection.width * image.naturalWidth));
       const sourceHeight = Math.max(1, Math.round(selection.height * image.naturalHeight));
-      const scale = Math.min(1, 1200 / Math.max(sourceWidth, sourceHeight));
+      const maxOutputSize = Math.max(320, Number(options.maxOutputSize) || 1200);
+      const scale = Math.min(1, maxOutputSize / Math.max(sourceWidth, sourceHeight));
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.round(sourceWidth * scale));
       canvas.height = Math.max(1, Math.round(sourceHeight * scale));
@@ -18739,8 +27100,44 @@ MAX - https://bizvmax.ru/zifra_plus
         canvas.width,
         canvas.height
       );
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-      const base64 = dataUrl.split(",")[1] || "";
+      let outputCanvas = canvas;
+      let quality = clamp(Number(options.outputQuality) || 0.9, 0.5, 0.95);
+      let base64 = outputCanvas.toDataURL("image/jpeg", quality).split(",")[1] || "";
+      while (base64.length > 300000 && quality > 0.55) {
+        quality = Math.max(0.55, quality - 0.08);
+        base64 = outputCanvas.toDataURL("image/jpeg", quality).split(",")[1] || "";
+      }
+      while (base64.length > 300000 && Math.max(outputCanvas.width, outputCanvas.height) > 420) {
+        const reducedCanvas = document.createElement("canvas");
+        reducedCanvas.width = Math.max(1, Math.round(outputCanvas.width * 0.8));
+        reducedCanvas.height = Math.max(1, Math.round(outputCanvas.height * 0.8));
+        reducedCanvas.getContext("2d")?.drawImage(outputCanvas, 0, 0, reducedCanvas.width, reducedCanvas.height);
+        outputCanvas = reducedCanvas;
+        base64 = outputCanvas.toDataURL("image/jpeg", quality).split(",")[1] || "";
+      }
+      if (selectRegionMode) {
+        const selectedFile = currentFileEntry().file;
+        const selectedPage = currentPage;
+        const pageResult = pageCache.get(currentPageKey());
+        useButton.disabled = true;
+        useButton.setAttribute("aria-busy", "true");
+        try {
+          await options.onSelect({
+            file: selectedFile,
+            fileIndex: currentFileEntry().index,
+            page: selectedPage,
+            selection: { ...selection },
+            cropPreview: { mimeType: "image/jpeg", base64 },
+            pagePreview: pageResult?.preview || null
+          });
+          close();
+        } catch (error) {
+          alert(error.message || "Не удалось подготовить выбранную область документа.");
+          useButton.disabled = false;
+          useButton.removeAttribute("aria-busy");
+        }
+        return;
+      }
       if (!addStudentDocumentPhotoCandidate(dialog, {
         page: currentPage,
         mimeType: "image/jpeg",
@@ -18752,13 +27149,22 @@ MAX - https://bizvmax.ru/zifra_plus
         alert("Не удалось подготовить выделенное фото.");
         return;
       }
+      const candidateIndex = dialog.studentDocumentPhotoCandidates.length - 1;
+      useButton.disabled = true;
+      useButton.setAttribute("aria-busy", "true");
+      try {
+        await updateStudentCardPhotoFromRecognitionCandidate(dialog, candidateIndex);
+      } catch (error) {
+        alert(`Не удалось обновить фото в карточке: ${error.message}`);
+      }
       close();
     });
     backdrop.querySelector("[data-action='close-student-photo-cropper']")?.focus({ preventScroll: true });
-    loadPage(1);
+    loadPage(currentPage, currentFilePosition);
   }
 
   async function applyStudentDocumentRecognition(dialog, applyButton = null) {
+    const isContract = isContractDocumentRecognitionDialog(dialog);
     const updates = {};
     let invalidRow = null;
     dialog.querySelectorAll("[data-ocr-recognition-field]").forEach((row) => {
@@ -18777,7 +27183,16 @@ MAX - https://bizvmax.ru/zifra_plus
         row.querySelector("[data-ocr-field-value]").value = value;
         if (!updateStudentDocumentRecognitionIdentityValidation(row)) invalidRow ||= row;
       }
-      if (["birthDate", "passportDate", "educationDocumentDate"].includes(key) && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      if ([
+        "birthDate",
+        "passportDate",
+        "identityIssueDate",
+        "educationDocumentDate",
+        "applicationDate",
+        "startDate",
+        "endDate",
+        "contractDate"
+      ].includes(key) && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
         invalidRow ||= row;
       }
       updates[key] = value;
@@ -18804,25 +27219,52 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Выберите хотя бы одно найденное поле или фото.");
       return;
     }
-    const currentDraft = collectStudentFormDraft();
+    const currentDraft = isContract ? collectContractFormDraft() : collectStudentFormDraft();
     if (applyButton) {
       applyButton.disabled = true;
       applyButton.setAttribute("aria-busy", "true");
     }
     try {
       if (photoCandidate) {
-        const dataUrl = `data:${photoCandidate.mimeType};base64,${photoCandidate.base64}`;
-        const uploadedPhoto = await uploadStoredPhoto(dataUrl, currentDraft.photoPath || "", {
-          studentName: updates.name || currentDraft.name || ""
-        });
-        updates.photoPath = uploadedPhoto.photoPath || "";
-        updates.photoUrl = uploadedPhoto.photoUrl || "";
+        const photoAlreadyUpdated = (
+          selectedPhotoIndex === dialog.studentDocumentCommittedPhotoCandidateIndex
+          && photoCandidate.storedPhotoPath
+          && photoCandidate.storedPhotoUrl
+        );
+        if (photoAlreadyUpdated) {
+          updates.photoPath = photoCandidate.storedPhotoPath;
+          updates.photoUrl = photoCandidate.storedPhotoUrl;
+        } else {
+          const dataUrl = `data:${photoCandidate.mimeType};base64,${photoCandidate.base64}`;
+          const personName = updates.name || currentDraft.name || "";
+          const uploadedPhoto = await uploadStoredPhoto(
+            dataUrl,
+            currentDraft.photoPath || "",
+            isContract
+              ? { entityType: "contract", employeeName: personName, contractName: personName, name: personName }
+              : { studentName: personName, name: personName }
+          );
+          updates.photoPath = uploadedPhoto.photoPath || "";
+          updates.photoUrl = uploadedPhoto.photoUrl || "";
+        }
         updates.photoData = "";
         updateKeys.push("photoPath", "photoUrl", "photoData");
       }
     state.modal.draft = { ...currentDraft, ...updates };
     state.modal.hasDraftChanges = true;
-    if (updateKeys.some((key) => studentDocumentRecognitionFieldGroups
+    if (isContract) {
+      const contractDocumentKeys = contractDocumentRecognitionFieldGroups
+        .filter((group) => ["passport", "identity"].includes(group.id))
+        .flatMap((group) => group.keys)
+        .filter((key) => key !== "name");
+      const contractTermsKeys = contractDocumentRecognitionFieldGroups
+        .find((group) => group.id === "contract")?.keys || [];
+      state.contractCardTab = updateKeys.some((key) => contractDocumentKeys.includes(key)) || photoCandidate
+        ? "documents"
+        : updateKeys.some((key) => contractTermsKeys.includes(key))
+          ? "contract"
+          : "main";
+    } else if (updateKeys.some((key) => studentDocumentRecognitionFieldGroups
       .filter((group) => ["passport", "identity", "education"].includes(group.id))
       .flatMap((group) => group.keys)
       .filter((key) => !["name", "gender", "registrationAddress"].includes(key))
@@ -18830,10 +27272,16 @@ MAX - https://bizvmax.ru/zifra_plus
       state.studentCardTab = "documents";
     } else if (updateKeys.includes("registrationAddress")) {
       state.studentCardTab = "main";
+    } else if (updateKeys.length) {
+      state.studentCardTab = getStudentDocumentFieldTab(updateKeys[0]);
     }
     dialog.closeStudentDocumentRecognitionDialog?.();
     render();
     requestAnimationFrame(() => {
+      if (updates.photoUrl) {
+        const photo = document.querySelector(`${isContract ? "#contractPhotoPreview" : "#studentPhotoPreview"} > img`);
+        if (photo) photo.src = getPhotoPreviewCacheBustedUrl(updates.photoUrl);
+      }
       const firstVisibleField = updateKeys
         .map((key) => document.querySelector(`[name="${CSS.escape(key)}"]`))
         .find(Boolean);
@@ -18849,29 +27297,171 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
-  async function startStudentDocumentRecognition(event) {
+  function closeStudentDocumentRecognitionSelectionDialog() {
+    const dialog = document.querySelector("[data-student-document-recognition-selection]");
+    if (!dialog) return false;
+    dialog.closeStudentDocumentRecognitionSelection?.();
+    return true;
+  }
+
+  function chooseStudentDocumentsForRecognition(files, options = {}) {
+    closeStudentDocumentRecognitionSelectionDialog();
+    const availableFiles = (Array.isArray(files) ? files : [])
+      .map((file) => ({
+        fileName: String(file?.fileName || "").trim(),
+        relativeName: String(file?.relativeName || "").replace(/\\/g, "/").trim(),
+        contentType: String(file?.contentType || "").trim(),
+        size: Math.max(0, Number(file?.size) || 0)
+      }))
+      .filter((file) => file.fileName && file.relativeName);
+    if (!availableFiles.length) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const backdrop = document.createElement("div");
+      backdrop.className = "modal-backdrop student-document-recognition-selection-backdrop";
+      backdrop.dataset.studentDocumentRecognitionSelection = "";
+      let settled = false;
+      const finish = (selectedFiles = null) => {
+        if (settled) return;
+        settled = true;
+        backdrop.remove();
+        resolve(selectedFiles);
+      };
+      backdrop.closeStudentDocumentRecognitionSelection = () => finish(null);
+      const sourceLabel = String(options.sourceLabel || "Папка документов");
+      const skippedCount = Math.max(0, Number(options.skippedCount) || 0);
+      backdrop.innerHTML = `
+        <form class="modal student-document-recognition-selection-modal" data-ocr-file-selection-form>
+          <header class="modal-head">
+            <div>
+              <h2>Выберите документы для распознавания</h2>
+              <p>${escapeHtml(sourceLabel)} · найдены изображения, PDF и текстовые документы</p>
+            </div>
+            <button class="icon-button" data-action="cancel-student-document-recognition-selection" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+          </header>
+          <div class="student-document-recognition-selection-body">
+            <div class="student-document-recognition-selection-summary">
+              <label>
+                <input type="checkbox" data-ocr-file-select-all checked>
+                <span>Выбрать все</span>
+              </label>
+              <strong data-ocr-file-selected-count>${availableFiles.length} из ${availableFiles.length}</strong>
+            </div>
+            <div class="student-document-recognition-file-options" role="group" aria-label="Документы для распознавания">
+              ${availableFiles.map((file, index) => {
+                const extension = file.fileName.includes(".")
+                  ? file.fileName.split(".").pop().toUpperCase().slice(0, 5)
+                  : "ФАЙЛ";
+                return `
+                  <label class="student-document-recognition-file-option">
+                    <input type="checkbox" data-ocr-file-option value="${index}" checked>
+                    <span class="student-document-recognition-file-type" aria-hidden="true">${escapeHtml(extension)}</span>
+                    <span class="student-document-recognition-file-details">
+                      <strong>${escapeHtml(file.fileName)}</strong>
+                      <small>${escapeHtml(file.relativeName)}</small>
+                    </span>
+                    <span class="student-document-recognition-file-size">${escapeHtml(formatBytes(file.size))}</span>
+                  </label>
+                `;
+              }).join("")}
+            </div>
+            ${skippedCount ? `<p class="student-document-recognition-selection-warning">Не показано файлов из-за формата или размера: ${skippedCount}.</p>` : ""}
+          </div>
+          <footer class="modal-actions">
+            <button class="ghost-button" data-action="cancel-student-document-recognition-selection" type="button">Отмена</button>
+            <button class="primary-button" data-action="confirm-student-document-recognition-selection" type="submit">
+              Распознать выбранные (<span data-ocr-file-submit-count>${availableFiles.length}</span>)
+            </button>
+          </footer>
+        </form>
+      `;
+      const form = backdrop.querySelector("[data-ocr-file-selection-form]");
+      const selectAll = backdrop.querySelector("[data-ocr-file-select-all]");
+      const fileInputs = Array.from(backdrop.querySelectorAll("[data-ocr-file-option]"));
+      const selectedCount = backdrop.querySelector("[data-ocr-file-selected-count]");
+      const submitCount = backdrop.querySelector("[data-ocr-file-submit-count]");
+      const submitButton = backdrop.querySelector("[data-action='confirm-student-document-recognition-selection']");
+      const updateSelection = () => {
+        const count = fileInputs.filter((input) => input.checked).length;
+        selectAll.checked = count === fileInputs.length;
+        selectAll.indeterminate = count > 0 && count < fileInputs.length;
+        selectedCount.textContent = `${count} из ${fileInputs.length}`;
+        submitCount.textContent = String(count);
+        submitButton.disabled = count === 0;
+      };
+      selectAll.addEventListener("change", () => {
+        fileInputs.forEach((input) => {
+          input.checked = selectAll.checked;
+        });
+        updateSelection();
+      });
+      fileInputs.forEach((input) => input.addEventListener("change", updateSelection));
+      backdrop.querySelectorAll("[data-action='cancel-student-document-recognition-selection']")
+        .forEach((button) => button.addEventListener("click", () => finish(null)));
+      backdrop.addEventListener("pointerdown", (event) => {
+        if (event.target === backdrop) finish(null);
+      });
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const selectedFiles = fileInputs
+          .filter((input) => input.checked)
+          .map((input) => availableFiles[Number(input.value)]?.relativeName)
+          .filter(Boolean);
+        if (selectedFiles.length) finish(selectedFiles);
+      });
+      document.body.appendChild(backdrop);
+      requestAnimationFrame(() => fileInputs[0]?.focus({ preventScroll: true }));
+    });
+  }
+
+  async function startStudentDocumentRecognition(event, options = {}) {
+    const isContract = options.entityType === "contract";
     const button = event?.currentTarget;
-    const currentRecord = collectStudentFormDraft();
-    const folder = getStudentYandexDocumentsFolder(currentRecord);
+    const currentRecord = isContract ? collectContractFormDraft() : collectStudentFormDraft();
+    const folder = isContract
+      ? getContractDocumentsFolder(currentRecord)
+      : getStudentYandexDocumentsFolder(currentRecord);
     const source = getStudentDocumentsSource(Boolean(event?.shiftKey));
     if (!folder) {
-      alert("Не удалось определить папку документов слушателя.");
+      alert(`Не удалось определить папку документов ${isContract ? "сотрудника" : "слушателя"}.`);
       return;
     }
-    state.modal.draft = currentRecord;
-    const dialog = createStudentDocumentRecognitionDialog();
+    let dialog = null;
     if (button) {
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
     }
     try {
-      const startResponse = await fetch(photoApiUrl("/api/students/recognize-documents/start"), {
+      const filesResponse = await fetch(photoApiUrl("/api/students/recognize-documents/files"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Requested-With": "AIS-Web"
         },
         body: JSON.stringify({ folder, source })
+      });
+      const filesPayload = await filesResponse.json().catch(() => ({}));
+      if (!filesResponse.ok) {
+        throw new Error(filesPayload.error || "Не удалось получить список документов.");
+      }
+      const availableFiles = Array.isArray(filesPayload.files) ? filesPayload.files : [];
+      if (!availableFiles.length) {
+        throw new Error(`В папке ${isContract ? "сотрудника" : "слушателя"} не найдены файлы JPG, PNG, PDF, TXT, CSV, RTF, DOCX или ODT.`);
+      }
+      const selectedFiles = await chooseStudentDocumentsForRecognition(availableFiles, {
+        sourceLabel: filesPayload.sourceLabel,
+        skippedCount: filesPayload.skippedCount
+      });
+      if (!selectedFiles?.length) return;
+      const selectedSource = String(filesPayload.source || source);
+      state.modal.draft = currentRecord;
+      dialog = createStudentDocumentRecognitionDialog({ entityType: isContract ? "contract" : "student" });
+      const startResponse = await fetch(photoApiUrl("/api/students/recognize-documents/start"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({ folder, source: selectedSource, selectedFiles })
       });
       const startPayload = await startResponse.json().catch(() => ({}));
       if (!startResponse.ok) {
@@ -18904,12 +27494,16 @@ MAX - https://bizvmax.ru/zifra_plus
         throw new Error(result.error || "Не удалось получить результаты распознавания.");
       }
       if (!dialog.isStudentDocumentRecognitionClosed?.()) {
-        const storedResult = storeStudentDocumentRecognitionResult(result);
+        const storedResult = isContract
+          ? storeContractDocumentRecognitionResult(result)
+          : storeStudentDocumentRecognitionResult(result);
         renderStudentDocumentRecognitionResults(dialog, storedResult, currentRecord);
       }
     } catch (error) {
-      if (!dialog.isStudentDocumentRecognitionClosed?.()) {
+      if (dialog && !dialog.isStudentDocumentRecognitionClosed?.()) {
         renderStudentDocumentRecognitionError(dialog, error.message);
+      } else if (!dialog) {
+        alert(error.message);
       }
     } finally {
       if (button?.isConnected) {
@@ -18981,12 +27575,18 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Эту позицию нельзя удалить: она распределена на слушателей.");
       return;
     }
-    if (!confirm("Удалить запись?")) return;
-    if (configId === "students" && record.photoPath) {
+    if (!await acquireRecordLock(recordLockEntityType(configId), id)) return;
+    const deleteLock = activeRecordLock;
+    if (!confirm("Удалить запись?")) {
+      await releaseRecordLock(deleteLock);
+      return;
+    }
+    if (["students", "contracts"].includes(configId) && record.photoPath) {
       try {
         await deleteStoredPhoto(record.photoPath);
       } catch (error) {
         alert("Запись не удалена: не удалось удалить фото из хранилища. " + error.message);
+        await releaseRecordLock(deleteLock);
         return;
       }
     }
@@ -19000,6 +27600,14 @@ MAX - https://bizvmax.ru/zifra_plus
       changes: buildAuditChanges(record, {}, configId === "students" ? studentAllFields : config.fields)
     });
     persist();
+    try {
+      if (!await flushSharedApplicationState()) {
+        await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
+      }
+    } catch (error) {
+      alert(`Удаление пока не передано в общую базу: ${error.message}`);
+    }
+    await releaseRecordLock(deleteLock);
     render();
   }
 
@@ -19007,6 +27615,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const config = configs[configId];
     const selected = getSelected(configId);
     if (!selected.length) return;
+    await pollSharedRecordLocks({ renderAfter: false });
+    const lockedRecord = selected
+      .map((id) => getRecordLock(recordLockEntityType(configId), id))
+      .find((lock) => lock && !lock.ownedByClient);
+    if (lockedRecord) {
+      alert(formatRecordLockMessage(lockedRecord, "Массовое удаление невозможно"));
+      return;
+    }
     if (configId === "inventory") {
       const allocated = getRowsByIds(config.collection, selected)
         .find((item) => getInventoryAllocationCount(item.id) > 0);
@@ -19034,20 +27650,28 @@ MAX - https://bizvmax.ru/zifra_plus
         entityLabel: removed.map((item) => item.title || item.id).join(", ")
       });
       persist();
+      try {
+        if (!await flushSharedApplicationState()) {
+          await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
+          alert("Изменения не сохранены в общей базе. Данные были обновлены с сервера.");
+        }
+      } catch (error) {
+        alert(`Изменения пока не переданы в общую базу: ${error.message}`);
+      }
       render();
       return;
     }
-    if (configId === "students") {
-      const selectedStudents = getRowsByIds(config.collection, selected);
+    if (["students", "contracts"].includes(configId)) {
+      const selectedRecords = getRowsByIds(config.collection, selected);
       try {
-        for (const student of selectedStudents) {
-          if (student.photoPath) await deleteStoredPhoto(student.photoPath);
+        for (const record of selectedRecords) {
+          if (record.photoPath) await deleteStoredPhoto(record.photoPath);
         }
       } catch (error) {
         alert("Записи не удалены: не удалось удалить фото из хранилища. " + error.message);
         return;
       }
-      releaseStudentDirectExpenses(selectedStudents);
+      if (configId === "students") releaseStudentDirectExpenses(selectedRecords);
     }
     state.data.collections[config.collection] = (state.data.collections[config.collection] || []).filter((row) => !selectedSet.has(row.id));
     state.selected[configId] = [];
@@ -19056,14 +27680,30 @@ MAX - https://bizvmax.ru/zifra_plus
       entityId: selected.join(", ")
     });
     persist();
+    try {
+      if (!await flushSharedApplicationState()) {
+        await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
+        alert("Удаление не сохранено в общей базе. Данные были обновлены с сервера.");
+      }
+    } catch (error) {
+      alert(`Удаление пока не передано в общую базу: ${error.message}`);
+    }
     render();
   }
 
-  function bulkSetStatus(configId) {
+  async function bulkSetStatus(configId) {
     const config = configs[configId];
     const selected = getSelected(configId);
     const status = document.getElementById("bulkStatusSelect")?.value;
     if (!selected.length || !status) return;
+    await pollSharedRecordLocks({ renderAfter: false });
+    const lockedRecord = selected
+      .map((id) => getRecordLock(recordLockEntityType(configId), id))
+      .find((lock) => lock && !lock.ownedByClient);
+    if (lockedRecord) {
+      alert(formatRecordLockMessage(lockedRecord, "Массовое изменение невозможно"));
+      return;
+    }
     const selectedSet = new Set(selected);
     state.data.collections[config.collection] = (state.data.collections[config.collection] || []).map((row) => (
       selectedSet.has(row.id) ? { ...row, status } : row
@@ -19076,6 +27716,14 @@ MAX - https://bizvmax.ru/zifra_plus
       after: status
     });
     persist();
+    try {
+      if (!await flushSharedApplicationState()) {
+        await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
+        alert("Статус не сохранён в общей базе. Данные были обновлены с сервера.");
+      }
+    } catch (error) {
+      alert(`Статус пока не передан в общую базу: ${error.message}`);
+    }
     render();
   }
 
@@ -19099,29 +27747,66 @@ MAX - https://bizvmax.ru/zifra_plus
   function saveCommunicationTemplates(event) {
     event.preventDefault();
     collectCommunicationTemplateFormDraft(event.currentTarget);
-    addAudit("Изменен справочник", dictionaryTitle("communicationTemplates"), "Сохранены шаблоны сообщений");
+    const audience = event.currentTarget.dataset.templateAudience === "employees" ? "сотрудников" : "слушателей";
+    addAudit("Изменен справочник", dictionaryTitle("communicationTemplates"), `Сохранены шаблоны сообщений ${audience}`);
     persist();
     render();
   }
 
-  function collectCommunicationTemplateFormDraft(form = document.querySelector("form[data-action='save-communication-templates']")) {
-    if (!form) return;
+  function collectCommunicationTemplateFormDraft(form = null) {
+    if (!form) {
+      document.querySelectorAll("form[data-action='save-communication-templates']")
+        .forEach((item) => collectCommunicationTemplateFormDraft(item));
+      return;
+    }
     form.querySelectorAll("[data-template-editor]").forEach(syncCommunicationTemplateEditor);
-    state.data.dictionaries.communicationTemplates = studentCommunicationMessages.map((message, index) => (
+    const isEmployees = form.dataset.templateAudience === "employees";
+    const messages = isEmployees ? employeeCommunicationMessages : studentCommunicationMessages;
+    const templates = messages.map((message, index) => (
       replaceCommunicationTemplateFieldAliases(String(form.elements[`template${index}`]?.value || ""))
     ));
-    state.data.dictionaries.communicationTemplateDescriptions = studentCommunicationMessages.map((message, index) => (
+    const descriptions = messages.map((message, index) => (
       String(form.elements[`description${index}`]?.value || "").trim() || message.label
     ));
+    if (isEmployees) {
+      state.data.dictionaries.employeeCommunicationTemplates = templates;
+      state.data.dictionaries.employeeCommunicationTemplateDescriptions = descriptions;
+    } else {
+      state.data.dictionaries.communicationTemplates = templates;
+      state.data.dictionaries.communicationTemplateDescriptions = descriptions;
+    }
   }
 
-  function resetCommunicationTemplates() {
-    if (!confirm("Восстановить исходные шаблоны типовых сообщений?")) return;
-    state.data.dictionaries.communicationTemplates = [...studentCommunicationTemplateDefaults];
-    state.data.dictionaries.communicationTemplateDescriptions = studentCommunicationMessages.map((message) => message.label);
-    addAudit("Изменен справочник", dictionaryTitle("communicationTemplates"), "Восстановлены исходные шаблоны");
+  function resetCommunicationTemplates(audience = "students") {
+    const isEmployees = audience === "employees";
+    const audienceLabel = isEmployees ? "сотрудников" : "слушателей";
+    if (!confirm(`Восстановить исходные шаблоны типовых сообщений ${audienceLabel}?`)) return;
+    collectCommunicationTemplateFormDraft();
+    if (isEmployees) {
+      state.data.dictionaries.employeeCommunicationTemplates = [...employeeCommunicationTemplateDefaults];
+      state.data.dictionaries.employeeCommunicationTemplateDescriptions = employeeCommunicationMessages.map((message) => message.label);
+    } else {
+      state.data.dictionaries.communicationTemplates = [...studentCommunicationTemplateDefaults];
+      state.data.dictionaries.communicationTemplateDescriptions = studentCommunicationMessages.map((message) => message.label);
+    }
+    addAudit("Изменен справочник", dictionaryTitle("communicationTemplates"), `Восстановлены исходные шаблоны ${audienceLabel}`);
     persist();
     render();
+  }
+
+  function switchCommunicationTemplateAudience(audience) {
+    const target = audience === "employees" ? "employees" : "students";
+    state.communicationTemplateAudience = target;
+    document.querySelectorAll("[data-action='switch-communication-template-audience']").forEach((button) => {
+      const active = button.dataset.templateAudience === target;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    document.querySelectorAll("[data-communication-template-panel]").forEach((panel) => {
+      const active = panel.dataset.communicationTemplatePanel === target;
+      panel.classList.toggle("is-active", active);
+      panel.hidden = !active;
+    });
   }
 
   function saveDataFormulas(event) {
@@ -19599,7 +28284,10 @@ MAX - https://bizvmax.ru/zifra_plus
       response = await fetch(photoApiUrl("/api/documents/template-inspect"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(source)
+        body: JSON.stringify({
+          ...source,
+          preferLocalTemplate: getEffectiveLocalDocumentsMode()
+        })
       });
     } catch (error) {
       throw new Error(`не удалось подключиться к app-server.js (${photoServerOrigin()})`);
@@ -20928,6 +29616,17 @@ MAX - https://bizvmax.ru/zifra_plus
       };
     });
     const settings = [...constantsResult.settings, ...otherSettings];
+    const invalidAgentRate = settings.find((setting) => {
+      if (setting.type !== "percent") return false;
+      const value = Number(String(setting.value || "").replace(",", "."));
+      return !Number.isFinite(value) || value < 0 || value > 100;
+    });
+    if (invalidAgentRate) {
+      alert(`Ставка «${invalidAgentRate.label}» должна быть числом от 0 до 100%.`);
+      switchPaymentSettingsTab("agents");
+      form.elements[invalidAgentRate.key]?.focus();
+      return;
+    }
     const automaticRules = settings.find((setting) => setting.key === "automaticExpenseRules");
     const invalidRule = String(automaticRules?.value || "").split(/\r?\n/u)
       .map((line) => line.trim())
@@ -20963,6 +29662,10 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.meta.defaultAuthorPaymentPercent = nextAuthorRate;
     syncVisibleGlobalAuthorRate(previousAuthorRate, nextAuthorRate);
     refreshAllProgramAuthorExpensesForStudents();
+    refreshContractPaymentAccountingForCollections(
+      state.data.collections,
+      state.data.dictionaries.paymentSettings
+    );
     const mappedAgents = parseSourceAgentAssignments(sourceAssignments?.value)
       .map((item) => item.agent)
       .filter(Boolean);
@@ -20988,6 +29691,10 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.meta.defaultAuthorPaymentPercent = nextAuthorRate;
     syncVisibleGlobalAuthorRate(previousAuthorRate, nextAuthorRate);
     refreshAllProgramAuthorExpensesForStudents();
+    refreshContractPaymentAccountingForCollections(
+      state.data.collections,
+      state.data.dictionaries.paymentSettings
+    );
     addAudit("Изменен справочник", dictionaryTitle("paymentSettings"), "Восстановлены исходные настройки оплаты");
     persist();
     render();
@@ -21268,17 +29975,17 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function bindCommunicationTemplateFieldActions() {
-    const form = document.querySelector("form[data-action='save-communication-templates']");
-    if (!form) return;
-    form.querySelector("[data-action='add-communication-template-field']")?.addEventListener("click", () => (
-      showCommunicationTemplateFieldDialog()
-    ));
-    form.addEventListener("contextmenu", (event) => {
-      const token = event.target.closest?.("[data-template-field-name]");
-      if (!token || !form.contains(token)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      showCommunicationTemplateFieldMenu(token.dataset.templateFieldName, event.clientX, event.clientY, token);
+    document.querySelectorAll("form[data-action='save-communication-templates']").forEach((form) => {
+      form.querySelector("[data-action='add-communication-template-field']")?.addEventListener("click", () => (
+        showCommunicationTemplateFieldDialog()
+      ));
+      form.addEventListener("contextmenu", (event) => {
+        const token = event.target.closest?.("[data-template-field-name]");
+        if (!token || !form.contains(token)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        showCommunicationTemplateFieldMenu(token.dataset.templateFieldName, event.clientX, event.clientY, token);
+      });
     });
   }
 
@@ -21830,9 +30537,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindCommunicationTemplateDragAndDrop() {
     const tokenMime = "application/x-ais-template-field";
-    const form = document.querySelector("form[data-action='save-communication-templates']");
-    if (!form) return;
-    let draggedTemplateBlock = null;
+    const forms = document.querySelectorAll("form[data-action='save-communication-templates']");
+    forms.forEach((form) => {
+      let draggedTemplateBlock = null;
 
     form.addEventListener("click", openTemplateEditorLink);
     form.addEventListener("dragstart", (event) => {
@@ -21915,6 +30622,7 @@ MAX - https://bizvmax.ru/zifra_plus
         refreshCommunicationTemplateEditor(editor, true);
         editor.focus();
       });
+    });
     });
   }
 
@@ -22257,6 +30965,26 @@ MAX - https://bizvmax.ru/zifra_plus
     ].join("\n");
   }
 
+  function getStudentDatabaseDownloadTooltip() {
+    const source = getStudentDatabaseSourceLabel(getStudentDocumentsSource());
+    const alternateSource = getStudentDatabaseSourceLabel(getStudentDocumentsSource(true));
+    if (!isLocalDocumentsAvailable()) {
+      return [
+        "Экспорт в базу",
+        "",
+        "Формирует отдельный XLSB с текущими данными и скачивает его в «Загрузки».",
+        "Исходная база на Яндекс-Диске не изменяется."
+      ].join("\n");
+    }
+    return [
+      "Экспорт в базу",
+      "",
+      `Обычный щелчок: шаблон — ${source}.`,
+      `Shift + щелчок: шаблон — ${alternateSource}.`,
+      "Сформированный XLSB скачивается с датой и временем в имени; исходная база не изменяется."
+    ].join("\n");
+  }
+
   function getAutomaticDocumentSaveHint(
     preferLocal = getOpenDocumentsLocally(),
     localRoot = getLocalDocumentsRoot(),
@@ -22292,6 +31020,32 @@ MAX - https://bizvmax.ru/zifra_plus
       "input",
       () => updateAutomaticDocumentSaveHint(form)
     );
+  }
+
+  function updateAdminMySqlSettingsState(form) {
+    if (!form) return;
+    const managedByEnvironment = Boolean(state.data.meta.mysqlManagedByEnvironment);
+    const useApplicationsConnection = Boolean(form.elements.mysqlUseApplicationsConnection?.checked);
+    const disabled = managedByEnvironment || useApplicationsConnection;
+    const grid = form.querySelector("[data-mysql-settings-grid]");
+    grid?.classList.toggle("is-disabled", disabled);
+    grid?.querySelectorAll("input").forEach((input) => { input.disabled = disabled; });
+    const hint = form.querySelector("[data-mysql-source-hint]");
+    if (hint) {
+      hint.textContent = managedByEnvironment
+        ? "Настройки заданы переменной окружения сервера."
+        : useApplicationsConnection
+          ? "Общая база и блокировки используют подключение MySQL базы заявок."
+          : "Общая база и блокировки используют отдельное подключение MySQL.";
+    }
+  }
+
+  function bindAdminMySqlSettings(form) {
+    if (!form) return;
+    updateAdminMySqlSettingsState(form);
+    form.elements.mysqlUseApplicationsConnection?.addEventListener("change", () => {
+      updateAdminMySqlSettingsState(form);
+    });
   }
 
   function getStudentDocumentsOpenTooltip() {
@@ -22349,14 +31103,16 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function updateAdminSettingsSaveButton(form = null) {
-    const button = (form || document)?.querySelector?.(".admin-save-connection-button");
-    if (!button) return;
+    const buttons = Array.from((form || document)?.querySelectorAll?.(".admin-save-connection-button") || []);
+    if (!buttons.length) return;
     const title = state.adminSettingsDirty
       ? "Есть несохранённые изменения. Сохранить подключение"
       : "Сохранить подключение";
-    button.classList.toggle("is-unsaved", state.adminSettingsDirty);
-    button.title = title;
-    button.setAttribute("aria-label", title);
+    buttons.forEach((button) => {
+      button.classList.toggle("is-unsaved", state.adminSettingsDirty);
+      button.title = title;
+      button.setAttribute("aria-label", title);
+    });
   }
 
   function setAdminSettingsDirty(dirty, form = null) {
@@ -22425,8 +31181,8 @@ MAX - https://bizvmax.ru/zifra_plus
       form.elements.studentDatabaseWebDavPath?.focus();
       return false;
     }
-    const submitButton = form.querySelector("button[type='submit']");
-    if (submitButton) submitButton.disabled = true;
+    const submitButtons = Array.from(form.querySelectorAll("button[type='submit']"));
+    submitButtons.forEach((button) => { button.disabled = true; });
     state.adminSettingsSaving = true;
     try {
       const yandexSettings = await saveYandexDiskSettings(form);
@@ -22439,7 +31195,7 @@ MAX - https://bizvmax.ru/zifra_plus
     } catch (error) {
       alert(`Не удалось сохранить настройки: ${error.message}`);
       form.elements.studentDatabaseWebDavPath?.focus();
-      if (submitButton) submitButton.disabled = false;
+      submitButtons.forEach((button) => { button.disabled = false; });
       return false;
     } finally {
       state.adminSettingsSaving = false;
@@ -22462,6 +31218,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const emailSmtpPort = Number(form.elements.studentApplicationsEmailSmtpPort?.value || 465);
     const emailLogin = String(form.elements.studentApplicationsEmailLogin?.value || "").trim();
     const emailPassword = String(form.elements.studentApplicationsEmailPassword?.value || "");
+    const mysqlUseApplicationsConnection = Boolean(
+      form.elements.mysqlUseApplicationsConnection?.checked
+    );
+    const mysqlHost = String(form.elements.mysqlHost?.value || "").trim();
+    const mysqlPort = Number(form.elements.mysqlPort?.value || 3306);
+    const mysqlDatabase = String(form.elements.mysqlDatabase?.value || "").trim();
+    const mysqlUser = String(form.elements.mysqlUser?.value || "").trim();
+    const mysqlPassword = String(form.elements.mysqlPassword?.value || "");
     if (!databasePath) throw new Error("Укажите WebDAV-путь или ссылку на базу слушателей.");
     if (!basePath) throw new Error("Укажите путь папки документов в Яндекс-Диске.");
     if (!localDocumentsRoot) throw new Error("Укажите расположение документов на локальном диске.");
@@ -22474,6 +31238,17 @@ MAX - https://bizvmax.ru/zifra_plus
       throw new Error("Укажите корректный порт SMTP.");
     }
     if (!emailLogin) throw new Error("Укажите логин электронной почты.");
+    if (!mysqlUseApplicationsConnection && !state.data.meta.mysqlManagedByEnvironment) {
+      if (!mysqlHost) throw new Error("Укажите сервер MySQL.");
+      if (!Number.isInteger(mysqlPort) || mysqlPort < 1 || mysqlPort > 65535) {
+        throw new Error("Укажите корректный порт MySQL.");
+      }
+      if (!mysqlDatabase) throw new Error("Укажите имя базы MySQL.");
+      if (!mysqlUser) throw new Error("Укажите пользователя MySQL.");
+      if (!mysqlPassword && !state.data.meta.mysqlHasPassword) {
+        throw new Error("Введите пароль MySQL.");
+      }
+    }
     const response = await fetch(photoApiUrl("/api/settings/system-documents"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -22491,7 +31266,13 @@ MAX - https://bizvmax.ru/zifra_plus
         emailSmtpHost,
         emailSmtpPort,
         emailLogin,
-        emailPassword
+        emailPassword,
+        mysqlUseApplicationsConnection,
+        mysqlHost,
+        mysqlPort,
+        mysqlDatabase,
+        mysqlUser,
+        mysqlPassword
       })
     });
     const payload = await response.json().catch(() => ({}));
@@ -22500,6 +31281,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (form.elements.studentApplicationsEmailPassword) {
       form.elements.studentApplicationsEmailPassword.value = "";
     }
+    if (form.elements.mysqlPassword) form.elements.mysqlPassword.value = "";
     return payload;
   }
 
@@ -22535,6 +31317,17 @@ MAX - https://bizvmax.ru/zifra_plus
       payload.emailLogin ?? getStudentApplicationsEmailLogin()
     ).trim();
     state.data.meta.studentApplicationsEmailHasPassword = Boolean(payload.emailHasPassword);
+    if (Object.prototype.hasOwnProperty.call(payload, "mysqlUseApplicationsConnection")) {
+      state.data.meta.mysqlUseApplicationsConnection = payload.mysqlUseApplicationsConnection !== false;
+      state.data.meta.mysqlHost = String(payload.mysqlHost || "").trim();
+      state.data.meta.mysqlPort = Number(payload.mysqlPort || 3306);
+      state.data.meta.mysqlDatabase = String(payload.mysqlDatabase || "").trim();
+      state.data.meta.mysqlUser = String(payload.mysqlUser || "").trim();
+      state.data.meta.mysqlHasPassword = Boolean(payload.mysqlHasPassword);
+      state.data.meta.mysqlConfigured = Boolean(payload.mysqlConfigured);
+      state.data.meta.mysqlManagedByEnvironment = Boolean(payload.mysqlManagedByEnvironment);
+      state.data.meta.mysqlSource = String(payload.mysqlSource || "").trim();
+    }
   }
 
   async function testYandexDiskConnection(event) {
@@ -22585,6 +31378,39 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  async function testMySqlLocksConnection(event) {
+    const button = event.currentTarget;
+    const form = button.closest("form");
+    if (!form) return;
+    button.disabled = true;
+    try {
+      const settings = await saveYandexDiskSettings(form);
+      applyYandexDiskSettings(settings);
+      clearAdminSettingsDirtyState(form);
+      addAudit("Изменено подключение", "Админка", "Параметры MySQL сохранены перед проверкой");
+      persist();
+      const response = await fetch(photoApiUrl("/api/mysql-locks/test"), { method: "POST" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Не удалось подключиться к MySQL.");
+      const detail = [
+        payload.database,
+        payload.version ? `MySQL ${payload.version}` : "",
+        payload.stateRevision ? `ревизия общей базы ${payload.stateRevision}` : "",
+        payload.flushed ? `выгружено изменений: ${payload.flushed}` : "",
+        payload.pendingCount ? `ожидают выгрузки: ${payload.pendingCount}` : ""
+      ]
+        .filter(Boolean)
+        .join(", ");
+      await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
+      updateSharedStateStatusUi();
+      alert(`${payload.message || "Подключение MySQL работает."}${detail ? `\n${detail}` : ""}`);
+      render();
+    } catch (error) {
+      alert(`Проверка MySQL не выполнена: ${error.message}`);
+      button.disabled = false;
+    }
+  }
+
   async function syncServerConnectionSettings() {
     try {
       const yandexResponse = await fetch(photoApiUrl("/api/settings/system-documents"));
@@ -22606,7 +31432,14 @@ MAX - https://bizvmax.ru/zifra_plus
           emailSmtpHost: getStudentApplicationsEmailSmtpHost(),
           emailSmtpPort: getStudentApplicationsEmailSmtpPort(),
           emailLogin: getStudentApplicationsEmailLogin(),
-          emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword
+          emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword,
+          mysqlUseApplicationsConnection: state.data.meta.mysqlUseApplicationsConnection,
+          mysqlHost: state.data.meta.mysqlHost,
+          mysqlPort: state.data.meta.mysqlPort,
+          mysqlDatabase: state.data.meta.mysqlDatabase,
+          mysqlUser: state.data.meta.mysqlUser,
+          mysqlHasPassword: state.data.meta.mysqlHasPassword,
+          mysqlManagedByEnvironment: state.data.meta.mysqlManagedByEnvironment
         });
         applyYandexDiskSettings(payload);
         changed = before !== JSON.stringify({
@@ -22624,7 +31457,14 @@ MAX - https://bizvmax.ru/zifra_plus
           emailSmtpHost: getStudentApplicationsEmailSmtpHost(),
           emailSmtpPort: getStudentApplicationsEmailSmtpPort(),
           emailLogin: getStudentApplicationsEmailLogin(),
-          emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword
+          emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword,
+          mysqlUseApplicationsConnection: state.data.meta.mysqlUseApplicationsConnection,
+          mysqlHost: state.data.meta.mysqlHost,
+          mysqlPort: state.data.meta.mysqlPort,
+          mysqlDatabase: state.data.meta.mysqlDatabase,
+          mysqlUser: state.data.meta.mysqlUser,
+          mysqlHasPassword: state.data.meta.mysqlHasPassword,
+          mysqlManagedByEnvironment: state.data.meta.mysqlManagedByEnvironment
         });
       }
       if (!changed) return;
@@ -22721,18 +31561,47 @@ MAX - https://bizvmax.ru/zifra_plus
       photoApiUrl(`/api/students/export-database/result?id=${encodeURIComponent(job.id)}`),
       { cache: "no-store" }
     );
-    return readStudentImportResponse(resultResponse);
+    const resultContentType = String(resultResponse.headers.get("Content-Type") || "").toLowerCase();
+    if (
+      body.downloadOnly === true
+      && resultResponse.ok
+      && (
+        resultContentType.includes("application/vnd.ms-excel.sheet.binary.macroenabled.12")
+        || resultContentType.includes("application/octet-stream")
+      )
+    ) {
+      return {
+        jobId: job.id,
+        downloadReady: true,
+        fileName: getDownloadFileNameFromResponse(resultResponse, "АИС Допобразование.xlsb"),
+        fileBlob: await resultResponse.blob()
+      };
+    }
+    const result = await readStudentImportResponse(resultResponse);
+    return { ...result, jobId: job.id };
   }
 
   function buildStudentDatabaseExportStudents() {
     return (state.data.collections.students || []).map((student) => {
+      const agentCalculation = getStudentAgentCommissionCalculation(
+        student,
+        state.data.collections,
+        state.data.dictionaries.paymentSettings
+      );
       const {
         photoData,
         photoUrl,
         directExpenses,
         ...databaseFields
       } = student;
-      return databaseFields;
+      return {
+        ...databaseFields,
+        agentAmount: agentCalculation.payableAmount,
+        agentPayment1Amount: agentCalculation.payment1Amount,
+        agentPayment1Date: agentCalculation.payment1Date,
+        agentPayment2Amount: agentCalculation.payment2Amount,
+        agentPayment2Date: agentCalculation.payment2Date
+      };
     });
   }
 
@@ -22789,6 +31658,14 @@ MAX - https://bizvmax.ru/zifra_plus
     }));
   }
 
+  function buildStudentDatabaseExportAgentPaymentRates() {
+    const rates = getAgentCommissionRates();
+    return {
+      withAuthorPercent: rates.withAuthor,
+      withoutAuthorPercent: rates.withoutAuthor
+    };
+  }
+
   function getDownloadFileNameFromResponse(response, fallback) {
     const disposition = String(response.headers.get("Content-Disposition") || "");
     const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
@@ -22824,7 +31701,8 @@ MAX - https://bizvmax.ru/zifra_plus
       status: "Подготовка синхронизации...",
       progress: 0,
       tone: "active",
-      indeterminate: false
+      indeterminate: false,
+      operation: "sync"
     });
     try {
       const students = buildStudentDatabaseExportStudents();
@@ -22832,6 +31710,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const directExpenses = buildStudentDatabaseExportDirectExpenses();
       const generalExpenses = buildStudentDatabaseExportGeneralExpenses();
       const paymentConstants = buildStudentDatabaseExportPaymentConstants();
+      const agentPaymentRates = buildStudentDatabaseExportAgentPaymentRates();
       const result = await runStudentDatabaseExport({
         databasePath: getStudentDatabaseWebDavPath(),
         source: syncSource,
@@ -22839,7 +31718,8 @@ MAX - https://bizvmax.ru/zifra_plus
         contracts,
         directExpenses,
         generalExpenses,
-        paymentConstants
+        paymentConstants,
+        agentPaymentRates
       });
       const duration = formatDatabaseOperationDuration(startedAt);
       state.data.meta.studentDatabaseLastExportedAt = new Date().toISOString();
@@ -22865,6 +31745,89 @@ MAX - https://bizvmax.ru/zifra_plus
     } catch (error) {
       finishDatabaseExportIndicator("error", `Ошибка: ${error.message}`, 6500);
       alert(`Не удалось синхронизировать базу: ${error.message}`);
+    }
+  }
+
+  async function downloadStudentsDatabase(event) {
+    if (state.databaseExport.running) return;
+    if (state.databaseImport.running) {
+      alert("Дождитесь завершения загрузки данных из базы.");
+      return;
+    }
+    const exportSource = getStudentDocumentsSource(Boolean(event?.shiftKey));
+    const sourceLabel = exportSource === "local"
+      ? "локального файла"
+      : "базы на Яндекс-Диске через WebDAV";
+    const startedAt = performance.now();
+    updateDatabaseExportIndicator({
+      running: true,
+      visible: true,
+      status: `Подготовка экспорта на основе ${sourceLabel}...`,
+      progress: 0,
+      tone: "active",
+      indeterminate: false,
+      operation: "download"
+    });
+    try {
+      const students = buildStudentDatabaseExportStudents();
+      const contracts = buildStudentDatabaseExportContracts();
+      const directExpenses = buildStudentDatabaseExportDirectExpenses();
+      const generalExpenses = buildStudentDatabaseExportGeneralExpenses();
+      const paymentConstants = buildStudentDatabaseExportPaymentConstants();
+      const agentPaymentRates = buildStudentDatabaseExportAgentPaymentRates();
+      const result = await runStudentDatabaseExport({
+        databasePath: getStudentDatabaseWebDavPath(),
+        source: exportSource,
+        downloadOnly: true,
+        students,
+        contracts,
+        directExpenses,
+        generalExpenses,
+        paymentConstants,
+        agentPaymentRates
+      });
+      if (!result.jobId || !result.downloadReady) {
+        throw new Error("Сервер не подготовил файл базы для скачивания.");
+      }
+      updateDatabaseExportIndicator({ status: "Скачивание сформированной базы...", progress: 99 });
+      let fileName = result.fileName || "АИС Допобразование.xlsb";
+      let fileBlob = result.fileBlob instanceof Blob ? result.fileBlob : null;
+      if (!fileBlob) {
+        const response = await fetch(
+          photoApiUrl(`/api/students/export-database/download?id=${encodeURIComponent(result.jobId)}`),
+          { cache: "no-store" }
+        );
+        if (!response.ok) {
+          let message = `Ошибка скачивания (${response.status}).`;
+          try {
+            const payload = await response.json();
+            if (payload?.error) message = payload.error;
+          } catch {}
+          throw new Error(message);
+        }
+        fileName = getDownloadFileNameFromResponse(response, fileName);
+        fileBlob = await response.blob();
+      }
+      downloadBlob(fileName, fileBlob);
+      const duration = formatDatabaseOperationDuration(startedAt);
+      state.data.meta.studentDatabaseLastDownloadedAt = new Date().toISOString();
+      addAudit(
+        "Экспорт в базу",
+        "Слушатели, договоры и затраты",
+        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; файл: ${fileName}; источник: ${sourceLabel}; время выполнения: ${duration}`,
+        { entityType: "database", entityLabel: fileName, source: `xlsb-download-${exportSource}` }
+      );
+      persist();
+      state.databaseExport.running = false;
+      render();
+      finishDatabaseExportIndicator(
+        "success",
+        `Файл «${fileName}» скачан. Время выполнения: ${duration}`
+      );
+      alert(`База сформирована и скачана в папку «Загрузки»: ${fileName}.`);
+    } catch (error) {
+      finishDatabaseExportIndicator("error", `Ошибка: ${error.message}`, 6500);
+      alert(`Не удалось экспортировать базу: ${error.message}`);
     }
   }
 
@@ -22917,6 +31880,76 @@ MAX - https://bizvmax.ru/zifra_plus
       settingsByMarker.set(normalizedMarker, setting);
     });
     return normalizePaymentSettings(mergedSettings);
+  }
+
+  function mergeImportedAgentPaymentRates(settings, rates = {}) {
+    const source = rates && typeof rates === "object" ? rates : {};
+    const importedByKey = {
+      agentRateWithAuthor: source.withAuthorPercent ?? source.withAuthor,
+      agentRateWithoutAuthor: source.withoutAuthorPercent ?? source.withoutAuthor
+    };
+    return normalizePaymentSettings(settings).map((setting) => {
+      if (setting.type !== "percent" || !Object.prototype.hasOwnProperty.call(importedByKey, setting.key)) {
+        return setting;
+      }
+      const value = normalizeAgentCommissionRate(importedByKey[setting.key], setting.value);
+      return { ...setting, value: String(value) };
+    });
+  }
+
+  function getStudentAgentPaymentImportIdentity(student = {}) {
+    const uid = String(student.uid || "").trim();
+    if (uid) return `uid:${uid}`;
+    const id = String(student.id || "").trim();
+    if (id) return `id:${id}`;
+    const parts = [student.name, student.program, student.email, student.phone]
+      .map((value) => String(value || "").trim().toLocaleLowerCase("ru-RU"))
+    return parts.some(Boolean) ? parts.join("|") : "";
+  }
+
+  function mergeImportedStudentAgentPaymentMetadata(imported = {}, previous = null) {
+    if (!previous || typeof previous !== "object") return imported;
+    const next = { ...imported };
+    const sameAgent = normalizeEmployeeActPersonName(imported.agent)
+      === normalizeEmployeeActPersonName(previous.agent);
+    if (!sameAgent) return next;
+    const copyMissing = (keys) => keys.forEach((key) => {
+      if (
+        (next[key] === undefined || next[key] === null || next[key] === "")
+        && previous[key] !== undefined
+        && previous[key] !== null
+        && previous[key] !== ""
+      ) next[key] = previous[key];
+    });
+    const sameAmount = (left, right) => Math.abs(Number(left || 0) - Number(right || 0)) < 0.005;
+    [1, 2].forEach((number) => {
+      const prefix = `agentPayment${number}`;
+      if (!sameAmount(imported[`${prefix}Amount`], previous[`${prefix}Amount`])) return;
+      copyMissing([
+        `${prefix}Comment`,
+        `${prefix}Basis`,
+        `${prefix}Recommendation`,
+        `${prefix}RecommendationManual`,
+        `${prefix}Act`,
+        `${prefix}ActStatus`,
+        `${prefix}Order`
+      ]);
+    });
+    if (sameAmount(imported.agentAmount, previous.agentAmount)) {
+      copyMissing([
+        "agentPaymentDate",
+        "agentPaymentComment",
+        "agentPaymentBasis",
+        "agentPaymentRecommendation",
+        "agentPaymentRecommendationManual",
+        "agentPaymentAct",
+        "agentPaymentActStatus",
+        "agentPaymentOrder",
+        "agentPaymentAmountManual",
+        "agentPaymentAutoDisabled"
+      ]);
+    }
+    return next;
   }
 
   function mergeImportedProgramPaymentSettings(programs, importedSettings, defaultAuthorPercent) {
@@ -22985,10 +32018,17 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       const previousData = state.data;
       const responsibleLogin = getCurrentUserLogin();
+      const previousStudentsByIdentity = new Map((previousData.collections.students || [])
+        .map((student) => [getStudentAgentPaymentImportIdentity(student), student])
+        .filter(([identity]) => identity));
       const nextStudents = payload.students.map((student) => {
-        const normalized = applyMappedAgentToStudentRecord(
+        let normalized = applyMappedAgentToStudentRecord(
           normalizeStudentRecord(student),
           { onlyWhenEmpty: true }
+        );
+        normalized = mergeImportedStudentAgentPaymentMetadata(
+          normalized,
+          previousStudentsByIdentity.get(getStudentAgentPaymentImportIdentity(normalized)) || null
         );
         return {
           ...normalized,
@@ -22998,6 +32038,10 @@ MAX - https://bizvmax.ru/zifra_plus
       const nextDirectExpenses = payload.directExpenses.map((expense) => ({ ...expense }));
       const nextGeneralExpenses = payload.generalExpenses.map((expense) => normalizeGeneralExpenseRecord(expense));
       const nextContracts = payload.contracts.map((contract) => normalizeContractRecord(contract));
+      const contractSectionSummary = formatContractDatabaseSectionSummary(
+        payload.contractSectionCounts,
+        payload.contractSectionRows
+      );
       const nextInventory = payload.inventory.map((item) => ({
         ...item,
         amount: Number(item.amount || 0),
@@ -23012,10 +32056,13 @@ MAX - https://bizvmax.ru/zifra_plus
         payload.paymentRates.authorRate ?? payload.paymentRates.defaultAuthorPercent,
         previousData.meta.defaultAuthorPaymentPercent || 50
       );
-      const nextPaymentSettings = mergeImportedPaymentRates(
-        previousData.dictionaries.paymentSettings,
-        payload.paymentRates,
-        payload.paymentConstants
+      const nextPaymentSettings = mergeImportedAgentPaymentRates(
+        mergeImportedPaymentRates(
+          previousData.dictionaries.paymentSettings,
+          payload.paymentRates,
+          payload.paymentConstants
+        ),
+        payload.agentPaymentRates
       );
       const nextPrograms = applyGlobalAuthorRateToPrograms(
         mergeImportedProgramPaymentSettings(
@@ -23106,6 +32153,7 @@ MAX - https://bizvmax.ru/zifra_plus
         "Загрузка из базы",
         "Слушатели, договоры, затраты и запасы",
         `${sourceLabel}; ${payload.count || nextStudents.length} слушателей; ${nextContracts.length} договоров; ${linkedDirectExpenseCount} расходов привязано; `
+        + `разделы договоров по расположению строк: ${contractSectionSummary}; `
         + `${nextDirectExpenses.length} не привязано; ${nextGeneralExpenses.length} общих затрат; ${nextInventory.length} позиций запасов; `
         + `${payload.programPaymentSettings.length} программ с характеристиками и ставками; `
         + `${inventoryLinkedExpenseCount} выдач связано с карточками`
@@ -23135,6 +32183,7 @@ MAX - https://bizvmax.ru/zifra_plus
       alert(
         `Загрузка завершена. Перезаписано слушателей: ${payload.count || nextStudents.length}; `
         + `договоров: ${nextContracts.length}; `
+        + `по разделам листа: ${contractSectionSummary}. `
         + `затрат привязано к карточкам: ${linkedDirectExpenseCount}; `
         + `не привязано и оставлено в разделе: ${nextDirectExpenses.length}. `
         + `Загружено общих затрат: ${nextGeneralExpenses.length}. `
@@ -23273,7 +32322,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function buildStudentAuditQueryParams({ includePage = true } = {}) {
-    const params = new URLSearchParams({ studentId: state.studentAuditLog.studentId });
+    const audit = state.studentAuditLog;
+    const params = new URLSearchParams({
+      entityType: audit.entityType || "students",
+      entityId: audit.entityId || audit.studentId
+    });
     Object.entries(state.studentAuditLog.filters || {}).forEach(([key, value]) => {
       const normalized = String(value || "").trim();
       if (normalized) params.set(key, normalized);
@@ -23287,8 +32340,14 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function loadStudentAuditLog({ page = state.studentAuditLog.page } = {}) {
     const audit = state.studentAuditLog;
-    const studentId = String(audit.studentId || "").trim();
-    if (!audit.open || !studentId || audit.loading) return;
+    const entityType = String(audit.entityType || "students").trim();
+    const entityId = String(audit.entityId || audit.studentId || "").trim();
+    const isCurrentEntity = () => (
+      state.studentAuditLog.open
+      && state.studentAuditLog.entityType === entityType
+      && String(state.studentAuditLog.entityId || state.studentAuditLog.studentId || "") === entityId
+    );
+    if (!audit.open || !entityId || audit.loading) return;
     audit.page = Math.max(1, Number(page) || 1);
     audit.loading = true;
     audit.error = "";
@@ -23296,7 +32355,7 @@ MAX - https://bizvmax.ru/zifra_plus
     try {
       const params = buildStudentAuditQueryParams();
       const payload = await authRequest(`api/students/audit?${params.toString()}`);
-      if (!state.studentAuditLog.open || state.studentAuditLog.studentId !== studentId) return;
+      if (!isCurrentEntity()) return;
       audit.items = Array.isArray(payload.items) ? payload.items : [];
       audit.total = Number(payload.total) || 0;
       audit.page = Number(payload.page) || 1;
@@ -23305,14 +32364,14 @@ MAX - https://bizvmax.ru/zifra_plus
       audit.options = payload.options && typeof payload.options === "object" ? payload.options : {};
       audit.loaded = true;
     } catch (error) {
-      if (!state.studentAuditLog.open || state.studentAuditLog.studentId !== studentId) return;
+      if (!isCurrentEntity()) return;
       audit.items = [];
       audit.total = 0;
       audit.pages = 1;
       audit.loaded = true;
       audit.error = `Не удалось загрузить журнал: ${error.message}`;
     } finally {
-      if (state.studentAuditLog.open && state.studentAuditLog.studentId === studentId) {
+      if (isCurrentEntity()) {
         audit.loading = false;
         render();
       }
@@ -23327,23 +32386,33 @@ MAX - https://bizvmax.ru/zifra_plus
     ]));
   }
 
-  function preserveStudentCardDraft() {
-    if (state.modal?.config !== "students") return;
+  function preserveCardDraftForAudit() {
+    if (!state.modal || !["students", "contracts"].includes(state.modal.config)) return;
     const form = document.getElementById("recordForm");
     const hasChanges = state.modal.hasDraftChanges || hasUnsavedFormChanges(form);
-    state.modal.draft = collectStudentFormDraft();
+    if (state.modal?.config === "students") {
+      state.modal.draft = collectStudentFormDraft();
+    } else if (state.modal?.config === "contracts") {
+      state.modal.draft = collectContractFormDraft();
+    } else {
+      return;
+    }
     state.modal.hasDraftChanges = Boolean(hasChanges);
   }
 
   function openStudentAuditLog() {
-    const studentId = String(state.modal?.id || "").trim();
-    if (!studentId) return;
-    preserveStudentCardDraft();
-    const record = (state.data.collections.students || []).find((item) => item.id === studentId) || {};
+    const entityType = state.modal?.config === "contracts" ? "contracts" : "students";
+    const entityId = String(state.modal?.id || "").trim();
+    if (!entityId) return;
+    preserveCardDraftForAudit();
+    const record = (state.data.collections[entityType] || []).find((item) => item.id === entityId) || {};
     const pageSize = Number(state.studentAuditLog.pageSize) || 50;
     state.studentAuditLog = {
       open: true,
-      studentId,
+      entityType,
+      entityId,
+      entityName: String(state.modal?.draft?.name || record.name || "").trim(),
+      studentId: entityType === "students" ? entityId : "",
       studentName: String(state.modal?.draft?.name || record.name || "").trim(),
       items: [],
       total: 0,
@@ -23383,7 +32452,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function downloadStudentAuditLog() {
     const audit = state.studentAuditLog;
-    if (!audit.open || !audit.studentId || !audit.total) return;
+    const entityId = String(audit.entityId || audit.studentId || "").trim();
+    if (!audit.open || !entityId || !audit.total) return;
     const button = document.querySelector("[data-action='download-student-audit-log']");
     if (button) button.disabled = true;
     try {
@@ -23397,10 +32467,12 @@ MAX - https://bizvmax.ru/zifra_plus
         throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       }
       const blob = await response.blob();
-      const fallback = `Журнал_действий_слушателя_${new Date().toISOString().slice(0, 10)}.csv`;
+      const entityLabel = audit.entityType === "contracts" ? "сотрудника" : "слушателя";
+      const fallback = `Журнал_действий_${entityLabel}_${new Date().toISOString().slice(0, 10)}.csv`;
       downloadBlob(getDownloadFileNameFromResponse(response, fallback), blob);
     } catch (error) {
-      alert(`Не удалось скачать журнал слушателя: ${error.message}`);
+      const entityLabel = audit.entityType === "contracts" ? "сотрудника" : "слушателя";
+      alert(`Не удалось скачать журнал ${entityLabel}: ${error.message}`);
     } finally {
       if (button) button.disabled = false;
     }
@@ -23877,7 +32949,7 @@ MAX - https://bizvmax.ru/zifra_plus
       "",
       String(description || "Сформировать документ по данным карточки слушателя.").trim(),
       ...details.map((item) => String(item || "").trim()).filter(Boolean),
-      "Правый щелчок: параметры формирования и отправки."
+      "Правый щелчок: проверка данных и параметры формирования."
     ].join("\n");
   }
 
@@ -23921,11 +32993,14 @@ MAX - https://bizvmax.ru/zifra_plus
     closeStudentDocumentActionMenu();
   }
 
-  function editStudentDocumentTemplateParameters(documentTemplateId) {
+  function editStudentDocumentTemplateParameters(documentTemplateId, options = {}) {
     const documentTemplate = getDocumentTemplates().find((item) => item.id === documentTemplateId);
     if (!documentTemplate) return;
     if (state.modal) {
-      state.modal.draft = collectStudentFormDraft();
+      const collectDraft = typeof options.collectDraft === "function"
+        ? options.collectDraft
+        : collectStudentFormDraft;
+      state.modal.draft = collectDraft();
       state.modal.hasDraftChanges = true;
     }
     closeStudentDocumentActionMenu();
@@ -23936,18 +33011,20 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
-  function showStudentDocumentActionMenu(x, y, documentTemplate) {
+  function showStudentDocumentActionMenu(x, y, documentTemplate, options = {}) {
     closeStudentDocumentActionMenu();
     const format = normalizeDocumentGenerationFormat(documentTemplate.generationFormat);
     const deliveryMode = normalizeDocumentEmailDeliveryMode(
       documentTemplate.emailDeliveryMode,
       documentTemplate
     );
+    const menuTitle = String(options.title || documentTemplate.title || "Документ").trim();
+    const recipientLabel = String(options.recipientLabel || "слушателю").trim();
     const menu = document.createElement("div");
     menu.className = "student-tab-menu student-document-action-menu";
     menu.dataset.studentDocumentActionMenu = "";
     menu.innerHTML = `
-      <div class="student-document-action-menu-title">${escapeHtml(documentTemplate.title)}</div>
+      <div class="student-document-action-menu-title">${escapeHtml(menuTitle)}</div>
       <div class="student-document-action-menu-label">Формат</div>
       <button data-document-format="pdf" type="button" aria-pressed="${format === "pdf"}">
         <span class="student-document-action-menu-check" aria-hidden="true">${format === "pdf" ? "✓" : ""}</span>
@@ -23964,13 +33041,17 @@ MAX - https://bizvmax.ru/zifra_plus
       </button>
       <button data-document-email-mode="student" type="button" aria-pressed="${deliveryMode === "student"}">
         <span class="student-document-action-menu-check" aria-hidden="true">${deliveryMode === "student" ? "✓" : ""}</span>
-        <span>Отправить email слушателю</span>
+        <span>Отправить email ${escapeHtml(recipientLabel)}</span>
       </button>
       <button data-document-email-mode="system" type="button" aria-pressed="${deliveryMode === "system"}">
         <span class="student-document-action-menu-check" aria-hidden="true">${deliveryMode === "system" ? "✓" : ""}</span>
         <span>Отправить email системе</span>
       </button>
       <div class="student-document-action-menu-separator"></div>
+      <button data-action="check-student-document-data" type="button">
+        <span class="student-document-action-menu-check" aria-hidden="true"></span>
+        <span>Проверка данных</span>
+      </button>
       <button data-action="edit-student-document-template" type="button">
         <span class="student-document-action-menu-check" aria-hidden="true"></span>
         <span>Редактировать параметры</span>
@@ -23998,7 +33079,7 @@ MAX - https://bizvmax.ru/zifra_plus
         );
         const labels = {
           off: "Email выключен",
-          student: "Email слушателю",
+          student: `Email ${recipientLabel}`,
           system: "Email системе"
         };
         updateDocumentTemplateActionSetting(
@@ -24008,8 +33089,25 @@ MAX - https://bizvmax.ru/zifra_plus
         );
       });
     });
+    menu.querySelector("[data-action='check-student-document-data']")?.addEventListener("click", () => {
+      const collectDraft = typeof options.collectDraft === "function"
+        ? options.collectDraft
+        : collectStudentFormDraft;
+      const record = collectDraft();
+      closeStudentDocumentActionMenu();
+      if (typeof options.checkData === "function") {
+        options.checkData(record, documentTemplate);
+        return;
+      }
+      const programType = documentTemplate.documentKind === "education"
+        ? getStudentProgramTypeCode(record)
+        : "";
+      checkStudentDocumentData(record, documentTemplate, programType);
+    });
     menu.querySelector("[data-action='edit-student-document-template']")?.addEventListener("click", () => {
-      editStudentDocumentTemplateParameters(documentTemplate.id);
+      editStudentDocumentTemplateParameters(documentTemplate.id, {
+        collectDraft: options.collectDraft
+      });
     });
     setTimeout(() => {
       document.addEventListener("pointerdown", closeStudentDocumentActionMenuOnOutsideClick, { capture: true, once: true });
@@ -24192,19 +33290,103 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function validateStudentDocumentRequiredFields(record, documentTemplate, programType = "") {
+    const missing = getMissingStudentDocumentFields(record, documentTemplate, programType);
+    if (!missing.length) return true;
+    const firstMissing = missing[0];
+    const title = String(documentTemplate?.title || "Документ").trim();
+    alert(`Документ «${title}» не сформирован.\nНе заполнены поля:\n${formatStudentDocumentMissingFields(missing)}`);
+    focusStudentDocumentField(firstMissing.focusKey || firstMissing.key, record);
+    return false;
+  }
+
+  function getMissingStudentDocumentFields(record, documentTemplate, programType = "") {
     const documentKind = String(documentTemplate?.documentKind || "").trim();
     const requiredFields = getStudentDocumentRequiredFields(documentKind, record, programType);
-    const missing = requiredFields.filter((item) => {
+    return requiredFields.filter((item) => {
       const value = item.value ?? record?.[item.key];
       if (item.positive) return !(Number(value) > 0);
       return !String(value ?? "").trim();
     });
-    if (!missing.length) return true;
-    const firstMissing = missing[0];
+  }
+
+  function formatStudentDocumentMissingFields(missing) {
+    return missing.map((item, index) => `${index + 1}. ${item.label}`).join("\n");
+  }
+
+  function checkStudentDocumentData(record, documentTemplate, programType = "") {
+    const missing = getMissingStudentDocumentFields(record, documentTemplate, programType);
+    showStudentDocumentDataCheckDialog(record, documentTemplate, missing);
+    return missing.length === 0;
+  }
+
+  function showStudentDocumentDataCheckDialog(record, documentTemplate, missingFields, options = {}) {
+    document.querySelector("[data-student-document-data-check-dialog]")
+      ?.closeStudentDocumentDataCheck?.();
+    const missing = Array.isArray(missingFields) ? missingFields : [];
+    const firstMissing = missing[0] || null;
     const title = String(documentTemplate?.title || "Документ").trim();
-    alert(`Документ «${title}» не сформирован.\nНе заполнены поля: ${missing.map((item) => item.label).join(", ")}.`);
-    focusStudentDocumentField(firstMissing.focusKey || firstMissing.key, record);
-    return false;
+    const focusField = typeof options.focusField === "function"
+      ? options.focusField
+      : focusStudentDocumentField;
+    if (firstMissing) {
+      focusField(firstMissing.focusKey || firstMissing.key, record);
+    }
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop student-document-data-check-backdrop";
+    backdrop.dataset.studentDocumentDataCheckDialog = "";
+    backdrop.innerHTML = `
+      <section class="modal student-document-data-check-dialog" role="dialog" aria-modal="true" aria-labelledby="student-document-data-check-title">
+        <header class="modal-head">
+          <div>
+            <p class="eyebrow">${escapeHtml(title)}</p>
+            <h2 id="student-document-data-check-title">Проверка данных</h2>
+          </div>
+          <button class="icon-button" data-action="close-student-document-data-check" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <div class="student-document-data-check-body ${missing.length ? "has-missing-fields" : "is-complete"}">
+          ${missing.length ? `
+            <p>Для формирования документа не хватает данных. Заполните поля:</p>
+            <ol class="student-document-data-check-list">
+              ${missing.map((item, index) => `
+                <li class="${index === 0 ? "is-first" : ""}">
+                  <span>${escapeHtml(item.label)}</span>
+                  ${index === 0 ? "<small>Первое поле для ввода</small>" : ""}
+                </li>
+              `).join("")}
+            </ol>
+          ` : `
+            <p class="student-document-data-check-success">Все необходимые поля заполнены. Документ готов к формированию.</p>
+          `}
+        </div>
+        <footer class="modal-actions">
+          <button class="ghost-button" data-action="close-student-document-data-check" type="button">Закрыть</button>
+          ${firstMissing ? `
+            <button class="primary-button" data-action="focus-first-student-document-field" type="button">Перейти к первому полю</button>
+          ` : ""}
+        </footer>
+      </section>
+    `;
+    const close = (focusFirst = false) => {
+      backdrop.remove();
+      if (focusFirst && firstMissing) {
+        focusField(firstMissing.focusKey || firstMissing.key, record);
+      }
+    };
+    backdrop.closeStudentDocumentDataCheck = () => close(false);
+    backdrop.addEventListener("pointerdown", (event) => {
+      if (event.target === backdrop) close(false);
+    });
+    backdrop.querySelectorAll("[data-action='close-student-document-data-check']").forEach((button) => {
+      button.addEventListener("click", () => close(false));
+    });
+    backdrop.querySelector("[data-action='focus-first-student-document-field']")?.addEventListener("click", () => {
+      close(true);
+    });
+    document.body.appendChild(backdrop);
+    requestAnimationFrame(() => (
+      backdrop.querySelector("[data-action='focus-first-student-document-field']")
+      || backdrop.querySelector("[data-action='close-student-document-data-check']")
+    )?.focus({ preventScroll: true }));
   }
 
   function validateStudentEducationDocumentRequiredFields(record, programType, documentTemplate) {
@@ -24274,9 +33456,17 @@ MAX - https://bizvmax.ru/zifra_plus
     return configuredFolder || `Слушатели/${studentName}/Документы`;
   }
 
-  function getStudentYandexDocumentsFolderUrl(record) {
+  function getContractDocumentsFolder(record) {
+    const employeeName = getStudentCompactFolderName(record?.name) || "БезФИО";
+    const individualFolder = normalizeStudentDocumentsFolderSource(record?.photoPath, true);
+    if (individualFolder) return individualFolder;
+    return `Сотрудники/${employeeName}/Документы`;
+  }
+
+  function getDocumentsFolderUrl(folderValue, record = {}) {
     if (!String(record?.photoPath || "").trim() && !String(record?.name || "").trim()) return "";
-    let folder = getStudentYandexDocumentsFolder(record);
+    let folder = String(folderValue || "").trim();
+    if (!folder) return "";
     const useParentFolder = /^\[-1\](?:[\\/]+|$)/u.test(folder);
     folder = folder.replace(/^\[-1\][\\/]+/u, "");
     const baseParts = getYandexDiskBasePath()
@@ -24292,6 +33482,10 @@ MAX - https://bizvmax.ru/zifra_plus
       .filter(Boolean)];
     if (!fullPath.length || fullPath.some((part) => part === "." || part === "..")) return "";
     return `https://disk.yandex.ru/client/disk/${fullPath.map(encodeURIComponent).join("/")}`;
+  }
+
+  function getStudentYandexDocumentsFolderUrl(record) {
+    return getDocumentsFolderUrl(getStudentYandexDocumentsFolder(record), record);
   }
 
   function getStudentDocumentStorageFolder(record, documentTemplate = {}) {
@@ -24340,6 +33534,18 @@ MAX - https://bizvmax.ru/zifra_plus
       promptLocalSave: useLocalDocuments,
       useBrowserDownloads: false,
       studentFolder: getStudentDocumentStorageFolder(record, documentTemplate),
+      studentName: String(record?.name || "")
+    };
+  }
+
+  function getEmployeeDocumentStorageRequest(record) {
+    const recommendedSaveEnabled = Boolean(state.data.meta.yandexDiskAutoSave);
+    const useLocalDocuments = getEffectiveLocalDocumentsMode();
+    return {
+      saveToYandexDisk: recommendedSaveEnabled && !useLocalDocuments,
+      promptLocalSave: useLocalDocuments,
+      useBrowserDownloads: false,
+      studentFolder: getContractDocumentsFolder(record),
       studentName: String(record?.name || "")
     };
   }
@@ -24445,6 +33651,24 @@ MAX - https://bizvmax.ru/zifra_plus
     updateDocumentGenerationIndicator();
   }
 
+  function showDocumentGenerationNotice(message, kind = "success") {
+    document.querySelector("[data-document-generation-notice]")?.remove();
+    const notice = document.createElement("div");
+    notice.className = "document-generation-notice";
+    notice.dataset.documentGenerationNotice = "";
+    notice.dataset.kind = kind;
+    notice.setAttribute("role", "status");
+    notice.setAttribute("aria-live", "polite");
+    notice.innerHTML = `
+      <span>${escapeHtml(message)}</span>
+      <button class="icon-button" type="button" aria-label="Закрыть уведомление" title="Закрыть">×</button>
+    `;
+    document.body.appendChild(notice);
+    const close = () => notice.remove();
+    notice.querySelector("button")?.addEventListener("click", close);
+    window.setTimeout(close, 9000);
+  }
+
   async function finishStudentDocumentGeneration(response, fileName, storageRequest) {
     const localSaveResult = readLocalDocumentSaveResult(
       response,
@@ -24463,6 +33687,42 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     showYandexDocumentSaveWarning(yandexSaveResult);
+  }
+
+  function getGeneratedDocumentResponseDetails(response, requestedFileName, requestedFormat) {
+    const responseFormat = String(response.headers.get("X-Generated-Document-Format") || "")
+      .trim()
+      .toLowerCase();
+    const responseContentType = String(response.headers.get("Content-Type") || "").toLowerCase();
+    const outputFormat = responseFormat === "docx" || responseFormat === "pdf"
+      ? responseFormat
+      : (responseContentType.includes("wordprocessingml")
+        ? "docx"
+        : normalizeDocumentGenerationFormat(requestedFormat));
+    let fileName = "";
+    try {
+      fileName = decodeURIComponent(response.headers.get("X-Generated-Document-File-Name") || "");
+    } catch {
+      fileName = "";
+    }
+    if (!fileName) {
+      fileName = ensureGeneratedDocumentFileName(
+        String(requestedFileName || "документ").replace(/\.(?:pdf|docx)$/i, ""),
+        outputFormat
+      );
+    }
+    let conversionError = "";
+    try {
+      conversionError = decodeURIComponent(response.headers.get("X-Document-Conversion-Error") || "");
+    } catch {
+      conversionError = "";
+    }
+    return {
+      outputFormat,
+      fileName,
+      conversionFallback: response.headers.get("X-Document-Conversion-Fallback") === "true",
+      conversionError
+    };
   }
 
   function applyDocumentEmailTemplateMarkers(template, values) {
@@ -24484,6 +33744,10 @@ MAX - https://bizvmax.ru/zifra_plus
       documentTemplate
     );
     if (recipientMode === "off") return null;
+    const isEmployeeDocument = ["employeeContract", "employeeAct"].includes(
+      String(documentTemplate?.documentKind || "").trim()
+    );
+    const recipientRoleLabel = isEmployeeDocument ? "сотрудника" : "слушателя";
     const values = {
       ...normalizeDocumentEmailTemplateValues(documentTemplate.emailTemplateValues),
       ...sourceValues,
@@ -24505,7 +33769,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
       alert(sendToSystemMailbox
         ? "Укажите корректный системный почтовый ящик в админке."
-        : "Укажите корректный Email слушателя.");
+        : `Укажите корректный Email ${recipientRoleLabel}.`);
       if (!sendToSystemMailbox) {
         document.querySelector("[name='email']")?.focus({ preventScroll: true });
       }
@@ -24521,7 +33785,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const recipientDescription = sendToSystemMailbox
       ? `системный ящик ${recipient}`
-      : `адрес слушателя ${recipient}`;
+      : `адрес ${recipientRoleLabel} ${recipient}`;
     if (!confirm(`Сформировать документ «${documentTemplate.title}» и отправить его по почте?\n\nПолучатель: ${recipientDescription}.`)) {
       return false;
     }
@@ -24547,10 +33811,12 @@ MAX - https://bizvmax.ru/zifra_plus
     documentTemplate,
     record,
     button,
-    errorTitle
+    errorTitle,
+    options = {}
   ) {
     const templateUrl = documentTemplate.templateUrl || "";
     const templatePath = documentTemplate.templatePath || "";
+    const fallbackTemplatePath = documentTemplate.fallbackTemplatePath || "";
     const useCustomDocumentProperties = isChecked(documentTemplate.useCustomDocumentProperties);
     const fileNameTemplate = documentTemplate.fileNameTemplate || `${documentTemplate.title || "документ"}_#ФИО#`;
     if (!templateUrl.trim() && !templatePath.trim()) {
@@ -24582,7 +33848,7 @@ MAX - https://bizvmax.ru/zifra_plus
         sourceValues
       );
       if (emailRequest === false) return;
-      const storageRequest = await prepareStudentDocumentStorageRequest(
+      const storageRequest = options.storageRequest || await prepareStudentDocumentStorageRequest(
         record,
         documentTemplate,
         fileName
@@ -24594,10 +33860,13 @@ MAX - https://bizvmax.ru/zifra_plus
         body: JSON.stringify({
           templateUrl,
           templatePath,
+          fallbackTemplatePath,
           fileName,
           fieldValues,
           sourceValues,
+          documentKind: documentTemplate.documentKind,
           useCustomDocumentProperties,
+          preferLocalTemplate: getEffectiveLocalDocumentsMode(),
           outputFormat,
           ...storageRequest
         })
@@ -24606,14 +33875,15 @@ MAX - https://bizvmax.ru/zifra_plus
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       }
+      const responseDetails = getGeneratedDocumentResponseDetails(response, fileName, outputFormat);
       const emailResponse = emailRequest ? response.clone() : null;
-      await finishStudentDocumentGeneration(response, fileName, storageRequest);
+      await finishStudentDocumentGeneration(response, responseDetails.fileName, storageRequest);
       addAudit(
         "Сформирован документ",
-        "Документы слушателя",
-        `${documentTemplate.title || fileName}; формат ${String(outputFormat || "").toUpperCase()}`,
+        options.auditArea || "Документы слушателя",
+        `${documentTemplate.title || responseDetails.fileName}; формат ${String(responseDetails.outputFormat || "").toUpperCase()}`,
         {
-          entityType: "students",
+          entityType: options.entityType || "students",
           entityId: String(record.id || state.modal?.id || ""),
           entityLabel: record.name || String(record.id || state.modal?.id || ""),
           source: "document-generation"
@@ -24622,8 +33892,8 @@ MAX - https://bizvmax.ru/zifra_plus
       if (emailRequest && emailResponse) {
         const attachment = await createStudentDocumentEmailAttachment(
           emailResponse,
-          fileName,
-          outputFormat
+          responseDetails.fileName,
+          responseDetails.outputFormat
         );
         await sendServerEmail({
           email: String(record.email || "").trim(),
@@ -24632,12 +33902,25 @@ MAX - https://bizvmax.ru/zifra_plus
           button,
           attachment,
           recipientMode: emailRequest.recipientMode,
-          messageType: documentTemplate.title || "Документ слушателя",
+          messageType: options.messageType || documentTemplate.title || "Документ слушателя",
           skipConfirmation: true
         });
       }
+      if (responseDetails.conversionFallback) {
+        showDocumentGenerationNotice(
+          `PDF-конвертер временно недоступен. Файл «${responseDetails.fileName}» скачан в формате DOCX и доступен для открытия в Word.`,
+          "warning"
+        );
+      }
+      return {
+        generated: true,
+        emailed: Boolean(emailRequest),
+        outputFormat: responseDetails.outputFormat,
+        conversionFallback: responseDetails.conversionFallback
+      };
     } catch (error) {
       alert(`${errorTitle}: ${error.message}`);
+      return null;
     } finally {
       endDocumentGeneration(generationTaskId);
       if (button) {
@@ -24788,6 +34071,491 @@ MAX - https://bizvmax.ru/zifra_plus
     );
   }
 
+  function getEmployeeContractDocumentFields(documentTemplate = {}) {
+    return employeeContractDocumentFieldDefinitions.map(([name, formula], index) => ({
+      id: `employee-contract-field-${index + 1}`,
+      position: index + 1,
+      name,
+      formula: name === "Срок с"
+        ? (documentTemplate.useStartDateClause
+          ? "=ЕСЛИ([Срок с]<[Дата договора];\"Договор распространяется на отношения сторон, возникшие с \" & [Срок с];\"Срок начала оказания услуг по Договору – \" & [Срок с])"
+          : "=[Срок с]")
+        : formula,
+      hideEmpty: false
+    }));
+  }
+
+  function getEmployeeContractDocumentTemplates() {
+    const configuredTemplates = getDocumentTemplates();
+    return employeeContractDocumentTemplates.map((definition) => {
+      const configured = configuredTemplates.find((documentTemplate) => documentTemplate.id === definition.id);
+      return {
+        ...createEmployeeContractDocumentTemplate(definition),
+        ...(configured || {}),
+        fallbackTemplatePath: definition.fallbackTemplatePath,
+        useStartDateClause: definition.useStartDateClause,
+        defaultTemplate: definition.defaultTemplate
+      };
+    });
+  }
+
+  function getEmployeeActDocumentTemplate() {
+    return getDocumentTemplates().find((documentTemplate) => (
+      documentTemplate.id === employeeActDocumentTemplateDefinition.id
+      || documentTemplate.documentKind === "employeeAct"
+    )) || createEmployeeActDocumentTemplate();
+  }
+
+  function normalizeEmployeeActPersonName(value) {
+    return String(value || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLocaleLowerCase("ru-RU");
+  }
+
+  function formatEmployeeActAmount(value) {
+    const amount = Math.round((Number(value) || 0) * 100) / 100;
+    return amount.toLocaleString("ru-RU", {
+      useGrouping: false,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2
+    });
+  }
+
+  function formatEmployeeActPaymentRows(rows) {
+    return (Array.isArray(rows) ? rows : [])
+      .filter((row) => String(row?.description || "").trim() && Number(row?.amount || 0))
+      .map((row) => `${String(row.description).trim()}\t${formatEmployeeActAmount(row.amount)}`)
+      .join("\n");
+  }
+
+  function getEmployeeActVariablePaymentRows(record) {
+    const employeeName = normalizeEmployeeActPersonName(record?.name);
+    if (!employeeName) return [];
+    const studentsByUid = new Map((state.data.collections.students || []).map((student) => [
+      String(student?.uid || "").trim(),
+      student
+    ]));
+    const seen = new Set();
+    const directRows = getAllDirectExpenses().reduce((rows, expense, index) => {
+      if (normalizeEmployeeActPersonName(expense?.note) !== employeeName) return rows;
+      if (String(expense?.act || "").trim()) return rows;
+      if (String(expense?.recommendation || "").trim() !== "+") return rows;
+      const amount = Number(expense?.amount || 0);
+      if (!amount) return rows;
+      const identity = directExpenseIdentity(expense, index);
+      if (seen.has(identity)) return rows;
+      seen.add(identity);
+      const student = studentsByUid.get(String(expense?.uid || "").trim());
+      const description = String(expense?.additionalInfo || "").trim()
+        || (student
+          ? [
+              `${String(expense?.type || "Работа").trim()} за слушателя ${String(student.name || "").trim()}`,
+              String(student.program || "").trim() ? `программа обучения — «${String(student.program).trim()}»` : ""
+            ].filter(Boolean).join(", ")
+          : String(expense?.type || "Оказанные услуги").trim());
+      rows.push({ description, amount });
+      return rows;
+    }, []);
+    const generalRows = (state.data.collections.generalExpenses || []).reduce((rows, expense) => {
+      if (normalizeEmployeeActPersonName(expense?.counterparty) !== employeeName) return rows;
+      if (String(expense?.paid || "").trim()) return rows;
+      if (String(expense?.act || "").trim()) return rows;
+      const amount = Number(expense?.amount || 0);
+      if (!amount) return rows;
+      const date = formatContractDate(expense?.date);
+      const description = String(expense?.workType || expense?.description || "Оказанные услуги").trim();
+      rows.push({
+        description: date ? `${description} (на дату ${date})` : description,
+        amount
+      });
+      return rows;
+    }, []);
+    return [...directRows, ...generalRows];
+  }
+
+  function getEmployeeActPartnerPaymentRows(record) {
+    const accounting = getEmployeePaymentAccounting(record, state.data.collections);
+    const rows = accounting.partnerRows.reduce((result, row) => {
+      if (!row.payable || row.slot !== "due") return result;
+      const values = normalizeEmployeePaymentSourceRow("partner", row.source);
+      const payableAmount = Number(row.calculation?.payableAmount ?? values.amount ?? 0);
+      if (!values.recommendation || values.paid || values.act || !(payableAmount > 0)) return result;
+      result.push({
+        description: [
+          `Агентское вознаграждение за слушателя ${String(row.student.name || "").trim()}`,
+          String(row.student.program || "").trim() ? `программа обучения — ${String(row.student.program).trim()}` : "",
+          `ставка ${row.calculation.rate}% от поступлений ${formatEmployeeActAmount(row.calculation.receiptsTotal)}`
+        ].filter(Boolean).join(", "),
+        amount: payableAmount,
+        source: row.source
+      });
+      return result;
+    }, []);
+    return rows;
+  }
+
+  function getEmployeeActPaymentSummary(record) {
+    const accounting = getEmployeePaymentAccounting(record, state.data.collections);
+    const hasDetailedExpenseSources = accounting.directEntries.length > 0 || accounting.generalEntries.length > 0;
+    const hasDetailedPaymentSources = hasDetailedExpenseSources || accounting.partnerStudents.length > 0;
+    let variableRows = getEmployeeActVariablePaymentRows(record);
+    let variableTotal = variableRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    if (!variableRows.length && !hasDetailedExpenseSources && Number(record?.paid || 0)) {
+      variableTotal = Number(record.paid);
+      variableRows = [{
+        description: String(record?.subject || "Оказанные услуги").trim() || "Оказанные услуги",
+        amount: variableTotal
+      }];
+    }
+    const partnerRows = getEmployeeActPartnerPaymentRows(record);
+    const partnerTotal = partnerRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    let total = variableTotal + partnerTotal;
+    if (
+      !total
+      && !hasDetailedPaymentSources
+      && !Number(record?.agencyAmount || 0)
+      && Number(record?.amount || 0)
+    ) total = Number(record.amount);
+    total = Math.round(total * 100) / 100;
+    return {
+      variableRows,
+      variableTotal: Math.round(variableTotal * 100) / 100,
+      partnerRows,
+      partnerTotal: Math.round(partnerTotal * 100) / 100,
+      total
+    };
+  }
+
+  function formatEmployeeActCurrentDate(saveFormat = false) {
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, "0");
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const year = String(now.getFullYear());
+    return saveFormat ? `${year}.${month}.${day}` : `${day}.${month}.${year}`;
+  }
+
+  function prepareEmployeeActDocumentRecord(record) {
+    const summary = getEmployeeActPaymentSummary(record);
+    const nameParts = splitFullName(record?.name);
+    const words = numberToRussianWords(summary.total);
+    const actValues = {
+      "ДатаДоговора": formatContractDate(record?.contractDate),
+      "ФИО": String(record?.name || "").trim(),
+      "Предмет": String(record?.subject || "").trim(),
+      "Сумма": formatEmployeeActAmount(summary.total),
+      "Сумма прописью": words ? `${words.charAt(0).toLocaleUpperCase("ru-RU")}${words.slice(1)}` : "",
+      "ФИО сокр": formatEmployeeContractShortName(record?.name),
+      "ТекДата": formatEmployeeActCurrentDate(false),
+      "Договор": String(record?.contractNo || "").trim(),
+      "Переменные выплаты": formatEmployeeActPaymentRows(summary.variableRows),
+      "Итого по переменным выплатам": formatEmployeeActAmount(summary.variableTotal),
+      "Email": String(record?.email || "").trim(),
+      "ИО": [nameParts.firstName, nameParts.patronymic].filter(Boolean).join(" "),
+      "ТекДата_Сохр": formatEmployeeActCurrentDate(true),
+      "Фото": "",
+      "СуммаЗач": formatEmployeeActAmount(Math.floor(summary.total * 0.87)),
+      "Партнерская программа": formatEmployeeActPaymentRows(summary.partnerRows),
+      "Итого по партнерской программе": formatEmployeeActAmount(summary.partnerTotal)
+    };
+    return {
+      ...record,
+      employeeActDocument: true,
+      employeeActDocumentValues: actValues,
+      employeeActPaymentTotal: summary.total,
+      ...actValues
+    };
+  }
+
+  function formatEmployeeContractShortName(name) {
+    const { surname, firstName, patronymic } = splitFullName(name);
+    const initials = [firstName, patronymic]
+      .filter(Boolean)
+      .map((part) => `${part.slice(0, 1).toLocaleUpperCase("ru-RU")}.`)
+      .join("");
+    return [surname, initials].filter(Boolean).join(" ");
+  }
+
+  function getEmployeeContractStartDateText(record, documentTemplate) {
+    const startDate = formatContractDate(record?.startDate);
+    if (!startDate || !documentTemplate?.useStartDateClause) return startDate;
+    const startTimestamp = parseOrdersSdoDate(record?.startDate)?.getTime();
+    const contractTimestamp = parseOrdersSdoDate(record?.contractDate)?.getTime();
+    return Number.isFinite(startTimestamp) && Number.isFinite(contractTimestamp) && startTimestamp < contractTimestamp
+      ? `Договор распространяется на отношения сторон, возникшие с ${startDate}`
+      : `Срок начала оказания услуг по Договору – ${startDate}`;
+  }
+
+  function prepareEmployeeContractDocumentRecord(record, documentTemplate) {
+    const { firstName, patronymic } = splitFullName(record?.name);
+    const identityType = String(record?.identityDocumentType || "").trim();
+    const prepared = {
+      ...record,
+      employeeDocumentName: String(record?.name || "").trim(),
+      employeeDocumentSubject: String(record?.subject || "").trim(),
+      employeeDocumentAmount: String(record?.paymentTerms || record?.amount || record?.paid || "").trim(),
+      employeeDocumentIdentityNumber: String(record?.identityDocument || "").trim(),
+      employeeDocumentIdentityIssuer: String(record?.identityIssuer || "").trim(),
+      employeeDocumentSettlementAccount: String(record?.settlementAccount || "").trim(),
+      employeeDocumentCorrespondentAccount: String(record?.correspondentAccount || "").trim(),
+      employeeDocumentBic: String(record?.bic || "").trim(),
+      employeeDocumentIdentityType: identityType,
+      employeeDocumentShortName: formatEmployeeContractShortName(record?.name),
+      employeeDocumentIdentityTypeLower: identityType.toLocaleLowerCase("ru-RU"),
+      employeeDocumentIdentityIssueDate: formatContractDate(record?.identityIssueDate),
+      employeeDocumentAddress: String(record?.address || "").trim(),
+      employeeDocumentSnils: String(record?.snils || "").trim(),
+      employeeDocumentInn: String(record?.inn || "").trim(),
+      employeeDocumentBank: String(record?.bank || "").trim(),
+      employeeDocumentContractNo: String(record?.contractNo || "").trim(),
+      employeeDocumentBirthDate: formatContractDate(record?.birthDate),
+      employeeDocumentPhoto: String(record?.photoPath || record?.photoUrl || record?.photoData || "").trim(),
+      employeeDocumentFirstPatronymic: [firstName, patronymic].filter(Boolean).join(" "),
+      employeeDocumentEmail: String(record?.email || "").trim(),
+      employeeDocumentEndDate: formatContractDate(record?.endDate),
+      employeeDocumentContractDate: formatContractDate(record?.contractDate),
+      employeeDocumentStartDate: getEmployeeContractStartDateText(record, documentTemplate)
+    };
+    return {
+      ...prepared,
+      "Предмет": prepared.employeeDocumentSubject,
+      "Сумма": prepared.employeeDocumentAmount,
+      "ДокумСерияНомер": prepared.employeeDocumentIdentityNumber,
+      "ДокумКемВыдан": prepared.employeeDocumentIdentityIssuer,
+      "РасчСч": prepared.employeeDocumentSettlementAccount,
+      "КорСчет": prepared.employeeDocumentCorrespondentAccount,
+      "БИК": prepared.employeeDocumentBic,
+      "ДокумВид": prepared.employeeDocumentIdentityType,
+      "ДокумДатаВыдачи": prepared.employeeDocumentIdentityIssueDate,
+      "Адрес": prepared.employeeDocumentAddress,
+      "СНИЛСф": prepared.employeeDocumentSnils,
+      "ИННф": prepared.employeeDocumentInn,
+      "Банк": prepared.employeeDocumentBank,
+      "ДатаРождения": prepared.employeeDocumentBirthDate,
+      "Срок по": prepared.employeeDocumentEndDate,
+      "Срок с": formatContractDate(record?.startDate)
+    };
+  }
+
+  function getEmployeeContractDocumentRequiredFields(record) {
+    return [
+      { key: "name", label: "ФИО / контрагент" },
+      { key: "contractNo", label: "Номер договора" },
+      { key: "contractDate", label: "Дата договора" },
+      { key: "startDate", label: "Срок с" },
+      { key: "endDate", label: "Срок по" },
+      { key: "subject", label: "Предмет договора" },
+      { key: "paymentTerms", label: "Сумма / условия оплаты", value: record?.paymentTerms || record?.amount || record?.paid },
+      { key: "birthDate", label: "Дата рождения" },
+      { key: "identityDocumentType", label: "Вид документа" },
+      { key: "identityDocument", label: "Серия и номер документа" },
+      { key: "identityIssueDate", label: "Дата выдачи документа" },
+      { key: "identityIssuer", label: "Кем выдан документ" },
+      { key: "address", label: "Адрес регистрации" },
+      { key: "snils", label: "СНИЛС" },
+      { key: "inn", label: "ИНН" },
+      { key: "bank", label: "Банк" },
+      { key: "settlementAccount", label: "Расчётный счёт" },
+      { key: "correspondentAccount", label: "Корреспондентский счёт" },
+      { key: "bic", label: "БИК" }
+    ];
+  }
+
+  function getMissingEmployeeContractDocumentFields(record) {
+    return getEmployeeContractDocumentRequiredFields(record).filter((item) => (
+      !String(item.value ?? record?.[item.key] ?? "").trim()
+    ));
+  }
+
+  function getEmployeeContractDocumentFieldTab(fieldName) {
+    if ([
+      "contractNo", "contractDate", "startDate", "endDate", "subject", "paymentTerms",
+      "bank", "settlementAccount", "correspondentAccount", "bic"
+    ].includes(fieldName)) return "contract";
+    if ([
+      "birthDate", "identityDocumentType", "identityDocument", "identityIssueDate",
+      "identityIssuer", "address", "snils", "inn"
+    ].includes(fieldName)) return "documents";
+    return "main";
+  }
+
+  function focusEmployeeContractDocumentField(fieldName, record) {
+    const key = String(fieldName || "").trim();
+    if (!key) return;
+    const tabId = getEmployeeContractDocumentFieldTab(key);
+    if (state.contractCardTab !== tabId) {
+      if (state.modal) state.modal.draft = { ...(state.modal.draft || {}), ...record };
+      state.contractCardTab = tabId;
+      render();
+    }
+    requestAnimationFrame(() => {
+      const input = document.querySelector(`[name="${CSS.escape(key)}"]`);
+      input?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+      input?.focus({ preventScroll: true });
+    });
+  }
+
+  function validateEmployeeContractDocumentFields(record, documentTemplate) {
+    const missing = getMissingEmployeeContractDocumentFields(record);
+    if (!missing.length) return true;
+    alert(`Документ «${documentTemplate?.title || "Договор"}» не сформирован.\nНе заполнены поля:\n${formatStudentDocumentMissingFields(missing)}`);
+    focusEmployeeContractDocumentField(missing[0].key, record);
+    return false;
+  }
+
+  function checkEmployeeContractDocumentData(record, documentTemplate) {
+    const missing = getMissingEmployeeContractDocumentFields(record);
+    showStudentDocumentDataCheckDialog(record, documentTemplate, missing, {
+      focusField: focusEmployeeContractDocumentField
+    });
+    return missing.length === 0;
+  }
+
+  function getEmployeeActDocumentRequiredFields(record) {
+    const summary = getEmployeeActPaymentSummary(record);
+    return [
+      { key: "name", label: "ФИО / контрагент" },
+      { key: "contractNo", label: "Номер договора" },
+      { key: "contractDate", label: "Дата договора" },
+      { key: "subject", label: "Предмет договора" },
+      {
+        key: "amount",
+        label: "Сумма оказанных услуг",
+        value: summary.total,
+        positive: true
+      }
+    ];
+  }
+
+  function getMissingEmployeeActDocumentFields(record) {
+    return getEmployeeActDocumentRequiredFields(record).filter((item) => {
+      const value = item.value ?? record?.[item.key];
+      return item.positive ? !(Number(value) > 0) : !String(value ?? "").trim();
+    });
+  }
+
+  function validateEmployeeActDocumentFields(record, documentTemplate) {
+    const missing = getMissingEmployeeActDocumentFields(record);
+    if (!missing.length) return true;
+    alert(`Документ «${documentTemplate?.title || "Акт оказанных услуг"}» не сформирован.\nНе заполнены поля:\n${formatStudentDocumentMissingFields(missing)}`);
+    focusEmployeeContractDocumentField(missing[0].key, record);
+    return false;
+  }
+
+  function checkEmployeeActDocumentData(record, documentTemplate) {
+    const missing = getMissingEmployeeActDocumentFields(record);
+    showStudentDocumentDataCheckDialog(record, documentTemplate, missing, {
+      focusField: focusEmployeeContractDocumentField
+    });
+    return missing.length === 0;
+  }
+
+  function showEmployeeDocumentActionMenu(x, y, documentTemplate, options = {}) {
+    if (!documentTemplate) {
+      alert("Не найден соответствующий шаблон в Конструкторе документов.");
+      return;
+    }
+    const documentKind = String(options.documentKind || documentTemplate.documentKind || "").trim();
+    showStudentDocumentActionMenu(x, y, documentTemplate, {
+      title: options.title || documentTemplate.title,
+      recipientLabel: "сотруднику",
+      collectDraft: collectContractFormDraft,
+      checkData: documentKind === "employeeAct"
+        ? checkEmployeeActDocumentData
+        : checkEmployeeContractDocumentData
+    });
+  }
+
+  async function openEmployeeContractDocument(event) {
+    const button = event?.currentTarget;
+    const record = collectContractFormDraft();
+    const templates = getEmployeeContractDocumentTemplates();
+    const documentTemplate = await chooseStudentContractDocument(templates, templates[0]?.id, {
+      eyebrow: "Карточка сотрудника",
+      note: "По умолчанию выбран шаблон договора на образовательные услуги."
+    });
+    if (!documentTemplate) return;
+    if (!validateEmployeeContractDocumentFields(record, documentTemplate)) return;
+    const generationRecord = prepareEmployeeContractDocumentRecord(record, documentTemplate);
+    await downloadStudentDocumentFromTemplate(
+      documentTemplate,
+      generationRecord,
+      button,
+      `Не удалось сформировать документ «${documentTemplate.title}»`,
+      {
+        entityType: "contracts",
+        auditArea: "Документы сотрудника",
+        messageType: "Договор сотрудника",
+        storageRequest: getEmployeeDocumentStorageRequest(record)
+      }
+    );
+  }
+
+  function markEmployeeActPaymentRowsAsSent(record) {
+    const employeeName = normalizeEmployeeActPersonName(record?.name);
+    if (!employeeName) return 0;
+    let changed = 0;
+    getDirectExpenseEntriesFromCollections(state.data.collections).forEach(({ expense }) => {
+      if (normalizeEmployeeActPersonName(expense?.note) !== employeeName) return;
+      if (String(expense?.act || "").trim()) return;
+      if (String(expense?.recommendation || "").trim() !== "+") return;
+      expense.act = "+";
+      expense.actStatus = "Отправлен";
+      changed += 1;
+    });
+    (state.data.collections.generalExpenses || []).forEach((expense) => {
+      if (normalizeEmployeeActPersonName(expense?.counterparty) !== employeeName) return;
+      if (String(expense?.paid || "").trim() || String(expense?.act || "").trim()) return;
+      expense.act = "+";
+      expense.actStatus = "Отправлен";
+      changed += 1;
+    });
+    getEmployeePaymentAccounting(record, state.data.collections).partnerRows.forEach((row) => {
+      if (!row.payable || row.slot !== "due") return;
+      const values = normalizeEmployeePaymentSourceRow("partner", row.source);
+      if (!values.recommendation || values.paid || values.act || !(values.amount > 0)) return;
+      const student = row.student;
+      student.agentPaymentAct = "+";
+      student.agentPaymentActStatus = "Отправлен";
+      changed += 1;
+    });
+    if (!changed) return 0;
+    addAudit("Отправлен акт", "Выплаты сотрудникам", `${record.name}: ${changed} поз.`, {
+      entityType: "contracts",
+      entityId: String(record.id || state.modal?.id || ""),
+      entityLabel: record.name || String(record.id || ""),
+      source: "employee-act-email"
+    });
+    commitEmployeePaymentAccountingChange(record, {}, true);
+    return changed;
+  }
+
+  async function openEmployeeActDocument(event) {
+    const button = event?.currentTarget;
+    const record = collectContractFormDraft();
+    const documentTemplate = getEmployeeActDocumentTemplate();
+    if (!documentTemplate) {
+      alert("В Конструкторе документов не найден шаблон «Акт оказанных услуг».");
+      return;
+    }
+    if (!validateEmployeeActDocumentFields(record, documentTemplate)) return;
+    const generationRecord = prepareEmployeeActDocumentRecord(record);
+    const result = await downloadStudentDocumentFromTemplate(
+      documentTemplate,
+      generationRecord,
+      button,
+      "Не удалось сформировать акт оказанных услуг",
+      {
+        entityType: "contracts",
+        auditArea: "Документы сотрудника",
+        messageType: "Акт оказанных услуг",
+        storageRequest: getEmployeeDocumentStorageRequest(record)
+      }
+    );
+    if (result?.emailed) markEmployeeActPaymentRowsAsSent(record);
+  }
+
   function isStudentFundedByLegalEntity(record) {
     const fundingSource = String(record?.fundingSource || "")
       .replace(/\u00a0/g, " ")
@@ -24804,10 +34572,12 @@ MAX - https://bizvmax.ru/zifra_plus
       : getPrimaryDocumentTemplate();
   }
 
-  function chooseStudentContractDocument(documentTemplates, selectedDocumentId) {
+  function chooseStudentContractDocument(documentTemplates, selectedDocumentId, options = {}) {
     document.querySelector("[data-student-document-choice-dialog]")?.closeStudentDocumentChoice?.();
     const templates = Array.isArray(documentTemplates) ? documentTemplates.filter(Boolean) : [];
     if (!templates.length) return Promise.resolve(null);
+    const eyebrow = String(options.eyebrow || "Карточка слушателя").trim();
+    const note = String(options.note || "Без Shift документ выбирается автоматически по источнику финансирования.").trim();
     return new Promise((resolve) => {
       const backdrop = document.createElement("div");
       backdrop.className = "modal-backdrop student-document-choice-backdrop";
@@ -24816,7 +34586,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <form class="modal student-document-choice-dialog">
           <header class="modal-head">
             <div>
-              <p class="eyebrow">Карточка слушателя</p>
+              <p class="eyebrow">${escapeHtml(eyebrow)}</p>
               <h2>Сформировать документ</h2>
             </div>
             <button class="icon-button" data-action="close-student-document-choice" type="button" title="Закрыть" aria-label="Закрыть">×</button>
@@ -24832,7 +34602,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 `).join("")}
               </select>
             </label>
-            <small>Без Shift документ выбирается автоматически по источнику финансирования.</small>
+            ${note ? `<small>${escapeHtml(note)}</small>` : ""}
           </div>
           <footer class="modal-actions">
             <button class="ghost-button" data-action="close-student-document-choice" type="button">Отмена</button>
@@ -25020,6 +34790,24 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function evaluateContractTemplateField(field, record, values, evaluateByName = null) {
     const fieldName = String(field.name || "").trim();
+    if (
+      record?.employeeActDocument
+      && record.employeeActDocumentValues
+      && Object.prototype.hasOwnProperty.call(record.employeeActDocumentValues, fieldName)
+    ) {
+      return String(record.employeeActDocumentValues[fieldName] ?? "");
+    }
+    if (Object.prototype.hasOwnProperty.call(record || {}, "employeeDocumentName")) {
+      const employeeValues = {
+        "ФИО_сокр": record.employeeDocumentShortName,
+        "ДокумВидНР": record.employeeDocumentIdentityTypeLower,
+        "ИО": record.employeeDocumentFirstPatronymic,
+        "Срок с": record.employeeDocumentStartDate
+      };
+      if (Object.prototype.hasOwnProperty.call(employeeValues, fieldName)) {
+        return String(employeeValues[fieldName] || "");
+      }
+    }
     if (fieldName === "Прогр обуч факт") return getContractTemplateSourceValue("Прогр обуч факт", record);
     if (fieldName === "Вид курсов") return formatContractProgramTitle(record);
     if (fieldName === "Номер приказа зачисления") return getContractTemplateSourceValue("Номер приказа зачисления", record);
@@ -25771,6 +35559,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ovzStatuses: "Статусы ОВЗ",
       fundingSources: "Источники финансирования",
       expenseNotes: "Типовые примечания расходов",
+      employeePaymentBases: "Основания выплат сотрудникам",
       paymentSettings: "Оплата",
       sdoSettings: "Настройки СДО",
       documentPathSettings: "Пути сохранения документов",
@@ -25819,18 +35608,63 @@ MAX - https://bizvmax.ru/zifra_plus
       .replaceAll("\n", "&#10;");
   }
 
-  bindStudentStatusHistoryNavigation();
-  window.addEventListener("resize", repositionOpenFieldLookupPanels, { passive: true });
-  render();
-  const connectionSettingsSync = syncServerConnectionSettings();
-  if (shouldBootstrapHostedDatabase) {
-    connectionSettingsSync.finally(() => {
+  async function initializeApplication() {
+    let sharedStateError = null;
+    await initializeBrowserOfflineStorage();
+    try {
+      await initializeSharedApplicationState();
+    } catch (error) {
+      sharedStateError = error;
+      sharedStateReady = true;
+      sharedStateOffline = true;
+      sharedStateSource = "local-browser";
+      sharedStateBaseData = clone(state.data);
+      sharedStateDirty = Boolean(sharedStatePendingPatch);
+      if (sharedStatePendingPatch) sharedStatePendingCount = Math.max(1, sharedStatePendingCount);
+      console.warn("Общая база недоступна, используется резервная копия браузера", error);
+    }
+    bindStudentStatusHistoryNavigation();
+    window.addEventListener("resize", repositionOpenFieldLookupPanels, { passive: true });
+    render();
+    if (sharedStateError) {
       window.setTimeout(() => {
-        importStudentsFromDatabase({ shiftKey: false, skipConfirmation: true });
-      }, 100);
+        alert(
+          "Общая база временно недоступна. Включён автономный режим: изменения сохраняются на этом компьютере "
+          + "и будут автоматически выгружены после восстановления соединения. "
+          + `Причина: ${sharedStateError.message}`
+        );
+      }, 50);
+    }
+    const connectionSettingsSync = syncServerConnectionSettings();
+    if (shouldBootstrapHostedDatabase) {
+      connectionSettingsSync.finally(() => {
+        window.setTimeout(() => {
+          importStudentsFromDatabase({ shiftKey: false, skipConfirmation: true });
+        }, 100);
+      });
+    }
+    window.setInterval(pollSharedApplicationState, SHARED_STATE_POLL_INTERVAL_MS);
+    if (sharedStateDirty) scheduleSharedApplicationStateSave(1000);
+    await pollSharedRecordLocks({ renderAfter: false });
+    window.setInterval(pollSharedRecordLocks, RECORD_LOCK_POLL_INTERVAL_MS);
+    window.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      pollSharedApplicationState();
+      pollSharedRecordLocks();
     });
+    window.addEventListener("online", () => {
+      scheduleSharedApplicationStateSave(0);
+      pollSharedApplicationState();
+      pollSharedRecordLocks();
+    });
+    window.addEventListener("pagehide", () => {
+      const lock = activeRecordLock;
+      if (lock) releaseRecordLock(lock, { keepalive: true });
+    });
+    window.setTimeout(() => {
+      autoInspectDocumentTemplates();
+    }, 250);
   }
-  window.setTimeout(() => {
-    autoInspectDocumentTemplates();
-  }, 250);
+
+  initializeApplication();
 })();

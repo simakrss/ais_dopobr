@@ -11,6 +11,8 @@
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$AgentRateWithAuthorDefinedName = "AIS_AgentRateWithAuthor"
+$AgentRateWithoutAuthorDefinedName = "AIS_AgentRateWithoutAuthor"
 
 function Release-ComObject {
   param([object]$Value)
@@ -199,6 +201,80 @@ function Set-ExcelCellValue {
     $cell.Value2 = $Value
   } finally {
     Release-ComObject $cell
+  }
+}
+
+function Get-AgentPaymentPercent {
+  param(
+    [object]$AgentPaymentRates,
+    [string]$PropertyName,
+    [double]$Fallback
+  )
+  $candidate = Get-ObjectProperty $AgentPaymentRates $PropertyName
+  if ($null -eq $candidate -or ([string]$candidate).Trim() -eq "") { return $Fallback }
+  try {
+    $parsed = [double]$candidate
+    if ($parsed -ge 0 -and $parsed -le 100) { return $parsed }
+  } catch {}
+  return $Fallback
+}
+
+function Update-AgentPaymentRates {
+  param(
+    [object]$Workbook,
+    [object]$AgentPaymentRates
+  )
+  $sheet = $null
+  $withAuthorRange = $null
+  $withoutAuthorRange = $null
+  try {
+    $sheet = $Workbook.Worksheets.Item("Настройки")
+    $markerColumn = 52
+    $valueColumn = 53
+    $markerHeader = "Ставки агентских выплат веб-АИС"
+    $valueHeader = "Значение"
+    $currentMarkerHeader = ([string]$sheet.Cells.Item(1, $markerColumn).Value2).Trim()
+    $currentValueHeader = ([string]$sheet.Cells.Item(1, $valueColumn).Value2).Trim()
+    if (
+      ($currentMarkerHeader -and $currentMarkerHeader -ne $markerHeader) -or
+      ($currentValueHeader -and $currentValueHeader -ne $valueHeader)
+    ) {
+      throw "Колонки AZ:BA листа 'Настройки' заняты и не могут использоваться для ставок агентских выплат."
+    }
+
+    $withAuthorPercent = Get-AgentPaymentPercent $AgentPaymentRates "withAuthorPercent" 10.0
+    $withoutAuthorPercent = Get-AgentPaymentPercent $AgentPaymentRates "withoutAuthorPercent" 25.0
+    Set-ExcelCellValue $sheet 1 $markerColumn $markerHeader
+    Set-ExcelCellValue $sheet 1 $valueColumn $valueHeader
+    Set-ExcelCellValue $sheet 2 $markerColumn "Программа с автором"
+    Set-ExcelCellValue $sheet 3 $markerColumn "Программа без автора"
+
+    $withAuthorRange = $sheet.Cells.Item(2, $valueColumn)
+    $withoutAuthorRange = $sheet.Cells.Item(3, $valueColumn)
+    $withAuthorRange.Value2 = $withAuthorPercent / 100
+    $withoutAuthorRange.Value2 = $withoutAuthorPercent / 100
+    try { $withAuthorRange.NumberFormat = "0.####%" } catch {}
+    try { $withoutAuthorRange.NumberFormat = "0.####%" } catch {}
+    Set-WorkbookDefinedName `
+      $Workbook `
+      $AgentRateWithAuthorDefinedName `
+      (Get-ExcelRangeReference $sheet $withAuthorRange)
+    Set-WorkbookDefinedName `
+      $Workbook `
+      $AgentRateWithoutAuthorDefinedName `
+      (Get-ExcelRangeReference $sheet $withoutAuthorRange)
+
+    return [pscustomobject]@{
+      WithAuthorPercent = $withAuthorPercent
+      WithoutAuthorPercent = $withoutAuthorPercent
+      Count = 2
+    }
+  } catch {
+    throw "Ошибка обновления ставок агентских выплат: $($_.Exception.Message)`n$($_.ScriptStackTrace)"
+  } finally {
+    Release-ComObject $withoutAuthorRange
+    Release-ComObject $withAuthorRange
+    Release-ComObject $sheet
   }
 }
 
@@ -599,10 +675,160 @@ function Update-MappedColumn {
         }
         continue
       }
+      # АгентСумма is calculated by the workbook. Never replace its formula with
+      # the cached numeric value imported into the web database. Newly inserted
+      # student rows receive this formula from Insert-StudentTemplateRows.
+      if ($FieldName -eq "agentAmount") {
+        $nextValues[$offset, 0] = $currentValue
+        continue
+      }
       $value = Get-ObjectProperty $record $FieldName
       $nextValues[$offset, 0] = Convert-CellValue $value $FieldName $DateFields $NumberFields
     }
     $range.Formula = $nextValues
+  } finally {
+    Release-ComObject $range
+  }
+}
+
+function ConvertTo-ExcelColumnName {
+  param([int]$Column)
+  if ($Column -le 0) { throw "Некорректный номер столбца Excel: $Column." }
+  $letters = ""
+  $remaining = $Column
+  while ($remaining -gt 0) {
+    $letterCode = 65 + [int](($remaining - 1) % 26)
+    $letters = ([char]$letterCode).ToString() + $letters
+    $remaining = [int][Math]::Floor(($remaining - 1) / 26)
+  }
+  return $letters
+}
+
+function Update-StudentAgentAmountFormulas {
+  param(
+    [object]$Sheet,
+    [object[]]$Columns,
+    [int]$StartRow,
+    [int]$EndRow,
+    [hashtable]$RecordByRow,
+    [object]$AgentPaymentRates
+  )
+  if ($EndRow -lt $StartRow) {
+    return [pscustomobject]@{
+      UpdatedCount = 0
+      SkippedUnknownFormulaCount = 0
+      PreservedConstantCount = 0
+    }
+  }
+
+  $requiredFields = @(
+    "name",
+    "agent",
+    "agentAmount",
+    "agentPayment1Amount",
+    "agentPayment1Date",
+    "agentPayment2Amount",
+    "agentPayment2Date",
+    "program",
+    "paidAmount"
+  )
+  $columnByField = @{}
+  foreach ($fieldName in $requiredFields) {
+    $match = $Columns | Where-Object { $_.FieldName -eq $fieldName } | Select-Object -First 1
+    if ($null -eq $match) {
+      return [pscustomobject]@{
+        UpdatedCount = 0
+        SkippedUnknownFormulaCount = 0
+        PreservedConstantCount = 0
+      }
+    }
+    $columnByField[$fieldName] = [int]$match.Column
+  }
+
+  $withAuthorRate = $AgentRateWithAuthorDefinedName
+  $withoutAuthorRate = $AgentRateWithoutAuthorDefinedName
+
+  $nameColumn = ConvertTo-ExcelColumnName $columnByField.name
+  $agentColumn = ConvertTo-ExcelColumnName $columnByField.agent
+  $agentAmountColumn = $columnByField.agentAmount
+  $agentPayment1Column = ConvertTo-ExcelColumnName $columnByField.agentPayment1Amount
+  $agentPayment1DateColumn = ConvertTo-ExcelColumnName $columnByField.agentPayment1Date
+  $agentPayment2Column = ConvertTo-ExcelColumnName $columnByField.agentPayment2Amount
+  $agentPayment2DateColumn = ConvertTo-ExcelColumnName $columnByField.agentPayment2Date
+  $programColumn = ConvertTo-ExcelColumnName $columnByField.program
+  $paidAmountColumn = ConvertTo-ExcelColumnName $columnByField.paidAmount
+
+  $range = $null
+  try {
+    $range = $Sheet.Range(
+      $Sheet.Cells.Item($StartRow, $agentAmountColumn),
+      $Sheet.Cells.Item($EndRow, $agentAmountColumn)
+    )
+    $currentFormulas = $range.Formula
+    $rowCount = $EndRow - $StartRow + 1
+    $nextFormulas = New-Object "object[,]" $rowCount, 1
+    $updatedCount = 0
+    $skippedUnknownFormulaCount = 0
+    $preservedConstantCount = 0
+    for ($offset = 0; $offset -lt $rowCount; $offset += 1) {
+      $row = $StartRow + $offset
+      $currentFormula = Get-MatrixValue $currentFormulas ($offset + 1) 1
+      $hasFormula = $currentFormula -is [string] -and $currentFormula.StartsWith("=")
+      $isEmpty = $null -eq $currentFormula -or ([string]$currentFormula).Trim() -eq ""
+      if ($hasFormula) {
+        $formulaText = ([string]$currentFormula).Replace('$', '')
+        $payment1Pattern = "-\s*$([regex]::Escape($agentPayment1Column))$row(?!\d)"
+        $payment2Pattern = "-\s*$([regex]::Escape($agentPayment2Column))$row(?!\d)"
+        $payment1ReferencePattern = "(?i)(?<![A-Z])$([regex]::Escape($agentPayment1Column))$row(?!\d)"
+        $payment1DateReferencePattern = "(?i)(?<![A-Z])$([regex]::Escape($agentPayment1DateColumn))$row(?!\d)"
+        $payment2ReferencePattern = "(?i)(?<![A-Z])$([regex]::Escape($agentPayment2Column))$row(?!\d)"
+        $payment2DateReferencePattern = "(?i)(?<![A-Z])$([regex]::Escape($agentPayment2DateColumn))$row(?!\d)"
+        $isLegacyManagedFormula = $formulaText -match $payment1Pattern -and $formulaText -match $payment2Pattern
+        $isDatedManagedFormula = (
+          $formulaText -match $payment1ReferencePattern -and
+          $formulaText -match $payment1DateReferencePattern -and
+          $formulaText -match $payment2ReferencePattern -and
+          $formulaText -match $payment2DateReferencePattern
+        )
+        $isManagedFormula = (
+          $formulaText -match "(?i)(ROUNDUP|ОКРУГЛВВЕРХ)\s*\(" -and
+          ($isLegacyManagedFormula -or $isDatedManagedFormula)
+        )
+        if (-not $isManagedFormula) {
+          $nextFormulas[$offset, 0] = $currentFormula
+          $skippedUnknownFormulaCount += 1
+          continue
+        }
+      } elseif (-not $isEmpty) {
+        $nextFormulas[$offset, 0] = $currentFormula
+        $preservedConstantCount += 1
+        continue
+      } elseif (-not $RecordByRow.ContainsKey([int]$row)) {
+        $nextFormulas[$offset, 0] = $currentFormula
+        continue
+      }
+      $nextFormulas[$offset, 0] = (
+        '=IF({0}{9}<>"",IF({1}{9}<>"",ROUNDUP(({2}{9}*IF(VLOOKUP({3}{9},РеестрПрограмм,COLUMN(''Реестр программ''!S:S),FALSE)<>"",{4},{5}))/50,0)*50-IF({6}{9}<>"",{7}{9},0)-IF({8}{9}<>"",{10}{9},0),""),"")' -f `
+          $nameColumn,
+          $agentColumn,
+          $paidAmountColumn,
+          $programColumn,
+          $withAuthorRate,
+          $withoutAuthorRate,
+          $agentPayment1DateColumn,
+          $agentPayment1Column,
+          $agentPayment2DateColumn,
+          $row,
+          $agentPayment2Column
+      )
+      $updatedCount += 1
+    }
+    $range.Formula = $nextFormulas
+    return [pscustomobject]@{
+      UpdatedCount = $updatedCount
+      SkippedUnknownFormulaCount = $skippedUnknownFormulaCount
+      PreservedConstantCount = $preservedConstantCount
+    }
   } finally {
     Release-ComObject $range
   }
@@ -992,6 +1218,14 @@ function Update-StudentSheet {
       Release-ComObject $uidRange
     }
 
+    $agentFormulaResult = Update-StudentAgentAmountFormulas `
+      $sheet $columns $startRow $lastRow $recordByRow (Get-ObjectProperty $Payload "agentPaymentRates")
+    if ($agentFormulaResult.SkippedUnknownFormulaCount -gt 0) {
+      Write-SyncProgress 8 (
+        "Сохранено пользовательских формул в колонке АгентСумма без изменений: " +
+        $agentFormulaResult.SkippedUnknownFormulaCount
+      )
+    }
     $processedColumns = 0
     foreach ($column in $columns) {
       Update-MappedColumn $sheet $startRow $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.studentEventTemplates) $preserveRows
@@ -1003,6 +1237,9 @@ function Update-StudentSheet {
     return [pscustomobject]@{
       Count = $recordByRow.Count
       LastRow = $lastRow
+      AgentFormulaCount = $agentFormulaResult.UpdatedCount
+      AgentFormulaSkippedUnknownCount = $agentFormulaResult.SkippedUnknownFormulaCount
+      AgentFormulaPreservedConstantCount = $agentFormulaResult.PreservedConstantCount
     }
   } catch {
     throw "Ошибка обновления листа 'База': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
@@ -1068,7 +1305,12 @@ function Find-ContractSectionRows {
     for ($row = 1; $row -le $lastRow; $row += 1) {
       $value = (Normalize-Header (Get-MatrixValue $values $row 1)).ToUpperInvariant()
       foreach ($key in @("active", "partners", "expired")) {
-        if ($value -and $value -eq $names[$key]) { $rows[$key] = $row }
+        if ($value -and $value -eq $names[$key]) {
+          if ($rows.ContainsKey($key)) {
+            throw "Раздел '$($names[$key])' встречается несколько раз: строки $($rows[$key]) и $row."
+          }
+          $rows[$key] = $row
+        }
       }
     }
     foreach ($key in @("active", "partners", "expired")) {
@@ -1369,7 +1611,11 @@ try {
   $excel.AutomationSecurity = 3
   $workbook = $excel.Workbooks.Open($InputPath, 0, $false)
 
-  Write-SyncProgress 8 "Книга открыта. Обновление слушателей..."
+  Write-SyncProgress 7 "Книга открыта. Обновление ставок агентских выплат..."
+  $agentRateResult = Update-AgentPaymentRates `
+    $workbook `
+    (Get-ObjectProperty $payload "agentPaymentRates")
+  Write-SyncProgress 8 "Обновление слушателей..."
   $studentResult = Update-StudentSheet $workbook $payload $dateFields $numberFields
   $expenseResult = Update-DirectExpenseSheet $workbook $payload $dateFields $numberFields
   $generalExpenseResult = Update-GeneralExpenseSheet $workbook $payload $dateFields $numberFields
@@ -1387,10 +1633,17 @@ try {
   [pscustomobject]@{
     type = "result"
     students = $studentResult.Count
+    agentFormulaCount = $studentResult.AgentFormulaCount
+    agentFormulaSkippedUnknownCount = $studentResult.AgentFormulaSkippedUnknownCount
+    agentFormulaPreservedConstantCount = $studentResult.AgentFormulaPreservedConstantCount
     contracts = $contractResult.Count
     directExpenses = $expenseResult.Count
     generalExpenses = $generalExpenseResult.Count
     paymentConstants = $paymentResult.Count
+    agentPaymentRates = [pscustomobject]@{
+      withAuthorPercent = $agentRateResult.WithAuthorPercent
+      withoutAuthorPercent = $agentRateResult.WithoutAuthorPercent
+    }
     outputPath = $OutputPath
   } | ConvertTo-Json -Compress | Write-Output
 } finally {

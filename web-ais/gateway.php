@@ -464,19 +464,29 @@ function gateway_handle_audit_routes(
         '/api/students/audit',
         '/api/students/audit/export',
     ], true)) {
-        $studentId = trim((string) ($_GET['studentId'] ?? ''));
-        if ($studentId === '' || mb_strlen($studentId, 'UTF-8') > 240) {
-            gateway_fail(400, 'Не указан слушатель для просмотра журнала.');
+        $legacyStudentId = trim((string) ($_GET['studentId'] ?? ''));
+        $entityType = trim((string) ($_GET['entityType'] ?? '')) === 'contracts'
+            ? 'contracts'
+            : 'students';
+        $entityId = trim((string) ($_GET['entityId'] ?? $legacyStudentId));
+        if ($entityId === '' || mb_strlen($entityId, 'UTF-8') > 240) {
+            gateway_fail(
+                400,
+                $entityType === 'contracts'
+                    ? 'Не указан сотрудник для просмотра журнала.'
+                    : 'Не указан слушатель для просмотра журнала.'
+            );
         }
         $scope = [
-            'entityTypeExact' => 'students',
-            'entityIdExact' => $studentId,
+            'entityTypeExact' => $entityType,
+            'entityIdExact' => $entityId,
         ];
         $filters = array_merge(gateway_audit_filters(), $scope);
         if (str_ends_with($path, '/export')) {
             $csv = ais_audit_export_csv($filters);
-            $safeId = preg_replace('/[^A-Za-z0-9_-]+/', '-', $studentId) ?: 'log';
-            $fileName = 'student-audit-' . substr($safeId, 0, 80) . '-' . gmdate('Y-m-d_H-i-s') . '.csv';
+            $safeId = preg_replace('/[^A-Za-z0-9_-]+/', '-', $entityId) ?: 'log';
+            $prefix = $entityType === 'contracts' ? 'employee-audit-' : 'student-audit-';
+            $fileName = $prefix . substr($safeId, 0, 80) . '-' . gmdate('Y-m-d_H-i-s') . '.csv';
             header('Content-Type: text/csv; charset=utf-8');
             header('Content-Disposition: attachment; filename="' . $fileName . '"');
             header('Content-Length: ' . strlen($csv));
@@ -872,6 +882,636 @@ function gateway_handle_application_query(array $headers, string $body): void
     ]);
 }
 
+function gateway_record_locks_pdo(): PDO
+{
+    static $pdo = null;
+    if ($pdo instanceof PDO) {
+        return $pdo;
+    }
+    $settings = gateway_server_settings();
+    $environmentConnection = trim((string) (getenv('AIS_RECORD_LOCKS_MYSQL_CONNECTION_STRING') ?: ''));
+    $dedicatedConnection = trim((string) ($settings['sharedRecordLocksMySqlConnectionString'] ?? ''));
+    $useApplicationsConnection = ($settings['sharedRecordLocksMySqlUseApplicationsConnection'] ?? true) !== false;
+    if ($environmentConnection !== '' || $dedicatedConnection !== '' || $useApplicationsConnection) {
+        $connection = gateway_parse_connection_string(
+            $environmentConnection !== ''
+                ? $environmentConnection
+                : ($dedicatedConnection !== ''
+                    ? $dedicatedConnection
+                    : (string) ($settings['studentApplicationsMySqlConnectionString'] ?? ''))
+        );
+    } else {
+        $connection = [
+            'host' => (string) ($settings['sharedRecordLocksMySqlHost'] ?? ''),
+            'port' => (string) ($settings['sharedRecordLocksMySqlPort'] ?? '3306'),
+            'database' => (string) ($settings['sharedRecordLocksMySqlDatabase'] ?? ''),
+            'user' => (string) ($settings['sharedRecordLocksMySqlUser'] ?? ''),
+            'password' => (string) ($settings['sharedRecordLocksMySqlPassword'] ?? ''),
+        ];
+    }
+    $host = trim((string) ($connection['server'] ?? $connection['host'] ?? ''));
+    $database = trim((string) ($connection['database'] ?? ''));
+    $user = trim((string) ($connection['uid'] ?? $connection['user'] ?? ''));
+    $password = (string) ($connection['pwd'] ?? $connection['password'] ?? '');
+    $port = max(1, (int) ($connection['port'] ?? 3306));
+    if ($host === '' || $database === '' || $user === '' || $password === '') {
+        throw new RuntimeException('Не настроено подключение MySQL для блокировок записей.');
+    }
+    $candidateHosts = preg_match('/\.timeweb\.ru$/i', $host)
+        ? array_values(array_unique(['127.0.0.1', 'localhost', $host]))
+        : [$host];
+    $lastError = null;
+    foreach ($candidateHosts as $candidateHost) {
+        try {
+            $pdo = new PDO(
+                'mysql:host=' . $candidateHost . ';port=' . $port . ';dbname=' . $database . ';charset=utf8mb4',
+                $user,
+                $password,
+                [
+                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    PDO::ATTR_TIMEOUT => 10,
+                    PDO::ATTR_EMULATE_PREPARES => true,
+                ]
+            );
+            $pdo->exec("SET time_zone = '+00:00'");
+            return $pdo;
+        } catch (PDOException $error) {
+            $lastError = $error;
+            $pdo = null;
+        }
+    }
+    throw $lastError ?? new RuntimeException('Не удалось подключиться к MySQL блокировок.');
+}
+
+function gateway_shared_state_key(): string
+{
+    $key = trim((string) (getenv('AIS_SHARED_STATE_KEY') ?: 'main'));
+    return substr($key !== '' ? $key : 'main', 0, 64);
+}
+
+function gateway_shared_state_ensure_tables(PDO $pdo): void
+{
+    $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS ais_shared_state_meta (
+  state_key VARCHAR(64) NOT NULL,
+  revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  updated_at DATETIME(3) NOT NULL,
+  updated_by VARCHAR(160) NOT NULL DEFAULT '',
+  PRIMARY KEY (state_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL);
+    $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS ais_shared_state_entries (
+  state_key VARCHAR(64) NOT NULL,
+  entry_type VARCHAR(32) NOT NULL,
+  group_name VARCHAR(120) NOT NULL DEFAULT '',
+  item_key VARCHAR(191) NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  data_json LONGTEXT NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (state_key, entry_type, group_name, item_key),
+  KEY ais_shared_state_entries_order (state_key, entry_type, group_name, sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL);
+}
+
+function gateway_shared_state_meta(PDO $pdo, bool $forUpdate = false): ?array
+{
+    $sql = 'SELECT revision, updated_at, updated_by FROM ais_shared_state_meta WHERE state_key = ?'
+        . ($forUpdate ? ' FOR UPDATE' : ' LIMIT 1');
+    $statement = $pdo->prepare($sql);
+    try {
+        $statement->execute([gateway_shared_state_key()]);
+    } catch (PDOException $error) {
+        if ((int) ($error->errorInfo[1] ?? 0) !== 1146) {
+            throw $error;
+        }
+        gateway_shared_state_ensure_tables($pdo);
+        $statement = $pdo->prepare($sql);
+        $statement->execute([gateway_shared_state_key()]);
+    }
+    $row = $statement->fetch();
+    return is_array($row) ? $row : null;
+}
+
+function gateway_shared_state_decode_value(mixed $value): mixed
+{
+    $decoded = json_decode((string) $value, true, 512, JSON_THROW_ON_ERROR);
+    return $decoded;
+}
+
+function gateway_shared_state_read_data(PDO $pdo): array
+{
+    $statement = $pdo->prepare(<<<'SQL'
+SELECT entry_type, group_name, item_key, sort_order, data_json
+FROM ais_shared_state_entries
+WHERE state_key = ?
+ORDER BY entry_type, group_name, sort_order, item_key
+SQL);
+    $statement->execute([gateway_shared_state_key()]);
+    $data = ['collections' => [], 'dictionaries' => [], 'meta' => []];
+    $collections = [];
+    $replacements = [];
+    while ($row = $statement->fetch()) {
+        $type = (string) ($row['entry_type'] ?? '');
+        $group = (string) ($row['group_name'] ?? '');
+        $key = (string) ($row['item_key'] ?? '');
+        if ($type === 'collection_meta') {
+            $collections[$group] ??= [];
+            continue;
+        }
+        if ($type === 'collection_replace') {
+            $replacements[$group] = gateway_shared_state_decode_value($row['data_json'] ?? '[]');
+            continue;
+        }
+        if ($type === 'collection') {
+            $collections[$group] ??= [];
+            $collections[$group][] = [
+                'order' => (int) ($row['sort_order'] ?? 0),
+                'key' => $key,
+                'value' => gateway_shared_state_decode_value($row['data_json'] ?? 'null'),
+            ];
+            continue;
+        }
+        if ($type === 'dictionary') {
+            $data['dictionaries'][$key] = gateway_shared_state_decode_value($row['data_json'] ?? 'null');
+        } elseif ($type === 'meta') {
+            $data['meta'][$key] = gateway_shared_state_decode_value($row['data_json'] ?? 'null');
+        } elseif ($type === 'root') {
+            $data[$key] = gateway_shared_state_decode_value($row['data_json'] ?? 'null');
+        }
+    }
+    foreach ($collections as $name => $items) {
+        usort($items, static fn (array $left, array $right): int =>
+            $left['order'] <=> $right['order'] ?: strcmp((string) $left['key'], (string) $right['key'])
+        );
+        $data['collections'][$name] = array_map(
+            static fn (array $item): mixed => $item['value'],
+            $items
+        );
+    }
+    foreach ($replacements as $name => $value) {
+        $data['collections'][$name] = is_array($value) ? $value : [];
+    }
+    return $data;
+}
+
+function gateway_shared_state_version(int $revision): string
+{
+    return 'mysql-' . max(0, $revision);
+}
+
+function gateway_shared_state_iso_date(string $value): string
+{
+    $date = new DateTimeImmutable($value, new DateTimeZone('UTC'));
+    return $date->format('Y-m-d\TH:i:s.v\Z');
+}
+
+function gateway_shared_state_public_meta(?array $meta): array
+{
+    $revision = max(0, (int) ($meta['revision'] ?? 0));
+    return [
+        'exists' => $meta !== null,
+        'revision' => $revision,
+        'versionTag' => $meta !== null ? gateway_shared_state_version($revision) : '',
+        'updatedAt' => $meta !== null ? gateway_shared_state_iso_date((string) $meta['updated_at']) : '',
+        'updatedBy' => (string) ($meta['updated_by'] ?? ''),
+        'source' => 'mysql',
+        'offline' => false,
+        'writable' => true,
+        'pendingCount' => 0,
+    ];
+}
+
+function gateway_shared_state_upsert_entry(
+    PDOStatement $statement,
+    string $type,
+    string $group,
+    string $key,
+    int $order,
+    mixed $value
+): void {
+    $json = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    $statement->execute([gateway_shared_state_key(), $type, $group, $key, $order, $json]);
+}
+
+function gateway_shared_state_replace_data(PDO $pdo, array $data): void
+{
+    if (!is_array($data['collections'] ?? null) || !is_array($data['dictionaries'] ?? null)) {
+        throw new InvalidArgumentException('Общая база передана в некорректном формате.');
+    }
+    $delete = $pdo->prepare('DELETE FROM ais_shared_state_entries WHERE state_key = ?');
+    $delete->execute([gateway_shared_state_key()]);
+    $insert = $pdo->prepare(<<<'SQL'
+INSERT INTO ais_shared_state_entries
+  (state_key, entry_type, group_name, item_key, sort_order, data_json, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))
+ON DUPLICATE KEY UPDATE
+  sort_order = VALUES(sort_order), data_json = VALUES(data_json), updated_at = VALUES(updated_at)
+SQL);
+    foreach ($data['collections'] as $name => $rows) {
+        if (!preg_match('/^[A-Za-z0-9_-]{1,120}$/', (string) $name)) {
+            continue;
+        }
+        $rows = is_array($rows) ? array_values($rows) : [];
+        gateway_shared_state_upsert_entry($insert, 'collection_meta', (string) $name, '__collection__', 0, null);
+        $rowsHaveIds = true;
+        foreach ($rows as $row) {
+            if (!is_array($row) || trim((string) ($row['id'] ?? '')) === '') {
+                $rowsHaveIds = false;
+                break;
+            }
+        }
+        if (!$rowsHaveIds) {
+            gateway_shared_state_upsert_entry($insert, 'collection_replace', (string) $name, '__replace__', 0, $rows);
+            continue;
+        }
+        foreach ($rows as $index => $row) {
+            gateway_shared_state_upsert_entry(
+                $insert,
+                'collection',
+                (string) $name,
+                (string) $row['id'],
+                (int) $index,
+                $row
+            );
+        }
+    }
+    foreach (['dictionaries' => 'dictionary', 'meta' => 'meta'] as $group => $type) {
+        foreach (is_array($data[$group] ?? null) ? $data[$group] : [] as $name => $value) {
+            gateway_shared_state_upsert_entry($insert, $type, '', (string) $name, 0, $value);
+        }
+    }
+    foreach ($data as $name => $value) {
+        if (in_array($name, ['collections', 'dictionaries', 'meta'], true)) {
+            continue;
+        }
+        gateway_shared_state_upsert_entry($insert, 'root', '', (string) $name, 0, $value);
+    }
+}
+
+function gateway_shared_state_apply_patch(PDO $pdo, array $patch): void
+{
+    $insert = $pdo->prepare(<<<'SQL'
+INSERT INTO ais_shared_state_entries
+  (state_key, entry_type, group_name, item_key, sort_order, data_json, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))
+ON DUPLICATE KEY UPDATE data_json = VALUES(data_json), updated_at = VALUES(updated_at)
+SQL);
+    $insertWithOrder = $pdo->prepare(<<<'SQL'
+INSERT INTO ais_shared_state_entries
+  (state_key, entry_type, group_name, item_key, sort_order, data_json, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))
+ON DUPLICATE KEY UPDATE
+  sort_order = VALUES(sort_order), data_json = VALUES(data_json), updated_at = VALUES(updated_at)
+SQL);
+    $deleteCollection = $pdo->prepare(<<<'SQL'
+DELETE FROM ais_shared_state_entries
+WHERE state_key = ? AND group_name = ?
+  AND entry_type IN ('collection', 'collection_meta', 'collection_replace')
+SQL);
+    $deleteReplacement = $pdo->prepare(<<<'SQL'
+DELETE FROM ais_shared_state_entries
+WHERE state_key = ? AND group_name = ? AND entry_type = 'collection_replace'
+SQL);
+    $deleteRecord = $pdo->prepare(<<<'SQL'
+DELETE FROM ais_shared_state_entries
+WHERE state_key = ? AND entry_type = 'collection' AND group_name = ? AND item_key = ?
+SQL);
+    $updateOrder = $pdo->prepare(<<<'SQL'
+UPDATE ais_shared_state_entries
+SET sort_order = ?, updated_at = UTC_TIMESTAMP(3)
+WHERE state_key = ? AND entry_type = 'collection' AND group_name = ? AND item_key = ?
+SQL);
+    foreach (is_array($patch['collections'] ?? null) ? $patch['collections'] : [] as $name => $change) {
+        $name = (string) $name;
+        if (!preg_match('/^[A-Za-z0-9_-]{1,120}$/', $name) || !is_array($change)) {
+            continue;
+        }
+        if (is_array($change['replace'] ?? null)) {
+            $deleteCollection->execute([gateway_shared_state_key(), $name]);
+            gateway_shared_state_upsert_entry($insertWithOrder, 'collection_meta', $name, '__collection__', 0, null);
+            $rows = array_values($change['replace']);
+            $rowsHaveIds = true;
+            foreach ($rows as $row) {
+                if (!is_array($row) || trim((string) ($row['id'] ?? '')) === '') {
+                    $rowsHaveIds = false;
+                    break;
+                }
+            }
+            if (!$rowsHaveIds) {
+                gateway_shared_state_upsert_entry($insertWithOrder, 'collection_replace', $name, '__replace__', 0, $rows);
+            } else {
+                foreach ($rows as $index => $row) {
+                    gateway_shared_state_upsert_entry($insertWithOrder, 'collection', $name, (string) $row['id'], (int) $index, $row);
+                }
+            }
+            continue;
+        }
+        gateway_shared_state_upsert_entry($insert, 'collection_meta', $name, '__collection__', 0, null);
+        $deleteReplacement->execute([gateway_shared_state_key(), $name]);
+        foreach (is_array($change['deletes'] ?? null) ? $change['deletes'] : [] as $id) {
+            $deleteRecord->execute([gateway_shared_state_key(), $name, (string) $id]);
+        }
+        $order = is_array($change['order'] ?? null) ? array_values($change['order']) : [];
+        $orderById = array_flip(array_map('strval', $order));
+        foreach (is_array($change['upserts'] ?? null) ? $change['upserts'] : [] as $index => $row) {
+            if (!is_array($row) || trim((string) ($row['id'] ?? '')) === '') {
+                continue;
+            }
+            $id = (string) $row['id'];
+            gateway_shared_state_upsert_entry(
+                $order !== [] ? $insertWithOrder : $insert,
+                'collection',
+                $name,
+                $id,
+                isset($orderById[$id]) ? (int) $orderById[$id] : 1000000000 + (int) $index,
+                $row
+            );
+        }
+        foreach ($order as $index => $id) {
+            $updateOrder->execute([(int) $index, gateway_shared_state_key(), $name, (string) $id]);
+        }
+    }
+    foreach (['dictionaries' => 'dictionary', 'meta' => 'meta', 'root' => 'root'] as $group => $type) {
+        foreach (is_array($patch[$group] ?? null) ? $patch[$group] : [] as $name => $value) {
+            gateway_shared_state_upsert_entry($insert, $type, '', (string) $name, 0, $value);
+        }
+    }
+}
+
+function gateway_shared_state_lock_conflict(PDO $pdo, array $patch, string $clientId): ?array
+{
+    $select = $pdo->prepare(<<<'SQL'
+SELECT entity_type, entity_id, client_id, owner_login, owner_name, acquired_at, expires_at
+FROM ais_record_locks
+WHERE entity_type = ? AND entity_id = ? AND expires_at > UTC_TIMESTAMP(3) AND client_id <> ?
+LIMIT 1
+SQL);
+    foreach (is_array($patch['collections'] ?? null) ? $patch['collections'] : [] as $collection => $change) {
+        if (!is_array($change)) {
+            continue;
+        }
+        $ids = [];
+        foreach (is_array($change['upserts'] ?? null) ? $change['upserts'] : [] as $row) {
+            if (is_array($row) && trim((string) ($row['id'] ?? '')) !== '') {
+                $ids[] = (string) $row['id'];
+            }
+        }
+        foreach (is_array($change['deletes'] ?? null) ? $change['deletes'] : [] as $id) {
+            $ids[] = (string) $id;
+        }
+        foreach (array_unique($ids) as $id) {
+            $select->execute([(string) $collection, $id, $clientId]);
+            $row = $select->fetch();
+            if (is_array($row)) {
+                return $row;
+            }
+        }
+    }
+    return null;
+}
+
+function gateway_handle_shared_state(string $method, string $body, array $currentUser): void
+{
+    $pdo = gateway_record_locks_pdo();
+    if ($method === 'GET') {
+        $meta = gateway_shared_state_meta($pdo);
+        $response = gateway_shared_state_public_meta($meta);
+        if (($_GET['metadata'] ?? '') !== '1') {
+            $response['warning'] = '';
+            $response['data'] = $meta !== null ? gateway_shared_state_read_data($pdo) : null;
+        }
+        gateway_json(200, $response);
+    }
+    if ($method !== 'POST') {
+        gateway_fail(405, 'Method not allowed');
+    }
+    if (strlen($body) > 40 * 1024 * 1024) {
+        gateway_fail(413, 'Пакет синхронизации превышает допустимый размер.');
+    }
+    $payload = json_decode($body, true);
+    if (!is_array($payload)) {
+        gateway_fail(400, 'Некорректный JSON общей базы.');
+    }
+    $patch = is_array($payload['patch'] ?? null) ? $payload['patch'] : null;
+    $data = is_array($payload['data'] ?? null) ? $payload['data'] : null;
+    if ($patch === null && $data === null) {
+        gateway_fail(400, 'Не переданы изменения общей базы.');
+    }
+    $requestedRevision = max(0, (int) ($payload['baseRevision'] ?? 0));
+    $clientId = substr(trim((string) ($payload['clientId'] ?? '')), 0, 160);
+    if ($patch !== null) {
+        $locked = gateway_shared_state_lock_conflict($pdo, $patch, $clientId);
+        if ($locked !== null) {
+            gateway_json(423, [
+                'error' => 'Одна из изменяемых записей сейчас заблокирована другим пользователем.',
+                'locked' => true,
+                'lock' => gateway_public_record_lock($locked, $clientId),
+            ]);
+        }
+    }
+    $pdo->beginTransaction();
+    try {
+        $meta = gateway_shared_state_meta($pdo, true);
+        $currentRevision = max(0, (int) ($meta['revision'] ?? 0));
+        if ($patch === null && $requestedRevision !== $currentRevision) {
+            $pdo->rollBack();
+            gateway_json(409, [
+                'error' => 'Общая база уже изменена другим пользователем.',
+                'conflict' => true,
+                ...gateway_shared_state_public_meta($meta),
+            ]);
+        }
+        if ($meta === null && $data === null) {
+            throw new RuntimeException('Общая база ещё не создана.');
+        }
+        if ($data !== null) {
+            gateway_shared_state_replace_data($pdo, $data);
+        } else {
+            gateway_shared_state_apply_patch($pdo, $patch);
+        }
+        $nextRevision = $currentRevision + 1;
+        $updatedBy = substr((string) ($currentUser['login'] ?? $currentUser['name'] ?? 'system'), 0, 160);
+        $upsertMeta = $pdo->prepare(<<<'SQL'
+INSERT INTO ais_shared_state_meta (state_key, revision, updated_at, updated_by)
+VALUES (?, ?, UTC_TIMESTAMP(3), ?)
+ON DUPLICATE KEY UPDATE
+  revision = VALUES(revision), updated_at = VALUES(updated_at), updated_by = VALUES(updated_by)
+SQL);
+        $upsertMeta->execute([gateway_shared_state_key(), $nextRevision, $updatedBy]);
+        $pdo->commit();
+        $savedMeta = gateway_shared_state_meta($pdo);
+        $response = [
+            'ok' => true,
+            'conflict' => false,
+            'locked' => false,
+            'merged' => $patch !== null && $requestedRevision !== $currentRevision,
+            ...gateway_shared_state_public_meta($savedMeta),
+        ];
+        if ($response['merged']) {
+            $response['data'] = gateway_shared_state_read_data($pdo);
+        } else {
+            $response['data'] = null;
+        }
+        gateway_json(200, $response);
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $error;
+    }
+}
+
+function gateway_record_lock_identifier(mixed $value, string $label): string
+{
+    $text = trim((string) $value);
+    if ($text === '' || strlen($text) > 160 || !preg_match('/^[A-Za-z0-9_.:@-]+$/', $text)) {
+        throw new InvalidArgumentException($label . ' блокировки указан некорректно.');
+    }
+    return $text;
+}
+
+function gateway_public_record_lock(?array $row, string $clientId): ?array
+{
+    if ($row === null) {
+        return null;
+    }
+    $utc = new DateTimeZone('UTC');
+    $acquiredAt = new DateTimeImmutable((string) $row['acquired_at'], $utc);
+    $expiresAt = new DateTimeImmutable((string) $row['expires_at'], $utc);
+    return [
+        'entityType' => (string) $row['entity_type'],
+        'entityId' => (string) $row['entity_id'],
+        'ownerLogin' => (string) $row['owner_login'],
+        'ownerName' => (string) $row['owner_name'],
+        'acquiredAt' => $acquiredAt->format('Y-m-d\TH:i:s.v\Z'),
+        'expiresAt' => $expiresAt->format('Y-m-d\TH:i:s.v\Z'),
+        'ownedByClient' => $clientId !== '' && hash_equals((string) $row['client_id'], $clientId),
+    ];
+}
+
+function gateway_handle_record_locks(string $method, string $body, array $currentUser): void
+{
+    $pdo = gateway_record_locks_pdo();
+    if ($method === 'GET') {
+        $clientId = trim((string) ($_GET['clientId'] ?? ''));
+        $statement = $pdo->query(<<<'SQL'
+SELECT entity_type, entity_id, client_id, owner_login, owner_name, acquired_at, expires_at
+FROM ais_record_locks
+WHERE expires_at > UTC_TIMESTAMP(3)
+ORDER BY updated_at DESC
+LIMIT 5000
+SQL);
+        $locks = [];
+        while ($row = $statement->fetch()) {
+            $locks[] = gateway_public_record_lock($row, $clientId);
+        }
+        gateway_json(200, [
+            'locks' => $locks,
+            'revision' => (int) floor(microtime(true) * 1000),
+            'ttlMs' => 30000,
+            'pollIntervalMs' => 1000,
+            'source' => 'mysql',
+        ]);
+    }
+    if ($method !== 'POST') {
+        gateway_fail(405, 'Method not allowed');
+    }
+    $payload = json_decode($body, true);
+    if (!is_array($payload)) {
+        gateway_fail(400, 'Некорректный JSON запроса блокировки.');
+    }
+    $action = strtolower(trim((string) ($payload['action'] ?? 'acquire')));
+    if (!in_array($action, ['acquire', 'renew', 'release'], true)) {
+        gateway_fail(400, 'Неизвестное действие с блокировкой записи.');
+    }
+    $entityType = gateway_record_lock_identifier($payload['entityType'] ?? '', 'Раздел');
+    $entityId = gateway_record_lock_identifier($payload['entityId'] ?? '', 'Идентификатор записи');
+    $clientId = gateway_record_lock_identifier($payload['clientId'] ?? '', 'Идентификатор клиента');
+    $pdo->beginTransaction();
+    try {
+        $select = $pdo->prepare(<<<'SQL'
+SELECT entity_type, entity_id, client_id, owner_login, owner_name, acquired_at, expires_at
+FROM ais_record_locks
+WHERE entity_type = ? AND entity_id = ?
+FOR UPDATE
+SQL);
+        $select->execute([$entityType, $entityId]);
+        $existing = $select->fetch() ?: null;
+        $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $existingActive = $existing !== null
+            && new DateTimeImmutable((string) $existing['expires_at'], new DateTimeZone('UTC')) > $now;
+        if ($existingActive && !hash_equals((string) $existing['client_id'], $clientId)) {
+            $pdo->commit();
+            gateway_json(423, [
+                'error' => 'Запись уже редактируется другим пользователем.',
+                'locked' => true,
+                'lock' => gateway_public_record_lock($existing, $clientId),
+            ]);
+        }
+        if ($action === 'release') {
+            $delete = $pdo->prepare(
+                'DELETE FROM ais_record_locks WHERE entity_type = ? AND entity_id = ? AND client_id = ?'
+            );
+            $delete->execute([$entityType, $entityId, $clientId]);
+            $pdo->commit();
+            gateway_json(200, [
+                'ok' => true,
+                'locked' => false,
+                'released' => true,
+                'lock' => null,
+                'revision' => (int) floor(microtime(true) * 1000),
+                'ttlMs' => 30000,
+                'source' => 'mysql',
+            ]);
+        }
+        $acquiredAt = $existingActive && hash_equals((string) $existing['client_id'], $clientId)
+            ? new DateTimeImmutable((string) $existing['acquired_at'], new DateTimeZone('UTC'))
+            : $now;
+        $expiresAt = $now->modify('+30 seconds');
+        $row = [
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'client_id' => $clientId,
+            'owner_login' => mb_substr((string) ($currentUser['login'] ?? ''), 0, 160, 'UTF-8'),
+            'owner_name' => mb_substr((string) ($currentUser['name'] ?? $currentUser['login'] ?? 'Пользователь'), 0, 240, 'UTF-8'),
+            'acquired_at' => $acquiredAt->format('Y-m-d H:i:s.v'),
+            'expires_at' => $expiresAt->format('Y-m-d H:i:s.v'),
+            'updated_at' => $now->format('Y-m-d H:i:s.v'),
+        ];
+        $upsert = $pdo->prepare(<<<'SQL'
+INSERT INTO ais_record_locks (
+  entity_type, entity_id, client_id, owner_login, owner_name, acquired_at, expires_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE
+  client_id = VALUES(client_id),
+  owner_login = VALUES(owner_login),
+  owner_name = VALUES(owner_name),
+  acquired_at = VALUES(acquired_at),
+  expires_at = VALUES(expires_at),
+  updated_at = VALUES(updated_at)
+SQL);
+        $upsert->execute(array_values($row));
+        $pdo->commit();
+        gateway_json(200, [
+            'ok' => true,
+            'locked' => false,
+            'released' => false,
+            'lock' => gateway_public_record_lock($row, $clientId),
+            'revision' => (int) floor(microtime(true) * 1000),
+            'ttlMs' => 30000,
+            'source' => 'mysql',
+        ]);
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $error;
+    }
+}
+
 set_time_limit(AIS_GATEWAY_TIMEOUT_SECONDS + 20);
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 if (!in_array($method, ['GET', 'HEAD', 'POST', 'DELETE', 'OPTIONS'], true)) {
@@ -906,6 +1546,11 @@ try {
     }
 
     $currentUser = gateway_require_user();
+    $authenticatedHeaders = gateway_request_headers();
+    $authenticatedHeaders['x-ais-user-id'] = (string) ($currentUser['id'] ?? '');
+    $authenticatedHeaders['x-ais-user-login'] = (string) ($currentUser['login'] ?? '');
+    $authenticatedHeaders['x-ais-user-name'] = (string) ($currentUser['name'] ?? '');
+    $authenticatedHeaders['x-ais-user-role'] = (string) ($currentUser['role'] ?? 'manager');
     gateway_handle_audit_routes($method, $requestPath, $body, $currentUser);
     gateway_handle_admin_users($method, $requestPath, $body, $currentUser);
     if (
@@ -913,6 +1558,7 @@ try {
         || in_array($requestPath, [
             '/api/yandex-disk/test',
             '/api/student-applications-email/test',
+            '/api/mysql-locks/test',
         ], true)
         || $requestPath === '/api/students/export-database'
         || str_starts_with($requestPath, '/api/students/export-database/')
@@ -923,6 +1569,14 @@ try {
     gateway_cleanup_jobs();
     $url = gateway_api_url();
     $path = (string) parse_url($url, PHP_URL_PATH);
+
+    if ($path === '/api/shared-state') {
+        gateway_handle_shared_state($method, $body, $currentUser);
+    }
+
+    if ($path === '/api/shared-state/locks') {
+        gateway_handle_record_locks($method, $body, $currentUser);
+    }
 
     if ($method === 'POST' && $path === '/api/students/recognize-documents/start') {
         $ocrPayload = json_decode($body, true);
@@ -1015,7 +1669,7 @@ try {
         ]);
     }
 
-    $response = gateway_run_node($url, $method, gateway_request_headers(), $body);
+    $response = gateway_run_node($url, $method, $authenticatedHeaders, $body);
     gateway_send_node_response($response);
 } catch (Throwable $error) {
     gateway_fail(500, $error->getMessage());

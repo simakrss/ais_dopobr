@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const { Readable } = require("node:stream");
-const { ensureStorage, route } = require("./app-server");
+const { ensureStorage, closeSharedRecordLocksStorage, route } = require("./app-server");
 
 const [, , requestPath, requestBodyPath, responsePath, responseBodyPath] = process.argv;
 
@@ -55,4 +55,4 @@ main().catch((error) => {
     Buffer.from(JSON.stringify({ error: error.message || "Server request failed." }), "utf8")
   );
   process.exitCode = 1;
-});
+}).finally(closeSharedRecordLocksStorage);

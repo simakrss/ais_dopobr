@@ -1,23 +1,10 @@
 const http = require("http");
-const fs = require("fs");
-const path = require("path");
 
-const root = __dirname;
 const port = Number(process.env.PORT || 8081);
 const host = process.env.HOST || "127.0.0.1";
+const appServerOrigin = process.env.AIS_APP_SERVER_ORIGIN || "http://127.0.0.1:8080";
 const yandexGeocoderApiKey = process.env.YANDEX_GEOCODER_API_KEY || "";
 const dgisApiKey = process.env.DGIS_API_KEY || process.env.TWOGIS_API_KEY || "";
-
-const mimeTypes = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".svg": "image/svg+xml; charset=utf-8"
-};
 
 function send(res, status, body, contentType = "text/plain; charset=utf-8") {
   res.writeHead(status, {
@@ -165,20 +152,40 @@ async function handlePostalIndex(req, res, url) {
   }
 }
 
-function serveStatic(res, pathname) {
-  const cleanPath = pathname === "/" ? "/index.html" : decodeURIComponent(pathname);
-  const filePath = path.resolve(root, `.${cleanPath}`);
-  if (!filePath.startsWith(root)) {
-    send(res, 403, "Forbidden");
-    return;
-  }
-  fs.readFile(filePath, (error, data) => {
-    if (error) {
-      send(res, 404, "Not found");
+function proxyToAppServer(req, res) {
+  const target = new URL(req.url, appServerOrigin);
+  const headers = {
+    ...req.headers,
+    "x-forwarded-host": req.headers.host || `${host}:${port}`,
+    "x-forwarded-proto": "http",
+    "x-forwarded-for": req.socket.remoteAddress || ""
+  };
+  const proxyReq = http.request({
+    protocol: target.protocol,
+    hostname: target.hostname,
+    port: target.port,
+    method: req.method,
+    path: `${target.pathname}${target.search}`,
+    headers
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on("error", () => {
+    if (!res.headersSent) {
+      send(
+        res,
+        502,
+        JSON.stringify({ error: "Сервер приложения на порту 8080 недоступен." }),
+        "application/json; charset=utf-8"
+      );
       return;
     }
-    send(res, 200, data, mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream");
+    res.destroy();
   });
+
+  req.pipe(proxyReq);
 }
 
 const server = http.createServer((req, res) => {
@@ -187,9 +194,9 @@ const server = http.createServer((req, res) => {
     handlePostalIndex(req, res, url);
     return;
   }
-  serveStatic(res, url.pathname);
+  proxyToAppServer(req, res);
 });
 
 server.listen(port, host, () => {
-  console.log(`Web AIS local server: http://${host}:${port}/`);
+  console.log(`Web AIS local server: http://${host}:${port}/ -> ${appServerOrigin}`);
 });
