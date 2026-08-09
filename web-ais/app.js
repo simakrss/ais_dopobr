@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.15",
+    version: "1.7.16",
     releasedAt: "2026-08-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.16",
+      releasedAt: "2026-08-09",
+      changes: [
+        "В Конструкторе документов список шаблонов по умолчанию сортируется по названию документа от А до Я."
+      ]
+    },
     {
       version: "1.7.15",
       releasedAt: "2026-08-09",
@@ -2553,7 +2560,7 @@ MAX - https://bizvmax.ru/zifra_plus
     programRegistryTypeFilter: [],
     contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
     studentImportedViewIds: [],
-    sort: { key: "", dir: "asc" },
+    sort: getDefaultTableSort(initialView),
     navItemOrder: loadNavItemOrder(),
     dashboardStudentStatusOrder: loadDashboardStudentStatusOrder(),
     studentCardTab: "main",
@@ -8120,7 +8127,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getDefaultTableSort(configId) {
-    const defaultSort = configs[configId]?.defaultSort || {};
+    const tableConfigId = configId === "documentConstructor" ? "documentTemplates" : configId;
+    const defaultSort = configs[tableConfigId]?.defaultSort || {};
     return {
       key: String(defaultSort.key || ""),
       dir: defaultSort.dir === "desc" ? "desc" : "asc"
@@ -8319,7 +8327,7 @@ MAX - https://bizvmax.ru/zifra_plus
               ${fields.map((fieldItem) => `
                 <th class="table-column-head" ${columnDataAttrs(configId, fieldItem.key)} ${columnStyleAttr(configId, fieldItem.key)} draggable="true" title="Перетащите заголовок для смены порядка">
                   <div class="table-head-cell">
-                    <button data-action="sort" data-key="${fieldItem.key}" type="button">
+                    <button data-action="sort" data-config="${escapeAttr(configId)}" data-key="${fieldItem.key}" type="button">
                       ${escapeHtml(fieldItem.label)}
                       ${state.sort.key === fieldItem.key ? (state.sort.dir === "asc" ? "↑" : "↓") : ""}
                     </button>
@@ -8501,7 +8509,8 @@ MAX - https://bizvmax.ru/zifra_plus
   function resetTableOptions(configId) {
     delete state.tableSettings[configId];
     delete state.tablePages[configId];
-    if (state.view === configId) state.sort = getDefaultTableSort(configId);
+    const activeTableConfigId = state.view === "documentConstructor" ? "documentTemplates" : state.view;
+    if (activeTableConfigId === configId) state.sort = getDefaultTableSort(configId);
     state.tableOptions = null;
     persistTableSettings();
     render();
@@ -19176,12 +19185,13 @@ MAX - https://bizvmax.ru/zifra_plus
 
     document.querySelectorAll("[data-action='sort']").forEach((button) => {
       button.addEventListener("click", () => {
+        const configId = button.dataset.config || state.view;
         const key = button.dataset.key;
         state.sort = {
           key,
           dir: state.sort.key === key && state.sort.dir === "asc" ? "desc" : "asc"
         };
-        state.tablePages[state.view] = 1;
+        state.tablePages[configId] = 1;
         render();
       });
     });
