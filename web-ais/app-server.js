@@ -67,6 +67,8 @@ const MAX_OCR_TOTAL_BYTES = 160 * 1024 * 1024;
 const MAX_STUDENT_DATABASE_EXPORT_STUDENTS = 20000;
 const MAX_STUDENT_DATABASE_EXPORT_EXPENSES = 100000;
 const MAX_STUDENT_DATABASE_EXPORT_CONTRACTS = 20000;
+const MAX_STUDENT_DATABASE_EXPORT_PROGRAMS = 20000;
+const MAX_PROGRAM_PROMO_MESSAGE_LENGTH = 32767;
 const MAX_PAYMENT_DATABASE_CONSTANTS = 200;
 const MAX_EMAIL_SUBJECT_LENGTH = 200;
 const STUDENT_IMPORT_JOB_TTL_MS = 15 * 60 * 1000;
@@ -246,8 +248,14 @@ const PROGRAM_DATABASE_COLUMN_MAP = Object.freeze({
   "Разработчик": "developer",
   "Менеджер": "manager",
   "Преподаватели": "teachers",
-  "Литература ОП": "literature"
+  "Литература ОП": "literature",
+  "Промосообщение1": "promoMessage1",
+  "Промосообщение2": "promoMessage2"
 });
+const PROGRAM_DATABASE_COMMENT_FIELDS = new Set([
+  "promoMessage1",
+  "promoMessage2"
+]);
 const PROGRAM_DATABASE_LIST_FIELDS = new Set([
   "qualification",
   "activityScope",
@@ -8385,6 +8393,15 @@ function normalizeProgramDatabaseValue(fieldName, value) {
   return String(value ?? "").trim();
 }
 
+function getProgramDatabaseCommentText(worksheet, rowIndex, columnIndex) {
+  const address = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
+  const comments = Array.isArray(worksheet?.[address]?.c) ? worksheet[address].c : [];
+  return comments
+    .map((comment) => String(comment?.t ?? "").replace(/\r\n?/g, "\n").trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}) {
   const worksheet = workbook.Sheets["Реестр программ"];
   if (!worksheet) throw new Error("В файле не найден лист «Реестр программ».");
@@ -8405,6 +8422,7 @@ function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}) {
   }
   const headers = rows[headerRowIndex].map((value) => String(value || "").trim());
   const programColumn = headers.findIndex((header) => programHeaders.has(header));
+  const landingCodeColumn = headers.indexOf("Код лендинга");
   const mappedColumns = headers
     .map((header, index) => ({
       index,
@@ -8412,12 +8430,22 @@ function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}) {
     }))
     .filter((item) => item.fieldName);
   const programPaymentSettings = rows.slice(headerRowIndex + 1)
-    .map((row) => {
+    .map((row, offset) => {
+      const xlsbProgramRow = headerRowIndex + offset + 2;
+      const name = String(row[programColumn] ?? "").trim();
       const record = {
-        name: String(row[programColumn] ?? "").trim()
+        name,
+        xlsbProgramName: name,
+        xlsbProgramRow,
+        xlsbProgramLandingCode: landingCodeColumn >= 0
+          ? String(row[landingCodeColumn] ?? "").trim()
+          : ""
       };
       mappedColumns.forEach(({ index, fieldName }) => {
-        record[fieldName] = normalizeProgramDatabaseValue(fieldName, row[index]);
+        const value = PROGRAM_DATABASE_COMMENT_FIELDS.has(fieldName)
+          ? getProgramDatabaseCommentText(worksheet, xlsbProgramRow - 1, index)
+          : row[index];
+        record[fieldName] = normalizeProgramDatabaseValue(fieldName, value);
       });
       return record;
     })
@@ -10436,6 +10464,64 @@ function sanitizeAgentPaymentRates(value) {
   };
 }
 
+function sanitizeProgramPromoMessage(value, label) {
+  const text = String(value ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u0000/g, "");
+  if (text.length > MAX_PROGRAM_PROMO_MESSAGE_LENGTH) {
+    throw new Error(
+      `${label} превышает допустимый размер ${MAX_PROGRAM_PROMO_MESSAGE_LENGTH} символов.`
+    );
+  }
+  return text;
+}
+
+function sanitizeStudentDatabaseExportPrograms(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("Некорректный список программ для синхронизации.");
+  if (value.length > MAX_STUDENT_DATABASE_EXPORT_PROGRAMS) {
+    throw new Error(`Число программ превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_PROGRAMS}.`);
+  }
+  return value
+    .filter((program) => program && typeof program === "object" && !Array.isArray(program))
+    .map((program, index) => {
+      const name = String(program.name || "").trim().slice(0, 1000);
+      const xlsbProgramName = String(program.xlsbProgramName || name).trim().slice(0, 1000);
+      const landingCode = String(program.landingCode || "").trim().slice(0, 300);
+      const xlsbProgramLandingCode = String(
+        Object.prototype.hasOwnProperty.call(program, "xlsbProgramLandingCode")
+          ? program.xlsbProgramLandingCode
+          : landingCode
+      ).trim().slice(0, 300);
+      const xlsbProgramRow = Math.max(0, Math.trunc(Number(program.xlsbProgramRow) || 0));
+      const promoMessage1 = sanitizeProgramPromoMessage(
+        program.promoMessage1,
+        `Промосообщение 1 программы ${name || index + 1}`
+      );
+      const promoMessage2 = sanitizeProgramPromoMessage(
+        program.promoMessage2,
+        `Промосообщение 2 программы ${name || index + 1}`
+      );
+      const sourceRowKnown = xlsbProgramRow > 0;
+      return {
+        name,
+        landingCode,
+        xlsbProgramName,
+        xlsbProgramLandingCode,
+        xlsbProgramRow,
+        promoMessage1Provided: Object.prototype.hasOwnProperty.call(program, "promoMessage1Provided")
+          ? program.promoMessage1Provided === true
+          : sourceRowKnown || Boolean(promoMessage1.trim()),
+        promoMessage2Provided: Object.prototype.hasOwnProperty.call(program, "promoMessage2Provided")
+          ? program.promoMessage2Provided === true
+          : sourceRowKnown || Boolean(promoMessage2.trim()),
+        promoMessage1,
+        promoMessage2
+      };
+    })
+    .filter((program) => program.name || program.xlsbProgramName);
+}
+
 function sanitizeStudentDatabaseExportPayload(body) {
   if (!Array.isArray(body.students) || !body.students.length) {
     throw new Error("В облачной базе нет слушателей для синхронизации.");
@@ -10497,11 +10583,15 @@ function sanitizeStudentDatabaseExportPayload(body) {
       section: normalizeGeneralExpenseDatabaseSection(expense.section)
         || GENERAL_EXPENSE_DATABASE_SECTIONS.organizations
     }));
+  const programsProvided = Array.isArray(body.programs);
+  const programs = sanitizeStudentDatabaseExportPrograms(body.programs);
   return {
     students,
     contracts,
     directExpenses,
     generalExpenses,
+    programs,
+    programPromoMessagesProvided: programsProvided,
     paymentConstants: sanitizePaymentDatabaseConstants(body.paymentConstants),
     paymentConstantsProvided: Array.isArray(body.paymentConstants),
     agentPaymentRates: sanitizeAgentPaymentRates(body.agentPaymentRates),
@@ -11104,7 +11194,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       fs.writeFile(inputPath, sourceBytes),
       fs.writeFile(payloadPath, JSON.stringify(payload), "utf8")
     ]);
-    await runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, (scriptProgress) => {
+    const scriptResult = await runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, (scriptProgress) => {
       const value = Math.max(0, Math.min(100, Number(scriptProgress.progress) || 0));
       onProgress({
         progress: 20 + value * 0.7,
@@ -11180,7 +11270,10 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       studentCount: payload.students.length,
       contractCount: payload.contracts.length,
       directExpenseCount: payload.directExpenses.length,
-      generalExpenseCount: payload.generalExpenses.length
+      generalExpenseCount: payload.generalExpenses.length,
+      programCount: Number(scriptResult.programs || 0),
+      programPromoMessageCount: Number(scriptResult.programPromoMessages || 0),
+      programPromoSkippedCount: Number(scriptResult.programPromoSkipped || 0)
     };
   } finally {
     if (tempDirectory) {
@@ -11264,7 +11357,7 @@ async function runStudentExportJob(job, body) {
       status: "completed",
       stage: "complete",
       progress: 100,
-      message: `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} прямых и ${job.result.generalExpenseCount} общих затрат`
+      message: `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} прямых и ${job.result.generalExpenseCount} общих затрат, ${job.result.programPromoMessageCount || 0} промосообщений`
     });
   } catch (error) {
     updateStudentExportJob(job, {

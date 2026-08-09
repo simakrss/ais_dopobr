@@ -1,10 +1,20 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.17",
+    version: "1.7.18",
     releasedAt: "2026-08-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.18",
+      releasedAt: "2026-08-09",
+      changes: [
+        "В карточке программы добавлена вкладка «Промосообщение» с двумя редакторами, подсветкой ссылок и открытием ссылки по Ctrl + щелчку.",
+        "Промосообщения загружаются из примечаний колонок «Промосообщение1» и «Промосообщение2» листа «Реестр программ».",
+        "При синхронизации непустое сообщение записывается в примечание Excel, а значение ячейки приводится к маркеру «Промосообщение».",
+        "Программы с одинаковыми названиями сопоставляются по коду лендинга, поэтому сообщения действующих и архивных программ не смешиваются."
+      ]
+    },
     {
       version: "1.7.17",
       releasedAt: "2026-08-09",
@@ -1865,7 +1875,9 @@ MAX - https://bizvmax.ru/zifra_plus
     developer: ["Разработчик"],
     manager: ["Менеджер"],
     teachers: ["Преподаватели"],
-    literature: ["Литература ОП"]
+    literature: ["Литература ОП"],
+    promoMessage1: ["Промосообщение1"],
+    promoMessage2: ["Промосообщение2"]
   });
   const PROGRAM_DICTIONARY_FIELDS = Object.freeze({
     frdoProfessionalArea: "frdoProfessionalAreas",
@@ -1992,6 +2004,8 @@ MAX - https://bizvmax.ru/zifra_plus
         field("opFolder", "Папка ОП", "text", false, null, { programTab: "characteristics", wide: true }),
         field("opFileName", "Имя файла ОП", "text", false, null, { programTab: "characteristics", wide: true }),
         field("literature", "Литература ОП", "textarea", false, null, { programTab: "characteristics", list: true, wide: true }),
+        field("promoMessage1", "Промосообщение 1", "textarea", false, null, { programTab: "promo", wide: true }),
+        field("promoMessage2", "Промосообщение 2", "textarea", false, null, { programTab: "promo", wide: true }),
         field("commissionChair", "Председатель", "text", false, null, { programTab: "commission" }),
         field("commissionMember1", "Член 1", "text", false, null, { programTab: "commission" }),
         field("commissionMember2", "Член 2", "text", false, null, { programTab: "commission" }),
@@ -13278,6 +13292,7 @@ MAX - https://bizvmax.ru/zifra_plus
       { id: "main", label: "Основное" },
       { id: "trainingPlan", label: "Учебный план" },
       { id: "characteristics", label: "Характеристики" },
+      { id: "promo", label: "Промосообщение" },
       { id: "commission", label: "Комиссия" }
     ]);
     const activeTab = programTabs.find((tab) => tab.id === state.programCardTab) || programTabs[0];
@@ -13336,6 +13351,9 @@ MAX - https://bizvmax.ru/zifra_plus
               </div>
               <div class="program-tab-panel ${activeTab.id === "characteristics" ? "is-active" : ""}" data-program-tab-panel="characteristics" role="tabpanel" ${activeTab.id === "characteristics" ? "" : "hidden"}>
                 ${renderProgramCharacteristicsSection(record || {})}
+              </div>
+              <div class="program-tab-panel ${activeTab.id === "promo" ? "is-active" : ""}" data-program-tab-panel="promo" role="tabpanel" ${activeTab.id === "promo" ? "" : "hidden"}>
+                ${renderProgramPromoSection(record || {})}
               </div>
               <div class="program-tab-panel ${activeTab.id === "commission" ? "is-active" : ""}" data-program-tab-panel="commission" role="tabpanel" ${activeTab.id === "commission" ? "" : "hidden"}>
                 ${renderProgramCommissionSection(record || {})}
@@ -13417,6 +13435,45 @@ MAX - https://bizvmax.ru/zifra_plus
               ? renderProgramOperationalDocumentField(item, record)
               : renderField(item, record);
           }).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderProgramPromoMessageEditor(item, record) {
+    const value = String(record?.[item.key] ?? "");
+    const helpText = "Поддерживаются HTML и ссылки. Ctrl + щелчок открывает подсвеченную ссылку.";
+    return `
+      <label class="program-promo-message-field" data-field-key="${escapeAttr(item.key)}">
+        <span>${escapeHtml(item.label)}</span>
+        <div
+          class="program-promo-message-editor"
+          contenteditable="true"
+          data-program-promo-editor
+          data-program-promo-field="${escapeAttr(item.key)}"
+          spellcheck="true"
+          role="textbox"
+          aria-multiline="true"
+          aria-label="${escapeAttr(item.label)}"
+        >${renderCommunicationTemplateLinks(value)}</div>
+        <input name="${escapeAttr(item.key)}" value="${escapeAttr(value)}" type="hidden">
+        <small>${escapeHtml(helpText)}</small>
+      </label>
+    `;
+  }
+
+  function renderProgramPromoSection(record) {
+    const fields = getProgramFieldsByTab("promo");
+    return `
+      <section class="form-section program-promo-section">
+        <div class="form-section-head">
+          <div>
+            <h3>Промосообщения программы</h3>
+            <p>Тексты загружаются из примечаний к колонкам «Промосообщение1» и «Промосообщение2» листа «Реестр программ».</p>
+          </div>
+        </div>
+        <div class="program-promo-grid">
+          ${fields.map((item) => renderProgramPromoMessageEditor(item, record)).join("")}
         </div>
       </section>
     `;
@@ -18991,6 +19048,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", openProgramOperationalDocumentResource);
     });
     bindPaymentFormulaEditors();
+    bindProgramPromoEditors();
     document.querySelector("[data-action='add-program-training-plan-row']")?.addEventListener("click", addProgramTrainingPlanRow);
     const programTrainingPlanBody = document.querySelector("[data-program-training-plan-body]");
     programTrainingPlanBody?.addEventListener("click", (event) => {
@@ -23316,6 +23374,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!formElement) return "";
     const config = configs[formElement.dataset.config];
     const rows = state.data.collections[config.collection];
+    if (formElement.dataset.config === "programs") {
+      formElement.querySelectorAll("[data-program-promo-editor]").forEach(syncProgramPromoEditor);
+    }
     const formData = new FormData(formElement);
     const isStudentCard = formElement.dataset.config === "students";
     const isProgramCard = formElement.dataset.config === "programs";
@@ -23345,6 +23406,11 @@ MAX - https://bizvmax.ru/zifra_plus
     if (isProgramCard) {
       PROGRAM_LIST_FIELD_KEYS.forEach((key) => {
         if (formData.has(key)) values[key] = normalizeProgramListValue(formData.get(key));
+      });
+      ["promoMessage1", "promoMessage2"].forEach((key) => {
+        if (String(values[key] || "") !== String(currentRecord[key] || "")) {
+          values[`${key}Touched`] = true;
+        }
       });
       values.programOrderDate = normalizeProgramOrderDate(values.programOrderDate);
       values.authorPayments = collectProgramAuthorPayments(formElement);
@@ -29732,6 +29798,64 @@ MAX - https://bizvmax.ru/zifra_plus
     if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
   }
 
+  function syncProgramPromoEditor(editor) {
+    if (!editor) return;
+    const fieldName = String(editor.dataset.programPromoField || "").trim();
+    const hiddenInput = fieldName ? editor.closest("form")?.elements[fieldName] : null;
+    if (hiddenInput) hiddenInput.value = serializeCommunicationTemplateEditor(editor);
+  }
+
+  function bindProgramPromoEditors(root = document) {
+    root.querySelectorAll("[data-program-promo-editor]").forEach((editor) => {
+      if (editor.dataset.programPromoBound === "true") return;
+      editor.dataset.programPromoBound = "true";
+      let highlightTimer = 0;
+      const refresh = (preserveCaret = false) => {
+        window.clearTimeout(highlightTimer);
+        refreshTemplateLinkEditor(editor, preserveCaret);
+        syncProgramPromoEditor(editor);
+      };
+      editor.addEventListener("compositionstart", () => {
+        window.clearTimeout(highlightTimer);
+        editor.dataset.composing = "true";
+      });
+      editor.addEventListener("compositionend", () => {
+        editor.dataset.composing = "";
+        refresh(true);
+      });
+      editor.addEventListener("click", openTemplateEditorLink);
+      editor.addEventListener("paste", (event) => {
+        const text = event.clipboardData?.getData("text/plain");
+        if (typeof text !== "string") return;
+        event.preventDefault();
+        editor.focus({ preventScroll: true });
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : document.createRange();
+        if (!editor.contains(range.commonAncestorContainer)) {
+          range.selectNodeContents(editor);
+          range.collapse(false);
+        }
+        range.deleteContents();
+        const textNode = document.createTextNode(text);
+        range.insertNode(textNode);
+        range.setStartAfter(textNode);
+        range.collapse(true);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      editor.addEventListener("input", () => {
+        syncProgramPromoEditor(editor);
+        if (editor.dataset.composing === "true") return;
+        window.clearTimeout(highlightTimer);
+        highlightTimer = window.setTimeout(() => {
+          if (editor.isConnected && editor.dataset.composing !== "true") refresh(true);
+        }, 180);
+      });
+      editor.addEventListener("blur", () => refresh());
+    });
+  }
+
   function openDocumentEmailTemplateValueEditor(fieldName) {
     const normalizedName = String(fieldName || "").replace(/^\[|\]$/g, "").trim();
     if (!normalizedName) return;
@@ -31962,6 +32086,37 @@ MAX - https://bizvmax.ru/zifra_plus
       .map((contract) => normalizeContractRecord(contract));
   }
 
+  function buildStudentDatabaseExportPrograms() {
+    return (state.data.collections.programs || [])
+      .filter((program) => program && typeof program === "object")
+      .filter((program) => (
+        Number(program.xlsbProgramRow) > 0
+        || program.promoMessage1Touched === true
+        || program.promoMessage2Touched === true
+        || String(program.promoMessage1 || "").trim()
+        || String(program.promoMessage2 || "").trim()
+      ))
+      .map((program) => ({
+        name: String(program.name || "").trim(),
+        landingCode: String(program.landingCode || "").trim(),
+        xlsbProgramName: String(program.xlsbProgramName || program.name || "").trim(),
+        xlsbProgramLandingCode: String(
+          Object.prototype.hasOwnProperty.call(program, "xlsbProgramLandingCode")
+            ? program.xlsbProgramLandingCode
+            : program.landingCode || ""
+        ).trim(),
+        xlsbProgramRow: Number(program.xlsbProgramRow) || 0,
+        promoMessage1Provided: Number(program.xlsbProgramRow) > 0
+          || program.promoMessage1Touched === true
+          || Boolean(String(program.promoMessage1 || "").trim()),
+        promoMessage2Provided: Number(program.xlsbProgramRow) > 0
+          || program.promoMessage2Touched === true
+          || Boolean(String(program.promoMessage2 || "").trim()),
+        promoMessage1: String(program.promoMessage1 || ""),
+        promoMessage2: String(program.promoMessage2 || "")
+      }));
+  }
+
   function buildStudentDatabaseExportPaymentConstants() {
     return getPaymentConstantSettings().map((setting) => ({
       key: String(setting.key || "").trim(),
@@ -32003,7 +32158,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ? "на локальном компьютере"
       : "на Яндекс-Диске через WebDAV";
     const confirmed = confirm(
-      "Текущие данные веб-базы будут перенесены в листы «База», «Реестр договоров», «Прямые затраты» и «Общие затраты» исходного XLSB. "
+      "Текущие данные веб-базы будут перенесены в листы «База», «Реестр договоров», «Прямые затраты» и «Общие затраты» исходного XLSB; промосообщения — в примечания листа «Реестр программ». "
       + "Строки слушателей, которых больше нет в веб-базе, будут очищены. "
       + `Перед обновлением будет создана резервная копия, затем база ${sourceLabel} будет заменена. Продолжить?`
     );
@@ -32023,6 +32178,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const contracts = buildStudentDatabaseExportContracts();
       const directExpenses = buildStudentDatabaseExportDirectExpenses();
       const generalExpenses = buildStudentDatabaseExportGeneralExpenses();
+      const programs = buildStudentDatabaseExportPrograms();
       const paymentConstants = buildStudentDatabaseExportPaymentConstants();
       const agentPaymentRates = buildStudentDatabaseExportAgentPaymentRates();
       const result = await runStudentDatabaseExport({
@@ -32032,6 +32188,7 @@ MAX - https://bizvmax.ru/zifra_plus
         contracts,
         directExpenses,
         generalExpenses,
+        programs,
         paymentConstants,
         agentPaymentRates
       });
@@ -32039,8 +32196,8 @@ MAX - https://bizvmax.ru/zifra_plus
       state.data.meta.studentDatabaseLastExportedAt = new Date().toISOString();
       addAudit(
         "Синхронизация с базой",
-        "Слушатели, договоры и затраты",
-        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${sourceLabel}; резервная копия: ${result.backupPath || "создана"}; время выполнения: ${duration}`,
+        "Слушатели, договоры, затраты и промосообщения",
+        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.programPromoMessageCount || 0} промосообщений; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; ${sourceLabel}; резервная копия: ${result.backupPath || "создана"}; время выполнения: ${duration}`,
         { entityType: "database", entityLabel: "АИС Допобразование.xlsb", source: `xlsb-sync-${syncSource}` }
       );
       persist();
@@ -32048,11 +32205,11 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
       finishDatabaseExportIndicator(
         "success",
-        `Готово: ${students.length} слушателей, ${contracts.length} договоров, ${directExpenses.length} прямых и ${generalExpenses.length} общих затрат. Резервная копия создана. Время выполнения: ${duration}`
+        `Готово: ${students.length} слушателей, ${contracts.length} договоров, ${directExpenses.length} прямых и ${generalExpenses.length} общих затрат, ${result.programPromoMessageCount || 0} промосообщений. Резервная копия создана. Время выполнения: ${duration}`
       );
       alert(
         `Синхронизация завершена. В XLSB перенесено слушателей: ${students.length}; `
-        + `договоров: ${contracts.length}; прямых затрат: ${directExpenses.length}; общих затрат: ${generalExpenses.length}. База обновлена ${sourceLabel}. `
+        + `договоров: ${contracts.length}; прямых затрат: ${directExpenses.length}; общих затрат: ${generalExpenses.length}; промосообщений: ${result.programPromoMessageCount || 0}; не сопоставлено программ: ${result.programPromoSkippedCount || 0}. База обновлена ${sourceLabel}. `
         + `Резервная копия: ${result.backupPath || "создана в папке _Резерв"}. `
         + `Время выполнения: ${duration}.`
       );
@@ -32087,6 +32244,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const contracts = buildStudentDatabaseExportContracts();
       const directExpenses = buildStudentDatabaseExportDirectExpenses();
       const generalExpenses = buildStudentDatabaseExportGeneralExpenses();
+      const programs = buildStudentDatabaseExportPrograms();
       const paymentConstants = buildStudentDatabaseExportPaymentConstants();
       const agentPaymentRates = buildStudentDatabaseExportAgentPaymentRates();
       const result = await runStudentDatabaseExport({
@@ -32097,6 +32255,7 @@ MAX - https://bizvmax.ru/zifra_plus
         contracts,
         directExpenses,
         generalExpenses,
+        programs,
         paymentConstants,
         agentPaymentRates
       });
@@ -32127,8 +32286,8 @@ MAX - https://bizvmax.ru/zifra_plus
       state.data.meta.studentDatabaseLastDownloadedAt = new Date().toISOString();
       addAudit(
         "Экспорт в базу",
-        "Слушатели, договоры и затраты",
-        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; файл: ${fileName}; источник: ${sourceLabel}; время выполнения: ${duration}`,
+        "Слушатели, договоры, затраты и промосообщения",
+        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.programPromoMessageCount || 0} промосообщений; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; файл: ${fileName}; источник: ${sourceLabel}; время выполнения: ${duration}`,
         { entityType: "database", entityLabel: fileName, source: `xlsb-download-${exportSource}` }
       );
       persist();
@@ -32266,12 +32425,40 @@ MAX - https://bizvmax.ru/zifra_plus
     return next;
   }
 
+  function getProgramWorkbookIdentity(name, landingCode) {
+    const normalizedName = normalizeProgramName(name);
+    const normalizedLandingCode = String(landingCode || "").trim().toLocaleLowerCase("ru-RU");
+    return normalizedName ? `${normalizedName}\u0000${normalizedLandingCode}` : "";
+  }
+
   function mergeImportedProgramPaymentSettings(programs, importedSettings, defaultAuthorPercent) {
-    const importedByName = new Map((Array.isArray(importedSettings) ? importedSettings : [])
-      .map((item) => [normalizeProgramName(item?.name), item])
-      .filter(([name]) => name));
+    const importedRows = (Array.isArray(importedSettings) ? importedSettings : [])
+      .filter((item) => normalizeProgramName(item?.name));
+    const importedByIdentity = new Map();
+    const importedByName = new Map();
+    importedRows.forEach((item) => {
+      const name = normalizeProgramName(item.name);
+      const identity = getProgramWorkbookIdentity(item.name, item.xlsbProgramLandingCode);
+      if (!importedByIdentity.has(identity)) importedByIdentity.set(identity, []);
+      importedByIdentity.get(identity).push(item);
+      if (!importedByName.has(name)) importedByName.set(name, []);
+      importedByName.get(name).push(item);
+    });
     return (Array.isArray(programs) ? programs : []).map((program) => {
-      const imported = importedByName.get(normalizeProgramName(program?.name));
+      const sourceLandingCode = Object.prototype.hasOwnProperty.call(
+        program || {},
+        "xlsbProgramLandingCode"
+      )
+        ? program.xlsbProgramLandingCode
+        : program?.landingCode;
+      const identity = getProgramWorkbookIdentity(
+        program?.xlsbProgramName || program?.name,
+        sourceLandingCode
+      );
+      const sameIdentityRows = importedByIdentity.get(identity) || [];
+      const sameNameRows = importedByName.get(normalizeProgramName(program?.name)) || [];
+      const imported = (sameIdentityRows.length === 1 ? sameIdentityRows[0] : null)
+        || (sameNameRows.length === 1 ? sameNameRows[0] : null);
       if (!imported) return program;
       const authorSource = String(imported.authorSource || "").trim();
       const importedFields = clone(imported);

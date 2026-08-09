@@ -60,6 +60,15 @@ function Get-ObjectProperty {
   return $property.Value
 }
 
+function Test-ObjectProperty {
+  param(
+    [object]$Record,
+    [string]$Name
+  )
+  if ($null -eq $Record) { return $false }
+  return $null -ne $Record.PSObject.Properties[$Name]
+}
+
 function Get-MatrixValue {
   param(
     [object]$Matrix,
@@ -1587,6 +1596,169 @@ function Update-GeneralExpenseSheet {
   }
 }
 
+function Get-ProgramWorkbookIdentity {
+  param(
+    [object]$Name,
+    [object]$LandingCode
+  )
+  $normalizedName = (Normalize-Header $Name).ToLowerInvariant()
+  $normalizedLandingCode = (Normalize-Header $LandingCode).ToLowerInvariant()
+  if (-not $normalizedName) { return "" }
+  return "$normalizedName$([char]0)$normalizedLandingCode"
+}
+
+function Set-ProgramPromoMessageCell {
+  param(
+    [object]$Sheet,
+    [int]$Row,
+    [int]$Column,
+    [object]$Value
+  )
+  $cell = $null
+  $comment = $null
+  try {
+    $cell = $Sheet.Cells.Item($Row, $Column)
+    try { [void]$cell.ClearComments() } catch {
+      try {
+        $comment = $cell.Comment
+        if ($null -ne $comment) { [void]$comment.Delete() }
+      } catch {}
+    } finally {
+      Release-ComObject $comment
+      $comment = $null
+    }
+    $text = ([string]$Value).Replace("`r`n", "`n").Replace("`r", "`n")
+    if ([string]::IsNullOrWhiteSpace($text)) {
+      [void]$cell.ClearContents()
+      return $false
+    }
+    $cell.Value2 = "Промосообщение"
+    $comment = $cell.AddComment($text)
+    try { $comment.Visible = $false } catch {}
+    return $true
+  } finally {
+    Release-ComObject $comment
+    Release-ComObject $cell
+  }
+}
+
+function Update-ProgramPromoMessages {
+  param(
+    [object]$Workbook,
+    [object]$Payload
+  )
+  $provided = Get-ObjectProperty $Payload "programPromoMessagesProvided"
+  $programs = @(Get-ObjectProperty $Payload "programs")
+  if (-not $provided) {
+    return [pscustomobject]@{ Count = 0; Messages = 0; Skipped = 0; Provided = $false }
+  }
+
+  $sheet = $null
+  $dataRange = $null
+  try {
+    $sheet = $Workbook.Worksheets.Item("Реестр программ")
+    $header = Find-HeaderRow $sheet @("Наименование программы", "Промосообщение1", "Промосообщение2")
+    $columnMap = [pscustomobject]@{
+      "Наименование программы" = "name"
+      "Код лендинга" = "landingCode"
+      "Промосообщение1" = "promoMessage1"
+      "Промосообщение2" = "promoMessage2"
+    }
+    $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn $columnMap)
+    $nameColumn = Find-MappedColumn $columns "name"
+    $landingCodeColumn = Find-MappedColumn $columns "landingCode"
+    $promoMessage1Column = Find-MappedColumn $columns "promoMessage1"
+    $promoMessage2Column = Find-MappedColumn $columns "promoMessage2"
+    $startRow = [int]$header.Row + 1
+    $lastRow = [int]$header.LastRow
+    if ($lastRow -lt $startRow) {
+      return [pscustomobject]@{ Count = 0; Messages = 0; Skipped = $programs.Count; Provided = $true }
+    }
+
+    $dataRange = $sheet.Range($sheet.Cells.Item($startRow, 1), $sheet.Cells.Item($lastRow, $header.LastColumn))
+    $values = $dataRange.Value2
+    $rowByIdentity = @{}
+    $identityByRow = @{}
+    for ($row = $startRow; $row -le $lastRow; $row += 1) {
+      $offset = $row - $startRow + 1
+      $name = Get-MatrixValue $values $offset $nameColumn
+      $landingCode = Get-MatrixValue $values $offset $landingCodeColumn
+      $identity = Get-ProgramWorkbookIdentity $name $landingCode
+      if (-not $identity) { continue }
+      if ($rowByIdentity.ContainsKey($identity)) {
+        throw "На листе 'Реестр программ' найден повторяющийся ключ названия и кода лендинга (строки $($rowByIdentity[$identity]) и $row)."
+      }
+      $rowByIdentity[$identity] = $row
+      $identityByRow[$row] = $identity
+    }
+
+    $updatedRows = [Collections.Generic.HashSet[int]]::new()
+    $updatedCount = 0
+    $messageCount = 0
+    $skippedCount = 0
+    foreach ($program in $programs) {
+      if ($null -eq $program) { continue }
+      $promoMessage1Provided = [bool](Get-ObjectProperty $program "promoMessage1Provided")
+      $promoMessage2Provided = [bool](Get-ObjectProperty $program "promoMessage2Provided")
+      if (-not $promoMessage1Provided -and -not $promoMessage2Provided) { continue }
+      $sourceName = Get-ObjectProperty $program "xlsbProgramName"
+      if (-not (Normalize-Header $sourceName)) { $sourceName = Get-ObjectProperty $program "name" }
+      if (Test-ObjectProperty $program "xlsbProgramLandingCode") {
+        $sourceLandingCode = Get-ObjectProperty $program "xlsbProgramLandingCode"
+      } else {
+        $sourceLandingCode = Get-ObjectProperty $program "landingCode"
+      }
+      $sourceIdentity = Get-ProgramWorkbookIdentity $sourceName $sourceLandingCode
+      $currentIdentity = Get-ProgramWorkbookIdentity `
+        (Get-ObjectProperty $program "name") `
+        (Get-ObjectProperty $program "landingCode")
+      $requestedRow = [int](Get-ObjectProperty $program "xlsbProgramRow")
+      $targetRow = 0
+      if (
+        $requestedRow -ge $startRow `
+        -and $requestedRow -le $lastRow `
+        -and $identityByRow.ContainsKey($requestedRow) `
+        -and $identityByRow[$requestedRow] -eq $sourceIdentity
+      ) {
+        $targetRow = $requestedRow
+      } elseif ($sourceIdentity -and $rowByIdentity.ContainsKey($sourceIdentity)) {
+        $targetRow = [int]$rowByIdentity[$sourceIdentity]
+      } elseif ($currentIdentity -and $rowByIdentity.ContainsKey($currentIdentity)) {
+        $targetRow = [int]$rowByIdentity[$currentIdentity]
+      }
+      if ($targetRow -le 0) {
+        $skippedCount += 1
+        continue
+      }
+      if (-not $updatedRows.Add($targetRow)) {
+        throw "Несколько записей веб-базы сопоставлены с одной строкой $targetRow листа 'Реестр программ'."
+      }
+      if ($promoMessage1Provided) {
+        if (Set-ProgramPromoMessageCell $sheet $targetRow $promoMessage1Column (Get-ObjectProperty $program "promoMessage1")) {
+          $messageCount += 1
+        }
+      }
+      if ($promoMessage2Provided) {
+        if (Set-ProgramPromoMessageCell $sheet $targetRow $promoMessage2Column (Get-ObjectProperty $program "promoMessage2")) {
+          $messageCount += 1
+        }
+      }
+      $updatedCount += 1
+    }
+    return [pscustomobject]@{
+      Count = $updatedCount
+      Messages = $messageCount
+      Skipped = $skippedCount
+      Provided = $true
+    }
+  } catch {
+    throw "Ошибка обновления промосообщений на листе 'Реестр программ': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
+  } finally {
+    Release-ComObject $dataRange
+    Release-ComObject $sheet
+  }
+}
+
 $excel = $null
 $workbook = $null
 try {
@@ -1620,6 +1792,8 @@ try {
   $expenseResult = Update-DirectExpenseSheet $workbook $payload $dateFields $numberFields
   $generalExpenseResult = Update-GeneralExpenseSheet $workbook $payload $dateFields $numberFields
   $contractResult = Update-ContractSheet $workbook $payload $dateFields $numberFields
+  Write-SyncProgress 95 "Обновление промосообщений программ..."
+  $programPromoResult = Update-ProgramPromoMessages $workbook $payload
   Write-SyncProgress 96 "Обновление ставок и констант оплаты..."
   $paymentResult = Update-PaymentSettings $workbook $payload
 
@@ -1639,6 +1813,9 @@ try {
     contracts = $contractResult.Count
     directExpenses = $expenseResult.Count
     generalExpenses = $generalExpenseResult.Count
+    programs = $programPromoResult.Count
+    programPromoMessages = $programPromoResult.Messages
+    programPromoSkipped = $programPromoResult.Skipped
     paymentConstants = $paymentResult.Count
     agentPaymentRates = [pscustomobject]@{
       withAuthorPercent = $agentRateResult.WithAuthorPercent

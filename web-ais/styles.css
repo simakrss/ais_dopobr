@@ -8437,6 +8437,7 @@ body.card-window-moving {
 }
 
 .program-characteristics-section,
+.program-promo-section,
 .program-commission-section {
   display: grid;
   gap: 10px;
@@ -8445,11 +8446,13 @@ body.card-window-moving {
 }
 
 .program-characteristics-section .form-section-head,
+.program-promo-section .form-section-head,
 .program-commission-section .form-section-head {
   align-items: flex-start;
 }
 
 .program-characteristics-section .form-section-head p,
+.program-promo-section .form-section-head p,
 .program-commission-section .form-section-head p {
   margin: 3px 0 0;
   color: var(--muted);
@@ -8492,6 +8495,51 @@ body.card-window-moving {
 .program-commission-grid textarea {
   min-height: 68px;
   line-height: 1.35;
+}
+
+.program-promo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.program-promo-message-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.program-promo-message-field > span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.program-promo-message-editor {
+  width: 100%;
+  min-height: min(360px, calc(100vh - 300px));
+  max-height: min(520px, calc(100vh - 230px));
+  overflow: auto;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: #fff;
+  color: var(--text);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.program-promo-message-editor:focus {
+  border-color: var(--green);
+  outline: 0;
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.13);
+}
+
+.program-promo-message-field small {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .program-order-fields {
@@ -15910,8 +15958,14 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .program-characteristics-grid,
+  .program-promo-grid,
   .program-commission-grid {
     grid-template-columns: 1fr;
+  }
+
+  .program-promo-message-editor {
+    min-height: 220px;
+    max-height: min(420px, calc(100vh - 240px));
   }
 
   .program-characteristics-grid label.program-field-wide,
