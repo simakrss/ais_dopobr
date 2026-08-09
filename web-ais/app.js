@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.13",
+    version: "1.7.14",
     releasedAt: "2026-08-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.14",
+      releasedAt: "2026-08-09",
+      changes: [
+        "Восстановлено перетаскивание строк статусов слушателей на рабочем столе с сохранением выбранного порядка.",
+        "Ограничение перетаскивания клавишей Shift по-прежнему применяется к вкладкам и пунктам меню, но не блокирует статусы рабочего стола."
+      ]
+    },
     {
       version: "1.7.13",
       releasedAt: "2026-08-09",
@@ -422,6 +430,7 @@
   const SHIFT_DRAG_EXEMPT_SELECTOR = [
     "[data-finance-row-drag]",
     "[data-employee-payment-row-drag]",
+    "[data-dashboard-student-status-item]",
     "[data-action='drag-program-training-plan-row']",
     "[data-contract-field-drag-handle]"
   ].join(", ");
