@@ -1,10 +1,19 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.12",
+    version: "1.7.13",
     releasedAt: "2026-08-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.13",
+      releasedAt: "2026-08-09",
+      changes: [
+        "Фильтр «Основание» в учёте выплат приведён к единому стилю списков и связан со справочником оснований в настройках.",
+        "Варианты источника, основания, статуса акта и статуса выплаты автоматически учитывают остальные выбранные фильтры.",
+        "Раздел «Реестр договоров» переименован в «Сотрудники», а после колонки «Услуги» добавлена колонка «Агентские»."
+      ]
+    },
     {
       version: "1.7.12",
       releasedAt: "2026-08-09",
@@ -406,6 +415,8 @@
   const DIRECT_EXPENSES_TABLE_LAYOUT_VERSION = "note-primary-uid-last";
   const GENERAL_EXPENSES_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-general-expenses-table-layout-v1";
   const GENERAL_EXPENSES_TABLE_LAYOUT_VERSION = "counterparty-first";
+  const CONTRACTS_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-contracts-table-layout-v1";
+  const CONTRACTS_TABLE_LAYOUT_VERSION = "agency-after-services";
   const SYSTEM_HELP_TOOLTIP_DELAY_MS = 1000;
   const DRAG_TOOLTIP_DELAY_MS = SYSTEM_HELP_TOOLTIP_DELAY_MS;
   const SHIFT_DRAG_EXEMPT_SELECTOR = [
@@ -1861,7 +1872,7 @@ MAX - https://bizvmax.ru/zifra_plus
       table: ["name", "status", "program", "applicationDate", "phone", "balance", "endDate", "documentsStatus"]
     },
     contracts: {
-      title: "Реестр договоров",
+      title: "Сотрудники",
       subtitle: "Лист Excel: Реестр договоров",
       collection: "contracts",
       accent: "blue",
@@ -1912,7 +1923,7 @@ MAX - https://bizvmax.ru/zifra_plus
           field(`message${index + 1}`, `Сообщение ${index + 1}`, "textarea", false, null, { wide: true, rows: 4 })
         ))
       ],
-      table: ["name", "contractNo", "type", "amount", "paid", "balance", "endDate"]
+      table: ["name", "contractNo", "type", "amount", "paid", "agencyAmount", "balance", "endDate"]
     },
     programs: {
       title: "Реестр программ",
@@ -5593,6 +5604,26 @@ MAX - https://bizvmax.ru/zifra_plus
         console.warn("Не удалось сохранить новый порядок колонок общих затрат", error);
       }
     }
+    if (localStorage.getItem(CONTRACTS_TABLE_LAYOUT_VERSION_KEY) !== CONTRACTS_TABLE_LAYOUT_VERSION) {
+      const current = settings.contracts && typeof settings.contracts === "object"
+        ? settings.contracts
+        : {};
+      const savedOrder = Array.isArray(current.order) ? current.order : [];
+      const baseOrder = ["name", "contractNo", "type", "amount", "paid", "agencyAmount", "balance", "endDate"];
+      const order = [
+        ...savedOrder.filter((key) => baseOrder.includes(key)),
+        ...baseOrder.filter((key) => !savedOrder.includes(key))
+      ].filter((key) => key !== "agencyAmount");
+      const paidIndex = order.indexOf("paid");
+      order.splice(paidIndex >= 0 ? paidIndex + 1 : order.length, 0, "agencyAmount");
+      settings.contracts = { ...current, order };
+      try {
+        localStorage.setItem(TABLE_SETTINGS_KEY, JSON.stringify(settings));
+        localStorage.setItem(CONTRACTS_TABLE_LAYOUT_VERSION_KEY, CONTRACTS_TABLE_LAYOUT_VERSION);
+      } catch (error) {
+        console.warn("Не удалось сохранить новый порядок колонок сотрудников", error);
+      }
+    }
     return settings;
   }
 
@@ -5805,7 +5836,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return `${days} дн.`;
     }
     if (configId === "inventory" && key === "balance" && !Number.isNaN(Number(value))) return pieces(value);
-    if (["amount", "price", "oldPrice", "paid", "balance", "contractAmount", "paidAmount"].includes(key) && !Number.isNaN(Number(value))) return money(value);
+    if (["amount", "price", "oldPrice", "paid", "agencyAmount", "balance", "contractAmount", "paidAmount"].includes(key) && !Number.isNaN(Number(value))) return money(value);
     if (key.toLowerCase().includes("date") || key.endsWith("At") || key === "paid") return dateRu(value);
     return String(value);
   }
@@ -8151,9 +8182,21 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     if (state.sort.key) {
       const dir = state.sort.dir === "asc" ? 1 : -1;
+      const sortField = config.fields?.find((fieldDefinition) => fieldDefinition.key === state.sort.key);
       filtered = filtered.slice().sort((a, b) => {
         const left = a[state.sort.key];
         const right = b[state.sort.key];
+        if (sortField?.type === "number") {
+          const leftNumber = String(left ?? "").trim() === "" ? null : Number(left);
+          const rightNumber = String(right ?? "").trim() === "" ? null : Number(right);
+          const hasLeftNumber = Number.isFinite(leftNumber);
+          const hasRightNumber = Number.isFinite(rightNumber);
+          if (!hasLeftNumber && hasRightNumber) return 1;
+          if (hasLeftNumber && !hasRightNumber) return -1;
+          if (hasLeftNumber && hasRightNumber && leftNumber !== rightNumber) {
+            return (leftNumber - rightNumber) * dir;
+          }
+        }
         if (state.sort.key === "endDate") {
           const leftDate = parseTableSortDate(left);
           const rightDate = parseTableSortDate(right);
@@ -11865,7 +11908,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (sourceType === "direct") return "Прямые затраты";
     if (sourceType === "general") return "Общие затраты";
     if (sourceType === "partner") return "База слушателей";
-    return "Реестр договоров";
+    return "Сотрудники";
   }
 
   function getEmployeePartnerPaymentAmount(
@@ -12109,7 +12152,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getEmployeePaymentStatusFilterValue(row = {}) {
-    const status = getEmployeePaymentRowStatus(row);
+    const status = String(row.statusText || getEmployeePaymentRowStatus(row)).trim();
     if (status.startsWith("Оплачено")) return "paid";
     if (status === "К выплате") return "payable";
     if (status === "Акт сформирован") return "actFormed";
@@ -12120,87 +12163,161 @@ MAX - https://bizvmax.ru/zifra_plus
     return "awaitingRecommendation";
   }
 
-  function employeePaymentRowMatchesFilters(row, filters = getEmployeePaymentFilters()) {
-    if (filters.source && row.sourceType !== filters.source) return false;
-    if (filters.payment && getEmployeePaymentStatusFilterValue(row) !== filters.payment) return false;
-    if (filters.act && getEmployeePaymentActFilterValue(row) !== filters.act) return false;
+  function employeePaymentRowMatchesFilters(row, filters = getEmployeePaymentFilters(), ignoredFilter = "") {
+    if (ignoredFilter !== "source" && filters.source && row.sourceType !== filters.source) return false;
+    if (ignoredFilter !== "payment" && filters.payment && getEmployeePaymentStatusFilterValue(row) !== filters.payment) return false;
+    if (ignoredFilter !== "act" && filters.act && getEmployeePaymentActFilterValue(row) !== filters.act) return false;
     const commentTokens = normalizeEmployeePaymentFilterText(filters.comment).split(" ").filter(Boolean);
-    const descriptionTokens = normalizeEmployeePaymentFilterText(filters.description).split(" ").filter(Boolean);
     const commentText = normalizeEmployeePaymentFilterText(row.comment);
     const descriptionText = normalizeEmployeePaymentFilterText(row.description);
-    if (!commentTokens.every((token) => commentText.includes(token))) return false;
-    if (!descriptionTokens.every((token) => descriptionText.includes(token))) return false;
+    if (ignoredFilter !== "comment" && !commentTokens.every((token) => commentText.includes(token))) return false;
+    if (
+      ignoredFilter !== "description"
+      && filters.description
+      && descriptionText !== normalizeEmployeePaymentFilterText(filters.description)
+    ) return false;
     return true;
   }
 
+  function getEmployeePaymentSourceFilterOptions() {
+    return [
+      ["", "Все"],
+      ["direct", "Прямые"],
+      ["general", "Общие"],
+      ["partner", "Агентские"]
+    ];
+  }
+
+  function getEmployeePaymentActFilterOptions() {
+    return [
+      ["", "Все"],
+      ["none", "Без акта"],
+      ["formed", "Сформирован"],
+      ["sent", "Отправлен"],
+      ["received", "Получен"]
+    ];
+  }
+
+  function getEmployeePaymentStatusFilterOptions() {
+    return [
+      ["", "Все"],
+      ["payable", "К выплате"],
+      ["actFormed", "Акт сформирован"],
+      ["actSent", "Акт отправлен"],
+      ["actReceived", "Акт получен"],
+      ["paid", "Оплачено"],
+      ["overpayment", "Переплата"],
+      ["missingPaymentDate", "Дата не указана"],
+      ["awaitingRecommendation", "Ожидает рекомендации"]
+    ];
+  }
+
+  function getEmployeePaymentFilterFacets(rows = [], filters = getEmployeePaymentFilters()) {
+    const collect = (filterKey, valueForRow) => new Set(
+      rows
+        .filter((row) => employeePaymentRowMatchesFilters(row, filters, filterKey))
+        .map(valueForRow)
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    );
+    return {
+      source: collect("source", (row) => row.sourceType),
+      description: collect("description", (row) => row.description),
+      act: collect("act", getEmployeePaymentActFilterValue),
+      payment: collect("payment", getEmployeePaymentStatusFilterValue)
+    };
+  }
+
+  function getAvailableEmployeePaymentFilterOptions(options, availableValues, selectedValue = "") {
+    const available = availableValues instanceof Set ? availableValues : new Set();
+    return options.filter(([value]) => !value || value === selectedValue || available.has(value));
+  }
+
+  function getEmployeePaymentBasisFilterOptions(availableValues, selectedValue = "") {
+    const availableNormalized = new Set(
+      [...(availableValues instanceof Set ? availableValues : [])]
+        .map(normalizeEmployeePaymentFilterText)
+        .filter(Boolean)
+    );
+    const values = unique([
+      ...getEmployeePaymentBasisOptions(selectedValue),
+      ...(availableValues instanceof Set ? [...availableValues] : [])
+    ]);
+    return [
+      ["", "Все", false],
+      ...values.map((value) => [
+        value,
+        value,
+        value !== selectedValue && !availableNormalized.has(normalizeEmployeePaymentFilterText(value))
+      ])
+    ];
+  }
+
   function renderEmployeePaymentFilterOptions(options, selectedValue) {
-    return options.map(([value, label]) => (
-      `<option value="${escapeAttr(value)}" ${value === selectedValue ? "selected" : ""}>${escapeHtml(label)}</option>`
+    return options.map(([value, label, disabled = false]) => (
+      `<option value="${escapeAttr(value)}" ${value === selectedValue ? "selected" : ""} ${disabled ? "disabled" : ""}>${escapeHtml(label)}</option>`
     )).join("");
   }
 
-  function renderEmployeePaymentColumnFilter(columnKey, filters, visibleRowCount, rowCount) {
+  function renderEmployeePaymentColumnFilter(columnKey, filters, visibleRowCount, rowCount, facets = {}) {
     if (columnKey === "source") {
       return `
         <select data-employee-payment-filter="source" aria-label="Фильтр по источнику" title="Фильтр по источнику">
-          ${renderEmployeePaymentFilterOptions([
-            ["", "Все"],
-            ["direct", "Прямые"],
-            ["general", "Общие"],
-            ["partner", "Агентские"]
-          ], filters.source)}
+          ${renderEmployeePaymentFilterOptions(getAvailableEmployeePaymentFilterOptions(
+            getEmployeePaymentSourceFilterOptions(),
+            facets.source,
+            filters.source
+          ), filters.source)}
         </select>
       `;
     }
-    if (columnKey === "comment" || columnKey === "description") {
-      const label = columnKey === "comment" ? "комментарию" : "основанию";
-      const basisListId = "employee-payment-basis-filter-values";
+    if (columnKey === "comment") {
       return `
         <input
-          data-employee-payment-filter="${columnKey}"
+          data-employee-payment-filter="comment"
           type="search"
-          value="${escapeAttr(filters[columnKey])}"
+          value="${escapeAttr(filters.comment)}"
           placeholder="Поиск"
           autocomplete="off"
-          ${columnKey === "description" ? `list="${basisListId}"` : ""}
-          ${columnKey === "description" ? 'data-settings-dictionary="employeePaymentBases"' : ""}
-          aria-label="Фильтр по ${label}"
-          title="Фильтр по ${label}"
+          aria-label="Фильтр по комментарию"
+          title="Фильтр по комментарию"
         >
-        ${columnKey === "description" ? `
-          <datalist id="${basisListId}">
-            ${getEmployeePaymentBasisOptions().map((value) => `<option value="${escapeAttr(value)}"></option>`).join("")}
-          </datalist>
-        ` : ""}
+      `;
+    }
+    if (columnKey === "description") {
+      return `
+        <select
+          data-employee-payment-filter="description"
+          data-settings-dictionary="employeePaymentBases"
+          aria-label="Фильтр по основанию"
+          title="Фильтр по основанию. Правой кнопкой мыши — редактировать список"
+        >
+          ${renderEmployeePaymentFilterOptions(
+            getEmployeePaymentBasisFilterOptions(facets.description, filters.description),
+            filters.description
+          )}
+        </select>
       `;
     }
     if (columnKey === "actStatus") {
       return `
         <select data-employee-payment-filter="act" aria-label="Фильтр по статусу акта" title="Фильтр по статусу акта">
-          ${renderEmployeePaymentFilterOptions([
-            ["", "Все"],
-            ["none", "Без акта"],
-            ["formed", "Сформирован"],
-            ["sent", "Отправлен"],
-            ["received", "Получен"]
-          ], filters.act)}
+          ${renderEmployeePaymentFilterOptions(getAvailableEmployeePaymentFilterOptions(
+            getEmployeePaymentActFilterOptions(),
+            facets.act,
+            filters.act
+          ), filters.act)}
         </select>
       `;
     }
     if (columnKey === "status") {
       return `
         <select data-employee-payment-filter="payment" aria-label="Фильтр по статусу выплаты" title="Фильтр по статусу выплаты">
-          ${renderEmployeePaymentFilterOptions([
-            ["", "Все"],
-            ["payable", "К выплате"],
-            ["actFormed", "Акт сформирован"],
-            ["actSent", "Акт отправлен"],
-            ["actReceived", "Акт получен"],
-            ["paid", "Оплачено"],
-            ["overpayment", "Переплата"],
-            ["missingPaymentDate", "Дата не указана"],
-            ["awaitingRecommendation", "Ожидает рекомендации"]
-          ], filters.payment)}
+          ${renderEmployeePaymentFilterOptions(getAvailableEmployeePaymentFilterOptions(
+            getEmployeePaymentStatusFilterOptions(),
+            facets.payment,
+            filters.payment
+          ), filters.payment)}
         </select>
       `;
     }
@@ -12266,6 +12383,7 @@ MAX - https://bizvmax.ru/zifra_plus
         || String(left.description || "").localeCompare(String(right.description || ""), "ru");
     });
     const filters = getEmployeePaymentFilters();
+    const filterFacets = getEmployeePaymentFilterFacets(rows, filters);
     const filtersActive = employeePaymentFiltersAreActive(filters);
     const visibleRowCount = rows.filter((row) => employeePaymentRowMatchesFilters(row, filters)).length;
     return `
@@ -12317,7 +12435,7 @@ MAX - https://bizvmax.ru/zifra_plus
                       ></span>
                     </div>
                     <div class="employee-payment-column-filter">
-                      ${renderEmployeePaymentColumnFilter(column.key, filters, visibleRowCount, rows.length)}
+                      ${renderEmployeePaymentColumnFilter(column.key, filters, visibleRowCount, rows.length, filterFacets)}
                     </div>
                   </th>
                 `).join("")}
@@ -12448,8 +12566,52 @@ MAX - https://bizvmax.ru/zifra_plus
       paid: String(paidControl?.value || ""),
       recommendation: Boolean(recommendationControl?.checked),
       act: Boolean(actControl?.checked),
-      actStatus: String(actStatusControl?.value || "")
+      actStatus: String(actStatusControl?.value || ""),
+      statusText: String(row.querySelector("[data-employee-payment-status]")?.textContent || "").trim()
     };
+  }
+
+  function refreshEmployeePaymentFilterOptions(section, rowModels, filters) {
+    const facets = getEmployeePaymentFilterFacets(rowModels, filters);
+    const updateSelect = (filterKey, options, selectedValue) => {
+      const control = section.querySelector(`[data-employee-payment-filter="${filterKey}"]`);
+      if (!(control instanceof HTMLSelectElement)) return;
+      const html = renderEmployeePaymentFilterOptions(options, selectedValue);
+      if (control.innerHTML !== html) control.innerHTML = html;
+      control.value = selectedValue;
+    };
+    updateSelect(
+      "source",
+      getAvailableEmployeePaymentFilterOptions(
+        getEmployeePaymentSourceFilterOptions(),
+        facets.source,
+        filters.source
+      ),
+      filters.source
+    );
+    updateSelect(
+      "description",
+      getEmployeePaymentBasisFilterOptions(facets.description, filters.description),
+      filters.description
+    );
+    updateSelect(
+      "act",
+      getAvailableEmployeePaymentFilterOptions(
+        getEmployeePaymentActFilterOptions(),
+        facets.act,
+        filters.act
+      ),
+      filters.act
+    );
+    updateSelect(
+      "payment",
+      getAvailableEmployeePaymentFilterOptions(
+        getEmployeePaymentStatusFilterOptions(),
+        facets.payment,
+        filters.payment
+      ),
+      filters.payment
+    );
   }
 
   function applyEmployeePaymentFiltersToDom(section = document.querySelector("[data-employee-payment-accounting]")) {
@@ -12457,9 +12619,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const filters = getEmployeePaymentFilters();
     const active = employeePaymentFiltersAreActive(filters);
     const rows = [...section.querySelectorAll("[data-employee-payment-row]")];
+    const rowModels = rows.map((row) => ({ row, model: getEmployeePaymentDomRowFilterModel(row) }));
+    refreshEmployeePaymentFilterOptions(section, rowModels.map(({ model }) => model), filters);
     let visibleCount = 0;
-    rows.forEach((row) => {
-      const visible = employeePaymentRowMatchesFilters(getEmployeePaymentDomRowFilterModel(row), filters);
+    rowModels.forEach(({ row, model }) => {
+      const visible = employeePaymentRowMatchesFilters(model, filters);
       row.hidden = !visible;
       if (visible) visibleCount += 1;
       const handle = row.querySelector(".employee-payment-row-drag-handle");
@@ -22118,6 +22282,9 @@ MAX - https://bizvmax.ru/zifra_plus
         });
       }
     });
+    if (dict === "employeePaymentBases") {
+      applyEmployeePaymentFiltersToDom(document.querySelector("[data-employee-payment-accounting]"));
+    }
   }
 
   function clearControlValue(control) {
@@ -25083,7 +25250,7 @@ MAX - https://bizvmax.ru/zifra_plus
       };
       addAudit(
         "Распознаны документы сотрудника",
-        "Реестр договоров",
+        "Сотрудники",
         `${result.documentCount} документов; время ${formatStudentDocumentRecognitionDuration(result.durationMs)}`,
         {
           entityType: "contracts",
