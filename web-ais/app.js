@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.33",
+    version: "1.7.34",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.34",
+      releasedAt: "2026-08-10",
+      changes: [
+        "В общих затратах добавлен фильтр по разделу; по умолчанию показываются «Организации» с сортировкой по убыванию даты.",
+        "Фильтр по виду работ в общих затратах поддерживает одновременный выбор нескольких значений."
+      ]
+    },
     {
       version: "1.7.33",
       releasedAt: "2026-08-10",
@@ -2208,6 +2216,7 @@ MAX - https://bizvmax.ru/zifra_plus
       subtitle: "Лист Excel: Общие затраты",
       collection: "generalExpenses",
       accent: "orange",
+      defaultSort: { key: "date", dir: "desc" },
       fields: [
         field("section", "Раздел", "select", true, null, GENERAL_EXPENSE_SECTIONS),
         field("counterparty", "Контрагент", "text", true),
@@ -2707,6 +2716,8 @@ MAX - https://bizvmax.ru/zifra_plus
     search: "",
     statusFilter: getDefaultStatusFilter(initialView),
     directExpenseNoteFilter: "",
+    generalExpenseSectionFilter: getDefaultGeneralExpenseSectionFilter(initialView),
+    generalExpenseWorkTypeFilter: [],
     studentProgramTypeFilter: [],
     programRegistryTypeFilter: [],
     contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
@@ -5897,6 +5908,10 @@ MAX - https://bizvmax.ru/zifra_plus
     return viewId === "students" ? "Учится" : "Все";
   }
 
+  function getDefaultGeneralExpenseSectionFilter(viewId) {
+    return viewId === "generalExpenses" ? [GENERAL_EXPENSE_SECTIONS[1]] : [];
+  }
+
   function setStartView(viewId) {
     const id = String(viewId || "").trim();
     if (!navItems.some((item) => item.id === id) || !canAccessView(id)) return;
@@ -6813,7 +6828,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderCollection(config) {
     const rows = getVisibleRows(config);
-    const statuses = getFilterOptions(config);
+    const statuses = state.view === "generalExpenses" ? [] : getFilterOptions(config);
     const statusDictionary = config.fields.find((item) => item.key === "status")?.dict || "";
     const directExpenseNoteOptions = state.view === "directExpenses"
       ? getDirectExpenseNoteFilterOptions()
@@ -6893,6 +6908,10 @@ MAX - https://bizvmax.ru/zifra_plus
               <select id="statusFilter" class="select-control" ${statusDictionary ? `data-settings-dictionary="${escapeAttr(statusDictionary)}"` : ""}>
                 ${["Все", ...statuses].map((item) => `<option ${state.statusFilter === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
               </select>
+            ` : ""}
+            ${state.view === "generalExpenses" ? `
+              ${renderGeneralExpenseSectionFilter()}
+              ${renderGeneralExpenseWorkTypeFilter()}
             ` : ""}
             ${state.view === "students" ? renderStudentProgramTypeFilter() : ""}
             ${state.view === "programs" ? renderProgramRegistryTypeFilter() : ""}
@@ -8214,6 +8233,86 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function getGeneralExpenseRowsForSectionFilter() {
+    const selectedSections = GENERAL_EXPENSE_SECTIONS
+      .filter((item) => state.generalExpenseSectionFilter.includes(item));
+    const rows = getRowsForConfig(configs.generalExpenses);
+    if (!selectedSections.length) return rows;
+    return rows.filter((expense) => selectedSections.includes(
+      normalizeGeneralExpenseSection(expense.section, expense.counterparty)
+    ));
+  }
+
+  function getGeneralExpenseWorkTypeFilterOptions() {
+    const rows = getGeneralExpenseRowsForSectionFilter();
+    const values = unique(rows
+      .map((expense) => String(expense.workType || "").trim())
+      .filter(Boolean))
+      .sort((left, right) => left.localeCompare(right, "ru", { sensitivity: "base" }));
+    if (rows.some((expense) => !String(expense.workType || "").trim())) values.push("Не задано");
+    return values;
+  }
+
+  function formatGeneralExpenseMultiFilterLabel(selected, emptyLabel) {
+    if (!selected.length) return emptyLabel;
+    if (selected.length === 1) return selected[0];
+    return `Выбрано: ${selected.length}`;
+  }
+
+  function renderGeneralExpenseSectionFilter() {
+    const selected = GENERAL_EXPENSE_SECTIONS
+      .filter((item) => state.generalExpenseSectionFilter.includes(item));
+    const selectionLabel = formatGeneralExpenseMultiFilterLabel(selected, "Все разделы");
+    const rows = getRowsForConfig(configs.generalExpenses);
+    return `
+      <details class="student-program-type-filter general-expense-filter ${selected.length ? "is-active" : ""}" data-program-type-filter data-general-expense-section-filter>
+        <summary title="Фильтр общих затрат по разделу">
+          <span>Раздел</span>
+          <strong>${escapeHtml(selectionLabel)}</strong>
+          <svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5"></path></svg>
+        </summary>
+        <div class="student-program-type-filter-panel general-expense-filter-panel">
+          ${GENERAL_EXPENSE_SECTIONS.map((item) => {
+            const count = rows.filter((expense) => (
+              normalizeGeneralExpenseSection(expense.section, expense.counterparty) === item
+            )).length;
+            return `
+              <label>
+                <input type="checkbox" value="${escapeAttr(item)}" data-general-expense-section-filter-option ${selected.includes(item) ? "checked" : ""}>
+                <span>${escapeHtml(item)} (${count})</span>
+              </label>
+            `;
+          }).join("")}
+          <button class="student-program-type-filter-clear" data-action="clear-general-expense-section-filter" type="button" ${selected.length ? "" : "disabled"}>Все разделы</button>
+        </div>
+      </details>
+    `;
+  }
+
+  function renderGeneralExpenseWorkTypeFilter() {
+    const options = getGeneralExpenseWorkTypeFilterOptions();
+    const selected = state.generalExpenseWorkTypeFilter.filter((item) => options.includes(item));
+    const selectionLabel = formatGeneralExpenseMultiFilterLabel(selected, "Все виды");
+    return `
+      <details class="student-program-type-filter general-expense-filter general-expense-work-type-filter ${selected.length ? "is-active" : ""}" data-program-type-filter data-general-expense-work-type-filter>
+        <summary title="Фильтр общих затрат по виду работ; можно выбрать несколько значений">
+          <span>Вид работ</span>
+          <strong>${escapeHtml(selectionLabel)}</strong>
+          <svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5"></path></svg>
+        </summary>
+        <div class="student-program-type-filter-panel general-expense-filter-panel general-expense-work-type-filter-panel">
+          ${options.length ? options.map((item) => `
+            <label>
+              <input type="checkbox" value="${escapeAttr(item)}" data-general-expense-work-type-filter-option ${selected.includes(item) ? "checked" : ""}>
+              <span>${escapeHtml(item)}</span>
+            </label>
+          `).join("") : '<span class="general-expense-filter-empty">Нет доступных видов работ</span>'}
+          <button class="student-program-type-filter-clear" data-action="clear-general-expense-work-type-filter" type="button" ${selected.length ? "" : "disabled"}>Сбросить</button>
+        </div>
+      </details>
+    `;
+  }
+
   function updateDatabaseImportIndicator(patch) {
     window.clearTimeout(databaseImportHideTimer);
     state.databaseImport = { ...state.databaseImport, ...patch };
@@ -8350,6 +8449,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getVisibleRows(config, rowsOverride = null) {
     const isDocumentTemplateTable = config.collection === "documentTemplates";
+    const isGeneralExpenseTable = config.collection === "generalExpenses";
     const query = (isDocumentTemplateTable ? state.documentTemplateSearch : state.search).trim().toLowerCase();
     const rows = getRowsForConfig(config, rowsOverride);
     const selectedProgramTypes = state.view === "students"
@@ -8368,6 +8468,12 @@ MAX - https://bizvmax.ru/zifra_plus
     const directExpenseNoteQuery = state.view === "directExpenses"
       ? String(state.directExpenseNoteFilter || "").trim().toLocaleLowerCase("ru-RU")
       : "";
+    const selectedGeneralExpenseSections = isGeneralExpenseTable
+      ? GENERAL_EXPENSE_SECTIONS.filter((item) => state.generalExpenseSectionFilter.includes(item))
+      : [];
+    const selectedGeneralExpenseWorkTypes = isGeneralExpenseTable
+      ? state.generalExpenseWorkTypeFilter.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
     let filtered = rows.filter((row) => {
       const matchQuery = !query || Object.values(row).some((value) => String(value || "").toLowerCase().includes(query));
       const hasUnassignedStatus = state.statusFilter === "Не задано"
@@ -8392,13 +8498,23 @@ MAX - https://bizvmax.ru/zifra_plus
       const matchImportedView = !importedViewIds.size || importedViewIds.has(String(row.id));
       const matchDirectExpenseNote = !directExpenseNoteQuery
         || String(row.note || "").toLocaleLowerCase("ru-RU").includes(directExpenseNoteQuery);
+      const generalExpenseSection = isGeneralExpenseTable
+        ? normalizeGeneralExpenseSection(row.section, row.counterparty)
+        : "";
+      const matchGeneralExpenseSection = !selectedGeneralExpenseSections.length
+        || selectedGeneralExpenseSections.includes(generalExpenseSection);
+      const generalExpenseWorkType = String(row.workType || "").trim();
+      const matchGeneralExpenseWorkType = !selectedGeneralExpenseWorkTypes.length
+        || selectedGeneralExpenseWorkTypes.includes(generalExpenseWorkType || "Не задано");
       return matchQuery
         && matchStatus
         && matchProgramType
         && matchRegistryProgramType
         && matchContractSection
         && matchImportedView
-        && matchDirectExpenseNote;
+        && matchDirectExpenseNote
+        && matchGeneralExpenseSection
+        && matchGeneralExpenseWorkType;
     });
     if (state.sort.key) {
       const dir = state.sort.dir === "asc" ? 1 : -1;
@@ -8417,7 +8533,7 @@ MAX - https://bizvmax.ru/zifra_plus
             return (leftNumber - rightNumber) * dir;
           }
         }
-        if (state.sort.key === "endDate") {
+        if (sortField?.type === "date") {
           const leftDate = parseTableSortDate(left);
           const rightDate = parseTableSortDate(right);
           if (leftDate === null && rightDate !== null) return 1;
@@ -19297,6 +19413,8 @@ MAX - https://bizvmax.ru/zifra_plus
         state.studentProgramTypeFilter = [];
         state.programRegistryTypeFilter = [];
         state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
+        state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
+        state.generalExpenseWorkTypeFilter = [];
         state.studentImportedViewIds = [];
         state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
@@ -19317,6 +19435,8 @@ MAX - https://bizvmax.ru/zifra_plus
         state.studentProgramTypeFilter = [];
         state.programRegistryTypeFilter = [];
         state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
+        state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
+        state.generalExpenseWorkTypeFilter = [];
         state.studentImportedViewIds = [];
         state.sort = getDefaultTableSort(state.view);
         state.tableOptions = null;
@@ -19735,6 +19855,43 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='clear-contract-section-filter']")?.addEventListener("click", () => {
       state.contractSectionFilter = [];
       state.tablePages.contracts = 1;
+      render();
+    });
+    document.querySelectorAll("[data-general-expense-section-filter-option]").forEach((input) => {
+      input.addEventListener("change", () => {
+        state.generalExpenseSectionFilter = Array.from(
+          document.querySelectorAll("[data-general-expense-section-filter-option]:checked")
+        ).map((item) => item.value);
+        const availableWorkTypes = getGeneralExpenseWorkTypeFilterOptions();
+        state.generalExpenseWorkTypeFilter = state.generalExpenseWorkTypeFilter
+          .filter((item) => availableWorkTypes.includes(item));
+        state.tablePages.generalExpenses = 1;
+        render();
+        const filter = document.querySelector("[data-general-expense-section-filter]");
+        if (filter) filter.open = true;
+      });
+    });
+    document.querySelector("[data-action='clear-general-expense-section-filter']")?.addEventListener("click", () => {
+      state.generalExpenseSectionFilter = [];
+      state.generalExpenseWorkTypeFilter = state.generalExpenseWorkTypeFilter
+        .filter((item) => getGeneralExpenseWorkTypeFilterOptions().includes(item));
+      state.tablePages.generalExpenses = 1;
+      render();
+    });
+    document.querySelectorAll("[data-general-expense-work-type-filter-option]").forEach((input) => {
+      input.addEventListener("change", () => {
+        state.generalExpenseWorkTypeFilter = Array.from(
+          document.querySelectorAll("[data-general-expense-work-type-filter-option]:checked")
+        ).map((item) => item.value);
+        state.tablePages.generalExpenses = 1;
+        render();
+        const filter = document.querySelector("[data-general-expense-work-type-filter]");
+        if (filter) filter.open = true;
+      });
+    });
+    document.querySelector("[data-action='clear-general-expense-work-type-filter']")?.addEventListener("click", () => {
+      state.generalExpenseWorkTypeFilter = [];
+      state.tablePages.generalExpenses = 1;
       render();
     });
     document.querySelector("[data-action='clear-student-imported-view']")?.addEventListener("click", () => {

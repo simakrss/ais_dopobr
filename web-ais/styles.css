@@ -1978,6 +1978,30 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   opacity: 0.55;
 }
 
+.general-expense-filter summary {
+  min-width: 210px;
+}
+
+.general-expense-work-type-filter summary {
+  min-width: 250px;
+}
+
+.general-expense-filter-panel {
+  min-width: 260px;
+  max-width: min(420px, calc(100vw - 32px));
+}
+
+.general-expense-work-type-filter-panel {
+  max-height: min(360px, calc(100vh - 180px));
+  overflow-y: auto;
+}
+
+.general-expense-filter-empty {
+  padding: 8px 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .combo-field {
   position: relative;
   min-width: 0;
