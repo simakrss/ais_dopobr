@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.35",
+    version: "1.7.36",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.36",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Исправлена регрессия переключения разделов после изменения механизма перетаскивания статусов слушателей.",
+        "Статус становится перетаскиваемым только в момент нажатия с удерживаемой клавишей Shift; обычный щелчок сразу открывает нужный список слушателей."
+      ]
+    },
     {
       version: "1.7.35",
       releasedAt: "2026-08-10",
@@ -19017,18 +19025,10 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindShiftDragRequirement() {
     annotateShiftRequiredDraggableElements();
-    const syncDashboardStatusDragAvailability = (active) => {
-      document.querySelectorAll("[data-dashboard-student-status-item]").forEach((element) => {
-        element.draggable = Boolean(active);
-        element.setAttribute("aria-grabbed", element.classList.contains("is-dragging") ? "true" : "false");
-      });
-    };
-    syncDashboardStatusDragAvailability(document.body.classList.contains("shift-drag-ready"));
     if (shiftDragRequirementBound) return;
     shiftDragRequirementBound = true;
     const setShiftDragCursorState = (active) => {
       document.body.classList.toggle("shift-drag-ready", Boolean(active));
-      syncDashboardStatusDragAvailability(active);
     };
     document.addEventListener("keydown", (event) => {
       if (event.key === "Shift" || event.shiftKey) setShiftDragCursorState(true);
@@ -19045,7 +19045,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.addEventListener("dragstart", (event) => {
       const draggable = getShiftRequiredDragElement(event.target);
-      if (!draggable || event.shiftKey) return;
+      if (!draggable || event.shiftKey || document.body.classList.contains("shift-drag-ready")) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       showSystemHelpTooltip(draggable);
@@ -20738,6 +20738,16 @@ MAX - https://bizvmax.ru/zifra_plus
       syncDashboardStudentStatusOrderFromDom(container);
     });
     container.querySelectorAll("[data-dashboard-student-status-item]").forEach((button) => {
+      button.draggable = false;
+      button.setAttribute("aria-grabbed", "false");
+      button.addEventListener("pointerdown", (event) => {
+        button.draggable = Boolean(event.shiftKey);
+      });
+      const disarmDrag = () => {
+        if (!button.classList.contains("is-dragging")) button.draggable = false;
+      };
+      button.addEventListener("pointerup", disarmDrag);
+      button.addEventListener("pointercancel", disarmDrag);
       button.addEventListener("dragstart", (event) => {
         if (!event.shiftKey && !document.body.classList.contains("shift-drag-ready")) {
           event.preventDefault();
@@ -20754,6 +20764,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("dragend", () => {
         button.classList.remove("is-dragging");
         button.setAttribute("aria-grabbed", "false");
+        button.draggable = false;
         document.body.classList.remove("dashboard-status-dragging");
         if (draggedDashboardStudentStatus) button.dataset.wasDragged = "true";
         lastDashboardStatusDragEndedAt = Date.now();
