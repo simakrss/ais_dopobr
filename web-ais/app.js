@@ -1,10 +1,19 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.25",
+    version: "1.7.26",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.26",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Локальный сервер повторяет запросы синхронизации и экспорта при кратком перезапуске сервера приложения на порту 8080, сохраняя переданный пакет данных.",
+        "Сообщения и состояния формирования отдельного файла XLSB используют термин «экспорт», а не «синхронизация».",
+        "Серверные задачи различают синхронизацию исходной базы и экспорт скачиваемого файла во всех сообщениях о ходе выполнения и ошибках."
+      ]
+    },
     {
       version: "1.7.25",
       releasedAt: "2026-08-10",
@@ -32486,13 +32495,15 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function runStudentDatabaseExport(body) {
+    const isFileExport = body.downloadOnly === true;
+    const operationGenitive = isFileExport ? "экспорта" : "синхронизации";
     const startResponse = await fetch(photoApiUrl("/api/students/export-database/start"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     });
     const job = await readStudentImportResponse(startResponse);
-    if (!job.id) throw new Error("Сервер не вернул идентификатор задачи синхронизации.");
+    if (!job.id) throw new Error(`Сервер не вернул идентификатор задачи ${operationGenitive}.`);
 
     while (true) {
       const statusResponse = await fetch(
@@ -32501,12 +32512,16 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       const status = await readStudentImportResponse(statusResponse);
       updateDatabaseExportIndicator({
-        status: status.message || "Синхронизация базы...",
+        status: status.message || (isFileExport ? "Экспорт базы..." : "Синхронизация базы..."),
         progress: Number(status.progress) || 0,
         indeterminate: false
       });
       if (status.status === "failed") {
-        throw new Error(status.error || status.message || "Синхронизация завершилась с ошибкой.");
+        throw new Error(
+          status.error
+          || status.message
+          || (isFileExport ? "Экспорт завершился с ошибкой." : "Синхронизация завершилась с ошибкой.")
+        );
       }
       if (status.status === "completed") break;
       await waitForStudentImportPoll();
@@ -33042,7 +33057,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function importStudentsFromDatabase(event) {
     if (state.databaseExport.running) {
-      alert("Дождитесь завершения синхронизации базы.");
+      alert(state.databaseExport.operation === "download"
+        ? "Дождитесь завершения экспорта базы."
+        : "Дождитесь завершения синхронизации базы.");
       return;
     }
     const importSource = getStudentDocumentsSource(Boolean(event?.shiftKey));

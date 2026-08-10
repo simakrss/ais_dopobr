@@ -5,6 +5,8 @@ const host = process.env.HOST || "127.0.0.1";
 const appServerOrigin = process.env.AIS_APP_SERVER_ORIGIN || "http://127.0.0.1:8080";
 const yandexGeocoderApiKey = process.env.YANDEX_GEOCODER_API_KEY || "";
 const dgisApiKey = process.env.DGIS_API_KEY || process.env.TWOGIS_API_KEY || "";
+const appServerRetryDelays = [0, 250, 500, 1000, 1500, 2000, 2500];
+const maxProxyRequestBytes = 48 * 1024 * 1024;
 
 function send(res, status, body, contentType = "text/plain; charset=utf-8") {
   res.writeHead(status, {
@@ -152,7 +154,36 @@ async function handlePostalIndex(req, res, url) {
   }
 }
 
-function proxyToAppServer(req, res) {
+function readProxyRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let tooLarge = false;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > maxProxyRequestBytes) {
+        tooLarge = true;
+        chunks.length = 0;
+        return;
+      }
+      if (!tooLarge) chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (tooLarge) {
+        reject(new Error("Пакет данных превышает допустимый размер."));
+        return;
+      }
+      resolve(chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0));
+    });
+    req.on("error", reject);
+  });
+}
+
+function isRetryableAppServerError(error) {
+  return ["ECONNREFUSED", "ECONNRESET", "EPIPE", "ETIMEDOUT"].includes(String(error?.code || ""));
+}
+
+function forwardToAppServer(req, res, body, attempt = 0) {
   const target = new URL(req.url, appServerOrigin);
   const headers = {
     ...req.headers,
@@ -160,6 +191,9 @@ function proxyToAppServer(req, res) {
     "x-forwarded-proto": "http",
     "x-forwarded-for": req.socket.remoteAddress || ""
   };
+  delete headers["transfer-encoding"];
+  headers["content-length"] = String(body.length);
+  let appServerConnected = false;
   const proxyReq = http.request({
     protocol: target.protocol,
     hostname: target.hostname,
@@ -171,13 +205,34 @@ function proxyToAppServer(req, res) {
     res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
     proxyRes.pipe(res);
   });
+  proxyReq.once("socket", (socket) => {
+    if (socket.connecting) socket.once("connect", () => { appServerConnected = true; });
+    else appServerConnected = true;
+  });
 
-  proxyReq.on("error", () => {
+  proxyReq.on("error", (error) => {
+    const nextAttempt = attempt + 1;
+    const requestCanBeRepeated = !appServerConnected
+      || ["GET", "HEAD", "OPTIONS"].includes(String(req.method || "GET").toUpperCase());
+    if (
+      !res.headersSent
+      && requestCanBeRepeated
+      && isRetryableAppServerError(error)
+      && nextAttempt < appServerRetryDelays.length
+    ) {
+      setTimeout(
+        () => forwardToAppServer(req, res, body, nextAttempt),
+        appServerRetryDelays[nextAttempt]
+      );
+      return;
+    }
     if (!res.headersSent) {
       send(
         res,
         502,
-        JSON.stringify({ error: "Сервер приложения на порту 8080 недоступен." }),
+        JSON.stringify({
+          error: "Сервер приложения на порту 8080 не ответил после автоматического восстановления. Повторите операцию."
+        }),
         "application/json; charset=utf-8"
       );
       return;
@@ -185,7 +240,18 @@ function proxyToAppServer(req, res) {
     res.destroy();
   });
 
-  req.pipe(proxyReq);
+  proxyReq.end(body);
+}
+
+async function proxyToAppServer(req, res) {
+  try {
+    const body = await readProxyRequestBody(req);
+    forwardToAppServer(req, res, body);
+  } catch (error) {
+    if (!res.headersSent) {
+      send(res, 413, JSON.stringify({ error: error.message }), "application/json; charset=utf-8");
+    }
+  }
 }
 
 const server = http.createServer((req, res) => {

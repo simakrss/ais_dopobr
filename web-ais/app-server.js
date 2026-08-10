@@ -11323,6 +11323,18 @@ function updateStudentExportJob(job, patch) {
   job.updatedAt = Date.now();
 }
 
+function normalizeStudentExportJobMessage(message, operation) {
+  const source = String(message || "");
+  if (operation !== "export") return source;
+  return source
+    .replace(/Синхронизация/gu, "Экспорт")
+    .replace(/синхронизации/gu, "экспорта")
+    .replace(/синхронизацию/gu, "экспорт")
+    .replace(/синхронизацией/gu, "экспортом")
+    .replace(/синхронизация/gu, "экспорт")
+    .replace(/синхронизировать/gu, "экспортировать");
+}
+
 function publicStudentExportJob(job) {
   return {
     id: job.id,
@@ -11331,6 +11343,7 @@ function publicStudentExportJob(job) {
     message: job.message,
     progress: job.progress,
     error: job.error || "",
+    operation: job.operation,
     createdAt: new Date(job.createdAt).toISOString(),
     updatedAt: new Date(job.updatedAt).toISOString()
   };
@@ -11339,7 +11352,10 @@ function publicStudentExportJob(job) {
 async function runStudentExportJob(job, body) {
   try {
     const result = await buildStudentDatabaseExport(body, (progress) => {
-      updateStudentExportJob(job, progress);
+      updateStudentExportJob(job, {
+        ...progress,
+        message: normalizeStudentExportJobMessage(progress?.message, job.operation)
+      });
     });
     if (Buffer.isBuffer(result.outputBytes)) {
       job.downloadBytes = result.outputBytes;
@@ -11360,11 +11376,15 @@ async function runStudentExportJob(job, body) {
       message: `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} прямых и ${job.result.generalExpenseCount} общих затрат, ${job.result.programPromoMessageCount || 0} промосообщений`
     });
   } catch (error) {
+    const errorMessage = normalizeStudentExportJobMessage(
+      error instanceof Error ? error.message : String(error),
+      job.operation
+    );
     updateStudentExportJob(job, {
       status: "failed",
       stage: "error",
-      error: error instanceof Error ? error.message : String(error),
-      message: error instanceof Error ? error.message : String(error)
+      error: errorMessage,
+      message: errorMessage
     });
   }
 }
@@ -11376,9 +11396,10 @@ async function handleStudentDatabaseExportStart(req, res) {
     const now = Date.now();
     const job = {
       id: crypto.randomUUID(),
+      operation: body.downloadOnly === true ? "export" : "sync",
       status: "running",
       stage: "prepare",
-      message: "Подготовка синхронизации...",
+      message: body.downloadOnly === true ? "Подготовка экспорта..." : "Подготовка синхронизации...",
       progress: 0,
       error: "",
       result: null,
@@ -11404,7 +11425,7 @@ function getStudentExportJob(requestUrl) {
 function handleStudentDatabaseExportStatus(res, requestUrl) {
   const job = getStudentExportJob(requestUrl);
   if (!job) {
-    sendError(res, 404, "Задача синхронизации не найдена или срок её хранения истёк.");
+    sendError(res, 404, "Задача синхронизации или экспорта не найдена либо срок её хранения истёк.");
     return;
   }
   sendJson(res, 200, publicStudentExportJob(job));
@@ -11413,15 +11434,25 @@ function handleStudentDatabaseExportStatus(res, requestUrl) {
 function handleStudentDatabaseExportResult(res, requestUrl) {
   const job = getStudentExportJob(requestUrl);
   if (!job) {
-    sendError(res, 404, "Задача синхронизации не найдена или срок её хранения истёк.");
+    sendError(res, 404, "Задача синхронизации или экспорта не найдена либо срок её хранения истёк.");
     return;
   }
   if (job.status === "failed") {
-    sendError(res, 400, job.error || "Синхронизация завершилась с ошибкой.");
+    sendError(
+      res,
+      400,
+      job.error || (job.operation === "export"
+        ? "Экспорт завершился с ошибкой."
+        : "Синхронизация завершилась с ошибкой.")
+    );
     return;
   }
   if (job.status !== "completed" || !job.result) {
-    sendError(res, 409, "Синхронизация ещё не завершена.");
+    sendError(
+      res,
+      409,
+      job.operation === "export" ? "Экспорт ещё не завершён." : "Синхронизация ещё не завершена."
+    );
     return;
   }
   sendJson(res, 200, job.result);
