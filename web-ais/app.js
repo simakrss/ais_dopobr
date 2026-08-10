@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.34",
+    version: "1.7.35",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.35",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Строки статусов слушателей на рабочем столе снова открывают соответствующий отфильтрованный список слушателей обычным щелчком.",
+        "Перетаскивание статусов включается только при удержании Shift; без Shift строка остаётся обычной кнопкой перехода."
+      ]
+    },
     {
       version: "1.7.34",
       releasedAt: "2026-08-10",
@@ -19009,10 +19017,18 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindShiftDragRequirement() {
     annotateShiftRequiredDraggableElements();
+    const syncDashboardStatusDragAvailability = (active) => {
+      document.querySelectorAll("[data-dashboard-student-status-item]").forEach((element) => {
+        element.draggable = Boolean(active);
+        element.setAttribute("aria-grabbed", element.classList.contains("is-dragging") ? "true" : "false");
+      });
+    };
+    syncDashboardStatusDragAvailability(document.body.classList.contains("shift-drag-ready"));
     if (shiftDragRequirementBound) return;
     shiftDragRequirementBound = true;
     const setShiftDragCursorState = (active) => {
       document.body.classList.toggle("shift-drag-ready", Boolean(active));
+      syncDashboardStatusDragAvailability(active);
     };
     document.addEventListener("keydown", (event) => {
       if (event.key === "Shift" || event.shiftKey) setShiftDragCursorState(true);
@@ -20723,15 +20739,21 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     container.querySelectorAll("[data-dashboard-student-status-item]").forEach((button) => {
       button.addEventListener("dragstart", (event) => {
+        if (!event.shiftKey && !document.body.classList.contains("shift-drag-ready")) {
+          event.preventDefault();
+          return;
+        }
         closeNavItemMenu();
         draggedDashboardStudentStatus = button.dataset.dashboardStudentStatusItem || "";
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", draggedDashboardStudentStatus);
         button.classList.add("is-dragging");
+        button.setAttribute("aria-grabbed", "true");
         document.body.classList.add("dashboard-status-dragging");
       });
       button.addEventListener("dragend", () => {
         button.classList.remove("is-dragging");
+        button.setAttribute("aria-grabbed", "false");
         document.body.classList.remove("dashboard-status-dragging");
         if (draggedDashboardStudentStatus) button.dataset.wasDragged = "true";
         lastDashboardStatusDragEndedAt = Date.now();
