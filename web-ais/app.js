@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.29",
+    version: "1.7.30",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.30",
+      releasedAt: "2026-08-10",
+      changes: [
+        "В учёте выплат сотрудникам по умолчанию включён фильтр «К выплате».",
+        "Колонка «Статус» перенесена на первое место, а колонка комментария сделана компактнее."
+      ]
+    },
     {
       version: "1.7.29",
       releasedAt: "2026-08-10",
@@ -531,7 +539,7 @@
     comment: "",
     description: "",
     source: "",
-    payment: "",
+    payment: "payable",
     act: ""
   });
   const EMPLOYEE_PAYMENT_SORT_DEFAULTS = Object.freeze({
@@ -539,16 +547,16 @@
     direction: "desc"
   });
   const EMPLOYEE_PAYMENT_TABLE_COLUMNS = Object.freeze([
+    { key: "status", label: "Статус", className: "employee-payment-status-column", defaultWidth: 78, sortType: "text" },
     { key: "date", label: "Дата", className: "employee-payment-date-column", defaultWidth: 92, sortType: "date" },
     { key: "source", label: "Источник", className: "employee-payment-source-column", defaultWidth: 88, sortType: "text" },
-    { key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 84, sortType: "text" },
+    { key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 64, sortType: "text" },
     { key: "description", label: "Основание", className: "employee-payment-basis-column", defaultWidth: 88, sortType: "text" },
     { key: "amount", label: "Сумма", className: "employee-payment-amount-column", defaultWidth: 60, sortType: "number" },
     { key: "recommendation", label: "Рекомендация", className: "employee-payment-recommendation-column", defaultWidth: 56, sortType: "boolean" },
     { key: "act", label: "Акт", className: "employee-payment-act-column", defaultWidth: 32, sortType: "boolean" },
     { key: "actStatus", label: "Статус акта", className: "employee-payment-act-status-column", defaultWidth: 72, sortType: "text" },
     { key: "paid", label: "Оплачено", className: "employee-payment-paid-column", defaultWidth: 82, sortType: "date" },
-    { key: "status", label: "Статус выплаты", className: "employee-payment-status-column", defaultWidth: 78, sortType: "text" },
     { key: "actions", label: "Действия", className: "employee-payment-actions-column", defaultWidth: 78 }
   ]);
   const DIRECT_EXPENSES_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-direct-expenses-table-layout-v1";
@@ -12784,7 +12792,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (columnKey === "status") {
       return `
-        <select data-employee-payment-filter="payment" aria-label="Фильтр по статусу выплаты" title="Фильтр по статусу выплаты">
+        <select data-employee-payment-filter="payment" aria-label="Фильтр по статусу" title="Фильтр по статусу">
           ${renderEmployeePaymentFilterOptions(getAvailableEmployeePaymentFilterOptions(
             getEmployeePaymentStatusFilterOptions(),
             facets.payment,
@@ -12918,6 +12926,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 const sourceLabel = row.source || getEmployeePaymentDefaultSourceLabel(row.sourceType);
                 return `
                   <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
+                    <td>${renderEmployeePaymentStatus(row)}</td>
                     <td class="employee-payment-date-cell">
                       ${renderEmployeePaymentRowDragHandle(row.sourceType, row.sourceId, filtersActive || Boolean(sort.key))}
                       <input data-employee-payment-field="date" type="date" value="${escapeAttr(row.date)}" ${row.dateReadOnly ? 'readonly title="Дата проведённой выплаты изменяется в колонке «Оплачено»"' : (editable ? "" : "disabled")}>
@@ -12956,7 +12965,6 @@ MAX - https://bizvmax.ru/zifra_plus
                       </select>
                     </td>
                     <td><input data-employee-payment-field="paid" type="date" value="${escapeAttr(row.paid)}" aria-label="Дата оплаты" ${editable ? "" : "disabled"}></td>
-                    <td>${renderEmployeePaymentStatus(row)}</td>
                     <td class="employee-payment-delete-cell">
                       ${editable ? `
                         <div class="employee-payment-row-actions">
@@ -13272,7 +13280,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <input name="paymentPaid" type="date" value="${escapeAttr(row.paid)}">
       </label>
       <label data-field-key="paymentStatus">
-        <span>Статус выплаты</span>
+        <span>Статус</span>
         <input name="paymentStatus" value="${escapeAttr(status)}" readonly aria-readonly="true">
       </label>
     `;
