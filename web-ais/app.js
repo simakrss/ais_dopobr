@@ -1,10 +1,19 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.23",
+    version: "1.7.24",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.24",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Редакторы промосообщений выровнены по верхнему краю и имеют одинаковую адаптивную высоту с независимой прокруткой.",
+        "Для каждого промосообщения добавлено стандартное контекстное меню полей с копированием, вставкой, удалением и отменой удаления.",
+        "Копирование выделенного текста, вставка в позицию курсора и подсветка ссылок продолжают работать в редакторе промосообщения."
+      ]
+    },
     {
       version: "1.7.23",
       releasedAt: "2026-08-10",
@@ -22955,6 +22964,8 @@ MAX - https://bizvmax.ru/zifra_plus
       control.checked = false;
     } else if (control.tagName === "SELECT") {
       control.selectedIndex = -1;
+    } else if (isContentEditableTextControl(control)) {
+      setContentEditableTextControlValue(control, "");
     } else {
       control.value = "";
     }
@@ -22972,7 +22983,7 @@ MAX - https://bizvmax.ru/zifra_plus
       name: control.name,
       tagName: control.tagName,
       type: String(control.type || "").toLowerCase(),
-      value: control.value,
+      value: isContentEditableTextControl(control) ? serializeCommunicationTemplateEditor(control) : control.value,
       checked: Boolean(control.checked),
       selectedIndex: control.selectedIndex,
       selectedValues
@@ -23010,6 +23021,8 @@ MAX - https://bizvmax.ru/zifra_plus
       } else {
         control.selectedIndex = stateToRestore.selectedIndex;
       }
+    } else if (isContentEditableTextControl(control)) {
+      setContentEditableTextControlValue(control, stateToRestore.value);
     } else {
       control.value = stateToRestore.value;
     }
@@ -23049,15 +23062,33 @@ MAX - https://bizvmax.ru/zifra_plus
     return true;
   }
 
+  function isContentEditableTextControl(control) {
+    return Boolean(control?.matches?.("[contenteditable='true'][role='textbox']"));
+  }
+
+  function setContentEditableTextControlValue(control, value) {
+    if (!isContentEditableTextControl(control)) return;
+    control.textContent = String(value ?? "");
+    refreshTemplateLinkEditor(control);
+    syncProgramPromoEditor(control);
+  }
+
   function getControlCopyValue(control) {
     const selectedText = getSelectedControlText(control);
     if (selectedText) return selectedText;
     if (control.type === "checkbox") return control.checked ? (control.value || "Да") : "Нет";
     if (control.tagName === "SELECT") return control.selectedOptions?.[0]?.textContent || control.value || "";
+    if (isContentEditableTextControl(control)) return serializeCommunicationTemplateEditor(control);
     return control.value || "";
   }
 
   function getSelectedControlText(control) {
+    if (isContentEditableTextControl(control)) {
+      const selection = window.getSelection();
+      if (!selection?.rangeCount || selection.isCollapsed) return "";
+      const range = selection.getRangeAt(0);
+      return control.contains(range.commonAncestorContainer) ? selection.toString() : "";
+    }
     if (!["INPUT", "TEXTAREA"].includes(control.tagName)) return "";
     try {
       const start = control.selectionStart;
@@ -23117,6 +23148,8 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!option) return false;
       if (control.multiple) option.selected = true;
       else control.value = option.value;
+    } else if (isContentEditableTextControl(control)) {
+      insertPlainTextIntoContentEditable(control, String(value ?? ""));
     } else {
       const pastedValue = normalizePastedInputValue(control, value);
       const supportsSelection = control.tagName === "TEXTAREA" || ["text", "search", "tel", "url", "password"].includes(control.type);
@@ -30271,6 +30304,24 @@ MAX - https://bizvmax.ru/zifra_plus
     if (hiddenInput) hiddenInput.value = serializeCommunicationTemplateEditor(editor);
   }
 
+  function insertPlainTextIntoContentEditable(editor, text) {
+    if (!editor) return;
+    editor.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : document.createRange();
+    if (!editor.contains(range.commonAncestorContainer)) {
+      range.selectNodeContents(editor);
+      range.collapse(false);
+    }
+    range.deleteContents();
+    const textNode = document.createTextNode(String(text ?? ""));
+    range.insertNode(textNode);
+    range.setStartAfter(textNode);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+
   function bindProgramPromoEditors(root = document) {
     root.querySelectorAll("[data-program-promo-editor]").forEach((editor) => {
       if (editor.dataset.programPromoBound === "true") return;
@@ -30290,24 +30341,17 @@ MAX - https://bizvmax.ru/zifra_plus
         refresh(true);
       });
       editor.addEventListener("click", openTemplateEditorLink);
+      editor.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        syncProgramPromoEditor(editor);
+        showFieldCopyPopup(editor, event.clientX, event.clientY);
+      });
       editor.addEventListener("paste", (event) => {
         const text = event.clipboardData?.getData("text/plain");
         if (typeof text !== "string") return;
         event.preventDefault();
-        editor.focus({ preventScroll: true });
-        const selection = window.getSelection();
-        const range = selection?.rangeCount ? selection.getRangeAt(0) : document.createRange();
-        if (!editor.contains(range.commonAncestorContainer)) {
-          range.selectNodeContents(editor);
-          range.collapse(false);
-        }
-        range.deleteContents();
-        const textNode = document.createTextNode(text);
-        range.insertNode(textNode);
-        range.setStartAfter(textNode);
-        range.collapse(true);
-        selection?.removeAllRanges();
-        selection?.addRange(range);
+        insertPlainTextIntoContentEditable(editor, text);
         editor.dispatchEvent(new Event("input", { bubbles: true }));
       });
       editor.addEventListener("input", () => {

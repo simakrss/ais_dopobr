@@ -8641,12 +8641,15 @@ body.card-window-moving {
 .program-promo-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 10px;
   min-width: 0;
 }
 
 .program-promo-message-field {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-self: start;
   gap: 5px;
   min-width: 0;
 }
@@ -8658,10 +8661,12 @@ body.card-window-moving {
 
 .program-promo-message-editor {
   width: 100%;
-  min-height: min(360px, calc(100vh - 300px));
-  max-height: min(520px, calc(100vh - 230px));
+  height: min(520px, max(300px, calc(100vh - 300px)));
+  min-height: 0;
+  max-height: none;
+  align-self: start;
   overflow: auto;
-  resize: vertical;
+  resize: none;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 9px 10px;
@@ -16170,8 +16175,9 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .program-promo-message-editor {
-    min-height: 220px;
-    max-height: min(420px, calc(100vh - 240px));
+    height: min(420px, max(220px, calc(100dvh - 240px)));
+    min-height: 0;
+    max-height: none;
   }
 
   .program-characteristics-grid label.program-field-wide,
