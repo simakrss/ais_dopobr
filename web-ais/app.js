@@ -1,10 +1,19 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.22",
+    version: "1.7.23",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.23",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Статистика синхронизации, импорта и экспорта XLSB теперь показывается в отдельном модальном окне в едином стиле системы.",
+        "В окне отображаются количества обработанных записей, источник, файл или резервная копия, время выполнения и предупреждения о несопоставленных программах.",
+        "Ошибки операций с базой также выводятся в этом окне вместо системных уведомлений браузера."
+      ]
+    },
     {
       version: "1.7.22",
       releasedAt: "2026-08-10",
@@ -2713,6 +2722,7 @@ MAX - https://bizvmax.ru/zifra_plus
     profileOpen: false,
     userManagementOpen: false,
     releaseHistoryOpen: false,
+    databaseOperationResult: null,
     adminTab: "database",
     authUsers: [],
     authUsersLoading: false,
@@ -6084,6 +6094,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ${state.documentTemplateDialogId ? renderDocumentTemplateDialog() : ""}
       ${state.profileOpen ? renderProfileDialog() : ""}
       ${state.releaseHistoryOpen && isAdminUser() ? renderReleaseHistoryDialog() : ""}
+      ${state.databaseOperationResult ? renderDatabaseOperationResultDialog() : ""}
       ${renderDatabaseImportIndicator()}
       ${renderDatabaseExportIndicator()}
     `;
@@ -11489,6 +11500,81 @@ MAX - https://bizvmax.ru/zifra_plus
         </section>
       </div>
     `;
+  }
+
+  function renderDatabaseOperationResultDialog() {
+    const result = state.databaseOperationResult || {};
+    const tone = result.tone === "error" ? "error" : "success";
+    const items = Array.isArray(result.items) ? result.items : [];
+    const details = Array.isArray(result.details) ? result.details : [];
+    return `
+      <div class="modal-backdrop database-operation-result-backdrop" data-action="close-database-operation-result">
+        <section class="modal database-operation-result-modal tone-${tone}" role="dialog" aria-modal="true" aria-labelledby="database-operation-result-title">
+          <header class="modal-head">
+            <div>
+              <p class="eyebrow">${escapeHtml(result.eyebrow || "Операция с базой")}</p>
+              <h2 id="database-operation-result-title">${escapeHtml(result.title || "Результат операции")}</h2>
+            </div>
+            <button class="icon-button" data-action="close-database-operation-result" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+          </header>
+          <div class="database-operation-result-content">
+            <div class="database-operation-result-summary">
+              <span class="database-operation-result-icon" aria-hidden="true">${tone === "success" ? "✓" : "!"}</span>
+              <div>
+                <strong>${tone === "success" ? "Операция завершена" : "Операция не выполнена"}</strong>
+                <p>${escapeHtml(result.summary || "")}</p>
+              </div>
+            </div>
+            ${items.length ? `
+              <dl class="database-operation-result-stats">
+                ${items.map((item) => `
+                  <div class="database-operation-result-stat">
+                    <dt>${escapeHtml(item.label || "")}</dt>
+                    <dd>${escapeHtml(String(item.value ?? ""))}</dd>
+                    ${item.note ? `<small>${escapeHtml(item.note)}</small>` : ""}
+                  </div>
+                `).join("")}
+              </dl>
+            ` : ""}
+            ${details.length ? `
+              <dl class="database-operation-result-details">
+                ${details.map((item) => `
+                  <div>
+                    <dt>${escapeHtml(item.label || "")}</dt>
+                    <dd>${escapeHtml(String(item.value ?? ""))}</dd>
+                  </div>
+                `).join("")}
+              </dl>
+            ` : ""}
+          </div>
+          <footer class="modal-actions">
+            <button class="primary-button" data-action="close-database-operation-result" type="button">Закрыть</button>
+          </footer>
+        </section>
+      </div>
+    `;
+  }
+
+  function showDatabaseOperationResult(result = {}) {
+    state.databaseOperationResult = {
+      tone: result.tone === "error" ? "error" : "success",
+      eyebrow: String(result.eyebrow || "Операция с базой"),
+      title: String(result.title || "Результат операции"),
+      summary: String(result.summary || ""),
+      items: Array.isArray(result.items) ? result.items : [],
+      details: Array.isArray(result.details) ? result.details : []
+    };
+    render();
+    requestAnimationFrame(() => {
+      document.querySelector(".database-operation-result-modal [data-action='close-database-operation-result']")
+        ?.focus({ preventScroll: true });
+    });
+  }
+
+  function closeDatabaseOperationResult() {
+    if (!state.databaseOperationResult) return;
+    state.databaseOperationResult = null;
+    render();
   }
 
   function getAuthUserEditorRecord() {
@@ -18841,6 +18927,10 @@ MAX - https://bizvmax.ru/zifra_plus
       settingsListDialog.closeSettingsListDialog?.();
       return true;
     }
+    if (state.databaseOperationResult) {
+      closeDatabaseOperationResult();
+      return true;
+    }
     if (state.releaseHistoryOpen) {
       state.releaseHistoryOpen = false;
       render();
@@ -19064,6 +19154,12 @@ MAX - https://bizvmax.ru/zifra_plus
         state.releaseHistoryOpen = false;
         render();
         document.querySelector("[data-action='open-release-history']")?.focus({ preventScroll: true });
+      });
+    });
+    document.querySelectorAll("[data-action='close-database-operation-result']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (!element.matches("button") && event.target !== element) return;
+        closeDatabaseOperationResult();
       });
     });
 
@@ -32577,15 +32673,37 @@ MAX - https://bizvmax.ru/zifra_plus
         "success",
         `Готово: ${students.length} слушателей, ${contracts.length} договоров, ${directExpenses.length} прямых и ${generalExpenses.length} общих затрат, ${result.programPromoMessageCount || 0} промосообщений. Резервная копия создана. Время выполнения: ${duration}`
       );
-      alert(
-        `Синхронизация завершена. В XLSB перенесено слушателей: ${students.length}; `
-        + `договоров: ${contracts.length}; прямых затрат: ${directExpenses.length}; общих затрат: ${generalExpenses.length}; промосообщений: ${result.programPromoMessageCount || 0}; не сопоставлено программ: ${result.programPromoSkippedCount || 0}. База обновлена ${sourceLabel}. `
-        + `Резервная копия: ${result.backupPath || "создана в папке _Резерв"}. `
-        + `Время выполнения: ${duration}.`
-      );
+      showDatabaseOperationResult({
+        eyebrow: "Синхронизация с XLSB",
+        title: "Синхронизация завершена",
+        summary: `База успешно обновлена ${sourceLabel}.`,
+        items: [
+          { label: "Слушатели", value: students.length },
+          { label: "Договоры", value: contracts.length },
+          { label: "Прямые затраты", value: directExpenses.length },
+          { label: "Общие затраты", value: generalExpenses.length },
+          { label: "Промосообщения", value: result.programPromoMessageCount || 0 },
+          {
+            label: "Не сопоставлено программ",
+            value: result.programPromoSkippedCount || 0,
+            note: result.programPromoSkippedCount ? "Проверьте название и код лендинга" : "Все программы сопоставлены"
+          }
+        ],
+        details: [
+          { label: "Источник", value: sourceLabel },
+          { label: "Резервная копия", value: result.backupPath || "Создана в папке _Резерв" },
+          { label: "Время выполнения", value: duration }
+        ]
+      });
     } catch (error) {
       finishDatabaseExportIndicator("error", `Ошибка: ${error.message}`, 6500);
-      alert(`Не удалось синхронизировать базу: ${error.message}`);
+      showDatabaseOperationResult({
+        tone: "error",
+        eyebrow: "Синхронизация с XLSB",
+        title: "Синхронизация не выполнена",
+        summary: error.message,
+        details: [{ label: "Источник", value: sourceLabel }]
+      });
     }
   }
 
@@ -32667,10 +32785,37 @@ MAX - https://bizvmax.ru/zifra_plus
         "success",
         `Файл «${fileName}» скачан. Время выполнения: ${duration}`
       );
-      alert(`База сформирована и скачана в папку «Загрузки»: ${fileName}.`);
+      showDatabaseOperationResult({
+        eyebrow: "Экспорт XLSB",
+        title: "Экспорт завершён",
+        summary: `Файл «${fileName}» сформирован и скачан в папку «Загрузки».`,
+        items: [
+          { label: "Слушатели", value: students.length },
+          { label: "Договоры", value: contracts.length },
+          { label: "Прямые затраты", value: directExpenses.length },
+          { label: "Общие затраты", value: generalExpenses.length },
+          { label: "Промосообщения", value: result.programPromoMessageCount || 0 },
+          {
+            label: "Не сопоставлено программ",
+            value: result.programPromoSkippedCount || 0,
+            note: result.programPromoSkippedCount ? "Проверьте название и код лендинга" : "Все программы сопоставлены"
+          }
+        ],
+        details: [
+          { label: "Файл", value: fileName },
+          { label: "Шаблон", value: sourceLabel },
+          { label: "Время выполнения", value: duration }
+        ]
+      });
     } catch (error) {
       finishDatabaseExportIndicator("error", `Ошибка: ${error.message}`, 6500);
-      alert(`Не удалось экспортировать базу: ${error.message}`);
+      showDatabaseOperationResult({
+        tone: "error",
+        eyebrow: "Экспорт XLSB",
+        title: "Экспорт не выполнен",
+        summary: error.message,
+        details: [{ label: "Шаблон", value: sourceLabel }]
+      });
     }
   }
 
@@ -33051,22 +33196,38 @@ MAX - https://bizvmax.ru/zifra_plus
         + `Оплата: ${payload.programPaymentSettings.length} программ. `
         + `Время выполнения: ${duration}`
       );
-      alert(
-        `Загрузка завершена. Перезаписано слушателей: ${payload.count || nextStudents.length}; `
-        + `договоров: ${nextContracts.length}; `
-        + `по разделам листа: ${contractSectionSummary}. `
-        + `затрат привязано к карточкам: ${linkedDirectExpenseCount}; `
-        + `не привязано и оставлено в разделе: ${nextDirectExpenses.length}. `
-        + `Загружено общих затрат: ${nextGeneralExpenses.length}. `
-        + `Загружено позиций запасов: ${nextInventory.length}; `
-        + `настроек оплаты программ: ${payload.programPaymentSettings.length}; `
-        + `выдач запасов связано с карточками: ${inventoryLinkedExpenseCount}`
-        + `${inventoryGeneratedExpenseCount ? ` (восстановлено из листа «Запасы»: ${inventoryGeneratedExpenseCount})` : ""}. `
-        + `Время выполнения: ${duration}.`
-      );
+      showDatabaseOperationResult({
+        eyebrow: "Импорт XLSB",
+        title: "Импорт завершён",
+        summary: `Данные успешно загружены ${sourceLabel} и сохранены в системе.`,
+        items: [
+          { label: "Слушатели", value: payload.count || nextStudents.length },
+          { label: "Договоры", value: nextContracts.length },
+          { label: "Затраты привязаны", value: linkedDirectExpenseCount, note: "К карточкам слушателей" },
+          { label: "Затраты не привязаны", value: nextDirectExpenses.length, note: "Оставлены в разделе прямых затрат" },
+          { label: "Общие затраты", value: nextGeneralExpenses.length },
+          { label: "Позиции запасов", value: nextInventory.length },
+          { label: "Настройки программ", value: payload.programPaymentSettings.length },
+          { label: "Выдачи запасов", value: inventoryLinkedExpenseCount, note: "Связаны с карточками" },
+          ...(inventoryGeneratedExpenseCount
+            ? [{ label: "Восстановлено выдач", value: inventoryGeneratedExpenseCount, note: "Из листа «Запасы»" }]
+            : [])
+        ],
+        details: [
+          { label: "Источник", value: sourceLabel },
+          { label: "Разделы договоров", value: contractSectionSummary },
+          { label: "Время выполнения", value: duration }
+        ]
+      });
     } catch (error) {
       finishDatabaseImportIndicator("error", `Ошибка: ${error.message}`, 6500);
-      alert(`Не удалось загрузить слушателей, договоры, прямые и общие затраты, а также запасы из базы: ${error.message}`);
+      showDatabaseOperationResult({
+        tone: "error",
+        eyebrow: "Импорт XLSB",
+        title: "Импорт не выполнен",
+        summary: error.message,
+        details: [{ label: "Источник", value: sourceLabel }]
+      });
     }
   }
 
