@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.30",
+    version: "1.7.31",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.31",
+      releasedAt: "2026-08-10",
+      changes: [
+        "События карточки сотрудника загружаются из поля «ДопНастрКонтр» листа «Реестр договоров» и синхронизируются обратно в XLSB.",
+        "При синхронизации высота строк сотрудников в реестре договоров сохраняется и ограничивается 15 пунктами — примерно 20 пикселями."
+      ]
+    },
     {
       version: "1.7.30",
       releasedAt: "2026-08-10",

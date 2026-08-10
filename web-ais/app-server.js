@@ -588,6 +588,14 @@ const STUDENT_EVENT_IMPORT_TEMPLATES = Object.freeze([
   { key: "reductionDocsReceived", label: "Получен комплект документов для сокращения обучения" },
   { key: "certificateSent", label: "Отправлена справка об обучении" }
 ]);
+const CONTRACT_EVENT_IMPORT_TEMPLATES = Object.freeze([
+  { key: "portalAccessSent", label: "Отправлены данные для доступа к порталу" },
+  { key: "partnerMessagesSent", label: "Отправлены партнерские сообщения" },
+  { key: "contractPrepared", label: "Сформирован договор" },
+  { key: "contractSigned", label: "Подписан договор" },
+  { key: "employmentCertificate", label: "Справка о трудовой деятельности" },
+  { key: "criminalRecordCertificate", label: "Справка об отсутствии судимости" }
+]);
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
@@ -7791,6 +7799,12 @@ const STUDENT_EVENT_IMPORT_KEY_BY_LABEL = new Map(
     event.key
   ])
 );
+const CONTRACT_EVENT_IMPORT_KEY_BY_LABEL = new Map(
+  CONTRACT_EVENT_IMPORT_TEMPLATES.map((event) => [
+    normalizeImportedStudentEventLabel(event.label),
+    event.key
+  ])
+);
 
 [
   ["Уведомление с перечнем документов в мессенжер (whApp, tlg)", "docsListNotice"],
@@ -7848,14 +7862,24 @@ function normalizeImportedStudentEventDate(value) {
   return date.toISOString().slice(0, 10);
 }
 
-function parseStudentEventSettings(value) {
+function parseRecordEventSettings(
+  value,
+  rootSection,
+  eventTemplates,
+  eventKeyByLabel
+) {
   const lines = String(value || "").replace(/\u000b/g, "").split(/\r?\n/);
+  const escapedRootSection = String(rootSection || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const eventSectionPattern = new RegExp(
+    `^\\[${escapedRootSection}\\\\События(?:\\\\(\\d+))?\\]$`,
+    "u"
+  );
   const blocks = [];
   let block = null;
   let currentEvent = null;
   let insideEventSection = false;
   lines.forEach((line) => {
-    const section = /^\[КарточкаСлушателя\\События(?:\\(\d+))?\]$/u.exec(line.trim());
+    const section = eventSectionPattern.exec(line.trim());
     if (section) {
       insideEventSection = true;
       if (!section[1]) {
@@ -7901,7 +7925,7 @@ function parseStudentEventSettings(value) {
     .filter((event) => event.label)
     .forEach((event) => {
       const normalizedLabel = normalizeImportedStudentEventLabel(event.label);
-      let eventKey = STUDENT_EVENT_IMPORT_KEY_BY_LABEL.get(normalizedLabel) || "";
+      let eventKey = eventKeyByLabel.get(normalizedLabel) || "";
       if (eventKey && usedBaseKeys.has(eventKey)) eventKey = "";
       if (eventKey) {
         usedBaseKeys.add(eventKey);
@@ -7923,11 +7947,29 @@ function parseStudentEventSettings(value) {
     });
   result.eventOrder = eventOrder.join(",");
   result.eventCustomKeys = customKeys.join(",");
-  result.eventDeleted = STUDENT_EVENT_IMPORT_TEMPLATES
+  result.eventDeleted = eventTemplates
     .map((event) => event.key)
     .filter((key) => !usedBaseKeys.has(key))
     .join(",");
   return result;
+}
+
+function parseStudentEventSettings(value) {
+  return parseRecordEventSettings(
+    value,
+    "КарточкаСлушателя",
+    STUDENT_EVENT_IMPORT_TEMPLATES,
+    STUDENT_EVENT_IMPORT_KEY_BY_LABEL
+  );
+}
+
+function parseContractEventSettings(value) {
+  return parseRecordEventSettings(
+    value,
+    "КарточкаКонтрагента",
+    CONTRACT_EVENT_IMPORT_TEMPLATES,
+    CONTRACT_EVENT_IMPORT_KEY_BY_LABEL
+  );
 }
 
 function buildStudentDatabaseRecordId(uid, rowNumber) {
@@ -8658,6 +8700,7 @@ function parseContractDatabaseSheet(workbook, onProgress = () => {}) {
       if (value === "") return;
       contract[column.fieldName] = value;
     });
+    Object.assign(contract, parseContractEventSettings(contract.additionalSettings));
     contract.id = buildContractDatabaseRecordId(contract, rowIndex + 1);
     contract.name = name;
     contract.status = sectionRange.section === CONTRACT_DATABASE_SECTIONS.active
@@ -10605,11 +10648,15 @@ function sanitizeStudentDatabaseExportPayload(body) {
     directExpenseColumnMap: DIRECT_EXPENSE_DATABASE_COLUMN_MAP,
     generalExpenseColumnMap: GENERAL_EXPENSE_DATABASE_COLUMN_MAP,
     generalExpenseSections: GENERAL_EXPENSE_DATABASE_SECTIONS,
-    contractColumnMap: CONTRACT_DATABASE_COLUMN_MAP,
+    contractColumnMap: {
+      ...CONTRACT_DATABASE_COLUMN_MAP,
+      "ДопНастрКонтр": "__contractEventSettings"
+    },
     contractSections: CONTRACT_DATABASE_SECTIONS,
     contractDateFields: [...CONTRACT_DATABASE_DATE_FIELDS],
     contractNumberFields: [...CONTRACT_DATABASE_NUMBER_FIELDS],
-    studentEventTemplates: STUDENT_EVENT_IMPORT_TEMPLATES
+    studentEventTemplates: STUDENT_EVENT_IMPORT_TEMPLATES,
+    contractEventTemplates: CONTRACT_EVENT_IMPORT_TEMPLATES
   };
 }
 

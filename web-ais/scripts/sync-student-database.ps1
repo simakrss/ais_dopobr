@@ -473,11 +473,12 @@ function Format-StudentEventDate {
   return $text
 }
 
-function Build-StudentEventSettings {
+function Build-RecordEventSettings {
   param(
     [object]$Record,
     [object]$ExistingValue,
-    [object[]]$EventTemplates
+    [object[]]$EventTemplates,
+    [string]$RootSection
   )
   $templateLabels = @{}
   foreach ($template in @($EventTemplates)) {
@@ -487,23 +488,24 @@ function Build-StudentEventSettings {
 
   $preservedLines = [Collections.Generic.List[string]]::new()
   $insideEventSection = $false
+  $eventSectionPattern = '^\[' + [regex]::Escape($RootSection) + '\\События(?:\\\d+)?\]$'
   foreach ($line in (([string]$ExistingValue) -split "\r?\n")) {
     $trimmed = $line.Trim()
     if ($trimmed.StartsWith("[")) {
-      $insideEventSection = $trimmed -match "^\[КарточкаСлушателя\\События(?:\\\d+)?\]$"
+      $insideEventSection = $trimmed -match $eventSectionPattern
     }
     if (-not $insideEventSection) { $preservedLines.Add($line) }
   }
   $rootIndex = -1
   for ($index = 0; $index -lt $preservedLines.Count; $index += 1) {
-    if ($preservedLines[$index].Trim() -eq "[КарточкаСлушателя]") {
+    if ($preservedLines[$index].Trim() -eq "[$RootSection]") {
       $rootIndex = $index
       break
     }
   }
   if ($rootIndex -lt 0) {
     $preservedLines.Insert(0, "События=")
-    $preservedLines.Insert(0, "[КарточкаСлушателя]")
+    $preservedLines.Insert(0, "[$RootSection]")
   } else {
     $hasEventSectionName = $false
     for ($index = $rootIndex + 1; $index -lt $preservedLines.Count; $index += 1) {
@@ -539,13 +541,13 @@ function Build-StudentEventSettings {
     if ($eventBlocks[$index].Selected) { $selectedIndexes.Add([string]$index) }
   }
   $eventLines = [Collections.Generic.List[string]]::new()
-  $eventLines.Add("[КарточкаСлушателя\События]")
+  $eventLines.Add("[$RootSection\События]")
   $eventLines.Add("Тип=LB")
   $eventLines.Add("Кол=$($eventBlocks.Count)")
   $eventLines.Add("Выд=$($selectedIndexes -join ',')")
   for ($index = 0; $index -lt $eventBlocks.Count; $index += 1) {
     $number = $index + 1
-    $eventLines.Add("[КарточкаСлушателя\События\$number]")
+    $eventLines.Add("[$RootSection\События\$number]")
     $eventLines.Add("Кол=2")
     $eventLines.Add("0=$(Encode-StudentEventValue $eventBlocks[$index].Date)")
     $eventLines.Add("1=$(Encode-StudentEventValue $eventBlocks[$index].Label)")
@@ -676,11 +678,22 @@ function Update-MappedColumn {
         $nextValues[$offset, 0] = $currentValue
         continue
       }
-      if ($FieldName -eq "__eventSettings") {
+      if ($FieldName -in @("__eventSettings", "__contractEventSettings")) {
+        $rootSection = if ($FieldName -eq "__contractEventSettings") {
+          "КарточкаКонтрагента"
+        } else {
+          "КарточкаСлушателя"
+        }
         $nextValues[$offset, 0] = if ($null -eq $record) {
           $null
         } else {
-          Build-StudentEventSettings $record $currentValue $EventTemplates
+          $recordSettings = if ($FieldName -eq "__contractEventSettings") {
+            [string](Get-ObjectProperty $record "additionalSettings")
+          } else {
+            ""
+          }
+          $preservedSettings = if ($recordSettings) { $recordSettings } else { $currentValue }
+          Build-RecordEventSettings $record $preservedSettings $EventTemplates $rootSection
         }
         continue
       }
@@ -1395,6 +1408,32 @@ function Ensure-ContractFormulaRows {
   }
 }
 
+function Limit-ContractDataRowHeight {
+  param(
+    [object]$Sheet,
+    [int]$StartRow,
+    [int]$Count,
+    [double]$MaxHeightPoints = 15
+  )
+  if ($Count -le 0) { return 0 }
+  $maximumHeight = 0.0
+  for ($offset = 0; $offset -lt $Count; $offset += 1) {
+    $row = $null
+    try {
+      $row = $Sheet.Rows.Item($StartRow + $offset)
+      $currentHeight = [double]$row.RowHeight
+      if ($currentHeight -gt $MaxHeightPoints) {
+        $row.RowHeight = $MaxHeightPoints
+        $currentHeight = $MaxHeightPoints
+      }
+      $maximumHeight = [Math]::Max($maximumHeight, $currentHeight)
+    } finally {
+      Release-ComObject $row
+    }
+  }
+  return $maximumHeight
+}
+
 function Update-ContractSheet {
   param(
     [object]$Workbook,
@@ -1456,18 +1495,24 @@ function Update-ContractSheet {
 
     $processedColumns = 0
     foreach ($column in $columns) {
-      Update-MappedColumn $sheet $activeStart ([int]$sectionRows.partners - 1) $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null
-      Update-MappedColumn $sheet $partnerStart ([int]$sectionRows.expired - 1) $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null
-      Update-MappedColumn $sheet $expiredStart $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null
+      Update-MappedColumn $sheet $activeStart ([int]$sectionRows.partners - 1) $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.contractEventTemplates) $null
+      Update-MappedColumn $sheet $partnerStart ([int]$sectionRows.expired - 1) $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.contractEventTemplates) $null
+      Update-MappedColumn $sheet $expiredStart $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.contractEventTemplates) $null
       $processedColumns += 1
       Write-SyncProgress 95 "Обновление договоров: $processedColumns из $($columns.Count) колонок"
     }
+    $maximumRowHeight = @(
+      (Limit-ContractDataRowHeight $sheet $activeStart $records.active.Count),
+      (Limit-ContractDataRowHeight $sheet $partnerStart $records.partners.Count),
+      (Limit-ContractDataRowHeight $sheet $expiredStart $records.expired.Count)
+    ) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
     return [pscustomobject]@{
       Count = $contracts.Count
       Active = $records.active.Count
       Partners = $records.partners.Count
       Expired = $records.expired.Count
       LastRow = $lastRow
+      MaxRowHeightPoints = [double]$maximumRowHeight
     }
   } catch {
     throw "Ошибка обновления листа 'Реестр договоров': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
@@ -1811,6 +1856,7 @@ try {
     agentFormulaSkippedUnknownCount = $studentResult.AgentFormulaSkippedUnknownCount
     agentFormulaPreservedConstantCount = $studentResult.AgentFormulaPreservedConstantCount
     contracts = $contractResult.Count
+    contractMaxRowHeightPoints = $contractResult.MaxRowHeightPoints
     directExpenses = $expenseResult.Count
     generalExpenses = $generalExpenseResult.Count
     programs = $programPromoResult.Count

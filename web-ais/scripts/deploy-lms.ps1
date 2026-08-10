@@ -25,6 +25,7 @@ $runtimeMirrorFiles = @(
   "auth-lib.php",
   "services/ocr/server.py",
   "server-cli.js",
+  "scripts/sync-student-database.ps1",
   "student-import-worker.js",
   "vendor/mysql2-bundle.cjs"
 )
