@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.39",
+    version: "1.7.40",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.40",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Добавлена активация перетаскивания разделов, вкладок и статусов после удержания левой кнопки мыши в течение 1 секунды.",
+        "Мгновенное перетаскивание с Shift сохранено; короткий щелчок без удержания по-прежнему открывает выбранный элемент."
+      ]
+    },
     {
       version: "1.7.39",
       releasedAt: "2026-08-10",
@@ -638,6 +646,8 @@
   const CONTRACTS_TABLE_LAYOUT_VERSION = "agency-after-services";
   const SYSTEM_HELP_TOOLTIP_DELAY_MS = 1000;
   const DRAG_TOOLTIP_DELAY_MS = SYSTEM_HELP_TOOLTIP_DELAY_MS;
+  const LONG_PRESS_DRAG_DELAY_MS = 1000;
+  const LONG_PRESS_DRAG_MOVE_THRESHOLD = 8;
   const SHIFT_DRAG_EXEMPT_SELECTOR = [
     "[data-finance-row-drag]",
     "[data-employee-payment-row-drag]",
@@ -2914,6 +2924,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let fieldEditHistoryBound = false;
   let globalEscapeKeyBound = false;
   let shiftDragRequirementBound = false;
+  let longPressDragRequirementBound = false;
   let adminBeforeUnloadBound = false;
   let lastKnownClipboardText = "";
   let draggedNavItemId = "";
@@ -19037,13 +19048,13 @@ MAX - https://bizvmax.ru/zifra_plus
       if (isShiftDragExemptElement(element)) return;
       element.dataset.shiftDragEnabled = "true";
       element.draggable = shiftActive;
-      const instruction = "Shift: удерживайте клавишу во время перетаскивания.";
+      const instruction = "Перетаскивание: удерживайте ЛКМ 1 секунду или используйте Shift.";
       const currentTitle = String(
         element.getAttribute("title")
         || element.dataset.systemHelpSource
         || ""
       ).trim();
-      if (/\bShift\b/u.test(currentTitle)) return;
+      if (/ЛКМ 1 секунду/u.test(currentTitle)) return;
       const nextTitle = `${currentTitle || "Перетаскивание элемента."}\n${instruction}`;
       if (element.dataset.systemHelpSource) element.dataset.systemHelpSource = nextTitle;
       else element.setAttribute("title", nextTitle);
@@ -19089,6 +19100,121 @@ MAX - https://bizvmax.ru/zifra_plus
       event.stopImmediatePropagation();
       showSystemHelpTooltip(draggable);
     }, { capture: true });
+  }
+
+  function getLongPressDragContext(node) {
+    if (!(node instanceof Element)) return null;
+    const element = node.closest("[data-nav-item], [data-dashboard-student-status-item], [data-orderable-tab]");
+    if (!element) return null;
+    if (element.matches("[data-nav-item]")) {
+      const container = element.closest(".nav-list");
+      return container ? { type: "nav", element, container } : null;
+    }
+    if (element.matches("[data-dashboard-student-status-item]")) {
+      const container = element.closest("[data-dashboard-status-list]");
+      return container ? { type: "status", element, container } : null;
+    }
+    const container = element.closest("[data-orderable-tabs]");
+    return container ? { type: "tabs", element, container } : null;
+  }
+
+  function moveLongPressDragElement(context, clientX, clientY) {
+    const { type, element, container } = context;
+    const afterElement = type === "nav"
+      ? getNavItemDragAfterElement(container, clientY)
+      : type === "status"
+        ? getDashboardStatusDragAfterElement(container, clientY)
+        : getOrderableTabDragAfterElement(container, clientX);
+    if (afterElement) {
+      if (element.nextElementSibling === afterElement) return false;
+      container.insertBefore(element, afterElement);
+      return true;
+    }
+    if (element === container.lastElementChild) return false;
+    container.appendChild(element);
+    return true;
+  }
+
+  function commitLongPressDragOrder(context) {
+    if (context.type === "nav") {
+      syncNavItemOrderFromDom();
+      lastNavItemDragEndedAt = Date.now();
+    } else if (context.type === "status") {
+      syncDashboardStudentStatusOrderFromDom(context.container);
+      lastDashboardStatusDragEndedAt = Date.now();
+    } else {
+      syncOrderableTabOrderFromDom(context.container);
+    }
+  }
+
+  function bindLongPressDragRequirement() {
+    if (longPressDragRequirementBound) return;
+    longPressDragRequirementBound = true;
+    let pending = null;
+
+    const clearPending = ({ commit = false } = {}) => {
+      if (!pending) return;
+      const current = pending;
+      pending = null;
+      window.clearTimeout(current.timer);
+      current.element.classList.remove("is-long-press-pending", "is-long-press-dragging", "is-dragging");
+      current.element.setAttribute("aria-grabbed", "false");
+      document.body.classList.remove("long-press-dragging", "nav-item-dragging", "dashboard-status-dragging", "orderable-tab-dragging");
+      if (commit && current.moved) {
+        current.element.dataset.wasDragged = "true";
+        commitLongPressDragOrder(current);
+        window.setTimeout(() => {
+          if (current.element.dataset.wasDragged === "true") current.element.dataset.wasDragged = "";
+        }, 220);
+      }
+    };
+
+    document.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.shiftKey) return;
+      const context = getLongPressDragContext(event.target);
+      if (!context) return;
+      clearPending();
+      context.pointerId = event.pointerId;
+      context.startX = event.clientX;
+      context.startY = event.clientY;
+      context.active = false;
+      context.moved = false;
+      context.element.classList.add("is-long-press-pending");
+      context.timer = window.setTimeout(() => {
+        if (pending !== context || !context.element.isConnected) return;
+        context.active = true;
+        context.element.classList.remove("is-long-press-pending");
+        context.element.classList.add("is-long-press-dragging", "is-dragging");
+        context.element.setAttribute("aria-grabbed", "true");
+        document.body.classList.add("long-press-dragging");
+        if (context.type === "nav") document.body.classList.add("nav-item-dragging");
+        if (context.type === "status") document.body.classList.add("dashboard-status-dragging");
+        if (context.type === "tabs") document.body.classList.add("orderable-tab-dragging");
+        hideSystemHelpTooltip(context.element);
+      }, LONG_PRESS_DRAG_DELAY_MS);
+      pending = context;
+    }, { capture: true });
+
+    document.addEventListener("pointermove", (event) => {
+      if (!pending || event.pointerId !== pending.pointerId) return;
+      if (!pending.active) {
+        const distance = Math.hypot(event.clientX - pending.startX, event.clientY - pending.startY);
+        if (distance > LONG_PRESS_DRAG_MOVE_THRESHOLD) clearPending();
+        return;
+      }
+      event.preventDefault();
+      pending.moved = moveLongPressDragElement(pending, event.clientX, event.clientY) || pending.moved;
+    }, { capture: true });
+
+    document.addEventListener("pointerup", (event) => {
+      if (!pending || event.pointerId !== pending.pointerId) return;
+      clearPending({ commit: pending.active });
+    }, { capture: true });
+    document.addEventListener("pointercancel", (event) => {
+      if (!pending || event.pointerId !== pending.pointerId) return;
+      clearPending({ commit: pending.active });
+    }, { capture: true });
+    window.addEventListener("blur", () => clearPending());
   }
 
   function applyCardWindowPosition(cardWindow) {
@@ -19381,6 +19507,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindDirectExpenseNoteFilterOutsideClick();
     bindSystemHelpTooltips();
     bindShiftDragRequirement();
+    bindLongPressDragRequirement();
     bindCardWindowControls();
     bindNavItemOrderControls();
     bindDashboardStudentStatusOrderControls();

@@ -2660,6 +2660,19 @@ body.shift-drag-ready .dashboard-status-list .bar-row-link:active {
   cursor: grabbing;
 }
 
+[data-nav-item].is-long-press-pending,
+[data-dashboard-student-status-item].is-long-press-pending,
+[data-orderable-tab].is-long-press-pending {
+  cursor: progress;
+  box-shadow: inset 0 0 0 1px rgba(21, 128, 112, 0.18);
+}
+
+body.long-press-dragging,
+body.long-press-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
 .dashboard-status-list .bar-row-link.is-dragging {
   opacity: 0.32;
   transform: scale(0.99);
