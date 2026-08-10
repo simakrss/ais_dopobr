@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.37",
+    version: "1.7.38",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.38",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Исправлена критическая ошибка инициализации обработчиков интерфейса: восстановлены щелчки по всем разделам, таблицам, карточкам, фильтрам и вкладкам.",
+        "Проверено реальное переключение разделов и переход из статуса рабочего стола в отфильтрованный список слушателей."
+      ]
+    },
     {
       version: "1.7.37",
       releasedAt: "2026-08-10",
@@ -19372,7 +19380,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindCardWindowControls();
     bindNavItemOrderControls();
     bindDashboardStudentStatusOrderControls();
-    bindFieldUndoShortcut();
+    bindFieldEditHistory();
     bindStudentApplicationsImportEvents();
     bindFinanceDetailsEvents();
     initializeRecordFormSnapshot(document.getElementById("recordForm"));
