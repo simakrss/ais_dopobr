@@ -8551,6 +8551,37 @@ body.card-window-moving {
   font-size: 13px;
 }
 
+.program-landing-code-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 5px;
+  align-items: center;
+}
+
+.program-landing-page-open {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+}
+
+.program-landing-page-open svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.program-form-grid input[data-program-external-link-field] {
+  cursor: text;
+}
+
+.program-form-grid input[data-program-external-link-field]:hover {
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--line));
+}
+
 .program-form-grid label[data-field-key="name"],
 .program-form-grid label[data-field-key="shortName"],
 .program-form-grid label[data-field-key="promoSite"],

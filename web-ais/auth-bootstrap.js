@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260810-contract-events-xlsb-v1";
+  const AUTH_BUILD = "20260810-program-links-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

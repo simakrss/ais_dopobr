@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.31",
+    version: "1.7.32",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.32",
+      releasedAt: "2026-08-10",
+      changes: [
+        "В карточке программы рядом с кодом лендинга добавлена кнопка открытия страницы edu-plus.ru по указанному коду.",
+        "Ссылки в полях «На промо сайте» и «Ссылка на отчет по оценкам» открываются по Ctrl + щелчку."
+      ]
+    },
     {
       version: "1.7.31",
       releasedAt: "2026-08-10",
@@ -13741,7 +13749,11 @@ MAX - https://bizvmax.ru/zifra_plus
               <div class="program-tab-panel program-main-panel ${activeTab.id === "main" ? "is-active" : ""}" data-program-tab-panel="main" role="tabpanel" ${activeTab.id === "main" ? "" : "hidden"}>
                 <div class="program-main-content">
                   <div class="form-grid program-form-grid">
-                    ${mainFields.map((item) => renderField(item, record || {})).join("")}
+                    ${mainFields.map((item) => (
+                      item.key === "landingCode"
+                        ? renderProgramLandingCodeField(item, record || {})
+                        : renderField(item, record || {})
+                    )).join("")}
                   </div>
                   ${renderProgramAuthorSection(record || {})}
                 </div>
@@ -13768,6 +13780,40 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getProgramFieldsByTab(tabId) {
     return configs.programs.fields.filter((item) => item.options?.programTab === tabId);
+  }
+
+  function getProgramLandingPageUrl(value) {
+    const landingCode = String(value || "").trim();
+    if (!landingCode) return "";
+    const url = new URL("https://edu-plus.ru/");
+    url.searchParams.set("p", landingCode);
+    return url.href;
+  }
+
+  function renderProgramLandingCodeField(item, record) {
+    const value = String(record?.[item.key] ?? "");
+    const buttonLabel = "Открыть страницу лендинга по указанному коду";
+    return `
+      <label data-field-key="${escapeAttr(item.key)}">
+        <span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>
+        <div class="program-landing-code-control">
+          <input name="${escapeAttr(item.key)}" type="text" value="${escapeAttr(value)}" ${item.required ? "required" : ""}>
+          <button
+            class="icon-button program-landing-page-open"
+            data-action="open-program-landing-page"
+            type="button"
+            title="${escapeAttr(buttonLabel)}"
+            aria-label="${escapeAttr(buttonLabel)}"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M14 4h6v6"></path>
+              <path d="M20 4l-9 9"></path>
+              <path d="M18 13v6H5V6h6"></path>
+            </svg>
+          </button>
+        </div>
+      </label>
+    `;
   }
 
   function getProgramOperationalDocumentTooltip(resourceType) {
@@ -14156,7 +14202,12 @@ MAX - https://bizvmax.ru/zifra_plus
     if (state.modal?.config === "programs" && item.key === "hours") {
       return renderProgramHoursField(label, value, required);
     }
-    return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${layoutOptions.readOnly ? "readonly" : ""}></label>`;
+    const isProgramExternalLink = state.modal?.config === "programs"
+      && ["promoSite", "gradeReportUrl"].includes(item.key);
+    const programExternalLinkAttrs = isProgramExternalLink
+      ? `data-program-external-link-field="${escapeAttr(item.key)}" title="Ctrl + щелчок: открыть ссылку из поля «${escapeAttr(item.label)}»"`
+      : "";
+    return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${layoutOptions.readOnly ? "readonly" : ""} ${programExternalLinkAttrs}></label>`;
   }
 
   function renderStudentModal(record) {
@@ -19451,6 +19502,11 @@ MAX - https://bizvmax.ru/zifra_plus
     bindProgramAuthorPaymentListActions(document.querySelector("[data-program-author-payment-list]"));
     document.querySelectorAll("[data-action='open-program-op-resource']").forEach((button) => {
       button.addEventListener("click", openProgramOperationalDocumentResource);
+    });
+    document.querySelector("[data-action='open-program-landing-page']")
+      ?.addEventListener("click", openProgramLandingPage);
+    document.querySelectorAll("[data-program-external-link-field]").forEach((input) => {
+      input.addEventListener("click", openProgramExternalLinkField);
     });
     bindPaymentFormulaEditors();
     bindProgramPromoEditors();
@@ -25677,6 +25733,34 @@ MAX - https://bizvmax.ru/zifra_plus
       || fullPath.some((part) => part === "." || part === ".." || /[\\/]/u.test(part))
     ) return "";
     return `https://disk.yandex.ru/client/disk/${fullPath.map(encodeURIComponent).join("/")}`;
+  }
+
+  function openProgramLandingPage(event) {
+    event?.preventDefault();
+    const form = event?.currentTarget?.closest("form") || document.querySelector("#recordForm[data-config='programs']");
+    const input = form?.elements?.landingCode;
+    const url = getProgramLandingPageUrl(input?.value || "");
+    if (!url) {
+      alert("Укажите код лендинга.");
+      input?.focus({ preventScroll: true });
+      return;
+    }
+    openExternalUrl(url);
+  }
+
+  function openProgramExternalLinkField(event) {
+    if (!(event.ctrlKey || event.metaKey) || event.button !== 0) return;
+    const input = event.currentTarget;
+    const url = normalizeExternalUrl(input?.value || "");
+    event.preventDefault();
+    event.stopPropagation();
+    if (!url) {
+      const label = input?.closest("label")?.querySelector(":scope > span")?.textContent?.trim() || "Ссылка";
+      alert(`В поле «${label}» не указана корректная ссылка.`);
+      input?.focus({ preventScroll: true });
+      return;
+    }
+    openExternalUrl(url);
   }
 
   async function openProgramOperationalDocumentResource(event) {
