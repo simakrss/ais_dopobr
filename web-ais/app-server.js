@@ -5713,7 +5713,12 @@ async function mutateSharedRecordLockMySql(pool, action, entityType, entityId, c
       const now = Date.now();
       const existing = sharedRecordLockFromMySqlRow(rows[0]);
       const existingActive = existing && new Date(existing.expiresAt).getTime() > now;
-      if (existingActive && existing.clientId !== clientId) {
+      const takenOver = Boolean(
+        action === "takeover"
+        && existingActive
+        && existing.clientId !== clientId
+      );
+      if (existingActive && existing.clientId !== clientId && action !== "takeover") {
         await connection.commit();
         return { locked: true, lock: publicSharedRecordLock(existing, clientId), source: "mysql" };
       }
@@ -5757,6 +5762,7 @@ async function mutateSharedRecordLockMySql(pool, action, entityType, entityId, c
       return {
         locked: false,
         released: false,
+        takenOver,
         lock: publicSharedRecordLock(lock, clientId),
         revision: now,
         ttlMs: SHARED_RECORD_LOCK_TTL_MS,
@@ -5932,7 +5938,7 @@ function publicSharedRecordLock(lock, clientId = "") {
 
 async function mutateSharedRecordLock(body, authUser) {
   const action = String(body?.action || "acquire").trim().toLowerCase();
-  if (!new Set(["acquire", "renew", "release"]).has(action)) {
+  if (!new Set(["acquire", "renew", "release", "takeover"]).has(action)) {
     throw new Error("Неизвестное действие с блокировкой записи.");
   }
   const entityType = normalizeRecordLockIdentifier(body?.entityType, "Раздел");
@@ -5960,13 +5966,20 @@ async function mutateSharedRecordLock(body, authUser) {
       const now = Date.now();
       const locks = activeSharedRecordLocks(current.document, now);
       const existing = locks.find((lock) => lock.key === key);
-      if (action !== "release" && existing && existing.clientId !== clientId) {
+      const takenOver = Boolean(
+        action === "takeover"
+        && existing
+        && existing.clientId !== clientId
+      );
+      if (action !== "release" && action !== "takeover" && existing && existing.clientId !== clientId) {
         return { locked: true, lock: publicSharedRecordLock(existing, clientId) };
       }
       let nextLocks = locks.filter((lock) => lock.key !== key);
       let lock = null;
       if (action !== "release") {
-        const acquiredAt = existing?.acquiredAt || new Date(now).toISOString();
+        const acquiredAt = existing && existing.clientId === clientId
+          ? existing.acquiredAt
+          : new Date(now).toISOString();
         lock = {
           key,
           entityType,
@@ -5992,6 +6005,7 @@ async function mutateSharedRecordLock(body, authUser) {
       return {
         locked: false,
         released: action === "release",
+        takenOver,
         lock: lock ? publicSharedRecordLock(lock, clientId) : null,
         revision: document.revision,
         ttlMs: SHARED_RECORD_LOCK_TTL_MS,
@@ -6025,13 +6039,24 @@ async function handleSharedRecordLocks(req, res, authUser, requestUrl) {
       return;
     }
     if (req.method === "POST") {
-      const result = await mutateSharedRecordLock(await readJsonBody(req), authUser);
+      const body = await readJsonBody(req);
+      const result = await mutateSharedRecordLock(body, authUser);
       if (result.locked) {
         sendJson(res, 423, {
           error: "Запись уже редактируется другим пользователем.",
           ...result
         });
         return;
+      }
+      if (result.takenOver) {
+        await safelyAppendAuditEntry({
+          action: "Перехвачена блокировка записи",
+          area: "Блокировки записей",
+          details: `${String(body.entityType || "Запись")}: ${String(body.entityId || "")}`,
+          entityType: String(body.entityType || ""),
+          entityId: String(body.entityId || ""),
+          source: "record-lock"
+        }, authUser, req);
       }
       sendJson(res, 200, { ok: true, ...result });
       return;

@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.44",
+    version: "1.7.45",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.45",
+      releasedAt: "2026-08-10",
+      changes: [
+        "В карточках и списках добавлено постоянное отображение блокировки записи с указанием владельца; при конфликте текущая сессия может перехватить блокировку и запретить сохранение в других сессиях.",
+        "Изменения событий слушателей и сотрудников сохраняются в черновике до сохранения карточки и записываются в журнал одной понятной строкой со статусом и датой без ложных технических изменений."
+      ]
+    },
     {
       version: "1.7.44",
       releasedAt: "2026-08-10",
@@ -5619,6 +5627,59 @@ MAX - https://bizvmax.ru/zifra_plus
     return `${prefix}. Сейчас запись редактирует ${owner}.${expiresLabel}`;
   }
 
+  function getCardRecordLock(record = {}) {
+    const configId = String(state.modal?.config || "");
+    const entityId = String(record?.id || state.modal?.id || "").trim();
+    if (!configId || !entityId) return null;
+    const entityType = recordLockEntityType(configId);
+    const key = recordLockKey(entityType, entityId);
+    if (activeRecordLock?.key === key) {
+      return { ...activeRecordLock, ownedByClient: true };
+    }
+    return getRecordLock(entityType, entityId);
+  }
+
+  function renderCardRecordLockStatus(record = {}) {
+    const lock = getCardRecordLock(record);
+    if (!lock) return "";
+    const owned = Boolean(lock.ownedByClient);
+    const owner = String(lock.ownerName || lock.ownerLogin || "другой пользователь").trim();
+    const label = owned ? "Запись заблокирована вами" : `Запись заблокирована: ${owner}`;
+    return `
+      <span
+        class="card-record-lock-status ${owned ? "is-owned" : "is-foreign"}"
+        data-card-record-lock-status
+        role="status"
+        title="${escapeAttr(owned ? "Другие сессии не могут изменить запись, пока карточка открыта" : formatRecordLockMessage(lock))}"
+      >
+        <span aria-hidden="true">🔒</span>
+        <span>${escapeHtml(label)}</span>
+      </span>
+    `;
+  }
+
+  function updateCardRecordLockStatusUi(lock = getCardRecordLock()) {
+    const current = document.querySelector("[data-card-record-lock-status]");
+    const title = document.querySelector(".student-modal-title, .contract-modal-title, #recordForm .modal-head > div:first-child");
+    if (!lock) {
+      current?.remove();
+      return;
+    }
+    const owned = Boolean(lock.ownedByClient || activeRecordLock?.key === recordLockKey(lock.entityType, lock.entityId));
+    const owner = String(lock.ownerName || lock.ownerLogin || "другой пользователь").trim();
+    const label = owned ? "Запись заблокирована вами" : `Запись заблокирована: ${owner}`;
+    const markup = `
+      <span
+        class="card-record-lock-status ${owned ? "is-owned" : "is-foreign"}"
+        data-card-record-lock-status
+        role="status"
+        title="${escapeAttr(owned ? "Другие сессии не могут изменить запись, пока карточка открыта" : formatRecordLockMessage(lock))}"
+      ><span aria-hidden="true">🔒</span><span>${escapeHtml(label)}</span></span>
+    `;
+    if (current) current.outerHTML = markup;
+    else title?.insertAdjacentHTML("beforeend", markup);
+  }
+
   async function requestSharedRecordLocks(options = {}) {
     const method = String(options.method || "GET").toUpperCase();
     const query = method === "GET" ? `?clientId=${encodeURIComponent(recordLockClientId)}` : "";
@@ -5655,7 +5716,15 @@ MAX - https://bizvmax.ru/zifra_plus
       const previousSignature = JSON.stringify([...recordLocks.entries()]);
       const nextSignature = JSON.stringify([...nextLocks.entries()]);
       recordLocks = nextLocks;
-      if (renderAfter && previousSignature !== nextSignature && !state.modal) render();
+      const currentActiveLock = activeRecordLock;
+      const currentRemoteLock = currentActiveLock ? nextLocks.get(currentActiveLock.key) : null;
+      if (currentActiveLock && currentRemoteLock && !currentRemoteLock.ownedByClient) {
+        markActiveRecordLockLost(currentActiveLock, currentRemoteLock);
+      }
+      if (renderAfter && previousSignature !== nextSignature) {
+        if (state.modal) updateCardRecordLockStatusUi(currentRemoteLock || getCardRecordLock());
+        else render();
+      }
     } catch (error) {
       console.warn("Не удалось обновить список заблокированных записей", error);
     } finally {
@@ -5668,10 +5737,11 @@ MAX - https://bizvmax.ru/zifra_plus
     recordLockHeartbeatTimer = 0;
   }
 
-  function markActiveRecordLockLost(lock = activeRecordLock) {
+  function markActiveRecordLockLost(lock = activeRecordLock, replacementLock = null) {
     if (!lock || activeRecordLock?.key !== lock.key) return;
     stopRecordLockHeartbeat();
     activeRecordLock = null;
+    if (replacementLock) recordLocks.set(lock.key, replacementLock);
     const form = document.getElementById("recordForm");
     if (form) {
       form.dataset.recordLockLost = "true";
@@ -5680,10 +5750,12 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!form.querySelector("[data-record-lock-warning]")) {
         form.querySelector(".modal-head")?.insertAdjacentHTML("afterend", `
           <div class="record-lock-warning" data-record-lock-warning role="alert">
-            Запись больше не заблокирована за вами. Сохранение отключено; скопируйте введённые данные и откройте запись повторно.
+            <span>Запись больше не заблокирована за вами. Сохранение отключено.</span>
+            <button class="ghost-button" data-action="takeover-current-record-lock" type="button">Перехватить блокировку</button>
           </div>
         `);
       }
+      updateCardRecordLockStatusUi(replacementLock);
     }
   }
 
@@ -5706,8 +5778,9 @@ MAX - https://bizvmax.ru/zifra_plus
           activeRecordLock = { ...lock, ...payload.lock, key: lock.key };
         }
       } catch (error) {
-        markActiveRecordLockLost(lock);
-        alert(formatRecordLockMessage(error.payload?.lock || {}, "Блокировка записи потеряна"));
+        const replacementLock = error.payload?.lock || null;
+        markActiveRecordLockLost(lock, replacementLock);
+        alert(formatRecordLockMessage(replacementLock || {}, "Блокировка записи потеряна"));
       }
     }, RECORD_LOCK_HEARTBEAT_INTERVAL_MS);
   }
@@ -5801,17 +5874,18 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
-  async function acquireRecordLock(entityType, entityId) {
+  async function acquireRecordLock(entityType, entityId, options = {}) {
     const id = String(entityId || "").trim();
     if (!id) return true;
     const key = recordLockKey(entityType, id);
-    if (activeRecordLock?.key === key) return true;
+    const takeover = Boolean(options.takeover);
+    if (activeRecordLock?.key === key && !takeover) return true;
     let payload;
     try {
       payload = await requestSharedRecordLocks({
         method: "POST",
         body: {
-          action: "acquire",
+          action: takeover ? "takeover" : "acquire",
           entityType,
           entityId: id,
           clientId: recordLockClientId
@@ -5821,8 +5895,13 @@ MAX - https://bizvmax.ru/zifra_plus
       if (error.status === 423) {
         const lock = error.payload?.lock || {};
         recordLocks.set(key, lock);
-        alert(formatRecordLockMessage(lock));
         if (!state.modal) render();
+        const confirmed = confirm([
+          formatRecordLockMessage(lock),
+          "",
+          "Нажмите OK, чтобы разблокировать запись для текущей сессии и заблокировать её для других сессий. Несохранённые изменения в другой сессии не будут применены."
+        ].join("\n"));
+        if (confirmed) return acquireRecordLock(entityType, id, { takeover: true });
         return false;
       }
       alert(`Не удалось заблокировать запись для редактирования: ${error.message}`);
@@ -5836,6 +5915,14 @@ MAX - https://bizvmax.ru/zifra_plus
       key
     };
     recordLocks.set(key, { ...activeRecordLock, ownedByClient: true });
+    const form = document.getElementById("recordForm");
+    if (form && form.dataset.id === id && form.dataset.config) {
+      delete form.dataset.recordLockLost;
+      const saveButton = form.querySelector('button[type="submit"]');
+      if (saveButton) saveButton.disabled = false;
+      form.querySelector("[data-record-lock-warning]")?.remove();
+      updateCardRecordLockStatusUi({ ...activeRecordLock, ownedByClient: true });
+    }
     startRecordLockHeartbeat();
     if (previousLock && previousLock.key !== key) {
       await releaseRecordLock(previousLock);
@@ -5848,6 +5935,17 @@ MAX - https://bizvmax.ru/zifra_plus
       startRecordLockHeartbeat();
     }
     return true;
+  }
+
+  async function takeoverCurrentRecordLock(button) {
+    const form = document.getElementById("recordForm");
+    const configId = String(form?.dataset.config || state.modal?.config || "");
+    const entityId = String(form?.dataset.id || state.modal?.id || "").trim();
+    if (!configId || !entityId) return;
+    if (!confirm("Перехватить блокировку записи? Текущая сессия получит право сохранения, а остальные сессии будут заблокированы.")) return;
+    if (button) button.disabled = true;
+    const acquired = await acquireRecordLock(recordLockEntityType(configId), entityId, { takeover: true });
+    if (!acquired && button) button.disabled = false;
   }
 
   function persistStateToLocalStorage(data = state.data) {
@@ -8744,15 +8842,21 @@ MAX - https://bizvmax.ru/zifra_plus
             ${pageRows.map((row) => {
               const recordLock = getRecordLock(recordLockEntityType(configId), row.id);
               const lockedByOther = Boolean(recordLock && !recordLock.ownedByClient);
+              const lockedByCurrentSession = Boolean(recordLock?.ownedByClient);
               const accountingPending = configId === "contracts" && !isChecked(row.accountingRecorded);
               const trainingDeadlinePassed = configId === "students" && isStudentTrainingDeadlinePassed(row);
               const rowClasses = [
                 lastEdited.config === configId && String(lastEdited.id || "") === String(row.id || "") ? "is-last-edited" : "",
                 lockedByOther ? "is-record-locked" : "",
+                lockedByCurrentSession ? "is-record-locked-by-current" : "",
                 accountingPending ? "contract-accounting-pending" : "",
                 trainingDeadlinePassed ? "student-training-expired" : ""
               ].filter(Boolean).join(" ");
-              const lockTitle = lockedByOther ? formatRecordLockMessage(recordLock) : "";
+              const lockTitle = lockedByOther
+                ? formatRecordLockMessage(recordLock)
+                : lockedByCurrentSession
+                  ? "Запись заблокирована текущей сессией"
+                  : "";
               const rowTitle = [
                 lockTitle,
                 accountingPending ? "Договор не передан в бухгалтерию" : "",
@@ -8772,7 +8876,7 @@ MAX - https://bizvmax.ru/zifra_plus
                       <td class="table-primary-col" ${attrs} ${style}>
                         <button class="table-edit-link" data-action="edit" data-config="${configId}" data-id="${row.id}" type="button" ${lockedByOther ? `aria-label="${escapeAttr(lockTitle)}"` : ""}>
                           ${value}
-                          ${lockedByOther ? '<span class="record-lock-indicator" aria-hidden="true">🔒</span>' : ""}
+                          ${recordLock ? '<span class="record-lock-indicator" aria-hidden="true">🔒</span>' : ""}
                         </button>
                       </td>
                     `;
@@ -12233,6 +12337,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <div>
                 <p class="eyebrow">${escapeHtml(config.title)}</p>
                 <h2>${title}</h2>
+                ${renderCardRecordLockStatus(record || {})}
               </div>
               <div class="modal-head-actions">
                 <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
@@ -13753,6 +13858,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 <p class="eyebrow">${escapeHtml(configs.contracts.title)}</p>
                 <h2>${escapeHtml(title)}</h2>
                 ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
+                ${renderCardRecordLockStatus(record)}
               </div>
               <div class="modal-head-actions contract-modal-actions">
                 <div class="student-card-primary-actions">
@@ -13935,6 +14041,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <div>
                 <p class="eyebrow">${escapeHtml(config.title)}</p>
                 <h2>${title}</h2>
+                ${renderCardRecordLockStatus(record)}
               </div>
               <div class="modal-head-actions">
                 <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
@@ -14019,6 +14126,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <div>
                 <p class="eyebrow">${escapeHtml(config.title)}</p>
                 <h2>${title}</h2>
+                ${renderCardRecordLockStatus(record || {})}
               </div>
               <div class="modal-head-actions">
                 <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
@@ -14545,6 +14653,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <div class="student-modal-title">
                 <h2>${escapeHtml(title)}</h2>
                 ${programTitle ? `<p>${escapeHtml(programTitle)}</p>` : ""}
+                ${renderCardRecordLockStatus(record)}
               </div>
               <div class="modal-head-actions">
                 <div class="student-card-primary-actions">
@@ -16182,6 +16291,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </div>
       </section>
+      </div>
     `;
   }
 
@@ -16258,6 +16368,19 @@ MAX - https://bizvmax.ru/zifra_plus
     if (input) input.value = unique(values.filter(Boolean)).join(",");
   }
 
+  function syncCardEventDraftFromDom() {
+    if (!state.modal || !["students", "contracts"].includes(state.modal.config)) return;
+    const form = document.getElementById("recordForm");
+    if (!form) return;
+    const eventValues = {};
+    form.querySelectorAll("[name^='event_'], [name='eventOrder'], [name='eventDeleted'], [name='eventCustomKeys']")
+      .forEach((control) => {
+        if (control.name) eventValues[control.name] = String(control.value || "");
+      });
+    state.modal.draft = { ...(state.modal.draft || {}), ...eventValues };
+    state.modal.hasDraftChanges = true;
+  }
+
   function getEventDragAfterElement(list, y) {
     const rows = Array.from(list.querySelectorAll(".student-event-row:not(.is-dragging)"));
     return rows.reduce((closest, row) => {
@@ -16311,6 +16434,7 @@ MAX - https://bizvmax.ru/zifra_plus
         row.dataset.wasDragged = "";
       }, 150);
       syncStudentEventOrder();
+      syncCardEventDraftFromDom();
     });
     row.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -16361,6 +16485,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const row = list.querySelector(`.student-event-row[data-event-key="${CSS.escape(key)}"]`);
     if (row) bindStudentEventRow(row);
     syncStudentEventOrder();
+    syncCardEventDraftFromDom();
   }
 
   function deleteStudentEvent(event) {
@@ -16378,6 +16503,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     row.remove();
     syncStudentEventOrder();
+    syncCardEventDraftFromDom();
   }
 
   function renderStudentField(item, record) {
@@ -17227,6 +17353,7 @@ MAX - https://bizvmax.ru/zifra_plus
     row.classList.toggle("is-selected", Boolean(nextState));
     row.classList.toggle("has-date", nextState === "dated");
     dateLabel.textContent = nextState === "dated" ? dateRu(dateInput.value) : "";
+    syncCardEventDraftFromDom();
   }
 
   function openStudentEventEditor(row, clientX = 0, clientY = 0) {
@@ -17285,6 +17412,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (checkbox) checkbox.checked = isSelected;
     row.classList.toggle("is-selected", isSelected);
     row.classList.toggle("has-date", stateInput?.value === "dated");
+    syncCardEventDraftFromDom();
     closeStudentEventEditor();
   }
 
@@ -19874,6 +20002,8 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.querySelector("[data-action='open-student-audit-log']")
       ?.addEventListener("click", openStudentAuditLog);
+    document.querySelector("[data-action='takeover-current-record-lock']")
+      ?.addEventListener("click", (event) => takeoverCurrentRecordLock(event.currentTarget));
     document.querySelectorAll("[data-action='close-student-audit-log']").forEach((element) => {
       element.addEventListener("click", (event) => {
         if (element.matches("button") || event.target === element) closeStudentAuditLog();
@@ -24833,7 +24963,7 @@ MAX - https://bizvmax.ru/zifra_plus
         entityType: config.collection,
         entityId: savedId,
         entityLabel,
-        changes: buildAuditChanges(beforeRecord, nextRecord, fields)
+        changes: buildRecordAuditChanges(formElement.dataset.config, beforeRecord, nextRecord, fields)
       });
     } else {
       savedId = makeId(config.collection);
@@ -24844,7 +24974,7 @@ MAX - https://bizvmax.ru/zifra_plus
         entityType: config.collection,
         entityId: savedId,
         entityLabel,
-        changes: buildAuditChanges({}, nextRecord, fields)
+        changes: buildRecordAuditChanges(formElement.dataset.config, {}, nextRecord, fields)
       });
     }
     if (isStudentCard || formElement.dataset.config === "directExpenses") {
@@ -34537,6 +34667,82 @@ MAX - https://bizvmax.ru/zifra_plus
       if (oldValue === newValue) return [];
       return [{ field: key, label: labels.get(key) || key, before: oldValue, after: newValue }];
     }).slice(0, AUDIT_CLIENT_MAX_CHANGES);
+  }
+
+  function isEventAuditValueField(key) {
+    return /^event_[A-Za-z0-9_-]+_(state|date|label)$/.test(String(key || ""));
+  }
+
+  function getEventAuditKeys(before = {}, after = {}, templates = []) {
+    const keys = new Set((templates || []).map((event) => event.key));
+    [before, after].forEach((record) => {
+      csvList(record?.eventCustomKeys).forEach((key) => keys.add(key));
+      Object.keys(record || {}).forEach((fieldKey) => {
+        const match = /^event_([A-Za-z0-9_-]+)_(?:state|date|label)$/.exec(fieldKey);
+        if (match) keys.add(match[1]);
+      });
+    });
+    return [...keys];
+  }
+
+  function getEventAuditSnapshot(record = {}, eventKey = "", defaultLabel = "") {
+    const stateValue = normalizeEventState(
+      record[`event_${eventKey}_state`],
+      record[`event_${eventKey}_date`]
+    );
+    const dateValue = stateValue === "dated"
+      ? String(record[`event_${eventKey}_date`] || "").trim()
+      : "";
+    const label = String(record[`event_${eventKey}_label`] || defaultLabel || "Событие").trim() || "Событие";
+    const value = stateValue === "dated"
+      ? `Выполнено${dateValue ? ` · ${dateRu(dateValue)}` : ""}`
+      : stateValue === "checked"
+        ? "Выполнено без даты"
+        : "Не выполнено";
+    return { stateValue, dateValue, label, value };
+  }
+
+  function buildCardEventAuditChanges(before = {}, after = {}, templates = []) {
+    const templateLabels = new Map((templates || []).map((event) => [event.key, event.label]));
+    return getEventAuditKeys(before, after, templates).flatMap((eventKey) => {
+      const defaultLabel = templateLabels.get(eventKey) || "";
+      const previous = getEventAuditSnapshot(before, eventKey, defaultLabel);
+      const next = getEventAuditSnapshot(after, eventKey, defaultLabel);
+      const changes = [];
+      if (previous.stateValue !== next.stateValue || previous.dateValue !== next.dateValue) {
+        changes.push({
+          field: `event_${eventKey}`,
+          label: `Событие: ${next.label || previous.label}`,
+          before: previous.value,
+          after: next.value
+        });
+      }
+      if (previous.label !== next.label) {
+        changes.push({
+          field: `event_${eventKey}_label`,
+          label: `Название события: ${previous.label}`,
+          before: previous.label,
+          after: next.label
+        });
+      }
+      return changes;
+    });
+  }
+
+  function buildRecordAuditChanges(configId, before = {}, after = {}, fields = []) {
+    const eventTemplates = configId === "students"
+      ? studentEventTemplates
+      : configId === "contracts"
+        ? contractEventTemplates
+        : null;
+    if (!eventTemplates) return buildAuditChanges(before, after, fields);
+    const ordinaryFields = (fields || []).filter((field) => !isEventAuditValueField(field.key));
+    const ordinaryChanges = buildAuditChanges(before, after, ordinaryFields)
+      .filter((change) => !isEventAuditValueField(change.field));
+    return [
+      ...ordinaryChanges,
+      ...buildCardEventAuditChanges(before, after, eventTemplates)
+    ].slice(0, AUDIT_CLIENT_MAX_CHANGES);
   }
 
   async function postAuditEntry(entry) {

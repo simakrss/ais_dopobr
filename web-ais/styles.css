@@ -2541,6 +2541,15 @@ body.is-resizing-column {
   box-shadow: inset 4px 0 0 var(--red);
 }
 
+.data-table tr.is-record-locked-by-current td,
+.data-table tr.is-record-locked-by-current:hover td {
+  background: #edfdf8;
+}
+
+.data-table tr.is-record-locked-by-current td:first-child {
+  box-shadow: inset 4px 0 0 var(--teal);
+}
+
 .select-col {
   width: 44px;
   text-align: center;
@@ -2587,6 +2596,39 @@ body.is-resizing-column {
   color: #8b1e13;
   font-size: 13px;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.record-lock-warning .ghost-button {
+  flex: 0 0 auto;
+  border-color: #d97768;
+  background: #fff;
+  color: #8b1e13;
+}
+
+.card-record-lock-status {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid #99d8ca;
+  border-radius: 999px;
+  background: #e9fbf6;
+  color: #0f6f64;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.card-record-lock-status.is-foreign {
+  border-color: #efb5ad;
+  background: #fff1ef;
+  color: #8b1e13;
 }
 
 .actions-col,

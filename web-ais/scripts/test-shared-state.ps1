@@ -137,9 +137,17 @@ try {
     $lockedSaveStatus = [int]$_.Exception.Response.StatusCode
   }
 
-  $releaseA = @{ action = "release"; entityType = "contracts"; entityId = "contract-1"; clientId = "test-client-a" } | ConvertTo-Json -Compress
-  Invoke-RestMethod -Method Post -Uri $locksUrl -ContentType "application/json" -Body $releaseA -TimeoutSec 15 | Out-Null
-  $acquiredAfterRelease = Invoke-RestMethod -Method Post -Uri $locksUrl -ContentType "application/json" -Body $lockB -TimeoutSec 15
+  $takeoverB = @{ action = "takeover"; entityType = "contracts"; entityId = "contract-1"; clientId = "test-client-b" } | ConvertTo-Json -Compress
+  $takenOver = Invoke-RestMethod -Method Post -Uri $locksUrl -ContentType "application/json" -Body $takeoverB -TimeoutSec 15
+  $firstClientAfterTakeoverStatus = 0
+  try {
+    Invoke-WebRequest -UseBasicParsing -Method Post -Uri $locksUrl -ContentType "application/json" -Body $lockA -TimeoutSec 15 | Out-Null
+  } catch {
+    $firstClientAfterTakeoverStatus = [int]$_.Exception.Response.StatusCode
+  }
+  $listAfterTakeover = Invoke-RestMethod -Method Get -Uri "$locksUrl`?clientId=test-client-b" -TimeoutSec 15
+  $releaseB = @{ action = "release"; entityType = "contracts"; entityId = "contract-1"; clientId = "test-client-b" } | ConvertTo-Json -Compress
+  Invoke-RestMethod -Method Post -Uri $locksUrl -ContentType "application/json" -Body $releaseB -TimeoutSec 15 | Out-Null
   $metadata = Invoke-RestMethod -Method Get -Uri "$url`?metadata=1" -TimeoutSec 15
 
   [pscustomobject]@{
@@ -155,7 +163,9 @@ try {
     LockOwner = [string]$acquired.lock.ownerLogin
     SecondLockStatus = $secondLockStatus
     LockedSaveStatus = $lockedSaveStatus
-    LockAcquiredAfterRelease = [bool](-not $acquiredAfterRelease.locked)
+    LockTakenOver = [bool]$takenOver.takenOver
+    TakeoverOwnerIsCurrentSession = [bool]($listAfterTakeover.locks | Where-Object { $_.entityId -eq "contract-1" -and $_.ownedByClient })
+    FirstClientAfterTakeoverStatus = $firstClientAfterTakeoverStatus
     MetadataVersionTag = [string]$metadata.versionTag
     StderrBytes = (Get-Item -LiteralPath $stderrPath).Length
   } | ConvertTo-Json -Compress
