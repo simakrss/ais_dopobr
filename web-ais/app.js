@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.24",
+    version: "1.7.25",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.25",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Заголовок и пояснение промосообщений перенесены из рабочей области в примечание вкладки «Промосообщение».",
+        "Примечание показывается в стандартной системной подсказке при наведении на вкладку."
+      ]
+    },
     {
       version: "1.7.24",
       releasedAt: "2026-08-10",
@@ -13630,7 +13638,11 @@ MAX - https://bizvmax.ru/zifra_plus
       { id: "main", label: "Основное" },
       { id: "trainingPlan", label: "Учебный план" },
       { id: "characteristics", label: "Характеристики" },
-      { id: "promo", label: "Промосообщение" },
+      {
+        id: "promo",
+        label: "Промосообщение",
+        note: "Промосообщения программы\nТексты загружаются из примечаний к колонкам «Промосообщение1» и «Промосообщение2» листа «Реестр программ»."
+      },
       { id: "commission", label: "Комиссия" }
     ]);
     const activeTab = programTabs.find((tab) => tab.id === state.programCardTab) || programTabs[0];
@@ -13672,6 +13684,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     role="tab"
                     aria-selected="${tab.id === activeTab.id ? "true" : "false"}"
                     tabindex="${tab.id === activeTab.id ? "0" : "-1"}"
+                    ${tab.note ? `title="${escapeMultilineAttr(tab.note)}"` : ""}
                   >${escapeHtml(tab.label)}</button>
                 `).join("")}
               </div>
@@ -13804,12 +13817,6 @@ MAX - https://bizvmax.ru/zifra_plus
     const fields = getProgramFieldsByTab("promo");
     return `
       <section class="form-section program-promo-section">
-        <div class="form-section-head">
-          <div>
-            <h3>Промосообщения программы</h3>
-            <p>Тексты загружаются из примечаний к колонкам «Промосообщение1» и «Промосообщение2» листа «Реестр программ».</p>
-          </div>
-        </div>
         <div class="program-promo-grid">
           ${fields.map((item) => renderProgramPromoMessageEditor(item, record)).join("")}
         </div>
