@@ -2663,8 +2663,18 @@ body.shift-drag-ready .dashboard-status-list .bar-row-link:active {
 [data-nav-item].is-long-press-pending,
 [data-dashboard-student-status-item].is-long-press-pending,
 [data-orderable-tab].is-long-press-pending {
-  cursor: progress;
+  cursor: default;
   box-shadow: inset 0 0 0 1px rgba(21, 128, 112, 0.18);
+}
+
+[data-nav-item].is-long-press-ready,
+[data-dashboard-student-status-item].is-long-press-ready,
+[data-orderable-tab].is-long-press-ready,
+body.long-press-drag-ready [data-nav-item].is-long-press-ready,
+body.long-press-drag-ready [data-dashboard-student-status-item].is-long-press-ready,
+body.long-press-drag-ready [data-orderable-tab].is-long-press-ready {
+  cursor: grab !important;
+  box-shadow: inset 0 0 0 2px rgba(21, 128, 112, 0.42);
 }
 
 body.long-press-dragging,

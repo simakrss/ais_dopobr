@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.41",
+    version: "1.7.42",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.42",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Удержание левой кнопки мыши в течение 1 секунды теперь явно переводит раздел, вкладку или статус слушателя в состояние готовности к переносу с курсором-рукой.",
+        "Повышена устойчивость перетаскивания: допускается небольшое движение во время удержания, указатель закрепляется за элементом, а порядок сохраняется после завершения переноса."
+      ]
+    },
     {
       version: "1.7.41",
       releasedAt: "2026-08-10",
@@ -655,7 +663,8 @@
   const SYSTEM_HELP_TOOLTIP_DELAY_MS = 1000;
   const DRAG_TOOLTIP_DELAY_MS = SYSTEM_HELP_TOOLTIP_DELAY_MS;
   const LONG_PRESS_DRAG_DELAY_MS = 1000;
-  const LONG_PRESS_DRAG_MOVE_THRESHOLD = 8;
+  const LONG_PRESS_DRAG_CANCEL_THRESHOLD = 24;
+  const LONG_PRESS_DRAG_START_THRESHOLD = 3;
   const SHIFT_DRAG_EXEMPT_SELECTOR = [
     "[data-finance-row-drag]",
     "[data-employee-payment-row-drag]",
@@ -19186,10 +19195,20 @@ MAX - https://bizvmax.ru/zifra_plus
       const current = pending;
       pending = null;
       window.clearTimeout(current.timer);
-      current.element.classList.remove("is-long-press-pending", "is-long-press-dragging", "is-dragging");
+      if (current.pointerCaptured) {
+        try {
+          current.element.releasePointerCapture(current.pointerId);
+        } catch {
+          // Указатель уже мог быть освобождён браузером при завершении жеста.
+        }
+      }
+      current.element.classList.remove("is-long-press-pending", "is-long-press-ready", "is-long-press-dragging", "is-dragging");
       current.element.setAttribute("aria-grabbed", "false");
-      document.body.classList.remove("long-press-dragging", "nav-item-dragging", "dashboard-status-dragging", "orderable-tab-dragging");
-      if (commit && current.moved) {
+      if (current.element.dataset.shiftDragEnabled === "true") {
+        current.element.draggable = document.body.classList.contains("shift-drag-ready");
+      }
+      document.body.classList.remove("long-press-drag-ready", "long-press-dragging", "nav-item-dragging", "dashboard-status-dragging", "orderable-tab-dragging");
+      if (commit && current.dragging) {
         current.element.dataset.wasDragged = "true";
         commitLongPressDragOrder(current);
         window.setTimeout(() => {
@@ -19199,36 +19218,76 @@ MAX - https://bizvmax.ru/zifra_plus
     };
 
     document.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || event.shiftKey) return;
+      if (event.button !== 0) return;
       const context = getLongPressDragContext(event.target);
       if (!context) return;
       clearPending();
       context.pointerId = event.pointerId;
       context.startX = event.clientX;
       context.startY = event.clientY;
-      context.active = false;
+      context.lastX = event.clientX;
+      context.lastY = event.clientY;
+      context.readyX = event.clientX;
+      context.readyY = event.clientY;
+      context.ready = false;
+      context.dragging = false;
       context.moved = false;
-      context.element.classList.add("is-long-press-pending");
-      context.timer = window.setTimeout(() => {
+      context.pointerCaptured = false;
+      context.immediate = Boolean(
+        event.shiftKey
+        || document.body.classList.contains("shift-drag-ready")
+      );
+      context.element.draggable = false;
+      try {
+        context.element.setPointerCapture(event.pointerId);
+        context.pointerCaptured = context.element.hasPointerCapture(event.pointerId);
+      } catch {
+        // В старых браузерах перенос продолжит работать через обработчики document.
+      }
+      const markReady = () => {
         if (pending !== context || !context.element.isConnected) return;
-        context.active = true;
+        context.ready = true;
+        context.readyX = context.lastX;
+        context.readyY = context.lastY;
         context.element.classList.remove("is-long-press-pending");
-        context.element.classList.add("is-long-press-dragging", "is-dragging");
-        context.element.setAttribute("aria-grabbed", "true");
-        document.body.classList.add("long-press-dragging");
-        if (context.type === "nav") document.body.classList.add("nav-item-dragging");
-        if (context.type === "status") document.body.classList.add("dashboard-status-dragging");
-        if (context.type === "tabs") document.body.classList.add("orderable-tab-dragging");
+        context.element.classList.add("is-long-press-ready");
+        document.body.classList.add("long-press-drag-ready");
         hideSystemHelpTooltip(context.element);
-      }, LONG_PRESS_DRAG_DELAY_MS);
+      };
+      if (context.immediate) {
+        context.timer = 0;
+        context.element.classList.add("is-long-press-ready");
+      } else {
+        context.element.classList.add("is-long-press-pending");
+        context.timer = window.setTimeout(markReady, LONG_PRESS_DRAG_DELAY_MS);
+      }
       pending = context;
+      if (context.immediate) markReady();
     }, { capture: true });
 
     document.addEventListener("pointermove", (event) => {
       if (!pending || event.pointerId !== pending.pointerId) return;
-      if (!pending.active) {
+      pending.lastX = event.clientX;
+      pending.lastY = event.clientY;
+      if (!pending.ready) {
         const distance = Math.hypot(event.clientX - pending.startX, event.clientY - pending.startY);
-        if (distance > LONG_PRESS_DRAG_MOVE_THRESHOLD) clearPending();
+        if (distance > LONG_PRESS_DRAG_CANCEL_THRESHOLD) clearPending();
+        return;
+      }
+      if (!pending.dragging) {
+        const distance = Math.hypot(event.clientX - pending.readyX, event.clientY - pending.readyY);
+        if (distance < LONG_PRESS_DRAG_START_THRESHOLD) return;
+        pending.dragging = true;
+        pending.element.classList.remove("is-long-press-ready");
+        pending.element.classList.add("is-long-press-dragging", "is-dragging");
+        pending.element.setAttribute("aria-grabbed", "true");
+        document.body.classList.remove("long-press-drag-ready");
+        document.body.classList.add("long-press-dragging");
+        if (pending.type === "nav") document.body.classList.add("nav-item-dragging");
+        if (pending.type === "status") document.body.classList.add("dashboard-status-dragging");
+        if (pending.type === "tabs") document.body.classList.add("orderable-tab-dragging");
+      }
+      if (!pending.dragging) {
         return;
       }
       event.preventDefault();
@@ -19237,11 +19296,11 @@ MAX - https://bizvmax.ru/zifra_plus
 
     document.addEventListener("pointerup", (event) => {
       if (!pending || event.pointerId !== pending.pointerId) return;
-      clearPending({ commit: pending.active });
+      clearPending({ commit: pending.dragging });
     }, { capture: true });
     document.addEventListener("pointercancel", (event) => {
       if (!pending || event.pointerId !== pending.pointerId) return;
-      clearPending({ commit: pending.active });
+      clearPending({ commit: pending.dragging });
     }, { capture: true });
     window.addEventListener("blur", () => clearPending());
   }
