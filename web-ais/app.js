@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.42",
+    version: "1.7.43",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.43",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Колонка «Действия» перенесена в начало таблицы учёта выплат сотрудникам."
+      ]
+    },
     {
       version: "1.7.42",
       releasedAt: "2026-08-10",
@@ -642,6 +649,7 @@
     direction: "desc"
   });
   const EMPLOYEE_PAYMENT_TABLE_COLUMNS = Object.freeze([
+    { key: "actions", label: "Действия", className: "employee-payment-actions-column", defaultWidth: 78 },
     { key: "status", label: "Статус", className: "employee-payment-status-column", defaultWidth: 78, sortType: "text" },
     { key: "date", label: "Дата", className: "employee-payment-date-column", defaultWidth: 92, sortType: "date" },
     { key: "source", label: "Источник", className: "employee-payment-source-column", defaultWidth: 88, sortType: "text" },
@@ -651,8 +659,7 @@
     { key: "recommendation", label: "Рекомендация", className: "employee-payment-recommendation-column", defaultWidth: 56, sortType: "boolean" },
     { key: "act", label: "Акт", className: "employee-payment-act-column", defaultWidth: 32, sortType: "boolean" },
     { key: "actStatus", label: "Статус акта", className: "employee-payment-act-status-column", defaultWidth: 72, sortType: "text" },
-    { key: "paid", label: "Оплачено", className: "employee-payment-paid-column", defaultWidth: 82, sortType: "date" },
-    { key: "actions", label: "Действия", className: "employee-payment-actions-column", defaultWidth: 78 }
+    { key: "paid", label: "Оплачено", className: "employee-payment-paid-column", defaultWidth: 82, sortType: "date" }
   ]);
   const DIRECT_EXPENSES_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-direct-expenses-table-layout-v1";
   const DIRECT_EXPENSES_TABLE_LAYOUT_VERSION = "note-primary-uid-last";
@@ -13140,46 +13147,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 const sourceLabel = row.source || getEmployeePaymentDefaultSourceLabel(row.sourceType);
                 return `
                   <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
-                    <td>${renderEmployeePaymentStatus(row)}</td>
-                    <td class="employee-payment-date-cell">
-                      ${renderEmployeePaymentRowDragHandle(row.sourceType, row.sourceId, filtersActive || Boolean(sort.key))}
-                      <input data-employee-payment-field="date" type="date" value="${escapeAttr(row.date)}" ${row.dateReadOnly ? 'readonly title="Дата проведённой выплаты изменяется в колонке «Оплачено»"' : (editable ? "" : "disabled")}>
-                    </td>
-                    <td title="${escapeAttr([sourceLabel, row.details].filter(Boolean).join(" · "))}">
-                      ${isExpenseSource ? `
-                        <select data-employee-payment-field="source" aria-label="Источник затраты" title="Источник затраты" ${editable ? "" : "disabled"}>
-                          <option value="direct" ${row.sourceType === "direct" ? "selected" : ""}>Прямые затраты</option>
-                          <option value="general" ${row.sourceType === "general" ? "selected" : ""}>Общие затраты</option>
-                        </select>
-                      ` : `<strong>${escapeHtml(sourceLabel)}</strong>`}
-                      ${row.details ? `<small>${escapeHtml(row.details)}</small>` : ""}
-                    </td>
-                    <td><input data-employee-payment-field="comment" value="${escapeAttr(row.comment)}" title="${escapeAttr(row.comment)}" aria-label="Комментарий к источнику" ${editable ? "" : "disabled"}></td>
-                    <td class="employee-payment-basis-cell">
-                      ${renderComboField({
-                        name: "employeePaymentBasis",
-                        value: row.description,
-                        options: getEmployeePaymentBasisOptions(row.description),
-                        dictionary: "employeePaymentBases",
-                        attrs: `data-employee-payment-field="description" title="${escapeAttr(row.description)}" aria-label="Основание выплаты" ${editable ? "" : "disabled"}`
-                      })}
-                    </td>
-                    <td><input data-employee-payment-field="amount" type="number" min="0" step="0.01" value="${escapeAttr(row.amount)}" ${amountReadOnly ? 'readonly title="Сумма рассчитывается автоматически по поступлениям слушателя"' : (editable ? "" : "disabled")}></td>
-                    <td class="employee-payment-check-cell">
-                      <input data-employee-payment-field="recommendation" type="checkbox" ${row.recommendation ? "checked" : ""} aria-label="Рекомендовать к выплате" title="${escapeAttr(row.recommendationManual ? "Рекомендация изменена вручную" : "Рекомендацию можно изменить вручную")}" ${editable ? "" : "disabled"}>
-                    </td>
-                    <td class="employee-payment-check-cell">
-                      <input data-employee-payment-field="act" type="checkbox" ${row.act ? "checked" : ""} aria-label="Акт сформирован" ${editable ? "" : "disabled"}>
-                    </td>
-                    <td>
-                      <select data-employee-payment-field="actStatus" aria-label="Статус акта" ${editable ? "" : "disabled"}>
-                          <option value="" ${row.actStatus ? "" : "selected"}>Не указан</option>
-                          <option value="Отправлен" ${row.actStatus === "Отправлен" ? "selected" : ""}>Отправлен</option>
-                          <option value="Получен" ${row.actStatus === "Получен" ? "selected" : ""}>Получен</option>
-                      </select>
-                    </td>
-                    <td><input data-employee-payment-field="paid" type="date" value="${escapeAttr(row.paid)}" aria-label="Дата оплаты" ${editable ? "" : "disabled"}></td>
-                    <td class="employee-payment-delete-cell">
+                    <td class="employee-payment-delete-cell" data-employee-payment-column="actions">
                       ${editable ? `
                         <div class="employee-payment-row-actions">
                           <button class="employee-payment-edit-button" data-action="edit-employee-expense" type="button" title="Редактировать запись оплаты во всплывающем окне" aria-label="Редактировать запись оплаты">
@@ -13220,6 +13188,45 @@ MAX - https://bizvmax.ru/zifra_plus
                         </div>
                       ` : "—"}
                     </td>
+                    <td>${renderEmployeePaymentStatus(row)}</td>
+                    <td class="employee-payment-date-cell">
+                      ${renderEmployeePaymentRowDragHandle(row.sourceType, row.sourceId, filtersActive || Boolean(sort.key))}
+                      <input data-employee-payment-field="date" type="date" value="${escapeAttr(row.date)}" ${row.dateReadOnly ? 'readonly title="Дата проведённой выплаты изменяется в колонке «Оплачено»"' : (editable ? "" : "disabled")}>
+                    </td>
+                    <td data-employee-payment-column="source" title="${escapeAttr([sourceLabel, row.details].filter(Boolean).join(" · "))}">
+                      ${isExpenseSource ? `
+                        <select data-employee-payment-field="source" aria-label="Источник затраты" title="Источник затраты" ${editable ? "" : "disabled"}>
+                          <option value="direct" ${row.sourceType === "direct" ? "selected" : ""}>Прямые затраты</option>
+                          <option value="general" ${row.sourceType === "general" ? "selected" : ""}>Общие затраты</option>
+                        </select>
+                      ` : `<strong>${escapeHtml(sourceLabel)}</strong>`}
+                      ${row.details ? `<small>${escapeHtml(row.details)}</small>` : ""}
+                    </td>
+                    <td><input data-employee-payment-field="comment" value="${escapeAttr(row.comment)}" title="${escapeAttr(row.comment)}" aria-label="Комментарий к источнику" ${editable ? "" : "disabled"}></td>
+                    <td class="employee-payment-basis-cell">
+                      ${renderComboField({
+                        name: "employeePaymentBasis",
+                        value: row.description,
+                        options: getEmployeePaymentBasisOptions(row.description),
+                        dictionary: "employeePaymentBases",
+                        attrs: `data-employee-payment-field="description" title="${escapeAttr(row.description)}" aria-label="Основание выплаты" ${editable ? "" : "disabled"}`
+                      })}
+                    </td>
+                    <td><input data-employee-payment-field="amount" type="number" min="0" step="0.01" value="${escapeAttr(row.amount)}" ${amountReadOnly ? 'readonly title="Сумма рассчитывается автоматически по поступлениям слушателя"' : (editable ? "" : "disabled")}></td>
+                    <td class="employee-payment-check-cell">
+                      <input data-employee-payment-field="recommendation" type="checkbox" ${row.recommendation ? "checked" : ""} aria-label="Рекомендовать к выплате" title="${escapeAttr(row.recommendationManual ? "Рекомендация изменена вручную" : "Рекомендацию можно изменить вручную")}" ${editable ? "" : "disabled"}>
+                    </td>
+                    <td class="employee-payment-check-cell">
+                      <input data-employee-payment-field="act" type="checkbox" ${row.act ? "checked" : ""} aria-label="Акт сформирован" ${editable ? "" : "disabled"}>
+                    </td>
+                    <td>
+                      <select data-employee-payment-field="actStatus" aria-label="Статус акта" ${editable ? "" : "disabled"}>
+                          <option value="" ${row.actStatus ? "" : "selected"}>Не указан</option>
+                          <option value="Отправлен" ${row.actStatus === "Отправлен" ? "selected" : ""}>Отправлен</option>
+                          <option value="Получен" ${row.actStatus === "Получен" ? "selected" : ""}>Получен</option>
+                      </select>
+                    </td>
+                    <td><input data-employee-payment-field="paid" type="date" value="${escapeAttr(row.paid)}" aria-label="Дата оплаты" ${editable ? "" : "disabled"}></td>
                   </tr>
                 `;
               }).join("")}
@@ -13244,15 +13251,16 @@ MAX - https://bizvmax.ru/zifra_plus
     const recommendationControl = field("recommendation");
     const actControl = field("act");
     const actStatusControl = field("actStatus");
+    const sourceCell = row.querySelector('[data-employee-payment-column="source"]');
     const sourceText = sourceControl instanceof HTMLSelectElement
       ? sourceControl.selectedOptions[0]?.textContent
-      : row.querySelector("td:nth-child(2) strong")?.textContent;
+      : sourceCell?.querySelector("strong")?.textContent;
     return {
       sourceType: sourceControl instanceof HTMLSelectElement
         ? String(sourceControl.value || row.dataset.paymentSource || "")
         : String(row.dataset.paymentSource || ""),
       source: String(sourceText || ""),
-      details: String(row.querySelector("td:nth-child(2) small")?.textContent || ""),
+      details: String(sourceCell?.querySelector("small")?.textContent || ""),
       order: Number(row.dataset.paymentOrder) || 0,
       date: String(dateControl?.value || ""),
       comment: String(commentControl?.value || ""),
