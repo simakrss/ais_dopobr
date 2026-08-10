@@ -1,10 +1,19 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.26",
+    version: "1.7.27",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.27",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Свёрнутая карточка сотрудника и слушателя отображается компактной полоской поверх рабочего раздела.",
+        "Исправлен конфликт полноразмерной вкладки оплаты и мобильных правил с высотой свёрнутой карточки.",
+        "В свёрнутом состоянии остаются имя и одна кнопка восстановления; рабочая область под карточкой остаётся видимой и доступной."
+      ]
+    },
     {
       version: "1.7.26",
       releasedAt: "2026-08-10",
