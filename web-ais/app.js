@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.45",
+    version: "1.7.46",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.46",
+      releasedAt: "2026-08-10",
+      changes: [
+        "При синхронизации промосообщений значения и формулы ячеек колонок «Промосообщение1/2» остаются без изменений; обновляются или удаляются только примечания ячеек."
+      ]
+    },
     {
       version: "1.7.45",
       releasedAt: "2026-08-10",

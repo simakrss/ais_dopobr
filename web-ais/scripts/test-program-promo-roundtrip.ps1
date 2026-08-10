@@ -58,6 +58,7 @@ try {
   $codeCell = $sheet.Cells.Item($targetRow, 7)
   $firstMessageCell = $sheet.Cells.Item($targetRow, 4)
   $secondMessageCell = $sheet.Cells.Item($targetRow, 5)
+  $originalFirstValue = [string]$firstMessageCell.Value2
   $secondComment = $secondMessageCell.Comment
   $originalSecondValue = [string]$secondMessageCell.Value2
   $originalSecondMessage = if ($null -ne $secondComment) { [string]$secondComment.Text() } else { "" }
@@ -94,8 +95,8 @@ try {
   $preservedSecondMessage = if ($null -ne $secondComment) { [string]$secondComment.Text() } else { "" }
   $preservedSecondMessage = $preservedSecondMessage.Replace("`r`n", "`n").Replace("`r", "`n")
 
-  if ([string]$firstMessageCell.Value2 -ne "Промосообщение") {
-    throw "Маркер первого промосообщения не записан."
+  if ([string]$firstMessageCell.Value2 -ne $originalFirstValue) {
+    throw "Содержимое ячейки первого промосообщения было изменено."
   }
   if ($actualMessage -ne $message) {
     throw "Текст примечания первого промосообщения отличается от исходного."
@@ -134,16 +135,16 @@ try {
   $secondComment = $secondMessageCell.Comment
   $preservedFirstMessage = if ($null -ne $firstComment) { [string]$firstComment.Text() } else { "" }
   $preservedFirstMessage = $preservedFirstMessage.Replace("`r`n", "`n").Replace("`r", "`n")
-  if ([string]$firstMessageCell.Value2 -ne "Промосообщение" -or $preservedFirstMessage -ne $message) {
+  if ([string]$firstMessageCell.Value2 -ne $originalFirstValue -or $preservedFirstMessage -ne $message) {
     throw "Первое промосообщение было затронуто очисткой второго поля."
   }
-  if ([string]$secondMessageCell.Value2 -or $null -ne $secondComment) {
-    throw "Пустое второе промосообщение не очищено."
+  if ([string]$secondMessageCell.Value2 -ne $originalSecondValue -or $null -ne $secondComment) {
+    throw "Примечание второго промосообщения не очищено либо содержимое ячейки было изменено."
   }
   if ($clearResult.Count -ne 1 -or $clearResult.Messages -ne 0 -or $clearResult.Skipped -ne 0) {
     throw "Некорректная статистика очистки второго промосообщения."
   }
-  $savedMarker = [string]$firstMessageCell.Value2
+  $savedFirstCellValue = [string]$firstMessageCell.Value2
 
   foreach ($value in @($firstComment, $secondComment, $nameCell, $codeCell, $firstMessageCell, $secondMessageCell, $sheet)) {
     Release-ComObject $value
@@ -191,7 +192,7 @@ process.stdout.write(JSON.stringify({
     updatedPrograms = $result.Count
     writtenMessages = $result.Messages
     skippedPrograms = $result.Skipped
-    marker = $savedMarker
+    preservedCellValue = $savedFirstCellValue
     commentLength = $actualMessage.Length
     adjacentMessagePreserved = $true
     emptyMessageCleared = $true

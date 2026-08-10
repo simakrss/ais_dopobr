@@ -1674,10 +1674,8 @@ function Set-ProgramPromoMessageCell {
     }
     $text = ([string]$Value).Replace("`r`n", "`n").Replace("`r", "`n")
     if ([string]::IsNullOrWhiteSpace($text)) {
-      [void]$cell.ClearContents()
       return $false
     }
-    $cell.Value2 = "Промосообщение"
     $comment = $cell.AddComment($text)
     try { $comment.Visible = $false } catch {}
     return $true
