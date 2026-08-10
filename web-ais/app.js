@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.38",
+    version: "1.7.39",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.39",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Восстановлено перетаскивание разделов, вкладок, пунктов меню и статусов слушателей при удержании Shift.",
+        "Обычный щелчок без перемещения продолжает открывать соответствующий раздел, вкладку, карточку или список слушателей."
+      ]
+    },
     {
       version: "1.7.38",
       releasedAt: "2026-08-10",
@@ -19023,11 +19031,12 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function annotateShiftRequiredDraggableElements(root = document) {
+    const shiftActive = document.body.classList.contains("shift-drag-ready");
     root.querySelectorAll?.('[draggable="true"], [data-shift-drag-enabled="true"]').forEach((element) => {
       element.dataset.systemHelpDelayMs = String(DRAG_TOOLTIP_DELAY_MS);
       if (isShiftDragExemptElement(element)) return;
       element.dataset.shiftDragEnabled = "true";
-      element.draggable = false;
+      element.draggable = shiftActive;
       const instruction = "Shift: удерживайте клавишу во время перетаскивания.";
       const currentTitle = String(
         element.getAttribute("title")
@@ -19046,7 +19055,12 @@ MAX - https://bizvmax.ru/zifra_plus
     if (shiftDragRequirementBound) return;
     shiftDragRequirementBound = true;
     const setShiftDragCursorState = (active) => {
-      document.body.classList.toggle("shift-drag-ready", Boolean(active));
+      const nextActive = Boolean(active);
+      if (document.body.classList.contains("shift-drag-ready") === nextActive) return;
+      document.body.classList.toggle("shift-drag-ready", nextActive);
+      document.querySelectorAll('[data-shift-drag-enabled="true"]').forEach((element) => {
+        element.draggable = nextActive;
+      });
     };
     document.addEventListener("keydown", (event) => {
       if (event.key === "Shift" || event.shiftKey) setShiftDragCursorState(true);
@@ -19066,17 +19080,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const draggable = event.target.closest('[data-shift-drag-enabled="true"], [draggable="true"]');
       if (!draggable || isShiftDragExemptElement(draggable)) return;
       draggable.dataset.shiftDragEnabled = "true";
-      draggable.draggable = Boolean(event.shiftKey);
-    }, { capture: true });
-    const disarmShiftDraggables = () => {
-      document.querySelectorAll('[data-shift-drag-enabled="true"]').forEach((element) => {
-        if (!element.classList.contains("is-dragging")) element.draggable = false;
-      });
-    };
-    document.addEventListener("pointerup", disarmShiftDraggables, { capture: true });
-    document.addEventListener("pointercancel", disarmShiftDraggables, { capture: true });
-    document.addEventListener("dragend", () => {
-      window.requestAnimationFrame(disarmShiftDraggables);
+      draggable.draggable = Boolean(event.shiftKey || document.body.classList.contains("shift-drag-ready"));
     }, { capture: true });
     document.addEventListener("dragstart", (event) => {
       const draggable = getShiftRequiredDragElement(event.target);
@@ -20790,7 +20794,6 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("dragend", () => {
         button.classList.remove("is-dragging");
         button.setAttribute("aria-grabbed", "false");
-        button.draggable = false;
         document.body.classList.remove("dashboard-status-dragging");
         if (draggedDashboardStudentStatus) button.dataset.wasDragged = "true";
         lastDashboardStatusDragEndedAt = Date.now();
@@ -20882,7 +20885,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!groupId || !buttons.length) return;
       buttons.forEach((button, index) => {
         button.dataset.shiftDragEnabled = "true";
-        button.draggable = false;
+        button.draggable = document.body.classList.contains("shift-drag-ready");
         if (!button.dataset.orderableTabDefaultIndex) {
           button.dataset.orderableTabDefaultIndex = String(index);
         }
