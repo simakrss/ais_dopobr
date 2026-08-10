@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.20",
+    version: "1.7.21",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.21",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Список фильтра «Основание» в учёте выплат сотрудникам теперь содержит только основания из строк, подходящих под остальные выбранные фильтры.",
+        "Текущее выбранное основание сохраняется в списке, даже если после изменения других фильтров подходящих строк временно не осталось."
+      ]
+    },
     {
       version: "1.7.20",
       releasedAt: "2026-08-10",
@@ -12542,22 +12550,30 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getEmployeePaymentBasisFilterOptions(availableValues, selectedValue = "") {
-    const availableNormalized = new Set(
-      [...(availableValues instanceof Set ? availableValues : [])]
-        .map(normalizeEmployeePaymentFilterText)
-        .filter(Boolean)
-    );
-    const values = unique([
-      ...getEmployeePaymentBasisOptions(selectedValue),
-      ...(availableValues instanceof Set ? [...availableValues] : [])
-    ]);
+    const selected = String(selectedValue || "").trim();
+    const availableByNormalizedValue = new Map();
+    [...(availableValues instanceof Set ? availableValues : [])].forEach((value) => {
+      const label = String(value || "").trim();
+      const normalized = normalizeEmployeePaymentFilterText(label);
+      if (normalized && !availableByNormalizedValue.has(normalized)) {
+        availableByNormalizedValue.set(normalized, label);
+      }
+    });
+    const selectedNormalized = normalizeEmployeePaymentFilterText(selected);
+    if (selectedNormalized) availableByNormalizedValue.set(selectedNormalized, selected);
+    const values = [];
+    getEmployeePaymentBasisOptions(selected).forEach((value) => {
+      const normalized = normalizeEmployeePaymentFilterText(value);
+      if (!normalized || !availableByNormalizedValue.has(normalized)) return;
+      values.push(availableByNormalizedValue.get(normalized));
+      availableByNormalizedValue.delete(normalized);
+    });
+    values.push(...[...availableByNormalizedValue.values()].sort((left, right) => (
+      String(left).localeCompare(String(right), "ru", { numeric: true, sensitivity: "base" })
+    )));
     return [
-      ["", "Все", false],
-      ...values.map((value) => [
-        value,
-        value,
-        value !== selectedValue && !availableNormalized.has(normalizeEmployeePaymentFilterText(value))
-      ])
+      ["", "Все"],
+      ...values.map((value) => [value, value])
     ];
   }
 
