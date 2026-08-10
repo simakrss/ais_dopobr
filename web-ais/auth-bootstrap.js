@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260810-dashboard-status-navigation-v2";
+  const AUTH_BUILD = "20260810-left-click-shift-drag-v3";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

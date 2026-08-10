@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.36",
+    version: "1.7.37",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.37",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Восстановлен обычный щелчок левой кнопкой мыши по разделам, вкладкам, пунктам меню и статусам слушателей.",
+        "Нативное перетаскивание элементов теперь включается только после нажатия на элемент с удерживаемой клавишей Shift и отключается после отпускания кнопки мыши."
+      ]
+    },
     {
       version: "1.7.36",
       releasedAt: "2026-08-10",
@@ -19007,9 +19015,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function annotateShiftRequiredDraggableElements(root = document) {
-    root.querySelectorAll?.('[draggable="true"]').forEach((element) => {
+    root.querySelectorAll?.('[draggable="true"], [data-shift-drag-enabled="true"]').forEach((element) => {
       element.dataset.systemHelpDelayMs = String(DRAG_TOOLTIP_DELAY_MS);
       if (isShiftDragExemptElement(element)) return;
+      element.dataset.shiftDragEnabled = "true";
+      element.draggable = false;
       const instruction = "Shift: удерживайте клавишу во время перетаскивания.";
       const currentTitle = String(
         element.getAttribute("title")
@@ -19043,6 +19053,23 @@ MAX - https://bizvmax.ru/zifra_plus
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) setShiftDragCursorState(false);
     });
+    document.addEventListener("pointerdown", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const draggable = event.target.closest('[data-shift-drag-enabled="true"], [draggable="true"]');
+      if (!draggable || isShiftDragExemptElement(draggable)) return;
+      draggable.dataset.shiftDragEnabled = "true";
+      draggable.draggable = Boolean(event.shiftKey);
+    }, { capture: true });
+    const disarmShiftDraggables = () => {
+      document.querySelectorAll('[data-shift-drag-enabled="true"]').forEach((element) => {
+        if (!element.classList.contains("is-dragging")) element.draggable = false;
+      });
+    };
+    document.addEventListener("pointerup", disarmShiftDraggables, { capture: true });
+    document.addEventListener("pointercancel", disarmShiftDraggables, { capture: true });
+    document.addEventListener("dragend", () => {
+      window.requestAnimationFrame(disarmShiftDraggables);
+    }, { capture: true });
     document.addEventListener("dragstart", (event) => {
       const draggable = getShiftRequiredDragElement(event.target);
       if (!draggable || event.shiftKey || document.body.classList.contains("shift-drag-ready")) return;
@@ -20738,16 +20765,7 @@ MAX - https://bizvmax.ru/zifra_plus
       syncDashboardStudentStatusOrderFromDom(container);
     });
     container.querySelectorAll("[data-dashboard-student-status-item]").forEach((button) => {
-      button.draggable = false;
       button.setAttribute("aria-grabbed", "false");
-      button.addEventListener("pointerdown", (event) => {
-        button.draggable = Boolean(event.shiftKey);
-      });
-      const disarmDrag = () => {
-        if (!button.classList.contains("is-dragging")) button.draggable = false;
-      };
-      button.addEventListener("pointerup", disarmDrag);
-      button.addEventListener("pointercancel", disarmDrag);
       button.addEventListener("dragstart", (event) => {
         if (!event.shiftKey && !document.body.classList.contains("shift-drag-ready")) {
           event.preventDefault();
@@ -20855,7 +20873,8 @@ MAX - https://bizvmax.ru/zifra_plus
       const buttons = [...container.querySelectorAll("[data-orderable-tab]")];
       if (!groupId || !buttons.length) return;
       buttons.forEach((button, index) => {
-        button.draggable = true;
+        button.dataset.shiftDragEnabled = "true";
+        button.draggable = false;
         if (!button.dataset.orderableTabDefaultIndex) {
           button.dataset.orderableTabDefaultIndex = String(index);
         }
