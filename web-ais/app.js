@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.19",
-    releasedAt: "2026-08-09"
+    version: "1.7.20",
+    releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.20",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Строки статусов слушателей на рабочем столе теперь перетаскиваются только при зажатой клавише Shift.",
+        "Без Shift используется обычный курсор, а при готовности к переносу он меняется на курсор захвата; подсказка содержит требуемую комбинацию клавиш."
+      ]
+    },
     {
       version: "1.7.19",
       releasedAt: "2026-08-09",
@@ -477,7 +485,6 @@
   const SHIFT_DRAG_EXEMPT_SELECTOR = [
     "[data-finance-row-drag]",
     "[data-employee-payment-row-drag]",
-    "[data-dashboard-student-status-item]",
     "[data-action='drag-program-training-plan-row']",
     "[data-contract-field-drag-handle]"
   ].join(", ");
@@ -6161,7 +6168,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 data-dashboard-student-status-item="${escapeAttr(label)}"
                 type="button"
                 draggable="true"
-                title="Открыть слушателей со статусом «${escapeAttr(label)}». Перетащите строку для изменения порядка"
+                title="Открыть слушателей со статусом «${escapeAttr(label)}». Для изменения порядка удерживайте Shift и перетащите строку"
               >
                 <span>${escapeHtml(label)}</span>
                 <span class="bar-track"><i style="width:${count > 0 ? Math.max(8, (count / maxStatus) * 100) : 0}%"></i></span>

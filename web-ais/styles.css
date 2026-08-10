@@ -2485,13 +2485,20 @@ body.is-resizing-column {
 }
 
 .dashboard-status-list .bar-row-link {
-  cursor: grab;
+  cursor: default;
   user-select: none;
 }
 
-.dashboard-status-list .bar-row-link:active,
 .dashboard-status-list .bar-row-link.is-dragging,
 body.dashboard-status-dragging .dashboard-status-list .bar-row-link {
+  cursor: grabbing;
+}
+
+body.shift-drag-ready:not(.dashboard-status-dragging) .dashboard-status-list .bar-row-link {
+  cursor: grab;
+}
+
+body.shift-drag-ready .dashboard-status-list .bar-row-link:active {
   cursor: grabbing;
 }
 
