@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.46",
+    version: "1.7.47",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.47",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Поле «Тип программы обучения» в карточке программы преобразовано в настраиваемый стандартный список с редактированием через контекстное меню.",
+        "Поле «Форма обучения» перенесено непосредственно после кода и кнопки открытия страницы лендинга."
+      ]
+    },
     {
       version: "1.7.46",
       releasedAt: "2026-08-10",
@@ -1995,6 +2003,7 @@ MAX - https://bizvmax.ru/zifra_plus
     educationLevels: ["СПО", "Бакалавр", "Специалист", "Магистр", "Аттестат"],
     educationDocumentTypes: ["Диплом о начальном профессиональном образовании", "Диплом о среднем профессиональном образовании", "Диплом о высшем образовании"],
     educationDocumentIssuers: [],
+    programTypes: ["КПК", "ППП", "ДОП", "ПРО", "ИТ"],
     trainingPlanAttestationTypes: ["Зачет", "Экзамен"],
     workPlaces: [],
     positions: [],
@@ -2214,15 +2223,15 @@ MAX - https://bizvmax.ru/zifra_plus
         field("status", "Статус", "select", true, "programStatuses"),
         field("price", "Стоимость", "number"),
         field("oldPrice", "Старая цена", "number"),
-        field("type", "Тип"),
+        field("type", "Тип программы обучения", "select", false, "programTypes"),
         field("hours", "Часы", "number"),
         field("duration", "Срок"),
         field("landingCode", "Код лендинга"),
+        field("studyForm", "Форма обучения", "select", false, "studyForms"),
         field("promoSite", "На промо сайте"),
         field("gradeReportUrl", "Ссылка на отчет по оценкам"),
         field("telegramGroup", "Гр. Телеграмм"),
         field("groupIndex", "Индекс группы"),
-        field("studyForm", "Форма обучения", "select", false, "studyForms"),
         field("qualification", "Квалификация", "textarea", false, null, { programTab: "characteristics", list: true }),
         field("activityScope", "Сфера деятельности", "textarea", false, null, { programTab: "characteristics", list: true }),
         field("fgos", "ФГОС", "textarea", false, null, { programTab: "characteristics", list: true }),
@@ -37780,6 +37789,7 @@ MAX - https://bizvmax.ru/zifra_plus
       statuses: "Статусы",
       contractTypes: "Виды договоров",
       studyForms: "Формы обучения",
+      programTypes: "Типы программ обучения",
       programStatuses: "Статусы программ",
       expenseTypes: "Виды затрат",
       inventoryTypes: "Виды ТМЦ",
