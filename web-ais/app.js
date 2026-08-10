@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.43",
+    version: "1.7.44",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.44",
+      releasedAt: "2026-08-10",
+      changes: [
+        "В журнале действий по сотруднику под каждой записью добавлена раскрываемая расширенная информация с точными значениями «было / стало», пользователем, источником и описанием действия.",
+        "Быстрые изменения, добавление, дублирование и удаление строк выплат теперь записывают в журнал конкретные изменённые поля."
+      ]
+    },
     {
       version: "1.7.43",
       releasedAt: "2026-08-10",
@@ -10956,6 +10964,81 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderEmployeeAuditExpandedChanges(row) {
+    const structuredChanges = Array.isArray(row.changes) ? row.changes : [];
+    const changes = structuredChanges.length
+      ? structuredChanges
+      : (row.field || row.before || row.after)
+        ? [{
+            field: row.field || "Изменение",
+            label: row.field || "Изменение",
+            before: row.before || "",
+            after: row.after || ""
+          }]
+        : [];
+    if (!changes.length) {
+      return '<p class="employee-audit-expanded-empty">Для этого действия отдельные значения «было / стало» не зафиксированы. Описание действия приведено ниже.</p>';
+    }
+    return `
+      <div class="employee-audit-expanded-change-list">
+        ${changes.map((change) => `
+          <div class="employee-audit-expanded-change-item">
+            <strong>${escapeHtml(change.label || change.field || "Поле")}</strong>
+            <div>
+              <span class="is-before"><small>Было</small>${escapeHtml(change.before || "∅")}</span>
+              <span class="employee-audit-expanded-arrow" aria-hidden="true">→</span>
+              <span class="is-after"><small>Стало</small>${escapeHtml(change.after || "∅")}</span>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function renderEmployeeAuditExpandedRow(row) {
+    const changeCount = Array.isArray(row.changes) && row.changes.length
+      ? row.changes.length
+      : (row.field || row.before || row.after ? 1 : 0);
+    return `
+      <tr class="employee-audit-expanded-table-row">
+        <td colspan="8">
+          <details class="employee-audit-expanded-details">
+            <summary>
+              <span>Расширенная информация</span>
+              <small>${changeCount
+                ? `${changeCount} ${pluralizeRu(changeCount, "изменение", "изменения", "изменений")}`
+                : "подробности действия"}</small>
+            </summary>
+            <div class="employee-audit-expanded-content">
+              <dl class="employee-audit-expanded-meta">
+                <div><dt>Дата и время</dt><dd>${escapeHtml(formatDateTimeRu(row.createdAt || row.date))}</dd></div>
+                <div><dt>Пользователь</dt><dd>${escapeHtml([row.userName, row.user].filter(Boolean).join(" · ") || "system")}</dd></div>
+                <div><dt>Действие</dt><dd>${escapeHtml(row.action || "—")}</dd></div>
+                <div><dt>Раздел</dt><dd>${escapeHtml(row.area || "—")}</dd></div>
+                <div><dt>Источник</dt><dd>${escapeHtml(row.source || "—")}</dd></div>
+                <div><dt>IP</dt><dd>${escapeHtml(row.ip || "—")}</dd></div>
+              </dl>
+              <section class="employee-audit-expanded-section">
+                <h4>Что конкретно изменилось</h4>
+                ${renderEmployeeAuditExpandedChanges(row)}
+              </section>
+              <section class="employee-audit-expanded-section">
+                <h4>Описание действия</h4>
+                <p>${escapeHtml(row.details || "Дополнительное описание отсутствует.")}</p>
+              </section>
+              ${row.userAgent ? `
+                <section class="employee-audit-expanded-section">
+                  <h4>Клиент</h4>
+                  <p>${escapeHtml(row.userAgent)}</p>
+                </section>
+              ` : ""}
+            </div>
+          </details>
+        </td>
+      </tr>
+    `;
+  }
+
   function pluralizeRu(value, one, few, many) {
     const number = Math.abs(Number(value) || 0) % 100;
     const remainder = number % 10;
@@ -11075,6 +11158,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderStudentAuditTable() {
     const audit = state.studentAuditLog;
+    const isContract = audit.entityType === "contracts";
     if (audit.loading && !audit.loaded) {
       return '<div class="empty-state compact"><span>Загрузка журнала действий...</span></div>';
     }
@@ -11117,6 +11201,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 <td><span class="admin-audit-source">${escapeHtml(row.source || "—")}</span></td>
                 <td class="admin-audit-ip" title="${escapeAttr(row.userAgent || "")}">${escapeHtml(row.ip || "—")}</td>
               </tr>
+              ${isContract ? renderEmployeeAuditExpandedRow(row) : ""}
             `).join("")}
           </tbody>
         </table>
@@ -13432,6 +13517,20 @@ MAX - https://bizvmax.ru/zifra_plus
       actStatus: row.actStatus,
       paid: row.paid
     };
+  }
+
+  function getEmployeePaymentAuditFields() {
+    return [
+      { key: "source", label: "Источник" },
+      { key: "date", label: "Дата" },
+      { key: "comment", label: "Комментарий" },
+      { key: "description", label: "Основание" },
+      { key: "amount", label: "Сумма" },
+      { key: "recommendation", label: "Рекомендация к оплате" },
+      { key: "act", label: "Акт сформирован" },
+      { key: "actStatus", label: "Статус акта" },
+      { key: "paid", label: "Дата оплаты" }
+    ];
   }
 
   function renderEmployeePaymentEditorFields(context) {
@@ -22107,17 +22206,7 @@ MAX - https://bizvmax.ru/zifra_plus
     synchronizeEmployeePaymentAgencyDraft(draft, sourceType, source);
 
     const afterPayment = getEmployeePaymentEditorAuditRecord(sourceType, source);
-    const paymentAuditFields = [
-      { key: "source", label: "Источник" },
-      { key: "date", label: "Дата" },
-      { key: "comment", label: "Комментарий" },
-      { key: "description", label: "Основание" },
-      { key: "amount", label: "Сумма" },
-      { key: "recommendation", label: "Рекомендация к оплате" },
-      { key: "act", label: "Акт сформирован" },
-      { key: "actStatus", label: "Статус акта" },
-      { key: "paid", label: "Дата оплаты" }
-    ];
+    const paymentAuditFields = getEmployeePaymentAuditFields();
     const pickFields = (record, definitions) => Object.fromEntries(
       definitions.map((item) => [item.key, record?.[item.key] ?? ""])
     );
@@ -22284,6 +22373,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const sourceId = String(row.dataset.paymentSourceId || "");
     const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
     if (!source) return;
+    const beforePayment = getEmployeePaymentEditorAuditRecord(sourceType, source);
     const draft = getEmployeePaymentAccountingDraft();
     const field = String(input.dataset.employeePaymentField || "");
     if (field === "source") {
@@ -22302,6 +22392,11 @@ MAX - https://bizvmax.ru/zifra_plus
           entityType: "contracts",
           entityId: String(draft.id || state.modal?.id || ""),
           entityLabel: draft.name || String(draft.id || ""),
+          changes: buildAuditChanges(
+            beforePayment,
+            getEmployeePaymentEditorAuditRecord(migrated.sourceType, migrated.source),
+            getEmployeePaymentAuditFields()
+          ),
           source: "employee-payment-accounting"
         }
       );
@@ -22327,6 +22422,7 @@ MAX - https://bizvmax.ru/zifra_plus
     synchronizeEmployeePaymentAgencyDraft(draft, sourceType, effectiveSource);
     if (field === "description") rememberEmployeePaymentBasis(input.value);
     const sourceValues = getEmployeePaymentSourceValues(sourceType, effectiveSource);
+    const afterPayment = getEmployeePaymentEditorAuditRecord(sourceType, effectiveSource);
     addEmployeePaymentAudit(
       "Изменён учёт выплаты",
       "Договоры сотрудников",
@@ -22335,6 +22431,7 @@ MAX - https://bizvmax.ru/zifra_plus
         entityType: "contracts",
         entityId: String(draft.id || state.modal?.id || ""),
         entityLabel: draft.name || String(draft.id || ""),
+        changes: buildAuditChanges(beforePayment, afterPayment, getEmployeePaymentAuditFields()),
         source: "employee-payment-accounting"
       }
     );
@@ -22620,6 +22717,11 @@ MAX - https://bizvmax.ru/zifra_plus
         entityType: "contracts",
         entityId: String(draft.id || state.modal?.id || ""),
         entityLabel: draft.name || String(draft.id || ""),
+        changes: buildAuditChanges(
+          {},
+          getEmployeePaymentEditorAuditRecord(sourceType, duplicate),
+          getEmployeePaymentAuditFields()
+        ),
         source: "employee-payment-accounting"
       }
     );
@@ -22727,6 +22829,11 @@ MAX - https://bizvmax.ru/zifra_plus
         entityType: "contracts",
         entityId: String(draft.id || state.modal?.id || ""),
         entityLabel: draft.name || String(draft.id || ""),
+        changes: buildAuditChanges(
+          getEmployeePaymentEditorAuditRecord(sourceType, removed),
+          {},
+          getEmployeePaymentAuditFields()
+        ),
         source: "employee-payment-accounting"
       }
     );
@@ -22781,10 +22888,18 @@ MAX - https://bizvmax.ru/zifra_plus
       collections.directExpenses = [expense, ...(collections.directExpenses || [])];
       sourceId = expense.id;
     }
+    const createdSource = findEmployeePaymentSourceRecord(sourceType, sourceId);
     addEmployeePaymentAudit("Добавлена выплата", "Договоры сотрудников", employeeName, {
       entityType: "contracts",
       entityId: String(draft.id || state.modal?.id || ""),
       entityLabel: employeeName,
+      changes: createdSource
+        ? buildAuditChanges(
+            {},
+            getEmployeePaymentEditorAuditRecord(sourceType, createdSource),
+            getEmployeePaymentAuditFields()
+          )
+        : [],
       source: "employee-payment-accounting"
     });
     commitEmployeePaymentAccountingChange(draft, { sourceId, field: "amount" }, true);
