@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.40",
+    version: "1.7.41",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.41",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Обновлена карточка общих затрат: даты оплаты выбираются календарём, бухгалтерское закрытие отмечается флажком, а номер расхода выбирается из настраиваемого списка или вводится вручную.",
+        "Добавлено копирование выбранных общих расходов с автоматической установкой текущей даты в полях «Дата» и «Оплачено»."
+      ]
+    },
     {
       version: "1.7.40",
       releasedAt: "2026-08-10",
@@ -1977,6 +1985,7 @@ MAX - https://bizvmax.ru/zifra_plus
     ],
     ovzStatuses: ["ОВЗ", "ОВЗ Инвалиды", "Инвалиды"],
     expenseNotes: [],
+    generalExpenseNumbers: ["личная карта"],
     employeePaymentBases: ["Оплата сотруднику", "Агентские"],
     discountRules: []
   };
@@ -2274,10 +2283,9 @@ MAX - https://bizvmax.ru/zifra_plus
         field("workType", "Вид работ", "select", true, "expenseTypes"),
         field("description", "Описание"),
         field("amount", "Сумма", "number", true),
-        field("paid", "Оплачено"),
-        field("accountingClosed", "Закрыто в бухгалтерии"),
-        field("bkExpenseNo", "Номер в расходах БК"),
-        field("otherExpenses", "Прочие затраты")
+        field("paid", "Оплачено", "date"),
+        field("accountingClosed", "Закрыто в бухгалтерии", "checkbox"),
+        field("bkExpenseNo", "Номер в расходах", "combo", false, "generalExpenseNumbers")
       ],
       table: ["counterparty", "section", "date", "workType", "amount", "paid", "accountingClosed"]
     },
@@ -6111,6 +6119,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function valueForDisplay(key, value, configId = "") {
+    if (configId === "generalExpenses" && key === "accountingClosed") {
+      return String(value ?? "").trim() === "+" ? "Да" : "\u00a0";
+    }
     if (value === undefined || value === null || value === "") return "—";
     if (key === "daysRemaining") {
       const days = Number(value);
@@ -8116,6 +8127,11 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="ghost-button" data-action="bulk-status" data-config="${configId}" type="button" ${selected.length ? "" : "disabled"}>Сменить статус</button>
         ` : ""}
         <button class="ghost-button" data-action="bulk-clear" data-config="${configId}" type="button" ${selected.length ? "" : "disabled"}>Снять выбор</button>
+        ${configId === "generalExpenses" ? `
+          <button class="ghost-button" data-action="bulk-copy-general-expenses" data-config="${configId}" type="button" title="Копировать выбранные общие расходы с текущей датой" ${selectedRows.length ? "" : "disabled"}>
+            Копировать
+          </button>
+        ` : ""}
         <button class="ghost-button icon-only csv-button" data-action="bulk-export" data-config="${configId}" type="button" title="Экспорт выбранных в CSV" aria-label="Экспорт выбранных в CSV" ${selectedRows.length ? "" : "disabled"}>
           <svg class="csv-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <rect x="3" y="4" width="13" height="16" rx="2"></rect>
@@ -14349,7 +14365,10 @@ MAX - https://bizvmax.ru/zifra_plus
       return renderStudentIdentityInput(label, item.key, value, { maxLength: 14 });
     }
     if (item.type === "checkbox") {
-      return `${label}<input name="${item.key}" type="checkbox" value="Да" ${isChecked(value) ? "checked" : ""}></label>`;
+      const checked = state.modal?.config === "generalExpenses" && item.key === "accountingClosed"
+        ? String(value ?? "").trim() === "+"
+        : isChecked(value);
+      return `${label}<input name="${item.key}" type="checkbox" value="Да" ${checked ? "checked" : ""}></label>`;
     }
     if (item.type === "textarea") {
       const rows = Number(layoutOptions.rows || (layoutOptions.list ? 3 : 0));
@@ -14357,6 +14376,16 @@ MAX - https://bizvmax.ru/zifra_plus
         ? '<small class="program-list-hint">Каждый элемент списка с новой строки</small>'
         : "";
       return `${label}<textarea name="${item.key}" ${rows ? `rows="${rows}"` : ""} ${required} ${layoutOptions.readOnly ? 'readonly aria-readonly="true"' : ""}>${escapeHtml(value)}</textarea>${hint}</label>`;
+    }
+    if (item.type === "combo") {
+      const dictionaryOptions = state.data.dictionaries[item.dict] || [];
+      return `${label}${renderComboField({
+        name: item.key,
+        value,
+        required,
+        options: dictionaryOptions,
+        dictionary: item.dict
+      })}</label>`;
     }
     if (item.type === "select") {
       const dictionaryOptions = Array.isArray(item.options)
@@ -20409,6 +20438,10 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", () => bulkSetStatus(button.dataset.config));
     });
 
+    document.querySelectorAll("[data-action='bulk-copy-general-expenses']").forEach((button) => {
+      button.addEventListener("click", () => bulkCopyGeneralExpenses());
+    });
+
     document.querySelectorAll("[data-action='bulk-delete']").forEach((button) => {
       button.addEventListener("click", () => bulkDelete(button.dataset.config));
     });
@@ -24497,7 +24530,9 @@ MAX - https://bizvmax.ru/zifra_plus
     fields.forEach((item) => {
       if (item.type === "checkbox") {
         if (!formElement.elements[item.key]) return;
-        values[item.key] = formData.has(item.key) ? "Да" : "";
+        values[item.key] = formData.has(item.key)
+          ? (formElement.dataset.config === "generalExpenses" && item.key === "accountingClosed" ? "+" : "Да")
+          : "";
         return;
       }
       if (!formData.has(item.key)) return;
@@ -29249,6 +29284,39 @@ MAX - https://bizvmax.ru/zifra_plus
     } catch (error) {
       alert(`Статус пока не передан в общую базу: ${error.message}`);
     }
+    render();
+  }
+
+  function bulkCopyGeneralExpenses() {
+    const selected = getSelected("generalExpenses");
+    const sourceRows = getRowsByIds("generalExpenses", selected);
+    if (!sourceRows.length) return;
+    const currentDate = todayIso();
+    const copies = sourceRows.map((source) => normalizeGeneralExpenseRecord({
+      ...clone(source),
+      id: makeId("general-expense"),
+      date: currentDate,
+      paid: currentDate
+    }));
+    state.data.collections.generalExpenses = [
+      ...copies,
+      ...(state.data.collections.generalExpenses || [])
+    ];
+    state.selected.generalExpenses = copies.map((record) => record.id);
+    state.lastEditedRow = {
+      config: "generalExpenses",
+      id: copies[copies.length - 1]?.id || ""
+    };
+    state.tablePages.generalExpenses = 1;
+    addAudit("Скопированы общие расходы", configs.generalExpenses.title, `${copies.length} записей`, {
+      entityType: "generalExpenses",
+      entityId: copies.map((record) => record.id).join(", "),
+      changes: [
+        { field: "date", label: "Дата", before: "", after: currentDate },
+        { field: "paid", label: "Оплачено", before: "", after: currentDate }
+      ]
+    });
+    persist();
     render();
   }
 
@@ -37340,6 +37408,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ovzStatuses: "Статусы ОВЗ",
       fundingSources: "Источники финансирования",
       expenseNotes: "Типовые примечания расходов",
+      generalExpenseNumbers: "Номера в расходах",
       employeePaymentBases: "Основания выплат сотрудникам",
       paymentSettings: "Оплата",
       sdoSettings: "Настройки СДО",
