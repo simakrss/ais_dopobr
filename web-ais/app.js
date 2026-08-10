@@ -1,10 +1,19 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.21",
+    version: "1.7.22",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.22",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Изменения строк учёта выплат сотрудникам теперь выполняются в быстром локальном черновике без записи всей общей базы после каждой галочки или выбора из списка.",
+        "Черновик выплат переносится в общую базу только при сохранении карточки сотрудника; кнопка «Отмена» полностью отбрасывает внесённые в оплату изменения.",
+        "Новые основания выплат и записи журнала также применяются только после сохранения карточки."
+      ]
+    },
     {
       version: "1.7.21",
       releasedAt: "2026-08-10",
@@ -4629,11 +4638,11 @@ MAX - https://bizvmax.ru/zifra_plus
     ];
   }
 
-  function getAllDirectExpenses() {
-    const linked = (state.data.collections.students || []).flatMap((student) => (
+  function getAllDirectExpenses(collections = state.data.collections) {
+    const linked = (collections.students || []).flatMap((student) => (
       Array.isArray(student.directExpenses) ? student.directExpenses : []
     ));
-    return [...linked, ...(state.data.collections.directExpenses || [])];
+    return [...linked, ...(collections.directExpenses || [])];
   }
 
   function parseProgramAuthorPayments(source, defaultPercent = 50) {
@@ -12172,7 +12181,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getNextEmployeePaymentOrder(record = {}) {
-    const accounting = getEmployeePaymentAccounting(record, state.data.collections);
+    const accounting = getEmployeePaymentAccounting(record, getEmployeePaymentCollections());
     const orders = [
       ...accounting.directEntries.map(({ expense }) => Number(expense?.employeePaymentOrder) || 0),
       ...accounting.generalEntries.map(({ expense }) => Number(expense?.employeePaymentOrder) || 0),
@@ -12210,8 +12219,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getEmployeePaymentBasisOptions(currentValue = "") {
+    const transaction = getEmployeePaymentTransaction();
     return unique([
       ...(state.data.dictionaries.employeePaymentBases || []),
+      ...(transaction?.pendingBases || []),
       String(currentValue || "").trim()
     ].map((value) => String(value || "").trim()).filter(Boolean));
   }
@@ -12664,7 +12675,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderEmployeePaymentAccounting(record) {
-    const accounting = getEmployeePaymentAccounting(record, state.data.collections);
+    const accounting = getEmployeePaymentAccounting(record, getEmployeePaymentCollections());
     const directRows = accounting.directEntries.map(({ expense, identity, student }) => ({
       sourceType: "direct",
       sourceId: String(expense.id || identity || "").trim(),
@@ -13239,7 +13250,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderContractModal(record) {
-    const paymentAccounting = getEmployeePaymentAccounting(record, state.data.collections);
+    const paymentAccounting = getEmployeePaymentAccounting(record, getEmployeePaymentCollections());
     record = {
       ...record,
       amount: paymentAccounting.amount,
@@ -20695,6 +20706,9 @@ MAX - https://bizvmax.ru/zifra_plus
         return;
       }
     }
+    if (state.modal?.config === "contracts" && state.modal?.employeePaymentTransaction) {
+      discardEmployeePaymentTransaction();
+    }
     const target = getContractNavigationTarget(currentId, direction);
     if (!target) return;
     await openContractCardById(target.id);
@@ -20855,10 +20869,98 @@ MAX - https://bizvmax.ru/zifra_plus
     return calculateStudentFinance(values);
   }
 
+  function cloneEmployeePaymentCollections(collections = state.data.collections) {
+    const source = collections && typeof collections === "object" ? collections : {};
+    return {
+      ...source,
+      contracts: (source.contracts || []).map((record) => ({ ...record })),
+      generalExpenses: (source.generalExpenses || []).map((record) => ({ ...record })),
+      directExpenses: (source.directExpenses || []).map((record) => ({ ...record })),
+      students: (source.students || []).map((record) => ({
+        ...record,
+        directExpenses: Array.isArray(record?.directExpenses)
+          ? record.directExpenses.map((expense) => ({ ...expense }))
+          : record?.directExpenses
+      }))
+    };
+  }
+
+  function getEmployeePaymentTransaction({ create = false } = {}) {
+    if (!state.modal || state.modal.config !== "contracts") return null;
+    if (!state.modal.employeePaymentTransaction && create) {
+      window.clearTimeout(employeePaymentPersistTimer);
+      employeePaymentPersistTimer = 0;
+      state.modal.employeePaymentTransaction = {
+        collections: cloneEmployeePaymentCollections(state.data.collections),
+        pendingBases: [],
+        auditEntries: [],
+        dirty: false
+      };
+    }
+    return state.modal.employeePaymentTransaction || null;
+  }
+
+  function getEmployeePaymentCollections({ create = false } = {}) {
+    return getEmployeePaymentTransaction({ create })?.collections || state.data.collections;
+  }
+
+  function markEmployeePaymentTransactionDirty() {
+    const transaction = getEmployeePaymentTransaction({ create: true });
+    if (!transaction) return false;
+    transaction.dirty = true;
+    state.modal.hasDraftChanges = true;
+    return true;
+  }
+
+  function addEmployeePaymentAudit(action, area, details, context = {}) {
+    const transaction = getEmployeePaymentTransaction({ create: true });
+    if (!transaction) {
+      addAudit(action, area, details, context);
+      return;
+    }
+    transaction.auditEntries.push({ action, area, details, context: { ...context } });
+    markEmployeePaymentTransactionDirty();
+  }
+
+  function commitEmployeePaymentTransaction() {
+    const transaction = getEmployeePaymentTransaction();
+    if (!transaction) return false;
+    if (employeePaymentPreviewFrame) window.cancelAnimationFrame(employeePaymentPreviewFrame);
+    employeePaymentPreviewFrame = 0;
+    pendingEmployeePaymentPreview = null;
+    const workingCollections = transaction.collections || {};
+    ["students", "directExpenses", "generalExpenses", "contracts"].forEach((key) => {
+      const sourceRows = Array.isArray(workingCollections[key]) ? workingCollections[key] : [];
+      const targetRows = state.data.collections[key];
+      if (Array.isArray(targetRows)) targetRows.splice(0, targetRows.length, ...sourceRows);
+      else state.data.collections[key] = [...sourceRows];
+    });
+    if (transaction.pendingBases.length) {
+      state.data.dictionaries.employeePaymentBases = unique([
+        ...(state.data.dictionaries.employeePaymentBases || []),
+        ...transaction.pendingBases
+      ]);
+    }
+    const auditEntries = [...transaction.auditEntries];
+    delete state.modal.employeePaymentTransaction;
+    auditEntries.forEach(({ action, area, details, context }) => addAudit(action, area, details, context));
+    return Boolean(transaction.dirty);
+  }
+
+  function discardEmployeePaymentTransaction() {
+    if (employeePaymentPreviewFrame) window.cancelAnimationFrame(employeePaymentPreviewFrame);
+    employeePaymentPreviewFrame = 0;
+    pendingEmployeePaymentPreview = null;
+    if (state.modal?.employeePaymentTransaction) delete state.modal.employeePaymentTransaction;
+    window.clearTimeout(employeePaymentPersistTimer);
+    employeePaymentPersistTimer = 0;
+  }
+
   function collectContractFormDraft() {
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "contracts") return state.modal?.draft || {};
-    const rows = state.data.collections.contracts || [];
+    const collections = getEmployeePaymentCollections();
+    const rows = collections.contracts || [];
     const currentRecord = formElement.dataset.id
       ? rows.find((row) => row.id === formElement.dataset.id) || {}
       : {};
@@ -20879,7 +20981,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     clearUnchangedGeneratedEmployeeCommunicationMessages(values, formElement);
     values.portalCredentials = buildContractPortalCredentials(values);
-    const accounting = getEmployeePaymentAccounting(values, state.data.collections);
+    const accounting = getEmployeePaymentAccounting(values, collections);
     return normalizeContractRecord({
       ...values,
       amount: accounting.amount,
@@ -20890,25 +20992,26 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function findEmployeePaymentSourceRecord(sourceType, sourceId) {
+    const collections = getEmployeePaymentCollections({ create: true });
     const id = String(sourceId || "").trim();
     if (!id) return null;
     if (sourceType === "general") {
-      return (state.data.collections.generalExpenses || []).find((expense) => String(expense?.id || "").trim() === id) || null;
+      return (collections.generalExpenses || []).find((expense) => String(expense?.id || "").trim() === id) || null;
     }
     if (sourceType === "direct") {
-      return getDirectExpenseEntriesFromCollections(state.data.collections)
+      return getDirectExpenseEntriesFromCollections(collections)
         .find(({ expense, identity }) => String(expense?.id || identity || "").trim() === id)?.expense || null;
     }
     if (sourceType === "partner") {
       const { studentId, slot } = parseEmployeePartnerPaymentSourceId(id);
-      const student = (state.data.collections.students || []).find((item) => (
+      const student = (collections.students || []).find((item) => (
         String(item?.id || item?.uid || "").trim() === studentId
       )) || null;
       return student ? createEmployeePartnerPaymentSource(student, slot) : null;
     }
     if (sourceType === "contract") {
       const contractId = id === "aggregate" ? String(state.modal?.id || "") : id;
-      return (state.data.collections.contracts || []).find((contract) => (
+      return (collections.contracts || []).find((contract) => (
         String(contract?.id || "").trim() === contractId
       )) || null;
     }
@@ -21073,13 +21176,17 @@ MAX - https://bizvmax.ru/zifra_plus
     const current = Array.isArray(state.data.dictionaries.employeePaymentBases)
       ? state.data.dictionaries.employeePaymentBases
       : [];
-    if (current.some((item) => String(item || "").trim() === basis)) return false;
-    state.data.dictionaries.employeePaymentBases = unique([...current, basis]);
+    const transaction = getEmployeePaymentTransaction({ create: true });
+    const pending = transaction?.pendingBases || [];
+    if ([...current, ...pending].some((item) => String(item || "").trim() === basis)) return false;
+    if (transaction) transaction.pendingBases = unique([...pending, basis]);
+    else state.data.dictionaries.employeePaymentBases = unique([...current, basis]);
     refreshSettingsLinkedControls("employeePaymentBases");
     return true;
   }
 
   function migrateEmployeeExpenseSource(sourceType, sourceId, targetType, draft = {}) {
+    const collections = getEmployeePaymentCollections({ create: true });
     if (!["direct", "general"].includes(sourceType) || !["direct", "general"].includes(targetType)) return null;
     const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
     if (!source) return null;
@@ -21111,7 +21218,7 @@ MAX - https://bizvmax.ru/zifra_plus
         bkExpenseNo: String(source.bkExpenseNo || ""),
         otherExpenses: String(source.otherExpenses || "")
       });
-      state.data.collections.generalExpenses = [nextSource, ...(state.data.collections.generalExpenses || [])];
+      collections.generalExpenses = [nextSource, ...(collections.generalExpenses || [])];
     } else {
       nextSource = {
         id: nextId,
@@ -21129,7 +21236,7 @@ MAX - https://bizvmax.ru/zifra_plus
         employeePaymentOrder: values.order,
         additionalInfo: values.comment
       };
-      state.data.collections.directExpenses = [nextSource, ...(state.data.collections.directExpenses || [])];
+      collections.directExpenses = [nextSource, ...(collections.directExpenses || [])];
     }
     return { sourceType: targetType, sourceId: nextId, source: nextSource };
   }
@@ -21234,7 +21341,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (sourceType !== "partner") return draft;
     const employeeName = normalizeEmployeeActPersonName(draft.name);
-    draft.agencyAmount = Math.round((state.data.collections.students || []).reduce((sum, student) => (
+    draft.agencyAmount = Math.round((getEmployeePaymentCollections().students || []).reduce((sum, student) => (
       normalizeEmployeeActPersonName(student?.agent) === employeeName
         ? sum + getEmployeePartnerPaymentAmount(student)
         : sum
@@ -21348,7 +21455,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...buildAuditChanges(pickFields(beforeSource, fields), pickFields(source, fields), fields)
     ].slice(0, AUDIT_CLIENT_MAX_CHANGES);
     const entityLabel = draft.name || source.note || source.counterparty || sourceId;
-    addAudit("Изменена запись оплаты сотруднику", "Договоры сотрудников", `${entityLabel}: ${afterPayment.description || "оплата"}, ${money(afterPayment.amount)}`, {
+    addEmployeePaymentAudit("Изменена запись оплаты сотруднику", "Договоры сотрудников", `${entityLabel}: ${afterPayment.description || "оплата"}, ${money(afterPayment.amount)}`, {
       entityType: "contracts",
       entityId: String(draft.id || state.modal?.id || ""),
       entityLabel,
@@ -21363,7 +21470,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = document.querySelector("#recordForm[data-config='contracts']");
     if (form) return collectContractFormDraft();
     const id = String(form?.dataset.id || state.modal?.id || "").trim();
-    const stored = (state.data.collections.contracts || [])
+    const stored = (getEmployeePaymentCollections().contracts || [])
       .find((contract) => String(contract?.id || "").trim() === id) || {};
     return normalizeContractRecord({
       ...stored,
@@ -21374,6 +21481,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function scheduleEmployeePaymentAccountingPersist(delay = EMPLOYEE_PAYMENT_PERSIST_DELAY_MS) {
+    if (markEmployeePaymentTransactionDirty()) return;
     window.clearTimeout(employeePaymentPersistTimer);
     employeePaymentPersistTimer = window.setTimeout(() => {
       employeePaymentPersistTimer = 0;
@@ -21433,7 +21541,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function commitEmployeePaymentAccountingChange(draft, focus = {}, renderAfter = false) {
-    const accounting = getEmployeePaymentAccounting(draft, state.data.collections);
+    const collections = getEmployeePaymentCollections({ create: true });
+    const accounting = getEmployeePaymentAccounting(draft, collections);
     const metrics = {
       amount: accounting.amount,
       paid: accounting.paid,
@@ -21441,7 +21550,7 @@ MAX - https://bizvmax.ru/zifra_plus
       balance: accounting.balance
     };
     const contractId = String(draft.id || state.modal?.id || "").trim();
-    const storedContract = (state.data.collections.contracts || [])
+    const storedContract = (collections.contracts || [])
       .find((contract) => String(contract?.id || "").trim() === contractId);
     if (storedContract) Object.assign(storedContract, metrics);
     const nextDraft = normalizeContractRecord({
@@ -21514,7 +21623,7 @@ MAX - https://bizvmax.ru/zifra_plus
         alert("Не удалось изменить источник затраты.");
         return;
       }
-      addAudit(
+      addEmployeePaymentAudit(
         "Изменён источник затраты",
         "Договоры сотрудников",
         `${draft.name || "Сотрудник"}: ${getEmployeePaymentDefaultSourceLabel(sourceType)} → ${getEmployeePaymentDefaultSourceLabel(targetType)}`,
@@ -21547,7 +21656,7 @@ MAX - https://bizvmax.ru/zifra_plus
     synchronizeEmployeePaymentAgencyDraft(draft, sourceType, effectiveSource);
     if (field === "description") rememberEmployeePaymentBasis(input.value);
     const sourceValues = getEmployeePaymentSourceValues(sourceType, effectiveSource);
-    addAudit(
+    addEmployeePaymentAudit(
       "Изменён учёт выплаты",
       "Договоры сотрудников",
       `${draft.name || "Сотрудник"}: ${sourceValues.description || "выплата"}`,
@@ -21603,22 +21712,23 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function buildEmployeePaymentSourceLookup() {
+    const collections = getEmployeePaymentCollections({ create: true });
     const lookup = new Map();
     const add = (sourceType, sourceId, source) => {
       const id = String(sourceId || "").trim();
       if (id && source) lookup.set(`${sourceType}\u0000${id}`, source);
     };
-    getDirectExpenseEntriesFromCollections(state.data.collections).forEach(({ expense, identity }) => {
+    getDirectExpenseEntriesFromCollections(collections).forEach(({ expense, identity }) => {
       add("direct", expense?.id || identity, expense);
     });
-    (state.data.collections.generalExpenses || []).forEach((expense) => add("general", expense?.id, expense));
-    (state.data.collections.students || []).forEach((student) => {
+    (collections.generalExpenses || []).forEach((expense) => add("general", expense?.id, expense));
+    (collections.students || []).forEach((student) => {
       getEmployeePartnerPaymentRows(student).forEach((row) => add("partner", row.sourceId, row.source));
       const legacyId = String(student?.id || student?.uid || "").trim();
       if (legacyId) add("partner", legacyId, createEmployeePartnerPaymentSource(student, "due"));
     });
-    (state.data.collections.contracts || []).forEach((contract) => add("contract", contract?.id, contract));
-    const activeContract = (state.data.collections.contracts || []).find((contract) => (
+    (collections.contracts || []).forEach((contract) => add("contract", contract?.id, contract));
+    const activeContract = (collections.contracts || []).find((contract) => (
       String(contract?.id || "").trim() === String(state.modal?.id || "").trim()
     ));
     if (activeContract) add("contract", "aggregate", activeContract);
@@ -21642,7 +21752,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const draft = getEmployeePaymentAccountingDraft();
     const sourceLookup = buildEmployeePaymentSourceLookup();
     if (!syncEmployeePaymentOrderFromTable(tbody, sourceLookup)) return false;
-    addAudit("Изменён порядок выплат", "Договоры сотрудников", draft.name || "Сотрудник", {
+    addEmployeePaymentAudit("Изменён порядок выплат", "Договоры сотрудников", draft.name || "Сотрудник", {
       entityType: "contracts",
       entityId: String(draft.id || state.modal?.id || ""),
       entityLabel: draft.name || String(draft.id || ""),
@@ -21803,19 +21913,21 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     let inserted = false;
     if (sourceType === "general") {
-      const expenses = state.data.collections.generalExpenses || [];
+      const collections = getEmployeePaymentCollections({ create: true });
+      const expenses = collections.generalExpenses || [];
       const sourceIndex = expenses.indexOf(source);
       if (sourceIndex >= 0) {
         expenses.splice(sourceIndex + 1, 0, normalizeGeneralExpenseRecord(duplicate));
         inserted = true;
       }
     } else {
-      const entry = getDirectExpenseEntriesFromCollections(state.data.collections)
+      const collections = getEmployeePaymentCollections({ create: true });
+      const entry = getDirectExpenseEntriesFromCollections(collections)
         .find(({ expense, identity }) => expense === source || String(expense?.id || identity || "").trim() === sourceId);
       if (entry) {
         const expenses = entry.student
           ? (Array.isArray(entry.student.directExpenses) ? entry.student.directExpenses : [])
-          : (state.data.collections.directExpenses || []);
+          : (collections.directExpenses || []);
         const sourceIndex = expenses.indexOf(entry.expense);
         if (sourceIndex >= 0) {
           expenses.splice(sourceIndex + 1, 0, duplicate);
@@ -21829,7 +21941,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const draft = getEmployeePaymentAccountingDraft();
     const values = getEmployeePaymentSourceValues(sourceType, source);
-    addAudit(
+    addEmployeePaymentAudit(
       "Продублирована выплата",
       "Договоры сотрудников",
       `${draft.name || "Сотрудник"}: ${values.description || "выплата"}, ${money(source.amount)}`,
@@ -21844,20 +21956,21 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function removeEmployeePaymentSourceRecord(sourceType, sourceId) {
+    const collections = getEmployeePaymentCollections({ create: true });
     const id = String(sourceId || "").trim();
     if (!id) return null;
     if (sourceType === "general") {
-      const expenses = state.data.collections.generalExpenses || [];
+      const expenses = collections.generalExpenses || [];
       const index = expenses.findIndex((expense) => String(expense?.id || "").trim() === id);
       return index >= 0 ? expenses.splice(index, 1)[0] : null;
     }
     if (sourceType === "direct") {
-      const entry = getDirectExpenseEntriesFromCollections(state.data.collections)
+      const entry = getDirectExpenseEntriesFromCollections(collections)
         .find(({ expense, identity }) => String(expense?.id || identity || "").trim() === id);
       if (!entry) return null;
       const expenses = entry.student
         ? (Array.isArray(entry.student.directExpenses) ? entry.student.directExpenses : [])
-        : (state.data.collections.directExpenses || []);
+        : (collections.directExpenses || []);
       const index = expenses.indexOf(entry.expense);
       return index >= 0 ? expenses.splice(index, 1)[0] : null;
     }
@@ -21935,7 +22048,7 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Не удалось удалить связанную запись выплаты.");
       return;
     }
-    addAudit(
+    addEmployeePaymentAudit(
       "Удалена выплата",
       "Договоры сотрудников",
       `${draft.name || "Сотрудник"}: ${description}, ${money(sourceValues.amount)}`,
@@ -21950,6 +22063,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function addEmployeePaymentAccountingRow(sourceType) {
+    const collections = getEmployeePaymentCollections({ create: true });
     const draft = collectContractFormDraft();
     const employeeName = String(draft.name || "").trim();
     if (!employeeName) {
@@ -21959,7 +22073,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     let sourceId = "";
     if (sourceType === "general") {
-      const previousGeneralPayment = getEmployeePaymentAccounting(draft, state.data.collections)
+      const previousGeneralPayment = getEmployeePaymentAccounting(draft, collections)
         .generalEntries[0]?.expense;
       const previousAmount = Number(previousGeneralPayment?.amount || 0);
       const expense = normalizeGeneralExpenseRecord({
@@ -21974,7 +22088,7 @@ MAX - https://bizvmax.ru/zifra_plus
         employeePaymentOrder: getNextEmployeePaymentOrder(draft),
         accountingClosed: ""
       });
-      state.data.collections.generalExpenses = [expense, ...(state.data.collections.generalExpenses || [])];
+      collections.generalExpenses = [expense, ...(collections.generalExpenses || [])];
       sourceId = expense.id;
     } else {
       const expense = {
@@ -21992,10 +22106,10 @@ MAX - https://bizvmax.ru/zifra_plus
         employeePaymentOrder: getNextEmployeePaymentOrder(draft),
         additionalInfo: ""
       };
-      state.data.collections.directExpenses = [expense, ...(state.data.collections.directExpenses || [])];
+      collections.directExpenses = [expense, ...(collections.directExpenses || [])];
       sourceId = expense.id;
     }
-    addAudit("Добавлена выплата", "Договоры сотрудников", employeeName, {
+    addEmployeePaymentAudit("Добавлена выплата", "Договоры сотрудников", employeeName, {
       entityType: "contracts",
       entityId: String(draft.id || state.modal?.id || ""),
       entityLabel: employeeName,
@@ -22227,6 +22341,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     const lock = activeRecordLock;
+    discardEmployeePaymentTransaction();
     activeRecordLock = null;
     stopRecordLockHeartbeat();
     state.employeeExpenseEditor = null;
@@ -22678,6 +22793,8 @@ MAX - https://bizvmax.ru/zifra_plus
         const hadEmptyOption = [...control.options].some((option) => option.value === "");
         const values = dict === "finalAttestationSettings"
           ? getFinalAttestationGradeOptions(currentValue)
+          : dict === "employeePaymentBases"
+            ? getEmployeePaymentBasisOptions(currentValue)
           : unique([
               ...(state.data.dictionaries[dict] || []).filter((value) => typeof value !== "object"),
               currentValue
@@ -22698,6 +22815,8 @@ MAX - https://bizvmax.ru/zifra_plus
           ? getLookupOptions(lookup, [currentValue])
           : dict === "expenseNotes"
             ? getStudentExpenseNoteOptions(record)
+            : dict === "employeePaymentBases"
+              ? getEmployeePaymentBasisOptions(currentValue)
             : unique([...(state.data.dictionaries[dict] || []), currentValue].map((value) => String(value || "").trim()).filter(Boolean));
         panel.innerHTML = values.map((value) => `
           <button class="${value === currentValue ? "is-selected" : ""}" data-action="select-combo-value" data-value="${escapeAttr(value)}" type="button" aria-selected="${value === currentValue ? "true" : "false"}">${escapeHtml(value)}</button>
@@ -23727,7 +23846,16 @@ MAX - https://bizvmax.ru/zifra_plus
       if (snilsInput) snilsInput.value = values.snils;
       if (!validateStudentIdentityValue("inn", values.inn, innInput)
         || !validateStudentIdentityValue("snils", values.snils, snilsInput)) return "";
-      Object.assign(values, normalizeContractRecord({ ...currentRecord, ...values }));
+      const paymentAccounting = getEmployeePaymentAccounting(values, getEmployeePaymentCollections());
+      Object.assign(values, normalizeContractRecord({
+        ...currentRecord,
+        ...values,
+        amount: paymentAccounting.amount,
+        paid: paymentAccounting.paid,
+        agencyAmount: paymentAccounting.agencyAmount,
+        balance: paymentAccounting.balance
+      }));
+      commitEmployeePaymentTransaction();
     }
 
     let savedId = formElement.dataset.id;
