@@ -1,10 +1,19 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.27",
+    version: "1.7.28",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.28",
+      releasedAt: "2026-08-10",
+      changes: [
+        "Для каждого редактируемого поля добавлена независимая история изменений с командами Ctrl+Z и Ctrl+Y.",
+        "В стандартное контекстное меню полей добавлен пункт «Вернуть» для повторного применения отменённого изменения.",
+        "Редакторы промосообщений, формул, путей и почтовых шаблонов подключены к общей системе отмены и возврата."
+      ]
+    },
     {
       version: "1.7.27",
       releasedAt: "2026-08-10",
@@ -2814,11 +2823,10 @@ MAX - https://bizvmax.ru/zifra_plus
   let employeePaymentPersistTimer = 0;
   let employeePaymentPreviewFrame = 0;
   let pendingEmployeePaymentPreview = null;
-  let fieldUndoKeyBound = false;
+  let fieldEditHistoryBound = false;
   let globalEscapeKeyBound = false;
   let shiftDragRequirementBound = false;
   let adminBeforeUnloadBound = false;
-  let lastDeletedControlState = null;
   let lastKnownClipboardText = "";
   let draggedNavItemId = "";
   let draggedDashboardStudentStatus = "";
@@ -2865,6 +2873,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let recordLockHeartbeatTimer = 0;
   const recordLockClientId = getRecordLockClientId();
   const communicationTemplateEditorHistories = new WeakMap();
+  const fieldControlHistories = new WeakMap();
 
   const transliterationPairs = [
     ["А", "A"], ["Б", "B"], ["В", "V"], ["Г", "G"], ["Д", "D"], ["Е", "E"], ["Ё", "Yo"], ["Ж", "Zh"],
@@ -22514,6 +22523,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function showFieldCopyPopup(control, x, y) {
     hideFieldCopyPopup();
+    initializeFieldControlHistory(control);
+    const historyEditable = isFieldEditHistoryControl(control);
     const settingsDictionary = String(control?.dataset?.settingsDictionary || "").trim();
     const popup = document.createElement("div");
     popup.className = "field-copy-popup";
@@ -22536,7 +22547,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <span>Вставить</span>
       </button>
       <span class="field-copy-divider" aria-hidden="true"></span>
-      <button class="field-delete-button" data-action="delete-field-value" type="button">
+      <button class="field-delete-button" data-action="delete-field-value" type="button" ${historyEditable ? "" : "disabled"}>
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M4 7h16"></path>
           <path d="M10 11v6"></path>
@@ -22546,12 +22557,19 @@ MAX - https://bizvmax.ru/zifra_plus
         </svg>
         <span>Удалить</span>
       </button>
-      <button class="field-undo-button" data-action="undo-field-delete" type="button" ${lastDeletedControlState ? "" : "disabled"}>
+      <button class="field-undo-button" data-action="undo-field-change" type="button" ${canUndoFieldControl(control) ? "" : "disabled"} title="Отменить последнее изменение (Ctrl+Z)">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M9 7 4 12l5 5"></path>
           <path d="M5 12h9a6 6 0 0 1 6 6"></path>
         </svg>
         <span>Отменить</span>
+      </button>
+      <button class="field-redo-button" data-action="redo-field-change" type="button" ${canRedoFieldControl(control) ? "" : "disabled"} title="Вернуть отменённое изменение (Ctrl+Y)">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="m15 7 5 5-5 5"></path>
+          <path d="M19 12h-9a6 6 0 0 0-6 6"></path>
+        </svg>
+        <span>Вернуть</span>
       </button>
       ${settingsDictionary ? `
         <span class="field-copy-divider" aria-hidden="true"></span>
@@ -22616,20 +22634,29 @@ MAX - https://bizvmax.ru/zifra_plus
       deleteStarted = true;
       clearControlValue(control);
       deleteButton.disabled = true;
-      undoButton.disabled = false;
+      undoButton.disabled = !canUndoFieldControl(control);
+      redoButton.disabled = true;
     };
     deleteButton.addEventListener("pointerdown", deleteNow);
     deleteButton.addEventListener("click", deleteNow);
-    const undoButton = popup.querySelector("[data-action='undo-field-delete']");
+    const undoButton = popup.querySelector("[data-action='undo-field-change']");
     const undoNow = (event) => {
       event.preventDefault();
       event.stopPropagation();
       if (undoButton.disabled) return;
-      restoreLastDeletedControl();
-      hideFieldCopyPopup();
+      if (undoFieldControl(control)) hideFieldCopyPopup();
     };
     undoButton.addEventListener("pointerdown", undoNow);
     undoButton.addEventListener("click", undoNow);
+    const redoButton = popup.querySelector("[data-action='redo-field-change']");
+    const redoNow = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (redoButton.disabled) return;
+      if (redoFieldControl(control)) hideFieldCopyPopup();
+    };
+    redoButton.addEventListener("pointerdown", redoNow);
+    redoButton.addEventListener("click", redoNow);
     const editListButton = popup.querySelector("[data-action='edit-settings-list']");
     let editListStarted = false;
     const editListNow = (event) => {
@@ -22984,7 +23011,6 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function clearControlValue(control) {
-    lastDeletedControlState = captureControlState(control);
     if (control.type === "checkbox" || control.type === "radio") {
       control.checked = false;
     } else if (control.tagName === "SELECT") {
@@ -22999,72 +23025,205 @@ MAX - https://bizvmax.ru/zifra_plus
     control.focus({ preventScroll: true });
   }
 
-  function captureControlState(control) {
-    const selectedValues = control.tagName === "SELECT"
-      ? Array.from(control.selectedOptions || []).map((option) => option.value)
-      : [];
+  function isFieldEditHistoryControl(control) {
+    if (!control?.matches?.("input, select, textarea, [contenteditable='true'][role='textbox']")) return false;
+    if (!isCopyableControl(control)) return false;
+    return !control.disabled && !control.readOnly && control.getAttribute("aria-disabled") !== "true";
+  }
+
+  function getFieldHistoryRadioGroup(control) {
+    if (String(control?.type || "").toLowerCase() !== "radio" || !control.name) return [control];
+    const owner = control.form || document;
+    return Array.from(owner.querySelectorAll("input[type='radio']"))
+      .filter((item) => item.name === control.name);
+  }
+
+  function captureFieldControlHistoryValue(control) {
+    const type = String(control?.type || "").toLowerCase();
+    if (type === "radio") {
+      return {
+        kind: "radio",
+        checked: getFieldHistoryRadioGroup(control).map((item) => Boolean(item.checked))
+      };
+    }
+    if (type === "checkbox") return { kind: "checkbox", checked: Boolean(control.checked) };
+    if (control.tagName === "SELECT") {
+      return {
+        kind: "select",
+        selected: Array.from(control.options || []).map((option) => Boolean(option.selected))
+      };
+    }
+    if (isContentEditableTextControl(control)) {
+      return { kind: "contenteditable", value: serializeCommunicationTemplateEditor(control) };
+    }
+    return { kind: "value", value: String(control.value ?? "") };
+  }
+
+  function cloneFieldControlHistoryValue(value) {
+    if (!value) return value;
     return {
-      control,
-      name: control.name,
-      tagName: control.tagName,
-      type: String(control.type || "").toLowerCase(),
-      value: isContentEditableTextControl(control) ? serializeCommunicationTemplateEditor(control) : control.value,
-      checked: Boolean(control.checked),
-      selectedIndex: control.selectedIndex,
-      selectedValues
+      ...value,
+      ...(Array.isArray(value.checked) ? { checked: [...value.checked] } : {}),
+      ...(Array.isArray(value.selected) ? { selected: [...value.selected] } : {})
     };
   }
 
-  function bindFieldUndoShortcut() {
-    if (fieldUndoKeyBound) return;
-    fieldUndoKeyBound = true;
+  function fieldControlHistoryValuesEqual(first, second) {
+    return JSON.stringify(first) === JSON.stringify(second);
+  }
+
+  function initializeFieldControlHistory(control) {
+    if (!isFieldEditHistoryControl(control)) return null;
+    if (isContentEditableTextControl(control)) {
+      initializeCommunicationTemplateEditorHistory(control);
+      return communicationTemplateEditorHistories.get(control) || null;
+    }
+    if (!fieldControlHistories.has(control)) {
+      fieldControlHistories.set(control, {
+        undo: [],
+        redo: [],
+        current: captureFieldControlHistoryValue(control),
+        beforeInput: null,
+        applying: false
+      });
+    }
+    return fieldControlHistories.get(control);
+  }
+
+  function initializeFieldEditHistories(root = document) {
+    root.querySelectorAll?.("input, select, textarea, [contenteditable='true'][role='textbox']")
+      .forEach((control) => initializeFieldControlHistory(control));
+  }
+
+  function recordFieldControlHistoryChange(control, previousValue = null) {
+    const history = initializeFieldControlHistory(control);
+    if (!history || history.applying || isContentEditableTextControl(control)) return false;
+    const nextValue = captureFieldControlHistoryValue(control);
+    const beforeValue = previousValue || history.beforeInput || history.current;
+    history.beforeInput = null;
+    if (fieldControlHistoryValuesEqual(beforeValue, nextValue)) {
+      history.current = cloneFieldControlHistoryValue(nextValue);
+      return false;
+    }
+    history.undo.push(cloneFieldControlHistoryValue(beforeValue));
+    if (history.undo.length > 100) history.undo.shift();
+    history.redo = [];
+    history.current = cloneFieldControlHistoryValue(nextValue);
+    return true;
+  }
+
+  function applyFieldControlHistoryValue(control, value) {
+    const history = initializeFieldControlHistory(control);
+    if (!history || !value) return false;
+    history.applying = true;
+    if (value.kind === "radio") {
+      getFieldHistoryRadioGroup(control).forEach((item, index) => {
+        item.checked = Boolean(value.checked[index]);
+      });
+    } else if (value.kind === "checkbox") {
+      control.checked = Boolean(value.checked);
+    } else if (value.kind === "select") {
+      Array.from(control.options || []).forEach((option, index) => {
+        option.selected = Boolean(value.selected[index]);
+      });
+    } else {
+      control.value = String(value.value ?? "");
+    }
+    history.current = cloneFieldControlHistoryValue(captureFieldControlHistoryValue(control));
+    history.beforeInput = null;
+    control.dispatchEvent(new Event("input", { bubbles: true }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+    history.applying = false;
+    control.focus({ preventScroll: true });
+    return true;
+  }
+
+  function canUndoFieldControl(control) {
+    const history = initializeFieldControlHistory(control);
+    return Boolean(history?.undo?.length);
+  }
+
+  function canRedoFieldControl(control) {
+    const history = initializeFieldControlHistory(control);
+    return Boolean(history?.redo?.length);
+  }
+
+  function undoFieldControl(control) {
+    if (!isFieldEditHistoryControl(control)) return false;
+    if (isContentEditableTextControl(control)) return undoCommunicationTemplateEditor(control);
+    const history = initializeFieldControlHistory(control);
+    if (!history?.undo.length) return false;
+    const previous = history.undo.pop();
+    history.redo.push(cloneFieldControlHistoryValue(captureFieldControlHistoryValue(control)));
+    return applyFieldControlHistoryValue(control, previous);
+  }
+
+  function redoFieldControl(control) {
+    if (!isFieldEditHistoryControl(control)) return false;
+    if (isContentEditableTextControl(control)) return redoCommunicationTemplateEditor(control);
+    const history = initializeFieldControlHistory(control);
+    if (!history?.redo.length) return false;
+    const next = history.redo.pop();
+    history.undo.push(cloneFieldControlHistoryValue(captureFieldControlHistoryValue(control)));
+    return applyFieldControlHistoryValue(control, next);
+  }
+
+  function getFieldHistoryControlFromEvent(event, includeActive = false) {
+    const control = event.target?.closest?.("input, select, textarea, [contenteditable='true'][role='textbox']")
+      || (includeActive && isFieldEditHistoryControl(document.activeElement) ? document.activeElement : null);
+    return isFieldEditHistoryControl(control) ? control : null;
+  }
+
+  function bindFieldEditHistory() {
+    initializeFieldEditHistories(document);
+    if (fieldEditHistoryBound) return;
+    fieldEditHistoryBound = true;
     document.addEventListener("paste", (event) => {
       const value = event.clipboardData?.getData("text/plain");
       if (typeof value === "string") lastKnownClipboardText = value;
     });
-    document.addEventListener("keydown", (event) => {
-      if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.key.toLowerCase() !== "z") return;
-      if (!lastDeletedControlState) return;
-      const form = document.getElementById("recordForm");
-      if (!form || !form.contains(document.activeElement)) return;
-      event.preventDefault();
-      restoreLastDeletedControl();
+    document.addEventListener("focusin", (event) => {
+      initializeFieldControlHistory(getFieldHistoryControlFromEvent(event));
     });
-  }
-
-  function restoreLastDeletedControl() {
-    const stateToRestore = lastDeletedControlState;
-    const control = getRestorableControl(stateToRestore);
-    if (!control) return;
-    if (stateToRestore.type === "checkbox" || stateToRestore.type === "radio") {
-      control.checked = stateToRestore.checked;
-    } else if (stateToRestore.tagName === "SELECT") {
-      if (control.multiple) {
-        Array.from(control.options).forEach((option) => {
-          option.selected = stateToRestore.selectedValues.includes(option.value);
-        });
-      } else {
-        control.selectedIndex = stateToRestore.selectedIndex;
-      }
-    } else if (isContentEditableTextControl(control)) {
-      setContentEditableTextControlValue(control, stateToRestore.value);
-    } else {
-      control.value = stateToRestore.value;
-    }
-    control.dispatchEvent(new Event("input", { bubbles: true }));
-    control.dispatchEvent(new Event("change", { bubbles: true }));
-    control.focus({ preventScroll: true });
-    lastDeletedControlState = null;
-  }
-
-  function getRestorableControl(stateToRestore) {
-    if (!stateToRestore) return null;
-    if (stateToRestore.control?.isConnected) return stateToRestore.control;
-    const form = document.getElementById("recordForm");
-    const control = form?.elements[stateToRestore.name];
-    if (!control) return null;
-    if (control.tagName) return control;
-    return Array.from(control).find((item) => item.type === stateToRestore.type) || control[0] || null;
+    document.addEventListener("beforeinput", (event) => {
+      const control = getFieldHistoryControlFromEvent(event);
+      if (!control || isContentEditableTextControl(control)) return;
+      const history = initializeFieldControlHistory(control);
+      if (history && !history.applying) history.beforeInput = captureFieldControlHistoryValue(control);
+    });
+    document.addEventListener("input", (event) => {
+      const control = getFieldHistoryControlFromEvent(event);
+      if (!control) return;
+      if (isContentEditableTextControl(control)) recordCommunicationTemplateEditorChange(control);
+      else recordFieldControlHistoryChange(control);
+    });
+    document.addEventListener("change", (event) => {
+      const control = getFieldHistoryControlFromEvent(event);
+      if (control && !isContentEditableTextControl(control)) recordFieldControlHistoryChange(control);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const control = getFieldHistoryControlFromEvent(event);
+      if (!control) return;
+      const key = String(event.key || "").toLowerCase();
+      const code = String(event.code || "");
+      const isUndoKey = key === "z" || code === "KeyZ";
+      const isRedoKey = key === "y" || code === "KeyY" || (isUndoKey && event.shiftKey);
+      const applied = isRedoKey
+        ? redoFieldControl(control)
+        : isUndoKey && !event.shiftKey
+          ? undoFieldControl(control)
+          : false;
+      if (applied) event.preventDefault();
+    });
+    document.addEventListener("contextmenu", (event) => {
+      if (event.defaultPrevented) return;
+      const control = getFieldHistoryControlFromEvent(event);
+      if (!control) return;
+      event.preventDefault();
+      event.stopPropagation();
+      showFieldCopyPopup(control, event.clientX, event.clientY);
+    });
   }
 
   function handleFieldCopyPopupOutside(event) {
@@ -23083,7 +23242,6 @@ MAX - https://bizvmax.ru/zifra_plus
   function isCopyableControl(control) {
     const type = String(control.type || "").toLowerCase();
     if (["hidden", "file", "button", "submit", "reset"].includes(type)) return false;
-    if (control.matches("[data-action='filter-lookup-values'], [data-event-editor-date], [data-event-editor-label]")) return false;
     return true;
   }
 
@@ -23093,9 +23251,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function setContentEditableTextControlValue(control, value) {
     if (!isContentEditableTextControl(control)) return;
-    control.textContent = String(value ?? "");
-    refreshTemplateLinkEditor(control);
-    syncProgramPromoEditor(control);
+    renderCommunicationTemplateEditorValue(control, String(value ?? ""));
   }
 
   function getControlCopyValue(control) {
@@ -23293,7 +23449,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const editor = token?.closest("[data-payment-formula-editor]");
     hideCommunicationTemplateFieldMenu();
     if (!editor) return;
+    const beforeValue = serializeCommunicationTemplateEditor(editor);
     token.remove();
+    commitCommunicationTemplateEditorChange(editor, beforeValue);
     syncPaymentFormulaEditor(editor);
     editor.focus({ preventScroll: true });
   }
@@ -23645,6 +23803,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function insertPaymentFormulaConstant(editor, marker, range = null) {
     const normalizedMarker = normalizePaymentConstantMarker(marker);
     if (!editor || !normalizedMarker) return;
+    const beforeValue = serializeCommunicationTemplateEditor(editor);
     const textNode = document.createTextNode(`[${normalizedMarker}]`);
     if (range) range.insertNode(textNode);
     else editor.append(textNode);
@@ -23657,6 +23816,7 @@ MAX - https://bizvmax.ru/zifra_plus
       selection.removeAllRanges();
       selection.addRange(caret);
     }
+    commitCommunicationTemplateEditorChange(editor, beforeValue);
     refreshPaymentFormulaEditor(editor, true);
   }
 
@@ -29704,8 +29864,10 @@ MAX - https://bizvmax.ru/zifra_plus
       editor.dispatchEvent(new Event("input", { bubbles: true }));
       return;
     }
+    const beforeValue = serializeCommunicationTemplateEditor(editor);
     const block = createDocumentSaveFolderToken(token);
     editor.replaceChildren(block);
+    commitCommunicationTemplateEditorChange(editor, beforeValue);
     syncDocumentSaveFolderEditor(editor);
     editor.focus({ preventScroll: true });
     const selection = window.getSelection();
@@ -29736,7 +29898,9 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!removeButton || !editor.contains(removeButton)) return;
       event.preventDefault();
       event.stopPropagation();
+      const beforeValue = serializeCommunicationTemplateEditor(editor);
       removeButton.closest("[data-document-save-folder-token]")?.remove();
+      commitCommunicationTemplateEditorChange(editor, beforeValue);
       syncDocumentSaveFolderEditor(editor);
       editor.focus({ preventScroll: true });
     });
@@ -29799,9 +29963,11 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function insertDocumentEmailTemplateToken(editor, token, range = null, existingBlock = null) {
     if (!editor || !token) return;
+    const beforeValue = serializeCommunicationTemplateEditor(editor);
     const block = existingBlock || createDocumentEmailTemplateBlock(token);
     if (range && !block.contains(range.startContainer)) range.insertNode(block);
     else editor.append(block);
+    commitCommunicationTemplateEditorChange(editor, beforeValue);
     syncDocumentEmailTemplateEditor(editor);
     editor.focus({ preventScroll: true });
     const selection = window.getSelection();
@@ -29898,7 +30064,15 @@ MAX - https://bizvmax.ru/zifra_plus
         editor.classList.remove("is-drop-target");
         const range = getCommunicationTemplateDropRange(editor, event.clientX, event.clientY);
         if (draggedEmailBlock?.contains(range?.startContainer)) return;
+        const sourceEditor = draggedEmailBlock?.closest?.("[data-document-email-editor]");
+        const beforeSourceValue = sourceEditor && sourceEditor !== editor
+          ? serializeCommunicationTemplateEditor(sourceEditor)
+          : "";
         insertDocumentEmailTemplateToken(editor, token, range, draggedEmailBlock);
+        if (sourceEditor && sourceEditor !== editor) {
+          commitCommunicationTemplateEditorChange(sourceEditor, beforeSourceValue);
+          syncDocumentEmailTemplateEditor(sourceEditor);
+        }
         draggedEmailBlock = null;
       });
     });
@@ -29930,9 +30104,11 @@ MAX - https://bizvmax.ru/zifra_plus
       editor.focus({ preventScroll: true });
       return;
     }
+    const beforeValue = serializeCommunicationTemplateEditor(editor);
     const block = createDocumentSaveFolderToken(token);
     if (range) range.insertNode(block);
     else editor.append(block);
+    commitCommunicationTemplateEditorChange(editor, beforeValue);
     syncDocumentPathValueEditor(editor);
     editor.focus({ preventScroll: true });
     const selection = window.getSelection();
@@ -30351,6 +30527,7 @@ MAX - https://bizvmax.ru/zifra_plus
     root.querySelectorAll("[data-program-promo-editor]").forEach((editor) => {
       if (editor.dataset.programPromoBound === "true") return;
       editor.dataset.programPromoBound = "true";
+      initializeCommunicationTemplateEditorHistory(editor);
       let highlightTimer = 0;
       const refresh = (preserveCaret = false) => {
         window.clearTimeout(highlightTimer);
@@ -30380,12 +30557,18 @@ MAX - https://bizvmax.ru/zifra_plus
         editor.dispatchEvent(new Event("input", { bubbles: true }));
       });
       editor.addEventListener("input", () => {
+        recordCommunicationTemplateEditorChange(editor);
         syncProgramPromoEditor(editor);
         if (editor.dataset.composing === "true") return;
         window.clearTimeout(highlightTimer);
         highlightTimer = window.setTimeout(() => {
           if (editor.isConnected && editor.dataset.composing !== "true") refresh(true);
         }, 180);
+      });
+      editor.addEventListener("keydown", (event) => {
+        if (handleCommunicationTemplateEditorHistoryKeydown(event, editor)) {
+          window.clearTimeout(highlightTimer);
+        }
       });
       editor.addEventListener("blur", () => refresh());
     });
@@ -30435,12 +30618,19 @@ MAX - https://bizvmax.ru/zifra_plus
     let highlightTimer = null;
     if (editor) {
       editor.innerHTML = renderCommunicationTemplateLinks(currentValues[normalizedName] || "");
+      initializeCommunicationTemplateEditorHistory(editor);
       editor.focus({ preventScroll: true });
       setCommunicationTemplateEditorCaretOffset(editor, 0);
       editor.addEventListener("click", openTemplateEditorLink);
       editor.addEventListener("input", () => {
+        recordCommunicationTemplateEditorChange(editor);
         window.clearTimeout(highlightTimer);
         highlightTimer = window.setTimeout(() => refreshTemplateLinkEditor(editor, true), 180);
+      });
+      editor.addEventListener("keydown", (event) => {
+        if (handleCommunicationTemplateEditorHistoryKeydown(event, editor)) {
+          window.clearTimeout(highlightTimer);
+        }
       });
       editor.addEventListener("blur", () => {
         window.clearTimeout(highlightTimer);
@@ -30877,6 +31067,11 @@ MAX - https://bizvmax.ru/zifra_plus
     if (editor.matches("[data-contract-formula-editor]")) syncContractFormulaEditor(editor);
     else if (editor.matches("[data-data-formula-editor]")) syncDataFormulaEditor(editor);
     else if (editor.matches("[data-formula-editor]")) syncCommunicationTemplateFormulaEditor(editor);
+    else if (editor.matches("[data-program-promo-editor]")) syncProgramPromoEditor(editor);
+    else if (editor.matches("[data-document-email-editor]")) syncDocumentEmailTemplateEditor(editor);
+    else if (editor.matches("[data-document-path-value-editor]")) syncDocumentPathValueEditor(editor);
+    else if (editor.matches("[data-document-save-folder-editor]")) syncDocumentSaveFolderEditor(editor);
+    else if (editor.matches("[data-payment-formula-editor]")) syncPaymentFormulaEditor(editor);
     else syncCommunicationTemplateEditor(editor);
   }
 
@@ -30888,6 +31083,20 @@ MAX - https://bizvmax.ru/zifra_plus
       editor.innerHTML = renderDataFormulaEditorContent(value);
     } else if (editor.matches("[data-formula-editor]")) {
       editor.innerHTML = renderCommunicationTemplateFormulaEditorContent(value);
+    } else if (editor.matches("[data-program-promo-editor], [data-document-email-template-value-editor]")) {
+      editor.innerHTML = renderCommunicationTemplateLinks(value);
+    } else if (editor.matches("[data-document-email-editor]")) {
+      editor.textContent = value;
+      refreshDocumentEmailTemplateEditor(editor);
+    } else if (editor.matches("[data-document-path-value-editor]")) {
+      editor.textContent = value;
+      refreshDocumentPathValueEditor(editor);
+    } else if (editor.matches("[data-document-save-folder-editor]")) {
+      editor.textContent = value;
+      refreshDocumentSaveFolderEditor(editor);
+    } else if (editor.matches("[data-payment-formula-editor]")) {
+      editor.textContent = value;
+      refreshPaymentFormulaEditor(editor);
     } else {
       editor.innerHTML = renderCommunicationTemplateEditorContent(value);
     }
