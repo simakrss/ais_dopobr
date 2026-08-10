@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.28",
+    version: "1.7.29",
     releasedAt: "2026-08-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.29",
+      releasedAt: "2026-08-10",
+      changes: [
+        "При добавлении общей выплаты сумма и основание автоматически копируются из последней общей выплаты сотрудника."
+      ]
+    },
     {
       version: "1.7.28",
       releasedAt: "2026-08-10",
@@ -22215,12 +22222,13 @@ MAX - https://bizvmax.ru/zifra_plus
       const previousGeneralPayment = getEmployeePaymentAccounting(draft, collections)
         .generalEntries[0]?.expense;
       const previousAmount = Number(previousGeneralPayment?.amount || 0);
+      const previousBasis = String(previousGeneralPayment?.workType || "").trim();
       const expense = normalizeGeneralExpenseRecord({
         id: makeId("general-expense"),
         section: GENERAL_EXPENSE_SECTIONS[0],
         counterparty: employeeName,
         date: todayIso(),
-        workType: "Оплата сотруднику",
+        workType: previousBasis || "Оплата сотруднику",
         description: "",
         amount: Number.isFinite(previousAmount) ? previousAmount : 0,
         paid: "",
