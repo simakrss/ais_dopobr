@@ -15431,7 +15431,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .student-income-tab .discount-description-label {
-  grid-column: 1 / -1;
+  grid-column: span 2;
 }
 
 .discount-description-field input {
@@ -16774,6 +16774,10 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   .student-photo-panel,
   .student-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .student-income-tab .discount-description-label {
+    grid-column: 1;
   }
 
   .student-education-document-meta-row {

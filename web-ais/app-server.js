@@ -341,6 +341,7 @@ const STUDENT_DATABASE_COLUMN_MAP = Object.freeze({
   "АгентДата1": "agentPayment1Date",
   "АгентСумма2": "agentPayment2Amount",
   "АгентДата2": "agentPayment2Date",
+  "Купон": "coupon",
   "Скидка": "discount",
   "Вид программы ДПО": "educationType",
   "Вид  программы ДПО": "educationType",

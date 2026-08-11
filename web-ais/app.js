@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.73",
+    version: "1.7.74",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.74",
+      releasedAt: "2026-08-12",
+      changes: [
+        "При импорте заявок купоны RASS25 и RASS50 распознаются как платежи по рассрочке на 25% и 50% суммы договора: в карточку передаются код купона и описание условий, сумма договора восстанавливается до 100%, а в поступления и связанные выплаты попадает фактически внесённая сумма. Поле «Купон» добавлено на вкладку «Финансы» рядом с описанием скидки."
+      ]
+    },
     {
       version: "1.7.73",
       releasedAt: "2026-08-12",
@@ -2734,7 +2741,8 @@ MAX - https://bizvmax.ru/zifra_plus
             field("discount", "Скидка в %", "number"),
             field("paidAmount", "Внесено по договору", "number"),
             field("balance", "Остаток по договору", "number"),
-            field("discountDescription", "Описание скидки")
+            field("discountDescription", "Описание скидки"),
+            field("coupon", "Купон")
           ]
         }
       ]
@@ -7631,24 +7639,51 @@ MAX - https://bizvmax.ru/zifra_plus
         row.organization,
         row.position,
         row.source,
+        row.coupon,
         row.note
       ].some((value) => String(value || "").toLocaleLowerCase("ru-RU").includes(query))
     ));
   }
 
-  function getStudentApplicationCouponDiscount(row = {}) {
-    const couponText = [row.coupon, row.order, row.note]
+  function getStudentApplicationCouponTerms(row = {}) {
+    const explicitCoupon = String(row.coupon || "").trim();
+    const couponText = [explicitCoupon, row.order, row.note]
       .map((value) => String(value || "").trim())
       .filter(Boolean)
       .join(" ");
+    const installmentMatch = /(?:^|[^a-z0-9])RASS(25|50)(?:$|[^a-z0-9])/i.exec(couponText);
+    if (installmentMatch) {
+      const installmentPercent = Number(installmentMatch[1]);
+      const coupon = `RASS${installmentPercent}`;
+      return {
+        coupon,
+        percent: 0,
+        installmentPercent,
+        description: `Платёж по рассрочке — ${installmentPercent}% от суммы договора (купон ${coupon})`
+      };
+    }
     if (/(?:^|[^a-z0-9])SALE10(?:$|[^a-z0-9])/i.test(couponText)) {
       return {
         coupon: "SALE10",
         percent: 10,
+        installmentPercent: 0,
         description: "Периодическая акция"
       };
     }
-    return { coupon: "", percent: 0, description: "" };
+    return { coupon: explicitCoupon, percent: 0, installmentPercent: 0, description: "" };
+  }
+
+  function getStudentApplicationFinancialTerms(row = {}) {
+    const couponTerms = getStudentApplicationCouponTerms(row);
+    const rawPaymentAmount = Number(row.paymentAmount || 0);
+    const paymentAmount = Number.isFinite(rawPaymentAmount) && rawPaymentAmount > 0
+      ? Math.round(rawPaymentAmount * 100) / 100
+      : 0;
+    const installmentPercent = Number(couponTerms.installmentPercent || 0);
+    const contractAmount = paymentAmount > 0 && installmentPercent > 0
+      ? Math.round((paymentAmount * 100 / installmentPercent) * 100) / 100
+      : paymentAmount;
+    return { ...couponTerms, paymentAmount, contractAmount };
   }
 
   function renderStudentApplicationDetail(row, importedLookup = buildStudentApplicationsImportLookup()) {
@@ -7657,16 +7692,23 @@ MAX - https://bizvmax.ru/zifra_plus
       row,
       state.studentApplicationsImport.filters.programId
     );
-    const paymentAmount = Math.max(0, Number(row.paymentAmount || 0));
+    const financialTerms = getStudentApplicationFinancialTerms(row);
+    const { paymentAmount, contractAmount } = financialTerms;
     const hasPayment = paymentAmount > 0 || Boolean(row.paid);
-    const couponDiscount = getStudentApplicationCouponDiscount(row);
     const repeatComment = getStudentApplicationRepeatComment(row, importedLookup);
+    const benefitDescription = financialTerms.description
+      ? (financialTerms.percent
+        ? `${financialTerms.percent}% — ${financialTerms.description}`
+        : financialTerms.description)
+      : "—";
     const details = [
       ["Дата", row.date],
       ["ФИО", row.name],
       ["Заказ", row.order],
       ["Оплата", hasPayment ? money(paymentAmount) : "—"],
-      ["Скидка", couponDiscount.percent ? `${couponDiscount.percent}% — ${couponDiscount.description}` : "—"],
+      ["Сумма договора", hasPayment ? money(contractAmount) : "—"],
+      ["Купон", financialTerms.coupon || "—"],
+      ["Скидка / рассрочка", benefitDescription],
       ["Программа", row.program],
       ["Телефон", row.phone],
       ["Email", row.email],
@@ -7688,7 +7730,11 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="student-application-import-preview">
         <span>Будет добавлено</span>
         <strong>${escapeHtml(mappedProgram?.name || getStudentApplicationProgramTitle(row) || "Программа не определена")}</strong>
-        <small>${hasPayment ? `Оплата: ${escapeHtml(money(paymentAmount))}` : "Без оплаты"}</small>
+        <small>${hasPayment
+          ? (financialTerms.installmentPercent
+            ? `Платёж ${financialTerms.installmentPercent}%: ${escapeHtml(money(paymentAmount))}; сумма договора: ${escapeHtml(money(contractAmount))}`
+            : `Оплата: ${escapeHtml(money(paymentAmount))}`)
+          : "Без оплаты"}</small>
         ${repeatComment ? `<small class="student-application-repeat-comment">${escapeHtml(repeatComment)}</small>` : ""}
       </div>
     `;
@@ -8348,11 +8394,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function createStudentFromApplication(row, uid, status, selectedProgramId) {
     const program = getStudentApplicationProgram(row, selectedProgramId);
-    const couponDiscount = getStudentApplicationCouponDiscount(row);
-    const rawPaymentAmount = Number(row.paymentAmount || 0);
-    const paymentAmount = Number.isFinite(rawPaymentAmount) && rawPaymentAmount > 0
-      ? Math.round(rawPaymentAmount * 100) / 100
-      : 0;
+    const financialTerms = getStudentApplicationFinancialTerms(row);
+    const { paymentAmount, contractAmount } = financialTerms;
     const applicationDate = String(row.dateCreated || "").slice(0, 10);
     const paymentDate = paymentAmount ? (applicationDate || todayIso()) : "";
     const city = String(row.city || "").trim();
@@ -8377,9 +8420,10 @@ MAX - https://bizvmax.ru/zifra_plus
       source: String(row.source || "Сайт").trim(),
       agent: getApplicationSourceAgent(row.source || "Сайт"),
       manager: getCurrentUserLogin() || String(program?.manager || ""),
-      discount: couponDiscount.percent,
+      discount: financialTerms.percent,
       discountUnit: "percent",
-      discountDescription: couponDiscount.description,
+      discountDescription: financialTerms.description,
+      coupon: financialTerms.coupon,
       note: noteParts.join("\n"),
       applicationDate,
       orderNo: String(row.orderId || "").trim(),
@@ -8387,10 +8431,15 @@ MAX - https://bizvmax.ru/zifra_plus
       sourceOrderId: String(row.orderId || "").trim(),
       sourceProductId: String(row.productId || "").trim(),
       photoPath: `Слушатели/${getStudentCompactFolderName(row.name)}/Документы`,
-      contractAmount: paymentAmount,
+      contractAmount,
       payment1Date: paymentDate,
       payment1Amount: paymentAmount,
-      payment1Note: paymentAmount ? `Заказ №${String(row.orderId || "").trim()}` : "",
+      payment1Note: paymentAmount ? [
+        `Заказ №${String(row.orderId || "").trim()}`,
+        financialTerms.installmentPercent
+          ? `рассрочка ${financialTerms.installmentPercent}% по купону ${financialTerms.coupon}`
+          : ""
+      ].filter(Boolean).join("; ") : "",
       directExpenses: []
     };
     return calculateStudentFinance(addAutomaticStudentExpenses(record, program).record);

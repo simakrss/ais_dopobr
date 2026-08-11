@@ -111,6 +111,7 @@ FROM (
     IFNULL(baddr1.meta_value, '') AS `Должность`,
     IFNULL(baddr2.meta_value, '') AS `Источник`,
     IFNULL(bcomm.post_excerpt, '') AS `Примечание`,
+    IFNULL(coup.order_item_name, '') AS source_coupon,
     t_opl.date_created,
     t_opl.order_id AS source_order_id,
     oi.order_item_id AS source_line_item_id,
@@ -235,6 +236,7 @@ try {
         organization = Read-DbString $reader "Организация"
         position = Read-DbString $reader "Должность"
         source = Read-DbString $reader "Источник"
+        coupon = Read-DbString $reader "source_coupon"
         note = Read-DbString $reader "Примечание"
         paid = ([int]$reader["source_is_paid"]) -eq 1
         paymentAmount = $paymentAmount
