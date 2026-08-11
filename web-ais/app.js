@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.54",
+    version: "1.7.55",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.55",
+      releasedAt: "2026-08-11",
+      changes: [
+        "Синхронизация с XLSB теперь добавляет отсутствующие программы из листа «Реестр программ», включая основные параметры карточки, стоимость, тип, часы и ссылки."
+      ]
+    },
     {
       version: "1.7.54",
       releasedAt: "2026-08-11",
@@ -34158,6 +34165,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .filter((item) => normalizeProgramName(item?.name));
     const importedByIdentity = new Map();
     const importedByName = new Map();
+    const importedByRow = new Map();
     importedRows.forEach((item) => {
       const name = normalizeProgramName(item.name);
       const identity = getProgramWorkbookIdentity(item.name, item.xlsbProgramLandingCode);
@@ -34165,8 +34173,39 @@ MAX - https://bizvmax.ru/zifra_plus
       importedByIdentity.get(identity).push(item);
       if (!importedByName.has(name)) importedByName.set(name, []);
       importedByName.get(name).push(item);
+      const sourceRow = Math.max(0, Number(item.xlsbProgramRow) || 0);
+      if (sourceRow) {
+        if (!importedByRow.has(sourceRow)) importedByRow.set(sourceRow, []);
+        importedByRow.get(sourceRow).push(item);
+      }
     });
-    return (Array.isArray(programs) ? programs : []).map((program) => {
+    const usedImportedRows = new Set();
+    const takeSingleUnused = (rows) => {
+      const available = (Array.isArray(rows) ? rows : []).filter((item) => !usedImportedRows.has(item));
+      return available.length === 1 ? available[0] : null;
+    };
+    const applyImportedFields = (program, imported) => {
+      if (!imported) return program;
+      usedImportedRows.add(imported);
+      const authorSource = String(imported.authorSource || "").trim();
+      const importedFields = clone(imported);
+      delete importedFields.name;
+      return {
+        ...(program || {}),
+        ...importedFields,
+        id: String(program?.id || "").trim() || buildLegacyRecordId("program-xlsb", [
+          imported.xlsbProgramRow,
+          imported.name,
+          imported.xlsbProgramLandingCode
+        ]),
+        name: String(program?.name || imported.name || "").trim(),
+        author: authorSource,
+        authorSource,
+        authorPayments: parseProgramAuthorPayments(authorSource, defaultAuthorPercent),
+        defaultAuthorPaymentPercent: defaultAuthorPercent
+      };
+    };
+    const mergedPrograms = (Array.isArray(programs) ? programs : []).map((program) => {
       const sourceLandingCode = Object.prototype.hasOwnProperty.call(
         program || {},
         "xlsbProgramLandingCode"
@@ -34177,23 +34216,23 @@ MAX - https://bizvmax.ru/zifra_plus
         program?.xlsbProgramName || program?.name,
         sourceLandingCode
       );
+      const sourceRow = Math.max(0, Number(program?.xlsbProgramRow) || 0);
+      const sourceName = normalizeProgramName(program?.xlsbProgramName || program?.name);
+      const sameRowRows = sourceRow
+        ? (importedByRow.get(sourceRow) || []).filter((item) => normalizeProgramName(item?.name) === sourceName)
+        : [];
       const sameIdentityRows = importedByIdentity.get(identity) || [];
       const sameNameRows = importedByName.get(normalizeProgramName(program?.name)) || [];
-      const imported = (sameIdentityRows.length === 1 ? sameIdentityRows[0] : null)
-        || (sameNameRows.length === 1 ? sameNameRows[0] : null);
+      const imported = takeSingleUnused(sameRowRows)
+        || takeSingleUnused(sameIdentityRows)
+        || takeSingleUnused(sameNameRows);
       if (!imported) return program;
-      const authorSource = String(imported.authorSource || "").trim();
-      const importedFields = clone(imported);
-      delete importedFields.name;
-      return {
-        ...program,
-        ...importedFields,
-        author: authorSource,
-        authorSource,
-        authorPayments: parseProgramAuthorPayments(authorSource, defaultAuthorPercent),
-        defaultAuthorPaymentPercent: defaultAuthorPercent
-      };
+      return applyImportedFields(program, imported);
     });
+    const addedPrograms = importedRows
+      .filter((imported) => !usedImportedRows.has(imported))
+      .map((imported) => applyImportedFields(null, imported));
+    return [...mergedPrograms, ...addedPrograms];
   }
 
   async function importStudentsFromDatabase(event) {

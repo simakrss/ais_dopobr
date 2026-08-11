@@ -238,6 +238,19 @@ const AGENT_PAYMENT_RATE_DEFINITIONS = Object.freeze([
   })
 ]);
 const PROGRAM_DATABASE_COLUMN_MAP = Object.freeze({
+  "Наименование программы (без часов)": "shortName",
+  "Статус": "status",
+  "Код лендинга": "landingCode",
+  "Стоимость": "price",
+  "Старая цена": "oldPrice",
+  "Тип": "type",
+  "Часы": "hours",
+  "Срок": "duration",
+  "Форма обучения": "studyForm",
+  "Индекс группы": "groupIndex",
+  "На промо сайте": "promoSite",
+  "Гр. Телеграмм": "telegramGroup",
+  "Ссылка на отчет по оценкам": "gradeReportUrl",
   "Автор": "authorSource",
   "Квалификация": "qualification",
   "Сфера деятельности": "activityScope",
@@ -266,6 +279,11 @@ const PROGRAM_DATABASE_COLUMN_MAP = Object.freeze({
 const PROGRAM_DATABASE_COMMENT_FIELDS = new Set([
   "promoMessage1",
   "promoMessage2"
+]);
+const PROGRAM_DATABASE_NUMBER_FIELDS = new Set([
+  "price",
+  "oldPrice",
+  "hours"
 ]);
 const PROGRAM_DATABASE_LIST_FIELDS = new Set([
   "qualification",
@@ -8595,6 +8613,11 @@ function normalizeProgramDatabaseListValue(value) {
 
 function normalizeProgramDatabaseValue(fieldName, value) {
   if (fieldName === "programOrderDate") return normalizeStudentDatabaseDate(value);
+  if (PROGRAM_DATABASE_NUMBER_FIELDS.has(fieldName)) {
+    if (value === "" || value === null || value === undefined) return "";
+    const number = Number(String(value).replace(/\s+/g, "").replace(",", "."));
+    return Number.isFinite(number) ? number : String(value).trim();
+  }
   if (PROGRAM_DATABASE_LIST_FIELDS.has(fieldName)) {
     return normalizeProgramDatabaseListValue(value);
   }
