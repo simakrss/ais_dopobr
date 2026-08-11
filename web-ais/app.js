@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.58",
+    version: "1.7.59",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.59",
+      releasedAt: "2026-08-11",
+      changes: [
+        "Кнопка загрузки писем убрана из строки пути к фотографии и оставлена только в верхней панели карточки слушателя рядом с кнопкой документов."
+      ]
+    },
     {
       version: "1.7.58",
       releasedAt: "2026-08-11",
@@ -16330,6 +16337,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderStudentDocumentsFolderLink(record, extraClass = "", entityType = "student") {
     const isContract = entityType === "contract";
+    const showMailboxButton = !isContract
+      && String(extraClass || "").split(/\s+/).includes("student-card-header-action");
     const personLabel = isContract ? "сотрудника" : "слушателя";
     const documentsFolder = isContract ? getContractDocumentsFolder(record) : getStudentYandexDocumentsFolder(record);
     const folderUrl = getDocumentsFolderUrl(documentsFolder, record);
@@ -16354,7 +16363,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <path d="M3 9h18"></path>
         </svg>
       </a>
-      ${isContract ? "" : `
+      ${showMailboxButton ? `
         <button
           class="icon-button student-mailbox-documents-button ${escapeAttr(extraClass)}"
           data-action="open-student-mailbox-documents"
@@ -16370,7 +16379,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <path d="M3 5h18v14H3z"></path><path d="m3 6 9 7 9-7"></path><path d="M12 10v8"></path><path d="m9 15 3 3 3-3"></path>
           </svg>
         </button>
-      `}
+      ` : ""}
     `;
   }
 
