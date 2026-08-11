@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.67",
-    releasedAt: "2026-08-11"
+    version: "1.7.68",
+    releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.68",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Удалённые записи общих затрат сразу исчезают из списка, а удаление сохраняется в общей базе в фоне; дополнительно очищается устаревшее выделение строк."
+      ]
+    },
     {
       version: "1.7.67",
       releasedAt: "2026-08-11",
@@ -5750,10 +5757,18 @@ MAX - https://bizvmax.ru/zifra_plus
     return !sharedStateConflict && sharedStatePersistedGeneration >= target;
   }
 
-  function saveSharedApplicationStateInBackground({ generation = sharedStateChangeGeneration, lock = null } = {}) {
+  function saveSharedApplicationStateInBackground({
+    generation = sharedStateChangeGeneration,
+    lock = null,
+    renderOnFailure = false
+  } = {}) {
     window.setTimeout(async () => {
       try {
-        await flushSharedApplicationStateThroughGeneration(generation);
+        const saved = await flushSharedApplicationStateThroughGeneration(generation);
+        if (!saved && renderOnFailure) {
+          await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
+          render();
+        }
       } catch (error) {
         console.warn("Изменения остались в фоновой очереди синхронизации", error);
         scheduleSharedApplicationStateSave(1000);
@@ -8514,7 +8529,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const selected = getSelected(configId);
     const selectedRows = getRowsByIds(config.collection, selected);
     const filteredSelectionCount = configId === "students"
-      ? rows.filter((row) => selected.includes(row.id)).length
+      ? rows.filter((row) => selected.includes(String(row?.id || "").trim())).length
       : 0;
     const statusField = config.fields.find((item) => item.key === "status");
     const statusOptions = statusField ? (statusField.options || state.data.dictionaries[statusField.dict] || getFilterOptions(config)) : [];
@@ -9124,7 +9139,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const pagination = getTablePagination(configId, rows.length);
     const pageRows = rows.slice(pagination.start, pagination.end);
-    const allVisibleSelected = pageRows.length > 0 && pageRows.every((row) => selected.includes(row.id));
+    const allVisibleSelected = pageRows.length > 0
+      && pageRows.every((row) => selected.includes(String(row?.id || "").trim()));
     return `
       <div class="table-wrap">
         <table class="data-table">
@@ -9173,7 +9189,7 @@ MAX - https://bizvmax.ru/zifra_plus
               return `
               <tr class="${rowClasses}" ${lockedByOther ? "data-record-locked" : ""} ${rowTitle ? `title="${escapeAttr(rowTitle)}"` : ""}>
                 <td class="select-col">
-                  <input type="checkbox" data-action="toggle-row-selection" data-config="${configId}" data-id="${row.id}" ${selected.includes(row.id) ? "checked" : ""} aria-label="Выбрать строку">
+                  <input type="checkbox" data-action="toggle-row-selection" data-config="${configId}" data-id="${row.id}" ${selected.includes(String(row?.id || "").trim()) ? "checked" : ""} aria-label="Выбрать строку">
                 </td>
                 ${fields.map((fieldItem, index) => {
                   const value = escapeHtml(valueForDisplay(fieldItem.key, row[fieldItem.key], configId) || "Открыть");
@@ -9591,25 +9607,28 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getSelected(configId) {
-    return state.selected[configId] || [];
+    return (state.selected[configId] || []).map((id) => String(id || "").trim()).filter(Boolean);
   }
 
   function setSelected(configId, ids) {
-    state.selected[configId] = unique(ids.filter(Boolean));
+    state.selected[configId] = unique(
+      ids.map((id) => String(id || "").trim()).filter(Boolean)
+    );
   }
 
   function getRowsByIds(collection, ids) {
-    const set = new Set(ids);
+    const set = new Set(ids.map((id) => String(id || "").trim()).filter(Boolean));
     const rows = collection === "documentTemplates"
       ? getDocumentTemplateRows()
       : (state.data.collections[collection] || []);
-    return rows.filter((row) => set.has(row.id));
+    return rows.filter((row) => set.has(String(row?.id || "").trim()));
   }
 
   function toggleRowSelection(configId, id, checked) {
     const selected = new Set(getSelected(configId));
-    if (checked) selected.add(id);
-    else selected.delete(id);
+    const normalizedId = String(id || "").trim();
+    if (checked) selected.add(normalizedId);
+    else selected.delete(normalizedId);
     setSelected(configId, Array.from(selected));
     render();
   }
@@ -9619,8 +9638,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const visibleIds = getCurrentTablePageRows(configId, getVisibleRows(config)).map((row) => row.id);
     const selected = new Set(getSelected(configId));
     visibleIds.forEach((id) => {
-      if (checked) selected.add(id);
-      else selected.delete(id);
+      const normalizedId = String(id || "").trim();
+      if (checked) selected.add(normalizedId);
+      else selected.delete(normalizedId);
     });
     setSelected(configId, Array.from(selected));
     render();
@@ -30095,7 +30115,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const config = configs[configId];
     const rows = state.data.collections[config.collection];
-    const record = rows.find((row) => row.id === id);
+    const normalizedId = String(id || "").trim();
+    const record = rows.find((row) => String(row?.id || "").trim() === normalizedId);
     if (!record) return;
     if (configId === "inventory" && getInventoryAllocationCount(record.id) > 0) {
       alert("Эту позицию нельзя удалить: она распределена на слушателей.");
@@ -30117,30 +30138,41 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     }
     if (configId === "students") releaseStudentDirectExpenses([record]);
-    state.data.collections[config.collection] = rows.filter((row) => row.id !== id);
-    const entityLabel = record.name || record.contractNo || record.code || record.itemType || id;
+    state.data.collections[config.collection] = rows.filter((row) => (
+      String(row?.id || "").trim() !== normalizedId
+    ));
+    const entityLabel = record.name || record.contractNo || record.code || record.itemType || normalizedId;
     addAudit("Удалена запись", config.title, entityLabel, {
       entityType: config.collection,
-      entityId: id,
+      entityId: normalizedId,
       entityLabel,
       changes: buildAuditChanges(record, {}, configId === "students" ? studentAllFields : config.fields)
     });
     persist();
-    try {
-      if (!await flushSharedApplicationState()) {
-        await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
-      }
-    } catch (error) {
-      alert(`Удаление пока не передано в общую базу: ${error.message}`);
-    }
-    await releaseRecordLock(deleteLock);
+    const generation = sharedStateChangeGeneration;
+    state.lastEditedRow = null;
     render();
+    saveSharedApplicationStateInBackground({
+      generation,
+      lock: deleteLock,
+      renderOnFailure: true
+    });
   }
 
   async function bulkDelete(configId) {
     const config = configs[configId];
-    const selected = getSelected(configId);
-    if (!selected.length) return;
+    const requestedSelected = getSelected(configId);
+    if (!requestedSelected.length) return;
+    const selectedRecords = getRowsByIds(config.collection, requestedSelected);
+    const selected = selectedRecords
+      .map((record) => String(record?.id || "").trim())
+      .filter(Boolean);
+    if (!selected.length) {
+      setSelected(configId, []);
+      render();
+      return;
+    }
+    if (selected.length !== requestedSelected.length) setSelected(configId, selected);
     await pollSharedRecordLocks({ renderAfter: false });
     const lockedRecord = selected
       .map((id) => getRecordLock(recordLockEntityType(configId), id))
@@ -30188,7 +30220,6 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     if (["students", "contracts"].includes(configId)) {
-      const selectedRecords = getRowsByIds(config.collection, selected);
       try {
         for (const record of selectedRecords) {
           if (record.photoPath) await deleteStoredPhoto(record.photoPath);
@@ -30199,22 +30230,19 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       if (configId === "students") releaseStudentDirectExpenses(selectedRecords);
     }
-    state.data.collections[config.collection] = (state.data.collections[config.collection] || []).filter((row) => !selectedSet.has(row.id));
-    state.selected[configId] = [];
+    state.data.collections[config.collection] = (state.data.collections[config.collection] || [])
+      .filter((row) => !selectedSet.has(String(row?.id || "").trim()));
+    setSelected(configId, []);
     addAudit("Массовое удаление", config.title, `${selected.length} записей`, {
       entityType: config.collection,
       entityId: selected.join(", ")
     });
     persist();
-    try {
-      if (!await flushSharedApplicationState()) {
-        await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
-        alert("Удаление не сохранено в общей базе. Данные были обновлены с сервера.");
-      }
-    } catch (error) {
-      alert(`Удаление пока не передано в общую базу: ${error.message}`);
-    }
+    const generation = sharedStateChangeGeneration;
+    state.lastEditedRow = null;
+    state.tablePages[configId] = Math.max(1, Number(state.tablePages[configId]) || 1);
     render();
+    saveSharedApplicationStateInBackground({ generation, renderOnFailure: true });
   }
 
   async function bulkSetStatus(configId) {
