@@ -10957,12 +10957,8 @@ body.card-window-moving {
   font-size: 13px;
 }
 
-.student-main-identity > .student-photo-path-field {
-  grid-column: 2;
-}
-
 .student-main-identity > .student-additional-status-grid {
-  grid-column: 1 / -1;
+  grid-column: 2;
 }
 
 .student-form-grid.student-additional-status-grid {

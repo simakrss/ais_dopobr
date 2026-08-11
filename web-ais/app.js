@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.59",
+    version: "1.7.60",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.60",
+      releasedAt: "2026-08-11",
+      changes: [
+        "Строка пути к фотографии и папке документов перенесена непосредственно под контактные данные; нижняя часть карточки слушателя поднята вверх."
+      ]
+    },
     {
       version: "1.7.59",
       releasedAt: "2026-08-11",
@@ -15963,11 +15970,11 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
             ${renderStudentContactLine(record)}
           </div>
+          ${renderStudentPhotoPathField(photoPathField, record)}
         </div>
         <div class="student-main-uid">
           ${renderStudentField(uidField, record)}
         </div>
-        ${renderStudentPhotoPathField(photoPathField, record)}
         <div class="student-form-grid student-additional-status-grid">
           ${renderStudentField(additionalStatusField, record)}
         </div>
