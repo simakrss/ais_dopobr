@@ -27,7 +27,8 @@ $runtimeMirrorFiles = @(
   "server-cli.js",
   "scripts/sync-student-database.ps1",
   "student-import-worker.js",
-  "vendor/mysql2-bundle.cjs"
+  "vendor/mysql2-bundle.cjs",
+  "vendor/qrcode-runtime/node_modules/qrcode-generator/qrcode.js"
 )
 
 function Normalize-RelativePath([string]$PathValue) {

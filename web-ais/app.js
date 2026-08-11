@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.52",
+    version: "1.7.53",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.53",
+      releasedAt: "2026-08-11",
+      changes: [
+        "В сертификатах восстановлено вычисление формул транслитерации, даты выдачи и QR-кода; QR-код вставляется как локально сформированное изображение.",
+        "Недоступный конвертеру шрифт регистрационного номера заменяется совместимым системным шрифтом без моноширинной подстановки."
+      ]
+    },
     {
       version: "1.7.52",
       releasedAt: "2026-08-11",
@@ -37143,6 +37151,21 @@ MAX - https://bizvmax.ru/zifra_plus
     const formula = String(field.formula || "").trim();
     if (isGetSqlQueryFormula(formula)) {
       return field.name === "УчебныйПлан" ? formatEducationDocumentTrainingPlan(record) : "";
+    }
+    if (fieldName === "ФИО_ENG" && /ТРАНСЛИТЕРАЦИЯ/i.test(formula)) {
+      return String(record?.fullNameEnglish || record?.nameEnglish || record?.fioEnglish || "").trim()
+        || transliterateStudentName(record?.name || "");
+    }
+    if (fieldName === "РегНомер_ENG" && /ТРАНСЛИТЕРАЦИЯ/i.test(formula)) {
+      return transliterateStudentName(getContractTemplateRawSourceValue("РегНомер", record));
+    }
+    if (fieldName === "Дата выдачи" && /^\s*=\s*ТЕКСТ\(/i.test(formula)) {
+      return formatContractDate(getContractTemplateRawSourceValue("Дата выдачи", record));
+    }
+    if (fieldName === "QRкод" && /^\s*=\s*QRкод\(/i.test(formula)) {
+      const program = String(getContractTemplateSourceValue("Прогр обуч факт", record) || "").trim();
+      const fullName = String(getContractTemplateSourceValue("ФИО", record) || record?.name || "").trim();
+      return `${program}${program && fullName ? " " : ""}${fullName}https://edu-plus.ru`;
     }
     const isDefaultFormula = defaultField && formula === String(defaultField.formula || "").trim();
     if (!isDefaultFormula) return evaluateContractFormulaFallback(formula, record, values, evaluateByName);

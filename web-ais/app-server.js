@@ -14,6 +14,16 @@ const SERVER_CODE_ROOT = __dirname;
 const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
 const XLSX = require(path.join(ROOT, "vendor", "sheetjs", "xlsx.full.min.js"));
 const PDF_LIB = require(path.join(ROOT, "vendor", "pdf-lib.min.js"));
+const QR_CODE_GENERATOR = require(path.join(
+  ROOT,
+  "vendor",
+  "qrcode-runtime",
+  "node_modules",
+  "qrcode-generator",
+  "qrcode.js"
+));
+
+QR_CODE_GENERATOR.stringToBytes = QR_CODE_GENERATOR.stringToBytesFuncs["UTF-8"];
 const MYSQL2_BUNDLE_PATH = path.join(ROOT, "vendor", "mysql2-bundle.cjs");
 const STORAGE_ROOT = path.join(ROOT, "storage");
 const PHOTO_ROOT = path.join(STORAGE_ROOT, "photos");
@@ -2468,6 +2478,26 @@ function evaluateDocumentFormulaExpression(expression, context) {
     .replace(/\[([^\]]+)\]/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)));
 }
 
+const DOCUMENT_TRANSLITERATION_PAIRS = [
+  ["А", "A"], ["Б", "B"], ["В", "V"], ["Г", "G"], ["Д", "D"], ["Е", "E"], ["Ё", "Yo"], ["Ж", "Zh"],
+  ["З", "Z"], ["И", "I"], ["Й", "Y"], ["К", "K"], ["Л", "L"], ["М", "M"], ["Н", "N"], ["О", "O"],
+  ["П", "P"], ["Р", "R"], ["С", "S"], ["Т", "T"], ["У", "U"], ["Ф", "F"], ["Х", "Kh"], ["Ц", "Ts"],
+  ["Ч", "Ch"], ["Ш", "Sh"], ["Щ", "Shch"], ["Ъ", ""], ["Ы", "Y"], ["Ь", ""], ["Э", "E"], ["Ю", "Yu"],
+  ["Я", "Ya"]
+];
+const DOCUMENT_TRANSLITERATION_MAP = DOCUMENT_TRANSLITERATION_PAIRS.reduce((result, [cyrillic, latin]) => {
+  result[cyrillic] = latin;
+  result[cyrillic.toLocaleLowerCase("ru-RU")] = latin.toLocaleLowerCase("en-US");
+  return result;
+}, {});
+
+function transliterateDocumentFormulaText(value) {
+  return String(value || "")
+    .replace(/[А-Яа-яЁё]/g, (character) => DOCUMENT_TRANSLITERATION_MAP[character] ?? character)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function evaluateDocumentFormulaFunction(name, args, context) {
   const upperName = String(name || "").toUpperCase();
   const compactName = upperName.replace(/[\s_*]+/g, "");
@@ -2501,6 +2531,8 @@ function evaluateDocumentFormulaFunction(name, args, context) {
   }
   if (upperName === "СЖПРОБЕЛЫ") return text(0).replace(/\s+/g, " ").trim();
   if (upperName === "ТЕКСТ") return formatDocumentFormulaDate(text(0));
+  if (compactName === "ТРАНСЛИТЕРАЦИЯ") return transliterateDocumentFormulaText(text(0));
+  if (compactName === "QRКОД") return text(0).trim();
   if (compactName === "ОКРУГЛВНИЗ") {
     const number = Number(String(value(0)).replace(",", "."));
     const digitsValue = Number(String(value(1)).replace(",", "."));
@@ -3525,6 +3557,29 @@ function updateCustomDocumentProperties(entries, fieldValues, allowedNames = nul
   entry.content = Buffer.from(xml, "utf8");
 }
 
+function normalizeUnavailableDocumentFonts(entries) {
+  const fallbackFonts = new Map([
+    ["Batang", "Times New Roman"]
+  ]);
+  entries.forEach((entry) => {
+    if (!/^word\/.+\.xml$/i.test(entry.name)) return;
+    let xml = entry.content.toString("utf8");
+    fallbackFonts.forEach((fallback, unavailable) => {
+      const escapedName = unavailable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      xml = xml
+        .replace(
+          new RegExp(`(\\bw:(?:ascii|hAnsi|eastAsia|cs)=")${escapedName}(")`, "g"),
+          `$1${fallback}$2`
+        )
+        .replace(
+          new RegExp(`(<w:font\\b[^>]*\\bw:name=")${escapedName}(")`, "g"),
+          `$1${fallback}$2`
+        );
+    });
+    entry.content = Buffer.from(xml, "utf8");
+  });
+}
+
 function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyUpdateNames = null) {
   const replacements = Object.entries(fieldValues || {})
     .filter(([name]) => String(name || "").trim())
@@ -3537,6 +3592,7 @@ function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyU
       };
     });
   const entries = readDocxZipEntries(templateBytes);
+  normalizeUnavailableDocumentFonts(entries);
   const indexedFieldPositionMap = normalizeExpulsionOrderFieldPositionMap(
     getIndexedWordFieldPositionMap(entries),
     fieldValues
@@ -4125,6 +4181,90 @@ async function loadContractPhoto(fieldValues) {
     if (!fullPath || error.code === "ENOENT") return null;
     throw error;
   }
+}
+
+function createDocumentQrCodeImage(value) {
+  const payload = String(value || "").trim();
+  if (!payload) return null;
+  try {
+    if (/^data:image\//i.test(payload)) {
+      const parsedImage = parseDataUrl(payload);
+      return {
+        ...parsedImage,
+        ...imageDimensions(parsedImage.bytes, parsedImage.ext),
+        name: "QR-код документа"
+      };
+    }
+    const qrCode = QR_CODE_GENERATOR(0, "M");
+    qrCode.addData(payload, "Byte");
+    qrCode.make();
+    const parsed = createQrCodePng(qrCode, 12, 4);
+    return {
+      ...parsed,
+      ...imageDimensions(parsed.bytes, parsed.ext),
+      name: "QR-код документа"
+    };
+  } catch (error) {
+    throw new Error(`Не удалось сформировать QR-код документа: ${error.message}`);
+  }
+}
+
+function pngCrc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
+    }
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function buildPngChunk(type, data) {
+  const typeBytes = Buffer.from(type, "ascii");
+  const payload = Buffer.isBuffer(data) ? data : Buffer.from(data || []);
+  const chunk = Buffer.allocUnsafe(12 + payload.length);
+  chunk.writeUInt32BE(payload.length, 0);
+  typeBytes.copy(chunk, 4);
+  payload.copy(chunk, 8);
+  chunk.writeUInt32BE(pngCrc32(Buffer.concat([typeBytes, payload])), 8 + payload.length);
+  return chunk;
+}
+
+function createQrCodePng(qrCode, scale = 12, marginModules = 4) {
+  const moduleCount = qrCode.getModuleCount();
+  const cellSize = Math.max(1, Math.trunc(Number(scale) || 12));
+  const margin = Math.max(0, Math.trunc(Number(marginModules) || 0));
+  const size = (moduleCount + margin * 2) * cellSize;
+  const stride = size + 1;
+  const pixels = Buffer.alloc(stride * size, 0xFF);
+  for (let y = 0; y < size; y += 1) {
+    const rowOffset = y * stride;
+    pixels[rowOffset] = 0;
+    const moduleY = Math.floor(y / cellSize) - margin;
+    for (let x = 0; x < size; x += 1) {
+      const moduleX = Math.floor(x / cellSize) - margin;
+      const dark = moduleX >= 0 && moduleX < moduleCount
+        && moduleY >= 0 && moduleY < moduleCount
+        && qrCode.isDark(moduleY, moduleX);
+      pixels[rowOffset + 1 + x] = dark ? 0 : 0xFF;
+    }
+  }
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
+  header[8] = 8;
+  header[9] = 0;
+  header[10] = 0;
+  header[11] = 0;
+  header[12] = 0;
+  const bytes = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+    buildPngChunk("IHDR", header),
+    buildPngChunk("IDAT", zlib.deflateSync(pixels, { level: 9 })),
+    buildPngChunk("IEND", Buffer.alloc(0))
+  ]);
+  return { bytes, ext: "png", mime: "image/png", width: size, height: size };
 }
 
 function requestBuffer(url, options = {}, redirectCount = 0) {
@@ -11849,9 +11989,21 @@ async function handleContractDocument(req, res) {
       photo: sourceValues.photo || fieldValues.photo || "",
       photoPath: sourceValues.photoPath || fieldValues.photoPath || ""
     });
+    const hasQrCodeField = Object.prototype.hasOwnProperty.call(fieldValues, "QRкод");
+    const qrCode = hasQrCodeField
+      ? createDocumentQrCodeImage(fieldValues["QRкод"] || sourceValues["QRкод"] || "")
+      : null;
     const outputFieldValues = { ...fieldValues, "Фото": "" };
+    if (hasQrCodeField) outputFieldValues["QRкод"] = "";
     if (!photo) outputFieldValues["ПутьСохр"] = "";
-    const docxResult = fillDocxMarkers(templateBytes, outputFieldValues, photo ? { "Фото": photo } : { "Фото": null }, propertyUpdateNames);
+    const imageValues = { "Фото": photo };
+    if (hasQrCodeField) imageValues["QRкод"] = qrCode;
+    const docxResult = fillDocxMarkers(
+      templateBytes,
+      outputFieldValues,
+      imageValues,
+      propertyUpdateNames
+    );
     const requestedOutputFormat = normalizeGeneratedDocumentFormat(body.outputFormat);
     let outputFormat = requestedOutputFormat;
     let result = docxResult;
@@ -12826,6 +12978,7 @@ module.exports = {
   inspectStudentDatabaseBinary,
   applyCustomDocumentPropertyFormulas,
   convertDocxBytesToPdf,
+  createDocumentQrCodeImage,
   removeBlankInteriorPdfPages,
   evaluateDocumentFormula,
   extractWebDavBrowserPreviewText,
