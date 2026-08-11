@@ -48,6 +48,9 @@ const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH = "ООО Цифровизация П
 const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
 const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
 const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
+const DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST = "imap.timeweb.ru";
+const DEFAULT_STUDENT_APPLICATIONS_EMAIL_SMTP_HOST = "smtp.timeweb.ru";
+const DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN = "mail@zifra-plus.ru";
 let serverSettings = {};
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
@@ -696,13 +699,13 @@ async function ensureStorage() {
     sharedRecordLocksMySqlUser: "",
     sharedRecordLocksMySqlPassword: "",
     studentApplicationsMySqlConnectionString: "",
-    studentApplicationsEmailHost: "",
+    studentApplicationsEmailHost: DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST,
     studentApplicationsEmailPort: 993,
     studentApplicationsEmailSecure: true,
-    studentApplicationsEmailSmtpHost: "",
+    studentApplicationsEmailSmtpHost: DEFAULT_STUDENT_APPLICATIONS_EMAIL_SMTP_HOST,
     studentApplicationsEmailSmtpPort: 465,
     studentApplicationsEmailSmtpSecure: true,
-    studentApplicationsEmailLogin: "",
+    studentApplicationsEmailLogin: DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN,
     studentDocumentMailboxes: [],
     documentConverterUrl: DEFAULT_DOCUMENT_CONVERTER_URL,
     documentConverterSourceUrl: DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL,
@@ -710,21 +713,72 @@ async function ensureStorage() {
     yandexDiskAutoSave: false,
     ...serverSettings
   };
+  const mailboxMigration = migrateStudentApplicationsMailboxSettings(serverSettings);
+  serverSettings = mailboxMigration.settings;
   if (
     !String(serverSettings.documentConverterJwtSecret || "").trim()
     && !String(process.env.ONLYOFFICE_JWT_SECRET || "").trim()
   ) {
     serverSettings.documentConverterJwtSecret = crypto.randomBytes(32).toString("hex");
-    await fs.writeFile(
-      SERVER_SETTINGS_PATH,
-      `${JSON.stringify(serverSettings, null, 2)}\n`,
-      "utf8"
-    );
+    mailboxMigration.changed = true;
+  }
+  if (mailboxMigration.changed) {
+    await fs.writeFile(SERVER_SETTINGS_PATH, `${JSON.stringify(serverSettings, null, 2)}\n`, "utf8");
   }
   delete serverSettings.systemDocumentsPublicUrl;
   delete serverSettings.systemDocumentsPublicPassword;
   delete serverSettings.studentDatabaseUrl;
   delete serverSettings.studentPhotoBasePath;
+}
+
+function migrateStudentApplicationsMailboxSettings(settings = {}) {
+  const next = { ...settings };
+  const currentLogin = String(next.studentApplicationsEmailLogin || "").trim();
+  let changed = false;
+
+  // An early version stored the mailbox for student documents in the single
+  // applications-mailbox slot. Preserve its credentials as a document mailbox
+  // and restore the dedicated applications address expected by the importer.
+  if (currentLogin.toLowerCase() === "mail@edu-plus.ru") {
+    const documentMailboxes = Array.isArray(next.studentDocumentMailboxes)
+      ? [...next.studentDocumentMailboxes]
+      : [];
+    const alreadyMoved = documentMailboxes.some((mailbox) => (
+      String(mailbox?.login || "").trim().toLowerCase() === currentLogin.toLowerCase()
+    ));
+    if (!alreadyMoved) {
+      documentMailboxes.push({
+        id: "student-documents-edu-plus",
+        label: "Документы слушателей · mail@edu-plus.ru",
+        host: String(next.studentApplicationsEmailHost || DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST).trim(),
+        port: normalizeMailboxPort(next.studentApplicationsEmailPort, 993),
+        secure: next.studentApplicationsEmailSecure !== false,
+        smtpHost: String(
+          next.studentApplicationsEmailSmtpHost || DEFAULT_STUDENT_APPLICATIONS_EMAIL_SMTP_HOST
+        ).trim(),
+        smtpPort: normalizeMailboxPort(next.studentApplicationsEmailSmtpPort, 465),
+        smtpSecure: next.studentApplicationsEmailSmtpSecure !== false,
+        login: currentLogin,
+        password: String(next.studentApplicationsEmailPassword || "")
+      });
+    }
+    next.studentDocumentMailboxes = documentMailboxes;
+    next.studentApplicationsEmailLogin = DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN;
+    next.studentApplicationsEmailPassword = "";
+    changed = true;
+  }
+
+  const defaults = {
+    studentApplicationsEmailHost: DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST,
+    studentApplicationsEmailSmtpHost: DEFAULT_STUDENT_APPLICATIONS_EMAIL_SMTP_HOST,
+    studentApplicationsEmailLogin: DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN
+  };
+  Object.entries(defaults).forEach(([key, value]) => {
+    if (String(next[key] || "").trim()) return;
+    next[key] = value;
+    changed = true;
+  });
+  return { settings: next, changed };
 }
 
 function authBase64UrlEncode(value) {
@@ -13220,7 +13274,9 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       body.emailSmtpHost || emailHost.replace(/^imap(?=\.)/i, "smtp")
     ).trim();
     const emailSmtpPort = Number(body.emailSmtpPort || 465);
-    const emailLogin = String(body.emailLogin || "").trim();
+    const emailLogin = String(
+      body.emailLogin || DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN
+    ).trim();
     const emailPassword = String(body.emailPassword || "");
     const currentDocumentMailboxes = new Map(
       (Array.isArray(serverSettings.studentDocumentMailboxes)
@@ -13257,6 +13313,9 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     const mysqlPassword = String(body.mysqlPassword || "");
     if (!Number.isInteger(emailPort) || emailPort < 1 || emailPort > 65535) {
       throw new Error("Укажите корректный порт IMAP.");
+    }
+    if (emailLogin.toLowerCase() !== DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN) {
+      throw new Error(`Для сбора заявок используется ящик ${DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN}.`);
     }
     if (!emailSmtpHost) throw new Error("Укажите SMTP-сервер.");
     if (!Number.isInteger(emailSmtpPort) || emailSmtpPort < 1 || emailSmtpPort > 65535) {

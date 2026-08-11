@@ -17394,6 +17394,16 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   color: var(--muted);
 }
 
+.admin-document-mailboxes-head.is-applications-heading {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.admin-document-mailboxes.is-applications-list {
+  margin-bottom: 2px;
+}
+
 .admin-document-mailboxes {
   display: grid;
   gap: 12px;
@@ -17437,6 +17447,24 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   background: #dff3ec;
   color: var(--teal);
   font-size: 11px;
+}
+
+.admin-mailbox-state {
+  margin-left: auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.admin-mailbox-state.is-ready {
+  background: #dff3ec;
+  color: var(--teal);
+}
+
+.admin-mailbox-state.is-incomplete {
+  background: #fff2d7;
+  color: #8a5a00;
 }
 
 .admin-mailbox-card-actions {

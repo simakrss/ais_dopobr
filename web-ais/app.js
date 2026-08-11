@@ -1,10 +1,24 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
+  const DEFAULT_STUDENT_APPLICATIONS_EMAIL = Object.freeze({
+    login: "mail@zifra-plus.ru",
+    host: "imap.timeweb.ru",
+    port: 993,
+    smtpHost: "smtp.timeweb.ru",
+    smtpPort: 465
+  });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.66",
+    version: "1.7.67",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.67",
+      releasedAt: "2026-08-11",
+      changes: [
+        "В настройках электронной почты выделен отдельный ящик mail@zifra-plus.ru для сбора заявок; ошибочно сохранённый в его поле ящик документов переносится в отдельную карточку без потери пароля."
+      ]
+    },
     {
       version: "1.7.66",
       releasedAt: "2026-08-11",
@@ -3458,20 +3472,21 @@ MAX - https://bizvmax.ru/zifra_plus
     data.meta.yandexDiskHasPassword = Boolean(data.meta.yandexDiskHasPassword);
     data.meta.yandexDiskAutoSave = Boolean(data.meta.yandexDiskAutoSave);
     data.meta.studentApplicationsEmailHost = String(
-      data.meta.studentApplicationsEmailHost || ""
+      data.meta.studentApplicationsEmailHost || DEFAULT_STUDENT_APPLICATIONS_EMAIL.host
     ).trim();
     data.meta.studentApplicationsEmailPort = Number(
       data.meta.studentApplicationsEmailPort || 993
     );
     data.meta.studentApplicationsEmailSmtpHost = String(
       data.meta.studentApplicationsEmailSmtpHost
+        || DEFAULT_STUDENT_APPLICATIONS_EMAIL.smtpHost
         || data.meta.studentApplicationsEmailHost.replace(/^imap(?=\.)/i, "smtp")
     ).trim();
     data.meta.studentApplicationsEmailSmtpPort = Number(
       data.meta.studentApplicationsEmailSmtpPort || 465
     );
     data.meta.studentApplicationsEmailLogin = String(
-      data.meta.studentApplicationsEmailLogin || ""
+      data.meta.studentApplicationsEmailLogin || DEFAULT_STUDENT_APPLICATIONS_EMAIL.login
     ).trim();
     data.meta.studentApplicationsEmailHasPassword = Boolean(
       data.meta.studentApplicationsEmailHasPassword
@@ -11830,21 +11845,29 @@ MAX - https://bizvmax.ru/zifra_plus
     login,
     password
   }) {
-    const title = login
-      ? `Загрузка заявок · ${login}`
-      : "Почтовый ящик для загрузки заявок";
+    const isExpectedLogin = String(login || "").trim().toLowerCase()
+      === DEFAULT_STUDENT_APPLICATIONS_EMAIL.login;
+    const isConfigured = Boolean(
+      host && login && (password || state.data.meta.studentApplicationsEmailHasPassword)
+    );
     return `
       <fieldset class="admin-mailbox-card is-applications-mailbox" data-applications-mailbox>
-        <legend>${escapeHtml(title)}</legend>
+        <legend>Сбор заявок · ${escapeHtml(DEFAULT_STUDENT_APPLICATIONS_EMAIL.login)}</legend>
         <div class="admin-mailbox-purpose">
-          <strong>Системный ящик</strong>
-          <span>Загрузка заявок и отправка сообщений</span>
+          <strong>Системный ящик заявок</strong>
+          <span>Из него загружаются новые заявки; он также используется для системных сообщений.</span>
+          <span class="admin-mailbox-state ${isConfigured && isExpectedLogin ? "is-ready" : "is-incomplete"}">
+            ${isConfigured && isExpectedLogin ? "Настроен" : "Требуется настройка"}
+          </span>
         </div>
         <div class="admin-mailbox-card-actions">
           <button class="ghost-button compact-button" data-action="test-student-applications-email" type="button">Проверить</button>
         </div>
         <div class="admin-email-settings-grid">
-          <label><span>Логин</span><input name="studentApplicationsEmailLogin" type="email" value="${escapeAttr(login)}" required autocomplete="username"></label>
+          <label>
+            <span>Логин</span>
+            <input name="studentApplicationsEmailLogin" type="email" value="${escapeAttr(DEFAULT_STUDENT_APPLICATIONS_EMAIL.login)}" required readonly autocomplete="username">
+          </label>
           <label><span>IMAP-сервер</span><input name="studentApplicationsEmailHost" type="text" value="${escapeAttr(host)}" required spellcheck="false" placeholder="imap.example.ru"></label>
           <label><span>Порт IMAP</span><input name="studentApplicationsEmailPort" type="number" min="1" max="65535" value="${escapeAttr(port)}" required></label>
           <label><span>SMTP-сервер</span><input name="studentApplicationsEmailSmtpHost" type="text" value="${escapeAttr(smtpHost)}" required spellcheck="false" placeholder="smtp.example.ru"></label>
@@ -12142,14 +12165,13 @@ MAX - https://bizvmax.ru/zifra_plus
                     </button>
                   </div>
                 </div>
-                <div class="admin-document-mailboxes-head">
+                <div class="admin-document-mailboxes-head is-applications-heading">
                   <div>
-                    <strong>Почтовые ящики</strong>
-                    <small>Системный ящик загружает заявки; письма и вложения из настроенных ящиков можно сохранять в документы слушателей.</small>
+                    <strong>Сбор заявок</strong>
+                    <small>Отдельное подключение ящика mail@zifra-plus.ru, из которого система загружает заявки.</small>
                   </div>
-                  <button class="ghost-button" data-action="add-document-mailbox" type="button">Добавить ящик</button>
                 </div>
-                <div class="admin-document-mailboxes" data-document-mailboxes>
+                <div class="admin-document-mailboxes is-applications-list">
                   ${renderAdminApplicationsMailbox({
                     host: emailHost,
                     port: emailPort,
@@ -12158,6 +12180,15 @@ MAX - https://bizvmax.ru/zifra_plus
                     login: emailLogin,
                     password: emailPassword
                   })}
+                </div>
+                <div class="admin-document-mailboxes-head">
+                  <div>
+                    <strong>Ящики для документов слушателей</strong>
+                    <small>Письма и вложения из этих ящиков можно сохранять в папку документов выбранного слушателя.</small>
+                  </div>
+                  <button class="ghost-button" data-action="add-document-mailbox" type="button">Добавить ящик</button>
+                </div>
+                <div class="admin-document-mailboxes" data-document-mailboxes>
                   ${documentMailboxes.map(renderAdminDocumentMailbox).join("")}
                   ${documentMailboxes.length ? "" : '<p class="empty-state">Дополнительные почтовые ящики не настроены.</p>'}
                 </div>
@@ -34123,7 +34154,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentApplicationsEmailHost() {
-    return String(state.data.meta?.studentApplicationsEmailHost || "").trim();
+    return String(
+      state.data.meta?.studentApplicationsEmailHost || DEFAULT_STUDENT_APPLICATIONS_EMAIL.host
+    ).trim();
   }
 
   function getStudentApplicationsEmailPort() {
@@ -34134,6 +34167,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function getStudentApplicationsEmailSmtpHost() {
     return String(
       state.data.meta?.studentApplicationsEmailSmtpHost
+        || DEFAULT_STUDENT_APPLICATIONS_EMAIL.smtpHost
         || getStudentApplicationsEmailHost().replace(/^imap(?=\.)/i, "smtp")
     ).trim();
   }
@@ -34144,7 +34178,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentApplicationsEmailLogin() {
-    return String(state.data.meta?.studentApplicationsEmailLogin || "").trim();
+    return String(
+      state.data.meta?.studentApplicationsEmailLogin || DEFAULT_STUDENT_APPLICATIONS_EMAIL.login
+    ).trim();
   }
 
   function formatDateTimeRu(value) {
@@ -34328,6 +34364,9 @@ MAX - https://bizvmax.ru/zifra_plus
       throw new Error("Укажите корректный порт SMTP.");
     }
     if (!emailLogin) throw new Error("Укажите логин электронной почты.");
+    if (emailLogin.toLowerCase() !== DEFAULT_STUDENT_APPLICATIONS_EMAIL.login) {
+      throw new Error(`Для сбора заявок используется ящик ${DEFAULT_STUDENT_APPLICATIONS_EMAIL.login}.`);
+    }
     if (!mysqlUseApplicationsConnection && !state.data.meta.mysqlManagedByEnvironment) {
       if (!mysqlHost) throw new Error("Укажите сервер MySQL.");
       if (!Number.isInteger(mysqlPort) || mysqlPort < 1 || mysqlPort > 65535) {
