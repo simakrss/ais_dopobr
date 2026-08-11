@@ -4,7 +4,8 @@ const assert = require("node:assert/strict");
 const {
   parseStudentMailboxMessage,
   collectEmailMessageContent,
-  parseImapBodyStructureAttachments
+  parseImapBodyStructureAttachments,
+  prepareStudentMailboxAttachmentForSave
 } = require("../app-server.js");
 
 const subject = "Документы слушателя";
@@ -61,4 +62,39 @@ assert.deepEqual(bodyStructureAttachments.get("7932").map(({ fileName, contentTy
   { fileName: "photo.jpg", contentType: "image/jpeg", size: 600 }
 ]);
 
-console.log("Student mailbox MIME parser: OK");
+(async () => {
+  const pngBytes = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]);
+  const pngAttachment = await prepareStudentMailboxAttachmentForSave({
+    fileName: "photo.png",
+    contentType: "application/octet-stream",
+    bytes: pngBytes
+  });
+  assert.equal(pngAttachment.fileName, "photo.png");
+  assert.equal(pngAttachment.converted, false);
+  assert.deepEqual(pngAttachment.bytes, pngBytes);
+
+  const pdfBytes = Buffer.from("%PDF-test", "ascii");
+  const pdfAttachment = await prepareStudentMailboxAttachmentForSave({
+    fileName: "document.bin",
+    contentType: "application/pdf",
+    bytes: pdfBytes
+  });
+  assert.equal(pdfAttachment.fileName, "document.bin");
+  assert.equal(pdfAttachment.converted, false);
+  assert.deepEqual(pdfAttachment.bytes, pdfBytes);
+
+  const jpegBytes = Buffer.from([0xFF, 0xD8, 0xFF, 0xD9]);
+  const jpegAttachment = await prepareStudentMailboxAttachmentForSave({
+    fileName: "photo.jpeg",
+    contentType: "image/jpeg",
+    bytes: jpegBytes
+  });
+  assert.equal(jpegAttachment.fileName, "photo.jpg");
+  assert.equal(jpegAttachment.contentType, "image/jpeg");
+  assert.deepEqual(jpegAttachment.bytes, jpegBytes);
+
+  console.log("Student mailbox MIME parser: OK");
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

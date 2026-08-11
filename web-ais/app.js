@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.64",
+    version: "1.7.65",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.65",
+      releasedAt: "2026-08-11",
+      changes: [
+        "При сохранении почтовых вложений изображения HEIC, BMP, TIFF, WebP, GIF, AVIF и других поддерживаемых форматов автоматически преобразуются в JPG; PNG и PDF сохраняются без изменений."
+      ]
+    },
     {
       version: "1.7.64",
       releasedAt: "2026-08-11",
@@ -26159,7 +26166,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!uids.length || busy) return;
       busy = true;
       importButton.disabled = true;
-      status.textContent = "Сохранение текста писем и вложений…";
+      status.textContent = "Сохранение текста писем, преобразование изображений и загрузка вложений…";
       try {
         const response = await fetch(photoApiUrl("/api/students/mailbox-documents/import"), {
           method: "POST",
@@ -26175,7 +26182,10 @@ MAX - https://bizvmax.ru/zifra_plus
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || "Не удалось сохранить документы из писем.");
         const warning = payload.warnings?.length ? `\n\nПредупреждения:\n${payload.warnings.join("\n")}` : "";
-        alert(`Загружено писем: ${payload.messages || 0}. Сохранено файлов: ${payload.files?.length || 0}.${warning}`);
+        const converted = Number(payload.convertedImages) > 0
+          ? ` Изображений преобразовано в JPG: ${Number(payload.convertedImages)}.`
+          : "";
+        alert(`Загружено писем: ${payload.messages || 0}. Сохранено файлов: ${payload.files?.length || 0}.${converted}${warning}`);
         backdrop.remove();
       } catch (error) {
         status.textContent = `Ошибка: ${error.message}`;

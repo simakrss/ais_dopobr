@@ -7210,7 +7210,7 @@ function shouldUseOcrCli() {
   return ["1", "true", "yes"].includes(String(process.env.AIS_OCR_CLI || "").trim().toLowerCase());
 }
 
-function runOcrCli(argumentsList, payload = null, timeoutMs = 6 * 60 * 1000) {
+function runOcrCli(argumentsList, payload = null, timeoutMs = 6 * 60 * 1000, maxStdoutBytes = 8 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const pythonBinary = String(process.env.OCR_PYTHON_BINARY || (
       process.platform === "win32" ? "python" : "/usr/bin/python3"
@@ -7250,7 +7250,7 @@ function runOcrCli(argumentsList, payload = null, timeoutMs = 6 * 60 * 1000) {
     }, timeoutMs);
     child.stdout.on("data", (chunk) => {
       stdoutBytes += chunk.length;
-      if (stdoutBytes > 8 * 1024 * 1024) {
+      if (stdoutBytes > maxStdoutBytes) {
         child.kill("SIGKILL");
         finish(() => reject(new Error("Ответ OCR-сервиса превышает допустимый размер.")));
         return;
@@ -11123,6 +11123,130 @@ function safeStudentMailboxAttachmentName(value, fallback = "Вложение") 
   try { return safeWebDavUploadFileName(value); } catch { return `${fallback}.bin`; }
 }
 
+const STUDENT_MAILBOX_IMAGE_EXTENSIONS = new Set([
+  ".avif", ".bmp", ".dds", ".dib", ".dng", ".emf", ".exr", ".gif", ".hdr",
+  ".heic", ".heif", ".icns", ".ico", ".jfif", ".jp2", ".j2k", ".jpe",
+  ".jpeg", ".jpg", ".pbm", ".pcx", ".pgm", ".png", ".pnm", ".ppm", ".ras",
+  ".sgi", ".svg", ".tga", ".tif", ".tiff", ".webp", ".wmf", ".xbm", ".xpm"
+]);
+
+function mailboxAttachmentFileNameWithJpgExtension(fileName) {
+  const parsed = path.parse(String(fileName || "image"));
+  return `${parsed.name || "image"}.jpg`;
+}
+
+function isStudentMailboxPdfAttachment(fileName, contentType, bytes) {
+  return path.extname(String(fileName || "")).toLowerCase() === ".pdf"
+    || String(contentType || "").split(";", 1)[0].trim().toLowerCase() === "application/pdf"
+    || Buffer.from(bytes || "").subarray(0, 5).toString("ascii") === "%PDF-";
+}
+
+function isStudentMailboxPngAttachment(fileName, contentType, bytes) {
+  const signature = Buffer.from(bytes || "").subarray(0, 8);
+  return path.extname(String(fileName || "")).toLowerCase() === ".png"
+    || String(contentType || "").split(";", 1)[0].trim().toLowerCase() === "image/png"
+    || signature.equals(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]));
+}
+
+function isStudentMailboxJpegAttachment(fileName, contentType, bytes) {
+  const extension = path.extname(String(fileName || "")).toLowerCase();
+  const signature = Buffer.from(bytes || "").subarray(0, 3);
+  return [".jfif", ".jpe", ".jpeg", ".jpg"].includes(extension)
+    || String(contentType || "").split(";", 1)[0].trim().toLowerCase() === "image/jpeg"
+    || (signature.length === 3 && signature[0] === 0xFF && signature[1] === 0xD8 && signature[2] === 0xFF);
+}
+
+function isStudentMailboxImageAttachment(fileName, contentType) {
+  const extension = path.extname(String(fileName || "")).toLowerCase();
+  const normalizedType = String(contentType || "").split(";", 1)[0].trim().toLowerCase();
+  return normalizedType.startsWith("image/") || STUDENT_MAILBOX_IMAGE_EXTENSIONS.has(extension);
+}
+
+function parseMailboxImageConversionResponse(payload) {
+  const base64 = String(payload?.base64 || "").replace(/\s+/g, "");
+  if (!payload?.ok || !base64 || !/^[a-z0-9+/]+={0,2}$/i.test(base64)) {
+    throw new Error(payload?.error || "Конвертер изображений вернул некорректный ответ.");
+  }
+  const bytes = Buffer.from(base64, "base64");
+  if (!bytes.length || bytes.length > 24 * 1024 * 1024 || !bytes.subarray(0, 3).equals(Buffer.from([0xFF, 0xD8, 0xFF]))) {
+    throw new Error("Конвертер изображений не сформировал корректный JPG-файл.");
+  }
+  return bytes;
+}
+
+async function convertStudentMailboxImageToJpeg(attachment) {
+  const requestPayload = {
+    fileName: attachment.fileName,
+    mimeType: attachment.contentType,
+    base64: attachment.bytes.toString("base64")
+  };
+  let responsePayload;
+  let serviceError = null;
+  if (!shouldUseOcrCli()) {
+    try {
+      const requestBody = Buffer.from(JSON.stringify(requestPayload), "utf8");
+      const serviceUrl = String(process.env.OCR_SERVICE_URL || DEFAULT_OCR_SERVICE_URL)
+        .trim().replace(/\/+$/g, "");
+      const response = await requestBuffer(`${serviceUrl}/v1/convert-image`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Content-Length": requestBody.length
+        },
+        body: requestBody,
+        timeoutMs: 2 * 60 * 1000,
+        maxResponseBytes: 36 * 1024 * 1024,
+        errorPrefix: "Сервис преобразования изображений отклонил файл",
+        timeoutError: "Сервис преобразования изображений не завершил обработку вовремя"
+      });
+      responsePayload = JSON.parse(response.toString("utf8"));
+    } catch (error) {
+      serviceError = error;
+    }
+  }
+  if (!responsePayload) {
+    try {
+      responsePayload = await runOcrCli(
+        ["--convert-image-stdin"],
+        requestPayload,
+        2 * 60 * 1000,
+        36 * 1024 * 1024
+      );
+    } catch (cliError) {
+      throw new Error([serviceError?.message, cliError.message].filter(Boolean).join("; "));
+    }
+  }
+  return parseMailboxImageConversionResponse(responsePayload);
+}
+
+async function prepareStudentMailboxAttachmentForSave(attachment) {
+  const fileName = safeStudentMailboxAttachmentName(attachment.fileName, "Вложение");
+  const contentType = String(attachment.contentType || "application/octet-stream").trim();
+  const bytes = Buffer.from(attachment.bytes || "");
+  if (
+    isStudentMailboxPdfAttachment(fileName, contentType, bytes)
+    || isStudentMailboxPngAttachment(fileName, contentType, bytes)
+    || !isStudentMailboxImageAttachment(fileName, contentType)
+  ) {
+    return { fileName, contentType, bytes, converted: false };
+  }
+  if (isStudentMailboxJpegAttachment(fileName, contentType, bytes)) {
+    return {
+      fileName: mailboxAttachmentFileNameWithJpgExtension(fileName),
+      contentType: "image/jpeg",
+      bytes,
+      converted: path.extname(fileName).toLowerCase() !== ".jpg"
+    };
+  }
+  const convertedBytes = await convertStudentMailboxImageToJpeg({ fileName, contentType, bytes });
+  return {
+    fileName: mailboxAttachmentFileNameWithJpgExtension(fileName),
+    contentType: "image/jpeg",
+    bytes: convertedBytes,
+    converted: true
+  };
+}
+
 async function saveStudentMailboxDocument(folderSource, fileName, bytes, contentType) {
   const relativeFolder = normalizeSystemDocumentsRelativePath(folderSource);
   if (!relativeFolder) throw new Error("Не удалось определить папку документов слушателя.");
@@ -11170,6 +11294,7 @@ async function importStudentMailboxMessages(body, authUser, req) {
     await client.close();
   }
   const files = [];
+  let convertedImages = 0;
   let totalBytes = 0;
   for (const source of messages) {
     const message = parseStudentMailboxMessage(source.uid, source.bytes);
@@ -11187,16 +11312,29 @@ async function importStudentMailboxMessages(body, authUser, req) {
         warnings.push(`Вложение «${attachment.fileName}» пропущено: размер превышает 24 МБ.`);
         continue;
       }
-      totalBytes += attachment.bytes.length;
+      let preparedAttachment;
+      try {
+        preparedAttachment = await prepareStudentMailboxAttachmentForSave(attachment);
+      } catch (error) {
+        throw new Error(`Не удалось преобразовать вложение «${attachment.fileName}» в JPG: ${error.message}`);
+      }
+      totalBytes += preparedAttachment.bytes.length;
       if (totalBytes > 100 * 1024 * 1024) throw new Error("Общий размер выбранных писем превышает 100 МБ.");
-      const attachmentName = `${prefix}_${index + 1}_${safeStudentMailboxAttachmentName(attachment.fileName, `Вложение-${index + 1}`)}`;
+      const attachmentName = `${prefix}_${index + 1}_${preparedAttachment.fileName}`;
       const target = await saveStudentMailboxDocument(
         folder,
         attachmentName,
-        attachment.bytes,
-        attachment.contentType
+        preparedAttachment.bytes,
+        preparedAttachment.contentType
       );
-      files.push({ name: attachmentName, size: attachment.bytes.length, type: "attachment", ...target });
+      if (preparedAttachment.converted) convertedImages += 1;
+      files.push({
+        name: attachmentName,
+        size: preparedAttachment.bytes.length,
+        type: "attachment",
+        converted: preparedAttachment.converted,
+        ...target
+      });
     }
   }
   await safelyAppendAuditEntry({
@@ -11210,7 +11348,13 @@ async function importStudentMailboxMessages(body, authUser, req) {
     details: `Ящик: ${settings.login}; папка: ${folder}`,
     source: "imap"
   }, authUser, req);
-  return { mailbox: { id: settings.id, label: settings.label }, messages: messages.length, files, warnings };
+  return {
+    mailbox: { id: settings.id, label: settings.label },
+    messages: messages.length,
+    files,
+    convertedImages,
+    warnings
+  };
 }
 
 async function handleStudentMailboxMessagesQuery(req, res) {
@@ -13760,6 +13904,7 @@ module.exports = {
   collectEmailMessageContent,
   parseImapBodyStructureAttachments,
   parseStudentMailboxMessage,
+  prepareStudentMailboxAttachmentForSave,
   publicStudentDocumentMailboxes,
   queryStudentMailboxMessages,
   applyCustomDocumentPropertyFormulas,

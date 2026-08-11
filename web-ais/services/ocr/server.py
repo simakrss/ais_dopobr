@@ -2134,6 +2134,89 @@ def decode_document_payload(payload: dict[str, Any]) -> tuple[str, str, str, byt
     return file_name, mime_type, allowed_types[mime_type], file_bytes
 
 
+def decode_image_conversion_payload(payload: dict[str, Any]) -> tuple[str, str, bytes]:
+    file_name = Path(str(payload.get("fileName") or "image")).name[:180]
+    mime_type = str(payload.get("mimeType") or "").split(";", 1)[0].lower().strip()
+    extension_by_mime_type = {
+        "image/avif": ".avif",
+        "image/bmp": ".bmp",
+        "image/emf": ".emf",
+        "image/gif": ".gif",
+        "image/heic": ".heic",
+        "image/heif": ".heif",
+        "image/jpeg": ".jpg",
+        "image/jp2": ".jp2",
+        "image/png": ".png",
+        "image/svg+xml": ".svg",
+        "image/tiff": ".tiff",
+        "image/webp": ".webp",
+        "image/wmf": ".wmf",
+        "image/x-pcx": ".pcx",
+        "image/x-icon": ".ico",
+    }
+    allowed_extensions = {
+        ".avif", ".bmp", ".dds", ".dib", ".dng", ".emf", ".exr", ".gif",
+        ".hdr", ".heic", ".heif", ".icns", ".ico", ".jfif", ".jp2",
+        ".j2k", ".jpe", ".jpeg", ".jpg", ".pbm", ".pcx", ".pgm", ".png",
+        ".pnm", ".ppm", ".ras", ".sgi", ".svg", ".tga", ".tif", ".tiff",
+        ".webp", ".wmf", ".xbm", ".xpm",
+    }
+    extension = Path(file_name).suffix.lower()
+    if extension not in allowed_extensions:
+        extension = extension_by_mime_type.get(mime_type, "")
+    if extension not in allowed_extensions:
+        raise ValueError("Формат изображения не поддерживается для преобразования в JPG.")
+    try:
+        file_bytes = base64.b64decode(str(payload.get("base64") or ""), validate=True)
+    except (ValueError, binascii.Error) as error:
+        raise ValueError("Изображение передано в некорректном формате.") from error
+    if not file_bytes or len(file_bytes) > MAX_FILE_BYTES:
+        raise ValueError("Изображение пустое или превышает 24 МБ.")
+    return file_name, extension, file_bytes
+
+
+def convert_image_to_jpeg(payload: dict[str, Any]) -> dict[str, Any]:
+    file_name, extension, file_bytes = decode_image_conversion_payload(payload)
+    with tempfile.TemporaryDirectory(prefix="ais-image-convert-") as temp_dir:
+        workdir = Path(temp_dir)
+        source_path = workdir / f"source{extension}"
+        output_path = workdir / "converted.jpg"
+        source_path.write_bytes(file_bytes)
+        run_command(
+            [
+                CONVERT_BINARY,
+                f"{source_path}[0]",
+                "-auto-orient",
+                "-background",
+                "white",
+                "-alpha",
+                "remove",
+                "-alpha",
+                "off",
+                "-strip",
+                "-colorspace",
+                "sRGB",
+                "-quality",
+                "92",
+                str(output_path),
+            ],
+            timeout=90,
+        )
+        output_bytes = output_path.read_bytes() if output_path.exists() else b""
+        if not output_bytes.startswith(b"\xff\xd8\xff"):
+            raise RuntimeError("Конвертер не сформировал корректный JPG-файл.")
+        if len(output_bytes) > MAX_FILE_BYTES:
+            raise RuntimeError("Преобразованный JPG-файл превышает 24 МБ.")
+        output_name = f"{Path(file_name).stem or 'image'}.jpg"
+        return {
+            "ok": True,
+            "fileName": output_name,
+            "mimeType": "image/jpeg",
+            "size": len(output_bytes),
+            "base64": base64.b64encode(output_bytes).decode("ascii"),
+        }
+
+
 def render_document_page(payload: dict[str, Any]) -> dict[str, Any]:
     file_name, mime_type, extension, file_bytes = decode_document_payload(payload)
     if not (mime_type.startswith("image/") or mime_type == "application/pdf"):
@@ -2329,7 +2412,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "Not found"})
 
     def do_POST(self) -> None:
-        if self.path not in {"/v1/recognize", "/v1/render-page"}:
+        if self.path not in {"/v1/recognize", "/v1/render-page", "/v1/convert-image"}:
             self.send_json(404, {"error": "Not found"})
             return
         try:
@@ -2337,7 +2420,12 @@ class Handler(BaseHTTPRequestHandler):
             if content_length <= 0 or content_length > MAX_REQUEST_BYTES:
                 raise ValueError("Запрос пустой или превышает допустимый размер.")
             payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
-            result = render_document_page(payload) if self.path == "/v1/render-page" else recognize(payload)
+            if self.path == "/v1/render-page":
+                result = render_document_page(payload)
+            elif self.path == "/v1/convert-image":
+                result = convert_image_to_jpeg(payload)
+            else:
+                result = recognize(payload)
             self.send_json(200, result)
         except subprocess.TimeoutExpired:
             self.send_json(504, {"error": "Истекло время распознавания файла."})
@@ -2380,6 +2468,11 @@ def run_cli(arguments: list[str]) -> int:
             if not source or len(source) > MAX_REQUEST_BYTES:
                 raise ValueError("Запрос пустой или превышает допустимый размер.")
             payload = render_document_page(json.loads(source.decode("utf-8")))
+        elif arguments == ["--convert-image-stdin"]:
+            source = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
+            if not source or len(source) > MAX_REQUEST_BYTES:
+                raise ValueError("Запрос пустой или превышает допустимый размер.")
+            payload = convert_image_to_jpeg(json.loads(source.decode("utf-8")))
         else:
             raise ValueError("Неизвестный режим запуска OCR.")
         sys.stdout.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
