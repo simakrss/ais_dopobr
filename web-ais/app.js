@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.56",
+    version: "1.7.57",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.57",
+      releasedAt: "2026-08-11",
+      changes: [
+        "При генерации сертификата гиперссылка из рамки QR-кода переносится непосредственно на изображение и сохраняется в PDF на обеих языковых страницах."
+      ]
+    },
     {
       version: "1.7.56",
       releasedAt: "2026-08-11",

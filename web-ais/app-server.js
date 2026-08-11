@@ -1872,9 +1872,37 @@ function imageExtentEmu(image, frame = null) {
   return { cx, cy };
 }
 
-function buildImageDrawingXml({ relationshipId, cx, cy, docPrId, name }) {
+function buildImageDrawingXml({ relationshipId, hyperlinkRelationshipId = "", cx, cy, docPrId, name }) {
   const safeName = escapeXmlAttribute(name || "Фото слушателя");
-  return `<w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="${docPrId}" name="${safeName}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="${safeName}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="${relationshipId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>`;
+  const safeHyperlinkRelationshipId = escapeXmlAttribute(hyperlinkRelationshipId);
+  const hyperlinkXml = safeHyperlinkRelationshipId
+    ? `<a:hlinkClick xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="${safeHyperlinkRelationshipId}"/>`
+    : "";
+  const docPrXml = hyperlinkXml
+    ? `<wp:docPr id="${docPrId}" name="${safeName}">${hyperlinkXml}</wp:docPr>`
+    : `<wp:docPr id="${docPrId}" name="${safeName}"/>`;
+  const picturePropertiesXml = hyperlinkXml
+    ? `<pic:cNvPr id="0" name="${safeName}">${hyperlinkXml}</pic:cNvPr>`
+    : `<pic:cNvPr id="0" name="${safeName}"/>`;
+  return `<w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>${docPrXml}<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr>${picturePropertiesXml}<pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="${relationshipId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>`;
+}
+
+function getDrawingHyperlinkRelationshipId(xml) {
+  return /<a:hlinkClick\b[^>]*\br:id="([^"]+)"/i.exec(String(xml || ""))?.[1] || "";
+}
+
+function getImageFrameHyperlinkRelationshipId(xml, markerIndex, sourceRunXml = "") {
+  const runRelationshipId = getDrawingHyperlinkRelationshipId(sourceRunXml);
+  if (runRelationshipId) return runRelationshipId;
+  const hyperlink = getEnclosingXmlElement(xml, markerIndex, "w:hyperlink");
+  const hyperlinkRelationshipId = /<w:hyperlink\b[^>]*\br:id="([^"]+)"/i.exec(hyperlink?.xml || "")?.[1] || "";
+  if (hyperlinkRelationshipId) return hyperlinkRelationshipId;
+  for (const tagName of ["wp:inline", "wp:anchor", "w:drawing", "v:shape", "mc:AlternateContent"]) {
+    const container = getEnclosingXmlElement(xml, markerIndex, tagName);
+    const relationshipId = getDrawingHyperlinkRelationshipId(container?.xml);
+    if (relationshipId) return relationshipId;
+  }
+  return "";
 }
 
 function replaceTextMarkerWithXml(xml, marker, replacementXml) {
@@ -1902,10 +1930,13 @@ function insertDocumentImage(entries, fieldName, image) {
   const mediaName = uniqueMediaName(entries, ext);
   const target = mediaName.replace(/^word\//, "");
   const relationshipId = addDocumentImageRelationship(entries, target);
+  const markerIndex = documentXml.indexOf(marker);
+  const hyperlinkRelationshipId = getImageFrameHyperlinkRelationshipId(documentXml, markerIndex);
   const frame = getImageFrameConstraints(documentXml, marker);
   const { cx, cy } = imageExtentEmu(image, frame);
   const drawingXml = buildImageDrawingXml({
     relationshipId,
+    hyperlinkRelationshipId,
     cx,
     cy,
     docPrId: nextDocPrId(documentXml),
@@ -1963,19 +1994,37 @@ function findIndexedWordFieldImageAnchor(paragraphXml, fieldName, fieldPositionM
 function applyIndexedDocumentImage(entries, fieldName, image, fieldPositionMap) {
   const documentEntry = entryByName(entries, "word/document.xml");
   if (!documentEntry || !fieldPositionMap?.size) return false;
-  const documentXml = documentEntry.content.toString("utf8");
+  let documentXml = documentEntry.content.toString("utf8");
   const paragraphs = [...documentXml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)];
+  const replacements = [];
   for (const paragraph of paragraphs) {
     const anchor = findIndexedWordFieldImageAnchor(paragraph[0], fieldName, fieldPositionMap);
     if (!anchor) continue;
+    replacements.push({ paragraph, anchor });
+  }
+  if (!replacements.length) return false;
+
+  const hasImage = Boolean(image?.bytes?.length);
+  let relationshipId = "";
+  let mediaName = "";
+  let contentType = "";
+  if (hasImage) {
+    const ext = image.ext === "jpeg" ? "jpg" : image.ext;
+    contentType = IMAGE_CONTENT_TYPES[ext];
+    if (!contentType) return false;
+    mediaName = uniqueMediaName(entries, ext);
+    relationshipId = addDocumentImageRelationship(entries, mediaName.replace(/^word\//, ""));
+  }
+
+  let docPrId = nextDocPrId(documentXml);
+  replacements.reverse().forEach(({ paragraph, anchor }) => {
     let replacementRun = "";
-    if (image?.bytes?.length) {
-      const ext = image.ext === "jpeg" ? "jpg" : image.ext;
-      const contentType = IMAGE_CONTENT_TYPES[ext];
-      if (!contentType) return false;
-      const mediaName = uniqueMediaName(entries, ext);
-      const target = mediaName.replace(/^word\//, "");
-      const relationshipId = addDocumentImageRelationship(entries, target);
+    if (hasImage) {
+      const hyperlinkRelationshipId = getImageFrameHyperlinkRelationshipId(
+        documentXml,
+        paragraph.index + anchor.insertionIndex,
+        anchor.runXml
+      );
       const frame = anchor.runXml ? {
         width: parseXmlTagNumberAttribute(anchor.runXml, "wp:extent", "cx"),
         height: parseXmlTagNumberAttribute(anchor.runXml, "wp:extent", "cy")
@@ -1983,27 +2032,32 @@ function applyIndexedDocumentImage(entries, fieldName, image, fieldPositionMap) 
       const { cx, cy } = imageExtentEmu(image, frame);
       const drawingXml = buildImageDrawingXml({
         relationshipId,
+        hyperlinkRelationshipId,
         cx,
         cy,
-        docPrId: nextDocPrId(documentXml),
+        docPrId,
         name: image.name || fieldName
       });
+      docPrId += 1;
       const runOpenTag = /^<w:r\b[^>]*>/.exec(anchor.runXml)?.[0] || "<w:r>";
       const runProperties = /<w:rPr\b[\s\S]*?<\/w:rPr>/.exec(anchor.runXml)?.[0] || "";
-      replacementRun = `${runOpenTag}${runProperties}${drawingXml}</w:r>`;
-      entries.push({ name: mediaName, content: image.bytes });
-      ensureContentType(entries, ext, contentType);
+      const imageRun = `${runOpenTag}${runProperties}${drawingXml}</w:r>`;
+      replacementRun = hyperlinkRelationshipId
+        ? `<w:hyperlink xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="${escapeXmlAttribute(hyperlinkRelationshipId)}">${imageRun}</w:hyperlink>`
+        : imageRun;
     }
     const replacementStart = anchor.runStart >= 0 ? anchor.runStart : anchor.insertionIndex;
     const replacementEnd = anchor.runEnd >= 0 ? anchor.runEnd : anchor.insertionIndex;
     const paragraphXml = `${paragraph[0].slice(0, replacementStart)}${replacementRun}${paragraph[0].slice(replacementEnd)}`;
-    documentEntry.content = Buffer.from(
-      `${documentXml.slice(0, paragraph.index)}${paragraphXml}${documentXml.slice(paragraph.index + paragraph[0].length)}`,
-      "utf8"
-    );
-    return true;
+    documentXml = `${documentXml.slice(0, paragraph.index)}${paragraphXml}${documentXml.slice(paragraph.index + paragraph[0].length)}`;
+  });
+
+  if (hasImage) {
+    entries.push({ name: mediaName, content: image.bytes });
+    ensureContentType(entries, image.ext === "jpeg" ? "jpg" : image.ext, contentType);
   }
-  return false;
+  documentEntry.content = Buffer.from(documentXml, "utf8");
+  return true;
 }
 
 function decodeXmlText(value) {
