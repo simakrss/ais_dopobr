@@ -17560,6 +17560,38 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   background: #f4fbf8;
 }
 
+.admin-mailbox-card .admin-email-settings-grid {
+  grid-template-columns: minmax(190px, 1.25fr) minmax(180px, 1fr) 84px minmax(180px, 1fr) 84px;
+}
+
+.admin-mailbox-card:not(.is-applications-mailbox) .admin-mailbox-name-field {
+  grid-column: 1 / 3;
+}
+
+.admin-mailbox-card:not(.is-applications-mailbox) .admin-mailbox-login-field {
+  grid-column: 3 / 6;
+}
+
+.admin-mailbox-card:not(.is-applications-mailbox) .admin-mailbox-imap-field {
+  grid-column: 1 / 3;
+}
+
+.admin-mailbox-card:not(.is-applications-mailbox) .admin-mailbox-imap-port-field {
+  grid-column: 3;
+}
+
+.admin-mailbox-card:not(.is-applications-mailbox) .admin-mailbox-smtp-field {
+  grid-column: 4;
+}
+
+.admin-mailbox-card:not(.is-applications-mailbox) .admin-mailbox-smtp-port-field {
+  grid-column: 5;
+}
+
+.admin-mailbox-card .admin-email-credential-field {
+  grid-column: 1 / -1;
+}
+
 .admin-mailbox-purpose {
   display: flex;
   align-items: center;
@@ -17603,6 +17635,46 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   display: flex;
   align-items: center;
   gap: 5px;
+}
+
+@media (max-width: 900px) {
+  .admin-mailbox-card .admin-email-settings-grid {
+    grid-template-columns: minmax(0, 1fr) 88px;
+  }
+
+  .admin-mailbox-card .admin-mailbox-name-field,
+  .admin-mailbox-card .admin-mailbox-login-field,
+  .admin-mailbox-card .admin-email-credential-field {
+    grid-column: 1 / -1;
+  }
+
+  .admin-mailbox-card .admin-mailbox-imap-field,
+  .admin-mailbox-card .admin-mailbox-smtp-field {
+    grid-column: 1;
+  }
+
+  .admin-mailbox-card .admin-mailbox-imap-port-field,
+  .admin-mailbox-card .admin-mailbox-smtp-port-field {
+    grid-column: 2;
+  }
+}
+
+@media (max-width: 620px) {
+  .admin-mailbox-card .admin-email-settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-mailbox-card :is(
+    .admin-mailbox-name-field,
+    .admin-mailbox-login-field,
+    .admin-mailbox-imap-field,
+    .admin-mailbox-imap-port-field,
+    .admin-mailbox-smtp-field,
+    .admin-mailbox-smtp-port-field,
+    .admin-email-credential-field
+  ) {
+    grid-column: 1;
+  }
 }
 
 .student-mailbox-backdrop {

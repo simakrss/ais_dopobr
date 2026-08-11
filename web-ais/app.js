@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.77",
+    version: "1.7.78",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.78",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В настройках почтовых ящиков выровнена ширина полей: названия, логины и адреса IMAP/SMTP отображаются целиком, порты остаются компактными, а поле пароля использует всю доступную ширину. Сетка адаптируется к планшетам и телефонам без обрезания значений."
+      ]
+    },
     {
       version: "1.7.77",
       releasedAt: "2026-08-12",
@@ -12039,12 +12046,12 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="icon-button" data-action="remove-document-mailbox" type="button" title="Удалить ящик" aria-label="Удалить ящик">×</button>
         </div>
         <div class="admin-email-settings-grid">
-          <label><span>Название</span><input data-mailbox-field="label" value="${escapeAttr(mailbox.label)}" required></label>
-          <label><span>Логин</span><input data-mailbox-field="login" type="email" value="${escapeAttr(mailbox.login)}" required autocomplete="username"></label>
-          <label><span>IMAP-сервер</span><input data-mailbox-field="host" value="${escapeAttr(mailbox.host)}" required spellcheck="false"></label>
-          <label><span>Порт IMAP</span><input data-mailbox-field="port" type="number" min="1" max="65535" value="${escapeAttr(mailbox.port)}" required></label>
-          <label><span>SMTP-сервер</span><input data-mailbox-field="smtpHost" value="${escapeAttr(mailbox.smtpHost)}" required spellcheck="false"></label>
-          <label><span>Порт SMTP</span><input data-mailbox-field="smtpPort" type="number" min="1" max="65535" value="${escapeAttr(mailbox.smtpPort)}" required></label>
+          <label class="admin-mailbox-name-field"><span>Название</span><input data-mailbox-field="label" value="${escapeAttr(mailbox.label)}" required></label>
+          <label class="admin-mailbox-login-field"><span>Логин</span><input data-mailbox-field="login" type="email" value="${escapeAttr(mailbox.login)}" required autocomplete="username"></label>
+          <label class="admin-mailbox-imap-field"><span>IMAP-сервер</span><input data-mailbox-field="host" value="${escapeAttr(mailbox.host)}" required spellcheck="false"></label>
+          <label class="admin-mailbox-imap-port-field"><span>Порт IMAP</span><input data-mailbox-field="port" type="number" min="1" max="65535" value="${escapeAttr(mailbox.port)}" required></label>
+          <label class="admin-mailbox-smtp-field"><span>SMTP-сервер</span><input data-mailbox-field="smtpHost" value="${escapeAttr(mailbox.smtpHost)}" required spellcheck="false"></label>
+          <label class="admin-mailbox-smtp-port-field"><span>Порт SMTP</span><input data-mailbox-field="smtpPort" type="number" min="1" max="65535" value="${escapeAttr(mailbox.smtpPort)}" required></label>
           <label class="admin-email-credential-field"><span>Пароль</span><input data-mailbox-field="password" type="password" value="${escapeAttr(mailbox.password)}" placeholder="${mailbox.hasPassword ? "Пароль сохранён на сервере" : "Введите пароль"}" autocomplete="new-password"></label>
         </div>
       </fieldset>
@@ -12078,14 +12085,14 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="ghost-button compact-button" data-action="test-student-applications-email" type="button">Проверить</button>
         </div>
         <div class="admin-email-settings-grid">
-          <label>
+          <label class="admin-mailbox-login-field">
             <span>Логин</span>
             <input name="studentApplicationsEmailLogin" type="email" value="${escapeAttr(DEFAULT_STUDENT_APPLICATIONS_EMAIL.login)}" required readonly autocomplete="username">
           </label>
-          <label><span>IMAP-сервер</span><input name="studentApplicationsEmailHost" type="text" value="${escapeAttr(host)}" required spellcheck="false" placeholder="imap.example.ru"></label>
-          <label><span>Порт IMAP</span><input name="studentApplicationsEmailPort" type="number" min="1" max="65535" value="${escapeAttr(port)}" required></label>
-          <label><span>SMTP-сервер</span><input name="studentApplicationsEmailSmtpHost" type="text" value="${escapeAttr(smtpHost)}" required spellcheck="false" placeholder="smtp.example.ru"></label>
-          <label><span>Порт SMTP</span><input name="studentApplicationsEmailSmtpPort" type="number" min="1" max="65535" value="${escapeAttr(smtpPort)}" required></label>
+          <label class="admin-mailbox-imap-field"><span>IMAP-сервер</span><input name="studentApplicationsEmailHost" type="text" value="${escapeAttr(host)}" required spellcheck="false" placeholder="imap.example.ru"></label>
+          <label class="admin-mailbox-imap-port-field"><span>Порт IMAP</span><input name="studentApplicationsEmailPort" type="number" min="1" max="65535" value="${escapeAttr(port)}" required></label>
+          <label class="admin-mailbox-smtp-field"><span>SMTP-сервер</span><input name="studentApplicationsEmailSmtpHost" type="text" value="${escapeAttr(smtpHost)}" required spellcheck="false" placeholder="smtp.example.ru"></label>
+          <label class="admin-mailbox-smtp-port-field"><span>Порт SMTP</span><input name="studentApplicationsEmailSmtpPort" type="number" min="1" max="65535" value="${escapeAttr(smtpPort)}" required></label>
           <label class="admin-email-credential-field">
             <span>Пароль</span>
             <input
