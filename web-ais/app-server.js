@@ -703,6 +703,7 @@ async function ensureStorage() {
     studentApplicationsEmailSmtpPort: 465,
     studentApplicationsEmailSmtpSecure: true,
     studentApplicationsEmailLogin: "",
+    studentDocumentMailboxes: [],
     documentConverterUrl: DEFAULT_DOCUMENT_CONVERTER_URL,
     documentConverterSourceUrl: DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL,
     yandexDiskLogin: "",
@@ -9817,6 +9818,89 @@ function runStudentApplicationsQuery(filters) {
   });
 }
 
+function normalizeMailboxId(value, fallback = "mailbox") {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return normalized || fallback;
+}
+
+function normalizeMailboxPort(value, fallback) {
+  const port = Number(value || fallback);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : fallback;
+}
+
+function normalizeStudentDocumentMailbox(value = {}, fallbackId = "mailbox") {
+  const host = String(value.host || value.imapHost || "").trim().slice(0, 255);
+  const smtpHost = String(
+    value.smtpHost || host.replace(/^imap(?=\.)/i, "smtp") || ""
+  ).trim().slice(0, 255);
+  const login = String(value.login || "").trim().slice(0, 320);
+  return {
+    id: normalizeMailboxId(value.id, fallbackId),
+    label: String(value.label || login || "Почтовый ящик").trim().slice(0, 160),
+    host,
+    port: normalizeMailboxPort(value.port || value.imapPort, 993),
+    secure: value.secure !== false,
+    smtpHost,
+    smtpPort: normalizeMailboxPort(value.smtpPort, 465),
+    smtpSecure: value.smtpSecure !== false,
+    login,
+    password: String(value.password || "").slice(0, 1024)
+  };
+}
+
+function getStudentDocumentMailboxes({ includePrimary = true } = {}) {
+  const result = [];
+  if (includePrimary) {
+    const primary = getStudentApplicationsEmailSettings();
+    if (primary.login || primary.host) {
+      result.push(normalizeStudentDocumentMailbox({
+        id: "applications",
+        label: "Основной ящик (заявки и отправка)",
+        host: primary.host,
+        port: primary.port,
+        smtpHost: primary.smtpHost,
+        smtpPort: primary.smtpPort,
+        login: primary.login,
+        password: primary.password
+      }, "applications"));
+    }
+  }
+  const seen = new Set(result.map((mailbox) => mailbox.id));
+  (Array.isArray(serverSettings.studentDocumentMailboxes)
+    ? serverSettings.studentDocumentMailboxes
+    : []).forEach((value, index) => {
+    const mailbox = normalizeStudentDocumentMailbox(value, `mailbox-${index + 1}`);
+    let id = mailbox.id;
+    let suffix = 2;
+    while (seen.has(id)) id = `${mailbox.id}-${suffix++}`;
+    seen.add(id);
+    result.push({ ...mailbox, id });
+  });
+  return result;
+}
+
+function publicStudentDocumentMailboxes() {
+  return getStudentDocumentMailboxes().map(({ password, ...mailbox }) => ({
+    ...mailbox,
+    hasPassword: Boolean(password)
+  }));
+}
+
+function getStudentDocumentMailboxSettings(mailboxId) {
+  const requestedId = normalizeMailboxId(mailboxId, "applications");
+  const mailbox = getStudentDocumentMailboxes().find((item) => item.id === requestedId);
+  if (!mailbox) throw new Error("Выбранный почтовый ящик не найден в настройках.");
+  if (!mailbox.host || !mailbox.login || !mailbox.password) {
+    throw new Error(`Почтовый ящик «${mailbox.label}» настроен не полностью.`);
+  }
+  return mailbox;
+}
+
 function getStudentApplicationsEmailSettings() {
   const host = String(
     serverSettings.studentApplicationsEmailHost
@@ -10175,8 +10259,8 @@ function createImapResponseReader(socket) {
   };
 }
 
-async function connectStudentApplicationsImap() {
-  const settings = getStudentApplicationsEmailSettings();
+async function connectStudentApplicationsImap(mailboxSettings = null) {
+  const settings = mailboxSettings || getStudentApplicationsEmailSettings();
   if (!settings.host || !settings.login || !settings.password) {
     throw new Error("В админке не настроено подключение к почтовому ящику заявок.");
   }
@@ -10666,6 +10750,286 @@ async function testStudentApplicationsEmailConnection() {
   const client = await connectStudentApplicationsImap();
   await client.close();
   return runAuthenticatedSmtpSession(async ({ settings }) => settings);
+}
+
+function decodeMimeParameter(value) {
+  const source = String(value || "").trim().replace(/^"|"$/g, "");
+  const encoded = /^(?:utf-8|us-ascii)''(.+)$/i.exec(source)?.[1];
+  if (encoded) {
+    try { return decodeURIComponent(encoded); } catch { return encoded; }
+  }
+  return decodeMimeHeader(source);
+}
+
+function getMimeFileName(headers, contentType) {
+  const disposition = parseMimeContentType(headers["content-disposition"] || "");
+  return decodeMimeParameter(
+    disposition.parameters["filename*"]
+      || disposition.parameters.filename
+      || contentType.parameters["name*"]
+      || contentType.parameters.name
+      || ""
+  );
+}
+
+function collectEmailMessageContent(bytes, result = { plain: [], html: [], attachments: [] }, depth = 0) {
+  if (depth > 12) return result;
+  const { headers, body } = splitMimeEntity(bytes);
+  const contentType = parseMimeContentType(headers["content-type"]);
+  if (contentType.type.startsWith("multipart/") && contentType.parameters.boundary) {
+    const delimiter = `--${contentType.parameters.boundary}`;
+    const sections = body.toString("latin1").split(delimiter).slice(1);
+    for (const sectionSource of sections) {
+      if (/^--/.test(sectionSource)) break;
+      const section = sectionSource.replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+      if (section.trim()) collectEmailMessageContent(Buffer.from(section, "latin1"), result, depth + 1);
+    }
+    return result;
+  }
+  if (contentType.type === "message/rfc822") {
+    return collectEmailMessageContent(body, result, depth + 1);
+  }
+  const decoded = decodeMimeTransfer(body, headers["content-transfer-encoding"]);
+  const fileName = getMimeFileName(headers, contentType);
+  const dispositionType = parseMimeContentType(headers["content-disposition"] || "").type;
+  if (fileName || dispositionType === "attachment") {
+    if (decoded.length && result.attachments.length < 100) {
+      result.attachments.push({
+        fileName: fileName || `Вложение-${result.attachments.length + 1}`,
+        contentType: contentType.type || "application/octet-stream",
+        bytes: decoded
+      });
+    }
+    return result;
+  }
+  if (contentType.type === "text/plain" || contentType.type === "text/html") {
+    const text = decodeTextBytes(decoded, contentType.parameters.charset || "utf-8").replace(/\u0000/g, "").trim();
+    if (text) result[contentType.type === "text/plain" ? "plain" : "html"].push(text);
+  }
+  return result;
+}
+
+function parseStudentMailboxMessage(uid, bytes) {
+  const { headers } = splitMimeEntity(bytes);
+  const content = collectEmailMessageContent(bytes);
+  const plainText = content.plain.join("\n\n").trim()
+    || htmlToPlainText(content.html.join("\n\n"));
+  const date = new Date(String(headers.date || ""));
+  const isoDate = Number.isNaN(date.getTime()) ? "" : date.toISOString();
+  return {
+    uid: String(uid || ""),
+    subject: decodeMimeHeader(headers.subject) || "Без темы",
+    from: decodeMimeHeader(headers.from),
+    to: decodeMimeHeader(headers.to),
+    cc: decodeMimeHeader(headers.cc),
+    date: isoDate,
+    messageId: String(headers["message-id"] || "").replace(/[<>\r\n]/g, "").slice(0, 240),
+    text: normalizeEmailOrderText(plainText),
+    attachments: content.attachments
+  };
+}
+
+function parseStudentMailboxSearchBody(body = {}) {
+  const mailboxId = normalizeMailboxId(body.mailboxId, "applications");
+  const email = String(body.email || "").trim().slice(0, 320);
+  const query = String(body.query || "").trim().slice(0, 300);
+  const today = new Date();
+  const defaultTo = today.toISOString().slice(0, 10);
+  const defaultFromDate = new Date(today.getTime() - 180 * 86400000);
+  const dateFrom = /^\d{4}-\d{2}-\d{2}$/.test(String(body.dateFrom || ""))
+    ? String(body.dateFrom)
+    : defaultFromDate.toISOString().slice(0, 10);
+  const dateTo = /^\d{4}-\d{2}-\d{2}$/.test(String(body.dateTo || ""))
+    ? String(body.dateTo)
+    : defaultTo;
+  if (dateFrom > dateTo) throw new Error("Дата начала периода не может быть позже даты окончания.");
+  if (!email && !query) throw new Error("Укажите email слушателя или текст для поиска писем.");
+  return { mailboxId, email, query, dateFrom, dateTo };
+}
+
+async function queryStudentMailboxMessages(body) {
+  const filters = parseStudentMailboxSearchBody(body);
+  const settings = getStudentDocumentMailboxSettings(filters.mailboxId);
+  const client = await connectStudentApplicationsImap(settings);
+  const warnings = [];
+  try {
+    const criteria = [
+      `SINCE ${formatImapDate(filters.dateFrom)}`,
+      `BEFORE ${formatImapDate(addDaysToIsoDate(filters.dateTo, 1))}`
+    ];
+    if (filters.email) {
+      const value = quoteImapValue(filters.email);
+      criteria.push(`OR FROM ${value} OR TO ${value} CC ${value}`);
+    }
+    const response = await client.command(`UID SEARCH ${criteria.join(" ")}`, 45000);
+    const allUids = parseImapSearchUids(response);
+    const uids = allUids.slice(-100).reverse();
+    const messages = await fetchImapMessages(client, uids, warnings);
+    const queryKey = filters.query.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+    const rows = messages
+      .map((message) => parseStudentMailboxMessage(message.uid, message.bytes))
+      .filter((message) => {
+        if (!queryKey) return true;
+        return [message.subject, message.from, message.to, message.cc, message.text]
+          .join("\n")
+          .toLocaleLowerCase("ru-RU")
+          .replace(/ё/g, "е")
+          .includes(queryKey);
+      });
+    const order = new Map(uids.map((uid, index) => [uid, index]));
+    rows.sort((left, right) => (order.get(left.uid) ?? 9999) - (order.get(right.uid) ?? 9999));
+    return {
+      mailbox: { id: settings.id, label: settings.label, login: settings.login },
+      messages: rows.map((message) => ({
+        uid: message.uid,
+        subject: message.subject,
+        from: message.from,
+        to: message.to,
+        date: message.date,
+        excerpt: message.text.slice(0, 500),
+        attachmentCount: message.attachments.length,
+        attachments: message.attachments.map((attachment, index) => ({
+          name: safeStudentMailboxAttachmentName(attachment.fileName, `Вложение-${index + 1}`),
+          size: attachment.bytes.length,
+          contentType: attachment.contentType
+        }))
+      })),
+      total: allUids.length,
+      truncated: allUids.length > uids.length,
+      warnings
+    };
+  } finally {
+    await client.close();
+  }
+}
+
+function buildStudentMailboxTextFile(message) {
+  return [
+    `Тема: ${message.subject}`,
+    `От: ${message.from}`,
+    `Кому: ${message.to}`,
+    message.cc ? `Копия: ${message.cc}` : "",
+    message.date ? `Дата: ${new Date(message.date).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" })}` : "",
+    message.messageId ? `Message-ID: ${message.messageId}` : "",
+    "",
+    message.text || "Текст письма отсутствует."
+  ].filter((line, index) => line || index >= 6).join("\r\n");
+}
+
+function buildStudentMailboxFilePrefix(message) {
+  const date = message.date ? message.date.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const subject = safeNamePart(String(message.subject || "Письмо").slice(0, 70), "Письмо");
+  return `${date}_${subject}_UID-${message.uid}`;
+}
+
+function safeStudentMailboxAttachmentName(value, fallback = "Вложение") {
+  try { return safeWebDavUploadFileName(value); } catch { return `${fallback}.bin`; }
+}
+
+async function saveStudentMailboxDocument(folderSource, fileName, bytes, contentType) {
+  const relativeFolder = normalizeSystemDocumentsRelativePath(folderSource);
+  if (!relativeFolder) throw new Error("Не удалось определить папку документов слушателя.");
+  const safeName = safeWebDavUploadFileName(fileName);
+  const localDocuments = serverSettings.openDocumentsLocally !== false
+    ? await getLocalSystemDocumentsAvailability()
+    : { available: false };
+  if (localDocuments.available) {
+    const folderPath = resolveLocalDocumentsPath(relativeFolder, "Не удалось определить локальную папку документов.");
+    await fs.mkdir(folderPath, { recursive: true });
+    const targetPath = path.resolve(folderPath, safeName);
+    const relativeTarget = path.relative(folderPath, targetPath);
+    if (relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget)) {
+      throw new Error("Недопустимое имя файла вложения.");
+    }
+    await fs.writeFile(targetPath, bytes);
+    return { storage: "local", path: `${relativeFolder}/${safeName}` };
+  }
+  const folderPath = normalizeWebDavPath(`${resolveYandexDiskBasePath(false)}/${relativeFolder}`);
+  await ensureYandexDiskFolder(folderPath);
+  const targetPath = normalizeWebDavPath(`${folderPath}/${safeName}`);
+  await requestYandexWebDav("PUT", targetPath, {
+    acceptedStatuses: [200, 201, 204],
+    body: bytes,
+    contentType: contentType || getWebDavBrowserContentType(safeName)
+  });
+  return { storage: "webdav", path: `${relativeFolder}/${safeName}` };
+}
+
+async function importStudentMailboxMessages(body, authUser, req) {
+  const mailboxId = normalizeMailboxId(body.mailboxId, "applications");
+  const settings = getStudentDocumentMailboxSettings(mailboxId);
+  const uids = [...new Set((Array.isArray(body.uids) ? body.uids : [])
+    .map((value) => String(value || "").trim())
+    .filter((value) => /^\d+$/.test(value)))].slice(0, 20);
+  if (!uids.length) throw new Error("Выберите хотя бы одно письмо.");
+  const folder = String(body.folder || "").trim();
+  if (!folder) throw new Error("Не указана папка документов слушателя.");
+  const client = await connectStudentApplicationsImap(settings);
+  const warnings = [];
+  let messages;
+  try {
+    messages = await fetchImapMessages(client, uids, warnings);
+  } finally {
+    await client.close();
+  }
+  const files = [];
+  let totalBytes = 0;
+  for (const source of messages) {
+    const message = parseStudentMailboxMessage(source.uid, source.bytes);
+    const prefix = buildStudentMailboxFilePrefix(message);
+    const textBytes = Buffer.from(buildStudentMailboxTextFile(message), "utf8");
+    totalBytes += textBytes.length;
+    if (totalBytes > 100 * 1024 * 1024) throw new Error("Общий размер выбранных писем превышает 100 МБ.");
+    const textName = `${prefix}.txt`;
+    const textTarget = await saveStudentMailboxDocument(folder, textName, textBytes, "text/plain; charset=utf-8");
+    files.push({ name: textName, size: textBytes.length, type: "text", ...textTarget });
+    for (let index = 0; index < message.attachments.length; index += 1) {
+      const attachment = message.attachments[index];
+      if (!attachment.bytes.length) continue;
+      if (attachment.bytes.length > 24 * 1024 * 1024) {
+        warnings.push(`Вложение «${attachment.fileName}» пропущено: размер превышает 24 МБ.`);
+        continue;
+      }
+      totalBytes += attachment.bytes.length;
+      if (totalBytes > 100 * 1024 * 1024) throw new Error("Общий размер выбранных писем превышает 100 МБ.");
+      const attachmentName = `${prefix}_${index + 1}_${safeStudentMailboxAttachmentName(attachment.fileName, `Вложение-${index + 1}`)}`;
+      const target = await saveStudentMailboxDocument(
+        folder,
+        attachmentName,
+        attachment.bytes,
+        attachment.contentType
+      );
+      files.push({ name: attachmentName, size: attachment.bytes.length, type: "attachment", ...target });
+    }
+  }
+  await safelyAppendAuditEntry({
+    action: "Загружены документы из электронной почты",
+    area: "Документы слушателя",
+    entityType: "students",
+    entityId: auditText(body.studentId, 240),
+    entityLabel: auditText(body.studentName, 500),
+    field: "documents",
+    after: `${messages.length} писем, ${files.length} файлов`,
+    details: `Ящик: ${settings.login}; папка: ${folder}`,
+    source: "imap"
+  }, authUser, req);
+  return { mailbox: { id: settings.id, label: settings.label }, messages: messages.length, files, warnings };
+}
+
+async function handleStudentMailboxMessagesQuery(req, res) {
+  try {
+    sendJson(res, 200, await queryStudentMailboxMessages(await readJsonBody(req)));
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleStudentMailboxMessagesImport(req, res, authUser) {
+  try {
+    sendJson(res, 201, await importStudentMailboxMessages(await readJsonBody(req), authUser, req));
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
 }
 
 function parseStudentApplicationsQueryFilters(body = {}) {
@@ -12480,7 +12844,8 @@ async function publicSystemDocumentSettings(includeAdminSettings = false) {
     emailHasPassword: Boolean(
       serverSettings.studentApplicationsEmailPassword
         || process.env.STUDENT_APPLICATIONS_EMAIL_PASSWORD
-    )
+    ),
+    documentMailboxes: publicStudentDocumentMailboxes()
   };
   if (includeAdminSettings) Object.assign(settings, publicSharedRecordLocksMySqlSettings());
   return settings;
@@ -12516,6 +12881,33 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     const emailSmtpPort = Number(body.emailSmtpPort || 465);
     const emailLogin = String(body.emailLogin || "").trim();
     const emailPassword = String(body.emailPassword || "");
+    const currentDocumentMailboxes = new Map(
+      (Array.isArray(serverSettings.studentDocumentMailboxes)
+        ? serverSettings.studentDocumentMailboxes
+        : []).map((mailbox, index) => {
+        const normalized = normalizeStudentDocumentMailbox(mailbox, `mailbox-${index + 1}`);
+        return [normalized.id, normalized];
+      })
+    );
+    const documentMailboxesProvided = Array.isArray(body.documentMailboxes);
+    const documentMailboxes = (documentMailboxesProvided
+      ? body.documentMailboxes.slice(0, 20).map((mailbox, index) => {
+        const normalized = normalizeStudentDocumentMailbox(mailbox, `mailbox-${index + 1}`);
+        const existing = currentDocumentMailboxes.get(normalized.id);
+        normalized.password = mailbox?.clearPassword
+          ? ""
+          : String(mailbox?.password || existing?.password || "");
+        if (!normalized.host) throw new Error(`Укажите IMAP-сервер для ящика «${normalized.label}».`);
+        if (!normalized.smtpHost) throw new Error(`Укажите SMTP-сервер для ящика «${normalized.label}».`);
+        if (!normalized.login) throw new Error(`Укажите логин для ящика «${normalized.label}».`);
+        return normalized;
+      })
+      : [...currentDocumentMailboxes.values()]);
+    const documentMailboxIds = new Set();
+    documentMailboxes.forEach((mailbox) => {
+      if (documentMailboxIds.has(mailbox.id)) throw new Error("Идентификаторы почтовых ящиков не должны повторяться.");
+      documentMailboxIds.add(mailbox.id);
+    });
     const mysqlUseApplicationsConnection = body.mysqlUseApplicationsConnection !== false;
     const mysqlHost = String(body.mysqlHost || "").trim();
     const mysqlPort = Number(body.mysqlPort || 3306);
@@ -12566,6 +12958,7 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       studentApplicationsEmailLogin: emailLogin,
       sharedRecordLocksMySqlUseApplicationsConnection: mysqlUseApplicationsConnection
     };
+    if (documentMailboxesProvided) patch.studentDocumentMailboxes = documentMailboxes;
     if (!mysqlUseApplicationsConnection) {
       Object.assign(patch, {
         sharedRecordLocksMySqlConnectionString: "",
@@ -12658,6 +13051,23 @@ async function handleStudentApplicationsEmailConnectionTest(req, res) {
       host: settings.host,
       smtpHost: settings.smtpHost,
       message: "Подключение к почтовому ящику по IMAP и SMTP работает."
+    });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleStudentDocumentMailboxConnectionTest(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const settings = getStudentDocumentMailboxSettings(body.mailboxId);
+    const client = await connectStudentApplicationsImap(settings);
+    await client.close();
+    sendJson(res, 200, {
+      ok: true,
+      mailboxId: settings.id,
+      login: settings.login,
+      message: `Подключение к ящику «${settings.label}» по IMAP работает.`
     });
   } catch (error) {
     sendError(res, 400, error.message);
@@ -12939,6 +13349,7 @@ async function route(req, res) {
     || [
       "/api/yandex-disk/test",
       "/api/student-applications-email/test",
+      "/api/student-document-mailboxes/test",
       "/api/mysql-locks/test"
     ].includes(requestUrl.pathname)
     || requestUrl.pathname === "/api/students/export-database"
@@ -12999,6 +13410,10 @@ async function route(req, res) {
     await handleStudentApplicationsEmailConnectionTest(req, res);
     return;
   }
+  if (req.method === "POST" && requestUrl.pathname === "/api/student-document-mailboxes/test") {
+    await handleStudentDocumentMailboxConnectionTest(req, res);
+    return;
+  }
   if (req.method === "POST" && requestUrl.pathname === "/api/mysql-locks/test") {
     await handleSharedRecordLocksMySqlConnectionTest(req, res);
     return;
@@ -13009,6 +13424,14 @@ async function route(req, res) {
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/students/ensure-document-folders") {
     await handleEnsureStudentDocumentFolders(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/mailbox-documents/query") {
+    await handleStudentMailboxMessagesQuery(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/mailbox-documents/import") {
+    await handleStudentMailboxMessagesImport(req, res, authUser);
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/students/webdav-documents/list") {
@@ -13137,6 +13560,10 @@ module.exports = {
   parseStudentDatabaseWorkbook,
   sanitizeStudentDatabaseExportPayload,
   inspectStudentDatabaseBinary,
+  collectEmailMessageContent,
+  parseStudentMailboxMessage,
+  publicStudentDocumentMailboxes,
+  queryStudentMailboxMessages,
   applyCustomDocumentPropertyFormulas,
   convertDocxBytesToPdf,
   createDocumentQrCodeImage,

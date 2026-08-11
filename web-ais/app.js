@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.57",
+    version: "1.7.58",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.58",
+      releasedAt: "2026-08-11",
+      changes: [
+        "В карточке слушателя добавлена загрузка выбранных писем: текст письма и вложения сохраняются в папку «Документы» на локальном диске или через WebDAV.",
+        "В админке добавлено управление несколькими почтовыми ящиками IMAP/SMTP с отдельной проверкой подключения и серверным хранением паролей."
+      ]
+    },
     {
       version: "1.7.57",
       releasedAt: "2026-08-11",
@@ -3406,6 +3414,18 @@ MAX - https://bizvmax.ru/zifra_plus
     data.meta.studentApplicationsEmailHasPassword = Boolean(
       data.meta.studentApplicationsEmailHasPassword
     );
+    data.meta.documentMailboxes = Array.isArray(data.meta.documentMailboxes)
+      ? data.meta.documentMailboxes.map((mailbox, index) => ({
+        id: String(mailbox?.id || `mailbox-${index + 1}`).trim(),
+        label: String(mailbox?.label || mailbox?.login || "Почтовый ящик").trim(),
+        host: String(mailbox?.host || "").trim(),
+        port: Number(mailbox?.port || 993),
+        smtpHost: String(mailbox?.smtpHost || "").trim(),
+        smtpPort: Number(mailbox?.smtpPort || 465),
+        login: String(mailbox?.login || "").trim(),
+        hasPassword: Boolean(mailbox?.hasPassword)
+      }))
+      : [];
     data.meta.defaultAuthorPaymentPercent = normalizePaymentPercent(
       data.meta.defaultAuthorPaymentPercent,
       50
@@ -11601,6 +11621,46 @@ MAX - https://bizvmax.ru/zifra_plus
       : fallback;
   }
 
+  function getAdditionalDocumentMailboxesForAdmin() {
+    const draft = state.adminSettingsDirty ? state.adminSettingsDraft?.documentMailboxes : null;
+    const source = Array.isArray(draft) ? draft : state.data.meta.documentMailboxes;
+    return (Array.isArray(source) ? source : [])
+      .filter((mailbox) => String(mailbox?.id || "") !== "applications")
+      .map((mailbox, index) => ({
+        id: String(mailbox?.id || `mailbox-${index + 1}`).trim(),
+        label: String(mailbox?.label || mailbox?.login || "Почтовый ящик").trim(),
+        host: String(mailbox?.host || "").trim(),
+        port: Number(mailbox?.port || 993),
+        smtpHost: String(mailbox?.smtpHost || "").trim(),
+        smtpPort: Number(mailbox?.smtpPort || 465),
+        login: String(mailbox?.login || "").trim(),
+        hasPassword: Boolean(mailbox?.hasPassword),
+        password: String(mailbox?.password || "")
+      }));
+  }
+
+  function renderAdminDocumentMailbox(mailbox, index) {
+    return `
+      <fieldset class="admin-mailbox-card" data-document-mailbox data-mailbox-index="${index}">
+        <legend>${escapeHtml(mailbox.label || mailbox.login || `Почтовый ящик ${index + 1}`)}</legend>
+        <input type="hidden" data-mailbox-field="id" value="${escapeAttr(mailbox.id || `mailbox-${index + 1}`)}">
+        <div class="admin-mailbox-card-actions">
+          <button class="ghost-button compact-button" data-action="test-document-mailbox" type="button">Проверить</button>
+          <button class="icon-button" data-action="remove-document-mailbox" type="button" title="Удалить ящик" aria-label="Удалить ящик">×</button>
+        </div>
+        <div class="admin-email-settings-grid">
+          <label><span>Название</span><input data-mailbox-field="label" value="${escapeAttr(mailbox.label)}" required></label>
+          <label><span>Логин</span><input data-mailbox-field="login" type="email" value="${escapeAttr(mailbox.login)}" required autocomplete="username"></label>
+          <label><span>IMAP-сервер</span><input data-mailbox-field="host" value="${escapeAttr(mailbox.host)}" required spellcheck="false"></label>
+          <label><span>Порт IMAP</span><input data-mailbox-field="port" type="number" min="1" max="65535" value="${escapeAttr(mailbox.port)}" required></label>
+          <label><span>SMTP-сервер</span><input data-mailbox-field="smtpHost" value="${escapeAttr(mailbox.smtpHost)}" required spellcheck="false"></label>
+          <label><span>Порт SMTP</span><input data-mailbox-field="smtpPort" type="number" min="1" max="65535" value="${escapeAttr(mailbox.smtpPort)}" required></label>
+          <label class="admin-email-credential-field"><span>Пароль</span><input data-mailbox-field="password" type="password" value="${escapeAttr(mailbox.password)}" placeholder="${mailbox.hasPassword ? "Пароль сохранён на сервере" : "Введите пароль"}" autocomplete="new-password"></label>
+        </div>
+      </fieldset>
+    `;
+  }
+
   function renderAdmin() {
     const databasePath = getAdminSettingRenderValue("studentDatabaseWebDavPath", getStudentDatabaseWebDavPath());
     const basePath = getAdminSettingRenderValue("yandexDiskBasePath", getYandexDiskBasePath());
@@ -11640,6 +11700,7 @@ MAX - https://bizvmax.ru/zifra_plus
       getStudentApplicationsEmailLogin()
     );
     const emailPassword = getAdminSettingRenderValue("studentApplicationsEmailPassword", "");
+    const documentMailboxes = getAdditionalDocumentMailboxesForAdmin();
     const mysqlUseApplicationsConnection = Boolean(getAdminSettingRenderValue(
       "mysqlUseApplicationsConnection",
       state.data.meta.mysqlUseApplicationsConnection !== false
@@ -11911,7 +11972,18 @@ MAX - https://bizvmax.ru/zifra_plus
                     >
                   </label>
                 </div>
-                <small class="sdo-settings-hint">IMAP используется для загрузки заявок. Все исходящие сообщения отправляются через SMTP от имени указанного ящика.</small>
+                <small class="sdo-settings-hint">Основной ящик используется для загрузки заявок и отправки сообщений. Пароли хранятся только в закрытых настройках сервера.</small>
+                <div class="admin-document-mailboxes-head">
+                  <div>
+                    <strong>Дополнительные почтовые ящики</strong>
+                    <small>Письма и вложения из этих ящиков можно загружать в документы слушателей.</small>
+                  </div>
+                  <button class="ghost-button" data-action="add-document-mailbox" type="button">Добавить ящик</button>
+                </div>
+                <div class="admin-document-mailboxes" data-document-mailboxes>
+                  ${documentMailboxes.map(renderAdminDocumentMailbox).join("")}
+                  ${documentMailboxes.length ? "" : '<p class="empty-state">Дополнительные почтовые ящики не настроены.</p>'}
+                </div>
                 </div>
               </div>
               <div class="admin-database-copy system-action-notes">
@@ -16282,6 +16354,23 @@ MAX - https://bizvmax.ru/zifra_plus
           <path d="M3 9h18"></path>
         </svg>
       </a>
+      ${isContract ? "" : `
+        <button
+          class="icon-button student-mailbox-documents-button ${escapeAttr(extraClass)}"
+          data-action="open-student-mailbox-documents"
+          data-student-id="${escapeAttr(record?.id || "")}"
+          data-student-name="${escapeAttr(record?.name || "")}"
+          data-student-email="${escapeAttr(record?.email || "")}"
+          data-student-documents-folder="${escapeAttr(documentsFolder)}"
+          type="button"
+          title="Загрузить письма и вложения из электронной почты"
+          aria-label="Загрузить письма и вложения из электронной почты"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M3 5h18v14H3z"></path><path d="m3 6 9 7 9-7"></path><path d="M12 10v8"></path><path d="m9 15 3 3 3-3"></path>
+          </svg>
+        </button>
+      `}
     `;
   }
 
@@ -20082,6 +20171,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const studentDatabaseSettingsForm = document.querySelector("form[data-action='save-student-database-settings']");
     studentDatabaseSettingsForm?.addEventListener("submit", saveStudentDatabaseSettings);
     bindAdminSettingsDirtyState(studentDatabaseSettingsForm);
+    bindAdminDocumentMailboxFields(studentDatabaseSettingsForm);
     bindAdminSettingsBeforeUnload();
     bindAutomaticDocumentSaveHint(studentDatabaseSettingsForm);
     bindAdminMySqlSettings(studentDatabaseSettingsForm);
@@ -20089,6 +20179,14 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='test-mysql-locks']")?.addEventListener("click", testMySqlLocksConnection);
     document.querySelector("[data-action='test-student-applications-email']")
       ?.addEventListener("click", testStudentApplicationsEmailConnection);
+    document.querySelector("[data-action='add-document-mailbox']")
+      ?.addEventListener("click", addDocumentMailbox);
+    document.querySelectorAll("[data-action='remove-document-mailbox']").forEach((button) => {
+      button.addEventListener("click", removeDocumentMailbox);
+    });
+    document.querySelectorAll("[data-action='test-document-mailbox']").forEach((button) => {
+      button.addEventListener("click", testDocumentMailboxConnection);
+    });
     document.querySelector("[data-action='download-audit-log']")
       ?.addEventListener("click", downloadAuditLog);
     document.querySelector("form[data-action='filter-audit-log']")
@@ -20868,6 +20966,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", (event) => recropStoredPersonPhoto("student", event.currentTarget));
     document.querySelectorAll("[data-student-documents-folder-link]").forEach((link) => {
       link.addEventListener("click", openStudentDocumentsFolder);
+    });
+    document.querySelectorAll("[data-action='open-student-mailbox-documents']").forEach((button) => {
+      button.addEventListener("click", openStudentMailboxDocuments);
     });
     document.querySelector("[data-action='create-student-documents-folder']")
       ?.addEventListener("click", createMissingStudentDocumentsFolder);
@@ -25843,6 +25944,178 @@ MAX - https://bizvmax.ru/zifra_plus
       && !/^https?:\/\//i.test(candidate)
       && !/\.(png|jpe?g|webp|gif)$/i.test(candidate)) return "";
     return photoPublicUrl(candidate);
+  }
+
+  function getAvailableStudentDocumentMailboxes() {
+    const configured = (Array.isArray(state.data.meta?.documentMailboxes)
+      ? state.data.meta.documentMailboxes
+      : []).filter((mailbox) => mailbox?.host && mailbox?.login);
+    if (configured.length) return configured;
+    const host = getStudentApplicationsEmailHost();
+    const login = getStudentApplicationsEmailLogin();
+    return host && login ? [{
+      id: "applications",
+      label: "Основной ящик",
+      host,
+      port: getStudentApplicationsEmailPort(),
+      login,
+      hasPassword: Boolean(state.data.meta?.studentApplicationsEmailHasPassword)
+    }] : [];
+  }
+
+  function studentMailboxDateOffset(days) {
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    return date.toISOString().slice(0, 10);
+  }
+
+  async function openStudentMailboxDocuments(event) {
+    const button = event.currentTarget;
+    const mailboxes = getAvailableStudentDocumentMailboxes();
+    if (!mailboxes.length) {
+      alert("В админке не настроены почтовые ящики.");
+      return;
+    }
+    const studentId = String(button.dataset.studentId || "").trim();
+    const studentName = String(button.dataset.studentName || "").trim();
+    const studentEmail = String(button.dataset.studentEmail || "").trim();
+    const folder = String(button.dataset.studentDocumentsFolder || "").trim();
+    if (!folder) {
+      alert("Не удалось определить папку документов слушателя.");
+      return;
+    }
+    document.querySelector("[data-student-mailbox-dialog]")?.remove();
+    const preferredMailbox = mailboxes.find((mailbox) => String(mailbox.login).toLowerCase() === "mail@edu-plus.ru")
+      || mailboxes[0];
+    const backdrop = document.createElement("div");
+    backdrop.className = "student-mailbox-backdrop";
+    backdrop.dataset.studentMailboxDialog = "";
+    backdrop.innerHTML = `
+      <section class="student-mailbox-dialog" role="dialog" aria-modal="true" aria-labelledby="studentMailboxTitle">
+        <header class="student-mailbox-head">
+          <div><h2 id="studentMailboxTitle">Письма: ${escapeHtml(studentName || "слушатель")}</h2><p>Выберите письма — их текст и вложения будут сохранены в папку «Документы».</p></div>
+          <button class="icon-button" data-action="close-student-mailbox" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <form class="student-mailbox-filters" data-student-mailbox-filters>
+          <label><span>Почтовый ящик</span><select name="mailboxId">${mailboxes.map((mailbox) => `<option value="${escapeAttr(mailbox.id)}" ${mailbox.id === preferredMailbox.id ? "selected" : ""}>${escapeHtml(mailbox.label || mailbox.login)} · ${escapeHtml(mailbox.login)}</option>`).join("")}</select></label>
+          <label><span>Email слушателя</span><input name="email" type="email" value="${escapeAttr(studentEmail)}" placeholder="email@example.ru"></label>
+          <label><span>С</span><input name="dateFrom" type="date" value="${studentMailboxDateOffset(-180)}"></label>
+          <label><span>По</span><input name="dateTo" type="date" value="${studentMailboxDateOffset(0)}"></label>
+          <label class="student-mailbox-query"><span>Текст или тема</span><input name="query" type="search" placeholder="Дополнительный поиск"></label>
+          <button class="primary-button" type="submit">Найти письма</button>
+        </form>
+        <div class="student-mailbox-toolbar">
+          <label><input type="checkbox" data-student-mailbox-select-all> <span>Выбрать все</span></label>
+          <output data-student-mailbox-count>Письма ещё не загружены</output>
+        </div>
+        <div class="student-mailbox-status" data-student-mailbox-status aria-live="polite"></div>
+        <div class="student-mailbox-list" data-student-mailbox-list></div>
+        <footer class="student-mailbox-footer">
+          <button class="ghost-button" data-action="close-student-mailbox" type="button">Отмена</button>
+          <button class="primary-button" data-action="import-student-mailbox" type="button" disabled>Загрузить выбранные</button>
+        </footer>
+      </section>
+    `;
+    document.body.appendChild(backdrop);
+    const filters = backdrop.querySelector("[data-student-mailbox-filters]");
+    const list = backdrop.querySelector("[data-student-mailbox-list]");
+    const status = backdrop.querySelector("[data-student-mailbox-status]");
+    const count = backdrop.querySelector("[data-student-mailbox-count]");
+    const importButton = backdrop.querySelector("[data-action='import-student-mailbox']");
+    const selectAll = backdrop.querySelector("[data-student-mailbox-select-all]");
+    let messages = [];
+    let busy = false;
+    const close = () => { if (!busy) backdrop.remove(); };
+    backdrop.querySelectorAll("[data-action='close-student-mailbox']").forEach((control) => control.addEventListener("click", close));
+    backdrop.addEventListener("pointerdown", (pointerEvent) => { if (pointerEvent.target === backdrop) close(); });
+    const updateSelection = () => {
+      const boxes = Array.from(list.querySelectorAll("input[data-message-uid]"));
+      const selected = boxes.filter((input) => input.checked).length;
+      count.textContent = `Выбрано ${selected} из ${boxes.length}`;
+      importButton.disabled = busy || selected === 0;
+      selectAll.checked = Boolean(boxes.length && selected === boxes.length);
+      selectAll.indeterminate = selected > 0 && selected < boxes.length;
+    };
+    const renderMessages = () => {
+      list.innerHTML = messages.length ? messages.map((message) => `
+        <article class="student-mailbox-message">
+          <label class="student-mailbox-message-select"><input type="checkbox" data-message-uid="${escapeAttr(message.uid)}"><span></span></label>
+          <div class="student-mailbox-message-content">
+            <div class="student-mailbox-message-title"><strong>${escapeHtml(message.subject || "Без темы")}</strong><time>${escapeHtml(formatDateTimeRu(message.date))}</time></div>
+            <p><b>От:</b> ${escapeHtml(message.from || "—")}</p>
+            <p><b>Кому:</b> ${escapeHtml(message.to || "—")}</p>
+            ${message.excerpt ? `<details><summary>Текст письма</summary><pre>${escapeHtml(message.excerpt)}</pre></details>` : ""}
+            <div class="student-mailbox-attachments">${message.attachments?.length ? message.attachments.map((attachment) => `<span title="${escapeAttr(`${attachment.name}, ${formatBytes(attachment.size)}`)}">📎 ${escapeHtml(attachment.name)}</span>`).join("") : "<span>Без вложений</span>"}</div>
+          </div>
+        </article>
+      `).join("") : '<p class="empty-state">Письма по заданным условиям не найдены.</p>';
+      list.querySelectorAll("input[data-message-uid]").forEach((input) => input.addEventListener("change", updateSelection));
+      updateSelection();
+    };
+    const loadMessages = async () => {
+      if (busy) return;
+      busy = true;
+      status.textContent = "Загрузка писем…";
+      list.innerHTML = '<div class="student-mailbox-loading"><span class="loading-spinner" aria-hidden="true"></span><span>Получение писем из ящика…</span></div>';
+      importButton.disabled = true;
+      try {
+        const formData = new FormData(filters);
+        const response = await fetch(photoApiUrl("/api/students/mailbox-documents/query"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(Object.fromEntries(formData.entries()))
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || "Не удалось получить письма.");
+        messages = Array.isArray(payload.messages) ? payload.messages : [];
+        status.textContent = payload.truncated
+          ? `Показаны последние ${messages.length} писем из ${payload.total}. Уточните период поиска.`
+          : `Найдено писем: ${messages.length}.`;
+        renderMessages();
+      } catch (error) {
+        messages = [];
+        list.innerHTML = `<p class="student-mailbox-error">${escapeHtml(error.message)}</p>`;
+        status.textContent = "Загрузка не выполнена.";
+        updateSelection();
+      } finally {
+        busy = false;
+      }
+    };
+    filters.addEventListener("submit", (submitEvent) => { submitEvent.preventDefault(); loadMessages(); });
+    selectAll.addEventListener("change", () => {
+      list.querySelectorAll("input[data-message-uid]").forEach((input) => { input.checked = selectAll.checked; });
+      updateSelection();
+    });
+    importButton.addEventListener("click", async () => {
+      const uids = Array.from(list.querySelectorAll("input[data-message-uid]:checked")).map((input) => input.dataset.messageUid);
+      if (!uids.length || busy) return;
+      busy = true;
+      importButton.disabled = true;
+      status.textContent = "Сохранение текста писем и вложений…";
+      try {
+        const response = await fetch(photoApiUrl("/api/students/mailbox-documents/import"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mailboxId: filters.elements.mailboxId.value,
+            uids,
+            folder,
+            studentId,
+            studentName
+          })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || "Не удалось сохранить документы из писем.");
+        const warning = payload.warnings?.length ? `\n\nПредупреждения:\n${payload.warnings.join("\n")}` : "";
+        alert(`Загружено писем: ${payload.messages || 0}. Сохранено файлов: ${payload.files?.length || 0}.${warning}`);
+        backdrop.remove();
+      } catch (error) {
+        status.textContent = `Ошибка: ${error.message}`;
+        busy = false;
+        updateSelection();
+      }
+    });
+    loadMessages();
   }
 
   async function openStudentDocumentsFolder(event) {
@@ -33238,15 +33511,31 @@ MAX - https://bizvmax.ru/zifra_plus
     return Number.isNaN(date.getTime()) ? String(value || "") : date.toLocaleString("ru-RU");
   }
 
+  function collectDocumentMailboxesFromForm(form) {
+    return Array.from(form?.querySelectorAll("[data-document-mailbox]") || []).map((card, index) => ({
+      id: String(card.querySelector('[data-mailbox-field="id"]')?.value || `mailbox-${index + 1}`).trim(),
+      label: String(card.querySelector('[data-mailbox-field="label"]')?.value || "").trim(),
+      host: String(card.querySelector('[data-mailbox-field="host"]')?.value || "").trim(),
+      port: Number(card.querySelector('[data-mailbox-field="port"]')?.value || 993),
+      smtpHost: String(card.querySelector('[data-mailbox-field="smtpHost"]')?.value || "").trim(),
+      smtpPort: Number(card.querySelector('[data-mailbox-field="smtpPort"]')?.value || 465),
+      login: String(card.querySelector('[data-mailbox-field="login"]')?.value || "").trim(),
+      password: String(card.querySelector('[data-mailbox-field="password"]')?.value || ""),
+      hasPassword: String(card.querySelector('[data-mailbox-field="password"]')?.placeholder || "").includes("сохранён")
+    }));
+  }
+
   function collectAdminSettingsDraft(form) {
-    return Array.from(form?.elements || []).reduce((draft, control) => {
-      if (!control.name || isSnapshotIgnoredControl(control)) return draft;
+    const draft = Array.from(form?.elements || []).reduce((result, control) => {
+      if (!control.name || isSnapshotIgnoredControl(control)) return result;
       const type = String(control.type || "").toLowerCase();
-      draft[control.name] = type === "checkbox" || type === "radio"
+      result[control.name] = type === "checkbox" || type === "radio"
         ? Boolean(control.checked)
         : control.value;
-      return draft;
+      return result;
     }, {});
+    draft.documentMailboxes = collectDocumentMailboxesFromForm(form);
+    return draft;
   }
 
   function updateAdminSettingsSaveButton(form = null) {
@@ -33289,6 +33578,18 @@ MAX - https://bizvmax.ru/zifra_plus
     form.addEventListener("input", trackChanges);
     form.addEventListener("change", trackChanges);
     updateAdminSettingsSaveButton(form);
+  }
+
+  function bindAdminDocumentMailboxFields(form) {
+    if (!form) return;
+    const trackMailboxChanges = () => {
+      state.adminSettingsDraft = collectAdminSettingsDraft(form);
+      setAdminSettingsDirty(true, form);
+    };
+    form.querySelectorAll("[data-mailbox-field]").forEach((control) => {
+      control.addEventListener("input", trackMailboxChanges);
+      control.addEventListener("change", trackMailboxChanges);
+    });
   }
 
   function bindAdminSettingsBeforeUnload() {
@@ -33365,6 +33666,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const emailSmtpPort = Number(form.elements.studentApplicationsEmailSmtpPort?.value || 465);
     const emailLogin = String(form.elements.studentApplicationsEmailLogin?.value || "").trim();
     const emailPassword = String(form.elements.studentApplicationsEmailPassword?.value || "");
+    const documentMailboxes = collectDocumentMailboxesFromForm(form);
     const mysqlUseApplicationsConnection = Boolean(
       form.elements.mysqlUseApplicationsConnection?.checked
     );
@@ -33414,6 +33716,7 @@ MAX - https://bizvmax.ru/zifra_plus
         emailSmtpPort,
         emailLogin,
         emailPassword,
+        documentMailboxes,
         mysqlUseApplicationsConnection,
         mysqlHost,
         mysqlPort,
@@ -33428,6 +33731,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (form.elements.studentApplicationsEmailPassword) {
       form.elements.studentApplicationsEmailPassword.value = "";
     }
+    form.querySelectorAll('[data-mailbox-field="password"]').forEach((input) => { input.value = ""; });
     if (form.elements.mysqlPassword) form.elements.mysqlPassword.value = "";
     return payload;
   }
@@ -33464,6 +33768,9 @@ MAX - https://bizvmax.ru/zifra_plus
       payload.emailLogin ?? getStudentApplicationsEmailLogin()
     ).trim();
     state.data.meta.studentApplicationsEmailHasPassword = Boolean(payload.emailHasPassword);
+    state.data.meta.documentMailboxes = Array.isArray(payload.documentMailboxes)
+      ? payload.documentMailboxes
+      : [];
     if (Object.prototype.hasOwnProperty.call(payload, "mysqlUseApplicationsConnection")) {
       state.data.meta.mysqlUseApplicationsConnection = payload.mysqlUseApplicationsConnection !== false;
       state.data.meta.mysqlHost = String(payload.mysqlHost || "").trim();
@@ -33514,6 +33821,64 @@ MAX - https://bizvmax.ru/zifra_plus
       persist();
       const response = await fetch(photoApiUrl("/api/student-applications-email/test"), {
         method: "POST"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Не удалось подключиться к почтовому ящику.");
+      alert(payload.message || "Подключение к почтовому ящику работает.");
+      render();
+    } catch (error) {
+      alert(`Проверка почты не выполнена: ${error.message}`);
+      button.disabled = false;
+    }
+  }
+
+  function addDocumentMailbox(event) {
+    const form = event.currentTarget.closest("form");
+    if (!form) return;
+    const mailboxes = collectDocumentMailboxesFromForm(form);
+    mailboxes.push({
+      id: `mailbox-${Date.now().toString(36)}`,
+      label: "Новый почтовый ящик",
+      host: getStudentApplicationsEmailHost(),
+      port: getStudentApplicationsEmailPort(),
+      smtpHost: getStudentApplicationsEmailSmtpHost(),
+      smtpPort: getStudentApplicationsEmailSmtpPort(),
+      login: "",
+      password: "",
+      hasPassword: false
+    });
+    state.adminSettingsDraft = { ...collectAdminSettingsDraft(form), documentMailboxes: mailboxes };
+    setAdminSettingsDirty(true, form);
+    render();
+  }
+
+  function removeDocumentMailbox(event) {
+    const form = event.currentTarget.closest("form");
+    const card = event.currentTarget.closest("[data-document-mailbox]");
+    if (!form || !card) return;
+    const label = card.querySelector('[data-mailbox-field="label"]')?.value || "почтовый ящик";
+    if (!confirm(`Удалить «${label}» из настроек?`)) return;
+    card.remove();
+    state.adminSettingsDraft = collectAdminSettingsDraft(form);
+    setAdminSettingsDirty(true, form);
+    render();
+  }
+
+  async function testDocumentMailboxConnection(event) {
+    const button = event.currentTarget;
+    const form = button.closest("form");
+    const card = button.closest("[data-document-mailbox]");
+    if (!form || !card) return;
+    button.disabled = true;
+    try {
+      const mailboxId = String(card.querySelector('[data-mailbox-field="id"]')?.value || "").trim();
+      const settings = await saveYandexDiskSettings(form);
+      applyYandexDiskSettings(settings);
+      clearAdminSettingsDirtyState(form);
+      const response = await fetch(photoApiUrl("/api/student-document-mailboxes/test"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mailboxId })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || "Не удалось подключиться к почтовому ящику.");
@@ -33580,6 +33945,7 @@ MAX - https://bizvmax.ru/zifra_plus
           emailSmtpPort: getStudentApplicationsEmailSmtpPort(),
           emailLogin: getStudentApplicationsEmailLogin(),
           emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword,
+          documentMailboxes: state.data.meta.documentMailboxes,
           mysqlUseApplicationsConnection: state.data.meta.mysqlUseApplicationsConnection,
           mysqlHost: state.data.meta.mysqlHost,
           mysqlPort: state.data.meta.mysqlPort,
@@ -33605,6 +33971,7 @@ MAX - https://bizvmax.ru/zifra_plus
           emailSmtpPort: getStudentApplicationsEmailSmtpPort(),
           emailLogin: getStudentApplicationsEmailLogin(),
           emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword,
+          documentMailboxes: state.data.meta.documentMailboxes,
           mysqlUseApplicationsConnection: state.data.meta.mysqlUseApplicationsConnection,
           mysqlHost: state.data.meta.mysqlHost,
           mysqlPort: state.data.meta.mysqlPort,
