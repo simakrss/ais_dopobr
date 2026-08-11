@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.60",
+    version: "1.7.61",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.61",
+      releasedAt: "2026-08-11",
+      changes: [
+        "Настройки основного почтового ящика mail@zifra-plus.ru для загрузки заявок перенесены в единый раздел почтовых ящиков админки."
+      ]
+    },
     {
       version: "1.7.60",
       releasedAt: "2026-08-11",
@@ -11675,6 +11682,48 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderAdminApplicationsMailbox({
+    host,
+    port,
+    smtpHost,
+    smtpPort,
+    login,
+    password
+  }) {
+    const title = login
+      ? `Загрузка заявок · ${login}`
+      : "Почтовый ящик для загрузки заявок";
+    return `
+      <fieldset class="admin-mailbox-card is-applications-mailbox" data-applications-mailbox>
+        <legend>${escapeHtml(title)}</legend>
+        <div class="admin-mailbox-purpose">
+          <strong>Системный ящик</strong>
+          <span>Загрузка заявок и отправка сообщений</span>
+        </div>
+        <div class="admin-mailbox-card-actions">
+          <button class="ghost-button compact-button" data-action="test-student-applications-email" type="button">Проверить</button>
+        </div>
+        <div class="admin-email-settings-grid">
+          <label><span>Логин</span><input name="studentApplicationsEmailLogin" type="email" value="${escapeAttr(login)}" required autocomplete="username"></label>
+          <label><span>IMAP-сервер</span><input name="studentApplicationsEmailHost" type="text" value="${escapeAttr(host)}" required spellcheck="false" placeholder="imap.example.ru"></label>
+          <label><span>Порт IMAP</span><input name="studentApplicationsEmailPort" type="number" min="1" max="65535" value="${escapeAttr(port)}" required></label>
+          <label><span>SMTP-сервер</span><input name="studentApplicationsEmailSmtpHost" type="text" value="${escapeAttr(smtpHost)}" required spellcheck="false" placeholder="smtp.example.ru"></label>
+          <label><span>Порт SMTP</span><input name="studentApplicationsEmailSmtpPort" type="number" min="1" max="65535" value="${escapeAttr(smtpPort)}" required></label>
+          <label class="admin-email-credential-field">
+            <span>Пароль</span>
+            <input
+              name="studentApplicationsEmailPassword"
+              type="password"
+              value="${escapeAttr(password)}"
+              placeholder="${state.data.meta.studentApplicationsEmailHasPassword ? "Пароль сохранён на сервере" : "Введите пароль"}"
+              autocomplete="new-password"
+            >
+          </label>
+        </div>
+      </fieldset>
+    `;
+  }
+
   function renderAdmin() {
     const databasePath = getAdminSettingRenderValue("studentDatabaseWebDavPath", getStudentDatabaseWebDavPath());
     const basePath = getAdminSettingRenderValue("yandexDiskBasePath", getYandexDiskBasePath());
@@ -11939,7 +11988,6 @@ MAX - https://bizvmax.ru/zifra_plus
                 <div class="admin-system-documents-head admin-email-settings-head">
                   <strong>Электронная почта (IMAP/SMTP)</strong>
                   <div class="admin-email-settings-actions">
-                    <button class="ghost-button admin-connection-test-button" data-action="test-student-applications-email" type="button">Проверить почту</button>
                     <button
                       class="primary-button icon-only admin-save-connection-button ${state.adminSettingsDirty ? "is-unsaved" : ""}"
                       type="submit"
@@ -11954,47 +12002,22 @@ MAX - https://bizvmax.ru/zifra_plus
                     </button>
                   </div>
                 </div>
-                <div class="admin-email-settings-grid">
-                  <label>
-                    <span>IMAP-сервер</span>
-                    <input name="studentApplicationsEmailHost" type="text" value="${escapeAttr(emailHost)}" required spellcheck="false" placeholder="imap.example.ru">
-                  </label>
-                  <label>
-                    <span>Порт IMAP</span>
-                    <input name="studentApplicationsEmailPort" type="number" min="1" max="65535" value="${escapeAttr(emailPort)}" required>
-                  </label>
-                  <label>
-                    <span>SMTP-сервер</span>
-                    <input name="studentApplicationsEmailSmtpHost" type="text" value="${escapeAttr(emailSmtpHost)}" required spellcheck="false" placeholder="smtp.example.ru">
-                  </label>
-                  <label>
-                    <span>Порт SMTP</span>
-                    <input name="studentApplicationsEmailSmtpPort" type="number" min="1" max="65535" value="${escapeAttr(emailSmtpPort)}" required>
-                  </label>
-                  <label class="admin-email-credential-field">
-                    <span>Логин электронной почты</span>
-                    <input name="studentApplicationsEmailLogin" type="email" value="${escapeAttr(emailLogin)}" required autocomplete="username">
-                  </label>
-                  <label class="admin-email-credential-field">
-                    <span>Пароль электронной почты</span>
-                    <input
-                      name="studentApplicationsEmailPassword"
-                      type="password"
-                      value="${escapeAttr(emailPassword)}"
-                      placeholder="${state.data.meta.studentApplicationsEmailHasPassword ? "Пароль сохранён на сервере" : "Введите пароль"}"
-                      autocomplete="new-password"
-                    >
-                  </label>
-                </div>
-                <small class="sdo-settings-hint">Основной ящик используется для загрузки заявок и отправки сообщений. Пароли хранятся только в закрытых настройках сервера.</small>
                 <div class="admin-document-mailboxes-head">
                   <div>
-                    <strong>Дополнительные почтовые ящики</strong>
-                    <small>Письма и вложения из этих ящиков можно загружать в документы слушателей.</small>
+                    <strong>Почтовые ящики</strong>
+                    <small>Системный ящик загружает заявки; письма и вложения из настроенных ящиков можно сохранять в документы слушателей.</small>
                   </div>
                   <button class="ghost-button" data-action="add-document-mailbox" type="button">Добавить ящик</button>
                 </div>
                 <div class="admin-document-mailboxes" data-document-mailboxes>
+                  ${renderAdminApplicationsMailbox({
+                    host: emailHost,
+                    port: emailPort,
+                    smtpHost: emailSmtpHost,
+                    smtpPort: emailSmtpPort,
+                    login: emailLogin,
+                    password: emailPassword
+                  })}
                   ${documentMailboxes.map(renderAdminDocumentMailbox).join("")}
                   ${documentMailboxes.length ? "" : '<p class="empty-state">Дополнительные почтовые ящики не настроены.</p>'}
                 </div>

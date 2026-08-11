@@ -17191,6 +17191,29 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   font-weight: 700;
 }
 
+.admin-mailbox-card.is-applications-mailbox {
+  border-color: rgba(15, 118, 110, 0.34);
+  background: #f4fbf8;
+}
+
+.admin-mailbox-purpose {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-mailbox-purpose strong {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #dff3ec;
+  color: var(--teal);
+  font-size: 11px;
+}
+
 .admin-mailbox-card-actions {
   position: absolute;
   top: 8px;
