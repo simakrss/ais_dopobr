@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.68",
+    version: "1.7.69",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.69",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В таблицу общих затрат добавлена колонка «Номер в расходах»; при копировании общей затраты номер очищается, чтобы его можно было назначить новой записи отдельно."
+      ]
+    },
     {
       version: "1.7.68",
       releasedAt: "2026-08-12",
@@ -854,7 +861,7 @@
   const DIRECT_EXPENSES_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-direct-expenses-table-layout-v1";
   const DIRECT_EXPENSES_TABLE_LAYOUT_VERSION = "note-primary-uid-last";
   const GENERAL_EXPENSES_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-general-expenses-table-layout-v1";
-  const GENERAL_EXPENSES_TABLE_LAYOUT_VERSION = "counterparty-first";
+  const GENERAL_EXPENSES_TABLE_LAYOUT_VERSION = "counterparty-first-with-expense-number";
   const CONTRACTS_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-contracts-table-layout-v1";
   const CONTRACTS_TABLE_LAYOUT_VERSION = "agency-after-services";
   const SYSTEM_HELP_TOOLTIP_DELAY_MS = 1000;
@@ -2495,7 +2502,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("accountingClosed", "Закрыто в бухгалтерии", "checkbox"),
         field("bkExpenseNo", "Номер в расходах", "combo", false, "generalExpenseNumbers")
       ],
-      table: ["counterparty", "section", "date", "workType", "amount", "paid", "accountingClosed"]
+      table: ["counterparty", "section", "date", "workType", "bkExpenseNo", "amount", "paid", "accountingClosed"]
     },
     inventory: {
       title: "Запасы",
@@ -6238,9 +6245,16 @@ MAX - https://bizvmax.ru/zifra_plus
       const current = settings.generalExpenses && typeof settings.generalExpenses === "object"
         ? settings.generalExpenses
         : {};
+      const baseOrder = ["counterparty", "section", "date", "workType", "bkExpenseNo", "amount", "paid", "accountingClosed"];
+      const savedOrder = Array.isArray(current.order)
+        ? current.order.filter((key) => baseOrder.includes(key) && key !== "bkExpenseNo")
+        : [];
+      const order = [...savedOrder, ...baseOrder.filter((key) => !savedOrder.includes(key) && key !== "bkExpenseNo")];
+      const workTypeIndex = order.indexOf("workType");
+      order.splice(workTypeIndex >= 0 ? workTypeIndex + 1 : order.length, 0, "bkExpenseNo");
       settings.generalExpenses = {
         ...current,
-        order: ["counterparty", "section", "date", "workType", "amount", "paid", "accountingClosed"]
+        order
       };
       try {
         localStorage.setItem(TABLE_SETTINGS_KEY, JSON.stringify(settings));
@@ -23285,6 +23299,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...source,
       id: nextId,
       date: todayIso(),
+      ...(sourceType === "general" ? { bkExpenseNo: "" } : {}),
       act: "",
       actStatus: "",
       paid: "",
@@ -30290,7 +30305,8 @@ MAX - https://bizvmax.ru/zifra_plus
       ...clone(source),
       id: makeId("general-expense"),
       date: currentDate,
-      paid: currentDate
+      paid: currentDate,
+      bkExpenseNo: ""
     }));
     state.data.collections.generalExpenses = [
       ...copies,
