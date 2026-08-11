@@ -3,7 +3,8 @@
 const assert = require("node:assert/strict");
 const {
   parseStudentMailboxMessage,
-  collectEmailMessageContent
+  collectEmailMessageContent,
+  parseImapBodyStructureAttachments
 } = require("../app-server.js");
 
 const subject = "Документы слушателя";
@@ -44,5 +45,20 @@ assert.match(message.from, /student@example\.ru/);
 assert.match(message.text, /Направляю документы/);
 assert.equal(message.attachments.length, 1);
 assert.equal(message.messageId, "mail-test@example.ru");
+
+const bodyStructureResponse = Buffer.from([
+  '* 7440 FETCH (UID 7932 BODYSTRUCTURE (("text" "plain" ("charset" "utf-8") NIL NIL "base64" 120 2 NIL NIL NIL NIL)("application" "pdf" ("name" "first.pdf") NIL NIL "base64" 400 NIL ("attachment" ("filename" "first.pdf")) NIL NIL)("image" "jpeg" NIL NIL NIL "base64" 800 NIL ("inline" ("filename" "photo.jpg")) NIL NIL) "mixed" ("boundary" "test") NIL NIL NIL))',
+  'A0001 OK Fetch completed.'
+].join("\r\n"), "latin1");
+const bodyStructureAttachments = parseImapBodyStructureAttachments(bodyStructureResponse);
+assert.equal(bodyStructureAttachments.get("7932").length, 2);
+assert.deepEqual(bodyStructureAttachments.get("7932").map(({ fileName, contentType, size }) => ({
+  fileName,
+  contentType,
+  size
+})), [
+  { fileName: "first.pdf", contentType: "application/pdf", size: 300 },
+  { fileName: "photo.jpg", contentType: "image/jpeg", size: 600 }
+]);
 
 console.log("Student mailbox MIME parser: OK");

@@ -10410,6 +10410,172 @@ function extractImapFetchLiterals(response) {
   return entries;
 }
 
+function parseImapSExpression(source, startIndex = 0) {
+  let index = startIndex;
+  const skipWhitespace = () => {
+    while (index < source.length && /\s/.test(source[index])) index += 1;
+  };
+  const readValue = () => {
+    skipWhitespace();
+    if (source[index] === "(") {
+      index += 1;
+      const values = [];
+      while (index < source.length) {
+        skipWhitespace();
+        if (source[index] === ")") {
+          index += 1;
+          return values;
+        }
+        values.push(readValue());
+      }
+      throw new Error("IMAP-сервер вернул незавершённую структуру письма.");
+    }
+    if (source[index] === '"') {
+      index += 1;
+      let value = "";
+      while (index < source.length) {
+        const character = source[index++];
+        if (character === '"') return value;
+        if (character === "\\" && index < source.length) value += source[index++];
+        else value += character;
+      }
+      throw new Error("IMAP-сервер вернул незавершённую строку структуры письма.");
+    }
+    if (source[index] === "{") {
+      const literalMatch = /^\{(\d+)\}\r\n/.exec(source.slice(index));
+      if (!literalMatch) throw new Error("IMAP-сервер вернул повреждённый литерал структуры письма.");
+      index += literalMatch[0].length;
+      const length = Number(literalMatch[1]);
+      const value = source.slice(index, index + length);
+      index += length;
+      return value;
+    }
+    const atomStart = index;
+    while (index < source.length && !/[\s()]/.test(source[index])) index += 1;
+    if (index === atomStart) throw new Error("IMAP-сервер вернул неизвестный элемент структуры письма.");
+    const atom = source.slice(atomStart, index);
+    return atom.toUpperCase() === "NIL" ? null : atom;
+  };
+  const value = readValue();
+  return { value, index };
+}
+
+function imapParameterListToObject(value) {
+  const parameters = {};
+  if (!Array.isArray(value)) return parameters;
+  for (let index = 0; index + 1 < value.length; index += 2) {
+    const name = String(value[index] || "").trim().toLowerCase();
+    if (name) parameters[name] = String(value[index + 1] || "");
+  }
+  return parameters;
+}
+
+function estimateDecodedMimeSize(size, transferEncoding) {
+  const encodedSize = Math.max(0, Number(size) || 0);
+  return String(transferEncoding || "").toLowerCase() === "base64"
+    ? Math.floor(encodedSize * 3 / 4)
+    : encodedSize;
+}
+
+function collectImapBodyStructureAttachments(structure, result = [], depth = 0) {
+  if (!Array.isArray(structure) || depth > 20) return result;
+  if (Array.isArray(structure[0])) {
+    for (const part of structure) {
+      if (!Array.isArray(part)) break;
+      collectImapBodyStructureAttachments(part, result, depth + 1);
+    }
+    return result;
+  }
+  const primaryType = String(structure[0] || "application").toLowerCase();
+  const subtype = String(structure[1] || "octet-stream").toLowerCase();
+  const contentParameters = imapParameterListToObject(structure[2]);
+  const transferEncoding = String(structure[5] || "").toLowerCase();
+  const contentSize = Number(structure[6]) || 0;
+  const dispositionIndex = primaryType === "text"
+    ? 9
+    : (primaryType === "message" && subtype === "rfc822" ? 11 : 8);
+  const disposition = Array.isArray(structure[dispositionIndex]) ? structure[dispositionIndex] : [];
+  const dispositionType = String(disposition[0] || "").toLowerCase();
+  const dispositionParameters = imapParameterListToObject(disposition[1]);
+  const fileName = decodeMimeParameter(
+    dispositionParameters["filename*"]
+      || dispositionParameters.filename
+      || contentParameters["name*"]
+      || contentParameters.name
+      || ""
+  );
+  if (fileName || dispositionType === "attachment") {
+    result.push({
+      fileName: fileName || `Вложение-${result.length + 1}`,
+      contentType: `${primaryType}/${subtype}`,
+      size: estimateDecodedMimeSize(contentSize, transferEncoding)
+    });
+    return result;
+  }
+  if (primaryType === "message" && subtype === "rfc822" && Array.isArray(structure[8])) {
+    collectImapBodyStructureAttachments(structure[8], result, depth + 1);
+  }
+  return result;
+}
+
+function parseImapBodyStructureAttachments(response) {
+  const source = Buffer.from(response || "").toString("latin1");
+  const attachmentsByUid = new Map();
+  const fetchPattern = /\*\s+\d+\s+FETCH\s*/gi;
+  let match;
+  while ((match = fetchPattern.exec(source))) {
+    let listStart = match.index + match[0].length;
+    while (/\s/.test(source[listStart])) listStart += 1;
+    if (source[listStart] !== "(") continue;
+    let parsedExpression;
+    try {
+      parsedExpression = parseImapSExpression(source, listStart);
+    } catch {
+      continue;
+    }
+    const parsed = parsedExpression.value;
+    if (!Array.isArray(parsed)) continue;
+    let uid = "";
+    let structure = null;
+    for (let index = 0; index < parsed.length - 1; index += 1) {
+      const name = String(parsed[index] || "").toUpperCase();
+      if (name === "UID") uid = String(parsed[index + 1] || "");
+      if (name === "BODYSTRUCTURE") structure = parsed[index + 1];
+    }
+    if (uid && structure) {
+      attachmentsByUid.set(uid, collectImapBodyStructureAttachments(structure));
+    }
+    fetchPattern.lastIndex = Math.max(fetchPattern.lastIndex, parsedExpression.index);
+  }
+  return attachmentsByUid;
+}
+
+async function fetchImapAttachmentMetadata(client, uids, warnings) {
+  const attachmentsByUid = new Map();
+  const readResponse = (response) => {
+    parseImapBodyStructureAttachments(response).forEach((attachments, uid) => {
+      attachmentsByUid.set(uid, attachments);
+    });
+  };
+  for (const batch of chunkValues(uids, 100)) {
+    try {
+      readResponse(await client.command(
+        `UID FETCH ${batch.join(",")} (UID BODYSTRUCTURE)`,
+        45000
+      ));
+    } catch {
+      for (const uid of batch) {
+        try {
+          readResponse(await client.command(`UID FETCH ${uid} (UID BODYSTRUCTURE)`, 30000));
+        } catch (error) {
+          warnings.push(`Список вложений письма UID ${uid} не прочитан: ${error.message}`);
+        }
+      }
+    }
+  }
+  return attachmentsByUid;
+}
+
 function chunkValues(values, size) {
   const chunks = [];
   for (let index = 0; index < values.length; index += size) {
@@ -10475,6 +10641,7 @@ async function fetchImapMessages(client, uids, warnings) {
 
 async function fetchImapMessagePreviews(client, uids, warnings) {
   const previews = [];
+  const attachmentsByUid = await fetchImapAttachmentMetadata(client, uids, warnings);
   for (const uid of uids) {
     try {
       const response = await client.command(
@@ -10489,12 +10656,14 @@ async function fetchImapMessagePreviews(client, uids, warnings) {
         continue;
       }
       const message = parseStudentMailboxMessage(uid, Buffer.concat(literals));
+      const completeAttachments = attachmentsByUid.get(uid);
       previews.push({
         ...message,
-        attachments: message.attachments.map((attachment) => ({
+        attachments: (completeAttachments || message.attachments).map((attachment) => ({
           fileName: attachment.fileName,
           contentType: attachment.contentType,
-          bytes: Buffer.alloc(0)
+          bytes: Buffer.alloc(0),
+          size: Math.max(0, Number(attachment.size) || attachment.bytes?.length || 0)
         }))
       });
     } catch (error) {
@@ -10918,7 +11087,7 @@ async function queryStudentMailboxMessages(body) {
         attachmentCount: message.attachments.length,
         attachments: message.attachments.map((attachment, index) => ({
           name: safeStudentMailboxAttachmentName(attachment.fileName, `Вложение-${index + 1}`),
-          size: attachment.bytes.length,
+          size: Math.max(0, Number(attachment.size) || attachment.bytes.length),
           contentType: attachment.contentType
         }))
       })),
@@ -13589,6 +13758,7 @@ module.exports = {
   sanitizeStudentDatabaseExportPayload,
   inspectStudentDatabaseBinary,
   collectEmailMessageContent,
+  parseImapBodyStructureAttachments,
   parseStudentMailboxMessage,
   publicStudentDocumentMailboxes,
   queryStudentMailboxMessages,

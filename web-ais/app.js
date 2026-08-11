@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.63",
+    version: "1.7.64",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.64",
+      releasedAt: "2026-08-11",
+      changes: [
+        "В окне загрузки писем теперь показывается полный список вложений из MIME-структуры письма, даже если письмо содержит несколько крупных файлов."
+      ]
+    },
     {
       version: "1.7.63",
       releasedAt: "2026-08-11",
