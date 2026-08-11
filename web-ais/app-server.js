@@ -10293,11 +10293,15 @@ async function connectStudentApplicationsImap(mailboxSettings = null) {
   const command = async (commandText, timeout = 30000) => {
     const tag = `A${String(++commandNumber).padStart(4, "0")}`;
     const responsePromise = reader.waitFor((buffer) => {
-      const text = buffer.toString("latin1");
+      // A tagged IMAP completion line is short and always arrives at the end
+      // of the response. Inspect only the tail instead of converting a growing
+      // multi-megabyte message to text again for every network chunk.
+      const tailOffset = Math.max(0, buffer.length - 8192);
+      const text = buffer.subarray(tailOffset).toString("latin1");
       const match = new RegExp(`(?:^|\\r\\n)${tag} (OK|NO|BAD)(?: ([^\\r\\n]*))?\\r\\n`, "i").exec(text);
       if (!match) return null;
       return {
-        end: match.index + match[0].length,
+        end: tailOffset + match.index + match[0].length,
         status: match[1].toUpperCase(),
         message: String(match[2] || "").trim()
       };
@@ -10381,6 +10385,7 @@ function extractImapFetchLiterals(response) {
   const entries = [];
   const literalPattern = /\{(\d+)\}\r\n/g;
   let cursor = 0;
+  let activeUid = "";
   while (cursor < bytes.length) {
     literalPattern.lastIndex = cursor;
     const match = literalPattern.exec(text);
@@ -10397,7 +10402,8 @@ function extractImapFetchLiterals(response) {
       text.lastIndexOf("* ", match.index)
     );
     const prefix = text.slice(Math.max(cursor, responseStart >= 0 ? responseStart : cursor), match.index);
-    const uid = /\bUID\s+(\d+)\b/i.exec(prefix)?.[1] || "";
+    const uid = /\bUID\s+(\d+)\b/i.exec(prefix)?.[1] || activeUid;
+    if (uid) activeUid = uid;
     if (uid) entries.push({ uid, bytes: bytes.subarray(start, end) });
     cursor = end;
   }
@@ -10453,25 +10459,49 @@ async function fetchImapMessages(client, uids, warnings) {
   const readResponse = (response) => {
     messages.push(...extractImapFetchLiterals(response));
   };
-  for (const batch of chunkValues(uids, 20)) {
+  // Full messages can contain large attachments. Fetch them one at a time so
+  // the response reader never accumulates several multi-megabyte literals in
+  // a single buffer (Timeweb closes the connection after an oversized batch).
+  for (const uid of uids) {
     try {
-      const response = await client.command(
-        `UID FETCH ${batch.join(",")} (UID BODY.PEEK[])`,
-        60000
-      );
+      const response = await client.command(`UID FETCH ${uid} (UID BODY.PEEK[])`, 60000);
       readResponse(response);
-    } catch {
-      for (const uid of batch) {
-        try {
-          const response = await client.command(`UID FETCH ${uid} (UID BODY.PEEK[])`, 45000);
-          readResponse(response);
-        } catch (error) {
-          warnings.push(`Письмо UID ${uid} пропущено: ${error.message}`);
-        }
-      }
+    } catch (error) {
+      warnings.push(`Письмо UID ${uid} пропущено: ${error.message}`);
     }
   }
   return messages;
+}
+
+async function fetchImapMessagePreviews(client, uids, warnings) {
+  const previews = [];
+  for (const uid of uids) {
+    try {
+      const response = await client.command(
+        `UID FETCH ${uid} (UID RFC822.SIZE BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.131072>)`,
+        45000
+      );
+      const literals = extractImapFetchLiterals(response)
+        .filter((entry) => entry.uid === uid)
+        .map((entry) => entry.bytes);
+      if (!literals.length) {
+        warnings.push(`Письмо UID ${uid} пропущено: IMAP-сервер не вернул заголовки.`);
+        continue;
+      }
+      const message = parseStudentMailboxMessage(uid, Buffer.concat(literals));
+      previews.push({
+        ...message,
+        attachments: message.attachments.map((attachment) => ({
+          fileName: attachment.fileName,
+          contentType: attachment.contentType,
+          bytes: Buffer.alloc(0)
+        }))
+      });
+    } catch (error) {
+      warnings.push(`Письмо UID ${uid} пропущено: ${error.message}`);
+    }
+  }
+  return previews;
 }
 
 function splitMimeEntity(bytes) {
@@ -10864,18 +10894,16 @@ async function queryStudentMailboxMessages(body) {
     const response = await client.command(`UID SEARCH ${criteria.join(" ")}`, 45000);
     const allUids = parseImapSearchUids(response);
     const uids = allUids.slice(-100).reverse();
-    const messages = await fetchImapMessages(client, uids, warnings);
+    const messages = await fetchImapMessagePreviews(client, uids, warnings);
     const queryKey = filters.query.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
-    const rows = messages
-      .map((message) => parseStudentMailboxMessage(message.uid, message.bytes))
-      .filter((message) => {
-        if (!queryKey) return true;
-        return [message.subject, message.from, message.to, message.cc, message.text]
-          .join("\n")
-          .toLocaleLowerCase("ru-RU")
-          .replace(/ё/g, "е")
-          .includes(queryKey);
-      });
+    const rows = messages.filter((message) => {
+      if (!queryKey) return true;
+      return [message.subject, message.from, message.to, message.cc, message.text]
+        .join("\n")
+        .toLocaleLowerCase("ru-RU")
+        .replace(/ё/g, "е")
+        .includes(queryKey);
+    });
     const order = new Map(uids.map((uid, index) => [uid, index]));
     rows.sort((left, right) => (order.get(left.uid) ?? 9999) - (order.get(right.uid) ?? 9999));
     return {

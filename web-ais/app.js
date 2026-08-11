@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.61",
+    version: "1.7.62",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.62",
+      releasedAt: "2026-08-11",
+      changes: [
+        "Исправлена загрузка писем с крупными вложениями: IMAP-сервер больше не получает общий пакет, превышающий допустимый размер ответа."
+      ]
+    },
     {
       version: "1.7.61",
       releasedAt: "2026-08-11",
@@ -26084,7 +26091,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <p><b>От:</b> ${escapeHtml(message.from || "—")}</p>
             <p><b>Кому:</b> ${escapeHtml(message.to || "—")}</p>
             ${message.excerpt ? `<details><summary>Текст письма</summary><pre>${escapeHtml(message.excerpt)}</pre></details>` : ""}
-            <div class="student-mailbox-attachments">${message.attachments?.length ? message.attachments.map((attachment) => `<span title="${escapeAttr(`${attachment.name}, ${formatBytes(attachment.size)}`)}">📎 ${escapeHtml(attachment.name)}</span>`).join("") : "<span>Без вложений</span>"}</div>
+            <div class="student-mailbox-attachments">${message.attachments?.length ? message.attachments.map((attachment) => `<span title="${escapeAttr(attachment.size ? `${attachment.name}, ${formatBytes(attachment.size)}` : attachment.name)}">📎 ${escapeHtml(attachment.name)}</span>`).join("") : "<span>Без вложений</span>"}</div>
           </div>
         </article>
       `).join("") : '<p class="empty-state">Письма по заданным условиям не найдены.</p>';
