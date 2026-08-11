@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.62",
+    version: "1.7.63",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.63",
+      releasedAt: "2026-08-11",
+      changes: [
+        "Кнопка «Перехватить блокировку» теперь работает и для предупреждения, которое появляется уже после открытия карточки, и возвращает текущей сессии возможность сохранения."
+      ]
+    },
     {
       version: "1.7.62",
       releasedAt: "2026-08-11",
@@ -5897,6 +5904,14 @@ MAX - https://bizvmax.ru/zifra_plus
     recordLockHeartbeatTimer = 0;
   }
 
+  function bindTakeoverCurrentRecordLockButtons(root = document) {
+    root.querySelectorAll("[data-action='takeover-current-record-lock']").forEach((button) => {
+      if (button.dataset.takeoverLockBound === "true") return;
+      button.dataset.takeoverLockBound = "true";
+      button.addEventListener("click", () => takeoverCurrentRecordLock(button));
+    });
+  }
+
   function markActiveRecordLockLost(lock = activeRecordLock, replacementLock = null) {
     if (!lock || activeRecordLock?.key !== lock.key) return;
     stopRecordLockHeartbeat();
@@ -5915,6 +5930,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         `);
       }
+      bindTakeoverCurrentRecordLockButtons(form);
       updateCardRecordLockStatusUi(replacementLock);
     }
   }
@@ -20254,8 +20270,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.querySelector("[data-action='open-student-audit-log']")
       ?.addEventListener("click", openStudentAuditLog);
-    document.querySelector("[data-action='takeover-current-record-lock']")
-      ?.addEventListener("click", (event) => takeoverCurrentRecordLock(event.currentTarget));
+    bindTakeoverCurrentRecordLockButtons(document);
     document.querySelectorAll("[data-action='close-student-audit-log']").forEach((element) => {
       element.addEventListener("click", (event) => {
         if (element.matches("button") || event.target === element) closeStudentAuditLog();
