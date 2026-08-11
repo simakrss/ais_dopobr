@@ -2113,7 +2113,7 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   width: 100%;
   min-width: 100%;
   max-width: 100%;
-  max-height: 260px;
+  max-height: var(--combo-options-max-height, 260px);
   overflow-y: auto;
   overflow-x: hidden;
   padding: 6px;
@@ -2126,6 +2126,11 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
 .combo-field.is-open .combo-options {
   display: grid;
   gap: 3px;
+}
+
+.combo-field.is-open-above .combo-options {
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 
 .combo-options button {
@@ -2231,9 +2236,14 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
 
 .modal .combo-options {
   top: calc(100% + 3px);
-  max-height: 210px;
+  max-height: min(210px, var(--combo-options-max-height, 210px));
   padding: 3px;
   border-radius: 5px;
+}
+
+.modal .combo-field.is-open-above .combo-options {
+  top: auto;
+  bottom: calc(100% + 3px);
 }
 
 .modal .combo-field.is-open .combo-options {

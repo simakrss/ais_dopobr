@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.72",
+    version: "1.7.73",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.73",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Пользовательские выпадающие списки больше не увеличивают нижнюю часть формы: направление открытия выбирается автоматически по свободному месту, а рядом с нижней границей список открывается вверх и получает безопасную высоту с прокруткой."
+      ]
+    },
     {
       version: "1.7.72",
       releasedAt: "2026-08-12",
@@ -17893,9 +17900,64 @@ MAX - https://bizvmax.ru/zifra_plus
     closeStudentEventEditor();
   }
 
+  function getComboVisibleVerticalBounds(field) {
+    const margin = 8;
+    let top = margin;
+    let bottom = (document.documentElement.clientHeight || window.innerHeight) - margin;
+    let ancestor = field?.parentElement;
+    while (ancestor && ancestor !== document.body && ancestor !== document.documentElement) {
+      const style = window.getComputedStyle(ancestor);
+      if (/(?:auto|scroll|hidden|clip)/u.test(`${style.overflowY} ${style.overflow}`)) {
+        const rect = ancestor.getBoundingClientRect();
+        if (rect.height > 0) {
+          top = Math.max(top, rect.top + 4);
+          bottom = Math.min(bottom, rect.bottom - 4);
+        }
+      }
+      ancestor = ancestor.parentElement;
+    }
+    return { top, bottom: Math.max(top, bottom) };
+  }
+
+  function positionComboOptions(field) {
+    const panel = field?.querySelector(":scope > [data-combo-options], :scope > .combo-options");
+    const anchor = field?.querySelector(":scope > .combo-input-wrap") || field;
+    if (!panel || !anchor || !field.classList.contains("is-open")) return;
+    const rect = anchor.getBoundingClientRect();
+    const bounds = getComboVisibleVerticalBounds(field);
+    const gap = field.closest(".modal") ? 3 : 6;
+    const baseMaxHeight = field.closest(".modal") ? 210 : 260;
+    const spaceAbove = Math.max(0, rect.top - bounds.top - gap);
+    const spaceBelow = Math.max(0, bounds.bottom - rect.bottom - gap);
+    const desiredHeight = Math.min(baseMaxHeight, Math.max(48, panel.scrollHeight || baseMaxHeight));
+    const lowerHalf = rect.top + rect.height / 2 > bounds.top + (bounds.bottom - bounds.top) / 2;
+    const openAbove = spaceAbove > spaceBelow
+      && (spaceBelow < desiredHeight || lowerHalf)
+      && spaceAbove >= 48;
+    const availableHeight = openAbove ? spaceAbove : spaceBelow;
+    field.classList.toggle("is-open-above", openAbove);
+    panel.style.setProperty(
+      "--combo-options-max-height",
+      `${Math.max(48, Math.min(baseMaxHeight, availableHeight || baseMaxHeight))}px`
+    );
+  }
+
+  function repositionOpenComboPanels() {
+    document.querySelectorAll(".combo-field.is-open").forEach(positionComboOptions);
+  }
+
+  function openComboPanel(field) {
+    if (!field) return;
+    field.classList.add("is-open");
+    positionComboOptions(field);
+    window.requestAnimationFrame(() => positionComboOptions(field));
+  }
+
   function closeComboPanels(except = null) {
-    document.querySelectorAll("[data-combo-field].is-open").forEach((field) => {
-      if (field !== except) field.classList.remove("is-open");
+    document.querySelectorAll(".combo-field.is-open").forEach((field) => {
+      if (field !== except) {
+        field.classList.remove("is-open", "is-open-above");
+      }
     });
   }
 
@@ -17909,7 +17971,7 @@ MAX - https://bizvmax.ru/zifra_plus
         closeComboPanels(field);
         const showAll = event?.type !== "input";
         filterComboOptions(input, { showAll });
-        field.classList.add("is-open");
+        openComboPanel(field);
         if (showAll) focusComboSelectedOption(input);
         if (event?.type === "input" && document.activeElement !== input) {
           input.focus({ preventScroll: true });
@@ -17919,7 +17981,7 @@ MAX - https://bizvmax.ru/zifra_plus
       input.addEventListener("click", open);
       input.addEventListener("input", open);
       input.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") field.classList.remove("is-open");
+        if (event.key === "Escape") field.classList.remove("is-open", "is-open-above");
       });
       field.addEventListener("pointerdown", (event) => {
         if (event.target.closest("[data-action='select-combo-value'], [data-action='clear-combo-value']")) {
@@ -17929,7 +17991,7 @@ MAX - https://bizvmax.ru/zifra_plus
       field.addEventListener("focusout", (event) => {
         if (event.relatedTarget && field.contains(event.relatedTarget)) return;
         setTimeout(() => {
-          if (!field.contains(document.activeElement)) field.classList.remove("is-open");
+          if (!field.contains(document.activeElement)) field.classList.remove("is-open", "is-open-above");
         }, 0);
       });
     });
@@ -17944,7 +18006,7 @@ MAX - https://bizvmax.ru/zifra_plus
         input.value = button.dataset.value || "";
         input.dispatchEvent(new Event("input", { bubbles: true }));
         input.dispatchEvent(new Event("change", { bubbles: true }));
-        field.classList.remove("is-open");
+        field.classList.remove("is-open", "is-open-above");
         input.focus();
       });
     });
@@ -17960,7 +18022,7 @@ MAX - https://bizvmax.ru/zifra_plus
         input.dispatchEvent(new Event("input", { bubbles: true }));
         input.dispatchEvent(new Event("change", { bubbles: true }));
         filterComboOptions(input);
-        field.classList.add("is-open");
+        openComboPanel(field);
         input.focus();
       });
     });
@@ -17972,12 +18034,13 @@ MAX - https://bizvmax.ru/zifra_plus
     field?.querySelectorAll("[data-action='select-combo-value']").forEach((button) => {
       button.hidden = query && !button.textContent.toLowerCase().includes(query);
     });
+    if (field?.classList.contains("is-open")) positionComboOptions(field);
   }
 
   function closeDirectExpenseNoteFilter() {
     const field = document.querySelector("[data-direct-expense-note-filter]");
     if (!field) return;
-    field.classList.remove("is-open");
+    field.classList.remove("is-open", "is-open-above");
     field.querySelector("#directExpenseNoteFilter")?.setAttribute("aria-expanded", "false");
   }
 
@@ -18001,7 +18064,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!field) return;
     closeComboPanels();
     filterDirectExpenseNoteOptions(input, { showAll });
-    field.classList.add("is-open");
+    openComboPanel(field);
     input.setAttribute("aria-expanded", "true");
   }
 
@@ -24284,7 +24347,7 @@ MAX - https://bizvmax.ru/zifra_plus
             control.value = button.dataset.value || "";
             control.dispatchEvent(new Event("input", { bubbles: true }));
             control.dispatchEvent(new Event("change", { bubbles: true }));
-            field.classList.remove("is-open");
+            field.classList.remove("is-open", "is-open-above");
             control.focus();
           });
         });
@@ -39408,6 +39471,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     bindStudentStatusHistoryNavigation();
     window.addEventListener("resize", repositionOpenFieldLookupPanels, { passive: true });
+    window.addEventListener("resize", repositionOpenComboPanels, { passive: true });
+    document.addEventListener("scroll", repositionOpenComboPanels, { passive: true, capture: true });
     render();
     if (sharedStateError) {
       window.setTimeout(() => {
