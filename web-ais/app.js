@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.79",
+    version: "1.7.80",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.80",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В списке слушателей удалена дублирующая кнопка «Выбрать все отфильтрованные». Массовый выбор и снятие выбора со всех строк, соответствующих текущим фильтрам, выполняются галочкой в левом заголовке таблицы."
+      ]
+    },
     {
       version: "1.7.79",
       releasedAt: "2026-08-12",
@@ -8735,22 +8742,11 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderBulkToolbar(config, rows, configId) {
     const selected = getSelected(configId);
     const selectedRows = getRowsByIds(config.collection, selected);
-    const filteredSelectionCount = configId === "students"
-      ? rows.filter((row) => selected.includes(String(row?.id || "").trim())).length
-      : 0;
     const statusField = config.fields.find((item) => item.key === "status");
     const statusOptions = statusField ? (statusField.options || state.data.dictionaries[statusField.dict] || getFilterOptions(config)) : [];
     return `
       <div class="bulk-toolbar ${selected.length ? "active" : ""}">
         <span>Выбрано: <strong>${selected.length}</strong></span>
-        ${configId === "students" ? `
-          <button class="ghost-button" data-action="bulk-select-filtered-students" data-config="students" type="button" ${rows.length ? "" : "disabled"}>
-            Выбрать все отфильтрованные (${rows.length})
-          </button>
-          ${filteredSelectionCount === rows.length && rows.length ? `
-            <button class="ghost-button" data-action="bulk-unselect-filtered-students" data-config="students" type="button">Снять выбор с результатов</button>
-          ` : ""}
-        ` : ""}
         ${statusOptions.length ? `
           <select id="bulkStatusSelect" class="select-control" ${statusField?.dict ? `data-settings-dictionary="${escapeAttr(statusField.dict)}"` : ""} ${selected.length ? "" : "disabled"}>
             ${configId === "students"
@@ -9347,15 +9343,19 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const pagination = getTablePagination(configId, rows.length);
     const pageRows = rows.slice(pagination.start, pagination.end);
-    const allVisibleSelected = pageRows.length > 0
-      && pageRows.every((row) => selected.includes(String(row?.id || "").trim()));
+    const selectableRows = configId === "students" ? rows : pageRows;
+    const allVisibleSelected = selectableRows.length > 0
+      && selectableRows.every((row) => selected.includes(String(row?.id || "").trim()));
+    const selectAllLabel = configId === "students"
+      ? "Выбрать все отфильтрованные строки"
+      : "Выбрать строки текущей страницы";
     return `
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
               <th class="select-col">
-                <input type="checkbox" data-action="toggle-all-selection" data-config="${configId}" ${allVisibleSelected ? "checked" : ""} aria-label="Выбрать строки текущей страницы">
+                <input type="checkbox" data-action="toggle-all-selection" data-config="${configId}" ${allVisibleSelected ? "checked" : ""} aria-label="${selectAllLabel}">
               </th>
               ${fields.map((fieldItem) => `
                 <th class="table-column-head" ${columnDataAttrs(configId, fieldItem.key)} ${columnStyleAttr(configId, fieldItem.key)} draggable="true" title="Перетащите заголовок для смены порядка">
@@ -9843,7 +9843,11 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function toggleAllSelection(configId, checked) {
     const config = configs[configId];
-    const visibleIds = getCurrentTablePageRows(configId, getVisibleRows(config)).map((row) => row.id);
+    const visibleRows = getVisibleRows(config);
+    const visibleIds = (configId === "students"
+      ? visibleRows
+      : getCurrentTablePageRows(configId, visibleRows)
+    ).map((row) => row.id);
     const selected = new Set(getSelected(configId));
     visibleIds.forEach((id) => {
       const normalizedId = String(id || "").trim();
@@ -12663,19 +12667,6 @@ MAX - https://bizvmax.ru/zifra_plus
   function closeDatabaseOperationResult() {
     if (!state.databaseOperationResult) return;
     state.databaseOperationResult = null;
-    render();
-  }
-
-  function toggleAllFilteredSelection(configId, checked = true) {
-    const config = configs[configId];
-    if (!config) return;
-    const visibleIds = getVisibleRows(config).map((row) => row.id).filter(Boolean);
-    const selected = new Set(checked ? [] : getSelected(configId));
-    visibleIds.forEach((id) => {
-      if (checked) selected.add(id);
-      else selected.delete(id);
-    });
-    setSelected(configId, Array.from(selected));
     render();
   }
 
@@ -21518,12 +21509,6 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", () => bulkSetStatus(button.dataset.config));
     });
 
-    document.querySelector("[data-action='bulk-select-filtered-students']")?.addEventListener("click", () => {
-      toggleAllFilteredSelection("students", true);
-    });
-    document.querySelector("[data-action='bulk-unselect-filtered-students']")?.addEventListener("click", () => {
-      toggleAllFilteredSelection("students", false);
-    });
     document.querySelector("[data-action='open-student-bulk-operations']")?.addEventListener("click", openStudentBulkOperationsDialog);
 
     document.querySelectorAll("[data-action='bulk-copy-general-expenses']").forEach((button) => {
