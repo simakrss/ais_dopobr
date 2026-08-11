@@ -305,6 +305,26 @@ const PROGRAM_DATABASE_DICTIONARY_RANGES = Object.freeze({
     header: "Вид экономической деятельности (для 1-ПК)"
   }
 });
+const TRAINING_PLAN_DATABASE_COLUMN_MAP = Object.freeze({
+  "Код": "code",
+  "Наименование программы": "programName",
+  "Дисциплины": "discipline",
+  "Дисциплина": "discipline",
+  "Описание": "description",
+  "Всего": "totalHours",
+  "Всего часов": "totalHours",
+  "Теория": "theoryHours",
+  "Практика": "practiceHours",
+  "Аттестация": "attestation",
+  "Преподаватель": "teacher",
+  "Материалы": "materials",
+  "Содержание": "content"
+});
+const TRAINING_PLAN_DATABASE_NUMBER_FIELDS = new Set([
+  "totalHours",
+  "theoryHours",
+  "practiceHours"
+]);
 const STUDENT_DATABASE_COLUMN_MAP = Object.freeze({
   "uid": "uid",
   "ФИО": "name",
@@ -8688,6 +8708,68 @@ function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}) {
   };
 }
 
+function buildTrainingPlanDatabaseRecordId(record, rowNumber) {
+  const fingerprint = [
+    record.code,
+    record.programName,
+    record.discipline,
+    rowNumber
+  ].map((value) => String(value ?? "").trim()).join(":");
+  const hash = crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 16);
+  return `training-plan-db-${hash}`;
+}
+
+function normalizeTrainingPlanDatabaseValue(fieldName, value) {
+  if (TRAINING_PLAN_DATABASE_NUMBER_FIELDS.has(fieldName)) {
+    if (value === "" || value === null || value === undefined) return "";
+    return normalizeStudentDatabaseNumber(value);
+  }
+  if (fieldName === "code") return String(value ?? "").trim().replace(/\.0+$/, "");
+  return String(value ?? "").trim();
+}
+
+function parseTrainingPlanDatabaseSheet(workbook, onProgress = () => {}) {
+  const worksheet = workbook.Sheets["Учебные планы"];
+  if (!worksheet) throw new Error("В файле не найден лист «Учебные планы».");
+  onProgress({ progress: 70, message: "Чтение листа «Учебные планы»..." });
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: "",
+    raw: true,
+    UTC: true
+  });
+  const headerRowIndex = rows.findIndex((row) => (
+    row.some((value) => String(value || "").trim() === "Наименование программы")
+    && row.some((value) => ["Дисциплины", "Дисциплина"].includes(String(value || "").trim()))
+  ));
+  if (headerRowIndex < 0) {
+    throw new Error("На листе «Учебные планы» не найдены колонки программы и дисциплины.");
+  }
+  const headers = rows[headerRowIndex].map((value) => String(value || "").trim());
+  const mappedColumns = headers
+    .map((header, index) => ({ index, fieldName: TRAINING_PLAN_DATABASE_COLUMN_MAP[header] || "" }))
+    .filter((column) => column.fieldName);
+  const sourceRows = Math.max(0, rows.length - headerRowIndex - 1);
+  const trainingPlans = rows.slice(headerRowIndex + 1)
+    .map((row, offset) => {
+      const record = {};
+      mappedColumns.forEach(({ index, fieldName }) => {
+        record[fieldName] = normalizeTrainingPlanDatabaseValue(fieldName, row[index]);
+      });
+      const rowNumber = headerRowIndex + offset + 2;
+      record.id = buildTrainingPlanDatabaseRecordId(record, rowNumber);
+      record.xlsbTrainingPlanRow = rowNumber;
+      return record;
+    })
+    .filter((record) => record.programName);
+  return {
+    trainingPlans,
+    trainingPlanSheetName: "Учебные планы",
+    trainingPlanSourceRows: sourceRows,
+    trainingPlanSkippedRows: Math.max(0, sourceRows - trainingPlans.length)
+  };
+}
+
 function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}) {
   const worksheet = workbook.Sheets["Прямые затраты"];
   if (!worksheet) throw new Error("В файле не найден лист «Прямые затраты».");
@@ -9290,6 +9372,7 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
   const paymentSettingsResult = parsePaymentDatabaseSettings(workbook, onProgress);
   const programDictionaryResult = parseProgramDictionaryDatabaseSettings(workbook, onProgress);
   const programPaymentResult = parseProgramPaymentDatabaseSheet(workbook, onProgress);
+  const trainingPlanResult = parseTrainingPlanDatabaseSheet(workbook, onProgress);
   const inventoryResult = parseInventoryDatabaseSheet(workbook, onProgress);
   const directExpenseResult = parseDirectExpenseDatabaseSheet(workbook, onProgress);
   const contractResult = parseContractDatabaseSheet(workbook, onProgress);
@@ -9317,6 +9400,7 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
     ...paymentSettingsResult,
     ...programDictionaryResult,
     ...programPaymentResult,
+    ...trainingPlanResult,
     ...directExpenseResult,
     ...generalExpenseResult,
     ...contractResult,

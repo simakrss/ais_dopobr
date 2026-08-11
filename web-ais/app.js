@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.55",
+    version: "1.7.56",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.56",
+      releasedAt: "2026-08-11",
+      changes: [
+        "Синхронизация с XLSB загружает актуальный лист «Учебные планы» и автоматически привязывает его строки к карточкам программ, включая вновь добавленные программы."
+      ]
+    },
     {
       version: "1.7.55",
       releasedAt: "2026-08-11",
@@ -5151,6 +5158,27 @@ MAX - https://bizvmax.ru/zifra_plus
       const program = findProgramInRows(programs, row.programName);
       return program?.id ? { ...row, programId: program.id } : row;
     });
+  }
+
+  function mergeImportedTrainingPlanRows(currentRows = [], importedRows = []) {
+    const normalizedImportedRows = (Array.isArray(importedRows) ? importedRows : [])
+      .map((item, index) => normalizeTrainingPlanRecord(item, index))
+      .filter((item) => item.programName);
+    const importedIds = new Set(normalizedImportedRows
+      .map((item) => String(item.id || "").trim())
+      .filter(Boolean));
+    const importedKeys = new Set(normalizedImportedRows.map(trainingPlanImportKey));
+    const customRows = (Array.isArray(currentRows) ? currentRows : [])
+      .map((item, index) => normalizeTrainingPlanRecord(item, index))
+      .filter((item) => {
+        const id = String(item?.id || "").trim();
+        return id
+          && !/^plan-\d+$/i.test(id)
+          && !id.startsWith("training-plan-db-")
+          && !importedIds.has(id)
+          && !importedKeys.has(trainingPlanImportKey(item));
+      });
+    return [...normalizedImportedRows, ...customRows];
   }
 
   function normalizeOptionalNumber(value) {
@@ -34247,7 +34275,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ? "с локального компьютера"
       : "с Яндекс-Диска через WebDAV";
     if (!event?.skipConfirmation && !confirm(
-      `Данные по всем слушателям, договорам, прямым и общим затратам, а также запасам будут перезаписаны `
+      `Данные по всем слушателям, договорам, прямым и общим затратам, программам, учебным планам и запасам будут перезаписаны `
       + `данными из базы АИС Допобразование.xlsb ${sourceLabel}. Продолжить?`
     )) return;
     if (state.databaseImport.running) return;
@@ -34279,6 +34307,9 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       if (!payload.paymentRates || !Array.isArray(payload.programPaymentSettings)) {
         throw new Error("Не удалось прочитать настройки оплаты и реестр программ.");
+      }
+      if (!Array.isArray(payload.trainingPlans)) {
+        throw new Error("Не удалось прочитать лист «Учебные планы».");
       }
       const previousData = state.data;
       const responsibleLogin = getCurrentUserLogin();
@@ -34337,6 +34368,10 @@ MAX - https://bizvmax.ru/zifra_plus
         previousAuthorRate,
         defaultAuthorPaymentPercent
       );
+      const nextTrainingPlans = mergeImportedTrainingPlanRows(
+        previousData.collections.trainingPlans,
+        payload.trainingPlans
+      );
       const nextProgramDictionaries = {};
       Object.entries(PROGRAM_DICTIONARY_FIELDS).forEach(([fieldKey, dictionaryKey]) => {
         const settingsValues = payload.programDictionaries?.[dictionaryKey];
@@ -34367,7 +34402,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const inventoryLinkedExpenseCount = Number(payload.inventoryLinkedExpenseCount || 0);
       const inventoryGeneratedExpenseCount = Number(payload.inventoryGeneratedExpenseCount || 0);
       updateDatabaseImportIndicator({
-        status: `Применение данных: ${nextStudents.length} слушателей, ${nextContracts.length} договоров, ${totalDirectExpenseCount} прямых и ${nextGeneralExpenses.length} общих затрат, ${nextInventory.length} позиций запасов...`,
+        status: `Применение данных: ${nextStudents.length} слушателей, ${nextContracts.length} договоров, ${nextTrainingPlans.length} строк учебных планов, ${totalDirectExpenseCount} прямых и ${nextGeneralExpenses.length} общих затрат, ${nextInventory.length} позиций запасов...`,
         progress: 100
       });
       state.data = ensureDataShape({
@@ -34392,6 +34427,7 @@ MAX - https://bizvmax.ru/zifra_plus
         collections: {
           ...previousData.collections,
           programs: nextPrograms,
+          trainingPlans: nextTrainingPlans,
           students: nextStudents,
           contracts: nextContracts,
           directExpenses: nextDirectExpenses,
@@ -34419,7 +34455,7 @@ MAX - https://bizvmax.ru/zifra_plus
         `${sourceLabel}; ${payload.count || nextStudents.length} слушателей; ${nextContracts.length} договоров; ${linkedDirectExpenseCount} расходов привязано; `
         + `разделы договоров по расположению строк: ${contractSectionSummary}; `
         + `${nextDirectExpenses.length} не привязано; ${nextGeneralExpenses.length} общих затрат; ${nextInventory.length} позиций запасов; `
-        + `${payload.programPaymentSettings.length} программ с характеристиками и ставками; `
+        + `${payload.programPaymentSettings.length} программ с характеристиками и ставками; ${nextTrainingPlans.length} строк учебных планов; `
         + `${inventoryLinkedExpenseCount} выдач связано с карточками`
         + `${inventoryGeneratedExpenseCount ? `, ${inventoryGeneratedExpenseCount} восстановлено` : ""}; `
         + `время выполнения: ${duration}`,
@@ -34441,7 +34477,7 @@ MAX - https://bizvmax.ru/zifra_plus
         `Готово: ${nextContracts.length} договоров, ${linkedDirectExpenseCount} расходов привязано, ${nextDirectExpenses.length} оставлено в разделе, `
         + `${nextGeneralExpenses.length} общих затрат загружено. `
         + `Запасы: ${nextInventory.length} позиций, ${inventoryLinkedExpenseCount} выдач связано. `
-        + `Оплата: ${payload.programPaymentSettings.length} программ. `
+        + `Программы: ${payload.programPaymentSettings.length}, учебные планы: ${nextTrainingPlans.length} строк. `
         + `Время выполнения: ${duration}`
       );
       showDatabaseOperationResult({
@@ -34456,6 +34492,7 @@ MAX - https://bizvmax.ru/zifra_plus
           { label: "Общие затраты", value: nextGeneralExpenses.length },
           { label: "Позиции запасов", value: nextInventory.length },
           { label: "Настройки программ", value: payload.programPaymentSettings.length },
+          { label: "Учебные планы", value: nextTrainingPlans.length, note: "Строки листа «Учебные планы»" },
           { label: "Выдачи запасов", value: inventoryLinkedExpenseCount, note: "Связаны с карточками" },
           ...(inventoryGeneratedExpenseCount
             ? [{ label: "Восстановлено выдач", value: inventoryGeneratedExpenseCount, note: "Из листа «Запасы»" }]
