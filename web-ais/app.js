@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.65",
+    version: "1.7.66",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.66",
+      releasedAt: "2026-08-11",
+      changes: [
+        "В базе слушателей добавлены фильтры по программе и диапазонам любых рабочих дат, выбор всех отфильтрованных записей и групповые операции для сообщений, событий и документов с автозаполнением вычисляемых реквизитов."
+      ]
+    },
     {
       version: "1.7.65",
       releasedAt: "2026-08-11",
@@ -2957,6 +2964,12 @@ MAX - https://bizvmax.ru/zifra_plus
     generalExpenseSectionFilter: getDefaultGeneralExpenseSectionFilter(initialView),
     generalExpenseWorkTypeFilter: [],
     studentProgramTypeFilter: [],
+    studentListFilters: {
+      program: "",
+      dateField: "",
+      dateFrom: "",
+      dateTo: ""
+    },
     programRegistryTypeFilter: [],
     contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
     studentImportedViewIds: [],
@@ -6069,6 +6082,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!id) return true;
     const key = recordLockKey(entityType, id);
     const takeover = Boolean(options.takeover);
+    const promptTakeover = options.promptTakeover !== false;
     if (activeRecordLock?.key === key && !takeover) return true;
     let payload;
     try {
@@ -6085,13 +6099,14 @@ MAX - https://bizvmax.ru/zifra_plus
       if (error.status === 423) {
         const lock = error.payload?.lock || {};
         recordLocks.set(key, lock);
+        if (!promptTakeover) return false;
         if (!state.modal) render();
         const confirmed = confirm([
           formatRecordLockMessage(lock),
           "",
           "Нажмите OK, чтобы разблокировать запись для текущей сессии и заблокировать её для других сессий. Несохранённые изменения в другой сессии не будут применены."
         ].join("\n"));
-        if (confirmed) return acquireRecordLock(entityType, id, { takeover: true });
+        if (confirmed) return acquireRecordLock(entityType, id, { takeover: true, promptTakeover });
         return false;
       }
       alert(`Не удалось заблокировать запись для редактирования: ${error.message}`);
@@ -7200,6 +7215,63 @@ MAX - https://bizvmax.ru/zifra_plus
       .sort((left, right) => left.localeCompare(right, "ru", { sensitivity: "base" }));
   }
 
+  function getStudentListDateFilterFields() {
+    const excluded = /^(?:payment|expense)\d+Date$/u;
+    const fields = studentAllFields
+      .filter((item) => item.type === "date" && !excluded.test(item.key))
+      .map((item) => ({ key: item.key, label: item.label }));
+    const seen = new Set();
+    return fields.filter((item) => {
+      if (!item.key || seen.has(item.key)) return false;
+      seen.add(item.key);
+      return true;
+    });
+  }
+
+  function getStudentListProgramFilterOptions() {
+    return unique([
+      ...(state.data.collections.students || []).map((record) => String(record?.program || "").trim()),
+      ...(state.data.collections.programs || []).map((record) => String(record?.name || "").trim())
+    ].filter(Boolean)).sort((left, right) => left.localeCompare(right, "ru", {
+      numeric: true,
+      sensitivity: "base"
+    }));
+  }
+
+  function renderStudentListAdvancedFilters() {
+    const filters = state.studentListFilters || {};
+    const dateFields = getStudentListDateFilterFields();
+    const programs = getStudentListProgramFilterOptions();
+    const active = Boolean(filters.program || filters.dateField || filters.dateFrom || filters.dateTo);
+    return `
+      <div class="student-list-advanced-filters ${active ? "is-active" : ""}" data-student-list-filters>
+        <label class="student-list-program-filter">
+          <span>Программа</span>
+          <select class="select-control" data-student-list-filter="program">
+            <option value="">Все программы</option>
+            ${programs.map((program) => `<option value="${escapeAttr(program)}" ${filters.program === program ? "selected" : ""}>${escapeHtml(program)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="student-list-date-field-filter">
+          <span>Дата</span>
+          <select class="select-control" data-student-list-filter="dateField">
+            <option value="">Без фильтра по дате</option>
+            ${dateFields.map((item) => `<option value="${escapeAttr(item.key)}" ${filters.dateField === item.key ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>С</span>
+          <input type="date" data-student-list-filter="dateFrom" value="${escapeAttr(filters.dateFrom || "")}" ${filters.dateField ? "" : "disabled"}>
+        </label>
+        <label>
+          <span>По</span>
+          <input type="date" data-student-list-filter="dateTo" value="${escapeAttr(filters.dateTo || "")}" ${filters.dateField ? "" : "disabled"}>
+        </label>
+        <button class="ghost-button" data-action="clear-student-list-filters" type="button" ${active ? "" : "disabled"}>Сбросить</button>
+      </div>
+    `;
+  }
+
   function renderCollection(config) {
     const rows = getVisibleRows(config);
     const statuses = state.view === "generalExpenses" ? [] : getFilterOptions(config);
@@ -7297,6 +7369,7 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
           </div>
         </div>
+        ${state.view === "students" ? renderStudentListAdvancedFilters() : ""}
         ${importedViewIds.length ? `
           <div class="student-imported-view-bar" role="status">
             <span>Показаны импортированные заявки: <strong>${importedViewCount}</strong></span>
@@ -8425,11 +8498,22 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderBulkToolbar(config, rows, configId) {
     const selected = getSelected(configId);
     const selectedRows = getRowsByIds(config.collection, selected);
+    const filteredSelectionCount = configId === "students"
+      ? rows.filter((row) => selected.includes(row.id)).length
+      : 0;
     const statusField = config.fields.find((item) => item.key === "status");
     const statusOptions = statusField ? (statusField.options || state.data.dictionaries[statusField.dict] || getFilterOptions(config)) : [];
     return `
       <div class="bulk-toolbar ${selected.length ? "active" : ""}">
         <span>Выбрано: <strong>${selected.length}</strong></span>
+        ${configId === "students" ? `
+          <button class="ghost-button" data-action="bulk-select-filtered-students" data-config="students" type="button" ${rows.length ? "" : "disabled"}>
+            Выбрать все отфильтрованные (${rows.length})
+          </button>
+          ${filteredSelectionCount === rows.length && rows.length ? `
+            <button class="ghost-button" data-action="bulk-unselect-filtered-students" data-config="students" type="button">Снять выбор с результатов</button>
+          ` : ""}
+        ` : ""}
         ${statusOptions.length ? `
           <select id="bulkStatusSelect" class="select-control" ${statusField?.dict ? `data-settings-dictionary="${escapeAttr(statusField.dict)}"` : ""} ${selected.length ? "" : "disabled"}>
             ${configId === "students"
@@ -8439,6 +8523,9 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="ghost-button" data-action="bulk-status" data-config="${configId}" type="button" ${selected.length ? "" : "disabled"}>Сменить статус</button>
         ` : ""}
         <button class="ghost-button" data-action="bulk-clear" data-config="${configId}" type="button" ${selected.length ? "" : "disabled"}>Снять выбор</button>
+        ${configId === "students" ? `
+          <button class="primary-button" data-action="open-student-bulk-operations" type="button" ${selected.length ? "" : "disabled"}>Групповые операции</button>
+        ` : ""}
         ${configId === "generalExpenses" ? `
           <button class="ghost-button" data-action="bulk-copy-general-expenses" data-config="${configId}" type="button" title="Копировать выбранные общие расходы с текущей датой" ${selectedRows.length ? "" : "disabled"}>
             Копировать
@@ -8834,6 +8921,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const selectedProgramTypes = state.view === "students"
       ? state.studentProgramTypeFilter
       : [];
+    const studentListFilters = state.view === "students"
+      ? (state.studentListFilters || {})
+      : {};
     const selectedRegistryProgramTypes = state.view === "programs"
       ? getProgramRegistryTypeFilterOptions()
         .filter((item) => state.programRegistryTypeFilter.includes(item))
@@ -8868,6 +8958,17 @@ MAX - https://bizvmax.ru/zifra_plus
         row.educationType || findProgramByName(row.program)?.type
       );
       const matchProgramType = !selectedProgramTypes.length || selectedProgramTypes.includes(programType);
+      const matchStudentProgram = !studentListFilters.program
+        || String(row.program || "").trim() === String(studentListFilters.program).trim();
+      const studentDateValue = studentListFilters.dateField
+        ? parseTableSortDate(row[studentListFilters.dateField])
+        : null;
+      const studentDateFrom = parseTableSortDate(studentListFilters.dateFrom);
+      const studentDateTo = parseTableSortDate(studentListFilters.dateTo);
+      const matchStudentDate = !studentListFilters.dateField
+        || (studentDateValue !== null
+          && (studentDateFrom === null || studentDateValue >= studentDateFrom)
+          && (studentDateTo === null || studentDateValue <= studentDateTo));
       const registryProgramType = String(row.type || "").trim() || "Не задано";
       const matchRegistryProgramType = !selectedRegistryProgramTypes.length
         || selectedRegistryProgramTypes.includes(registryProgramType);
@@ -8888,6 +8989,8 @@ MAX - https://bizvmax.ru/zifra_plus
       return matchQuery
         && matchStatus
         && matchProgramType
+        && matchStudentProgram
+        && matchStudentDate
         && matchRegistryProgramType
         && matchContractSection
         && matchImportedView
@@ -12304,6 +12407,19 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
+  function toggleAllFilteredSelection(configId, checked = true) {
+    const config = configs[configId];
+    if (!config) return;
+    const visibleIds = getVisibleRows(config).map((row) => row.id).filter(Boolean);
+    const selected = new Set(checked ? [] : getSelected(configId));
+    visibleIds.forEach((id) => {
+      if (checked) selected.add(id);
+      else selected.delete(id);
+    });
+    setSelected(configId, Array.from(selected));
+    render();
+  }
+
   function getAuthUserEditorRecord() {
     if (state.authUserEditorId === "new") {
       return { id: "", login: "", name: "", email: "", phone: "", role: "manager", status: "active" };
@@ -15574,11 +15690,13 @@ MAX - https://bizvmax.ru/zifra_plus
     generateNumberFromDataFormula("expulsionOrderNumber");
   }
 
-  function getGeneratedNumberFromDataFormula(formulaKey, date, currentId = "") {
+  function getGeneratedNumberFromDataFormula(formulaKey, date, currentId = "", contextOverride = null) {
     const formula = normalizeDataFormulaTemplates(state.data.dictionaries.dataFormulas)
       .find((item) => item.key === formulaKey);
     if (!formula) return { formula: null, value: "" };
-    const context = getDataFormulaContext(formulaKey);
+    const context = contextOverride && typeof contextOverride === "object"
+      ? contextOverride
+      : getDataFormulaContext(formulaKey);
     const sequence = formula.template.includes("{ПорядковыйНомерЗаГод}")
       ? getNextDataFormulaYearSequence(formula, date, currentId, context)
       : formula.template.includes("{ПорядковыйНомерЗаДату}")
@@ -19143,7 +19261,8 @@ MAX - https://bizvmax.ru/zifra_plus
     recipientLabel = "слушателя",
     entityType = "students",
     entityId = "",
-    entityName = ""
+    entityName = "",
+    quiet = false
   }) {
     const normalizedSubject = normalizeServerEmailSubject(subject);
     const { sendToSystemMailbox, recipient } = resolveServerEmailRecipient(
@@ -19152,7 +19271,7 @@ MAX - https://bizvmax.ru/zifra_plus
       recipientMode
     );
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
-      alert(sendToSystemMailbox
+      if (!quiet) alert(sendToSystemMailbox
         ? "Укажите корректный системный почтовый ящик в админке."
         : `Укажите корректный Email ${recipientLabel}.`);
       if (!sendToSystemMailbox) {
@@ -19161,11 +19280,11 @@ MAX - https://bizvmax.ru/zifra_plus
       return false;
     }
     if (!normalizedSubject) {
-      alert("Не указана тема письма.");
+      if (!quiet) alert("Не указана тема письма.");
       return false;
     }
     if (!String(message || "").trim()) {
-      alert("Текст письма пуст.");
+      if (!quiet) alert("Текст письма пуст.");
       return false;
     }
     const recipientDescription = sendToSystemMailbox
@@ -19222,10 +19341,10 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       }
-      alert(`Письмо отправлено на адрес ${recipient}.`);
+      if (!quiet) alert(`Письмо отправлено на адрес ${recipient}.`);
       return true;
     } catch (error) {
-      alert(`Не удалось отправить письмо через сервер: ${error.message}`);
+      if (!quiet) alert(`Не удалось отправить письмо через сервер: ${error.message}`);
       return false;
     } finally {
       if (button) button.disabled = originalDisabled;
@@ -20613,6 +20732,27 @@ MAX - https://bizvmax.ru/zifra_plus
       state.tablePages.students = 1;
       render();
     });
+    document.querySelectorAll("[data-student-list-filter]").forEach((control) => {
+      control.addEventListener("change", () => {
+        const key = String(control.dataset.studentListFilter || "");
+        if (!key) return;
+        state.studentListFilters = {
+          ...(state.studentListFilters || {}),
+          [key]: String(control.value || "")
+        };
+        if (key === "dateField" && !control.value) {
+          state.studentListFilters.dateFrom = "";
+          state.studentListFilters.dateTo = "";
+        }
+        state.tablePages.students = 1;
+        render();
+      });
+    });
+    document.querySelector("[data-action='clear-student-list-filters']")?.addEventListener("click", () => {
+      state.studentListFilters = { program: "", dateField: "", dateFrom: "", dateTo: "" };
+      state.tablePages.students = 1;
+      render();
+    });
     document.querySelectorAll("[data-program-registry-type-filter-option]").forEach((input) => {
       input.addEventListener("change", () => {
         state.programRegistryTypeFilter = Array.from(
@@ -21014,6 +21154,14 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='bulk-status']").forEach((button) => {
       button.addEventListener("click", () => bulkSetStatus(button.dataset.config));
     });
+
+    document.querySelector("[data-action='bulk-select-filtered-students']")?.addEventListener("click", () => {
+      toggleAllFilteredSelection("students", true);
+    });
+    document.querySelector("[data-action='bulk-unselect-filtered-students']")?.addEventListener("click", () => {
+      toggleAllFilteredSelection("students", false);
+    });
+    document.querySelector("[data-action='open-student-bulk-operations']")?.addEventListener("click", openStudentBulkOperationsDialog);
 
     document.querySelectorAll("[data-action='bulk-copy-general-expenses']").forEach((button) => {
       button.addEventListener("click", () => bulkCopyGeneralExpenses());
@@ -30105,6 +30253,421 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     persist();
     render();
+  }
+
+  const studentBulkDocumentOperations = [
+    { key: "education", label: "Документы об образовании" },
+    { key: "contract", label: "Договоры" },
+    { key: "enrollmentOrder", label: "Приказ о зачислении" },
+    { key: "expulsionOrder", label: "Приказ об отчислении" },
+    { key: "postalEnvelope", label: "Почтовые конверты" },
+    { key: "studyCertificate", label: "Справки об обучении" }
+  ];
+
+  function replaceStudentBulkRecord(record) {
+    const index = (state.data.collections.students || [])
+      .findIndex((item) => String(item.id || "") === String(record?.id || ""));
+    if (index < 0) return false;
+    state.data.collections.students[index] = record;
+    return true;
+  }
+
+  function getStudentBulkDocumentTemplate(record, operation) {
+    if (operation === "education") return getEducationDocumentTemplateForRecord(record);
+    if (operation === "contract") return getAutomaticStudentContractTemplate(record);
+    if (operation === "studyCertificate") return getStudyCertificateDocumentTemplate();
+    return getStudentCardDocumentTemplate(operation);
+  }
+
+  function getStudentBulkBaseDate(record, preferredDate = "") {
+    return [preferredDate, record.contractDate, record.applicationDate, record.startDate, todayIso()]
+      .map((value) => String(value || "").trim())
+      .find((value) => parseOrdersSdoDate(value)) || todayIso();
+  }
+
+  function prepareStudentRecordForBulkDocument(source, operation, preferredDate = "", sharedOrderNo = "") {
+    const record = { ...source };
+    const program = findProgramByName(record.program);
+    const programType = normalizeEducationProgramType(program?.type || record.educationType);
+    const baseDate = getStudentBulkBaseDate(record, preferredDate);
+    const baseDateObject = parseOrdersSdoDate(baseDate) || new Date();
+    if (program) {
+      if (!String(record.educationType || "").trim()) record.educationType = program.type || "";
+      if (!String(record.hours || "").trim()) record.hours = program.hours || "";
+      if (!String(record.studyForm || "").trim()) record.studyForm = program.studyForm || "";
+      if (!String(record.qualification || "").trim()) record.qualification = program.qualification || "";
+    }
+    if (["contract", "enrollmentOrder", "studyCertificate", "education"].includes(operation)) {
+      if (!parseOrdersSdoDate(record.contractDate)) record.contractDate = baseDate;
+      if (!parseOrdersSdoDate(record.startDate)) record.startDate = baseDate;
+      if (!parseOrdersSdoDate(record.enrollmentDate)) record.enrollmentDate = record.startDate;
+      if (!parseOrdersSdoDate(record.endDate)) {
+        const endDate = getTrainingEndDate(record.startDate, getStudentProgramHours(record));
+        if (endDate) record.endDate = formatOrdersSdoDate(endDate);
+      }
+      if (!String(record.contractNo || "").trim()) {
+        record.contractNo = getGeneratedNumberFromDataFormula("contractNumber", baseDateObject, record.id).value;
+      }
+      if (!String(record.enrollmentOrderNo || "").trim()) {
+        record.enrollmentOrderNo = sharedOrderNo || getGeneratedNumberFromDataFormula(
+          "enrollmentOrderNumber",
+          parseOrdersSdoDate(record.enrollmentDate) || baseDateObject,
+          record.id
+        ).value;
+      }
+      if (!String(record.group || "").trim() && program?.groupIndex) {
+        record.group = getStudentGroupNumber(record.program, record.startDate);
+      }
+    }
+    if (operation === "enrollmentOrder") {
+      record.enrollmentDate = preferredDate || record.enrollmentDate || record.startDate || baseDate;
+      record.startDate = record.startDate || record.enrollmentDate;
+      record.enrollmentOrderNo = sharedOrderNo || record.enrollmentOrderNo || getGeneratedNumberFromDataFormula(
+        "enrollmentOrderNumber",
+        parseOrdersSdoDate(record.enrollmentDate) || baseDateObject,
+        record.id
+      ).value;
+    }
+    if (["expulsionOrder", "education"].includes(operation)) {
+      const issueDate = preferredDate || record.expulsionDate || record.endDate || baseDate;
+      if (!parseOrdersSdoDate(record.expulsionDate)) record.expulsionDate = issueDate;
+      if (!String(record.expulsionOrderNo || "").trim()) {
+        record.expulsionOrderNo = sharedOrderNo || getGeneratedNumberFromDataFormula(
+          "expulsionOrderNumber",
+          parseOrdersSdoDate(record.expulsionDate) || baseDateObject,
+          record.id
+        ).value;
+      } else if (sharedOrderNo) {
+        record.expulsionOrderNo = sharedOrderNo;
+      }
+    }
+    if (operation === "education") {
+      const issueDate = record.expulsionDate || record.endDate || baseDate;
+      if (!String(record.diplomaBlankNo || "").trim()) {
+        record.diplomaBlankNo = getNextEducationBlankNumber(programType, record.id);
+      }
+      if (!String(record.registrationNo || "").trim()) {
+        record.registrationNo = getGeneratedNumberFromDataFormula(
+          "educationRegistrationNumber",
+          parseOrdersSdoDate(issueDate) || baseDateObject,
+          record.id,
+          {
+            programType,
+            programTypeCode: getEducationRegistrationTypeCode(programType)
+          }
+        ).value;
+      }
+      if (!parseOrdersSdoDate(record.diplomaIssueDate)) record.diplomaIssueDate = issueDate;
+      if (programType === "ППП" && !String(record.protocolNo || "").trim()) {
+        record.protocolNo = getNextEducationProtocolNo(record.diplomaIssueDate, record.id);
+      }
+    }
+    return record;
+  }
+
+  async function persistStudentBulkChanges() {
+    persist();
+    try {
+      if (!await flushSharedApplicationState()) {
+        throw new Error("общая база отклонила изменения");
+      }
+      return "";
+    } catch (error) {
+      return `Изменения сохранены локально и ожидают синхронизации: ${error.message}`;
+    }
+  }
+
+  function showStudentBulkOperationResult(result) {
+    document.querySelector("[data-student-bulk-result]")?.remove();
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop student-bulk-result-backdrop";
+    backdrop.dataset.studentBulkResult = "";
+    const details = Array.isArray(result.details) ? result.details : [];
+    backdrop.innerHTML = `
+      <section class="modal student-bulk-result-dialog" role="dialog" aria-modal="true" aria-labelledby="student-bulk-result-title">
+        <header class="modal-head">
+          <div><p class="eyebrow">Групповые операции</p><h2 id="student-bulk-result-title">Результат выполнения</h2></div>
+          <button class="icon-button" data-action="close-student-bulk-result" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <div class="student-bulk-result-summary">
+          <span class="is-success">Выполнено: <strong>${Number(result.success || 0)}</strong></span>
+          <span class="is-warning">Пропущено: <strong>${Number(result.skipped || 0)}</strong></span>
+          <span class="is-error">Ошибок: <strong>${Number(result.failed || 0)}</strong></span>
+        </div>
+        ${result.notice ? `<p class="student-bulk-result-notice">${escapeHtml(result.notice)}</p>` : ""}
+        ${details.length ? `<div class="student-bulk-result-list">${details.map((item) => `
+          <div class="is-${escapeAttr(item.tone || "warning")}"><strong>${escapeHtml(item.name || "Запись")}</strong><span>${escapeHtml(item.message || "")}</span></div>
+        `).join("")}</div>` : `<p class="empty-state compact"><span>Все выбранные записи обработаны без замечаний.</span></p>`}
+        <footer class="modal-actions"><button class="primary-button" data-action="close-student-bulk-result" type="button">Закрыть</button></footer>
+      </section>
+    `;
+    const close = () => backdrop.remove();
+    backdrop.addEventListener("pointerdown", (event) => { if (event.target === backdrop) close(); });
+    backdrop.querySelectorAll("[data-action='close-student-bulk-result']").forEach((button) => button.addEventListener("click", close));
+    document.body.appendChild(backdrop);
+    backdrop.querySelector("[data-action='close-student-bulk-result']")?.focus({ preventScroll: true });
+  }
+
+  async function runStudentBulkMessage(records, messageKey, updateProgress) {
+    const definition = studentCommunicationMessages.find((item) => item.key === messageKey);
+    const result = { success: 0, skipped: 0, failed: 0, details: [] };
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      updateProgress(index, `Отправка: ${record.name || record.id}`);
+      const generated = generateStudentCommunicationMessages(record);
+      const message = String(record[messageKey] || generated[messageKey] || "").trim();
+      const sent = await sendServerEmail({
+        email: record.email,
+        subject: `Учебный центр: ${definition?.label || "Сообщение"}`,
+        message,
+        confirmText: "",
+        button: null,
+        recipientMode: "student",
+        messageType: definition?.label || "Сообщение от учебного центра",
+        skipConfirmation: true,
+        quiet: true,
+        entityType: "students",
+        entityId: record.id,
+        entityName: record.name
+      });
+      if (sent) result.success += 1;
+      else {
+        result.failed += 1;
+        result.details.push({ tone: "error", name: record.name, message: "Письмо не отправлено: проверьте Email и текст сообщения." });
+      }
+    }
+    return result;
+  }
+
+  async function runStudentBulkEvent(records, eventKey, eventDate, updateProgress) {
+    const definition = studentEventTemplates.find((item) => item.key === eventKey);
+    const result = { success: 0, skipped: 0, failed: 0, details: [] };
+    for (let index = 0; index < records.length; index += 1) {
+      const source = records[index];
+      updateProgress(index, `Событие: ${source.name || source.id}`);
+      const acquired = await acquireRecordLock("students", source.id, { promptTakeover: false });
+      if (!acquired) {
+        result.skipped += 1;
+        result.details.push({ tone: "warning", name: source.name, message: "Запись заблокирована другой сессией." });
+        continue;
+      }
+      try {
+        const record = {
+          ...source,
+          [`event_${eventKey}_state`]: eventDate ? "dated" : "checked",
+          [`event_${eventKey}_date`]: eventDate || "",
+          [`event_${eventKey}_label`]: definition?.label || source[`event_${eventKey}_label`] || "Событие"
+        };
+        replaceStudentBulkRecord(record);
+        addAudit("Массово проставлено событие", configs.students.title, `${record.name}: ${definition?.label || eventKey}`, {
+          entityType: "students",
+          entityId: record.id,
+          entityLabel: record.name,
+          field: `event_${eventKey}_state`,
+          after: eventDate || "Отмечено"
+        });
+        result.success += 1;
+      } finally {
+        await releaseRecordLock();
+      }
+    }
+    result.notice = await persistStudentBulkChanges();
+    return result;
+  }
+
+  async function runStudentBulkDocuments(records, operation, preferredDate, autoFill, updateProgress) {
+    const result = { success: 0, skipped: 0, failed: 0, details: [] };
+    const isGroupOrder = ["enrollmentOrder", "expulsionOrder"].includes(operation);
+    let sharedOrderNo = "";
+    if (isGroupOrder && autoFill && records.length) {
+      const formulaKey = operation === "enrollmentOrder" ? "enrollmentOrderNumber" : "expulsionOrderNumber";
+      sharedOrderNo = getGeneratedNumberFromDataFormula(
+        formulaKey,
+        parseOrdersSdoDate(preferredDate) || new Date(),
+        records[0].id
+      ).value;
+    }
+    const preparedRecords = [];
+    for (let index = 0; index < records.length; index += 1) {
+      const source = records[index];
+      updateProgress(index, `Подготовка данных: ${source.name || source.id}`);
+      let record = autoFill
+        ? prepareStudentRecordForBulkDocument(source, operation, preferredDate, sharedOrderNo)
+        : { ...source };
+      const acquired = autoFill
+        ? await acquireRecordLock("students", source.id, { promptTakeover: false })
+        : false;
+      if (autoFill && !acquired) {
+        result.skipped += 1;
+        result.details.push({ tone: "warning", name: source.name, message: "Запись заблокирована другой сессией." });
+        continue;
+      }
+      try {
+        if (autoFill) {
+          replaceStudentBulkRecord(record);
+          addAudit("Автозаполнение для группового документа", configs.students.title, record.name || record.id, {
+            entityType: "students",
+            entityId: record.id,
+            entityLabel: record.name,
+            source: "bulk-document-autofill"
+          });
+        }
+        preparedRecords.push(record);
+      } finally {
+        if (acquired) await releaseRecordLock();
+      }
+    }
+    if (autoFill) result.notice = await persistStudentBulkChanges();
+    const generationGroups = isGroupOrder
+      ? [...preparedRecords.reduce((groups, record) => {
+          const orderField = operation === "enrollmentOrder" ? "enrollmentOrderNo" : "expulsionOrderNo";
+          const key = normalizeOrderDocumentNumber(record[orderField]) || `record:${record.id}`;
+          const group = groups.get(key) || { record, count: 0 };
+          group.count += 1;
+          groups.set(key, group);
+          return groups;
+        }, new Map()).values()]
+      : preparedRecords.map((record) => ({ record, count: 1 }));
+    for (let index = 0; index < generationGroups.length; index += 1) {
+      const { record, count } = generationGroups[index];
+      updateProgress(preparedRecords.length + index, `Формирование: ${record.name || record.id}`);
+      const documentTemplate = getStudentBulkDocumentTemplate(record, operation);
+      if (!documentTemplate) {
+        result.failed += count;
+        result.details.push({ tone: "error", name: record.name, message: "Не найден подходящий шаблон в Конструкторе документов." });
+        continue;
+      }
+      const programType = operation === "education" ? getStudentProgramTypeCode(record) : "";
+      const missing = getMissingStudentDocumentFields(record, documentTemplate, programType);
+      if (missing.length) {
+        result.skipped += count;
+        result.details.push({
+          tone: "warning",
+          name: isGroupOrder ? `Группа (${count})` : record.name,
+          message: `Не заполнены поля: ${missing.map((item) => item.label).join(", ")}.`
+        });
+        continue;
+      }
+      const generated = await downloadStudentDocumentFromTemplate(
+        { ...documentTemplate, emailDeliveryMode: "off" },
+        record,
+        null,
+        "Не удалось сформировать групповой документ",
+        { storageRequest: getStudentDocumentStorageRequest(record, documentTemplate) }
+      );
+      if (generated?.generated) result.success += count;
+      else {
+        result.failed += count;
+        result.details.push({ tone: "error", name: record.name, message: "Документ не сформирован." });
+      }
+    }
+    persist();
+    return result;
+  }
+
+  function openStudentBulkOperationsDialog() {
+    const records = getRowsByIds("students", getSelected("students"));
+    if (!records.length) return;
+    document.querySelector("[data-student-bulk-operations]")?.remove();
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop student-bulk-operations-backdrop";
+    backdrop.dataset.studentBulkOperations = "";
+    backdrop.innerHTML = `
+      <form class="modal student-bulk-operations-dialog">
+        <header class="modal-head">
+          <div><p class="eyebrow">Выбрано слушателей: ${records.length}</p><h2>Групповые операции</h2></div>
+          <button class="icon-button" data-action="close-student-bulk-operations" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <div class="student-bulk-operation-grid">
+          <label><span>Операция</span><select name="operation">
+            <option value="message">Отправить сообщение</option>
+            <option value="document">Сформировать документы</option>
+            <option value="event">Проставить событие</option>
+          </select></label>
+          <label data-student-bulk-panel="message"><span>Вид сообщения</span><select name="messageKey">
+            ${studentCommunicationMessages.filter((item) => item.showInCommunications !== false).map((item) => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`).join("")}
+          </select></label>
+          <div class="student-bulk-operation-document-panel" data-student-bulk-panel="document" hidden>
+            <label><span>Документ</span><select name="documentOperation">
+              ${studentBulkDocumentOperations.map((item) => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`).join("")}
+            </select></label>
+            <label><span>Дата операции</span><input name="operationDate" type="date" value="${todayIso()}"></label>
+            <label class="checkbox-line"><input name="autoFill" type="checkbox" checked><span>Автоматически заполнить вычисляемые реквизиты</span></label>
+          </div>
+          <div class="student-bulk-operation-event-panel" data-student-bulk-panel="event" hidden>
+            <label><span>Событие</span><select name="eventKey">
+              ${studentEventTemplates.map((item) => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`).join("")}
+            </select></label>
+            <label><span>Дата события</span><input name="eventDate" type="date" value="${todayIso()}"></label>
+          </div>
+          <p class="student-bulk-operation-hint" data-student-bulk-hint>Сообщение будет сформировано отдельно для каждого слушателя по шаблону вкладки «Коммуникации».</p>
+          <div class="student-bulk-operation-progress" data-student-bulk-progress hidden><span></span><strong data-student-bulk-progress-label>Подготовка...</strong></div>
+        </div>
+        <footer class="modal-actions">
+          <button class="ghost-button" data-action="close-student-bulk-operations" type="button">Отмена</button>
+          <button class="primary-button" type="submit">Выполнить</button>
+        </footer>
+      </form>
+    `;
+    const form = backdrop.querySelector("form");
+    const close = () => backdrop.remove();
+    const syncPanels = () => {
+      const operation = form.elements.operation.value;
+      form.querySelectorAll("[data-student-bulk-panel]").forEach((panel) => {
+        panel.hidden = panel.dataset.studentBulkPanel !== operation;
+      });
+      const hints = {
+        message: "Сообщение будет сформировано отдельно для каждого слушателя по шаблону вкладки «Коммуникации».",
+        document: "Вычисляемые даты, номера, часы и реквизиты документа будут заполнены автоматически. Неопределимые персональные данные будут перечислены в результате.",
+        event: "Событие и его дата будут записаны в карточку каждого доступного слушателя."
+      };
+      form.querySelector("[data-student-bulk-hint]").textContent = hints[operation];
+    };
+    backdrop.addEventListener("pointerdown", (event) => { if (event.target === backdrop) close(); });
+    form.querySelectorAll("[data-action='close-student-bulk-operations']").forEach((button) => button.addEventListener("click", close));
+    form.elements.operation.addEventListener("change", syncPanels);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const operation = form.elements.operation.value;
+      if (!confirm(`Выполнить выбранную операцию для ${records.length} слушателей?`)) return;
+      const submit = form.querySelector("button[type='submit']");
+      const progress = form.querySelector("[data-student-bulk-progress]");
+      const progressFill = progress.querySelector("span");
+      const progressLabel = progress.querySelector("[data-student-bulk-progress-label]");
+      submit.disabled = true;
+      progress.hidden = false;
+      const updateProgress = (index, label) => {
+        const totalSteps = operation === "document" ? Math.max(1, records.length * 2) : records.length;
+        progressFill.style.width = `${Math.min(100, Math.round((index / totalSteps) * 100))}%`;
+        progressLabel.textContent = label;
+      };
+      let result;
+      try {
+        if (operation === "message") {
+          result = await runStudentBulkMessage(records, form.elements.messageKey.value, updateProgress);
+        } else if (operation === "event") {
+          result = await runStudentBulkEvent(records, form.elements.eventKey.value, form.elements.eventDate.value, updateProgress);
+        } else {
+          result = await runStudentBulkDocuments(
+            records,
+            form.elements.documentOperation.value,
+            form.elements.operationDate.value,
+            form.elements.autoFill.checked,
+            updateProgress
+          );
+        }
+        progressFill.style.width = "100%";
+        close();
+        render();
+        showStudentBulkOperationResult(result || {});
+      } catch (error) {
+        submit.disabled = false;
+        progressLabel.textContent = `Ошибка: ${error.message}`;
+      }
+    });
+    document.body.appendChild(backdrop);
+    syncPanels();
+    form.elements.operation.focus({ preventScroll: true });
   }
 
   function addDictionaryValue(event) {
