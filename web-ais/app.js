@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.80",
+    version: "1.7.81",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.81",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Все настроенные почтовые ящики одновременно используются для импорта заявок InSales и загрузки документов слушателей. Почтовые уведомления WooCommerce больше не распознаются как заявки, поскольку эти заказы поступают через SQL. Раздел электронной почты в админке обновлён в соответствии с единым назначением ящиков."
+      ]
+    },
     {
       version: "1.7.80",
       releasedAt: "2026-08-12",
@@ -12056,6 +12063,13 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="ghost-button compact-button" data-action="test-document-mailbox" type="button">Проверить</button>
           <button class="icon-button" data-action="remove-document-mailbox" type="button" title="Удалить ящик" aria-label="Удалить ящик">×</button>
         </div>
+        <div class="admin-mailbox-purpose">
+          <strong>Заявки InSales и документы</strong>
+          <span>Система ищет в этом ящике заявки InSales, а письма и вложения можно загружать в документы слушателей.</span>
+          <span class="admin-mailbox-state ${mailbox.host && mailbox.login && mailbox.hasPassword ? "is-ready" : "is-incomplete"}">
+            ${mailbox.host && mailbox.login && mailbox.hasPassword ? "Настроен" : "Требуется настройка"}
+          </span>
+        </div>
         <div class="admin-email-settings-grid">
           <label class="admin-mailbox-name-field"><span>Название</span><input data-mailbox-field="label" value="${escapeAttr(mailbox.label)}" required></label>
           <label class="admin-mailbox-login-field"><span>Логин</span><input data-mailbox-field="login" type="email" value="${escapeAttr(mailbox.login)}" required autocomplete="username"></label>
@@ -12077,19 +12091,17 @@ MAX - https://bizvmax.ru/zifra_plus
     login,
     password
   }) {
-    const isExpectedLogin = String(login || "").trim().toLowerCase()
-      === DEFAULT_STUDENT_APPLICATIONS_EMAIL.login;
     const isConfigured = Boolean(
       host && login && (password || state.data.meta.studentApplicationsEmailHasPassword)
     );
     return `
       <fieldset class="admin-mailbox-card is-applications-mailbox" data-applications-mailbox>
-        <legend>Сбор заявок · ${escapeHtml(DEFAULT_STUDENT_APPLICATIONS_EMAIL.login)}</legend>
+        <legend>Основной почтовый ящик · ${escapeHtml(DEFAULT_STUDENT_APPLICATIONS_EMAIL.login)}</legend>
         <div class="admin-mailbox-purpose">
-          <strong>Системный ящик заявок</strong>
-          <span>Из него загружаются новые заявки; он также используется для системных сообщений.</span>
-          <span class="admin-mailbox-state ${isConfigured && isExpectedLogin ? "is-ready" : "is-incomplete"}">
-            ${isConfigured && isExpectedLogin ? "Настроен" : "Требуется настройка"}
+          <strong>Заявки InSales и документы</strong>
+          <span>Система ищет в этом ящике заявки InSales, а письма и вложения можно загружать в документы слушателей. Ящик также используется для системных сообщений.</span>
+          <span class="admin-mailbox-state ${isConfigured ? "is-ready" : "is-incomplete"}">
+            ${isConfigured ? "Настроен" : "Требуется настройка"}
           </span>
         </div>
         <div class="admin-mailbox-card-actions">
@@ -12399,8 +12411,8 @@ MAX - https://bizvmax.ru/zifra_plus
                 </div>
                 <div class="admin-document-mailboxes-head is-applications-heading">
                   <div>
-                    <strong>Сбор заявок</strong>
-                    <small>Отдельное подключение ящика mail@zifra-plus.ru, из которого система загружает заявки.</small>
+                    <strong>Почтовые ящики</strong>
+                    <small>Все настроенные ящики одновременно используются для поиска заявок InSales и для загрузки писем и вложений в документы слушателей.</small>
                   </div>
                 </div>
                 <div class="admin-document-mailboxes is-applications-list">
@@ -12415,8 +12427,8 @@ MAX - https://bizvmax.ru/zifra_plus
                 </div>
                 <div class="admin-document-mailboxes-head">
                   <div>
-                    <strong>Ящики для документов слушателей</strong>
-                    <small>Письма и вложения из этих ящиков можно сохранять в папку документов выбранного слушателя.</small>
+                    <strong>Дополнительные почтовые ящики</strong>
+                    <small>Каждый добавленный ящик автоматически становится сборщиком заявок InSales и документов слушателей.</small>
                   </div>
                   <button class="ghost-button" data-action="add-document-mailbox" type="button">Добавить ящик</button>
                 </div>

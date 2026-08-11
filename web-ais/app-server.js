@@ -10007,8 +10007,20 @@ function getStudentApplicationsEmailSettings() {
 }
 
 function hasStudentApplicationsEmailSettings() {
-  const settings = getStudentApplicationsEmailSettings();
-  return Boolean(settings.host && settings.login && settings.password);
+  return getStudentApplicationsMailboxes().length > 0;
+}
+
+function getStudentApplicationsMailboxes() {
+  const seen = new Set();
+  return getStudentDocumentMailboxes().filter((mailbox) => {
+    if (!mailbox.host || !mailbox.login || !mailbox.password) return false;
+    const key = [mailbox.host, mailbox.port, mailbox.login]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .join("\u0000");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function createSmtpResponseReader(socket) {
@@ -10885,7 +10897,7 @@ function normalizeEmailCustomerName(value) {
 }
 
 function isStudentApplicationOrderSubject(value) {
-  return /(?:^|:\s*)Новый заказ\s*:?\s*№\s*\d+/iu.test(String(value || "").trim());
+  return /^Новый заказ\s*№\s*\d+/iu.test(String(value || "").trim());
 }
 
 function parseInSalesOrderEmail(rawMessage) {
@@ -11051,8 +11063,7 @@ function parseWooCommerceOrderEmail(rawMessage) {
 }
 
 function parseStudentApplicationOrderEmail(rawMessage) {
-  const inSalesRows = parseInSalesOrderEmail(rawMessage);
-  return inSalesRows.length ? inSalesRows : parseWooCommerceOrderEmail(rawMessage);
+  return parseInSalesOrderEmail(rawMessage);
 }
 
 function normalizeStudentApplicationProgramMatchValue(value) {
@@ -11087,8 +11098,9 @@ function studentEmailApplicationMatchesFilters(row, filters) {
   return Boolean(matchesProduct || matchesProgram);
 }
 
-async function runStudentApplicationsEmailQuery(filters) {
-  const client = await connectStudentApplicationsImap();
+async function runStudentApplicationsEmailQuery(filters, mailboxSettings = null) {
+  const settings = mailboxSettings || getStudentApplicationsEmailSettings();
+  const client = await connectStudentApplicationsImap(settings);
   const warnings = [];
   try {
     const beforeDate = addDaysToIsoDate(filters.dateTo, 1);
@@ -11107,9 +11119,13 @@ async function runStudentApplicationsEmailQuery(filters) {
     const rows = [];
     for (const message of messages) {
       try {
-        rows.push(...parseStudentApplicationOrderEmail(message.bytes).filter((row) => (
-          studentEmailApplicationMatchesFilters(row, filters)
-        )));
+        rows.push(...parseStudentApplicationOrderEmail(message.bytes)
+          .filter((row) => studentEmailApplicationMatchesFilters(row, filters))
+          .map((row) => ({
+            ...row,
+            sourceMailboxId: String(settings.id || "applications"),
+            sourceMailbox: String(settings.label || settings.login || "")
+          })));
       } catch (error) {
         warnings.push(`Письмо UID ${message.uid} пропущено: ${error.message}`);
       }
@@ -11617,12 +11633,13 @@ async function handleStudentApplicationsQuery(req, res) {
         promise: runStudentApplicationsQuery(filters)
       });
     }
-    if (hasStudentApplicationsEmailSettings()) {
+    const applicationMailboxes = getStudentApplicationsMailboxes();
+    applicationMailboxes.forEach((mailbox) => {
       sources.push({
-        label: "Электронная почта",
-        promise: runStudentApplicationsEmailQuery(filters)
+        label: `Почта ${mailbox.login}`,
+        promise: runStudentApplicationsEmailQuery(filters, mailbox)
       });
-    }
+    });
     if (!sources.length) {
       throw new Error("Не настроены источники заявок: база сайта и электронная почта.");
     }
