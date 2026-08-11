@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.53",
+    version: "1.7.54",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.54",
+      releasedAt: "2026-08-11",
+      changes: [
+        "Подпись флажка публикации отзыва сокращена до «Отзыв на сайте»."
+      ]
+    },
     {
       version: "1.7.53",
       releasedAt: "2026-08-11",
@@ -2746,7 +2753,7 @@ MAX - https://bizvmax.ru/zifra_plus
           reviewPanel: true,
           fields: [
             field("review", "Отзыв", "textarea"),
-            field("reviewPublished", "Отзыв размещен на сайте", "checkbox")
+            field("reviewPublished", "Отзыв на сайте", "checkbox")
           ]
         }
       ]
@@ -2760,7 +2767,7 @@ MAX - https://bizvmax.ru/zifra_plus
           fields: [
             field("review", "Текст отзыва", "textarea"),
             field("reviewDate", "Дата отзыва", "date"),
-            field("reviewPublished", "Отзыв размещен на сайте", "checkbox"),
+            field("reviewPublished", "Отзыв на сайте", "checkbox"),
             field("reviewLink", "Ссылка на отзыв"),
             field("reviewPermission", "Согласие на публикацию"),
             field("reviewNotes", "Примечания", "textarea")
@@ -15055,7 +15062,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </button>
           <label class="student-review-published">
             <input name="reviewPublished" type="checkbox" value="Да" ${isChecked(record.reviewPublished) ? "checked" : ""}>
-            <span>Отзыв размещен на сайте</span>
+            <span>Отзыв на сайте</span>
           </label>
         </div>
         <label class="student-review-text">
