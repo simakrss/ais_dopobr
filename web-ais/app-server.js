@@ -10884,10 +10884,14 @@ function normalizeEmailCustomerName(value) {
   return parts.join(" ");
 }
 
+function isStudentApplicationOrderSubject(value) {
+  return /(?:^|:\s*)Новый заказ\s*:?\s*№\s*\d+/iu.test(String(value || "").trim());
+}
+
 function parseInSalesOrderEmail(rawMessage) {
   const { headers } = splitMimeEntity(rawMessage);
   const subject = decodeMimeHeader(headers.subject);
-  if (!/^Новый заказ №/iu.test(subject)) return [];
+  if (!isStudentApplicationOrderSubject(subject)) return [];
   const mimeText = extractMimeText(rawMessage);
   const text = normalizeEmailOrderText(mimeText.plain || htmlToPlainText(mimeText.html));
   const orderMatch = /Поступил заказ №\s*(\d+)\s+от\s+(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}:\d{2})/iu.exec(text);
@@ -10959,6 +10963,110 @@ function parseInSalesOrderEmail(rawMessage) {
   });
 }
 
+function parseWooCommerceOrderEmail(rawMessage) {
+  const { headers } = splitMimeEntity(rawMessage);
+  const subject = decodeMimeHeader(headers.subject);
+  if (!isStudentApplicationOrderSubject(subject)) return [];
+  const mimeText = extractMimeText(rawMessage);
+  const text = normalizeEmailOrderText(mimeText.plain || htmlToPlainText(mimeText.html));
+  const orderMatch = /(?:Новый заказ\s*:\s*№|\[Заказ №)\s*(\d+)/iu.exec(text);
+  if (!orderMatch) return [];
+  const orderId = String(orderMatch[1] || "").trim();
+  const dateMatch = new RegExp(
+    `\\[Заказ №\\s*${orderId}\\]\\s*\\(\\s*(\\d{2})\\.(\\d{2})\\.(\\d{4})\\s*\\)`,
+    "iu"
+  ).exec(text);
+  if (!dateMatch) return [];
+  const [, day, month, year] = dateMatch;
+  const name = normalizeEmailCustomerName(
+    /Получен заказ от покупателя\s+(.+?)\s*:/iu.exec(text)?.[1] || ""
+  );
+  const productBlock = /Товар\s*\n+Количество\s*\n+Цена\s*\n+([\s\S]*?)\n+Подытог\s*:/iu.exec(text)?.[1] || "";
+  const productLines = productBlock.split("\n").map((line) => line.trim()).filter(Boolean);
+  const products = [];
+  for (let index = 0; index + 2 < productLines.length;) {
+    const quantity = Number(String(productLines[index + 1] || "").replace(/\s+/g, ""));
+    const price = parseEmailMoney(productLines[index + 2]);
+    if (!Number.isFinite(quantity) || quantity < 1 || !/[₽руб]/iu.test(productLines[index + 2])) {
+      index += 1;
+      continue;
+    }
+    products.push({
+      productId: "",
+      program: productLines[index].replace(/\s+/g, " ").trim(),
+      baseAmount: price * quantity
+    });
+    index += 3;
+  }
+  if (!products.length) return [];
+
+  const addressBlock = /Платёжный адрес\s*\n+([\s\S]*?)(?:\n+Поздравляем|\n+Работать с заказами|$)/iu.exec(text)?.[1] || "";
+  const addressLines = addressBlock.split("\n").map((line) => line.trim()).filter(Boolean);
+  const emailIndex = addressLines.findIndex((line) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(line));
+  const phoneIndex = addressLines.findIndex((line, index) => (
+    index > 0 && index < (emailIndex >= 0 ? emailIndex : addressLines.length)
+    && String(line).replace(/\D/g, "").length >= 7
+  ));
+  const detailsEnd = phoneIndex >= 0 ? phoneIndex : (emailIndex >= 0 ? emailIndex : addressLines.length);
+  const addressDetails = addressLines.slice(1, detailsEnd);
+  const email = emailIndex >= 0 ? addressLines[emailIndex] : "";
+  const phone = phoneIndex >= 0 ? addressLines[phoneIndex] : "";
+  const organization = addressDetails[0] || "";
+  const position = addressDetails[1] || "";
+  const source = addressDetails.length > 3 ? addressDetails[2] : "";
+  const city = addressDetails.at(-1) || "";
+  const totalAmount = parseEmailMoney(
+    /Итого\s*:\s*\n+([0-9][0-9\s.,]*)\s*(?:₽|руб)/iu.exec(text)?.[1] || ""
+  );
+  const paid = /(?:статус оплаты|заказ)\s*:\s*[^\n]*оплачен/iu.test(text)
+    && !/не\s+оплачен/iu.test(text);
+  const headerDate = new Date(String(headers.date || ""));
+  const dateCreated = Number.isNaN(headerDate.getTime())
+    ? `${year}-${month}-${day}T00:00:00`
+    : headerDate.toISOString();
+  const time = Number.isNaN(headerDate.getTime())
+    ? "00:00:00"
+    : headerDate.toLocaleTimeString("ru-RU", { timeZone: "Europe/Moscow", hour12: false });
+  const messageId = String(headers["message-id"] || "").replace(/[<>\s]+/g, "").slice(0, 120);
+  return products.map((product, index) => ({
+    id: `email-${orderId}-${index + 1}-${messageId || index + 1}`,
+    sourceType: "email",
+    date: `${day}.${month}.${year} ${time}`,
+    dateCreated,
+    name,
+    order: orderId,
+    orderId,
+    program: product.program,
+    productId: product.productId,
+    phone,
+    email,
+    city,
+    organization,
+    position,
+    source: source || "Электронная почта / WooCommerce",
+    note: "Заявка получена из уведомления WooCommerce.",
+    paid,
+    paymentAmount: paid ? totalAmount : 0
+  }));
+}
+
+function parseStudentApplicationOrderEmail(rawMessage) {
+  const inSalesRows = parseInSalesOrderEmail(rawMessage);
+  return inSalesRows.length ? inSalesRows : parseWooCommerceOrderEmail(rawMessage);
+}
+
+function normalizeStudentApplicationProgramMatchValue(value) {
+  return String(value || "")
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/\[\s*\d+\s*\]\s*$/u, "")
+    .replace(/^доступ\s+к\s+/u, "")
+    .replace(/^он[\s-]*лайн\s+семинару?\s*:?\s*/u, "")
+    .replace(/[«»"'`]+/gu, "")
+    .replace(/[^a-zа-я0-9]+/gu, " ")
+    .trim();
+}
+
 function studentEmailApplicationMatchesFilters(row, filters) {
   if (filters.onlyPaid && !row.paid) return false;
   const productId = String(filters.productId || "").trim();
@@ -10966,9 +11074,15 @@ function studentEmailApplicationMatchesFilters(row, filters) {
   if (!productId && !programName) return true;
   const matchesProduct = productId && String(row.productId || "").trim() === productId;
   const rowProgram = String(row.program || "").toLocaleLowerCase("ru-RU");
+  const normalizedProgramName = normalizeStudentApplicationProgramMatchValue(programName);
+  const normalizedRowProgram = normalizeStudentApplicationProgramMatchValue(rowProgram);
   const matchesProgram = programName && (
     rowProgram.includes(programName)
     || programName.includes(rowProgram.replace(/\s*\([^)]*\)\s*$/u, "").trim())
+    || (normalizedProgramName && normalizedRowProgram && (
+      normalizedRowProgram.includes(normalizedProgramName)
+      || normalizedProgramName.includes(normalizedRowProgram)
+    ))
   );
   return Boolean(matchesProduct || matchesProgram);
 }
@@ -10983,14 +11097,17 @@ async function runStudentApplicationsEmailQuery(filters) {
       45000
     );
     const allUids = parseImapSearchUids(searchResponse);
-    const uids = allUids.slice(-1000).reverse();
-    const subjects = await fetchImapSubjects(client, uids, warnings);
-    const orderUids = uids.filter((uid) => /^Новый заказ №/iu.test(subjects.get(uid) || ""));
+    const subjectUids = allUids.slice(-5000).reverse();
+    const subjects = await fetchImapSubjects(client, subjectUids, warnings);
+    const allOrderUids = subjectUids.filter((uid) => (
+      isStudentApplicationOrderSubject(subjects.get(uid) || "")
+    ));
+    const orderUids = allOrderUids.slice(0, 1000);
     const messages = await fetchImapMessages(client, orderUids, warnings);
     const rows = [];
     for (const message of messages) {
       try {
-        rows.push(...parseInSalesOrderEmail(message.bytes).filter((row) => (
+        rows.push(...parseStudentApplicationOrderEmail(message.bytes).filter((row) => (
           studentEmailApplicationMatchesFilters(row, filters)
         )));
       } catch (error) {
@@ -11000,7 +11117,7 @@ async function runStudentApplicationsEmailQuery(filters) {
     return {
       rows,
       total: rows.length,
-      truncated: allUids.length > uids.length,
+      truncated: allUids.length > subjectUids.length || allOrderUids.length > orderUids.length,
       warnings
     };
   } finally {
@@ -11466,6 +11583,25 @@ function parseStudentApplicationsQueryFilters(body = {}) {
   };
 }
 
+function mergeStudentApplicationRows(rows) {
+  const rowsByKey = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const orderId = String(row.orderId || "").trim();
+    const programKey = normalizeStudentApplicationProgramMatchValue(row.program);
+    const key = orderId && programKey
+      ? `order\u0000${orderId}\u0000${programKey}`
+      : `${row.sourceType || "mysql"}\u0000${orderId}\u0000${row.productId || ""}\u0000${row.id || ""}`;
+    const current = rowsByKey.get(key);
+    const currentIsMySql = String(current?.sourceType || "mysql") === "mysql";
+    const rowIsMySql = String(row?.sourceType || "mysql") === "mysql";
+    if (!current || (!currentIsMySql && rowIsMySql)) rowsByKey.set(key, row);
+  });
+  return [...rowsByKey.values()].sort((left, right) => (
+    String(right.dateCreated || "").localeCompare(String(left.dateCreated || ""))
+    || String(right.id || "").localeCompare(String(left.id || ""))
+  ));
+}
+
 async function handleStudentApplicationsQuery(req, res) {
   try {
     const body = await readJsonBody(req);
@@ -11508,20 +11644,7 @@ async function handleStudentApplicationsQuery(req, res) {
       throw new Error(warnings.join("\n"));
     }
 
-    const uniqueRows = [];
-    const seen = new Set();
-    rows
-      .slice()
-      .sort((left, right) => (
-        String(right.dateCreated || "").localeCompare(String(left.dateCreated || ""))
-        || String(right.id || "").localeCompare(String(left.id || ""))
-      ))
-      .forEach((row) => {
-        const key = `${row.sourceType || "mysql"}\u0000${row.orderId || ""}\u0000${row.productId || ""}\u0000${row.id || ""}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        uniqueRows.push(row);
-      });
+    const uniqueRows = mergeStudentApplicationRows(rows);
     sendJson(res, 200, {
       rows: uniqueRows,
       total: uniqueRows.length,
@@ -13970,6 +14093,8 @@ module.exports = {
   sanitizeStudentDatabaseExportPayload,
   inspectStudentDatabaseBinary,
   collectEmailMessageContent,
+  parseStudentApplicationOrderEmail,
+  mergeStudentApplicationRows,
   parseImapBodyStructureAttachments,
   parseStudentMailboxMessage,
   prepareStudentMailboxAttachmentForSave,

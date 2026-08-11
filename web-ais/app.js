@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.78",
+    version: "1.7.79",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.79",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Импорт заявок из mail@zifra-plus.ru распознаёт уведомления WooCommerce с префиксом сайта и сохраняет поддержку прежнего формата InSales. Поиск сначала проверяет до 5000 тем писем и только затем ограничивает число заказов, поэтому старые заявки не вытесняются обычной перепиской. Совпадающие заявки из почты и базы сайта объединяются без дублирования."
+      ]
+    },
     {
       version: "1.7.78",
       releasedAt: "2026-08-12",
