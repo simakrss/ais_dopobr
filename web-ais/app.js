@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.70",
+    version: "1.7.71",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.71",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Окно распознавания документов развёрнуто по доступной высоте, область выбора фотографии увеличена, а вертикальная прокрутка результатов сделана постоянно видимой. В итогах отдельно показываются выбранные, найденные и обработанные файлы, включая изображения, PDF и текстовые документы."
+      ]
+    },
     {
       version: "1.7.70",
       releasedAt: "2026-08-12",
@@ -27569,12 +27576,26 @@ MAX - https://bizvmax.ru/zifra_plus
       0,
       Number(value.documentCount ?? value.processedCount) || 0
     );
+    const sourceFileCount = Math.max(
+      processedCount,
+      Number(value.sourceFileCount ?? value.selectedFileCount) || 0
+    );
+    const selectedFileCount = Math.max(
+      processedCount,
+      Math.min(sourceFileCount || Number.MAX_SAFE_INTEGER, Number(value.selectedFileCount) || 0)
+    );
     return {
       ...value,
       recognizedAt,
       durationMs: Math.max(0, Number(value.durationMs) || 0),
+      sourceFileCount,
+      selectedFileCount,
+      unselectedFileCount: Math.max(0, Number(value.unselectedFileCount) || sourceFileCount - selectedFileCount),
       documentCount: processedCount,
       processedCount,
+      imageFileCount: Math.max(0, Number(value.imageFileCount) || 0),
+      pdfFileCount: Math.max(0, Number(value.pdfFileCount) || 0),
+      textFileCount: Math.max(0, Number(value.textFileCount) || 0),
       failedCount: Math.max(0, Number(value.failedCount) || 0),
       skippedCount: Math.max(0, Number(value.skippedCount) || 0),
       fields,
@@ -28086,6 +28107,14 @@ MAX - https://bizvmax.ru/zifra_plus
       fieldDocumentKeys.add(sourceKey);
       fieldDocuments.push({ source, sourceKey });
     });
+    const processedFileCount = Number(payload.documentCount ?? payload.processedCount) || 0;
+    const selectedFileCount = Math.max(processedFileCount, Number(payload.selectedFileCount) || 0);
+    const sourceFileCount = Math.max(selectedFileCount, Number(payload.sourceFileCount) || 0);
+    const fileTypeCounts = [
+      Number(payload.imageFileCount) > 0 ? `изображений: ${Number(payload.imageFileCount)}` : "",
+      Number(payload.pdfFileCount) > 0 ? `PDF: ${Number(payload.pdfFileCount)}` : "",
+      Number(payload.textFileCount) > 0 ? `текстовых: ${Number(payload.textFileCount)}` : ""
+    ].filter(Boolean);
     modal.querySelector("[data-ocr-progress-panel]")?.remove();
     modal.insertAdjacentHTML("beforeend", `
       <div class="student-document-recognition-result">
@@ -28096,7 +28125,10 @@ MAX - https://bizvmax.ru/zifra_plus
           <span>Дата распознавания: ${escapeHtml(formatDateTimeRu(payload.recognizedAt))}</span>
           <span>Время работы: ${escapeHtml(formatStudentDocumentRecognitionDuration(payload.durationMs))}</span>
           <span>Источник: ${escapeHtml(payload.sourceLabel || `Папка ${personLabel}`)}</span>
-          <span>Распознано документов: ${Number(payload.documentCount ?? payload.processedCount) || 0}</span>
+          <span>Обработано файлов: ${processedFileCount}${selectedFileCount ? ` из ${selectedFileCount} выбранных` : ""}</span>
+          ${sourceFileCount ? `<span>Найдено в папке: ${sourceFileCount}</span>` : ""}
+          ${fileTypeCounts.length ? `<span>${escapeHtml(fileTypeCounts.join(" · "))}</span>` : ""}
+          ${sourceFileCount > selectedFileCount ? `<span>Не выбрано: ${sourceFileCount - selectedFileCount}</span>` : ""}
           ${payload.failedCount ? `<span class="is-error">С ошибками: ${Number(payload.failedCount)}</span>` : ""}
           ${payload.skippedCount ? `<span>Пропущено: ${Number(payload.skippedCount)}</span>` : ""}
         </div>

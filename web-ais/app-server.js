@@ -7666,8 +7666,16 @@ async function runStudentDocumentRecognitionJob(job, options) {
       sourceLabel: sourceResult.sourceLabel,
       recognizedAt: new Date(job.completedAt).toISOString(),
       durationMs,
+      sourceFileCount: sourceResult.documents.length,
+      selectedFileCount: documents.length,
+      unselectedFileCount: Math.max(0, sourceResult.documents.length - documents.length),
       documentCount: successfulFiles.length,
       processedCount: successfulFiles.length,
+      imageFileCount: successfulFiles.filter((item) => /^image\//i.test(item.contentType)).length,
+      pdfFileCount: successfulFiles.filter((item) => item.contentType === "application/pdf").length,
+      textFileCount: successfulFiles.filter((item) => (
+        !/^image\//i.test(item.contentType) && item.contentType !== "application/pdf"
+      )).length,
       failedCount: fileResults.length - successfulFiles.length,
       skippedCount: sourceResult.skippedCount,
       fields: aggregatedFields,

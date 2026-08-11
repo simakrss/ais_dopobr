@@ -12555,7 +12555,8 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .student-document-recognition-modal {
-  width: min(1080px, 100%);
+  width: min(1280px, 100%);
+  height: calc(100dvh - 24px);
   max-height: calc(100vh - 24px);
   overflow: hidden;
   display: grid;
@@ -12578,7 +12579,8 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .student-document-recognition-selection-modal {
-  width: min(780px, 100%);
+  width: min(960px, 100%);
+  height: min(900px, calc(100dvh - 24px));
   max-height: calc(100vh - 24px);
   overflow: hidden;
   display: grid;
@@ -12597,7 +12599,10 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .student-document-recognition-selection-body {
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
   padding: 14px;
   background: #f7faf9;
 }
@@ -12783,12 +12788,35 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .student-document-recognition-result {
   min-height: 0;
-  overflow: auto;
+  height: 100%;
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-color: #7aaea3 #edf3f1;
+  overscroll-behavior: contain;
   display: grid;
   grid-auto-rows: max-content;
   align-content: start;
   gap: 8px;
   padding: 10px 12px;
+}
+
+.student-document-recognition-result::-webkit-scrollbar,
+.student-document-recognition-selection-body::-webkit-scrollbar {
+  width: 14px;
+}
+
+.student-document-recognition-result::-webkit-scrollbar-track,
+.student-document-recognition-selection-body::-webkit-scrollbar-track {
+  background: #edf3f1;
+}
+
+.student-document-recognition-result::-webkit-scrollbar-thumb,
+.student-document-recognition-selection-body::-webkit-scrollbar-thumb {
+  border: 3px solid #edf3f1;
+  border-radius: 999px;
+  background: #7aaea3;
 }
 
 .student-document-recognition-summary {
@@ -13002,19 +13030,20 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .student-document-photo-candidates {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
-  gap: 7px;
-  padding: 8px 9px 0;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 9px;
+  padding: 10px 9px 2px;
 }
 
 .student-document-photo-candidate {
   position: relative;
   min-width: 0;
   display: grid;
-  grid-template-columns: 18px 72px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  padding: 5px;
+  grid-template-columns: 18px 96px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-height: 144px;
+  padding: 7px;
   border: 1px solid var(--line);
   border-radius: 5px;
   background: #fff;
@@ -13032,8 +13061,8 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .student-document-photo-candidate-image {
-  width: 72px;
-  height: 86px;
+  width: 96px;
+  height: 128px;
   overflow: hidden;
   border-radius: 4px;
   background: #e8eeeb;
@@ -14052,10 +14081,12 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 @media (max-width: 760px) {
+  .student-document-recognition-backdrop,
   .student-document-recognition-selection-backdrop {
     padding: 0;
   }
 
+  .student-document-recognition-modal,
   .student-document-recognition-selection-modal {
     width: 100%;
     height: 100dvh;
@@ -14195,6 +14226,16 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .student-document-photo-candidates {
     grid-template-columns: 1fr;
+  }
+
+  .student-document-photo-candidate {
+    grid-template-columns: 18px 88px minmax(0, 1fr);
+    min-height: 128px;
+  }
+
+  .student-document-photo-candidate-image {
+    width: 88px;
+    height: 116px;
   }
 
   .student-document-photo-cropper-backdrop {
