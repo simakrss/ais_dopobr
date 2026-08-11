@@ -13,6 +13,7 @@ const { TextDecoder } = require("node:util");
 const SERVER_CODE_ROOT = __dirname;
 const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
 const XLSX = require(path.join(ROOT, "vendor", "sheetjs", "xlsx.full.min.js"));
+const PDF_LIB = require(path.join(ROOT, "vendor", "pdf-lib.min.js"));
 const MYSQL2_BUNDLE_PATH = path.join(ROOT, "vendor", "mysql2-bundle.cjs");
 const STORAGE_ROOT = path.join(ROOT, "storage");
 const PHOTO_ROOT = path.join(STORAGE_ROOT, "photos");
@@ -11778,6 +11779,30 @@ async function convertDocxBytesToPdf(docxBytes) {
   }
 }
 
+async function removeBlankInteriorPdfPages(pdfBytes) {
+  const document = await PDF_LIB.PDFDocument.load(pdfBytes, {
+    ignoreEncryption: true,
+    updateMetadata: false
+  });
+  const pages = document.getPages();
+  const visibleResourceNames = ["Font", "XObject", "Pattern", "Shading"];
+  const blankPageIndexes = [];
+  for (let index = 1; index < pages.length - 1; index += 1) {
+    const resources = pages[index].node.Resources();
+    const hasVisibleResources = Boolean(resources) && visibleResourceNames.some((name) => (
+      Boolean(resources.get(PDF_LIB.PDFName.of(name)))
+    ));
+    if (!hasVisibleResources) blankPageIndexes.push(index);
+  }
+  if (!blankPageIndexes.length) return pdfBytes;
+  blankPageIndexes.reverse().forEach((index) => document.removePage(index));
+  return Buffer.from(await document.save({
+    addDefaultPage: false,
+    useObjectStreams: false,
+    updateFieldAppearances: false
+  }));
+}
+
 function handleDocumentConversionSource(req, res, requestUrl) {
   pruneDocumentConversionSources();
   const prefix = "/api/document-conversion/source/";
@@ -11834,6 +11859,9 @@ async function handleContractDocument(req, res) {
     if (requestedOutputFormat === "pdf") {
       try {
         result = await convertDocxBytesToPdf(docxResult);
+        if (documentIdentity.includes("диплом о переподготовке")) {
+          result = await removeBlankInteriorPdfPages(result);
+        }
       } catch (conversionError) {
         outputFormat = "docx";
         result = docxResult;
@@ -12798,6 +12826,7 @@ module.exports = {
   inspectStudentDatabaseBinary,
   applyCustomDocumentPropertyFormulas,
   convertDocxBytesToPdf,
+  removeBlankInteriorPdfPages,
   evaluateDocumentFormula,
   extractWebDavBrowserPreviewText,
   fillDocxMarkers,

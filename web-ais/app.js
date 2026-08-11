@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.49",
+    version: "1.7.50",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.50",
+      releasedAt: "2026-08-11",
+      changes: [
+        "В PDF диплома о профессиональной переподготовке восстановлены исходные шрифты шаблона за счёт подключения системных шрифтов к ONLYOFFICE.",
+        "Исправлен переход между альбомной страницей диплома и книжным приложением, из-за которого в PDF появлялась пустая страница."
+      ]
+    },
     {
       version: "1.7.49",
       releasedAt: "2026-08-11",

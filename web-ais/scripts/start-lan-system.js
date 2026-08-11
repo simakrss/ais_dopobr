@@ -239,6 +239,7 @@ function startDocumentServices(commonEnvironment) {
           stdio: "inherit",
         },
       );
+      ensureOnlyOfficeDocumentFonts();
       console.log("OCR and OnlyOffice containers are running from local images.");
       return "running";
     } catch (_error) {
@@ -255,12 +256,64 @@ function startDocumentServices(commonEnvironment) {
         stdio: "inherit",
       },
     );
+    ensureOnlyOfficeDocumentFonts();
     console.log("OCR and OnlyOffice containers are running.");
     return "running";
   } catch (error) {
     console.error(`OCR/PDF could not be started: ${error.message}`);
     console.log("The main AIS servers will continue without Docker services.");
     return "unavailable";
+  }
+}
+
+function ensureOnlyOfficeDocumentFonts() {
+  const fontCachePath = "/var/www/onlyoffice/documentserver/server/FileConverter/bin/AllFonts.js";
+  const requiredFontCheck = ["Calibri", "Cambria", "Lucida Sans", "Times New Roman"]
+    .map((fontName) => `grep -Fq '${fontName}' '${fontCachePath}'`)
+    .join(" && ");
+  try {
+    execFileSync(
+      "docker.exe",
+      ["exec", "ais-onlyoffice", "bash", "-lc", requiredFontCheck],
+      {
+        timeout: 15000,
+        windowsHide: false,
+        stdio: "ignore",
+      },
+    );
+    console.log("ONLYOFFICE document fonts are ready.");
+    return;
+  } catch (_error) {
+    console.log("Updating ONLYOFFICE document fonts from Windows...");
+  }
+  try {
+    execFileSync(
+      "docker.exe",
+      [
+        "exec",
+        "ais-onlyoffice",
+        "bash",
+        "-lc",
+        "fc-cache -f && /usr/bin/documentserver-generate-allfonts.sh",
+      ],
+      {
+        timeout: 300000,
+        windowsHide: false,
+        stdio: "inherit",
+      },
+    );
+    execFileSync(
+      "docker.exe",
+      ["exec", "ais-onlyoffice", "bash", "-lc", requiredFontCheck],
+      {
+        timeout: 15000,
+        windowsHide: false,
+        stdio: "ignore",
+      },
+    );
+    console.log("ONLYOFFICE document fonts were updated.");
+  } catch (error) {
+    console.warn(`ONLYOFFICE document fonts could not be fully updated: ${error.message}`);
   }
 }
 

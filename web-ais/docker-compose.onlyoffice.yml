@@ -11,6 +11,11 @@ services:
       JWT_SECRET: "${ONLYOFFICE_JWT_SECRET:?Set ONLYOFFICE_JWT_SECRET}"
       ALLOW_PRIVATE_IP_ADDRESS: "true"
       EXAMPLE_ENABLED: "false"
+    volumes:
+      - type: bind
+        source: C:/Windows/Fonts
+        target: /usr/share/fonts/truetype/windows
+        read_only: true
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
