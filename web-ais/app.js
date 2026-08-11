@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.74",
+    version: "1.7.75",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.75",
+      releasedAt: "2026-08-12",
+      changes: [
+        "После фонового сохранения карточки и освобождения её блокировки соответствующий список сразу обновляется. Значок блокировки теперь исчезает не только у слушателей, но и в реестре программ, сотрудниках, затратах и остальных разделах системы."
+      ]
+    },
     {
       version: "1.7.74",
       releasedAt: "2026-08-12",
@@ -5816,7 +5823,10 @@ MAX - https://bizvmax.ru/zifra_plus
         console.warn("Изменения остались в фоновой очереди синхронизации", error);
         scheduleSharedApplicationStateSave(1000);
       } finally {
-        if (lock) await releaseRecordLock(lock);
+        if (lock) {
+          await releaseRecordLock(lock);
+          if (!state.modal) render();
+        }
       }
     }, 0);
   }
