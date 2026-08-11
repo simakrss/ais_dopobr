@@ -14235,28 +14235,22 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .student-review-actions {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px 10px;
   padding-left: 0;
 }
 
-.student-review-main-actions,
-.student-review-report-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  gap: 8px 10px;
-}
-
-.student-review-report-actions {
-  justify-self: start;
+.student-review-actions > * {
+  flex: 0 0 auto;
 }
 
 .student-course-page-button {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  white-space: nowrap;
 }
 
 .student-course-page-button svg {
@@ -14277,6 +14271,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .student-review-published input {
@@ -16310,6 +16305,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .student-review-actions {
     padding-left: 0;
+    flex-wrap: wrap;
   }
 
   .topbar {

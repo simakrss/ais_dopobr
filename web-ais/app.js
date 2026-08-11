@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.48",
+    version: "1.7.49",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.49",
+      releasedAt: "2026-08-11",
+      changes: [
+        "В карточке слушателя кнопки страницы курса, отчёта по оценкам и журнала активности вместе с флажком публикации отзыва размещены одной строкой над текстом отзыва."
+      ]
+    },
     {
       version: "1.7.48",
       releasedAt: "2026-08-11",
@@ -15001,31 +15008,27 @@ MAX - https://bizvmax.ru/zifra_plus
       : "Открыть журнал активности";
     return `
       <div class="student-review-panel">
+        <div class="student-review-actions">
+          <button class="ghost-button student-course-page-button" data-action="open-student-course-page" type="button" title="${escapeAttr(buttonTitle)}" aria-label="${escapeAttr(buttonTitle)}">
+            ${renderExternalLinkIcon()}
+            <span>Открыть страницу курса</span>
+          </button>
+          <button class="ghost-button student-course-page-button" data-action="open-student-grade-report" type="button" title="${escapeAttr(gradeReportTitle)}" aria-label="${escapeAttr(gradeReportTitle)}">
+            ${renderExternalLinkIcon()}
+            <span>Отчет по оценкам</span>
+          </button>
+          <button class="ghost-button student-course-page-button" data-action="open-student-activity-log" type="button" title="${escapeAttr(activityLogTitle)}" aria-label="${escapeAttr(activityLogTitle)}">
+            ${renderExternalLinkIcon()}
+            <span>Журнал активности</span>
+          </button>
+          <label class="student-review-published">
+            <input name="reviewPublished" type="checkbox" value="Да" ${isChecked(record.reviewPublished) ? "checked" : ""}>
+            <span>Отзыв размещен на сайте</span>
+          </label>
+        </div>
         <label class="student-review-text">
           <textarea name="review">${escapeHtml(record.review || "")}</textarea>
         </label>
-        <div class="student-review-actions">
-          <div class="student-review-main-actions">
-            <button class="ghost-button student-course-page-button" data-action="open-student-course-page" type="button" title="${escapeAttr(buttonTitle)}" aria-label="${escapeAttr(buttonTitle)}">
-              ${renderExternalLinkIcon()}
-              <span>Открыть страницу курса</span>
-            </button>
-            <label class="student-review-published">
-              <input name="reviewPublished" type="checkbox" value="Да" ${isChecked(record.reviewPublished) ? "checked" : ""}>
-              <span>Отзыв размещен на сайте</span>
-            </label>
-          </div>
-          <div class="student-review-report-actions" aria-label="Отчеты по обучению">
-            <button class="ghost-button student-course-page-button" data-action="open-student-grade-report" type="button" title="${escapeAttr(gradeReportTitle)}" aria-label="${escapeAttr(gradeReportTitle)}">
-              ${renderExternalLinkIcon()}
-              <span>Отчет по оценкам</span>
-            </button>
-            <button class="ghost-button student-course-page-button" data-action="open-student-activity-log" type="button" title="${escapeAttr(activityLogTitle)}" aria-label="${escapeAttr(activityLogTitle)}">
-              ${renderExternalLinkIcon()}
-              <span>Журнал активности</span>
-            </button>
-          </div>
-        </div>
       </div>
     `;
   }
