@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.71",
+    version: "1.7.72",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.72",
+      releasedAt: "2026-08-12",
+      changes: [
+        "При выборе фотографии слушателя или сотрудника сначала открываются изображения и PDF из его папки документов в выбранном локальном или облачном режиме. Если папка недоступна или не содержит подходящих файлов, остаётся выбор фотографии с устройства."
+      ]
+    },
     {
       version: "1.7.71",
       releasedAt: "2026-08-12",
@@ -12846,12 +12853,12 @@ MAX - https://bizvmax.ru/zifra_plus
                 </svg>
               </button>
             ` : ""}
-            <label class="photo-icon-button" title="Прикрепить и кадрировать фото" aria-label="Прикрепить и кадрировать фото">
-              <input id="contractPhotoInput" type="file" accept="image/*">
+            <button class="photo-icon-button" data-action="choose-contract-photo" type="button" title="Выбрать и кадрировать фото" aria-label="Выбрать и кадрировать фото">
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path d="M21.4 11.6l-8.9 8.9a6 6 0 0 1-8.5-8.5l9.8-9.8a4 4 0 0 1 5.7 5.7l-9.8 9.8a2 2 0 0 1-2.8-2.8l8.8-8.8"></path>
               </svg>
-            </label>
+            </button>
+            <input id="contractPhotoInput" type="file" accept="image/*" hidden>
             <button class="photo-icon-button" data-action="clear-contract-photo" type="button" title="Удалить фото" aria-label="Удалить фото">
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path d="M4 7h16"></path>
@@ -16545,12 +16552,12 @@ MAX - https://bizvmax.ru/zifra_plus
               </svg>
             </button>
           ` : ""}
-          <label class="photo-icon-button" title="Прикрепить и кадрировать фото" aria-label="Прикрепить и кадрировать фото">
-            <input id="studentPhotoInput" type="file" accept="image/*">
+          <button class="photo-icon-button" data-action="choose-student-photo" type="button" title="Выбрать и кадрировать фото" aria-label="Выбрать и кадрировать фото">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="M21.4 11.6l-8.9 8.9a6 6 0 0 1-8.5-8.5l9.8-9.8a4 4 0 0 1 5.7 5.7l-9.8 9.8a2 2 0 0 1-2.8-2.8l8.8-8.8"></path>
             </svg>
-          </label>
+          </button>
+          <input id="studentPhotoInput" type="file" accept="image/*" hidden>
           <button class="photo-icon-button" data-action="clear-photo" type="button" title="Удалить фото" aria-label="Удалить фото">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="M4 7h16"></path>
@@ -21264,6 +21271,8 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     document.getElementById("studentPhotoInput")?.addEventListener("change", handleStudentPhoto);
+    document.querySelector("[data-action='choose-student-photo']")
+      ?.addEventListener("click", (event) => choosePersonPhoto(event, "student"));
     document.querySelector("[data-action='crop-stored-photo']")
       ?.addEventListener("click", (event) => recropStoredPersonPhoto("student", event.currentTarget));
     document.querySelectorAll("[data-student-documents-folder-link]").forEach((link) => {
@@ -21317,6 +21326,8 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     document.getElementById("contractPhotoInput")?.addEventListener("change", handleContractPhoto);
+    document.querySelector("[data-action='choose-contract-photo']")
+      ?.addEventListener("click", (event) => choosePersonPhoto(event, "contract"));
     document.querySelector("[data-action='crop-contract-photo']")
       ?.addEventListener("click", (event) => recropStoredPersonPhoto("contract", event.currentTarget));
     document.querySelector("[data-action='clear-contract-photo']")?.addEventListener("click", async () => {
@@ -25963,6 +25974,169 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function getPersonPhotoInput(entityType) {
+    return document.getElementById(entityType === "contract" ? "contractPhotoInput" : "studentPhotoInput");
+  }
+
+  function openPersonPhotoDeviceFallback(entityType, message = "") {
+    document.querySelector("[data-person-photo-device-fallback]")?.remove();
+    const isContract = entityType === "contract";
+    const personLabel = isContract ? "сотрудника" : "слушателя";
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.dataset.personPhotoDeviceFallback = "";
+    backdrop.innerHTML = `
+      <section class="modal" role="dialog" aria-modal="true" aria-label="Выбор фото ${personLabel}">
+        <header class="modal-head">
+          <div>
+            <h2>Выбор фото ${escapeHtml(personLabel)}</h2>
+            <p>${escapeHtml(message || "В папке документов нет подходящих изображений или PDF.")}</p>
+          </div>
+          <button class="icon-button" data-action="close-person-photo-device-fallback" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <div class="modal-body">
+          <p>Выберите фотографию на этом устройстве. После выбора откроется окно кадрирования.</p>
+        </div>
+        <footer class="modal-actions">
+          <button class="ghost-button" data-action="close-person-photo-device-fallback" type="button">Отмена</button>
+          <button class="primary-button" data-action="choose-person-photo-device" type="button">Выбрать файл на устройстве</button>
+        </footer>
+      </section>
+    `;
+    const close = () => backdrop.remove();
+    backdrop.querySelectorAll("[data-action='close-person-photo-device-fallback']")
+      .forEach((button) => button.addEventListener("click", close));
+    backdrop.querySelector("[data-action='choose-person-photo-device']")?.addEventListener("click", () => {
+      close();
+      getPersonPhotoInput(entityType)?.click();
+    });
+    backdrop.addEventListener("pointerdown", (event) => {
+      if (event.target === backdrop) close();
+    });
+    backdrop.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") close();
+    });
+    document.body.appendChild(backdrop);
+    backdrop.querySelector("[data-action='choose-person-photo-device']")?.focus({ preventScroll: true });
+  }
+
+  async function savePersonPhotoCrop(entityType, cropPreview) {
+    const isContract = entityType === "contract";
+    const nameSelector = isContract
+      ? "#recordForm[data-config='contracts'] [name='name']"
+      : "#recordForm[data-config='students'] [name='name']";
+    const personName = String(document.querySelector(nameSelector)?.value || "").trim();
+    if (!personName) throw new Error(`Сначала укажите ФИО ${isContract ? "сотрудника" : "слушателя"}.`);
+    const pathInput = document.getElementById(isContract ? "contractPhotoPath" : "studentPhotoPath");
+    const preview = document.getElementById(isContract ? "contractPhotoPreview" : "studentPhotoPreview");
+    const dataUrl = `data:${cropPreview?.mimeType || "image/jpeg"};base64,${cropPreview?.base64 || ""}`;
+    if (!cropPreview?.base64) throw new Error("Не удалось подготовить выбранную фотографию.");
+    preview?.classList.add("is-loading");
+    try {
+      const uploaded = await uploadStoredPhoto(dataUrl, pathInput?.value || "", isContract
+        ? { entityType: "contract", employeeName: personName, contractName: personName, name: personName }
+        : { studentName: personName, name: personName });
+      if (pathInput) {
+        pathInput.value = uploaded.photoPath;
+        pathInput.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (!isContract) {
+        const hidden = document.getElementById("studentPhotoData");
+        const urlInput = document.getElementById("studentPhotoUrl");
+        if (hidden) hidden.value = "";
+        if (urlInput) urlInput.value = uploaded.photoUrl;
+        syncStudentPhotoPathUi(uploaded.photoPath, false);
+      }
+      if (preview) {
+        preview.classList.add("has-photo");
+        preview.querySelector(":scope > span")?.remove();
+        const image = preview.querySelector("img");
+        const photoUrl = getPhotoPreviewCacheBustedUrl(uploaded.photoUrl);
+        if (image) image.src = photoUrl;
+        else preview.insertAdjacentHTML("afterbegin", `<img src="${escapeAttr(photoUrl)}" alt="Фото ${isContract ? "сотрудника" : "слушателя"}">`);
+      }
+      state.modal.draft = isContract ? collectContractFormDraft() : collectStudentFormDraft();
+      state.modal.hasDraftChanges = true;
+    } finally {
+      preview?.classList.remove("is-loading");
+    }
+  }
+
+  async function choosePersonPhoto(event, entityType = "student") {
+    event?.preventDefault();
+    const isContract = entityType === "contract";
+    const button = event?.currentTarget;
+    const currentRecord = isContract ? collectContractFormDraft() : collectStudentFormDraft();
+    const personLabel = isContract ? "сотрудника" : "слушателя";
+    if (!String(currentRecord.name || "").trim()) {
+      alert(`Сначала укажите ФИО ${personLabel}.`);
+      return;
+    }
+    const folder = isContract
+      ? getContractDocumentsFolder(currentRecord)
+      : getStudentYandexDocumentsFolder(currentRecord);
+    if (!folder) {
+      openPersonPhotoDeviceFallback(entityType, `Не удалось определить папку документов ${personLabel}.`);
+      return;
+    }
+    const preferredSource = getStudentDocumentsSource();
+    const sourceCandidates = [...new Set([
+      preferredSource,
+      ...(isLocalDocumentsAvailable() ? [getStudentDocumentsSource(true)] : [])
+    ])];
+    let availableFolder = false;
+    let lastError = "";
+    if (button) {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+    }
+    try {
+      for (const source of sourceCandidates) {
+        try {
+          const response = await fetch(photoApiUrl("/api/students/recognize-documents/files"), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "AIS-Web"
+            },
+            body: JSON.stringify({ folder, source })
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.error || "Не удалось открыть папку документов.");
+          availableFolder = true;
+          const files = (Array.isArray(payload.files) ? payload.files : [])
+            .filter((file) => isStudentRecognitionVisualFile(file));
+          if (!files.length) break;
+          state.modal.draft = currentRecord;
+          openStudentDocumentPhotoCropper(null, {
+            folder,
+            source: String(payload.source || source),
+            files
+          }, 0, {
+            title: `Выбор фото ${personLabel} · ${String(payload.sourceLabel || (source === "local" ? "локальная папка" : "облако"))}`,
+            ariaLabel: `Выбор фото ${personLabel} из папки документов`,
+            useLabel: "Использовать фото",
+            defaultSelection: { x: 0, y: 0, width: 1, height: 1 },
+            onChooseFile: () => getPersonPhotoInput(entityType)?.click(),
+            onSelect: ({ cropPreview }) => savePersonPhotoCrop(entityType, cropPreview)
+          });
+          return;
+        } catch (error) {
+          lastError = error.message || String(error);
+        }
+      }
+      const message = availableFolder
+        ? `В папке документов ${personLabel} не найдены изображения или PDF.`
+        : `Папка документов ${personLabel} недоступна${lastError ? `: ${lastError}` : "."}`;
+      openPersonPhotoDeviceFallback(entityType, message);
+    } finally {
+      if (button?.isConnected) {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+      }
+    }
+  }
+
   async function handleStudentPhoto(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -29315,6 +29489,9 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </div>
         <footer class="modal-actions">
+          ${typeof options.onChooseFile === "function" ? `
+            <button class="ghost-button" data-action="choose-student-photo-file" type="button">Выбрать файл на устройстве</button>
+          ` : ""}
           <button class="ghost-button" data-action="close-student-photo-cropper" type="button">Отмена</button>
           <button class="primary-button" data-action="use-student-photo-crop" type="button" disabled>${escapeHtml(options.useLabel || "Использовать выделение")}</button>
         </footer>
@@ -29512,6 +29689,16 @@ MAX - https://bizvmax.ru/zifra_plus
                 width: clamp(Number(options.initialBox.width) || 0, 0, 1 - initialX),
                 height: clamp(Number(options.initialBox.height) || 0, 0, 1 - initialY)
               });
+            } else if (selectRegionMode && options.defaultSelection) {
+              const defaultSelection = options.defaultSelection;
+              const defaultX = clamp(Number(defaultSelection.x) || 0, 0, 1);
+              const defaultY = clamp(Number(defaultSelection.y) || 0, 0, 1);
+              selections.set(selectionKey, {
+                x: defaultX,
+                y: defaultY,
+                width: clamp(Number(defaultSelection.width) || 0, 0, 1 - defaultX),
+                height: clamp(Number(defaultSelection.height) || 0, 0, 1 - defaultY)
+              });
             } else if (!selectRegionMode) {
               selections.set(selectionKey, { x: 0.22, y: 0.08, width: 0.56, height: 0.84 });
             }
@@ -29707,6 +29894,10 @@ MAX - https://bizvmax.ru/zifra_plus
     nextButton.addEventListener("click", () => loadPage(currentPage + 1));
     backdrop.querySelectorAll("[data-action='close-student-photo-cropper']").forEach((button) => {
       button.addEventListener("click", close);
+    });
+    backdrop.querySelector("[data-action='choose-student-photo-file']")?.addEventListener("click", () => {
+      close();
+      options.onChooseFile?.();
     });
     backdrop.addEventListener("pointerdown", (event) => {
       if (event.target === backdrop) close();
