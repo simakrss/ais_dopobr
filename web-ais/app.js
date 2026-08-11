@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.47",
-    releasedAt: "2026-08-10"
+    version: "1.7.48",
+    releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.48",
+      releasedAt: "2026-08-11",
+      changes: [
+        "Если при сохранении карточки её блокировка потеряна, система предлагает перехватить блокировку для текущей сессии и после подтверждения автоматически продолжает сохранение.",
+        "При отказе от перехвата карточка остаётся открытой, а введённые данные сохраняются в форме без применения изменений."
+      ]
+    },
     {
       version: "1.7.47",
       releasedAt: "2026-08-10",
@@ -25015,14 +25023,30 @@ MAX - https://bizvmax.ru/zifra_plus
     event.preventDefault();
     const form = event.currentTarget;
     const existingId = String(form.dataset.id || "").trim();
+    const submitButton = form.querySelector('button[type="submit"]');
     const expectedLockKey = existingId
       ? recordLockKey(recordLockEntityType(form.dataset.config), existingId)
       : "";
     if (existingId && (form.dataset.recordLockLost === "true" || activeRecordLock?.key !== expectedLockKey)) {
-      alert("Запись не заблокирована за вами и не может быть сохранена. Закройте карточку и откройте её повторно.");
-      return;
+      const confirmed = confirm([
+        "Запись больше не заблокирована за текущей сессией.",
+        "",
+        "Разблокировать карточку для текущей сессии, заблокировать её для других сессий и продолжить сохранение?",
+        "",
+        "При отмене карточка останется открытой, а изменения не будут применены."
+      ].join("\n"));
+      if (!confirmed) return;
+      if (submitButton) submitButton.disabled = true;
+      const acquired = await acquireRecordLock(
+        recordLockEntityType(form.dataset.config),
+        existingId,
+        { takeover: true }
+      );
+      if (!acquired) {
+        if (submitButton) submitButton.disabled = false;
+        return;
+      }
     }
-    const submitButton = form.querySelector('button[type="submit"]');
     if (submitButton) submitButton.disabled = true;
     const savedId = saveFormRecord(form);
     if (!savedId) {
