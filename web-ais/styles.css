@@ -1749,7 +1749,7 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
 
 .student-list-advanced-filters {
   display: grid;
-  grid-template-columns: minmax(240px, 1.8fr) minmax(210px, 1.2fr) 142px 142px auto;
+  grid-template-columns: minmax(260px, 1.8fr) minmax(190px, 1.15fr) minmax(160px, 0.9fr) 132px 132px auto;
   align-items: end;
   gap: 7px;
   margin: -2px 0 8px;
@@ -1791,6 +1791,79 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   border-color: var(--teal);
   outline: 0;
   box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12);
+}
+
+.student-list-program-filter summary {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 7px;
+  border-radius: 5px;
+}
+
+.student-list-program-filter summary strong {
+  max-width: min(240px, 58%);
+  font-size: 11px;
+}
+
+.student-list-program-filter-panel {
+  right: auto;
+  left: 0;
+  width: min(520px, calc(100vw - 42px));
+  max-width: none;
+}
+
+.student-list-program-search {
+  display: grid !important;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 3px !important;
+  padding: 0 !important;
+  cursor: text !important;
+}
+
+.student-list-program-search > span {
+  display: grid;
+  place-items: center;
+  color: var(--muted) !important;
+  font-size: 14px !important;
+  font-weight: 400 !important;
+}
+
+.student-list-advanced-filters .student-list-program-search input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 3px 7px;
+}
+
+.student-list-program-filter-options {
+  max-height: 260px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.student-list-program-filter-options label > span {
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.student-list-advanced-filters .student-list-program-filter-options input[type="checkbox"] {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+}
+
+.student-list-program-filter-empty {
+  padding: 9px 7px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 .student-imported-view-bar {
@@ -16717,7 +16790,8 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .student-list-advanced-filters .student-list-program-filter,
-  .student-list-advanced-filters .student-list-date-field-filter {
+  .student-list-advanced-filters .student-list-date-field-filter,
+  .student-list-advanced-filters .student-list-date-period-filter {
     grid-column: 1 / -1;
   }
 

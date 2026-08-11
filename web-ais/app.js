@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.75",
+    version: "1.7.76",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.76",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Фильтр слушателей по программам поддерживает выбор нескольких программ с галочками и поиском. Для фильтра по любой дате добавлены готовые периоды: последние 7, 30 и 90 дней, текущий месяц, текущий год и произвольный диапазон."
+      ]
+    },
     {
       version: "1.7.75",
       releasedAt: "2026-08-12",
@@ -3036,11 +3043,13 @@ MAX - https://bizvmax.ru/zifra_plus
     generalExpenseWorkTypeFilter: [],
     studentProgramTypeFilter: [],
     studentListFilters: {
-      program: "",
+      programs: [],
       dateField: "",
+      datePeriod: "",
       dateFrom: "",
       dateTo: ""
     },
+    studentListProgramQuery: "",
     programRegistryTypeFilter: [],
     contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
     studentImportedViewIds: [],
@@ -7328,25 +7337,101 @@ MAX - https://bizvmax.ru/zifra_plus
     }));
   }
 
+  function getStudentListSelectedPrograms(filters = state.studentListFilters || {}) {
+    const values = Array.isArray(filters.programs)
+      ? filters.programs
+      : [filters.program];
+    return unique(values.map((value) => String(value || "").trim()).filter(Boolean));
+  }
+
+  function normalizeStudentListProgramQuery(value) {
+    return String(value || "").trim().toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  }
+
+  function applyStudentListProgramSearch(query, root = document) {
+    const normalizedQuery = normalizeStudentListProgramQuery(query);
+    let visibleCount = 0;
+    root.querySelectorAll("[data-student-list-program-option-row]").forEach((row) => {
+      const label = normalizeStudentListProgramQuery(row.textContent);
+      const hidden = Boolean(normalizedQuery && !label.includes(normalizedQuery));
+      row.hidden = hidden;
+      if (!hidden) visibleCount += 1;
+    });
+    const empty = root.querySelector("[data-student-list-program-filter-empty]");
+    if (empty) empty.hidden = visibleCount > 0;
+  }
+
+  function getStudentListDatePeriodDates(period, referenceDate = new Date()) {
+    const value = String(period || "custom");
+    if (["7", "30", "90"].includes(value)) {
+      return getStudentApplicationsDefaultDates(Number(value), referenceDate);
+    }
+    const dateTo = getStudentApplicationsDefaultDates(0, referenceDate).dateTo;
+    if (value === "month") return { dateFrom: `${dateTo.slice(0, 7)}-01`, dateTo };
+    if (value === "year") return { dateFrom: `${dateTo.slice(0, 4)}-01-01`, dateTo };
+    return null;
+  }
+
   function renderStudentListAdvancedFilters() {
     const filters = state.studentListFilters || {};
     const dateFields = getStudentListDateFilterFields();
     const programs = getStudentListProgramFilterOptions();
-    const active = Boolean(filters.program || filters.dateField || filters.dateFrom || filters.dateTo);
+    const selectedPrograms = getStudentListSelectedPrograms(filters);
+    const selectionLabel = selectedPrograms.length === 1
+      ? selectedPrograms[0]
+      : (selectedPrograms.length ? `Выбрано: ${selectedPrograms.length}` : "Все программы");
+    const programQuery = String(state.studentListProgramQuery || "");
+    const normalizedProgramQuery = normalizeStudentListProgramQuery(programQuery);
+    const visibleProgramCount = programs.filter((program) => (
+      !normalizedProgramQuery
+      || normalizeStudentListProgramQuery(program).includes(normalizedProgramQuery)
+    )).length;
+    const active = Boolean(selectedPrograms.length || filters.dateField || filters.dateFrom || filters.dateTo);
     return `
       <div class="student-list-advanced-filters ${active ? "is-active" : ""}" data-student-list-filters>
-        <label class="student-list-program-filter">
-          <span>Программа</span>
-          <select class="select-control" data-student-list-filter="program">
-            <option value="">Все программы</option>
-            ${programs.map((program) => `<option value="${escapeAttr(program)}" ${filters.program === program ? "selected" : ""}>${escapeHtml(program)}</option>`).join("")}
-          </select>
-        </label>
+        <details class="student-program-type-filter student-list-program-filter ${selectedPrograms.length ? "is-active" : ""}" data-program-type-filter data-student-list-program-filter>
+          <summary title="Выбрать одну или несколько программ">
+            <span>Программа</span>
+            <strong>${escapeHtml(selectionLabel)}</strong>
+            <svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5"></path></svg>
+          </summary>
+          <div class="student-program-type-filter-panel student-list-program-filter-panel">
+            <label class="student-list-program-search">
+              <span aria-hidden="true">⌕</span>
+              <input type="search" value="${escapeAttr(programQuery)}" placeholder="Поиск программы" autocomplete="off" data-student-list-program-search>
+            </label>
+            <div class="student-list-program-filter-options" data-student-list-program-filter-options>
+              ${programs.map((program) => {
+                const normalizedProgram = normalizeStudentListProgramQuery(program);
+                const hidden = normalizedProgramQuery && !normalizedProgram.includes(normalizedProgramQuery);
+                return `
+                  <label data-student-list-program-option-row ${hidden ? "hidden" : ""}>
+                    <input type="checkbox" value="${escapeAttr(program)}" data-student-list-program-filter-option ${selectedPrograms.includes(program) ? "checked" : ""}>
+                    <span>${escapeHtml(program)}</span>
+                  </label>
+                `;
+              }).join("")}
+              <div class="student-list-program-filter-empty" data-student-list-program-filter-empty ${visibleProgramCount ? "hidden" : ""}>Программы не найдены</div>
+            </div>
+            <button class="student-program-type-filter-clear" data-action="clear-student-list-program-filter" type="button" ${selectedPrograms.length ? "" : "disabled"}>Сбросить</button>
+          </div>
+        </details>
         <label class="student-list-date-field-filter">
           <span>Дата</span>
           <select class="select-control" data-student-list-filter="dateField">
             <option value="">Без фильтра по дате</option>
             ${dateFields.map((item) => `<option value="${escapeAttr(item.key)}" ${filters.dateField === item.key ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="student-list-date-period-filter">
+          <span>Период</span>
+          <select class="select-control" data-student-list-filter="datePeriod" ${filters.dateField ? "" : "disabled"}>
+            <option value="7" ${filters.datePeriod === "7" ? "selected" : ""}>Последние 7 дней</option>
+            <option value="30" ${filters.datePeriod === "30" ? "selected" : ""}>Последние 30 дней</option>
+            <option value="90" ${filters.datePeriod === "90" ? "selected" : ""}>Последние 90 дней</option>
+            <option value="month" ${filters.datePeriod === "month" ? "selected" : ""}>Текущий месяц</option>
+            <option value="year" ${filters.datePeriod === "year" ? "selected" : ""}>Текущий год</option>
+            <option value="custom" ${!filters.datePeriod || filters.datePeriod === "custom" ? "selected" : ""}>Произвольный период</option>
           </select>
         </label>
         <label>
@@ -7472,8 +7557,8 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function getStudentApplicationsDefaultDates(days = 30) {
-    const dateTo = new Date();
+  function getStudentApplicationsDefaultDates(days = 30, referenceDate = new Date()) {
+    const dateTo = new Date(referenceDate);
     const dateFrom = new Date(dateTo);
     dateFrom.setDate(dateFrom.getDate() - days);
     const format = (date) => [
@@ -9055,6 +9140,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const studentListFilters = state.view === "students"
       ? (state.studentListFilters || {})
       : {};
+    const selectedStudentPrograms = getStudentListSelectedPrograms(studentListFilters);
     const selectedRegistryProgramTypes = state.view === "programs"
       ? getProgramRegistryTypeFilterOptions()
         .filter((item) => state.programRegistryTypeFilter.includes(item))
@@ -9089,8 +9175,8 @@ MAX - https://bizvmax.ru/zifra_plus
         row.educationType || findProgramByName(row.program)?.type
       );
       const matchProgramType = !selectedProgramTypes.length || selectedProgramTypes.includes(programType);
-      const matchStudentProgram = !studentListFilters.program
-        || String(row.program || "").trim() === String(studentListFilters.program).trim();
+      const matchStudentProgram = !selectedStudentPrograms.length
+        || selectedStudentPrograms.includes(String(row.program || "").trim());
       const studentDateValue = studentListFilters.dateField
         ? parseTableSortDate(row[studentListFilters.dateField])
         : null;
@@ -20940,24 +21026,72 @@ MAX - https://bizvmax.ru/zifra_plus
       state.tablePages.students = 1;
       render();
     });
+    document.querySelector("[data-student-list-program-search]")?.addEventListener("input", (event) => {
+      state.studentListProgramQuery = event.currentTarget.value;
+      applyStudentListProgramSearch(event.currentTarget.value, event.currentTarget.closest("[data-student-list-program-filter]"));
+    });
+    document.querySelectorAll("[data-student-list-program-filter-option]").forEach((input) => {
+      input.addEventListener("change", () => {
+        state.studentListFilters = {
+          ...(state.studentListFilters || {}),
+          programs: Array.from(
+            document.querySelectorAll("[data-student-list-program-filter-option]:checked")
+          ).map((item) => item.value),
+          program: ""
+        };
+        state.tablePages.students = 1;
+        render();
+        const filter = document.querySelector("[data-student-list-program-filter]");
+        if (filter) filter.open = true;
+      });
+    });
+    document.querySelector("[data-action='clear-student-list-program-filter']")?.addEventListener("click", () => {
+      state.studentListFilters = {
+        ...(state.studentListFilters || {}),
+        programs: [],
+        program: ""
+      };
+      state.studentListProgramQuery = "";
+      state.tablePages.students = 1;
+      render();
+    });
     document.querySelectorAll("[data-student-list-filter]").forEach((control) => {
       control.addEventListener("change", () => {
         const key = String(control.dataset.studentListFilter || "");
         if (!key) return;
-        state.studentListFilters = {
+        const nextFilters = {
           ...(state.studentListFilters || {}),
           [key]: String(control.value || "")
         };
-        if (key === "dateField" && !control.value) {
-          state.studentListFilters.dateFrom = "";
-          state.studentListFilters.dateTo = "";
+        if (key === "dateField") {
+          if (!control.value) {
+            nextFilters.datePeriod = "";
+            nextFilters.dateFrom = "";
+            nextFilters.dateTo = "";
+          } else if (!nextFilters.dateFrom || !nextFilters.dateTo) {
+            nextFilters.datePeriod = "30";
+            Object.assign(nextFilters, getStudentListDatePeriodDates("30"));
+          }
+        } else if (key === "datePeriod") {
+          const dates = getStudentListDatePeriodDates(control.value);
+          if (dates) Object.assign(nextFilters, dates);
+        } else if (key === "dateFrom" || key === "dateTo") {
+          nextFilters.datePeriod = "custom";
         }
+        state.studentListFilters = nextFilters;
         state.tablePages.students = 1;
         render();
       });
     });
     document.querySelector("[data-action='clear-student-list-filters']")?.addEventListener("click", () => {
-      state.studentListFilters = { program: "", dateField: "", dateFrom: "", dateTo: "" };
+      state.studentListFilters = {
+        programs: [],
+        dateField: "",
+        datePeriod: "",
+        dateFrom: "",
+        dateTo: ""
+      };
+      state.studentListProgramQuery = "";
       state.tablePages.students = 1;
       render();
     });
