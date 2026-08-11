@@ -1,10 +1,18 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.50",
+    version: "1.7.51",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.51",
+      releasedAt: "2026-08-11",
+      changes: [
+        "В удостоверение о повышении квалификации и диплом о переподготовке корректно подставляется дата выдачи из карточки слушателя.",
+        "Для сертификатов ДОП и ПРО дата отчисления и учебный план больше не являются обязательными для формирования документа."
+      ]
+    },
     {
       version: "1.7.50",
       releasedAt: "2026-08-11",
@@ -1316,6 +1324,7 @@ MAX - https://bizvmax.ru/zifra_plus
     "Фото": "photoPath",
     "ФИО_ENG": "nameEnglish",
     "Дата выдачи документа": "diplomaIssueDate",
+    "Дата выдачи": "diplomaIssueDate",
     "Дата отчисления": "expulsionDate",
     "Дата приказа отчисления": "expulsionDate",
     "Дата приказа Отчисл Док Обр": "expulsionDate",
@@ -35420,6 +35429,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentDocumentRequiredFields(documentKind, record, programType = "") {
+    const normalizedProgramType = normalizeEducationProgramType(
+      programType || getStudentProgramTypeCode(record)
+    );
+    const isCertificateProgram = ["ДОП", "ПРО"].includes(normalizedProgramType);
     const common = [
       { key: "name", label: "ФИО" },
       { key: "program", label: "Программа" }
@@ -35503,7 +35516,9 @@ MAX - https://bizvmax.ru/zifra_plus
         { key: "hours", label: "Количество часов", value: getStudentProgramHours(record) },
         { key: "startDate", label: "Дата начала обучения" },
         { key: "endDate", label: "Дата окончания обучения" },
-        { key: "expulsionDate", label: "Дата приказа об отчислении" },
+        ...(isCertificateProgram ? [] : [
+          { key: "expulsionDate", label: "Дата приказа об отчислении" }
+        ]),
         { key: "diplomaBlankNo", label: "Номер бланка" },
         { key: "registrationNo", label: "Рег. номер" },
         { key: "diplomaIssueDate", label: "Дата выдачи" }
@@ -35524,7 +35539,7 @@ MAX - https://bizvmax.ru/zifra_plus
         }
       );
     }
-    if (documentKind === "education") {
+    if (documentKind === "education" && !isCertificateProgram) {
       requiredFields.push({
         key: "program",
         focusKey: "program",
