@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.69",
+    version: "1.7.70",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.70",
+      releasedAt: "2026-08-12",
+      changes: [
+        "При сохранении выбранных писем и вложений в папку документов показывается отдельный индикатор загрузки; элементы выбора блокируются до завершения операции."
+      ]
+    },
     {
       version: "1.7.69",
       releasedAt: "2026-08-12",
@@ -26298,10 +26305,18 @@ MAX - https://bizvmax.ru/zifra_plus
           <output data-student-mailbox-count>Письма ещё не загружены</output>
         </div>
         <div class="student-mailbox-status" data-student-mailbox-status aria-live="polite"></div>
+        <div class="student-mailbox-import-progress" data-student-mailbox-import-progress role="status" aria-live="polite" hidden>
+          <span class="student-mailbox-progress-spinner" aria-hidden="true"></span>
+          <div class="student-mailbox-progress-copy">
+            <strong data-student-mailbox-progress-title>Загрузка выбранных писем…</strong>
+            <span>Текст писем и вложения сохраняются в папку документов. Не закрывайте окно.</span>
+            <progress max="100" aria-label="Загрузка выбранных писем"></progress>
+          </div>
+        </div>
         <div class="student-mailbox-list" data-student-mailbox-list></div>
         <footer class="student-mailbox-footer">
           <button class="ghost-button" data-action="close-student-mailbox" type="button">Отмена</button>
-          <button class="primary-button" data-action="import-student-mailbox" type="button" disabled>Загрузить выбранные</button>
+          <button class="primary-button student-mailbox-import-button" data-action="import-student-mailbox" type="button" disabled><span data-student-mailbox-import-label>Загрузить выбранные</span></button>
         </footer>
       </section>
     `;
@@ -26311,9 +26326,33 @@ MAX - https://bizvmax.ru/zifra_plus
     const status = backdrop.querySelector("[data-student-mailbox-status]");
     const count = backdrop.querySelector("[data-student-mailbox-count]");
     const importButton = backdrop.querySelector("[data-action='import-student-mailbox']");
+    const importButtonLabel = importButton.querySelector("[data-student-mailbox-import-label]");
+    const importProgress = backdrop.querySelector("[data-student-mailbox-import-progress]");
+    const importProgressTitle = backdrop.querySelector("[data-student-mailbox-progress-title]");
+    const dialog = backdrop.querySelector(".student-mailbox-dialog");
     const selectAll = backdrop.querySelector("[data-student-mailbox-select-all]");
     let messages = [];
     let busy = false;
+    let importing = false;
+    const setImportProgress = (active, selectedCount = 0) => {
+      importing = Boolean(active);
+      importProgress.hidden = !importing;
+      importButton.classList.toggle("is-loading", importing);
+      importButton.setAttribute("aria-busy", importing ? "true" : "false");
+      if (dialog) {
+        dialog.classList.toggle("is-importing", importing);
+        if (importing) dialog.setAttribute("aria-busy", "true");
+        else dialog.removeAttribute("aria-busy");
+      }
+      if (importButtonLabel) importButtonLabel.textContent = importing ? "Загрузка…" : "Загрузить выбранные";
+      if (importProgressTitle && importing) {
+        importProgressTitle.textContent = `Загрузка выбранных писем: ${selectedCount}…`;
+      }
+      filters.querySelectorAll("input, select, button").forEach((control) => { control.disabled = importing; });
+      selectAll.disabled = importing;
+      list.querySelectorAll("input[data-message-uid]").forEach((control) => { control.disabled = importing; });
+      backdrop.querySelectorAll("[data-action='close-student-mailbox']").forEach((control) => { control.disabled = importing; });
+    };
     const close = () => { if (!busy) backdrop.remove(); };
     backdrop.querySelectorAll("[data-action='close-student-mailbox']").forEach((control) => control.addEventListener("click", close));
     backdrop.addEventListener("pointerdown", (pointerEvent) => { if (pointerEvent.target === backdrop) close(); });
@@ -26380,6 +26419,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!uids.length || busy) return;
       busy = true;
       importButton.disabled = true;
+      setImportProgress(true, uids.length);
       status.textContent = "Сохранение текста писем, преобразование изображений и загрузка вложений…";
       try {
         const response = await fetch(photoApiUrl("/api/students/mailbox-documents/import"), {
@@ -26403,8 +26443,12 @@ MAX - https://bizvmax.ru/zifra_plus
         backdrop.remove();
       } catch (error) {
         status.textContent = `Ошибка: ${error.message}`;
-        busy = false;
-        updateSelection();
+      } finally {
+        if (backdrop.isConnected) {
+          busy = false;
+          setImportProgress(false);
+          updateSelection();
+        }
       }
     });
     loadMessages();
