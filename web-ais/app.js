@@ -1,10 +1,17 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.51",
+    version: "1.7.52",
     releasedAt: "2026-08-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.52",
+      releasedAt: "2026-08-11",
+      changes: [
+        "Блок отзыва в карточке слушателя адаптирован к ширине формы: поле не выходит за границы, а кнопки и подпись публикации корректно переносятся при нехватке места."
+      ]
+    },
     {
       version: "1.7.51",
       releasedAt: "2026-08-11",

@@ -14213,17 +14213,24 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .student-review-panel {
   display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   gap: 8px;
 }
 
 .student-review-text {
   display: block;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .student-review-text textarea {
   display: block;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 142px;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -14237,20 +14244,30 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 .student-review-actions {
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   gap: 8px 10px;
   padding-left: 0;
 }
 
 .student-review-actions > * {
-  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .student-course-page-button {
   display: inline-flex;
+  flex: 0 1 auto;
   align-items: center;
   gap: 7px;
-  white-space: nowrap;
+  white-space: normal;
+}
+
+.student-course-page-button span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .student-course-page-button svg {
@@ -14265,16 +14282,24 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .student-review-published {
   display: inline-flex;
+  flex: 0 1 auto;
   align-items: center;
   gap: 6px;
   color: #3d4945;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  white-space: nowrap;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.student-review-published span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .student-review-published input {
+  flex: 0 0 16px;
   width: 16px;
   height: 16px;
   margin: 0;
