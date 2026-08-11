@@ -2,6 +2,7 @@
 setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul
 title АИС Допобразование — остановка
+call :log Начало остановки АИС.
 pushd "%~dp0"
 if errorlevel 1 goto :path_error
 
@@ -12,22 +13,33 @@ if exist "C:\Program Files\nodejs\node.exe" set "AIS_NODE=C:\Program Files\nodej
 if not exist "%AIS_NODE%" goto :node_error
 
 :run
+call :log Отправлена команда остановки локальных серверов АИС.
 "%AIS_NODE%" ".\scripts\stop-lan-system.js" %*
 set "AIS_EXIT_CODE=%ERRORLEVEL%"
+if "%AIS_EXIT_CODE%"=="0" (
+  call :log Локальные серверы АИС остановлены.
+) else (
+  call :log ОШИБКА: остановка АИС завершилась с кодом %AIS_EXIT_CODE%.
+)
 popd
 echo.
 pause
 exit /b %AIS_EXIT_CODE%
 
 :node_error
-echo Node.js не найден. Установите Node.js или добавьте node.exe в PATH.
+call :log ОШИБКА: Node.js не найден. Установите Node.js или добавьте node.exe в PATH.
 popd
 echo.
 pause
 exit /b 1
 
 :path_error
-echo Не удалось открыть папку АИС.
+call :log ОШИБКА: не удалось открыть папку АИС.
 echo.
 pause
 exit /b 1
+
+:log
+set "AIS_LOG_TIME=%TIME: =0%"
+echo [%DATE% %AIS_LOG_TIME:~0,8%] %*
+exit /b 0

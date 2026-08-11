@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.76",
+    version: "1.7.77",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.77",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В сценариях запуска и остановки локальной АИС добавлены дата и время начала операции, запуска и остановки серверов, завершения и ошибок. Сообщения диспетчера локальных серверов, OCR и ONLYOFFICE также выводятся с точной отметкой времени."
+      ]
+    },
     {
       version: "1.7.76",
       releasedAt: "2026-08-12",

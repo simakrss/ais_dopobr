@@ -7,6 +7,32 @@ const os = require("os");
 const path = require("path");
 const { execFileSync, spawn } = require("child_process");
 
+const eventTimestampFormatter = new Intl.DateTimeFormat("ru-RU", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+function enableTimestampedConsole() {
+  for (const method of ["log", "warn", "error"]) {
+    const write = console[method].bind(console);
+    console[method] = (...values) => {
+      const output = [...values];
+      if (typeof output[0] === "string" && output[0].startsWith("\n")) {
+        write("");
+        output[0] = output[0].slice(1);
+      }
+      write(`[${eventTimestampFormatter.format(new Date()).replace(",", "")}]`, ...output);
+    };
+  }
+}
+
+enableTimestampedConsole();
+
 const appRoot = path.resolve(__dirname, "..");
 const logRoot = path.join(appRoot, "tmp", "lan-system");
 const statusPath = path.join(logRoot, "status.json");
