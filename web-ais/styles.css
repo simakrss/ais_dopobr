@@ -6241,7 +6241,7 @@ body.long-press-dragging * {
 
 .student-bulk-operations-dialog,
 .student-bulk-result-dialog {
-  width: min(780px, 100%);
+  width: min(900px, 100%);
 }
 
 .student-bulk-operation-grid {
@@ -6255,13 +6255,19 @@ body.long-press-dragging * {
 }
 
 .student-bulk-operation-grid label,
+.student-bulk-operation-message-panel,
 .student-bulk-operation-document-panel,
+.student-bulk-operation-order-panel,
+.student-bulk-operation-portal-panel,
 .student-bulk-operation-event-panel {
   min-width: 0;
 }
 
 .student-bulk-operation-grid label:not(.checkbox-line),
+.student-bulk-operation-message-panel,
 .student-bulk-operation-document-panel,
+.student-bulk-operation-order-panel,
+.student-bulk-operation-portal-panel,
 .student-bulk-operation-event-panel {
   display: grid;
   gap: 5px;
@@ -6273,7 +6279,7 @@ body.long-press-dragging * {
   font-weight: 700;
 }
 
-.student-bulk-operation-grid :is(input, select) {
+.student-bulk-operation-grid :is(input, select, textarea) {
   width: 100%;
   min-width: 0;
   min-height: 34px;
@@ -6285,7 +6291,7 @@ body.long-press-dragging * {
 }
 
 .student-bulk-operation-document-panel,
-.student-bulk-operation-event-panel {
+.student-bulk-operation-order-panel {
   grid-template-columns: minmax(220px, 1fr) minmax(150px, .5fr);
   align-items: end;
   padding: 10px;
@@ -6296,6 +6302,88 @@ body.long-press-dragging * {
 
 .student-bulk-operation-document-panel .checkbox-line {
   grid-column: 1 / -1;
+}
+
+.student-bulk-operation-message-panel,
+.student-bulk-operation-portal-panel,
+.student-bulk-operation-event-panel {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-soft);
+}
+
+.student-bulk-operation-message-panel {
+  grid-template-columns: minmax(210px, .42fr) minmax(320px, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.student-bulk-message-preview textarea {
+  min-height: 180px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.student-bulk-operation-order-panel {
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-soft);
+}
+
+.student-bulk-order-number {
+  grid-column: 1 / -1;
+}
+
+.student-bulk-operation-portal-panel {
+  grid-template-columns: minmax(180px, .35fr) minmax(320px, 1fr);
+  align-items: end;
+  gap: 10px;
+}
+
+.student-bulk-operation-portal-panel p {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.student-bulk-operation-event-panel {
+  gap: 8px;
+}
+
+.student-bulk-event-list {
+  display: grid;
+  max-height: min(390px, 48vh);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.student-bulk-event-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 150px;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.student-bulk-event-row:last-child {
+  border-bottom: 0;
+}
+
+.student-bulk-event-row > label:not(.checkbox-line) {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.student-bulk-event-row > label:not(.checkbox-line) > span {
+  font-weight: 600;
 }
 
 .student-bulk-operation-grid .checkbox-line {
@@ -17031,11 +17119,19 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     width: 100%;
   }
 
+  .student-bulk-operation-message-panel,
   .student-bulk-operation-document-panel,
+  .student-bulk-operation-order-panel,
+  .student-bulk-operation-portal-panel,
   .student-bulk-operation-event-panel,
+  .student-bulk-event-row,
   .student-bulk-result-summary,
   .student-bulk-result-list > div {
     grid-template-columns: 1fr;
+  }
+
+  .student-bulk-event-row > label:not(.checkbox-line) {
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .student-program-type-filter-panel {

@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.97",
+    version: "1.7.98",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.98",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Групповые операции слушателей дополнены настройками формата и отправки документов по email, формированием номера и даты приказа, отправкой доступа к порталу, одновременной простановкой нескольких событий с разными датами и предпросмотром персонализированного сообщения для первого выбранного слушателя."
+      ]
+    },
     {
       version: "1.7.97",
       releasedAt: "2026-08-12",
@@ -9073,7 +9080,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </select>
           <button class="ghost-button" data-action="bulk-status" data-config="${configId}" type="button" ${selected.length ? "" : "disabled"}>Сменить статус</button>
         ` : ""}
-        <button class="ghost-button" data-action="bulk-clear" data-config="${configId}" type="button" ${selected.length ? "" : "disabled"}>Снять выбор</button>
+        ${configId === "students" ? "" : `<button class="ghost-button" data-action="bulk-clear" data-config="${configId}" type="button" ${selected.length ? "" : "disabled"}>Снять выбор</button>`}
         ${configId === "students" ? `
           <button class="primary-button" data-action="open-student-bulk-operations" type="button" ${selected.length ? "" : "disabled"}>Групповые операции</button>
         ` : ""}
@@ -31714,12 +31721,26 @@ MAX - https://bizvmax.ru/zifra_plus
     return result;
   }
 
-  async function runStudentBulkEvent(records, eventKey, eventDate, updateProgress) {
-    const definition = studentEventTemplates.find((item) => item.key === eventKey);
+  async function runStudentBulkEvents(records, events, updateProgress) {
+    const normalizedEvents = (Array.isArray(events) ? events : [])
+      .map((event) => ({
+        key: String(event?.key || "").trim(),
+        date: String(event?.date || "").trim()
+      }))
+      .filter((event, index, items) => (
+        event.key
+        && studentEventTemplates.some((item) => item.key === event.key)
+        && items.findIndex((item) => item.key === event.key) === index
+      ));
     const result = { success: 0, skipped: 0, failed: 0, details: [] };
+    if (!normalizedEvents.length) {
+      result.skipped = records.length;
+      result.details.push({ tone: "warning", name: "События", message: "Не выбрано ни одного события." });
+      return result;
+    }
     for (let index = 0; index < records.length; index += 1) {
       const source = records[index];
-      updateProgress(index, `Событие: ${source.name || source.id}`);
+      updateProgress(index, `События: ${source.name || source.id}`);
       const acquired = await acquireRecordLock("students", source.id, { promptTakeover: false });
       if (!acquired) {
         result.skipped += 1;
@@ -31727,19 +31748,27 @@ MAX - https://bizvmax.ru/zifra_plus
         continue;
       }
       try {
-        const record = {
-          ...source,
-          [`event_${eventKey}_state`]: eventDate ? "dated" : "checked",
-          [`event_${eventKey}_date`]: eventDate || "",
-          [`event_${eventKey}_label`]: definition?.label || source[`event_${eventKey}_label`] || "Событие"
-        };
+        const record = { ...source };
+        const changes = [];
+        normalizedEvents.forEach(({ key, date }) => {
+          const definition = studentEventTemplates.find((item) => item.key === key);
+          const label = definition?.label || source[`event_${key}_label`] || "Событие";
+          record[`event_${key}_state`] = date ? "dated" : "checked";
+          record[`event_${key}_date`] = date;
+          record[`event_${key}_label`] = label;
+          changes.push({
+            field: `event_${key}_state`,
+            label,
+            before: source[`event_${key}_date`] || source[`event_${key}_state`] || "",
+            after: date || "Отмечено"
+          });
+        });
         replaceStudentBulkRecord(record);
-        addAudit("Массово проставлено событие", configs.students.title, `${record.name}: ${definition?.label || eventKey}`, {
+        addAudit("Массово проставлены события", configs.students.title, `${record.name}: ${normalizedEvents.length}`, {
           entityType: "students",
           entityId: record.id,
           entityLabel: record.name,
-          field: `event_${eventKey}_state`,
-          after: eventDate || "Отмечено"
+          changes
         });
         result.success += 1;
       } finally {
@@ -31750,7 +31779,140 @@ MAX - https://bizvmax.ru/zifra_plus
     return result;
   }
 
-  async function runStudentBulkDocuments(records, operation, preferredDate, autoFill, updateProgress) {
+  async function runStudentBulkOrderDetails(records, orderType, orderDate, requestedOrderNo, updateProgress) {
+    const normalizedType = orderType === "expulsion" ? "expulsion" : "enrollment";
+    const dateField = normalizedType === "expulsion" ? "expulsionDate" : "enrollmentDate";
+    const numberField = normalizedType === "expulsion" ? "expulsionOrderNo" : "enrollmentOrderNo";
+    const formulaKey = normalizedType === "expulsion" ? "expulsionOrderNumber" : "enrollmentOrderNumber";
+    const date = String(orderDate || "").trim() || todayIso();
+    const orderNo = String(requestedOrderNo || "").trim() || getGeneratedNumberFromDataFormula(
+      formulaKey,
+      parseOrdersSdoDate(date) || new Date(),
+      records[0]?.id
+    ).value;
+    const result = { success: 0, skipped: 0, failed: 0, details: [] };
+    for (let index = 0; index < records.length; index += 1) {
+      const source = records[index];
+      updateProgress(index, `Приказ: ${source.name || source.id}`);
+      const acquired = await acquireRecordLock("students", source.id, { promptTakeover: false });
+      if (!acquired) {
+        result.skipped += 1;
+        result.details.push({ tone: "warning", name: source.name, message: "Запись заблокирована другой сессией." });
+        continue;
+      }
+      try {
+        const record = { ...source, [dateField]: date, [numberField]: orderNo };
+        replaceStudentBulkRecord(record);
+        addAudit("Сформированы реквизиты приказа", configs.students.title, `${record.name}: ${orderNo} от ${date}`, {
+          entityType: "students",
+          entityId: record.id,
+          entityLabel: record.name,
+          changes: [
+            { field: dateField, label: "Дата приказа", before: source[dateField] || "", after: date },
+            { field: numberField, label: "Номер приказа", before: source[numberField] || "", after: orderNo }
+          ]
+        });
+        result.success += 1;
+      } finally {
+        await releaseRecordLock();
+      }
+    }
+    result.notice = await persistStudentBulkChanges();
+    return result;
+  }
+
+  function getStudentBulkPortalLogin(record = {}) {
+    const existing = String(record.login || "").trim();
+    if (existing) return existing;
+    const email = String(record.email || "").trim();
+    const parts = email.split("@");
+    return parts.length > 1 ? parts[0].trim().toLowerCase() : "";
+  }
+
+  async function runStudentBulkPortalAccess(records, eventDate, updateProgress) {
+    const result = { success: 0, skipped: 0, failed: 0, details: [] };
+    const subject = getSdoSettingValue("portalAccessEmailSubject").trim()
+      || "Доступ к порталу дистанционного обучения Цифровизация Плюс";
+    const date = String(eventDate || "").trim() || todayIso();
+    for (let index = 0; index < records.length; index += 1) {
+      const source = records[index];
+      updateProgress(index, `Доступ к порталу: ${source.name || source.id}`);
+      const acquired = await acquireRecordLock("students", source.id, { promptTakeover: false });
+      if (!acquired) {
+        result.skipped += 1;
+        result.details.push({ tone: "warning", name: source.name, message: "Запись заблокирована другой сессией." });
+        continue;
+      }
+      try {
+        const login = getStudentBulkPortalLogin(source);
+        if (!login || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(source.email || "").trim())) {
+          result.skipped += 1;
+          result.details.push({ tone: "warning", name: source.name, message: "Не указан корректный Email для формирования логина и отправки доступа." });
+          continue;
+        }
+        const record = {
+          ...source,
+          login,
+          password: String(source.password || "").trim() || createPortalPassword(),
+          portalAccessMessage: ""
+        };
+        const message = String(generateStudentCommunicationMessages(record).portalAccessMessage || "").trim();
+        if (!message) {
+          result.skipped += 1;
+          result.details.push({ tone: "warning", name: source.name, message: "Не удалось сформировать сообщение о доступе к порталу." });
+          continue;
+        }
+        const sent = await sendServerEmail({
+          email: record.email,
+          subject,
+          message,
+          confirmText: "",
+          button: null,
+          recipientMode: "student",
+          messageType: "Доступ к порталу дистанционного обучения",
+          skipConfirmation: true,
+          quiet: true,
+          entityType: "students",
+          entityId: record.id,
+          entityName: record.name
+        });
+        if (!sent) {
+          result.failed += 1;
+          result.details.push({ tone: "error", name: record.name, message: "Письмо с данными доступа не отправлено; новые учётные данные не сохранены." });
+          continue;
+        }
+        record.event_portalCredentialsSent_state = "dated";
+        record.event_portalCredentialsSent_date = date;
+        record.event_portalCredentialsSent_label = studentEventTemplates
+          .find((item) => item.key === "portalCredentialsSent")?.label || "Отправлены данные для доступа к порталу";
+        replaceStudentBulkRecord(record);
+        addAudit("Отправлены данные для доступа к порталу", configs.students.title, record.name || record.id, {
+          entityType: "students",
+          entityId: record.id,
+          entityLabel: record.name,
+          changes: [
+            { field: "login", label: "Логин СДО", before: source.login || "", after: record.login },
+            { field: "event_portalCredentialsSent_date", label: "Дата отправки доступа", before: source.event_portalCredentialsSent_date || "", after: date }
+          ]
+        });
+        result.success += 1;
+      } finally {
+        await releaseRecordLock();
+      }
+    }
+    result.notice = await persistStudentBulkChanges();
+    return result;
+  }
+
+  async function runStudentBulkDocuments(
+    records,
+    operation,
+    preferredDate,
+    autoFill,
+    generationFormat,
+    emailDeliveryMode,
+    updateProgress
+  ) {
     const result = { success: 0, skipped: 0, failed: 0, details: [] };
     const isGroupOrder = ["enrollmentOrder", "expulsionOrder"].includes(operation);
     let sharedOrderNo = "";
@@ -31793,7 +31955,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     }
     if (autoFill) result.notice = await persistStudentBulkChanges();
-    const generationGroups = isGroupOrder
+    const generationGroups = isGroupOrder && emailDeliveryMode !== "student"
       ? [...preparedRecords.reduce((groups, record) => {
           const orderField = operation === "enrollmentOrder" ? "enrollmentOrderNo" : "expulsionOrderNo";
           const key = normalizeOrderDocumentNumber(record[orderField]) || `record:${record.id}`;
@@ -31823,14 +31985,36 @@ MAX - https://bizvmax.ru/zifra_plus
         });
         continue;
       }
+      if (
+        emailDeliveryMode === "student"
+        && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(record.email || "").trim())
+      ) {
+        result.skipped += count;
+        result.details.push({ tone: "warning", name: record.name, message: "Документ не сформирован: не указан корректный Email слушателя." });
+        continue;
+      }
+      const effectiveTemplate = {
+        ...documentTemplate,
+        generationFormat: normalizeDocumentGenerationFormat(generationFormat || documentTemplate.generationFormat),
+        emailDeliveryMode: normalizeDocumentEmailDeliveryMode(emailDeliveryMode, documentTemplate)
+      };
       const generated = await downloadStudentDocumentFromTemplate(
-        { ...documentTemplate, emailDeliveryMode: "off" },
+        effectiveTemplate,
         record,
         null,
         "Не удалось сформировать групповой документ",
-        { storageRequest: getStudentDocumentStorageRequest(record, documentTemplate) }
+        {
+          storageRequest: getStudentDocumentStorageRequest(record, effectiveTemplate),
+          skipEmailConfirmation: true,
+          quietEmail: true
+        }
       );
-      if (generated?.generated) result.success += count;
+      if (generated?.generated) {
+        result.success += count;
+        if (emailDeliveryMode !== "off" && !generated.emailed) {
+          result.details.push({ tone: "warning", name: record.name, message: "Документ сформирован, но не отправлен по электронной почте." });
+        }
+      }
       else {
         result.failed += count;
         result.details.push({ tone: "error", name: record.name, message: "Документ не сформирован." });
@@ -31843,6 +32027,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function openStudentBulkOperationsDialog() {
     const records = getRowsByIds("students", getSelected("students"));
     if (!records.length) return;
+    const previewRecord = records[0];
     document.querySelector("[data-student-bulk-operations]")?.remove();
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop student-bulk-operations-backdrop";
@@ -31857,23 +32042,60 @@ MAX - https://bizvmax.ru/zifra_plus
           <label><span>Операция</span><select name="operation">
             <option value="message">Отправить сообщение</option>
             <option value="document">Сформировать документы</option>
-            <option value="event">Проставить событие</option>
+            <option value="orderDetails">Сформировать номер и дату приказа</option>
+            <option value="portalAccess">Отправить данные для доступа к порталу</option>
+            <option value="event">Проставить события</option>
           </select></label>
-          <label data-student-bulk-panel="message"><span>Вид сообщения</span><select name="messageKey">
-            ${studentCommunicationMessages.filter((item) => item.showInCommunications !== false).map((item) => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`).join("")}
-          </select></label>
+          <div class="student-bulk-operation-message-panel" data-student-bulk-panel="message">
+            <label><span>Вид сообщения</span><select name="messageKey">
+              ${studentCommunicationMessages.filter((item) => item.showInCommunications !== false).map((item) => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`).join("")}
+            </select></label>
+            <label class="student-bulk-message-preview">
+              <span>Пример для: ${escapeHtml(previewRecord.name || previewRecord.id)}</span>
+              <textarea data-student-bulk-message-preview readonly aria-readonly="true"></textarea>
+            </label>
+          </div>
           <div class="student-bulk-operation-document-panel" data-student-bulk-panel="document" hidden>
             <label><span>Документ</span><select name="documentOperation">
               ${studentBulkDocumentOperations.map((item) => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`).join("")}
             </select></label>
             <label><span>Дата операции</span><input name="operationDate" type="date" value="${todayIso()}"></label>
+            <label><span>Формат</span><select name="generationFormat">
+              <option value="pdf">PDF</option>
+              <option value="docx">DOCX</option>
+            </select></label>
+            <label><span>Отправка по электронной почте</span><select name="emailDeliveryMode">
+              <option value="off">Не отправлять</option>
+              <option value="student">Отправить слушателю</option>
+              <option value="system">Отправить на системный ящик</option>
+            </select></label>
             <label class="checkbox-line"><input name="autoFill" type="checkbox" checked><span>Автоматически заполнить вычисляемые реквизиты</span></label>
           </div>
-          <div class="student-bulk-operation-event-panel" data-student-bulk-panel="event" hidden>
-            <label><span>Событие</span><select name="eventKey">
-              ${studentEventTemplates.map((item) => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`).join("")}
+          <div class="student-bulk-operation-order-panel" data-student-bulk-panel="orderDetails" hidden>
+            <label><span>Вид приказа</span><select name="orderType">
+              <option value="enrollment">Приказ о зачислении</option>
+              <option value="expulsion">Приказ об отчислении</option>
             </select></label>
-            <label><span>Дата события</span><input name="eventDate" type="date" value="${todayIso()}"></label>
+            <label><span>Дата приказа</span><input name="orderDate" type="date" value="${todayIso()}"></label>
+            <label class="student-bulk-order-number"><span>Номер приказа</span><input name="orderNo" placeholder="Оставьте пустым для автоматического формирования"></label>
+          </div>
+          <div class="student-bulk-operation-portal-panel" data-student-bulk-panel="portalAccess" hidden>
+            <label><span>Дата отправки</span><input name="portalEventDate" type="date" value="${todayIso()}"></label>
+            <p>Отсутствующие логин и пароль будут сформированы автоматически. После успешной отправки в карточке будет отмечено соответствующее событие.</p>
+          </div>
+          <div class="student-bulk-operation-event-panel" data-student-bulk-panel="event" hidden>
+            <strong>Выберите одно или несколько событий и укажите для каждого дату</strong>
+            <div class="student-bulk-event-list">
+              ${studentEventTemplates.map((item, index) => `
+                <div class="student-bulk-event-row">
+                  <label class="checkbox-line">
+                    <input name="eventKeys" type="checkbox" value="${escapeAttr(item.key)}" ${index === 0 ? "checked" : ""}>
+                    <span>${escapeHtml(item.label)}</span>
+                  </label>
+                  <label><span>Дата</span><input data-event-date-for="${escapeAttr(item.key)}" type="date" value="${todayIso()}" ${index === 0 ? "" : "disabled"}></label>
+                </div>
+              `).join("")}
+            </div>
           </div>
           <p class="student-bulk-operation-hint" data-student-bulk-hint>Сообщение будет сформировано отдельно для каждого слушателя по шаблону вкладки «Коммуникации».</p>
           <div class="student-bulk-operation-progress" data-student-bulk-progress hidden><span></span><strong data-student-bulk-progress-label>Подготовка...</strong></div>
@@ -31886,6 +32108,29 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
     const form = backdrop.querySelector("form");
     const close = () => backdrop.remove();
+    const syncMessagePreview = () => {
+      const messageKey = String(form.elements.messageKey?.value || "");
+      const generated = generateStudentCommunicationMessages(previewRecord);
+      const message = String(previewRecord[messageKey] || generated[messageKey] || "").trim();
+      const preview = form.querySelector("[data-student-bulk-message-preview]");
+      if (preview) preview.value = message || "Сообщение для выбранного слушателя не сформировано.";
+    };
+    const syncDocumentOptions = () => {
+      const template = getStudentBulkDocumentTemplate(previewRecord, form.elements.documentOperation?.value);
+      if (!template) return;
+      form.elements.generationFormat.value = normalizeDocumentGenerationFormat(template.generationFormat);
+      form.elements.emailDeliveryMode.value = normalizeDocumentEmailDeliveryMode(template.emailDeliveryMode, template);
+    };
+    const syncEventRows = () => {
+      form.querySelectorAll("input[name='eventKeys']").forEach((checkbox) => {
+        const date = form.querySelector(`[data-event-date-for="${CSS.escape(checkbox.value)}"]`);
+        if (date) date.disabled = !checkbox.checked;
+      });
+    };
+    const getSelectedEvents = () => [...form.querySelectorAll("input[name='eventKeys']:checked")].map((checkbox) => ({
+      key: checkbox.value,
+      date: form.querySelector(`[data-event-date-for="${CSS.escape(checkbox.value)}"]`)?.value || ""
+    }));
     const syncPanels = () => {
       const operation = form.elements.operation.value;
       form.querySelectorAll("[data-student-bulk-panel]").forEach((panel) => {
@@ -31893,17 +32138,27 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       const hints = {
         message: "Сообщение будет сформировано отдельно для каждого слушателя по шаблону вкладки «Коммуникации».",
-        document: "Вычисляемые даты, номера, часы и реквизиты документа будут заполнены автоматически. Неопределимые персональные данные будут перечислены в результате.",
-        event: "Событие и его дата будут записаны в карточку каждого доступного слушателя."
+        document: "Формат и отправка по email применяются только к текущему групповому запуску. Постоянные параметры шаблонов не изменяются.",
+        orderDetails: "Один номер и дата приказа будут записаны всем выбранным слушателям. Если номер не введён, он сформируется по системной формуле.",
+        portalAccess: "Доступ отправляется персонально каждому слушателю; отсутствующие учётные данные формируются автоматически.",
+        event: "Все отмеченные события будут записаны одним пакетом с указанными для них датами."
       };
       form.querySelector("[data-student-bulk-hint]").textContent = hints[operation];
     };
     backdrop.addEventListener("pointerdown", (event) => { if (event.target === backdrop) close(); });
     form.querySelectorAll("[data-action='close-student-bulk-operations']").forEach((button) => button.addEventListener("click", close));
     form.elements.operation.addEventListener("change", syncPanels);
+    form.elements.messageKey.addEventListener("change", syncMessagePreview);
+    form.elements.documentOperation.addEventListener("change", syncDocumentOptions);
+    form.querySelectorAll("input[name='eventKeys']").forEach((checkbox) => checkbox.addEventListener("change", syncEventRows));
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const operation = form.elements.operation.value;
+      const selectedEvents = operation === "event" ? getSelectedEvents() : [];
+      if (operation === "event" && !selectedEvents.length) {
+        alert("Выберите хотя бы одно событие.");
+        return;
+      }
       if (!confirm(`Выполнить выбранную операцию для ${records.length} слушателей?`)) return;
       const submit = form.querySelector("button[type='submit']");
       const progress = form.querySelector("[data-student-bulk-progress]");
@@ -31921,13 +32176,25 @@ MAX - https://bizvmax.ru/zifra_plus
         if (operation === "message") {
           result = await runStudentBulkMessage(records, form.elements.messageKey.value, updateProgress);
         } else if (operation === "event") {
-          result = await runStudentBulkEvent(records, form.elements.eventKey.value, form.elements.eventDate.value, updateProgress);
+          result = await runStudentBulkEvents(records, selectedEvents, updateProgress);
+        } else if (operation === "orderDetails") {
+          result = await runStudentBulkOrderDetails(
+            records,
+            form.elements.orderType.value,
+            form.elements.orderDate.value,
+            form.elements.orderNo.value,
+            updateProgress
+          );
+        } else if (operation === "portalAccess") {
+          result = await runStudentBulkPortalAccess(records, form.elements.portalEventDate.value, updateProgress);
         } else {
           result = await runStudentBulkDocuments(
             records,
             form.elements.documentOperation.value,
             form.elements.operationDate.value,
             form.elements.autoFill.checked,
+            form.elements.generationFormat.value,
+            form.elements.emailDeliveryMode.value,
             updateProgress
           );
         }
@@ -31941,6 +32208,9 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     });
     document.body.appendChild(backdrop);
+    syncMessagePreview();
+    syncDocumentOptions();
+    syncEventRows();
     syncPanels();
     form.elements.operation.focus({ preventScroll: true });
   }
@@ -38572,7 +38842,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .replace(/\{([^{}\r\n]+)\}/g, replaceMarker);
   }
 
-  function prepareStudentDocumentEmailRequest(documentTemplate, record, fieldValues, sourceValues) {
+  function prepareStudentDocumentEmailRequest(documentTemplate, record, fieldValues, sourceValues, options = {}) {
     const recipientMode = normalizeDocumentEmailDeliveryMode(
       documentTemplate.emailDeliveryMode,
       documentTemplate
@@ -38620,7 +38890,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const recipientDescription = sendToSystemMailbox
       ? `системный ящик ${recipient}`
       : `адрес ${recipientRoleLabel} ${recipient}`;
-    if (!confirm(`Сформировать документ «${documentTemplate.title}» и отправить его по почте?\n\nПолучатель: ${recipientDescription}.`)) {
+    if (!options.skipConfirmation && !confirm(`Сформировать документ «${documentTemplate.title}» и отправить его по почте?\n\nПолучатель: ${recipientDescription}.`)) {
       return false;
     }
     return {
@@ -38679,7 +38949,8 @@ MAX - https://bizvmax.ru/zifra_plus
         documentTemplate,
         record,
         fieldValues,
-        sourceValues
+        sourceValues,
+        { skipConfirmation: options.skipEmailConfirmation === true }
       );
       if (emailRequest === false) return;
       const storageRequest = options.storageRequest || await prepareStudentDocumentStorageRequest(
@@ -38723,13 +38994,14 @@ MAX - https://bizvmax.ru/zifra_plus
           source: "document-generation"
         }
       );
+      let emailSent = false;
       if (emailRequest && emailResponse) {
         const attachment = await createStudentDocumentEmailAttachment(
           emailResponse,
           responseDetails.fileName,
           responseDetails.outputFormat
         );
-        await sendServerEmail({
+        emailSent = await sendServerEmail({
           email: String(record.email || "").trim(),
           subject: emailRequest.subject,
           message: emailRequest.message,
@@ -38737,7 +39009,8 @@ MAX - https://bizvmax.ru/zifra_plus
           attachment,
           recipientMode: emailRequest.recipientMode,
           messageType: options.messageType || documentTemplate.title || "Документ слушателя",
-          skipConfirmation: true
+          skipConfirmation: true,
+          quiet: options.quietEmail === true
         });
       }
       if (responseDetails.conversionFallback) {
@@ -38748,7 +39021,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       return {
         generated: true,
-        emailed: Boolean(emailRequest),
+        emailed: emailSent,
         outputFormat: responseDetails.outputFormat,
         conversionFallback: responseDetails.conversionFallback
       };
