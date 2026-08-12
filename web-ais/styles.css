@@ -852,6 +852,12 @@ body.is-session-expired {
   display: none;
 }
 
+.admin-database-subpanel > .admin-system-documents-head:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .admin-database-subpanel-head {
   display: flex;
   flex-wrap: wrap;

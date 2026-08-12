@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.89",
+    version: "1.7.90",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.90",
+      releasedAt: "2026-08-12",
+      changes: [
+        "На вкладках подключения «Интернет магазин» и «Облачная база» убрана лишняя горизонтальная линия над содержимым."
+      ]
+    },
     {
       version: "1.7.89",
       releasedAt: "2026-08-12",
