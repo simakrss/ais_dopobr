@@ -51,7 +51,7 @@ const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
 const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST = "imap.timeweb.ru";
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_SMTP_HOST = "smtp.timeweb.ru";
-const DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN = "mail@zifra-plus.ru";
+const DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN = "mail@edu-plus.ru";
 const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
 let serverSettings = {};
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
@@ -758,20 +758,28 @@ function migrateStudentApplicationsMailboxSettings(settings = {}) {
   const currentLogin = String(next.studentApplicationsEmailLogin || "").trim();
   let changed = false;
 
-  // An early version stored the mailbox for student documents in the single
-  // applications-mailbox slot. Preserve its credentials as a document mailbox
-  // and restore the dedicated applications address expected by the importer.
-  if (currentLogin.toLowerCase() === "mail@edu-plus.ru") {
+  // mail@edu-plus.ru is the primary mailbox. When upgrading an installation
+  // where it was stored among additional mailboxes, swap the mailbox roles and
+  // preserve both sets of credentials without exposing or re-entering passwords.
+  if (currentLogin && currentLogin.toLowerCase() !== DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN) {
     const documentMailboxes = Array.isArray(next.studentDocumentMailboxes)
       ? [...next.studentDocumentMailboxes]
       : [];
-    const alreadyMoved = documentMailboxes.some((mailbox) => (
+    const primaryIndex = documentMailboxes.findIndex((mailbox) => (
+      String(mailbox?.login || "").trim().toLowerCase() === DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN
+    ));
+    const primaryMailbox = primaryIndex >= 0
+      ? documentMailboxes.splice(primaryIndex, 1)[0]
+      : null;
+    const currentAlreadyAdditional = documentMailboxes.some((mailbox) => (
       String(mailbox?.login || "").trim().toLowerCase() === currentLogin.toLowerCase()
     ));
-    if (!alreadyMoved) {
+    if (!currentAlreadyAdditional) {
       documentMailboxes.push({
-        id: "student-documents-edu-plus",
-        label: "Документы слушателей · mail@edu-plus.ru",
+        id: currentLogin.toLowerCase() === "mail@zifra-plus.ru"
+          ? "student-documents-zifra-plus"
+          : normalizeMailboxId(`student-documents-${currentLogin}`, "student-documents-previous-primary"),
+        label: `Дополнительный ящик · ${currentLogin}`,
         host: String(next.studentApplicationsEmailHost || DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST).trim(),
         port: normalizeMailboxPort(next.studentApplicationsEmailPort, 993),
         secure: next.studentApplicationsEmailSecure !== false,
@@ -785,8 +793,21 @@ function migrateStudentApplicationsMailboxSettings(settings = {}) {
       });
     }
     next.studentDocumentMailboxes = documentMailboxes;
+    next.studentApplicationsEmailHost = String(
+      primaryMailbox?.host || primaryMailbox?.imapHost || DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST
+    ).trim();
+    next.studentApplicationsEmailPort = normalizeMailboxPort(
+      primaryMailbox?.port || primaryMailbox?.imapPort,
+      993
+    );
+    next.studentApplicationsEmailSecure = primaryMailbox?.secure !== false;
+    next.studentApplicationsEmailSmtpHost = String(
+      primaryMailbox?.smtpHost || DEFAULT_STUDENT_APPLICATIONS_EMAIL_SMTP_HOST
+    ).trim();
+    next.studentApplicationsEmailSmtpPort = normalizeMailboxPort(primaryMailbox?.smtpPort, 465);
+    next.studentApplicationsEmailSmtpSecure = primaryMailbox?.smtpSecure !== false;
     next.studentApplicationsEmailLogin = DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN;
-    next.studentApplicationsEmailPassword = "";
+    next.studentApplicationsEmailPassword = String(primaryMailbox?.password || "");
     changed = true;
   }
 

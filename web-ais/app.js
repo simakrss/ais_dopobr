@@ -1,7 +1,7 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const DEFAULT_STUDENT_APPLICATIONS_EMAIL = Object.freeze({
-    login: "mail@zifra-plus.ru",
+    login: "mail@edu-plus.ru",
     host: "imap.timeweb.ru",
     port: 993,
     smtpHost: "smtp.timeweb.ru",
@@ -19,10 +19,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.123",
+    version: "1.7.124",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.124",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Основным почтовым ящиком системы назначен mail@edu-plus.ru: он используется первым для заявок, документов и системной отправки.",
+        "Существующий mail@zifra-plus.ru сохраняется как дополнительный рабочий ящик без потери настроек подключения."
+      ]
+    },
     {
       version: "1.7.123",
       releasedAt: "2026-08-12",
