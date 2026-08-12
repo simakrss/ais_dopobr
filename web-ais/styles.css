@@ -2653,6 +2653,12 @@ body.sidebar-collapsed .sidebar-toggle {
   border: 0;
 }
 
+.collection-register > .table-wrap,
+.issued-documents-register > .table-wrap,
+.document-constructor-panel .document-template-registry > .table-wrap {
+  max-height: var(--registry-table-max-height, max(180px, calc(100dvh - 250px)));
+}
+
 .table-pagination {
   display: flex;
   align-items: center;
@@ -2930,7 +2936,7 @@ body.is-resizing-column {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  max-height: max(260px, calc(100dvh - 390px));
+  max-height: var(--registry-table-max-height, max(180px, calc(100dvh - 390px)));
   overflow: auto;
   scrollbar-gutter: stable;
   overscroll-behavior-inline: contain;

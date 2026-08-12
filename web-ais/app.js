@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.136",
+    version: "1.7.137",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.137",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Высота основных реестров слушателей, сотрудников, программ, затрат и других разделов теперь рассчитывается по свободному месту на текущем экране.",
+        "Таблицы остаются внутри экрана и используют собственную вертикальную прокрутку; горизонтальная прокрутка и закреплённые заголовки колонок сохранены."
+      ]
+    },
     {
       version: "1.7.136",
       releasedAt: "2026-08-12",
@@ -3701,6 +3709,8 @@ MAX - https://bizvmax.ru/zifra_plus
   let employeePaymentPersistTimer = 0;
   let studentApplicationsSearchTimer = 0;
   let employeePaymentPreviewFrame = 0;
+  let mainRegistryViewportFitFrame = 0;
+  let mainRegistryViewportFitTimer = 0;
   let pendingEmployeePaymentPreview = null;
   let fieldEditHistoryBound = false;
   let globalEscapeKeyBound = false;
@@ -7454,6 +7464,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ${renderDatabaseExportIndicator()}
     `;
     bindEvents();
+    scheduleMainRegistryTableViewportFit();
+    window.clearTimeout(mainRegistryViewportFitTimer);
+    mainRegistryViewportFitTimer = window.setTimeout(scheduleMainRegistryTableViewportFit, 180);
     restoreDictionaryAddFocus();
     focusPendingContractTemplateField();
     if (state.view === "admin" && state.adminTab === "audit" && isAdminUser() && !state.auditLog.loaded && !state.auditLog.loading) {
@@ -7462,6 +7475,40 @@ MAX - https://bizvmax.ru/zifra_plus
     if (state.view === "admin" && state.adminTab === "users" && isAdminUser() && !state.authUsersLoaded && !state.authUsersLoading) {
       queueMicrotask(() => loadAuthUsers());
     }
+  }
+
+  function fitMainRegistryTablesToViewport() {
+    const viewport = window.visualViewport;
+    const viewportHeight = Math.max(0, Number(viewport?.height) || window.innerHeight || document.documentElement.clientHeight);
+    const viewportBottom = (Number(viewport?.offsetTop) || 0) + viewportHeight;
+    document.querySelectorAll("[data-main-registry]").forEach((registry) => {
+      const tableWrap = registry.querySelector(".table-wrap");
+      if (!tableWrap) return;
+      const tableTop = tableWrap.getBoundingClientRect().top;
+      const tableSiblings = Array.from(tableWrap.parentElement?.children || []);
+      const followingHeight = tableSiblings
+        .slice(tableSiblings.indexOf(tableWrap) + 1)
+        .reduce((height, element) => {
+          const style = window.getComputedStyle(element);
+          if (style.display === "none" || ["absolute", "fixed"].includes(style.position)) return height;
+          return height
+            + element.getBoundingClientRect().height
+            + (Number.parseFloat(style.marginTop) || 0)
+            + (Number.parseFloat(style.marginBottom) || 0);
+        }, 0);
+      const registryStyle = window.getComputedStyle(registry);
+      const bottomPadding = Number.parseFloat(registryStyle.paddingBottom) || 0;
+      const availableHeight = Math.floor(viewportBottom - tableTop - followingHeight - bottomPadding - 10);
+      tableWrap.style.setProperty("--registry-table-max-height", `${Math.max(108, availableHeight)}px`);
+    });
+  }
+
+  function scheduleMainRegistryTableViewportFit() {
+    if (mainRegistryViewportFitFrame) window.cancelAnimationFrame(mainRegistryViewportFitFrame);
+    mainRegistryViewportFitFrame = window.requestAnimationFrame(() => {
+      mainRegistryViewportFitFrame = 0;
+      fitMainRegistryTablesToViewport();
+    });
   }
 
   function focusPendingContractTemplateField() {
@@ -8589,7 +8636,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const exportedCount = allRows.filter((row) => row.frdoKey === "exported").length;
     const pendingCount = allRows.filter((row) => row.frdoKey === "pending").length;
     return `
-      <section class="panel issued-documents-register" data-issued-documents-register>
+      <section class="panel issued-documents-register" data-issued-documents-register data-main-registry>
         <div class="issued-documents-summary" aria-label="Сводка реестра">
           <span>Всего: <strong>${allRows.length}</strong></span>
           <span class="is-success">Выгружено в ФРДО: <strong>${exportedCount}</strong></span>
@@ -8695,7 +8742,7 @@ MAX - https://bizvmax.ru/zifra_plus
       )).length
       : 0;
     return `
-      <section class="panel">
+      <section class="panel collection-register" data-main-registry>
         <div class="section-head">
           <div class="${state.view === "directExpenses" ? "direct-expenses-section-heading" : ""}">
             <p class="eyebrow">${config.subtitle}</p>
@@ -11883,7 +11930,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const fields = activeDocument.fields;
     const customCount = fields.filter((field) => field.custom).length;
     return `
-      <section class="panel document-constructor-panel">
+      <section class="panel document-constructor-panel" data-main-registry>
         <div class="section-head">
           <div>
             <p class="eyebrow">Шаблоны и формулы</p>
@@ -43266,6 +43313,8 @@ MAX - https://bizvmax.ru/zifra_plus
     bindStudentStatusHistoryNavigation();
     window.addEventListener("resize", repositionOpenFieldLookupPanels, { passive: true });
     window.addEventListener("resize", repositionOpenComboPanels, { passive: true });
+    window.addEventListener("resize", scheduleMainRegistryTableViewportFit, { passive: true });
+    window.visualViewport?.addEventListener("resize", scheduleMainRegistryTableViewportFit, { passive: true });
     document.addEventListener("scroll", repositionOpenComboPanels, { passive: true, capture: true });
     render();
     if (sharedStateError) {
