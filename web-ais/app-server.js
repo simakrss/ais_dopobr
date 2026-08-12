@@ -11146,7 +11146,10 @@ function parseInSalesOrderEmail(rawMessage) {
       note: [paymentMethod, paymentStatus, coupon].filter(Boolean).join("\n"),
       paid,
       orderAmount: paymentAmount,
-      paymentAmount: paid ? paymentAmount : 0
+      // InSales creates the receipt record independently of the payment-status
+      // flag in the notification. The status is still preserved in `paid` and
+      // `note`, while the full allocated order amount is imported into Finance.
+      paymentAmount
     };
   });
 }

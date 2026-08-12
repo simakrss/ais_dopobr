@@ -9,10 +9,17 @@
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.103",
+    version: "1.7.104",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.104",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Неоплаченные заказы InSales теперь импортируются как поступления денег на полную сумму заказа; исходный статус оплаты сохраняется в сведениях заявки."
+      ]
+    },
     {
       version: "1.7.103",
       releasedAt: "2026-08-12",

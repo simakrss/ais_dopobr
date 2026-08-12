@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const {
   parseStudentMailboxMessage,
+  parseStudentApplicationOrderEmail,
   collectEmailMessageContent,
   parseImapBodyStructureAttachments,
   prepareStudentMailboxAttachmentForSave
@@ -46,6 +47,45 @@ assert.match(message.from, /student@example\.ru/);
 assert.match(message.text, /Направляю документы/);
 assert.equal(message.attachments.length, 1);
 assert.equal(message.messageId, "mail-test@example.ru");
+
+const unpaidInSalesBody = [
+  "Поступил заказ № 5555 от 12.08.2026 10:30",
+  "Имя:",
+  "Тестовая Пользовательница",
+  "E-mail:",
+  "test@example.ru",
+  "Телефон:",
+  "+79990000000",
+  "Состав заказа:",
+  "777",
+  "Тестовая программа (72 ч)",
+  "цена: 10 000 ₽, количество: 1 шт.",
+  "Сумма:",
+  "Итого к оплате: 10 000 ₽",
+  "Способ получения товара:",
+  "Электронно",
+  "Москва",
+  "Способ оплаты:",
+  "Банковская карта",
+  "Статус оплаты:",
+  "не оплачен"
+].join("\n");
+const unpaidInSalesRaw = Buffer.from([
+  "From: shop@example.ru",
+  "To: mail@zifra-plus.ru",
+  `Subject: =?UTF-8?B?${Buffer.from("Новый заказ № 5555").toString("base64")}?=`,
+  "Date: Wed, 12 Aug 2026 10:30:00 +0300",
+  "Message-ID: <insales-unpaid-test@example.ru>",
+  "Content-Type: text/plain; charset=UTF-8",
+  "Content-Transfer-Encoding: base64",
+  "",
+  Buffer.from(unpaidInSalesBody).toString("base64")
+].join("\r\n"), "utf8");
+const unpaidInSalesRows = parseStudentApplicationOrderEmail(unpaidInSalesRaw);
+assert.equal(unpaidInSalesRows.length, 1);
+assert.equal(unpaidInSalesRows[0].paid, false);
+assert.equal(unpaidInSalesRows[0].orderAmount, 10000);
+assert.equal(unpaidInSalesRows[0].paymentAmount, 10000);
 
 const bodyStructureResponse = Buffer.from([
   '* 7440 FETCH (UID 7932 BODYSTRUCTURE (("text" "plain" ("charset" "utf-8") NIL NIL "base64" 120 2 NIL NIL NIL NIL)("application" "pdf" ("name" "first.pdf") NIL NIL "base64" 400 NIL ("attachment" ("filename" "first.pdf")) NIL NIL)("image" "jpeg" NIL NIL NIL "base64" 800 NIL ("inline" ("filename" "photo.jpg")) NIL NIL) "mixed" ("boundary" "test") NIL NIL NIL))',
