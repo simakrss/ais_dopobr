@@ -19,10 +19,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.122",
+    version: "1.7.123",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.123",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В групповые операции по слушателям добавлена установка даты выгрузки в ФРДО для выбранных записей.",
+        "Операция учитывает блокировки, применяется только к программам КПК и ППП и подробно сообщает о пропущенных записях."
+      ]
+    },
     {
       version: "1.7.122",
       releasedAt: "2026-08-12",
@@ -33527,6 +33535,63 @@ MAX - https://bizvmax.ru/zifra_plus
     return result;
   }
 
+  async function runStudentBulkFrdoDate(records, requestedDate, updateProgress) {
+    const date = String(requestedDate || "").trim();
+    const result = { success: 0, skipped: 0, failed: 0, details: [] };
+    if (!parseOrdersSdoDate(date)) {
+      result.failed = records.length;
+      result.details.push({ tone: "error", name: "Дата ФРДО", message: "Укажите корректную дату выгрузки в ФРДО." });
+      return result;
+    }
+    for (let index = 0; index < records.length; index += 1) {
+      const source = records[index];
+      updateProgress(index, `ФРДО: ${source.name || source.id}`);
+      const acquired = await acquireRecordLock("students", source.id, { promptTakeover: false });
+      if (!acquired) {
+        result.skipped += 1;
+        result.details.push({ tone: "warning", name: source.name, message: "Запись заблокирована другой сессией." });
+        continue;
+      }
+      try {
+        const current = (state.data.collections.students || [])
+          .find((item) => String(item.id || "") === String(source.id || "")) || source;
+        const programType = normalizeEducationProgramType(findProgramByName(current.program)?.type || current.educationType);
+        if (!isFrdoProgramType(programType)) {
+          result.skipped += 1;
+          result.details.push({
+            tone: "warning",
+            name: current.name,
+            message: `Дата ФРДО не применяется к виду программы «${programType || "не указан"}».`
+          });
+          continue;
+        }
+        if (String(current.frdoDate || "").trim() === date) {
+          result.skipped += 1;
+          result.details.push({ tone: "warning", name: current.name, message: `Дата ФРДО ${dateRu(date)} уже установлена.` });
+          continue;
+        }
+        const record = { ...current, frdoDate: date };
+        replaceStudentBulkRecord(record);
+        addAudit("Установлена дата выгрузки в ФРДО", configs.students.title, `${record.name}: ${dateRu(date)}`, {
+          entityType: "students",
+          entityId: record.id,
+          entityLabel: record.name,
+          changes: [{
+            field: "frdoDate",
+            label: "Дата выгрузки в ФРДО",
+            before: current.frdoDate || "",
+            after: date
+          }]
+        });
+        result.success += 1;
+      } finally {
+        await releaseRecordLock();
+      }
+    }
+    result.notice = await persistStudentBulkChanges();
+    return result;
+  }
+
   function getStudentBulkPortalLogin(record = {}) {
     const existing = String(record.login || "").trim();
     if (existing) return existing;
@@ -33768,6 +33833,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <option value="message">Отправить сообщение</option>
             <option value="document">Сформировать документы</option>
             <option value="orderDetails">Сформировать номер и дату приказа</option>
+            <option value="frdoDate">Установить дату выгрузки в ФРДО</option>
             <option value="portalAccess">Отправить данные для доступа к порталу</option>
             <option value="event">Проставить события</option>
           </select></label>
@@ -33803,6 +33869,10 @@ MAX - https://bizvmax.ru/zifra_plus
             </select></label>
             <label><span>Дата приказа</span><input name="orderDate" type="date" value="${todayIso()}"></label>
             <label class="student-bulk-order-number"><span>Номер приказа</span><input name="orderNo" placeholder="Оставьте пустым для автоматического формирования"></label>
+          </div>
+          <div class="student-bulk-operation-portal-panel student-bulk-operation-frdo-panel" data-student-bulk-panel="frdoDate" hidden>
+            <label><span>Дата выгрузки в ФРДО</span><input name="frdoDate" type="date" value="${todayIso()}" required></label>
+            <p>Дата будет установлена выбранным слушателям программ КПК и ППП. Остальные записи будут пропущены.</p>
           </div>
           <div class="student-bulk-operation-portal-panel" data-student-bulk-panel="portalAccess" hidden>
             <label><span>Дата отправки</span><input name="portalEventDate" type="date" value="${todayIso()}"></label>
@@ -33865,6 +33935,7 @@ MAX - https://bizvmax.ru/zifra_plus
         message: "Сообщение будет сформировано отдельно для каждого слушателя по шаблону вкладки «Коммуникации».",
         document: "Формат и отправка по email применяются только к текущему групповому запуску. Постоянные параметры шаблонов не изменяются.",
         orderDetails: "Один номер и дата приказа будут записаны всем выбранным слушателям. Если номер не введён, он сформируется по системной формуле.",
+        frdoDate: "Дата выгрузки в ФРДО будет записана во все выбранные карточки программ КПК и ППП с учётом блокировок записей.",
         portalAccess: "Доступ отправляется персонально каждому слушателю; отсутствующие учётные данные формируются автоматически.",
         event: "Все отмеченные события будут записаны одним пакетом с указанными для них датами."
       };
@@ -33882,6 +33953,11 @@ MAX - https://bizvmax.ru/zifra_plus
       const selectedEvents = operation === "event" ? getSelectedEvents() : [];
       if (operation === "event" && !selectedEvents.length) {
         alert("Выберите хотя бы одно событие.");
+        return;
+      }
+      if (operation === "frdoDate" && !form.elements.frdoDate.value) {
+        alert("Укажите дату выгрузки в ФРДО.");
+        form.elements.frdoDate.focus();
         return;
       }
       if (!confirm(`Выполнить выбранную операцию для ${records.length} слушателей?`)) return;
@@ -33910,6 +33986,8 @@ MAX - https://bizvmax.ru/zifra_plus
             form.elements.orderNo.value,
             updateProgress
           );
+        } else if (operation === "frdoDate") {
+          result = await runStudentBulkFrdoDate(records, form.elements.frdoDate.value, updateProgress);
         } else if (operation === "portalAccess") {
           result = await runStudentBulkPortalAccess(records, form.elements.portalEventDate.value, updateProgress);
         } else {
