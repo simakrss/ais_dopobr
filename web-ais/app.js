@@ -19,10 +19,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.129",
+    version: "1.7.130",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.130",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Таблица реестра выданных документов получила изменение порядка и ширины колонок, а также восстановление исходного вида по аналогии с базой слушателей.",
+        "Заголовки таблиц закреплены при вертикальной прокрутке."
+      ]
+    },
     {
       version: "1.7.129",
       releasedAt: "2026-08-12",
@@ -2595,6 +2603,19 @@ MAX - https://bizvmax.ru/zifra_plus
       value: "60"
     }
   ];
+  const ISSUED_DOCUMENT_TABLE_CONFIG_ID = "issuedDocuments";
+  const issuedDocumentTableConfig = Object.freeze({
+    table: ["student", "documentNumber", "issueDate", "elapsedDays", "frdo", "program", "programType"],
+    fields: [
+      { key: "student", label: "ФИО слушателя", defaultWidth: 210 },
+      { key: "documentNumber", label: "Номер документа", defaultWidth: 165 },
+      { key: "issueDate", label: "Дата выдачи", defaultWidth: 115 },
+      { key: "elapsedDays", label: "Прошло дней", defaultWidth: 105 },
+      { key: "frdo", label: "Выгрузка в ФРДО", defaultWidth: 175 },
+      { key: "program", label: "Образовательная программа", defaultWidth: 260 },
+      { key: "programType", label: "Вид программы", defaultWidth: 115 }
+    ]
+  });
   const financeDetailMetrics = [
     { key: "all", label: "Все операции" },
     { key: "revenue", label: "Поступления" },
@@ -8308,6 +8329,54 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderIssuedDocumentTableCell(row, column) {
+    const attrs = columnDataAttrs(ISSUED_DOCUMENT_TABLE_CONFIG_ID, column.key);
+    const style = issuedDocumentColumnStyleAttr(column);
+    if (column.key === "student") {
+      return `
+        <td ${attrs} ${style}>
+          <button class="table-edit-link issued-document-student-link" data-action="open-issued-document-student" data-student-id="${escapeAttr(row.studentId)}" type="button">
+            ${escapeHtml(row.studentName || "Без ФИО")}
+          </button>
+          ${row.studentUid ? `<small>uid ${escapeHtml(row.studentUid)}</small>` : ""}
+        </td>
+      `;
+    }
+    if (column.key === "documentNumber") {
+      return `
+        <td ${attrs} ${style}>
+          <strong>${escapeHtml(row.documentNumber || row.registrationNumber || "—")}</strong>
+          ${row.documentNumber && row.registrationNumber ? `<small>Рег. № ${escapeHtml(row.registrationNumber)}</small>` : ""}
+        </td>
+      `;
+    }
+    if (column.key === "issueDate") {
+      return `<td ${attrs} ${style}>${row.issueDate ? escapeHtml(dateRu(row.issueDate)) : "—"}</td>`;
+    }
+    if (column.key === "elapsedDays") {
+      return `
+        <td
+          class="issued-document-days-cell"
+          ${attrs}
+          ${style}
+          title="${row.elapsedDays === null ? "Дата выдачи не указана" : escapeAttr(`Норматив: ${row.deadlineDays} дней. Осталось: ${row.remainingDays} дней.`)}"
+        >${row.elapsedDays === null ? "—" : escapeHtml(String(row.elapsedDays))}</td>
+      `;
+    }
+    if (column.key === "frdo") {
+      return `
+        <td ${attrs} ${style}>
+          <span class="issued-document-frdo-status is-${escapeAttr(row.frdoKey)}">${escapeHtml(row.frdoLabel)}</span>
+          ${row.frdoDate ? `<small>${escapeHtml(dateRu(row.frdoDate))}</small>` : ""}
+        </td>
+      `;
+    }
+    if (column.key === "program") {
+      return `<td ${attrs} ${style}>${escapeHtml(row.program || "—")}</td>`;
+    }
+    return `<td ${attrs} ${style}>${escapeHtml(row.programType || "—")}</td>`;
+  }
+
   function renderIssuedDocumentsRegistry() {
     const allRows = getIssuedDocumentRows();
     const rows = getVisibleIssuedDocumentRows(allRows);
@@ -8318,6 +8387,8 @@ MAX - https://bizvmax.ru/zifra_plus
       .sort((left, right) => left.localeCompare(right, "ru", { numeric: true, sensitivity: "base" }));
     const pagination = getTablePagination("issuedDocuments", rows.length);
     const pageRows = rows.slice(pagination.start, pagination.end);
+    const columns = getTableFields(issuedDocumentTableConfig, ISSUED_DOCUMENT_TABLE_CONFIG_ID);
+    const tableMinWidth = getIssuedDocumentTableMinWidth(columns);
     const exportedCount = allRows.filter((row) => row.frdoKey === "exported").length;
     const pendingCount = allRows.filter((row) => row.frdoKey === "pending").length;
     return `
@@ -8329,8 +8400,10 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="issued-documents-filter-actions">
             <span>Показано <strong>${rows.length}</strong> из ${allRows.length}</span>
             <button class="ghost-button" data-action="reset-issued-document-filters" type="button" ${issuedDocumentFiltersAreActive(filters) ? "" : "disabled"}>Сбросить</button>
+            <button class="ghost-button icon-only table-options-button" data-action="toggle-table-options" data-config="${ISSUED_DOCUMENT_TABLE_CONFIG_ID}" type="button" title="Опции таблицы" aria-label="Опции таблицы">⋯</button>
           </div>
         </div>
+        ${renderTableOptions(ISSUED_DOCUMENT_TABLE_CONFIG_ID)}
         <div class="issued-documents-filters" data-issued-document-filters>
           <label>
             <span>Номер документа</span>
@@ -8374,42 +8447,29 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         ${rows.length ? `
           <div class="table-wrap issued-documents-table-wrap">
-            <table class="data-table issued-documents-table">
+            <table class="data-table issued-documents-table" style="min-width:${tableMinWidth}px">
               <thead>
                 <tr>
-                  <th>${renderIssuedDocumentSortHeader("student", "ФИО слушателя")}</th>
-                  <th>${renderIssuedDocumentSortHeader("documentNumber", "Номер документа")}</th>
-                  <th>${renderIssuedDocumentSortHeader("issueDate", "Дата выдачи")}</th>
-                  <th>${renderIssuedDocumentSortHeader("elapsedDays", "Прошло дней")}</th>
-                  <th>${renderIssuedDocumentSortHeader("frdo", "Выгрузка в ФРДО")}</th>
-                  <th>${renderIssuedDocumentSortHeader("program", "Образовательная программа")}</th>
-                  <th>${renderIssuedDocumentSortHeader("programType", "Вид программы")}</th>
+                  ${columns.map((column) => `
+                    <th
+                      class="table-column-head"
+                      ${columnDataAttrs(ISSUED_DOCUMENT_TABLE_CONFIG_ID, column.key)}
+                      ${issuedDocumentColumnStyleAttr(column)}
+                      draggable="true"
+                      title="Перетащите заголовок для смены порядка"
+                    >
+                      <div class="table-head-cell">
+                        ${renderIssuedDocumentSortHeader(column.key, column.label)}
+                        <span class="column-resize-handle" data-action="resize-column" data-config="${ISSUED_DOCUMENT_TABLE_CONFIG_ID}" data-field="${escapeAttr(column.key)}" title="Изменить ширину"></span>
+                      </div>
+                    </th>
+                  `).join("")}
                 </tr>
               </thead>
               <tbody>
                 ${pageRows.map((row) => `
                   <tr class="${row.deadlineTone ? `is-frdo-deadline-${escapeAttr(row.deadlineTone)}` : ""}">
-                    <td>
-                      <button class="table-edit-link issued-document-student-link" data-action="open-issued-document-student" data-student-id="${escapeAttr(row.studentId)}" type="button">
-                        ${escapeHtml(row.studentName || "Без ФИО")}
-                      </button>
-                      ${row.studentUid ? `<small>uid ${escapeHtml(row.studentUid)}</small>` : ""}
-                    </td>
-                    <td>
-                      <strong>${escapeHtml(row.documentNumber || row.registrationNumber || "—")}</strong>
-                      ${row.documentNumber && row.registrationNumber ? `<small>Рег. № ${escapeHtml(row.registrationNumber)}</small>` : ""}
-                    </td>
-                    <td>${row.issueDate ? escapeHtml(dateRu(row.issueDate)) : "—"}</td>
-                    <td
-                      class="issued-document-days-cell"
-                      title="${row.elapsedDays === null ? "Дата выдачи не указана" : escapeAttr(`Норматив: ${row.deadlineDays} дней. Осталось: ${row.remainingDays} дней.`)}"
-                    >${row.elapsedDays === null ? "—" : escapeHtml(String(row.elapsedDays))}</td>
-                    <td>
-                      <span class="issued-document-frdo-status is-${escapeAttr(row.frdoKey)}">${escapeHtml(row.frdoLabel)}</span>
-                      ${row.frdoDate ? `<small>${escapeHtml(dateRu(row.frdoDate))}</small>` : ""}
-                    </td>
-                    <td>${escapeHtml(row.program || "—")}</td>
-                    <td>${escapeHtml(row.programType || "—")}</td>
+                    ${columns.map((column) => renderIssuedDocumentTableCell(row, column)).join("")}
                   </tr>
                 `).join("")}
               </tbody>
@@ -11191,7 +11251,29 @@ MAX - https://bizvmax.ru/zifra_plus
       const column = EMPLOYEE_PAYMENT_TABLE_COLUMNS.find((item) => item.key === key);
       if (column) return { min: column.defaultWidth, max: 640 };
     }
+    if (configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID) {
+      const column = issuedDocumentTableConfig.fields.find((item) => item.key === key);
+      if (column) return { min: 80, max: 640 };
+    }
     return { min: 80, max: 640 };
+  }
+
+  function getIssuedDocumentColumnWidth(column, overrideKey = "", overrideWidth = 0) {
+    const width = column.key === overrideKey
+      ? Number(overrideWidth)
+      : Number(getColumnWidth(ISSUED_DOCUMENT_TABLE_CONFIG_ID, column.key));
+    return clamp(width || column.defaultWidth, 80, 640);
+  }
+
+  function issuedDocumentColumnStyleAttr(column) {
+    const width = getIssuedDocumentColumnWidth(column);
+    return `style="width:${width}px;min-width:${width}px"`;
+  }
+
+  function getIssuedDocumentTableMinWidth(columns = getTableFields(issuedDocumentTableConfig, ISSUED_DOCUMENT_TABLE_CONFIG_ID), overrideKey = "", overrideWidth = 0) {
+    return columns.reduce((total, column) => (
+      total + getIssuedDocumentColumnWidth(column, overrideKey, overrideWidth)
+    ), 0);
   }
 
   function getEmployeePaymentColumnWidth(column, overrideKey = "", overrideWidth = 0) {
@@ -11235,7 +11317,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function moveTableColumn(configId, fieldKey, dir) {
-    const config = configs[configId];
+    const config = configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID
+      ? issuedDocumentTableConfig
+      : configs[configId];
     if (!config) return;
     const order = getTableKeys(config, configId);
     const from = order.indexOf(fieldKey);
@@ -11260,7 +11344,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function reorderTableColumn(configId, fromKey, toKey) {
-    const config = configs[configId];
+    const config = configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID
+      ? issuedDocumentTableConfig
+      : configs[configId];
     if (!config || !fromKey || !toKey || fromKey === toKey) return;
     const order = getTableKeys(config, configId);
     const from = order.indexOf(fromKey);
@@ -11275,7 +11361,11 @@ MAX - https://bizvmax.ru/zifra_plus
     delete state.tableSettings[configId];
     delete state.tablePages[configId];
     const activeTableConfigId = state.view === "documentConstructor" ? "documentTemplates" : state.view;
-    if (activeTableConfigId === configId) state.sort = getDefaultTableSort(configId);
+    if (configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID) {
+      state.issuedDocumentSort = { key: "issueDate", dir: "asc" };
+    } else if (activeTableConfigId === configId) {
+      state.sort = getDefaultTableSort(configId);
+    }
     state.tableOptions = null;
     persistTableSettings();
     render();
@@ -11536,6 +11626,11 @@ MAX - https://bizvmax.ru/zifra_plus
     if (configId === EMPLOYEE_PAYMENT_TABLE_CONFIG_ID) {
       document.querySelectorAll(".employee-payment-table").forEach((table) => {
         table.style.minWidth = `${getEmployeePaymentTableMinWidth(fieldKey, width)}px`;
+      });
+    }
+    if (configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID) {
+      document.querySelectorAll(".issued-documents-table").forEach((table) => {
+        table.style.minWidth = `${getIssuedDocumentTableMinWidth(undefined, fieldKey, width)}px`;
       });
     }
   }

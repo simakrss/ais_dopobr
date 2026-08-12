@@ -1208,6 +1208,7 @@ body.is-session-expired {
 }
 
 .user-management-table-wrap {
+  max-height: max(280px, calc(100dvh - 230px));
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2529,7 +2530,9 @@ body.sidebar-collapsed .sidebar-toggle {
 
 .table-wrap {
   width: 100%;
-  overflow-x: auto;
+  max-height: max(280px, calc(100dvh - 250px));
+  overflow: auto;
+  scrollbar-gutter: stable;
   border: 1px solid var(--line);
   border-radius: 8px;
 }
@@ -2619,6 +2622,7 @@ body.sidebar-collapsed .sidebar-toggle {
   color: #3d4945;
   position: sticky;
   top: 0;
+  z-index: 2;
 }
 
 .table-column-head {
@@ -2793,8 +2797,8 @@ body.is-resizing-column {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
+  max-height: max(260px, calc(100dvh - 390px));
+  overflow: auto;
   scrollbar-gutter: stable;
   overscroll-behavior-inline: contain;
 }
@@ -2803,34 +2807,6 @@ body.is-resizing-column {
   width: 100%;
   min-width: 1085px;
   table-layout: fixed;
-}
-
-.issued-documents-table th:nth-child(1) {
-  width: 210px;
-}
-
-.issued-documents-table th:nth-child(2) {
-  width: 165px;
-}
-
-.issued-documents-table th:nth-child(3) {
-  width: 115px;
-}
-
-.issued-documents-table th:nth-child(4) {
-  width: 105px;
-}
-
-.issued-documents-table th:nth-child(5) {
-  width: 175px;
-}
-
-.issued-documents-table th:nth-child(7) {
-  width: 115px;
-}
-
-.issued-documents-table th:nth-child(6) {
-  width: 260px;
 }
 
 .issued-documents-table tbody tr.is-frdo-deadline-warning > td {
@@ -10990,7 +10966,7 @@ body.card-window-moving {
 .employee-payment-table thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
   vertical-align: top;
   padding-block: 3px;
   background: #f4f8f6;
