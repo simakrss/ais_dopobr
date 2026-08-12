@@ -19,10 +19,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.125",
+    version: "1.7.126",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.126",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Реестр выданных документов уплотнён: убраны дублирующие заголовки, ФИО перенесено в первую колонку, а таблица ограничена шириной формы и прокручивается по горизонтали.",
+        "Дата выгрузки в ФРДО, сохранённая в статусе в формате ISO, теперь распознаётся как дата, отображается в российском формате и не попадает в состояние «Не выгружено»."
+      ]
+    },
     {
       version: "1.7.125",
       releasedAt: "2026-08-12",
@@ -8093,30 +8101,38 @@ MAX - https://bizvmax.ru/zifra_plus
     return normalizeEducationProgramType(program?.type || program?.educationType || "");
   }
 
+  function isIssuedDocumentDateValue(value) {
+    const text = String(value || "").trim();
+    return /^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/u.test(text)
+      || /^\d{1,2}\.\d{1,2}\.\d{4}(?:[T\s].*)?$/u.test(text);
+  }
+
   function getIssuedDocumentFrdoDetails(student = {}, programType = "") {
-    const date = String(student.frdoDate || "").trim();
     const sourceStatus = String(student.frdoStatus || "").trim();
-    const normalizedStatus = normalizeIssuedDocumentFilterText(sourceStatus);
+    const statusDate = isIssuedDocumentDateValue(sourceStatus) ? sourceStatus : "";
+    const date = String(student.frdoDate || statusDate || "").trim();
+    const statusText = statusDate ? "" : sourceStatus;
+    const normalizedStatus = normalizeIssuedDocumentFilterText(statusText);
     const explicitlyNotExported = normalizedStatus.includes("не выгруж")
       || normalizedStatus.includes("не загруж")
       || normalizedStatus.includes("не отправ")
       || ["нет", "-", "0"].includes(normalizedStatus);
     const explicitlyExported = Boolean(date)
       || (!explicitlyNotExported && (
-        sourceStatus === "+"
-        || sourceStatus === "1"
+        statusText === "+"
+        || statusText === "1"
         || normalizedStatus === "да"
         || normalizedStatus.includes("выгруж")
         || normalizedStatus.includes("загруж")
         || normalizedStatus.includes("отправ")
       ));
     if (explicitlyExported) {
-      return { key: "exported", label: sourceStatus && sourceStatus !== "+" ? sourceStatus : "Выгружено", date };
+      return { key: "exported", label: statusText && statusText !== "+" ? statusText : "Выгружено", date };
     }
     if (normalizedStatus.includes("не треб") || !isFrdoProgramType(programType)) {
       return { key: "not-required", label: "Не требуется", date: "" };
     }
-    return { key: "pending", label: sourceStatus || "Не выгружено", date: "" };
+    return { key: "pending", label: statusText || "Не выгружено", date: "" };
   }
 
   function getIssuedDocumentRows() {
@@ -8234,16 +8250,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const pendingCount = allRows.filter((row) => row.frdoKey === "pending").length;
     return `
       <section class="panel issued-documents-register" data-issued-documents-register>
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Данные карточек слушателей</p>
-            <h2>Реестр выданных документов</h2>
-          </div>
-          <div class="issued-documents-summary" aria-label="Сводка реестра">
-            <span>Всего: <strong>${allRows.length}</strong></span>
-            <span class="is-success">Выгружено в ФРДО: <strong>${exportedCount}</strong></span>
-            <span class="${pendingCount ? "is-warning" : ""}">Ожидают ФРДО: <strong>${pendingCount}</strong></span>
-          </div>
+        <div class="issued-documents-summary" aria-label="Сводка реестра">
+          <span>Всего: <strong>${allRows.length}</strong></span>
+          <span class="is-success">Выгружено в ФРДО: <strong>${exportedCount}</strong></span>
+          <span class="${pendingCount ? "is-warning" : ""}">Ожидают ФРДО: <strong>${pendingCount}</strong></span>
         </div>
         <div class="issued-documents-filters" data-issued-document-filters>
           <label>
@@ -8295,10 +8305,10 @@ MAX - https://bizvmax.ru/zifra_plus
             <table class="data-table issued-documents-table">
               <thead>
                 <tr>
+                  <th>${renderIssuedDocumentSortHeader("student", "ФИО слушателя")}</th>
                   <th>${renderIssuedDocumentSortHeader("documentNumber", "Номер документа")}</th>
                   <th>${renderIssuedDocumentSortHeader("issueDate", "Дата выдачи")}</th>
                   <th>${renderIssuedDocumentSortHeader("frdo", "Выгрузка в ФРДО")}</th>
-                  <th>${renderIssuedDocumentSortHeader("student", "ФИО слушателя")}</th>
                   <th>${renderIssuedDocumentSortHeader("program", "Образовательная программа")}</th>
                   <th>${renderIssuedDocumentSortHeader("programType", "Вид программы")}</th>
                 </tr>
@@ -8307,6 +8317,12 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${pageRows.map((row) => `
                   <tr>
                     <td>
+                      <button class="table-edit-link issued-document-student-link" data-action="open-issued-document-student" data-student-id="${escapeAttr(row.studentId)}" type="button">
+                        ${escapeHtml(row.studentName || "Без ФИО")}
+                      </button>
+                      ${row.studentUid ? `<small>uid ${escapeHtml(row.studentUid)}</small>` : ""}
+                    </td>
+                    <td>
                       <strong>${escapeHtml(row.documentNumber || row.registrationNumber || "—")}</strong>
                       ${row.documentNumber && row.registrationNumber ? `<small>Рег. № ${escapeHtml(row.registrationNumber)}</small>` : ""}
                     </td>
@@ -8314,12 +8330,6 @@ MAX - https://bizvmax.ru/zifra_plus
                     <td>
                       <span class="issued-document-frdo-status is-${escapeAttr(row.frdoKey)}">${escapeHtml(row.frdoLabel)}</span>
                       ${row.frdoDate ? `<small>${escapeHtml(dateRu(row.frdoDate))}</small>` : ""}
-                    </td>
-                    <td>
-                      <button class="table-edit-link issued-document-student-link" data-action="open-issued-document-student" data-student-id="${escapeAttr(row.studentId)}" type="button">
-                        ${escapeHtml(row.studentName || "Без ФИО")}
-                      </button>
-                      ${row.studentUid ? `<small>uid ${escapeHtml(row.studentUid)}</small>` : ""}
                     </td>
                     <td>${escapeHtml(row.program || "—")}</td>
                     <td>${escapeHtml(row.programType || "—")}</td>

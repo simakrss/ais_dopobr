@@ -2693,18 +2693,18 @@ body.is-resizing-column {
 }
 
 .issued-documents-register {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   display: grid;
   gap: 12px;
-}
-
-.issued-documents-register .section-head {
-  margin-bottom: 0;
+  overflow: hidden;
 }
 
 .issued-documents-summary {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
 }
 
@@ -2735,13 +2735,17 @@ body.is-resizing-column {
 
 .issued-documents-filters {
   display: grid;
-  grid-template-columns: minmax(150px, 0.8fr) minmax(190px, 1fr) minmax(260px, 1.5fr) minmax(120px, 0.55fr) minmax(160px, 0.75fr) minmax(135px, 0.55fr) minmax(135px, 0.55fr) auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: end;
   gap: 8px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-soft);
+}
+
+.issued-documents-program-filter {
+  grid-column: span 2;
 }
 
 .issued-documents-filters label {
@@ -2774,37 +2778,55 @@ body.is-resizing-column {
 }
 
 .issued-documents-filter-actions {
+  grid-column: 1 / -1;
   min-height: 34px;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
 }
 
+.issued-documents-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
+  overscroll-behavior-inline: contain;
+}
+
 .issued-documents-table {
-  min-width: 1060px;
+  width: 100%;
+  min-width: 980px;
+  table-layout: fixed;
 }
 
 .issued-documents-table th:nth-child(1) {
-  width: 170px;
+  width: 210px;
 }
 
 .issued-documents-table th:nth-child(2) {
-  width: 125px;
+  width: 165px;
 }
 
 .issued-documents-table th:nth-child(3) {
-  width: 180px;
+  width: 115px;
 }
 
 .issued-documents-table th:nth-child(4) {
-  width: 220px;
+  width: 175px;
 }
 
 .issued-documents-table th:nth-child(6) {
-  width: 120px;
+  width: 115px;
+}
+
+.issued-documents-table th:nth-child(5) {
+  width: 260px;
 }
 
 .issued-documents-table td small {
@@ -18663,19 +18685,11 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 @media (max-width: 1280px) {
   .issued-documents-filters {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .issued-documents-program-filter {
-    grid-column: span 2;
+    gap: 7px;
   }
 }
 
 @media (max-width: 720px) {
-  .issued-documents-register .section-head {
-    align-items: flex-start;
-  }
-
   .issued-documents-summary {
     width: 100%;
     justify-content: flex-start;
