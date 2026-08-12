@@ -11623,33 +11623,57 @@ async function prepareStudentMailboxAttachmentForSave(attachment) {
   };
 }
 
+function getStudentMailboxFileNameCandidate(fileName, attempt = 0) {
+  const safeName = safeWebDavUploadFileName(fileName);
+  if (!attempt) return safeName;
+  const extension = path.extname(safeName);
+  const baseName = path.basename(safeName, extension);
+  const suffix = ` (${attempt + 1})`;
+  const maxBaseLength = Math.max(1, 180 - extension.length - suffix.length);
+  return safeWebDavUploadFileName(`${baseName.slice(0, maxBaseLength)}${suffix}${extension}`);
+}
+
 async function saveStudentMailboxDocument(folderSource, fileName, bytes, contentType) {
   const relativeFolder = normalizeSystemDocumentsRelativePath(folderSource);
   if (!relativeFolder) throw new Error("Не удалось определить папку документов слушателя.");
-  const safeName = safeWebDavUploadFileName(fileName);
   const localDocuments = serverSettings.openDocumentsLocally !== false
     ? await getLocalSystemDocumentsAvailability()
     : { available: false };
   if (localDocuments.available) {
     const folderPath = resolveLocalDocumentsPath(relativeFolder, "Не удалось определить локальную папку документов.");
     await fs.mkdir(folderPath, { recursive: true });
-    const targetPath = path.resolve(folderPath, safeName);
-    const relativeTarget = path.relative(folderPath, targetPath);
-    if (relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget)) {
-      throw new Error("Недопустимое имя файла вложения.");
+    for (let attempt = 0; attempt < 10000; attempt += 1) {
+      const candidateName = getStudentMailboxFileNameCandidate(fileName, attempt);
+      const targetPath = path.resolve(folderPath, candidateName);
+      const relativeTarget = path.relative(folderPath, targetPath);
+      if (relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget)) {
+        throw new Error("Недопустимое имя файла вложения.");
+      }
+      try {
+        await fs.writeFile(targetPath, bytes, { flag: "wx" });
+        return { storage: "local", name: candidateName, path: `${relativeFolder}/${candidateName}` };
+      } catch (error) {
+        if (error.code === "EEXIST") continue;
+        throw error;
+      }
     }
-    await fs.writeFile(targetPath, bytes);
-    return { storage: "local", path: `${relativeFolder}/${safeName}` };
+    throw new Error("Не удалось подобрать свободное имя файла вложения.");
   }
   const folderPath = normalizeWebDavPath(`${resolveYandexDiskBasePath(false)}/${relativeFolder}`);
   await ensureYandexDiskFolder(folderPath);
-  const targetPath = normalizeWebDavPath(`${folderPath}/${safeName}`);
-  await requestYandexWebDav("PUT", targetPath, {
-    acceptedStatuses: [200, 201, 204],
-    body: bytes,
-    contentType: contentType || getWebDavBrowserContentType(safeName)
-  });
-  return { storage: "webdav", path: `${relativeFolder}/${safeName}` };
+  for (let attempt = 0; attempt < 10000; attempt += 1) {
+    const candidateName = getStudentMailboxFileNameCandidate(fileName, attempt);
+    const targetPath = normalizeWebDavPath(`${folderPath}/${candidateName}`);
+    const response = await requestYandexWebDav("PUT", targetPath, {
+      acceptedStatuses: [200, 201, 204, 412],
+      headers: { "If-None-Match": "*" },
+      body: bytes,
+      contentType: contentType || getWebDavBrowserContentType(candidateName)
+    });
+    if (response.statusCode === 412) continue;
+    return { storage: "webdav", name: candidateName, path: `${relativeFolder}/${candidateName}` };
+  }
+  throw new Error("Не удалось подобрать свободное имя файла вложения.");
 }
 
 async function importStudentMailboxMessages(body, authUser, req) {
@@ -11680,7 +11704,7 @@ async function importStudentMailboxMessages(body, authUser, req) {
     if (totalBytes > 100 * 1024 * 1024) throw new Error("Общий размер выбранных писем превышает 100 МБ.");
     const textName = `${prefix}.txt`;
     const textTarget = await saveStudentMailboxDocument(folder, textName, textBytes, "text/plain; charset=utf-8");
-    files.push({ name: textName, size: textBytes.length, type: "text", ...textTarget });
+    files.push({ name: textTarget.name || textName, size: textBytes.length, type: "text", ...textTarget });
     for (let index = 0; index < message.attachments.length; index += 1) {
       const attachment = message.attachments[index];
       if (!attachment.bytes.length) continue;
@@ -11696,16 +11720,15 @@ async function importStudentMailboxMessages(body, authUser, req) {
       }
       totalBytes += preparedAttachment.bytes.length;
       if (totalBytes > 100 * 1024 * 1024) throw new Error("Общий размер выбранных писем превышает 100 МБ.");
-      const attachmentName = `${prefix}_${index + 1}_${preparedAttachment.fileName}`;
       const target = await saveStudentMailboxDocument(
         folder,
-        attachmentName,
+        preparedAttachment.fileName,
         preparedAttachment.bytes,
         preparedAttachment.contentType
       );
       if (preparedAttachment.converted) convertedImages += 1;
       files.push({
-        name: attachmentName,
+        name: target.name || preparedAttachment.fileName,
         size: preparedAttachment.bytes.length,
         type: "attachment",
         converted: preparedAttachment.converted,
@@ -14390,6 +14413,7 @@ module.exports = {
   parseImapBodyStructureAttachments,
   parseStudentMailboxMessage,
   prepareStudentMailboxAttachmentForSave,
+  getStudentMailboxFileNameCandidate,
   publicStudentDocumentMailboxes,
   queryStudentMailboxMessages,
   applyCustomDocumentPropertyFormulas,

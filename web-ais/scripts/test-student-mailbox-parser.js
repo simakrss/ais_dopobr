@@ -7,7 +7,8 @@ const {
   mergeStudentApplicationRows,
   collectEmailMessageContent,
   parseImapBodyStructureAttachments,
-  prepareStudentMailboxAttachmentForSave
+  prepareStudentMailboxAttachmentForSave,
+  getStudentMailboxFileNameCandidate
 } = require("../app-server.js");
 
 const subject = "Документы слушателя";
@@ -48,6 +49,9 @@ assert.match(message.from, /student@example\.ru/);
 assert.match(message.text, /Направляю документы/);
 assert.equal(message.attachments.length, 1);
 assert.equal(message.messageId, "mail-test@example.ru");
+assert.equal(getStudentMailboxFileNameCandidate("Паспорт.pdf", 0), "Паспорт.pdf");
+assert.equal(getStudentMailboxFileNameCandidate("Паспорт.pdf", 1), "Паспорт (2).pdf");
+assert.equal(getStudentMailboxFileNameCandidate("Паспорт.pdf", 2), "Паспорт (3).pdf");
 
 const unpaidInSalesBody = [
   "Поступил заказ № 5555 от 12.08.2026 10:30",

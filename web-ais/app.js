@@ -9,10 +9,17 @@
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.106",
+    version: "1.7.107",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.107",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Вложения из электронной почты сохраняются под исходными именами без префикса даты, ФИО и UID. При совпадении имени создаётся безопасная копия с суффиксом «(2)», «(3)» и далее без перезаписи существующего файла."
+      ]
+    },
     {
       version: "1.7.106",
       releasedAt: "2026-08-12",
