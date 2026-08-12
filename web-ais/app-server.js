@@ -44,6 +44,7 @@ const AUDIT_MAX_ROWS = 100000;
 const AUDIT_MAX_CHANGES = 100;
 const STUDENT_DATABASE_SYNC_SCRIPT = path.join(ROOT, "scripts", "sync-student-database.ps1");
 const STUDENT_APPLICATIONS_QUERY_SCRIPT = path.join(ROOT, "scripts", "query-student-applications.ps1");
+const FRDO_EXPORT_TEMPLATE_PATH = path.join(ROOT, "data", "frdo-export-template.xlsx");
 let defaultStudentApplicationsSqlQuery = "";
 const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH = "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
 const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
@@ -85,6 +86,7 @@ const MAX_STUDENT_DATABASE_EXPORT_STUDENTS = 20000;
 const MAX_STUDENT_DATABASE_EXPORT_EXPENSES = 100000;
 const MAX_STUDENT_DATABASE_EXPORT_CONTRACTS = 20000;
 const MAX_STUDENT_DATABASE_EXPORT_PROGRAMS = 20000;
+const MAX_FRDO_EXPORT_RECORDS = 5000;
 const MAX_PROGRAM_PROMO_MESSAGE_LENGTH = 32767;
 const MAX_PAYMENT_DATABASE_CONSTANTS = 200;
 const MAX_EMAIL_SUBJECT_LENGTH = 200;
@@ -660,7 +662,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Expose-Headers": "Content-Disposition, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled"
+  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled"
 };
 
 const MIME_TYPES = {
@@ -8355,6 +8357,352 @@ function normalizeStudentDatabaseDate(value) {
   return date.toISOString().slice(0, 10);
 }
 
+const FRDO_EXPORT_HEADERS = Object.freeze([
+  "Вид документа",
+  "Статус документа",
+  "Подтверждение утраты",
+  "Подтверждение обмена",
+  "Подтверждение уничтожения",
+  "Серия документа",
+  "Номер документа",
+  "Дата выдачи документа",
+  "Регистрационный номер",
+  "Дополнительная профессиональная программа (повышение квалификации/ профессиональная переподготовка)",
+  "Наименование дополнительной профессиональной программы",
+  "Наименование области профессиональной деятельности",
+  "Укрупненные группы специальностей",
+  "Наименование квалификации, профессии, специальности",
+  "Уровень образования ВО/СПО",
+  "Фамилия указанная в дипломе о ВО или СПО",
+  "Серия документа о ВО/СПО",
+  "Номер документа о ВО/СПО",
+  "Год начала обучения (для документа о квалификации)",
+  "Год окончания обучения (для документа о квалификации)",
+  "Срок обучения, часов (для документа о квалификации)",
+  "Фамилия получателя",
+  "Имя получателя",
+  "Отчество получателя",
+  "Дата рождения получателя",
+  "Пол получателя",
+  "СНИЛС",
+  "Форма обучения",
+  "Источник финансирования обучения",
+  "Форма получения образования на момент прекращения образовательных отношений",
+  "Гражданство получателя (код страны по ОКСМ)",
+  "Наименование документа об образовании (оригинала)",
+  "Серия (оригинала)",
+  "Номер (оригинала)",
+  "Регистрационный N (оригинала)",
+  "Дата выдачи (оригинала)",
+  "Фамилия получателя (оригинала)",
+  "Имя получателя (оригинала)",
+  "Отчество получателя (оригинала)",
+  "Номер документа для изменения"
+]);
+
+const FRDO_CITIZENSHIP_CODES = new Map([
+  ["россия", "643"],
+  ["российская федерация", "643"],
+  ["рф", "643"],
+  ["казахстан", "398"],
+  ["республика казахстан", "398"],
+  ["узбекистан", "860"],
+  ["республика узбекистан", "860"],
+  ["беларусь", "112"],
+  ["республика беларусь", "112"],
+  ["армения", "051"],
+  ["республика армения", "051"],
+  ["азербайджан", "031"],
+  ["кыргызстан", "417"],
+  ["киргизия", "417"],
+  ["таджикистан", "762"],
+  ["туркменистан", "795"],
+  ["грузия", "268"],
+  ["молдова", "498"],
+  ["украина", "804"]
+]);
+
+function normalizeFrdoText(value, maxLength = 5000) {
+  return String(value ?? "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function normalizeFrdoProgramType(value) {
+  const text = normalizeFrdoText(value, 100).toLocaleUpperCase("ru-RU");
+  if (text.includes("КПК") || text.includes("ПОВЫШ")) return "КПК";
+  if (text.includes("ППП") || text.includes("ПЕРЕПОД")) return "ППП";
+  return text;
+}
+
+function splitFrdoFullName(value) {
+  const [surname = "", firstName = "", ...patronymicParts] = normalizeFrdoText(value, 500).split(" ");
+  return { surname, firstName, patronymic: patronymicParts.join(" ") };
+}
+
+function formatFrdoExportDate(value) {
+  const iso = normalizeStudentDatabaseDate(value);
+  if (!iso) return "";
+  const [year, month, day] = iso.split("-");
+  return `${day}.${month}.${year}`;
+}
+
+function getFrdoExportYear(value) {
+  const iso = normalizeStudentDatabaseDate(value);
+  return iso ? Number(iso.slice(0, 4)) : "";
+}
+
+function normalizeFrdoGender(value) {
+  const text = normalizeFrdoText(value, 50).toLocaleLowerCase("ru-RU");
+  if (/^(?:жен|ж)$/.test(text) || text.includes("женск")) return "Жен";
+  if (/^(?:муж|м)$/.test(text) || text.includes("мужск")) return "Муж";
+  return normalizeFrdoText(value, 50);
+}
+
+function normalizeFrdoStudyForm(value) {
+  const text = normalizeFrdoText(value, 100);
+  const normalized = text.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  if (normalized.includes("очно-заоч")) return "Очно-заочная";
+  if (normalized.includes("дистан") || normalized.includes("дистант") || normalized.includes("заоч")) return "Заочная";
+  if (normalized.includes("очн")) return "Очная";
+  return text;
+}
+
+function normalizeFrdoFundingSource(value) {
+  const normalized = normalizeFrdoText(value, 200).toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  return /бюджет|субсид|сертификат/u.test(normalized) ? "Бюджетное обучение" : "Платное обучение";
+}
+
+function normalizeFrdoEducationLevel(level, documentName) {
+  const source = `${normalizeFrdoText(level, 200)} ${normalizeFrdoText(documentName, 300)}`
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е");
+  if (/спо|средн[^ ]*\s+профессион|начальн[^ ]*\s+профессион/u.test(source)) {
+    return "Среднее профессиональное образование";
+  }
+  if (/высш|бакалав|специалист|магистр/u.test(source)) return "Высшее образование";
+  return normalizeFrdoText(level, 200);
+}
+
+function normalizeFrdoCitizenshipCode(value) {
+  const text = normalizeFrdoText(value, 100);
+  if (/^\d{1,3}$/.test(text)) return text.padStart(3, "0");
+  const normalized = text.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  return FRDO_CITIZENSHIP_CODES.get(normalized) || "";
+}
+
+function isFrdoRecordAlreadyExported(record) {
+  if (normalizeStudentDatabaseDate(record.frdoDate)) return true;
+  const statusDate = normalizeStudentDatabaseDate(record.frdoStatus);
+  if (statusDate) return true;
+  const status = normalizeFrdoText(record.frdoStatus, 200).toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  const explicitlyNotExported = status.includes("не выгруж")
+    || status.includes("не загруж")
+    || status.includes("не отправ")
+    || ["нет", "-", "0"].includes(status);
+  return Boolean(!explicitlyNotExported && (
+    status === "+"
+    || status === "1"
+    || status === "да"
+    || /выгруж|загруж|отправ/u.test(status)
+  ));
+}
+
+function sanitizeFrdoExportPayload(body) {
+  const source = Array.isArray(body?.records) ? body.records : [];
+  if (!source.length) throw new Error("Нет невыгруженных документов для экспорта в ФРДО.");
+  if (source.length > MAX_FRDO_EXPORT_RECORDS) {
+    throw new Error(`За один раз можно экспортировать не более ${MAX_FRDO_EXPORT_RECORDS} документов.`);
+  }
+  const records = source
+    .filter((record) => record && typeof record === "object")
+    .map((record) => ({
+      documentNumber: normalizeFrdoText(record.documentNumber, 200),
+      registrationNumber: normalizeFrdoText(record.registrationNumber, 200),
+      issueDate: normalizeStudentDatabaseDate(record.issueDate),
+      program: normalizeFrdoText(record.program, 2000),
+      programType: normalizeFrdoProgramType(record.programType),
+      frdoProfessionalArea: normalizeFrdoText(record.frdoProfessionalArea, 2000),
+      qualification: normalizeFrdoText(record.qualification, 2000),
+      programQualification: normalizeFrdoText(record.programQualification, 2000),
+      startDate: normalizeStudentDatabaseDate(record.startDate),
+      endDate: normalizeStudentDatabaseDate(record.endDate),
+      hours: normalizeFrdoText(record.hours, 100),
+      name: normalizeFrdoText(record.name, 500),
+      birthDate: normalizeStudentDatabaseDate(record.birthDate),
+      gender: normalizeFrdoText(record.gender, 50),
+      snils: normalizeFrdoText(record.snils, 100),
+      studyForm: normalizeFrdoText(record.studyForm, 100),
+      fundingSource: normalizeFrdoText(record.fundingSource, 200),
+      citizenship: normalizeFrdoText(record.citizenship, 100),
+      educationLevel: normalizeFrdoText(record.educationLevel, 300),
+      educationDocument: normalizeFrdoText(record.educationDocument, 1000),
+      educationDocumentSeries: normalizeFrdoText(record.educationDocumentSeries, 300),
+      educationDocumentNumber: normalizeFrdoText(record.educationDocumentNumber, 300),
+      educationDocumentSurname: normalizeFrdoText(record.educationDocumentSurname, 500),
+      frdoStatus: normalizeFrdoText(record.frdoStatus, 200),
+      frdoDate: normalizeStudentDatabaseDate(record.frdoDate)
+    }))
+    .filter((record) => (
+      ["КПК", "ППП"].includes(record.programType)
+      && !isFrdoRecordAlreadyExported(record)
+      && Boolean(record.documentNumber || record.registrationNumber || record.issueDate)
+    ));
+  if (!records.length) throw new Error("Нет невыгруженных документов КПК или ППП для экспорта в ФРДО.");
+  return records.sort((left, right) => (
+    String(left.issueDate || "9999-12-31").localeCompare(String(right.issueDate || "9999-12-31"))
+    || left.registrationNumber.localeCompare(right.registrationNumber, "ru", { numeric: true })
+    || left.name.localeCompare(right.name, "ru", { sensitivity: "base" })
+  ));
+}
+
+function buildFrdoExportRow(record) {
+  const name = splitFrdoFullName(record.name);
+  const educationSurname = record.educationDocumentSurname || name.surname;
+  const qualification = record.qualification || record.programQualification || record.program;
+  const documentKind = record.programType === "ППП"
+    ? "Диплом о профессиональной переподготовке"
+    : "Удостоверение о повышении квалификации";
+  const programKind = record.programType === "ППП"
+    ? "Профессиональная переподготовка"
+    : "Повышение квалификации";
+  return [
+    documentKind,
+    "Оригинал",
+    "Нет",
+    "Нет",
+    "Нет",
+    "Нет",
+    record.documentNumber,
+    formatFrdoExportDate(record.issueDate),
+    record.registrationNumber,
+    programKind,
+    record.program,
+    record.frdoProfessionalArea,
+    "",
+    qualification,
+    normalizeFrdoEducationLevel(record.educationLevel, record.educationDocument),
+    educationSurname,
+    record.educationDocumentSeries,
+    record.educationDocumentNumber,
+    getFrdoExportYear(record.startDate),
+    getFrdoExportYear(record.endDate),
+    record.hours,
+    name.surname,
+    name.firstName,
+    name.patronymic,
+    formatFrdoExportDate(record.birthDate),
+    normalizeFrdoGender(record.gender),
+    record.snils,
+    normalizeFrdoStudyForm(record.studyForm),
+    normalizeFrdoFundingSource(record.fundingSource),
+    "в образовательной организации",
+    normalizeFrdoCitizenshipCode(record.citizenship),
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ];
+}
+
+function renderFrdoExportCell(address, value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return `<x:c r="${address}" s="11"><x:v>${value}</x:v></x:c>`;
+  }
+  const text = escapeXmlText(value);
+  return `<x:c r="${address}" s="11" t="inlineStr"><x:is><x:t xml:space="preserve">${text}</x:t></x:is></x:c>`;
+}
+
+function buildFrdoExportWorksheetXml(templateXml, rows) {
+  const sheetDataMatch = /<x:sheetData>([\s\S]*?)<\/x:sheetData>/u.exec(templateXml);
+  const headerMatch = sheetDataMatch && /<x:row\b[^>]*\br="1"[^>]*>[\s\S]*?<\/x:row>/u.exec(sheetDataMatch[1]);
+  if (!sheetDataMatch || !headerMatch) throw new Error("Шаблон ФРДО повреждён: не найдена строка заголовков.");
+  const dataXml = rows.map((row, rowIndex) => {
+    const rowNumber = rowIndex + 2;
+    const cells = row.map((value, columnIndex) => (
+      renderFrdoExportCell(`${XLSX.utils.encode_col(columnIndex)}${rowNumber}`, value)
+    )).join("");
+    return `<x:row r="${rowNumber}" ht="45" customHeight="1">${cells}</x:row>`;
+  }).join("");
+  return templateXml.replace(
+    sheetDataMatch[0],
+    `<x:sheetData>${headerMatch[0]}${dataXml}</x:sheetData>`
+  );
+}
+
+function verifyFrdoExportTemplate(workbookBytes) {
+  const workbook = XLSX.read(workbookBytes, { type: "buffer", raw: true });
+  const worksheet = workbook.Sheets["Шаблон"];
+  if (!worksheet) throw new Error("Шаблон ФРДО повреждён: отсутствует лист «Шаблон».");
+  const headers = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: true })[0] || [];
+  if (FRDO_EXPORT_HEADERS.some((header, index) => String(headers[index] || "").trim() !== header)) {
+    throw new Error("Шаблон ФРДО повреждён: состав или порядок колонок изменён.");
+  }
+}
+
+function formatFrdoExportFileDate(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}.${value.month}.${value.day}`;
+}
+
+async function buildFrdoExportWorkbook(body) {
+  const records = sanitizeFrdoExportPayload(body);
+  const templateBytes = await fs.readFile(FRDO_EXPORT_TEMPLATE_PATH);
+  verifyFrdoExportTemplate(templateBytes);
+  const entries = readDocxZipEntries(templateBytes);
+  const worksheetEntry = entries.find((entry) => entry.name === "xl/worksheets/sheet1.xml");
+  if (!worksheetEntry) throw new Error("Шаблон ФРДО повреждён: не найден XML листа.");
+  worksheetEntry.content = Buffer.from(
+    buildFrdoExportWorksheetXml(worksheetEntry.content.toString("utf8"), records.map(buildFrdoExportRow)),
+    "utf8"
+  );
+  const outputBytes = buildDocxZip(entries);
+  const verification = XLSX.read(outputBytes, { type: "buffer", raw: true });
+  const outputRows = XLSX.utils.sheet_to_json(verification.Sheets["Шаблон"], {
+    header: 1,
+    defval: "",
+    raw: true
+  });
+  if (outputRows.length !== records.length + 1 || outputRows[0]?.length !== FRDO_EXPORT_HEADERS.length) {
+    throw new Error("Не удалось проверить сформированную выгрузку ФРДО.");
+  }
+  return {
+    bytes: outputBytes,
+    count: records.length,
+    fileName: `ВыгрузкаДПО_${formatFrdoExportFileDate()}.xls`
+  };
+}
+
+async function handleFrdoExport(req, res) {
+  try {
+    const result = await buildFrdoExportWorkbook(await readJsonBody(req));
+    sendFile(
+      res,
+      200,
+      result.bytes,
+      result.fileName,
+      "application/vnd.ms-excel",
+      { "X-Frdo-Export-Count": String(result.count) }
+    );
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
 function normalizeStudentDatabaseNumber(value) {
   if (typeof value === "number") return Number.isFinite(value) ? value : "";
   const text = String(value ?? "").replace(/\u00a0/g, "").replace(/\s+/g, "").replace(",", ".").trim();
@@ -14454,6 +14802,10 @@ async function route(req, res) {
     await handleStudentDatabaseExport(req, res);
     return;
   }
+  if (req.method === "POST" && requestUrl.pathname === "/api/issued-documents/frdo-export") {
+    await handleFrdoExport(req, res);
+    return;
+  }
   if (req.method === "POST" && req.url === "/api/contracts/student-document") {
     await handleContractDocument(req, res);
     return;
@@ -14494,6 +14846,8 @@ module.exports = {
   runStudentApplicationsQuery,
   parseStudentDatabaseWorkbook,
   sanitizeStudentDatabaseExportPayload,
+  sanitizeFrdoExportPayload,
+  buildFrdoExportWorkbook,
   inspectStudentDatabaseBinary,
   collectEmailMessageContent,
   parseStudentApplicationOrderEmail,

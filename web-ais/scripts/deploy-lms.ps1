@@ -23,6 +23,7 @@ $runtimeMirrorFiles = @(
   "app-server.js",
   "audit-lib.php",
   "auth-lib.php",
+  "data/frdo-export-template.xlsx",
   "services/ocr/server.py",
   "server-cli.js",
   "scripts/sync-student-database.ps1",

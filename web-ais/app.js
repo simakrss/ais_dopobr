@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.133",
+    version: "1.7.134",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.134",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В реестр выданных документов добавлена кнопка «Экспорт в ФРДО»: она формирует единый файл со всеми невыгруженными удостоверениями и дипломами.",
+        "Выгрузка соответствует приложенной 40-колоночной форме ФРДО, сортируется по дате выдачи и сопровождается индикатором формирования файла."
+      ]
+    },
     {
       version: "1.7.133",
       releasedAt: "2026-08-12",
@@ -3518,6 +3526,7 @@ MAX - https://bizvmax.ru/zifra_plus
       programType: ""
     },
     issuedDocumentSort: { key: "issueDate", dir: "asc" },
+    issuedDocumentExportRunning: false,
     programRegistryTypeFilter: [],
     contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
     studentImportedViewIds: [],
@@ -8339,6 +8348,88 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function buildIssuedDocumentFrdoExportRecords() {
+    const studentsById = new Map(
+      (state.data.collections.students || []).map((student) => [String(student.id || ""), student])
+    );
+    return getIssuedDocumentRows()
+      .filter((row) => row.frdoKey === "pending")
+      .map((row) => {
+        const student = studentsById.get(String(row.studentId || ""));
+        if (!student) return null;
+        const program = findProgramByName(row.program) || {};
+        return {
+          documentNumber: row.documentNumber,
+          registrationNumber: row.registrationNumber,
+          issueDate: row.issueDate,
+          program: row.program,
+          programType: row.programType,
+          frdoProfessionalArea: program.frdoProfessionalArea || "",
+          qualification: student.qualification || "",
+          programQualification: program.qualification || "",
+          startDate: student.startDate || "",
+          endDate: student.endDate || "",
+          hours: student.hours || program.hours || "",
+          name: student.name || "",
+          birthDate: student.birthDate || "",
+          gender: student.gender || "",
+          snils: student.snils || "",
+          studyForm: student.studyForm || program.studyForm || "",
+          fundingSource: student.fundingSource || "",
+          citizenship: student.citizenship || "",
+          educationLevel: student.educationLevel || "",
+          educationDocument: student.educationDocument || "",
+          educationDocumentSeries: student.educationDocumentSeries || "",
+          educationDocumentNumber: student.educationDocumentNumber || "",
+          educationDocumentSurname: student.educationDocumentSurname || "",
+          frdoStatus: student.frdoStatus || "",
+          frdoDate: student.frdoDate || ""
+        };
+      })
+      .filter(Boolean);
+  }
+
+  async function exportIssuedDocumentsToFrdo(button) {
+    if (state.issuedDocumentExportRunning) return;
+    const records = buildIssuedDocumentFrdoExportRecords();
+    if (!records.length) {
+      alert("Нет невыгруженных документов КПК или ППП для экспорта в ФРДО.");
+      return;
+    }
+    state.issuedDocumentExportRunning = true;
+    const originalText = button?.textContent || "Экспорт в ФРДО";
+    if (button) {
+      button.disabled = true;
+      button.classList.add("is-loading");
+      button.setAttribute("aria-busy", "true");
+      button.textContent = "Формирование…";
+    }
+    try {
+      const response = await fetch(photoApiUrl("/api/issued-documents/frdo-export"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ records })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Не удалось сформировать выгрузку ФРДО.");
+      }
+      const blob = await response.blob();
+      const fallback = `ВыгрузкаДПО_${todayIso().replace(/-/g, ".")}.xls`;
+      downloadBlob(getDownloadFileNameFromResponse(response, fallback), blob);
+    } catch (error) {
+      alert(error.message || "Не удалось сформировать выгрузку ФРДО.");
+    } finally {
+      state.issuedDocumentExportRunning = false;
+      if (button?.isConnected) {
+        button.disabled = false;
+        button.classList.remove("is-loading");
+        button.removeAttribute("aria-busy");
+        button.textContent = originalText;
+      }
+    }
+  }
+
   function issuedDocumentFiltersAreActive(filters = state.issuedDocumentFilters || {}) {
     return Object.values(filters).some((value) => String(value || "").trim());
   }
@@ -8484,6 +8575,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <span class="is-success">Выгружено в ФРДО: <strong>${exportedCount}</strong></span>
           <span class="${pendingCount ? "is-warning" : ""}">Ожидают ФРДО: <strong>${pendingCount}</strong></span>
           <div class="issued-documents-filter-actions">
+            <button class="primary-button issued-documents-frdo-export-button" data-action="export-issued-documents-frdo" type="button" ${pendingCount && !state.issuedDocumentExportRunning ? "" : "disabled"}>Экспорт в ФРДО</button>
             <span>Показано <strong>${rows.length}</strong> из ${allRows.length}</span>
             <button class="ghost-button" data-action="reset-issued-document-filters" type="button" ${issuedDocumentFiltersAreActive(filters) ? "" : "disabled"}>Сбросить</button>
             <button class="ghost-button icon-only table-options-button" data-action="toggle-table-options" data-config="${ISSUED_DOCUMENT_TABLE_CONFIG_ID}" type="button" title="Опции таблицы" aria-label="Опции таблицы">⋯</button>
@@ -24016,6 +24108,9 @@ MAX - https://bizvmax.ru/zifra_plus
         };
         state.tablePages.issuedDocuments = 1;
         render();
+      });
+      issuedDocumentsRegister.querySelector("[data-action='export-issued-documents-frdo']")?.addEventListener("click", (event) => {
+        exportIssuedDocumentsToFrdo(event.currentTarget);
       });
       issuedDocumentsRegister.querySelectorAll("[data-action='open-issued-document-student']").forEach((button) => {
         button.addEventListener("click", () => {
