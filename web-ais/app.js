@@ -4778,8 +4778,15 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function normalizeStudentRecord(student) {
     if (!student || typeof student !== "object") return student;
+    const importedApplicationProgramType = (
+      student.sourceOrderId || student.sourceApplicationKey
+    ) ? getStudentApplicationInferredProgramType(student) : "";
     const normalized = {
       ...student,
+      program: importedApplicationProgramType
+        ? getStudentApplicationCanonicalProgramTitle(student.program)
+        : student.program,
+      educationType: importedApplicationProgramType || student.educationType,
       additionalStatus: String(student.additionalStatus || "").trim(),
       studyForm: normalizeStudyForm(student.studyForm),
       gender: normalizeStudentGender(student.gender),
@@ -7990,8 +7997,8 @@ MAX - https://bizvmax.ru/zifra_plus
       .trim();
   }
 
-  function normalizeStudentApplicationProgramName(value) {
-    return normalizeProgramName(value)
+  function getStudentApplicationCanonicalProgramTitle(value) {
+    return String(value || "")
       .replace(/\s*\[\s*\d+\s*\]\s*$/u, "")
       .replace(
         /^(?:(?:онлайн[- ]?)?курс|программа)\s+(?:(?:профессиональной\s+)?переподготовки|повышения\s+квалификации|дополнительного(?:\s+профессионального)?\s+образования)\s*[:\-–—]?\s*/iu,
@@ -7999,6 +8006,11 @@ MAX - https://bizvmax.ru/zifra_plus
       )
       .replace(/^(?:(?:онлайн[- ]?)?курс|программа)\s*[:\-–—]\s*/iu, "")
       .replace(/^[\s"'«»]+|[\s"'«»]+$/gu, "")
+      .trim();
+  }
+
+  function normalizeStudentApplicationProgramName(value) {
+    return normalizeProgramName(getStudentApplicationCanonicalProgramTitle(value))
       .replace(/\s*\(\s*\d+(?:[.,]\d+)?\s*(?:ч|час|часа|часов)(?:\s*\/[^)]*)?\)\s*$/iu, "")
       .trim();
   }
