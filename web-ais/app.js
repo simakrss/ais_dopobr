@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.100",
+    version: "1.7.101",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.101",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Заявки с префиксом «Курс дополнительного образования» сопоставляются с программами ДОП из реестра; для неоднозначных названий доступно сохраняемое ручное сопоставление."
+      ]
+    },
     {
       version: "1.7.100",
       releasedAt: "2026-08-12",
@@ -3757,6 +3764,9 @@ MAX - https://bizvmax.ru/zifra_plus
       data.meta.applicationsMysqlManagedByEnvironment
     );
     data.meta.applicationsSqlQuery = String(data.meta.applicationsSqlQuery || "");
+    data.meta.studentApplicationProgramMappings = normalizeStudentApplicationProgramMappings(
+      data.meta.studentApplicationProgramMappings
+    );
     data.meta.documentMailboxes = Array.isArray(data.meta.documentMailboxes)
       ? data.meta.documentMailboxes.map((mailbox, index) => ({
         id: String(mailbox?.id || `mailbox-${index + 1}`).trim(),
@@ -7984,13 +7994,71 @@ MAX - https://bizvmax.ru/zifra_plus
     return normalizeProgramName(value)
       .replace(/\s*\[\s*\d+\s*\]\s*$/u, "")
       .replace(
-        /^(?:(?:онлайн[- ]?)?курс|программа)\s+(?:(?:профессиональной\s+)?переподготовки|повышения\s+квалификации|дополнительного\s+профессионального\s+образования)\s*[:\-–—]?\s*/iu,
+        /^(?:(?:онлайн[- ]?)?курс|программа)\s+(?:(?:профессиональной\s+)?переподготовки|повышения\s+квалификации|дополнительного(?:\s+профессионального)?\s+образования)\s*[:\-–—]?\s*/iu,
         ""
       )
       .replace(/^(?:(?:онлайн[- ]?)?курс|программа)\s*[:\-–—]\s*/iu, "")
       .replace(/^[\s"'«»]+|[\s"'«»]+$/gu, "")
       .replace(/\s*\(\s*\d+(?:[.,]\d+)?\s*(?:ч|час|часа|часов)(?:\s*\/[^)]*)?\)\s*$/iu, "")
       .trim();
+  }
+
+  function getStudentApplicationInferredProgramType(row) {
+    return /^(?:(?:онлайн[- ]?)?курс|программа)\s+дополнительного\s+образования(?=$|[\s"'«»(:\-–—])/iu.test(
+      getStudentApplicationProgramTitle(row)
+    ) ? "ДОП" : "";
+  }
+
+  function normalizeStudentApplicationProgramMappings(values) {
+    return (Array.isArray(values) ? values : [])
+      .map((item) => ({
+        sourceProgram: String(item?.sourceProgram || "").trim(),
+        sourceProgramNormalized: normalizeStudentApplicationProgramName(
+          item?.sourceProgramNormalized || item?.sourceProgram
+        ),
+        sourceProductId: String(item?.sourceProductId || "").trim(),
+        sourceType: String(item?.sourceType || "").trim().toLocaleLowerCase("ru-RU"),
+        programId: String(item?.programId || "").trim(),
+        programName: String(item?.programName || "").trim(),
+        updatedAt: String(item?.updatedAt || "").trim(),
+        updatedBy: String(item?.updatedBy || "").trim()
+      }))
+      .filter((item) => item.sourceProgramNormalized && (item.programId || item.programName));
+  }
+
+  function getStudentApplicationProgramMappingSource(row) {
+    const sourceProgram = getStudentApplicationProgramTitle(row);
+    return {
+      sourceProgram,
+      sourceProgramNormalized: normalizeStudentApplicationProgramName(sourceProgram),
+      sourceProductId: String(row?.productId || "").trim(),
+      sourceType: String(row?.sourceType || "").trim().toLocaleLowerCase("ru-RU")
+    };
+  }
+
+  function getStoredStudentApplicationProgramMapping(row) {
+    const source = getStudentApplicationProgramMappingSource(row);
+    const mappings = normalizeStudentApplicationProgramMappings(
+      state.data?.meta?.studentApplicationProgramMappings
+    ).filter((item) => (
+      item.sourceProgramNormalized === source.sourceProgramNormalized
+      && (!item.sourceType || !source.sourceType || item.sourceType === source.sourceType)
+    ));
+    if (!mappings.length) return null;
+    const exactProductMappings = source.sourceProductId
+      ? mappings.filter((item) => item.sourceProductId === source.sourceProductId)
+      : [];
+    const candidates = exactProductMappings.length ? exactProductMappings : mappings;
+    const programIds = unique(candidates.map((item) => item.programId || item.programName).filter(Boolean));
+    return programIds.length === 1 ? candidates[0] : null;
+  }
+
+  function resolveStoredStudentApplicationProgram(row) {
+    const mapping = getStoredStudentApplicationProgramMapping(row);
+    if (!mapping) return null;
+    const programs = state.data.collections.programs || [];
+    return programs.find((program) => String(program.id || "") === mapping.programId)
+      || findProgramByName(mapping.programName);
   }
 
   function getStudentApplicationProgramHours(value, fallback = "") {
@@ -8035,6 +8103,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const selectedProgram = (state.data.collections.programs || [])
       .find((program) => String(program.id || "") === String(selectedProgramId || ""));
     if (selectedProgram) return selectedProgram;
+    const storedProgram = resolveStoredStudentApplicationProgram(row);
+    if (storedProgram) return storedProgram;
     const productId = String(row?.productId || "").trim();
     const byProductId = productId
       ? (state.data.collections.programs || []).find((program) => (
@@ -8059,6 +8129,43 @@ MAX - https://bizvmax.ru/zifra_plus
       if (matchingHours) return matchingHours;
     }
     return comparablePrograms.length === 1 ? comparablePrograms[0] : null;
+  }
+
+  function saveStudentApplicationProgramMapping(rowId, programId) {
+    const row = (state.studentApplicationsImport.rows || [])
+      .find((item) => String(item.id || "") === String(rowId || ""));
+    if (!row) return;
+    const program = (state.data.collections.programs || [])
+      .find((item) => String(item.id || "") === String(programId || ""));
+    const source = getStudentApplicationProgramMappingSource(row);
+    const current = normalizeStudentApplicationProgramMappings(
+      state.data.meta.studentApplicationProgramMappings
+    ).filter((item) => !(
+      item.sourceProgramNormalized === source.sourceProgramNormalized
+      && item.sourceProductId === source.sourceProductId
+      && item.sourceType === source.sourceType
+    ));
+    if (program) {
+      current.push({
+        ...source,
+        programId: String(program.id || "").trim(),
+        programName: String(program.name || "").trim(),
+        updatedAt: new Date().toISOString(),
+        updatedBy: getCurrentUserLogin()
+      });
+    }
+    state.data.meta.studentApplicationProgramMappings = current;
+    state.studentApplicationsImport.error = "";
+    addAudit(
+      program ? "Сопоставлена программа заявки" : "Удалено сопоставление программы заявки",
+      "Слушатели и заявки",
+      program
+        ? `${source.sourceProgram} → ${program.name}`
+        : source.sourceProgram,
+      { source: "applications-import" }
+    );
+    persist();
+    render();
   }
 
   function buildStudentApplicationsImportLookup() {
@@ -8255,6 +8362,11 @@ MAX - https://bizvmax.ru/zifra_plus
       state.studentApplicationsImport.filters.programId
     );
     const financialTerms = getStudentApplicationFinancialTerms(row, mappedProgram);
+    const inferredProgramType = getStudentApplicationInferredProgramType(row) || mappedProgram?.type;
+    const programFilterOverridesMapping = Boolean(state.studentApplicationsImport.filters.programId);
+    const programs = (state.data.collections.programs || [])
+      .slice()
+      .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "ru"));
     const { paymentAmount, contractAmount } = financialTerms;
     const hasPayment = paymentAmount > 0 || Boolean(row.paid);
     const repeatComment = getStudentApplicationRepeatComment(row, importedLookup);
@@ -8273,6 +8385,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ["Купон", financialTerms.coupon || "—"],
       ["Скидка / рассрочка", benefitDescription],
       ["Программа", row.program],
+      ["Категория", inferredProgramType || "—"],
       ["Телефон", row.phone],
       ["Email", row.email],
       ["Город", row.city],
@@ -8293,6 +8406,22 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="student-application-import-preview">
         <span>Будет добавлено</span>
         <strong>${escapeHtml(mappedProgram?.name || getStudentApplicationProgramTitle(row) || "Программа не определена")}</strong>
+        <label class="student-application-program-mapping ${mappedProgram ? "is-matched" : "is-unmatched"}">
+          <span>Сопоставление с реестром программ</span>
+          <select data-student-application-program-map="${escapeAttr(row.id)}" ${programFilterOverridesMapping ? "disabled" : ""}>
+            <option value="">Выберите программу...</option>
+            ${programs.map((program) => `
+              <option value="${escapeAttr(program.id)}" ${String(program.id || "") === String(mappedProgram?.id || "") ? "selected" : ""}>
+                ${escapeHtml(program.name || "Без названия")}${program.type ? ` — ${escapeHtml(program.type)}` : ""}${program.hours ? `, ${escapeHtml(program.hours)} ч` : ""}
+              </option>
+            `).join("")}
+          </select>
+          <small>${programFilterOverridesMapping
+            ? "Программа задана фильтром импорта."
+            : (mappedProgram
+              ? "Сопоставление найдено автоматически или сохранено ранее."
+              : "Выберите программу: этот вариант будет сохранён для следующих заявок с таким названием.")}</small>
+        </label>
         <small>${hasPayment
           ? (financialTerms.installmentPercent
             ? `Платёж ${financialTerms.installmentPercent}%: ${escapeHtml(money(paymentAmount))}; сумма договора: ${escapeHtml(money(contractAmount))}`
@@ -8973,7 +9102,7 @@ MAX - https://bizvmax.ru/zifra_plus
       status: status || "На зачисление",
       program: String(program?.name || getStudentApplicationProgramTitle(row)).trim(),
       studyForm: String(program?.studyForm || ""),
-      educationType: String(program?.type || ""),
+      educationType: String(getStudentApplicationInferredProgramType(row) || program?.type || ""),
       hours: program?.hours || "",
       phone: String(row.phone || "").trim(),
       email: String(row.email || "").trim(),
@@ -9045,6 +9174,17 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Выберите заявки, которые нужно добавить.");
       return;
     }
+    const selectedProgramId = state.studentApplicationsImport.filters.programId;
+    const unresolvedRow = selectedRows.find((row) => !getStudentApplicationProgram(row, selectedProgramId));
+    if (unresolvedRow) {
+      state.studentApplicationsImport.activeId = String(unresolvedRow.id || "");
+      state.studentApplicationsImport.error = `Сопоставьте программу заявки «${getStudentApplicationProgramTitle(unresolvedRow) || "Без названия"}» с программой из реестра.`;
+      render();
+      requestAnimationFrame(() => {
+        document.querySelector(`[data-student-application-program-map="${CSS.escape(String(unresolvedRow.id || ""))}"]`)?.focus();
+      });
+      return;
+    }
     if (!confirm(`Добавить выбранных слушателей: ${selectedRows.length}?`)) return;
     const status = state.studentApplicationsImport.filters.status || "На зачисление";
     let nextUid = Number(getNextUid()) || 1;
@@ -9059,7 +9199,7 @@ MAX - https://bizvmax.ru/zifra_plus
         row,
         nextUid,
         status,
-        state.studentApplicationsImport.filters.programId
+        selectedProgramId
       ));
       nextUid += 1;
     });
@@ -9159,6 +9299,13 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", toggleAllStudentApplications);
     document.querySelector("[data-action='add-selected-student-applications']")
       ?.addEventListener("click", addSelectedStudentApplications);
+    document.querySelector("[data-student-application-program-map]")
+      ?.addEventListener("change", (event) => {
+        saveStudentApplicationProgramMapping(
+          event.currentTarget.dataset.studentApplicationProgramMap,
+          event.currentTarget.value
+        );
+      });
     document.querySelectorAll("[data-student-application-select]").forEach((input) => {
       input.addEventListener("click", (event) => event.stopPropagation());
       input.addEventListener("change", () => {
