@@ -27,8 +27,10 @@ $nameCell = $null
 $codeCell = $null
 $firstMessageCell = $null
 $secondMessageCell = $null
+$emailMessageCell = $null
 $firstComment = $null
 $secondComment = $null
+$emailComment = $null
 
 try {
   [void](New-Item -ItemType Directory -Path $temporaryDirectory)
@@ -53,14 +55,21 @@ try {
   Release-ComObject $workbooks
   $workbooks = $null
   $sheet = $workbook.Worksheets.Item("Реестр программ")
-  $targetRow = 63
+  $targetRow = 34
+  $header = Find-HeaderRow $sheet @("Наименование программы", "Промосообщение1", "Промосообщение2", "СообщПочты")
+  $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn ([pscustomobject]@{
+    "Код лендинга" = "landingCode"
+  }))
+  $landingCodeColumn = Find-MappedColumn $columns "landingCode"
   $nameCell = $sheet.Cells.Item($targetRow, 1)
-  $codeCell = $sheet.Cells.Item($targetRow, 7)
+  $codeCell = $sheet.Cells.Item($targetRow, $landingCodeColumn)
   $firstMessageCell = $sheet.Cells.Item($targetRow, 4)
   $secondMessageCell = $sheet.Cells.Item($targetRow, 5)
+  $emailMessageCell = $sheet.Cells.Item($targetRow, 6)
   $originalFirstValue = [string]$firstMessageCell.Value2
   $secondComment = $secondMessageCell.Comment
   $originalSecondValue = [string]$secondMessageCell.Value2
+  $originalEmailValue = [string]$emailMessageCell.Value2
   $originalSecondMessage = if ($null -ne $secondComment) { [string]$secondComment.Text() } else { "" }
   $originalSecondMessage = $originalSecondMessage.Replace("`r`n", "`n").Replace("`r", "`n")
   if (-not $originalSecondMessage) {
@@ -71,6 +80,7 @@ try {
   $programName = [string]$nameCell.Value2
   $landingCode = [string]$codeCell.Value2
   $message = "Тестовая строка 1`nhttps://example.test/promo?q=1&x=2`nТестовая строка 3"
+  $emailMessage = "#ФИО#, здравствуйте!`nДокумент: #Документ#`nhttps://example.test/education"
   $payload = [pscustomobject]@{
     programPromoMessagesProvided = $true
     programs = @([pscustomobject]@{
@@ -81,8 +91,10 @@ try {
       xlsbProgramRow = $targetRow
       promoMessage1Provided = $true
       promoMessage2Provided = $false
+      emailMessageTemplateProvided = $true
       promoMessage1 = $message
       promoMessage2 = ""
+      emailMessageTemplate = $emailMessage
     })
   }
 
@@ -90,16 +102,23 @@ try {
   $workbook.Save()
   $firstComment = $firstMessageCell.Comment
   $secondComment = $secondMessageCell.Comment
+  $emailComment = $emailMessageCell.Comment
   $actualMessage = if ($null -ne $firstComment) { [string]$firstComment.Text() } else { "" }
   $actualMessage = $actualMessage.Replace("`r`n", "`n").Replace("`r", "`n")
   $preservedSecondMessage = if ($null -ne $secondComment) { [string]$secondComment.Text() } else { "" }
   $preservedSecondMessage = $preservedSecondMessage.Replace("`r`n", "`n").Replace("`r", "`n")
+  $actualEmailMessage = if ($null -ne $emailComment) { [string]$emailComment.Text() } else { "" }
+  $actualEmailMessage = $actualEmailMessage.Replace("`r`n", "`n").Replace("`r", "`n")
+
+  if ($result.Count -ne 1 -or $result.Skipped -ne 0) {
+    throw "Тестовая программа не сопоставлена: обновлено $($result.Count), пропущено $($result.Skipped)."
+  }
 
   if ([string]$firstMessageCell.Value2 -ne $originalFirstValue) {
     throw "Содержимое ячейки первого промосообщения было изменено."
   }
   if ($actualMessage -ne $message) {
-    throw "Текст примечания первого промосообщения отличается от исходного."
+    throw "Текст примечания первого промосообщения отличается от исходного. Ожидалось: [$message]. Получено: [$actualMessage]."
   }
   if (
     [string]$secondMessageCell.Value2 -ne $originalSecondValue `
@@ -107,7 +126,10 @@ try {
   ) {
     throw "Неизменяемое второе промосообщение было затронуто частичной синхронизацией."
   }
-  if ($result.Count -ne 1 -or $result.Messages -ne 1 -or $result.Skipped -ne 0) {
+  if ([string]$emailMessageCell.Value2 -ne $originalEmailValue -or $actualEmailMessage -ne $emailMessage) {
+    throw "Почтовое сообщение программы или исходное содержимое ячейки сохранено неверно."
+  }
+  if ($result.Count -ne 1 -or $result.Messages -ne 1 -or $result.EmailMessages -ne 1 -or $result.Skipped -ne 0) {
     throw "Некорректная статистика обновления промосообщений."
   }
 
@@ -146,15 +168,17 @@ try {
   }
   $savedFirstCellValue = [string]$firstMessageCell.Value2
 
-  foreach ($value in @($firstComment, $secondComment, $nameCell, $codeCell, $firstMessageCell, $secondMessageCell, $sheet)) {
+  foreach ($value in @($firstComment, $secondComment, $emailComment, $nameCell, $codeCell, $firstMessageCell, $secondMessageCell, $emailMessageCell, $sheet)) {
     Release-ComObject $value
   }
   $firstComment = $null
   $secondComment = $null
+  $emailComment = $null
   $nameCell = $null
   $codeCell = $null
   $firstMessageCell = $null
   $secondMessageCell = $null
+  $emailMessageCell = $null
   $sheet = $null
   $workbook.Close($false)
   Release-ComObject $workbook
@@ -174,7 +198,8 @@ const row = (result.programPaymentSettings || [])
 if (!row) throw new Error("Program row was not imported from the saved workbook.");
 process.stdout.write(JSON.stringify({
   promoMessage1: String(row.promoMessage1 || ""),
-  promoMessage2: String(row.promoMessage2 || "")
+  promoMessage2: String(row.promoMessage2 || ""),
+  emailMessageTemplate: String(row.emailMessageTemplate || "")
 }));
 '@
   $verifyScriptPath = Join-Path $temporaryDirectory "verify-program-promo.js"
@@ -184,13 +209,18 @@ process.stdout.write(JSON.stringify({
     throw "Не удалось повторно прочитать сохранённую временную XLSB."
   }
   $verification = $verificationOutput[-1] | ConvertFrom-Json
-  if ([string]$verification.promoMessage1 -ne $message -or [string]$verification.promoMessage2) {
+  if (
+    [string]$verification.promoMessage1 -ne $message `
+    -or [string]$verification.promoMessage2 `
+    -or [string]$verification.emailMessageTemplate -ne $emailMessage
+  ) {
     throw "Повторный импорт сохранённой временной XLSB вернул неверные промосообщения."
   }
 
   [pscustomobject]@{
     updatedPrograms = $result.Count
     writtenMessages = $result.Messages
+    writtenEmailMessages = $result.EmailMessages
     skippedPrograms = $result.Skipped
     preservedCellValue = $savedFirstCellValue
     commentLength = $actualMessage.Length
@@ -202,10 +232,12 @@ process.stdout.write(JSON.stringify({
   foreach ($value in @(
     $firstComment,
     $secondComment,
+    $emailComment,
     $nameCell,
     $codeCell,
     $firstMessageCell,
     $secondMessageCell,
+    $emailMessageCell,
     $workbooks,
     $sheet
   )) {

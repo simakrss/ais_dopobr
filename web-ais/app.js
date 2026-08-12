@@ -9,10 +9,18 @@
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.110",
+    version: "1.7.111",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.111",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В карточку образовательной программы добавлена вкладка «Отправка по почте», которая загружает текст из примечания «СообщПочты» листа «Реестр программ» и использует интерфейс почтового шаблона конструктора документов.",
+        "При отправке документа об образовании текст программы имеет приоритет; если он пуст, применяется текст из параметров отправляемого документа. Синхронизация XLSB изменяет только примечание «СообщПочты», сохраняя содержимое ячейки."
+      ]
+    },
     {
       version: "1.7.110",
       releasedAt: "2026-08-12",
@@ -2578,7 +2586,8 @@ MAX - https://bizvmax.ru/zifra_plus
     teachers: ["Преподаватели"],
     literature: ["Литература ОП"],
     promoMessage1: ["Промосообщение1"],
-    promoMessage2: ["Промосообщение2"]
+    promoMessage2: ["Промосообщение2"],
+    emailMessageTemplate: ["СообщПочты"]
   });
   const PROGRAM_DICTIONARY_FIELDS = Object.freeze({
     frdoProfessionalArea: "frdoProfessionalAreas",
@@ -2708,6 +2717,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("literature", "Литература ОП", "textarea", false, null, { programTab: "characteristics", list: true, wide: true }),
         field("promoMessage1", "Промосообщение 1", "textarea", false, null, { programTab: "promo", wide: true }),
         field("promoMessage2", "Промосообщение 2", "textarea", false, null, { programTab: "promo", wide: true }),
+        field("emailMessageTemplate", "Текст сообщения", "textarea", false, null, { programTab: "email", wide: true }),
         field("commissionChair", "Председатель", "text", false, null, { programTab: "commission" }),
         field("commissionMember1", "Член 1", "text", false, null, { programTab: "commission" }),
         field("commissionMember2", "Член 2", "text", false, null, { programTab: "commission" }),
@@ -16207,6 +16217,11 @@ MAX - https://bizvmax.ru/zifra_plus
         label: "Промосообщение",
         note: "Промосообщения программы\nТексты загружаются из примечаний к колонкам «Промосообщение1» и «Промосообщение2» листа «Реестр программ»."
       },
+      {
+        id: "email",
+        label: "Отправка по почте",
+        note: "Текст загружается из примечания к колонке «СообщПочты» листа «Реестр программ». Если текст не заполнен, используется шаблон выбранного документа об образовании."
+      },
       { id: "commission", label: "Комиссия" }
     ]);
     const activeTab = programTabs.find((tab) => tab.id === state.programCardTab) || programTabs[0];
@@ -16274,6 +16289,9 @@ MAX - https://bizvmax.ru/zifra_plus
               </div>
               <div class="program-tab-panel ${activeTab.id === "promo" ? "is-active" : ""}" data-program-tab-panel="promo" role="tabpanel" ${activeTab.id === "promo" ? "" : "hidden"}>
                 ${renderProgramPromoSection(record || {})}
+              </div>
+              <div class="program-tab-panel program-email-panel ${activeTab.id === "email" ? "is-active" : ""}" data-program-tab-panel="email" role="tabpanel" ${activeTab.id === "email" ? "" : "hidden"}>
+                ${renderProgramEmailSection(record || {})}
               </div>
               <div class="program-tab-panel ${activeTab.id === "commission" ? "is-active" : ""}" data-program-tab-panel="commission" role="tabpanel" ${activeTab.id === "commission" ? "" : "hidden"}>
                 ${renderProgramCommissionSection(record || {})}
@@ -16422,6 +16440,127 @@ MAX - https://bizvmax.ru/zifra_plus
       <section class="form-section program-promo-section">
         <div class="program-promo-grid">
           ${fields.map((item) => renderProgramPromoMessageEditor(item, record)).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function getProgramEducationDocumentTemplate(record = {}) {
+    const programType = normalizeEducationProgramType(record.type);
+    const educationDocuments = getDocumentTemplates()
+      .filter((documentTemplate) => documentTemplate.documentKind === "education");
+    if (!programType) return educationDocuments[0] || null;
+    return educationDocuments.find((documentTemplate) => (
+      (documentTemplate.programTypes || [])
+        .some((type) => normalizeEducationProgramType(type) === programType)
+    )) || null;
+  }
+
+  function getProgramEmailTemplateContext(record = {}) {
+    const documentTemplate = getProgramEducationDocumentTemplate(record);
+    return {
+      documentTemplate,
+      tokens: documentTemplate ? getDocumentEmailTemplateTokens(documentTemplate) : []
+    };
+  }
+
+  function renderProgramEmailMarkerGroup(title, subtitle, items) {
+    return `
+      <section class="document-template-email-marker-group" data-document-email-marker-group>
+        <div class="document-template-email-marker-group-head">
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(subtitle)} · ${items.length}</span>
+        </div>
+        <div class="document-template-email-marker-list">
+          ${items.map((item) => `
+            <button
+              class="communication-template-token contract-template-token document-email-marker is-${escapeAttr(item.type)}"
+              data-action="insert-document-email-token"
+              data-template-token="${escapeAttr(item.token)}"
+              data-document-email-marker-label="${escapeAttr(`${item.label} ${item.token}`.toLocaleLowerCase("ru-RU"))}"
+              data-document-email-token
+              ${item.fieldId ? `data-contract-field-id="${escapeAttr(item.fieldId)}" data-contract-document-field-name="${escapeAttr(item.label)}"` : ""}
+              ${item.templateValueName ? `data-document-email-template-value-name="${escapeAttr(item.templateValueName)}"` : ""}
+              draggable="true"
+              type="button"
+              title="${escapeAttr(`${item.label}: ${item.token}`)}"
+            >${escapeHtml(item.label)}</button>
+          `).join("")}
+          <span class="lookup-empty document-template-email-marker-empty" ${items.length ? "hidden" : ""}>${items.length ? "Совпадений нет" : "Поля не найдены"}</span>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderProgramEmailSection(record) {
+    const { documentTemplate, tokens } = getProgramEmailTemplateContext(record);
+    const deliveryMode = documentTemplate
+      ? normalizeDocumentEmailDeliveryMode(documentTemplate.emailDeliveryMode, documentTemplate)
+      : "off";
+    const deliveryModeLabel = {
+      off: "Не отправлять",
+      student: "Слушатель",
+      system: "Системный ящик"
+    }[deliveryMode] || "Не отправлять";
+    const message = String(record.emailMessageTemplate || "");
+    const documentTokens = tokens.filter((item) => item.type === "document");
+    const sourceTokens = tokens.filter((item) => item.type === "source");
+    const constantTokens = tokens.filter((item) => item.type === "constant");
+    return `
+      <section class="document-template-email-settings program-email-settings" data-program-email-settings>
+        <div class="document-template-email-settings-head">
+          <div>
+            <strong>Отправка по почте</strong>
+            <span>Текст загружается из примечания «СообщПочты». Пустое поле использует текст из параметров документа${documentTemplate ? ` «${escapeHtml(documentTemplate.title)}»` : ""}.</span>
+          </div>
+          <label>
+            <span>Получатель</span>
+            <select disabled aria-label="Получатель из параметров документа">
+              <option>${escapeHtml(deliveryModeLabel)}</option>
+            </select>
+          </label>
+        </div>
+        <div class="document-template-email-layout">
+          <div class="document-template-email-editors">
+            <label class="document-template-email-field">
+              <span>Тема сообщения</span>
+              <div
+                class="document-email-template-editor is-subject is-readonly"
+                role="textbox"
+                aria-readonly="true"
+                aria-label="Тема отправляемого письма из параметров документа"
+              >${renderDocumentEmailEditorContent(documentTemplate?.emailSubjectTemplate || "", tokens)}</div>
+            </label>
+            <label class="document-template-email-field is-message">
+              <span>Текст сообщения</span>
+              <div
+                class="document-email-template-editor is-message is-active-editor"
+                contenteditable="true"
+                data-document-email-editor
+                data-program-email-editor
+                data-document-email-field="emailMessageTemplate"
+                role="textbox"
+                aria-label="Текст отправляемого письма для программы"
+                aria-multiline="true"
+              >${renderDocumentEmailEditorContent(message, tokens)}</div>
+              <input name="emailMessageTemplate" type="hidden" value="${escapeAttr(message)}">
+            </label>
+          </div>
+          <aside class="document-template-email-markers">
+            <div class="document-template-email-markers-head">
+              <strong>Доступные поля</strong>
+              <span>Щёлкните или перетащите поле в активный редактор.</span>
+            </div>
+            <label class="document-template-email-marker-search">
+              <span aria-hidden="true">⌕</span>
+              <input data-document-email-marker-search type="search" placeholder="Найти поле" autocomplete="off" aria-label="Поиск доступного поля">
+            </label>
+            <div class="document-template-email-marker-groups">
+              ${renderProgramEmailMarkerGroup("Поля документа", "значения после расчёта", documentTokens)}
+              ${renderProgramEmailMarkerGroup("Исходные данные", "значения карточки слушателя", sourceTokens)}
+              ${renderProgramEmailMarkerGroup("Константы", "значения из файла Word", constantTokens)}
+            </div>
+          </aside>
         </div>
       </section>
     `;
@@ -27184,6 +27323,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const rows = state.data.collections[config.collection];
     if (formElement.dataset.config === "programs") {
       formElement.querySelectorAll("[data-program-promo-editor]").forEach(syncProgramPromoEditor);
+      formElement.querySelectorAll("[data-program-email-editor]").forEach(syncDocumentEmailTemplateEditor);
     }
     const formData = new FormData(formElement);
     const isStudentCard = formElement.dataset.config === "students";
@@ -27217,7 +27357,7 @@ MAX - https://bizvmax.ru/zifra_plus
       PROGRAM_LIST_FIELD_KEYS.forEach((key) => {
         if (formData.has(key)) values[key] = normalizeProgramListValue(formData.get(key));
       });
-      ["promoMessage1", "promoMessage2"].forEach((key) => {
+      ["promoMessage1", "promoMessage2", "emailMessageTemplate"].forEach((key) => {
         if (String(values[key] || "") !== String(currentRecord[key] || "")) {
           values[`${key}Touched`] = true;
         }
@@ -34349,11 +34489,23 @@ MAX - https://bizvmax.ru/zifra_plus
     hiddenInput.value = value;
   }
 
+  function getDocumentEmailEditorTokens(editor) {
+    const form = editor?.closest("form");
+    if (editor?.matches("[data-program-email-editor]")) {
+      const storedRecord = (state.data.collections.programs || [])
+        .find((item) => String(item.id || "") === String(form?.dataset.id || "")) || {};
+      const record = {
+        ...storedRecord,
+        type: form?.elements?.type?.value ?? storedRecord.type
+      };
+      return getProgramEmailTemplateContext(record).tokens;
+    }
+    return getDocumentEmailTemplateTokens(collectContractTemplateForm(form).document);
+  }
+
   function refreshDocumentEmailTemplateEditor(editor) {
     if (!editor) return;
-    const form = editor.closest("form");
-    const documentTemplate = collectContractTemplateForm(form).document;
-    const tokens = getDocumentEmailTemplateTokens(documentTemplate);
+    const tokens = getDocumentEmailEditorTokens(editor);
     let value = serializeCommunicationTemplateEditor(editor);
     if (editor.dataset.documentEmailField === "emailSubjectTemplate") {
       value = value.replace(/\s*\n+\s*/g, " ").trim();
@@ -34362,9 +34514,11 @@ MAX - https://bizvmax.ru/zifra_plus
     syncDocumentEmailTemplateEditor(editor);
   }
 
-  function createDocumentEmailTemplateBlock(token) {
+  function createDocumentEmailTemplateBlock(token, editor = null) {
     const block = document.createElement("span");
-    const tokenDefinition = getDocumentEmailTemplateTokens(getActiveDocumentTemplate())
+    const tokenDefinition = (editor
+      ? getDocumentEmailEditorTokens(editor)
+      : getDocumentEmailTemplateTokens(getActiveDocumentTemplate()))
       .find((item) => item.token === token);
     const type = tokenDefinition?.type || (String(token).startsWith("#") ? "document" : "source");
     block.className = `communication-template-block document-email-template-block is-${type}`;
@@ -34387,7 +34541,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function insertDocumentEmailTemplateToken(editor, token, range = null, existingBlock = null) {
     if (!editor || !token) return;
     const beforeValue = serializeCommunicationTemplateEditor(editor);
-    const block = existingBlock || createDocumentEmailTemplateBlock(token);
+    const block = existingBlock || createDocumentEmailTemplateBlock(token, editor);
     if (range && !block.contains(range.startContainer)) range.insertNode(block);
     else editor.append(block);
     commitCommunicationTemplateEditorChange(editor, beforeValue);
@@ -34404,8 +34558,12 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function bindDocumentEmailTemplateEditors() {
-    const form = document.querySelector("form[data-action='save-contract-template-fields']");
-    if (!form) return;
+    const forms = Array.from(document.querySelectorAll(
+      "form[data-action='save-contract-template-fields'], form[data-config='programs']"
+    )).filter((form) => form.querySelector("[data-document-email-editor]"));
+    forms.forEach((form) => {
+    if (form.dataset.documentEmailEditorsBound === "true") return;
+    form.dataset.documentEmailEditorsBound = "true";
     const tokenMime = "application/x-ais-contract-template-token";
     const editors = Array.from(form.querySelectorAll("[data-document-email-editor]"));
     const tokenButtons = Array.from(form.querySelectorAll("[data-action='insert-document-email-token']"));
@@ -34438,8 +34596,12 @@ MAX - https://bizvmax.ru/zifra_plus
     form.addEventListener("dragstart", (event) => {
       const block = event.target.closest?.(".document-email-template-block");
       draggedEmailBlock = block && form.contains(block) ? block : null;
-      if (draggedEmailBlock && event.dataTransfer) {
-        event.dataTransfer.effectAllowed = "move";
+      const marker = event.target.closest?.("[data-action='insert-document-email-token']");
+      const token = draggedEmailBlock?.dataset.templateToken || marker?.dataset.templateToken || "";
+      if (token && event.dataTransfer) {
+        event.dataTransfer.effectAllowed = draggedEmailBlock ? "move" : "copy";
+        event.dataTransfer.setData(tokenMime, token);
+        event.dataTransfer.setData("text/plain", token);
       }
     });
     form.addEventListener("dragend", () => {
@@ -34455,18 +34617,37 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
     editors.forEach((editor) => {
+      initializeCommunicationTemplateEditorHistory(editor);
       editor.addEventListener("focus", () => {
         editors.forEach((item) => item.classList.toggle("is-active-editor", item === editor));
         activeEditor = editor;
       });
-      editor.addEventListener("input", () => syncDocumentEmailTemplateEditor(editor));
+      editor.addEventListener("click", openTemplateEditorLink);
+      editor.addEventListener("contextmenu", (event) => {
+        if (!editor.matches("[data-program-email-editor]")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        syncDocumentEmailTemplateEditor(editor);
+        showFieldCopyPopup(editor, event.clientX, event.clientY);
+      });
+      editor.addEventListener("input", () => {
+        recordCommunicationTemplateEditorChange(editor);
+        syncDocumentEmailTemplateEditor(editor);
+      });
       editor.addEventListener("blur", () => refreshDocumentEmailTemplateEditor(editor));
       editor.addEventListener("keydown", (event) => {
+        if (handleCommunicationTemplateEditorHistoryKeydown(event, editor)) return;
         if (editor.dataset.documentEmailField === "emailSubjectTemplate" && event.key === "Enter") {
           event.preventDefault();
         }
       });
-      editor.addEventListener("paste", () => {
+      editor.addEventListener("paste", (event) => {
+        const text = event.clipboardData?.getData("text/plain");
+        if (typeof text === "string") {
+          event.preventDefault();
+          insertPlainTextIntoContentEditable(editor, text);
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+        }
         window.setTimeout(() => refreshDocumentEmailTemplateEditor(editor));
       });
       editor.addEventListener("dragover", (event) => {
@@ -34498,6 +34679,7 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         draggedEmailBlock = null;
       });
+    });
     });
   }
 
@@ -37443,8 +37625,10 @@ MAX - https://bizvmax.ru/zifra_plus
         Number(program.xlsbProgramRow) > 0
         || program.promoMessage1Touched === true
         || program.promoMessage2Touched === true
+        || program.emailMessageTemplateTouched === true
         || String(program.promoMessage1 || "").trim()
         || String(program.promoMessage2 || "").trim()
+        || String(program.emailMessageTemplate || "").trim()
       ))
       .map((program) => ({
         name: String(program.name || "").trim(),
@@ -37462,8 +37646,12 @@ MAX - https://bizvmax.ru/zifra_plus
         promoMessage2Provided: Number(program.xlsbProgramRow) > 0
           || program.promoMessage2Touched === true
           || Boolean(String(program.promoMessage2 || "").trim()),
+        emailMessageTemplateProvided: Number(program.xlsbProgramRow) > 0
+          || program.emailMessageTemplateTouched === true
+          || Boolean(String(program.emailMessageTemplate || "").trim()),
         promoMessage1: String(program.promoMessage1 || ""),
-        promoMessage2: String(program.promoMessage2 || "")
+        promoMessage2: String(program.promoMessage2 || ""),
+        emailMessageTemplate: String(program.emailMessageTemplate || "")
       }));
   }
 
@@ -37546,8 +37734,8 @@ MAX - https://bizvmax.ru/zifra_plus
       state.data.meta.studentDatabaseLastExportedAt = new Date().toISOString();
       addAudit(
         "Синхронизация с базой",
-        "Слушатели, договоры, затраты и промосообщения",
-        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.programPromoMessageCount || 0} промосообщений; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; ${sourceLabel}; резервная копия: ${result.backupPath || "создана"}; время выполнения: ${duration}`,
+        "Слушатели, договоры, затраты и сообщения программ",
+        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.programPromoMessageCount || 0} промосообщений; ${result.programEmailMessageCount || 0} почтовых сообщений программ; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; ${sourceLabel}; резервная копия: ${result.backupPath || "создана"}; время выполнения: ${duration}`,
         { entityType: "database", entityLabel: "АИС Допобразование.xlsb", source: `xlsb-sync-${syncSource}` }
       );
       persist();
@@ -37555,7 +37743,7 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
       finishDatabaseExportIndicator(
         "success",
-        `Готово: ${students.length} слушателей, ${contracts.length} договоров, ${directExpenses.length} прямых и ${generalExpenses.length} общих затрат, ${result.programPromoMessageCount || 0} промосообщений. Резервная копия создана. Время выполнения: ${duration}`
+        `Готово: ${students.length} слушателей, ${contracts.length} договоров, ${directExpenses.length} прямых и ${generalExpenses.length} общих затрат, ${result.programPromoMessageCount || 0} промосообщений и ${result.programEmailMessageCount || 0} почтовых сообщений программ. Резервная копия создана. Время выполнения: ${duration}`
       );
       showDatabaseOperationResult({
         eyebrow: "Синхронизация с XLSB",
@@ -37567,6 +37755,7 @@ MAX - https://bizvmax.ru/zifra_plus
           { label: "Прямые затраты", value: directExpenses.length },
           { label: "Общие затраты", value: generalExpenses.length },
           { label: "Промосообщения", value: result.programPromoMessageCount || 0 },
+          { label: "Почтовые сообщения программ", value: result.programEmailMessageCount || 0 },
           {
             label: "Не сопоставлено программ",
             value: result.programPromoSkippedCount || 0,
@@ -37658,8 +37847,8 @@ MAX - https://bizvmax.ru/zifra_plus
       state.data.meta.studentDatabaseLastDownloadedAt = new Date().toISOString();
       addAudit(
         "Экспорт в базу",
-        "Слушатели, договоры, затраты и промосообщения",
-        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.programPromoMessageCount || 0} промосообщений; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; файл: ${fileName}; источник: ${sourceLabel}; время выполнения: ${duration}`,
+        "Слушатели, договоры, затраты и сообщения программ",
+        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.programPromoMessageCount || 0} промосообщений; ${result.programEmailMessageCount || 0} почтовых сообщений программ; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; файл: ${fileName}; источник: ${sourceLabel}; время выполнения: ${duration}`,
         { entityType: "database", entityLabel: fileName, source: `xlsb-download-${exportSource}` }
       );
       persist();
@@ -37679,6 +37868,7 @@ MAX - https://bizvmax.ru/zifra_plus
           { label: "Прямые затраты", value: directExpenses.length },
           { label: "Общие затраты", value: generalExpenses.length },
           { label: "Промосообщения", value: result.programPromoMessageCount || 0 },
+          { label: "Почтовые сообщения программ", value: result.programEmailMessageCount || 0 },
           {
             label: "Не сопоставлено программ",
             value: result.programPromoSkippedCount || 0,
@@ -39782,6 +39972,13 @@ MAX - https://bizvmax.ru/zifra_plus
       .replace(/\{([^{}\r\n]+)\}/g, replaceMarker);
   }
 
+  function getProgramEducationEmailMessageTemplate(documentTemplate, record) {
+    if (String(documentTemplate?.documentKind || "").trim() !== "education") return "";
+    const program = findProgramByName(record?.program);
+    const message = String(program?.emailMessageTemplate || "");
+    return message.trim() ? message : "";
+  }
+
   function prepareStudentDocumentEmailRequest(documentTemplate, record, fieldValues, sourceValues, options = {}) {
     const recipientMode = normalizeDocumentEmailDeliveryMode(
       documentTemplate.emailDeliveryMode,
@@ -39801,8 +39998,9 @@ MAX - https://bizvmax.ru/zifra_plus
       documentTemplate.emailSubjectTemplate,
       values
     ));
+    const programMessageTemplate = getProgramEducationEmailMessageTemplate(documentTemplate, record);
     const message = applyDocumentEmailTemplateMarkers(
-      documentTemplate.emailMessageTemplate,
+      programMessageTemplate || documentTemplate.emailMessageTemplate,
       values
     ).trim();
     const { sendToSystemMailbox, recipient } = resolveServerEmailRecipient(

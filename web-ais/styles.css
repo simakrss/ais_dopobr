@@ -7665,6 +7665,11 @@ body.card-window-moving {
   height: 100%;
 }
 
+.document-email-template-editor.is-readonly {
+  background: #f5f8f6;
+  color: var(--muted);
+}
+
 .document-email-template-editor:focus,
 .document-email-template-editor.is-active-editor,
 .document-email-template-editor.is-drop-target {
@@ -9427,6 +9432,14 @@ body.card-window-moving {
 
 .program-tab-panel {
   min-width: 0;
+}
+
+.program-email-panel {
+  min-height: min(590px, calc(94vh - 190px));
+}
+
+.program-email-settings {
+  min-height: inherit;
 }
 
 .program-characteristics-section,
@@ -17018,6 +17031,11 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .document-template-email-settings {
     height: auto;
+  }
+
+  .program-email-panel,
+  .program-email-settings {
+    min-height: 0;
   }
 
   .document-template-email-settings-head {

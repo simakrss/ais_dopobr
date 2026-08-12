@@ -281,11 +281,13 @@ const PROGRAM_DATABASE_COLUMN_MAP = Object.freeze({
   "Преподаватели": "teachers",
   "Литература ОП": "literature",
   "Промосообщение1": "promoMessage1",
-  "Промосообщение2": "promoMessage2"
+  "Промосообщение2": "promoMessage2",
+  "СообщПочты": "emailMessageTemplate"
 });
 const PROGRAM_DATABASE_COMMENT_FIELDS = new Set([
   "promoMessage1",
-  "promoMessage2"
+  "promoMessage2",
+  "emailMessageTemplate"
 ]);
 const PROGRAM_DATABASE_NUMBER_FIELDS = new Set([
   "price",
@@ -11984,6 +11986,10 @@ function sanitizeStudentDatabaseExportPrograms(value) {
         program.promoMessage2,
         `Промосообщение 2 программы ${name || index + 1}`
       );
+      const emailMessageTemplate = sanitizeProgramPromoMessage(
+        program.emailMessageTemplate,
+        `Почтовое сообщение программы ${name || index + 1}`
+      );
       const sourceRowKnown = xlsbProgramRow > 0;
       return {
         name,
@@ -11997,8 +12003,12 @@ function sanitizeStudentDatabaseExportPrograms(value) {
         promoMessage2Provided: Object.prototype.hasOwnProperty.call(program, "promoMessage2Provided")
           ? program.promoMessage2Provided === true
           : sourceRowKnown || Boolean(promoMessage2.trim()),
+        emailMessageTemplateProvided: Object.prototype.hasOwnProperty.call(program, "emailMessageTemplateProvided")
+          ? program.emailMessageTemplateProvided === true
+          : sourceRowKnown || Boolean(emailMessageTemplate.trim()),
         promoMessage1,
-        promoMessage2
+        promoMessage2,
+        emailMessageTemplate
       };
     })
     .filter((program) => program.name || program.xlsbProgramName);
@@ -12759,6 +12769,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       generalExpenseCount: payload.generalExpenses.length,
       programCount: Number(scriptResult.programs || 0),
       programPromoMessageCount: Number(scriptResult.programPromoMessages || 0),
+      programEmailMessageCount: Number(scriptResult.programEmailMessages || 0),
       programPromoSkippedCount: Number(scriptResult.programPromoSkipped || 0)
     };
   } finally {
@@ -12859,7 +12870,7 @@ async function runStudentExportJob(job, body) {
       status: "completed",
       stage: "complete",
       progress: 100,
-      message: `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} прямых и ${job.result.generalExpenseCount} общих затрат, ${job.result.programPromoMessageCount || 0} промосообщений`
+      message: `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} прямых и ${job.result.generalExpenseCount} общих затрат, ${job.result.programPromoMessageCount || 0} промосообщений и ${job.result.programEmailMessageCount || 0} почтовых сообщений программ`
     });
   } catch (error) {
     const errorMessage = normalizeStudentExportJobMessage(

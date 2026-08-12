@@ -1693,29 +1693,31 @@ function Update-ProgramPromoMessages {
   $provided = Get-ObjectProperty $Payload "programPromoMessagesProvided"
   $programs = @(Get-ObjectProperty $Payload "programs")
   if (-not $provided) {
-    return [pscustomobject]@{ Count = 0; Messages = 0; Skipped = 0; Provided = $false }
+    return [pscustomobject]@{ Count = 0; Messages = 0; EmailMessages = 0; Skipped = 0; Provided = $false }
   }
 
   $sheet = $null
   $dataRange = $null
   try {
     $sheet = $Workbook.Worksheets.Item("Реестр программ")
-    $header = Find-HeaderRow $sheet @("Наименование программы", "Промосообщение1", "Промосообщение2")
+    $header = Find-HeaderRow $sheet @("Наименование программы", "Промосообщение1", "Промосообщение2", "СообщПочты")
     $columnMap = [pscustomobject]@{
       "Наименование программы" = "name"
       "Код лендинга" = "landingCode"
       "Промосообщение1" = "promoMessage1"
       "Промосообщение2" = "promoMessage2"
+      "СообщПочты" = "emailMessageTemplate"
     }
     $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn $columnMap)
     $nameColumn = Find-MappedColumn $columns "name"
     $landingCodeColumn = Find-MappedColumn $columns "landingCode"
     $promoMessage1Column = Find-MappedColumn $columns "promoMessage1"
     $promoMessage2Column = Find-MappedColumn $columns "promoMessage2"
+    $emailMessageTemplateColumn = Find-MappedColumn $columns "emailMessageTemplate"
     $startRow = [int]$header.Row + 1
     $lastRow = [int]$header.LastRow
     if ($lastRow -lt $startRow) {
-      return [pscustomobject]@{ Count = 0; Messages = 0; Skipped = $programs.Count; Provided = $true }
+      return [pscustomobject]@{ Count = 0; Messages = 0; EmailMessages = 0; Skipped = $programs.Count; Provided = $true }
     }
 
     $dataRange = $sheet.Range($sheet.Cells.Item($startRow, 1), $sheet.Cells.Item($lastRow, $header.LastColumn))
@@ -1738,12 +1740,14 @@ function Update-ProgramPromoMessages {
     $updatedRows = [Collections.Generic.HashSet[int]]::new()
     $updatedCount = 0
     $messageCount = 0
+    $emailMessageCount = 0
     $skippedCount = 0
     foreach ($program in $programs) {
       if ($null -eq $program) { continue }
       $promoMessage1Provided = [bool](Get-ObjectProperty $program "promoMessage1Provided")
       $promoMessage2Provided = [bool](Get-ObjectProperty $program "promoMessage2Provided")
-      if (-not $promoMessage1Provided -and -not $promoMessage2Provided) { continue }
+      $emailMessageTemplateProvided = [bool](Get-ObjectProperty $program "emailMessageTemplateProvided")
+      if (-not $promoMessage1Provided -and -not $promoMessage2Provided -and -not $emailMessageTemplateProvided) { continue }
       $sourceName = Get-ObjectProperty $program "xlsbProgramName"
       if (-not (Normalize-Header $sourceName)) { $sourceName = Get-ObjectProperty $program "name" }
       if (Test-ObjectProperty $program "xlsbProgramLandingCode") {
@@ -1786,11 +1790,17 @@ function Update-ProgramPromoMessages {
           $messageCount += 1
         }
       }
+      if ($emailMessageTemplateProvided) {
+        if (Set-ProgramPromoMessageCell $sheet $targetRow $emailMessageTemplateColumn (Get-ObjectProperty $program "emailMessageTemplate")) {
+          $emailMessageCount += 1
+        }
+      }
       $updatedCount += 1
     }
     return [pscustomobject]@{
       Count = $updatedCount
       Messages = $messageCount
+      EmailMessages = $emailMessageCount
       Skipped = $skippedCount
       Provided = $true
     }
@@ -1835,7 +1845,7 @@ try {
   $expenseResult = Update-DirectExpenseSheet $workbook $payload $dateFields $numberFields
   $generalExpenseResult = Update-GeneralExpenseSheet $workbook $payload $dateFields $numberFields
   $contractResult = Update-ContractSheet $workbook $payload $dateFields $numberFields
-  Write-SyncProgress 95 "Обновление промосообщений программ..."
+  Write-SyncProgress 95 "Обновление промосообщений и почтовых сообщений программ..."
   $programPromoResult = Update-ProgramPromoMessages $workbook $payload
   Write-SyncProgress 96 "Обновление ставок и констант оплаты..."
   $paymentResult = Update-PaymentSettings $workbook $payload
@@ -1859,6 +1869,7 @@ try {
     generalExpenses = $generalExpenseResult.Count
     programs = $programPromoResult.Count
     programPromoMessages = $programPromoResult.Messages
+    programEmailMessages = $programPromoResult.EmailMessages
     programPromoSkipped = $programPromoResult.Skipped
     paymentConstants = $paymentResult.Count
     agentPaymentRates = [pscustomobject]@{
