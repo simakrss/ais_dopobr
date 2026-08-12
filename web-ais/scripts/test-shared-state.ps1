@@ -71,7 +71,9 @@ try {
   }
   $data1 = @{
     meta = @{ organization = "Shared test" }
-    dictionaries = @{}
+    dictionaries = @{
+      documentTemplates = @(@{ id = "document-template-1"; title = "Original document" })
+    }
     collections = @{
       students = @(
         @{ id = "student-1"; name = "Student one original" },
@@ -137,6 +139,38 @@ try {
     $lockedSaveStatus = [int]$_.Exception.Response.StatusCode
   }
 
+  $documentLockA = @{
+    action = "acquire"
+    entityType = "documentTemplates"
+    entityId = "document-template-1"
+    clientId = "test-client-a"
+  } | ConvertTo-Json -Compress
+  Invoke-RestMethod -Method Post -Uri $locksUrl -ContentType "application/json" -Body $documentLockA -TimeoutSec 15 | Out-Null
+  $lockedDocumentPatch = @{
+    baseRevision = [int]$merged2.revision
+    clientId = "test-client-b"
+    patch = @{
+      collections = @{}
+      dictionaries = @{
+        documentTemplates = @(@{ id = "document-template-1"; title = "Conflicting document" })
+      }
+      recordKeys = @("documentTemplates:document-template-1")
+    }
+  } | ConvertTo-Json -Depth 12 -Compress
+  $lockedDocumentSaveStatus = 0
+  try {
+    Invoke-WebRequest -UseBasicParsing -Method Post -Uri $url -ContentType "application/json" -Body $lockedDocumentPatch -TimeoutSec 15 | Out-Null
+  } catch {
+    $lockedDocumentSaveStatus = [int]$_.Exception.Response.StatusCode
+  }
+  $releaseDocumentA = @{
+    action = "release"
+    entityType = "documentTemplates"
+    entityId = "document-template-1"
+    clientId = "test-client-a"
+  } | ConvertTo-Json -Compress
+  Invoke-RestMethod -Method Post -Uri $locksUrl -ContentType "application/json" -Body $releaseDocumentA -TimeoutSec 15 | Out-Null
+
   $takeoverB = @{ action = "takeover"; entityType = "contracts"; entityId = "contract-1"; clientId = "test-client-b" } | ConvertTo-Json -Compress
   $takenOver = Invoke-RestMethod -Method Post -Uri $locksUrl -ContentType "application/json" -Body $takeoverB -TimeoutSec 15
   $firstClientAfterTakeoverStatus = 0
@@ -163,6 +197,7 @@ try {
     LockOwner = [string]$acquired.lock.ownerLogin
     SecondLockStatus = $secondLockStatus
     LockedSaveStatus = $lockedSaveStatus
+    LockedDocumentSaveStatus = $lockedDocumentSaveStatus
     LockTakenOver = [bool]$takenOver.takenOver
     TakeoverOwnerIsCurrentSession = [bool]($listAfterTakeover.locks | Where-Object { $_.entityId -eq "contract-1" -and $_.ownedByClient })
     FirstClientAfterTakeoverStatus = $firstClientAfterTakeoverStatus

@@ -8,10 +8,18 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.87",
+    version: "1.7.88",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.88",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В карточке документа конструктора кнопка «Закрыть» переименована в «Отмена» и расположена перед кнопкой «Сохранить».",
+        "Документы конструктора блокируются на время редактирования так же, как записи остальных таблиц: показывается владелец блокировки, поддерживается перехват, а сохранение из другой сессии не допускается."
+      ]
+    },
     {
       version: "1.7.87",
       releasedAt: "2026-08-12",
@@ -3329,6 +3337,8 @@ MAX - https://bizvmax.ru/zifra_plus
   let recordLocksPollRunning = false;
   let activeRecordLock = null;
   let recordLockHeartbeatTimer = 0;
+  let documentTemplateReturnRecordLock = null;
+  let documentTemplateEditOriginal = null;
   const recordLockClientId = getRecordLockClientId();
   const communicationTemplateEditorHistories = new WeakMap();
   const fieldControlHistories = new WeakMap();
@@ -5469,7 +5479,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function buildSharedApplicationStatePatch(baseData, nextData) {
     if (!baseData || !nextData) return null;
-    const patch = { collections: {}, dictionaries: {}, meta: {}, root: {} };
+    const patch = { collections: {}, dictionaries: {}, meta: {}, root: {}, recordKeys: [] };
     const collectionNames = new Set([
       ...Object.keys(baseData.collections || {}),
       ...Object.keys(nextData.collections || {})
@@ -5513,6 +5523,16 @@ MAX - https://bizvmax.ru/zifra_plus
       names.forEach((name) => {
         if (!sharedStateValuesEqual(baseData[key]?.[name], nextData[key]?.[name])) {
           patch[key][name] = nextData[key]?.[name] ?? null;
+          if (key === "dictionaries" && name === "documentTemplates") {
+            const beforeDocuments = Array.isArray(baseData[key]?.[name]) ? baseData[key][name] : [];
+            const afterDocuments = Array.isArray(nextData[key]?.[name]) ? nextData[key][name] : [];
+            const beforeById = new Map(beforeDocuments.map((item) => [String(item?.id || ""), item]));
+            const afterById = new Map(afterDocuments.map((item) => [String(item?.id || ""), item]));
+            new Set([...beforeById.keys(), ...afterById.keys()]).forEach((id) => {
+              if (!id || sharedStateValuesEqual(beforeById.get(id), afterById.get(id))) return;
+              patch.recordKeys.push(`${recordLockEntityType("documentTemplates")}:${id}`);
+            });
+          }
         }
       });
     }
@@ -5523,6 +5543,7 @@ MAX - https://bizvmax.ru/zifra_plus
         patch.root[name] = nextData[name] ?? null;
       }
     });
+    patch.recordKeys = [...new Set(patch.recordKeys)];
     const hasChanges = Object.values(patch).some((group) => Object.keys(group).length > 0);
     return hasChanges ? patch : null;
   }
@@ -5535,6 +5556,10 @@ MAX - https://bizvmax.ru/zifra_plus
     merged.dictionaries = { ...(merged.dictionaries || {}), ...(nextPatch.dictionaries || {}) };
     merged.meta = { ...(merged.meta || {}), ...(nextPatch.meta || {}) };
     merged.root = { ...(merged.root || {}), ...(nextPatch.root || {}) };
+    merged.recordKeys = [...new Set([
+      ...(merged.recordKeys || []),
+      ...(nextPatch.recordKeys || [])
+    ].map(String).filter(Boolean))];
     Object.entries(nextPatch.collections || {}).forEach(([collectionName, nextChange]) => {
       const previousChange = merged.collections[collectionName];
       if (!previousChange || Array.isArray(nextChange.replace)) {
@@ -5910,7 +5935,8 @@ MAX - https://bizvmax.ru/zifra_plus
   function saveSharedApplicationStateInBackground({
     generation = sharedStateChangeGeneration,
     lock = null,
-    renderOnFailure = false
+    renderOnFailure = false,
+    afterLockRelease = null
   } = {}) {
     window.setTimeout(async () => {
       try {
@@ -5927,6 +5953,7 @@ MAX - https://bizvmax.ru/zifra_plus
           await releaseRecordLock(lock);
           if (!state.modal) render();
         }
+        if (typeof afterLockRelease === "function") await afterLockRelease();
       }
     }, 0);
   }
@@ -5995,6 +6022,15 @@ MAX - https://bizvmax.ru/zifra_plus
     return lock;
   }
 
+  function getRecordLockForEntity(entityType, entityId) {
+    const normalizedEntityType = String(entityType || "").trim();
+    const normalizedEntityId = String(entityId || "").trim();
+    if (!normalizedEntityType || !normalizedEntityId) return null;
+    const key = recordLockKey(normalizedEntityType, normalizedEntityId);
+    if (activeRecordLock?.key === key) return { ...activeRecordLock, ownedByClient: true };
+    return getRecordLock(normalizedEntityType, normalizedEntityId);
+  }
+
   function formatRecordLockMessage(lock = {}, prefix = "Запись временно заблокирована") {
     const owner = String(lock.ownerName || lock.ownerLogin || "другой пользователь").trim();
     const expiresAt = new Date(lock.expiresAt || 0);
@@ -6009,11 +6045,12 @@ MAX - https://bizvmax.ru/zifra_plus
     const entityId = String(record?.id || state.modal?.id || "").trim();
     if (!configId || !entityId) return null;
     const entityType = recordLockEntityType(configId);
-    const key = recordLockKey(entityType, entityId);
-    if (activeRecordLock?.key === key) {
-      return { ...activeRecordLock, ownedByClient: true };
-    }
-    return getRecordLock(entityType, entityId);
+    return getRecordLockForEntity(entityType, entityId);
+  }
+
+  function getDocumentTemplateRecordLock(record = {}) {
+    const entityId = String(record?.id || state.documentTemplateDialogId || "").trim();
+    return getRecordLockForEntity(recordLockEntityType("documentTemplates"), entityId);
   }
 
   function renderCardRecordLockStatus(record = {}) {
@@ -6035,9 +6072,33 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderDocumentTemplateRecordLockStatus(record = {}) {
+    const lock = getDocumentTemplateRecordLock(record);
+    if (!lock) return "";
+    const owned = Boolean(lock.ownedByClient);
+    const owner = String(lock.ownerName || lock.ownerLogin || "другой пользователь").trim();
+    const label = owned ? "Запись заблокирована вами" : `Запись заблокирована: ${owner}`;
+    return `
+      <span
+        class="card-record-lock-status ${owned ? "is-owned" : "is-foreign"}"
+        data-card-record-lock-status
+        role="status"
+        title="${escapeAttr(owned ? "Другие сессии не могут изменить документ, пока карточка открыта" : formatRecordLockMessage(lock))}"
+      >
+        <span aria-hidden="true">🔒</span>
+        <span>${escapeHtml(label)}</span>
+      </span>
+    `;
+  }
+
   function updateCardRecordLockStatusUi(lock = getCardRecordLock()) {
-    const current = document.querySelector("[data-card-record-lock-status]");
-    const title = document.querySelector(".student-modal-title, .contract-modal-title, #recordForm .modal-head > div:first-child");
+    const statusRoot = state.documentTemplateDialogId
+      ? document.querySelector(".document-template-settings-modal")
+      : document;
+    const current = statusRoot?.querySelector("[data-card-record-lock-status]");
+    const title = state.documentTemplateDialogId
+      ? document.querySelector(".document-template-settings-head > div:first-child")
+      : document.querySelector(".student-modal-title, .contract-modal-title, #recordForm .modal-head > div:first-child");
     if (!lock) {
       current?.remove();
       return;
@@ -6099,7 +6160,9 @@ MAX - https://bizvmax.ru/zifra_plus
         markActiveRecordLockLost(currentActiveLock, currentRemoteLock);
       }
       if (renderAfter && previousSignature !== nextSignature) {
-        if (state.modal) updateCardRecordLockStatusUi(currentRemoteLock || getCardRecordLock());
+        if (state.documentTemplateDialogId) {
+          updateCardRecordLockStatusUi(currentRemoteLock || getDocumentTemplateRecordLock());
+        } else if (state.modal) updateCardRecordLockStatusUi(currentRemoteLock || getCardRecordLock());
         else render();
       }
     } catch (error) {
@@ -6127,13 +6190,22 @@ MAX - https://bizvmax.ru/zifra_plus
     stopRecordLockHeartbeat();
     activeRecordLock = null;
     if (replacementLock) recordLocks.set(lock.key, replacementLock);
-    const form = document.getElementById("recordForm");
+    const form = state.documentTemplateDialogId
+      ? document.querySelector("form[data-action='save-contract-template-fields']")
+      : document.getElementById("recordForm");
     if (form) {
       form.dataset.recordLockLost = "true";
-      const saveButton = form.querySelector('button[type="submit"]');
+      const saveButton = document.querySelector(`button[type="submit"][form="${CSS.escape(form.id)}"]`)
+        || form.querySelector('button[type="submit"]');
       if (saveButton) saveButton.disabled = true;
-      if (!form.querySelector("[data-record-lock-warning]")) {
-        form.querySelector(".modal-head")?.insertAdjacentHTML("afterend", `
+      const warningHost = state.documentTemplateDialogId
+        ? document.querySelector(".document-template-settings-head")
+        : form.querySelector(".modal-head");
+      const warningContainer = state.documentTemplateDialogId
+        ? document.querySelector(".document-template-settings-modal")
+        : form;
+      if (!warningContainer?.querySelector("[data-record-lock-warning]")) {
+        warningHost?.insertAdjacentHTML("afterend", `
           <div class="record-lock-warning" data-record-lock-warning role="alert">
             <span>Запись больше не заблокирована за вами. Сохранение отключено.</span>
             <button class="ghost-button" data-action="takeover-current-record-lock" type="button">Перехватить блокировку</button>
@@ -6303,12 +6375,17 @@ MAX - https://bizvmax.ru/zifra_plus
       key
     };
     recordLocks.set(key, { ...activeRecordLock, ownedByClient: true });
-    const form = document.getElementById("recordForm");
+    const form = state.documentTemplateDialogId
+      ? document.querySelector("form[data-action='save-contract-template-fields']")
+      : document.getElementById("recordForm");
     if (form && form.dataset.id === id && form.dataset.config) {
       delete form.dataset.recordLockLost;
-      const saveButton = form.querySelector('button[type="submit"]');
+      const saveButton = document.querySelector(`button[type="submit"][form="${CSS.escape(form.id)}"]`)
+        || form.querySelector('button[type="submit"]');
       if (saveButton) saveButton.disabled = false;
-      form.querySelector("[data-record-lock-warning]")?.remove();
+      (state.documentTemplateDialogId
+        ? document.querySelector(".document-template-settings-modal [data-record-lock-warning]")
+        : form.querySelector("[data-record-lock-warning]"))?.remove();
       updateCardRecordLockStatusUi({ ...activeRecordLock, ownedByClient: true });
     }
     startRecordLockHeartbeat();
@@ -6325,8 +6402,40 @@ MAX - https://bizvmax.ru/zifra_plus
     return true;
   }
 
+  async function acquireDocumentTemplateRecordLock(documentTemplateId, options = {}) {
+    const id = String(documentTemplateId || "").trim();
+    if (!id) return true;
+    const entityType = recordLockEntityType("documentTemplates");
+    const key = recordLockKey(entityType, id);
+    const previousLock = activeRecordLock?.key !== key ? activeRecordLock : null;
+    const acquired = await acquireRecordLock(entityType, id, options);
+    if (!acquired) return false;
+    documentTemplateReturnRecordLock = previousLock && previousLock.entityType !== entityType
+      ? {
+          entityType: previousLock.entityType,
+          entityId: previousLock.entityId
+        }
+      : null;
+    return true;
+  }
+
+  async function releaseDocumentTemplateRecordLockAndRestore(lock = activeRecordLock) {
+    const returnLock = documentTemplateReturnRecordLock;
+    documentTemplateReturnRecordLock = null;
+    if (lock?.entityType === recordLockEntityType("documentTemplates")) {
+      await releaseRecordLock(lock);
+    }
+    if (!returnLock || !state.modal) return;
+    const modalEntityType = recordLockEntityType(state.modal.config);
+    const modalEntityId = String(state.modal.id || "").trim();
+    if (returnLock.entityType !== modalEntityType || returnLock.entityId !== modalEntityId) return;
+    await acquireRecordLock(returnLock.entityType, returnLock.entityId);
+  }
+
   async function takeoverCurrentRecordLock(button) {
-    const form = document.getElementById("recordForm");
+    const form = state.documentTemplateDialogId
+      ? document.querySelector("form[data-action='save-contract-template-fields']")
+      : document.getElementById("recordForm");
     const configId = String(form?.dataset.config || state.modal?.config || "");
     const entityId = String(form?.dataset.id || state.modal?.id || "").trim();
     if (!configId || !entityId) return;
@@ -6671,10 +6780,17 @@ MAX - https://bizvmax.ru/zifra_plus
     window.addEventListener("popstate", (event) => {
       const navigation = event.state?.aisStudentStatusNavigation;
       if (!navigation) return;
+      const documentTemplateLock = state.documentTemplateDialogId
+        && activeRecordLock?.entityType === recordLockEntityType("documentTemplates")
+        ? activeRecordLock
+        : null;
       state.modal = null;
       resetCardWindowState();
       state.studentApplicationsImport.open = false;
       state.documentTemplateDialogId = "";
+      documentTemplateEditOriginal = null;
+      documentTemplateReturnRecordLock = null;
+      if (documentTemplateLock) releaseRecordLock(documentTemplateLock).catch(() => {});
       state.search = "";
       state.studentProgramTypeFilter = [];
       state.studentImportedViewIds = [];
@@ -10961,6 +11077,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <div>
               <p class="eyebrow">Конструктор документов</p>
               <h2>${escapeHtml(activeDocument.title || "Настройки документа")}</h2>
+              ${renderDocumentTemplateRecordLockStatus(activeDocument)}
             </div>
             <div class="modal-head-actions document-template-head-actions">
               <div class="document-template-primary-actions">
@@ -10968,8 +11085,8 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${renderDocumentTemplateActionIcon("refresh")}
                   <span>Обновить данные</span>
                 </button>
+                <button class="ghost-button" data-action="close-document-template-settings" type="button">Отмена</button>
                 <button class="primary-button" form="documentTemplateSettingsForm" type="submit">Сохранить</button>
-                <button class="ghost-button" data-action="close-document-template-settings" type="button">Закрыть</button>
               </div>
             </div>
           </header>
@@ -11003,7 +11120,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const activeField = getActiveContractTemplateField(fields);
     const activeIndex = Math.max(0, fields.findIndex((field) => field.id === activeField?.id));
     return `
-      <form id="documentTemplateSettingsForm" class="contract-template-form document-template-settings-form" data-action="save-contract-template-fields" data-document-id="${escapeAttr(activeDocument.id)}">
+      <form id="documentTemplateSettingsForm" class="contract-template-form document-template-settings-form" data-action="save-contract-template-fields" data-document-id="${escapeAttr(activeDocument.id)}" data-config="documentTemplates" data-id="${escapeAttr(activeDocument.id)}">
         <div class="contract-template-field-store" hidden>
           ${fields.map((field, index) => renderContractTemplateHiddenFieldRow(field, index)).join("")}
         </div>
@@ -21515,7 +21632,9 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", async () => {
         state.lastEditedRow = { config: button.dataset.config || "", id: button.dataset.id || "" };
         if (button.dataset.config === "documentTemplates") {
-          selectDocumentTemplate(button.dataset.id);
+          await withCardLoadingIndicator("documentTemplates", button.dataset.id, () => (
+            selectDocumentTemplate(button.dataset.id)
+          ));
           return;
         }
         button.disabled = true;
@@ -25997,11 +26116,16 @@ MAX - https://bizvmax.ru/zifra_plus
     return savedId;
   }
 
-  async function saveRecord(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
+  function getFormSubmitButton(form) {
+    if (!form) return null;
+    return document.querySelector(`button[type="submit"][form="${CSS.escape(form.id || "")}"]`)
+      || form.querySelector('button[type="submit"]');
+  }
+
+  async function ensureRecordLockForSave(form) {
     const existingId = String(form.dataset.id || "").trim();
-    const submitButton = form.querySelector('button[type="submit"]');
+    if (!existingId) return true;
+    const submitButton = getFormSubmitButton(form);
     const expectedLockKey = existingId
       ? recordLockKey(recordLockEntityType(form.dataset.config), existingId)
       : "";
@@ -26013,7 +26137,7 @@ MAX - https://bizvmax.ru/zifra_plus
         "",
         "При отмене карточка останется открытой, а изменения не будут применены."
       ].join("\n"));
-      if (!confirmed) return;
+      if (!confirmed) return false;
       if (submitButton) submitButton.disabled = true;
       const acquired = await acquireRecordLock(
         recordLockEntityType(form.dataset.config),
@@ -26022,9 +26146,17 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       if (!acquired) {
         if (submitButton) submitButton.disabled = false;
-        return;
+        return false;
       }
     }
+    return true;
+  }
+
+  async function saveRecord(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = getFormSubmitButton(form);
+    if (!await ensureRecordLockForSave(form)) return;
     if (submitButton) submitButton.disabled = true;
     const savedId = saveFormRecord(form);
     if (!savedId) {
@@ -30871,7 +31003,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function deleteRecord(configId, id) {
     if (configId === "documentTemplates") {
-      removeDocumentTemplate(id);
+      await removeDocumentTemplate(id);
       return;
     }
     const config = configs[configId];
@@ -31777,44 +31909,71 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function beginDocumentTemplateEdit(documentTemplateId) {
+    if (documentTemplateEditOriginal) return;
+    documentTemplateEditOriginal = {
+      documentTemplateId: String(documentTemplateId || ""),
+      activeDocumentTemplateId: String(state.activeDocumentTemplateId || ""),
+      documents: clone(getDocumentTemplates())
+    };
+  }
+
+  function discardDocumentTemplateEdit() {
+    const original = documentTemplateEditOriginal;
+    documentTemplateEditOriginal = null;
+    if (!original) return false;
+    const currentDocuments = getDocumentTemplates();
+    if (sharedStateValuesEqual(currentDocuments, original.documents)) return false;
+    const activeDocument = original.documents.find((item) => item.id === original.activeDocumentTemplateId)
+      || original.documents.find((item) => item.id === original.documentTemplateId)
+      || original.documents[0];
+    commitDocumentTemplates(original.documents, activeDocument);
+    persist();
+    return true;
+  }
+
   function hasUnsavedDocumentTemplateChanges(form = document.querySelector("form[data-action='save-contract-template-fields']")) {
     if (!form) return false;
     const { document: draftDocument } = collectContractTemplateForm(form);
-    const savedDocument = getDocumentTemplates().find((item) => item.id === draftDocument.id);
+    const savedDocument = (documentTemplateEditOriginal?.documents || getDocumentTemplates())
+      .find((item) => item.id === draftDocument.id);
     if (!savedDocument) return true;
     return JSON.stringify(getDocumentTemplateEditSnapshot(draftDocument)) !== JSON.stringify(getDocumentTemplateEditSnapshot(savedDocument));
   }
-  function saveContractTemplateFields(event) {
+  async function saveContractTemplateFields(event) {
     event.preventDefault();
-    const { documents, document, fields } = collectContractTemplateForm(event.currentTarget);
+    const form = event.currentTarget;
+    if (!await ensureRecordLockForSave(form)) return;
+    const submitButton = getFormSubmitButton(form);
+    const { documents, document, fields } = collectContractTemplateForm(form);
     if (!document.title) {
       alert("Укажите название документа.");
       switchDocumentTemplateSettingsTab("main");
-      event.currentTarget.elements.documentTitle?.focus();
+      form.elements.documentTitle?.focus();
       return;
     }
     if (!document.templateUrl.trim() && !document.templatePath.trim()) {
       alert("Укажите ссылку на шаблон или загрузите файл Word.");
       switchDocumentTemplateSettingsTab("main");
-      event.currentTarget.elements.templateUrl?.focus();
+      form.elements.templateUrl?.focus();
       return;
     }
     if (!document.saveFolderTemplate.trim()) {
       alert("Укажите папку сохранения документа.");
       switchDocumentTemplateSettingsTab("main");
-      event.currentTarget.querySelector("[data-document-save-folder-editor]")?.focus();
+      form.querySelector("[data-document-save-folder-editor]")?.focus();
       return;
     }
     if (document.emailDeliveryMode !== "off" && !document.emailSubjectTemplate.trim()) {
       alert("Заполните тему сообщения или отключите отправку по почте.");
       switchDocumentTemplateSettingsTab("email");
-      event.currentTarget.querySelector("[data-document-email-field='emailSubjectTemplate']")?.focus();
+      form.querySelector("[data-document-email-field='emailSubjectTemplate']")?.focus();
       return;
     }
     if (document.emailDeliveryMode !== "off" && !document.emailMessageTemplate.trim()) {
       alert("Заполните текст сообщения или отключите отправку по почте.");
       switchDocumentTemplateSettingsTab("email");
-      event.currentTarget.querySelector("[data-document-email-field='emailMessageTemplate']")?.focus();
+      form.querySelector("[data-document-email-field='emailMessageTemplate']")?.focus();
       return;
     }
     const duplicate = fields.find((field, index) => fields.findIndex((item) => item.name === field.name) !== index);
@@ -31829,14 +31988,27 @@ MAX - https://bizvmax.ru/zifra_plus
       switchDocumentTemplateSettingsTab("fields");
       return;
     }
+    if (submitButton) submitButton.disabled = true;
     commitDocumentTemplates(documents, document);
+    documentTemplateEditOriginal = null;
     addAudit("Изменен конструктор документов", document.title, "Сохранены настройки, поля и формулы");
+    state.lastEditedRow = { config: "documentTemplates", id: document.id };
+    setTablePageForRow("documentTemplates", document.id);
+    persist();
+    const generation = sharedStateChangeGeneration;
+    const lock = activeRecordLock;
+    activeRecordLock = null;
+    stopRecordLockHeartbeat();
     state.documentTemplateDialogId = "";
     state.documentTemplateSettingsTab = "main";
     state.activeContractTemplateFieldId = "";
     state.pendingContractTemplateFieldFocus = "";
-    persist();
     render();
+    saveSharedApplicationStateInBackground({
+      generation,
+      lock,
+      afterLockRelease: () => releaseDocumentTemplateRecordLockAndRestore(null)
+    });
   }
 
   function addContractTemplateField() {
@@ -31956,7 +32128,9 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function selectDocumentTemplate(id) {
+  async function selectDocumentTemplate(id) {
+    if (!await acquireDocumentTemplateRecordLock(id)) return false;
+    beginDocumentTemplateEdit(id);
     const { documents, document } = collectContractTemplateForm();
     commitDocumentTemplates(documents.map((item) => item.id === document.id ? document : item), document);
     state.activeDocumentTemplateId = id;
@@ -31966,20 +32140,34 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
-  function closeDocumentTemplateSettings() {
+  async function closeDocumentTemplateSettings() {
     const form = document.querySelector("form[data-action='save-contract-template-fields']");
     if (hasUnsavedDocumentTemplateChanges(form)) {
       if (confirm("В карточке документа есть несохраненные изменения. Сохранить перед закрытием?")) {
-        saveContractTemplateFields({ preventDefault() {}, currentTarget: form });
+        await saveContractTemplateFields({ preventDefault() {}, currentTarget: form });
         return;
       }
       if (!confirm("Закрыть карточку документа без сохранения изменений?")) return;
     }
+    const revertedPersistedChanges = discardDocumentTemplateEdit();
+    const generation = sharedStateChangeGeneration;
+    const lock = activeRecordLock;
+    activeRecordLock = null;
+    stopRecordLockHeartbeat();
     state.documentTemplateDialogId = "";
     state.documentTemplateSettingsTab = "main";
     state.activeContractTemplateFieldId = "";
     state.pendingContractTemplateFieldFocus = "";
     render();
+    if (revertedPersistedChanges) {
+      saveSharedApplicationStateInBackground({
+        generation,
+        lock,
+        afterLockRelease: () => releaseDocumentTemplateRecordLockAndRestore(null)
+      });
+      return;
+    }
+    await releaseDocumentTemplateRecordLockAndRestore(lock);
   }
 
   function sortDocumentTemplates(key) {
@@ -32018,19 +32206,28 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
-  function removeDocumentTemplate(id) {
+  async function removeDocumentTemplate(id) {
     const { documents, document } = collectContractTemplateForm();
     if (documents.length <= 1) return;
     const target = documents.find((item) => item.id === id);
     if (!target) return;
-    if (!confirm(`Удалить документ «${target.title}» из конструктора?`)) return;
+    if (!await acquireDocumentTemplateRecordLock(id)) return;
+    const deleteLock = activeRecordLock;
+    if (!confirm(`Удалить документ «${target.title}» из конструктора?`)) {
+      await releaseDocumentTemplateRecordLockAndRestore(deleteLock);
+      return;
+    }
     const nextDocuments = documents.filter((item) => item.id !== id);
     const nextActive = document.id === id ? nextDocuments[0] : document;
     commitDocumentTemplates(nextDocuments, nextActive);
     state.selected.documentTemplates = getSelected("documentTemplates").filter((selectedId) => selectedId !== id);
     addAudit("Изменен конструктор документов", target.title, "Документ удален");
     persist();
+    const generation = sharedStateChangeGeneration;
+    activeRecordLock = null;
+    stopRecordLockHeartbeat();
     render();
+    saveSharedApplicationStateInBackground({ generation, lock: deleteLock });
   }
 
   function readFileAsDataUrl(file) {
@@ -32266,6 +32463,8 @@ MAX - https://bizvmax.ru/zifra_plus
       state.activeContractTemplateFieldId = "";
       addAudit("Изменен конструктор документов", newDocument.title, "Добавлен источник документа");
       persist();
+      beginDocumentTemplateEdit(newDocument.id);
+      await acquireDocumentTemplateRecordLock(newDocument.id);
       render();
     } catch (error) {
       alert(`Не удалось добавить документ: ${error.message}`);
@@ -32308,6 +32507,8 @@ MAX - https://bizvmax.ru/zifra_plus
       state.activeContractTemplateFieldId = "";
       addAudit("Изменен конструктор документов", newDocument.title, "Файл Word загружен");
       persist();
+      beginDocumentTemplateEdit(newDocument.id);
+      await acquireDocumentTemplateRecordLock(newDocument.id);
       render();
     } catch (error) {
       alert(`Не удалось загрузить документ: ${error.message}`);
@@ -37295,7 +37496,7 @@ MAX - https://bizvmax.ru/zifra_plus
     closeStudentDocumentActionMenu();
   }
 
-  function editStudentDocumentTemplateParameters(documentTemplateId, options = {}) {
+  async function editStudentDocumentTemplateParameters(documentTemplateId, options = {}) {
     const documentTemplate = getDocumentTemplates().find((item) => item.id === documentTemplateId);
     if (!documentTemplate) return;
     if (state.modal) {
@@ -37306,11 +37507,14 @@ MAX - https://bizvmax.ru/zifra_plus
       state.modal.hasDraftChanges = true;
     }
     closeStudentDocumentActionMenu();
+    if (!await acquireDocumentTemplateRecordLock(documentTemplate.id)) return;
+    beginDocumentTemplateEdit(documentTemplate.id);
     state.activeDocumentTemplateId = documentTemplate.id;
     state.documentTemplateDialogId = documentTemplate.id;
     state.documentTemplateSettingsTab = "main";
     state.activeContractTemplateFieldId = "";
     render();
+    return true;
   }
 
   function showStudentDocumentActionMenu(x, y, documentTemplate, options = {}) {
@@ -37406,8 +37610,8 @@ MAX - https://bizvmax.ru/zifra_plus
         : "";
       checkStudentDocumentData(record, documentTemplate, programType);
     });
-    menu.querySelector("[data-action='edit-student-document-template']")?.addEventListener("click", () => {
-      editStudentDocumentTemplateParameters(documentTemplate.id, {
+    menu.querySelector("[data-action='edit-student-document-template']")?.addEventListener("click", async () => {
+      await editStudentDocumentTemplateParameters(documentTemplate.id, {
         collectDraft: options.collectDraft
       });
     });

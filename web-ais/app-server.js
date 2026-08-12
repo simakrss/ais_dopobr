@@ -4771,7 +4771,7 @@ function normalizeSharedApplicationStatePatch(value) {
     throw new Error("Пакет синхронизации общей базы превышает допустимый размер.");
   }
   const source = JSON.parse(serialized);
-  const patch = { collections: {}, dictionaries: {}, meta: {}, root: {} };
+  const patch = { collections: {}, dictionaries: {}, meta: {}, root: {}, recordKeys: [] };
   const collections = source.collections && typeof source.collections === "object" && !Array.isArray(source.collections)
     ? source.collections
     : {};
@@ -4801,6 +4801,11 @@ function normalizeSharedApplicationStatePatch(value) {
       if (String(name).length > 160) continue;
       patch[key][name] = nextValue;
     }
+  }
+  if (Array.isArray(source.recordKeys)) {
+    patch.recordKeys = [...new Set(source.recordKeys
+      .map((key) => String(key || "").trim())
+      .filter((key) => /^[A-Za-z0-9_-]{1,120}:[^:\r\n]{1,191}$/.test(key)))];
   }
   return patch;
 }
@@ -4846,7 +4851,7 @@ function applySharedApplicationStatePatch(currentData, patch) {
 }
 
 function getSharedApplicationStatePatchRecordKeys(patch) {
-  const keys = [];
+  const keys = Array.isArray(patch?.recordKeys) ? patch.recordKeys.map(String) : [];
   for (const [collectionName, change] of Object.entries(patch?.collections || {})) {
     for (const record of change.upserts || []) {
       if (record?.id) keys.push(`${collectionName}:${record.id}`);
