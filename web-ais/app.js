@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.82",
+    version: "1.7.83",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.83",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В настройках почтовых ящиков устранено наложение описания, статуса и кнопок: заголовок карточки получил отдельную адаптивную область действий."
+      ]
+    },
     {
       version: "1.7.82",
       releasedAt: "2026-08-12",
@@ -12079,16 +12086,18 @@ MAX - https://bizvmax.ru/zifra_plus
       <fieldset class="admin-mailbox-card" data-document-mailbox data-mailbox-index="${index}">
         <legend>${escapeHtml(mailbox.label || mailbox.login || `Почтовый ящик ${index + 1}`)}</legend>
         <input type="hidden" data-mailbox-field="id" value="${escapeAttr(mailbox.id || `mailbox-${index + 1}`)}">
-        <div class="admin-mailbox-card-actions">
-          <button class="ghost-button compact-button" data-action="test-document-mailbox" type="button">Проверить</button>
-          <button class="icon-button" data-action="remove-document-mailbox" type="button" title="Удалить ящик" aria-label="Удалить ящик">×</button>
-        </div>
-        <div class="admin-mailbox-purpose">
-          <strong>Заявки InSales и документы</strong>
-          <span>Система ищет в этом ящике заявки InSales, а письма и вложения можно загружать в документы слушателей.</span>
-          <span class="admin-mailbox-state ${mailbox.host && mailbox.login && mailbox.hasPassword ? "is-ready" : "is-incomplete"}">
-            ${mailbox.host && mailbox.login && mailbox.hasPassword ? "Настроен" : "Требуется настройка"}
-          </span>
+        <div class="admin-mailbox-card-head">
+          <div class="admin-mailbox-purpose">
+            <strong>Заявки InSales и документы</strong>
+            <span>Система ищет в этом ящике заявки InSales, а письма и вложения можно загружать в документы слушателей.</span>
+            <span class="admin-mailbox-state ${mailbox.host && mailbox.login && mailbox.hasPassword ? "is-ready" : "is-incomplete"}">
+              ${mailbox.host && mailbox.login && mailbox.hasPassword ? "Настроен" : "Требуется настройка"}
+            </span>
+          </div>
+          <div class="admin-mailbox-card-actions">
+            <button class="ghost-button compact-button" data-action="test-document-mailbox" type="button">Проверить</button>
+            <button class="icon-button" data-action="remove-document-mailbox" type="button" title="Удалить ящик" aria-label="Удалить ящик">×</button>
+          </div>
         </div>
         <div class="admin-email-settings-grid">
           <label class="admin-mailbox-name-field"><span>Название</span><input data-mailbox-field="label" value="${escapeAttr(mailbox.label)}" required></label>
@@ -12117,15 +12126,17 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <fieldset class="admin-mailbox-card is-applications-mailbox" data-applications-mailbox>
         <legend>Основной почтовый ящик · ${escapeHtml(DEFAULT_STUDENT_APPLICATIONS_EMAIL.login)}</legend>
-        <div class="admin-mailbox-purpose">
-          <strong>Заявки InSales и документы</strong>
-          <span>Система ищет в этом ящике заявки InSales, а письма и вложения можно загружать в документы слушателей. Ящик также используется для системных сообщений.</span>
-          <span class="admin-mailbox-state ${isConfigured ? "is-ready" : "is-incomplete"}">
-            ${isConfigured ? "Настроен" : "Требуется настройка"}
-          </span>
-        </div>
-        <div class="admin-mailbox-card-actions">
-          <button class="ghost-button compact-button" data-action="test-student-applications-email" type="button">Проверить</button>
+        <div class="admin-mailbox-card-head">
+          <div class="admin-mailbox-purpose">
+            <strong>Заявки InSales и документы</strong>
+            <span>Система ищет в этом ящике заявки InSales, а письма и вложения можно загружать в документы слушателей. Ящик также используется для системных сообщений.</span>
+            <span class="admin-mailbox-state ${isConfigured ? "is-ready" : "is-incomplete"}">
+              ${isConfigured ? "Настроен" : "Требуется настройка"}
+            </span>
+          </div>
+          <div class="admin-mailbox-card-actions">
+            <button class="ghost-button compact-button" data-action="test-student-applications-email" type="button">Проверить</button>
+          </div>
         </div>
         <div class="admin-email-settings-grid">
           <label class="admin-mailbox-login-field">

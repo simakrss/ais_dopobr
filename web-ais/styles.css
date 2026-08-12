@@ -17609,14 +17609,33 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   grid-column: 1 / -1;
 }
 
+.admin-mailbox-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
+  margin-bottom: 10px;
+}
+
+.admin-mailbox-card-head > .admin-mailbox-purpose {
+  flex: 1 1 520px;
+}
+
 .admin-mailbox-purpose {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 5px 8px;
-  margin: 0 0 10px;
+  min-width: 0;
+  margin: 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+.admin-mailbox-purpose > span:not(.admin-mailbox-state) {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .admin-mailbox-purpose strong {
@@ -17646,12 +17665,12 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .admin-mailbox-card-actions {
-  position: absolute;
-  top: 8px;
-  right: 10px;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 5px;
+  min-width: max-content;
+  margin-left: auto;
 }
 
 @media (max-width: 900px) {
