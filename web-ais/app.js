@@ -19,10 +19,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.127",
+    version: "1.7.128",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.128",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В реестр выданных документов добавлена колонка «Прошло дней» и контроль 60-дневного норматива выгрузки в ФРДО с предупреждающей подсветкой.",
+        "Норматив выгрузки документов в ФРДО вынесен в общие настройки системы."
+      ]
+    },
     {
       version: "1.7.127",
       releasedAt: "2026-08-12",
@@ -2573,6 +2581,13 @@ MAX - https://bizvmax.ru/zifra_plus
     { key: "revenue", label: "Поступления", tone: "income" },
     { key: "direct", label: "Прямые затраты", tone: "direct" }
   ];
+  const issuedDocumentSettingDefaults = [
+    {
+      key: "frdoUploadDeadlineDays",
+      label: "Норматив выгрузки в ФРДО, дней",
+      value: "60"
+    }
+  ];
   const financeDetailMetrics = [
     { key: "all", label: "Все операции" },
     { key: "revenue", label: "Поступления" },
@@ -4078,6 +4093,9 @@ MAX - https://bizvmax.ru/zifra_plus
     data.dictionaries.finalAttestationSettings = normalizeFinalAttestationSettings(
       data.dictionaries.finalAttestationSettings
     );
+    data.dictionaries.issuedDocumentSettings = normalizeIssuedDocumentSettings(
+      data.dictionaries.issuedDocumentSettings
+    );
     delete data.dictionaries.moodlePortalUrls;
     data.collections = data.collections || {};
     data.collections.programs = mergeProgramPaymentRegistry(data, mergeProgramRegistry(data))
@@ -4187,6 +4205,23 @@ MAX - https://bizvmax.ru/zifra_plus
         value: String(savedSetting?.value ?? setting.value).trim()
       };
     });
+  }
+
+  function normalizeIssuedDocumentSettings(values) {
+    const saved = Array.isArray(values) ? values : [];
+    return issuedDocumentSettingDefaults.map((setting) => {
+      const savedSetting = saved.find((item) => item?.key === setting.key);
+      const value = Number(savedSetting?.value ?? setting.value);
+      return {
+        ...setting,
+        value: String(Number.isInteger(value) && value >= 1 && value <= 3650 ? value : setting.value)
+      };
+    });
+  }
+
+  function getIssuedDocumentDeadlineDays() {
+    return Number(normalizeIssuedDocumentSettings(state.data.dictionaries.issuedDocumentSettings)
+      .find((setting) => setting.key === "frdoUploadDeadlineDays")?.value) || 60;
   }
 
   function normalizePaymentRateValue(value) {
@@ -8142,6 +8177,21 @@ MAX - https://bizvmax.ru/zifra_plus
     return { key: "pending", label: statusText || "Не выгружено", date: "" };
   }
 
+  function getIssuedDocumentElapsedDays(issueDate, currentDate = todayIso()) {
+    const issueTimestamp = parseTableSortDate(issueDate);
+    const currentTimestamp = parseTableSortDate(currentDate);
+    if (issueTimestamp === null || currentTimestamp === null) return null;
+    return Math.max(0, Math.floor((currentTimestamp - issueTimestamp) / 86400000));
+  }
+
+  function getIssuedDocumentDeadlineTone(frdoKey, elapsedDays, deadlineDays = getIssuedDocumentDeadlineDays()) {
+    if (frdoKey !== "pending" || elapsedDays === null) return "";
+    const remainingDays = deadlineDays - elapsedDays;
+    if (remainingDays < 10) return "danger";
+    if (remainingDays < 20) return "warning";
+    return "";
+  }
+
   function getIssuedDocumentRows() {
     const programs = getProgramRows();
     return (state.data.collections.students || []).flatMap((student) => {
@@ -8152,12 +8202,18 @@ MAX - https://bizvmax.ru/zifra_plus
       const program = String(student.program || "").trim();
       const programType = getIssuedDocumentProgramType(student, programs);
       const frdo = getIssuedDocumentFrdoDetails(student, programType);
+      const elapsedDays = getIssuedDocumentElapsedDays(issueDate);
+      const deadlineDays = getIssuedDocumentDeadlineDays();
       return [{
         id: `issued-document-${String(student.id || student.uid || documentNumber || registrationNumber)}`,
         studentId: String(student.id || ""),
         documentNumber,
         registrationNumber,
         issueDate,
+        elapsedDays,
+        remainingDays: elapsedDays === null ? null : deadlineDays - elapsedDays,
+        deadlineDays,
+        deadlineTone: getIssuedDocumentDeadlineTone(frdo.key, elapsedDays, deadlineDays),
         frdoKey: frdo.key,
         frdoLabel: frdo.label,
         frdoDate: frdo.date,
@@ -8207,7 +8263,9 @@ MAX - https://bizvmax.ru/zifra_plus
       const rightEmpty = String(right ?? "").trim() === "";
       if (leftEmpty !== rightEmpty) return leftEmpty ? 1 : -1;
       let comparison = 0;
-      if (dateKeys.has(sort.key)) {
+      if (sort.key === "elapsedDays") {
+        comparison = Number(left) - Number(right);
+      } else if (dateKeys.has(sort.key)) {
         const leftDate = parseTableSortDate(left);
         const rightDate = parseTableSortDate(right);
         if (leftDate === null && rightDate !== null) return 1;
@@ -8315,6 +8373,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   <th>${renderIssuedDocumentSortHeader("student", "ФИО слушателя")}</th>
                   <th>${renderIssuedDocumentSortHeader("documentNumber", "Номер документа")}</th>
                   <th>${renderIssuedDocumentSortHeader("issueDate", "Дата выдачи")}</th>
+                  <th>${renderIssuedDocumentSortHeader("elapsedDays", "Прошло дней")}</th>
                   <th>${renderIssuedDocumentSortHeader("frdo", "Выгрузка в ФРДО")}</th>
                   <th>${renderIssuedDocumentSortHeader("program", "Образовательная программа")}</th>
                   <th>${renderIssuedDocumentSortHeader("programType", "Вид программы")}</th>
@@ -8322,7 +8381,7 @@ MAX - https://bizvmax.ru/zifra_plus
               </thead>
               <tbody>
                 ${pageRows.map((row) => `
-                  <tr>
+                  <tr class="${row.deadlineTone ? `is-frdo-deadline-${escapeAttr(row.deadlineTone)}` : ""}">
                     <td>
                       <button class="table-edit-link issued-document-student-link" data-action="open-issued-document-student" data-student-id="${escapeAttr(row.studentId)}" type="button">
                         ${escapeHtml(row.studentName || "Без ФИО")}
@@ -8334,6 +8393,10 @@ MAX - https://bizvmax.ru/zifra_plus
                       ${row.documentNumber && row.registrationNumber ? `<small>Рег. № ${escapeHtml(row.registrationNumber)}</small>` : ""}
                     </td>
                     <td>${row.issueDate ? escapeHtml(dateRu(row.issueDate)) : "—"}</td>
+                    <td
+                      class="issued-document-days-cell"
+                      title="${row.elapsedDays === null ? "Дата выдачи не указана" : escapeAttr(`Норматив: ${row.deadlineDays} дней. Осталось: ${row.remainingDays} дней.`)}"
+                    >${row.elapsedDays === null ? "—" : escapeHtml(String(row.elapsedDays))}</td>
                     <td>
                       <span class="issued-document-frdo-status is-${escapeAttr(row.frdoKey)}">${escapeHtml(row.frdoLabel)}</span>
                       ${row.frdoDate ? `<small>${escapeHtml(dateRu(row.frdoDate))}</small>` : ""}
@@ -11602,7 +11665,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const isDocumentPathSettings = selectedKey === "documentPathSettings";
     const isEducationRegistrationTypeCodes = selectedKey === "educationRegistrationTypeCodes";
     const isFinalAttestationSettings = selectedKey === "finalAttestationSettings";
-    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings;
+    const isIssuedDocumentSettings = selectedKey === "issuedDocumentSettings";
+    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     return `
       <section class="panel">
@@ -11638,7 +11702,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${isCommunicationTemplates ? `
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "asc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="asc" type="button" title="Сортировать поля по алфавиту" aria-label="Сортировать поля по алфавиту" aria-pressed="${communicationTemplateFieldSortOrder === "asc" ? "true" : "false"}">А→Я</button>
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "desc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="desc" type="button" title="Сортировать поля против алфавита" aria-label="Сортировать поля против алфавита" aria-pressed="${communicationTemplateFieldSortOrder === "desc" ? "true" : "false"}">Я→А</button>
-                  ` : isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings ? "" : `
+                  ` : isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings ? "" : `
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
                   `}
@@ -11672,6 +11736,8 @@ MAX - https://bizvmax.ru/zifra_plus
                         ? renderEducationRegistrationTypeCodesDictionary(selectedValues)
                         : isFinalAttestationSettings
                         ? renderFinalAttestationSettingsDictionary(selectedValues)
+                        : isIssuedDocumentSettings
+                          ? renderIssuedDocumentSettingsDictionary(selectedValues)
                         : renderSimpleDictionaryEditor(selectedKey, selectedValues)}
             ` : `<div class="empty-state"><span>Выберите справочник</span></div>`}
           </section>
@@ -12290,6 +12356,26 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </form>
       </section>
+    `;
+  }
+
+  function renderIssuedDocumentSettingsDictionary(values) {
+    const settings = normalizeIssuedDocumentSettings(values);
+    const deadline = settings.find((setting) => setting.key === "frdoUploadDeadlineDays") || issuedDocumentSettingDefaults[0];
+    return `
+      <form class="sdo-settings-form" data-action="save-issued-document-settings">
+        <div class="sdo-settings-fields">
+          <label>
+            <span>${escapeHtml(deadline.label)}</span>
+            <input name="frdoUploadDeadlineDays" type="number" min="1" max="3650" step="1" inputmode="numeric" value="${escapeAttr(deadline.value)}" required>
+          </label>
+        </div>
+        <p class="sdo-settings-hint">Для документов со статусом «Не выгружено» строка выделяется жёлтым, когда до окончания норматива остаётся менее 20 дней, и красным — менее 10 дней.</p>
+        <div class="sdo-settings-actions">
+          <button class="ghost-button" data-action="reset-issued-document-settings" type="button">Восстановить исходные</button>
+          <button class="primary-button" type="submit">Сохранить настройки</button>
+        </div>
+      </form>
     `;
   }
 
@@ -24261,6 +24347,8 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='reset-education-registration-type-codes']")?.addEventListener("click", resetEducationRegistrationTypeCodes);
     document.querySelector("form[data-action='save-final-attestation-settings']")?.addEventListener("submit", saveFinalAttestationSettings);
     document.querySelector("[data-action='reset-final-attestation-settings']")?.addEventListener("click", resetFinalAttestationSettings);
+    document.querySelector("form[data-action='save-issued-document-settings']")?.addEventListener("submit", saveIssuedDocumentSettings);
+    document.querySelector("[data-action='reset-issued-document-settings']")?.addEventListener("click", resetIssuedDocumentSettings);
     document.querySelector("[data-action='add-attestation-category']")?.addEventListener("click", () => addFinalAttestationSetting("category"));
     document.querySelector("[data-action='add-attestation-scale']")?.addEventListener("click", () => addFinalAttestationSetting("scale"));
     document.querySelectorAll("[data-action='remove-attestation-setting']").forEach((button) => {
@@ -36314,6 +36402,32 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
+  function saveIssuedDocumentSettings(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const value = Number(form.elements.frdoUploadDeadlineDays?.value);
+    if (!Number.isInteger(value) || value < 1 || value > 3650) {
+      alert("Укажите норматив выгрузки в ФРДО целым числом от 1 до 3650 дней.");
+      form.elements.frdoUploadDeadlineDays?.focus();
+      return;
+    }
+    state.data.dictionaries.issuedDocumentSettings = normalizeIssuedDocumentSettings([{
+      ...issuedDocumentSettingDefaults[0],
+      value: String(value)
+    }]);
+    addAudit("Изменен справочник", dictionaryTitle("issuedDocumentSettings"), `Норматив выгрузки в ФРДО: ${value} дней`);
+    persist();
+    render();
+  }
+
+  function resetIssuedDocumentSettings() {
+    if (!confirm("Восстановить норматив выгрузки в ФРДО — 60 дней?")) return;
+    state.data.dictionaries.issuedDocumentSettings = normalizeIssuedDocumentSettings([]);
+    addAudit("Изменен справочник", dictionaryTitle("issuedDocumentSettings"), "Восстановлен норматив выгрузки в ФРДО: 60 дней");
+    persist();
+    render();
+  }
+
   function collectFinalAttestationSettings(form = document.querySelector("form[data-action='save-final-attestation-settings']")) {
     if (!form) return normalizeFinalAttestationSettings(state.data.dictionaries.finalAttestationSettings);
     const categories = [...form.querySelectorAll("[data-attestation-category]")].map((row, index) => ({
@@ -42711,6 +42825,7 @@ MAX - https://bizvmax.ru/zifra_plus
       documentPathSettings: "Пути сохранения документов",
       educationRegistrationTypeCodes: "Сокращения типов программ в рег. номере",
       finalAttestationSettings: "Итоговая аттестация: оценки и шкала",
+      issuedDocumentSettings: "Реестр выданных документов",
       discountRules: "Скидки",
       dataFormulas: "Конструктор формул данных",
       contractTemplateFields: "Конструктор полей договора",

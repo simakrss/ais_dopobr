@@ -2801,7 +2801,7 @@ body.is-resizing-column {
 
 .issued-documents-table {
   width: 100%;
-  min-width: 980px;
+  min-width: 1085px;
   table-layout: fixed;
 }
 
@@ -2818,15 +2818,40 @@ body.is-resizing-column {
 }
 
 .issued-documents-table th:nth-child(4) {
-  width: 175px;
-}
-
-.issued-documents-table th:nth-child(6) {
-  width: 115px;
+  width: 105px;
 }
 
 .issued-documents-table th:nth-child(5) {
+  width: 175px;
+}
+
+.issued-documents-table th:nth-child(7) {
+  width: 115px;
+}
+
+.issued-documents-table th:nth-child(6) {
   width: 260px;
+}
+
+.issued-documents-table tbody tr.is-frdo-deadline-warning > td {
+  background: #fff4c7;
+}
+
+.issued-documents-table tbody tr.is-frdo-deadline-danger > td {
+  background: #ffe0dc;
+}
+
+.issued-documents-table tbody tr.is-frdo-deadline-warning:hover > td {
+  background: #ffedac;
+}
+
+.issued-documents-table tbody tr.is-frdo-deadline-danger:hover > td {
+  background: #ffd1cb;
+}
+
+.issued-document-days-cell {
+  font-weight: 700;
+  text-align: center;
 }
 
 .issued-documents-table td small {
