@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.83",
+    version: "1.7.84",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.84",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Внутри раздела админки «Подключение к базе» добавлены вкладки «База АИС Допобразование», «Интернет-магазин» и «Облачная база»; настройки XLSB/WebDAV, SQL интернет-магазина и общей MySQL разнесены по соответствующим панелям."
+      ]
+    },
     {
       version: "1.7.83",
       releasedAt: "2026-08-12",
@@ -3196,6 +3203,7 @@ MAX - https://bizvmax.ru/zifra_plus
     releaseHistoryOpen: false,
     databaseOperationResult: null,
     adminTab: "database",
+    adminDatabaseTab: "ais",
     authUsers: [],
     authUsersLoading: false,
     authUsersLoaded: false,
@@ -12261,6 +12269,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const adminTab = adminTabs.some((tab) => tab.id === state.adminTab)
       ? state.adminTab
       : "database";
+    const adminDatabaseTabs = [
+      { id: "ais", label: "База АИС Допобразование" },
+      { id: "shop", label: "Интернет магазин" },
+      { id: "cloud", label: "Облачная база" }
+    ];
+    const adminDatabaseTab = adminDatabaseTabs.some((tab) => tab.id === state.adminDatabaseTab)
+      ? state.adminDatabaseTab
+      : "ais";
     return `
       <section class="panel admin-release-panel" aria-labelledby="admin-release-title">
         <div class="admin-release-copy">
@@ -12308,19 +12324,10 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </div>
           <div class="admin-database-settings">
-            <form class="sdo-settings-form" data-action="save-student-database-settings">
+            <form class="sdo-settings-form" data-action="save-student-database-settings" novalidate>
               <div class="admin-database-settings-head">
-                <h3>База АИС Допобразование</h3>
+                <h3>Настройки подключений</h3>
                 <div class="sdo-settings-actions admin-database-actions">
-                  <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseImportTooltip())}" ${state.databaseImport.running ? "disabled" : ""}>
-                    <span data-import-button-label>${state.databaseImport.running ? "Импорт..." : "Загрузить из базы"}</span>
-                  </button>
-                  <button class="ghost-button ${state.databaseExport.running && state.databaseExport.operation === "download" ? "is-loading" : ""}" data-action="download-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseDownloadTooltip())}" ${state.databaseExport.running ? "disabled" : ""}>
-                    <span data-database-download-button-label>${state.databaseExport.running && state.databaseExport.operation === "download" ? "Формирование..." : "Экспорт в базу"}</span>
-                  </button>
-                  <button class="ghost-button ${state.databaseExport.running && state.databaseExport.operation !== "download" ? "is-loading" : ""}" data-action="sync-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseSyncTooltip())}" ${state.databaseExport.running ? "disabled" : ""}>
-                    <span data-database-export-button-label>${state.databaseExport.running && state.databaseExport.operation !== "download" ? "Синхронизация..." : "Синхронизировать с базой"}</span>
-                  </button>
                   <button
                     class="primary-button icon-only admin-save-connection-button ${state.adminSettingsDirty ? "is-unsaved" : ""}"
                     type="submit"
@@ -12335,8 +12342,48 @@ MAX - https://bizvmax.ru/zifra_plus
                   </button>
                 </div>
               </div>
+              <nav class="admin-database-subtabs" role="tablist" aria-label="Подключения к базам">
+                ${adminDatabaseTabs.map((tab) => `
+                  <button
+                    id="admin-database-tab-${escapeAttr(tab.id)}"
+                    class="admin-database-subtab-button ${adminDatabaseTab === tab.id ? "is-active" : ""}"
+                    data-action="switch-admin-database-tab"
+                    data-admin-database-tab="${escapeAttr(tab.id)}"
+                    type="button"
+                    role="tab"
+                    tabindex="${adminDatabaseTab === tab.id ? "0" : "-1"}"
+                    aria-selected="${adminDatabaseTab === tab.id ? "true" : "false"}"
+                    aria-controls="admin-database-panel-${escapeAttr(tab.id)}"
+                  >${escapeHtml(tab.label)}</button>
+                `).join("")}
+              </nav>
               <div class="sdo-settings-fields">
                 <div class="admin-database-tab-content">
+                <section
+                  class="admin-database-subpanel"
+                  id="admin-database-panel-ais"
+                  data-admin-database-panel="ais"
+                  role="tabpanel"
+                  aria-labelledby="admin-database-tab-ais"
+                  ${adminDatabaseTab === "ais" ? "" : "hidden"}
+                >
+                <div class="admin-database-subpanel-head">
+                  <div class="admin-connection-heading-copy">
+                    <strong>База АИС Допобразование</strong>
+                    <small>Импорт, синхронизация и экспорт файла XLSB, а также размещение документов системы.</small>
+                  </div>
+                  <div class="sdo-settings-actions admin-database-actions">
+                    <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseImportTooltip())}" ${state.databaseImport.running ? "disabled" : ""}>
+                      <span data-import-button-label>${state.databaseImport.running ? "Импорт..." : "Загрузить из базы"}</span>
+                    </button>
+                    <button class="ghost-button ${state.databaseExport.running && state.databaseExport.operation === "download" ? "is-loading" : ""}" data-action="download-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseDownloadTooltip())}" ${state.databaseExport.running ? "disabled" : ""}>
+                      <span data-database-download-button-label>${state.databaseExport.running && state.databaseExport.operation === "download" ? "Формирование..." : "Экспорт в базу"}</span>
+                    </button>
+                    <button class="ghost-button ${state.databaseExport.running && state.databaseExport.operation !== "download" ? "is-loading" : ""}" data-action="sync-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseSyncTooltip())}" ${state.databaseExport.running ? "disabled" : ""}>
+                      <span data-database-export-button-label>${state.databaseExport.running && state.databaseExport.operation !== "download" ? "Синхронизация..." : "Синхронизировать с базой"}</span>
+                    </button>
+                  </div>
+                </div>
                 <label>
                   <span>WebDAV-путь или ссылка на АИС Допобразование.xlsb</span>
                   <input name="studentDatabaseWebDavPath" type="text" value="${escapeAttr(databasePath)}" required spellcheck="false" placeholder="ООО .../АИС Допобразование.xlsb или ссылка Яндекс-Диска">
@@ -12400,6 +12447,49 @@ MAX - https://bizvmax.ru/zifra_plus
                     </small>
                   </span>
                 </label>
+                <div class="admin-database-copy system-action-notes">
+                  <section class="system-action-note">
+                    <strong>Загрузить из базы</strong>
+                    <p>Заменяет текущие списки слушателей, прямых и общих затрат, а также запасов данными из XLSB. Обычный щелчок использует выбранный режим хранения, Shift + щелчок — альтернативный источник.</p>
+                  </section>
+                  <section class="system-action-note">
+                    <strong>Синхронизировать с базой</strong>
+                    <p>Переносит данные веб-системы в XLSB по выбранному пути. Перед заменой исходного файла создаётся резервная копия в папке «_Резерв».</p>
+                  </section>
+                  <section class="system-action-note">
+                    <strong>Экспорт в базу</strong>
+                    <p>Формирует отдельную копию АИС Допобразование.xlsb с текущими данными и скачивает её в «Загрузки» с датой и временем в имени. Рабочая база не изменяется.</p>
+                  </section>
+                </div>
+                <div class="admin-database-history" aria-label="Статистика обмена с базой">
+                  <p>
+                    <span>Последняя загрузка</span>
+                    <strong>${state.data.meta.studentDatabaseLastImportedAt
+                      ? escapeHtml(formatDateTimeRu(state.data.meta.studentDatabaseLastImportedAt))
+                      : "Ещё не выполнялась"}</strong>
+                  </p>
+                  <p>
+                    <span>Последняя синхронизация</span>
+                    <strong>${state.data.meta.studentDatabaseLastExportedAt
+                      ? escapeHtml(formatDateTimeRu(state.data.meta.studentDatabaseLastExportedAt))
+                      : "Ещё не выполнялась"}</strong>
+                  </p>
+                  <p>
+                    <span>Последний экспорт в файл</span>
+                    <strong>${state.data.meta.studentDatabaseLastDownloadedAt
+                      ? escapeHtml(formatDateTimeRu(state.data.meta.studentDatabaseLastDownloadedAt))
+                      : "Ещё не выполнялся"}</strong>
+                  </p>
+                </div>
+                </section>
+                <section
+                  class="admin-database-subpanel"
+                  id="admin-database-panel-shop"
+                  data-admin-database-panel="shop"
+                  role="tabpanel"
+                  aria-labelledby="admin-database-tab-shop"
+                  ${adminDatabaseTab === "shop" ? "" : "hidden"}
+                >
                 <div class="admin-system-documents-head admin-internet-shop-head">
                   <div class="admin-connection-heading-copy">
                     <strong>Интернет-магазин — заявки WooCommerce</strong>
@@ -12439,6 +12529,15 @@ MAX - https://bizvmax.ru/zifra_plus
                   <small class="sdo-settings-hint">Разрешён один запрос SELECT. Два знака <code>?</code> соответствуют началу и концу периода. Запрос должен возвращать перечисленные в стандартном запросе служебные поля и колонки заявки.</small>
                 </label>
                 ${applicationsMysqlFieldsDisabled ? '<small class="sdo-settings-hint">Параметры подключения заданы переменной окружения сервера; в админке можно изменять SQL-запрос.</small>' : ""}
+                </section>
+                <section
+                  class="admin-database-subpanel"
+                  id="admin-database-panel-cloud"
+                  data-admin-database-panel="cloud"
+                  role="tabpanel"
+                  aria-labelledby="admin-database-tab-cloud"
+                  ${adminDatabaseTab === "cloud" ? "" : "hidden"}
+                >
                 <div class="admin-system-documents-head">
                   <div class="admin-connection-heading-copy">
                     <strong>MySQL — общая база и блокировки в реальном времени</strong>
@@ -12488,6 +12587,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   </label>
                 </div>
                 <small class="sdo-settings-hint">Пароль MySQL хранится только в закрытых серверных настройках и никогда не передаётся обратно в браузер. Данные размещаются в таблицах <code>ais_shared_state_meta</code> и <code>ais_shared_state_entries</code>, блокировки — в <code>ais_record_locks</code>.</small>
+                </section>
                 </div>
                 <div class="admin-email-tab-content">
                 <div class="admin-system-documents-head admin-email-settings-head">
@@ -12535,40 +12635,6 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${documentMailboxes.length ? "" : '<p class="empty-state">Дополнительные почтовые ящики не настроены.</p>'}
                 </div>
                 </div>
-              </div>
-              <div class="admin-database-copy system-action-notes">
-                <section class="system-action-note">
-                  <strong>Загрузить из базы</strong>
-                  <p>Заменяет текущие списки слушателей, прямых и общих затрат, а также запасов данными из XLSB. Обычный щелчок использует выбранный режим хранения, Shift + щелчок — альтернативный источник.</p>
-                </section>
-                <section class="system-action-note">
-                  <strong>Синхронизировать с базой</strong>
-                  <p>Переносит данные веб-системы в XLSB по выбранному пути. Перед заменой исходного файла создаётся резервная копия в папке «_Резерв».</p>
-                </section>
-                <section class="system-action-note">
-                  <strong>Экспорт в базу</strong>
-                  <p>Формирует отдельную копию АИС Допобразование.xlsb с текущими данными и скачивает её в «Загрузки» с датой и временем в имени. Рабочая база не изменяется.</p>
-                </section>
-              </div>
-              <div class="admin-database-history" aria-label="Статистика обмена с базой">
-                <p>
-                  <span>Последняя загрузка</span>
-                  <strong>${state.data.meta.studentDatabaseLastImportedAt
-                    ? escapeHtml(formatDateTimeRu(state.data.meta.studentDatabaseLastImportedAt))
-                    : "Ещё не выполнялась"}</strong>
-                </p>
-                <p>
-                  <span>Последняя синхронизация</span>
-                  <strong>${state.data.meta.studentDatabaseLastExportedAt
-                    ? escapeHtml(formatDateTimeRu(state.data.meta.studentDatabaseLastExportedAt))
-                    : "Ещё не выполнялась"}</strong>
-                </p>
-                <p>
-                  <span>Последний экспорт в файл</span>
-                  <strong>${state.data.meta.studentDatabaseLastDownloadedAt
-                    ? escapeHtml(formatDateTimeRu(state.data.meta.studentDatabaseLastDownloadedAt))
-                    : "Ещё не выполнялся"}</strong>
-                </p>
               </div>
             </form>
           </div>
@@ -20671,6 +20737,23 @@ MAX - https://bizvmax.ru/zifra_plus
           document.querySelector(`[data-action='switch-admin-tab'][data-admin-tab='${CSS.escape(tab)}']`)
             ?.focus({ preventScroll: true });
         });
+      });
+    });
+    document.querySelectorAll("[data-action='switch-admin-database-tab']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const tab = String(button.dataset.adminDatabaseTab || "");
+        if (!["ais", "shop", "cloud"].includes(tab) || tab === state.adminDatabaseTab) return;
+        state.adminDatabaseTab = tab;
+        document.querySelectorAll("[data-admin-database-panel]").forEach((panel) => {
+          panel.hidden = panel.dataset.adminDatabasePanel !== tab;
+        });
+        document.querySelectorAll("[data-action='switch-admin-database-tab']").forEach((item) => {
+          const active = item.dataset.adminDatabaseTab === tab;
+          item.classList.toggle("is-active", active);
+          item.setAttribute("aria-selected", active ? "true" : "false");
+          item.tabIndex = active ? 0 : -1;
+        });
+        button.focus({ preventScroll: true });
       });
     });
     document.querySelector("[data-action='refresh-auth-users']")?.addEventListener("click", () => {

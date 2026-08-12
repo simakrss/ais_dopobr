@@ -793,11 +793,79 @@ body.is-session-expired {
   gap: 10px;
 }
 
+.admin-database-subtabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 2px 2px 0;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: thin;
+}
+
+.admin-database-subtab-button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-database-subtab-button:hover,
+.admin-database-subtab-button:focus-visible {
+  background: #eef7f4;
+  color: var(--teal);
+}
+
+.admin-database-subtab-button.is-active {
+  border-color: var(--line);
+  background: #fff;
+  color: var(--teal);
+  box-shadow: inset 0 -3px 0 var(--teal);
+}
+
+.admin-database-subpanel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.admin-database-subpanel[hidden] {
+  display: none;
+}
+
+.admin-database-subpanel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+}
+
+.admin-database-subpanel-head > .admin-connection-heading-copy {
+  flex: 1 1 280px;
+}
+
+.admin-database-subpanel-head > .admin-database-actions {
+  flex: 1 1 520px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  padding-top: 0;
+}
+
 .admin-email-tab-content {
   display: none;
 }
 
 .admin-connection-panel.is-email-tab .admin-database-settings-head,
+.admin-connection-panel.is-email-tab .admin-database-subtabs,
 .admin-connection-panel.is-email-tab .admin-database-tab-content,
 .admin-connection-panel.is-email-tab .admin-database-copy,
 .admin-connection-panel.is-email-tab .admin-database-history {
