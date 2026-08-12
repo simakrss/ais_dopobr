@@ -9,10 +9,17 @@
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.107",
+    version: "1.7.108",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.108",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Выделение заявок в импорте оптимизировано для больших списков: одна галочка больше не обходит тысячи строк и не перестраивает подробности заявки; счётчики и сумма выбранных оплат обновляются инкрементально."
+      ]
+    },
     {
       version: "1.7.107",
       releasedAt: "2026-08-12",
@@ -3324,6 +3331,7 @@ MAX - https://bizvmax.ru/zifra_plus
       importing: false,
       rows: [],
       selected: [],
+      selectedPayment: 0,
       activeId: "",
       truncated: false,
       error: "",
@@ -8031,6 +8039,7 @@ MAX - https://bizvmax.ru/zifra_plus
       importing: false,
       rows: [],
       selected: [],
+      selectedPayment: 0,
       activeId: "",
       truncated: false,
       error: "",
@@ -8528,7 +8537,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const importedLookup = buildStudentApplicationsImportLookup();
     const selectedIds = new Set(importState.selected || []);
     const selectedRows = (importState.rows || []).filter((row) => selectedIds.has(String(row.id)));
-    const selectedPayment = selectedRows.reduce((sum, row) => sum + getStudentApplicationReceiptAmount(row), 0);
+    const selectedPayment = Math.max(0, Number(importState.selectedPayment) || 0);
     const importedCount = visibleRows.filter((row) => isStudentApplicationImported(row, importedLookup)).length;
     const activeRow = (importState.rows || []).find((row) => String(row.id) === String(importState.activeId))
       || visibleRows[0]
@@ -8643,7 +8652,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     return `
                       <tr class="${active ? "is-active" : ""} ${imported ? "is-repeat" : ""}" data-student-application-row="${escapeAttr(row.id)}">
                         <td>
-                          <input data-student-application-select="${escapeAttr(row.id)}" type="checkbox" ${selected ? "checked" : ""} aria-label="Выбрать заявку">
+                          <input data-student-application-select="${escapeAttr(row.id)}" data-payment-amount="${escapeAttr(paymentAmount)}" type="checkbox" ${selected ? "checked" : ""} aria-label="Выбрать заявку">
                         </td>
                         <td>${escapeHtml(row.date || "")}</td>
                         <td>${escapeHtml(row.name || "")}${repeatComment ? `<small>${escapeHtml(repeatComment)}</small>` : ""}</td>
@@ -8740,6 +8749,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }));
       state.studentApplicationsImport.rows = rows;
       state.studentApplicationsImport.selected = [];
+      state.studentApplicationsImport.selectedPayment = 0;
       state.studentApplicationsImport.activeId = String(rows[0]?.id || "");
       state.studentApplicationsImport.truncated = Boolean(payload.truncated);
       state.studentApplicationsImport.warnings = Array.isArray(payload.warnings)
@@ -8748,6 +8758,7 @@ MAX - https://bizvmax.ru/zifra_plus
     } catch (error) {
       state.studentApplicationsImport.rows = [];
       state.studentApplicationsImport.selected = [];
+      state.studentApplicationsImport.selectedPayment = 0;
       state.studentApplicationsImport.activeId = "";
       state.studentApplicationsImport.error = error.message;
       state.studentApplicationsImport.warnings = [];
@@ -8786,6 +8797,7 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     state.studentApplicationsImport.rows = [];
     state.studentApplicationsImport.selected = [];
+    state.studentApplicationsImport.selectedPayment = 0;
     state.studentApplicationsImport.activeId = "";
     state.studentApplicationsImport.truncated = false;
     state.studentApplicationsImport.error = "";
@@ -8803,7 +8815,11 @@ MAX - https://bizvmax.ru/zifra_plus
       else selected.add(id);
     });
     state.studentApplicationsImport.selected = [...selected];
-    updateStudentApplicationsSelectionUi();
+    state.studentApplicationsImport.selectedPayment = (state.studentApplicationsImport.rows || [])
+      .reduce((sum, row) => selected.has(String(row.id))
+        ? sum + getStudentApplicationReceiptAmount(row)
+        : sum, 0);
+    updateStudentApplicationsSelectionUi({ refreshAll: true });
   }
 
   function bindStudentApplicationProgramMappingControl(root = document) {
@@ -8816,46 +8832,64 @@ MAX - https://bizvmax.ru/zifra_plus
       });
   }
 
-  function updateStudentApplicationsSelectionUi() {
-    const selectedIds = new Set((state.studentApplicationsImport.selected || []).map(String));
+  function updateStudentApplicationsSelectionUi(options = {}) {
+    const selectedIds = options.selectedIds instanceof Set
+      ? options.selectedIds
+      : new Set((state.studentApplicationsImport.selected || []).map(String));
     const activeId = String(state.studentApplicationsImport.activeId || "");
-    document.querySelectorAll("[data-student-application-select]").forEach((input) => {
-      input.checked = selectedIds.has(String(input.dataset.studentApplicationSelect || ""));
-    });
-    document.querySelectorAll("[data-student-application-row]").forEach((row) => {
-      row.classList.toggle("is-active", String(row.dataset.studentApplicationRow || "") === activeId);
-    });
-    const selectedRows = (state.studentApplicationsImport.rows || [])
-      .filter((row) => selectedIds.has(String(row.id)));
-    const selectedPayment = selectedRows.reduce(
-      (sum, row) => sum + getStudentApplicationReceiptAmount(row),
-      0
-    );
+    if (options.refreshAll) {
+      document.querySelectorAll("[data-student-application-select]").forEach((input) => {
+        input.checked = selectedIds.has(String(input.dataset.studentApplicationSelect || ""));
+      });
+    } else if (options.input) {
+      options.input.checked = selectedIds.has(String(options.input.dataset.studentApplicationSelect || ""));
+    }
+    if (options.updateDetail) {
+      document.querySelector("[data-student-application-row].is-active")?.classList.remove("is-active");
+      options.row?.classList.add("is-active");
+    }
     const selectedCount = document.querySelector("[data-student-applications-selected-count]");
-    if (selectedCount) selectedCount.textContent = String(selectedRows.length);
+    if (selectedCount) selectedCount.textContent = String(selectedIds.size);
     const paymentTotal = document.querySelector("[data-student-applications-selected-payment]");
-    if (paymentTotal) paymentTotal.textContent = money(selectedPayment);
+    if (paymentTotal) paymentTotal.textContent = money(state.studentApplicationsImport.selectedPayment || 0);
     const addButton = document.querySelector("[data-action='add-selected-student-applications']");
-    if (addButton) addButton.disabled = !selectedRows.length || state.studentApplicationsImport.importing;
-    const activeRow = (state.studentApplicationsImport.rows || [])
-      .find((row) => String(row.id || "") === activeId) || null;
-    const detail = document.querySelector("[data-student-applications-detail]");
-    if (detail) {
-      detail.innerHTML = `
-        <h3>Информация о выбранной заявке</h3>
-        ${renderStudentApplicationDetail(activeRow, buildStudentApplicationsImportLookup())}
-      `;
-      bindStudentApplicationProgramMappingControl(detail);
+    if (addButton) addButton.disabled = !selectedIds.size || state.studentApplicationsImport.importing;
+    if (options.updateDetail) {
+      const activeRow = (state.studentApplicationsImport.rows || [])
+        .find((row) => String(row.id || "") === activeId) || null;
+      const detail = document.querySelector("[data-student-applications-detail]");
+      if (detail) {
+        detail.innerHTML = `
+          <h3>Информация о выбранной заявке</h3>
+          ${renderStudentApplicationDetail(activeRow, buildStudentApplicationsImportLookup())}
+        `;
+        bindStudentApplicationProgramMappingControl(detail);
+      }
     }
   }
 
-  function toggleStudentApplicationSelection(id, selected) {
+  function toggleStudentApplicationSelection(id, selected, options = {}) {
     const values = new Set(state.studentApplicationsImport.selected || []);
+    const wasSelected = values.has(String(id));
     if (selected) values.add(String(id));
     else values.delete(String(id));
     state.studentApplicationsImport.selected = [...values];
-    state.studentApplicationsImport.activeId = String(id);
-    updateStudentApplicationsSelectionUi();
+    if (wasSelected !== Boolean(selected)) {
+      const inputAmount = Number(options.input?.dataset.paymentAmount);
+      const row = Number.isFinite(inputAmount)
+        ? null
+        : (state.studentApplicationsImport.rows || [])
+          .find((item) => String(item.id || "") === String(id));
+      const delta = Number.isFinite(inputAmount)
+        ? Math.max(0, inputAmount)
+        : getStudentApplicationReceiptAmount(row);
+      state.studentApplicationsImport.selectedPayment = Math.max(
+        0,
+        (Number(state.studentApplicationsImport.selectedPayment) || 0) + (selected ? delta : -delta)
+      );
+    }
+    if (options.activate) state.studentApplicationsImport.activeId = String(id);
+    updateStudentApplicationsSelectionUi({ ...options, selectedIds: values });
   }
 
   function parseSourceAgentAssignments(value) {
@@ -9440,7 +9474,11 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-student-application-select]").forEach((input) => {
       input.addEventListener("click", (event) => event.stopPropagation());
       input.addEventListener("change", () => {
-        toggleStudentApplicationSelection(input.dataset.studentApplicationSelect, input.checked);
+        toggleStudentApplicationSelection(
+          input.dataset.studentApplicationSelect,
+          input.checked,
+          { input, updateDetail: false }
+        );
       });
     });
     document.querySelectorAll("[data-student-application-row]").forEach((row) => {
@@ -9449,7 +9487,11 @@ MAX - https://bizvmax.ru/zifra_plus
         const checkbox = row.querySelector("[data-student-application-select]");
         if (checkbox && !checkbox.disabled) {
           const selected = (state.studentApplicationsImport.selected || []).map(String).includes(id);
-          toggleStudentApplicationSelection(id, !selected);
+          toggleStudentApplicationSelection(
+            id,
+            !selected,
+            { input: checkbox, row, activate: true, updateDetail: true }
+          );
           return;
         }
         state.studentApplicationsImport.activeId = id;
