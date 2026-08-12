@@ -8,11 +8,29 @@
     smtpPort: 465
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
+  const ADMIN_SQL_KEYWORDS = new Set([
+    "ADD", "ALL", "ALTER", "AND", "AS", "ASC", "BETWEEN", "BY", "CASE", "CAST",
+    "COLLATE", "CREATE", "CROSS", "CURRENT_DATE", "CURRENT_TIMESTAMP", "DATABASE", "DATE",
+    "DECIMAL", "DELETE", "DESC", "DISTINCT", "DROP", "ELSE", "END", "ESCAPE", "EXISTS",
+    "FALSE", "FROM", "FULL", "GROUP", "HAVING", "IF", "IN", "INDEX", "INNER", "INSERT",
+    "INTERVAL", "INTO", "IS", "JOIN", "LEFT", "LIKE", "LIMIT", "LOCK", "NOT", "NULL",
+    "OFFSET", "ON", "OR", "ORDER", "OUTER", "PARTITION", "PROCEDURE", "REGEXP", "RIGHT",
+    "SELECT", "SET", "SHOW", "TABLE", "THEN", "TRUE", "UNION", "UNIQUE", "UNLOCK",
+    "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
+  ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.117",
+    version: "1.7.118",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.118",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В настройках интернет-магазина SQL-запрос получил подсветку ключевых слов, функций, строк, чисел, параметров и комментариев.",
+        "SQL-редактор поддерживает вставку обычного текста, отступы клавишей Tab, Ctrl+Z/Ctrl+Y и стандартное контекстное меню полей системы."
+      ]
+    },
     {
       version: "1.7.117",
       releasedAt: "2026-08-12",
@@ -13305,6 +13323,30 @@ MAX - https://bizvmax.ru/zifra_plus
       : fallback;
   }
 
+  function renderAdminSqlQuerySyntax(value) {
+    const source = String(value || "");
+    const tokenPattern = /(\/\*[\s\S]*?\*\/|--[^\r\n]*|#[^\r\n]*|'(?:''|\\.|[^'\\])*'|"(?:""|\\.|[^"\\])*"|`(?:``|[^`])*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_$]*\b|\?)/g;
+    let result = "";
+    let offset = 0;
+    for (const match of source.matchAll(tokenPattern)) {
+      const token = match[0];
+      result += escapeHtml(source.slice(offset, match.index));
+      let tone = "";
+      if (/^(?:\/\*|--|#)/.test(token)) tone = "comment";
+      else if (/^['"]/.test(token)) tone = "string";
+      else if (token.startsWith("`")) tone = "identifier";
+      else if (/^\d/.test(token)) tone = "number";
+      else if (token === "?") tone = "parameter";
+      else if (ADMIN_SQL_KEYWORDS.has(token.toUpperCase())) tone = "keyword";
+      else if (/^\s*\(/.test(source.slice(Number(match.index) + token.length))) tone = "function";
+      result += tone
+        ? `<span class="admin-sql-token is-${tone}">${escapeHtml(token)}</span>`
+        : escapeHtml(token);
+      offset = Number(match.index) + token.length;
+    }
+    return `${result}${escapeHtml(source.slice(offset))}`;
+  }
+
   function getAdditionalDocumentMailboxesForAdmin() {
     const draft = state.adminSettingsDirty ? state.adminSettingsDraft?.documentMailboxes : null;
     const source = Array.isArray(draft) ? draft : state.data.meta.documentMailboxes;
@@ -13761,7 +13803,17 @@ MAX - https://bizvmax.ru/zifra_plus
                 </label>
                 <label class="admin-applications-sql-field">
                   <span>SQL-запрос получения заявок</span>
-                  <textarea name="applicationsSqlQuery" rows="18" required spellcheck="false">${escapeHtml(applicationsSqlQuery)}</textarea>
+                  <input name="applicationsSqlQuery" type="hidden" value="${escapeAttr(applicationsSqlQuery)}" data-admin-sql-query-input>
+                  <div
+                    class="admin-sql-query-editor"
+                    contenteditable="true"
+                    data-admin-sql-query-editor
+                    role="textbox"
+                    aria-label="SQL-запрос получения заявок"
+                    aria-multiline="true"
+                    aria-required="true"
+                    spellcheck="false"
+                  >${renderAdminSqlQuerySyntax(applicationsSqlQuery)}</div>
                   <small class="sdo-settings-hint">Разрешён один запрос SELECT. Два знака <code>?</code> соответствуют началу и концу периода. Запрос должен возвращать перечисленные в стандартном запросе служебные поля и колонки заявки.</small>
                 </label>
                 ${applicationsMysqlFieldsDisabled ? '<small class="sdo-settings-hint">Параметры подключения заданы переменной окружения сервера; в админке можно изменять SQL-запрос.</small>' : ""}
@@ -22539,6 +22591,7 @@ MAX - https://bizvmax.ru/zifra_plus
     studentDatabaseSettingsForm?.addEventListener("submit", saveStudentDatabaseSettings);
     bindAdminSettingsDirtyState(studentDatabaseSettingsForm);
     bindAdminDocumentMailboxFields(studentDatabaseSettingsForm);
+    bindAdminSqlQueryEditor(studentDatabaseSettingsForm);
     bindAdminSettingsBeforeUnload();
     bindAutomaticDocumentSaveHint(studentDatabaseSettingsForm);
     bindAdminMySqlSettings(studentDatabaseSettingsForm);
@@ -35791,6 +35844,7 @@ MAX - https://bizvmax.ru/zifra_plus
     else if (editor.matches("[data-document-path-value-editor]")) syncDocumentPathValueEditor(editor);
     else if (editor.matches("[data-document-save-folder-editor]")) syncDocumentSaveFolderEditor(editor);
     else if (editor.matches("[data-payment-formula-editor]")) syncPaymentFormulaEditor(editor);
+    else if (editor.matches("[data-admin-sql-query-editor]")) syncAdminSqlQueryEditor(editor);
     else syncCommunicationTemplateEditor(editor);
   }
 
@@ -35804,6 +35858,9 @@ MAX - https://bizvmax.ru/zifra_plus
       editor.innerHTML = renderCommunicationTemplateFormulaEditorContent(value);
     } else if (editor.matches("[data-program-promo-editor], [data-document-email-template-value-editor]")) {
       editor.innerHTML = renderCommunicationTemplateLinks(value);
+    } else if (editor.matches("[data-admin-sql-query-editor]")) {
+      editor.innerHTML = renderAdminSqlQuerySyntax(value);
+      syncAdminSqlQueryEditor(editor);
     } else if (editor.matches("[data-document-email-editor]")) {
       editor.textContent = value;
       refreshDocumentEmailTemplateEditor(editor);
@@ -37009,6 +37066,64 @@ MAX - https://bizvmax.ru/zifra_plus
       password: String(card.querySelector('[data-mailbox-field="password"]')?.value || ""),
       hasPassword: String(card.querySelector('[data-mailbox-field="password"]')?.placeholder || "").includes("сохранён")
     }));
+  }
+
+  function syncAdminSqlQueryEditor(editor) {
+    if (!editor) return;
+    const input = editor.closest("form")?.elements.applicationsSqlQuery;
+    if (input) input.value = serializeCommunicationTemplateEditor(editor);
+  }
+
+  function refreshAdminSqlQueryEditor(editor, preserveCaret = false) {
+    if (!editor) return;
+    const query = serializeCommunicationTemplateEditor(editor);
+    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
+    editor.innerHTML = renderAdminSqlQuerySyntax(query);
+    syncAdminSqlQueryEditor(editor);
+    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
+  }
+
+  function bindAdminSqlQueryEditor(form) {
+    const editor = form?.querySelector("[data-admin-sql-query-editor]");
+    if (!editor || editor.dataset.adminSqlQueryBound === "true") return;
+    editor.dataset.adminSqlQueryBound = "true";
+    initializeCommunicationTemplateEditorHistory(editor);
+    let highlightTimer = 0;
+    const refresh = (preserveCaret = false) => {
+      window.clearTimeout(highlightTimer);
+      refreshAdminSqlQueryEditor(editor, preserveCaret);
+    };
+    editor.addEventListener("compositionstart", () => {
+      window.clearTimeout(highlightTimer);
+      editor.dataset.composing = "true";
+    });
+    editor.addEventListener("compositionend", () => {
+      editor.dataset.composing = "";
+      refresh(true);
+    });
+    editor.addEventListener("paste", (event) => {
+      const text = event.clipboardData?.getData("text/plain");
+      if (typeof text !== "string") return;
+      event.preventDefault();
+      insertPlainTextIntoContentEditable(editor, text);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    editor.addEventListener("input", () => {
+      syncAdminSqlQueryEditor(editor);
+      if (editor.dataset.composing === "true") return;
+      window.clearTimeout(highlightTimer);
+      highlightTimer = window.setTimeout(() => {
+        if (editor.isConnected && editor.dataset.composing !== "true") refresh(true);
+      }, 120);
+    });
+    editor.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab" || event.ctrlKey || event.metaKey || event.altKey) return;
+      event.preventDefault();
+      insertPlainTextIntoContentEditable(editor, "  ");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    editor.addEventListener("blur", () => refresh());
+    syncAdminSqlQueryEditor(editor);
   }
 
   function collectAdminSettingsDraft(form) {

@@ -5573,16 +5573,58 @@ body.long-press-dragging * {
   gap: 5px;
 }
 
-.admin-applications-sql-field textarea {
+.admin-sql-query-editor {
   width: 100%;
   min-width: 0;
   min-height: 280px;
+  height: 300px;
+  overflow: auto;
   resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfcfd;
+  padding: 9px 10px;
+  color: #24322f;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
   line-height: 1.45;
+  outline: none;
   tab-size: 2;
   white-space: pre;
+}
+
+.admin-sql-query-editor:focus {
+  border-color: var(--teal);
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12);
+}
+
+.admin-sql-token.is-keyword {
+  color: #0f5fb3;
+  font-weight: 700;
+}
+
+.admin-sql-token.is-function {
+  color: #7c3aed;
+}
+
+.admin-sql-token.is-string {
+  color: #a33a16;
+}
+
+.admin-sql-token.is-identifier {
+  color: #08776d;
+}
+
+.admin-sql-token.is-number,
+.admin-sql-token.is-parameter {
+  color: #b45309;
+  font-weight: 700;
+}
+
+.admin-sql-token.is-comment {
+  color: #718078;
+  font-style: italic;
 }
 
 .admin-email-credential-field {
