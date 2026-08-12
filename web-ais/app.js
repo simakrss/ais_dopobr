@@ -9,10 +9,17 @@
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.116",
+    version: "1.7.117",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.117",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Во вкладке админки «Электронная почта» удалены дублирующий заголовок «Электронная почта (IMAP/SMTP)» и горизонтальный разделитель; кнопка сохранения перенесена в строку заголовка «Почтовые ящики»."
+      ]
+    },
     {
       version: "1.7.116",
       releasedAt: "2026-08-12",
@@ -13819,8 +13826,11 @@ MAX - https://bizvmax.ru/zifra_plus
                 </section>
                 </div>
                 <div class="admin-email-tab-content">
-                <div class="admin-system-documents-head admin-email-settings-head">
-                  <strong>Электронная почта (IMAP/SMTP)</strong>
+                <div class="admin-document-mailboxes-head is-applications-heading">
+                  <div>
+                    <strong>Почтовые ящики</strong>
+                    <small>Все настроенные ящики одновременно используются для поиска заявок InSales и для загрузки писем и вложений в документы слушателей.</small>
+                  </div>
                   <div class="admin-email-settings-actions">
                     <button
                       class="primary-button icon-only admin-save-connection-button ${state.adminSettingsDirty ? "is-unsaved" : ""}"
@@ -13834,12 +13844,6 @@ MAX - https://bizvmax.ru/zifra_plus
                         <path d="M8 21v-7h8v7"></path>
                       </svg>
                     </button>
-                  </div>
-                </div>
-                <div class="admin-document-mailboxes-head is-applications-heading">
-                  <div>
-                    <strong>Почтовые ящики</strong>
-                    <small>Все настроенные ящики одновременно используются для поиска заявок InSales и для загрузки писем и вложений в документы слушателей.</small>
                   </div>
                 </div>
                 <div class="admin-document-mailboxes is-applications-list">
