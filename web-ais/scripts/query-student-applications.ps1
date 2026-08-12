@@ -130,7 +130,7 @@ FROM (
   INNER JOIN wp_wc_order_stats os
     ON t_opl.order_id = os.order_id
   INNER JOIN wp_woocommerce_order_items oi
-    ON t_opl.order_id = oi.order_id
+    ON t_opl.order_item_id = oi.order_item_id
     AND oi.order_item_type = 'line_item'
   LEFT JOIN wp_woocommerce_order_itemmeta iprod
     ON oi.order_item_id = iprod.order_item_id
@@ -165,9 +165,10 @@ FROM (
   LEFT JOIN wp_woocommerce_order_items coup
     ON t_opl.order_id = coup.order_id
     AND coup.order_item_type = 'coupon'
+  WHERE t_opl.date_created >= ?
+    AND t_opl.date_created < ?
 ) AS t_all
-WHERE date_created >= ?
-  AND date_created < ?
+WHERE 1 = 1
 '@
 
 $configuredQuery = ([string]$env:AIS_APPLICATIONS_SQL_QUERY).Trim()
@@ -202,6 +203,7 @@ try {
   $connection.Open()
   $command = $connection.CreateCommand()
   $command.CommandText = $query
+  $command.CommandTimeout = 15
   foreach ($value in $parameterValues) {
     $parameter = $command.Parameters.Add("@value", [Data.Odbc.OdbcType]::VarChar)
     if ($value -is [datetime]) {

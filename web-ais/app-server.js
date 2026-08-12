@@ -97,6 +97,8 @@ let sharedApplicationStateWriteQueue = Promise.resolve();
 let sharedRecordLocksWriteQueue = Promise.resolve();
 let sharedRecordLocksMySqlPool = null;
 let sharedRecordLocksMySqlInitialization = null;
+let studentApplicationsMySqlPool = null;
+let studentApplicationsMySqlInitialization = null;
 let sharedStateMirrorRunning = false;
 let sharedStateMirrorVersionTag = "";
 let sharedStateMirrorLastError = "";
@@ -725,6 +727,12 @@ async function ensureStorage() {
   };
   const mailboxMigration = migrateStudentApplicationsMailboxSettings(serverSettings);
   serverSettings = mailboxMigration.settings;
+  const savedApplicationsSqlQuery = String(serverSettings.studentApplicationsSqlQuery || "").trim();
+  const optimizedApplicationsSqlQuery = optimizeStudentApplicationsSqlQuery(savedApplicationsSqlQuery);
+  if (savedApplicationsSqlQuery && optimizedApplicationsSqlQuery !== savedApplicationsSqlQuery) {
+    serverSettings.studentApplicationsSqlQuery = optimizedApplicationsSqlQuery;
+    mailboxMigration.changed = true;
+  }
   if (
     !String(serverSettings.documentConverterJwtSecret || "").trim()
     && !String(process.env.ONLYOFFICE_JWT_SECRET || "").trim()
@@ -1471,6 +1479,10 @@ async function handleAdminUsers(req, res, user) {
 }
 
 async function saveServerSettings(patch) {
+  const resetsStudentApplicationsMySql = Object.prototype.hasOwnProperty.call(
+    patch || {},
+    "studentApplicationsMySqlConnectionString"
+  ) && serverSettings.studentApplicationsMySqlConnectionString !== patch.studentApplicationsMySqlConnectionString;
   const resetsSharedRecordLocksMySql = Object.keys(patch || {}).some((key) => {
     const isMySqlSetting = key.startsWith("sharedRecordLocksMySql")
       || key === "studentApplicationsMySqlConnectionString";
@@ -1489,6 +1501,7 @@ async function saveServerSettings(patch) {
     sharedStateMySqlUnavailableUntil = 0;
     await closeSharedRecordLocksStorage();
   }
+  if (resetsStudentApplicationsMySql) await closeStudentApplicationsMySqlStorage();
   return serverSettings;
 }
 
@@ -5132,13 +5145,30 @@ function getStudentApplicationsMySqlConnectionString() {
 }
 
 function getStudentApplicationsSqlQuery() {
-  return String(
+  return optimizeStudentApplicationsSqlQuery(String(
     serverSettings.studentApplicationsSqlQuery || defaultStudentApplicationsSqlQuery || ""
-  ).trim();
+  ).trim());
+}
+
+function optimizeStudentApplicationsSqlQuery(value) {
+  let query = String(value || "").trim();
+  if (!query || !/FROM\s+wp_wc_order_product_lookup\s+AS\s+t_opl/iu.test(query)) return query;
+  query = query.replace(
+    /INNER\s+JOIN\s+wp_woocommerce_order_items\s+oi\s+ON\s+t_opl\.order_id\s*=\s*oi\.order_id/iu,
+    "INNER JOIN wp_woocommerce_order_items oi\n    ON t_opl.order_item_id = oi.order_item_id"
+  );
+  const outerDateFilter = /\n\)\s+AS\s+t_all\s*\nWHERE\s+date_created\s*>=\s*\?\s*\n\s*AND\s+date_created\s*<\s*\?\s*$/iu;
+  if (outerDateFilter.test(query)) {
+    query = query.replace(
+      outerDateFilter,
+      "\n  WHERE t_opl.date_created >= ?\n    AND t_opl.date_created < ?\n) AS t_all\nWHERE 1 = 1"
+    );
+  }
+  return query;
 }
 
 function normalizeStudentApplicationsSqlQuery(value) {
-  const query = String(value || "").trim();
+  const query = optimizeStudentApplicationsSqlQuery(value);
   if (!query) throw new Error("Укажите SQL-запрос получения заявок интернет-магазина.");
   if (query.length > 100000) throw new Error("SQL-запрос интернет-магазина слишком большой.");
   if (!/^SELECT\b/iu.test(query)) {
@@ -5192,6 +5222,65 @@ function publicStudentApplicationsMySqlSettings() {
     applicationsMysqlManagedByEnvironment: Boolean(process.env.STUDENT_APPLICATIONS_MYSQL_CONNECTION_STRING),
     applicationsSqlQuery: getStudentApplicationsSqlQuery()
   };
+}
+
+async function getStudentApplicationsMySqlPool() {
+  const connectionString = getStudentApplicationsMySqlConnectionString();
+  if (!connectionString) return null;
+  if (studentApplicationsMySqlPool) return studentApplicationsMySqlPool;
+  if (studentApplicationsMySqlInitialization) return studentApplicationsMySqlInitialization;
+  studentApplicationsMySqlInitialization = (async () => {
+    const connection = parseSharedRecordLocksMySqlConnectionString(connectionString);
+    let host = String(connection.server || connection.host || "").trim();
+    const database = String(connection.database || connection.initialcatalog || "").trim();
+    const user = String(connection.uid || connection.user || connection.userid || "").trim();
+    const password = String(connection.pwd || connection.password || "");
+    if (!host || !database || !user || !password) {
+      throw new Error("Не настроено подключение MySQL к интернет-магазину.");
+    }
+    if (process.platform !== "win32" && /\.timeweb\.ru$/i.test(host)) host = "127.0.0.1";
+    let mysql;
+    try {
+      mysql = require(MYSQL2_BUNDLE_PATH);
+    } catch (error) {
+      throw new Error(`Драйвер MySQL интернет-магазина не установлен: ${error.message}`);
+    }
+    const pool = mysql.createPool({
+      host,
+      port: Math.max(1, Number(connection.port) || 3306),
+      database,
+      user,
+      password,
+      charset: "utf8mb4",
+      dateStrings: true,
+      waitForConnections: true,
+      connectionLimit: 2,
+      maxIdle: 1,
+      idleTimeout: 30000,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 0,
+      connectTimeout: 4000
+    });
+    try {
+      await pool.query({ sql: "SELECT 1 AS ok", timeout: 6000 });
+    } catch (error) {
+      await pool.end().catch(() => {});
+      throw error;
+    }
+    studentApplicationsMySqlPool = pool;
+    return pool;
+  })();
+  try {
+    return await studentApplicationsMySqlInitialization;
+  } finally {
+    studentApplicationsMySqlInitialization = null;
+  }
+}
+
+async function closeStudentApplicationsMySqlStorage() {
+  const pool = studentApplicationsMySqlPool;
+  studentApplicationsMySqlPool = null;
+  if (pool) await pool.end().catch(() => {});
 }
 
 function getSharedRecordLocksMySqlConnectionString() {
@@ -9875,87 +9964,60 @@ function runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, onProg
   });
 }
 
-function runStudentApplicationsQuery(filters) {
-  if (process.platform !== "win32") {
-    return Promise.reject(new Error("Импорт заявок через ODBC доступен только на сервере Windows."));
+async function runStudentApplicationsQuery(filters) {
+  const pool = await getStudentApplicationsMySqlPool();
+  if (!pool) throw new Error("Не настроено подключение к базе заявок.");
+  const dateToExclusive = new Date(`${filters.dateTo}T00:00:00Z`);
+  dateToExclusive.setUTCDate(dateToExclusive.getUTCDate() + 1);
+  const parameterValues = [filters.dateFrom, dateToExclusive.toISOString().slice(0, 10)];
+  let query = getStudentApplicationsSqlQuery();
+  if (filters.productId && filters.programName) {
+    query += " AND (source_product_id = ? OR `Программа` LIKE ?)";
+    parameterValues.push(filters.productId, `%${filters.programName}%`);
+  } else if (filters.productId) {
+    query += " AND source_product_id = ?";
+    parameterValues.push(filters.productId);
+  } else if (filters.programName) {
+    query += " AND `Программа` LIKE ?";
+    parameterValues.push(`%${filters.programName}%`);
   }
-  const connectionString = getStudentApplicationsMySqlConnectionString();
-  if (!connectionString) {
-    return Promise.reject(new Error("Не настроено подключение к базе заявок."));
+  if (filters.onlyPaid) query += " AND source_is_paid = 1";
+  query += " ORDER BY source_order_id DESC, source_line_item_id LIMIT 5000";
+  try {
+    const [databaseRows] = await pool.execute({ sql: query, timeout: 15000 }, parameterValues);
+    const rows = (Array.isArray(databaseRows) ? databaseRows : []).map((row) => {
+      const orderId = String(row.source_order_id ?? "").trim();
+      const lineItemId = String(row.source_line_item_id ?? "").trim();
+      const dateCreated = String(row.date_created ?? "").trim().replace(" ", "T");
+      return {
+        id: `${orderId}-${lineItemId}`,
+        date: String(row["Дата"] ?? ""),
+        dateCreated,
+        name: String(row["ФИО"] ?? ""),
+        order: String(row["Заказ (оплата)"] ?? ""),
+        orderId,
+        program: String(row["Программа"] ?? ""),
+        productId: String(row.source_product_id ?? ""),
+        phone: String(row["Телефон"] ?? ""),
+        email: String(row.Email ?? ""),
+        city: String(row["Город"] ?? ""),
+        organization: String(row["Организация"] ?? ""),
+        position: String(row["Должность"] ?? ""),
+        source: String(row["Источник"] ?? ""),
+        coupon: String(row.source_coupon ?? ""),
+        note: String(row["Примечание"] ?? ""),
+        paid: Number(row.source_is_paid || 0) === 1,
+        paymentAmount: Number(row.source_payment_amount || 0) || 0
+      };
+    });
+    return { rows, total: rows.length, truncated: rows.length >= 5000 };
+  } catch (error) {
+    if (isMySqlConnectivityError(error)) await closeStudentApplicationsMySqlStorage();
+    if (["PROTOCOL_SEQUENCE_TIMEOUT", "ETIMEDOUT"].includes(String(error?.code || "").toUpperCase())) {
+      throw new Error("SQL-запрос интернет-магазина выполняется дольше 15 секунд. Уточните период или проверьте индексы базы.");
+    }
+    throw error;
   }
-  const powershellPath = process.env.SystemRoot
-    ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-    : "powershell.exe";
-  const launcher = [
-    "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
-    "$scriptText = [IO.File]::ReadAllText($env:AIS_APPLICATIONS_SCRIPT, [Text.UTF8Encoding]::new($false))",
-    "try { & ([ScriptBlock]::Create($scriptText)) } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
-  ].join("; ");
-  const args = [
-    "-NoLogo",
-    "-NoProfile",
-    "-NonInteractive",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-EncodedCommand",
-    Buffer.from(launcher, "utf16le").toString("base64")
-  ];
-  return new Promise((resolve, reject) => {
-    const child = spawn(powershellPath, args, {
-      windowsHide: true,
-      env: {
-        ...process.env,
-        AIS_APPLICATIONS_SCRIPT: STUDENT_APPLICATIONS_QUERY_SCRIPT,
-        AIS_APPLICATIONS_DB: connectionString,
-        AIS_APPLICATIONS_SQL_QUERY: getStudentApplicationsSqlQuery(),
-        AIS_APPLICATIONS_DATE_FROM: filters.dateFrom,
-        AIS_APPLICATIONS_DATE_TO: filters.dateTo,
-        AIS_APPLICATIONS_PROGRAM_NAME: filters.programName,
-        AIS_APPLICATIONS_PRODUCT_ID: filters.productId,
-        AIS_APPLICATIONS_ONLY_PAID: filters.onlyPaid ? "1" : "0"
-      }
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill();
-      reject(new Error("База заявок не ответила за 60 секунд."));
-    }, 60 * 1000);
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      if (stdout.length < 24 * 1024 * 1024) stdout += chunk;
-    });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => {
-      if (stderr.length < 2 * 1024 * 1024) stderr += chunk;
-    });
-    child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (code !== 0) {
-        const detail = String(stderr || stdout || "")
-          .replace(/#< CLIXML[\s\S]*$/i, "")
-          .trim();
-        reject(new Error(detail || `Запрос заявок завершился с кодом ${code}.`));
-        return;
-      }
-      try {
-        resolve(JSON.parse(String(stdout || "").replace(/^\uFEFF/, "").trim()));
-      } catch {
-        reject(new Error("Сервер заявок вернул некорректный ответ."));
-      }
-    });
-  });
 }
 
 function normalizeMailboxId(value, fallback = "mailbox") {
@@ -14267,6 +14329,9 @@ if (isMainThread && require.main === module) {
 module.exports = {
   ensureStorage,
   closeSharedRecordLocksStorage,
+  closeStudentApplicationsMySqlStorage,
+  optimizeStudentApplicationsSqlQuery,
+  runStudentApplicationsQuery,
   parseStudentDatabaseWorkbook,
   sanitizeStudentDatabaseExportPayload,
   inspectStudentDatabaseBinary,

@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.85",
+    version: "1.7.86",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.86",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Загрузка заявок интернет-магазина ускорена: запрос выполняется напрямую через постоянное подключение MySQL без запуска PowerShell/ODBC, диапазон дат применяется до тяжёлых соединений таблиц WooCommerce, а строки заказа связываются по идентификатору позиции. Старый стандартный SQL обновляется автоматически."
+      ]
+    },
     {
       version: "1.7.85",
       releasedAt: "2026-08-12",
