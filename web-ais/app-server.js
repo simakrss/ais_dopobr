@@ -4140,6 +4140,25 @@ async function handleResolveLocalDocumentFile(req, res) {
   }
 }
 
+async function handleRevealLocalDocumentFile(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    if (!serverSettings.openDocumentsLocally) {
+      throw new Error("Включите режим работы с документами на локальном компьютере.");
+    }
+    const filePath = resolveLocalDocumentFile(body.folder, body.fileName || "документ.docx");
+    const stats = await fs.stat(filePath).catch((error) => {
+      if (error.code === "ENOENT") throw new Error("Сформированный документ не найден на локальном диске.");
+      throw error;
+    });
+    if (!stats.isFile()) throw new Error("Указанный путь не является файлом.");
+    await revealFileInExplorer(filePath);
+    sendJson(res, 200, { ok: true, path: filePath });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
 async function handleRevealLocalDocumentTemplate(req, res) {
   try {
     const body = await readJsonBody(req);
@@ -4288,6 +4307,16 @@ async function promptAndSaveStudentDocumentLocally(bytes, fileName, body, output
     console.warn(`Не удалось показать сохранённый документ в Проводнике: ${error.message}`);
   }
   return { saved: true, cancelled: false, path: selectedPath };
+}
+
+async function saveStudentDocumentLocally(bytes, fileName, body) {
+  if (!serverSettings.openDocumentsLocally) {
+    throw new Error("Включите режим работы с документами на локальном компьютере.");
+  }
+  const targetPath = resolveLocalDocumentFile(body.studentFolder, fileName);
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.writeFile(targetPath, bytes);
+  return { saved: true, cancelled: false, path: targetPath };
 }
 
 async function loadSystemDocumentFromYandexDisk(relativePath) {
@@ -13310,14 +13339,16 @@ async function handleContractDocument(req, res) {
     const outputFileName = safeDocumentFileName(body.fileName || "документ", outputFormat);
     extraHeaders["X-Generated-Document-Format"] = outputFormat;
     extraHeaders["X-Generated-Document-File-Name"] = encodeURIComponent(outputFileName);
-    if (body.promptLocalSave) {
+    if (body.autoSaveLocal || body.promptLocalSave) {
       try {
-        const localSaveResult = await promptAndSaveStudentDocumentLocally(
-          result,
-          outputFileName,
-          body,
-          outputFormat
-        );
+        const localSaveResult = body.autoSaveLocal
+          ? await saveStudentDocumentLocally(result, outputFileName, body)
+          : await promptAndSaveStudentDocumentLocally(
+              result,
+              outputFileName,
+              body,
+              outputFormat
+            );
         if (localSaveResult.cancelled) {
           extraHeaders["X-Local-Document-Cancelled"] = "true";
         } else {
@@ -14247,6 +14278,10 @@ async function route(req, res) {
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/local-documents/resolve-file") {
     await handleResolveLocalDocumentFile(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/local-documents/reveal-file") {
+    await handleRevealLocalDocumentFile(req, res);
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/documents/template-reveal-local") {

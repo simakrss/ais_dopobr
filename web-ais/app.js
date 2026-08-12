@@ -19,10 +19,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.120",
+    version: "1.7.121",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.121",
+      releasedAt: "2026-08-12",
+      changes: [
+        "При групповых операциях документы сохраняются автоматически в настроенное место без отдельных диалогов сохранения.",
+        "После группового формирования локальных документов Проводник открывается один раз и выделяет первый созданный файл, если локальный режим доступен."
+      ]
+    },
     {
       version: "1.7.120",
       releasedAt: "2026-08-12",
@@ -33273,6 +33281,7 @@ MAX - https://bizvmax.ru/zifra_plus
     updateProgress
   ) {
     const result = { success: 0, skipped: 0, failed: 0, details: [] };
+    let firstLocalDocument = null;
     const isGroupOrder = ["enrollmentOrder", "expulsionOrder"].includes(operation);
     let sharedOrderNo = "";
     if (isGroupOrder && autoFill && records.length) {
@@ -33357,19 +33366,26 @@ MAX - https://bizvmax.ru/zifra_plus
         generationFormat: normalizeDocumentGenerationFormat(generationFormat || documentTemplate.generationFormat),
         emailDeliveryMode: normalizeDocumentEmailDeliveryMode(emailDeliveryMode, documentTemplate)
       };
+      const storageRequest = getStudentBulkDocumentStorageRequest(record, effectiveTemplate);
       const generated = await downloadStudentDocumentFromTemplate(
         effectiveTemplate,
         record,
         null,
         "Не удалось сформировать групповой документ",
         {
-          storageRequest: getStudentDocumentStorageRequest(record, effectiveTemplate),
+          storageRequest,
           skipEmailConfirmation: true,
           quietEmail: true
         }
       );
       if (generated?.generated) {
         result.success += count;
+        if (!firstLocalDocument && generated.storageResult?.localSaveResult?.saved) {
+          firstLocalDocument = {
+            folder: storageRequest.studentFolder,
+            fileName: generated.fileName
+          };
+        }
         if (emailDeliveryMode !== "off" && !generated.emailed) {
           result.details.push({ tone: "warning", name: record.name, message: "Документ сформирован, но не отправлен по электронной почте." });
         }
@@ -33377,6 +33393,17 @@ MAX - https://bizvmax.ru/zifra_plus
       else {
         result.failed += count;
         result.details.push({ tone: "error", name: record.name, message: "Документ не сформирован." });
+      }
+    }
+    if (firstLocalDocument) {
+      try {
+        await revealStudentBulkDocument(firstLocalDocument.folder, firstLocalDocument.fileName);
+      } catch (error) {
+        result.details.push({
+          tone: "warning",
+          name: firstLocalDocument.fileName,
+          message: `Документы сохранены, но не удалось выделить первый файл в Проводнике: ${error.message}`
+        });
       }
     }
     persist();
@@ -40123,6 +40150,16 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function getStudentBulkDocumentStorageRequest(record, documentTemplate = {}) {
+    const storageRequest = getStudentDocumentStorageRequest(record, documentTemplate);
+    if (!storageRequest.promptLocalSave) return storageRequest;
+    return {
+      ...storageRequest,
+      promptLocalSave: false,
+      autoSaveLocal: true
+    };
+  }
+
   function getEmployeeDocumentStorageRequest(record) {
     const recommendedSaveEnabled = Boolean(state.data.meta.yandexDiskAutoSave);
     const useLocalDocuments = getEffectiveLocalDocumentsMode();
@@ -40257,21 +40294,40 @@ MAX - https://bizvmax.ru/zifra_plus
   async function finishStudentDocumentGeneration(response, fileName, storageRequest) {
     const localSaveResult = readLocalDocumentSaveResult(
       response,
-      storageRequest.promptLocalSave
+      storageRequest.promptLocalSave || storageRequest.autoSaveLocal
     );
     const yandexSaveResult = readYandexDocumentSaveResult(
       response,
       storageRequest.saveToYandexDisk
     );
     const blob = await response.blob();
-    if (localSaveResult?.saved || localSaveResult?.cancelled) return;
-    if (yandexSaveResult?.saved) return;
+    if (localSaveResult?.saved || localSaveResult?.cancelled) {
+      return { localSaveResult, yandexSaveResult, downloaded: false };
+    }
+    if (yandexSaveResult?.saved) {
+      return { localSaveResult, yandexSaveResult, downloaded: false };
+    }
     downloadBlob(fileName, blob);
     if (localSaveResult && !localSaveResult.saved) {
       alert(`Не удалось сохранить документ по выбранному локальному пути: ${localSaveResult.error}`);
-      return;
+      return { localSaveResult, yandexSaveResult, downloaded: true };
     }
     showYandexDocumentSaveWarning(yandexSaveResult);
+    return { localSaveResult, yandexSaveResult, downloaded: true };
+  }
+
+  async function revealStudentBulkDocument(folder, fileName) {
+    if (!getEffectiveLocalDocumentsMode() || !folder || !fileName) return false;
+    const response = await fetch(photoApiUrl("/api/local-documents/reveal-file"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder, fileName })
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+    }
+    return true;
   }
 
   function getGeneratedDocumentResponseDetails(response, requestedFileName, requestedFormat) {
@@ -40471,7 +40527,11 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       const responseDetails = getGeneratedDocumentResponseDetails(response, fileName, outputFormat);
       const emailResponse = emailRequest ? response.clone() : null;
-      await finishStudentDocumentGeneration(response, responseDetails.fileName, storageRequest);
+      const storageResult = await finishStudentDocumentGeneration(
+        response,
+        responseDetails.fileName,
+        storageRequest
+      );
       addAudit(
         "Сформирован документ",
         options.auditArea || "Документы слушателя",
@@ -40511,6 +40571,9 @@ MAX - https://bizvmax.ru/zifra_plus
       return {
         generated: true,
         emailed: emailSent,
+        fileName: responseDetails.fileName,
+        storageRequest,
+        storageResult,
         outputFormat: responseDetails.outputFormat,
         conversionFallback: responseDetails.conversionFallback
       };
