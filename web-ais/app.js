@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.91",
+    version: "1.7.92",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.92",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В карточке слушателя кнопки «Отмена» и «Сохранить» поменяны местами."
+      ]
+    },
     {
       version: "1.7.91",
       releasedAt: "2026-08-12",
@@ -15612,8 +15619,8 @@ MAX - https://bizvmax.ru/zifra_plus
                   >
                     ${renderOrdersSdoIcon("history")}
                   </button>
-                  <button class="primary-button" type="submit">Сохранить</button>
                   <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
+                  <button class="primary-button" type="submit">Сохранить</button>
                   ${renderCardWindowControls()}
                 </div>
                 <div class="student-card-secondary-actions">
