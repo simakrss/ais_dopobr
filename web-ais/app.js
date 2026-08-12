@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.137",
+    version: "1.7.138",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.138",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Выгрузка ФРДО автоматически сохраняется в настроенную локальную или облачную папку и после формирования показывает сохранённый файл.",
+        "Путь выгрузки ФРДО добавлен в раздел настроек ФРДО рядом с нормативным сроком; исходная папка — «ФРДО»."
+      ]
+    },
     {
       version: "1.7.137",
       releasedAt: "2026-08-12",
@@ -2657,6 +2665,11 @@ MAX - https://bizvmax.ru/zifra_plus
       key: "frdoUploadDeadlineDays",
       label: "Норматив выгрузки в ФРДО, дней",
       value: "60"
+    },
+    {
+      key: "frdoExportFolder",
+      label: "Папка выгрузки ФРДО",
+      value: "ФРДО"
     }
   ];
   const ISSUED_DOCUMENT_TABLE_CONFIG_ID = "issuedDocuments";
@@ -4298,6 +4311,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const saved = Array.isArray(values) ? values : [];
     return issuedDocumentSettingDefaults.map((setting) => {
       const savedSetting = saved.find((item) => item?.key === setting.key);
+      if (setting.key === "frdoExportFolder") {
+        const value = String(savedSetting?.value ?? setting.value).trim();
+        return {
+          ...setting,
+          value: value || setting.value
+        };
+      }
       const value = Number(savedSetting?.value ?? setting.value);
       return {
         ...setting,
@@ -4309,6 +4329,17 @@ MAX - https://bizvmax.ru/zifra_plus
   function getIssuedDocumentDeadlineDays() {
     return Number(normalizeIssuedDocumentSettings(state.data.dictionaries.issuedDocumentSettings)
       .find((setting) => setting.key === "frdoUploadDeadlineDays")?.value) || 60;
+  }
+
+  function getFrdoExportFolder() {
+    return normalizeIssuedDocumentSettings(state.data.dictionaries.issuedDocumentSettings)
+      .find((setting) => setting.key === "frdoExportFolder")?.value || "ФРДО";
+  }
+
+  function isValidFrdoExportFolder(value) {
+    const source = String(value || "").trim().replace(/\\/g, "/");
+    if (!source || source.length > 500 || /^data:|^https?:/iu.test(source)) return false;
+    return !source.split("/").some((part) => part.trim() === "." || part.trim() === "..");
   }
 
   function normalizePaymentRateValue(value) {
@@ -8475,7 +8506,10 @@ MAX - https://bizvmax.ru/zifra_plus
       const response = await fetch(photoApiUrl("/api/issued-documents/frdo-export"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ records })
+        body: JSON.stringify({
+          records,
+          frdoExportFolder: getFrdoExportFolder()
+        })
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
@@ -8483,7 +8517,26 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       const blob = await response.blob();
       const fallback = `ВыгрузкаДПО_${todayIso().replace(/-/g, ".")}.xls`;
-      downloadBlob(getDownloadFileNameFromResponse(response, fallback), blob);
+      const fileName = getDownloadFileNameFromResponse(response, fallback);
+      const saved = response.headers.get("X-Frdo-Saved") === "true";
+      if (!saved) {
+        downloadBlob(fileName, blob);
+        return;
+      }
+      const storage = response.headers.get("X-Frdo-Storage") || "";
+      const warning = decodeURIComponent(response.headers.get("X-Frdo-Warning") || "");
+      if (storage === "webdav") {
+        const relativeFolder = decodeURIComponent(response.headers.get("X-Frdo-Relative-Folder") || "")
+          || getFrdoExportFolder();
+        await openStudentWebDavDocumentsManager(relativeFolder, "", {
+          title: "Выгрузки ФРДО",
+          rootLabel: "ФРДО",
+          selectedFileName: fileName,
+          notice: `Файл «${fileName}» сохранён в облачную папку ФРДО.`
+        });
+      } else if (warning) {
+        alert(`Файл «${fileName}» сохранён. ${warning}`);
+      }
     } catch (error) {
       alert(error.message || "Не удалось сформировать выгрузку ФРДО.");
     } finally {
@@ -12709,6 +12762,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderIssuedDocumentSettingsDictionary(values) {
     const settings = normalizeIssuedDocumentSettings(values);
     const deadline = settings.find((setting) => setting.key === "frdoUploadDeadlineDays") || issuedDocumentSettingDefaults[0];
+    const exportFolder = settings.find((setting) => setting.key === "frdoExportFolder") || issuedDocumentSettingDefaults[1];
     return `
       <form class="sdo-settings-form" data-action="save-issued-document-settings">
         <div class="sdo-settings-fields">
@@ -12716,7 +12770,12 @@ MAX - https://bizvmax.ru/zifra_plus
             <span>${escapeHtml(deadline.label)}</span>
             <input name="frdoUploadDeadlineDays" type="number" min="1" max="3650" step="1" inputmode="numeric" value="${escapeAttr(deadline.value)}" required>
           </label>
+          <label>
+            <span>${escapeHtml(exportFolder.label)}</span>
+            <input name="frdoExportFolder" type="text" maxlength="500" value="${escapeAttr(exportFolder.value)}" placeholder="ФРДО" required>
+          </label>
         </div>
+        <p class="sdo-settings-hint">Путь задаётся относительно корневой папки системы «АИС Допобразование». Значение «ФРДО» соответствует папке Y:\\АИС Допобразование\\ФРДО в локальном режиме и одноимённой папке в облаке.</p>
         <p class="sdo-settings-hint">Для документов со статусом «Не выгружено» строка выделяется жёлтым, когда до окончания норматива остаётся менее 20 дней, и красным — менее 10 дней.</p>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-issued-document-settings" type="button">Восстановить исходные</button>
@@ -29960,7 +30019,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ? normalizedFolder.replace(/\/Документы$/iu, "")
       : normalizedFolder;
     const initialPath = documentsFolderMatch ? "Документы" : "";
-    const rootLabel = String(studentName || "Папка карточки").trim() || "Папка карточки";
+    const rootLabel = String(options.rootLabel || studentName || "Папка карточки").trim() || "Папка карточки";
+    const dialogTitle = String(options.title || "").trim()
+      || `Документы${studentName ? `: ${studentName}` : " слушателя"}`;
     const backdrop = document.createElement("div");
     backdrop.className = "student-webdav-browser-backdrop";
     backdrop.dataset.studentWebdavBrowser = "";
@@ -29968,7 +30029,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <section class="student-webdav-browser-dialog" role="dialog" aria-modal="true" aria-labelledby="studentWebDavBrowserTitle">
         <header class="student-webdav-browser-head">
           <div>
-            <h2 id="studentWebDavBrowserTitle">Документы${studentName ? `: ${escapeHtml(studentName)}` : " слушателя"}</h2>
+            <h2 id="studentWebDavBrowserTitle">${escapeHtml(dialogTitle)}</h2>
             <p>Яндекс-Диск · WebDAV</p>
           </div>
           <button class="icon-button" type="button" data-action="close-student-webdav-browser" title="Закрыть" aria-label="Закрыть">×</button>
@@ -30007,6 +30068,7 @@ MAX - https://bizvmax.ru/zifra_plus
     let currentEntries = [];
     let loading = false;
     let selectedEntryPath = "";
+    let initialSelectedFileName = String(options.selectedFileName || "").trim();
     let previewRequestToken = 0;
     let previewScale = 1;
     let previewPanX = 0;
@@ -30425,11 +30487,24 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!response.ok) throw new Error(payload.error || "Не удалось прочитать папку WebDAV.");
         currentPath = String(payload.path || "");
         currentEntries = Array.isArray(payload.entries) ? payload.entries : [];
-        selectedEntryPath = "";
+        const initialSelection = initialSelectedFileName
+          ? currentEntries.find((entry) => (
+            !entry.isDirectory
+            && String(entry.name || "").localeCompare(initialSelectedFileName, "ru", { sensitivity: "base" }) === 0
+          ))
+          : null;
+        selectedEntryPath = initialSelection?.path || "";
+        initialSelectedFileName = "";
         previewRequestToken += 1;
         renderPath();
         renderEntries();
         preview.innerHTML = '<div class="student-webdav-browser-preview-empty">Выберите файл для просмотра</div>';
+        if (selectedEntryPath) {
+          requestAnimationFrame(() => {
+            list.querySelector(`[data-webdav-browser-entry="${CSS.escape(selectedEntryPath)}"]`)
+              ?.scrollIntoView({ block: "nearest" });
+          });
+        }
         setStatus(payload.truncated ? "Показаны первые 1000 элементов." : "", payload.truncated ? "warning" : "");
       } catch (error) {
         list.innerHTML = `<div class="student-webdav-browser-empty is-error">${escapeHtml(error.message)}</div>`;
@@ -36837,19 +36912,35 @@ MAX - https://bizvmax.ru/zifra_plus
       form.elements.frdoUploadDeadlineDays?.focus();
       return;
     }
-    state.data.dictionaries.issuedDocumentSettings = normalizeIssuedDocumentSettings([{
-      ...issuedDocumentSettingDefaults[0],
-      value: String(value)
-    }]);
-    addAudit("Изменен справочник", dictionaryTitle("issuedDocumentSettings"), `Норматив выгрузки в ФРДО: ${value} дней`);
+    const exportFolder = String(form.elements.frdoExportFolder?.value || "").trim();
+    if (!isValidFrdoExportFolder(exportFolder)) {
+      alert("Укажите корректный путь к папке выгрузки ФРДО без ссылок и сегментов «.» или «..». ");
+      form.elements.frdoExportFolder?.focus();
+      return;
+    }
+    state.data.dictionaries.issuedDocumentSettings = normalizeIssuedDocumentSettings([
+      {
+        ...issuedDocumentSettingDefaults[0],
+        value: String(value)
+      },
+      {
+        ...issuedDocumentSettingDefaults[1],
+        value: exportFolder
+      }
+    ]);
+    addAudit(
+      "Изменен справочник",
+      dictionaryTitle("issuedDocumentSettings"),
+      `Норматив выгрузки в ФРДО: ${value} дней; папка: ${exportFolder}`
+    );
     persist();
     render();
   }
 
   function resetIssuedDocumentSettings() {
-    if (!confirm("Восстановить норматив выгрузки в ФРДО — 60 дней?")) return;
+    if (!confirm("Восстановить норматив выгрузки в ФРДО — 60 дней и папку «ФРДО»?")) return;
     state.data.dictionaries.issuedDocumentSettings = normalizeIssuedDocumentSettings([]);
-    addAudit("Изменен справочник", dictionaryTitle("issuedDocumentSettings"), "Восстановлен норматив выгрузки в ФРДО: 60 дней");
+    addAudit("Изменен справочник", dictionaryTitle("issuedDocumentSettings"), "Восстановлены норматив выгрузки в ФРДО: 60 дней и папка «ФРДО»");
     persist();
     render();
   }
@@ -43251,7 +43342,7 @@ MAX - https://bizvmax.ru/zifra_plus
       documentPathSettings: "Пути сохранения документов",
       educationRegistrationTypeCodes: "Сокращения типов программ в рег. номере",
       finalAttestationSettings: "Итоговая аттестация: оценки и шкала",
-      issuedDocumentSettings: "Реестр выданных документов",
+      issuedDocumentSettings: "ФРДО",
       discountRules: "Скидки",
       dataFormulas: "Конструктор формул данных",
       contractTemplateFields: "Конструктор полей договора",

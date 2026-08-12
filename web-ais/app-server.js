@@ -45,6 +45,7 @@ const AUDIT_MAX_CHANGES = 100;
 const STUDENT_DATABASE_SYNC_SCRIPT = path.join(ROOT, "scripts", "sync-student-database.ps1");
 const STUDENT_APPLICATIONS_QUERY_SCRIPT = path.join(ROOT, "scripts", "query-student-applications.ps1");
 const FRDO_EXPORT_TEMPLATE_PATH = path.join(ROOT, "data", "frdo-export-template.xlsx");
+const DEFAULT_FRDO_EXPORT_FOLDER = "ФРДО";
 let defaultStudentApplicationsSqlQuery = "";
 const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH = "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
 const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
@@ -662,7 +663,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled"
+  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled"
 };
 
 const MIME_TYPES = {
@@ -3846,6 +3847,16 @@ function normalizeSystemDocumentsRelativePath(value) {
     .filter(Boolean);
   if (parts.some((part) => part === "." || part === "..")) return "";
   return parts.join("/");
+}
+
+function normalizeFrdoExportFolder(value) {
+  const source = String(value || DEFAULT_FRDO_EXPORT_FOLDER).trim();
+  if (source.length > 500) throw new Error("Путь к папке выгрузки ФРДО слишком длинный.");
+  const relativePath = normalizeSystemDocumentsRelativePath(source);
+  if (!relativePath) {
+    throw new Error("Укажите корректный путь к папке выгрузки ФРДО в настройках.");
+  }
+  return relativePath;
 }
 
 function usesParentSystemDocumentsFolder(value) {
@@ -8687,16 +8698,79 @@ async function buildFrdoExportWorkbook(body) {
   };
 }
 
+async function saveFrdoExportWorkbook(result, folderSource) {
+  const relativeFolder = normalizeFrdoExportFolder(folderSource);
+  const localDocuments = serverSettings.openDocumentsLocally !== false
+    ? await getLocalSystemDocumentsAvailability()
+    : { available: false };
+  if (localDocuments.available) {
+    const folderPath = resolveLocalDocumentsPath(
+      relativeFolder,
+      "Не удалось определить локальную папку выгрузки ФРДО."
+    );
+    await fs.mkdir(folderPath, { recursive: true });
+    const pathApi = getRuntimeFileSystemPathApi(folderPath) || path;
+    const targetPath = pathApi.resolve(folderPath, result.fileName);
+    const pathFromFolder = pathApi.relative(folderPath, targetPath);
+    if (pathFromFolder.startsWith("..") || pathApi.isAbsolute(pathFromFolder)) {
+      throw new Error("Файл выгрузки ФРДО находится за пределами настроенной папки.");
+    }
+    await fs.writeFile(targetPath, result.bytes);
+    let revealed = false;
+    let warning = "";
+    try {
+      await revealFileInExplorer(targetPath);
+      revealed = true;
+    } catch (error) {
+      warning = `Не удалось выделить файл в Проводнике: ${error.message}`;
+      console.warn(warning);
+    }
+    return {
+      storage: "local",
+      path: targetPath,
+      relativeFolder,
+      revealed,
+      warning
+    };
+  }
+  const folderPath = normalizeWebDavPath(`${resolveYandexDiskBasePath(false)}/${relativeFolder}`);
+  await ensureYandexDiskFolder(folderPath);
+  const targetPath = normalizeWebDavPath(`${folderPath}/${result.fileName}`);
+  await requestYandexWebDav("PUT", targetPath, {
+    acceptedStatuses: [200, 201, 204],
+    body: result.bytes,
+    contentType: "application/vnd.ms-excel",
+    timeoutMs: 60000
+  });
+  return {
+    storage: "webdav",
+    path: targetPath.replace(/^\/+/, ""),
+    relativeFolder,
+    revealed: false,
+    warning: ""
+  };
+}
+
 async function handleFrdoExport(req, res) {
   try {
-    const result = await buildFrdoExportWorkbook(await readJsonBody(req));
+    const body = await readJsonBody(req);
+    const result = await buildFrdoExportWorkbook(body);
+    const saved = await saveFrdoExportWorkbook(result, body.frdoExportFolder);
     sendFile(
       res,
       200,
       result.bytes,
       result.fileName,
       "application/vnd.ms-excel",
-      { "X-Frdo-Export-Count": String(result.count) }
+      {
+        "X-Frdo-Export-Count": String(result.count),
+        "X-Frdo-Saved": "true",
+        "X-Frdo-Storage": saved.storage,
+        "X-Frdo-Path": encodeURIComponent(saved.path),
+        "X-Frdo-Relative-Folder": encodeURIComponent(saved.relativeFolder),
+        "X-Frdo-Revealed": String(saved.revealed),
+        "X-Frdo-Warning": encodeURIComponent(saved.warning)
+      }
     );
   } catch (error) {
     sendError(res, 400, error.message);
