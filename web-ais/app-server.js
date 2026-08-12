@@ -52,6 +52,7 @@ const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока �
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST = "imap.timeweb.ru";
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_SMTP_HOST = "smtp.timeweb.ru";
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN = "mail@zifra-plus.ru";
+const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
 let serverSettings = {};
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
@@ -711,6 +712,7 @@ async function ensureStorage() {
     sharedRecordLocksMySqlUser: "",
     sharedRecordLocksMySqlPassword: "",
     studentApplicationsMySqlConnectionString: "",
+    studentApplicationsOrderAdminUrlTemplate: DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE,
     studentApplicationsEmailHost: DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST,
     studentApplicationsEmailPort: 993,
     studentApplicationsEmailSecure: true,
@@ -5155,6 +5157,31 @@ function getStudentApplicationsSqlQuery() {
   ).trim());
 }
 
+function normalizeStudentApplicationsOrderAdminUrlTemplate(value) {
+  const template = String(value || DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE).trim();
+  if (!template || template.length > 2048) {
+    throw new Error("Укажите корректный шаблон ссылки на заказ интернет-магазина.");
+  }
+  if (!/[{]НомерЗаказа[}]|НомерЗаказа|[{]orderNo[}]|%ORDER_ID%/u.test(template)) {
+    throw new Error("Добавьте в шаблон ссылки маркер {НомерЗаказа}.");
+  }
+  const candidate = template
+    .replaceAll("{НомерЗаказа}", "1")
+    .replaceAll("НомерЗаказа", "1")
+    .replaceAll("{orderNo}", "1")
+    .replaceAll("%ORDER_ID%", "1");
+  let url;
+  try {
+    url = new URL(candidate);
+  } catch (error) {
+    throw new Error("Укажите корректный адрес страницы заказа интернет-магазина.");
+  }
+  if (!["http:", "https:"].includes(url.protocol.toLowerCase())) {
+    throw new Error("Ссылка на заказ должна использовать протокол HTTP или HTTPS.");
+  }
+  return template;
+}
+
 function optimizeStudentApplicationsSqlQuery(value) {
   let query = String(value || "").trim();
   if (!query || !/FROM\s+wp_wc_order_product_lookup\s+AS\s+t_opl/iu.test(query)) return query;
@@ -5225,7 +5252,10 @@ function publicStudentApplicationsMySqlSettings() {
     applicationsMysqlHasPassword: Boolean(connection.pwd || connection.password),
     applicationsMysqlConfigured: Boolean(connectionString),
     applicationsMysqlManagedByEnvironment: Boolean(process.env.STUDENT_APPLICATIONS_MYSQL_CONNECTION_STRING),
-    applicationsSqlQuery: getStudentApplicationsSqlQuery()
+    applicationsSqlQuery: getStudentApplicationsSqlQuery(),
+    applicationsOrderAdminUrlTemplate: normalizeStudentApplicationsOrderAdminUrlTemplate(
+      serverSettings.studentApplicationsOrderAdminUrlTemplate
+    )
   };
 }
 
@@ -13535,7 +13565,10 @@ async function publicSystemDocumentSettings(includeAdminSettings = false) {
       serverSettings.studentApplicationsEmailPassword
         || process.env.STUDENT_APPLICATIONS_EMAIL_PASSWORD
     ),
-    documentMailboxes: publicStudentDocumentMailboxes()
+    documentMailboxes: publicStudentDocumentMailboxes(),
+    applicationsOrderAdminUrlTemplate: normalizeStudentApplicationsOrderAdminUrlTemplate(
+      serverSettings.studentApplicationsOrderAdminUrlTemplate
+    )
   };
   if (includeAdminSettings) Object.assign(
     settings,
@@ -13626,6 +13659,9 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     const applicationsSqlQuery = normalizeStudentApplicationsSqlQuery(
       body.applicationsSqlQuery || getStudentApplicationsSqlQuery()
     );
+    const applicationsOrderAdminUrlTemplate = normalizeStudentApplicationsOrderAdminUrlTemplate(
+      body.applicationsOrderAdminUrlTemplate || serverSettings.studentApplicationsOrderAdminUrlTemplate
+    );
     if (!applicationsMysqlManagedByEnvironment) {
       if (!applicationsMysqlDriver || /[;{}]/u.test(applicationsMysqlDriver)) {
         throw new Error("Укажите корректный драйвер ODBC интернет-магазина.");
@@ -13698,6 +13734,7 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       studentApplicationsEmailSmtpSecure: true,
       studentApplicationsEmailLogin: emailLogin,
       studentApplicationsSqlQuery: applicationsSqlQuery,
+      studentApplicationsOrderAdminUrlTemplate: applicationsOrderAdminUrlTemplate,
       sharedRecordLocksMySqlUseApplicationsConnection: mysqlUseApplicationsConnection
     };
     if (!applicationsMysqlManagedByEnvironment) {

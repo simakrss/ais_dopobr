@@ -5568,6 +5568,11 @@ body.long-press-dragging * {
   gap: 5px;
 }
 
+.sdo-settings-fields .admin-applications-order-url-field {
+  display: grid;
+  gap: 5px;
+}
+
 .admin-applications-sql-field textarea {
   width: 100%;
   min-width: 0;
@@ -12783,6 +12788,26 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .student-income-tab .student-form-grid label span {
   font-size: 12px;
+}
+
+.student-order-number-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.student-order-number-control .student-order-admin-button {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 6px;
+}
+
+.student-order-number-control .student-order-admin-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .student-documents-tab {

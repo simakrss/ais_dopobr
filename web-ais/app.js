@@ -7,11 +7,19 @@
     smtpHost: "smtp.timeweb.ru",
     smtpPort: 465
   });
+  const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.102",
+    version: "1.7.103",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.103",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Рядом с номером заказа в карточке слушателя добавлена кнопка перехода к заказу WooCommerce; шаблон ссылки вынесен в настройки интернет-магазина."
+      ]
+    },
     {
       version: "1.7.102",
       releasedAt: "2026-08-12",
@@ -3772,6 +3780,9 @@ MAX - https://bizvmax.ru/zifra_plus
       data.meta.applicationsMysqlManagedByEnvironment
     );
     data.meta.applicationsSqlQuery = String(data.meta.applicationsSqlQuery || "");
+    data.meta.applicationsOrderAdminUrlTemplate = String(
+      data.meta.applicationsOrderAdminUrlTemplate || DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE
+    ).trim();
     data.meta.studentApplicationProgramMappings = normalizeStudentApplicationProgramMappings(
       data.meta.studentApplicationProgramMappings
     );
@@ -12812,6 +12823,10 @@ MAX - https://bizvmax.ru/zifra_plus
       "applicationsSqlQuery",
       state.data.meta.applicationsSqlQuery || ""
     );
+    const applicationsOrderAdminUrlTemplate = getAdminSettingRenderValue(
+      "applicationsOrderAdminUrlTemplate",
+      state.data.meta.applicationsOrderAdminUrlTemplate || DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE
+    );
     const applicationsMysqlFieldsDisabled = Boolean(
       state.data.meta.applicationsMysqlManagedByEnvironment
     );
@@ -13094,6 +13109,11 @@ MAX - https://bizvmax.ru/zifra_plus
                     <input name="applicationsMysqlPassword" type="password" value="${escapeAttr(applicationsMysqlPassword)}" placeholder="${state.data.meta.applicationsMysqlHasPassword ? "Пароль сохранён на сервере" : "Введите пароль MySQL"}" autocomplete="new-password" ${applicationsMysqlFieldsDisabled ? "disabled" : ""}>
                   </label>
                 </div>
+                <label class="admin-applications-order-url-field">
+                  <span>Шаблон ссылки на заказ</span>
+                  <input name="applicationsOrderAdminUrlTemplate" type="url" value="${escapeAttr(applicationsOrderAdminUrlTemplate)}" required spellcheck="false">
+                  <small class="sdo-settings-hint">Маркер <code>{НомерЗаказа}</code> заменяется номером из карточки слушателя.</small>
+                </label>
                 <label class="admin-applications-sql-field">
                   <span>SQL-запрос получения заявок</span>
                   <textarea name="applicationsSqlQuery" rows="18" required spellcheck="false">${escapeHtml(applicationsSqlQuery)}</textarea>
@@ -18073,6 +18093,7 @@ MAX - https://bizvmax.ru/zifra_plus
       item.key === "finalGrade" ? "student-final-grade-field" : "",
       ["finalWorkTopic", "finalWorkNotes"].includes(item.key) ? "student-final-work-field" : "",
       item.key === "discountDescription" ? "discount-description-label" : "",
+      item.key === "orderNo" ? "student-order-number-field" : "",
       item.key === "educationDocumentSurname" ? "student-document-surname-field" : "",
       isIssuerField ? "student-issuer-field" : "",
       ["workPlace", "employmentCategory"].includes(item.key) ? "long-label-field" : ""
@@ -18109,6 +18130,9 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (item.key === "discountDescription") {
       return renderDiscountDescriptionField(label, value);
+    }
+    if (item.key === "orderNo") {
+      return renderStudentOrderNumberField(label, value, required);
     }
     if (item.key === "manager") {
       return `${label}<input name="${item.key}" type="text" value="${escapeAttr(value)}" readonly title="Ответственный определяется по текущей учётной записи"></label>`;
@@ -18159,6 +18183,71 @@ MAX - https://bizvmax.ru/zifra_plus
       return `${label}<select name="${item.key}" ${item.dict ? `data-settings-dictionary="${escapeAttr(item.dict)}"` : ""} ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
     return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${isCalculatedFinanceField ? 'readonly class="calculated-finance-field"' : ""}></label>`;
+  }
+
+  function getStudentOrderAdminUrlTemplate() {
+    return String(
+      state.data.meta.applicationsOrderAdminUrlTemplate
+        || DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE
+    ).trim();
+  }
+
+  function getStudentOrderAdminUrl(orderNumber) {
+    const value = String(orderNumber || "").trim();
+    if (!value) return "";
+    const encodedValue = encodeURIComponent(value);
+    const template = getStudentOrderAdminUrlTemplate();
+    const url = template
+      .replaceAll("{НомерЗаказа}", encodedValue)
+      .replaceAll("НомерЗаказа", encodedValue)
+      .replaceAll("{orderNo}", encodedValue)
+      .replaceAll("%ORDER_ID%", encodedValue);
+    return normalizeExternalUrl(url);
+  }
+
+  function getStudentOrderAdminButtonTitle(orderNumber) {
+    const value = String(orderNumber || "").trim();
+    const url = getStudentOrderAdminUrl(value);
+    return url
+      ? `Открыть заказ № ${value} в интернет-магазине\n${url}`
+      : "Укажите номер заказа";
+  }
+
+  function renderStudentOrderNumberField(label, value, required) {
+    const title = getStudentOrderAdminButtonTitle(value);
+    return `
+      ${label}
+        <div class="student-order-number-control">
+          <input name="orderNo" type="text" value="${escapeAttr(value)}" ${required} autocomplete="off">
+          <button class="icon-button student-order-admin-button" data-action="open-student-order-admin" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}" ${getStudentOrderAdminUrl(value) ? "" : "disabled"}>
+            ${renderExternalLinkIcon()}
+          </button>
+        </div>
+      </label>
+    `;
+  }
+
+  function refreshStudentOrderAdminButton(input) {
+    const button = input?.closest("label")?.querySelector("[data-action='open-student-order-admin']");
+    if (!button) return;
+    const title = getStudentOrderAdminButtonTitle(input.value);
+    button.disabled = !getStudentOrderAdminUrl(input.value);
+    button.title = title;
+    button.setAttribute("aria-label", title);
+  }
+
+  function openStudentOrderAdmin(event) {
+    event?.preventDefault();
+    const form = event?.currentTarget?.closest("form")
+      || document.querySelector("#recordForm[data-config='students']");
+    const input = form?.elements?.orderNo;
+    const url = getStudentOrderAdminUrl(input?.value || "");
+    if (!url) {
+      alert("Укажите номер заказа.");
+      input?.focus({ preventScroll: true });
+      return;
+    }
+    openExternalUrl(url);
   }
 
   function renderStudentIdentityInput(label, field, value, { maxLength, pattern = "" }) {
@@ -21684,6 +21773,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
     document.querySelector("[data-action='open-student-messenger-url']")?.addEventListener("click", openStudentMessengerUrl);
     document.querySelector("[data-action='open-student-program-promo']")?.addEventListener("click", openStudentProgramPromo);
+    document.querySelector("[data-action='open-student-order-admin']")?.addEventListener("click", openStudentOrderAdmin);
+    const studentOrderNumberInput = document.querySelector("#recordForm[data-config='students'] [name='orderNo']");
+    studentOrderNumberInput?.addEventListener("input", () => refreshStudentOrderAdminButton(studentOrderNumberInput));
     document.querySelector("[data-action='open-student-course-page']")?.addEventListener("click", openStudentCoursePage);
     document.querySelector("[data-action='open-student-grade-report']")?.addEventListener("click", openStudentGradeReport);
     document.querySelector("[data-action='open-student-activity-log']")?.addEventListener("click", openStudentActivityLog);
@@ -36232,6 +36324,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const applicationsMysqlUser = String(form.elements.applicationsMysqlUser?.value || "").trim();
     const applicationsMysqlPassword = String(form.elements.applicationsMysqlPassword?.value || "");
     const applicationsSqlQuery = String(form.elements.applicationsSqlQuery?.value || "").trim();
+    const applicationsOrderAdminUrlTemplate = String(
+      form.elements.applicationsOrderAdminUrlTemplate?.value || ""
+    ).trim();
     const mysqlUseApplicationsConnection = Boolean(
       form.elements.mysqlUseApplicationsConnection?.checked
     );
@@ -36256,6 +36351,9 @@ MAX - https://bizvmax.ru/zifra_plus
       throw new Error(`Для сбора заявок используется ящик ${DEFAULT_STUDENT_APPLICATIONS_EMAIL.login}.`);
     }
     if (!applicationsSqlQuery) throw new Error("Укажите SQL-запрос интернет-магазина.");
+    if (!applicationsOrderAdminUrlTemplate) {
+      throw new Error("Укажите шаблон ссылки на заказ интернет-магазина.");
+    }
     if (!state.data.meta.applicationsMysqlManagedByEnvironment) {
       if (!applicationsMysqlDriver) throw new Error("Укажите драйвер ODBC интернет-магазина.");
       if (!applicationsMysqlHost) throw new Error("Укажите сервер MySQL интернет-магазина.");
@@ -36305,6 +36403,7 @@ MAX - https://bizvmax.ru/zifra_plus
         applicationsMysqlUser,
         applicationsMysqlPassword,
         applicationsSqlQuery,
+        applicationsOrderAdminUrlTemplate,
         mysqlUseApplicationsConnection,
         mysqlHost,
         mysqlPort,
@@ -36371,6 +36470,9 @@ MAX - https://bizvmax.ru/zifra_plus
       payload.applicationsMysqlManagedByEnvironment
     );
     state.data.meta.applicationsSqlQuery = String(payload.applicationsSqlQuery || "");
+    state.data.meta.applicationsOrderAdminUrlTemplate = String(
+      payload.applicationsOrderAdminUrlTemplate || DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE
+    ).trim();
     if (Object.prototype.hasOwnProperty.call(payload, "mysqlUseApplicationsConnection")) {
       state.data.meta.mysqlUseApplicationsConnection = payload.mysqlUseApplicationsConnection !== false;
       state.data.meta.mysqlHost = String(payload.mysqlHost || "").trim();
