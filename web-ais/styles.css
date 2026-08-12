@@ -8830,6 +8830,12 @@ body.card-window-moving {
   color: #047857;
 }
 
+.admin-audit-change-item .admin-audit-legacy-event-note {
+  grid-column: 2 / -1;
+  color: var(--muted);
+  font-style: italic;
+}
+
 .admin-audit-pagination {
   justify-content: flex-end;
   margin-top: 9px;
@@ -9099,6 +9105,15 @@ body.card-window-moving {
   grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr);
   gap: 5px;
   align-items: start;
+}
+
+.employee-audit-expanded-change-item > div.is-legacy-event {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.employee-audit-legacy-event-note {
+  color: var(--muted);
+  font-style: italic;
 }
 
 .employee-audit-expanded-change-item span {

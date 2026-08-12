@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.135",
+    version: "1.7.136",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.136",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Исправлен журнал действий для событий: состояние и дата больше не скрываются ошибочно из-за служебного имени события.",
+        "Для старых записей событий с парой «[скрыто] → [скрыто]» журнал показывает понятное сообщение об изменении состояния."
+      ]
+    },
     {
       version: "1.7.135",
       releasedAt: "2026-08-12",
@@ -13613,6 +13621,12 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function isLegacyMaskedEventAuditChange(change = {}) {
+    return /^event_/i.test(String(change.field || ""))
+      && String(change.before || "") === "[скрыто]"
+      && String(change.after || "") === "[скрыто]";
+  }
+
   function renderAuditChanges(row) {
     const changes = Array.isArray(row.changes) ? row.changes : [];
     if (!changes.length) {
@@ -13633,9 +13647,13 @@ MAX - https://bizvmax.ru/zifra_plus
           ${changes.map((change) => `
             <div class="admin-audit-change-item">
               <strong>${escapeHtml(change.label || change.field || "Поле")}</strong>
-              <span class="is-before" title="Было">${escapeHtml(change.before || "∅")}</span>
-              <span aria-hidden="true">→</span>
-              <span class="is-after" title="Стало">${escapeHtml(change.after || "∅")}</span>
+              ${isLegacyMaskedEventAuditChange(change) ? `
+                <span class="admin-audit-legacy-event-note">Состояние события изменено; значения старой записи недоступны.</span>
+              ` : `
+                <span class="is-before" title="Было">${escapeHtml(change.before || "∅")}</span>
+                <span aria-hidden="true">→</span>
+                <span class="is-after" title="Стало">${escapeHtml(change.after || "∅")}</span>
+              `}
             </div>
           `).join("")}
         </div>
@@ -13663,10 +13681,14 @@ MAX - https://bizvmax.ru/zifra_plus
         ${changes.map((change) => `
           <div class="employee-audit-expanded-change-item">
             <strong>${escapeHtml(change.label || change.field || "Поле")}</strong>
-            <div>
-              <span class="is-before"><small>Было</small>${escapeHtml(change.before || "∅")}</span>
-              <span class="employee-audit-expanded-arrow" aria-hidden="true">→</span>
-              <span class="is-after"><small>Стало</small>${escapeHtml(change.after || "∅")}</span>
+            <div class="${isLegacyMaskedEventAuditChange(change) ? "is-legacy-event" : ""}">
+              ${isLegacyMaskedEventAuditChange(change) ? `
+                <span class="employee-audit-legacy-event-note">Состояние события изменено; значения старой записи недоступны.</span>
+              ` : `
+                <span class="is-before"><small>Было</small>${escapeHtml(change.before || "∅")}</span>
+                <span class="employee-audit-expanded-arrow" aria-hidden="true">→</span>
+                <span class="is-after"><small>Стало</small>${escapeHtml(change.after || "∅")}</span>
+              `}
             </div>
           </div>
         `).join("")}
@@ -33964,7 +33986,7 @@ MAX - https://bizvmax.ru/zifra_plus
           record[`event_${key}_date`] = date;
           record[`event_${key}_label`] = label;
           changes.push({
-            field: `event_${key}_state`,
+            field: "cardEventState",
             label,
             before: source[`event_${key}_date`] || source[`event_${key}_state`] || "",
             after: date || "Отмечено"
@@ -34156,7 +34178,7 @@ MAX - https://bizvmax.ru/zifra_plus
           entityLabel: record.name,
           changes: [
             { field: "login", label: "Логин СДО", before: source.login || "", after: record.login },
-            { field: "event_portalCredentialsSent_date", label: "Дата отправки доступа", before: source.event_portalCredentialsSent_date || "", after: date }
+            { field: "cardEventDate", label: "Дата отправки доступа", before: source.event_portalCredentialsSent_date || "", after: date }
           ]
         });
         result.success += 1;
@@ -40015,7 +40037,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const changes = [];
       if (previous.stateValue !== next.stateValue || previous.dateValue !== next.dateValue) {
         changes.push({
-          field: `event_${eventKey}`,
+          field: "cardEventState",
           label: `Событие: ${next.label || previous.label}`,
           before: previous.value,
           after: next.value
@@ -40023,7 +40045,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       if (previous.label !== next.label) {
         changes.push({
-          field: `event_${eventKey}_label`,
+          field: "cardEventLabel",
           label: `Название события: ${previous.label}`,
           before: previous.label,
           after: next.label
