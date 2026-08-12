@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.101",
+    version: "1.7.102",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.102",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Списки программ во всех формах и реестр программ по умолчанию сортируются по полному наименованию."
+      ]
+    },
     {
       version: "1.7.101",
       releasedAt: "2026-08-12",
@@ -2612,6 +2619,7 @@ MAX - https://bizvmax.ru/zifra_plus
       subtitle: "Лист Excel: Реестр программ",
       collection: "programs",
       accent: "green",
+      defaultSort: { key: "name", dir: "asc" },
       fields: [
         field("name", "Наименование программы", "text", true),
         field("shortName", "Краткое название"),
@@ -4287,6 +4295,25 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function normalizeProgramName(value) {
     return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function compareProgramNames(left, right) {
+    return String(left || "").localeCompare(String(right || ""), "ru", {
+      numeric: true,
+      sensitivity: "base"
+    });
+  }
+
+  function sortProgramNames(values) {
+    return unique((Array.isArray(values) ? values : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean))
+      .sort(compareProgramNames);
+  }
+
+  function sortProgramRows(programs) {
+    return [...(Array.isArray(programs) ? programs : [])]
+      .sort((left, right) => compareProgramNames(left?.name, right?.name));
   }
 
   function normalizeStudyForm(value) {
@@ -7712,13 +7739,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentListProgramFilterOptions() {
-    return unique([
+    return sortProgramNames([
       ...(state.data.collections.students || []).map((record) => String(record?.program || "").trim()),
       ...(state.data.collections.programs || []).map((record) => String(record?.name || "").trim())
-    ].filter(Boolean)).sort((left, right) => left.localeCompare(right, "ru", {
-      numeric: true,
-      sensitivity: "base"
-    }));
+    ]);
   }
 
   function getStudentListSelectedPrograms(filters = state.studentListFilters || {}) {
@@ -8376,9 +8400,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const financialTerms = getStudentApplicationFinancialTerms(row, mappedProgram);
     const inferredProgramType = getStudentApplicationInferredProgramType(row) || mappedProgram?.type;
     const programFilterOverridesMapping = Boolean(state.studentApplicationsImport.filters.programId);
-    const programs = (state.data.collections.programs || [])
-      .slice()
-      .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "ru"));
+    const programs = getProgramRows();
     const { paymentAmount, contractAmount } = financialTerms;
     const hasPayment = paymentAmount > 0 || Boolean(row.paid);
     const repeatComment = getStudentApplicationRepeatComment(row, importedLookup);
@@ -8456,9 +8478,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const activeRow = (importState.rows || []).find((row) => String(row.id) === String(importState.activeId))
       || visibleRows[0]
       || null;
-    const programs = (state.data.collections.programs || [])
-      .slice()
-      .sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "ru"));
+    const programs = getProgramRows();
     const statuses = unique([
       ...(state.data.dictionaries.statuses || []),
       filters.status || "На зачисление"
@@ -9858,7 +9878,10 @@ MAX - https://bizvmax.ru/zifra_plus
             return (leftDate - rightDate) * dir;
           }
         }
-        return String(left || "").localeCompare(String(right || ""), "ru") * dir;
+        const textComparison = config.collection === "programs" && state.sort.key === "name"
+          ? compareProgramNames(left, right)
+          : String(left || "").localeCompare(String(right || ""), "ru");
+        return textComparison * dir;
       });
     }
     return filtered;
@@ -18336,10 +18359,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderStudentProgramField(label, value, required) {
-    const programNames = unique([
+    const programNames = sortProgramNames([
       ...getProgramRows().map((program) => program.name).filter(Boolean),
       value
-    ].filter(Boolean));
+    ]);
     return `
       ${label}
         ${renderComboField({
@@ -18480,7 +18503,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getProgramRows() {
-    return state.data.collections.programs || [];
+    return sortProgramRows(state.data.collections.programs || []);
   }
 
   function findProgramByName(name) {
@@ -23202,7 +23225,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getProgramNavigationRows() {
     const visibleRows = getVisibleRows(configs.programs);
-    return visibleRows.length ? visibleRows : (state.data.collections.programs || []);
+    return visibleRows.length ? visibleRows : getProgramRows();
   }
 
   function getProgramCardNavigation(record = {}) {
