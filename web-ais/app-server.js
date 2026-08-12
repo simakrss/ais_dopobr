@@ -11112,9 +11112,11 @@ function parseInSalesOrderEmail(rawMessage) {
       organization: "",
       position: "",
       source: "Электронная почта / InSales",
+      coupon,
       note: [paymentMethod, paymentStatus, coupon].filter(Boolean).join("\n"),
       paid,
-      paymentAmount
+      orderAmount: paymentAmount,
+      paymentAmount: paid ? paymentAmount : 0
     };
   });
 }

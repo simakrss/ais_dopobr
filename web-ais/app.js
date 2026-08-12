@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.99",
+    version: "1.7.100",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.100",
+      releasedAt: "2026-08-12",
+      changes: [
+        "При импорте заявок источник финансирования устанавливается в «Собственные средства», а сумма договора и скидка рассчитываются по стоимости программы, оплате и купону; купоны rass учитываются как рассрочка, sale/next — как периодическая акция."
+      ]
+    },
     {
       version: "1.7.99",
       releasedAt: "2026-08-12",
@@ -8149,39 +8156,96 @@ MAX - https://bizvmax.ru/zifra_plus
       .map((value) => String(value || "").trim())
       .filter(Boolean)
       .join(" ");
-    const installmentMatch = /(?:^|[^a-z0-9])RASS(25|50)(?:$|[^a-z0-9])/i.exec(couponText);
+    const detectedCoupon = explicitCoupon || (
+      /(?:^|[^a-z0-9])((?:RASS|SALE|NEXT)[a-z0-9_-]*)(?:$|[^a-z0-9_-])/i.exec(couponText)?.[1]
+      || ""
+    );
+    const normalizedCoupon = String(detectedCoupon || "").trim();
+    const installmentMatch = /^RASS(?:[-_]?([0-9]+(?:[.,][0-9]+)?))?/i.exec(normalizedCoupon);
     if (installmentMatch) {
-      const installmentPercent = Number(installmentMatch[1]);
-      const coupon = `RASS${installmentPercent}`;
+      const installmentPercent = Number(String(installmentMatch[1] || "").replace(",", ".")) || 0;
       return {
-        coupon,
+        coupon: normalizedCoupon,
         percent: 0,
         installmentPercent,
-        description: `Платёж по рассрочке — ${installmentPercent}% от суммы договора (купон ${coupon})`
+        installment: true,
+        description: installmentPercent
+          ? `Рассрочка — платёж ${installmentPercent}% от суммы договора`
+          : "Рассрочка"
       };
     }
-    if (/(?:^|[^a-z0-9])SALE10(?:$|[^a-z0-9])/i.test(couponText)) {
-      return {
-        coupon: "SALE10",
-        percent: 10,
-        installmentPercent: 0,
-        description: "Периодическая акция"
-      };
-    }
-    return { coupon: explicitCoupon, percent: 0, installmentPercent: 0, description: "" };
+    const periodicPromotion = /^(?:SALE|NEXT)/i.test(normalizedCoupon);
+    return {
+      coupon: normalizedCoupon,
+      percent: 0,
+      installmentPercent: 0,
+      installment: false,
+      periodicPromotion,
+      description: normalizedCoupon
+        ? (periodicPromotion
+          ? "Периодическая акция"
+          : "По решению директора учебного центра")
+        : ""
+    };
   }
 
-  function getStudentApplicationFinancialTerms(row = {}) {
+  function getStudentApplicationCouponPercentHint(coupon) {
+    const value = String(coupon || "").trim();
+    if (!value) return 0;
+    if (/free/iu.test(value)) return 100;
+    const promotionMatch = /^(?:SALE|NEXT)[-_]?([0-9]+(?:[.,][0-9]+)?)/i.exec(value);
+    const percent = Number(String(promotionMatch?.[1] || "").replace(",", "."));
+    return Number.isFinite(percent) && percent >= 0 && percent <= 100 ? percent : 0;
+  }
+
+  function parseStudentApplicationMoney(value) {
+    const normalized = String(value ?? "")
+      .replace(/[\s\u00a0]+/g, "")
+      .replace(",", ".");
+    const amount = Number(normalized);
+    return Number.isFinite(amount) ? amount : 0;
+  }
+
+  function getStudentApplicationFinancialTerms(row = {}, programOverride = null) {
+    const program = programOverride || getStudentApplicationProgram(row);
     const couponTerms = getStudentApplicationCouponTerms(row);
-    const rawPaymentAmount = Number(row.paymentAmount || 0);
+    const rawPaymentAmount = parseStudentApplicationMoney(row.paymentAmount);
     const paymentAmount = Number.isFinite(rawPaymentAmount) && rawPaymentAmount > 0
       ? Math.round(rawPaymentAmount * 100) / 100
       : 0;
+    const rawRegistryPrice = parseStudentApplicationMoney(program?.price);
+    const registryPrice = Number.isFinite(rawRegistryPrice) && rawRegistryPrice > 0
+      ? Math.round(rawRegistryPrice * 100) / 100
+      : 0;
     const installmentPercent = Number(couponTerms.installmentPercent || 0);
-    const contractAmount = paymentAmount > 0 && installmentPercent > 0
-      ? Math.round((paymentAmount * 100 / installmentPercent) * 100) / 100
-      : paymentAmount;
-    return { ...couponTerms, paymentAmount, contractAmount };
+    let contractAmount = registryPrice || paymentAmount;
+    let discountAmount = 0;
+    let discountPercent = 0;
+    if (couponTerms.installment) {
+      if (!registryPrice && paymentAmount > 0 && installmentPercent > 0) {
+        contractAmount = Math.round((paymentAmount * 100 / installmentPercent) * 100) / 100;
+      }
+    } else if (couponTerms.coupon && registryPrice > 0) {
+      const percentHint = paymentAmount > 0
+        ? 0
+        : getStudentApplicationCouponPercentHint(couponTerms.coupon);
+      const discountedAmount = paymentAmount > 0
+        ? paymentAmount
+        : (percentHint > 0 ? registryPrice * (1 - percentHint / 100) : registryPrice);
+      contractAmount = Math.round(Math.max(0, Math.min(registryPrice, discountedAmount)) * 100) / 100;
+      discountAmount = Math.round(Math.max(0, registryPrice - contractAmount) * 100) / 100;
+      discountPercent = registryPrice > 0
+        ? Math.round((discountAmount * 100 / registryPrice) * 100) / 100
+        : 0;
+    }
+    return {
+      ...couponTerms,
+      percent: discountPercent,
+      paymentAmount,
+      registryPrice,
+      discountAmount,
+      contractAmount
+    };
   }
 
   function renderStudentApplicationDetail(row, importedLookup = buildStudentApplicationsImportLookup()) {
@@ -8190,7 +8254,7 @@ MAX - https://bizvmax.ru/zifra_plus
       row,
       state.studentApplicationsImport.filters.programId
     );
-    const financialTerms = getStudentApplicationFinancialTerms(row);
+    const financialTerms = getStudentApplicationFinancialTerms(row, mappedProgram);
     const { paymentAmount, contractAmount } = financialTerms;
     const hasPayment = paymentAmount > 0 || Boolean(row.paid);
     const repeatComment = getStudentApplicationRepeatComment(row, importedLookup);
@@ -8204,7 +8268,8 @@ MAX - https://bizvmax.ru/zifra_plus
       ["ФИО", row.name],
       ["Заказ", row.order],
       ["Оплата", hasPayment ? money(paymentAmount) : "—"],
-      ["Сумма договора", hasPayment ? money(contractAmount) : "—"],
+      ["Стоимость по реестру", financialTerms.registryPrice ? money(financialTerms.registryPrice) : "—"],
+      ["Сумма договора", contractAmount || financialTerms.coupon ? money(contractAmount) : "—"],
       ["Купон", financialTerms.coupon || "—"],
       ["Скидка / рассрочка", benefitDescription],
       ["Программа", row.program],
@@ -8231,8 +8296,8 @@ MAX - https://bizvmax.ru/zifra_plus
         <small>${hasPayment
           ? (financialTerms.installmentPercent
             ? `Платёж ${financialTerms.installmentPercent}%: ${escapeHtml(money(paymentAmount))}; сумма договора: ${escapeHtml(money(contractAmount))}`
-            : `Оплата: ${escapeHtml(money(paymentAmount))}`)
-          : "Без оплаты"}</small>
+            : `Оплата: ${escapeHtml(money(paymentAmount))}; сумма договора: ${escapeHtml(money(contractAmount))}`)
+          : `Без оплаты; сумма договора: ${escapeHtml(money(contractAmount))}`}</small>
         ${repeatComment ? `<small class="student-application-repeat-comment">${escapeHtml(repeatComment)}</small>` : ""}
       </div>
     `;
@@ -8892,7 +8957,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function createStudentFromApplication(row, uid, status, selectedProgramId) {
     const program = getStudentApplicationProgram(row, selectedProgramId);
-    const financialTerms = getStudentApplicationFinancialTerms(row);
+    const financialTerms = getStudentApplicationFinancialTerms(row, program);
     const { paymentAmount, contractAmount } = financialTerms;
     const applicationDate = String(row.dateCreated || "").slice(0, 10);
     const paymentDate = paymentAmount ? (applicationDate || todayIso()) : "";
@@ -8918,6 +8983,7 @@ MAX - https://bizvmax.ru/zifra_plus
       source: String(row.source || "Сайт").trim(),
       agent: getApplicationSourceAgent(row.source || "Сайт"),
       manager: getCurrentUserLogin() || String(program?.manager || ""),
+      fundingSource: "Собственные средства",
       discount: financialTerms.percent,
       discountUnit: "percent",
       discountDescription: financialTerms.description,
