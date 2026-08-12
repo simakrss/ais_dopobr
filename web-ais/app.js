@@ -13908,17 +13908,20 @@ MAX - https://bizvmax.ru/zifra_plus
     const source = Array.isArray(draft) ? draft : state.data.meta.documentMailboxes;
     return (Array.isArray(source) ? source : [])
       .filter((mailbox) => String(mailbox?.id || "") !== "applications")
-      .map((mailbox, index) => ({
-        id: String(mailbox?.id || `mailbox-${index + 1}`).trim(),
-        label: String(mailbox?.label || mailbox?.login || "Почтовый ящик").trim(),
-        host: String(mailbox?.host || "").trim(),
-        port: Number(mailbox?.port || 993),
-        smtpHost: String(mailbox?.smtpHost || "").trim(),
-        smtpPort: Number(mailbox?.smtpPort || 465),
-        login: String(mailbox?.login || "").trim(),
-        hasPassword: Boolean(mailbox?.hasPassword),
-        password: String(mailbox?.password || "")
-      }));
+      .map((mailbox, index) => {
+        const login = String(mailbox?.login || "").trim();
+        return {
+          id: String(mailbox?.id || `mailbox-${index + 1}`).trim(),
+          label: getStudentMailboxRole({ login, label: mailbox?.label }).title,
+          host: String(mailbox?.host || "").trim(),
+          port: Number(mailbox?.port || 993),
+          smtpHost: String(mailbox?.smtpHost || "").trim(),
+          smtpPort: Number(mailbox?.smtpPort || 465),
+          login,
+          hasPassword: Boolean(mailbox?.hasPassword),
+          password: String(mailbox?.password || "")
+        };
+      });
   }
 
   function getStudentMailboxRole(mailbox = {}) {
