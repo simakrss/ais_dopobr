@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.98",
+    version: "1.7.99",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.99",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Импорт заявок надёжнее определяет ранее поданную заявку на ту же программу: учитываются служебные названия интернет-магазина, кавычки, код товара и продолжительность обучения, а также точный идентификатор исходной заявки."
+      ]
+    },
     {
       version: "1.7.98",
       releasedAt: "2026-08-12",
@@ -7968,8 +7975,30 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function normalizeStudentApplicationProgramName(value) {
     return normalizeProgramName(value)
+      .replace(/\s*\[\s*\d+\s*\]\s*$/u, "")
+      .replace(
+        /^(?:(?:онлайн[- ]?)?курс|программа)\s+(?:(?:профессиональной\s+)?переподготовки|повышения\s+квалификации|дополнительного\s+профессионального\s+образования)\s*[:\-–—]?\s*/iu,
+        ""
+      )
+      .replace(/^(?:(?:онлайн[- ]?)?курс|программа)\s*[:\-–—]\s*/iu, "")
+      .replace(/^[\s"'«»]+|[\s"'«»]+$/gu, "")
       .replace(/\s*\(\s*\d+(?:[.,]\d+)?\s*(?:ч|час|часа|часов)(?:\s*\/[^)]*)?\)\s*$/iu, "")
       .trim();
+  }
+
+  function getStudentApplicationProgramHours(value, fallback = "") {
+    const match = String(value || "").match(
+      /(?:^|[\s(])([0-9]+(?:[.,][0-9]+)?)\s*(?:ч|час|часа|часов)(?=$|[\s)/"'«»])/iu
+    );
+    const parsed = Number(String(match?.[1] || fallback || "").replace(",", "."));
+    return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : "";
+  }
+
+  function getStudentApplicationProgramIdentity(value, fallbackHours = "") {
+    const name = normalizeStudentApplicationProgramName(value);
+    if (!name) return "";
+    const hours = getStudentApplicationProgramHours(value, fallbackHours);
+    return hours ? `${name}\u0001hours:${hours}` : name;
   }
 
   function normalizeStudentApplicationPersonName(value) {
@@ -7982,8 +8011,8 @@ MAX - https://bizvmax.ru/zifra_plus
       .replace(/ё/g, "е");
   }
 
-  function getStudentApplicationIdentityKeys(person, programName) {
-    const program = normalizeStudentApplicationProgramName(programName);
+  function getStudentApplicationIdentityKeys(person, programName, programHours = "") {
+    const program = getStudentApplicationProgramIdentity(programName, programHours);
     if (!program) return [];
     const name = normalizeStudentApplicationPersonName(person?.name);
     const email = String(person?.email || "").trim().toLocaleLowerCase("ru-RU");
@@ -8009,29 +8038,46 @@ MAX - https://bizvmax.ru/zifra_plus
     const byName = findProgramByName(title);
     if (byProductId || byName) return byProductId || byName;
     const comparableTitle = normalizeStudentApplicationProgramName(title);
-    return (state.data.collections.programs || []).find((program) => (
+    const titleHours = getStudentApplicationProgramHours(title);
+    const comparablePrograms = (state.data.collections.programs || []).filter((program) => (
       [program.name, program.shortName].some((name) => (
         normalizeStudentApplicationProgramName(name) === comparableTitle
       ))
-    )) || null;
+    ));
+    if (!comparablePrograms.length) return null;
+    if (titleHours) {
+      const matchingHours = comparablePrograms.find((program) => (
+        getStudentApplicationProgramHours(program.name, program.hours) === titleHours
+      ));
+      if (matchingHours) return matchingHours;
+    }
+    return comparablePrograms.length === 1 ? comparablePrograms[0] : null;
   }
 
   function buildStudentApplicationsImportLookup() {
     const historyByIdentity = new Map();
+    const historyBySourceKey = new Map();
     (state.data.collections.students || []).forEach((student) => {
+      const mappedProgram = findProgramByName(student.program);
       const entry = {
         id: String(student.id || ""),
         name: String(student.name || ""),
         program: String(student.program || ""),
         applicationDate: String(student.applicationDate || "")
       };
-      getStudentApplicationIdentityKeys(student, student.program).forEach((key) => {
+      const sourceKey = String(student.sourceApplicationKey || "").trim();
+      if (sourceKey) historyBySourceKey.set(sourceKey, entry);
+      getStudentApplicationIdentityKeys(
+        student,
+        mappedProgram?.name || student.program,
+        mappedProgram?.hours || student.hours
+      ).forEach((key) => {
         const history = historyByIdentity.get(key) || [];
         history.push(entry);
         historyByIdentity.set(key, history);
       });
     });
-    return { historyByIdentity };
+    return { historyByIdentity, historyBySourceKey };
   }
 
   function getStudentApplicationPreviousMatches(
@@ -8043,7 +8089,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const mappedProgram = getStudentApplicationProgram(row, selectedProgramId);
     const programName = mappedProgram?.name || getStudentApplicationProgramTitle(row);
     const matchesById = new Map();
-    getStudentApplicationIdentityKeys(row, programName).forEach((key) => {
+    const sourceMatch = lookup.historyBySourceKey?.get(getStudentApplicationSourceKey(row));
+    if (sourceMatch) {
+      matchesById.set(sourceMatch.id || `${sourceMatch.name}\u0000${sourceMatch.applicationDate}`, sourceMatch);
+    }
+    getStudentApplicationIdentityKeys(row, programName, mappedProgram?.hours).forEach((key) => {
       (lookup.historyByIdentity.get(key) || []).forEach((entry) => {
         matchesById.set(entry.id || `${entry.name}\u0000${entry.applicationDate}`, entry);
       });
