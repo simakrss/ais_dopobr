@@ -44,6 +44,7 @@ const AUDIT_MAX_ROWS = 100000;
 const AUDIT_MAX_CHANGES = 100;
 const STUDENT_DATABASE_SYNC_SCRIPT = path.join(ROOT, "scripts", "sync-student-database.ps1");
 const STUDENT_APPLICATIONS_QUERY_SCRIPT = path.join(ROOT, "scripts", "query-student-applications.ps1");
+let defaultStudentApplicationsSqlQuery = "";
 const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH = "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
 const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
 const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
@@ -685,6 +686,14 @@ async function ensureStorage() {
   } catch (error) {
     if (error.code !== "ENOENT") console.warn(`Не удалось прочитать настройки сервера: ${error.message}`);
     serverSettings = {};
+  }
+  try {
+    const queryScript = await fs.readFile(STUDENT_APPLICATIONS_QUERY_SCRIPT, "utf8");
+    defaultStudentApplicationsSqlQuery = String(
+      /\$query\s*=\s*@'\r?\n([\s\S]*?)\r?\n'@/u.exec(queryScript)?.[1] || ""
+    ).trim();
+  } catch (error) {
+    console.warn(`Не удалось прочитать стандартный SQL-запрос интернет-магазина: ${error.message}`);
   }
   serverSettings = {
     studentDatabaseWebDavPath: DEFAULT_STUDENT_DATABASE_WEBDAV_PATH,
@@ -5112,6 +5121,77 @@ function parseSharedRecordLocksMySqlConnectionString(value) {
     result[key] = item;
   }
   return result;
+}
+
+function getStudentApplicationsMySqlConnectionString() {
+  return String(
+    serverSettings.studentApplicationsMySqlConnectionString
+      || process.env.STUDENT_APPLICATIONS_MYSQL_CONNECTION_STRING
+      || ""
+  ).trim();
+}
+
+function getStudentApplicationsSqlQuery() {
+  return String(
+    serverSettings.studentApplicationsSqlQuery || defaultStudentApplicationsSqlQuery || ""
+  ).trim();
+}
+
+function normalizeStudentApplicationsSqlQuery(value) {
+  const query = String(value || "").trim();
+  if (!query) throw new Error("Укажите SQL-запрос получения заявок интернет-магазина.");
+  if (query.length > 100000) throw new Error("SQL-запрос интернет-магазина слишком большой.");
+  if (!/^SELECT\b/iu.test(query)) {
+    throw new Error("SQL-запрос интернет-магазина должен начинаться с SELECT.");
+  }
+  if (/;|--|\/\*|\*\/|(?:^|\s)#/u.test(query)) {
+    throw new Error("В SQL-запросе интернет-магазина нельзя использовать несколько команд или комментарии.");
+  }
+  if (/\b(?:INSERT|UPDATE|DELETE|REPLACE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|CALL|LOAD|OUTFILE|DUMPFILE|LOCK|UNLOCK)\b/iu.test(query)) {
+    throw new Error("SQL-запрос интернет-магазина может только читать данные.");
+  }
+  if ((query.match(/\?/g) || []).length !== 2) {
+    throw new Error("SQL-запрос должен содержать два параметра ?: начало периода и конец периода.");
+  }
+  const requiredColumns = [
+    "date_created", "source_order_id", "source_line_item_id", "source_product_id",
+    "source_is_paid", "source_payment_amount", "`Дата`", "`ФИО`",
+    "`Заказ (оплата)`", "`Программа`", "`Телефон`", "`Email`", "`Город`",
+    "`Организация`", "`Должность`", "`Источник`", "`Примечание`"
+  ];
+  const missing = requiredColumns.filter((column) => !query.includes(column));
+  if (missing.length) {
+    throw new Error(`SQL-запрос не возвращает обязательные поля: ${missing.join(", ")}.`);
+  }
+  return query;
+}
+
+function buildStudentApplicationsMySqlConnectionString(values = {}) {
+  const encode = (value) => `{${String(value || "")}}`;
+  return [
+    ["Driver", values.driver],
+    ["Server", values.host],
+    ["Port", values.port],
+    ["Database", values.database],
+    ["Uid", values.user],
+    ["Pwd", values.password]
+  ].map(([key, value]) => `${key}=${encode(value)}`).join(";");
+}
+
+function publicStudentApplicationsMySqlSettings() {
+  const connectionString = getStudentApplicationsMySqlConnectionString();
+  const connection = parseSharedRecordLocksMySqlConnectionString(connectionString);
+  return {
+    applicationsMysqlDriver: String(connection.driver || "MySQL ODBC 9.4 Unicode Driver").trim(),
+    applicationsMysqlHost: String(connection.server || connection.host || "").trim(),
+    applicationsMysqlPort: Math.max(1, Number(connection.port) || 3306),
+    applicationsMysqlDatabase: String(connection.database || connection.initialcatalog || "").trim(),
+    applicationsMysqlUser: String(connection.uid || connection.user || connection.userid || "").trim(),
+    applicationsMysqlHasPassword: Boolean(connection.pwd || connection.password),
+    applicationsMysqlConfigured: Boolean(connectionString),
+    applicationsMysqlManagedByEnvironment: Boolean(process.env.STUDENT_APPLICATIONS_MYSQL_CONNECTION_STRING),
+    applicationsSqlQuery: getStudentApplicationsSqlQuery()
+  };
 }
 
 function getSharedRecordLocksMySqlConnectionString() {
@@ -9799,11 +9879,7 @@ function runStudentApplicationsQuery(filters) {
   if (process.platform !== "win32") {
     return Promise.reject(new Error("Импорт заявок через ODBC доступен только на сервере Windows."));
   }
-  const connectionString = String(
-    serverSettings.studentApplicationsMySqlConnectionString
-      || process.env.STUDENT_APPLICATIONS_MYSQL_CONNECTION_STRING
-      || ""
-  ).trim();
+  const connectionString = getStudentApplicationsMySqlConnectionString();
   if (!connectionString) {
     return Promise.reject(new Error("Не настроено подключение к базе заявок."));
   }
@@ -9831,6 +9907,7 @@ function runStudentApplicationsQuery(filters) {
         ...process.env,
         AIS_APPLICATIONS_SCRIPT: STUDENT_APPLICATIONS_QUERY_SCRIPT,
         AIS_APPLICATIONS_DB: connectionString,
+        AIS_APPLICATIONS_SQL_QUERY: getStudentApplicationsSqlQuery(),
         AIS_APPLICATIONS_DATE_FROM: filters.dateFrom,
         AIS_APPLICATIONS_DATE_TO: filters.dateTo,
         AIS_APPLICATIONS_PROGRAM_NAME: filters.programName,
@@ -13391,7 +13468,11 @@ async function publicSystemDocumentSettings(includeAdminSettings = false) {
     ),
     documentMailboxes: publicStudentDocumentMailboxes()
   };
-  if (includeAdminSettings) Object.assign(settings, publicSharedRecordLocksMySqlSettings());
+  if (includeAdminSettings) Object.assign(
+    settings,
+    publicStudentApplicationsMySqlSettings(),
+    publicSharedRecordLocksMySqlSettings()
+  );
   return settings;
 }
 
@@ -13454,6 +13535,48 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       if (documentMailboxIds.has(mailbox.id)) throw new Error("Идентификаторы почтовых ящиков не должны повторяться.");
       documentMailboxIds.add(mailbox.id);
     });
+    const applicationsMysqlManagedByEnvironment = Boolean(
+      process.env.STUDENT_APPLICATIONS_MYSQL_CONNECTION_STRING
+    );
+    const currentApplicationsConnection = parseSharedRecordLocksMySqlConnectionString(
+      getStudentApplicationsMySqlConnectionString()
+    );
+    const applicationsMysqlDriver = String(
+      body.applicationsMysqlDriver || currentApplicationsConnection.driver || "MySQL ODBC 9.4 Unicode Driver"
+    ).trim();
+    const applicationsMysqlHost = String(body.applicationsMysqlHost || "").trim();
+    const applicationsMysqlPort = Number(body.applicationsMysqlPort || 3306);
+    const applicationsMysqlDatabase = String(body.applicationsMysqlDatabase || "").trim();
+    const applicationsMysqlUser = String(body.applicationsMysqlUser || "").trim();
+    const applicationsMysqlPassword = String(
+      body.applicationsMysqlPassword
+        || currentApplicationsConnection.pwd
+        || currentApplicationsConnection.password
+        || ""
+    );
+    const applicationsSqlQuery = normalizeStudentApplicationsSqlQuery(
+      body.applicationsSqlQuery || getStudentApplicationsSqlQuery()
+    );
+    if (!applicationsMysqlManagedByEnvironment) {
+      if (!applicationsMysqlDriver || /[;{}]/u.test(applicationsMysqlDriver)) {
+        throw new Error("Укажите корректный драйвер ODBC интернет-магазина.");
+      }
+      if (!applicationsMysqlHost || applicationsMysqlHost.length > 255 || !/^[A-Za-z0-9.-]+$/u.test(applicationsMysqlHost)) {
+        throw new Error("Укажите корректный сервер MySQL интернет-магазина.");
+      }
+      if (!Number.isInteger(applicationsMysqlPort) || applicationsMysqlPort < 1 || applicationsMysqlPort > 65535) {
+        throw new Error("Укажите корректный порт MySQL интернет-магазина.");
+      }
+      if (!applicationsMysqlDatabase || applicationsMysqlDatabase.length > 128 || /[;{}]/u.test(applicationsMysqlDatabase)) {
+        throw new Error("Укажите корректное имя базы интернет-магазина.");
+      }
+      if (!applicationsMysqlUser || applicationsMysqlUser.length > 128 || /[;{}]/u.test(applicationsMysqlUser)) {
+        throw new Error("Укажите корректного пользователя базы интернет-магазина.");
+      }
+      if (!applicationsMysqlPassword || /[{}]/u.test(applicationsMysqlPassword)) {
+        throw new Error("Введите пароль базы интернет-магазина без фигурных скобок.");
+      }
+    }
     const mysqlUseApplicationsConnection = body.mysqlUseApplicationsConnection !== false;
     const mysqlHost = String(body.mysqlHost || "").trim();
     const mysqlPort = Number(body.mysqlPort || 3306);
@@ -13505,8 +13628,19 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       studentApplicationsEmailSmtpPort: emailSmtpPort,
       studentApplicationsEmailSmtpSecure: true,
       studentApplicationsEmailLogin: emailLogin,
+      studentApplicationsSqlQuery: applicationsSqlQuery,
       sharedRecordLocksMySqlUseApplicationsConnection: mysqlUseApplicationsConnection
     };
+    if (!applicationsMysqlManagedByEnvironment) {
+      patch.studentApplicationsMySqlConnectionString = buildStudentApplicationsMySqlConnectionString({
+        driver: applicationsMysqlDriver,
+        host: applicationsMysqlHost,
+        port: applicationsMysqlPort,
+        database: applicationsMysqlDatabase,
+        user: applicationsMysqlUser,
+        password: applicationsMysqlPassword
+      });
+    }
     if (documentMailboxesProvided) patch.studentDocumentMailboxes = documentMailboxes;
     if (!mysqlUseApplicationsConnection) {
       Object.assign(patch, {
@@ -13600,6 +13734,28 @@ async function handleStudentApplicationsEmailConnectionTest(req, res) {
       host: settings.host,
       smtpHost: settings.smtpHost,
       message: "Подключение к почтовому ящику по IMAP и SMTP работает."
+    });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleStudentApplicationsMySqlConnectionTest(req, res) {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const result = await runStudentApplicationsQuery({
+      dateFrom: today,
+      dateTo: today,
+      programName: "",
+      productId: "",
+      onlyPaid: false
+    });
+    const settings = publicStudentApplicationsMySqlSettings();
+    sendJson(res, 200, {
+      ok: true,
+      database: settings.applicationsMysqlDatabase,
+      rows: Number(result?.total || 0),
+      message: "Подключение к базе интернет-магазина и SQL-запрос работают."
     });
   } catch (error) {
     sendError(res, 400, error.message);
@@ -13898,6 +14054,7 @@ async function route(req, res) {
     || [
       "/api/yandex-disk/test",
       "/api/student-applications-email/test",
+      "/api/student-applications-mysql/test",
       "/api/student-document-mailboxes/test",
       "/api/mysql-locks/test"
     ].includes(requestUrl.pathname)
@@ -13957,6 +14114,10 @@ async function route(req, res) {
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/student-applications-email/test") {
     await handleStudentApplicationsEmailConnectionTest(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/student-applications-mysql/test") {
+    await handleStudentApplicationsMySqlConnectionTest(req, res);
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/student-document-mailboxes/test") {

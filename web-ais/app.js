@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.81",
+    version: "1.7.82",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.82",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В админку добавлен отдельный блок подключения к интернет-магазину: драйвер ODBC, сервер и порт MySQL, имя базы, пользователь, серверный пароль и редактируемый SQL-запрос заявок WooCommerce. Запрос ограничен чтением SELECT, проверяется перед сохранением и выполняется кнопкой «Проверить магазин»."
+      ]
+    },
     {
       version: "1.7.81",
       releasedAt: "2026-08-12",
@@ -3592,6 +3599,19 @@ MAX - https://bizvmax.ru/zifra_plus
     data.meta.studentApplicationsEmailHasPassword = Boolean(
       data.meta.studentApplicationsEmailHasPassword
     );
+    data.meta.applicationsMysqlDriver = String(
+      data.meta.applicationsMysqlDriver || "MySQL ODBC 9.4 Unicode Driver"
+    ).trim();
+    data.meta.applicationsMysqlHost = String(data.meta.applicationsMysqlHost || "").trim();
+    data.meta.applicationsMysqlPort = Number(data.meta.applicationsMysqlPort || 3306);
+    data.meta.applicationsMysqlDatabase = String(data.meta.applicationsMysqlDatabase || "").trim();
+    data.meta.applicationsMysqlUser = String(data.meta.applicationsMysqlUser || "").trim();
+    data.meta.applicationsMysqlHasPassword = Boolean(data.meta.applicationsMysqlHasPassword);
+    data.meta.applicationsMysqlConfigured = Boolean(data.meta.applicationsMysqlConfigured);
+    data.meta.applicationsMysqlManagedByEnvironment = Boolean(
+      data.meta.applicationsMysqlManagedByEnvironment
+    );
+    data.meta.applicationsSqlQuery = String(data.meta.applicationsSqlQuery || "");
     data.meta.documentMailboxes = Array.isArray(data.meta.documentMailboxes)
       ? data.meta.documentMailboxes.map((mailbox, index) => ({
         id: String(mailbox?.id || `mailbox-${index + 1}`).trim(),
@@ -12170,6 +12190,34 @@ MAX - https://bizvmax.ru/zifra_plus
       getStudentApplicationsEmailLogin()
     );
     const emailPassword = getAdminSettingRenderValue("studentApplicationsEmailPassword", "");
+    const applicationsMysqlDriver = getAdminSettingRenderValue(
+      "applicationsMysqlDriver",
+      state.data.meta.applicationsMysqlDriver || "MySQL ODBC 9.4 Unicode Driver"
+    );
+    const applicationsMysqlHost = getAdminSettingRenderValue(
+      "applicationsMysqlHost",
+      state.data.meta.applicationsMysqlHost || ""
+    );
+    const applicationsMysqlPort = getAdminSettingRenderValue(
+      "applicationsMysqlPort",
+      state.data.meta.applicationsMysqlPort || 3306
+    );
+    const applicationsMysqlDatabase = getAdminSettingRenderValue(
+      "applicationsMysqlDatabase",
+      state.data.meta.applicationsMysqlDatabase || ""
+    );
+    const applicationsMysqlUser = getAdminSettingRenderValue(
+      "applicationsMysqlUser",
+      state.data.meta.applicationsMysqlUser || ""
+    );
+    const applicationsMysqlPassword = getAdminSettingRenderValue("applicationsMysqlPassword", "");
+    const applicationsSqlQuery = getAdminSettingRenderValue(
+      "applicationsSqlQuery",
+      state.data.meta.applicationsSqlQuery || ""
+    );
+    const applicationsMysqlFieldsDisabled = Boolean(
+      state.data.meta.applicationsMysqlManagedByEnvironment
+    );
     const documentMailboxes = getAdditionalDocumentMailboxesForAdmin();
     const mysqlUseApplicationsConnection = Boolean(getAdminSettingRenderValue(
       "mysqlUseApplicationsConnection",
@@ -12341,6 +12389,45 @@ MAX - https://bizvmax.ru/zifra_plus
                     </small>
                   </span>
                 </label>
+                <div class="admin-system-documents-head admin-internet-shop-head">
+                  <div class="admin-connection-heading-copy">
+                    <strong>Интернет-магазин — заявки WooCommerce</strong>
+                    <small>Подключение используется для загрузки заказов магазина через SQL. Пароль хранится только на сервере.</small>
+                  </div>
+                  <button class="ghost-button admin-connection-test-button" data-action="test-applications-mysql" type="button">Проверить магазин</button>
+                </div>
+                <div class="admin-mysql-settings-grid ${applicationsMysqlFieldsDisabled ? "is-disabled" : ""}" data-applications-mysql-settings-grid>
+                  <label>
+                    <span>Драйвер ODBC</span>
+                    <input name="applicationsMysqlDriver" type="text" value="${escapeAttr(applicationsMysqlDriver)}" spellcheck="false" ${applicationsMysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label>
+                    <span>Сервер MySQL</span>
+                    <input name="applicationsMysqlHost" type="text" value="${escapeAttr(applicationsMysqlHost)}" placeholder="mysql.example.ru" spellcheck="false" ${applicationsMysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label>
+                    <span>Порт</span>
+                    <input name="applicationsMysqlPort" type="number" min="1" max="65535" value="${escapeAttr(applicationsMysqlPort)}" ${applicationsMysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label>
+                    <span>Имя базы</span>
+                    <input name="applicationsMysqlDatabase" type="text" value="${escapeAttr(applicationsMysqlDatabase)}" spellcheck="false" ${applicationsMysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label>
+                    <span>Пользователь</span>
+                    <input name="applicationsMysqlUser" type="text" value="${escapeAttr(applicationsMysqlUser)}" autocomplete="username" spellcheck="false" ${applicationsMysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label class="admin-mysql-password-field">
+                    <span>Пароль</span>
+                    <input name="applicationsMysqlPassword" type="password" value="${escapeAttr(applicationsMysqlPassword)}" placeholder="${state.data.meta.applicationsMysqlHasPassword ? "Пароль сохранён на сервере" : "Введите пароль MySQL"}" autocomplete="new-password" ${applicationsMysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                </div>
+                <label class="admin-applications-sql-field">
+                  <span>SQL-запрос получения заявок</span>
+                  <textarea name="applicationsSqlQuery" rows="18" required spellcheck="false">${escapeHtml(applicationsSqlQuery)}</textarea>
+                  <small class="sdo-settings-hint">Разрешён один запрос SELECT. Два знака <code>?</code> соответствуют началу и концу периода. Запрос должен возвращать перечисленные в стандартном запросе служебные поля и колонки заявки.</small>
+                </label>
+                ${applicationsMysqlFieldsDisabled ? '<small class="sdo-settings-hint">Параметры подключения заданы переменной окружения сервера; в админке можно изменять SQL-запрос.</small>' : ""}
                 <div class="admin-system-documents-head">
                   <div class="admin-connection-heading-copy">
                     <strong>MySQL — общая база и блокировки в реальном времени</strong>
@@ -20689,6 +20776,8 @@ MAX - https://bizvmax.ru/zifra_plus
     bindAutomaticDocumentSaveHint(studentDatabaseSettingsForm);
     bindAdminMySqlSettings(studentDatabaseSettingsForm);
     document.querySelector("[data-action='test-yandex-disk']")?.addEventListener("click", testYandexDiskConnection);
+    document.querySelector("[data-action='test-applications-mysql']")
+      ?.addEventListener("click", testStudentApplicationsMySqlConnection);
     document.querySelector("[data-action='test-mysql-locks']")?.addEventListener("click", testMySqlLocksConnection);
     document.querySelector("[data-action='test-student-applications-email']")
       ?.addEventListener("click", testStudentApplicationsEmailConnection);
@@ -34929,6 +35018,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const emailLogin = String(form.elements.studentApplicationsEmailLogin?.value || "").trim();
     const emailPassword = String(form.elements.studentApplicationsEmailPassword?.value || "");
     const documentMailboxes = collectDocumentMailboxesFromForm(form);
+    const applicationsMysqlDriver = String(form.elements.applicationsMysqlDriver?.value || "").trim();
+    const applicationsMysqlHost = String(form.elements.applicationsMysqlHost?.value || "").trim();
+    const applicationsMysqlPort = Number(form.elements.applicationsMysqlPort?.value || 3306);
+    const applicationsMysqlDatabase = String(form.elements.applicationsMysqlDatabase?.value || "").trim();
+    const applicationsMysqlUser = String(form.elements.applicationsMysqlUser?.value || "").trim();
+    const applicationsMysqlPassword = String(form.elements.applicationsMysqlPassword?.value || "");
+    const applicationsSqlQuery = String(form.elements.applicationsSqlQuery?.value || "").trim();
     const mysqlUseApplicationsConnection = Boolean(
       form.elements.mysqlUseApplicationsConnection?.checked
     );
@@ -34951,6 +35047,19 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!emailLogin) throw new Error("Укажите логин электронной почты.");
     if (emailLogin.toLowerCase() !== DEFAULT_STUDENT_APPLICATIONS_EMAIL.login) {
       throw new Error(`Для сбора заявок используется ящик ${DEFAULT_STUDENT_APPLICATIONS_EMAIL.login}.`);
+    }
+    if (!applicationsSqlQuery) throw new Error("Укажите SQL-запрос интернет-магазина.");
+    if (!state.data.meta.applicationsMysqlManagedByEnvironment) {
+      if (!applicationsMysqlDriver) throw new Error("Укажите драйвер ODBC интернет-магазина.");
+      if (!applicationsMysqlHost) throw new Error("Укажите сервер MySQL интернет-магазина.");
+      if (!Number.isInteger(applicationsMysqlPort) || applicationsMysqlPort < 1 || applicationsMysqlPort > 65535) {
+        throw new Error("Укажите корректный порт MySQL интернет-магазина.");
+      }
+      if (!applicationsMysqlDatabase) throw new Error("Укажите имя базы интернет-магазина.");
+      if (!applicationsMysqlUser) throw new Error("Укажите пользователя базы интернет-магазина.");
+      if (!applicationsMysqlPassword && !state.data.meta.applicationsMysqlHasPassword) {
+        throw new Error("Введите пароль базы интернет-магазина.");
+      }
     }
     if (!mysqlUseApplicationsConnection && !state.data.meta.mysqlManagedByEnvironment) {
       if (!mysqlHost) throw new Error("Укажите сервер MySQL.");
@@ -34982,6 +35091,13 @@ MAX - https://bizvmax.ru/zifra_plus
         emailLogin,
         emailPassword,
         documentMailboxes,
+        applicationsMysqlDriver,
+        applicationsMysqlHost,
+        applicationsMysqlPort,
+        applicationsMysqlDatabase,
+        applicationsMysqlUser,
+        applicationsMysqlPassword,
+        applicationsSqlQuery,
         mysqlUseApplicationsConnection,
         mysqlHost,
         mysqlPort,
@@ -34997,6 +35113,7 @@ MAX - https://bizvmax.ru/zifra_plus
       form.elements.studentApplicationsEmailPassword.value = "";
     }
     form.querySelectorAll('[data-mailbox-field="password"]').forEach((input) => { input.value = ""; });
+    if (form.elements.applicationsMysqlPassword) form.elements.applicationsMysqlPassword.value = "";
     if (form.elements.mysqlPassword) form.elements.mysqlPassword.value = "";
     return payload;
   }
@@ -35036,6 +35153,17 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.meta.documentMailboxes = Array.isArray(payload.documentMailboxes)
       ? payload.documentMailboxes
       : [];
+    state.data.meta.applicationsMysqlDriver = String(payload.applicationsMysqlDriver || "").trim();
+    state.data.meta.applicationsMysqlHost = String(payload.applicationsMysqlHost || "").trim();
+    state.data.meta.applicationsMysqlPort = Number(payload.applicationsMysqlPort || 3306);
+    state.data.meta.applicationsMysqlDatabase = String(payload.applicationsMysqlDatabase || "").trim();
+    state.data.meta.applicationsMysqlUser = String(payload.applicationsMysqlUser || "").trim();
+    state.data.meta.applicationsMysqlHasPassword = Boolean(payload.applicationsMysqlHasPassword);
+    state.data.meta.applicationsMysqlConfigured = Boolean(payload.applicationsMysqlConfigured);
+    state.data.meta.applicationsMysqlManagedByEnvironment = Boolean(
+      payload.applicationsMysqlManagedByEnvironment
+    );
+    state.data.meta.applicationsSqlQuery = String(payload.applicationsSqlQuery || "");
     if (Object.prototype.hasOwnProperty.call(payload, "mysqlUseApplicationsConnection")) {
       state.data.meta.mysqlUseApplicationsConnection = payload.mysqlUseApplicationsConnection !== false;
       state.data.meta.mysqlHost = String(payload.mysqlHost || "").trim();
@@ -35151,6 +35279,32 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
     } catch (error) {
       alert(`Проверка почты не выполнена: ${error.message}`);
+      button.disabled = false;
+    }
+  }
+
+  async function testStudentApplicationsMySqlConnection(event) {
+    const button = event.currentTarget;
+    const form = button.closest("form");
+    if (!form) return;
+    button.disabled = true;
+    try {
+      const settings = await saveYandexDiskSettings(form);
+      applyYandexDiskSettings(settings);
+      clearAdminSettingsDirtyState(form);
+      const response = await fetch(photoApiUrl("/api/student-applications-mysql/test"), {
+        method: "POST"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Не удалось выполнить SQL-запрос интернет-магазина.");
+      const details = [
+        payload.database ? `база ${payload.database}` : "",
+        `заявок за сегодня: ${Number(payload.rows || 0)}`
+      ].filter(Boolean).join(", ");
+      alert(`${payload.message || "Подключение к интернет-магазину работает."}${details ? `\n${details}` : ""}`);
+      render();
+    } catch (error) {
+      alert(`Проверка интернет-магазина не выполнена: ${error.message}`);
       button.disabled = false;
     }
   }

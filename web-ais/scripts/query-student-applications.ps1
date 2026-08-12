@@ -170,6 +170,11 @@ WHERE date_created >= ?
   AND date_created < ?
 '@
 
+$configuredQuery = ([string]$env:AIS_APPLICATIONS_SQL_QUERY).Trim()
+if (-not [string]::IsNullOrWhiteSpace($configuredQuery)) {
+  $query = $configuredQuery
+}
+
 $parameterValues = [Collections.Generic.List[object]]::new()
 $parameterValues.Add($dateFrom)
 $parameterValues.Add($dateTo.AddDays(1))

@@ -5467,6 +5467,23 @@ body.long-press-dragging * {
   grid-column: span 2;
 }
 
+.sdo-settings-fields .admin-applications-sql-field {
+  display: grid;
+  gap: 5px;
+}
+
+.admin-applications-sql-field textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 280px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  tab-size: 2;
+  white-space: pre;
+}
+
 .admin-email-credential-field {
   grid-column: span 2;
 }
