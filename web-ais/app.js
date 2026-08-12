@@ -19,10 +19,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.126",
+    version: "1.7.127",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.127",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В реестре выданных документов по умолчанию показываются только документы, ожидающие выгрузки в ФРДО, по возрастанию даты выдачи."
+      ]
+    },
     {
       version: "1.7.126",
       releasedAt: "2026-08-12",
@@ -3438,12 +3445,12 @@ MAX - https://bizvmax.ru/zifra_plus
       documentNumber: "",
       issueDateFrom: "",
       issueDateTo: "",
-      frdo: "",
+      frdo: "pending",
       student: "",
       program: "",
       programType: ""
     },
-    issuedDocumentSort: { key: "issueDate", dir: "desc" },
+    issuedDocumentSort: { key: "issueDate", dir: "asc" },
     programRegistryTypeFilter: [],
     contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
     studentImportedViewIds: [],
@@ -8190,7 +8197,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function sortIssuedDocumentRows(rows) {
-    const sort = state.issuedDocumentSort || { key: "issueDate", dir: "desc" };
+    const sort = state.issuedDocumentSort || { key: "issueDate", dir: "asc" };
     const direction = sort.dir === "desc" ? -1 : 1;
     const dateKeys = new Set(["issueDate", "frdoDate"]);
     return rows.map((row, index) => ({ row, index })).sort((leftEntry, rightEntry) => {
@@ -23660,7 +23667,7 @@ MAX - https://bizvmax.ru/zifra_plus
       issuedDocumentsRegister.querySelectorAll("[data-action='sort-issued-documents']").forEach((button) => {
         button.addEventListener("click", () => {
           const key = String(button.dataset.sortKey || "issueDate");
-          const current = state.issuedDocumentSort || { key: "issueDate", dir: "desc" };
+          const current = state.issuedDocumentSort || { key: "issueDate", dir: "asc" };
           state.issuedDocumentSort = current.key === key
             ? { key, dir: current.dir === "desc" ? "asc" : "desc" }
             : { key, dir: ["issueDate", "frdoDate"].includes(key) ? "desc" : "asc" };
@@ -23673,7 +23680,7 @@ MAX - https://bizvmax.ru/zifra_plus
           documentNumber: "",
           issueDateFrom: "",
           issueDateTo: "",
-          frdo: "",
+          frdo: "pending",
           student: "",
           program: "",
           programType: ""
