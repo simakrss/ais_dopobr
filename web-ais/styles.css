@@ -13285,8 +13285,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   min-height: 0;
   height: 100%;
   max-height: 100%;
-  overflow-x: hidden;
-  overflow-y: scroll;
+  overflow: scroll;
   scrollbar-gutter: stable;
   scrollbar-color: #7aaea3 #edf3f1;
   overscroll-behavior: contain;
@@ -13294,12 +13293,14 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   grid-auto-rows: max-content;
   align-content: start;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 10px 12px 18px;
+  scroll-padding: 10px 12px 18px;
 }
 
 .student-document-recognition-result::-webkit-scrollbar,
 .student-document-recognition-selection-body::-webkit-scrollbar {
   width: 14px;
+  height: 14px;
 }
 
 .student-document-recognition-result::-webkit-scrollbar-track,

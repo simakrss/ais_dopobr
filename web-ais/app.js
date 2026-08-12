@@ -9,10 +9,18 @@
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.113",
+    version: "1.7.114",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.114",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Исправлена структура окна распознавания: блок фотографий, все группы полей и обработанные файлы теперь находятся в единой прокручиваемой области и не скрываются под нижней панелью.",
+        "Для результата распознавания добавлены постоянные вертикальная и горизонтальная полосы прокрутки; при открытии окно всегда начинается с верхней части, где расположен выбор фото."
+      ]
+    },
     {
       version: "1.7.113",
       releasedAt: "2026-08-12",
@@ -30247,7 +30255,6 @@ MAX - https://bizvmax.ru/zifra_plus
             : "В выбранных текстовых файлах нет изображения для фотографии."}
         </p>
       </section>
-      </div>
     `;
   }
 
@@ -30456,6 +30463,11 @@ MAX - https://bizvmax.ru/zifra_plus
         <button class="primary-button" data-action="apply-student-document-recognition" type="button" ${fields.length || photoCandidates.length ? "" : "disabled"}>Применить выбранное</button>
       </footer>
     `);
+    const recognitionResult = modal.querySelector(".student-document-recognition-result");
+    if (recognitionResult) {
+      recognitionResult.scrollTop = 0;
+      recognitionResult.scrollLeft = 0;
+    }
     modal.querySelector("footer [data-action='close-student-document-recognition']")
       ?.addEventListener("click", dialog.closeStudentDocumentRecognitionDialog);
     modal.querySelector("[data-action='apply-student-document-recognition']")
