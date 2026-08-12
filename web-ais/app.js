@@ -19,10 +19,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.128",
+    version: "1.7.129",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.129",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Счётчик отфильтрованных записей и кнопка сброса в реестре выданных документов перенесены в правый верхний угол."
+      ]
+    },
     {
       version: "1.7.128",
       releasedAt: "2026-08-12",
@@ -8319,6 +8326,10 @@ MAX - https://bizvmax.ru/zifra_plus
           <span>Всего: <strong>${allRows.length}</strong></span>
           <span class="is-success">Выгружено в ФРДО: <strong>${exportedCount}</strong></span>
           <span class="${pendingCount ? "is-warning" : ""}">Ожидают ФРДО: <strong>${pendingCount}</strong></span>
+          <div class="issued-documents-filter-actions">
+            <span>Показано <strong>${rows.length}</strong> из ${allRows.length}</span>
+            <button class="ghost-button" data-action="reset-issued-document-filters" type="button" ${issuedDocumentFiltersAreActive(filters) ? "" : "disabled"}>Сбросить</button>
+          </div>
         </div>
         <div class="issued-documents-filters" data-issued-document-filters>
           <label>
@@ -8360,10 +8371,6 @@ MAX - https://bizvmax.ru/zifra_plus
             <span>Дата выдачи по</span>
             <input type="date" data-issued-document-filter="issueDateTo" value="${escapeAttr(filters.issueDateTo || "")}">
           </label>
-          <div class="issued-documents-filter-actions">
-            <span>Показано <strong>${rows.length}</strong> из ${allRows.length}</span>
-            <button class="ghost-button" data-action="reset-issued-document-filters" type="button" ${issuedDocumentFiltersAreActive(filters) ? "" : "disabled"}>Сбросить</button>
-          </div>
         </div>
         ${rows.length ? `
           <div class="table-wrap issued-documents-table-wrap">
