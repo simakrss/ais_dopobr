@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.132",
+    version: "1.7.133",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.133",
+      releasedAt: "2026-08-12",
+      changes: [
+        "На рабочий стол добавлен виджет документов, ожидающих выгрузки в ФРДО, с количеством записей и ближайшим сроком выгрузки.",
+        "Щелчок по виджету открывает реестр выданных документов с фильтром «Не выгружено» и сортировкой по возрастанию даты выдачи."
+      ]
+    },
     {
       version: "1.7.132",
       releasedAt: "2026-08-12",
@@ -7479,8 +7487,59 @@ MAX - https://bizvmax.ru/zifra_plus
       .sort((a, b) => new Date(a.endDate) - new Date(b.endDate))
       .slice(0, 5)
       .map((item) => ({ ...item, daysRemaining: calculateDaysUntilDate(item.endDate) }));
+    const pendingIssuedDocuments = getIssuedDocumentRows()
+      .filter((row) => row.frdoKey === "pending");
+    const pendingIssuedDocumentDays = pendingIssuedDocuments
+      .map((row) => row.remainingDays)
+      .filter((days) => Number.isFinite(days));
+    const nearestFrdoDays = pendingIssuedDocumentDays.length
+      ? Math.min(...pendingIssuedDocumentDays)
+      : null;
+    const frdoDeadlineDays = getIssuedDocumentDeadlineDays();
+    const frdoWidgetTone = pendingIssuedDocuments.length === 0
+      ? "is-success"
+      : (nearestFrdoDays !== null && nearestFrdoDays < 10
+        ? "is-danger"
+        : (nearestFrdoDays !== null && nearestFrdoDays < 20 ? "is-warning" : ""));
+    const frdoDeadlineLabel = pendingIssuedDocuments.length === 0
+      ? "Все документы выгружены"
+      : (nearestFrdoDays === null
+        ? "Для расчёта срока укажите дату выдачи"
+        : (nearestFrdoDays < 0
+          ? `Просрочено на ${Math.abs(nearestFrdoDays)} дн.`
+          : (nearestFrdoDays === 0 ? "Срок истекает сегодня" : `До ближайшего срока: ${nearestFrdoDays} дн.`)));
+    const frdoDaysIndicatorLabel = pendingIssuedDocuments.length === 0
+      ? "Новых задач нет"
+      : (nearestFrdoDays === null
+        ? "Ближайший срок не рассчитан"
+        : (nearestFrdoDays < 0
+          ? `Просрочено дней: ${Math.abs(nearestFrdoDays)}`
+          : `Осталось дней: ${nearestFrdoDays}`));
 
     return `
+      <button
+        class="panel dashboard-frdo-widget ${frdoWidgetTone}"
+        data-view-shortcut="issuedDocuments"
+        data-issued-document-scope="pending"
+        type="button"
+        title="Открыть документы, ожидающие выгрузки в ФРДО"
+      >
+        <span class="dashboard-frdo-widget-heading">
+          <span class="eyebrow">ФРДО</span>
+          <strong>Документы к выгрузке</strong>
+          <small>Норматив: ${frdoDeadlineDays} дней с даты выдачи</small>
+        </span>
+        <span class="dashboard-frdo-widget-count">
+          <strong>${pendingIssuedDocuments.length}</strong>
+          <small>документов</small>
+        </span>
+        <span class="dashboard-frdo-widget-deadline">
+          <strong>${escapeHtml(frdoDeadlineLabel)}</strong>
+          <small>${escapeHtml(frdoDaysIndicatorLabel)}</small>
+        </span>
+        <span class="dashboard-frdo-widget-open" aria-hidden="true">↗</span>
+      </button>
+
       <section class="panel">
         <div class="panel-head">
           <div>
@@ -23276,6 +23335,19 @@ MAX - https://bizvmax.ru/zifra_plus
         state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
         state.generalExpenseWorkTypeFilter = [];
         state.studentImportedViewIds = [];
+        if (state.view === "issuedDocuments" && button.dataset.issuedDocumentScope === "pending") {
+          state.issuedDocumentFilters = {
+            documentNumber: "",
+            issueDateFrom: "",
+            issueDateTo: "",
+            frdo: "pending",
+            student: "",
+            program: "",
+            programType: ""
+          };
+          state.issuedDocumentSort = { key: "issueDate", dir: "asc" };
+          state.tablePages.issuedDocuments = 1;
+        }
         state.sort = state.view === "students"
           ? getStudentStatusTableSort(state.statusFilter)
           : getDefaultTableSort(state.view);
