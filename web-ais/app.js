@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.88",
+    version: "1.7.89",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.89",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Во вкладке администрирования «Подключение к базе» убраны лишние вложенные рамки и их внутренние отступы, чтобы вкладки и параметры подключения занимали меньше места."
+      ]
+    },
     {
       version: "1.7.88",
       releasedAt: "2026-08-12",

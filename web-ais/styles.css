@@ -7941,6 +7941,21 @@ body.card-window-moving {
   margin-bottom: 0;
 }
 
+.admin-connection-panel.is-database-tab .admin-database-settings {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.admin-connection-panel.is-database-tab .admin-database-settings > .sdo-settings-form {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .admin-database-copy {
   display: grid;
   gap: 8px;
