@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.96",
+    version: "1.7.97",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.97",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В редакторе оплаты раздел дополнительных данных переименован в «Связи». UID слушателя, сотрудник и связь с запасами теперь выбираются из стандартных редактируемых списков со свободным вводом; списки автоматически дополняются значениями из текущей базы."
+      ]
+    },
     {
       version: "1.7.96",
       releasedAt: "2026-08-12",
@@ -2391,6 +2398,9 @@ MAX - https://bizvmax.ru/zifra_plus
     ovzStatuses: ["ОВЗ", "ОВЗ Инвалиды", "Инвалиды"],
     expenseNotes: [],
     generalExpenseNumbers: ["личная карта"],
+    expenseStudentUids: [],
+    expenseEmployees: [],
+    expenseInventoryLinks: [],
     employeePaymentBases: ["Оплата сотруднику", "Агентские"],
     discountRules: []
   };
@@ -3459,6 +3469,18 @@ MAX - https://bizvmax.ru/zifra_plus
         Array.isArray(student?.directExpenses) ? student.directExpenses : []
       ))
     ];
+    add("expenseStudentUids", [
+      ...(collections.students || []).map((student) => student?.uid),
+      ...directExpenses.map((expense) => expense?.uid)
+    ]);
+    add("expenseEmployees", [
+      ...(collections.contracts || []).map((contract) => contract?.name),
+      ...directExpenses.map((expense) => expense?.note)
+    ]);
+    add("expenseInventoryLinks", [
+      ...(collections.inventory || []).map((item) => item?.itemType),
+      ...directExpenses.map((expense) => expense?.inventoryLink)
+    ]);
     add("expenseTypes", [
       ...(dictionaries.inventoryTypes || []),
       ...directExpenses.map((expense) => expense?.type),
@@ -14793,17 +14815,26 @@ MAX - https://bizvmax.ru/zifra_plus
   function getEmployeeExpenseEditorFields(context) {
     if (!context.configId) return [];
     const config = configs[context.configId];
+    const linkedDictionaryByField = {
+      uid: "expenseStudentUids",
+      note: "expenseEmployees",
+      inventoryLink: "expenseInventoryLinks"
+    };
     const supplementalKeys = context.sourceType === "direct"
       ? new Set(["uid", "note", "inventoryLink"])
       : new Set(["section", "counterparty", "accountingClosed", "bkExpenseNo", "otherExpenses"]);
     return config.fields.filter((item) => supplementalKeys.has(item.key)).map((item) => {
+      const dictionary = linkedDictionaryByField[item.key];
+      const linkedField = dictionary
+        ? { ...item, type: "combo", dict: dictionary }
+        : item;
       if (context.sourceType === "direct" && item.key === "note") {
-        return { ...item, label: "Сотрудник (связь с карточкой)" };
+        return { ...linkedField, label: "Сотрудник (связь с карточкой)" };
       }
       if (context.sourceType === "general" && item.key === "counterparty") {
-        return { ...item, label: "Сотрудник (связь с карточкой)" };
+        return { ...linkedField, label: "Сотрудник (связь с карточкой)" };
       }
-      return item;
+      return linkedField;
     });
   }
 
@@ -14945,7 +14976,7 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
             ${fields.length ? `
               <details class="employee-payment-editor-extra">
-                <summary>Дополнительные данные связанной затраты</summary>
+                <summary>${context.sourceType === "direct" ? "Связи" : "Дополнительные данные связанной затраты"}</summary>
                 <div class="form-grid employee-expense-editor-grid employee-payment-editor-extra-grid">
                   ${fields.map((item) => renderField(item, context.source)).join("")}
                 </div>
@@ -40381,6 +40412,9 @@ MAX - https://bizvmax.ru/zifra_plus
       fundingSources: "Источники финансирования",
       expenseNotes: "Типовые примечания расходов",
       generalExpenseNumbers: "Номера в расходах",
+      expenseStudentUids: "Связи затрат: UID слушателей",
+      expenseEmployees: "Связи затрат: сотрудники",
+      expenseInventoryLinks: "Связи затрат: запасы",
       employeePaymentBases: "Основания выплат сотрудникам",
       paymentSettings: "Оплата",
       sdoSettings: "Настройки СДО",
