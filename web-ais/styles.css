@@ -8091,7 +8091,7 @@ body.card-window-moving {
   margin-bottom: 0;
 }
 
-.admin-connection-panel.is-database-tab .admin-database-settings {
+.admin-connection-panel:is(.is-database-tab, .is-email-tab) .admin-database-settings {
   margin: 0;
   padding: 0;
   border: 0;
@@ -8099,7 +8099,7 @@ body.card-window-moving {
   background: transparent;
 }
 
-.admin-connection-panel.is-database-tab .admin-database-settings > .sdo-settings-form {
+.admin-connection-panel:is(.is-database-tab, .is-email-tab) .admin-database-settings > .sdo-settings-form {
   padding: 0;
   border: 0;
   border-radius: 0;
