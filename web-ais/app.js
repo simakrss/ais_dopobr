@@ -9,10 +9,17 @@
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.114",
+    version: "1.7.115",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.115",
+      releasedAt: "2026-08-12",
+      changes: [
+        "При групповом формировании документов об образовании реквизиты теперь рассчитываются тем же способом, что и по кнопке «Заполнить реквизиты документа об образовании» в карточке слушателя: формируются номер бланка, регистрационный номер, дата выдачи, номер протокола и квалификация."
+      ]
+    },
     {
       version: "1.7.114",
       releasedAt: "2026-08-12",
@@ -17815,25 +17822,49 @@ MAX - https://bizvmax.ru/zifra_plus
     return String((numbers.length ? Math.max(...numbers) : 0) + 1);
   }
 
+  function getEducationDocumentAutofillValues(record, options = {}) {
+    const source = record && typeof record === "object" ? record : {};
+    const program = options.program || findProgramByName(source.program);
+    const programType = normalizeEducationProgramType(
+      options.programType || program?.type || source.educationType
+    );
+    const issueDate = String(
+      options.issueDate || source.expulsionDate || source.expulsionOrderDate || ""
+    ).trim();
+    if (!program || !programType || !parseOrdersSdoDate(issueDate)) return null;
+    const currentId = String(options.currentId || source.id || "").trim();
+    return {
+      diplomaBlankNo: getNextEducationBlankNumber(programType, currentId),
+      registrationNo: getGeneratedNumberFromDataFormula(
+        "educationRegistrationNumber",
+        parseOrdersSdoDate(issueDate),
+        currentId,
+        {
+          programType,
+          programTypeCode: getEducationRegistrationTypeCode(programType)
+        }
+      ).value,
+      diplomaIssueDate: issueDate,
+      frdoDate: isFrdoProgramType(programType) ? source.frdoDate || "" : "",
+      protocolNo: programType === "ППП"
+        ? getNextEducationProtocolNo(issueDate, currentId)
+        : "",
+      qualification: programType === "ППП"
+        ? String(program.qualification || "").trim()
+        : ""
+    };
+  }
+
   function autoFillEducationDocument() {
     const context = getEducationDocumentAutofillContext();
     if (!context) return;
-    const values = {
-      diplomaBlankNo: getNextEducationBlankNumber(context.programType, context.form.dataset.id),
-      registrationNo: getGeneratedNumberFromDataFormula(
-        "educationRegistrationNumber",
-        parseOrdersSdoDate(context.issueDate),
-        context.form.dataset.id
-      ).value,
-      diplomaIssueDate: context.issueDate,
-      frdoDate: isFrdoProgramType(context.programType) ? context.record.frdoDate || "" : "",
-      protocolNo: context.programType === "ППП"
-        ? getNextEducationProtocolNo(context.issueDate, context.form.dataset.id)
-        : "",
-      qualification: context.programType === "ППП"
-        ? String(context.program.qualification || "").trim()
-        : ""
-    };
+    const values = getEducationDocumentAutofillValues(context.record, {
+      program: context.program,
+      programType: context.programType,
+      issueDate: context.issueDate,
+      currentId: context.form.dataset.id
+    });
+    if (!values) return;
     Object.entries(values).forEach(([fieldName, value]) => {
       setOrdersSdoFieldValue(context.form, fieldName, value);
     });
@@ -32777,24 +32808,13 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (operation === "education") {
       const issueDate = record.expulsionDate || record.endDate || baseDate;
-      if (!String(record.diplomaBlankNo || "").trim()) {
-        record.diplomaBlankNo = getNextEducationBlankNumber(programType, record.id);
-      }
-      if (!String(record.registrationNo || "").trim()) {
-        record.registrationNo = getGeneratedNumberFromDataFormula(
-          "educationRegistrationNumber",
-          parseOrdersSdoDate(issueDate) || baseDateObject,
-          record.id,
-          {
-            programType,
-            programTypeCode: getEducationRegistrationTypeCode(programType)
-          }
-        ).value;
-      }
-      if (!parseOrdersSdoDate(record.diplomaIssueDate)) record.diplomaIssueDate = issueDate;
-      if (programType === "ППП" && !String(record.protocolNo || "").trim()) {
-        record.protocolNo = getNextEducationProtocolNo(record.diplomaIssueDate, record.id);
-      }
+      const educationValues = getEducationDocumentAutofillValues(record, {
+        program,
+        programType,
+        issueDate,
+        currentId: record.id
+      });
+      if (educationValues) Object.assign(record, educationValues);
     }
     return record;
   }
