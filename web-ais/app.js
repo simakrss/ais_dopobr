@@ -9,10 +9,17 @@
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.111",
+    version: "1.7.112",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.112",
+      releasedAt: "2026-08-12",
+      changes: [
+        "При импорте заявок категория программы обязательно определяется по данным интернет-магазина: переподготовка — ППП, повышение квалификации — КПК, курс дополнительного образования — ДОП, онлайн/он-лайн, вебинар или семинар — ПРО. Сопоставление с реестром выполняется только внутри определённой категории."
+      ]
+    },
     {
       version: "1.7.111",
       releasedAt: "2026-08-12",
@@ -8139,7 +8146,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return String(value || "")
       .replace(/\s*\[\s*\d+\s*\]\s*$/u, "")
       .replace(
-        /^(?:(?:онлайн[- ]?)?курс|программа)\s+(?:(?:профессиональной\s+)?переподготовки|повышения\s+квалификации|дополнительного(?:\s+профессионального)?\s+образования)\s*[:\-–—]?\s*/iu,
+        /^(?:(?:он[\s-]*лайн[- ]?)?курс|программа)\s+(?:(?:профессиональной\s+)?переподготовки|повышения\s+квалификации|дополнительного(?:\s+профессионального)?\s+образования)\s*[:\-–—]?\s*/iu,
         ""
       )
       .replace(/^(?:(?:онлайн[- ]?)?курс|программа)\s*[:\-–—]\s*/iu, "")
@@ -8154,9 +8161,19 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentApplicationInferredProgramType(row) {
-    return /^(?:(?:онлайн[- ]?)?курс|программа)\s+дополнительного\s+образования(?=$|[\s"'«»(:\-–—])/iu.test(
-      getStudentApplicationProgramTitle(row)
-    ) ? "ДОП" : "";
+    const title = (getStudentApplicationProgramTitle(row) || [row?.order, row?.note].filter(Boolean).join(" "))
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е");
+    if (/переподготовк/iu.test(title)) return "ППП";
+    if (/повышени\S*\s+квалификац/iu.test(title)) return "КПК";
+    if (/курс\S*\s+дополнительн\S*\s+образован/iu.test(title)) return "ДОП";
+    if (/он[\s-]*лайн|вебинар|семинар/iu.test(title)) return "ПРО";
+    return "";
+  }
+
+  function studentApplicationProgramMatchesInferredType(program, inferredType) {
+    const requiredType = normalizeEducationProgramType(inferredType);
+    return !requiredType || normalizeEducationProgramType(program?.type) === requiredType;
   }
 
   function normalizeStudentApplicationProgramMappings(values) {
@@ -8207,8 +8224,17 @@ MAX - https://bizvmax.ru/zifra_plus
     const mapping = getStoredStudentApplicationProgramMapping(row);
     if (!mapping) return null;
     const programs = state.data.collections.programs || [];
-    return programs.find((program) => String(program.id || "") === mapping.programId)
-      || findProgramByName(mapping.programName);
+    const inferredType = getStudentApplicationInferredProgramType(row);
+    const storedProgram = programs.find((program) => (
+      String(program.id || "") === mapping.programId
+      && studentApplicationProgramMatchesInferredType(program, inferredType)
+    ));
+    if (storedProgram) return storedProgram;
+    const normalizedMappedName = normalizeProgramName(mapping.programName);
+    return getProgramRows().find((program) => (
+      studentApplicationProgramMatchesInferredType(program, inferredType)
+      && [program.name, program.shortName].some((name) => normalizeProgramName(name) === normalizedMappedName)
+    )) || null;
   }
 
   function getStudentApplicationProgramHours(value, fallback = "") {
@@ -8339,6 +8365,13 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function resolveStudentApplicationProgramMatch(row, context = buildStudentApplicationProgramMatchContext()) {
     const source = getStudentApplicationProgramMappingSource(row);
+    const inferredType = getStudentApplicationInferredProgramType(row);
+    const matchesInferredType = (program) => (
+      studentApplicationProgramMatchesInferredType(program, inferredType)
+    );
+    const filterEntriesByType = (entries) => (
+      (entries || []).filter((entry) => matchesInferredType(entry.program))
+    );
     const mapped = (context.mappingsBySourceName.get(source.sourceProgramNormalized) || [])
       .filter((item) => !item.sourceType || !source.sourceType || item.sourceType === source.sourceType);
     const exactProductMappings = source.sourceProductId
@@ -8347,26 +8380,27 @@ MAX - https://bizvmax.ru/zifra_plus
     const mappedCandidates = exactProductMappings.length ? exactProductMappings : mapped;
     const mappedPrograms = unique(mappedCandidates.map((item) => item.programId || item.programName).filter(Boolean))
       .map((value) => context.byId.get(value)
-        || context.byRawName.get(normalizeProgramName(value))?.[0]?.program)
-      .filter(Boolean);
+        || (context.byRawName.get(normalizeProgramName(value)) || [])
+          .find((entry) => matchesInferredType(entry.program))?.program)
+      .filter((program) => program && matchesInferredType(program));
     if (mappedPrograms.length === 1) {
       return { programId: String(mappedPrograms[0].id || ""), kind: "stored", score: 1 };
     }
 
     if (source.sourceProductId) {
-      const productMatches = context.byProductId.get(source.sourceProductId) || [];
+      const productMatches = filterEntriesByType(context.byProductId.get(source.sourceProductId));
       if (productMatches.length === 1) {
         return { programId: productMatches[0].id, kind: "product", score: 1 };
       }
     }
 
     const sourceTitle = getStudentApplicationProgramTitle(row);
-    const rawMatches = context.byRawName.get(normalizeProgramName(sourceTitle)) || [];
+    const rawMatches = filterEntriesByType(context.byRawName.get(normalizeProgramName(sourceTitle)));
     if (rawMatches.length === 1) return { programId: rawMatches[0].id, kind: "exact", score: 1 };
 
     const comparableTitle = normalizeStudentApplicationProgramName(sourceTitle);
     const sourceHours = getStudentApplicationProgramHours(sourceTitle);
-    const comparableMatches = context.byComparableName.get(comparableTitle) || [];
+    const comparableMatches = filterEntriesByType(context.byComparableName.get(comparableTitle));
     if (sourceHours) {
       const matchingHours = comparableMatches.filter((entry) => entry.hours === sourceHours);
       if (matchingHours.length === 1) {
@@ -8377,14 +8411,12 @@ MAX - https://bizvmax.ru/zifra_plus
       return { programId: comparableMatches[0].id, kind: "exact", score: 0.99 };
     }
 
-    const inferredType = normalizeProgramName(getStudentApplicationInferredProgramType(row));
     const sourceFeatures = buildStudentApplicationProgramMatchFeatures(sourceTitle);
-    const ranked = context.entries.map((entry) => {
+    const ranked = filterEntriesByType(context.entries).map((entry) => {
       let score = Math.max(...entry.names.map((name) => (
         getStudentApplicationProgramSimilarity(sourceFeatures, name.features)
       )), 0);
       if (sourceHours && entry.hours) score += sourceHours === entry.hours ? 0.08 : -0.16;
-      if (inferredType && normalizeProgramName(entry.program.type) === inferredType) score += 0.04;
       return { entry, score: Math.max(0, Math.min(1, score)) };
     }).sort((left, right) => right.score - left.score || compareProgramNames(left.entry.program.name, right.entry.program.name));
     const best = ranked[0];
@@ -8445,13 +8477,23 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentApplicationProgram(row, selectedProgramId = "") {
+    const inferredType = getStudentApplicationInferredProgramType(row);
+    const matchesInferredType = (program) => (
+      studentApplicationProgramMatchesInferredType(program, inferredType)
+    );
     const selectedProgram = (state.data.collections.programs || [])
-      .find((program) => String(program.id || "") === String(selectedProgramId || ""));
+      .find((program) => (
+        String(program.id || "") === String(selectedProgramId || "")
+        && matchesInferredType(program)
+      ));
     if (selectedProgram) return selectedProgram;
     const preparedMatch = row?._programMatch;
     if (preparedMatch?.programId && preparedMatch.kind !== "suggested") {
       const preparedProgram = (state.data.collections.programs || [])
-        .find((program) => String(program.id || "") === String(preparedMatch.programId || ""));
+        .find((program) => (
+          String(program.id || "") === String(preparedMatch.programId || "")
+          && matchesInferredType(program)
+        ));
       if (preparedProgram) return preparedProgram;
     }
     const storedProgram = resolveStoredStudentApplicationProgram(row);
@@ -8460,15 +8502,20 @@ MAX - https://bizvmax.ru/zifra_plus
     const byProductId = productId
       ? (state.data.collections.programs || []).find((program) => (
         String(program.landingCode || "").trim() === productId
+        && matchesInferredType(program)
       ))
       : null;
     const title = getStudentApplicationProgramTitle(row);
-    const byName = findProgramByName(title);
+    const normalizedTitle = normalizeProgramName(title);
+    const byName = getProgramRows().find((program) => (
+      matchesInferredType(program)
+      && [program.name, program.shortName].some((name) => normalizeProgramName(name) === normalizedTitle)
+    ));
     if (byProductId || byName) return byProductId || byName;
     const comparableTitle = normalizeStudentApplicationProgramName(title);
     const titleHours = getStudentApplicationProgramHours(title);
     const comparablePrograms = (state.data.collections.programs || []).filter((program) => (
-      [program.name, program.shortName].some((name) => (
+      matchesInferredType(program) && [program.name, program.shortName].some((name) => (
         normalizeStudentApplicationProgramName(name) === comparableTitle
       ))
     ));
@@ -8487,7 +8534,10 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!match?.programId || match.kind !== "suggested") return null;
     const program = (state.data.collections.programs || [])
       .find((item) => String(item.id || "") === String(match.programId || ""));
-    return program ? { program, score: Number(match.score || 0) } : null;
+    return program && studentApplicationProgramMatchesInferredType(
+      program,
+      getStudentApplicationInferredProgramType(row)
+    ) ? { program, score: Number(match.score || 0) } : null;
   }
 
   function saveStudentApplicationProgramMapping(rowId, programId) {
@@ -8496,6 +8546,11 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!row) return;
     const program = (state.data.collections.programs || [])
       .find((item) => String(item.id || "") === String(programId || ""));
+    const inferredType = getStudentApplicationInferredProgramType(row);
+    if (program && !studentApplicationProgramMatchesInferredType(program, inferredType)) {
+      alert(`По данным интернет-магазина эта заявка относится к категории ${inferredType}. Выберите программу этой категории.`);
+      return;
+    }
     const source = getStudentApplicationProgramMappingSource(row);
     const current = normalizeStudentApplicationProgramMappings(
       state.data.meta.studentApplicationProgramMappings
@@ -8761,7 +8816,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const financialTerms = getStudentApplicationFinancialTerms(row, mappedProgram);
     const inferredProgramType = getStudentApplicationInferredProgramType(row) || mappedProgram?.type;
     const programFilterOverridesMapping = Boolean(state.studentApplicationsImport.filters.programId);
-    const programs = getProgramRows();
+    const programs = getProgramRows().filter((program) => (
+      studentApplicationProgramMatchesInferredType(program, inferredProgramType)
+    ));
     const programOptions = recommendation
       ? [recommendation.program, ...programs.filter((program) => (
         String(program.id || "") !== String(recommendation.program.id || "")
