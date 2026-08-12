@@ -19,10 +19,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.118",
+    version: "1.7.119",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.119",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В мобильном режиме подсказку любого элемента с описанием можно открыть одновременным касанием двумя пальцами.",
+        "Жест подсказки не запускает обычное действие элемента; подсказка закрывается следующим касанием, прокруткой или автоматически."
+      ]
+    },
     {
       version: "1.7.118",
       releasedAt: "2026-08-12",
@@ -1226,6 +1234,8 @@
   const CONTRACTS_TABLE_LAYOUT_VERSION = "agency-after-services";
   const SYSTEM_HELP_TOOLTIP_DELAY_MS = 1000;
   const DRAG_TOOLTIP_DELAY_MS = SYSTEM_HELP_TOOLTIP_DELAY_MS;
+  const SYSTEM_HELP_TWO_FINGER_TAP_MAX_MS = 800;
+  const SYSTEM_HELP_TWO_FINGER_MOVE_THRESHOLD = 24;
   const LONG_PRESS_DRAG_DELAY_MS = 1000;
   const LONG_PRESS_DRAG_CANCEL_THRESHOLD = 24;
   const LONG_PRESS_DRAG_START_THRESHOLD = 3;
@@ -3520,6 +3530,8 @@ MAX - https://bizvmax.ru/zifra_plus
   let lastSystemHelpTouchTarget = null;
   let lastSystemHelpTouchAt = 0;
   let systemHelpTouchHideTimer = 0;
+  let systemHelpTwoFingerGesture = null;
+  let systemHelpTouchActionSuppression = null;
   let employeePaymentPersistTimer = 0;
   let studentApplicationsSearchTimer = 0;
   let employeePaymentPreviewFrame = 0;
@@ -21857,6 +21869,104 @@ MAX - https://bizvmax.ru/zifra_plus
     removeSystemHelpDescription(active);
   }
 
+  function showSystemHelpTooltipTemporarily(target) {
+    showSystemHelpTooltip(target);
+    if (systemHelpTouchHideTimer) window.clearTimeout(systemHelpTouchHideTimer);
+    systemHelpTouchHideTimer = window.setTimeout(() => hideSystemHelpTooltip(target), 6500);
+  }
+
+  function isMobileSystemHelpMode() {
+    return window.innerWidth <= 720 || window.matchMedia?.("(pointer: coarse)")?.matches;
+  }
+
+  function getTwoFingerSystemHelpTarget(touches, fallbackTarget = null) {
+    const touchTargets = Array.from(touches || []).map((touch) => (
+      getSystemHelpTarget(document.elementFromPoint(touch.clientX, touch.clientY))
+    ));
+    if (touchTargets.length === 2 && touchTargets[0] && touchTargets[0] === touchTargets[1]) {
+      return touchTargets[0];
+    }
+    if (touchTargets[0] && touchTargets[1]) {
+      if (touchTargets[0].contains(touchTargets[1])) return touchTargets[1];
+      if (touchTargets[1].contains(touchTargets[0])) return touchTargets[0];
+    }
+    const touchedHelpTarget = touchTargets.find(Boolean);
+    if (touchedHelpTarget) return touchedHelpTarget;
+    const fallback = getSystemHelpTarget(fallbackTarget);
+    if (fallback && touchTargets.every((target) => !target || target === fallback || fallback.contains(target))) {
+      return fallback;
+    }
+    return null;
+  }
+
+  function captureTwoFingerSystemHelpGesture(event) {
+    if (!isMobileSystemHelpMode() || event.touches.length !== 2) {
+      if (event.touches.length > 2) systemHelpTwoFingerGesture = null;
+      return;
+    }
+    const target = getTwoFingerSystemHelpTarget(event.touches, event.target);
+    if (!target || !prepareSystemHelpTooltipTarget(target)) {
+      systemHelpTwoFingerGesture = null;
+      return;
+    }
+    systemHelpTwoFingerGesture = {
+      target,
+      startedAt: performance.now(),
+      points: Array.from(event.touches, (touch) => ({
+        identifier: touch.identifier,
+        x: touch.clientX,
+        y: touch.clientY
+      })),
+      moved: false
+    };
+  }
+
+  function trackTwoFingerSystemHelpGesture(event) {
+    const gesture = systemHelpTwoFingerGesture;
+    if (!gesture) return;
+    gesture.moved = gesture.moved || Array.from(event.touches || []).some((touch) => {
+      const start = gesture.points.find((point) => point.identifier === touch.identifier);
+      return start && Math.hypot(touch.clientX - start.x, touch.clientY - start.y)
+        > SYSTEM_HELP_TWO_FINGER_MOVE_THRESHOLD;
+    });
+  }
+
+  function finishTwoFingerSystemHelpGesture(event) {
+    const gesture = systemHelpTwoFingerGesture;
+    if (!gesture || event.touches.length) return;
+    systemHelpTwoFingerGesture = null;
+    if (
+      gesture.moved
+      || performance.now() - gesture.startedAt > SYSTEM_HELP_TWO_FINGER_TAP_MAX_MS
+      || !gesture.target.isConnected
+    ) return;
+    event.preventDefault();
+    lastSystemHelpTouchTarget = null;
+    lastSystemHelpTouchAt = 0;
+    systemHelpTouchActionSuppression = {
+      target: gesture.target,
+      until: performance.now() + SYSTEM_HELP_TWO_FINGER_TAP_MAX_MS
+    };
+    showSystemHelpTooltipTemporarily(gesture.target);
+  }
+
+  function suppressTwoFingerSystemHelpAction(event) {
+    const suppression = systemHelpTouchActionSuppression;
+    if (!suppression || performance.now() > suppression.until) {
+      systemHelpTouchActionSuppression = null;
+      return;
+    }
+    const eventTarget = event.target instanceof Element ? event.target : null;
+    if (
+      !eventTarget
+      || !(suppression.target === eventTarget
+        || suppression.target.contains(eventTarget)
+        || eventTarget.contains(suppression.target))
+    ) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
   function bindSystemHelpTooltips() {
     annotateMobileFieldHelpTargets();
     if (systemHelpTooltipBound) return;
@@ -21881,6 +21991,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.addEventListener("pointerup", (event) => {
       if (event.pointerType !== "touch" || window.innerWidth > 720) return;
+      if (systemHelpTwoFingerGesture) return;
       const rawTarget = getSystemHelpTarget(event.target);
       const target = rawTarget?.closest("label[data-mobile-field-help-source]") || rawTarget;
       if (!target || !target.closest("form label")) return;
@@ -21892,10 +22003,14 @@ MAX - https://bizvmax.ru/zifra_plus
       event.preventDefault();
       lastSystemHelpTouchTarget = null;
       lastSystemHelpTouchAt = 0;
-      showSystemHelpTooltip(target);
-      if (systemHelpTouchHideTimer) window.clearTimeout(systemHelpTouchHideTimer);
-      systemHelpTouchHideTimer = window.setTimeout(() => hideSystemHelpTooltip(target), 6500);
+      showSystemHelpTooltipTemporarily(target);
     }, { capture: true });
+    document.addEventListener("touchstart", captureTwoFingerSystemHelpGesture, { capture: true, passive: true });
+    document.addEventListener("touchmove", trackTwoFingerSystemHelpGesture, { capture: true, passive: true });
+    document.addEventListener("touchend", finishTwoFingerSystemHelpGesture, { capture: true, passive: false });
+    document.addEventListener("touchcancel", () => { systemHelpTwoFingerGesture = null; }, { capture: true, passive: true });
+    document.addEventListener("click", suppressTwoFingerSystemHelpAction, { capture: true });
+    document.addEventListener("contextmenu", suppressTwoFingerSystemHelpAction, { capture: true });
     document.addEventListener("pointerdown", () => hideSystemHelpTooltip(), { capture: true });
     document.addEventListener("contextmenu", () => hideSystemHelpTooltip(), { capture: true });
     window.addEventListener("resize", () => hideSystemHelpTooltip());
