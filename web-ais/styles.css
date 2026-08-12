@@ -10470,6 +10470,17 @@ body.card-window-moving {
   white-space: nowrap;
 }
 
+.employee-payment-group-actions .employee-payment-group-delete:not(:disabled) {
+  border-color: rgba(220, 38, 38, 0.3);
+  color: #b91c1c;
+}
+
+.employee-payment-group-actions .employee-payment-group-delete:not(:disabled):hover,
+.employee-payment-group-actions .employee-payment-group-delete:not(:disabled):focus-visible {
+  border-color: rgba(220, 38, 38, 0.52);
+  background: #fff1f2;
+}
+
 .employee-payment-group-count {
   align-self: center;
   min-width: 78px;
@@ -10867,7 +10878,7 @@ body.card-window-moving {
 }
 
 .employee-payment-actions-column {
-  width: 78px;
+  width: 80px;
 }
 
 .employee-payment-table tbody tr:hover td {
@@ -11009,8 +11020,21 @@ body.card-window-moving {
   margin: 0;
 }
 
+.employee-payment-table input.employee-payment-row-selector,
+.employee-payment-table .employee-payment-select-visible input[type="checkbox"] {
+  width: 14px;
+  min-width: 14px;
+  max-width: 14px;
+  height: 14px;
+  min-height: 14px;
+  max-height: 14px;
+  margin: 0;
+  padding: 0;
+  border-radius: 3px;
+}
+
 .employee-payment-delete-cell {
-  width: 104px;
+  width: 80px;
   text-align: center !important;
 }
 
@@ -11027,8 +11051,7 @@ body.card-window-moving {
 }
 
 .employee-payment-edit-button,
-.employee-payment-duplicate-button,
-.employee-payment-delete-button {
+.employee-payment-duplicate-button {
   display: inline-grid;
   place-items: center;
   flex: 0 0 auto;
@@ -11057,8 +11080,7 @@ body.card-window-moving {
 }
 
 .employee-payment-edit-button svg,
-.employee-payment-duplicate-button svg,
-.employee-payment-delete-button svg {
+.employee-payment-duplicate-button svg {
   width: 14px;
   height: 14px;
   fill: none;
@@ -11066,11 +11088,6 @@ body.card-window-moving {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.8;
-}
-
-.employee-payment-delete-button {
-  width: 20px;
-  height: 24px;
 }
 
 .employee-expense-editor-backdrop {

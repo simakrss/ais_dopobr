@@ -9,10 +9,18 @@
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.112",
+    version: "1.7.113",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.113",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В учёте выплат уменьшены флажки, убраны корзины из строк, а удаление выбранных выплат вынесено в отдельную групповую кнопку справа от кнопки применения даты.",
+        "Сведения о связанном слушателе выводятся непосредственно в поле «Комментарий». Перетаскивание строк снова доступно: при начале переноса таблица переходит из фильтра/сортировки в ручной порядок."
+      ]
+    },
     {
       version: "1.7.112",
       releasedAt: "2026-08-12",
@@ -1150,7 +1158,7 @@
     direction: "desc"
   });
   const EMPLOYEE_PAYMENT_TABLE_COLUMNS = Object.freeze([
-    { key: "actions", label: "Действия", className: "employee-payment-actions-column", defaultWidth: 104 },
+    { key: "actions", label: "Действия", className: "employee-payment-actions-column", defaultWidth: 80 },
     { key: "status", label: "Статус", className: "employee-payment-status-column", defaultWidth: 78, sortType: "text" },
     { key: "date", label: "Дата", className: "employee-payment-date-column", defaultWidth: 92, sortType: "date" },
     { key: "source", label: "Источник", className: "employee-payment-source-column", defaultWidth: 88, sortType: "text" },
@@ -14707,6 +14715,13 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function getEmployeePaymentDisplayComment(comment = "", studentDetails = "") {
+    return unique([comment, studentDetails]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean))
+      .join(" · ");
+  }
+
   function getEmployeePaymentOrderField(sourceType, source = {}) {
     if (sourceType === "partner") {
       const slot = String(source.__agentPaymentSlot || "due");
@@ -14743,13 +14758,13 @@ MAX - https://bizvmax.ru/zifra_plus
     return orders.length ? Math.max(...orders) + 10 : 0;
   }
 
-  function renderEmployeePaymentRowDragHandle(sourceType, sourceId, orderingDisabled = false) {
+  function renderEmployeePaymentRowDragHandle(sourceType, sourceId, resetsView = false) {
     const available = Boolean(sourceId);
-    const enabled = available && !orderingDisabled;
+    const enabled = available;
     const title = !available
       ? "Строку нельзя переместить"
-      : orderingDisabled
-        ? "Сбросьте фильтры и сортировку, чтобы изменить порядок строк"
+      : resetsView
+        ? "Перетаскивание включит ручной порядок и покажет все выплаты"
         : "Перетащите строку или используйте клавиши ↑ и ↓";
     return `
       <button
@@ -15013,6 +15028,22 @@ MAX - https://bizvmax.ru/zifra_plus
     syncEmployeePaymentSortHeader(section);
   }
 
+  function prepareEmployeePaymentManualOrdering(section) {
+    clearEmployeePaymentSortForManualOrder(section);
+    if (!employeePaymentFiltersAreActive()) return;
+    state.employeePaymentFilters = {
+      comment: "",
+      description: "",
+      source: "",
+      payment: "",
+      act: ""
+    };
+    section?.querySelectorAll("[data-employee-payment-filter]").forEach((control) => {
+      control.value = "";
+    });
+    applyEmployeePaymentFiltersToDom(section);
+  }
+
   function getEmployeePaymentActFilterValue(row = {}) {
     const status = String(row.actStatus || "").trim().toLocaleLowerCase("ru-RU");
     if (status === "получен") return "received";
@@ -15244,7 +15275,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const generalRows = accounting.generalEntries.map(({ expense, identity }) => ({
       sourceType: "general",
       sourceId: String(expense.id || identity || "").trim(),
-      details: String(expense.section || "").trim(),
+      details: "",
       ...normalizeEmployeePaymentSourceRow("general", expense)
     }));
     const partnerRows = accounting.partnerRows.map(({ student, source, sourceId, slot, amount, calculation }) => ({
@@ -15303,6 +15334,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <input data-employee-payment-group-paid type="date" value="${escapeAttr(todayIso())}" aria-label="Групповая дата оплаты">
           </label>
           <button class="ghost-button" data-action="apply-employee-payment-group-paid" type="button" disabled>Применить дату</button>
+          <button class="ghost-button employee-payment-group-delete" data-action="delete-selected-employee-payments" type="button" disabled>Удалить выбранные</button>
           <button class="ghost-button employee-payment-group-clear" data-action="clear-employee-payment-selection" type="button" disabled>Снять выбор</button>
         </div>
         <div class="employee-payment-table-wrap">
@@ -15353,8 +15385,9 @@ MAX - https://bizvmax.ru/zifra_plus
                 const amountReadOnly = Boolean(row.automaticAmount);
                 const deletable = editable && row.deletable !== false;
                 const sourceLabel = row.source || getEmployeePaymentDefaultSourceLabel(row.sourceType);
+                const displayComment = getEmployeePaymentDisplayComment(row.comment, row.details);
                 return `
-                  <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
+                  <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" data-payment-details="${escapeAttr(row.details)}" data-payment-deletable="${deletable ? "true" : "false"}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
                     <td class="employee-payment-delete-cell" data-employee-payment-column="actions">
                       <div class="employee-payment-row-actions">
                         <input
@@ -15380,27 +15413,6 @@ MAX - https://bizvmax.ru/zifra_plus
                               </svg>
                             </button>
                           ` : ""}
-                          ${deletable ? `
-                            <button
-                              class="payment-row-delete employee-payment-delete-button"
-                              data-action="delete-employee-payment-row"
-                              type="button"
-                              title="Удалить запись выплаты"
-                              aria-label="Удалить запись выплаты"
-                            >
-                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <path d="M3 6h18"></path>
-                                <path d="M8 6V4h8v2"></path>
-                                <path d="M6 6l1 15h10l1-15"></path>
-                                <path d="M10 11v6"></path>
-                                <path d="M14 11v6"></path>
-                              </svg>
-                            </button>
-                          ` : `
-                            <button class="payment-row-delete employee-payment-delete-button" type="button" title="Автоматическое начисление рассчитывается по поступлениям и не удаляется" aria-label="Автоматическое начисление нельзя удалить" disabled>
-                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path></svg>
-                            </button>
-                          `}
                         ` : "—"}
                       </div>
                     </td>
@@ -15416,9 +15428,8 @@ MAX - https://bizvmax.ru/zifra_plus
                         </select>
                       ` : `<strong>${escapeHtml(sourceLabel)}</strong>`}
                     </td>
-                    <td class="employee-payment-comment-cell" data-employee-payment-column="comment" title="${escapeAttr([row.comment, row.details].filter(Boolean).join(" · "))}">
-                      <input data-employee-payment-field="comment" value="${escapeAttr(row.comment)}" title="${escapeAttr(row.comment)}" aria-label="Комментарий к источнику" ${editable ? "" : "disabled"}>
-                      ${row.details ? `<small>${escapeHtml(row.details)}</small>` : ""}
+                    <td class="employee-payment-comment-cell" data-employee-payment-column="comment" title="${escapeAttr(displayComment)}">
+                      <input data-employee-payment-field="comment" value="${escapeAttr(displayComment)}" title="${escapeAttr(displayComment)}" aria-label="Комментарий к источнику" ${editable ? "" : "disabled"}>
                     </td>
                     <td class="employee-payment-basis-cell">
                       ${renderComboField({
@@ -15478,7 +15489,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ? String(sourceControl.value || row.dataset.paymentSource || "")
         : String(row.dataset.paymentSource || ""),
       source: String(sourceText || ""),
-      details: String(commentCell?.querySelector("small")?.textContent || ""),
+      details: String(row.dataset.paymentDetails || ""),
       order: Number(row.dataset.paymentOrder) || 0,
       date: String(dateControl?.value || ""),
       comment: String(commentControl?.value || ""),
@@ -15560,6 +15571,10 @@ MAX - https://bizvmax.ru/zifra_plus
     if (count) count.textContent = String(selectedRows.length);
     section.querySelectorAll("[data-action='apply-employee-payment-group-act'], [data-action='apply-employee-payment-group-paid'], [data-action='clear-employee-payment-selection']")
       .forEach((button) => { button.disabled = !selectedRows.length; });
+    const deleteButton = section.querySelector("[data-action='delete-selected-employee-payments']");
+    if (deleteButton instanceof HTMLButtonElement) {
+      deleteButton.disabled = !selectedRows.some((row) => row.dataset.paymentDeletable === "true");
+    }
     section.querySelector("[data-employee-payment-group-actions]")
       ?.classList.toggle("has-selection", Boolean(selectedRows.length));
   }
@@ -15591,7 +15606,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function applyEmployeePaymentGroupOperation(event, section) {
-    const button = event.target.closest("[data-action='apply-employee-payment-group-act'], [data-action='apply-employee-payment-group-paid'], [data-action='clear-employee-payment-selection']");
+    const button = event.target.closest("[data-action='apply-employee-payment-group-act'], [data-action='apply-employee-payment-group-paid'], [data-action='delete-selected-employee-payments'], [data-action='clear-employee-payment-selection']");
     if (!button || !section?.contains(button)) return;
     if (button.matches("[data-action='clear-employee-payment-selection']")) {
       clearEmployeePaymentSelection(section);
@@ -15599,6 +15614,54 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const selectedRows = getSelectedEmployeePaymentRows(section);
     if (!selectedRows.length) return;
+    if (button.matches("[data-action='delete-selected-employee-payments']")) {
+      const deletableRows = selectedRows.filter((row) => row.dataset.paymentDeletable === "true");
+      if (!deletableRows.length) return;
+      const skippedCount = selectedRows.length - deletableRows.length;
+      const confirmation = [
+        `Удалить выбранные записи выплат: ${deletableRows.length}?`,
+        "Связанные записи прямых и общих затрат также будут удалены.",
+        skippedCount ? `Автоматические начисления, которые нельзя удалить, будут пропущены: ${skippedCount}.` : ""
+      ].filter(Boolean).join("\n\n");
+      if (!window.confirm(confirmation)) return;
+      const draft = getEmployeePaymentAccountingDraft();
+      const auditFields = getEmployeePaymentAuditFields();
+      const changes = [];
+      let removedCount = 0;
+      deletableRows.forEach((row) => {
+        const sourceType = String(row.dataset.paymentSource || "");
+        const sourceId = String(row.dataset.paymentSourceId || "");
+        const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
+        if (!source) return;
+        const before = getEmployeePaymentEditorAuditRecord(sourceType, source);
+        const removed = removeEmployeePaymentSourceRecord(sourceType, sourceId);
+        if (!removed) return;
+        removedCount += 1;
+        const rowLabel = before.description || sourceId;
+        buildAuditChanges(before, {}, auditFields).forEach((change) => changes.push({
+          ...change,
+          label: `${rowLabel}: ${change.label}`
+        }));
+      });
+      if (!removedCount) {
+        alert("Не удалось удалить выбранные выплаты.");
+        return;
+      }
+      addEmployeePaymentAudit(
+        "Удалены выбранные выплаты",
+        "Договоры сотрудников",
+        `${draft.name || "Сотрудник"}: удалено выплат — ${removedCount}`,
+        {
+          entityType: "contracts",
+          entityId: String(draft.id || state.modal?.id || ""),
+          entityLabel: draft.name || String(draft.id || ""),
+          changes: changes.slice(0, AUDIT_CLIENT_MAX_CHANGES),
+          source: "employee-payment-group-accounting"
+        }
+      );
+      commitEmployeePaymentAccountingChange(draft, {}, true);
+      return;
+    }
     const operation = button.matches("[data-action='apply-employee-payment-group-act']") ? "act" : "paid";
     const actState = String(section.querySelector("[data-employee-payment-group-act]")?.value || "sent");
     const paidDate = String(section.querySelector("[data-employee-payment-group-paid]")?.value || "");
@@ -15674,11 +15737,11 @@ MAX - https://bizvmax.ru/zifra_plus
       const handle = row.querySelector(".employee-payment-row-drag-handle");
       if (handle instanceof HTMLButtonElement) {
         const available = Boolean(String(row.dataset.paymentSourceId || "").trim());
-        handle.disabled = !available || active || sortActive;
+        handle.disabled = !available;
         handle.title = !available
           ? "Строку нельзя переместить"
           : active || sortActive
-            ? "Сбросьте фильтры и сортировку, чтобы изменить порядок строк"
+            ? "Перетаскивание включит ручной порядок и покажет все выплаты"
             : "Перетащите строку или используйте клавиши ↑ и ↓";
       }
     });
@@ -23391,7 +23454,6 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
     employeePaymentAccounting?.addEventListener("click", duplicateEmployeePaymentAccountingRow);
-    employeePaymentAccounting?.addEventListener("click", deleteEmployeePaymentAccountingRow);
     employeePaymentAccounting?.addEventListener("click", openEmployeeExpenseEditor);
     employeePaymentAccounting?.addEventListener("click", (event) => applyEmployeePaymentGroupOperation(event, employeePaymentAccounting));
     const employeePaymentFilters = employeePaymentAccounting?.querySelector("[data-employee-payment-filters]");
@@ -24956,8 +25018,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (sourceInput instanceof HTMLSelectElement) sourceInput.value = sourceType;
     const commentInput = row.querySelector('[data-employee-payment-field="comment"]');
     if (commentInput instanceof HTMLInputElement) {
-      commentInput.value = values.comment;
-      commentInput.title = values.comment;
+      const displayComment = getEmployeePaymentDisplayComment(values.comment, row.dataset.paymentDetails);
+      commentInput.value = displayComment;
+      commentInput.title = displayComment;
     }
     const recommendation = row.querySelector('[data-employee-payment-field="recommendation"]');
     if (recommendation instanceof HTMLInputElement) {
@@ -25275,6 +25338,7 @@ MAX - https://bizvmax.ru/zifra_plus
         event.preventDefault();
         return;
       }
+      prepareEmployeePaymentManualOrdering(section);
       tbody.dataset.originalEmployeePaymentOrder = [...tbody.querySelectorAll("[data-employee-payment-row]")]
         .map((item) => `${item.dataset.paymentSource || ""}:${item.dataset.paymentSourceId || ""}`)
         .join("|");
@@ -25319,6 +25383,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const row = handle?.closest("[data-employee-payment-row]");
       if (!handle || !row) return;
       event.preventDefault();
+      prepareEmployeePaymentManualOrdering(section);
       const moved = moveEmployeePaymentRowByOne(
         tbody,
         row,
@@ -25467,58 +25532,6 @@ MAX - https://bizvmax.ru/zifra_plus
       return contract;
     }
     return null;
-  }
-
-  function deleteEmployeePaymentAccountingRow(event) {
-    const button = event.target.closest("[data-action='delete-employee-payment-row']");
-    const row = button?.closest("[data-employee-payment-row]");
-    if (!button || !row) return;
-    const sourceType = String(row.dataset.paymentSource || "");
-    const sourceId = String(row.dataset.paymentSourceId || "");
-    const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
-    if (!source) {
-      alert("Связанная запись выплаты уже не найдена.");
-      return;
-    }
-    const draft = getEmployeePaymentAccountingDraft();
-    const sourceValues = getEmployeePaymentSourceValues(sourceType, source);
-    const description = String(sourceValues.description || "Выплата").trim();
-    const sourceLabel = sourceType === "direct"
-      ? "Прямые затраты"
-      : sourceType === "general"
-        ? "Общие затраты"
-        : sourceType === "partner"
-          ? "данные слушателя"
-          : "реестр договоров";
-    const confirmed = window.confirm(
-      `Удалить запись выплаты «${description}» на сумму ${money(sourceValues.amount)}?\n\n` +
-      `${sourceType === "direct" || sourceType === "general"
-        ? `Связанная запись будет также удалена из раздела «${sourceLabel}».`
-        : `Сумма и статусы выплаты будут очищены в источнике «${sourceLabel}».`}`
-    );
-    if (!confirmed) return;
-    const removed = removeEmployeePaymentSourceRecord(sourceType, sourceId);
-    if (!removed) {
-      alert("Не удалось удалить связанную запись выплаты.");
-      return;
-    }
-    addEmployeePaymentAudit(
-      "Удалена выплата",
-      "Договоры сотрудников",
-      `${draft.name || "Сотрудник"}: ${description}, ${money(sourceValues.amount)}`,
-      {
-        entityType: "contracts",
-        entityId: String(draft.id || state.modal?.id || ""),
-        entityLabel: draft.name || String(draft.id || ""),
-        changes: buildAuditChanges(
-          getEmployeePaymentEditorAuditRecord(sourceType, removed),
-          {},
-          getEmployeePaymentAuditFields()
-        ),
-        source: "employee-payment-accounting"
-      }
-    );
-    commitEmployeePaymentAccountingChange(draft, {}, true);
   }
 
   function addEmployeePaymentAccountingRow(sourceType) {
