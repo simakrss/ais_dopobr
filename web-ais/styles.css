@@ -10758,6 +10758,10 @@ body.card-window-moving {
   white-space: nowrap;
 }
 
+.employee-payment-comment-cell > small {
+  max-width: 100%;
+}
+
 .employee-payment-check-cell {
   text-align: center !important;
 }

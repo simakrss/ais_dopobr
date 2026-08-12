@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.94",
+    version: "1.7.95",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.95",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Сведения о связанном слушателе, UID и другие пояснения к источнику выплаты перенесены из колонки «Источник» в колонку «Комментарий»; поиск и сортировка комментариев учитывают эти сведения."
+      ]
+    },
     {
       version: "1.7.94",
       releasedAt: "2026-08-12",
@@ -13875,6 +13882,9 @@ MAX - https://bizvmax.ru/zifra_plus
       if (rawAmount === "" || rawAmount === null || rawAmount === undefined) return Number.NaN;
       return Number(rawAmount);
     }
+    if (key === "comment") {
+      return [row.comment, row.details].map((value) => String(value || "").trim()).filter(Boolean).join(" · ");
+    }
     if (key === "recommendation" || key === "act") return Boolean(row[key]);
     return String(row[key] || "").trim();
   }
@@ -14078,7 +14088,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (ignoredFilter !== "payment" && filters.payment && getEmployeePaymentStatusFilterValue(row) !== filters.payment) return false;
     if (ignoredFilter !== "act" && filters.act && getEmployeePaymentActFilterValue(row) !== filters.act) return false;
     const commentTokens = normalizeEmployeePaymentFilterText(filters.comment).split(" ").filter(Boolean);
-    const commentText = normalizeEmployeePaymentFilterText(row.comment);
+    const commentText = normalizeEmployeePaymentFilterText([row.comment, row.details].filter(Boolean).join(" "));
     const descriptionText = normalizeEmployeePaymentFilterText(row.description);
     if (ignoredFilter !== "comment" && !commentTokens.every((token) => commentText.includes(token))) return false;
     if (
@@ -14409,16 +14419,18 @@ MAX - https://bizvmax.ru/zifra_plus
                     <td class="employee-payment-date-cell">
                       <input data-employee-payment-field="date" type="date" value="${escapeAttr(row.date)}" ${row.dateReadOnly ? 'readonly title="Дата проведённой выплаты изменяется в колонке «Оплачено»"' : (editable ? "" : "disabled")}>
                     </td>
-                    <td data-employee-payment-column="source" title="${escapeAttr([sourceLabel, row.details].filter(Boolean).join(" · "))}">
+                    <td data-employee-payment-column="source" title="${escapeAttr(sourceLabel)}">
                       ${isExpenseSource ? `
                         <select data-employee-payment-field="source" aria-label="Источник затраты" title="Источник затраты" ${editable ? "" : "disabled"}>
                           <option value="direct" ${row.sourceType === "direct" ? "selected" : ""}>Прямые затраты</option>
                           <option value="general" ${row.sourceType === "general" ? "selected" : ""}>Общие затраты</option>
                         </select>
                       ` : `<strong>${escapeHtml(sourceLabel)}</strong>`}
+                    </td>
+                    <td class="employee-payment-comment-cell" data-employee-payment-column="comment" title="${escapeAttr([row.comment, row.details].filter(Boolean).join(" · "))}">
+                      <input data-employee-payment-field="comment" value="${escapeAttr(row.comment)}" title="${escapeAttr(row.comment)}" aria-label="Комментарий к источнику" ${editable ? "" : "disabled"}>
                       ${row.details ? `<small>${escapeHtml(row.details)}</small>` : ""}
                     </td>
-                    <td><input data-employee-payment-field="comment" value="${escapeAttr(row.comment)}" title="${escapeAttr(row.comment)}" aria-label="Комментарий к источнику" ${editable ? "" : "disabled"}></td>
                     <td class="employee-payment-basis-cell">
                       ${renderComboField({
                         name: "employeePaymentBasis",
@@ -14468,6 +14480,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const actControl = field("act");
     const actStatusControl = field("actStatus");
     const sourceCell = row.querySelector('[data-employee-payment-column="source"]');
+    const commentCell = row.querySelector('[data-employee-payment-column="comment"]');
     const sourceText = sourceControl instanceof HTMLSelectElement
       ? sourceControl.selectedOptions[0]?.textContent
       : sourceCell?.querySelector("strong")?.textContent;
@@ -14476,7 +14489,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ? String(sourceControl.value || row.dataset.paymentSource || "")
         : String(row.dataset.paymentSource || ""),
       source: String(sourceText || ""),
-      details: String(sourceCell?.querySelector("small")?.textContent || ""),
+      details: String(commentCell?.querySelector("small")?.textContent || ""),
       order: Number(row.dataset.paymentOrder) || 0,
       date: String(dateControl?.value || ""),
       comment: String(commentControl?.value || ""),
