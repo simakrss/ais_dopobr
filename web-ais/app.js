@@ -9,10 +9,18 @@
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.115",
+    version: "1.7.116",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.116",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Исправлены сценарии запуска и остановки локальной АИС: все BAT/CMD приведены к формату Windows CRLF, поэтому cmd.exe корректно обрабатывает пути и сообщения с кириллицей.",
+        "Добавлена автоматическая диагностическая проверка сценариев запуска и правило, сохраняющее корректные окончания строк при обновлении через Git."
+      ]
+    },
     {
       version: "1.7.115",
       releasedAt: "2026-08-12",

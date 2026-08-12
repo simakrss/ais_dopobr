@@ -15,6 +15,7 @@ if exist "C:\Program Files\nodejs\node.exe" set "AIS_NODE=C:\Program Files\nodej
 if not exist "%AIS_NODE%" goto :node_error
 
 :run
+if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" goto :validation_ok
 call :log Запуск локальных серверов АИС.
 "%AIS_NODE%" ".\scripts\start-lan-system.js" %*
 set "AIS_EXIT_CODE=%ERRORLEVEL%"
@@ -27,6 +28,11 @@ popd
 echo.
 pause
 exit /b %AIS_EXIT_CODE%
+
+:validation_ok
+call :log Проверка сценария запуска АИС выполнена успешно.
+popd
+exit /b 0
 
 :node_error
 call :log ОШИБКА: Node.js не найден. Установите Node.js или добавьте node.exe в PATH.
