@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.134",
+    version: "1.7.135",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.135",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В виджете ФРДО на рабочем столе отдельно показывается количество документов с просроченным нормативным сроком выгрузки.",
+        "Кнопка загрузки документов из почты перенесена на вкладку документов перед распознаванием из папки и получила понятную подпись и значок загрузки письма."
+      ]
+    },
     {
       version: "1.7.134",
       releasedAt: "2026-08-12",
@@ -7501,6 +7509,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const pendingIssuedDocumentDays = pendingIssuedDocuments
       .map((row) => row.remainingDays)
       .filter((days) => Number.isFinite(days));
+    const overdueIssuedDocumentsCount = pendingIssuedDocuments
+      .filter((row) => Number.isFinite(row.remainingDays) && row.remainingDays < 0)
+      .length;
     const nearestFrdoDays = pendingIssuedDocumentDays.length
       ? Math.min(...pendingIssuedDocumentDays)
       : null;
@@ -7541,6 +7552,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <span class="dashboard-frdo-widget-count">
           <strong>${pendingIssuedDocuments.length}</strong>
           <small>документов</small>
+          <small class="dashboard-frdo-widget-overdue ${overdueIssuedDocumentsCount ? "has-overdue" : ""}">Просрочено: <strong>${overdueIssuedDocumentsCount}</strong></small>
         </span>
         <span class="dashboard-frdo-widget-deadline">
           <strong>${escapeHtml(frdoDeadlineLabel)}</strong>
@@ -18066,6 +18078,7 @@ MAX - https://bizvmax.ru/zifra_plus
           >
             ${renderOrdersSdoIcon("history")}
           </button>
+          ${isContract ? "" : renderStudentMailboxDocumentsButton(record, "student-document-recognition-button", true)}
           <button
             class="ghost-button student-document-recognition-button"
             data-action="recognize-${actionPrefix}-documents"
@@ -18307,6 +18320,7 @@ MAX - https://bizvmax.ru/zifra_plus
       laptop: '<rect x="5" y="4" width="14" height="11" rx="1.5"></rect><path d="M3 18h18"></path><path d="m5 15-2 3"></path><path d="m19 15 2 3"></path><path d="M9 18h6"></path>',
       lock: '<rect x="5" y="10" width="14" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="M12 14v3"></path>',
       mail: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m4 7 8 6 8-6"></path>',
+      mailDownload: '<rect x="3" y="4" width="18" height="12" rx="2"></rect><path d="m4 6 8 6 8-6"></path><path d="M12 13v8"></path><path d="m9 18 3 3 3-3"></path>',
       user: '<circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path>',
       wand: '<path d="m4 20 11-11"></path><path d="m13 7 4 4"></path><path d="m5.5 3 .8 1.7L8 5.5l-1.7.8L5.5 8l-.8-1.7L3 5.5l1.7-.8L5.5 3Z"></path><path d="m18.5 13 .8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8.8-1.7Z"></path><path d="m19 2 .5 1 .9.5-.9.5-.5 1-.5-1-.9-.5.9-.5.5-1Z"></path>',
       zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"></path>'
@@ -19363,8 +19377,6 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderStudentDocumentsFolderLink(record, extraClass = "", entityType = "student") {
     const isContract = entityType === "contract";
-    const showMailboxButton = !isContract
-      && String(extraClass || "").split(/\s+/).includes("student-card-header-action");
     const personLabel = isContract ? "сотрудника" : "слушателя";
     const documentsFolder = isContract ? getContractDocumentsFolder(record) : getStudentYandexDocumentsFolder(record);
     const folderUrl = getDocumentsFolderUrl(documentsFolder, record);
@@ -19389,23 +19401,27 @@ MAX - https://bizvmax.ru/zifra_plus
           <path d="M3 9h18"></path>
         </svg>
       </a>
-      ${showMailboxButton ? `
-        <button
-          class="icon-button student-mailbox-documents-button ${escapeAttr(extraClass)}"
-          data-action="open-student-mailbox-documents"
-          data-student-id="${escapeAttr(record?.id || "")}"
-          data-student-name="${escapeAttr(record?.name || "")}"
-          data-student-email="${escapeAttr(record?.email || "")}"
-          data-student-documents-folder="${escapeAttr(documentsFolder)}"
-          type="button"
-          title="Загрузить письма и вложения из электронной почты"
-          aria-label="Загрузить письма и вложения из электронной почты"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M3 5h18v14H3z"></path><path d="m3 6 9 7 9-7"></path><path d="M12 10v8"></path><path d="m9 15 3 3 3-3"></path>
-          </svg>
-        </button>
-      ` : ""}
+    `;
+  }
+
+  function renderStudentMailboxDocumentsButton(record, extraClass = "", showLabel = false) {
+    const documentsFolder = getStudentYandexDocumentsFolder(record);
+    const title = "Загрузить документы из писем электронной почты";
+    return `
+      <button
+        class="ghost-button student-mailbox-documents-button ${escapeAttr(extraClass)}"
+        data-action="open-student-mailbox-documents"
+        data-student-id="${escapeAttr(record?.id || "")}"
+        data-student-name="${escapeAttr(record?.name || "")}"
+        data-student-email="${escapeAttr(record?.email || "")}"
+        data-student-documents-folder="${escapeAttr(documentsFolder)}"
+        type="button"
+        title="${escapeAttr(title)}"
+        aria-label="${escapeAttr(title)}"
+      >
+        ${renderOrdersSdoIcon("mailDownload")}
+        ${showLabel ? "<span>Загрузить из почты</span>" : ""}
+      </button>
     `;
   }
 

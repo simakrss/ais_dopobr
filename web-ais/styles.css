@@ -1832,6 +1832,22 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   color: var(--teal);
 }
 
+.dashboard-frdo-widget-overdue {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.dashboard-frdo-widget-overdue > strong {
+  color: inherit;
+  font-size: inherit;
+}
+
+.dashboard-frdo-widget-overdue.has-overdue {
+  color: var(--red);
+  font-weight: 700;
+}
+
 .dashboard-frdo-widget.is-warning .dashboard-frdo-widget-count > strong {
   color: #a16207;
 }
