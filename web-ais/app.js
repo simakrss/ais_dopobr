@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.92",
+    version: "1.7.93",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.93",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Удаление одного или нескольких слушателей теперь каскадно удаляет связанные прямые затраты и поступления денег; затраты больше не переносятся в непривязанные, агентские итоги сотрудников пересчитываются, а состав удалённых финансовых операций записывается в журнал."
+      ]
+    },
     {
       version: "1.7.92",
       releasedAt: "2026-08-12",
@@ -5203,15 +5210,76 @@ MAX - https://bizvmax.ru/zifra_plus
     return { unlinkedDirectExpenses, linkedDirectExpenseCount };
   }
 
-  function releaseStudentDirectExpenses(students = []) {
-    const released = students.flatMap((student) => (
-      Array.isArray(student?.directExpenses) ? student.directExpenses : []
+  function removeStudentFinancialRecords(students = []) {
+    const removedStudents = (Array.isArray(students) ? students : [])
+      .filter((student) => student && typeof student === "object");
+    const removedIds = new Set(removedStudents
+      .map((student) => String(student.id || "").trim())
+      .filter(Boolean));
+    const removedSourceIds = new Set(removedStudents
+      .map((student) => String(student.id || student.uid || "").trim())
+      .filter(Boolean));
+    const removedUids = new Set(removedStudents
+      .map((student) => String(student.uid || "").trim())
+      .filter(Boolean));
+    const removedStudentObjects = new Set(removedStudents);
+    const retainedUids = new Set((state.data.collections.students || [])
+      .filter((student) => (
+        !removedStudentObjects.has(student)
+        && !removedIds.has(String(student?.id || "").trim())
+      ))
+      .map((student) => String(student?.uid || "").trim())
+      .filter(Boolean));
+    const exclusivelyRemovedUids = new Set([...removedUids]
+      .filter((uid) => !retainedUids.has(uid)));
+    const linkedDirectExpenses = removedStudents.flatMap((student) => (
+      Array.isArray(student.directExpenses) ? student.directExpenses : []
     ));
-    if (!released.length) return;
-    state.data.collections.directExpenses = [
-      ...(state.data.collections.directExpenses || []),
-      ...released
-    ];
+    const globalDirectExpenses = state.data.collections.directExpenses || [];
+    const removedGlobalDirectExpenses = globalDirectExpenses.filter((expense) => (
+      exclusivelyRemovedUids.has(String(expense?.uid || "").trim())
+    ));
+    if (removedGlobalDirectExpenses.length) {
+      const removedExpenseObjects = new Set(removedGlobalDirectExpenses);
+      state.data.collections.directExpenses = globalDirectExpenses
+        .filter((expense) => !removedExpenseObjects.has(expense));
+    }
+    const receiptRows = getFinanceReceiptRows()
+      .filter((row) => removedSourceIds.has(String(row.sourceId || "").trim()));
+    const directExpenses = [...linkedDirectExpenses, ...removedGlobalDirectExpenses];
+    return {
+      directExpenseCount: directExpenses.length,
+      directExpenseAmount: Math.round(directExpenses
+        .reduce((sum, expense) => sum + Number(expense?.amount || 0), 0) * 100) / 100,
+      receiptCount: receiptRows.length,
+      receiptAmount: Math.round(receiptRows
+        .reduce((sum, row) => sum + Number(row.amount || 0), 0) * 100) / 100
+    };
+  }
+
+  function getStudentFinancialCascadeAuditChanges(summary = {}) {
+    const values = summary && typeof summary === "object" ? summary : {};
+    return [
+      Number(values.directExpenseCount) > 0 ? {
+        field: "relatedDirectExpenses",
+        label: "Связанные затраты",
+        before: `${Number(values.directExpenseCount)}; ${money(values.directExpenseAmount)}`,
+        after: "∅"
+      } : null,
+      Number(values.receiptCount) > 0 ? {
+        field: "relatedReceipts",
+        label: "Поступления денег",
+        before: `${Number(values.receiptCount)}; ${money(values.receiptAmount)}`,
+        after: "∅"
+      } : null
+    ].filter(Boolean);
+  }
+
+  function getStudentFinancialCascadeDetails(summary = {}) {
+    return [
+      `затраты: ${Number(summary.directExpenseCount) || 0} (${money(summary.directExpenseAmount || 0)})`,
+      `поступления: ${Number(summary.receiptCount) || 0} (${money(summary.receiptAmount || 0)})`
+    ].join("; ");
   }
 
   function getAllDirectExpenses(collections = state.data.collections) {
@@ -31029,7 +31097,10 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (!await acquireRecordLock(recordLockEntityType(configId), id)) return;
     const deleteLock = activeRecordLock;
-    if (!confirm("Удалить запись?")) {
+    const deleteQuestion = configId === "students"
+      ? "Удалить слушателя? Связанные с ним затраты и поступления денег также будут удалены."
+      : "Удалить запись?";
+    if (!confirm(deleteQuestion)) {
       await releaseRecordLock(deleteLock);
       return;
     }
@@ -31042,16 +31113,27 @@ MAX - https://bizvmax.ru/zifra_plus
         return;
       }
     }
-    if (configId === "students") releaseStudentDirectExpenses([record]);
+    const financialCascade = configId === "students"
+      ? removeStudentFinancialRecords([record])
+      : null;
     state.data.collections[config.collection] = rows.filter((row) => (
       String(row?.id || "").trim() !== normalizedId
     ));
+    if (configId === "students") {
+      refreshContractPaymentAccountingForCollections(state.data.collections);
+    }
     const entityLabel = record.name || record.contractNo || record.code || record.itemType || normalizedId;
-    addAudit("Удалена запись", config.title, entityLabel, {
+    const auditDetails = financialCascade
+      ? `${entityLabel}; ${getStudentFinancialCascadeDetails(financialCascade)}`
+      : entityLabel;
+    addAudit("Удалена запись", config.title, auditDetails, {
       entityType: config.collection,
       entityId: normalizedId,
       entityLabel,
-      changes: buildAuditChanges(record, {}, configId === "students" ? studentAllFields : config.fields)
+      changes: [
+        ...getStudentFinancialCascadeAuditChanges(financialCascade),
+        ...buildAuditChanges(record, {}, configId === "students" ? studentAllFields : config.fields)
+      ]
     });
     persist();
     const generation = sharedStateChangeGeneration;
@@ -31094,7 +31176,10 @@ MAX - https://bizvmax.ru/zifra_plus
         return;
       }
     }
-    if (!confirm(`Удалить выбранные записи: ${selected.length}?`)) return;
+    const bulkDeleteQuestion = configId === "students"
+      ? `Удалить выбранных слушателей: ${selected.length}? Связанные с ними затраты и поступления денег также будут удалены.`
+      : `Удалить выбранные записи: ${selected.length}?`;
+    if (!confirm(bulkDeleteQuestion)) return;
     const selectedSet = new Set(selected);
     if (configId === "documentTemplates") {
       const documents = getDocumentTemplates();
@@ -31124,6 +31209,7 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
       return;
     }
+    let financialCascade = null;
     if (["students", "contracts"].includes(configId)) {
       try {
         for (const record of selectedRecords) {
@@ -31133,14 +31219,21 @@ MAX - https://bizvmax.ru/zifra_plus
         alert("Записи не удалены: не удалось удалить фото из хранилища. " + error.message);
         return;
       }
-      if (configId === "students") releaseStudentDirectExpenses(selectedRecords);
+      if (configId === "students") financialCascade = removeStudentFinancialRecords(selectedRecords);
     }
     state.data.collections[config.collection] = (state.data.collections[config.collection] || [])
       .filter((row) => !selectedSet.has(String(row?.id || "").trim()));
+    if (configId === "students") {
+      refreshContractPaymentAccountingForCollections(state.data.collections);
+    }
     setSelected(configId, []);
-    addAudit("Массовое удаление", config.title, `${selected.length} записей`, {
+    const bulkAuditDetails = financialCascade
+      ? `${selected.length} записей; ${getStudentFinancialCascadeDetails(financialCascade)}`
+      : `${selected.length} записей`;
+    addAudit("Массовое удаление", config.title, bulkAuditDetails, {
       entityType: config.collection,
-      entityId: selected.join(", ")
+      entityId: selected.join(", "),
+      changes: getStudentFinancialCascadeAuditChanges(financialCascade)
     });
     persist();
     const generation = sharedStateChangeGeneration;
