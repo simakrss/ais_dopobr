@@ -803,6 +803,17 @@ body.is-session-expired {
   scrollbar-width: thin;
 }
 
+.admin-database-subtab-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: end;
+  gap: 8px;
+}
+
+.admin-database-subtab-actions {
+  padding: 0 0 4px;
+}
+
 .admin-database-subtab-button {
   flex: 0 0 auto;
   min-height: 34px;
@@ -865,7 +876,7 @@ body.is-session-expired {
 }
 
 .admin-connection-panel.is-email-tab .admin-database-settings-head,
-.admin-connection-panel.is-email-tab .admin-database-subtabs,
+.admin-connection-panel.is-email-tab .admin-database-subtab-row,
 .admin-connection-panel.is-email-tab .admin-database-tab-content,
 .admin-connection-panel.is-email-tab .admin-database-copy,
 .admin-connection-panel.is-email-tab .admin-database-history {
@@ -7973,6 +7984,15 @@ body.card-window-moving {
 }
 
 @media (max-width: 900px) {
+  .admin-database-subtab-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-database-subtab-actions {
+    grid-row: 1;
+    justify-self: end;
+  }
+
   .document-path-settings-layout {
     grid-template-columns: 1fr;
   }

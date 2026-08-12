@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.84",
+    version: "1.7.85",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.85",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Из вкладки «Подключение к базе» убраны дублирующие заголовки «Администрирование / Подключение к базе» и «Настройки подключений»."
+      ]
+    },
     {
       version: "1.7.84",
       releasedAt: "2026-08-12",
@@ -12317,17 +12324,33 @@ MAX - https://bizvmax.ru/zifra_plus
         role="tabpanel"
         ${!["database", "email"].includes(adminTab) ? "hidden" : ""}
       >
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Администрирование</p>
-            <h2>${adminTab === "email" ? "Электронная почта" : "Подключение к базе"}</h2>
+        ${adminTab === "email" ? `
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Администрирование</p>
+              <h2>Электронная почта</h2>
+            </div>
           </div>
-        </div>
+        ` : ""}
           <div class="admin-database-settings">
             <form class="sdo-settings-form" data-action="save-student-database-settings" novalidate>
-              <div class="admin-database-settings-head">
-                <h3>Настройки подключений</h3>
-                <div class="sdo-settings-actions admin-database-actions">
+              <div class="admin-database-subtab-row">
+                <nav class="admin-database-subtabs" role="tablist" aria-label="Подключения к базам">
+                  ${adminDatabaseTabs.map((tab) => `
+                    <button
+                      id="admin-database-tab-${escapeAttr(tab.id)}"
+                      class="admin-database-subtab-button ${adminDatabaseTab === tab.id ? "is-active" : ""}"
+                      data-action="switch-admin-database-tab"
+                      data-admin-database-tab="${escapeAttr(tab.id)}"
+                      type="button"
+                      role="tab"
+                      tabindex="${adminDatabaseTab === tab.id ? "0" : "-1"}"
+                      aria-selected="${adminDatabaseTab === tab.id ? "true" : "false"}"
+                      aria-controls="admin-database-panel-${escapeAttr(tab.id)}"
+                    >${escapeHtml(tab.label)}</button>
+                  `).join("")}
+                </nav>
+                <div class="sdo-settings-actions admin-database-actions admin-database-subtab-actions">
                   <button
                     class="primary-button icon-only admin-save-connection-button ${state.adminSettingsDirty ? "is-unsaved" : ""}"
                     type="submit"
@@ -12342,21 +12365,6 @@ MAX - https://bizvmax.ru/zifra_plus
                   </button>
                 </div>
               </div>
-              <nav class="admin-database-subtabs" role="tablist" aria-label="Подключения к базам">
-                ${adminDatabaseTabs.map((tab) => `
-                  <button
-                    id="admin-database-tab-${escapeAttr(tab.id)}"
-                    class="admin-database-subtab-button ${adminDatabaseTab === tab.id ? "is-active" : ""}"
-                    data-action="switch-admin-database-tab"
-                    data-admin-database-tab="${escapeAttr(tab.id)}"
-                    type="button"
-                    role="tab"
-                    tabindex="${adminDatabaseTab === tab.id ? "0" : "-1"}"
-                    aria-selected="${adminDatabaseTab === tab.id ? "true" : "false"}"
-                    aria-controls="admin-database-panel-${escapeAttr(tab.id)}"
-                  >${escapeHtml(tab.label)}</button>
-                `).join("")}
-              </nav>
               <div class="sdo-settings-fields">
                 <div class="admin-database-tab-content">
                 <section
