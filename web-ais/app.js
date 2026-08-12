@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.86",
+    version: "1.7.87",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.87",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В карточке программы кнопка «Сохранить» теперь расположена перед кнопкой «Отмена»."
+      ]
+    },
     {
       version: "1.7.86",
       releasedAt: "2026-08-12",
@@ -14944,8 +14951,8 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${renderCardRecordLockStatus(record || {})}
               </div>
               <div class="modal-head-actions">
-                <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
                 <button class="primary-button" type="submit">Сохранить</button>
+                <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
                 <div class="student-card-nav program-card-nav" aria-label="Переход между карточками программ">
                   <button class="icon-button student-card-nav-button" data-action="navigate-program-card" data-direction="-1" type="button" title="Предыдущая программа" aria-label="Предыдущая программа" ${navigation.hasPrev ? "" : "disabled"}>
                     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
