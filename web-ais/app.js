@@ -9,10 +9,17 @@
   });
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.104",
+    version: "1.7.105",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.105",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В фильтр периода импорта заявок добавлен вариант «За всё время», охватывающий всю доступную историю интернет-магазина и почтовых заявок InSales."
+      ]
+    },
     {
       version: "1.7.104",
       releasedAt: "2026-08-12",
@@ -7995,6 +8002,13 @@ MAX - https://bizvmax.ru/zifra_plus
     return { dateFrom: format(dateFrom), dateTo: format(dateTo) };
   }
 
+  function getStudentApplicationsAllTimeDates(referenceDate = new Date()) {
+    return {
+      dateFrom: "1970-01-01",
+      dateTo: getStudentApplicationsDefaultDates(0, referenceDate).dateTo
+    };
+  }
+
   function openStudentApplicationsImport() {
     const dates = getStudentApplicationsDefaultDates(30);
     state.studentApplicationsImport = {
@@ -8529,6 +8543,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <label>
                 <span>Период импорта</span>
                 <select name="period">
+                  <option value="all" ${filters.period === "all" ? "selected" : ""}>За всё время</option>
                   <option value="7" ${filters.period === "7" ? "selected" : ""}>За последние 7 дней</option>
                   <option value="30" ${filters.period === "30" ? "selected" : ""}>За последние 30 дней</option>
                   <option value="90" ${filters.period === "90" ? "selected" : ""}>За последние 90 дней</option>
@@ -8537,11 +8552,11 @@ MAX - https://bizvmax.ru/zifra_plus
               </label>
               <label>
                 <span>Дата с</span>
-                <input name="dateFrom" type="date" value="${escapeAttr(filters.dateFrom)}" required>
+                <input name="dateFrom" type="date" value="${escapeAttr(filters.dateFrom)}" ${filters.period === "all" ? "disabled" : ""} required>
               </label>
               <label>
                 <span>Дата по</span>
-                <input name="dateTo" type="date" value="${escapeAttr(filters.dateTo)}" required>
+                <input name="dateTo" type="date" value="${escapeAttr(filters.dateTo)}" ${filters.period === "all" ? "disabled" : ""} required>
               </label>
               <label class="student-applications-paid-filter">
                 <input name="onlyPaid" type="checkbox" ${filters.onlyPaid ? "checked" : ""}>
@@ -8721,7 +8736,12 @@ MAX - https://bizvmax.ru/zifra_plus
   function updateStudentApplicationsPeriod(period) {
     const value = String(period || "custom");
     state.studentApplicationsImport.filters.period = value;
-    if (value !== "custom") {
+    if (value === "all") {
+      Object.assign(
+        state.studentApplicationsImport.filters,
+        getStudentApplicationsAllTimeDates()
+      );
+    } else if (value !== "custom") {
       Object.assign(
         state.studentApplicationsImport.filters,
         getStudentApplicationsDefaultDates(Number(value) || 30)
