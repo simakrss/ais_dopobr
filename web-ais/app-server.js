@@ -52,6 +52,7 @@ const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока �
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST = "imap.timeweb.ru";
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_SMTP_HOST = "smtp.timeweb.ru";
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN = "mail@edu-plus.ru";
+const DEFAULT_WOOCOMMERCE_EMAIL_LOGIN = "mail@zifra-plus.ru";
 const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
 let serverSettings = {};
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
@@ -776,10 +777,10 @@ function migrateStudentApplicationsMailboxSettings(settings = {}) {
     ));
     if (!currentAlreadyAdditional) {
       documentMailboxes.push({
-        id: currentLogin.toLowerCase() === "mail@zifra-plus.ru"
+        id: currentLogin.toLowerCase() === DEFAULT_WOOCOMMERCE_EMAIL_LOGIN
           ? "student-documents-zifra-plus"
           : normalizeMailboxId(`student-documents-${currentLogin}`, "student-documents-previous-primary"),
-        label: `Дополнительный ящик · ${currentLogin}`,
+        label: getStudentMailboxRoleLabel(currentLogin, `Дополнительный ящик · ${currentLogin}`),
         host: String(next.studentApplicationsEmailHost || DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST).trim(),
         port: normalizeMailboxPort(next.studentApplicationsEmailPort, 993),
         secure: next.studentApplicationsEmailSecure !== false,
@@ -821,6 +822,14 @@ function migrateStudentApplicationsMailboxSettings(settings = {}) {
     next[key] = value;
     changed = true;
   });
+  if (Array.isArray(next.studentDocumentMailboxes)) {
+    next.studentDocumentMailboxes = next.studentDocumentMailboxes.map((mailbox) => {
+      const label = getStudentMailboxRoleLabel(mailbox?.login, mailbox?.label);
+      if (label === String(mailbox?.label || "").trim()) return mailbox;
+      changed = true;
+      return { ...mailbox, label };
+    });
+  }
   return { settings: next, changed };
 }
 
@@ -10122,6 +10131,17 @@ function normalizeMailboxPort(value, fallback) {
   return Number.isInteger(port) && port > 0 && port <= 65535 ? port : fallback;
 }
 
+function getStudentMailboxRoleLabel(login, fallback = "Почтовый ящик") {
+  const normalizedLogin = String(login || "").trim().toLowerCase();
+  if (normalizedLogin === DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN) {
+    return "Документы слушателей и заявки InSales";
+  }
+  if (normalizedLogin === DEFAULT_WOOCOMMERCE_EMAIL_LOGIN) {
+    return "Заявки WooCommerce";
+  }
+  return String(fallback || login || "Почтовый ящик").trim();
+}
+
 function normalizeStudentDocumentMailbox(value = {}, fallbackId = "mailbox") {
   const host = String(value.host || value.imapHost || "").trim().slice(0, 255);
   const smtpHost = String(
@@ -10149,7 +10169,7 @@ function getStudentDocumentMailboxes({ includePrimary = true } = {}) {
     if (primary.login || primary.host) {
       result.push(normalizeStudentDocumentMailbox({
         id: "applications",
-        label: "Основной ящик (заявки и отправка)",
+        label: getStudentMailboxRoleLabel(primary.login, "Основной почтовый ящик"),
         host: primary.host,
         port: primary.port,
         smtpHost: primary.smtpHost,
@@ -10164,6 +10184,7 @@ function getStudentDocumentMailboxes({ includePrimary = true } = {}) {
     ? serverSettings.studentDocumentMailboxes
     : []).forEach((value, index) => {
     const mailbox = normalizeStudentDocumentMailbox(value, `mailbox-${index + 1}`);
+    mailbox.label = getStudentMailboxRoleLabel(mailbox.login, mailbox.label);
     let id = mailbox.id;
     let suffix = 2;
     while (seen.has(id)) id = `${mailbox.id}-${suffix++}`;

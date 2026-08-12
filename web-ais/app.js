@@ -7,6 +7,7 @@
     smtpHost: "smtp.timeweb.ru",
     smtpPort: 465
   });
+  const DEFAULT_WOOCOMMERCE_EMAIL_LOGIN = "mail@zifra-plus.ru";
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const ADMIN_SQL_KEYWORDS = new Set([
     "ADD", "ALL", "ALTER", "AND", "AS", "ASC", "BETWEEN", "BY", "CASE", "CAST",
@@ -19,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.130",
+    version: "1.7.131",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.131",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Почтовые ящики получили явные назначения: mail@edu-plus.ru — документы слушателей и заявки InSales, mail@zifra-plus.ru — заявки WooCommerce.",
+        "Подписи ящиков в админке и окне загрузки документов слушателя приведены к единому виду."
+      ]
+    },
     {
       version: "1.7.130",
       releasedAt: "2026-08-12",
@@ -13912,15 +13921,45 @@ MAX - https://bizvmax.ru/zifra_plus
       }));
   }
 
+  function getStudentMailboxRole(mailbox = {}) {
+    const login = String(mailbox?.login || "").trim();
+    const normalizedLogin = login.toLowerCase();
+    if (normalizedLogin === DEFAULT_STUDENT_APPLICATIONS_EMAIL.login) {
+      return {
+        title: "Документы слушателей и заявки InSales",
+        description: "Система ищет в этом ящике заявки InSales, а письма и вложения загружает в документы слушателей. Ящик также используется для системных сообщений."
+      };
+    }
+    if (normalizedLogin === DEFAULT_WOOCOMMERCE_EMAIL_LOGIN) {
+      return {
+        title: "Заявки WooCommerce",
+        description: "Ящик используется для переписки по заявкам WooCommerce. Его письма и вложения также доступны для загрузки в документы слушателей."
+      };
+    }
+    return {
+      title: String(mailbox?.label || login || "Почтовый ящик").trim(),
+      description: "Письма и вложения из этого ящика можно загружать в документы слушателей."
+    };
+  }
+
+  function getStudentMailboxOptionLabel(mailbox = {}) {
+    const login = String(mailbox?.login || "").trim();
+    const title = getStudentMailboxRole(mailbox).title;
+    return login && !title.toLowerCase().includes(login.toLowerCase())
+      ? `${title} · ${login}`
+      : title;
+  }
+
   function renderAdminDocumentMailbox(mailbox, index) {
+    const role = getStudentMailboxRole(mailbox);
     return `
       <fieldset class="admin-mailbox-card" data-document-mailbox data-mailbox-index="${index}">
-        <legend>${escapeHtml(mailbox.label || mailbox.login || `Почтовый ящик ${index + 1}`)}</legend>
+        <legend>${escapeHtml(getStudentMailboxOptionLabel(mailbox) || `Почтовый ящик ${index + 1}`)}</legend>
         <input type="hidden" data-mailbox-field="id" value="${escapeAttr(mailbox.id || `mailbox-${index + 1}`)}">
         <div class="admin-mailbox-card-head">
           <div class="admin-mailbox-purpose">
-            <strong>Заявки InSales и документы</strong>
-            <span>Система ищет в этом ящике заявки InSales, а письма и вложения можно загружать в документы слушателей.</span>
+            <strong>${escapeHtml(role.title)}</strong>
+            <span>${escapeHtml(role.description)}</span>
             <span class="admin-mailbox-state ${mailbox.host && mailbox.login && mailbox.hasPassword ? "is-ready" : "is-incomplete"}">
               ${mailbox.host && mailbox.login && mailbox.hasPassword ? "Настроен" : "Требуется настройка"}
             </span>
@@ -13951,6 +13990,7 @@ MAX - https://bizvmax.ru/zifra_plus
     login,
     password
   }) {
+    const role = getStudentMailboxRole({ login: DEFAULT_STUDENT_APPLICATIONS_EMAIL.login });
     const isConfigured = Boolean(
       host && login && (password || state.data.meta.studentApplicationsEmailHasPassword)
     );
@@ -13959,8 +13999,8 @@ MAX - https://bizvmax.ru/zifra_plus
         <legend>Основной почтовый ящик · ${escapeHtml(DEFAULT_STUDENT_APPLICATIONS_EMAIL.login)}</legend>
         <div class="admin-mailbox-card-head">
           <div class="admin-mailbox-purpose">
-            <strong>Заявки InSales и документы</strong>
-            <span>Система ищет в этом ящике заявки InSales, а письма и вложения можно загружать в документы слушателей. Ящик также используется для системных сообщений.</span>
+            <strong>${escapeHtml(role.title)}</strong>
+            <span>${escapeHtml(role.description)}</span>
             <span class="admin-mailbox-state ${isConfigured ? "is-ready" : "is-incomplete"}">
               ${isConfigured ? "Настроен" : "Требуется настройка"}
             </span>
@@ -14458,7 +14498,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 <div class="admin-document-mailboxes-head">
                   <div>
                     <strong>Дополнительные почтовые ящики</strong>
-                    <small>Каждый добавленный ящик автоматически становится сборщиком заявок InSales и документов слушателей.</small>
+                    <small>Назначение стандартных ящиков указано в каждой карточке; письма любого настроенного ящика доступны для загрузки документов.</small>
                   </div>
                   <button class="ghost-button" data-action="add-document-mailbox" type="button">Добавить ящик</button>
                 </div>
@@ -29301,12 +29341,15 @@ MAX - https://bizvmax.ru/zifra_plus
     const configured = (Array.isArray(state.data.meta?.documentMailboxes)
       ? state.data.meta.documentMailboxes
       : []).filter((mailbox) => mailbox?.host && mailbox?.login);
-    if (configured.length) return configured;
+    if (configured.length) return configured.map((mailbox) => ({
+      ...mailbox,
+      label: getStudentMailboxRole(mailbox).title
+    }));
     const host = getStudentApplicationsEmailHost();
     const login = getStudentApplicationsEmailLogin();
     return host && login ? [{
       id: "applications",
-      label: "Основной ящик",
+      label: getStudentMailboxRole({ login }).title,
       host,
       port: getStudentApplicationsEmailPort(),
       login,
@@ -29348,7 +29391,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="icon-button" data-action="close-student-mailbox" type="button" title="Закрыть" aria-label="Закрыть">×</button>
         </header>
         <form class="student-mailbox-filters" data-student-mailbox-filters>
-          <label><span>Почтовый ящик</span><select name="mailboxId">${mailboxes.map((mailbox) => `<option value="${escapeAttr(mailbox.id)}" ${mailbox.id === preferredMailbox.id ? "selected" : ""}>${escapeHtml(mailbox.label || mailbox.login)} · ${escapeHtml(mailbox.login)}</option>`).join("")}</select></label>
+          <label><span>Почтовый ящик</span><select name="mailboxId">${mailboxes.map((mailbox) => `<option value="${escapeAttr(mailbox.id)}" ${mailbox.id === preferredMailbox.id ? "selected" : ""}>${escapeHtml(getStudentMailboxOptionLabel(mailbox))}</option>`).join("")}</select></label>
           <label><span>Email слушателя</span><input name="email" type="email" value="${escapeAttr(studentEmail)}" placeholder="email@example.ru"></label>
           <label><span>С</span><input name="dateFrom" type="date" value="${studentMailboxDateOffset(-180)}"></label>
           <label><span>По</span><input name="dateTo" type="date" value="${studentMailboxDateOffset(0)}"></label>
