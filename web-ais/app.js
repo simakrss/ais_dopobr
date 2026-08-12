@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.95",
+    version: "1.7.96",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.96",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В учёте выплат сотрудникам добавлены выбор отдельных и всех отфильтрованных строк, а также пакетная установка состояния акта и даты оплаты. Групповые изменения применяются одним пакетом и отменяются вместе с карточкой сотрудника."
+      ]
+    },
     {
       version: "1.7.95",
       releasedAt: "2026-08-12",
@@ -1029,7 +1036,7 @@
     direction: "desc"
   });
   const EMPLOYEE_PAYMENT_TABLE_COLUMNS = Object.freeze([
-    { key: "actions", label: "Действия", className: "employee-payment-actions-column", defaultWidth: 78 },
+    { key: "actions", label: "Действия", className: "employee-payment-actions-column", defaultWidth: 104 },
     { key: "status", label: "Статус", className: "employee-payment-status-column", defaultWidth: 78, sortType: "text" },
     { key: "date", label: "Дата", className: "employee-payment-date-column", defaultWidth: 92, sortType: "date" },
     { key: "source", label: "Источник", className: "employee-payment-source-column", defaultWidth: 88, sortType: "text" },
@@ -14251,6 +14258,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (columnKey === "actions") {
       return `
         <div class="employee-payment-filter-result">
+          <label class="employee-payment-select-visible" title="Выбрать все отфильтрованные выплаты">
+            <input data-action="select-visible-employee-payments" type="checkbox" aria-label="Выбрать все отфильтрованные выплаты">
+          </label>
           <output data-employee-payment-filter-count title="Показано ${visibleRowCount} из ${rowCount}">${visibleRowCount}/${rowCount}</output>
           <button
             class="employee-payment-filter-reset"
@@ -14323,6 +14333,24 @@ MAX - https://bizvmax.ru/zifra_plus
           <span class="${accounting.balance ? "has-balance" : ""}" data-employee-payment-balance-card><small>Остаток</small><strong data-employee-payment-summary="balance">${escapeHtml(money(accounting.balance))}</strong></span>
         </div>
         <p class="employee-payment-formula-hint">Выплата = Услуги + Агентские. Агентские — непогашенный остаток по поступлениям слушателей; проведённые выплаты показаны отдельными строками и повторно в итог не входят.</p>
+        <div class="employee-payment-group-actions" data-employee-payment-group-actions>
+          <span class="employee-payment-group-count">Выбрано: <strong data-employee-payment-selected-count>0</strong></span>
+          <label>
+            <span>Акт</span>
+            <select data-employee-payment-group-act aria-label="Групповое состояние акта">
+              <option value="sent">Отправлен</option>
+              <option value="received">Получен</option>
+              <option value="none">Не сформирован</option>
+            </select>
+          </label>
+          <button class="ghost-button" data-action="apply-employee-payment-group-act" type="button" disabled>Применить акт</button>
+          <label title="Пустая дата очистит дату оплаты у выбранных строк">
+            <span>Дата оплаты</span>
+            <input data-employee-payment-group-paid type="date" value="${escapeAttr(todayIso())}" aria-label="Групповая дата оплаты">
+          </label>
+          <button class="ghost-button" data-action="apply-employee-payment-group-paid" type="button" disabled>Применить дату</button>
+          <button class="ghost-button employee-payment-group-clear" data-action="clear-employee-payment-selection" type="button" disabled>Снять выбор</button>
+        </div>
         <div class="employee-payment-table-wrap">
           <table class="employee-payment-table" style="min-width:${getEmployeePaymentTableMinWidth()}px">
             <colgroup>
@@ -14375,6 +14403,13 @@ MAX - https://bizvmax.ru/zifra_plus
                   <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
                     <td class="employee-payment-delete-cell" data-employee-payment-column="actions">
                       <div class="employee-payment-row-actions">
+                        <input
+                          class="employee-payment-row-selector"
+                          data-action="select-employee-payment-row"
+                          type="checkbox"
+                          aria-label="Выбрать выплату ${escapeAttr(row.description || sourceLabel)}"
+                          ${editable ? "" : "disabled"}
+                        >
                         ${renderEmployeePaymentRowDragHandle(row.sourceType, row.sourceId, filtersActive || Boolean(sort.key))}
                         ${editable ? `
                           <button class="employee-payment-edit-button" data-action="edit-employee-expense" type="button" title="Редактировать запись оплаты во всплывающем окне" aria-label="Редактировать запись оплаты">
@@ -14546,6 +14581,129 @@ MAX - https://bizvmax.ru/zifra_plus
     );
   }
 
+  function getSelectedEmployeePaymentRows(section) {
+    return [...(section?.querySelectorAll("[data-employee-payment-row]") || [])].filter((row) => (
+      row.querySelector("[data-action='select-employee-payment-row']")?.checked
+    ));
+  }
+
+  function syncEmployeePaymentSelectionUi(section) {
+    if (!section) return;
+    const rows = [...section.querySelectorAll("[data-employee-payment-row]")];
+    const visibleSelectors = rows
+      .filter((row) => !row.hidden)
+      .map((row) => row.querySelector("[data-action='select-employee-payment-row']"))
+      .filter((control) => control instanceof HTMLInputElement && !control.disabled);
+    const selectedRows = getSelectedEmployeePaymentRows(section);
+    const selectedVisibleCount = visibleSelectors.filter((control) => control.checked).length;
+    const selectVisible = section.querySelector("[data-action='select-visible-employee-payments']");
+    if (selectVisible instanceof HTMLInputElement) {
+      selectVisible.disabled = !visibleSelectors.length;
+      selectVisible.checked = Boolean(visibleSelectors.length && selectedVisibleCount === visibleSelectors.length);
+      selectVisible.indeterminate = Boolean(selectedVisibleCount && selectedVisibleCount < visibleSelectors.length);
+    }
+    const count = section.querySelector("[data-employee-payment-selected-count]");
+    if (count) count.textContent = String(selectedRows.length);
+    section.querySelectorAll("[data-action='apply-employee-payment-group-act'], [data-action='apply-employee-payment-group-paid'], [data-action='clear-employee-payment-selection']")
+      .forEach((button) => { button.disabled = !selectedRows.length; });
+    section.querySelector("[data-employee-payment-group-actions]")
+      ?.classList.toggle("has-selection", Boolean(selectedRows.length));
+  }
+
+  function updateEmployeePaymentSelection(event, section) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return false;
+    if (target.matches("[data-action='select-visible-employee-payments']")) {
+      section.querySelectorAll("[data-employee-payment-row]").forEach((row) => {
+        if (row.hidden) return;
+        const selector = row.querySelector("[data-action='select-employee-payment-row']");
+        if (selector instanceof HTMLInputElement && !selector.disabled) selector.checked = target.checked;
+      });
+      syncEmployeePaymentSelectionUi(section);
+      return true;
+    }
+    if (target.matches("[data-action='select-employee-payment-row']")) {
+      syncEmployeePaymentSelectionUi(section);
+      return true;
+    }
+    return false;
+  }
+
+  function clearEmployeePaymentSelection(section) {
+    section?.querySelectorAll("[data-action='select-employee-payment-row']").forEach((control) => {
+      control.checked = false;
+    });
+    syncEmployeePaymentSelectionUi(section);
+  }
+
+  function applyEmployeePaymentGroupOperation(event, section) {
+    const button = event.target.closest("[data-action='apply-employee-payment-group-act'], [data-action='apply-employee-payment-group-paid'], [data-action='clear-employee-payment-selection']");
+    if (!button || !section?.contains(button)) return;
+    if (button.matches("[data-action='clear-employee-payment-selection']")) {
+      clearEmployeePaymentSelection(section);
+      return;
+    }
+    const selectedRows = getSelectedEmployeePaymentRows(section);
+    if (!selectedRows.length) return;
+    const operation = button.matches("[data-action='apply-employee-payment-group-act']") ? "act" : "paid";
+    const actState = String(section.querySelector("[data-employee-payment-group-act]")?.value || "sent");
+    const paidDate = String(section.querySelector("[data-employee-payment-group-paid]")?.value || "");
+    const draft = getEmployeePaymentAccountingDraft();
+    const auditFields = getEmployeePaymentAuditFields();
+    const changes = [];
+    let changedRows = 0;
+    selectedRows.forEach((row) => {
+      const sourceType = String(row.dataset.paymentSource || "");
+      const sourceId = String(row.dataset.paymentSourceId || "");
+      const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
+      if (!source) return;
+      const before = getEmployeePaymentEditorAuditRecord(sourceType, source);
+      if (operation === "act") {
+        const checked = actState !== "none";
+        setEmployeePaymentSourceField(sourceType, source, "act", { checked });
+        setEmployeePaymentSourceField(sourceType, source, "actStatus", {
+          value: actState === "received" ? "Получен" : actState === "sent" ? "Отправлен" : ""
+        });
+        if (sourceType === "partner" && actState === "received") {
+          settleReceivedEmployeePartnerPayment(source, paidDate);
+        }
+      } else {
+        setEmployeePaymentSourceField(sourceType, source, "paid", { value: paidDate });
+      }
+      const settledSourceId = sourceType === "partner" && source.__settledSlot
+        ? getEmployeePartnerPaymentSourceId(source.__partnerStudent, source.__settledSlot)
+        : "";
+      const effectiveSource = settledSourceId
+        ? (findEmployeePaymentSourceRecord(sourceType, settledSourceId) || source)
+        : source;
+      synchronizeEmployeePaymentAgencyDraft(draft, sourceType, effectiveSource);
+      const after = getEmployeePaymentEditorAuditRecord(sourceType, effectiveSource);
+      const rowChanges = buildAuditChanges(before, after, auditFields);
+      if (!rowChanges.length) return;
+      changedRows += 1;
+      const rowLabel = after.description || before.description || sourceId;
+      rowChanges.forEach((change) => changes.push({
+        ...change,
+        label: `${rowLabel}: ${change.label}`
+      }));
+    });
+    if (!changedRows) {
+      syncEmployeePaymentSelectionUi(section);
+      return;
+    }
+    const actionLabel = operation === "act"
+      ? `Групповое изменение акта: ${actState === "received" ? "Получен" : actState === "sent" ? "Отправлен" : "Не сформирован"}`
+      : `Групповое изменение даты оплаты: ${paidDate || "дата очищена"}`;
+    addEmployeePaymentAudit(actionLabel, "Договоры сотрудников", `${draft.name || "Сотрудник"}: изменено выплат — ${changedRows}`, {
+      entityType: "contracts",
+      entityId: String(draft.id || state.modal?.id || ""),
+      entityLabel: draft.name || String(draft.id || ""),
+      changes: changes.slice(0, AUDIT_CLIENT_MAX_CHANGES),
+      source: "employee-payment-group-accounting"
+    });
+    commitEmployeePaymentAccountingChange(draft, {}, true);
+  }
+
   function applyEmployeePaymentFiltersToDom(section = document.querySelector("[data-employee-payment-accounting]")) {
     if (!section) return;
     const filters = getEmployeePaymentFilters();
@@ -14587,6 +14745,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const reset = section.querySelector("[data-action='reset-employee-payment-filters']");
     if (reset instanceof HTMLButtonElement) reset.disabled = !active;
+    syncEmployeePaymentSelectionUi(section);
   }
 
   function updateEmployeePaymentFilters(panel) {
@@ -22060,6 +22219,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const employeePaymentAccounting = document.querySelector("[data-employee-payment-accounting]");
     employeePaymentAccounting?.addEventListener("input", previewEmployeePaymentAccountingField);
     employeePaymentAccounting?.addEventListener("change", (event) => {
+      if (updateEmployeePaymentSelection(event, employeePaymentAccounting)) return;
+      if (!event.target.closest("[data-employee-payment-field]")) return;
       updateEmployeePaymentAccountingField(event);
       window.requestAnimationFrame(() => {
         applyEmployeePaymentSortToDom(document.querySelector("[data-employee-payment-accounting]"));
@@ -22068,10 +22229,15 @@ MAX - https://bizvmax.ru/zifra_plus
     employeePaymentAccounting?.addEventListener("click", duplicateEmployeePaymentAccountingRow);
     employeePaymentAccounting?.addEventListener("click", deleteEmployeePaymentAccountingRow);
     employeePaymentAccounting?.addEventListener("click", openEmployeeExpenseEditor);
+    employeePaymentAccounting?.addEventListener("click", (event) => applyEmployeePaymentGroupOperation(event, employeePaymentAccounting));
     const employeePaymentFilters = employeePaymentAccounting?.querySelector("[data-employee-payment-filters]");
     employeePaymentFilters?.addEventListener("click", (event) => updateEmployeePaymentSort(event, employeePaymentAccounting));
-    employeePaymentFilters?.addEventListener("input", () => updateEmployeePaymentFilters(employeePaymentFilters));
-    employeePaymentFilters?.addEventListener("change", () => updateEmployeePaymentFilters(employeePaymentFilters));
+    employeePaymentFilters?.addEventListener("input", (event) => {
+      if (event.target.closest("[data-employee-payment-filter]")) updateEmployeePaymentFilters(employeePaymentFilters);
+    });
+    employeePaymentFilters?.addEventListener("change", (event) => {
+      if (event.target.closest("[data-employee-payment-filter]")) updateEmployeePaymentFilters(employeePaymentFilters);
+    });
     employeePaymentFilters?.querySelector("[data-action='reset-employee-payment-filters']")
       ?.addEventListener("click", () => resetEmployeePaymentFilters(employeePaymentFilters));
     applyEmployeePaymentFiltersToDom(employeePaymentAccounting);

@@ -10269,6 +10269,67 @@ body.card-window-moving {
   font-size: 12px;
 }
 
+.employee-payment-group-actions {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fbfa;
+  opacity: 0.72;
+}
+
+.employee-payment-group-actions.has-selection {
+  border-color: rgba(15, 118, 110, 0.32);
+  background: #eef8f5;
+  opacity: 1;
+}
+
+.employee-payment-group-actions label {
+  display: grid;
+  gap: 2px;
+  min-width: 130px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.employee-payment-group-actions :is(select, input[type="date"]) {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  padding: 3px 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.employee-payment-group-actions .ghost-button {
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.employee-payment-group-count {
+  align-self: center;
+  min-width: 78px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.employee-payment-group-count strong {
+  color: var(--teal);
+  font-size: 13px;
+}
+
+.employee-payment-group-clear {
+  margin-left: auto;
+}
+
 .employee-payment-formula-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -10347,6 +10408,24 @@ body.card-window-moving {
   align-items: center;
   justify-content: space-between;
   gap: 2px;
+}
+
+.employee-payment-select-visible {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.employee-payment-select-visible input,
+.employee-payment-row-selector {
+  width: 15px;
+  min-width: 15px;
+  height: 15px;
+  min-height: 15px;
+  margin: 0;
+  accent-color: var(--teal);
 }
 
 .employee-payment-filter-result output {
@@ -10774,7 +10853,7 @@ body.card-window-moving {
 }
 
 .employee-payment-delete-cell {
-  width: 78px;
+  width: 104px;
   text-align: center !important;
 }
 
@@ -10783,6 +10862,11 @@ body.card-window-moving {
   align-items: center;
   justify-content: center;
   gap: 0;
+}
+
+.employee-payment-row-selector {
+  flex: 0 0 auto;
+  margin-right: 2px;
 }
 
 .employee-payment-edit-button,
@@ -16648,6 +16732,19 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .employee-payment-accounting-actions {
     justify-content: flex-start;
+  }
+
+  .employee-payment-group-actions {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .employee-payment-group-actions label {
+    flex: 1 1 150px;
+  }
+
+  .employee-payment-group-clear {
+    margin-left: 0;
   }
 
   .employee-payment-formula-summary {
