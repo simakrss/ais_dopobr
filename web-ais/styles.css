@@ -2692,6 +2692,182 @@ body.is-resizing-column {
   background: #fbfdfa;
 }
 
+.issued-documents-register {
+  display: grid;
+  gap: 12px;
+}
+
+.issued-documents-register .section-head {
+  margin-bottom: 0;
+}
+
+.issued-documents-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.issued-documents-summary > span {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.issued-documents-summary > span.is-success {
+  border-color: #b8dfd3;
+  background: #edf9f5;
+  color: #0b7566;
+}
+
+.issued-documents-summary > span.is-warning {
+  border-color: #ead6a0;
+  background: #fff8e6;
+  color: #8b5a00;
+}
+
+.issued-documents-filters {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(190px, 1fr) minmax(260px, 1.5fr) minmax(120px, 0.55fr) minmax(160px, 0.75fr) minmax(135px, 0.55fr) minmax(135px, 0.55fr) auto;
+  align-items: end;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.issued-documents-filters label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.issued-documents-filters :is(input, select) {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.issued-documents-filters :is(input, select):focus {
+  border-color: var(--teal);
+  outline: 2px solid rgba(15, 118, 110, 0.14);
+  outline-offset: 0;
+}
+
+.issued-documents-filter-actions {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.issued-documents-table {
+  min-width: 1060px;
+}
+
+.issued-documents-table th:nth-child(1) {
+  width: 170px;
+}
+
+.issued-documents-table th:nth-child(2) {
+  width: 125px;
+}
+
+.issued-documents-table th:nth-child(3) {
+  width: 180px;
+}
+
+.issued-documents-table th:nth-child(4) {
+  width: 220px;
+}
+
+.issued-documents-table th:nth-child(6) {
+  width: 120px;
+}
+
+.issued-documents-table td small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.issued-document-sort-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.issued-document-sort-button.is-active {
+  color: var(--teal);
+}
+
+.issued-document-sort-indicator {
+  color: #9aaba5;
+  font-size: 12px;
+}
+
+.issued-document-sort-button.is-active .issued-document-sort-indicator {
+  color: var(--teal);
+}
+
+.issued-document-student-link {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.issued-document-frdo-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #edf1ef;
+  color: #52615c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.issued-document-frdo-status.is-exported {
+  background: #dff4ec;
+  color: #087465;
+}
+
+.issued-document-frdo-status.is-pending {
+  background: #fff0cb;
+  color: #8c5b00;
+}
+
+.issued-document-frdo-status.is-not-required {
+  background: #edf1ef;
+  color: #63716c;
+}
+
 .data-table.mini tr.mini-table-link-row {
   cursor: pointer;
 }
@@ -18482,5 +18658,39 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     align-items: flex-start;
     flex-direction: column;
     gap: 3px;
+  }
+}
+
+@media (max-width: 1280px) {
+  .issued-documents-filters {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .issued-documents-program-filter {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 720px) {
+  .issued-documents-register .section-head {
+    align-items: flex-start;
+  }
+
+  .issued-documents-summary {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .issued-documents-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .issued-documents-program-filter,
+  .issued-documents-filter-actions {
+    grid-column: 1 / -1;
+  }
+
+  .issued-documents-filter-actions {
+    justify-content: space-between;
   }
 }

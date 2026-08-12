@@ -19,10 +19,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.121",
+    version: "1.7.122",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.122",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Добавлен раздел «Реестр выданных документов» с номерами документов, датами выдачи, состоянием выгрузки в ФРДО, слушателями, программами и видами программ.",
+        "В реестре доступны фильтры, сортировка, постраничный просмотр и переход в связанную карточку слушателя."
+      ]
+    },
     {
       version: "1.7.121",
       releasedAt: "2026-08-12",
@@ -2632,6 +2640,7 @@ MAX - https://bizvmax.ru/zifra_plus
   const navItems = [
     { id: "dashboard", label: "Рабочий стол", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M7 16l4-4 3 3 5-7"></path><path d="M16 8h3v3"></path></svg>' },
     { id: "students", label: "Слушатели", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg>' },
+    { id: "issuedDocuments", label: "Реестр выданных документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><circle cx="17.5" cy="17.5" r="3.5"></circle><path d="M16 17.5l1 1 2-2"></path></svg>' },
     { id: "contracts", label: "Сотрудники", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3h7l5 5v13H7z"></path><path d="M14 3v5h5"></path><path d="M10 12h6"></path><path d="M10 16h6"></path></svg>' },
     { id: "programs", label: "Программы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 9l9-5 9 5-9 5z"></path><path d="M7 11v5c3 2 7 2 10 0v-5"></path><path d="M21 9v6"></path></svg>' },
     { id: "generalExpenses", label: "Общие затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8c0-2 3.6-3.5 8-3.5S20 6 20 8s-3.6 3.5-8 3.5S4 10 4 8z"></path><path d="M4 8v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V8"></path><path d="M4 12v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5v-4"></path></svg>' },
@@ -3392,6 +3401,16 @@ MAX - https://bizvmax.ru/zifra_plus
       dateTo: ""
     },
     studentListProgramQuery: "",
+    issuedDocumentFilters: {
+      documentNumber: "",
+      issueDateFrom: "",
+      issueDateTo: "",
+      frdo: "",
+      student: "",
+      program: "",
+      programType: ""
+    },
+    issuedDocumentSort: { key: "issueDate", dir: "desc" },
     programRegistryTypeFilter: [],
     contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
     studentImportedViewIds: [],
@@ -7283,6 +7302,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderView() {
     if (!canAccessView(state.view)) return renderDashboard();
     if (state.view === "dashboard") return renderDashboard();
+    if (state.view === "issuedDocuments") return renderIssuedDocumentsRegistry();
     if (state.view === "documentConstructor") return renderDocumentConstructor();
     if (state.view === "settings") return renderSettings();
     if (state.view === "admin") return renderAdmin();
@@ -8016,6 +8036,262 @@ MAX - https://bizvmax.ru/zifra_plus
         </label>
         <button class="ghost-button" data-action="clear-student-list-filters" type="button" ${active ? "" : "disabled"}>Сбросить</button>
       </div>
+    `;
+  }
+
+  function normalizeIssuedDocumentFilterText(value) {
+    return String(value || "")
+      .trim()
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е")
+      .replace(/\s+/g, " ");
+  }
+
+  function getIssuedDocumentProgramType(student = {}, programs = []) {
+    const directType = normalizeEducationProgramType(student.educationType || student.programType || "");
+    if (directType) return directType;
+    const program = findProgramInRows(programs, student.program);
+    return normalizeEducationProgramType(program?.type || program?.educationType || "");
+  }
+
+  function getIssuedDocumentFrdoDetails(student = {}, programType = "") {
+    const date = String(student.frdoDate || "").trim();
+    const sourceStatus = String(student.frdoStatus || "").trim();
+    const normalizedStatus = normalizeIssuedDocumentFilterText(sourceStatus);
+    const explicitlyNotExported = normalizedStatus.includes("не выгруж")
+      || normalizedStatus.includes("не загруж")
+      || normalizedStatus.includes("не отправ")
+      || ["нет", "-", "0"].includes(normalizedStatus);
+    const explicitlyExported = Boolean(date)
+      || (!explicitlyNotExported && (
+        sourceStatus === "+"
+        || sourceStatus === "1"
+        || normalizedStatus === "да"
+        || normalizedStatus.includes("выгруж")
+        || normalizedStatus.includes("загруж")
+        || normalizedStatus.includes("отправ")
+      ));
+    if (explicitlyExported) {
+      return { key: "exported", label: sourceStatus && sourceStatus !== "+" ? sourceStatus : "Выгружено", date };
+    }
+    if (normalizedStatus.includes("не треб") || !isFrdoProgramType(programType)) {
+      return { key: "not-required", label: "Не требуется", date: "" };
+    }
+    return { key: "pending", label: sourceStatus || "Не выгружено", date: "" };
+  }
+
+  function getIssuedDocumentRows() {
+    const programs = getProgramRows();
+    return (state.data.collections.students || []).flatMap((student) => {
+      const documentNumber = String(student.diplomaBlankNo || "").trim();
+      const registrationNumber = String(student.registrationNo || "").trim();
+      const issueDate = String(student.diplomaIssueDate || "").trim();
+      if (!documentNumber && !registrationNumber && !issueDate) return [];
+      const program = String(student.program || "").trim();
+      const programType = getIssuedDocumentProgramType(student, programs);
+      const frdo = getIssuedDocumentFrdoDetails(student, programType);
+      return [{
+        id: `issued-document-${String(student.id || student.uid || documentNumber || registrationNumber)}`,
+        studentId: String(student.id || ""),
+        documentNumber,
+        registrationNumber,
+        issueDate,
+        frdoKey: frdo.key,
+        frdoLabel: frdo.label,
+        frdoDate: frdo.date,
+        studentName: String(student.name || "").trim(),
+        studentUid: String(student.uid || "").trim(),
+        program,
+        programType
+      }];
+    });
+  }
+
+  function issuedDocumentFiltersAreActive(filters = state.issuedDocumentFilters || {}) {
+    return Object.values(filters).some((value) => String(value || "").trim());
+  }
+
+  function issuedDocumentRowMatchesFilters(row, filters = state.issuedDocumentFilters || {}) {
+    const contains = (value, query) => !query
+      || normalizeIssuedDocumentFilterText(value).includes(normalizeIssuedDocumentFilterText(query));
+    if (!contains(`${row.documentNumber} ${row.registrationNumber}`, filters.documentNumber)) return false;
+    if (!contains(`${row.studentName} ${row.studentUid}`, filters.student)) return false;
+    if (filters.program && row.program !== filters.program) return false;
+    if (filters.programType && row.programType !== filters.programType) return false;
+    if (filters.frdo && row.frdoKey !== filters.frdo) return false;
+    const issueTimestamp = parseTableSortDate(row.issueDate);
+    const fromTimestamp = parseTableSortDate(filters.issueDateFrom);
+    const toTimestamp = parseTableSortDate(filters.issueDateTo);
+    if (fromTimestamp !== null && (issueTimestamp === null || issueTimestamp < fromTimestamp)) return false;
+    if (toTimestamp !== null && (issueTimestamp === null || issueTimestamp > toTimestamp)) return false;
+    return true;
+  }
+
+  function getIssuedDocumentSortValue(row, key) {
+    if (key === "frdo") return row.frdoLabel;
+    if (key === "student") return row.studentName;
+    if (key === "documentNumber") return row.documentNumber || row.registrationNumber;
+    return row[key] ?? "";
+  }
+
+  function sortIssuedDocumentRows(rows) {
+    const sort = state.issuedDocumentSort || { key: "issueDate", dir: "desc" };
+    const direction = sort.dir === "desc" ? -1 : 1;
+    const dateKeys = new Set(["issueDate", "frdoDate"]);
+    return rows.map((row, index) => ({ row, index })).sort((leftEntry, rightEntry) => {
+      const left = getIssuedDocumentSortValue(leftEntry.row, sort.key);
+      const right = getIssuedDocumentSortValue(rightEntry.row, sort.key);
+      const leftEmpty = String(left ?? "").trim() === "";
+      const rightEmpty = String(right ?? "").trim() === "";
+      if (leftEmpty !== rightEmpty) return leftEmpty ? 1 : -1;
+      let comparison = 0;
+      if (dateKeys.has(sort.key)) {
+        const leftDate = parseTableSortDate(left);
+        const rightDate = parseTableSortDate(right);
+        if (leftDate === null && rightDate !== null) return 1;
+        if (leftDate !== null && rightDate === null) return -1;
+        comparison = (leftDate || 0) - (rightDate || 0);
+      } else {
+        comparison = String(left).localeCompare(String(right), "ru", { numeric: true, sensitivity: "base" });
+      }
+      if (comparison) return comparison * direction;
+      return leftEntry.index - rightEntry.index;
+    }).map((entry) => entry.row);
+  }
+
+  function getVisibleIssuedDocumentRows(rows = getIssuedDocumentRows()) {
+    return sortIssuedDocumentRows(rows.filter((row) => issuedDocumentRowMatchesFilters(row)));
+  }
+
+  function renderIssuedDocumentSortHeader(key, label) {
+    const sort = state.issuedDocumentSort || {};
+    const active = sort.key === key;
+    const directionLabel = sort.dir === "desc" ? "по убыванию" : "по возрастанию";
+    return `
+      <button
+        class="issued-document-sort-button ${active ? "is-active" : ""}"
+        data-action="sort-issued-documents"
+        data-sort-key="${escapeAttr(key)}"
+        type="button"
+        title="Сортировать ${active ? directionLabel : "по этому столбцу"}"
+      >
+        <span>${escapeHtml(label)}</span>
+        <span class="issued-document-sort-indicator" aria-hidden="true">${active ? (sort.dir === "desc" ? "↓" : "↑") : "↕"}</span>
+      </button>
+    `;
+  }
+
+  function renderIssuedDocumentsRegistry() {
+    const allRows = getIssuedDocumentRows();
+    const rows = getVisibleIssuedDocumentRows(allRows);
+    const filters = state.issuedDocumentFilters || {};
+    const programs = unique(allRows.map((row) => row.program).filter(Boolean))
+      .sort((left, right) => left.localeCompare(right, "ru", { numeric: true, sensitivity: "base" }));
+    const programTypes = unique(allRows.map((row) => row.programType).filter(Boolean))
+      .sort((left, right) => left.localeCompare(right, "ru", { numeric: true, sensitivity: "base" }));
+    const pagination = getTablePagination("issuedDocuments", rows.length);
+    const pageRows = rows.slice(pagination.start, pagination.end);
+    const exportedCount = allRows.filter((row) => row.frdoKey === "exported").length;
+    const pendingCount = allRows.filter((row) => row.frdoKey === "pending").length;
+    return `
+      <section class="panel issued-documents-register" data-issued-documents-register>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Данные карточек слушателей</p>
+            <h2>Реестр выданных документов</h2>
+          </div>
+          <div class="issued-documents-summary" aria-label="Сводка реестра">
+            <span>Всего: <strong>${allRows.length}</strong></span>
+            <span class="is-success">Выгружено в ФРДО: <strong>${exportedCount}</strong></span>
+            <span class="${pendingCount ? "is-warning" : ""}">Ожидают ФРДО: <strong>${pendingCount}</strong></span>
+          </div>
+        </div>
+        <div class="issued-documents-filters" data-issued-document-filters>
+          <label>
+            <span>Номер документа</span>
+            <input data-issued-document-filter="documentNumber" value="${escapeAttr(filters.documentNumber || "")}" placeholder="Номер бланка или рег. номер">
+          </label>
+          <label>
+            <span>ФИО слушателя</span>
+            <input data-issued-document-filter="student" value="${escapeAttr(filters.student || "")}" placeholder="ФИО или uid">
+          </label>
+          <label class="issued-documents-program-filter">
+            <span>Образовательная программа</span>
+            <select class="select-control" data-issued-document-filter="program">
+              <option value="">Все программы</option>
+              ${programs.map((program) => `<option value="${escapeAttr(program)}" ${filters.program === program ? "selected" : ""}>${escapeHtml(program)}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Вид программы</span>
+            <select class="select-control" data-issued-document-filter="programType">
+              <option value="">Все виды</option>
+              ${programTypes.map((type) => `<option value="${escapeAttr(type)}" ${filters.programType === type ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Выгрузка в ФРДО</span>
+            <select class="select-control" data-issued-document-filter="frdo">
+              <option value="">Все состояния</option>
+              <option value="exported" ${filters.frdo === "exported" ? "selected" : ""}>Выгружено</option>
+              <option value="pending" ${filters.frdo === "pending" ? "selected" : ""}>Не выгружено</option>
+              <option value="not-required" ${filters.frdo === "not-required" ? "selected" : ""}>Не требуется</option>
+            </select>
+          </label>
+          <label>
+            <span>Дата выдачи с</span>
+            <input type="date" data-issued-document-filter="issueDateFrom" value="${escapeAttr(filters.issueDateFrom || "")}">
+          </label>
+          <label>
+            <span>Дата выдачи по</span>
+            <input type="date" data-issued-document-filter="issueDateTo" value="${escapeAttr(filters.issueDateTo || "")}">
+          </label>
+          <div class="issued-documents-filter-actions">
+            <span>Показано <strong>${rows.length}</strong> из ${allRows.length}</span>
+            <button class="ghost-button" data-action="reset-issued-document-filters" type="button" ${issuedDocumentFiltersAreActive(filters) ? "" : "disabled"}>Сбросить</button>
+          </div>
+        </div>
+        ${rows.length ? `
+          <div class="table-wrap issued-documents-table-wrap">
+            <table class="data-table issued-documents-table">
+              <thead>
+                <tr>
+                  <th>${renderIssuedDocumentSortHeader("documentNumber", "Номер документа")}</th>
+                  <th>${renderIssuedDocumentSortHeader("issueDate", "Дата выдачи")}</th>
+                  <th>${renderIssuedDocumentSortHeader("frdo", "Выгрузка в ФРДО")}</th>
+                  <th>${renderIssuedDocumentSortHeader("student", "ФИО слушателя")}</th>
+                  <th>${renderIssuedDocumentSortHeader("program", "Образовательная программа")}</th>
+                  <th>${renderIssuedDocumentSortHeader("programType", "Вид программы")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${pageRows.map((row) => `
+                  <tr>
+                    <td>
+                      <strong>${escapeHtml(row.documentNumber || row.registrationNumber || "—")}</strong>
+                      ${row.documentNumber && row.registrationNumber ? `<small>Рег. № ${escapeHtml(row.registrationNumber)}</small>` : ""}
+                    </td>
+                    <td>${row.issueDate ? escapeHtml(dateRu(row.issueDate)) : "—"}</td>
+                    <td>
+                      <span class="issued-document-frdo-status is-${escapeAttr(row.frdoKey)}">${escapeHtml(row.frdoLabel)}</span>
+                      ${row.frdoDate ? `<small>${escapeHtml(dateRu(row.frdoDate))}</small>` : ""}
+                    </td>
+                    <td>
+                      <button class="table-edit-link issued-document-student-link" data-action="open-issued-document-student" data-student-id="${escapeAttr(row.studentId)}" type="button">
+                        ${escapeHtml(row.studentName || "Без ФИО")}
+                      </button>
+                      ${row.studentUid ? `<small>uid ${escapeHtml(row.studentUid)}</small>` : ""}
+                    </td>
+                    <td>${escapeHtml(row.program || "—")}</td>
+                    <td>${escapeHtml(row.programType || "—")}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+          ${renderTablePagination("issuedDocuments", rows.length, pagination)}
+        ` : `<div class="empty-state"><strong>${allRows.length ? "По заданным фильтрам документов нет" : "Выданных документов пока нет"}</strong><span>${allRows.length ? "Измените или сбросьте фильтры." : "Записи появятся после заполнения номера документа или даты выдачи в карточке слушателя."}</span></div>`}
+      </section>
     `;
   }
 
@@ -23301,6 +23577,69 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
 
+    const issuedDocumentsRegister = document.querySelector("[data-issued-documents-register]");
+    if (issuedDocumentsRegister) {
+      let issuedDocumentFilterTimer = 0;
+      const applyIssuedDocumentFilter = (control, restoreFocus = false) => {
+        const key = String(control?.dataset.issuedDocumentFilter || "");
+        if (!key || !Object.prototype.hasOwnProperty.call(state.issuedDocumentFilters, key)) return;
+        state.issuedDocumentFilters[key] = control.value;
+        state.tablePages.issuedDocuments = 1;
+        const selectionStart = Number(control.selectionStart);
+        render();
+        if (!restoreFocus) return;
+        requestAnimationFrame(() => {
+          const nextControl = document.querySelector(`[data-issued-document-filter="${CSS.escape(key)}"]`);
+          nextControl?.focus({ preventScroll: true });
+          if (nextControl instanceof HTMLInputElement && Number.isFinite(selectionStart)) {
+            nextControl.setSelectionRange(selectionStart, selectionStart);
+          }
+        });
+      };
+      issuedDocumentsRegister.querySelector("[data-issued-document-filters]")?.addEventListener("input", (event) => {
+        const control = event.target.closest("[data-issued-document-filter]");
+        if (!(control instanceof HTMLInputElement) || control.type === "date") return;
+        window.clearTimeout(issuedDocumentFilterTimer);
+        issuedDocumentFilterTimer = window.setTimeout(() => applyIssuedDocumentFilter(control, true), 180);
+      });
+      issuedDocumentsRegister.querySelector("[data-issued-document-filters]")?.addEventListener("change", (event) => {
+        const control = event.target.closest("[data-issued-document-filter]");
+        if (!control) return;
+        window.clearTimeout(issuedDocumentFilterTimer);
+        applyIssuedDocumentFilter(control, false);
+      });
+      issuedDocumentsRegister.querySelectorAll("[data-action='sort-issued-documents']").forEach((button) => {
+        button.addEventListener("click", () => {
+          const key = String(button.dataset.sortKey || "issueDate");
+          const current = state.issuedDocumentSort || { key: "issueDate", dir: "desc" };
+          state.issuedDocumentSort = current.key === key
+            ? { key, dir: current.dir === "desc" ? "asc" : "desc" }
+            : { key, dir: ["issueDate", "frdoDate"].includes(key) ? "desc" : "asc" };
+          state.tablePages.issuedDocuments = 1;
+          render();
+        });
+      });
+      issuedDocumentsRegister.querySelector("[data-action='reset-issued-document-filters']")?.addEventListener("click", () => {
+        state.issuedDocumentFilters = {
+          documentNumber: "",
+          issueDateFrom: "",
+          issueDateTo: "",
+          frdo: "",
+          student: "",
+          program: "",
+          programType: ""
+        };
+        state.tablePages.issuedDocuments = 1;
+        render();
+      });
+      issuedDocumentsRegister.querySelectorAll("[data-action='open-issued-document-student']").forEach((button) => {
+        button.addEventListener("click", () => {
+          const navigationIds = getVisibleIssuedDocumentRows().map((row) => row.studentId).filter(Boolean);
+          openStudentCardById(button.dataset.studentId, navigationIds);
+        });
+      });
+    }
+
     document.querySelectorAll("[data-action='table-page']").forEach((button) => {
       button.addEventListener("click", () => {
         state.tablePages[button.dataset.config] = Number(button.dataset.page || 1);
@@ -24308,13 +24647,13 @@ MAX - https://bizvmax.ru/zifra_plus
     state.discountPicker = null;
   }
 
-  async function openStudentCardById(id) {
+  async function openStudentCardById(id, navigationIds = null) {
     if (!id) return;
     await withCardLoadingIndicator("students", id, async () => {
       if (!await acquireRecordLock(recordLockEntityType("students"), id)) return;
-      const studentNavigationIds = Array.isArray(state.modal?.studentNavigationIds)
-        ? [...state.modal.studentNavigationIds]
-        : [];
+      const studentNavigationIds = Array.isArray(navigationIds)
+        ? [...navigationIds]
+        : (Array.isArray(state.modal?.studentNavigationIds) ? [...state.modal.studentNavigationIds] : []);
       resetStudentCardTransientState();
       state.lastEditedRow = { config: "students", id };
       setTablePageForRow("students", id);
