@@ -19,10 +19,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.124",
+    version: "1.7.125",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.125",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Раздел «Реестр выданных документов» перемещён в меню сразу после раздела «Программы», включая ранее сохранённый порядок меню."
+      ]
+    },
     {
       version: "1.7.124",
       releasedAt: "2026-08-12",
@@ -1287,6 +1294,8 @@
   const STUDENT_CARD_TAB_ORDER_KEY = "ais-dopobr-student-card-tab-order-v1";
   const TAB_ORDER_SETTINGS_KEY = "ais-dopobr-tab-orders-v1";
   const NAV_ITEM_ORDER_KEY = "ais-dopobr-nav-item-order-v1";
+  const NAV_ITEM_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-nav-item-order-layout-v1";
+  const NAV_ITEM_ORDER_LAYOUT_VERSION = "issued-documents-after-programs";
   const DASHBOARD_STATUS_ORDER_KEY = "ais-dopobr-dashboard-status-order-v1";
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-dashboard-status-layout-v1";
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION = "enrollment-study-first";
@@ -2656,9 +2665,9 @@ MAX - https://bizvmax.ru/zifra_plus
   const navItems = [
     { id: "dashboard", label: "Рабочий стол", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M7 16l4-4 3 3 5-7"></path><path d="M16 8h3v3"></path></svg>' },
     { id: "students", label: "Слушатели", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg>' },
-    { id: "issuedDocuments", label: "Реестр выданных документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><circle cx="17.5" cy="17.5" r="3.5"></circle><path d="M16 17.5l1 1 2-2"></path></svg>' },
     { id: "contracts", label: "Сотрудники", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3h7l5 5v13H7z"></path><path d="M14 3v5h5"></path><path d="M10 12h6"></path><path d="M10 16h6"></path></svg>' },
     { id: "programs", label: "Программы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 9l9-5 9 5-9 5z"></path><path d="M7 11v5c3 2 7 2 10 0v-5"></path><path d="M21 9v6"></path></svg>' },
+    { id: "issuedDocuments", label: "Реестр выданных документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><circle cx="17.5" cy="17.5" r="3.5"></circle><path d="M16 17.5l1 1 2-2"></path></svg>' },
     { id: "generalExpenses", label: "Общие затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8c0-2 3.6-3.5 8-3.5S20 6 20 8s-3.6 3.5-8 3.5S4 10 4 8z"></path><path d="M4 8v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V8"></path><path d="M4 12v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5v-4"></path></svg>' },
     { id: "inventory", label: "Запасы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8l8-4 8 4-8 4z"></path><path d="M4 8v8l8 4 8-4V8"></path><path d="M12 12v8"></path><path d="M8 6l8 4"></path></svg>' },
     { id: "documentConstructor", label: "Конструктор документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><path d="M4 7h2"></path><path d="M4 11h2"></path><path d="M4 15h2"></path></svg>' },
@@ -7009,10 +7018,24 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function loadNavItemOrder() {
     const saved = localStorage.getItem(NAV_ITEM_ORDER_KEY);
-    if (!saved) return [];
+    if (!saved) {
+      localStorage.setItem(NAV_ITEM_ORDER_LAYOUT_VERSION_KEY, NAV_ITEM_ORDER_LAYOUT_VERSION);
+      return [];
+    }
     try {
       const parsed = JSON.parse(saved);
-      return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+      const order = Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+      if (localStorage.getItem(NAV_ITEM_ORDER_LAYOUT_VERSION_KEY) !== NAV_ITEM_ORDER_LAYOUT_VERSION) {
+        const programsIndex = order.indexOf("programs");
+        const issuedDocumentsIndex = order.indexOf("issuedDocuments");
+        if (programsIndex >= 0 && issuedDocumentsIndex >= 0) {
+          order.splice(issuedDocumentsIndex, 1);
+          order.splice(order.indexOf("programs") + 1, 0, "issuedDocuments");
+          localStorage.setItem(NAV_ITEM_ORDER_KEY, JSON.stringify(order));
+        }
+        localStorage.setItem(NAV_ITEM_ORDER_LAYOUT_VERSION_KEY, NAV_ITEM_ORDER_LAYOUT_VERSION);
+      }
+      return order;
     } catch (error) {
       console.warn("Не удалось прочитать порядок пунктов меню", error);
       return [];
