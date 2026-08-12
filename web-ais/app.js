@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.90",
+    version: "1.7.91",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.91",
+      releasedAt: "2026-08-12",
+      changes: [
+        "Во всех вкладках администрирования убраны повторяющиеся названия разделов под строкой вкладок; пояснения и кнопки действий сохранены."
+      ]
+    },
     {
       version: "1.7.90",
       releasedAt: "2026-08-12",
@@ -12153,11 +12160,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <section class="panel admin-audit-panel" id="admin-tab-audit" role="tabpanel">
         <div class="panel-head">
-          <div>
-            <p class="eyebrow">Контроль изменений</p>
-            <h2>Журнал действий пользователей</h2>
-            <p>Единая серверная история: ${state.auditLog.total} ${pluralizeRu(state.auditLog.total, "запись", "записи", "записей")} по текущему фильтру.</p>
-          </div>
+          <p class="admin-tab-summary">Единая серверная история: ${state.auditLog.total} ${pluralizeRu(state.auditLog.total, "запись", "записи", "записей")} по текущему фильтру.</p>
           <div class="admin-audit-head-actions">
             <button class="icon-button" data-action="refresh-audit-log" type="button" title="Обновить журнал" aria-label="Обновить журнал">↻</button>
             <button
@@ -12469,14 +12472,6 @@ MAX - https://bizvmax.ru/zifra_plus
         role="tabpanel"
         ${!["database", "email"].includes(adminTab) ? "hidden" : ""}
       >
-        ${adminTab === "email" ? `
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Администрирование</p>
-              <h2>Электронная почта</h2>
-            </div>
-          </div>
-        ` : ""}
           <div class="admin-database-settings">
             <form class="sdo-settings-form" data-action="save-student-database-settings" novalidate>
               <div class="admin-database-subtab-row">
@@ -12801,11 +12796,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <section class="panel admin-users-panel" id="admin-tab-users" role="tabpanel">
         <div class="section-head">
-          <div>
-            <p class="eyebrow">Доступ к системе</p>
-            <h2>Пользователи и роли</h2>
-            <p>Учётные записи администраторов и менеджеров, контакты и состояние доступа.</p>
-          </div>
+          <p class="admin-tab-summary">Учётные записи администраторов и менеджеров, контакты и состояние доступа.</p>
           <div class="admin-users-actions">
             <button class="ghost-button" data-action="refresh-auth-users" type="button" ${state.authUsersLoading ? "disabled" : ""}>Обновить</button>
             <button class="primary-button" data-action="create-auth-user" type="button">Добавить пользователя</button>

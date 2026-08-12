@@ -738,6 +738,17 @@ body.is-session-expired {
   font-size: 12px;
 }
 
+.admin-tab-summary {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-users-panel .section-head .admin-tab-summary {
+  margin: 0;
+}
+
 .admin-tabs {
   display: flex;
   align-items: flex-end;
