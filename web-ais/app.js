@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.131",
+    version: "1.7.132",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.132",
+      releasedAt: "2026-08-12",
+      changes: [
+        "При открытии раздела «Слушатели» автоматически выбирается первый непустой статус в порядке: «На зачисление», «Учится», «Отчислен»."
+      ]
+    },
     {
       version: "1.7.131",
       releasedAt: "2026-08-12",
@@ -7090,6 +7097,17 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getDefaultStatusFilter(viewId) {
     return viewId === "students" ? "Учится" : "Все";
+  }
+
+  function getStudentEntryStatusFilter() {
+    const availableStatuses = new Set(
+      (state.data.collections.students || [])
+        .map((student) => String(student?.status || "").trim().toLocaleLowerCase("ru-RU"))
+        .filter(Boolean)
+    );
+    return ["На зачисление", "Учится", "Отчислен"].find((status) => (
+      availableStatuses.has(status.toLocaleLowerCase("ru-RU"))
+    )) || "Все";
   }
 
   function getDefaultGeneralExpenseSectionFilter(viewId) {
@@ -23223,14 +23241,18 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!await saveAdminSettingsBeforeExit(button.dataset.view)) return;
         state.view = button.dataset.view;
         state.search = "";
-        state.statusFilter = getDefaultStatusFilter(state.view);
+        state.statusFilter = state.view === "students"
+          ? getStudentEntryStatusFilter()
+          : getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
         state.programRegistryTypeFilter = [];
         state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
         state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
         state.generalExpenseWorkTypeFilter = [];
         state.studentImportedViewIds = [];
-        state.sort = getDefaultTableSort(state.view);
+        state.sort = state.view === "students"
+          ? getStudentStatusTableSort(state.statusFilter)
+          : getDefaultTableSort(state.view);
         state.tableOptions = null;
         if (window.matchMedia("(max-width: 1120px)").matches) {
           document.body.classList.remove("sidebar-open");
@@ -23245,14 +23267,18 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!await saveAdminSettingsBeforeExit(button.dataset.viewShortcut)) return;
         state.view = button.dataset.viewShortcut;
         state.search = "";
-        state.statusFilter = getDefaultStatusFilter(state.view);
+        state.statusFilter = state.view === "students"
+          ? getStudentEntryStatusFilter()
+          : getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
         state.programRegistryTypeFilter = [];
         state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
         state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
         state.generalExpenseWorkTypeFilter = [];
         state.studentImportedViewIds = [];
-        state.sort = getDefaultTableSort(state.view);
+        state.sort = state.view === "students"
+          ? getStudentStatusTableSort(state.statusFilter)
+          : getDefaultTableSort(state.view);
         state.tableOptions = null;
         render();
       });
