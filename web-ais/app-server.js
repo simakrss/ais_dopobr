@@ -11114,13 +11114,14 @@ function parseInSalesOrderEmail(rawMessage) {
   const deliveryLines = deliveryBlock.split("\n").map((line) => line.trim()).filter(Boolean);
   const city = deliveryLines.slice(1).find((line) => !/^[\d\s.,-]+\s*₽$/u.test(line)) || "";
   const totalBaseAmount = products.reduce((sum, product) => sum + product.baseAmount, 0);
+  const receiptTotalAmount = totalAmount > 0 ? totalAmount : totalBaseAmount;
   const dateCreated = `${year}-${month}-${day}T${time}:00`;
   const messageId = String(headers["message-id"] || "").replace(/[<>\s]+/g, "").slice(0, 120);
 
   return products.map((product, index) => {
     const paymentAmount = Math.round((products.length === 1
-      ? totalAmount
-      : totalAmount * (product.baseAmount / Math.max(totalBaseAmount, 1))) * 100) / 100;
+      ? receiptTotalAmount
+      : receiptTotalAmount * (product.baseAmount / Math.max(totalBaseAmount, 1))) * 100) / 100;
     const orderParts = [
       orderId,
       paid ? `опл ${paymentAmount}` : "",
@@ -11783,13 +11784,14 @@ function mergeStudentApplicationRows(rows) {
   (Array.isArray(rows) ? rows : []).forEach((row) => {
     const orderId = String(row.orderId || "").trim();
     const programKey = normalizeStudentApplicationProgramMatchValue(row.program);
+    const sourceType = String(row.sourceType || "mysql").trim().toLowerCase();
     const key = orderId && programKey
-      ? `order\u0000${orderId}\u0000${programKey}`
-      : `${row.sourceType || "mysql"}\u0000${orderId}\u0000${row.productId || ""}\u0000${row.id || ""}`;
+      ? `${sourceType}\u0000order\u0000${orderId}\u0000${programKey}`
+      : `${sourceType}\u0000${orderId}\u0000${row.productId || ""}\u0000${row.id || ""}`;
     const current = rowsByKey.get(key);
-    const currentIsMySql = String(current?.sourceType || "mysql") === "mysql";
-    const rowIsMySql = String(row?.sourceType || "mysql") === "mysql";
-    if (!current || (!currentIsMySql && rowIsMySql)) rowsByKey.set(key, row);
+    if (!current || Number(row.paymentAmount || 0) > Number(current.paymentAmount || 0)) {
+      rowsByKey.set(key, row);
+    }
   });
   return [...rowsByKey.values()].sort((left, right) => (
     String(right.dateCreated || "").localeCompare(String(left.dateCreated || ""))

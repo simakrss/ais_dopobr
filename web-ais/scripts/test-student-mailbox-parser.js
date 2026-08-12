@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   parseStudentMailboxMessage,
   parseStudentApplicationOrderEmail,
+  mergeStudentApplicationRows,
   collectEmailMessageContent,
   parseImapBodyStructureAttachments,
   prepareStudentMailboxAttachmentForSave
@@ -86,6 +87,19 @@ assert.equal(unpaidInSalesRows.length, 1);
 assert.equal(unpaidInSalesRows[0].paid, false);
 assert.equal(unpaidInSalesRows[0].orderAmount, 10000);
 assert.equal(unpaidInSalesRows[0].paymentAmount, 10000);
+
+const distinctStoreRows = mergeStudentApplicationRows([
+  unpaidInSalesRows[0],
+  {
+    ...unpaidInSalesRows[0],
+    id: "mysql-5555-777",
+    sourceType: "mysql",
+    source: "Интернет-магазин / WooCommerce",
+    paymentAmount: 0
+  }
+]);
+assert.equal(distinctStoreRows.length, 2);
+assert.equal(distinctStoreRows.find((row) => row.sourceType === "email").paymentAmount, 10000);
 
 const bodyStructureResponse = Buffer.from([
   '* 7440 FETCH (UID 7932 BODYSTRUCTURE (("text" "plain" ("charset" "utf-8") NIL NIL "base64" 120 2 NIL NIL NIL NIL)("application" "pdf" ("name" "first.pdf") NIL NIL "base64" 400 NIL ("attachment" ("filename" "first.pdf")) NIL NIL)("image" "jpeg" NIL NIL NIL "base64" 800 NIL ("inline" ("filename" "photo.jpg")) NIL NIL) "mixed" ("boundary" "test") NIL NIL NIL))',
