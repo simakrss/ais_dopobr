@@ -10669,13 +10669,6 @@ body.card-window-moving {
   padding-inline: 2px;
 }
 
-.employee-payment-date-cell {
-  display: grid;
-  grid-template-columns: 12px minmax(0, 1fr);
-  align-items: center;
-  gap: 2px;
-}
-
 .employee-payment-row-drag-handle {
   display: grid;
   grid-template-columns: repeat(2, 3px);
@@ -10785,7 +10778,7 @@ body.card-window-moving {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 1px;
+  gap: 0;
 }
 
 .employee-payment-edit-button,
@@ -10794,9 +10787,9 @@ body.card-window-moving {
   display: inline-grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 24px;
+  width: 20px;
   height: 24px;
-  padding: 4px;
+  padding: 2px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -10831,7 +10824,7 @@ body.card-window-moving {
 }
 
 .employee-payment-delete-button {
-  width: 24px;
+  width: 20px;
   height: 24px;
 }
 

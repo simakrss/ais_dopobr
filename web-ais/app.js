@@ -8,10 +8,17 @@
     smtpPort: 465
   });
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.93",
+    version: "1.7.94",
     releasedAt: "2026-08-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.94",
+      releasedAt: "2026-08-12",
+      changes: [
+        "В таблице учёта выплат сотрудникам маркеры перетаскивания строк перенесены из колонки «Дата» в первую колонку «Действия»."
+      ]
+    },
     {
       version: "1.7.93",
       releasedAt: "2026-08-12",
@@ -14357,8 +14364,9 @@ MAX - https://bizvmax.ru/zifra_plus
                 return `
                   <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
                     <td class="employee-payment-delete-cell" data-employee-payment-column="actions">
-                      ${editable ? `
-                        <div class="employee-payment-row-actions">
+                      <div class="employee-payment-row-actions">
+                        ${renderEmployeePaymentRowDragHandle(row.sourceType, row.sourceId, filtersActive || Boolean(sort.key))}
+                        ${editable ? `
                           <button class="employee-payment-edit-button" data-action="edit-employee-expense" type="button" title="Редактировать запись оплаты во всплывающем окне" aria-label="Редактировать запись оплаты">
                             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                               <path d="M4 20h4l11-11-4-4L4 16v4z"></path>
@@ -14394,12 +14402,11 @@ MAX - https://bizvmax.ru/zifra_plus
                               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path></svg>
                             </button>
                           `}
-                        </div>
-                      ` : "—"}
+                        ` : "—"}
+                      </div>
                     </td>
                     <td>${renderEmployeePaymentStatus(row)}</td>
                     <td class="employee-payment-date-cell">
-                      ${renderEmployeePaymentRowDragHandle(row.sourceType, row.sourceId, filtersActive || Boolean(sort.key))}
                       <input data-employee-payment-field="date" type="date" value="${escapeAttr(row.date)}" ${row.dateReadOnly ? 'readonly title="Дата проведённой выплаты изменяется в колонке «Оплачено»"' : (editable ? "" : "disabled")}>
                     </td>
                     <td data-employee-payment-column="source" title="${escapeAttr([sourceLabel, row.details].filter(Boolean).join(" · "))}">
