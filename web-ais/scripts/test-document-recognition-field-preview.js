@@ -98,6 +98,57 @@ async function main() {
   }
 
   const clientSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
+  const displayFieldsStart = clientSource.indexOf("  function getDocumentRecognitionDisplayFields");
+  const displayFieldsEnd = clientSource.indexOf("\n\n  function storeStudentDocumentRecognitionResult", displayFieldsStart);
+  assert.ok(displayFieldsStart >= 0 && displayFieldsEnd > displayFieldsStart);
+  const displayFieldsSource = clientSource.slice(displayFieldsStart, displayFieldsEnd);
+  const getDisplayFields = new Function(
+    "isContractDocumentRecognitionDialog",
+    "getDocumentRecognitionFieldGroups",
+    "getDocumentRecognitionFieldDefinition",
+    `${displayFieldsSource}\nreturn getDocumentRecognitionDisplayFields;`
+  )(
+    (dialog) => Boolean(dialog?.isContract),
+    (dialog) => dialog.groups,
+    (key) => ({ label: `Label ${key}` })
+  );
+  const studentGroups = [
+    { id: "passport", keys: ["passportNumber", "passportDate", "passportCode", "passportIssuer"] },
+    { id: "education", keys: ["educationDocumentSeries", "educationDocumentNumber", "educationDocumentIssuer", "educationDocumentSurname"] },
+    { id: "application", keys: ["phone"] }
+  ];
+  const displayFields = getDisplayFields(
+    { groups: studentGroups },
+    [{ key: "passportNumber", value: "40 25 398117", label: "Passport" }]
+  );
+  assert.deepStrictEqual(
+    displayFields.map((field) => field.key),
+    [
+      "passportNumber",
+      "passportDate",
+      "passportCode",
+      "passportIssuer",
+      "educationDocumentSeries",
+      "educationDocumentNumber",
+      "educationDocumentIssuer",
+      "educationDocumentSurname"
+    ]
+  );
+  assert.strictEqual(displayFields.find((field) => field.key === "passportDate").recognitionMissing, true);
+  assert.strictEqual(displayFields.find((field) => field.key === "passportDate").value, "");
+  assert.strictEqual(displayFields.some((field) => field.key === "phone"), false);
+  const contractDisplayFields = getDisplayFields({
+    isContract: true,
+    groups: [{
+      id: "passport",
+      keys: ["name", "identityDocument", "identityIssueDate", "identityDepartmentCode", "identityIssuer"]
+    }]
+  }, []);
+  assert.deepStrictEqual(
+    contractDisplayFields.map((field) => field.key),
+    ["identityIssueDate", "identityDepartmentCode", "identityIssuer"]
+  );
+  assert.ok(contractDisplayFields.every((field) => field.recognitionMissing === true));
   assert.match(clientSource, /data-ocr-field-preview-text/u);
   assert.match(clientSource, /data-ocr-preview-rotate-left/u);
   assert.match(clientSource, /data-ocr-preview-rotate-right/u);
@@ -107,6 +158,8 @@ async function main() {
   assert.match(clientSource, /rotate\(\$\{normalizePreviewRotation\(view\.rotation\)\}deg\)/u);
   assert.match(clientSource, /previewLoadController\?\.abort\(\)/u);
   assert.match(clientSource, /signal: controller\.signal/u);
+  assert.match(clientSource, /Не распознано — заполните вручную/u);
+  assert.match(clientSource, /recognizedFieldPreview \|\| \(availableFiles\.length \? \{ page: 1 \} : null\)/u);
 
   const serverSource = fs.readFileSync(path.join(__dirname, "..", "app-server.js"), "utf8");
   assert.match(serverSource, /kind: "text"/u);

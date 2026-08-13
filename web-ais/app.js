@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.181",
+    version: "1.7.182",
     releasedAt: "2026-08-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.182",
+      releasedAt: "2026-08-14",
+      changes: [
+        "В результатах распознавания всегда показываются ключевые реквизиты паспорта и документа об образовании, даже если OCR не смог определить значение; такие поля можно заполнить вручную со сверкой по любому доступному документу."
+      ]
+    },
     {
       version: "1.7.181",
       releasedAt: "2026-08-14",
@@ -32405,6 +32412,53 @@ MAX - https://bizvmax.ru/zifra_plus
       : studentDocumentRecognitionFieldGroups;
   }
 
+  function getDocumentRecognitionDisplayFields(dialog, recognizedFields = []) {
+    const isContract = isContractDocumentRecognitionDialog(dialog);
+    const groups = getDocumentRecognitionFieldGroups(dialog);
+    const alwaysVisibleKeys = new Set(isContract
+      ? ["identityIssueDate", "identityDepartmentCode", "identityIssuer"]
+      : [
+          "passportDate",
+          "passportCode",
+          "passportIssuer",
+          "educationDocumentSeries",
+          "educationDocumentNumber",
+          "educationDocumentIssuer",
+          "educationDocumentSurname"
+        ]);
+    const fieldsByKey = new Map(
+      (Array.isArray(recognizedFields) ? recognizedFields : [])
+        .filter((field) => String(field?.key || ""))
+        .map((field) => [String(field.key), field])
+    );
+    const displayFields = [];
+    const displayedKeys = new Set();
+    groups.forEach((group) => {
+      group.keys.forEach((key) => {
+        const recognizedField = fieldsByKey.get(key);
+        if (!recognizedField && !alwaysVisibleKeys.has(key)) return;
+        if (displayedKeys.has(key)) return;
+        displayedKeys.add(key);
+        displayFields.push(recognizedField || {
+          key,
+          label: getDocumentRecognitionFieldDefinition(key, isContract)?.label || key,
+          value: "",
+          confidence: 0,
+          sourceFile: "",
+          evidence: "Поле не распознано",
+          recognitionMissing: true
+        });
+      });
+    });
+    (Array.isArray(recognizedFields) ? recognizedFields : []).forEach((field) => {
+      const key = String(field?.key || "");
+      if (!key || displayedKeys.has(key)) return;
+      displayedKeys.add(key);
+      displayFields.push(field);
+    });
+    return displayFields;
+  }
+
   function storeStudentDocumentRecognitionResult(payload) {
     const result = normalizeStudentDocumentRecognitionResult({
       ...payload,
@@ -32795,6 +32849,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const key = String(field.key || "");
     const listControl = getDocumentRecognitionListControl(field, options.isContract === true);
     const manualEntry = field.manualEntry === true && !String(field.value || "").trim();
+    const recognitionMissing = field.recognitionMissing === true;
     const isIdentityNumber = ["inn", "snils"].includes(key);
     const currentValue = String(currentRecord[key] || "").trim();
     const sameValue = Boolean(
@@ -32802,20 +32857,22 @@ MAX - https://bizvmax.ru/zifra_plus
       && normalizeRecognitionComparisonValue(key, currentValue)
         === normalizeRecognitionComparisonValue(key, field.value)
     );
-    const conflict = Boolean(currentValue && !sameValue);
+    const conflict = Boolean(!recognitionMissing && currentValue && !sameValue);
     const confidence = Math.round((Number(field.confidence) || 0) * 100);
     const confidenceTone = confidence >= 85 ? "high" : confidence >= 65 ? "medium" : "low";
     const selected = !currentValue && confidence >= 60;
     const alternatives = Array.isArray(field.alternatives) ? field.alternatives : [];
     const listId = !listControl && alternatives.length ? `ocr-options-${key}-${Math.random().toString(36).slice(2)}` : "";
-    const status = conflict
+    const status = recognitionMissing
+      ? '<span class="student-document-recognition-missing">Не распознано — заполните вручную</span>'
+      : conflict
       ? '<span class="student-document-recognition-conflict">Есть другое значение</span>'
       : sameValue
         ? '<span class="student-document-recognition-match">Совпадает</span>'
         : "";
     return `
       <div
-        class="student-document-recognition-field ${conflict ? "has-conflict" : ""}"
+        class="student-document-recognition-field ${conflict ? "has-conflict" : ""} ${recognitionMissing ? "is-recognition-missing" : ""}"
         data-ocr-recognition-field="${escapeAttr(key)}"
         data-ocr-field-source="${escapeAttr(field.sourceFile || "")}"
       >
@@ -32840,10 +32897,10 @@ MAX - https://bizvmax.ru/zifra_plus
             </datalist>
           ` : ""}
           <div class="student-document-recognition-field-meta">
-            <span class="student-document-recognition-confidence is-${confidenceTone}">${manualEntry ? "Требуется проверка" : `Уверенность ${confidence}%`}</span>
+            ${recognitionMissing ? "" : `<span class="student-document-recognition-confidence is-${confidenceTone}">${manualEntry ? "Требуется проверка" : `Уверенность ${confidence}%`}</span>`}
             ${isIdentityNumber ? '<span class="student-document-recognition-identity-status" data-ocr-identity-status aria-live="polite"></span>' : ""}
             ${status}
-            <span title="${escapeAttr(field.evidence || "")}">Источник: ${escapeHtml(field.sourceFile || "документ")}</span>
+            <span title="${escapeAttr(field.evidence || "")}">Источник: ${escapeHtml(field.sourceFile || "не определён")}</span>
           </div>
           ${currentValue ? `<small>Сейчас в карточке: <strong>${escapeHtml(currentValue)}</strong></small>` : ""}
           ${listControl ? `<small>${listControl.mode === "combo" ? "Выберите значение из списка или введите своё." : "Выберите значение из списка."}</small>` : ""}
@@ -33047,7 +33104,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const isContract = isContractDocumentRecognitionDialog(dialog);
     const personLabel = isContract ? "сотрудника" : "слушателя";
     dialog.stopStudentDocumentRecognitionTimer?.();
-    const fields = Array.isArray(payload.fields) ? payload.fields : [];
+    const recognizedFields = Array.isArray(payload.fields) ? payload.fields : [];
+    const fields = getDocumentRecognitionDisplayFields(dialog, recognizedFields);
     const photoCandidates = Array.isArray(payload.photoCandidates)
       ? payload.photoCandidates.map(normalizeStudentDocumentRecognitionPhotoCandidate).filter(Boolean)
       : [];
@@ -33060,7 +33118,7 @@ MAX - https://bizvmax.ru/zifra_plus
     })).filter((group) => group.fields.length);
     const fieldDocuments = [];
     const fieldDocumentKeys = new Set();
-    fields.forEach((field) => {
+    recognizedFields.forEach((field) => {
       const source = String(field.sourceFile || "Документ").trim() || "Документ";
       const sourceKey = source.replace(/\\/g, "/").toLocaleLowerCase("ru-RU");
       if (fieldDocumentKeys.has(sourceKey)) return;
@@ -33079,8 +33137,8 @@ MAX - https://bizvmax.ru/zifra_plus
     modal.insertAdjacentHTML("beforeend", `
       <div class="student-document-recognition-result">
         <div class="student-document-recognition-summary">
-          <strong>${fields.length
-            ? `Найдено полей: ${fields.length}`
+          <strong>${recognizedFields.length
+            ? `Найдено полей: ${recognizedFields.length}`
             : "Реквизиты документов не найдены"}</strong>
           <span>Дата распознавания: ${escapeHtml(formatDateTimeRu(payload.recognizedAt))}</span>
           <span>Время работы: ${escapeHtml(formatStudentDocumentRecognitionDuration(payload.durationMs))}</span>
@@ -33372,7 +33430,14 @@ MAX - https://bizvmax.ru/zifra_plus
       if (event.target.matches("[data-ocr-field-enabled], [data-ocr-field-value]")) sync();
     });
     modal.addEventListener("input", (event) => {
-      if (event.target.matches("[data-ocr-field-value]")) sync();
+      if (event.target.matches("[data-ocr-field-value]")) {
+        const row = event.target.closest("[data-ocr-recognition-field]");
+        if (row?.classList.contains("is-recognition-missing")) {
+          const checkbox = row.querySelector("[data-ocr-field-enabled]");
+          if (checkbox) checkbox.checked = Boolean(String(event.target.value || "").trim());
+        }
+        sync();
+      }
     });
     sync();
   }
@@ -33993,7 +34058,8 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     const showFieldPreview = (field, input, preserveView = true) => {
       const key = String(field?.key || "");
-      const { fieldPreview, pagePreview } = findStudentDocumentRecognitionPagePreview(field, files);
+      const { fieldPreview: recognizedFieldPreview, pagePreview } = findStudentDocumentRecognitionPagePreview(field, files);
+      const fieldPreview = recognizedFieldPreview || (availableFiles.length ? { page: 1 } : null);
       if (!input || !fieldPreview) {
         hide();
         return;

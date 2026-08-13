@@ -14667,6 +14667,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 .student-document-recognition-confidence,
 .student-document-recognition-conflict,
 .student-document-recognition-match,
+.student-document-recognition-missing,
 .student-document-recognition-identity-status {
   padding: 1px 5px;
   border-radius: 999px;
@@ -14688,6 +14689,15 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 .student-document-recognition-conflict {
   color: #b42318;
   background: #fee4e2;
+}
+
+.student-document-recognition-missing {
+  color: #8a5700;
+  background: #fff0c2;
+}
+
+.student-document-recognition-field.is-recognition-missing {
+  background: #fffdf6;
 }
 
 .student-document-recognition-identity-status[data-validation-state="valid"] {
