@@ -32042,7 +32042,34 @@ MAX - https://bizvmax.ru/zifra_plus
     return result;
   }
 
-  function showStoredStudentDocumentRecognitionResult() {
+  async function hydrateStoredDocumentRecognitionSourceFiles(result) {
+    if (!result || (Array.isArray(result.sourceFiles) && result.sourceFiles.length)) return result;
+    const folder = String(result?.folder || "").trim();
+    if (!folder) return result;
+    try {
+      const response = await fetch(photoApiUrl("/api/students/recognize-documents/files"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({ folder, source: result.source })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(payload.files) || !payload.files.length) return result;
+      return {
+        ...result,
+        source: payload.source || result.source,
+        sourceLabel: payload.sourceLabel || result.sourceLabel,
+        sourceFileCount: Math.max(Number(result.sourceFileCount) || 0, payload.files.length),
+        sourceFiles: payload.files
+      };
+    } catch {
+      return result;
+    }
+  }
+
+  async function showStoredStudentDocumentRecognitionResult() {
     const currentRecord = collectStudentFormDraft();
     let result = normalizeStudentDocumentRecognitionResult(
       currentRecord.documentRecognitionResult
@@ -32062,11 +32089,12 @@ MAX - https://bizvmax.ru/zifra_plus
         { keepPreviews: true }
       ) || result;
     }
+    result = await hydrateStoredDocumentRecognitionSourceFiles(result);
     const dialog = createStudentDocumentRecognitionDialog();
     renderStudentDocumentRecognitionResults(dialog, result, currentRecord);
   }
 
-  function showStoredContractDocumentRecognitionResult() {
+  async function showStoredContractDocumentRecognitionResult() {
     const currentRecord = collectContractFormDraft();
     let result = normalizeContractDocumentRecognitionResult(
       currentRecord.documentRecognitionResult
@@ -32086,6 +32114,7 @@ MAX - https://bizvmax.ru/zifra_plus
         { keepPreviews: true }
       ) || result;
     }
+    result = await hydrateStoredDocumentRecognitionSourceFiles(result);
     const dialog = createStudentDocumentRecognitionDialog({ entityType: "contract" });
     renderStudentDocumentRecognitionResults(dialog, result, currentRecord);
   }
@@ -32969,9 +32998,6 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function findStudentDocumentRecognitionPagePreview(field, files) {
-    const fieldPreview = normalizeStudentDocumentRecognitionPreview(field?.preview)
-      || normalizeStudentDocumentRecognitionPreviewReference(field?.previewReference);
-    if (!fieldPreview) return { fieldPreview: null, pagePreview: null };
     const sourceNames = String(field?.sourceFile || "")
       .split(/;\s*/g)
       .map((item) => item.trim())
@@ -32980,6 +33006,10 @@ MAX - https://bizvmax.ru/zifra_plus
       sourceName === String(file?.relativeName || "")
       || sourceName === String(file?.fileName || "")
     )));
+    const fieldPreview = normalizeStudentDocumentRecognitionPreview(field?.preview)
+      || normalizeStudentDocumentRecognitionPreviewReference(field?.previewReference)
+      || (sourceFile ? { page: 1 } : null);
+    if (!fieldPreview) return { fieldPreview: null, pagePreview: null };
     const pagePreview = (sourceFile?.pagePreviews || [])
       .map(normalizeStudentDocumentRecognitionPagePreview)
       .find((preview) => preview.page === fieldPreview.page) || null;
