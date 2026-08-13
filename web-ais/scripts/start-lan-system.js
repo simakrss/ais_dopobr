@@ -254,6 +254,22 @@ function startDocumentServices(commonEnvironment) {
   try {
     console.log("Starting OCR and OnlyOffice containers...");
     try {
+      console.log("Checking the local OCR image for source updates...");
+      execFileSync(
+        "docker.exe",
+        ["compose", "-f", composePath, "build", "ocr"],
+        {
+          cwd: appRoot,
+          env: { ...process.env, ...commonEnvironment },
+          timeout: 300000,
+          windowsHide: false,
+          stdio: "inherit",
+        },
+      );
+    } catch (_error) {
+      console.log("The OCR image could not be refreshed; the existing local image will be used.");
+    }
+    try {
       execFileSync(
         "docker.exe",
         ["compose", "-f", composePath, "up", "-d", "--no-build"],

@@ -344,7 +344,11 @@ def tesseract_text_with_words(
     return text, parse_tesseract_words(tsv_text)
 
 
-def ocr_image(image_path: Path) -> tuple[str, Path, list[dict[str, Any]]]:
+def ocr_image(
+    image_path: Path,
+    *,
+    try_snils_rotations: bool = False,
+) -> tuple[str, Path, list[dict[str, Any]]]:
     processed_path = image_path.with_name(f"{image_path.stem}-prepared.png")
     run_command(
         [
@@ -369,7 +373,37 @@ def ocr_image(image_path: Path) -> tuple[str, Path, list[dict[str, Any]]]:
     primary_normalized = normalize_text(primary)
     if len(primary_normalized) < 40:
         secondary = tesseract_text(processed_path, 6)
-    return merge_ocr_text(primary, secondary), processed_path, words
+    best_text = merge_ocr_text(primary, secondary)
+    best_path = processed_path
+    best_words = words
+    best_score = snils_ocr_text_score(best_text) if try_snils_rotations else 0
+    if try_snils_rotations and best_score < 250:
+        for angle in (90, 270, 180):
+            rotated_path = image_path.with_name(f"{image_path.stem}-prepared-{angle}.png")
+            run_command(
+                [
+                    CONVERT_BINARY,
+                    str(processed_path),
+                    "-rotate",
+                    str(angle),
+                    str(rotated_path),
+                ],
+                timeout=60,
+            )
+            rotated_primary, rotated_words = tesseract_text_with_words(rotated_path, 11)
+            rotated_secondary = ""
+            if len(normalize_text(rotated_primary)) < 40:
+                rotated_secondary = tesseract_text(rotated_path, 6)
+            rotated_text = merge_ocr_text(rotated_primary, rotated_secondary)
+            rotated_score = snils_ocr_text_score(rotated_text)
+            if rotated_score > best_score:
+                best_text = rotated_text
+                best_path = rotated_path
+                best_words = rotated_words
+                best_score = rotated_score
+            if best_score >= 250:
+                break
+    return best_text, best_path, best_words
 
 
 def render_pages(source_path: Path, mime_type: str, workdir: Path) -> list[Path]:
@@ -756,6 +790,69 @@ def format_snils(value: str) -> str:
     if len(digits) != 11:
         return digits
     return f"{digits[:3]}-{digits[3:6]}-{digits[6:9]} {digits[9:]}"
+
+
+SNILS_GROUPED_PATTERN = re.compile(
+    r"(?<![0-9A-Za-zА-Яа-яЁё])"
+    r"([0-9OОЗзБбS]{2,3})\D{1,3}([0-9OОЗзБбS]{3})\D{1,3}"
+    r"([0-9OОЗзБбS]{3})\D{1,3}([0-9OОЗзБбS]{2})"
+    r"(?![0-9A-Za-zА-Яа-яЁё])"
+)
+
+
+def recover_snils(value: str) -> tuple[str, bool]:
+    """Return an exact or uniquely checksum-corrected OCR value."""
+    digits = only_digits(value)
+    if len(digits) != 11:
+        return "", False
+    if is_valid_snils(digits):
+        return format_snils(digits), False
+    recovered = {
+        candidate
+        # The last two digits are the control number, so use them to repair a
+        # single OCR error in the nine-digit account number, not vice versa.
+        for index in range(9)
+        for replacement in "0123456789"
+        if replacement != digits[index]
+        for candidate in (digits[:index] + replacement + digits[index + 1:],)
+        if is_valid_snils(candidate)
+    }
+    if len(recovered) == 1:
+        return format_snils(recovered.pop()), True
+    return "", False
+
+
+def snils_candidates(
+    value: str,
+    *,
+    allow_missing_leading_zero: bool = False,
+) -> list[tuple[str, str, bool]]:
+    candidates: list[tuple[str, str, bool]] = []
+    for match in SNILS_GROUPED_PATTERN.finditer(str(value or "")):
+        groups = match.groups()
+        if len(only_digits(groups[0])) == 2 and not allow_missing_leading_zero:
+            continue
+        first_group = only_digits(groups[0]).zfill(3)
+        raw = format_snils(first_group + "".join(groups[1:]))
+        recovered, corrected = recover_snils(raw)
+        candidates.append((raw, recovered, corrected))
+    return candidates
+
+
+def snils_ocr_text_score(value: str) -> int:
+    source = normalize_text(value)
+    folded = source.casefold()
+    score = min(len(re.findall(r"[А-ЯЁа-яё]{3,}", source)), 30)
+    score += 100 * sum(marker in folded for marker in ("снилс", "страхов", "пенсион"))
+    for raw, recovered, corrected in snils_candidates(
+        source,
+        allow_missing_leading_zero=True,
+    ):
+        if recovered:
+            score += 180 if not corrected else 130
+        elif len(only_digits(raw)) == 11:
+            score += 30
+    return score
 
 
 def parse_date(value: str) -> str:
@@ -1217,13 +1314,24 @@ def extract_identity_numbers(
     kinds: list[str],
     fields: dict[str, dict[str, Any]],
 ) -> None:
-    for line in lines:
+    for index, line in enumerate(lines):
         folded = line.casefold()
         if "снилс" in folded or "snils" in folded:
-            match = re.search(r"([0-9OОЗзБбS]{3})\D{0,3}([0-9OОЗзБбS]{3})\D{0,3}([0-9OОЗзБбS]{3})\D{0,3}([0-9OОЗзБбS]{2})", line)
-            if match:
-                value = format_snils("".join(match.groups()))
-                add_field(fields, "snils", value, 0.99 if is_valid_snils(value) else 0.55, line)
+            evidence = nearby_text(lines, index, 2)
+            for raw, recovered, corrected in snils_candidates(
+                evidence,
+                allow_missing_leading_zero=True,
+            ):
+                if recovered:
+                    add_field(
+                        fields,
+                        "snils",
+                        recovered,
+                        0.9 if corrected else 0.99,
+                        f"{evidence} (OCR: {raw})" if corrected else evidence,
+                    )
+                else:
+                    add_field(fields, "snils", raw, 0.55, evidence)
         if "инн" in folded or "inn" in folded:
             if "инн/кпп" in folded or "инн / кпп" in folded:
                 continue
@@ -1234,30 +1342,37 @@ def extract_identity_numbers(
                     continue
                 add_field(fields, "inn", value, 0.99 if is_valid_inn(value) else 0.55, line)
 
-    snils_candidates = re.finditer(
-        r"(?<!\d)([0-9OОЗзБбS]{3})[-\s]([0-9OОЗзБбS]{3})[-\s]([0-9OОЗзБбS]{3})[\s-]([0-9OОЗзБбS]{2})(?!\d)",
+    for raw, recovered, corrected in snils_candidates(
         text,
-    )
-    for match in snils_candidates:
-        value = format_snils("".join(match.groups()))
-        if is_valid_snils(value):
-            add_field(fields, "snils", value, 0.98, match.group(0))
+        allow_missing_leading_zero="snils" in kinds,
+    ):
+        if recovered and (not corrected or "snils" in kinds):
+            add_field(
+                fields,
+                "snils",
+                recovered,
+                0.88 if corrected else 0.98,
+                f"OCR: {raw}" if corrected else raw,
+            )
 
 
 REGISTRATION_ADDRESS_LABEL = re.compile(
-    r"(?:мест[оа]\s+жительств[ао]|(?:адрес|место)\s+регистраци[ия]|"
+    r"(?:(?:почтовый\s+)?адрес(?:\s+(?:фактического|постоянного))?\s+места\s+жительства|"
+    r"мест[оа]\s+жительств[ао]|(?:адрес|место)\s+регистраци[ия]|"
     r"зарегистрирован(?:а|о|ы)?(?:\s+по\s+месту\s+жительства)?|"
     r"прописан(?:а|о|ы)?(?:\s+по\s+адресу)?)",
     re.IGNORECASE,
 )
 REGISTRATION_ADDRESS_STRONG_LABEL = re.compile(
-    r"(?:зарегистрирован(?:а|о|ы)?|прописан(?:а|о|ы)?|(?:адрес|место)\s+регистраци[ия])",
+    r"(?:(?:почтовый\s+)?адрес(?:\s+(?:фактического|постоянного))?\s+места\s+жительства|"
+    r"зарегистрирован(?:а|о|ы)?|прописан(?:а|о|ы)?|(?:адрес|место)\s+регистраци[ия])",
     re.IGNORECASE,
 )
 REGISTRATION_ADDRESS_STOP = re.compile(
     r"(?:снят(?:а|о|ы)?\s+с\s+регистрацион|орган\s+регистрацион|"
     r"подпись|личн(?:ая|ой)\s+подпись|паспорт\s+выдан|код\s+подразделения|"
-    r"дата\s+выдачи|место\s+рождения|фамили[яи]|отчеств[оа])",
+    r"дата\s+выдачи|место\s+рождения|фамили[яи]|отчеств[оа]|с\s+уважением|"
+    r"(?:фио|телефон|e-?mail|электронн(?:ая|ой)\s+почт[аы]|должность|организация|компания)\s*:)",
     re.IGNORECASE,
 )
 REGISTRATION_ADDRESS_AUTHORITY = re.compile(
@@ -1613,6 +1728,8 @@ def extract_fields(text: str, file_name: str) -> tuple[list[str], list[dict[str,
     is_application_document = "application" in kinds or "contract" in kinds
     if is_application_document:
         extract_application_fields(text, lines, fields)
+    elif Path(file_name).suffix.casefold() in {".txt", ".rtf", ".doc", ".docx", ".odt"}:
+        extract_registration_address(lines, fields)
     if "passport" in kinds:
         extract_passport(text, lines, fields)
         passport_source = f"{file_name}\n{text}".casefold()
@@ -1622,7 +1739,10 @@ def extract_fields(text: str, file_name: str) -> tuple[list[str], list[dict[str,
             "код подразделения",
             "место рождения",
         ))
-        if passport_file_hint or passport_identity_score >= 2:
+        if (
+            (passport_file_hint or passport_identity_score >= 2)
+            and "registrationAddress" not in fields
+        ):
             extract_registration_address(lines, fields)
     if "education" in kinds and not is_application_document:
         extract_education(text, lines, fields)
@@ -2280,6 +2400,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
         page_paths = render_pages(source_path, mime_type, workdir)
         pdf_text_pages = extract_pdf_text_pages(source_path) if mime_type == "application/pdf" else []
         passport_hint = bool(re.search(r"(?:паспорт|passport)", file_name, re.IGNORECASE))
+        snils_hint = bool(re.search(r"(?:снилс|snils|страхов)", file_name, re.IGNORECASE))
 
         def recognize_page(item: tuple[int, Path]) -> dict[str, Any]:
             page_number, page_path = item
@@ -2295,7 +2416,10 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 words: list[dict[str, Any]] = []
                 extraction_method = "text-layer"
             else:
-                page_text, prepared_path, words = ocr_image(page_path)
+                page_text, prepared_path, words = ocr_image(
+                    page_path,
+                    try_snils_rotations=snils_hint,
+                )
                 extraction_method = "ocr"
             page_source = page_text.casefold()
             registration_hint = (

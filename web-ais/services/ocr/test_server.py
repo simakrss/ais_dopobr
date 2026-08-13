@@ -59,6 +59,50 @@ class OcrExtractionTests(unittest.TestCase):
             "обл. Тестовая, г. Тестоград, ул. Учебная, д. 10, кв. 20",
         )
 
+    def test_registration_address_is_extracted_from_plain_text_message(self):
+        text = """
+        Тема: Информация о слушателе
+        ФИО: Тестова Екатерина Сергеевна.
+        Должность: лаборант.
+        Почтовый адрес фактического места жительства: 196628, Санкт-Петербург,
+        Шушары, тер. Славянка, ул. Полоцкая, д. 15, корп. 2, кв. 81.
+        С уважением, отправитель.
+        """
+        _, fields = self.field_map(text, "Информация о слушателе.txt")
+        self.assertEqual(
+            fields["registrationAddress"],
+            "196628, Санкт-Петербург, Шушары, тер. Славянка, ул. Полоцкая, д. 15, корп. 2, кв. 81",
+        )
+
+    def test_snils_is_found_on_line_before_label_and_uniquely_corrected(self):
+        text = """
+        Страховой номер индивидуального лицевого
+        206-927-751 82
+        счета (СНИЛС)
+        """
+        kinds, fields = self.field_map(text, "СНИЛС.pdf")
+        self.assertIn("snils", kinds)
+        self.assertEqual(fields["snils"], "206-927-750 82")
+
+    def test_snils_with_leading_zero_is_recognized(self):
+        text = """
+        СТРАХОВОЕ СВИДЕТЕЛЬСТВО
+        075-578-921 18
+        СНИЛС
+        """
+        kinds, fields = self.field_map(text, "СНИЛС.pdf")
+        self.assertIn("snils", kinds)
+        self.assertEqual(fields["snils"], "075-578-921 18")
+
+    def test_snils_restores_ocr_omitted_leading_zero(self):
+        text = """
+        СТРАХОВОЕ СВИДЕТЕЛЬСТВО
+        75-578-921 18
+        СНИЛС
+        """
+        _, fields = self.field_map(text, "СНИЛС.pdf")
+        self.assertEqual(fields["snils"], "075-578-921 18")
+
     def test_contract_addresses_are_not_passport_registration(self):
         text = """
         ДОГОВОР ОБ ОКАЗАНИИ ОБРАЗОВАТЕЛЬНЫХ УСЛУГ
