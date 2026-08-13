@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.148",
+    version: "1.7.149",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.149",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Устранена лишняя горизонтальная прокрутка в реестрах: маркер изменения ширины последней колонки больше не выходит за границы таблицы."
+      ]
+    },
     {
       version: "1.7.148",
       releasedAt: "2026-08-13",

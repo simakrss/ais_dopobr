@@ -2834,6 +2834,10 @@ body.sidebar-collapsed .sidebar-toggle {
   z-index: 2;
 }
 
+.data-table th:last-child .column-resize-handle {
+  right: -8px;
+}
+
 .column-resize-handle::after {
   content: "";
   position: absolute;
