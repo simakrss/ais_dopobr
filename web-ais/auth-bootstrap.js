@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260813-bulk-document-date-recalculation-v1";
+  const AUTH_BUILD = "20260813-bulk-date-force-and-order-icon-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.162",
+    version: "1.7.163",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.163",
+      releasedAt: "2026-08-13",
+      changes: [
+        "При групповой генерации выбранная дата при включённом автозаполнении заменяет ранее заполненные связанные даты и заново рассчитывает зависимые номера.",
+        "Кнопка открытия заказа в карточке слушателя получила стандартную контурную иконку внешней ссылки."
+      ]
+    },
     {
       version: "1.7.162",
       releasedAt: "2026-08-13",
@@ -19050,6 +19058,7 @@ MAX - https://bizvmax.ru/zifra_plus
       copy: '<rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>',
       document: '<path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h5"></path>',
       documentText: '<path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h5"></path><path d="M9 13h6"></path><path d="M9 17h4"></path>',
+      externalLink: '<path d="M14 5h5v5"></path><path d="M10 14 19 5"></path><path d="M19 14v5H5V5h5"></path>',
       globe: '<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a14 14 0 0 1 0 18"></path><path d="M12 3a14 14 0 0 0 0 18"></path>',
       history: '<path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5"></path><path d="M12 7v5l3 2"></path>',
       key: '<circle cx="8" cy="15" r="3"></circle><path d="m10.5 13.5 8-8"></path><path d="m16 8 2 2"></path><path d="m14 10 2 2"></path>',
@@ -20654,7 +20663,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="student-order-number-control">
           <input name="orderNo" type="text" value="${escapeAttr(value)}" ${required} autocomplete="off">
           <button class="icon-button student-order-admin-button" data-action="open-student-order-admin" type="button" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}" ${getStudentOrderAdminUrl(value) ? "" : "disabled"}>
-            ${renderExternalLinkIcon()}
+            ${renderOrdersSdoIcon("externalLink")}
           </button>
         </div>
       </label>
@@ -34850,6 +34859,24 @@ MAX - https://bizvmax.ru/zifra_plus
     const baseDateObject = parseOrdersSdoDate(baseDate) || new Date();
     const hasOperationDate = Boolean(parseOrdersSdoDate(preferredDate));
     const recalculateContractDetails = operation === "contract" && hasOperationDate;
+    const recalculateEnrollmentDetails = ["contract", "enrollmentOrder"].includes(operation) && hasOperationDate;
+    if (hasOperationDate) {
+      if (operation === "contract") record.contractDate = baseDate;
+      if (["contract", "enrollmentOrder"].includes(operation)) {
+        record.startDate = baseDate;
+        record.enrollmentDate = baseDate;
+        record.enrollmentOrderDate = baseDate;
+      }
+      if (["expulsionOrder", "education"].includes(operation)) {
+        record.endDate = baseDate;
+        record.expulsionDate = baseDate;
+        record.expulsionOrderDate = baseDate;
+      }
+      if (operation === "education") {
+        record.diplomaIssueDate = baseDate;
+        record.protocolDate = baseDate;
+      }
+    }
     if (program) {
       if (!String(record.educationType || "").trim()) record.educationType = program.type || "";
       if (!String(record.hours || "").trim()) record.hours = program.hours || "";
@@ -34860,27 +34887,28 @@ MAX - https://bizvmax.ru/zifra_plus
       if (recalculateContractDetails || !parseOrdersSdoDate(record.contractDate)) record.contractDate = baseDate;
       if (recalculateContractDetails || !parseOrdersSdoDate(record.startDate)) record.startDate = baseDate;
       if (recalculateContractDetails || !parseOrdersSdoDate(record.enrollmentDate)) record.enrollmentDate = record.startDate;
-      if (recalculateContractDetails || !parseOrdersSdoDate(record.endDate)) {
+      if (recalculateEnrollmentDetails || !parseOrdersSdoDate(record.endDate)) {
         const endDate = getTrainingEndDate(record.startDate, getStudentProgramHours(record));
         if (endDate) record.endDate = formatOrdersSdoDate(endDate);
       }
       if (recalculateContractDetails || !String(record.contractNo || "").trim()) {
         record.contractNo = getGeneratedNumberFromDataFormula("contractNumber", baseDateObject, record.id).value;
       }
-      if (recalculateContractDetails || !String(record.enrollmentOrderNo || "").trim()) {
+      if (recalculateEnrollmentDetails || !String(record.enrollmentOrderNo || "").trim()) {
         record.enrollmentOrderNo = sharedOrderNo || getGeneratedNumberFromDataFormula(
           "enrollmentOrderNumber",
           parseOrdersSdoDate(record.enrollmentDate) || baseDateObject,
           record.id
         ).value;
       }
-      if ((recalculateContractDetails || !String(record.group || "").trim()) && program?.groupIndex) {
+      if ((recalculateEnrollmentDetails || !String(record.group || "").trim()) && program?.groupIndex) {
         record.group = getStudentGroupNumber(record.program, record.startDate);
       }
     }
     if (operation === "enrollmentOrder") {
       record.enrollmentDate = preferredDate || record.enrollmentDate || record.startDate || baseDate;
-      record.startDate = record.startDate || record.enrollmentDate;
+      record.startDate = preferredDate || record.startDate || record.enrollmentDate;
+      if (hasOperationDate) record.enrollmentOrderDate = record.enrollmentDate;
       if (hasOperationDate || !String(record.enrollmentOrderNo || "").trim()) {
         record.enrollmentOrderNo = sharedOrderNo || getGeneratedNumberFromDataFormula(
           "enrollmentOrderNumber",
@@ -34892,6 +34920,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (["expulsionOrder", "education"].includes(operation)) {
       const issueDate = preferredDate || record.expulsionDate || record.endDate || baseDate;
       if (hasOperationDate || !parseOrdersSdoDate(record.expulsionDate)) record.expulsionDate = issueDate;
+      if (hasOperationDate) record.expulsionOrderDate = issueDate;
       if (hasOperationDate || !String(record.expulsionOrderNo || "").trim()) {
         record.expulsionOrderNo = sharedOrderNo || getGeneratedNumberFromDataFormula(
           "expulsionOrderNumber",
@@ -34911,6 +34940,11 @@ MAX - https://bizvmax.ru/zifra_plus
         currentId: record.id
       });
       if (educationValues) Object.assign(record, educationValues);
+      if (hasOperationDate) {
+        record.endDate = issueDate;
+        record.expulsionOrderDate = issueDate;
+        record.protocolDate = issueDate;
+      }
     }
     return record;
   }
