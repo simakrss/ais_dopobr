@@ -20,12 +20,12 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.143",
+    version: "1.7.144",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
     {
-      version: "1.7.143",
+      version: "1.7.144",
       releasedAt: "2026-08-13",
       changes: [
         "При импорте заявок список сопоставления разделён на наиболее подходящие и остальные программы, а после выбора программа и слушатель повторно проверяются по общей базе.",
@@ -7741,50 +7741,52 @@ MAX - https://bizvmax.ru/zifra_plus
           : `Осталось дней: ${nearestFrdoDays}`));
 
     return `
-      <button
-        class="panel dashboard-frdo-widget ${frdoWidgetTone}"
-        data-view-shortcut="issuedDocuments"
-        data-issued-document-scope="pending"
-        type="button"
-        title="Открыть документы, ожидающие выгрузки в ФРДО"
-      >
-        <span class="dashboard-frdo-widget-heading">
-          <span class="eyebrow">ФРДО</span>
-          <strong>Документы к выгрузке</strong>
-          <small>Норматив: ${frdoDeadlineDays} дней с даты выдачи</small>
-        </span>
-        <span class="dashboard-frdo-widget-count">
-          <strong>${pendingIssuedDocuments.length}</strong>
-          <small>документов</small>
-          <small class="dashboard-frdo-widget-overdue ${overdueIssuedDocumentsCount ? "has-overdue" : ""}">Просрочено: <strong>${overdueIssuedDocumentsCount}</strong></small>
-        </span>
-        <span class="dashboard-frdo-widget-deadline">
-          <strong>${escapeHtml(frdoDeadlineLabel)}</strong>
-          <small>${escapeHtml(frdoDaysIndicatorLabel)}</small>
-        </span>
-        <span class="dashboard-frdo-widget-open" aria-hidden="true">↗</span>
-      </button>
+      <div class="dashboard-deadline-row">
+        <button
+          class="panel dashboard-frdo-widget ${frdoWidgetTone}"
+          data-view-shortcut="issuedDocuments"
+          data-issued-document-scope="pending"
+          type="button"
+          title="Открыть документы, ожидающие выгрузки в ФРДО"
+        >
+          <span class="dashboard-frdo-widget-heading">
+            <span class="eyebrow">ФРДО</span>
+            <strong>Документы к выгрузке</strong>
+            <small>Норматив: ${frdoDeadlineDays} дней с даты выдачи</small>
+          </span>
+          <span class="dashboard-frdo-widget-count">
+            <strong>${pendingIssuedDocuments.length}</strong>
+            <small>документов</small>
+            <small class="dashboard-frdo-widget-overdue ${overdueIssuedDocumentsCount ? "has-overdue" : ""}">Просрочено: <strong>${overdueIssuedDocumentsCount}</strong></small>
+          </span>
+          <span class="dashboard-frdo-widget-deadline">
+            <strong>${escapeHtml(frdoDeadlineLabel)}</strong>
+            <small>${escapeHtml(frdoDaysIndicatorLabel)}</small>
+          </span>
+          <span class="dashboard-frdo-widget-open" aria-hidden="true">↗</span>
+        </button>
 
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">Контроль сроков</p>
-            <h2>Ближайшие окончания обучения</h2>
+        <section class="panel dashboard-training-deadlines">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Контроль сроков</p>
+              <h2>Ближайшие окончания обучения</h2>
+            </div>
           </div>
-        </div>
-        ${miniTable(dueSoon, ["name", "program", "endDate", "balance", "daysRemaining"], {
-          config: "students",
-          headers: {
-            name: "Слушатель",
-            program: "Программа",
-            endDate: "Дата окончания",
-            balance: "Остаток",
-            daysRemaining: "Срок"
-          },
-          warningKey: "daysRemaining",
-          warningBelow: 10
-        })}
-      </section>
+          ${miniTable(dueSoon, ["name", "program", "endDate", "balance", "daysRemaining"], {
+            config: "students",
+            headers: {
+              name: "Слушатель",
+              program: "Программа",
+              endDate: "Дата окончания",
+              balance: "Остаток",
+              daysRemaining: "Срок"
+            },
+            warningKey: "daysRemaining",
+            warningBelow: 10
+          })}
+        </section>
+      </div>
 
       <div class="split-layout">
         <section class="panel" data-dashboard-student-statuses>
