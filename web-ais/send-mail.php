@@ -186,6 +186,10 @@ function load_mail_settings(): array
         ?? getenv('STUDENT_APPLICATIONS_EMAIL_PASSWORD')
         ?: ''
     );
+    $requestDeliveryAndReadReceipts = !array_key_exists(
+        'emailRequestDeliveryAndReadReceipts',
+        $settings
+    ) || $settings['emailRequestDeliveryAndReadReceipts'] !== false;
     if ($smtpHost === '' || $smtpPort < 1 || $smtpPort > 65535 || $login === '' || $password === '') {
         throw new RuntimeException('В админке не настроен SMTP для исходящей почты.');
     }
@@ -197,6 +201,7 @@ function load_mail_settings(): array
         'port' => $smtpPort,
         'login' => $login,
         'password' => $password,
+        'requestDeliveryAndReadReceipts' => $requestDeliveryAndReadReceipts,
     ];
 }
 
@@ -240,13 +245,30 @@ function smtp_command($socket, string $command, array $expectedCodes, string $ac
     return smtp_read_response($socket, $expectedCodes, $action);
 }
 
+function smtp_response_supports_extension(string $response, string $extensionName): bool
+{
+    $requestedExtension = strtoupper(trim($extensionName));
+    if ($requestedExtension === '') {
+        return false;
+    }
+    foreach (preg_split('/\r\n|\n|\r/', $response) ?: [] as $line) {
+        if (
+            preg_match('/^\d{3}[ -]([A-Za-z0-9][A-Za-z0-9-]*)(?:[ =]|$)/', trim($line), $matches)
+            && strtoupper($matches[1]) === $requestedExtension
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function send_smtp_mail(
     array $settings,
     string $to,
     string $subject,
     string $message,
     ?array $attachment = null
-): void
+): array
 {
     $context = stream_context_create([
         'ssl' => [
@@ -272,12 +294,25 @@ function send_smtp_mail(
     stream_set_timeout($socket, 30);
     try {
         smtp_read_response($socket, [220], 'Подключение к SMTP');
-        smtp_command($socket, 'EHLO ais-dopobrazovanie.local', [250], 'Инициализация SMTP');
+        $ehloResponse = smtp_command($socket, 'EHLO ais-dopobrazovanie.local', [250], 'Инициализация SMTP');
+        $dsnSupported = smtp_response_supports_extension($ehloResponse, 'DSN');
+        $requestReceipts = !empty($settings['requestDeliveryAndReadReceipts']);
+        $requestDeliveryReceipt = $requestReceipts && $dsnSupported;
         smtp_command($socket, 'AUTH LOGIN', [334], 'Авторизация SMTP');
         smtp_command($socket, base64_encode($settings['login']), [334], 'Передача логина SMTP');
         smtp_command($socket, base64_encode($settings['password']), [235], 'Передача пароля SMTP');
-        smtp_command($socket, 'MAIL FROM:<' . $settings['login'] . '>', [250], 'Адрес отправителя');
-        smtp_command($socket, 'RCPT TO:<' . $to . '>', [250, 251], 'Адрес получателя');
+        smtp_command(
+            $socket,
+            'MAIL FROM:<' . $settings['login'] . '>' . ($requestDeliveryReceipt ? ' RET=HDRS' : ''),
+            [250],
+            'Адрес отправителя'
+        );
+        smtp_command(
+            $socket,
+            'RCPT TO:<' . $to . '>' . ($requestDeliveryReceipt ? ' NOTIFY=SUCCESS,FAILURE,DELAY' : ''),
+            [250, 251],
+            'Адрес получателя'
+        );
         smtp_command($socket, 'DATA', [354], 'Подготовка письма');
 
         $normalizedMessage = preg_replace("/\r\n|\r|\n/", "\r\n", $message);
@@ -293,6 +328,9 @@ function send_smtp_mail(
             'MIME-Version: 1.0',
             'X-Mailer: AIS-Dopobrazovanie',
         ];
+        if ($requestReceipts) {
+            $headers[] = 'Disposition-Notification-To: <' . $settings['login'] . '>';
+        }
         if ($attachment === null) {
             $headers[] = 'Content-Type: ' . $bodyContentType . '; charset=UTF-8';
             $headers[] = 'Content-Transfer-Encoding: base64';
@@ -325,6 +363,12 @@ function send_smtp_mail(
         } catch (Throwable $error) {
             // The message is already accepted; a QUIT failure must not trigger a duplicate retry.
         }
+        return [
+            'requestDeliveryAndReadReceipts' => $requestReceipts,
+            'dsnSupported' => $dsnSupported,
+            'deliveryReceiptRequested' => $requestDeliveryReceipt,
+            'readReceiptRequested' => $requestReceipts,
+        ];
     } finally {
         fclose($socket);
     }
@@ -448,7 +492,7 @@ if (array_key_exists('attachment', $data) && $data['attachment'] !== null) {
 
 try {
     $settings = load_mail_settings();
-    send_smtp_mail($settings, $to, $subject, $message, $attachment);
+    $receiptStatus = send_smtp_mail($settings, $to, $subject, $message, $attachment);
     ais_audit_try_append([
         'action' => 'Отправлено письмо',
         'area' => 'Электронная почта',
@@ -463,6 +507,14 @@ try {
             'Тема: ' . $subject,
             $attachmentFileName !== '' ? 'Вложение: ' . $attachmentFileName : 'Без вложения',
             'Отправитель: ' . $settings['login'],
+            !empty($receiptStatus['readReceiptRequested'])
+                ? 'Запрошено уведомление о прочтении'
+                : 'Уведомление о прочтении не запрашивалось',
+            !empty($receiptStatus['deliveryReceiptRequested'])
+                ? 'Запрошено уведомление о доставке (DSN)'
+                : (!empty($receiptStatus['requestDeliveryAndReadReceipts'])
+                    ? 'SMTP-сервер не поддерживает запрос уведомления о доставке (DSN)'
+                    : 'Уведомление о доставке не запрашивалось'),
         ]),
         'source' => 'smtp',
     ], $currentUser);

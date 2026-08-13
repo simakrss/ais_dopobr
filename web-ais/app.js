@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.182",
+    version: "1.7.183",
     releasedAt: "2026-08-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.183",
+      releasedAt: "2026-08-14",
+      changes: [
+        "В настройках электронной почты добавлён общий, включённый по умолчанию запрос уведомлений о доставке и прочтении для всех исходящих писем."
+      ]
+    },
     {
       version: "1.7.182",
       releasedAt: "2026-08-14",
@@ -4571,6 +4578,8 @@ MAX - https://bizvmax.ru/zifra_plus
     data.meta.studentApplicationsEmailHasPassword = Boolean(
       data.meta.studentApplicationsEmailHasPassword
     );
+    data.meta.emailRequestDeliveryAndReadReceipts =
+      data.meta.emailRequestDeliveryAndReadReceipts !== false;
     data.meta.applicationsMysqlDriver = String(
       data.meta.applicationsMysqlDriver || "MySQL ODBC 9.4 Unicode Driver"
     ).trim();
@@ -15373,6 +15382,10 @@ MAX - https://bizvmax.ru/zifra_plus
       getStudentApplicationsEmailLogin()
     );
     const emailPassword = getAdminSettingRenderValue("studentApplicationsEmailPassword", "");
+    const emailRequestDeliveryAndReadReceipts = Boolean(getAdminSettingRenderValue(
+      "emailRequestDeliveryAndReadReceipts",
+      state.data.meta.emailRequestDeliveryAndReadReceipts !== false
+    ));
     const applicationsMysqlDriver = getAdminSettingRenderValue(
       "applicationsMysqlDriver",
       state.data.meta.applicationsMysqlDriver || "MySQL ODBC 9.4 Unicode Driver"
@@ -15786,6 +15799,17 @@ MAX - https://bizvmax.ru/zifra_plus
                     </button>
                   </div>
                 </div>
+                <label class="admin-email-receipt-requests">
+                  <input
+                    name="emailRequestDeliveryAndReadReceipts"
+                    type="checkbox"
+                    ${emailRequestDeliveryAndReadReceipts ? "checked" : ""}
+                  >
+                  <span class="admin-email-receipt-requests-copy">
+                    <strong>Запрашивать уведомления о доставке и прочтении</strong>
+                    <small>Применяется ко всем исходящим письмам. Уведомление о доставке зависит от поддержки SMTP-сервера, а подтверждение прочтения — от почтовой программы и решения получателя.</small>
+                  </span>
+                </label>
                 <div class="admin-document-mailboxes is-applications-list">
                   ${renderAdminApplicationsMailbox({
                     host: emailHost,
@@ -40797,6 +40821,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const emailSmtpPort = Number(form.elements.studentApplicationsEmailSmtpPort?.value || 465);
     const emailLogin = String(form.elements.studentApplicationsEmailLogin?.value || "").trim();
     const emailPassword = String(form.elements.studentApplicationsEmailPassword?.value || "");
+    const emailRequestDeliveryAndReadReceipts = Boolean(
+      form.elements.emailRequestDeliveryAndReadReceipts?.checked
+    );
     const documentMailboxes = collectDocumentMailboxesFromForm(form);
     const applicationsMysqlDriver = String(form.elements.applicationsMysqlDriver?.value || "").trim();
     const applicationsMysqlHost = String(form.elements.applicationsMysqlHost?.value || "").trim();
@@ -40876,6 +40903,7 @@ MAX - https://bizvmax.ru/zifra_plus
         emailSmtpPort,
         emailLogin,
         emailPassword,
+        emailRequestDeliveryAndReadReceipts,
         documentMailboxes,
         applicationsMysqlDriver,
         applicationsMysqlHost,
@@ -40937,6 +40965,8 @@ MAX - https://bizvmax.ru/zifra_plus
       payload.emailLogin ?? getStudentApplicationsEmailLogin()
     ).trim();
     state.data.meta.studentApplicationsEmailHasPassword = Boolean(payload.emailHasPassword);
+    state.data.meta.emailRequestDeliveryAndReadReceipts =
+      payload.emailRequestDeliveryAndReadReceipts !== false;
     state.data.meta.documentMailboxes = Array.isArray(payload.documentMailboxes)
       ? payload.documentMailboxes
       : [];
@@ -41154,6 +41184,8 @@ MAX - https://bizvmax.ru/zifra_plus
           emailSmtpPort: getStudentApplicationsEmailSmtpPort(),
           emailLogin: getStudentApplicationsEmailLogin(),
           emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword,
+          emailRequestDeliveryAndReadReceipts:
+            state.data.meta.emailRequestDeliveryAndReadReceipts !== false,
           documentMailboxes: state.data.meta.documentMailboxes,
           mysqlUseApplicationsConnection: state.data.meta.mysqlUseApplicationsConnection,
           mysqlHost: state.data.meta.mysqlHost,
@@ -41180,6 +41212,8 @@ MAX - https://bizvmax.ru/zifra_plus
           emailSmtpPort: getStudentApplicationsEmailSmtpPort(),
           emailLogin: getStudentApplicationsEmailLogin(),
           emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword,
+          emailRequestDeliveryAndReadReceipts:
+            state.data.meta.emailRequestDeliveryAndReadReceipts !== false,
           documentMailboxes: state.data.meta.documentMailboxes,
           mysqlUseApplicationsConnection: state.data.meta.mysqlUseApplicationsConnection,
           mysqlHost: state.data.meta.mysqlHost,

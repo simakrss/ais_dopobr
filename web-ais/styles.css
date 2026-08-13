@@ -19122,6 +19122,47 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   margin-bottom: 2px;
 }
 
+.admin-email-receipt-requests {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(15, 118, 110, 0.28);
+  border-radius: 8px;
+  background: #f2faf7;
+  cursor: pointer;
+}
+
+.admin-email-receipt-requests > input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--teal);
+}
+
+.admin-email-receipt-requests-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.admin-email-receipt-requests-copy strong {
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.admin-email-receipt-requests-copy small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.admin-email-receipt-requests:focus-within {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
 .admin-document-mailboxes {
   display: grid;
   gap: 12px;

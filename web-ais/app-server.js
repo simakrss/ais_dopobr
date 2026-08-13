@@ -759,6 +759,7 @@ async function ensureStorage() {
     studentApplicationsEmailSmtpPort: 465,
     studentApplicationsEmailSmtpSecure: true,
     studentApplicationsEmailLogin: DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN,
+    emailRequestDeliveryAndReadReceipts: true,
     studentDocumentMailboxes: [],
     documentConverterUrl: DEFAULT_DOCUMENT_CONVERTER_URL,
     documentConverterSourceUrl: DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL,
@@ -11185,7 +11186,8 @@ function getStudentApplicationsEmailSettings() {
     smtpHost,
     smtpPort: Number.isInteger(smtpPort) && smtpPort > 0 && smtpPort <= 65535 ? smtpPort : 465,
     login,
-    password
+    password,
+    requestDeliveryAndReadReceipts: serverSettings.emailRequestDeliveryAndReadReceipts !== false
   };
 }
 
@@ -11304,6 +11306,31 @@ function assertSmtpResponse(response, expectedCodes, action) {
   throw new Error(`${action}: ${response.message || `код SMTP ${response.code}`}`);
 }
 
+function smtpResponseSupportsExtension(response, extensionName) {
+  const requestedExtension = String(extensionName || "").trim().toUpperCase();
+  if (!requestedExtension) return false;
+  return String(response?.message ?? response ?? "")
+    .split(/\r?\n/u)
+    .some((line) => {
+      const match = /^\d{3}[ -]([A-Za-z0-9][A-Za-z0-9-]*)(?:[ =]|$)/u.exec(line.trim());
+      return String(match?.[1] || "").toUpperCase() === requestedExtension;
+    });
+}
+
+function createEmailEnvelopeCommands({
+  from,
+  to,
+  requestDeliveryAndReadReceipts = false,
+  supportsDsn = false
+}) {
+  const requestDeliveryReceipt = Boolean(requestDeliveryAndReadReceipts && supportsDsn);
+  return {
+    mailFrom: `MAIL FROM:<${from}>${requestDeliveryReceipt ? " RET=HDRS" : ""}`,
+    recipient: `RCPT TO:<${to}>${requestDeliveryReceipt ? " NOTIFY=SUCCESS,FAILURE,DELAY" : ""}`,
+    requestDeliveryReceipt
+  };
+}
+
 async function runAuthenticatedSmtpSession(action) {
   const settings = getStudentApplicationsEmailSettings();
   if (!settings.smtpHost || !settings.login || !settings.password) {
@@ -11329,11 +11356,17 @@ async function runAuthenticatedSmtpSession(action) {
   };
   try {
     assertSmtpResponse(await reader.waitForResponse(), 220, "Подключение к SMTP");
-    await writeCommand("EHLO ais-dopobrazovanie.local", 250, "Инициализация SMTP");
+    const ehloResponse = await writeCommand("EHLO ais-dopobrazovanie.local", 250, "Инициализация SMTP");
     await writeCommand("AUTH LOGIN", 334, "Авторизация SMTP");
     await writeCommand(Buffer.from(settings.login, "utf8").toString("base64"), 334, "Передача логина SMTP");
     await writeCommand(Buffer.from(settings.password, "utf8").toString("base64"), 235, "Передача пароля SMTP");
-    return await action({ settings, socket, reader, writeCommand });
+    return await action({
+      settings,
+      socket,
+      reader,
+      writeCommand,
+      supportsDsn: smtpResponseSupportsExtension(ehloResponse, "DSN")
+    });
   } finally {
     if (!socket.destroyed) {
       try {
@@ -11373,7 +11406,14 @@ function containsHtmlMarkup(value) {
   return /<\s*\/?\s*[a-z][a-z0-9:-]*(?:\s[^<>]*?)?\s*\/?\s*>/iu.test(String(value || ""));
 }
 
-function createEmailMessage({ from, to, subject, message, attachment }) {
+function createEmailMessage({
+  from,
+  to,
+  subject,
+  message,
+  attachment,
+  requestDeliveryAndReadReceipts = false
+}) {
   const domain = String(from).split("@")[1] || "localhost";
   const messageId = `${Date.now()}.${crypto.randomBytes(8).toString("hex")}@${domain}`;
   const bodyContentType = containsHtmlMarkup(message) ? "text/html" : "text/plain";
@@ -11389,6 +11429,9 @@ function createEmailMessage({ from, to, subject, message, attachment }) {
     "MIME-Version: 1.0",
     "X-Mailer: AIS-Dopobrazovanie"
   ];
+  if (requestDeliveryAndReadReceipts) {
+    headers.push(`Disposition-Notification-To: <${from}>`);
+  }
   if (!attachment) {
     return [
       ...headers,
@@ -11421,19 +11464,34 @@ function createEmailMessage({ from, to, subject, message, attachment }) {
 }
 
 async function sendEmailThroughConfiguredMailbox({ to, subject, message, attachment }) {
-  return runAuthenticatedSmtpSession(async ({ settings, socket, reader, writeCommand }) => {
-    await writeCommand(`MAIL FROM:<${settings.login}>`, 250, "Адрес отправителя");
-    await writeCommand(`RCPT TO:<${to}>`, [250, 251], "Адрес получателя");
+  return runAuthenticatedSmtpSession(async ({ settings, socket, reader, writeCommand, supportsDsn }) => {
+    if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(settings.login) || /[\r\n]/u.test(settings.login)) {
+      throw new Error("Логин исходящего почтового ящика должен быть адресом электронной почты.");
+    }
+    const envelope = createEmailEnvelopeCommands({
+      from: settings.login,
+      to,
+      requestDeliveryAndReadReceipts: settings.requestDeliveryAndReadReceipts,
+      supportsDsn
+    });
+    await writeCommand(envelope.mailFrom, 250, "Адрес отправителя");
+    await writeCommand(envelope.recipient, [250, 251], "Адрес получателя");
     await writeCommand("DATA", 354, "Подготовка письма");
     socket.write(`${createEmailMessage({
       from: settings.login,
       to,
       subject,
       message,
-      attachment
+      attachment,
+      requestDeliveryAndReadReceipts: settings.requestDeliveryAndReadReceipts
     })}\r\n.\r\n`);
     assertSmtpResponse(await reader.waitForResponse(60000), 250, "Отправка письма");
-    return settings;
+    return {
+      ...settings,
+      dsnSupported: Boolean(supportsDsn),
+      deliveryReceiptRequested: envelope.requestDeliveryReceipt,
+      readReceiptRequested: Boolean(settings.requestDeliveryAndReadReceipts)
+    };
   });
 }
 
@@ -15739,6 +15797,8 @@ async function publicSystemDocumentSettings(includeAdminSettings = false) {
       serverSettings.studentApplicationsEmailPassword
         || process.env.STUDENT_APPLICATIONS_EMAIL_PASSWORD
     ),
+    emailRequestDeliveryAndReadReceipts:
+      serverSettings.emailRequestDeliveryAndReadReceipts !== false,
     documentMailboxes: publicStudentDocumentMailboxes(),
     applicationsOrderAdminUrlTemplate: normalizeStudentApplicationsOrderAdminUrlTemplate(
       serverSettings.studentApplicationsOrderAdminUrlTemplate
@@ -15784,6 +15844,12 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       body.emailLogin || DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN
     ).trim();
     const emailPassword = String(body.emailPassword || "");
+    const emailRequestDeliveryAndReadReceipts = Object.prototype.hasOwnProperty.call(
+      body,
+      "emailRequestDeliveryAndReadReceipts"
+    )
+      ? body.emailRequestDeliveryAndReadReceipts !== false
+      : serverSettings.emailRequestDeliveryAndReadReceipts !== false;
     const currentDocumentMailboxes = new Map(
       (Array.isArray(serverSettings.studentDocumentMailboxes)
         ? serverSettings.studentDocumentMailboxes
@@ -15907,6 +15973,7 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       studentApplicationsEmailSmtpPort: emailSmtpPort,
       studentApplicationsEmailSmtpSecure: true,
       studentApplicationsEmailLogin: emailLogin,
+      emailRequestDeliveryAndReadReceipts,
       studentApplicationsSqlQuery: applicationsSqlQuery,
       studentApplicationsOrderAdminUrlTemplate: applicationsOrderAdminUrlTemplate,
       sharedRecordLocksMySqlUseApplicationsConnection: mysqlUseApplicationsConnection
@@ -16171,7 +16238,15 @@ async function handleServerEmail(req, res, authUser) {
         `Получатель: ${auditRecipient} (${recipientMode})`,
         `Тема: ${auditSubject}`,
         auditAttachmentName ? `Вложение: ${auditAttachmentName}` : "Без вложения",
-        `Отправитель: ${settings.login}`
+        `Отправитель: ${settings.login}`,
+        settings.readReceiptRequested
+          ? "Запрошено уведомление о прочтении"
+          : "Уведомление о прочтении не запрашивалось",
+        settings.deliveryReceiptRequested
+          ? "Запрошено уведомление о доставке (DSN)"
+          : (settings.requestDeliveryAndReadReceipts
+            ? "SMTP-сервер не поддерживает запрос уведомления о доставке (DSN)"
+            : "Уведомление о доставке не запрашивалось")
       ].join("; ")
     );
     sendJson(res, 200, {
@@ -16624,5 +16699,8 @@ module.exports = {
   handleDocumentConversionSource,
   readDocxZipEntries,
   readSelectedOfficeTextZipEntries,
+  smtpResponseSupportsExtension,
+  createEmailEnvelopeCommands,
+  createEmailMessage,
   route
 };
