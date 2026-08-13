@@ -20,10 +20,19 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.154",
+    version: "1.7.155",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.155",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В импорте заявок добавлен поиск и множественный выбор образовательных программ; выбранные программы одним запросом применяются к базе сайта и почтовым заявкам.",
+        "Повторные заявки отмечаются компактной биркой «Повтор» после ФИО, а подробности обо всех найденных совпадениях показываются во всплывающей подсказке.",
+        "Шрифт таблицы и блока выбранной заявки увеличен; строки таблицы стали компактнее, длинные значения отображаются в одну строку и раскрываются по мере увеличения доступной ширины."
+      ]
+    },
     {
       version: "1.7.154",
       releasedAt: "2026-08-13",
@@ -3875,6 +3884,8 @@ MAX - https://bizvmax.ru/zifra_plus
       warnings: [],
       filters: {
         programId: "",
+        programIds: [],
+        programQuery: "",
         period: "30",
         dateFrom: "",
         dateTo: "",
@@ -9220,6 +9231,8 @@ MAX - https://bizvmax.ru/zifra_plus
       warnings: [],
       filters: {
         programId: "",
+        programIds: [],
+        programQuery: "",
         period: "30",
         ...dates,
         onlyPaid: false,
@@ -9236,6 +9249,39 @@ MAX - https://bizvmax.ru/zifra_plus
     state.studentApplicationsImport.open = false;
     state.studentApplicationsImport.loading = false;
     document.querySelector("[data-student-applications-import-backdrop]")?.remove();
+  }
+
+  function getStudentApplicationsSelectedProgramIds(filters = state.studentApplicationsImport.filters || {}) {
+    const values = Array.isArray(filters.programIds) && filters.programIds.length
+      ? filters.programIds
+      : [filters.programId];
+    return unique(values.map((value) => String(value || "").trim()).filter(Boolean));
+  }
+
+  function getStudentApplicationsSingleProgramFilterId(filters = state.studentApplicationsImport.filters || {}) {
+    const selectedIds = getStudentApplicationsSelectedProgramIds(filters);
+    return selectedIds.length === 1 ? selectedIds[0] : "";
+  }
+
+  function getStudentApplicationsProgramFilterLabel(filters = state.studentApplicationsImport.filters || {}) {
+    const selectedIds = getStudentApplicationsSelectedProgramIds(filters);
+    if (!selectedIds.length) return "Все программы";
+    if (selectedIds.length > 1) return `Выбрано: ${selectedIds.length}`;
+    return getProgramRows().find((program) => String(program.id || "") === selectedIds[0])?.name
+      || "Выбрана 1 программа";
+  }
+
+  function applyStudentApplicationsProgramSearch(query, root = document) {
+    const normalizedQuery = normalizeStudentListProgramQuery(query);
+    let visibleCount = 0;
+    root.querySelectorAll("[data-student-applications-program-option-row]").forEach((row) => {
+      const label = normalizeStudentListProgramQuery(row.textContent);
+      const hidden = Boolean(normalizedQuery && !label.includes(normalizedQuery));
+      row.hidden = hidden;
+      if (!hidden) visibleCount += 1;
+    });
+    const empty = root.querySelector("[data-student-applications-program-filter-empty]");
+    if (empty) empty.hidden = visibleCount > 0;
   }
 
   function refreshStudentApplicationsImportDialog(options = {}) {
@@ -9788,6 +9834,7 @@ MAX - https://bizvmax.ru/zifra_plus
         id: String(student.id || ""),
         name: String(student.name || ""),
         program: String(student.program || ""),
+        status: String(student.status || ""),
         applicationDate: String(student.applicationDate || ""),
         programIdentity: getStudentApplicationProgramIdentity(
           mappedProgram?.name || student.program,
@@ -9817,7 +9864,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function getStudentApplicationPreviousMatches(
     row,
     lookup = buildStudentApplicationsImportLookup(),
-    selectedProgramId = state.studentApplicationsImport.filters.programId
+    selectedProgramId = getStudentApplicationsSingleProgramFilterId()
   ) {
     if (!row) return [];
     if (!selectedProgramId && Array.isArray(row._previousMatches)) return row._previousMatches;
@@ -9868,6 +9915,27 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const existingProgram = String(previous.program || "").trim();
     return `Слушатель уже есть в базе${existingProgram ? `: ${existingProgram}` : ""}${applicationDate ? `; заявка от ${applicationDate}` : ""}. После выбора программы совпадение проверено повторно.`;
+  }
+
+  function getStudentApplicationRepeatTooltip(row, lookup = buildStudentApplicationsImportLookup()) {
+    const matches = getStudentApplicationPreviousMatches(row, lookup);
+    if (!matches.length) return "";
+    const lines = matches.map((item, index) => {
+      const parts = [
+        item.sameProgram ? "та же программа" : "другая программа",
+        String(item.name || "").trim(),
+        String(item.program || "Программа не указана").trim(),
+        item.status ? `статус: ${item.status}` : "",
+        dateRu(item.applicationDate) ? `заявка от ${dateRu(item.applicationDate)}` : "дата заявки не указана",
+        item.id ? `uid ${item.id}` : ""
+      ].filter(Boolean);
+      return `${index + 1}. ${parts.join(" · ")}`;
+    });
+    return [
+      "Повторная заявка. Слушатель уже найден в базе:",
+      ...lines,
+      "Повторный импорт разрешён."
+    ].join("\n");
   }
 
   function isStudentApplicationImported(row, lookup = buildStudentApplicationsImportLookup()) {
@@ -10008,12 +10076,12 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!row) return `<div class="student-applications-import-empty">Выберите заявку в таблице.</div>`;
     const mappedProgram = getStudentApplicationProgram(
       row,
-      state.studentApplicationsImport.filters.programId
+      getStudentApplicationsSingleProgramFilterId()
     );
     const recommendation = mappedProgram ? null : getStudentApplicationProgramRecommendation(row);
     const financialTerms = getStudentApplicationFinancialTerms(row, mappedProgram);
     const inferredProgramType = getStudentApplicationInferredProgramType(row) || mappedProgram?.type;
-    const programFilterOverridesMapping = Boolean(state.studentApplicationsImport.filters.programId);
+    const programFilterOverridesMapping = Boolean(getStudentApplicationsSingleProgramFilterId());
     const programs = getProgramRows();
     const suitablePrograms = getStudentApplicationProgramRecommendations(row);
     const suitableProgramIds = new Set(suitablePrograms.map((item) => String(item.program.id || "")));
@@ -10163,6 +10231,16 @@ MAX - https://bizvmax.ru/zifra_plus
       || pageRows[0]
       || null;
     const programs = getProgramRows();
+    const selectedProgramIds = getStudentApplicationsSelectedProgramIds(filters);
+    const selectedProgramIdSet = new Set(selectedProgramIds);
+    const programSelectionLabel = getStudentApplicationsProgramFilterLabel(filters);
+    const programQuery = String(filters.programQuery || "");
+    const normalizedProgramQuery = normalizeStudentListProgramQuery(programQuery);
+    const visibleProgramOptionCount = programs.filter((program) => (
+      !normalizedProgramQuery
+      || normalizeStudentListProgramQuery(`${program.name || ""} ${program.landingCode || ""}`)
+        .includes(normalizedProgramQuery)
+    )).length;
     const statuses = unique([
       ...(state.data.dictionaries.statuses || []),
       filters.status || "На зачисление"
@@ -10181,17 +10259,36 @@ MAX - https://bizvmax.ru/zifra_plus
 
             <div class="student-applications-import-body">
             <div class="student-applications-import-filters">
-              <label class="student-applications-program-filter">
+              <div class="student-applications-program-filter">
                 <span>Программа обучения</span>
-                <select name="programId">
-                  <option value="">Все программы</option>
-                  ${programs.map((program) => `
-                    <option value="${escapeAttr(program.id)}" ${String(program.id) === String(filters.programId) ? "selected" : ""}>
-                      ${escapeHtml(program.name || "Без названия")}${program.landingCode ? ` [${escapeHtml(program.landingCode)}]` : ""}
-                    </option>
-                  `).join("")}
-                </select>
-              </label>
+                <details class="student-program-type-filter student-list-program-filter student-applications-program-multiselect ${selectedProgramIds.length ? "is-active" : ""}" data-student-applications-program-filter>
+                  <summary title="Выбрать одну или несколько программ">
+                    <strong data-student-applications-program-filter-label>${escapeHtml(programSelectionLabel)}</strong>
+                    <svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5"></path></svg>
+                  </summary>
+                  <div class="student-program-type-filter-panel student-list-program-filter-panel student-applications-program-filter-panel">
+                    <label class="student-list-program-search">
+                      <span aria-hidden="true">⌕</span>
+                      <input type="search" value="${escapeAttr(programQuery)}" placeholder="Поиск программы" autocomplete="off" data-student-applications-program-search>
+                    </label>
+                    <div class="student-list-program-filter-options" data-student-applications-program-filter-options>
+                      ${programs.map((program) => {
+                        const programId = String(program.id || "");
+                        const searchValue = normalizeStudentListProgramQuery(`${program.name || ""} ${program.landingCode || ""}`);
+                        const hidden = normalizedProgramQuery && !searchValue.includes(normalizedProgramQuery);
+                        return `
+                          <label data-student-applications-program-option-row ${hidden ? "hidden" : ""}>
+                            <input type="checkbox" value="${escapeAttr(programId)}" data-student-applications-program-filter-option ${selectedProgramIdSet.has(programId) ? "checked" : ""}>
+                            <span>${escapeHtml(program.name || "Без названия")}${program.landingCode ? ` [${escapeHtml(program.landingCode)}]` : ""}</span>
+                          </label>
+                        `;
+                      }).join("")}
+                      <div class="student-list-program-filter-empty" data-student-applications-program-filter-empty ${visibleProgramOptionCount ? "hidden" : ""}>Программы не найдены</div>
+                    </div>
+                    <button class="student-program-type-filter-clear" data-action="clear-student-applications-program-filter" type="button" ${selectedProgramIds.length ? "" : "disabled"}>Сбросить</button>
+                  </div>
+                </details>
+              </div>
               <label>
                 <span>Период импорта</span>
                 <select name="period">
@@ -10265,7 +10362,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 <tbody>
                   ${pageRows.length ? pageRows.map((row) => {
                     const imported = isStudentApplicationImported(row, importedLookup);
-                    const repeatComment = imported ? getStudentApplicationRepeatComment(row, importedLookup) : "";
+                    const repeatTooltip = imported ? getStudentApplicationRepeatTooltip(row, importedLookup) : "";
                     const recommendation = getStudentApplicationProgramRecommendation(row);
                     const selected = selectedIds.has(String(row.id));
                     const active = String(activeRow?.id || "") === String(row.id);
@@ -10275,23 +10372,23 @@ MAX - https://bizvmax.ru/zifra_plus
                         <td>
                           <input data-student-application-select="${escapeAttr(row.id)}" data-payment-amount="${escapeAttr(paymentAmount)}" type="checkbox" ${selected ? "checked" : ""} aria-label="Выбрать заявку">
                         </td>
-                        <td>${escapeHtml(row.date || "")}</td>
-                        <td>${escapeHtml(row.name || "")}</td>
-                        <td>${escapeHtml(row.order || "")}</td>
+                        <td title="${escapeAttr(row.date || "")}"><div class="student-application-cell-content">${escapeHtml(row.date || "")}</div></td>
+                        <td title="${escapeAttr(row.name || "")}">
+                          <div class="student-application-name-cell">
+                            <span>${escapeHtml(row.name || "")}</span>
+                            ${imported ? `<span class="student-application-repeat-badge" title="${escapeMultilineAttr(repeatTooltip)}">Повтор</span>` : ""}
+                          </div>
+                        </td>
+                        <td title="${escapeAttr(row.order || "")}"><div class="student-application-cell-content">${escapeHtml(row.order || "")}</div></td>
                         <td class="student-applications-payment-cell">${paymentAmount > 0 || row.paid ? escapeHtml(money(paymentAmount)) : "—"}</td>
-                        <td>${escapeHtml(row.program || "")}${recommendation
-                          ? `<small>Рекомендуется: ${escapeHtml(recommendation.program.name)} (${Math.round(recommendation.score * 100)}%)</small>`
-                          : ""}</td>
-                        <td>${escapeHtml(row.phone || "")}</td>
-                        <td>${escapeHtml(row.email || "")}</td>
-                        <td>${escapeHtml(row.city || "")}</td>
-                        <td>${escapeHtml(row.source || "")}</td>
+                        <td title="${escapeAttr([row.program, recommendation ? `Рекомендуется: ${recommendation.program.name} (${Math.round(recommendation.score * 100)}%)` : ""].filter(Boolean).join(" · "))}">
+                          <div class="student-application-cell-content">${escapeHtml(row.program || "")}${recommendation ? ` · Рекомендуется: ${escapeHtml(recommendation.program.name)} (${Math.round(recommendation.score * 100)}%)` : ""}</div>
+                        </td>
+                        <td title="${escapeAttr(row.phone || "")}"><div class="student-application-cell-content">${escapeHtml(row.phone || "")}</div></td>
+                        <td title="${escapeAttr(row.email || "")}"><div class="student-application-cell-content">${escapeHtml(row.email || "")}</div></td>
+                        <td title="${escapeAttr(row.city || "")}"><div class="student-application-cell-content">${escapeHtml(row.city || "")}</div></td>
+                        <td title="${escapeAttr(row.source || "")}"><div class="student-application-cell-content">${escapeHtml(row.source || "")}</div></td>
                       </tr>
-                      ${repeatComment ? `
-                        <tr class="student-application-table-comment">
-                          <td colspan="10"><small>${escapeHtml(repeatComment)}</small></td>
-                        </tr>
-                      ` : ""}
                     `;
                   }).join("") : `
                     <tr>
@@ -10328,7 +10425,11 @@ MAX - https://bizvmax.ru/zifra_plus
   function syncStudentApplicationsImportFilters(form) {
     if (!form) return;
     const filters = state.studentApplicationsImport.filters;
-    filters.programId = String(form.elements.programId?.value || "");
+    const programIds = Array.from(
+      form.querySelectorAll("[data-student-applications-program-filter-option]:checked")
+    ).map((input) => String(input.value || "")).filter(Boolean);
+    filters.programIds = unique(programIds);
+    filters.programId = filters.programIds.length === 1 ? filters.programIds[0] : "";
     filters.period = String(form.elements.period?.value || "custom");
     filters.dateFrom = String(form.elements.dateFrom?.value || "");
     filters.dateTo = String(form.elements.dateTo?.value || "");
@@ -10352,8 +10453,10 @@ MAX - https://bizvmax.ru/zifra_plus
       refreshStudentApplicationsImportDialog();
       return;
     }
-    const program = (state.data.collections.programs || [])
-      .find((item) => String(item.id || "") === String(filters.programId || ""));
+    const selectedProgramIds = getStudentApplicationsSelectedProgramIds(filters);
+    const selectedProgramIdSet = new Set(selectedProgramIds);
+    const programs = getProgramRows()
+      .filter((item) => selectedProgramIdSet.has(String(item.id || "")));
     state.studentApplicationsImport.loading = true;
     state.studentApplicationsImport.error = "";
     state.studentApplicationsImport.warnings = [];
@@ -10365,8 +10468,12 @@ MAX - https://bizvmax.ru/zifra_plus
         body: JSON.stringify({
           dateFrom: filters.dateFrom,
           dateTo: filters.dateTo,
-          programName: String(program?.name || ""),
-          productId: String(program?.landingCode || ""),
+          programName: programs.length === 1 ? String(programs[0]?.name || "") : "",
+          productId: programs.length === 1 ? String(programs[0]?.landingCode || "") : "",
+          programs: programs.map((program) => ({
+            programName: String(program?.name || ""),
+            productId: String(program?.landingCode || "")
+          })),
           onlyPaid: filters.onlyPaid
         })
       });
@@ -10430,6 +10537,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const dates = getStudentApplicationsDefaultDates(30);
     state.studentApplicationsImport.filters = {
       programId: "",
+      programIds: [],
+      programQuery: "",
       period: "30",
       ...dates,
       onlyPaid: false,
@@ -10994,7 +11103,7 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Выберите заявки, которые нужно добавить.");
       return;
     }
-    const selectedProgramId = state.studentApplicationsImport.filters.programId;
+    const selectedProgramId = getStudentApplicationsSingleProgramFilterId();
     const unresolvedRow = selectedRows.find((row) => !getStudentApplicationProgram(row, selectedProgramId));
     if (unresolvedRow) {
       state.studentApplicationsImport.activeId = String(unresolvedRow.id || "");
@@ -11114,7 +11223,7 @@ MAX - https://bizvmax.ru/zifra_plus
       syncStudentApplicationsImportFilters(form);
       updateStudentApplicationsPeriod(event.currentTarget.value);
     });
-    ["programId", "dateFrom", "dateTo", "onlyPaid", "importStatus"].forEach((name) => {
+    ["dateFrom", "dateTo", "onlyPaid", "importStatus"].forEach((name) => {
       form?.elements[name]?.addEventListener("change", () => {
         if (name === "dateFrom" || name === "dateTo") {
           form.elements.period.value = "custom";
@@ -11130,6 +11239,43 @@ MAX - https://bizvmax.ru/zifra_plus
       studentApplicationsSearchTimer = window.setTimeout(() => {
         refreshStudentApplicationsImportDialog({ focusSearch: true, searchCursor: cursor });
       }, 120);
+    });
+    scope.querySelector("[data-student-applications-program-search]")?.addEventListener("input", (event) => {
+      state.studentApplicationsImport.filters.programQuery = event.currentTarget.value;
+      applyStudentApplicationsProgramSearch(
+        event.currentTarget.value,
+        event.currentTarget.closest("[data-student-applications-program-filter]")
+      );
+    });
+    scope.querySelectorAll("[data-student-applications-program-filter-option]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const filter = input.closest("[data-student-applications-program-filter]");
+        const selectedIds = Array.from(
+          filter?.querySelectorAll("[data-student-applications-program-filter-option]:checked") || []
+        ).map((item) => String(item.value || "")).filter(Boolean);
+        state.studentApplicationsImport.filters.programIds = unique(selectedIds);
+        state.studentApplicationsImport.filters.programId = selectedIds.length === 1 ? selectedIds[0] : "";
+        filter?.classList.toggle("is-active", selectedIds.length > 0);
+        const label = filter?.querySelector("[data-student-applications-program-filter-label]");
+        if (label) label.textContent = getStudentApplicationsProgramFilterLabel();
+        const clearButton = filter?.querySelector("[data-action='clear-student-applications-program-filter']");
+        if (clearButton) clearButton.disabled = selectedIds.length === 0;
+      });
+    });
+    scope.querySelector("[data-action='clear-student-applications-program-filter']")?.addEventListener("click", (event) => {
+      const filter = event.currentTarget.closest("[data-student-applications-program-filter]");
+      filter?.querySelectorAll("[data-student-applications-program-filter-option]")
+        .forEach((input) => { input.checked = false; });
+      state.studentApplicationsImport.filters.programIds = [];
+      state.studentApplicationsImport.filters.programId = "";
+      state.studentApplicationsImport.filters.programQuery = "";
+      filter?.classList.remove("is-active");
+      const search = filter?.querySelector("[data-student-applications-program-search]");
+      if (search) search.value = "";
+      applyStudentApplicationsProgramSearch("", filter || scope);
+      const label = filter?.querySelector("[data-student-applications-program-filter-label]");
+      if (label) label.textContent = "Все программы";
+      event.currentTarget.disabled = true;
     });
     scope.querySelector("[data-action='clear-student-applications-filters']")
       ?.addEventListener("click", clearStudentApplicationsFilters);

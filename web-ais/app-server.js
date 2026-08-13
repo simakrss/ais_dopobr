@@ -10771,15 +10771,22 @@ async function runStudentApplicationsQuery(filters) {
   dateToExclusive.setUTCDate(dateToExclusive.getUTCDate() + 1);
   const parameterValues = [filters.dateFrom, dateToExclusive.toISOString().slice(0, 10)];
   let query = getStudentApplicationsSqlQuery();
-  if (filters.productId && filters.programName) {
-    query += " AND (source_product_id = ? OR `Программа` LIKE ?)";
-    parameterValues.push(filters.productId, `%${filters.programName}%`);
-  } else if (filters.productId) {
-    query += " AND source_product_id = ?";
-    parameterValues.push(filters.productId);
-  } else if (filters.programName) {
-    query += " AND `Программа` LIKE ?";
-    parameterValues.push(`%${filters.programName}%`);
+  const programFilters = Array.isArray(filters.programs) ? filters.programs : [];
+  if (programFilters.length) {
+    const clauses = [];
+    programFilters.forEach((program) => {
+      if (program.productId && program.programName) {
+        clauses.push("(source_product_id = ? OR `Программа` LIKE ?)");
+        parameterValues.push(program.productId, `%${program.programName}%`);
+      } else if (program.productId) {
+        clauses.push("source_product_id = ?");
+        parameterValues.push(program.productId);
+      } else if (program.programName) {
+        clauses.push("`Программа` LIKE ?");
+        parameterValues.push(`%${program.programName}%`);
+      }
+    });
+    if (clauses.length) query += ` AND (${clauses.join(" OR ")})`;
   }
   if (filters.onlyPaid) query += " AND source_is_paid = 1";
   query += " ORDER BY source_order_id DESC, source_line_item_id LIMIT 5000";
@@ -12037,22 +12044,25 @@ function normalizeStudentApplicationProgramMatchValue(value) {
 
 function studentEmailApplicationMatchesFilters(row, filters) {
   if (filters.onlyPaid && !row.paid) return false;
-  const productId = String(filters.productId || "").trim();
-  const programName = String(filters.programName || "").trim().toLocaleLowerCase("ru-RU");
-  if (!productId && !programName) return true;
-  const matchesProduct = productId && String(row.productId || "").trim() === productId;
-  const rowProgram = String(row.program || "").toLocaleLowerCase("ru-RU");
-  const normalizedProgramName = normalizeStudentApplicationProgramMatchValue(programName);
-  const normalizedRowProgram = normalizeStudentApplicationProgramMatchValue(rowProgram);
-  const matchesProgram = programName && (
-    rowProgram.includes(programName)
-    || programName.includes(rowProgram.replace(/\s*\([^)]*\)\s*$/u, "").trim())
-    || (normalizedProgramName && normalizedRowProgram && (
-      normalizedRowProgram.includes(normalizedProgramName)
-      || normalizedProgramName.includes(normalizedRowProgram)
-    ))
-  );
-  return Boolean(matchesProduct || matchesProgram);
+  const programFilters = Array.isArray(filters.programs) ? filters.programs : [];
+  if (!programFilters.length) return true;
+  return programFilters.some((program) => {
+    const productId = String(program.productId || "").trim();
+    const programName = String(program.programName || "").trim().toLocaleLowerCase("ru-RU");
+    const matchesProduct = productId && String(row.productId || "").trim() === productId;
+    const rowProgram = String(row.program || "").toLocaleLowerCase("ru-RU");
+    const normalizedProgramName = normalizeStudentApplicationProgramMatchValue(programName);
+    const normalizedRowProgram = normalizeStudentApplicationProgramMatchValue(rowProgram);
+    const matchesProgram = programName && (
+      rowProgram.includes(programName)
+      || programName.includes(rowProgram.replace(/\s*\([^)]*\)\s*$/u, "").trim())
+      || (normalizedProgramName && normalizedRowProgram && (
+        normalizedRowProgram.includes(normalizedProgramName)
+        || normalizedProgramName.includes(normalizedRowProgram)
+      ))
+    );
+    return Boolean(matchesProduct || matchesProgram);
+  });
 }
 
 async function runStudentApplicationsEmailQuery(filters, mailboxSettings = null) {
@@ -12570,11 +12580,26 @@ function parseStudentApplicationsQueryFilters(body = {}) {
   if (dateFrom > dateTo) {
     throw new Error("Дата начала периода не может быть позже даты окончания.");
   }
+  const programs = (Array.isArray(body.programs) ? body.programs : [])
+    .slice(0, 100)
+    .map((program) => ({
+      programName: String(program?.programName || "").trim().slice(0, 500),
+      productId: String(program?.productId || "").trim().slice(0, 80)
+    }))
+    .filter((program) => program.programName || program.productId);
+  const legacyProgram = {
+    programName: String(body.programName || "").trim().slice(0, 500),
+    productId: String(body.productId || "").trim().slice(0, 80)
+  };
+  if (!programs.length && (legacyProgram.programName || legacyProgram.productId)) {
+    programs.push(legacyProgram);
+  }
   return {
     dateFrom,
     dateTo,
-    programName: String(body.programName || "").trim().slice(0, 500),
-    productId: String(body.productId || "").trim().slice(0, 80),
+    programName: programs.length === 1 ? programs[0].programName : "",
+    productId: programs.length === 1 ? programs[0].productId : "",
+    programs,
     onlyPaid: Boolean(body.onlyPaid)
   };
 }
