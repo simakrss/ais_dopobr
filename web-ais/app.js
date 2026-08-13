@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.161",
+    version: "1.7.162",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.162",
+      releasedAt: "2026-08-13",
+      changes: [
+        "При изменении даты групповой генерации и включённом автозаполнении пересчитываются связанные даты, номера приказов, договора, группы и реквизиты документа об образовании."
+      ]
+    },
     {
       version: "1.7.161",
       releasedAt: "2026-08-13",
@@ -34841,6 +34848,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const programType = normalizeEducationProgramType(program?.type || record.educationType);
     const baseDate = getStudentBulkBaseDate(record, preferredDate);
     const baseDateObject = parseOrdersSdoDate(baseDate) || new Date();
+    const hasOperationDate = Boolean(parseOrdersSdoDate(preferredDate));
+    const recalculateContractDetails = operation === "contract" && hasOperationDate;
     if (program) {
       if (!String(record.educationType || "").trim()) record.educationType = program.type || "";
       if (!String(record.hours || "").trim()) record.hours = program.hours || "";
@@ -34848,40 +34857,42 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!String(record.qualification || "").trim()) record.qualification = program.qualification || "";
     }
     if (["contract", "enrollmentOrder", "studyCertificate", "education"].includes(operation)) {
-      if (!parseOrdersSdoDate(record.contractDate)) record.contractDate = baseDate;
-      if (!parseOrdersSdoDate(record.startDate)) record.startDate = baseDate;
-      if (!parseOrdersSdoDate(record.enrollmentDate)) record.enrollmentDate = record.startDate;
-      if (!parseOrdersSdoDate(record.endDate)) {
+      if (recalculateContractDetails || !parseOrdersSdoDate(record.contractDate)) record.contractDate = baseDate;
+      if (recalculateContractDetails || !parseOrdersSdoDate(record.startDate)) record.startDate = baseDate;
+      if (recalculateContractDetails || !parseOrdersSdoDate(record.enrollmentDate)) record.enrollmentDate = record.startDate;
+      if (recalculateContractDetails || !parseOrdersSdoDate(record.endDate)) {
         const endDate = getTrainingEndDate(record.startDate, getStudentProgramHours(record));
         if (endDate) record.endDate = formatOrdersSdoDate(endDate);
       }
-      if (!String(record.contractNo || "").trim()) {
+      if (recalculateContractDetails || !String(record.contractNo || "").trim()) {
         record.contractNo = getGeneratedNumberFromDataFormula("contractNumber", baseDateObject, record.id).value;
       }
-      if (!String(record.enrollmentOrderNo || "").trim()) {
+      if (recalculateContractDetails || !String(record.enrollmentOrderNo || "").trim()) {
         record.enrollmentOrderNo = sharedOrderNo || getGeneratedNumberFromDataFormula(
           "enrollmentOrderNumber",
           parseOrdersSdoDate(record.enrollmentDate) || baseDateObject,
           record.id
         ).value;
       }
-      if (!String(record.group || "").trim() && program?.groupIndex) {
+      if ((recalculateContractDetails || !String(record.group || "").trim()) && program?.groupIndex) {
         record.group = getStudentGroupNumber(record.program, record.startDate);
       }
     }
     if (operation === "enrollmentOrder") {
       record.enrollmentDate = preferredDate || record.enrollmentDate || record.startDate || baseDate;
       record.startDate = record.startDate || record.enrollmentDate;
-      record.enrollmentOrderNo = sharedOrderNo || record.enrollmentOrderNo || getGeneratedNumberFromDataFormula(
-        "enrollmentOrderNumber",
-        parseOrdersSdoDate(record.enrollmentDate) || baseDateObject,
-        record.id
-      ).value;
+      if (hasOperationDate || !String(record.enrollmentOrderNo || "").trim()) {
+        record.enrollmentOrderNo = sharedOrderNo || getGeneratedNumberFromDataFormula(
+          "enrollmentOrderNumber",
+          parseOrdersSdoDate(record.enrollmentDate) || baseDateObject,
+          record.id
+        ).value;
+      }
     }
     if (["expulsionOrder", "education"].includes(operation)) {
       const issueDate = preferredDate || record.expulsionDate || record.endDate || baseDate;
-      if (!parseOrdersSdoDate(record.expulsionDate)) record.expulsionDate = issueDate;
-      if (!String(record.expulsionOrderNo || "").trim()) {
+      if (hasOperationDate || !parseOrdersSdoDate(record.expulsionDate)) record.expulsionDate = issueDate;
+      if (hasOperationDate || !String(record.expulsionOrderNo || "").trim()) {
         record.expulsionOrderNo = sharedOrderNo || getGeneratedNumberFromDataFormula(
           "expulsionOrderNumber",
           parseOrdersSdoDate(record.expulsionDate) || baseDateObject,
@@ -34892,7 +34903,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     }
     if (operation === "education") {
-      const issueDate = record.expulsionDate || record.endDate || baseDate;
+      const issueDate = preferredDate || record.expulsionDate || record.endDate || baseDate;
       const educationValues = getEducationDocumentAutofillValues(record, {
         program,
         programType,
@@ -35477,7 +35488,7 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       const hints = {
         message: "Сообщение будет сформировано отдельно для каждого слушателя по шаблону вкладки «Коммуникации».",
-        document: "Формат и отправка по email применяются только к текущему групповому запуску. Постоянные параметры шаблонов не изменяются.",
+        document: "При включённом автозаполнении изменение даты операции пересчитывает связанные даты и номера. Формат и отправка по email применяются только к текущему запуску.",
         orderDetails: "Один номер и дата приказа будут записаны всем выбранным слушателям. Если номер не введён, он сформируется по системной формуле.",
         frdoDate: "Дата выгрузки в ФРДО будет записана во все выбранные карточки программ КПК и ППП с учётом блокировок записей.",
         portalAccess: "Доступ отправляется персонально каждому слушателю; отсутствующие учётные данные формируются автоматически.",
