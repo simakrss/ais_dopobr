@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.163",
+    version: "1.7.164",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.164",
+      releasedAt: "2026-08-13",
+      changes: [
+        "При импорте заявок авторская выплата и оплата председателю ИАК назначаются по данным выбранной программы независимо от её вида; председатель берётся из первого блока поля до запятой.",
+        "Остальные правила автоматических затрат применяются только к программам ППП и КПК."
+      ]
+    },
     {
       version: "1.7.163",
       releasedAt: "2026-08-13",
@@ -10874,7 +10882,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function extractPaymentRecipientName(value) {
-    return String(value || "").split(",")[0].trim().split(/\s+/u).slice(0, 3).join(" ");
+    return String(value || "").split(",")[0].trim();
   }
 
   function automaticExpenseFingerprint(expense) {
@@ -10908,8 +10916,9 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!recipient || rule.exclusions.some((item) => normalizeProgramName(item) === normalizedRecipient)) {
         return null;
       }
-      const paymentPercent = getProgramAuthorPaymentPercent(author.amountFormula);
-      const amount = evaluateProgramAuthorPaymentFormula(author.amountFormula, paymentTotal);
+      const amountFormula = String(author.amountFormula || rule.amountFormula || "[АвторскаяСтавка]").trim();
+      const paymentPercent = getProgramAuthorPaymentPercent(amountFormula);
+      const amount = evaluateProgramAuthorPaymentFormula(amountFormula, paymentTotal);
       return {
         recipient,
         amount: Math.round(Math.max(0, Number(amount || 0)) * 100) / 100,
@@ -10919,7 +10928,7 @@ MAX - https://bizvmax.ru/zifra_plus
         automaticPaymentProgramName: String(program.name || "").trim(),
         automaticPaymentAuthorId: String(author.id || `program-author-${index + 1}`),
         automaticPaymentPercent: paymentPercent === "" ? "" : Number(paymentPercent || 0),
-        automaticPaymentFormula: String(author.amountFormula || "").trim()
+        automaticPaymentFormula: amountFormula
       };
     }).filter(Boolean);
   }
@@ -10986,6 +10995,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function buildAutomaticStudentExpenses(record, program = null) {
     const rules = parseAutomaticExpenseRules(getPaymentSettingValue("automaticExpenseRules"));
+    const commonRulesAllowed = isFrdoProgramType(program?.type || record.educationType);
     const existingExpenses = Array.isArray(record.directExpenses) ? record.directExpenses : [];
     const existingKeys = new Set(existingExpenses.map((expense) => String(expense?.automaticPaymentKey || "")).filter(Boolean));
     const existingFingerprints = new Set(existingExpenses.map(automaticExpenseFingerprint));
@@ -11044,6 +11054,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (recipient) addExpense(rule, recipient, evaluatePaymentAmountFormula(rule.amountFormula), "commission-chair");
         return;
       }
+      if (!commonRulesAllowed) return;
       addExpense(
         rule,
         rule.notes.join("; "),
@@ -12930,7 +12941,8 @@ MAX - https://bizvmax.ru/zifra_plus
           <p class="payment-settings-hint">
             Формат строки: <code>Вид затрат, Сумма или формула, Примечание</code>.
             Значения примечания со знаком «-» не добавляются. Несколько исключений разделяются точкой с запятой.
-            Для «Оплаты преподавателю» и «Оплаты председателю ИАК» получатель определяется из настроек программы.
+            Для «Оплаты преподавателю» и «Оплаты председателю ИАК» получатель определяется из настроек программы,
+            и эти две выплаты применяются ко всем видам программ. Остальные строки применяются только для ППП и КПК.
           </p>
         </section>
         <section
