@@ -6978,6 +6978,50 @@ body.long-press-dragging * {
   padding: 14px;
 }
 
+.student-bulk-operation-plan {
+  display: grid;
+  gap: 12px;
+}
+
+.student-bulk-operation-card {
+  display: grid;
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid #b9d8d0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(28, 65, 57, 0.06);
+}
+
+.student-bulk-operation-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--line);
+}
+
+.student-bulk-operation-card-head > strong {
+  color: var(--teal);
+  font-size: 13px;
+}
+
+.student-bulk-operation-card-head > div {
+  display: flex;
+  gap: 4px;
+}
+
+.student-bulk-operation-card-head .icon-button {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+}
+
+.student-bulk-add-operation {
+  justify-self: start;
+}
+
 .student-bulk-operation-grid [hidden] {
   display: none !important;
 }

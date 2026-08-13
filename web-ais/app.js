@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.176",
+    version: "1.7.177",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.177",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Групповые операции со слушателями объединены в настраиваемую очередь: теперь можно добавить несколько разных действий, изменить их порядок и выполнить за один запуск."
+      ]
+    },
     {
       version: "1.7.176",
       releasedAt: "2026-08-13",
@@ -35678,8 +35685,8 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="icon-button" data-action="close-student-bulk-result" type="button" title="Закрыть" aria-label="Закрыть">×</button>
         </header>
         <div class="student-bulk-result-summary">
-          <span class="is-success">Выполнено: <strong>${Number(result.success || 0)}</strong></span>
-          <span class="is-warning">Пропущено: <strong>${Number(result.skipped || 0)}</strong></span>
+          <span class="is-success">Выполнено действий: <strong>${Number(result.success || 0)}</strong></span>
+          <span class="is-warning">Пропущено действий: <strong>${Number(result.skipped || 0)}</strong></span>
           <span class="is-error">Ошибок: <strong>${Number(result.failed || 0)}</strong></span>
         </div>
         ${result.notice ? `<p class="student-bulk-result-notice">${escapeHtml(result.notice)}</p>` : ""}
@@ -35975,7 +35982,8 @@ MAX - https://bizvmax.ru/zifra_plus
     autoFill,
     generationFormat,
     emailDeliveryMode,
-    updateProgress
+    updateProgress,
+    revealGeneratedFile = true
   ) {
     const result = { success: 0, skipped: 0, failed: 0, details: [] };
     let firstLocalDocument = null;
@@ -36064,17 +36072,24 @@ MAX - https://bizvmax.ru/zifra_plus
         emailDeliveryMode: normalizeDocumentEmailDeliveryMode(emailDeliveryMode, documentTemplate)
       };
       const storageRequest = getStudentBulkDocumentStorageRequest(record, effectiveTemplate);
-      const generated = await downloadStudentDocumentFromTemplate(
-        effectiveTemplate,
-        record,
-        null,
-        "Не удалось сформировать групповой документ",
-        {
-          storageRequest,
-          skipEmailConfirmation: true,
-          quietEmail: true
-        }
-      );
+      let generated;
+      try {
+        generated = await downloadStudentDocumentFromTemplate(
+          effectiveTemplate,
+          record,
+          null,
+          "Не удалось сформировать групповой документ",
+          {
+            storageRequest,
+            skipEmailConfirmation: true,
+            quietEmail: true
+          }
+        );
+      } catch (error) {
+        result.failed += count;
+        result.details.push({ tone: "error", name: record.name, message: `Документ не сформирован: ${error.message}` });
+        continue;
+      }
       if (generated?.generated) {
         result.success += count;
         if (!firstLocalDocument && generated.storageResult?.localSaveResult?.saved) {
@@ -36092,7 +36107,7 @@ MAX - https://bizvmax.ru/zifra_plus
         result.details.push({ tone: "error", name: record.name, message: "Документ не сформирован." });
       }
     }
-    if (firstLocalDocument) {
+    if (firstLocalDocument && revealGeneratedFile) {
       try {
         await revealStudentBulkDocument(firstLocalDocument.folder, firstLocalDocument.fileName);
       } catch (error) {
@@ -36103,14 +36118,273 @@ MAX - https://bizvmax.ru/zifra_plus
         });
       }
     }
+    if (firstLocalDocument && !revealGeneratedFile) result.firstLocalDocument = firstLocalDocument;
     persist();
     return result;
+  }
+
+  const studentBulkOperationDefinitions = Object.freeze([
+    { key: "message", label: "Отправить сообщение" },
+    { key: "document", label: "Сформировать документы" },
+    { key: "orderDetails", label: "Сформировать номер и дату приказа" },
+    { key: "frdoDate", label: "Установить дату выгрузки в ФРДО" },
+    { key: "portalAccess", label: "Отправить данные для доступа к порталу" },
+    { key: "event", label: "Проставить события" }
+  ]);
+
+  function formatStudentBulkOperationCount(count) {
+    const value = Math.max(0, Number(count) || 0);
+    const lastTwo = value % 100;
+    const last = value % 10;
+    const noun = lastTwo >= 11 && lastTwo <= 14
+      ? "операций"
+      : last === 1
+        ? "операцию"
+        : last >= 2 && last <= 4
+          ? "операции"
+          : "операций";
+    return `${value} ${noun}`;
+  }
+
+  function getStudentBulkOperationLabel(operation = {}) {
+    const type = String(operation.type || operation.operation || "");
+    const definition = studentBulkOperationDefinitions.find((item) => item.key === type);
+    if (type === "message") {
+      const message = studentCommunicationMessages.find((item) => item.key === operation.messageKey);
+      return `${definition?.label || "Сообщение"}: ${message?.label || "не выбрано"}`;
+    }
+    if (type === "document") {
+      const documentOperation = studentBulkDocumentOperations.find((item) => item.key === operation.documentOperation);
+      return `${definition?.label || "Документы"}: ${documentOperation?.label || "не выбрано"}`;
+    }
+    if (type === "orderDetails") {
+      return `${definition?.label || "Приказ"}: ${operation.orderType === "expulsion" ? "об отчислении" : "о зачислении"}`;
+    }
+    if (type === "event") {
+      const count = Array.isArray(operation.events) ? operation.events.length : 0;
+      return `${definition?.label || "События"}: ${count}`;
+    }
+    return definition?.label || "Групповая операция";
+  }
+
+  function validateStudentBulkOperation(operation = {}) {
+    const type = String(operation.type || "");
+    if (!studentBulkOperationDefinitions.some((item) => item.key === type)) return "Выберите вид операции.";
+    if (type === "message" && !String(operation.messageKey || "").trim()) return "Выберите вид сообщения.";
+    if (type === "document" && !String(operation.documentOperation || "").trim()) return "Выберите документ.";
+    if (type === "frdoDate" && !parseOrdersSdoDate(operation.frdoDate)) return "Укажите корректную дату выгрузки в ФРДО.";
+    if (type === "event" && !(operation.events || []).length) return "Выберите хотя бы одно событие.";
+    return "";
+  }
+
+  function getStudentBulkOperationSignature(operation = {}) {
+    const type = String(operation.type || "").trim();
+    if (type === "message") return JSON.stringify({ type, messageKey: String(operation.messageKey || "").trim() });
+    if (type === "document") return JSON.stringify({
+      type,
+      documentOperation: String(operation.documentOperation || "").trim(),
+      operationDate: String(operation.operationDate || "").trim(),
+      autoFill: Boolean(operation.autoFill),
+      generationFormat: String(operation.generationFormat || "").trim(),
+      emailDeliveryMode: String(operation.emailDeliveryMode || "").trim()
+    });
+    if (type === "orderDetails") return JSON.stringify({
+      type,
+      orderType: String(operation.orderType || "").trim(),
+      orderDate: String(operation.orderDate || "").trim(),
+      orderNo: String(operation.orderNo || "").trim()
+    });
+    if (type === "frdoDate") return JSON.stringify({ type, frdoDate: String(operation.frdoDate || "").trim() });
+    if (type === "portalAccess") return JSON.stringify({ type, portalEventDate: String(operation.portalEventDate || "").trim() });
+    if (type === "event") return JSON.stringify({
+      type,
+      events: (operation.events || []).map((item) => ({
+        key: String(item.key || "").trim(),
+        date: String(item.date || "").trim()
+      })).sort((left, right) => left.key.localeCompare(right.key, "ru"))
+    });
+    return JSON.stringify({ type });
+  }
+
+  function findStudentBulkOperationConflict(operations = []) {
+    const signatures = operations.map(getStudentBulkOperationSignature);
+    const duplicateIndex = signatures.findIndex((signature, index) => signatures.indexOf(signature) !== index);
+    if (duplicateIndex >= 0) return { index: duplicateIndex, message: "полностью повторяет уже добавленную операцию" };
+    const singletonTypes = ["portalAccess", "frdoDate"];
+    for (const type of singletonTypes) {
+      const indexes = operations.map((item, index) => item.type === type ? index : -1).filter((index) => index >= 0);
+      if (indexes.length > 1) return { index: indexes[1], message: "конфликтует с уже добавленной операцией этого вида" };
+    }
+    const seenOrders = new Map();
+    for (let index = 0; index < operations.length; index += 1) {
+      const operation = operations[index];
+      if (operation.type !== "orderDetails") continue;
+      const orderType = String(operation.orderType || "enrollment");
+      if (seenOrders.has(orderType)) return { index, message: "повторно изменяет реквизиты того же вида приказа" };
+      seenOrders.set(orderType, index);
+    }
+    const documentOrderTypes = {
+      contract: "enrollment",
+      enrollmentOrder: "enrollment",
+      expulsionOrder: "expulsion",
+      education: "expulsion"
+    };
+    for (let index = 0; index < operations.length; index += 1) {
+      const operation = operations[index];
+      if (operation.type !== "document" || !operation.autoFill) continue;
+      const orderType = documentOrderTypes[String(operation.documentOperation || "")];
+      if (!orderType || !seenOrders.has(orderType)) continue;
+      return {
+        index,
+        message: "пересчитывает реквизиты того же приказа. Отключите автозаполнение у документа и разместите формирование реквизитов приказа перед ним"
+      };
+    }
+    const portalAccessIndex = operations.findIndex((operation) => operation.type === "portalAccess");
+    const portalEventIndex = operations.findIndex((operation) => (
+      operation.type === "event"
+      && (operation.events || []).some((event) => String(event.key || "").trim() === "portalCredentialsSent")
+    ));
+    if (portalAccessIndex >= 0 && portalEventIndex >= 0) {
+      return {
+        index: portalEventIndex,
+        message: "повторно изменяет событие отправки доступа, которое уже устанавливает операция отправки данных для портала"
+      };
+    }
+    const portalMessageIndex = operations.findIndex((operation) => (
+      operation.type === "message"
+      && String(operation.messageKey || "").trim() === "portalAccessMessage"
+    ));
+    if (portalAccessIndex >= 0 && portalMessageIndex >= 0) {
+      return {
+        index: portalMessageIndex,
+        message: "повторно отправляет сообщение о доступе, которое уже отправляет операция данных для портала"
+      };
+    }
+    const seenEvents = new Set();
+    for (let index = 0; index < operations.length; index += 1) {
+      if (operations[index].type !== "event") continue;
+      for (const event of operations[index].events || []) {
+        const key = String(event.key || "").trim();
+        if (seenEvents.has(key)) return { index, message: "повторно изменяет уже выбранное событие" };
+        seenEvents.add(key);
+      }
+    }
+    return null;
+  }
+
+  function mergeStudentBulkOperationResult(target, operation, result = {}) {
+    const label = getStudentBulkOperationLabel(operation);
+    const success = Number(result.success || 0);
+    const skipped = Number(result.skipped || 0);
+    const failed = Number(result.failed || 0);
+    target.success += success;
+    target.skipped += skipped;
+    target.failed += failed;
+    target.details.push({
+      tone: failed ? "error" : skipped ? "warning" : "success",
+      name: label,
+      message: `Выполнено: ${success}; пропущено: ${skipped}; ошибок: ${failed}.`
+    });
+    (result.details || []).forEach((detail) => target.details.push({
+      ...detail,
+      name: `${label} · ${detail.name || "Запись"}`
+    }));
+    if (result.notice && !target.notices.includes(result.notice)) target.notices.push(result.notice);
+    return target;
+  }
+
+  async function runStudentBulkOperation(operation, records, updateProgress) {
+    if (operation.type === "message") {
+      return runStudentBulkMessage(records, operation.messageKey, updateProgress);
+    }
+    if (operation.type === "event") {
+      return runStudentBulkEvents(records, operation.events, updateProgress);
+    }
+    if (operation.type === "orderDetails") {
+      return runStudentBulkOrderDetails(records, operation.orderType, operation.orderDate, operation.orderNo, updateProgress);
+    }
+    if (operation.type === "frdoDate") {
+      return runStudentBulkFrdoDate(records, operation.frdoDate, updateProgress);
+    }
+    if (operation.type === "portalAccess") {
+      return runStudentBulkPortalAccess(records, operation.portalEventDate, updateProgress);
+    }
+    return runStudentBulkDocuments(
+      records,
+      operation.documentOperation,
+      operation.operationDate,
+      operation.autoFill,
+      operation.generationFormat,
+      operation.emailDeliveryMode,
+      updateProgress,
+      false
+    );
+  }
+
+  async function executeStudentBulkOperationPlan(operations = [], recordIds = [], options = {}) {
+    const getRecords = options.getRecords || ((ids) => getRowsByIds("students", ids));
+    const runOperation = options.runOperation || runStudentBulkOperation;
+    const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {};
+    const expectedRecordCount = recordIds.length;
+    const weights = operations.map((operation) => Math.max(1, expectedRecordCount * (operation.type === "document" ? 2 : 1)));
+    const totalSteps = Math.max(1, weights.reduce((sum, value) => sum + value, 0));
+    const result = { success: 0, skipped: 0, failed: 0, details: [], notices: [] };
+    let completedSteps = 0;
+    let firstLocalDocument = null;
+    for (let index = 0; index < operations.length; index += 1) {
+      const operation = operations[index];
+      const currentRecords = getRecords(recordIds);
+      const missingRecords = Math.max(0, expectedRecordCount - currentRecords.length);
+      const updateProgress = (step, label) => onProgress({
+        operationIndex: index,
+        operationCount: operations.length,
+        currentStep: completedSteps + Math.max(0, Number(step) || 0),
+        totalSteps,
+        label
+      });
+      try {
+        const operationResult = await runOperation(operation, currentRecords, updateProgress);
+        if (missingRecords) {
+          operationResult.skipped = Number(operationResult.skipped || 0) + missingRecords;
+          operationResult.details = [
+            ...(operationResult.details || []),
+            { tone: "warning", name: "Удалённые записи", message: `${missingRecords} записей больше нет в базе.` }
+          ];
+        }
+        if (!firstLocalDocument && operationResult.firstLocalDocument) {
+          firstLocalDocument = operationResult.firstLocalDocument;
+        }
+        mergeStudentBulkOperationResult(result, operation, operationResult);
+      } catch (error) {
+        result.failed += currentRecords.length;
+        result.skipped += missingRecords;
+        result.details.push({ tone: "error", name: getStudentBulkOperationLabel(operation), message: error.message });
+        if (missingRecords) {
+          result.details.push({ tone: "warning", name: "Удалённые записи", message: `${missingRecords} записей больше нет в базе.` });
+        }
+      }
+      completedSteps += weights[index];
+      onProgress({
+        operationIndex: index,
+        operationCount: operations.length,
+        currentStep: completedSteps,
+        totalSteps,
+        label: getStudentBulkOperationLabel(operation),
+        operationComplete: true
+      });
+    }
+    result.notice = result.notices.join(" ");
+    delete result.notices;
+    return { result, firstLocalDocument };
   }
 
   function openStudentBulkOperationsDialog() {
     const records = getRowsByIds("students", getSelected("students"));
     if (!records.length) return;
+    const recordIds = records.map((record) => record.id);
     const previewRecord = records[0];
+    let nextOperationId = 1;
+    let running = false;
     document.querySelector("[data-student-bulk-operations]")?.remove();
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop student-bulk-operations-backdrop";
@@ -36122,15 +36396,22 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="icon-button" data-action="close-student-bulk-operations" type="button" title="Закрыть" aria-label="Закрыть">×</button>
         </header>
         <div class="student-bulk-operation-grid">
-          <label><span>Операция</span><select name="operation">
-            <option value="message">Отправить сообщение</option>
-            <option value="document">Сформировать документы</option>
-            <option value="orderDetails">Сформировать номер и дату приказа</option>
-            <option value="frdoDate">Установить дату выгрузки в ФРДО</option>
-            <option value="portalAccess">Отправить данные для доступа к порталу</option>
-            <option value="event">Проставить события</option>
-          </select></label>
-          <div class="student-bulk-operation-message-panel" data-student-bulk-panel="message">
+          <div class="student-bulk-operation-plan" data-student-bulk-operation-plan></div>
+          <button class="ghost-button student-bulk-add-operation" data-action="add-student-bulk-operation" type="button">+ Добавить операцию</button>
+          <template data-student-bulk-operation-template>
+            <section class="student-bulk-operation-card" data-student-bulk-operation-card>
+              <header class="student-bulk-operation-card-head">
+                <strong data-student-bulk-operation-number>Операция</strong>
+                <div>
+                  <button class="icon-button" data-action="move-student-bulk-operation-up" type="button" title="Переместить выше" aria-label="Переместить операцию выше">↑</button>
+                  <button class="icon-button" data-action="move-student-bulk-operation-down" type="button" title="Переместить ниже" aria-label="Переместить операцию ниже">↓</button>
+                  <button class="icon-button danger" data-action="remove-student-bulk-operation" type="button" title="Удалить операцию" aria-label="Удалить операцию">×</button>
+                </div>
+              </header>
+              <label><span>Операция</span><select name="operation">
+                ${studentBulkOperationDefinitions.map((item) => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`).join("")}
+              </select></label>
+              <div class="student-bulk-operation-message-panel" data-student-bulk-panel="message">
             <label><span>Вид сообщения</span><select name="messageKey">
               ${studentCommunicationMessages.filter((item) => item.showInCommunications !== false).map((item) => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`).join("")}
             </select></label>
@@ -36138,8 +36419,8 @@ MAX - https://bizvmax.ru/zifra_plus
               <span>Пример для: ${escapeHtml(previewRecord.name || previewRecord.id)}</span>
               <textarea data-student-bulk-message-preview readonly aria-readonly="true"></textarea>
             </label>
-          </div>
-          <div class="student-bulk-operation-document-panel" data-student-bulk-panel="document" hidden>
+              </div>
+              <div class="student-bulk-operation-document-panel" data-student-bulk-panel="document" hidden>
             <label><span>Документ</span><select name="documentOperation">
               ${studentBulkDocumentOperations.map((item) => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`).join("")}
             </select></label>
@@ -36154,24 +36435,24 @@ MAX - https://bizvmax.ru/zifra_plus
               <option value="system">Отправить на системный ящик</option>
             </select></label>
             <label class="checkbox-line"><input name="autoFill" type="checkbox" checked><span>Автоматически заполнить вычисляемые реквизиты</span></label>
-          </div>
-          <div class="student-bulk-operation-order-panel" data-student-bulk-panel="orderDetails" hidden>
+              </div>
+              <div class="student-bulk-operation-order-panel" data-student-bulk-panel="orderDetails" hidden>
             <label><span>Вид приказа</span><select name="orderType">
               <option value="enrollment">Приказ о зачислении</option>
               <option value="expulsion">Приказ об отчислении</option>
             </select></label>
             <label><span>Дата приказа</span><input name="orderDate" type="date" value="${todayIso()}"></label>
             <label class="student-bulk-order-number"><span>Номер приказа</span><input name="orderNo" placeholder="Оставьте пустым для автоматического формирования"></label>
-          </div>
-          <div class="student-bulk-operation-portal-panel student-bulk-operation-frdo-panel" data-student-bulk-panel="frdoDate" hidden>
-            <label><span>Дата выгрузки в ФРДО</span><input name="frdoDate" type="date" value="${todayIso()}" required></label>
+              </div>
+              <div class="student-bulk-operation-portal-panel student-bulk-operation-frdo-panel" data-student-bulk-panel="frdoDate" hidden>
+            <label><span>Дата выгрузки в ФРДО</span><input name="frdoDate" type="date" value="${todayIso()}"></label>
             <p>Дата будет установлена выбранным слушателям программ КПК и ППП. Остальные записи будут пропущены.</p>
-          </div>
-          <div class="student-bulk-operation-portal-panel" data-student-bulk-panel="portalAccess" hidden>
+              </div>
+              <div class="student-bulk-operation-portal-panel" data-student-bulk-panel="portalAccess" hidden>
             <label><span>Дата отправки</span><input name="portalEventDate" type="date" value="${todayIso()}"></label>
             <p>Отсутствующие логин и пароль будут сформированы автоматически. После успешной отправки в карточке будет отмечено соответствующее событие.</p>
-          </div>
-          <div class="student-bulk-operation-event-panel" data-student-bulk-panel="event" hidden>
+              </div>
+              <div class="student-bulk-operation-event-panel" data-student-bulk-panel="event" hidden>
             <strong>Выберите одно или несколько событий и укажите для каждого дату</strong>
             <div class="student-bulk-event-list">
               ${getStudentEventTemplates().map((item, index) => `
@@ -36184,131 +36465,185 @@ MAX - https://bizvmax.ru/zifra_plus
                 </div>
               `).join("")}
             </div>
-          </div>
-          <p class="student-bulk-operation-hint" data-student-bulk-hint>Сообщение будет сформировано отдельно для каждого слушателя по шаблону вкладки «Коммуникации».</p>
+              </div>
+              <p class="student-bulk-operation-hint" data-student-bulk-hint>Сообщение будет сформировано отдельно для каждого слушателя по шаблону вкладки «Коммуникации».</p>
+            </section>
+          </template>
           <div class="student-bulk-operation-progress" data-student-bulk-progress hidden><span></span><strong data-student-bulk-progress-label>Подготовка...</strong></div>
         </div>
         <footer class="modal-actions">
           <button class="ghost-button" data-action="close-student-bulk-operations" type="button">Отмена</button>
-          <button class="primary-button" type="submit">Выполнить</button>
+          <button class="primary-button" type="submit">Выполнить 1 операцию</button>
         </footer>
       </form>
     `;
     const form = backdrop.querySelector("form");
-    const close = () => backdrop.remove();
-    const syncMessagePreview = () => {
-      const messageKey = String(form.elements.messageKey?.value || "");
+    const plan = form.querySelector("[data-student-bulk-operation-plan]");
+    const operationTemplate = form.querySelector("[data-student-bulk-operation-template]");
+    const submit = form.querySelector("button[type='submit']");
+    const hints = {
+      message: "Сообщение будет сформировано отдельно для каждого слушателя по шаблону вкладки «Коммуникации». Предпросмотр основан на текущих данных первой карточки; предыдущие операции очереди могут изменить итоговый текст.",
+      document: "При включённом автозаполнении изменение даты операции пересчитывает связанные даты и номера. Формат и отправка по email применяются только к текущему запуску.",
+      orderDetails: "Один номер и дата приказа будут записаны всем выбранным слушателям. Если номер не введён, он сформируется по системной формуле.",
+      frdoDate: "Дата выгрузки в ФРДО будет записана во все выбранные карточки программ КПК и ППП с учётом блокировок записей.",
+      portalAccess: "Доступ отправляется персонально каждому слушателю; отсутствующие учётные данные формируются автоматически.",
+      event: "Все отмеченные события будут записаны одним пакетом с указанными для них датами."
+    };
+    const close = () => { if (!running) backdrop.remove(); };
+    const getCards = () => [...plan.querySelectorAll("[data-student-bulk-operation-card]")];
+    const syncMessagePreview = (card) => {
+      const messageKey = String(card.querySelector("[name='messageKey']")?.value || "");
       const generated = generateStudentCommunicationMessages(previewRecord);
       const message = String(previewRecord[messageKey] || generated[messageKey] || "").trim();
-      const preview = form.querySelector("[data-student-bulk-message-preview]");
+      const preview = card.querySelector("[data-student-bulk-message-preview]");
       if (preview) preview.value = message || "Сообщение для выбранного слушателя не сформировано.";
     };
-    const syncDocumentOptions = () => {
-      const template = getStudentBulkDocumentTemplate(previewRecord, form.elements.documentOperation?.value);
+    const syncDocumentOptions = (card) => {
+      const template = getStudentBulkDocumentTemplate(previewRecord, card.querySelector("[name='documentOperation']")?.value);
       if (!template) return;
-      form.elements.generationFormat.value = normalizeDocumentGenerationFormat(template.generationFormat);
-      form.elements.emailDeliveryMode.value = normalizeDocumentEmailDeliveryMode(template.emailDeliveryMode, template);
+      card.querySelector("[name='generationFormat']").value = normalizeDocumentGenerationFormat(template.generationFormat);
+      card.querySelector("[name='emailDeliveryMode']").value = normalizeDocumentEmailDeliveryMode(template.emailDeliveryMode, template);
     };
-    const syncEventRows = () => {
-      form.querySelectorAll("input[name='eventKeys']").forEach((checkbox) => {
-        const date = form.querySelector(`[data-event-date-for="${CSS.escape(checkbox.value)}"]`);
+    const syncEventRows = (card) => {
+      card.querySelectorAll("input[name='eventKeys']").forEach((checkbox) => {
+        const date = card.querySelector(`[data-event-date-for="${CSS.escape(checkbox.value)}"]`);
         if (date) date.disabled = !checkbox.checked;
       });
     };
-    const getSelectedEvents = () => [...form.querySelectorAll("input[name='eventKeys']:checked")].map((checkbox) => ({
+    const getSelectedEvents = (card) => [...card.querySelectorAll("input[name='eventKeys']:checked")].map((checkbox) => ({
       key: checkbox.value,
-      date: form.querySelector(`[data-event-date-for="${CSS.escape(checkbox.value)}"]`)?.value || ""
+      date: card.querySelector(`[data-event-date-for="${CSS.escape(checkbox.value)}"]`)?.value || ""
     }));
-    const syncPanels = () => {
-      const operation = form.elements.operation.value;
-      form.querySelectorAll("[data-student-bulk-panel]").forEach((panel) => {
+    const syncPanels = (card) => {
+      const operation = card.querySelector("[name='operation']").value;
+      card.querySelectorAll("[data-student-bulk-panel]").forEach((panel) => {
         panel.hidden = panel.dataset.studentBulkPanel !== operation;
       });
-      const hints = {
-        message: "Сообщение будет сформировано отдельно для каждого слушателя по шаблону вкладки «Коммуникации».",
-        document: "При включённом автозаполнении изменение даты операции пересчитывает связанные даты и номера. Формат и отправка по email применяются только к текущему запуску.",
-        orderDetails: "Один номер и дата приказа будут записаны всем выбранным слушателям. Если номер не введён, он сформируется по системной формуле.",
-        frdoDate: "Дата выгрузки в ФРДО будет записана во все выбранные карточки программ КПК и ППП с учётом блокировок записей.",
-        portalAccess: "Доступ отправляется персонально каждому слушателю; отсутствующие учётные данные формируются автоматически.",
-        event: "Все отмеченные события будут записаны одним пакетом с указанными для них датами."
+      card.querySelector("[data-student-bulk-hint]").textContent = hints[operation];
+    };
+    const updatePlanUi = () => {
+      const cards = getCards();
+      cards.forEach((card, index) => {
+        card.querySelector("[data-student-bulk-operation-number]").textContent = `Операция ${index + 1}`;
+        card.querySelector("[data-action='move-student-bulk-operation-up']").disabled = index === 0;
+        card.querySelector("[data-action='move-student-bulk-operation-down']").disabled = index === cards.length - 1;
+        card.querySelector("[data-action='remove-student-bulk-operation']").disabled = cards.length === 1;
+      });
+      submit.disabled = running || !cards.length;
+      submit.textContent = `Выполнить ${formatStudentBulkOperationCount(cards.length)}`;
+    };
+    const bindCard = (card) => {
+      card.dataset.studentBulkOperationId = String(nextOperationId++);
+      card.querySelector("[name='operation']").addEventListener("change", () => syncPanels(card));
+      card.querySelector("[name='messageKey']").addEventListener("change", () => syncMessagePreview(card));
+      card.querySelector("[name='documentOperation']").addEventListener("change", () => syncDocumentOptions(card));
+      card.querySelectorAll("input[name='eventKeys']").forEach((checkbox) => checkbox.addEventListener("change", () => syncEventRows(card)));
+      syncMessagePreview(card);
+      syncDocumentOptions(card);
+      syncEventRows(card);
+      syncPanels(card);
+    };
+    const addOperation = (type = "message") => {
+      const card = operationTemplate.content.firstElementChild.cloneNode(true);
+      card.querySelector("[name='operation']").value = type;
+      plan.appendChild(card);
+      bindCard(card);
+      updatePlanUi();
+      card.querySelector("[name='operation']").focus({ preventScroll: true });
+      return card;
+    };
+    const collectOperation = (card) => {
+      const value = (name) => String(card.querySelector(`[name="${name}"]`)?.value || "");
+      const type = value("operation");
+      return {
+        type,
+        messageKey: value("messageKey"),
+        documentOperation: value("documentOperation"),
+        operationDate: value("operationDate"),
+        generationFormat: value("generationFormat"),
+        emailDeliveryMode: value("emailDeliveryMode"),
+        autoFill: Boolean(card.querySelector("[name='autoFill']")?.checked),
+        orderType: value("orderType"),
+        orderDate: value("orderDate"),
+        orderNo: value("orderNo"),
+        frdoDate: value("frdoDate"),
+        portalEventDate: value("portalEventDate"),
+        events: type === "event" ? getSelectedEvents(card) : []
       };
-      form.querySelector("[data-student-bulk-hint]").textContent = hints[operation];
     };
     backdrop.addEventListener("pointerdown", (event) => { if (event.target === backdrop) close(); });
     form.querySelectorAll("[data-action='close-student-bulk-operations']").forEach((button) => button.addEventListener("click", close));
-    form.elements.operation.addEventListener("change", syncPanels);
-    form.elements.messageKey.addEventListener("change", syncMessagePreview);
-    form.elements.documentOperation.addEventListener("change", syncDocumentOptions);
-    form.querySelectorAll("input[name='eventKeys']").forEach((checkbox) => checkbox.addEventListener("change", syncEventRows));
+    form.querySelector("[data-action='add-student-bulk-operation']").addEventListener("click", () => addOperation());
+    plan.addEventListener("click", (event) => {
+      const action = event.target.closest("[data-action]")?.dataset.action;
+      const card = event.target.closest("[data-student-bulk-operation-card]");
+      if (!card || running) return;
+      if (action === "remove-student-bulk-operation" && getCards().length > 1) card.remove();
+      if (action === "move-student-bulk-operation-up" && card.previousElementSibling) plan.insertBefore(card, card.previousElementSibling);
+      if (action === "move-student-bulk-operation-down" && card.nextElementSibling) plan.insertBefore(card.nextElementSibling, card);
+      updatePlanUi();
+    });
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const operation = form.elements.operation.value;
-      const selectedEvents = operation === "event" ? getSelectedEvents() : [];
-      if (operation === "event" && !selectedEvents.length) {
-        alert("Выберите хотя бы одно событие.");
+      if (running) return;
+      const cards = getCards();
+      const operations = cards.map(collectOperation);
+      const invalidIndex = operations.findIndex((operation) => validateStudentBulkOperation(operation));
+      if (invalidIndex >= 0) {
+        alert(`Операция ${invalidIndex + 1}: ${validateStudentBulkOperation(operations[invalidIndex])}`);
+        cards[invalidIndex].querySelector("[name='operation']")?.focus();
         return;
       }
-      if (operation === "frdoDate" && !form.elements.frdoDate.value) {
-        alert("Укажите дату выгрузки в ФРДО.");
-        form.elements.frdoDate.focus();
+      const conflict = findStudentBulkOperationConflict(operations);
+      if (conflict) {
+        alert(`Операция ${conflict.index + 1} ${conflict.message}. Измените параметры или удалите её.`);
+        cards[conflict.index].scrollIntoView({ block: "nearest" });
         return;
       }
-      if (!confirm(`Выполнить выбранную операцию для ${records.length} слушателей?`)) return;
-      const submit = form.querySelector("button[type='submit']");
+      const operationList = operations.map((operation, index) => `${index + 1}. ${getStudentBulkOperationLabel(operation)}`).join("\n");
+      if (!confirm(`Последовательно выполнить ${formatStudentBulkOperationCount(operations.length)} для ${records.length} слушателей?\n\n${operationList}`)) return;
       const progress = form.querySelector("[data-student-bulk-progress]");
       const progressFill = progress.querySelector("span");
       const progressLabel = progress.querySelector("[data-student-bulk-progress-label]");
-      submit.disabled = true;
+      running = true;
+      form.querySelectorAll("button, input, select, textarea").forEach((control) => { control.disabled = true; });
       progress.hidden = false;
-      const updateProgress = (index, label) => {
-        const totalSteps = operation === "document" ? Math.max(1, records.length * 2) : records.length;
-        progressFill.style.width = `${Math.min(100, Math.round((index / totalSteps) * 100))}%`;
-        progressLabel.textContent = label;
-      };
-      let result;
       try {
-        if (operation === "message") {
-          result = await runStudentBulkMessage(records, form.elements.messageKey.value, updateProgress);
-        } else if (operation === "event") {
-          result = await runStudentBulkEvents(records, selectedEvents, updateProgress);
-        } else if (operation === "orderDetails") {
-          result = await runStudentBulkOrderDetails(
-            records,
-            form.elements.orderType.value,
-            form.elements.orderDate.value,
-            form.elements.orderNo.value,
-            updateProgress
-          );
-        } else if (operation === "frdoDate") {
-          result = await runStudentBulkFrdoDate(records, form.elements.frdoDate.value, updateProgress);
-        } else if (operation === "portalAccess") {
-          result = await runStudentBulkPortalAccess(records, form.elements.portalEventDate.value, updateProgress);
-        } else {
-          result = await runStudentBulkDocuments(
-            records,
-            form.elements.documentOperation.value,
-            form.elements.operationDate.value,
-            form.elements.autoFill.checked,
-            form.elements.generationFormat.value,
-            form.elements.emailDeliveryMode.value,
-            updateProgress
-          );
+        const execution = await executeStudentBulkOperationPlan(operations, recordIds, {
+          onProgress: ({ operationIndex, operationCount, currentStep, totalSteps, label, operationComplete }) => {
+            progressFill.style.width = `${Math.min(100, Math.round((currentStep / totalSteps) * 100))}%`;
+            progressLabel.textContent = operationComplete
+              ? `Операция ${operationIndex + 1} из ${operationCount} завершена`
+              : `Операция ${operationIndex + 1} из ${operationCount} · ${label}`;
+          }
+        });
+        const { result, firstLocalDocument } = execution;
+        if (firstLocalDocument) {
+          try {
+            await revealStudentBulkDocument(firstLocalDocument.folder, firstLocalDocument.fileName);
+          } catch (error) {
+            result.details.push({
+              tone: "warning",
+              name: firstLocalDocument.fileName,
+              message: `Документы сохранены, но не удалось выделить первый файл в Проводнике: ${error.message}`
+            });
+          }
         }
-        progressFill.style.width = "100%";
+        progressLabel.textContent = "Все операции выполнены";
+        running = false;
         close();
         render();
-        showStudentBulkOperationResult(result || {});
+        showStudentBulkOperationResult(result);
       } catch (error) {
-        submit.disabled = false;
+        running = false;
+        form.querySelectorAll("button, input, select, textarea").forEach((control) => { control.disabled = false; });
+        getCards().forEach(syncEventRows);
+        updatePlanUi();
         progressLabel.textContent = `Ошибка: ${error.message}`;
       }
     });
     document.body.appendChild(backdrop);
-    syncMessagePreview();
-    syncDocumentOptions();
-    syncEventRows();
-    syncPanels();
-    form.elements.operation.focus({ preventScroll: true });
+    addOperation();
   }
 
   function addDictionaryValue(event) {
