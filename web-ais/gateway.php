@@ -1518,17 +1518,27 @@ if (!in_array($method, ['GET', 'HEAD', 'POST', 'DELETE', 'OPTIONS'], true)) {
     gateway_fail(405, 'Method not allowed');
 }
 
+$requestPath = gateway_request_path();
+$isPreviewControlRequest = in_array($requestPath, [
+    '/api/contracts/student-document-preview/finalize',
+    '/api/contracts/student-document-preview/cancel',
+], true);
+$requestBodyLimit = $isPreviewControlRequest ? 4096 : AIS_GATEWAY_MAX_REQUEST_BYTES;
 $contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
-if ($contentLength > AIS_GATEWAY_MAX_REQUEST_BYTES) {
+if ($contentLength > $requestBodyLimit) {
     gateway_fail(413, 'Размер запроса превышает допустимый предел.');
 }
-$body = (string) file_get_contents('php://input');
-if (strlen($body) > AIS_GATEWAY_MAX_REQUEST_BYTES) {
+$inputStream = fopen('php://input', 'rb');
+if ($inputStream === false) {
+    gateway_fail(400, 'Не удалось прочитать тело запроса.');
+}
+$body = (string) stream_get_contents($inputStream, $requestBodyLimit + 1);
+fclose($inputStream);
+if (strlen($body) > $requestBodyLimit) {
     gateway_fail(413, 'Размер запроса превышает допустимый предел.');
 }
 
 try {
-    $requestPath = gateway_request_path();
     if (str_starts_with($requestPath, '/data/')) {
         gateway_serve_protected_data($requestPath);
     }
@@ -1551,6 +1561,7 @@ try {
     $authenticatedHeaders['x-ais-user-login'] = (string) ($currentUser['login'] ?? '');
     $authenticatedHeaders['x-ais-user-name'] = (string) ($currentUser['name'] ?? '');
     $authenticatedHeaders['x-ais-user-role'] = (string) ($currentUser['role'] ?? 'manager');
+    $authenticatedHeaders['x-ais-session-id'] = hash('sha256', (string) session_id());
     gateway_handle_audit_routes($method, $requestPath, $body, $currentUser);
     gateway_handle_admin_users($method, $requestPath, $body, $currentUser);
     if (

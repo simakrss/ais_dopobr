@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.179",
+    version: "1.7.180",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.180",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В контекстных меню документов слушателя и сотрудника добавлен подтверждаемый предварительный просмотр PDF перед сохранением, скачиванием и отправкой сформированного PDF или DOCX."
+      ]
+    },
     {
       version: "1.7.179",
       releasedAt: "2026-08-13",
@@ -5381,6 +5388,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ),
       emailTemplateValues: normalizeDocumentEmailTemplateValues(
         item?.emailTemplateValues || fallback.emailTemplateValues
+      ),
+      previewBeforeGeneration: isChecked(
+        item?.previewBeforeGeneration ?? fallback.previewBeforeGeneration
       ),
       useCustomDocumentProperties: isChecked(item?.useCustomDocumentProperties ?? fallback.useCustomDocumentProperties) ? "1" : "0",
       fields: normalizedFields,
@@ -24358,6 +24368,11 @@ MAX - https://bizvmax.ru/zifra_plus
       closeStudentDocumentRecognitionDialog();
       return true;
     }
+    const generatedDocumentPreview = document.querySelector("[data-generated-document-preview]");
+    if (generatedDocumentPreview) {
+      generatedDocumentPreview.closeGeneratedDocumentPreview?.(false);
+      return true;
+    }
     const studentDocumentDataCheckDialog = document.querySelector("[data-student-document-data-check-dialog]");
     if (studentDocumentDataCheckDialog) {
       studentDocumentDataCheckDialog.closeStudentDocumentDataCheck?.();
@@ -36104,7 +36119,8 @@ MAX - https://bizvmax.ru/zifra_plus
           {
             storageRequest,
             skipEmailConfirmation: true,
-            quietEmail: true
+            quietEmail: true,
+            skipPreview: true
           }
         );
       } catch (error) {
@@ -36935,6 +36951,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: normalized.fileNameTemplate,
       saveFolderTemplate: normalized.saveFolderTemplate,
       generationFormat: normalized.generationFormat,
+      previewBeforeGeneration: normalized.previewBeforeGeneration,
       emailDeliveryMode: normalized.emailDeliveryMode,
       emailSubjectTemplate: normalized.emailSubjectTemplate,
       emailMessageTemplate: normalized.emailMessageTemplate,
@@ -42797,17 +42814,25 @@ MAX - https://bizvmax.ru/zifra_plus
     closeStudentDocumentActionMenu();
   }
 
-  function updateDocumentTemplateActionSetting(documentTemplateId, patch, auditDetails) {
+  function updateDocumentTemplateActionSetting(
+    documentTemplateId,
+    patch,
+    auditDetails,
+    relatedDocumentTemplateIds = []
+  ) {
     const documents = getDocumentTemplates();
     const index = documents.findIndex((documentTemplate) => documentTemplate.id === documentTemplateId);
     if (index < 0) return;
-    const nextDocument = normalizeDocumentTemplate({
-      ...documents[index],
-      ...patch
-    }, index);
+    const targetIds = new Set([
+      documentTemplateId,
+      ...(Array.isArray(relatedDocumentTemplateIds) ? relatedDocumentTemplateIds : [])
+    ].map((value) => String(value || "").trim()).filter(Boolean));
     const nextDocuments = documents.map((documentTemplate, documentIndex) => (
-      documentIndex === index ? nextDocument : documentTemplate
+      targetIds.has(documentTemplate.id)
+        ? normalizeDocumentTemplate({ ...documentTemplate, ...patch }, documentIndex)
+        : documentTemplate
     ));
+    const nextDocument = nextDocuments[index];
     commitDocumentTemplates(nextDocuments, nextDocument);
     addAudit("Изменены параметры документа", nextDocument.title, auditDetails);
     persist();
@@ -42842,6 +42867,7 @@ MAX - https://bizvmax.ru/zifra_plus
       documentTemplate.emailDeliveryMode,
       documentTemplate
     );
+    const previewBeforeGeneration = Boolean(documentTemplate.previewBeforeGeneration);
     const menuTitle = String(options.title || documentTemplate.title || "Документ").trim();
     const recipientLabel = String(options.recipientLabel || "слушателю").trim();
     const menu = document.createElement("div");
@@ -42870,6 +42896,11 @@ MAX - https://bizvmax.ru/zifra_plus
       <button data-document-email-mode="system" type="button" aria-pressed="${deliveryMode === "system"}">
         <span class="student-document-action-menu-check" aria-hidden="true">${deliveryMode === "system" ? "✓" : ""}</span>
         <span>Отправить email системе</span>
+      </button>
+      <div class="student-document-action-menu-label">Перед выполнением</div>
+      <button data-document-preview-toggle type="button" aria-pressed="${previewBeforeGeneration}">
+        <span class="student-document-action-menu-check" aria-hidden="true">${previewBeforeGeneration ? "✓" : ""}</span>
+        <span>Предварительный просмотр</span>
       </button>
       <div class="student-document-action-menu-separator"></div>
       <button data-action="check-student-document-data" type="button">
@@ -42913,6 +42944,15 @@ MAX - https://bizvmax.ru/zifra_plus
         );
       });
     });
+    menu.querySelector("[data-document-preview-toggle]")?.addEventListener("click", () => {
+      const enabled = !previewBeforeGeneration;
+      updateDocumentTemplateActionSetting(
+        documentTemplate.id,
+        { previewBeforeGeneration: enabled },
+        `Предварительный просмотр: ${enabled ? "включён" : "выключен"}`,
+        options.relatedDocumentTemplateIds
+      );
+    });
     menu.querySelector("[data-action='check-student-document-data']")?.addEventListener("click", () => {
       const collectDraft = typeof options.collectDraft === "function"
         ? options.collectDraft
@@ -42952,7 +42992,11 @@ MAX - https://bizvmax.ru/zifra_plus
           alert("Не найден соответствующий шаблон в Конструкторе документов.");
           return;
         }
-        showStudentDocumentActionMenu(event.clientX, event.clientY, documentTemplate);
+        showStudentDocumentActionMenu(event.clientX, event.clientY, documentTemplate, {
+          relatedDocumentTemplateIds: button.dataset.documentContextKind === "contract"
+            ? getStudentContractDocumentTemplates().map((item) => item.id)
+            : []
+        });
       });
     });
   }
@@ -43584,6 +43628,131 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  async function requestGeneratedDocumentPreview(generationRequest) {
+    const response = await fetch(photoApiUrl("/api/contracts/student-document"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...generationRequest,
+        previewOnly: true,
+        saveToYandexDisk: false,
+        promptLocalSave: false,
+        autoSaveLocal: false
+      })
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+    }
+    const previewToken = String(response.headers.get("X-Document-Preview-Token") || "").trim();
+    if (!previewToken) {
+      throw new Error("Сервер не создал подтверждаемый предварительный просмотр. Перезапустите сервер приложения.");
+    }
+    const contentType = String(response.headers.get("Content-Type") || "").toLowerCase();
+    if (!contentType.includes("application/pdf")) {
+      throw new Error("Сервер вернул неподдерживаемый формат предварительного просмотра.");
+    }
+    return {
+      previewToken,
+      blob: await response.blob()
+    };
+  }
+
+  async function cancelGeneratedDocumentPreview(previewToken) {
+    if (!String(previewToken || "").trim()) return;
+    await fetch(photoApiUrl("/api/contracts/student-document-preview/cancel"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ previewToken })
+    }).catch(() => null);
+  }
+
+  function showGeneratedDocumentPreview(previewBlob, options = {}) {
+    document.querySelector("[data-generated-document-preview]")
+      ?.closeGeneratedDocumentPreview?.(false);
+    const title = String(options.title || "Документ").trim() || "Документ";
+    const fileName = String(options.fileName || "документ").trim() || "документ";
+    const outputFormat = normalizeDocumentGenerationFormat(options.outputFormat);
+    const emailDescription = String(options.emailDescription || "").trim();
+    const previewUrl = URL.createObjectURL(new Blob([previewBlob], { type: "application/pdf" }));
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    return new Promise((resolve) => {
+      const backdrop = document.createElement("div");
+      backdrop.className = "modal-backdrop generated-document-preview-backdrop";
+      backdrop.dataset.generatedDocumentPreview = "";
+      backdrop.innerHTML = `
+        <section class="modal generated-document-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="generated-document-preview-title">
+          <header class="modal-head">
+            <div>
+              <p class="eyebrow">${escapeHtml(title)}</p>
+              <h2 id="generated-document-preview-title">Предварительный просмотр</h2>
+            </div>
+            <button class="icon-button" data-action="cancel-generated-document-preview" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+          </header>
+          <div class="generated-document-preview-summary">
+            <strong>${escapeHtml(fileName)}</strong>
+            <span>${outputFormat === "docx"
+              ? "Предпросмотр показан в PDF. После подтверждения будет использован исходный файл DOCX."
+              : "После подтверждения будет использован просмотренный файл PDF."}${emailDescription
+                ? `<br>Отправка по email: ${escapeHtml(emailDescription)}.`
+                : ""}</span>
+          </div>
+          <iframe class="generated-document-preview-frame" src="${escapeAttr(`${previewUrl}#toolbar=1&navpanes=0`)}" title="Предварительный просмотр документа ${escapeAttr(title)}"></iframe>
+          <footer class="modal-actions generated-document-preview-actions">
+            <small>Сохранение, скачивание и отправка начнутся только после подтверждения.</small>
+            <button class="ghost-button" data-action="cancel-generated-document-preview" type="button">Отмена</button>
+            <button class="primary-button" data-action="confirm-generated-document-preview" type="button">Продолжить</button>
+          </footer>
+        </section>
+      `;
+      let settled = false;
+      const trapFocus = (event) => {
+        if (event.key !== "Tab") return;
+        const focusable = [...backdrop.querySelectorAll(
+          "button:not([disabled]), iframe, [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+        )].filter((element) => !element.hidden && element.getClientRects().length);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus({ preventScroll: true });
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus({ preventScroll: true });
+        }
+      };
+      const finish = (confirmed) => {
+        if (settled) return;
+        settled = true;
+        backdrop.removeEventListener("keydown", trapFocus);
+        URL.revokeObjectURL(previewUrl);
+        backdrop.remove();
+        if (previouslyFocused?.isConnected) {
+          previouslyFocused.focus({ preventScroll: true });
+        }
+        resolve(Boolean(confirmed));
+      };
+      backdrop.closeGeneratedDocumentPreview = finish;
+      backdrop.addEventListener("keydown", trapFocus);
+      backdrop.addEventListener("pointerdown", (event) => {
+        if (event.target === backdrop) finish(false);
+      });
+      backdrop.querySelectorAll("[data-action='cancel-generated-document-preview']").forEach((button) => {
+        button.addEventListener("click", () => finish(false));
+      });
+      backdrop.querySelector("[data-action='confirm-generated-document-preview']")?.addEventListener("click", () => {
+        finish(true);
+      });
+      document.body.appendChild(backdrop);
+      requestAnimationFrame(() => {
+        backdrop.querySelector("[data-action='confirm-generated-document-preview']")?.focus({ preventScroll: true });
+      });
+    });
+  }
+
   function applyDocumentEmailTemplateMarkers(template, values) {
     const source = String(template || "");
     const replaceMarker = (match, fieldName) => (
@@ -43659,7 +43828,8 @@ MAX - https://bizvmax.ru/zifra_plus
     return {
       recipientMode,
       subject,
-      message
+      message,
+      recipientDescription
     };
   }
 
@@ -43699,6 +43869,8 @@ MAX - https://bizvmax.ru/zifra_plus
       button.setAttribute("aria-busy", "true");
       button.classList.add("is-document-generating");
     }
+    let pendingPreviewToken = "";
+    let previewOpened = false;
     try {
       const fieldValues = evaluateContractTemplateFields(record, documentTemplate.fields);
       const sourceValues = collectContractTemplateSourceValues(record);
@@ -43708,37 +43880,65 @@ MAX - https://bizvmax.ru/zifra_plus
         applyContractTemplateMarkers(fileNameTemplate, fileNameValues),
         outputFormat
       );
+      const previewEnabled = Boolean(documentTemplate.previewBeforeGeneration)
+        && options.skipPreview !== true;
       const emailRequest = prepareStudentDocumentEmailRequest(
         documentTemplate,
         record,
         fieldValues,
         sourceValues,
-        { skipConfirmation: options.skipEmailConfirmation === true }
+        { skipConfirmation: options.skipEmailConfirmation === true || previewEnabled }
       );
       if (emailRequest === false) return;
+      const generationRequest = {
+        templateUrl,
+        templatePath,
+        fallbackTemplatePath,
+        fileName,
+        fieldValues,
+        sourceValues,
+        documentKind: documentTemplate.documentKind,
+        useCustomDocumentProperties,
+        preferLocalTemplate: getEffectiveLocalDocumentsMode(),
+        outputFormat
+      };
+      if (previewEnabled) {
+        const preview = await requestGeneratedDocumentPreview(generationRequest);
+        pendingPreviewToken = preview.previewToken;
+        previewOpened = true;
+        const confirmed = await showGeneratedDocumentPreview(preview.blob, {
+          title: documentTemplate.title,
+          fileName,
+          outputFormat,
+          emailDescription: emailRequest?.recipientDescription || ""
+        });
+        if (!confirmed) {
+          await cancelGeneratedDocumentPreview(pendingPreviewToken);
+          pendingPreviewToken = "";
+          return { generated: false, cancelled: true, previewed: true };
+        }
+      }
       const storageRequest = options.storageRequest || await prepareStudentDocumentStorageRequest(
         record,
         documentTemplate,
         fileName
       );
-      if (!storageRequest) return;
-      const response = await fetch(photoApiUrl("/api/contracts/student-document"), {
+      if (!storageRequest) {
+        await cancelGeneratedDocumentPreview(pendingPreviewToken);
+        pendingPreviewToken = "";
+        return;
+      }
+      const finalizingPreview = Boolean(pendingPreviewToken);
+      const response = await fetch(photoApiUrl(finalizingPreview
+        ? "/api/contracts/student-document-preview/finalize"
+        : "/api/contracts/student-document"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          templateUrl,
-          templatePath,
-          fallbackTemplatePath,
-          fileName,
-          fieldValues,
-          sourceValues,
-          documentKind: documentTemplate.documentKind,
-          useCustomDocumentProperties,
-          preferLocalTemplate: getEffectiveLocalDocumentsMode(),
-          outputFormat,
-          ...storageRequest
-        })
+        body: JSON.stringify(finalizingPreview
+          ? { previewToken: pendingPreviewToken, ...storageRequest }
+          : { ...generationRequest, ...storageRequest })
       });
+      if (finalizingPreview) pendingPreviewToken = "";
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
@@ -43796,6 +43996,10 @@ MAX - https://bizvmax.ru/zifra_plus
         conversionFallback: responseDetails.conversionFallback
       };
     } catch (error) {
+      if (pendingPreviewToken) {
+        await cancelGeneratedDocumentPreview(pendingPreviewToken);
+        pendingPreviewToken = "";
+      }
       alert(`${errorTitle}: ${error.message}`);
       return null;
     } finally {
@@ -43805,6 +44009,9 @@ MAX - https://bizvmax.ru/zifra_plus
         if (wasAriaBusy === null) button.removeAttribute("aria-busy");
         else button.setAttribute("aria-busy", wasAriaBusy);
         if (!hadGeneratingClass) button.classList.remove("is-document-generating");
+      }
+      if (previewOpened && button?.isConnected && !button.disabled) {
+        queueMicrotask(() => button.focus({ preventScroll: true }));
       }
     }
   }
@@ -44335,9 +44542,13 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     const documentKind = String(options.documentKind || documentTemplate.documentKind || "").trim();
+    const relatedDocumentTemplateIds = documentKind === "employeeContract"
+      ? getEmployeeContractDocumentTemplates().map((item) => item.id)
+      : [];
     showStudentDocumentActionMenu(x, y, documentTemplate, {
       title: options.title || documentTemplate.title,
       recipientLabel: "сотруднику",
+      relatedDocumentTemplateIds,
       collectDraft: collectContractFormDraft,
       checkData: documentKind === "employeeAct"
         ? checkEmployeeActDocumentData

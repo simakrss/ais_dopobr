@@ -99,6 +99,8 @@ const studentExportJobs = new Map();
 const studentDocumentRecognitionJobs = new Map();
 const serverEmailRateLimits = new Map();
 const documentConversionSources = new Map();
+const generatedDocumentPreviews = new Map();
+const generatedDocumentPreviewRateLimits = new Map();
 let sharedApplicationStateWriteQueue = Promise.resolve();
 let sharedRecordLocksWriteQueue = Promise.resolve();
 let sharedRecordLocksMySqlPool = null;
@@ -115,6 +117,28 @@ let sharedApplicationStateCacheLoaded = false;
 let sharedApplicationStatePendingMemory = null;
 let sharedApplicationStatePendingLoaded = false;
 const DOCUMENT_CONVERSION_SOURCE_TTL_MS = 5 * 60 * 1000;
+const DOCUMENT_CONVERSION_SOURCE_MAX_COUNT = 24;
+const DOCUMENT_CONVERSION_SOURCE_MAX_BYTES = 128 * 1024 * 1024;
+const DOCUMENT_CONVERSION_SOURCE_MAX_READS = 8;
+const GENERATED_DOCUMENT_PREVIEW_TTL_MS = 10 * 60 * 1000;
+const GENERATED_DOCUMENT_PREVIEW_MAX_COUNT = 24;
+const GENERATED_DOCUMENT_PREVIEW_MAX_BYTES = 128 * 1024 * 1024;
+const GENERATED_DOCUMENT_PREVIEW_MAX_COUNT_PER_OWNER = 4;
+const GENERATED_DOCUMENT_PREVIEW_MAX_BYTES_PER_OWNER = 48 * 1024 * 1024;
+const GENERATED_DOCUMENT_PREVIEW_RATE_WINDOW_MS = 60 * 1000;
+const GENERATED_DOCUMENT_PREVIEW_RATE_MAX = 8;
+const GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES = 4 * 1024;
+const GENERATED_DOCUMENT_PREVIEW_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32}$/u;
+const GENERATED_DOCUMENT_PREVIEW_FINALIZE_TTL_MS = 30 * 60 * 1000;
+const GENERATED_DOCUMENT_PREVIEW_FILE_LOCK_TTL_MS = 5 * 60 * 1000;
+const GENERATED_DOCUMENT_PREVIEW_FILE_LOCK_HEARTBEAT_MS = 5 * 1000;
+const GENERATED_DOCUMENT_PREVIEW_CLEANUP_INTERVAL_MS = 60 * 1000;
+const GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER_STALE_MS = 3 * 60 * 1000;
+const GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER_HEARTBEAT_MS = 2 * 1000;
+const generatedDocumentPreviewCleanupTimer = process.env.AIS_TRUST_GATEWAY === "1"
+  ? null
+  : setInterval(() => pruneGeneratedDocumentPreviews(), GENERATED_DOCUMENT_PREVIEW_CLEANUP_INTERVAL_MS);
+generatedDocumentPreviewCleanupTimer?.unref?.();
 const WORD_TEMPLATE_EXTENSIONS = new Set(["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"]);
 const OPENXML_WORD_EXTENSIONS = new Set(["docx", "docm", "dotx", "dotm"]);
 const OCR_DOCUMENT_CONTENT_TYPES = Object.freeze({
@@ -664,7 +688,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled"
+  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled"
 };
 
 const MIME_TYPES = {
@@ -1294,12 +1318,15 @@ async function destroyAuthSession(req) {
 
 async function getRequestAuthUser(req) {
   if (process.env.AIS_TRUST_GATEWAY === "1") {
+    const gatewayUserId = String(req.headers["x-ais-user-id"] || "gateway").slice(0, 160);
+    const gatewaySessionId = String(req.headers["x-ais-session-id"] || gatewayUserId).slice(0, 256);
     return {
-      id: String(req.headers["x-ais-user-id"] || "gateway").slice(0, 160),
+      id: gatewayUserId,
       login: String(req.headers["x-ais-user-login"] || "gateway").slice(0, 160),
       name: String(req.headers["x-ais-user-name"] || "Gateway").slice(0, 240),
       role: String(req.headers["x-ais-user-role"] || "admin") === "manager" ? "manager" : "admin",
-      status: "active"
+      status: "active",
+      authSessionKey: `gateway:${gatewaySessionId}`
     };
   }
   const token = parseRequestCookies(req)[AUTH_COOKIE_NAME] || "";
@@ -1312,7 +1339,11 @@ async function getRequestAuthUser(req) {
   const users = await loadAuthUsers();
   const user = users.find((item) => item.id === session.userId && item.status === "active");
   return user
-    ? { ...publicAuthUser(user), sessionExpiresAt: Number(session.expiresAt) || 0 }
+    ? {
+        ...publicAuthUser(user),
+        sessionExpiresAt: Number(session.expiresAt) || 0,
+        authSessionKey: `node:${tokenHash}`
+      }
     : null;
 }
 
@@ -14051,14 +14082,167 @@ function pruneDocumentConversionSources(now = Date.now()) {
   }
 }
 
-function registerDocumentConversionSource(bytes) {
+function documentConversionSourceFilePath(token) {
+  return path.join(generatedDocumentPreviewStorageRoot(), `.conversion-${token}.bin`);
+}
+
+function documentConversionSourceMetadataPath(token) {
+  return path.join(generatedDocumentPreviewStorageRoot(), `.conversion-${token}.json`);
+}
+
+async function listDocumentConversionSourceFiles() {
+  const root = generatedDocumentPreviewStorageRoot();
+  await fs.mkdir(root, { recursive: true, mode: 0o700 });
+  const names = await fs.readdir(root).catch((error) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  const tokens = names
+    .map((name) => /^\.conversion-([A-Za-z0-9_-]{32})\.json$/u.exec(name)?.[1] || "")
+    .filter(Boolean);
+  const entries = [];
+  for (const token of tokens) {
+    try {
+      const metadata = JSON.parse(await fs.readFile(documentConversionSourceMetadataPath(token), "utf8"));
+      const bytesStat = await fs.stat(documentConversionSourceFilePath(token));
+      if (!bytesStat.isFile() || bytesStat.size <= 0) throw new Error("Conversion source bytes are missing.");
+      metadata.size = bytesStat.size;
+      entries.push({ token, metadata });
+    } catch {
+      await removeDocumentConversionSourceFiles(token);
+    }
+  }
+  return entries;
+}
+
+async function removeDocumentConversionSourceFiles(token) {
+  await Promise.all([
+    fs.unlink(documentConversionSourceFilePath(token)).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    }),
+    fs.unlink(documentConversionSourceMetadataPath(token)).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    })
+  ]);
+}
+
+async function pruneDocumentConversionSourceFiles(now = Date.now()) {
+  const root = generatedDocumentPreviewStorageRoot();
+  const entries = await listDocumentConversionSourceFiles();
+  const liveTokens = new Set(entries.map(({ token }) => token));
+  await Promise.all(entries
+    .filter(({ metadata }) => Number(metadata?.expiresAt || 0) <= now)
+    .map(({ token }) => removeDocumentConversionSourceFiles(token)));
+  const names = await fs.readdir(root).catch(() => []);
+  await Promise.all(names
+    .filter((name) => {
+      const orphanBytes = /^\.conversion-([A-Za-z0-9_-]{32})\.bin$/u.exec(name);
+      if (orphanBytes) return !liveTokens.has(orphanBytes[1]);
+      return /^\.conversion-[A-Za-z0-9_-]{32}\.(?:bin|json)(?:\..+\.tmp|\.tmp-[A-Za-z0-9]+)$/u.test(name);
+    })
+    .map((name) => fs.unlink(path.join(root, name)).catch(() => null)));
+}
+
+async function registerDocumentConversionSource(bytes) {
+  const sourceBytes = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+  if (!sourceBytes.length) throw new Error("Исходный документ для конвертации пуст.");
+  if (useGeneratedDocumentPreviewFileStore()) {
+    await ensureGeneratedDocumentPreviewCleanupWorker();
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      const now = Date.now();
+      await pruneDocumentConversionSourceFiles(now);
+      const currentSources = await listDocumentConversionSourceFiles();
+      const totalBytes = currentSources.reduce((sum, item) => sum + Number(item?.metadata?.size || 0), 0);
+      if (
+        currentSources.length >= DOCUMENT_CONVERSION_SOURCE_MAX_COUNT
+        || totalBytes + sourceBytes.length > DOCUMENT_CONVERSION_SOURCE_MAX_BYTES
+      ) {
+        throw generatedDocumentPreviewError(
+          "Сервер временно занят преобразованием документов. Повторите попытку позже.",
+          503
+        );
+      }
+      const token = crypto.randomBytes(24).toString("base64url");
+      const metadata = {
+        createdAt: now,
+        expiresAt: now + DOCUMENT_CONVERSION_SOURCE_TTL_MS,
+        readCount: 0,
+        size: sourceBytes.length
+      };
+      const temporarySuffix = `${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+      const temporaryBytesPath = `${documentConversionSourceFilePath(token)}.${temporarySuffix}.tmp`;
+      const temporaryMetadataPath = `${documentConversionSourceMetadataPath(token)}.${temporarySuffix}.tmp`;
+      await fs.writeFile(temporaryBytesPath, sourceBytes, { flag: "wx", mode: 0o600 });
+      try {
+        await fs.writeFile(temporaryMetadataPath, JSON.stringify(metadata), { flag: "wx", mode: 0o600 });
+        await fs.rename(temporaryBytesPath, documentConversionSourceFilePath(token));
+        await fs.rename(temporaryMetadataPath, documentConversionSourceMetadataPath(token));
+      } catch (error) {
+        await Promise.all([
+          fs.unlink(temporaryBytesPath).catch(() => null),
+          fs.unlink(temporaryMetadataPath).catch(() => null),
+          removeDocumentConversionSourceFiles(token).catch(() => null)
+        ]);
+        throw error;
+      }
+      return token;
+    });
+  }
   pruneDocumentConversionSources();
   const token = crypto.randomBytes(24).toString("base64url");
   documentConversionSources.set(token, {
-    bytes,
-    expiresAt: Date.now() + DOCUMENT_CONVERSION_SOURCE_TTL_MS
+    bytes: sourceBytes,
+    expiresAt: Date.now() + DOCUMENT_CONVERSION_SOURCE_TTL_MS,
+    readCount: 0
   });
   return token;
+}
+
+async function readDocumentConversionSource(token) {
+  const normalizedToken = GENERATED_DOCUMENT_PREVIEW_TOKEN_PATTERN.test(String(token || ""))
+    ? String(token)
+    : "";
+  if (!normalizedToken) return null;
+  if (useGeneratedDocumentPreviewFileStore()) {
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      await pruneDocumentConversionSourceFiles();
+      let metadata;
+      try {
+        metadata = JSON.parse(await fs.readFile(documentConversionSourceMetadataPath(normalizedToken), "utf8"));
+      } catch (error) {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      }
+      if (
+        Number(metadata?.expiresAt || 0) <= Date.now()
+        || Number(metadata?.readCount || 0) >= DOCUMENT_CONVERSION_SOURCE_MAX_READS
+      ) {
+        await removeDocumentConversionSourceFiles(normalizedToken);
+        return null;
+      }
+      const sourceBytes = await fs.readFile(documentConversionSourceFilePath(normalizedToken));
+      metadata.readCount = Number(metadata.readCount || 0) + 1;
+      await writeJsonAtomic(documentConversionSourceMetadataPath(normalizedToken), metadata, true);
+      return { bytes: sourceBytes, expiresAt: Number(metadata.expiresAt) || 0 };
+    });
+  }
+  pruneDocumentConversionSources();
+  const source = documentConversionSources.get(normalizedToken);
+  if (!source || Number(source.readCount || 0) >= DOCUMENT_CONVERSION_SOURCE_MAX_READS) return null;
+  source.readCount = Number(source.readCount || 0) + 1;
+  return source;
+}
+
+async function removeDocumentConversionSource(token) {
+  const normalizedToken = GENERATED_DOCUMENT_PREVIEW_TOKEN_PATTERN.test(String(token || ""))
+    ? String(token)
+    : "";
+  if (!normalizedToken) return;
+  if (useGeneratedDocumentPreviewFileStore()) {
+    await withGeneratedDocumentPreviewFileLock(() => removeDocumentConversionSourceFiles(normalizedToken));
+    return;
+  }
+  documentConversionSources.delete(normalizedToken);
 }
 
 function buildDocumentConversionSourceUrl(baseUrl, token) {
@@ -14121,7 +14305,7 @@ async function requestOnlyOfficeConversion(payload, converterUrl, jwtSecret) {
 
 async function convertDocxBytesToPdf(docxBytes) {
   const { converterUrl, sourceUrl, jwtSecret } = getOnlyOfficeConverterSettings();
-  const sourceToken = registerDocumentConversionSource(docxBytes);
+  const sourceToken = await registerDocumentConversionSource(docxBytes);
   const key = crypto
     .createHash("sha256")
     .update(docxBytes)
@@ -14149,7 +14333,7 @@ async function convertDocxBytesToPdf(docxBytes) {
     }
     return pdfBytes;
   } finally {
-    documentConversionSources.delete(sourceToken);
+    await removeDocumentConversionSource(sourceToken).catch(() => null);
   }
 }
 
@@ -14177,11 +14361,12 @@ async function removeBlankInteriorPdfPages(pdfBytes) {
   }));
 }
 
-function handleDocumentConversionSource(req, res, requestUrl) {
-  pruneDocumentConversionSources();
+async function handleDocumentConversionSource(req, res, requestUrl) {
   const prefix = "/api/document-conversion/source/";
   const token = decodeURIComponent(requestUrl.pathname.slice(prefix.length));
-  const source = documentConversionSources.get(token);
+  const source = token && !token.includes("/")
+    ? await readDocumentConversionSource(token)
+    : null;
   if (!source || !token || token.includes("/")) {
     sendError(res, 404, "Временный документ не найден или срок ссылки истёк.");
     return;
@@ -14196,9 +14381,833 @@ function handleDocumentConversionSource(req, res, requestUrl) {
   res.end(req.method === "HEAD" ? undefined : source.bytes);
 }
 
-async function handleContractDocument(req, res) {
+function generatedDocumentPreviewOwner(authUser) {
+  const userId = String(authUser?.id || authUser?.login || "").trim();
+  const sessionKey = String(authUser?.authSessionKey || "").trim();
+  if (!userId || !sessionKey) return "";
+  return crypto.createHash("sha256").update(`${userId}\0${sessionKey}`).digest("base64url");
+}
+
+function generatedDocumentPreviewStorageRoot() {
+  const configuredRoot = String(process.env.AIS_GENERATED_DOCUMENT_PREVIEW_STORAGE_ROOT || "").trim();
+  if (configuredRoot) return path.resolve(configuredRoot);
+  return path.join(STORAGE_ROOT, "generated-document-previews");
+}
+
+function generatedDocumentPreviewFilePath(token) {
+  return path.join(generatedDocumentPreviewStorageRoot(), `${token}.bin`);
+}
+
+function generatedDocumentPreviewMetadataPath(token) {
+  return path.join(generatedDocumentPreviewStorageRoot(), `${token}.json`);
+}
+
+function useGeneratedDocumentPreviewFileStore() {
+  return process.env.AIS_TRUST_GATEWAY === "1";
+}
+
+function encodeGeneratedDocumentPreviewMetadata(preview) {
+  return {
+    owner: preview.owner,
+    createdAt: preview.createdAt,
+    expiresAt: preview.expiresAt,
+    outputFormat: preview.outputFormat,
+    fileName: preview.fileName,
+    extraHeaders: preview.extraHeaders || {},
+    size: Number(preview.bytes?.length || preview.size || 0),
+    state: String(preview.state || "pending"),
+    finalizingAt: Number(preview.finalizingAt || 0)
+  };
+}
+
+function decodeGeneratedDocumentPreviewMetadata(metadata, bytes) {
+  return {
+    bytes,
+    outputFormat: normalizeGeneratedDocumentFormat(metadata?.outputFormat),
+    fileName: String(metadata?.fileName || "документ"),
+    extraHeaders: metadata?.extraHeaders && typeof metadata.extraHeaders === "object"
+      ? metadata.extraHeaders
+      : {},
+    owner: String(metadata?.owner || ""),
+    createdAt: Number(metadata?.createdAt || 0),
+    expiresAt: Number(metadata?.expiresAt || 0),
+    state: String(metadata?.state || "pending"),
+    finalizingAt: Number(metadata?.finalizingAt || 0)
+  };
+}
+
+function isProcessAlive(pid) {
+  const normalizedPid = Number(pid || 0);
+  if (!Number.isInteger(normalizedPid) || normalizedPid <= 0) return false;
+  try {
+    process.kill(normalizedPid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+async function withGeneratedDocumentPreviewFileLock(callback) {
+  const root = generatedDocumentPreviewStorageRoot();
+  await fs.mkdir(root, { recursive: true, mode: 0o700 });
+  const lockPath = path.join(root, ".store.lock");
+  const deadline = Date.now() + 5000;
+  let lockHandle = null;
+  let createdLock = false;
+  const lockNonce = crypto.randomBytes(18).toString("base64url");
+  const lockContents = JSON.stringify({ nonce: lockNonce, pid: process.pid, createdAt: Date.now() });
+  while (!lockHandle && Date.now() < deadline) {
+    try {
+      lockHandle = await fs.open(lockPath, "wx", 0o600);
+      createdLock = true;
+      await lockHandle.writeFile(lockContents, "utf8");
+      await lockHandle.sync();
+    } catch (error) {
+      if (lockHandle) {
+        await lockHandle.close().catch(() => null);
+        lockHandle = null;
+      }
+      if (createdLock) {
+        await fs.unlink(lockPath).catch(() => null);
+        createdLock = false;
+      }
+      if (error.code !== "EEXIST") throw error;
+      const observedContents = await fs.readFile(lockPath, "utf8").catch(() => "");
+      const stat = await fs.stat(lockPath).catch(() => null);
+      if (stat && Date.now() - stat.mtimeMs > GENERATED_DOCUMENT_PREVIEW_FILE_LOCK_TTL_MS) {
+        let observedOwner = null;
+        try {
+          observedOwner = JSON.parse(observedContents);
+        } catch {
+          observedOwner = null;
+        }
+        if (isProcessAlive(observedOwner?.pid)) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          continue;
+        }
+        const confirmedContents = await fs.readFile(lockPath, "utf8").catch(() => "");
+        const confirmedStat = await fs.stat(lockPath).catch(() => null);
+        if (
+          !confirmedStat
+          || confirmedContents !== observedContents
+          || Date.now() - confirmedStat.mtimeMs <= GENERATED_DOCUMENT_PREVIEW_FILE_LOCK_TTL_MS
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          continue;
+        }
+        const stalePath = `${lockPath}.stale-${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+        try {
+          await fs.rename(lockPath, stalePath);
+          const movedContents = await fs.readFile(stalePath, "utf8").catch(() => "");
+          const movedStat = await fs.stat(stalePath).catch(() => null);
+          const remainedStale = Boolean(
+            movedStat
+            && Date.now() - movedStat.mtimeMs > GENERATED_DOCUMENT_PREVIEW_FILE_LOCK_TTL_MS
+          );
+          if (movedContents === observedContents && remainedStale) {
+            await fs.unlink(stalePath).catch(() => null);
+          } else {
+            await fs.rename(stalePath, lockPath).catch(() => null);
+          }
+        } catch (renameError) {
+          if (renameError.code !== "ENOENT" && renameError.code !== "EACCES" && renameError.code !== "EPERM") {
+            throw renameError;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  if (!lockHandle) {
+    throw generatedDocumentPreviewError(
+      "Хранилище предварительного просмотра временно занято. Повторите попытку.",
+      503
+    );
+  }
+  let heartbeatPromise = Promise.resolve();
+  const refreshHeartbeat = async () => {
+    try {
+      const currentContents = await fs.readFile(lockPath, "utf8").catch(() => "");
+      if (currentContents === lockContents) {
+        const now = new Date();
+        await fs.utimes(lockPath, now, now).catch(() => null);
+      }
+    } catch {
+      // The ownership check in finally prevents this process from releasing another holder's lock.
+    }
+  };
+  const heartbeat = setInterval(() => {
+    heartbeatPromise = heartbeatPromise.then(refreshHeartbeat, refreshHeartbeat);
+  }, GENERATED_DOCUMENT_PREVIEW_FILE_LOCK_HEARTBEAT_MS);
+  heartbeat.unref?.();
+  try {
+    return await callback();
+  } finally {
+    clearInterval(heartbeat);
+    await heartbeatPromise.catch(() => null);
+    await lockHandle.close().catch(() => null);
+    const currentContents = await fs.readFile(lockPath, "utf8").catch(() => "");
+    if (currentContents === lockContents) await fs.unlink(lockPath).catch(() => null);
+  }
+}
+
+async function listGeneratedDocumentPreviewFiles() {
+  const root = generatedDocumentPreviewStorageRoot();
+  await fs.mkdir(root, { recursive: true, mode: 0o700 });
+  const names = await fs.readdir(root).catch((error) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  const tokens = names
+    .map((name) => /^([A-Za-z0-9_-]{32})\.json$/u.exec(name)?.[1] || "")
+    .filter(Boolean);
+  const entries = [];
+  for (const token of tokens) {
+    try {
+      const metadata = JSON.parse(await fs.readFile(generatedDocumentPreviewMetadataPath(token), "utf8"));
+      const bytesStat = await fs.stat(generatedDocumentPreviewFilePath(token));
+      if (!bytesStat.isFile() || bytesStat.size <= 0) throw new Error("Preview bytes are missing.");
+      metadata.size = bytesStat.size;
+      entries.push({ token, metadata });
+    } catch {
+      await removeGeneratedDocumentPreviewFiles(token);
+    }
+  }
+  return entries;
+}
+
+async function removeGeneratedDocumentPreviewFiles(token) {
+  await Promise.all([
+    fs.unlink(generatedDocumentPreviewFilePath(token)).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    }),
+    fs.unlink(generatedDocumentPreviewMetadataPath(token)).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    })
+  ]);
+}
+
+async function pruneGeneratedDocumentPreviewFiles(now = Date.now()) {
+  const root = generatedDocumentPreviewStorageRoot();
+  const entries = await listGeneratedDocumentPreviewFiles();
+  const liveTokens = new Set(entries.map(({ token }) => token));
+  await Promise.all(entries
+    .filter(({ metadata }) => (
+      String(metadata?.state || "pending") === "finalizing"
+        ? Number(metadata?.finalizingAt || 0) + GENERATED_DOCUMENT_PREVIEW_FINALIZE_TTL_MS <= now
+        : Number(metadata?.expiresAt || 0) <= now
+    ))
+    .map(({ token }) => removeGeneratedDocumentPreviewFiles(token)));
+  const names = await fs.readdir(root).catch(() => []);
+  await Promise.all(names
+    .filter((name) => {
+      const orphanBytes = /^([A-Za-z0-9_-]{32})\.bin$/u.exec(name);
+      if (orphanBytes) return !liveTokens.has(orphanBytes[1]);
+      if (/^[A-Za-z0-9_-]{32}\.(?:bin|json)\..+\.tmp$/u.test(name)) return true;
+      if (/^[A-Za-z0-9_-]{32}\.json\.tmp-[A-Za-z0-9]+$/u.test(name)) return true;
+      if (/^\.rate-[A-Za-z0-9_-]+\.json\.tmp-[A-Za-z0-9]+$/u.test(name)) return true;
+      if (/^\.(?:store\.lock|cleanup-worker\.lock)\.stale-.+$/u.test(name)) return true;
+      return /^\.rate-[A-Za-z0-9_-]+\.json$/u.test(name);
+    })
+    .map(async (name) => {
+      const candidatePath = path.join(root, name);
+      const isRateFile = /^\.rate-[A-Za-z0-9_-]+\.json$/u.test(name);
+      const stat = await fs.stat(candidatePath).catch(() => null);
+      if (!stat) return;
+      if (!isRateFile || stat.mtimeMs + GENERATED_DOCUMENT_PREVIEW_RATE_WINDOW_MS <= now) {
+        await fs.unlink(candidatePath).catch(() => null);
+      }
+    }));
+}
+
+function generatedDocumentPreviewCleanupWorkerLeasePath() {
+  return path.join(generatedDocumentPreviewStorageRoot(), ".cleanup-worker.lock");
+}
+
+async function getGeneratedDocumentPreviewCleanupWorkerHealth() {
+  const leasePath = generatedDocumentPreviewCleanupWorkerLeasePath();
+  const stat = await fs.stat(leasePath).catch(() => null);
+  if (!stat) return { healthy: false, alive: false, lease: null };
+  let lease = null;
+  try {
+    lease = JSON.parse(await fs.readFile(leasePath, "utf8"));
+  } catch {
+    return { healthy: false, alive: false, lease: null };
+  }
+  const pid = Number(lease?.pid || 0);
+  const alive = isProcessAlive(pid);
+  return {
+    healthy: alive && Date.now() - stat.mtimeMs <= GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER_STALE_MS,
+    alive,
+    lease
+  };
+}
+
+async function acquireGeneratedDocumentPreviewCleanupWorkerLease() {
+  const root = generatedDocumentPreviewStorageRoot();
+  await fs.mkdir(root, { recursive: true, mode: 0o700 });
+  const leasePath = generatedDocumentPreviewCleanupWorkerLeasePath();
+  const nonce = crypto.randomBytes(18).toString("base64url");
+  const leaseContents = JSON.stringify({ nonce, pid: process.pid, startedAt: Date.now() });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const handle = await fs.open(leasePath, "wx", 0o600);
+      try {
+        await handle.writeFile(leaseContents, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close().catch(() => null);
+      }
+      let heartbeatPromise = Promise.resolve();
+      let leaseLost = false;
+      const refreshHeartbeat = async () => {
+        try {
+          const currentContents = await fs.readFile(leasePath, "utf8").catch(() => "");
+          if (currentContents === leaseContents) {
+            const now = new Date();
+            await fs.utimes(leasePath, now, now).catch(() => null);
+          } else {
+            leaseLost = true;
+          }
+        } catch {
+          leaseLost = true;
+        }
+      };
+      const heartbeat = setInterval(() => {
+        heartbeatPromise = heartbeatPromise.then(refreshHeartbeat, refreshHeartbeat);
+      }, GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER_HEARTBEAT_MS);
+      return {
+        isLost() {
+          return leaseLost;
+        },
+        async release() {
+          clearInterval(heartbeat);
+          await heartbeatPromise.catch(() => null);
+          const currentContents = await fs.readFile(leasePath, "utf8").catch(() => "");
+          if (currentContents === leaseContents) await fs.unlink(leasePath).catch(() => null);
+        }
+      };
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const health = await getGeneratedDocumentPreviewCleanupWorkerHealth();
+      if (health.alive) {
+        return null;
+      }
+      const stalePath = `${leasePath}.stale-${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+      try {
+        await fs.rename(leasePath, stalePath);
+        await fs.unlink(stalePath).catch(() => null);
+      } catch (renameError) {
+        if (renameError.code !== "ENOENT" && renameError.code !== "EACCES" && renameError.code !== "EPERM") {
+          throw renameError;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+async function pruneGeneratedDocumentPreviewFileStore(now = Date.now()) {
+  if (!useGeneratedDocumentPreviewFileStore()) return;
+  await withGeneratedDocumentPreviewFileLock(async () => {
+    await pruneGeneratedDocumentPreviewFiles(now);
+    await pruneDocumentConversionSourceFiles(now);
+  });
+}
+
+async function ensureGeneratedDocumentPreviewCleanupWorker() {
+  if (
+    !useGeneratedDocumentPreviewFileStore()
+    || process.env.AIS_GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER === "1"
+    || process.env.AIS_DISABLE_PREVIEW_CLEANUP_WORKER === "1"
+  ) return true;
+  if ((await getGeneratedDocumentPreviewCleanupWorkerHealth()).healthy) return true;
+  let spawnError = null;
+  try {
+    const child = spawn(process.execPath, [__filename], {
+      cwd: __dirname,
+      detached: true,
+      windowsHide: true,
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        AIS_TRUST_GATEWAY: "1",
+        AIS_GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER: "1"
+      }
+    });
+    child.once("error", (error) => {
+      spawnError = error;
+    });
+    child.unref();
+  } catch (error) {
+    throw generatedDocumentPreviewError(
+      `Generated document preview cleanup worker failed to start: ${error.message}`,
+      503
+    );
+  }
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (spawnError) {
+      throw generatedDocumentPreviewError(
+        `Generated document preview cleanup worker failed to start: ${spawnError.message}`,
+        503
+      );
+    }
+    if ((await getGeneratedDocumentPreviewCleanupWorkerHealth()).healthy) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw generatedDocumentPreviewError(
+    "Служба очистки предварительных просмотров не запустилась. Повторите попытку.",
+    503
+  );
+}
+
+async function startGeneratedDocumentPreviewCleanupWorker() {
+  const lease = await acquireGeneratedDocumentPreviewCleanupWorkerLease();
+  if (!lease) return;
+  let cleanupRunning = false;
+  let stopping = false;
+  let interval = null;
+  let leaseMonitor = null;
+  const stop = async () => {
+    if (stopping) return;
+    stopping = true;
+    if (interval) clearInterval(interval);
+    if (leaseMonitor) clearInterval(leaseMonitor);
+    await lease.release();
+    process.exit(0);
+  };
+  const cleanup = async () => {
+    if (cleanupRunning || stopping) return;
+    if (lease.isLost()) {
+      await stop();
+      return;
+    }
+    cleanupRunning = true;
+    try {
+      await pruneGeneratedDocumentPreviewFileStore();
+    } catch (error) {
+      console.error(`Generated document preview cleanup failed: ${error.message}`);
+    } finally {
+      cleanupRunning = false;
+    }
+    if (lease.isLost()) await stop();
+  };
+  await cleanup();
+  if (stopping) return;
+  interval = setInterval(cleanup, GENERATED_DOCUMENT_PREVIEW_CLEANUP_INTERVAL_MS);
+  leaseMonitor = setInterval(() => {
+    if (lease.isLost()) stop().catch(() => process.exit(1));
+  }, GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER_HEARTBEAT_MS);
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+}
+
+function releaseGeneratedDocumentPreview(preview) {
+  if (Buffer.isBuffer(preview?.bytes)) preview.bytes.fill(0);
+}
+
+function removeGeneratedDocumentPreview(token, preview = generatedDocumentPreviews.get(token)) {
+  if (!preview) return false;
+  releaseGeneratedDocumentPreview(preview);
+  return generatedDocumentPreviews.delete(token);
+}
+
+function generatedDocumentPreviewError(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function normalizeGeneratedDocumentPreviewToken(token) {
+  const normalized = String(token || "").trim();
+  return GENERATED_DOCUMENT_PREVIEW_TOKEN_PATTERN.test(normalized) ? normalized : "";
+}
+
+function pruneGeneratedDocumentPreviews(now = Date.now()) {
+  pruneDocumentConversionSources(now);
+  for (const [token, preview] of generatedDocumentPreviews) {
+    const expired = preview?.state === "finalizing"
+      ? Number(preview?.finalizingAt || 0) + GENERATED_DOCUMENT_PREVIEW_FINALIZE_TTL_MS <= now
+      : Number(preview?.expiresAt || 0) <= now;
+    if (expired) removeGeneratedDocumentPreview(token, preview);
+  }
+  const cutoff = now - GENERATED_DOCUMENT_PREVIEW_RATE_WINDOW_MS;
+  for (const [owner, attempts] of generatedDocumentPreviewRateLimits) {
+    const recent = attempts.filter((attemptAt) => attemptAt > cutoff);
+    if (recent.length) generatedDocumentPreviewRateLimits.set(owner, recent);
+    else generatedDocumentPreviewRateLimits.delete(owner);
+  }
+}
+
+async function assertGeneratedDocumentPreviewRequestAllowed(authUser, now = Date.now()) {
+  const owner = generatedDocumentPreviewOwner(authUser);
+  if (!owner) {
+    throw generatedDocumentPreviewError(
+      "Не удалось определить текущую сессию для предварительного просмотра.",
+      401
+    );
+  }
+  if (useGeneratedDocumentPreviewFileStore()) {
+    await withGeneratedDocumentPreviewFileLock(async () => {
+      await pruneGeneratedDocumentPreviewFiles(now);
+      const ratePath = path.join(generatedDocumentPreviewStorageRoot(), `.rate-${owner}.json`);
+      let recent = [];
+      try {
+        const parsed = JSON.parse(await fs.readFile(ratePath, "utf8"));
+        recent = Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        if (error.code !== "ENOENT") await fs.unlink(ratePath).catch(() => null);
+      }
+      const cutoff = now - GENERATED_DOCUMENT_PREVIEW_RATE_WINDOW_MS;
+      recent = recent.filter((attemptAt) => Number(attemptAt) > cutoff);
+      if (recent.length >= GENERATED_DOCUMENT_PREVIEW_RATE_MAX) {
+        throw generatedDocumentPreviewError(
+          "Слишком много запросов предварительного просмотра. Подождите минуту и повторите.",
+          429
+        );
+      }
+      recent.push(now);
+      await writeJsonAtomic(ratePath, recent, true);
+    });
+    return owner;
+  }
+  pruneGeneratedDocumentPreviews(now);
+  const cutoff = now - GENERATED_DOCUMENT_PREVIEW_RATE_WINDOW_MS;
+  const recent = (generatedDocumentPreviewRateLimits.get(owner) || [])
+    .filter((attemptAt) => attemptAt > cutoff);
+  if (recent.length >= GENERATED_DOCUMENT_PREVIEW_RATE_MAX) {
+    throw generatedDocumentPreviewError(
+      "Слишком много запросов предварительного просмотра. Подождите минуту и повторите.",
+      429
+    );
+  }
+  recent.push(now);
+  generatedDocumentPreviewRateLimits.set(owner, recent);
+  return owner;
+}
+
+async function registerGeneratedDocumentPreview(preview, authUser) {
+  const owner = generatedDocumentPreviewOwner(authUser);
+  if (!owner) {
+    throw generatedDocumentPreviewError(
+      "Не удалось определить текущую сессию для предварительного просмотра.",
+      401
+    );
+  }
+  const bytes = Buffer.from(preview?.bytes || []);
+  if (!bytes.length) throw new Error("Сформированный документ пуст.");
+  if (bytes.length > MAX_DOCX_BYTES) throw new Error("Сформированный документ слишком большой для предварительного просмотра.");
+  let currentPreviews;
+  if (useGeneratedDocumentPreviewFileStore()) {
+    await ensureGeneratedDocumentPreviewCleanupWorker();
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      await pruneGeneratedDocumentPreviewFiles();
+      currentPreviews = (await listGeneratedDocumentPreviewFiles()).map(({ metadata }) => metadata);
+      const ownedPreviews = currentPreviews.filter((item) => item?.owner === owner);
+      const ownedBytes = ownedPreviews
+        .reduce((sum, item) => sum + Number(item?.bytes?.length || item?.size || 0), 0);
+      if (
+        ownedPreviews.length >= GENERATED_DOCUMENT_PREVIEW_MAX_COUNT_PER_OWNER
+        || ownedBytes + bytes.length > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES_PER_OWNER
+      ) {
+        bytes.fill(0);
+        throw generatedDocumentPreviewError(
+          "Закройте ранее открытые окна предварительного просмотра и повторите попытку.",
+          429
+        );
+      }
+      const totalBytes = currentPreviews
+        .reduce((sum, item) => sum + Number(item?.bytes?.length || item?.size || 0), 0);
+      if (
+        currentPreviews.length >= GENERATED_DOCUMENT_PREVIEW_MAX_COUNT
+        || totalBytes + bytes.length > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES
+      ) {
+        bytes.fill(0);
+        throw generatedDocumentPreviewError(
+          "Сервер временно занят предварительными просмотрами. Повторите попытку позже.",
+          503
+        );
+      }
+      const token = crypto.randomBytes(24).toString("base64url");
+      const now = Date.now();
+      const storedPreview = {
+        ...preview,
+        bytes,
+        owner,
+        createdAt: now,
+        expiresAt: now + GENERATED_DOCUMENT_PREVIEW_TTL_MS,
+        state: "pending",
+        finalizingAt: 0
+      };
+      const temporarySuffix = `${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+      const temporaryBytesPath = `${generatedDocumentPreviewFilePath(token)}.${temporarySuffix}.tmp`;
+      const temporaryMetadataPath = `${generatedDocumentPreviewMetadataPath(token)}.${temporarySuffix}.tmp`;
+      await fs.writeFile(temporaryBytesPath, bytes, { flag: "wx", mode: 0o600 });
+      try {
+        await fs.writeFile(
+          temporaryMetadataPath,
+          JSON.stringify(encodeGeneratedDocumentPreviewMetadata(storedPreview)),
+          { flag: "wx", mode: 0o600 }
+        );
+        await fs.rename(temporaryBytesPath, generatedDocumentPreviewFilePath(token));
+        await fs.rename(temporaryMetadataPath, generatedDocumentPreviewMetadataPath(token));
+      } catch (error) {
+        await Promise.all([
+          fs.unlink(temporaryBytesPath).catch(() => null),
+          fs.unlink(temporaryMetadataPath).catch(() => null),
+          removeGeneratedDocumentPreviewFiles(token).catch(() => null)
+        ]);
+        bytes.fill(0);
+        throw error;
+      }
+      return token;
+    });
+  } else {
+    pruneGeneratedDocumentPreviews();
+    currentPreviews = [...generatedDocumentPreviews.values()];
+  }
+  const ownedPreviews = currentPreviews.filter((item) => item?.owner === owner);
+  const ownedBytes = ownedPreviews
+    .reduce((sum, item) => sum + Number(item?.bytes?.length || item?.size || 0), 0);
+  if (
+    ownedPreviews.length >= GENERATED_DOCUMENT_PREVIEW_MAX_COUNT_PER_OWNER
+    || ownedBytes + bytes.length > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES_PER_OWNER
+  ) {
+    bytes.fill(0);
+    throw generatedDocumentPreviewError(
+      "Закройте ранее открытые окна предварительного просмотра и повторите попытку.",
+      429
+    );
+  }
+  const totalBytes = currentPreviews
+    .reduce((sum, item) => sum + Number(item?.bytes?.length || item?.size || 0), 0);
+  if (
+    currentPreviews.length >= GENERATED_DOCUMENT_PREVIEW_MAX_COUNT
+    || totalBytes + bytes.length > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES
+  ) {
+    bytes.fill(0);
+    throw generatedDocumentPreviewError(
+      "Сервер временно занят предварительными просмотрами. Повторите попытку позже.",
+      503
+    );
+  }
+  const token = crypto.randomBytes(24).toString("base64url");
+  const now = Date.now();
+  const storedPreview = {
+    ...preview,
+    bytes,
+    owner,
+    createdAt: now,
+    expiresAt: now + GENERATED_DOCUMENT_PREVIEW_TTL_MS,
+    state: "pending",
+    finalizingAt: 0
+  };
+  generatedDocumentPreviews.set(token, storedPreview);
+  return token;
+}
+
+async function takeGeneratedDocumentPreview(token, authUser) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  if (!normalizedToken) return null;
+  if (useGeneratedDocumentPreviewFileStore()) {
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      await pruneGeneratedDocumentPreviewFiles();
+      let metadata;
+      try {
+        metadata = JSON.parse(await fs.readFile(generatedDocumentPreviewMetadataPath(normalizedToken), "utf8"));
+      } catch (error) {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      }
+      if (
+        String(metadata?.owner || "") !== generatedDocumentPreviewOwner(authUser)
+        || Number(metadata?.expiresAt || 0) <= Date.now()
+        || String(metadata?.state || "pending") !== "pending"
+      ) {
+        if (Number(metadata?.expiresAt || 0) <= Date.now()) {
+          await removeGeneratedDocumentPreviewFiles(normalizedToken);
+        }
+        return null;
+      }
+      metadata.state = "finalizing";
+      metadata.finalizingAt = Date.now();
+      await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+      const bytes = await fs.readFile(generatedDocumentPreviewFilePath(normalizedToken));
+      return {
+        ...decodeGeneratedDocumentPreviewMetadata(metadata, bytes),
+        previewToken: normalizedToken
+      };
+    });
+  }
+  pruneGeneratedDocumentPreviews();
+  const preview = generatedDocumentPreviews.get(normalizedToken);
+  if (
+    !preview
+    || preview.owner !== generatedDocumentPreviewOwner(authUser)
+    || preview.state !== "pending"
+  ) return null;
+  preview.state = "finalizing";
+  preview.finalizingAt = Date.now();
+  preview.previewToken = normalizedToken;
+  return preview;
+}
+
+async function completeGeneratedDocumentPreview(preview) {
+  const token = normalizeGeneratedDocumentPreviewToken(preview?.previewToken);
+  if (!token) {
+    releaseGeneratedDocumentPreview(preview);
+    return;
+  }
+  try {
+    if (useGeneratedDocumentPreviewFileStore()) {
+      await withGeneratedDocumentPreviewFileLock(() => removeGeneratedDocumentPreviewFiles(token));
+    } else {
+      const stored = generatedDocumentPreviews.get(token);
+      if (stored === preview) generatedDocumentPreviews.delete(token);
+    }
+  } finally {
+    releaseGeneratedDocumentPreview(preview);
+  }
+}
+
+async function cancelGeneratedDocumentPreview(token, authUser) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  if (!normalizedToken) return false;
+  if (useGeneratedDocumentPreviewFileStore()) {
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      await pruneGeneratedDocumentPreviewFiles();
+      let metadata;
+      try {
+        metadata = JSON.parse(await fs.readFile(generatedDocumentPreviewMetadataPath(normalizedToken), "utf8"));
+      } catch (error) {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      }
+      if (
+        String(metadata?.owner || "") !== generatedDocumentPreviewOwner(authUser)
+        || String(metadata?.state || "pending") !== "pending"
+      ) return false;
+      await removeGeneratedDocumentPreviewFiles(normalizedToken);
+      return true;
+    });
+  }
+  pruneGeneratedDocumentPreviews();
+  const preview = generatedDocumentPreviews.get(normalizedToken);
+  if (
+    !preview
+    || preview.owner !== generatedDocumentPreviewOwner(authUser)
+    || preview.state !== "pending"
+  ) return false;
+  return removeGeneratedDocumentPreview(normalizedToken, preview);
+}
+
+async function sendGeneratedDocumentResponse(res, generated, body = {}) {
+  const result = Buffer.isBuffer(generated.bytes)
+    ? generated.bytes
+    : Buffer.from(generated.bytes || []);
+  const outputFormat = normalizeGeneratedDocumentFormat(generated.outputFormat);
+  const outputFileName = safeDocumentFileName(generated.fileName || "документ", outputFormat);
+  const extraHeaders = { ...(generated.extraHeaders || {}) };
+  if (body.autoSaveLocal || body.promptLocalSave) {
+    try {
+      const localSaveResult = body.autoSaveLocal
+        ? await saveStudentDocumentLocally(result, outputFileName, body)
+        : await promptAndSaveStudentDocumentLocally(
+            result,
+            outputFileName,
+            body,
+            outputFormat
+          );
+      if (localSaveResult.cancelled) {
+        extraHeaders["X-Local-Document-Cancelled"] = "true";
+      } else {
+        extraHeaders["X-Local-Document-Saved"] = "true";
+        extraHeaders["X-Local-Document-Path"] = encodeURIComponent(localSaveResult.path);
+      }
+    } catch (saveError) {
+      extraHeaders["X-Local-Document-Saved"] = "false";
+      extraHeaders["X-Local-Document-Error"] = encodeURIComponent(saveError.message);
+    }
+  }
+  if (body.saveToYandexDisk) {
+    try {
+      const uploadedPath = await uploadStudentDocumentToYandexDisk(
+        result,
+        outputFileName,
+        { ...body, outputFormat }
+      );
+      extraHeaders["X-Yandex-Disk-Saved"] = "true";
+      extraHeaders["X-Yandex-Disk-Path"] = encodeURIComponent(uploadedPath);
+    } catch (uploadError) {
+      extraHeaders["X-Yandex-Disk-Saved"] = "false";
+      extraHeaders["X-Yandex-Disk-Error"] = encodeURIComponent(uploadError.message);
+    }
+  }
+  sendFile(
+    res,
+    200,
+    result,
+    outputFileName,
+    generatedDocumentContentType(outputFormat),
+    extraHeaders
+  );
+}
+
+async function handleGeneratedDocumentPreviewFinalize(req, res, authUser) {
+  let preview = null;
+  let completionScheduled = false;
+  try {
+    const body = await readJsonBody(req, GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES);
+    preview = await takeGeneratedDocumentPreview(body.previewToken, authUser);
+    if (!preview) {
+      sendError(res, 404, "Предварительный просмотр не найден или срок его действия истёк. Сформируйте документ заново.");
+      return;
+    }
+    await sendGeneratedDocumentResponse(res, preview, body);
+    if (typeof res.once === "function") {
+      const completedPreview = preview;
+      preview = null;
+      let completed = false;
+      const complete = () => {
+        if (completed) return;
+        completed = true;
+        completeGeneratedDocumentPreview(completedPreview).catch(() => null);
+      };
+      res.once("finish", complete);
+      res.once("close", complete);
+      if (res.writableFinished) queueMicrotask(complete);
+      completionScheduled = true;
+    }
+  } catch (error) {
+    sendError(res, Number(error?.statusCode) || 400, error.message);
+  } finally {
+    if (!completionScheduled && preview) {
+      try {
+        await completeGeneratedDocumentPreview(preview);
+      } catch (cleanupError) {
+        console.error(`Generated document preview cleanup failed after finalize: ${cleanupError.message}`);
+      }
+    }
+  }
+}
+
+async function handleGeneratedDocumentPreviewCancel(req, res, authUser) {
+  try {
+    const body = await readJsonBody(req, GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES);
+    await cancelGeneratedDocumentPreview(body.previewToken, authUser);
+    sendJson(res, 200, { cancelled: true });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleContractDocument(req, res, authUser) {
   try {
     const body = await readJsonBody(req);
+    if (body.previewOnly) await assertGeneratedDocumentPreviewRequestAllowed(authUser);
     let templateBytes;
     try {
       templateBytes = await loadTemplateBytesForRequest(body);
@@ -14260,60 +15269,63 @@ async function handleContractDocument(req, res) {
     const outputFileName = safeDocumentFileName(body.fileName || "документ", outputFormat);
     extraHeaders["X-Generated-Document-Format"] = outputFormat;
     extraHeaders["X-Generated-Document-File-Name"] = encodeURIComponent(outputFileName);
-    if (body.autoSaveLocal || body.promptLocalSave) {
-      try {
-        const localSaveResult = body.autoSaveLocal
-          ? await saveStudentDocumentLocally(result, outputFileName, body)
-          : await promptAndSaveStudentDocumentLocally(
-              result,
-              outputFileName,
-              body,
-              outputFormat
-            );
-        if (localSaveResult.cancelled) {
-          extraHeaders["X-Local-Document-Cancelled"] = "true";
-        } else {
-          extraHeaders["X-Local-Document-Saved"] = "true";
-          extraHeaders["X-Local-Document-Path"] = encodeURIComponent(localSaveResult.path);
-        }
-      } catch (saveError) {
-        extraHeaders["X-Local-Document-Saved"] = "false";
-        extraHeaders["X-Local-Document-Error"] = encodeURIComponent(saveError.message);
-      }
-    }
-    if (body.saveToYandexDisk) {
-      try {
-        const uploadedPath = await uploadStudentDocumentToYandexDisk(
-          result,
-          outputFileName,
-          { ...body, outputFormat }
-        );
-        extraHeaders["X-Yandex-Disk-Saved"] = "true";
-        extraHeaders["X-Yandex-Disk-Path"] = encodeURIComponent(uploadedPath);
-      } catch (uploadError) {
-        extraHeaders["X-Yandex-Disk-Saved"] = "false";
-        extraHeaders["X-Yandex-Disk-Error"] = encodeURIComponent(uploadError.message);
-      }
-    }
-    sendFile(
-      res,
-      200,
-      result,
-      outputFileName,
-      generatedDocumentContentType(outputFormat),
+    const generated = {
+      bytes: result,
+      outputFormat,
+      fileName: outputFileName,
       extraHeaders
-    );
+    };
+    if (body.previewOnly) {
+      let previewPdf = result;
+      if (outputFormat !== "pdf") {
+        if (requestedOutputFormat === "pdf") {
+          let conversionMessage = "PDF-конвертер недоступен.";
+          try {
+            conversionMessage = decodeURIComponent(extraHeaders["X-Document-Conversion-Error"] || conversionMessage);
+          } catch {
+            // Используем понятное сообщение по умолчанию.
+          }
+          throw new Error(`Не удалось подготовить предварительный просмотр: ${conversionMessage}`);
+        }
+        try {
+          previewPdf = await convertDocxBytesToPdf(result);
+          if (documentIdentity.includes("диплом о переподготовке")) {
+            previewPdf = await removeBlankInteriorPdfPages(previewPdf);
+          }
+        } catch (conversionError) {
+          throw new Error(`Не удалось подготовить предварительный просмотр: ${conversionError.message}`);
+        }
+      }
+      const previewToken = await registerGeneratedDocumentPreview(generated, authUser);
+      const previewFileName = safeDocumentFileName(
+        outputFileName.replace(/\.(?:pdf|docx)$/iu, ""),
+        "pdf"
+      );
+      sendFile(
+        res,
+        200,
+        previewPdf,
+        previewFileName,
+        generatedDocumentContentType("pdf"),
+        {
+          ...extraHeaders,
+          "X-Document-Preview-Token": previewToken
+        }
+      );
+      return;
+    }
+    await sendGeneratedDocumentResponse(res, generated, body);
   } catch (error) {
-    sendError(res, 400, error.message);
+    sendError(res, Number(error?.statusCode) || 400, error.message);
   }
 }
 
-async function readJsonBody(req) {
+async function readJsonBody(req, maxBytes = MAX_JSON_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_JSON_BYTES) throw new Error("Payload is too large");
+    if (size > maxBytes) throw new Error("Payload is too large");
     chunks.push(chunk);
   }
   if (!chunks.length) return {};
@@ -15066,6 +16078,17 @@ async function serveStatic(req, res) {
 
 async function route(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  if (
+    useGeneratedDocumentPreviewFileStore()
+    && process.env.AIS_GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER !== "1"
+    && process.env.AIS_DISABLE_PREVIEW_CLEANUP_WORKER !== "1"
+  ) {
+    try {
+      await ensureGeneratedDocumentPreviewCleanupWorker();
+    } catch (error) {
+      console.error(`Generated document preview cleanup supervision failed: ${error.message}`);
+    }
+  }
   if (req.method === "OPTIONS") {
     const headers = requestUrl.pathname.startsWith("/api/students/recognize-documents/")
       ? { ...CORS_HEADERS, "Access-Control-Allow-Headers": "Content-Type, X-Requested-With" }
@@ -15121,7 +16144,7 @@ async function route(req, res) {
     ["GET", "HEAD"].includes(req.method)
     && requestUrl.pathname.startsWith("/api/document-conversion/source/")
   ) {
-    handleDocumentConversionSource(req, res, requestUrl);
+    await handleDocumentConversionSource(req, res, requestUrl);
     return;
   }
   const authUser = await getRequestAuthUser(req);
@@ -15338,7 +16361,15 @@ async function route(req, res) {
     return;
   }
   if (req.method === "POST" && req.url === "/api/contracts/student-document") {
-    await handleContractDocument(req, res);
+    await handleContractDocument(req, res, authUser);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/finalize") {
+    await handleGeneratedDocumentPreviewFinalize(req, res, authUser);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/cancel") {
+    await handleGeneratedDocumentPreviewCancel(req, res, authUser);
     return;
   }
   if (req.method === "POST" && req.url === "/send-mail.php") {
@@ -15353,20 +16384,27 @@ async function route(req, res) {
 }
 
 if (isMainThread && require.main === module) {
-  ensureStorage()
-    .then(() => {
-      startSharedApplicationStateMirror();
-      http.createServer((req, res) => {
-        route(req, res).catch((error) => sendError(res, 500, error.message));
-      }).listen(PORT, HOST, () => {
-        console.log(`АИС Допобразование Web: http://${HOST}:${PORT}`);
-        console.log(`Фото: ${PHOTO_ROOT}`);
-      });
-    })
-    .catch((error) => {
+  if (process.env.AIS_GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER === "1") {
+    startGeneratedDocumentPreviewCleanupWorker().catch((error) => {
       console.error(error);
       process.exit(1);
     });
+  } else {
+    ensureStorage()
+      .then(() => {
+        startSharedApplicationStateMirror();
+        http.createServer((req, res) => {
+          route(req, res).catch((error) => sendError(res, 500, error.message));
+        }).listen(PORT, HOST, () => {
+          console.log(`АИС Допобразование Web: http://${HOST}:${PORT}`);
+          console.log(`Фото: ${PHOTO_ROOT}`);
+        });
+      })
+      .catch((error) => {
+        console.error(error);
+        process.exit(1);
+      });
+  }
 }
 
 module.exports = {
@@ -15392,6 +16430,15 @@ module.exports = {
   queryStudentMailboxMessages,
   applyCustomDocumentPropertyFormulas,
   convertDocxBytesToPdf,
+  registerDocumentConversionSource,
+  readDocumentConversionSource,
+  removeDocumentConversionSource,
+  registerGeneratedDocumentPreview,
+  takeGeneratedDocumentPreview,
+  cancelGeneratedDocumentPreview,
+  completeGeneratedDocumentPreview,
+  pruneGeneratedDocumentPreviews,
+  pruneGeneratedDocumentPreviewFileStore,
   createDocumentQrCodeImage,
   removeBlankInteriorPdfPages,
   evaluateDocumentFormula,
