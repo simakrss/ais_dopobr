@@ -3708,6 +3708,48 @@ body.long-press-dragging * {
   width: 100%;
 }
 
+.dictionary-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.dictionary-search-clear {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  flex: 0 0 26px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 0;
+  color: #61706b;
+}
+
+.dictionary-search-clear[hidden] {
+  display: none;
+}
+
+.dictionary-search-clear:hover {
+  background: #e8f1ee;
+  color: var(--teal);
+}
+
+.dictionary-search-clear:focus-visible {
+  outline: 2px solid rgba(14, 129, 122, 0.3);
+  outline-offset: 1px;
+}
+
+.dictionary-search-clear svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
 .dictionary-list {
   min-height: 0;
   overflow-y: auto;

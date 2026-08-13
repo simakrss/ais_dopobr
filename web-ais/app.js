@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.175",
+    version: "1.7.176",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.176",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В поле поиска справочников в настройках добавлена кнопка-крестик для мгновенного сброса запроса с сохранением фокуса в поле."
+      ]
+    },
     {
       version: "1.7.175",
       releasedAt: "2026-08-13",
@@ -12913,10 +12920,20 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         <div class="dictionary-browser">
           <aside class="dictionary-list-panel">
-            <label class="search-box dictionary-search">
-              <span>⌕</span>
-              <input id="dictionarySearch" value="${escapeAttr(state.dictionarySearch)}" placeholder="Поиск справочника" autocomplete="off">
-            </label>
+            <div class="search-box dictionary-search" role="search">
+              <span aria-hidden="true">⌕</span>
+              <input id="dictionarySearch" type="search" value="${escapeAttr(state.dictionarySearch)}" placeholder="Поиск справочника" autocomplete="off" aria-label="Поиск справочника">
+              <button
+                class="dictionary-search-clear"
+                data-action="clear-dictionary-search"
+                type="button"
+                title="Сбросить поиск"
+                aria-label="Сбросить поиск справочника"
+                ${state.dictionarySearch ? "" : "hidden"}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"></path></svg>
+              </button>
+            </div>
             <div class="dictionary-list" role="listbox" aria-label="Справочники">
               ${visibleItems.length ? visibleItems.map((item) => `
                 <button class="dictionary-list-item ${item.key === selectedKey ? "active" : ""}" data-action="select-dictionary" data-dict="${item.key}" type="button" role="option" aria-selected="${item.key === selectedKey ? "true" : "false"}" tabindex="${item.key === selectedKey ? "0" : "-1"}">
@@ -25135,6 +25152,11 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     });
     document.getElementById("dictionarySearch")?.addEventListener("keydown", focusDictionaryListFromSearch);
+    document.querySelector("[data-action='clear-dictionary-search']")?.addEventListener("click", () => {
+      state.dictionarySearch = "";
+      render();
+      document.getElementById("dictionarySearch")?.focus({ preventScroll: true });
+    });
 
     document.querySelectorAll("[data-action='select-dictionary']").forEach((button) => {
       button.addEventListener("click", () => {
