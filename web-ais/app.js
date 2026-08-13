@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.149",
+    version: "1.7.150",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.150",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В реестре выданных документов пустое поле выгрузки в ФРДО заменяется расчётным сроком в формате «до ДД.ММ.ГГГГ» — за 5 дней до окончания установленного норматива."
+      ]
+    },
     {
       version: "1.7.149",
       releasedAt: "2026-08-13",
@@ -2704,6 +2711,7 @@ MAX - https://bizvmax.ru/zifra_plus
       value: "ФРДО"
     }
   ];
+  const FRDO_UPLOAD_RESERVE_DAYS = 5;
   const ISSUED_DOCUMENT_TABLE_CONFIG_ID = "issuedDocuments";
   const issuedDocumentTableConfig = Object.freeze({
     table: ["student", "documentNumber", "issueDate", "elapsedDays", "frdo", "program", "programType"],
@@ -8629,6 +8637,13 @@ MAX - https://bizvmax.ru/zifra_plus
     return Math.max(0, Math.floor((currentTimestamp - issueTimestamp) / 86400000));
   }
 
+  function getIssuedDocumentPlannedFrdoDate(issueDate, deadlineDays = getIssuedDocumentDeadlineDays()) {
+    const issueTimestamp = parseTableSortDate(issueDate);
+    if (issueTimestamp === null) return "";
+    const safeDeadlineDays = Math.max(0, Number(deadlineDays) - FRDO_UPLOAD_RESERVE_DAYS);
+    return new Date(issueTimestamp + safeDeadlineDays * 86400000).toISOString().slice(0, 10);
+  }
+
   function getIssuedDocumentDeadlineTone(frdoKey, elapsedDays, deadlineDays = getIssuedDocumentDeadlineDays()) {
     if (frdoKey !== "pending" || elapsedDays === null) return "";
     const remainingDays = deadlineDays - elapsedDays;
@@ -8649,6 +8664,10 @@ MAX - https://bizvmax.ru/zifra_plus
       const frdo = getIssuedDocumentFrdoDetails(student, programType);
       const elapsedDays = getIssuedDocumentElapsedDays(issueDate);
       const deadlineDays = getIssuedDocumentDeadlineDays();
+      const hasFrdoValue = Boolean(String(student.frdoDate || student.frdoStatus || "").trim());
+      const plannedFrdoDate = frdo.key === "pending" && !hasFrdoValue
+        ? getIssuedDocumentPlannedFrdoDate(issueDate, deadlineDays)
+        : "";
       return [{
         id: `issued-document-${String(student.id || student.uid || documentNumber || registrationNumber)}`,
         studentId: String(student.id || ""),
@@ -8660,8 +8679,9 @@ MAX - https://bizvmax.ru/zifra_plus
         deadlineDays,
         deadlineTone: getIssuedDocumentDeadlineTone(frdo.key, elapsedDays, deadlineDays),
         frdoKey: frdo.key,
-        frdoLabel: frdo.label,
+        frdoLabel: plannedFrdoDate ? `до ${dateRu(plannedFrdoDate)}` : frdo.label,
         frdoDate: frdo.date,
+        plannedFrdoDate,
         studentName: String(student.name || "").trim(),
         studentUid: String(student.uid || "").trim(),
         program,
@@ -8885,9 +8905,12 @@ MAX - https://bizvmax.ru/zifra_plus
       `;
     }
     if (column.key === "frdo") {
+      const deadlineTitle = row.plannedFrdoDate
+        ? `Расчётный срок: норматив ${row.deadlineDays} дней минус резерв ${FRDO_UPLOAD_RESERVE_DAYS} дней.`
+        : "";
       return `
         <td ${attrs} ${style}>
-          <span class="issued-document-frdo-status is-${escapeAttr(row.frdoKey)}">${escapeHtml(row.frdoLabel)}</span>
+          <span class="issued-document-frdo-status is-${escapeAttr(row.frdoKey)}" ${deadlineTitle ? `title="${escapeAttr(deadlineTitle)}"` : ""}>${escapeHtml(row.frdoLabel)}</span>
           ${row.frdoDate ? `<small>${escapeHtml(dateRu(row.frdoDate))}</small>` : ""}
         </td>
       `;
