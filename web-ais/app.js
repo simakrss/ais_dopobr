@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.164",
+    version: "1.7.165",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.165",
+      releasedAt: "2026-08-13",
+      changes: [
+        "При повторном импорте слушателя из прежних карточек переносятся документы, данные СДО, адреса, фотография и папка документов; место работы и должность дополняются, если отсутствуют в новой заявке.",
+        "Поля ФИО в карточках слушателя и сотрудника получили поисковые списки по уже сохранённым ФИО с сохранением свободного ввода."
+      ]
+    },
     {
       version: "1.7.164",
       releasedAt: "2026-08-13",
@@ -3704,6 +3712,20 @@ MAX - https://bizvmax.ru/zifra_plus
     { key: "reductionDocsReceived", label: "Получен комплект документов для сокращения обучения" },
     { key: "certificateSent", label: "Отправлена справка об обучении" }
   ];
+
+  const STUDENT_APPLICATION_REUSABLE_DOCUMENT_FIELDS = Object.freeze(
+    studentCardTabs.find((tab) => tab.id === "documents")?.sections
+      .flatMap((section) => section.fields.map((item) => item.key)) || []
+  );
+  const STUDENT_APPLICATION_REUSABLE_SDO_FIELDS = Object.freeze([
+    "login", "password", "portalAccess", "portalAccessMessage", "portalNotes"
+  ]);
+  const STUDENT_APPLICATION_REUSABLE_PERSONAL_FIELDS = Object.freeze([
+    "nameEnglish", "gender", "noDeclension", "addressByFirstName",
+    "telegram", "whatsapp", "messengerUrl",
+    "registrationAddress", "mailingAddress",
+    "photoPath", "photoData", "photoUrl"
+  ]);
 
   const contractEventTemplates = [
     { key: "portalAccessSent", label: "Отправлены данные для доступа к порталу" },
@@ -9969,6 +9991,64 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function hasReusableStudentPersonalValue(value) {
+    if (value === null || value === undefined) return false;
+    return typeof value !== "string" || Boolean(value.trim());
+  }
+
+  function getStudentApplicationExistingPersonalRecords(
+    row,
+    lookup = buildStudentApplicationsImportLookup(),
+    selectedProgramId = ""
+  ) {
+    const studentsById = new Map((state.data.collections.students || []).map((student) => [
+      String(student.id || ""),
+      student
+    ]));
+    return getStudentApplicationPreviousMatches(row, lookup, selectedProgramId)
+      .map((match) => studentsById.get(String(match.id || "")))
+      .filter(Boolean);
+  }
+
+  function getMostCompleteExistingPersonName(records) {
+    const scoreName = (value) => {
+      const parts = String(value || "").trim().split(/\s+/u).filter(Boolean);
+      const fullParts = parts.filter((part) => part.replace(/[^А-ЯЁA-Z]/giu, "").length > 1).length;
+      return fullParts * 1000 + parts.length * 100 + String(value || "").replace(/\s+/gu, "").length;
+    };
+    return records.map((record) => String(record?.name || "").trim())
+      .filter(Boolean)
+      .sort((left, right) => scoreName(right) - scoreName(left))[0] || "";
+  }
+
+  function reuseExistingStudentPersonalData(record, row, lookup, selectedProgramId = "") {
+    const sources = getStudentApplicationExistingPersonalRecords(row, lookup, selectedProgramId);
+    if (!sources.length) return record;
+    const nextRecord = { ...record };
+    const sourceValue = (key) => sources
+      .map((source) => source?.[key])
+      .find(hasReusableStudentPersonalValue);
+    [
+      ...STUDENT_APPLICATION_REUSABLE_DOCUMENT_FIELDS,
+      ...STUDENT_APPLICATION_REUSABLE_SDO_FIELDS,
+      ...STUDENT_APPLICATION_REUSABLE_PERSONAL_FIELDS
+    ].forEach((key) => {
+      const value = sourceValue(key);
+      if (hasReusableStudentPersonalValue(value)) nextRecord[key] = value;
+    });
+    ["phone", "email", "workPlace", "position"].forEach((key) => {
+      if (hasReusableStudentPersonalValue(nextRecord[key])) return;
+      const value = sourceValue(key);
+      if (hasReusableStudentPersonalValue(value)) nextRecord[key] = value;
+    });
+    const existingName = getMostCompleteExistingPersonName(sources);
+    const importedName = String(nextRecord.name || "").trim();
+    if (existingName && getMostCompleteExistingPersonName([{ name: existingName }, { name: importedName }]) === existingName) {
+      nextRecord.name = existingName;
+    }
+    return nextRecord;
+  }
+
   function getStudentApplicationRepeatComment(row, lookup = buildStudentApplicationsImportLookup()) {
     const matches = getStudentApplicationPreviousMatches(row, lookup);
     const previous = matches.find((item) => item.sameProgram) || matches[0];
@@ -11079,7 +11159,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return { record: nextRecord, additions };
   }
 
-  function createStudentFromApplication(row, uid, status, selectedProgramId) {
+  function createStudentFromApplication(row, uid, status, selectedProgramId, existingStudentsLookup) {
     const program = getStudentApplicationProgram(row, selectedProgramId);
     const financialTerms = getStudentApplicationFinancialTerms(row, program);
     const { paymentAmount, contractAmount } = financialTerms;
@@ -11090,7 +11170,7 @@ MAX - https://bizvmax.ru/zifra_plus
       String(row.note || "").trim(),
       city ? `Город: ${city}` : ""
     ].filter(Boolean);
-    const record = {
+    let record = {
       id: makeId("students"),
       uid: String(uid),
       name: String(row.name || "").trim(),
@@ -11118,7 +11198,7 @@ MAX - https://bizvmax.ru/zifra_plus
       sourceApplicationKey: getStudentApplicationSourceKey(row),
       sourceOrderId: String(row.orderId || "").trim(),
       sourceProductId: String(row.productId || "").trim(),
-      photoPath: `Слушатели/${getStudentCompactFolderName(row.name)}/Документы`,
+      photoPath: "",
       contractAmount,
       payment1Date: paymentDate,
       payment1Amount: paymentAmount,
@@ -11130,6 +11210,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ].filter(Boolean).join("; ") : "",
       directExpenses: []
     };
+    record = reuseExistingStudentPersonalData(record, row, existingStudentsLookup, selectedProgramId);
     return calculateStudentFinance(addAutomaticStudentExpenses(
       applyStudentEventTemplateDefaults(record),
       program
@@ -11137,11 +11218,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function ensureStudentDocumentFolders(records) {
+    const recordsWithoutFolder = records.filter((record) => !String(record.photoPath || "").trim());
+    if (!recordsWithoutFolder.length) return;
     const response = await fetch(photoApiUrl("/api/students/ensure-document-folders"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        students: records.map((record) => ({
+        students: recordsWithoutFolder.map((record) => ({
           id: record.id,
           name: record.name
         }))
@@ -11155,7 +11238,7 @@ MAX - https://bizvmax.ru/zifra_plus
       String(item.id),
       String(item.relativePath || "")
     ]));
-    records.forEach((record) => {
+    recordsWithoutFolder.forEach((record) => {
       const relativePath = folderById.get(String(record.id));
       if (!relativePath) {
         throw new Error(`Сервер не вернул путь папки для ${record.name}.`);
@@ -11192,6 +11275,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (!confirm(`Добавить выбранных слушателей: ${selectedRows.length}?`)) return;
     const status = state.studentApplicationsImport.filters.status || "На зачисление";
+    const existingStudentsLookup = state.studentApplicationsImport.importedLookup
+      || buildStudentApplicationsImportLookup();
     let nextUid = Number(getNextUid()) || 1;
     const imported = [];
     let skipped = 0;
@@ -11204,7 +11289,8 @@ MAX - https://bizvmax.ru/zifra_plus
         row,
         nextUid,
         status,
-        selectedProgramId
+        selectedProgramId,
+        existingStudentsLookup
       ));
       nextUid += 1;
     });
@@ -18533,6 +18619,16 @@ MAX - https://bizvmax.ru/zifra_plus
       layoutOptions.wide ? "program-field-wide" : ""
     ].filter(Boolean).join(" ");
     const label = `<label data-field-key="${escapeAttr(item.key)}"${labelClasses ? ` class="${labelClasses}"` : ""}><span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>`;
+    if (state.modal?.config === "contracts" && item.key === "name") {
+      return `${label}${renderComboField({
+        name: item.key,
+        type: "search",
+        value,
+        required,
+        options: getSavedPersonNameOptions("contracts", value),
+        attrs: 'aria-label="ФИО сотрудника"'
+      })}</label>`;
+    }
     if (state.modal?.config === "contracts" && item.key === "inn") {
       return renderStudentIdentityInput(label, item.key, value, {
         maxLength: 12,
@@ -20557,6 +20653,16 @@ MAX - https://bizvmax.ru/zifra_plus
       ? ` data-tooltip="${escapeAttr(getFinalAttestationGradeTooltip())}"`
       : "";
     const label = `<label class="${classes}"${tooltip}><span>${escapeHtml(item.label)}${item.required ? " *" : ""}</span>`;
+    if (item.key === "name") {
+      return `${label}${renderComboField({
+        name: item.key,
+        type: "search",
+        value,
+        required,
+        options: getSavedPersonNameOptions("students", value),
+        attrs: 'aria-label="ФИО слушателя"'
+      })}</label>`;
+    }
     if (item.key === "program") {
       return renderStudentProgramField(label, value, required);
     }
@@ -20999,6 +21105,16 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
       </label>
     `;
+  }
+
+  function getSavedPersonNameOptions(collection, currentValue = "") {
+    return unique([
+      ...(state.data.collections[collection] || []).map((record) => String(record?.name || "").trim()),
+      String(currentValue || "").trim()
+    ].filter(Boolean)).sort((left, right) => left.localeCompare(right, "ru", {
+      numeric: true,
+      sensitivity: "base"
+    }));
   }
 
   function positionFieldLookupPanel(panel) {
