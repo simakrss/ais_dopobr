@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.172",
+    version: "1.7.173",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.173",
+      releasedAt: "2026-08-13",
+      changes: [
+        "При импорте повторной заявки из прежней карточки переносится категория занятости, а сообщение о доступе к порталу заново рассчитывается по актуальным формулам, программе, датам и реквизитам новой карточки."
+      ]
+    },
     {
       version: "1.7.172",
       releasedAt: "2026-08-13",
@@ -3773,7 +3780,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .flatMap((section) => section.fields.map((item) => item.key)) || []
   );
   const STUDENT_APPLICATION_REUSABLE_SDO_FIELDS = Object.freeze([
-    "login", "password", "portalAccess", "portalAccessMessage", "portalNotes"
+    "login", "password", "portalAccess", "portalNotes"
   ]);
   const STUDENT_APPLICATION_REUSABLE_PERSONAL_FIELDS = Object.freeze([
     "nameEnglish", "gender", "noDeclension", "addressByFirstName",
@@ -10119,7 +10126,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const value = sourceValue(key);
       if (hasReusableStudentPersonalValue(value)) nextRecord[key] = value;
     });
-    ["phone", "email", "workPlace", "position"].forEach((key) => {
+    ["phone", "email", "workPlace", "position", "employmentCategory"].forEach((key) => {
       if (hasReusableStudentPersonalValue(nextRecord[key])) return;
       const value = sourceValue(key);
       if (hasReusableStudentPersonalValue(value)) nextRecord[key] = value;
