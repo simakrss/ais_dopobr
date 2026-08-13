@@ -20,14 +20,15 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.146",
+    version: "1.7.147",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
     {
-      version: "1.7.146",
+      version: "1.7.147",
       releasedAt: "2026-08-13",
       changes: [
+        "Виджет ФРДО возвращён в отдельную широкую строку над блоком ближайших окончаний обучения.",
         "Основные реестры распределяют ширину колонок по объёму данных: ФИО, программы, комментарии и файловые поля шире коротких дат, сумм и статусов; колонка выбора сокращена, а горизонтальная прокрутка используется только на очень узких экранах.",
         "При импорте заявок список сопоставления разделён на наиболее подходящие и остальные программы, а после выбора программа и слушатель повторно проверяются по общей базе.",
         "Повторная заявка определяется также по совпадению ФИО, телефона или email, даже если в существующей карточке указана другая программа."
@@ -7835,52 +7836,50 @@ MAX - https://bizvmax.ru/zifra_plus
           : `Осталось дней: ${nearestFrdoDays}`));
 
     return `
-      <div class="dashboard-deadline-row">
-        <button
-          class="panel dashboard-frdo-widget ${frdoWidgetTone}"
-          data-view-shortcut="issuedDocuments"
-          data-issued-document-scope="pending"
-          type="button"
-          title="Открыть документы, ожидающие выгрузки в ФРДО"
-        >
-          <span class="dashboard-frdo-widget-heading">
-            <span class="eyebrow">ФРДО</span>
-            <strong>Документы к выгрузке</strong>
-            <small>Норматив: ${frdoDeadlineDays} дней с даты выдачи</small>
-          </span>
-          <span class="dashboard-frdo-widget-count">
-            <strong>${pendingIssuedDocuments.length}</strong>
-            <small>документов</small>
-            <small class="dashboard-frdo-widget-overdue ${overdueIssuedDocumentsCount ? "has-overdue" : ""}">Просрочено: <strong>${overdueIssuedDocumentsCount}</strong></small>
-          </span>
-          <span class="dashboard-frdo-widget-deadline">
-            <strong>${escapeHtml(frdoDeadlineLabel)}</strong>
-            <small>${escapeHtml(frdoDaysIndicatorLabel)}</small>
-          </span>
-          <span class="dashboard-frdo-widget-open" aria-hidden="true">↗</span>
-        </button>
+      <button
+        class="panel dashboard-frdo-widget ${frdoWidgetTone}"
+        data-view-shortcut="issuedDocuments"
+        data-issued-document-scope="pending"
+        type="button"
+        title="Открыть документы, ожидающие выгрузки в ФРДО"
+      >
+        <span class="dashboard-frdo-widget-heading">
+          <span class="eyebrow">ФРДО</span>
+          <strong>Документы к выгрузке</strong>
+          <small>Норматив: ${frdoDeadlineDays} дней с даты выдачи</small>
+        </span>
+        <span class="dashboard-frdo-widget-count">
+          <strong>${pendingIssuedDocuments.length}</strong>
+          <small>документов</small>
+          <small class="dashboard-frdo-widget-overdue ${overdueIssuedDocumentsCount ? "has-overdue" : ""}">Просрочено: <strong>${overdueIssuedDocumentsCount}</strong></small>
+        </span>
+        <span class="dashboard-frdo-widget-deadline">
+          <strong>${escapeHtml(frdoDeadlineLabel)}</strong>
+          <small>${escapeHtml(frdoDaysIndicatorLabel)}</small>
+        </span>
+        <span class="dashboard-frdo-widget-open" aria-hidden="true">↗</span>
+      </button>
 
-        <section class="panel dashboard-training-deadlines">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">Контроль сроков</p>
-              <h2>Ближайшие окончания обучения</h2>
-            </div>
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Контроль сроков</p>
+            <h2>Ближайшие окончания обучения</h2>
           </div>
-          ${miniTable(dueSoon, ["name", "program", "endDate", "balance", "daysRemaining"], {
-            config: "students",
-            headers: {
-              name: "Слушатель",
-              program: "Программа",
-              endDate: "Дата окончания",
-              balance: "Остаток",
-              daysRemaining: "Срок"
-            },
-            warningKey: "daysRemaining",
-            warningBelow: 10
-          })}
-        </section>
-      </div>
+        </div>
+        ${miniTable(dueSoon, ["name", "program", "endDate", "balance", "daysRemaining"], {
+          config: "students",
+          headers: {
+            name: "Слушатель",
+            program: "Программа",
+            endDate: "Дата окончания",
+            balance: "Остаток",
+            daysRemaining: "Срок"
+          },
+          warningKey: "daysRemaining",
+          warningBelow: 10
+        })}
+      </section>
 
       <div class="split-layout">
         <section class="panel" data-dashboard-student-statuses>

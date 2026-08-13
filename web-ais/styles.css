@@ -1778,23 +1778,11 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   border-left-color: var(--red);
 }
 
-.dashboard-deadline-row {
-  display: grid;
-  grid-template-columns: minmax(340px, 0.72fr) minmax(0, 2fr);
-  align-items: stretch;
-  gap: 12px;
-}
-
-.dashboard-training-deadlines {
-  min-width: 0;
-}
-
 .dashboard-frdo-widget {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(92px, auto) 34px;
+  grid-template-columns: minmax(220px, 1fr) minmax(105px, auto) minmax(230px, auto) 34px;
   align-items: center;
-  align-content: center;
   gap: 18px;
   margin: 0;
   border: 1px solid var(--line);
@@ -1882,9 +1870,8 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
 }
 
 .dashboard-frdo-widget-deadline {
-  grid-column: 1 / -1;
-  justify-items: start;
-  text-align: left;
+  justify-items: end;
+  text-align: right;
 }
 
 .dashboard-frdo-widget-deadline > strong {
@@ -17296,7 +17283,6 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   .dashboard-grid,
   .admin-stats,
   .dictionary-browser,
-  .dashboard-deadline-row,
   .split-layout,
   .student-card-layout,
   .contract-card-layout {
@@ -17304,7 +17290,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .dashboard-frdo-widget {
-    grid-template-columns: minmax(190px, 1fr) minmax(90px, auto) 34px;
+    grid-template-columns: minmax(190px, 1fr) minmax(90px, auto) minmax(190px, auto) 34px;
     gap: 12px;
   }
 
