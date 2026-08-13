@@ -3188,6 +3188,8 @@ body.is-resizing-column {
   width: 15px;
   height: 15px;
   margin: 0 auto;
+  position: relative;
+  top: 4px;
   vertical-align: middle;
 }
 

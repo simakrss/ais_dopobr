@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.151",
+    version: "1.7.152",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.152",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Галочки выбора строк сдвинуты немного вниз и выровнены по первой строке текста в заголовках и записях таблиц."
+      ]
+    },
     {
       version: "1.7.151",
       releasedAt: "2026-08-13",
