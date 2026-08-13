@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.173",
+    version: "1.7.174",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.174",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В выгрузку ФРДО попадают только невыгруженные удостоверения КПК и дипломы ППП с заполненным номером документа; дата выдачи или регистрационный номер без номера документа больше не считаются достаточными."
+      ]
+    },
     {
       version: "1.7.173",
       releasedAt: "2026-08-13",
@@ -8891,7 +8898,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const documentNumber = String(student.diplomaBlankNo || "").trim();
       const registrationNumber = String(student.registrationNo || "").trim();
       const issueDate = String(student.diplomaIssueDate || "").trim();
-      if (!documentNumber && !registrationNumber && !issueDate) return [];
+      if (!documentNumber) return [];
       const program = String(student.program || "").trim();
       const programType = getIssuedDocumentProgramType(student, programs);
       const frdo = getIssuedDocumentFrdoDetails(student, programType);
@@ -8923,12 +8930,18 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function isIssuedDocumentFrdoExportEligible(row = {}) {
+    return row.frdoKey === "pending"
+      && isFrdoProgramType(row.programType)
+      && Boolean(String(row.documentNumber || "").trim());
+  }
+
   function buildIssuedDocumentFrdoExportRecords() {
     const studentsById = new Map(
       (state.data.collections.students || []).map((student) => [String(student.id || ""), student])
     );
     return getIssuedDocumentRows()
-      .filter((row) => row.frdoKey === "pending")
+      .filter(isIssuedDocumentFrdoExportEligible)
       .map((row) => {
         const student = studentsById.get(String(row.studentId || ""));
         if (!student) return null;
@@ -8968,7 +8981,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (state.issuedDocumentExportRunning) return;
     const records = buildIssuedDocumentFrdoExportRecords();
     if (!records.length) {
-      alert("Нет невыгруженных документов КПК или ППП для экспорта в ФРДО.");
+      alert("Нет невыгруженных удостоверений или дипломов с заполненным номером документа для экспорта в ФРДО.");
       return;
     }
     state.issuedDocumentExportRunning = true;

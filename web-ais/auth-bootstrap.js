@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260813-import-reuse-employment-portal-v1";
+  const AUTH_BUILD = "20260813-frdo-issued-number-only-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

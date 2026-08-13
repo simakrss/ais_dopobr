@@ -8640,6 +8640,13 @@ function isFrdoRecordAlreadyExported(record) {
   ));
 }
 
+function isFrdoRecordExportRequired(record) {
+  const status = normalizeFrdoText(record.frdoStatus, 200)
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е");
+  return !status.includes("не треб");
+}
+
 function sanitizeFrdoExportPayload(body) {
   const source = Array.isArray(body?.records) ? body.records : [];
   if (!source.length) throw new Error("Нет невыгруженных документов для экспорта в ФРДО.");
@@ -8678,9 +8685,12 @@ function sanitizeFrdoExportPayload(body) {
     .filter((record) => (
       ["КПК", "ППП"].includes(record.programType)
       && !isFrdoRecordAlreadyExported(record)
-      && Boolean(record.documentNumber || record.registrationNumber || record.issueDate)
+      && isFrdoRecordExportRequired(record)
+      && Boolean(record.documentNumber)
     ));
-  if (!records.length) throw new Error("Нет невыгруженных документов КПК или ППП для экспорта в ФРДО.");
+  if (!records.length) {
+    throw new Error("Нет невыгруженных удостоверений или дипломов с заполненным номером документа для экспорта в ФРДО.");
+  }
   return records.sort((left, right) => (
     String(left.issueDate || "9999-12-31").localeCompare(String(right.issueDate || "9999-12-31"))
     || left.registrationNumber.localeCompare(right.registrationNumber, "ru", { numeric: true })
