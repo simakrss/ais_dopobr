@@ -20,12 +20,12 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.142",
+    version: "1.7.143",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
     {
-      version: "1.7.142",
+      version: "1.7.143",
       releasedAt: "2026-08-13",
       changes: [
         "При импорте заявок список сопоставления разделён на наиболее подходящие и остальные программы, а после выбора программа и слушатель повторно проверяются по общей базе.",
@@ -8806,7 +8806,6 @@ MAX - https://bizvmax.ru/zifra_plus
     const pagination = getTablePagination("issuedDocuments", rows.length);
     const pageRows = rows.slice(pagination.start, pagination.end);
     const columns = getTableFields(issuedDocumentTableConfig, ISSUED_DOCUMENT_TABLE_CONFIG_ID);
-    const tableMinWidth = getIssuedDocumentTableMinWidth(columns);
     const exportedCount = allRows.filter((row) => row.frdoKey === "exported").length;
     const pendingCount = allRows.filter((row) => row.frdoKey === "pending").length;
     return `
@@ -8866,7 +8865,7 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         ${rows.length ? `
           <div class="table-wrap issued-documents-table-wrap">
-            <table class="data-table issued-documents-table" style="min-width:${tableMinWidth}px">
+            <table class="data-table issued-documents-table">
               <thead>
                 <tr>
                   ${columns.map((column) => `
@@ -11753,22 +11752,30 @@ MAX - https://bizvmax.ru/zifra_plus
     return { min: 80, max: 640 };
   }
 
-  function getIssuedDocumentColumnWidth(column, overrideKey = "", overrideWidth = 0) {
-    const width = column.key === overrideKey
-      ? Number(overrideWidth)
-      : Number(getColumnWidth(ISSUED_DOCUMENT_TABLE_CONFIG_ID, column.key));
-    return clamp(width || column.defaultWidth, 80, 640);
+  function getRegistryColumnPercentages(configId, columns, overrideKey = "", overrideWidth = 0, totalPercent = 100) {
+    const weights = columns.map((column, index) => {
+      const savedWidth = Number(getColumnWidth(configId, column.key));
+      const defaultWidth = Number(column.defaultWidth) || (index === 0 ? 180 : 120);
+      const width = column.key === overrideKey ? Number(overrideWidth) : savedWidth;
+      return {
+        key: column.key,
+        weight: clamp(width || defaultWidth, 40, 640)
+      };
+    });
+    const totalWeight = weights.reduce((total, item) => total + item.weight, 0) || 1;
+    return new Map(weights.map((item) => [
+      item.key,
+      item.weight / totalWeight * totalPercent
+    ]));
   }
 
   function issuedDocumentColumnStyleAttr(column) {
-    const width = getIssuedDocumentColumnWidth(column);
-    return `style="width:${width}px;min-width:${width}px"`;
-  }
-
-  function getIssuedDocumentTableMinWidth(columns = getTableFields(issuedDocumentTableConfig, ISSUED_DOCUMENT_TABLE_CONFIG_ID), overrideKey = "", overrideWidth = 0) {
-    return columns.reduce((total, column) => (
-      total + getIssuedDocumentColumnWidth(column, overrideKey, overrideWidth)
-    ), 0);
+    const columns = getTableFields(issuedDocumentTableConfig, ISSUED_DOCUMENT_TABLE_CONFIG_ID);
+    const percentage = getRegistryColumnPercentages(
+      ISSUED_DOCUMENT_TABLE_CONFIG_ID,
+      columns
+    ).get(column.key) || 0;
+    return `style="width:${percentage.toFixed(4)}%;min-width:0"`;
   }
 
   function getEmployeePaymentColumnWidth(column, overrideKey = "", overrideWidth = 0) {
@@ -11791,10 +11798,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function columnStyleAttr(configId, key) {
-    const width = Number(getColumnWidth(configId, key));
-    if (!width) return "";
-    const safeWidth = clamp(width, 80, 640);
-    return `style="width:${safeWidth}px;min-width:${safeWidth}px"`;
+    const config = configs[configId];
+    if (!config) return "";
+    const columns = getTableFields(config, configId);
+    const percentage = getRegistryColumnPercentages(configId, columns, "", 0, 92).get(key) || 0;
+    return `style="width:${percentage.toFixed(4)}%;min-width:0"`;
   }
 
   function columnDataAttrs(configId, key) {
@@ -12113,21 +12121,36 @@ MAX - https://bizvmax.ru/zifra_plus
     const scope = configId === EMPLOYEE_PAYMENT_TABLE_CONFIG_ID
       ? ".employee-payment-table [data-table-config][data-column-key]"
       : "[data-table-config][data-column-key]";
-    document.querySelectorAll(scope).forEach((cell) => {
-      if (cell.dataset.tableConfig !== configId || cell.dataset.columnKey !== fieldKey) return;
-      cell.style.width = `${width}px`;
-      cell.style.minWidth = `${width}px`;
-    });
     if (configId === EMPLOYEE_PAYMENT_TABLE_CONFIG_ID) {
+      document.querySelectorAll(scope).forEach((cell) => {
+        if (cell.dataset.tableConfig !== configId || cell.dataset.columnKey !== fieldKey) return;
+        cell.style.width = `${width}px`;
+        cell.style.minWidth = `${width}px`;
+      });
       document.querySelectorAll(".employee-payment-table").forEach((table) => {
         table.style.minWidth = `${getEmployeePaymentTableMinWidth(fieldKey, width)}px`;
       });
+      return;
     }
-    if (configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID) {
-      document.querySelectorAll(".issued-documents-table").forEach((table) => {
-        table.style.minWidth = `${getIssuedDocumentTableMinWidth(undefined, fieldKey, width)}px`;
-      });
-    }
+    const config = configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID
+      ? issuedDocumentTableConfig
+      : configs[configId];
+    if (!config) return;
+    const columns = getTableFields(config, configId);
+    const percentages = getRegistryColumnPercentages(
+      configId,
+      columns,
+      fieldKey,
+      width,
+      configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID ? 100 : 92
+    );
+    document.querySelectorAll(scope).forEach((cell) => {
+      if (cell.dataset.tableConfig !== configId) return;
+      const percentage = percentages.get(cell.dataset.columnKey);
+      if (!percentage) return;
+      cell.style.width = `${percentage.toFixed(4)}%`;
+      cell.style.minWidth = "0";
+    });
   }
 
   function getSelected(configId) {
