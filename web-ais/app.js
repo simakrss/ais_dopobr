@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.166",
+    version: "1.7.167",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.167",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В реестре программ заголовки «Тип программы обучения» и «Индекс группы» сокращены до «Тип» и «Индекс гр.», колонки «Гр. Телеграмм» и «Код лендинга» скрыты, а адреса в колонке «На промо сайте» открываются как ссылки."
+      ]
+    },
     {
       version: "1.7.166",
       releasedAt: "2026-08-13",
@@ -2868,13 +2875,11 @@ MAX - https://bizvmax.ru/zifra_plus
     programs: {
       name: 320,
       status: 100,
-      type: 145,
+      type: 100,
       hours: 70,
       price: 85,
-      landingCode: 100,
-      promoSite: 150,
-      telegramGroup: 150,
-      groupIndex: 72
+      promoSite: 215,
+      groupIndex: 90
     },
     trainingPlans: {
       programName: 250,
@@ -3193,7 +3198,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("status", "Статус", "select", true, "programStatuses"),
         field("price", "Стоимость", "number"),
         field("oldPrice", "Старая цена", "number"),
-        field("type", "Тип программы обучения", "select", false, "programTypes"),
+        field("type", "Тип программы обучения", "select", false, "programTypes", { tableLabel: "Тип" }),
         field("hours", "Часы", "number"),
         field("duration", "Срок"),
         field("landingCode", "Код лендинга"),
@@ -3201,7 +3206,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("promoSite", "На промо сайте"),
         field("gradeReportUrl", "Ссылка на отчет по оценкам"),
         field("telegramGroup", "Гр. Телеграмм"),
-        field("groupIndex", "Индекс группы"),
+        field("groupIndex", "Индекс группы", "text", false, null, { tableLabel: "Индекс гр." }),
         field("qualification", "Квалификация", "textarea", false, null, { programTab: "characteristics", list: true }),
         field("activityScope", "Сфера деятельности", "textarea", false, null, { programTab: "characteristics", list: true }),
         field("fgos", "ФГОС", "textarea", false, null, { programTab: "characteristics", list: true }),
@@ -3227,7 +3232,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("manager", "Менеджер", "text", false, null, { programTab: "commission" }),
         field("teachers", "Преподаватели", "textarea", false, null, { programTab: "commission", list: true, wide: true, rows: 5 })
       ],
-      table: ["name", "status", "type", "hours", "price", "landingCode", "promoSite", "telegramGroup", "groupIndex"]
+      table: ["name", "status", "type", "hours", "price", "promoSite", "groupIndex"]
     },
     trainingPlans: {
       title: "Учебные планы",
@@ -12168,7 +12173,14 @@ MAX - https://bizvmax.ru/zifra_plus
                   <input type="checkbox" data-action="toggle-row-selection" data-config="${configId}" data-id="${row.id}" ${selected.includes(String(row?.id || "").trim()) ? "checked" : ""} aria-label="Выбрать строку">
                 </td>
                 ${fields.map((fieldItem, index) => {
-                  const value = escapeHtml(valueForDisplay(fieldItem.key, row[fieldItem.key], configId) || "Открыть");
+                  const rawValue = row[fieldItem.key];
+                  const displayValue = valueForDisplay(fieldItem.key, rawValue, configId) || "Открыть";
+                  const externalUrl = configId === "programs" && fieldItem.key === "promoSite"
+                    ? normalizeExternalUrl(rawValue)
+                    : "";
+                  const value = externalUrl
+                    ? `<a class="table-edit-link" href="${escapeAttr(externalUrl)}" target="_blank" rel="noopener noreferrer" title="Открыть страницу промосайта">${escapeHtml(displayValue)}</a>`
+                    : escapeHtml(displayValue);
                   const style = columnStyleAttr(configId, fieldItem.key);
                   const attrs = columnDataAttrs(configId, fieldItem.key);
                   if (index === 0) {
@@ -12211,7 +12223,14 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getTableFields(config, configId) {
-    return getTableKeys(config, configId).map((key) => config.fields.find((item) => item.key === key) || { key, label: key });
+    return getTableKeys(config, configId).map((key) => {
+      const item = config.fields.find((fieldItem) => fieldItem.key === key);
+      if (!item) return { key, label: key };
+      return {
+        ...item,
+        label: String(item.options?.tableLabel || item.label || key)
+      };
+    });
   }
 
   function getTableKeys(config, configId) {
