@@ -1718,6 +1718,19 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   scroll-margin-top: 12px;
 }
 
+.dashboard-status-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.dashboard-student-import-button {
+  min-height: 34px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+
 .panel h2,
 .section-head h2 {
   font-size: 18px;

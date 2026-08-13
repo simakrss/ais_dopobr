@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.139",
+    version: "1.7.140",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.140",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Кнопка «Импорт слушателей» продублирована в заголовке виджета статусов слушателей на рабочем столе."
+      ]
+    },
     {
       version: "1.7.139",
       releasedAt: "2026-08-13",
@@ -7682,7 +7689,10 @@ MAX - https://bizvmax.ru/zifra_plus
               <p class="eyebrow">Заявки и обучение</p>
               <h2>Статусы слушателей</h2>
             </div>
-            <button class="icon-button" data-view-shortcut="students" type="button" title="Открыть слушателей">↗</button>
+            <div class="dashboard-status-head-actions">
+              <button class="ghost-button dashboard-student-import-button" data-action="open-student-applications-import" type="button">Импорт слушателей</button>
+              <button class="icon-button" data-view-shortcut="students" type="button" title="Открыть слушателей">↗</button>
+            </div>
           </div>
           <div class="bar-list dashboard-status-list" data-dashboard-status-list>
             ${studentStatusItems.map(({ label, count }) => `
