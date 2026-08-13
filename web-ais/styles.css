@@ -2171,6 +2171,28 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   padding: 0 8px;
 }
 
+.toolbar .student-status-filter {
+  min-width: 184px;
+  border: 2px solid #0f817a;
+  background: linear-gradient(180deg, #f2fffc 0%, #e4f7f2 100%);
+  color: #075e58;
+  font-weight: 800;
+  box-shadow: 0 0 0 3px rgba(15, 129, 122, 0.12);
+  cursor: pointer;
+}
+
+.toolbar .student-status-filter:hover {
+  border-color: #08736d;
+  background: #ddf5ef;
+  box-shadow: 0 0 0 4px rgba(15, 129, 122, 0.16);
+}
+
+.toolbar .student-status-filter:focus-visible {
+  border-color: #075e58;
+  outline: 0;
+  box-shadow: 0 0 0 4px rgba(15, 129, 122, 0.24);
+}
+
 .student-program-type-filter {
   position: relative;
 }

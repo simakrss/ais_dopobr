@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.138",
-    releasedAt: "2026-08-12"
+    version: "1.7.139",
+    releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.139",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Основной фильтр статуса в реестре слушателей выделен контрастной рамкой, фоном и полужирным текстом."
+      ]
+    },
     {
       version: "1.7.138",
       releasedAt: "2026-08-12",
@@ -8858,7 +8865,12 @@ MAX - https://bizvmax.ru/zifra_plus
               </div>
             ` : ""}
             ${statuses.length ? `
-              <select id="statusFilter" class="select-control" ${statusDictionary ? `data-settings-dictionary="${escapeAttr(statusDictionary)}"` : ""}>
+              <select
+                id="statusFilter"
+                class="select-control ${state.view === "students" ? "student-status-filter" : ""}"
+                ${state.view === "students" ? 'aria-label="Фильтр слушателей по статусу" title="Фильтр слушателей по статусу"' : ""}
+                ${statusDictionary ? `data-settings-dictionary="${escapeAttr(statusDictionary)}"` : ""}
+              >
                 ${["Все", ...statuses].map((item) => `<option ${state.statusFilter === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
               </select>
             ` : ""}
