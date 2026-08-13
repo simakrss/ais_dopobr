@@ -1879,7 +1879,7 @@ function Update-MacroSettings {
   )
   $settings = Get-ObjectProperty $Payload "macroSettings"
   if ($null -eq $settings -or -not [bool](Get-ObjectProperty $settings "provided")) {
-    return [pscustomobject]@{ Provided = $false; StudentEvents = 0; ContractEvents = 0 }
+    return [pscustomobject]@{ Provided = $false; StudentEvents = 0; ContractEvents = 0; PaymentRules = 0 }
   }
   $definedName = $null
   $targetRange = $null
@@ -1894,6 +1894,12 @@ function Update-MacroSettings {
     $contractTemplates = @(Get-ObjectProperty $settings "contractEventTemplates")
     $text = Set-MacroSettingTextValue $text "События" (ConvertTo-StudentEventMacroSettingValue $studentTemplates)
     $text = Set-MacroSettingTextValue $text "СобытияКонтрагент" (ConvertTo-ContractEventMacroSettingValue $contractTemplates)
+    $paymentRuleCount = 0
+    if (Test-ObjectProperty $settings "automaticExpenseRules") {
+      $automaticExpenseRules = [string](Get-ObjectProperty $settings "automaticExpenseRules")
+      $text = Set-MacroSettingTextValue $text "АвтоНазнОплат" (ConvertTo-MacroSettingMultilineValue $automaticExpenseRules)
+      $paymentRuleCount = @($automaticExpenseRules -split "\r?\n" | Where-Object { $_.Trim() }).Count
+    }
 
     $query = [string](Get-ObjectProperty $settings "applicationsSqlQuery")
     if ($query.Trim()) {
@@ -1912,7 +1918,8 @@ function Update-MacroSettings {
       $text = $text.Remove($text.IndexOf("`r`n`r`n"), 2)
     }
     if ($text.Length -gt 32767) {
-      throw "Настройки превышают допустимый размер одной ячейки Excel (32767 символов)."
+      $overflow = $text.Length - 32767
+      throw "Диапазон 'НастройкиМакросов' превышает предел Excel на $overflow символов. Сократите правила назначения оплат или SQL-запрос интернет-магазина."
     }
     $rowHeight = $null
     try { $rowHeight = $targetRange.EntireRow.RowHeight } catch {}
@@ -1930,6 +1937,7 @@ function Update-MacroSettings {
       Provided = $true
       StudentEvents = $studentTemplates.Count
       ContractEvents = $contractTemplates.Count
+      PaymentRules = $paymentRuleCount
     }
   } catch {
     $textLength = if ($null -eq $text) { 0 } else { $text.Length }
@@ -1968,6 +1976,8 @@ try {
   $agentRateResult = Update-AgentPaymentRates `
     $workbook `
     (Get-ObjectProperty $payload "agentPaymentRates")
+  Write-SyncProgress 7 "Проверка событий, правил оплаты и настроек интернет-магазина..."
+  $macroSettingsResult = Update-MacroSettings $workbook $payload
   Write-SyncProgress 8 "Обновление слушателей..."
   $studentResult = Update-StudentSheet $workbook $payload $dateFields $numberFields
   $expenseResult = Update-DirectExpenseSheet $workbook $payload $dateFields $numberFields
@@ -1975,8 +1985,6 @@ try {
   $contractResult = Update-ContractSheet $workbook $payload $dateFields $numberFields
   Write-SyncProgress 95 "Обновление промосообщений и почтовых сообщений программ..."
   $programPromoResult = Update-ProgramPromoMessages $workbook $payload
-  Write-SyncProgress 96 "Обновление перечней событий и настроек интернет-магазина..."
-  $macroSettingsResult = Update-MacroSettings $workbook $payload
   Write-SyncProgress 96 "Обновление ставок и констант оплаты..."
   $paymentResult = Update-PaymentSettings $workbook $payload
 
@@ -2003,6 +2011,7 @@ try {
     programPromoSkipped = $programPromoResult.Skipped
     studentEventTemplates = $macroSettingsResult.StudentEvents
     contractEventTemplates = $macroSettingsResult.ContractEvents
+    automaticExpenseRules = $macroSettingsResult.PaymentRules
     macroSettingsUpdated = $macroSettingsResult.Provided
     paymentConstants = $paymentResult.Count
     agentPaymentRates = [pscustomobject]@{

@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.168",
+    version: "1.7.169",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.169",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Правила автоматического назначения оплат синхронизируются в обе стороны с ключом «АвтоНазнОплат» именованного диапазона «НастройкиМакросов» книги «АИС Допобразование.xlsb»."
+      ]
+    },
     {
       version: "1.7.168",
       releasedAt: "2026-08-13",
@@ -13064,6 +13071,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </label>
           <p class="payment-settings-hint">
             Этот список является источником правил автоматического назначения оплат: вида выплаты, формулы, ставки, примечания и исключений.
+            При работе с XLSB он синхронизируется с ключом <code>АвтоНазнОплат</code> диапазона <code>НастройкиМакросов</code>.
             Формат строки: <code>Вид затрат, Сумма или формула, Примечание</code>.
             Значения примечания со знаком «-» не добавляются. Несколько исключений разделяются точкой с запятой.
             Для «Оплаты преподавателю» и «Оплаты председателю ИАК» получатель определяется из настроек программы,
@@ -40398,6 +40406,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function buildStudentDatabaseExportMacroSettings() {
     return {
       provided: true,
+      automaticExpenseRules: getPaymentSettingValue("automaticExpenseRules"),
       studentEventTemplates: getStudentEventTemplates().map((event) => ({
         key: event.key,
         label: event.label,
@@ -40476,7 +40485,7 @@ MAX - https://bizvmax.ru/zifra_plus
       addAudit(
         "Синхронизация с базой",
         "Слушатели, договоры, затраты и сообщения программ",
-        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.programPromoMessageCount || 0} промосообщений; ${result.programEmailMessageCount || 0} почтовых сообщений программ; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; ${sourceLabel}; резервная копия: ${result.backupPath || "создана"}; время выполнения: ${duration}`,
+        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.automaticExpenseRuleCount || 0} правил назначения оплат; ${result.programPromoMessageCount || 0} промосообщений; ${result.programEmailMessageCount || 0} почтовых сообщений программ; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; ${sourceLabel}; резервная копия: ${result.backupPath || "создана"}; время выполнения: ${duration}`,
         { entityType: "database", entityLabel: "АИС Допобразование.xlsb", source: `xlsb-sync-${syncSource}` }
       );
       persist();
@@ -40495,6 +40504,7 @@ MAX - https://bizvmax.ru/zifra_plus
           { label: "Договоры", value: contracts.length },
           { label: "Прямые затраты", value: directExpenses.length },
           { label: "Общие затраты", value: generalExpenses.length },
+          { label: "Правила оплаты", value: result.automaticExpenseRuleCount || 0 },
           { label: "Промосообщения", value: result.programPromoMessageCount || 0 },
           { label: "Почтовые сообщения программ", value: result.programEmailMessageCount || 0 },
           {
@@ -40591,7 +40601,7 @@ MAX - https://bizvmax.ru/zifra_plus
       addAudit(
         "Экспорт в базу",
         "Слушатели, договоры, затраты и сообщения программ",
-        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.programPromoMessageCount || 0} промосообщений; ${result.programEmailMessageCount || 0} почтовых сообщений программ; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; файл: ${fileName}; источник: ${sourceLabel}; время выполнения: ${duration}`,
+        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.automaticExpenseRuleCount || 0} правил назначения оплат; ${result.programPromoMessageCount || 0} промосообщений; ${result.programEmailMessageCount || 0} почтовых сообщений программ; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; файл: ${fileName}; источник: ${sourceLabel}; время выполнения: ${duration}`,
         { entityType: "database", entityLabel: fileName, source: `xlsb-download-${exportSource}` }
       );
       persist();
@@ -40610,6 +40620,7 @@ MAX - https://bizvmax.ru/zifra_plus
           { label: "Договоры", value: contracts.length },
           { label: "Прямые затраты", value: directExpenses.length },
           { label: "Общие затраты", value: generalExpenses.length },
+          { label: "Правила оплаты", value: result.automaticExpenseRuleCount || 0 },
           { label: "Промосообщения", value: result.programPromoMessageCount || 0 },
           { label: "Почтовые сообщения программ", value: result.programEmailMessageCount || 0 },
           {
@@ -40926,7 +40937,18 @@ MAX - https://bizvmax.ru/zifra_plus
         payload.paymentRates.authorRate ?? payload.paymentRates.defaultAuthorPercent,
         previousData.meta.defaultAuthorPaymentPercent || 50
       );
-      const nextPaymentSettings = mergeImportedAgentPaymentRates(
+      const importedMacroSettings = payload.macroSettings && typeof payload.macroSettings === "object"
+        ? payload.macroSettings
+        : {};
+      const importedAutomaticExpenseRuleCount = Object.prototype.hasOwnProperty.call(
+        importedMacroSettings,
+        "automaticExpenseRules"
+      )
+        ? String(importedMacroSettings.automaticExpenseRules || "")
+          .split(/\r?\n/u)
+          .filter((line) => line.trim()).length
+        : null;
+      let nextPaymentSettings = mergeImportedAgentPaymentRates(
         mergeImportedPaymentRates(
           previousData.dictionaries.paymentSettings,
           payload.paymentRates,
@@ -40934,6 +40956,13 @@ MAX - https://bizvmax.ru/zifra_plus
         ),
         payload.agentPaymentRates
       );
+      if (Object.prototype.hasOwnProperty.call(importedMacroSettings, "automaticExpenseRules")) {
+        nextPaymentSettings = normalizePaymentSettings(nextPaymentSettings.map((setting) => (
+          setting.key === "automaticExpenseRules"
+            ? { ...setting, value: String(importedMacroSettings.automaticExpenseRules || "") }
+            : setting
+        )));
+      }
       const nextPrograms = applyGlobalAuthorRateToPrograms(
         mergeImportedProgramPaymentSettings(
           previousData.collections.programs,
@@ -40976,9 +41005,6 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       const inventoryLinkedExpenseCount = Number(payload.inventoryLinkedExpenseCount || 0);
       const inventoryGeneratedExpenseCount = Number(payload.inventoryGeneratedExpenseCount || 0);
-      const importedMacroSettings = payload.macroSettings && typeof payload.macroSettings === "object"
-        ? payload.macroSettings
-        : {};
       const importedStudentEventTemplates = normalizeConfiguredEventTemplates(
         importedMacroSettings.studentEventTemplates
       );
@@ -41080,6 +41106,7 @@ MAX - https://bizvmax.ru/zifra_plus
         + `разделы договоров по расположению строк: ${contractSectionSummary}; `
         + `${nextDirectExpenses.length} не привязано; ${nextGeneralExpenses.length} общих затрат; ${nextInventory.length} позиций запасов; `
         + `${payload.programPaymentSettings.length} программ с характеристиками и ставками; ${nextTrainingPlans.length} строк учебных планов; `
+        + `${importedAutomaticExpenseRuleCount ?? "без изменений"} правил назначения оплат; `
         + `${inventoryLinkedExpenseCount} выдач связано с карточками`
         + `${inventoryGeneratedExpenseCount ? `, ${inventoryGeneratedExpenseCount} восстановлено` : ""}; `
         + `время выполнения: ${duration}`,
@@ -41117,6 +41144,9 @@ MAX - https://bizvmax.ru/zifra_plus
           { label: "Позиции запасов", value: nextInventory.length },
           { label: "Настройки программ", value: payload.programPaymentSettings.length },
           { label: "Учебные планы", value: nextTrainingPlans.length, note: "Строки листа «Учебные планы»" },
+          ...(importedAutomaticExpenseRuleCount === null
+            ? []
+            : [{ label: "Правила оплаты", value: importedAutomaticExpenseRuleCount }]),
           { label: "Выдачи запасов", value: inventoryLinkedExpenseCount, note: "Связаны с карточками" },
           ...(inventoryGeneratedExpenseCount
             ? [{ label: "Восстановлено выдач", value: inventoryGeneratedExpenseCount, note: "Из листа «Запасы»" }]

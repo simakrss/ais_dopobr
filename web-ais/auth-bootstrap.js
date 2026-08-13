@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260813-education-lists-ocr-preview-v2";
+  const AUTH_BUILD = "20260813-payment-rules-xlsb-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

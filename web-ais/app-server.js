@@ -5360,7 +5360,7 @@ function compactSqlQueryForMacroSettings(value) {
       continue;
     }
     if (["'", '"', "`"].includes(char)) {
-      if (pendingSpace && result && !result.endsWith(" ")) result += " ";
+      if (pendingSpace && result && !/[\s,(=<>]$/u.test(result)) result += " ";
       pendingSpace = false;
       quote = char;
       result += char;
@@ -5376,7 +5376,7 @@ function compactSqlQueryForMacroSettings(value) {
       result += char;
       continue;
     }
-    if (pendingSpace && result && !result.endsWith(" ")) result += " ";
+    if (pendingSpace && result && !/[\s,(=<>]$/u.test(result)) result += " ";
     pendingSpace = false;
     result += char;
   }
@@ -9371,6 +9371,7 @@ function parseMacroSettingsBlock(value) {
   const requestedKeys = new Set([
     "События",
     "СобытияКонтрагент",
+    "АвтоНазнОплат",
     "Магазин_SQL",
     "Магазин_SQL_сервер",
     "Магазин_SQL_база",
@@ -9407,17 +9408,23 @@ function parseStudentDatabaseMacroSettings(workbook) {
   const entries = parseMacroSettingsBlock(namedCell.value);
   const studentEventTemplates = parseMacroStudentEventTemplates(entries.get("События"));
   const contractEventTemplates = parseMacroContractEventTemplates(entries.get("СобытияКонтрагент"));
+  const macroSettings = {
+    provided: true,
+    namedRange: namedCell.name,
+    studentEventTemplates,
+    contractEventTemplates,
+    applicationsSqlQuery: String(entries.get("Магазин_SQL") || "").replace(/\u000b+/gu, "\n").trim(),
+    applicationsMysqlHost: String(entries.get("Магазин_SQL_сервер") || "").trim(),
+    applicationsMysqlDatabase: String(entries.get("Магазин_SQL_база") || "").trim(),
+    applicationsMysqlUser: String(entries.get("Магазин_SQL_пользователь") || "").trim()
+  };
+  if (entries.has("АвтоНазнОплат")) {
+    macroSettings.automaticExpenseRules = String(entries.get("АвтоНазнОплат") || "")
+      .replace(/\u000b+/gu, "\n")
+      .trim();
+  }
   return {
-    macroSettings: {
-      provided: true,
-      namedRange: namedCell.name,
-      studentEventTemplates,
-      contractEventTemplates,
-      applicationsSqlQuery: String(entries.get("Магазин_SQL") || "").replace(/\u000b+/gu, "\n").trim(),
-      applicationsMysqlHost: String(entries.get("Магазин_SQL_сервер") || "").trim(),
-      applicationsMysqlDatabase: String(entries.get("Магазин_SQL_база") || "").trim(),
-      applicationsMysqlUser: String(entries.get("Магазин_SQL_пользователь") || "").trim()
-    },
+    macroSettings,
     macroSettingsSecret: {
       applicationsMysqlPassword: String(entries.get("Магазин_SQL_пароль") || "")
     }
@@ -12848,6 +12855,27 @@ function sanitizeMacroSettingsEventTemplates(value, withConditions = false) {
   }).filter(Boolean);
 }
 
+function sanitizeMacroSettingsAutomaticExpenseRules(value) {
+  const lines = String(value ?? "")
+    .replace(/\u000b+/gu, "\n")
+    .replace(/\r\n?/gu, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length > 300) {
+    throw new Error("В настройках слишком много правил назначения оплат.");
+  }
+  const invalidLine = lines.find((line) => line.length > 1000 || line.split(",").length < 2);
+  if (invalidLine) {
+    throw new Error(`Некорректное правило назначения оплаты: ${invalidLine.slice(0, 200)}`);
+  }
+  const normalized = lines.join("\n");
+  if (normalized.length > 12000) {
+    throw new Error("Правила назначения оплат превышают допустимый размер.");
+  }
+  return normalized;
+}
+
 function sanitizeStudentDatabaseMacroSettingsExport(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { provided: false };
@@ -12858,7 +12886,7 @@ function sanitizeStudentDatabaseMacroSettingsExport(value) {
   const requestedQuery = String(value.applicationsSqlQuery || "").trim();
   const applicationsSqlQuery = getStudentApplicationsSqlQuery()
     || (requestedQuery ? normalizeStudentApplicationsSqlQuery(requestedQuery) : "");
-  return {
+  const result = {
     provided: true,
     studentEventTemplates: sanitizeMacroSettingsEventTemplates(value.studentEventTemplates, true),
     contractEventTemplates: sanitizeMacroSettingsEventTemplates(value.contractEventTemplates),
@@ -12868,6 +12896,12 @@ function sanitizeStudentDatabaseMacroSettingsExport(value) {
     applicationsMysqlUser: String(connection.uid || connection.user || connection.userid || "").trim(),
     applicationsMysqlPassword: String(connection.pwd || connection.password || "")
   };
+  if (Object.prototype.hasOwnProperty.call(value, "automaticExpenseRules")) {
+    result.automaticExpenseRules = sanitizeMacroSettingsAutomaticExpenseRules(
+      value.automaticExpenseRules
+    );
+  }
+  return result;
 }
 
 function sanitizeStudentDatabaseExportPayload(body) {
@@ -13675,7 +13709,8 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       programCount: Number(scriptResult.programs || 0),
       programPromoMessageCount: Number(scriptResult.programPromoMessages || 0),
       programEmailMessageCount: Number(scriptResult.programEmailMessages || 0),
-      programPromoSkippedCount: Number(scriptResult.programPromoSkipped || 0)
+      programPromoSkippedCount: Number(scriptResult.programPromoSkipped || 0),
+      automaticExpenseRuleCount: Number(scriptResult.automaticExpenseRules || 0)
     };
   } finally {
     if (tempDirectory) {
@@ -13775,7 +13810,7 @@ async function runStudentExportJob(job, body) {
       status: "completed",
       stage: "complete",
       progress: 100,
-      message: `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} прямых и ${job.result.generalExpenseCount} общих затрат, ${job.result.programPromoMessageCount || 0} промосообщений и ${job.result.programEmailMessageCount || 0} почтовых сообщений программ`
+      message: `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} прямых и ${job.result.generalExpenseCount} общих затрат, ${job.result.automaticExpenseRuleCount || 0} правил оплаты, ${job.result.programPromoMessageCount || 0} промосообщений и ${job.result.programEmailMessageCount || 0} почтовых сообщений программ`
     });
   } catch (error) {
     const errorMessage = normalizeStudentExportJobMessage(
@@ -15331,6 +15366,7 @@ module.exports = {
   optimizeStudentApplicationsSqlQuery,
   runStudentApplicationsQuery,
   parseStudentDatabaseWorkbook,
+  parseStudentDatabaseMacroSettings,
   sanitizeStudentDatabaseExportPayload,
   sanitizeFrdoExportPayload,
   buildFrdoExportWorkbook,
