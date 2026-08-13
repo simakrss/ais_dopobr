@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.140",
+    version: "1.7.141",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.141",
+      releasedAt: "2026-08-13",
+      changes: [
+        "При импорте заявок список сопоставления разделён на наиболее подходящие и остальные программы, а после выбора программа и слушатель повторно проверяются по общей базе.",
+        "Повторная заявка определяется также по совпадению ФИО, телефона или email, даже если в существующей карточке указана другая программа."
+      ]
+    },
     {
       version: "1.7.140",
       releasedAt: "2026-08-13",
@@ -9089,16 +9097,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const mapping = getStoredStudentApplicationProgramMapping(row);
     if (!mapping) return null;
     const programs = state.data.collections.programs || [];
-    const inferredType = getStudentApplicationInferredProgramType(row);
     const storedProgram = programs.find((program) => (
       String(program.id || "") === mapping.programId
-      && studentApplicationProgramMatchesInferredType(program, inferredType)
     ));
     if (storedProgram) return storedProgram;
     const normalizedMappedName = normalizeProgramName(mapping.programName);
     return getProgramRows().find((program) => (
-      studentApplicationProgramMatchesInferredType(program, inferredType)
-      && [program.name, program.shortName].some((name) => normalizeProgramName(name) === normalizedMappedName)
+      [program.name, program.shortName].some((name) => normalizeProgramName(name) === normalizedMappedName)
     )) || null;
   }
 
@@ -9341,25 +9346,31 @@ MAX - https://bizvmax.ru/zifra_plus
     ].filter(Boolean);
   }
 
+  function getStudentApplicationPersonIdentityKeys(person) {
+    const name = normalizeStudentApplicationPersonName(person?.name);
+    const email = String(person?.email || "").trim().toLocaleLowerCase("ru-RU");
+    const phone = String(person?.phone || "").replace(/\D/g, "").slice(-10);
+    return [
+      name ? `name:${name}` : "",
+      email ? `email:${email}` : "",
+      phone.length === 10 ? `phone:${phone}` : ""
+    ].filter(Boolean);
+  }
+
   function getStudentApplicationProgram(row, selectedProgramId = "") {
     const inferredType = getStudentApplicationInferredProgramType(row);
     const matchesInferredType = (program) => (
       studentApplicationProgramMatchesInferredType(program, inferredType)
     );
     const selectedProgram = (state.data.collections.programs || [])
-      .find((program) => (
-        String(program.id || "") === String(selectedProgramId || "")
-        && matchesInferredType(program)
-      ));
+      .find((program) => String(program.id || "") === String(selectedProgramId || ""));
     if (selectedProgram) return selectedProgram;
     const preparedMatch = row?._programMatch;
     if (preparedMatch?.programId && preparedMatch.kind !== "suggested") {
       const preparedProgram = (state.data.collections.programs || [])
-        .find((program) => (
-          String(program.id || "") === String(preparedMatch.programId || "")
-          && matchesInferredType(program)
-        ));
-      if (preparedProgram) return preparedProgram;
+        .find((program) => String(program.id || "") === String(preparedMatch.programId || ""));
+      if (preparedProgram && preparedMatch.kind === "stored") return preparedProgram;
+      if (preparedProgram && matchesInferredType(preparedProgram)) return preparedProgram;
     }
     const storedProgram = resolveStoredStudentApplicationProgram(row);
     if (storedProgram) return storedProgram;
@@ -9405,17 +9416,45 @@ MAX - https://bizvmax.ru/zifra_plus
     ) ? { program, score: Number(match.score || 0) } : null;
   }
 
+  function getStudentApplicationProgramRecommendations(row, limit = 6) {
+    const sourceTitle = getStudentApplicationProgramTitle(row);
+    const sourceFeatures = buildStudentApplicationProgramMatchFeatures(sourceTitle);
+    if (!sourceFeatures.normalized) return [];
+    const sourceHours = getStudentApplicationProgramHours(sourceTitle);
+    const inferredType = getStudentApplicationInferredProgramType(row);
+    const ranked = getProgramRows()
+      .map((program) => {
+        const names = unique([program.name, program.shortName]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean));
+        let score = Math.max(...names.map((name) => (
+          getStudentApplicationProgramSimilarity(
+            sourceFeatures,
+            buildStudentApplicationProgramMatchFeatures(name)
+          )
+        )), 0);
+        const programHours = getStudentApplicationProgramHours(program.name, program.hours);
+        if (sourceHours && programHours) score += sourceHours === programHours ? 0.08 : -0.16;
+        if (inferredType) {
+          score += studentApplicationProgramMatchesInferredType(program, inferredType) ? 0.08 : -0.12;
+        }
+        return { program, score: Math.max(0, Math.min(1, score)) };
+      })
+      .sort((left, right) => (
+        right.score - left.score || compareProgramNames(left.program.name, right.program.name)
+      ));
+    const minimumScore = Math.max(0.32, Number(ranked[0]?.score || 0) - 0.35);
+    return ranked
+      .filter((item, index) => item.score >= minimumScore || index === 0)
+      .slice(0, Math.max(1, Number(limit) || 6));
+  }
+
   function saveStudentApplicationProgramMapping(rowId, programId) {
     const row = (state.studentApplicationsImport.rows || [])
       .find((item) => String(item.id || "") === String(rowId || ""));
     if (!row) return;
     const program = (state.data.collections.programs || [])
       .find((item) => String(item.id || "") === String(programId || ""));
-    const inferredType = getStudentApplicationInferredProgramType(row);
-    if (program && !studentApplicationProgramMatchesInferredType(program, inferredType)) {
-      alert(`По данным интернет-магазина эта заявка относится к категории ${inferredType}. Выберите программу этой категории.`);
-      return;
-    }
     const source = getStudentApplicationProgramMappingSource(row);
     const current = normalizeStudentApplicationProgramMappings(
       state.data.meta.studentApplicationProgramMappings
@@ -9469,6 +9508,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function buildStudentApplicationsImportLookup() {
     const historyByIdentity = new Map();
+    const historyByPersonIdentity = new Map();
     const historyBySourceKey = new Map();
     const programByName = new Map();
     getProgramRows().forEach((program) => {
@@ -9483,7 +9523,11 @@ MAX - https://bizvmax.ru/zifra_plus
         id: String(student.id || ""),
         name: String(student.name || ""),
         program: String(student.program || ""),
-        applicationDate: String(student.applicationDate || "")
+        applicationDate: String(student.applicationDate || ""),
+        programIdentity: getStudentApplicationProgramIdentity(
+          mappedProgram?.name || student.program,
+          mappedProgram?.hours || student.hours
+        )
       };
       const sourceKey = String(student.sourceApplicationKey || "").trim();
       if (sourceKey) historyBySourceKey.set(sourceKey, entry);
@@ -9496,8 +9540,13 @@ MAX - https://bizvmax.ru/zifra_plus
         history.push(entry);
         historyByIdentity.set(key, history);
       });
+      getStudentApplicationPersonIdentityKeys(student).forEach((key) => {
+        const history = historyByPersonIdentity.get(key) || [];
+        history.push(entry);
+        historyByPersonIdentity.set(key, history);
+      });
     });
-    return { historyByIdentity, historyBySourceKey };
+    return { historyByIdentity, historyByPersonIdentity, historyBySourceKey };
   }
 
   function getStudentApplicationPreviousMatches(
@@ -9509,14 +9558,28 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!selectedProgramId && Array.isArray(row._previousMatches)) return row._previousMatches;
     const mappedProgram = getStudentApplicationProgram(row, selectedProgramId);
     const programName = mappedProgram?.name || getStudentApplicationProgramTitle(row);
+    const programIdentity = getStudentApplicationProgramIdentity(programName, mappedProgram?.hours);
     const matchesById = new Map();
+    const rememberMatch = (entry, sameProgram = false) => {
+      const key = entry.id || `${entry.name}\u0000${entry.applicationDate}`;
+      const current = matchesById.get(key);
+      matchesById.set(key, {
+        ...entry,
+        sameProgram: Boolean(sameProgram || current?.sameProgram)
+      });
+    };
     const sourceMatch = lookup.historyBySourceKey?.get(getStudentApplicationSourceKey(row));
     if (sourceMatch) {
-      matchesById.set(sourceMatch.id || `${sourceMatch.name}\u0000${sourceMatch.applicationDate}`, sourceMatch);
+      rememberMatch(sourceMatch, Boolean(programIdentity && sourceMatch.programIdentity === programIdentity));
     }
     getStudentApplicationIdentityKeys(row, programName, mappedProgram?.hours).forEach((key) => {
       (lookup.historyByIdentity.get(key) || []).forEach((entry) => {
-        matchesById.set(entry.id || `${entry.name}\u0000${entry.applicationDate}`, entry);
+        rememberMatch(entry, true);
+      });
+    });
+    getStudentApplicationPersonIdentityKeys(row).forEach((key) => {
+      (lookup.historyByPersonIdentity?.get(key) || []).forEach((entry) => {
+        rememberMatch(entry, Boolean(programIdentity && entry.programIdentity === programIdentity));
       });
     });
     return [...matchesById.values()].sort((left, right) => {
@@ -9529,12 +9592,17 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentApplicationRepeatComment(row, lookup = buildStudentApplicationsImportLookup()) {
-    const previous = getStudentApplicationPreviousMatches(row, lookup)[0];
+    const matches = getStudentApplicationPreviousMatches(row, lookup);
+    const previous = matches.find((item) => item.sameProgram) || matches[0];
     if (!previous) return "";
     const applicationDate = dateRu(previous.applicationDate);
-    return applicationDate
-      ? `Слушатель уже подавал заявку на эту программу: ${applicationDate}. Повторный импорт разрешён.`
-      : "Слушатель уже подавал заявку на эту программу. Дата предыдущей заявки не указана. Повторный импорт разрешён.";
+    if (previous.sameProgram) {
+      return applicationDate
+        ? `Слушатель уже подавал заявку на эту программу: ${applicationDate}. Повторный импорт разрешён.`
+        : "Слушатель уже подавал заявку на эту программу. Дата предыдущей заявки не указана. Повторный импорт разрешён.";
+    }
+    const existingProgram = String(previous.program || "").trim();
+    return `Слушатель уже есть в базе${existingProgram ? `: ${existingProgram}` : ""}${applicationDate ? `; заявка от ${applicationDate}` : ""}. После выбора программы совпадение проверено повторно.`;
   }
 
   function isStudentApplicationImported(row, lookup = buildStudentApplicationsImportLookup()) {
@@ -9681,14 +9749,15 @@ MAX - https://bizvmax.ru/zifra_plus
     const financialTerms = getStudentApplicationFinancialTerms(row, mappedProgram);
     const inferredProgramType = getStudentApplicationInferredProgramType(row) || mappedProgram?.type;
     const programFilterOverridesMapping = Boolean(state.studentApplicationsImport.filters.programId);
-    const programs = getProgramRows().filter((program) => (
-      studentApplicationProgramMatchesInferredType(program, inferredProgramType)
-    ));
-    const programOptions = recommendation
-      ? [recommendation.program, ...programs.filter((program) => (
-        String(program.id || "") !== String(recommendation.program.id || "")
-      ))]
-      : programs;
+    const programs = getProgramRows();
+    const suitablePrograms = getStudentApplicationProgramRecommendations(row);
+    const suitableProgramIds = new Set(suitablePrograms.map((item) => String(item.program.id || "")));
+    const allOtherPrograms = programs.filter((program) => !suitableProgramIds.has(String(program.id || "")));
+    const renderProgramOption = (program, options = {}) => `
+      <option value="${escapeAttr(program.id)}" ${String(program.id || "") === String(mappedProgram?.id || "") ? "selected" : ""}>
+        ${options.recommended ? "★ " : ""}${escapeHtml(program.name || "Без названия")}${program.type ? ` — ${escapeHtml(program.type)}` : ""}${program.hours ? `, ${escapeHtml(program.hours)} ч` : ""}${Number.isFinite(options.score) ? ` (${Math.round(options.score * 100)}%)` : ""}
+      </option>
+    `;
     const { paymentAmount, contractAmount } = financialTerms;
     const hasPayment = paymentAmount > 0 || Boolean(row.paid);
     const repeatComment = getStudentApplicationRepeatComment(row, importedLookup);
@@ -9734,11 +9803,17 @@ MAX - https://bizvmax.ru/zifra_plus
           <span>Сопоставление с реестром программ</span>
           <select data-student-application-program-map="${escapeAttr(row.id)}" ${programFilterOverridesMapping ? "disabled" : ""}>
             <option value="">Выберите программу...</option>
-            ${programOptions.map((program) => `
-              <option value="${escapeAttr(program.id)}" ${String(program.id || "") === String(mappedProgram?.id || "") ? "selected" : ""}>
-                ${String(program.id || "") === String(recommendation?.program?.id || "") ? "★ Рекомендуется: " : ""}${escapeHtml(program.name || "Без названия")}${program.type ? ` — ${escapeHtml(program.type)}` : ""}${program.hours ? `, ${escapeHtml(program.hours)} ч` : ""}
-              </option>
-            `).join("")}
+            ${suitablePrograms.length ? `
+              <optgroup label="Наиболее подходящие программы">
+                ${suitablePrograms.map((item, index) => renderProgramOption(item.program, {
+                  recommended: index === 0,
+                  score: item.score
+                })).join("")}
+              </optgroup>
+            ` : ""}
+            <optgroup label="Все программы">
+              ${allOtherPrograms.map((program) => renderProgramOption(program)).join("")}
+            </optgroup>
           </select>
           <small>${programFilterOverridesMapping
             ? "Программа задана фильтром импорта."
@@ -9807,6 +9882,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const pageRows = visibleRows.slice(pagination.start, pagination.end);
     const importedLookup = importState.importedLookup || {
       historyByIdentity: new Map(),
+      historyByPersonIdentity: new Map(),
       historyBySourceKey: new Map()
     };
     const selectedIds = new Set(importState.selected || []);
