@@ -79,6 +79,7 @@ const MAX_DOCX_BYTES = 24 * 1024 * 1024;
 const MAX_STUDENT_DATABASE_BYTES = 24 * 1024 * 1024;
 const MAX_STUDENT_PHOTO_BYTES = 16 * 1024 * 1024;
 const MAX_OCR_DOCUMENT_BYTES = 24 * 1024 * 1024;
+const MAX_OCR_FIELD_PREVIEW_TEXT_CHARS = 200000;
 const MAX_WEBDAV_BROWSER_FILE_BYTES = 24 * 1024 * 1024;
 const MAX_WEBDAV_BROWSER_ENTRIES = 1000;
 const MAX_WEBDAV_BROWSER_PREVIEW_TEXT_CHARS = 400000;
@@ -141,6 +142,13 @@ const generatedDocumentPreviewCleanupTimer = process.env.AIS_TRUST_GATEWAY === "
 generatedDocumentPreviewCleanupTimer?.unref?.();
 const WORD_TEMPLATE_EXTENSIONS = new Set(["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"]);
 const OPENXML_WORD_EXTENSIONS = new Set(["docx", "docm", "dotx", "dotm"]);
+const MAX_OFFICE_ZIP_ENTRIES = 2048;
+const MAX_OFFICE_ZIP_ENTRY_BYTES = 32 * 1024 * 1024;
+const MAX_OFFICE_ZIP_UNCOMPRESSED_BYTES = 128 * 1024 * 1024;
+const MAX_OFFICE_TEXT_ZIP_ENTRIES = 128;
+const MAX_OFFICE_TEXT_ZIP_ENTRY_BYTES = 4 * 1024 * 1024;
+const MAX_OFFICE_TEXT_ZIP_UNCOMPRESSED_BYTES = 8 * 1024 * 1024;
+const MAX_OFFICE_TEXT_ZIP_COMPRESSED_BYTES = 5 * 1024 * 1024;
 const OCR_DOCUMENT_CONTENT_TYPES = Object.freeze({
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -1653,7 +1661,8 @@ function crc32(bytes) {
 }
 
 function findZipEnd(buffer) {
-  for (let offset = buffer.length - 22; offset >= 0; offset -= 1) {
+  const minimumOffset = Math.max(0, buffer.length - 22 - 0xFFFF);
+  for (let offset = buffer.length - 22; offset >= minimumOffset; offset -= 1) {
     if (buffer.readUInt32LE(offset) === 0x06054B50) return offset;
   }
   throw new Error("Некорректный DOCX: не найден центральный каталог ZIP");
@@ -1662,28 +1671,122 @@ function findZipEnd(buffer) {
 function readDocxZipEntries(buffer) {
   const endOffset = findZipEnd(buffer);
   const totalEntries = buffer.readUInt16LE(endOffset + 10);
+  if (totalEntries > MAX_OFFICE_ZIP_ENTRIES) {
+    throw new Error("ZIP-документ содержит слишком много файлов.");
+  }
   const centralOffset = buffer.readUInt32LE(endOffset + 16);
   const entries = [];
   let offset = centralOffset;
+  let totalUncompressedBytes = 0;
   for (let index = 0; index < totalEntries; index += 1) {
-    if (buffer.readUInt32LE(offset) !== 0x02014B50) throw new Error("Некорректный DOCX: ошибка центрального каталога");
+    if (offset < 0 || offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== 0x02014B50) {
+      throw new Error("Некорректный DOCX: ошибка центрального каталога");
+    }
     const method = buffer.readUInt16LE(offset + 10);
     const compressedSize = buffer.readUInt32LE(offset + 20);
+    const uncompressedSize = buffer.readUInt32LE(offset + 24);
     const nameLength = buffer.readUInt16LE(offset + 28);
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLength = buffer.readUInt16LE(offset + 32);
     const localOffset = buffer.readUInt32LE(offset + 42);
+    if (
+      uncompressedSize > MAX_OFFICE_ZIP_ENTRY_BYTES
+      || totalUncompressedBytes + uncompressedSize > MAX_OFFICE_ZIP_UNCOMPRESSED_BYTES
+    ) {
+      throw new Error("ZIP-документ после распаковки превышает допустимый размер.");
+    }
+    if (offset + 46 + nameLength + extraLength + commentLength > buffer.length) {
+      throw new Error("Некорректный DOCX: повреждён центральный каталог");
+    }
     const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
+    if (localOffset < 0 || localOffset + 30 > buffer.length || buffer.readUInt32LE(localOffset) !== 0x04034B50) {
+      throw new Error("Некорректный DOCX: повреждена запись ZIP");
+    }
     const localNameLength = buffer.readUInt16LE(localOffset + 26);
     const localExtraLength = buffer.readUInt16LE(localOffset + 28);
     const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    if (dataOffset < 0 || dataOffset + compressedSize > buffer.length) {
+      throw new Error("Некорректный DOCX: повреждены данные ZIP");
+    }
     const compressed = buffer.subarray(dataOffset, dataOffset + compressedSize);
     let content;
     if (method === 0) content = Buffer.from(compressed);
-    else if (method === 8) content = zlib.inflateRawSync(compressed);
+    else if (method === 8) {
+      content = zlib.inflateRawSync(compressed, { maxOutputLength: MAX_OFFICE_ZIP_ENTRY_BYTES });
+    }
     else throw new Error(`DOCX содержит неподдерживаемый метод сжатия ZIP: ${method}`);
+    if (content.length !== uncompressedSize || content.length > MAX_OFFICE_ZIP_ENTRY_BYTES) {
+      throw new Error("Некорректный DOCX: размер распакованной записи не совпадает с каталогом");
+    }
+    totalUncompressedBytes += content.length;
     entries.push({ name, content });
     offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+function readSelectedOfficeTextZipEntries(buffer, shouldInclude) {
+  const endOffset = findZipEnd(buffer);
+  const totalEntries = buffer.readUInt16LE(endOffset + 10);
+  if (totalEntries > MAX_OFFICE_ZIP_ENTRIES) {
+    throw new Error("ZIP-документ содержит слишком много файлов.");
+  }
+  const centralOffset = buffer.readUInt32LE(endOffset + 16);
+  const entries = [];
+  let offset = centralOffset;
+  let totalUncompressedBytes = 0;
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (offset < 0 || offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== 0x02014B50) {
+      throw new Error("Некорректный документ Office: ошибка центрального каталога");
+    }
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const uncompressedSize = buffer.readUInt32LE(offset + 24);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    if (offset + 46 + nameLength + extraLength + commentLength > buffer.length) {
+      throw new Error("Некорректный документ Office: повреждён центральный каталог");
+    }
+    const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
+    offset += 46 + nameLength + extraLength + commentLength;
+    if (!shouldInclude(name)) continue;
+    if (
+      entries.length >= MAX_OFFICE_TEXT_ZIP_ENTRIES
+      || compressedSize > MAX_OFFICE_TEXT_ZIP_COMPRESSED_BYTES
+      || uncompressedSize > MAX_OFFICE_TEXT_ZIP_ENTRY_BYTES
+      || totalUncompressedBytes + uncompressedSize > MAX_OFFICE_TEXT_ZIP_UNCOMPRESSED_BYTES
+    ) {
+      throw new Error("Текстовый слой документа Office превышает допустимый размер.");
+    }
+    if (localOffset < 0 || localOffset + 30 > buffer.length || buffer.readUInt32LE(localOffset) !== 0x04034B50) {
+      throw new Error("Некорректный документ Office: повреждена запись ZIP");
+    }
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    if (dataOffset < 0 || dataOffset + compressedSize > buffer.length) {
+      throw new Error("Некорректный документ Office: повреждены данные ZIP");
+    }
+    const compressed = buffer.subarray(dataOffset, dataOffset + compressedSize);
+    let content;
+    if (method === 0) {
+      if (compressedSize !== uncompressedSize) {
+        throw new Error("Некорректный документ Office: размер несжатой текстовой записи не совпадает с каталогом");
+      }
+      content = Buffer.from(compressed);
+    }
+    else if (method === 8) {
+      content = zlib.inflateRawSync(compressed, { maxOutputLength: MAX_OFFICE_TEXT_ZIP_ENTRY_BYTES });
+    } else {
+      throw new Error(`Документ Office содержит неподдерживаемый метод сжатия ZIP: ${method}`);
+    }
+    if (content.length !== uncompressedSize || content.length > MAX_OFFICE_TEXT_ZIP_ENTRY_BYTES) {
+      throw new Error("Некорректный документ Office: размер текстовой записи не совпадает с каталогом");
+    }
+    totalUncompressedBytes += content.length;
+    entries.push({ name, content });
   }
   return entries;
 }
@@ -7275,22 +7378,27 @@ function extractXmlPreviewText(xml) {
 }
 
 function extractOpenXmlWordPreviewText(bytes) {
-  const entries = readDocxZipEntries(Buffer.from(bytes));
-  const names = [
-    "word/document.xml",
-    ...entries.map((entry) => entry.name).filter((name) => /^word\/(?:header|footer|footnotes|endnotes)\d*\.xml$/i.test(name))
-  ];
-  return names.map((name) => {
-    const entry = entries.find((item) => item.name === name);
-    return entry ? extractXmlPreviewText(entry.content.toString("utf8")) : "";
-  }).filter(Boolean).join("\n\n");
+  const entries = readSelectedOfficeTextZipEntries(Buffer.from(bytes), (name) => (
+    name === "word/document.xml"
+    || /^word\/(?:header|footer|footnotes|endnotes)\d*\.xml$/i.test(name)
+  ));
+  return entries
+    .sort((left, right) => (
+      Number(right.name === "word/document.xml") - Number(left.name === "word/document.xml")
+      || left.name.localeCompare(right.name, "ru", { numeric: true })
+    ))
+    .map((entry) => extractXmlPreviewText(entry.content.toString("utf8")))
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, MAX_WEBDAV_BROWSER_PREVIEW_TEXT_CHARS + 1);
 }
 
 function extractOdtPreviewText(bytes) {
-  const entries = readDocxZipEntries(Buffer.from(bytes));
+  const entries = readSelectedOfficeTextZipEntries(Buffer.from(bytes), (name) => name === "content.xml");
   const content = entries.find((entry) => entry.name === "content.xml");
   if (!content) throw new Error("В документе ODT не найден текстовый слой.");
-  return extractXmlPreviewText(content.content.toString("utf8"));
+  return extractXmlPreviewText(content.content.toString("utf8"))
+    .slice(0, MAX_WEBDAV_BROWSER_PREVIEW_TEXT_CHARS + 1);
 }
 
 function extractPresentationPreviewText(bytes) {
@@ -7668,11 +7776,26 @@ function selectOcrDocuments(documents, selectedNames) {
 
 async function loadOcrDocumentBytes(document) {
   if (document.source === "local") {
-    const bytes = await fs.readFile(document.localPath);
-    if (!bytes.length || bytes.length > MAX_OCR_DOCUMENT_BYTES) {
-      throw new Error("Файл пустой или превышает 24 МБ.");
+    const handle = await fs.open(document.localPath, "r");
+    try {
+      const stats = await handle.stat();
+      if (!stats.isFile() || !stats.size || stats.size > MAX_OCR_DOCUMENT_BYTES) {
+        throw new Error("Файл пустой или превышает 24 МБ.");
+      }
+      const bytes = Buffer.allocUnsafe(stats.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+        if (!bytesRead) break;
+        offset += bytesRead;
+      }
+      if (offset !== bytes.length) {
+        throw new Error("Файл изменился во время чтения. Повторите попытку.");
+      }
+      return bytes;
+    } finally {
+      await handle.close();
     }
-    return bytes;
   }
   const response = await requestYandexWebDav("GET", document.davPath, {
     acceptedStatuses: [200],
@@ -7838,6 +7961,27 @@ async function renderOcrDocumentPage(document, page) {
   return payload;
 }
 
+function isVisualOcrDocument(document) {
+  const contentType = String(document?.contentType || "").toLowerCase().split(";", 1)[0].trim();
+  return contentType.startsWith("image/") || contentType === "application/pdf";
+}
+
+async function renderOcrDocumentTextPreview(document) {
+  const bytes = await loadOcrDocumentBytes(document);
+  const extracted = extractWebDavBrowserPreviewText(document.fileName || document.relativeName, bytes);
+  const text = normalizeWebDavBrowserPreviewText(extracted);
+  const truncated = text.length > MAX_OCR_FIELD_PREVIEW_TEXT_CHARS;
+  return {
+    kind: "text",
+    text: truncated
+      ? `${text.slice(0, MAX_OCR_FIELD_PREVIEW_TEXT_CHARS)}\n\n… Предпросмотр сокращён …`
+      : text,
+    truncated,
+    page: 1,
+    pageCount: 1
+  };
+}
+
 function normalizeOcrFieldPreview(value) {
   if (!value || typeof value !== "object") return null;
   if (String(value.mimeType || "").toLowerCase() !== "image/jpeg") return null;
@@ -7906,7 +8050,7 @@ function normalizeOcrPhotoCandidate(value, sourceFile) {
     ...preview,
     confidence: Math.round(Math.max(0, Math.min(1, Number(value?.confidence) || 0)) * 100) / 100,
     method: String(value?.method || "face").trim().slice(0, 40),
-    sourceFile: String(sourceFile || "").trim().slice(0, 260)
+    sourceFile: String(sourceFile || "").trim().slice(0, 600)
   };
 }
 
@@ -7923,12 +8067,27 @@ function normalizeOcrFieldCandidate(field, sourceFile) {
     value,
     confidence: Math.round(confidence * 100) / 100,
     evidence: String(field?.evidence || "").replace(/\s+/g, " ").trim().slice(0, 280),
-    sourceFile: String(sourceFile || "").slice(0, 260),
+    sourceFile: String(sourceFile || "").slice(0, 600),
     manualEntry
   };
   const preview = normalizeOcrFieldPreview(field?.preview);
   if (preview) candidate.preview = preview;
   return candidate;
+}
+
+function mergeOcrFieldSourceFiles(...values) {
+  const sources = [];
+  const seen = new Set();
+  values.forEach((value) => {
+    String(value || "").split(/;\s*/g).forEach((item) => {
+      const source = item.trim();
+      const key = source.replace(/\\/g, "/").toLocaleLowerCase("ru-RU");
+      if (!source || seen.has(key)) return;
+      seen.add(key);
+      sources.push(source);
+    });
+  });
+  return sources.join("; ").slice(0, MAX_OCR_DOCUMENT_FILES * 605);
 }
 
 function aggregateOcrFieldCandidates(fileResults) {
@@ -7943,9 +8102,11 @@ function aggregateOcrFieldCandidates(fileResults) {
       ));
       if (duplicate) {
         if (candidate.confidence > duplicate.confidence) {
+          const sourceFile = mergeOcrFieldSourceFiles(candidate.sourceFile, duplicate.sourceFile);
           Object.assign(duplicate, candidate);
-        } else if (!duplicate.sourceFile.includes(candidate.sourceFile)) {
-          duplicate.sourceFile = `${duplicate.sourceFile}; ${candidate.sourceFile}`.slice(0, 260);
+          duplicate.sourceFile = sourceFile;
+        } else {
+          duplicate.sourceFile = mergeOcrFieldSourceFiles(duplicate.sourceFile, candidate.sourceFile);
         }
       } else {
         candidates.push(candidate);
@@ -8287,12 +8448,22 @@ async function handleStudentDocumentRecognitionPage(req, res) {
       String(item.relativeName || "").replace(/\\/g, "/") === relativeName
     ));
     if (!document) throw new Error("Файл не найден в папке слушателя.");
+    if (!isVisualOcrDocument(document)) {
+      const textPreview = await renderOcrDocumentTextPreview(document);
+      sendJson(res, 200, {
+        fileName: document.fileName,
+        relativeName: document.relativeName,
+        ...textPreview
+      });
+      return;
+    }
     const payload = await renderOcrDocumentPage(document, page);
     const preview = normalizeOcrPagePreview(payload.preview);
     if (!preview) throw new Error("Сервер не смог сформировать изображение страницы.");
     sendJson(res, 200, {
       fileName: document.fileName,
       relativeName: document.relativeName,
+      kind: "image",
       page: Math.max(1, Number(payload.page) || page),
       pageCount: Math.max(1, Number(payload.pageCount) || 1),
       preview
@@ -16443,10 +16614,15 @@ module.exports = {
   removeBlankInteriorPdfPages,
   evaluateDocumentFormula,
   extractWebDavBrowserPreviewText,
+  buildDocxZip,
+  isVisualOcrDocument,
+  mergeOcrFieldSourceFiles,
+  renderOcrDocumentTextPreview,
   fillDocxMarkers,
   getWebDavBrowserIconKind,
   getWebDavBrowserPreviewKind,
   handleDocumentConversionSource,
   readDocxZipEntries,
+  readSelectedOfficeTextZipEntries,
   route
 };

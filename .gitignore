@@ -4,6 +4,7 @@ web-ais/storage/jobs/*
 web-ais/storage/users.json
 web-ais/storage/auth-sessions.json
 web-ais/storage/php-sessions/*
+web-ais/storage/generated-document-previews/
 web-ais/storage/audit-log.jsonl
 web-ais/.htpasswd
 .git.bak-*/

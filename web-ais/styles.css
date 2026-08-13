@@ -14821,12 +14821,15 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   gap: 3px;
 }
 
+.student-document-recognition-preview-page-navigation,
 .student-document-recognition-preview-view-tools {
-  justify-content: flex-end;
+  grid-column: 1 / -1;
+  justify-content: flex-start;
 }
 
 .student-document-recognition-preview-document-navigation[hidden],
-.student-document-recognition-preview-page-navigation[hidden] {
+.student-document-recognition-preview-page-navigation[hidden],
+.student-document-recognition-preview-view-tools[hidden] {
   display: none;
 }
 
@@ -14954,6 +14957,13 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   user-select: none;
 }
 
+.student-document-recognition-preview-viewport.is-text-preview {
+  overflow: auto;
+  background: #fff;
+  cursor: auto;
+  touch-action: pan-x pan-y;
+}
+
 .student-document-recognition-preview-viewport img {
   position: absolute;
   top: 0;
@@ -14965,6 +14975,31 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   pointer-events: none;
   transform-origin: 0 0;
   user-select: none;
+}
+
+.student-document-recognition-preview-viewport img[hidden],
+.student-document-recognition-preview-viewport pre[hidden] {
+  display: none;
+}
+
+.student-document-recognition-preview-viewport pre {
+  width: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 12px;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: #fff;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  overflow-wrap: anywhere;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+.student-document-recognition-preview-viewport pre:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--teal);
 }
 
 .student-document-recognition-preview-loading {
