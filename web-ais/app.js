@@ -20,14 +20,15 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.145",
+    version: "1.7.146",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
     {
-      version: "1.7.145",
+      version: "1.7.146",
       releasedAt: "2026-08-13",
       changes: [
+        "Основные реестры распределяют ширину колонок по объёму данных: ФИО, программы, комментарии и файловые поля шире коротких дат, сумм и статусов; колонка выбора сокращена, а горизонтальная прокрутка используется только на очень узких экранах.",
         "При импорте заявок список сопоставления разделён на наиболее подходящие и остальные программы, а после выбора программа и слушатель повторно проверяются по общей базе.",
         "Повторная заявка определяется также по совпадению ФИО, телефона или email, даже если в существующей карточке указана другая программа."
       ]
@@ -2706,6 +2707,99 @@ MAX - https://bizvmax.ru/zifra_plus
       { key: "program", label: "Образовательная программа", defaultWidth: 260 },
       { key: "programType", label: "Вид программы", defaultWidth: 115 }
     ]
+  });
+  const REGISTRY_COLUMN_WEIGHT_OVERRIDES = Object.freeze({
+    students: {
+      name: 230,
+      status: 110,
+      program: 310,
+      applicationDate: 105,
+      phone: 120,
+      balance: 82,
+      endDate: 105,
+      documentsStatus: 105
+    },
+    contracts: {
+      name: 230,
+      contractNo: 110,
+      type: 135,
+      amount: 88,
+      paid: 88,
+      agencyAmount: 92,
+      balance: 82,
+      endDate: 105
+    },
+    programs: {
+      name: 320,
+      status: 100,
+      type: 145,
+      hours: 70,
+      price: 85,
+      landingCode: 100,
+      promoSite: 150,
+      telegramGroup: 150,
+      groupIndex: 72
+    },
+    trainingPlans: {
+      programName: 250,
+      code: 90,
+      discipline: 260,
+      totalHours: 82,
+      attestation: 125,
+      teacher: 175
+    },
+    webinars: {
+      code: 90,
+      requestDate: 105,
+      name: 220,
+      email: 185,
+      source: 145,
+      payment: 88,
+      status: 110
+    },
+    directExpenses: {
+      note: 245,
+      date: 105,
+      type: 175,
+      amount: 90,
+      actStatus: 120,
+      recommendation: 110,
+      uid: 80
+    },
+    generalExpenses: {
+      counterparty: 210,
+      section: 120,
+      date: 105,
+      workType: 190,
+      bkExpenseNo: 110,
+      amount: 90,
+      paid: 105,
+      accountingClosed: 100
+    },
+    inventory: {
+      itemType: 205,
+      balance: 85,
+      date: 105,
+      amount: 90,
+      note: 245,
+      uid: 80
+    },
+    users: {
+      name: 220,
+      email: 205,
+      role: 110,
+      status: 110,
+      lastLogin: 130
+    },
+    documentTemplates: {
+      title: 230,
+      bindingLabel: 175,
+      sourceLabel: 100,
+      sourceValue: 260,
+      fileNameTemplate: 230,
+      fieldsCount: 72,
+      updatedAt: 105
+    }
   });
   const financeDetailMetrics = [
     { key: "all", label: "Все операции" },
@@ -11767,7 +11861,14 @@ MAX - https://bizvmax.ru/zifra_plus
   function getRegistryColumnPercentages(configId, columns, overrideKey = "", overrideWidth = 0, totalPercent = 100) {
     const weights = columns.map((column, index) => {
       const savedWidth = Number(getColumnWidth(configId, column.key));
-      const defaultWidth = Number(column.defaultWidth) || (index === 0 ? 180 : 120);
+      const configuredWidth = Number(REGISTRY_COLUMN_WEIGHT_OVERRIDES[configId]?.[column.key]);
+      const isLongText = ["textarea", "email"].includes(String(column.type || ""))
+        || /(?:name|program|title|description|comment|note|sourceValue|fileName|discipline|counterparty|teacher)/i.test(column.key);
+      const isCompact = ["number", "date", "checkbox"].includes(String(column.type || ""))
+        || /(?:date|amount|balance|count|hours|status|uid|code|index|paid)$/i.test(column.key);
+      const defaultWidth = configuredWidth
+        || Number(column.defaultWidth)
+        || (isLongText ? 210 : (isCompact ? 90 : (index === 0 ? 190 : 125)));
       const width = column.key === overrideKey ? Number(overrideWidth) : savedWidth;
       return {
         key: column.key,
@@ -11813,7 +11914,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const config = configs[configId];
     if (!config) return "";
     const columns = getTableFields(config, configId);
-    const percentage = getRegistryColumnPercentages(configId, columns, "", 0, 92).get(key) || 0;
+    const percentage = getRegistryColumnPercentages(configId, columns, "", 0, 96.5).get(key) || 0;
     return `style="width:${percentage.toFixed(4)}%;min-width:0"`;
   }
 
@@ -12154,7 +12255,7 @@ MAX - https://bizvmax.ru/zifra_plus
       columns,
       fieldKey,
       width,
-      configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID ? 100 : 92
+      configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID ? 100 : 96.5
     );
     document.querySelectorAll(scope).forEach((cell) => {
       if (cell.dataset.tableConfig !== configId) return;

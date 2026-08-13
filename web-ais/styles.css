@@ -1215,7 +1215,7 @@ body.is-session-expired {
 }
 
 .user-management-table {
-  min-width: 920px;
+  min-width: 0;
 }
 
 .user-management-table tr.is-active td {
@@ -2705,8 +2705,9 @@ body.sidebar-collapsed .sidebar-toggle {
 .issued-documents-register > .table-wrap,
 .document-constructor-panel .document-template-registry > .table-wrap {
   max-height: var(--registry-table-max-height, max(180px, calc(100dvh - 250px)));
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: auto;
+  overscroll-behavior-inline: contain;
 }
 
 .table-pagination {
@@ -3183,13 +3184,16 @@ body.is-resizing-column {
 }
 
 .select-col {
-  width: 44px;
+  width: 30px;
+  min-width: 30px;
+  padding-inline: 3px !important;
   text-align: center;
 }
 
 .select-col input {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
+  margin: 0;
 }
 
 .table-primary-col {
@@ -3213,6 +3217,18 @@ body.is-resizing-column {
 
 .table-edit-link:hover {
   color: #0a5d57;
+}
+
+@media (max-width: 720px) {
+  .collection-register > .table-wrap > .data-table,
+  .issued-documents-register > .table-wrap > .data-table,
+  .document-constructor-panel .document-template-registry > .table-wrap > .data-table {
+    min-width: 760px;
+  }
+
+  .user-management-table {
+    min-width: 760px;
+  }
 }
 
 .record-lock-indicator {
