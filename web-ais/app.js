@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.178",
+    version: "1.7.179",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.179",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В комментариях учёта выплат перед ФИО больше не выводится служебный префикс «слушатель:»."
+      ]
+    },
     {
       version: "1.7.178",
       releasedAt: "2026-08-13",
@@ -16651,9 +16658,17 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function normalizeEmployeePaymentDisplayCommentPart(value = "") {
+    return String(value || "")
+      .trim()
+      .replace(/^слушатель\s*:\s*/iu, "")
+      .trim();
+  }
+
   function getEmployeePaymentDisplayComment(comment = "", studentDetails = "") {
     return unique([comment, studentDetails]
-      .map((value) => String(value || "").trim())
+      .flatMap((value) => String(value || "").split(/\s*·\s*/u))
+      .map(normalizeEmployeePaymentDisplayCommentPart)
       .filter(Boolean))
       .join(" · ");
   }
@@ -16795,7 +16810,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return Number(rawAmount);
     }
     if (key === "comment") {
-      return [row.comment, row.details].map((value) => String(value || "").trim()).filter(Boolean).join(" · ");
+      return getEmployeePaymentDisplayComment(row.comment, row.details);
     }
     if (key === "recommendation" || key === "act") return Boolean(row[key]);
     return String(row[key] || "").trim();
@@ -17016,7 +17031,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (ignoredFilter !== "payment" && filters.payment && getEmployeePaymentStatusFilterValue(row) !== filters.payment) return false;
     if (ignoredFilter !== "act" && filters.act && getEmployeePaymentActFilterValue(row) !== filters.act) return false;
     const commentTokens = normalizeEmployeePaymentFilterText(filters.comment).split(" ").filter(Boolean);
-    const commentText = normalizeEmployeePaymentFilterText([row.comment, row.details].filter(Boolean).join(" "));
+    const commentText = normalizeEmployeePaymentFilterText(getEmployeePaymentDisplayComment(row.comment, row.details));
     const descriptionText = normalizeEmployeePaymentFilterText(row.description);
     if (ignoredFilter !== "comment" && !commentTokens.every((token) => commentText.includes(token))) return false;
     if (
@@ -17203,7 +17218,7 @@ MAX - https://bizvmax.ru/zifra_plus
       sourceType: "direct",
       sourceId: String(expense.id || identity || "").trim(),
       details: [
-        student?.name ? `слушатель: ${student.name}` : "",
+        student?.name || "",
         expense.uid ? `UID ${expense.uid}` : ""
       ].filter(Boolean).join(" · "),
       ...normalizeEmployeePaymentSourceRow("direct", expense)
@@ -17222,7 +17237,7 @@ MAX - https://bizvmax.ru/zifra_plus
       dateReadOnly: slot === "paid1" || slot === "paid2",
       deletable: slot !== "due",
       details: [
-        student.name ? `слушатель: ${student.name}` : "Партнёрская программа",
+        student.name || "Партнёрская программа",
         student.program ? `курс: ${student.program}` : "",
         slot === "due" ? `${calculation.rate}% от ${money(calculation.receiptsTotal)}` : ""
       ].filter(Boolean).join(" · "),
