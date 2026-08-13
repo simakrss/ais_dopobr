@@ -5273,8 +5273,98 @@ function optimizeStudentApplicationsSqlQuery(value) {
   return query;
 }
 
+function upgradeLegacyStudentApplicationsSqlQuery(value) {
+  let query = String(value || "")
+    .replace(/^\s*--[^\r\n]*(?:\r?\n|$)/gmu, "")
+    .trim();
+  if (!query || query.includes("source_order_id")) return query;
+  if (
+    !/FROM\s+wp_wc_order_product_lookup\s+AS\s+t_opl/iu.test(query)
+    || !/SELECT\s+DISTINCTROW/iu.test(query)
+  ) return query;
+  query = query.replace(
+    /,\s*t_opl\.date_created\s*\r?\nFROM/iu,
+    `,
+    IFNULL(coup.order_item_name, '') AS source_coupon,
+    t_opl.date_created,
+    t_opl.order_id AS source_order_id,
+    oi.order_item_id AS source_line_item_id,
+    IFNULL(iprod.meta_value, '') AS source_product_id,
+    (os.status IN ('wc-completed', 'wc-processing') AND os.total_sales > 0) AS source_is_paid,
+    ((os.status IN ('wc-completed', 'wc-processing') AND os.total_sales > 0) * IFNULL(itotal.meta_value, 0)) AS source_payment_amount
+FROM`
+  );
+  query = query.replace(
+    /\r?\n\s*ORDER\s+BY\s+t_opl\.order_id[\s\S]*?\)\s+AS\s+t_all\s*$/iu,
+    `
+  WHERE t_opl.date_created >= ?
+    AND t_opl.date_created < ?
+) AS t_all
+WHERE 1 = 1`
+  );
+  [
+    "Дата", "ФИО", "Заказ (оплата)", "Программа", "Телефон", "Email", "Город",
+    "Организация", "Должность", "Источник", "Примечание"
+  ].forEach((label) => {
+    const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    query = query.replace(
+      new RegExp(`\\bAS\\s+(?:\`${escapedLabel}\`|'${escapedLabel}'|${escapedLabel})(?=\\s*,)`, "giu"),
+      `AS \`${label}\``
+    );
+  });
+  return query;
+}
+
+function compactSqlQueryForMacroSettings(value) {
+  const source = String(value || "").trim();
+  let result = "";
+  let quote = "";
+  let pendingSpace = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      result += char;
+      if (char === quote) {
+        if (source[index + 1] === quote) {
+          result += source[index + 1];
+          index += 1;
+        } else {
+          quote = "";
+        }
+      } else if (char === "\\" && index + 1 < source.length) {
+        result += source[index + 1];
+        index += 1;
+      }
+      continue;
+    }
+    if (["'", '"', "`"].includes(char)) {
+      if (pendingSpace && result && !result.endsWith(" ")) result += " ";
+      pendingSpace = false;
+      quote = char;
+      result += char;
+      continue;
+    }
+    if (/\s/u.test(char)) {
+      pendingSpace = true;
+      continue;
+    }
+    if (",()=<>".includes(char)) {
+      result = result.trimEnd();
+      pendingSpace = false;
+      result += char;
+      continue;
+    }
+    if (pendingSpace && result && !result.endsWith(" ")) result += " ";
+    pendingSpace = false;
+    result += char;
+  }
+  return result.trim().replace(/\s+AS\s+(?=[`A-Za-zА-Яа-я_])/gu, " ");
+}
+
 function normalizeStudentApplicationsSqlQuery(value) {
-  const query = optimizeStudentApplicationsSqlQuery(value);
+  const query = optimizeStudentApplicationsSqlQuery(
+    upgradeLegacyStudentApplicationsSqlQuery(value)
+  );
   if (!query) throw new Error("Укажите SQL-запрос получения заявок интернет-магазина.");
   if (query.length > 100000) throw new Error("SQL-запрос интернет-магазина слишком большой.");
   if (!/^SELECT\b/iu.test(query)) {
@@ -8963,21 +9053,29 @@ function parseRecordEventSettings(
   return result;
 }
 
-function parseStudentEventSettings(value) {
+function parseStudentEventSettings(
+  value,
+  eventTemplates = STUDENT_EVENT_IMPORT_TEMPLATES,
+  eventKeyByLabel = STUDENT_EVENT_IMPORT_KEY_BY_LABEL
+) {
   return parseRecordEventSettings(
     value,
     "КарточкаСлушателя",
-    STUDENT_EVENT_IMPORT_TEMPLATES,
-    STUDENT_EVENT_IMPORT_KEY_BY_LABEL
+    eventTemplates,
+    eventKeyByLabel
   );
 }
 
-function parseContractEventSettings(value) {
+function parseContractEventSettings(
+  value,
+  eventTemplates = CONTRACT_EVENT_IMPORT_TEMPLATES,
+  eventKeyByLabel = CONTRACT_EVENT_IMPORT_KEY_BY_LABEL
+) {
   return parseRecordEventSettings(
     value,
     "КарточкаКонтрагента",
-    CONTRACT_EVENT_IMPORT_TEMPLATES,
-    CONTRACT_EVENT_IMPORT_KEY_BY_LABEL
+    eventTemplates,
+    eventKeyByLabel
   );
 }
 
@@ -9167,6 +9265,134 @@ function getWorkbookNamedCell(workbook, names) {
     name: String(namedRange.Name || "").trim(),
     ...reference,
     value: workbook.Sheets[reference.sheetName]?.[reference.cellAddress]?.v ?? ""
+  };
+}
+
+function normalizeMacroSettingEventType(value) {
+  const source = String(value || "").trim().toLocaleUpperCase("ru-RU");
+  if (!source) return "";
+  if (source.includes("КПК") || source.includes("ПОВЫШ")) return "КПК";
+  if (source.includes("ППП") || source.includes("ПЕРЕПОД")) return "ППП";
+  if (source.includes("ДОП")) return "ДОП";
+  if (source.includes("ПРО")) return "ПРО";
+  return "";
+}
+
+function buildMacroSettingEventKey(label, knownKeys = STUDENT_EVENT_IMPORT_KEY_BY_LABEL) {
+  const normalizedLabel = normalizeImportedStudentEventLabel(label);
+  const knownKey = knownKeys.get(normalizedLabel);
+  if (knownKey) return knownKey;
+  let hash = 2166136261;
+  for (let index = 0; index < normalizedLabel.length; index += 1) {
+    hash = Math.imul(hash ^ normalizedLabel.charCodeAt(index), 16777619);
+  }
+  return `macro_${(hash >>> 0).toString(36)}`;
+}
+
+function parseMacroSettingLines(value) {
+  return String(value || "")
+    .split(/\u000b+|\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function parseMacroStudentEventTemplates(value) {
+  const usedKeys = new Set();
+  return parseMacroSettingLines(value).map((line) => {
+    const [rawLabel, ...rawConditions] = line.split(";");
+    const label = String(rawLabel || "").trim();
+    if (!label) return null;
+    let key = buildMacroSettingEventKey(label);
+    if (usedKeys.has(key)) {
+      let suffix = 2;
+      while (usedKeys.has(`${key}_${suffix}`)) suffix += 1;
+      key = `${key}_${suffix}`;
+    }
+    usedKeys.add(key);
+    const includeTypes = [];
+    const excludeTypes = [];
+    rawConditions.forEach((condition) => {
+      const token = String(condition || "").trim();
+      const type = normalizeMacroSettingEventType(token.replace(/^[-–—]+/u, ""));
+      if (!type) return;
+      const target = /^[-–—]/u.test(token) ? excludeTypes : includeTypes;
+      if (!target.includes(type)) target.push(type);
+    });
+    return { key, label, includeTypes, excludeTypes };
+  }).filter(Boolean);
+}
+
+function parseMacroContractEventTemplates(value) {
+  const usedKeys = new Set();
+  return parseMacroSettingLines(value).map((label) => {
+    let key = buildMacroSettingEventKey(label, CONTRACT_EVENT_IMPORT_KEY_BY_LABEL);
+    if (usedKeys.has(key)) {
+      let suffix = 2;
+      while (usedKeys.has(`${key}_${suffix}`)) suffix += 1;
+      key = `${key}_${suffix}`;
+    }
+    usedKeys.add(key);
+    return { key, label };
+  });
+}
+
+function parseMacroSettingsBlock(value) {
+  const source = String(value || "");
+  const lines = source.split(/\r?\n/u);
+  const entries = new Map();
+  const requestedKeys = new Set([
+    "События",
+    "СобытияКонтрагент",
+    "Магазин_SQL",
+    "Магазин_SQL_сервер",
+    "Магазин_SQL_база",
+    "Магазин_SQL_пароль",
+    "Магазин_SQL_пользователь"
+  ]);
+  let currentKey = "";
+  lines.forEach((line) => {
+    const match = /^([^\s=]{1,100})=(.*)$/u.exec(line);
+    const key = String(match?.[1] || "").trim();
+    if (match) {
+      currentKey = requestedKeys.has(key) ? key : "";
+      if (currentKey) entries.set(currentKey, String(match[2] || ""));
+      return;
+    }
+    if (!currentKey) return;
+    entries.set(currentKey, `${entries.get(currentKey) || ""}\n${line}`);
+  });
+  return entries;
+}
+
+function parseStudentDatabaseMacroSettings(workbook) {
+  const namedCell = getWorkbookNamedCell(workbook, "НастройкиМакросов");
+  if (!namedCell) {
+    return {
+      macroSettings: {
+        provided: false,
+        studentEventTemplates: [],
+        contractEventTemplates: []
+      },
+      macroSettingsSecret: {}
+    };
+  }
+  const entries = parseMacroSettingsBlock(namedCell.value);
+  const studentEventTemplates = parseMacroStudentEventTemplates(entries.get("События"));
+  const contractEventTemplates = parseMacroContractEventTemplates(entries.get("СобытияКонтрагент"));
+  return {
+    macroSettings: {
+      provided: true,
+      namedRange: namedCell.name,
+      studentEventTemplates,
+      contractEventTemplates,
+      applicationsSqlQuery: String(entries.get("Магазин_SQL") || "").replace(/\u000b+/gu, "\n").trim(),
+      applicationsMysqlHost: String(entries.get("Магазин_SQL_сервер") || "").trim(),
+      applicationsMysqlDatabase: String(entries.get("Магазин_SQL_база") || "").trim(),
+      applicationsMysqlUser: String(entries.get("Магазин_SQL_пользователь") || "").trim()
+    },
+    macroSettingsSecret: {
+      applicationsMysqlPassword: String(entries.get("Магазин_SQL_пароль") || "")
+    }
   };
 }
 
@@ -9711,7 +9937,12 @@ function parseGeneralExpenseDatabaseSheet(workbook, onProgress = () => {}) {
   };
 }
 
-function parseContractDatabaseSheet(workbook, onProgress = () => {}) {
+function parseContractDatabaseSheet(
+  workbook,
+  onProgress = () => {},
+  eventTemplates = CONTRACT_EVENT_IMPORT_TEMPLATES,
+  eventKeyByLabel = CONTRACT_EVENT_IMPORT_KEY_BY_LABEL
+) {
   const worksheet = workbook.Sheets["Реестр договоров"];
   if (!worksheet) throw new Error("В файле не найден лист «Реестр договоров».");
   onProgress({ progress: 94, message: "Чтение листа «Реестр договоров»..." });
@@ -9776,7 +10007,11 @@ function parseContractDatabaseSheet(workbook, onProgress = () => {}) {
       if (value === "") return;
       contract[column.fieldName] = value;
     });
-    Object.assign(contract, parseContractEventSettings(contract.additionalSettings));
+    Object.assign(contract, parseContractEventSettings(
+      contract.additionalSettings,
+      eventTemplates,
+      eventKeyByLabel
+    ));
     contract.id = buildContractDatabaseRecordId(contract, rowIndex + 1);
     contract.name = name;
     contract.status = sectionRange.section === CONTRACT_DATABASE_SECTIONS.active
@@ -10098,6 +10333,21 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
   } catch (error) {
     throw new Error(`Не удалось прочитать базу Excel: ${error.message}`);
   }
+  const macroSettingsResult = parseStudentDatabaseMacroSettings(workbook);
+  const studentEventImportTemplates = macroSettingsResult.macroSettings.studentEventTemplates.length
+    ? macroSettingsResult.macroSettings.studentEventTemplates
+    : STUDENT_EVENT_IMPORT_TEMPLATES;
+  const contractEventImportTemplates = macroSettingsResult.macroSettings.contractEventTemplates.length
+    ? macroSettingsResult.macroSettings.contractEventTemplates
+    : CONTRACT_EVENT_IMPORT_TEMPLATES;
+  const studentEventImportKeyByLabel = new Map([
+    ...STUDENT_EVENT_IMPORT_KEY_BY_LABEL,
+    ...studentEventImportTemplates.map((event) => [normalizeImportedStudentEventLabel(event.label), event.key])
+  ]);
+  const contractEventImportKeyByLabel = new Map([
+    ...CONTRACT_EVENT_IMPORT_KEY_BY_LABEL,
+    ...contractEventImportTemplates.map((event) => [normalizeImportedStudentEventLabel(event.label), event.key])
+  ]);
   onProgress({ progress: 12, message: "Чтение листа «База»..." });
   const worksheet = workbook.Sheets["База"];
   if (!worksheet) throw new Error("В файле не найден лист «База».");
@@ -10153,7 +10403,11 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
       student[column.fieldName] = value;
     });
     if (eventSettingsColumn >= 0) {
-      Object.assign(student, parseStudentEventSettings(row[eventSettingsColumn]));
+      Object.assign(student, parseStudentEventSettings(
+        row[eventSettingsColumn],
+        studentEventImportTemplates,
+        studentEventImportKeyByLabel
+      ));
     }
     const baseId = buildStudentDatabaseRecordId(uid, rowIndex + 1);
     const duplicateNumber = (usedIds.get(baseId) || 0) + 1;
@@ -10180,7 +10434,12 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
   const trainingPlanResult = parseTrainingPlanDatabaseSheet(workbook, onProgress);
   const inventoryResult = parseInventoryDatabaseSheet(workbook, onProgress);
   const directExpenseResult = parseDirectExpenseDatabaseSheet(workbook, onProgress);
-  const contractResult = parseContractDatabaseSheet(workbook, onProgress);
+  const contractResult = parseContractDatabaseSheet(
+    workbook,
+    onProgress,
+    contractEventImportTemplates,
+    contractEventImportKeyByLabel
+  );
   const generalExpenseResult = parseGeneralExpenseDatabaseSheet(workbook, onProgress);
   onProgress({ progress: 98, message: "Сопоставление запасов с расходами..." });
   const inventoryLinkResult = linkInventoryToDirectExpenses(
@@ -10209,6 +10468,7 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
     ...directExpenseResult,
     ...generalExpenseResult,
     ...contractResult,
+    ...macroSettingsResult,
     inventory: inventoryResult.inventory,
     inventorySheetName: inventoryResult.inventorySheetName,
     inventorySourceRows: inventoryResult.inventorySourceRows,
@@ -12507,6 +12767,55 @@ function sanitizeStudentDatabaseExportPrograms(value) {
     .filter((program) => program.name || program.xlsbProgramName);
 }
 
+function sanitizeMacroSettingsEventTemplates(value, withConditions = false) {
+  if (!Array.isArray(value)) return [];
+  if (value.length > 300) throw new Error("В настройках слишком много событий.");
+  const usedKeys = new Set();
+  return value.map((item) => {
+    const label = String(item?.label || "")
+      .replace(/[;\r\n\u000b]+/gu, " ")
+      .trim()
+      .slice(0, 500);
+    if (!label) return null;
+    let key = String(item?.key || buildMacroSettingEventKey(label)).trim().replace(/[^A-Za-z0-9_-]/gu, "");
+    if (!key) key = buildMacroSettingEventKey(label);
+    if (usedKeys.has(key)) return null;
+    usedKeys.add(key);
+    const result = { key, label };
+    if (withConditions) {
+      result.includeTypes = [...new Set((item?.includeTypes || [])
+        .map(normalizeMacroSettingEventType)
+        .filter(Boolean))];
+      result.excludeTypes = [...new Set((item?.excludeTypes || [])
+        .map(normalizeMacroSettingEventType)
+        .filter(Boolean))];
+    }
+    return result;
+  }).filter(Boolean);
+}
+
+function sanitizeStudentDatabaseMacroSettingsExport(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { provided: false };
+  }
+  const connection = parseSharedRecordLocksMySqlConnectionString(
+    getStudentApplicationsMySqlConnectionString()
+  );
+  const requestedQuery = String(value.applicationsSqlQuery || "").trim();
+  const applicationsSqlQuery = getStudentApplicationsSqlQuery()
+    || (requestedQuery ? normalizeStudentApplicationsSqlQuery(requestedQuery) : "");
+  return {
+    provided: true,
+    studentEventTemplates: sanitizeMacroSettingsEventTemplates(value.studentEventTemplates, true),
+    contractEventTemplates: sanitizeMacroSettingsEventTemplates(value.contractEventTemplates),
+    applicationsSqlQuery: compactSqlQueryForMacroSettings(applicationsSqlQuery),
+    applicationsMysqlHost: String(connection.server || connection.host || "").trim(),
+    applicationsMysqlDatabase: String(connection.database || connection.initialcatalog || "").trim(),
+    applicationsMysqlUser: String(connection.uid || connection.user || connection.userid || "").trim(),
+    applicationsMysqlPassword: String(connection.pwd || connection.password || "")
+  };
+}
+
 function sanitizeStudentDatabaseExportPayload(body) {
   if (!Array.isArray(body.students) || !body.students.length) {
     throw new Error("В облачной базе нет слушателей для синхронизации.");
@@ -12570,6 +12879,7 @@ function sanitizeStudentDatabaseExportPayload(body) {
     }));
   const programsProvided = Array.isArray(body.programs);
   const programs = sanitizeStudentDatabaseExportPrograms(body.programs);
+  const macroSettings = sanitizeStudentDatabaseMacroSettingsExport(body.macroSettings);
   return {
     students,
     contracts,
@@ -12580,6 +12890,7 @@ function sanitizeStudentDatabaseExportPayload(body) {
     paymentConstants: sanitizePaymentDatabaseConstants(body.paymentConstants),
     paymentConstantsProvided: Array.isArray(body.paymentConstants),
     agentPaymentRates: sanitizeAgentPaymentRates(body.agentPaymentRates),
+    macroSettings,
     defaultStudentAdditionalStatus: DEFAULT_STUDENT_ADDITIONAL_STATUS,
     studentColumnMap: {
       ...STUDENT_DATABASE_COLUMN_MAP,
@@ -12597,8 +12908,12 @@ function sanitizeStudentDatabaseExportPayload(body) {
     contractSections: CONTRACT_DATABASE_SECTIONS,
     contractDateFields: [...CONTRACT_DATABASE_DATE_FIELDS],
     contractNumberFields: [...CONTRACT_DATABASE_NUMBER_FIELDS],
-    studentEventTemplates: STUDENT_EVENT_IMPORT_TEMPLATES,
-    contractEventTemplates: CONTRACT_EVENT_IMPORT_TEMPLATES
+    studentEventTemplates: macroSettings.studentEventTemplates?.length
+      ? macroSettings.studentEventTemplates
+      : STUDENT_EVENT_IMPORT_TEMPLATES,
+    contractEventTemplates: macroSettings.contractEventTemplates?.length
+      ? macroSettings.contractEventTemplates
+      : CONTRACT_EVENT_IMPORT_TEMPLATES
   };
 }
 
@@ -12731,9 +13046,50 @@ function parseStudentDatabaseInWorker(bytes, onProgress = () => {}) {
   });
 }
 
+async function applyImportedStudentDatabaseMacroSettings(result) {
+  const imported = result?.macroSettings;
+  if (!imported?.provided) return;
+  const patch = {};
+  if (String(imported.applicationsSqlQuery || "").trim()) {
+    patch.studentApplicationsSqlQuery = normalizeStudentApplicationsSqlQuery(
+      imported.applicationsSqlQuery
+    );
+  }
+  if (!process.env.STUDENT_APPLICATIONS_MYSQL_CONNECTION_STRING) {
+    const currentConnection = parseSharedRecordLocksMySqlConnectionString(
+      getStudentApplicationsMySqlConnectionString()
+    );
+    const host = String(imported.applicationsMysqlHost || currentConnection.server || currentConnection.host || "").trim();
+    const database = String(imported.applicationsMysqlDatabase || currentConnection.database || currentConnection.initialcatalog || "").trim();
+    const user = String(imported.applicationsMysqlUser || currentConnection.uid || currentConnection.user || currentConnection.userid || "").trim();
+    const password = String(
+      result?.macroSettingsSecret?.applicationsMysqlPassword
+      || currentConnection.pwd
+      || currentConnection.password
+      || ""
+    );
+    if (host && database && user && password) {
+      patch.studentApplicationsMySqlConnectionString = buildStudentApplicationsMySqlConnectionString({
+        driver: currentConnection.driver || "MySQL ODBC 9.4 Unicode Driver",
+        host,
+        port: Number(currentConnection.port) || 3306,
+        database,
+        user,
+        password
+      });
+    }
+  }
+  if (Object.keys(patch).length) await saveServerSettings(patch);
+  result.macroSettings = {
+    ...imported,
+    ...publicStudentApplicationsMySqlSettings()
+  };
+}
+
 function buildStudentDatabaseImportResult(result, source = "webdav") {
+  const { macroSettingsSecret, ...publicResult } = result;
   return {
-    ...result,
+    ...publicResult,
     count: result.students.length,
     contractCount: result.contracts.length,
     directExpenseCount: result.directExpenses.length,
@@ -12815,6 +13171,7 @@ async function runStudentImportJob(job, databasePath, source = "webdav") {
         message: parseProgress.message || "Обработка данных Excel..."
       });
     });
+    await applyImportedStudentDatabaseMacroSettings(result);
     job.result = buildStudentDatabaseImportResult(result, sourceType);
     updateStudentImportJob(job, {
       status: "completed",
@@ -13140,6 +13497,7 @@ async function handleStudentDatabaseImport(req, res) {
     );
     const bytes = await loadStudentDatabaseBytes(body.databasePath, null, { source });
     const result = await parseStudentDatabaseInWorker(bytes);
+    await applyImportedStudentDatabaseMacroSettings(result);
     sendJson(res, 200, buildStudentDatabaseImportResult(result, source));
   } catch (error) {
     sendError(res, 400, error.message);

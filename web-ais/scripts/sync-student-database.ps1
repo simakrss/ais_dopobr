@@ -1812,6 +1812,134 @@ function Update-ProgramPromoMessages {
   }
 }
 
+function ConvertTo-MacroSettingSingleLine {
+  param([object]$Value)
+  return (([string]$Value) -replace "[;\r\n\v]+", " ").Trim()
+}
+
+function ConvertTo-MacroSettingMultilineValue {
+  param([object]$Value)
+  $separator = "$([char]11)$([char]11)"
+  return (([string]$Value).Trim() -replace "\r?\n", $separator)
+}
+
+function Set-MacroSettingTextValue {
+  param(
+    [string]$Text,
+    [string]$Key,
+    [string]$Value
+  )
+  $line = "$Key=$Value"
+  $pattern = "(?m)^$([regex]::Escape($Key))=.*$"
+  if ([regex]::IsMatch($Text, $pattern)) {
+    return [regex]::Replace(
+      $Text,
+      $pattern,
+      [Text.RegularExpressions.MatchEvaluator]{ param($match) return $line },
+      1
+    )
+  }
+  if (-not $Text) { return $line }
+  return "$($Text.TrimEnd([char[]]"`r`n"))`r`n$line"
+}
+
+function ConvertTo-StudentEventMacroSettingValue {
+  param([object[]]$Templates)
+  $separator = "$([char]11)$([char]11)"
+  $rows = foreach ($template in @($Templates)) {
+    if ($null -eq $template) { continue }
+    $label = ConvertTo-MacroSettingSingleLine (Get-ObjectProperty $template "label")
+    if (-not $label) { continue }
+    $conditions = [Collections.Generic.List[string]]::new()
+    foreach ($type in @(Get-ObjectProperty $template "includeTypes")) {
+      $normalized = ConvertTo-MacroSettingSingleLine $type
+      if ($normalized -and -not $conditions.Contains($normalized)) { [void]$conditions.Add($normalized) }
+    }
+    foreach ($type in @(Get-ObjectProperty $template "excludeTypes")) {
+      $normalized = ConvertTo-MacroSettingSingleLine $type
+      if ($normalized -and -not $conditions.Contains("-$normalized")) { [void]$conditions.Add("-$normalized") }
+    }
+    @($label) + @($conditions) -join ";"
+  }
+  return (@($rows) -join $separator)
+}
+
+function ConvertTo-ContractEventMacroSettingValue {
+  param([object[]]$Templates)
+  $separator = "$([char]11)$([char]11)"
+  return (@($Templates) | ForEach-Object {
+    ConvertTo-MacroSettingSingleLine (Get-ObjectProperty $_ "label")
+  } | Where-Object { $_ }) -join $separator
+}
+
+function Update-MacroSettings {
+  param(
+    [object]$Workbook,
+    [object]$Payload
+  )
+  $settings = Get-ObjectProperty $Payload "macroSettings"
+  if ($null -eq $settings -or -not [bool](Get-ObjectProperty $settings "provided")) {
+    return [pscustomobject]@{ Provided = $false; StudentEvents = 0; ContractEvents = 0 }
+  }
+  $definedName = $null
+  $targetRange = $null
+  $text = ""
+  try {
+    $definedName = Get-WorkbookDefinedName $Workbook @("НастройкиМакросов")
+    if ($null -eq $definedName) { throw "В книге не найден именованный диапазон 'НастройкиМакросов'." }
+    try { $targetRange = $definedName.RefersToRange } catch {}
+    if ($null -eq $targetRange) { throw "Именованный диапазон 'НастройкиМакросов' не указывает на ячейку." }
+    $text = [string]$targetRange.Value2
+    $studentTemplates = @(Get-ObjectProperty $settings "studentEventTemplates")
+    $contractTemplates = @(Get-ObjectProperty $settings "contractEventTemplates")
+    $text = Set-MacroSettingTextValue $text "События" (ConvertTo-StudentEventMacroSettingValue $studentTemplates)
+    $text = Set-MacroSettingTextValue $text "СобытияКонтрагент" (ConvertTo-ContractEventMacroSettingValue $contractTemplates)
+
+    $query = [string](Get-ObjectProperty $settings "applicationsSqlQuery")
+    if ($query.Trim()) {
+      $text = Set-MacroSettingTextValue $text "Магазин_SQL" (ConvertTo-MacroSettingMultilineValue $query)
+    }
+    foreach ($mapping in @(
+      @("Магазин_SQL_сервер", "applicationsMysqlHost"),
+      @("Магазин_SQL_база", "applicationsMysqlDatabase"),
+      @("Магазин_SQL_пользователь", "applicationsMysqlUser"),
+      @("Магазин_SQL_пароль", "applicationsMysqlPassword")
+    )) {
+      $value = [string](Get-ObjectProperty $settings $mapping[1])
+      if ($value) { $text = Set-MacroSettingTextValue $text $mapping[0] $value }
+    }
+    while ($text.Length -gt 32767 -and $text.Contains("`r`n`r`n")) {
+      $text = $text.Remove($text.IndexOf("`r`n`r`n"), 2)
+    }
+    if ($text.Length -gt 32767) {
+      throw "Настройки превышают допустимый размер одной ячейки Excel (32767 символов)."
+    }
+    $rowHeight = $null
+    try { $rowHeight = $targetRange.EntireRow.RowHeight } catch {}
+    try {
+      $targetRange.Value2 = [object]$text
+    } catch {
+      # PowerShell may fail to marshal a near-limit (32767 chars) string through Value2.
+      # FormulaLocal stores the same literal text because the value does not start with '='.
+      $targetRange.FormulaLocal = [object]$text
+    }
+    if ($null -ne $rowHeight) {
+      try { $targetRange.EntireRow.RowHeight = $rowHeight } catch {}
+    }
+    return [pscustomobject]@{
+      Provided = $true
+      StudentEvents = $studentTemplates.Count
+      ContractEvents = $contractTemplates.Count
+    }
+  } catch {
+    $textLength = if ($null -eq $text) { 0 } else { $text.Length }
+    throw "Ошибка обновления диапазона 'НастройкиМакросов' (длина: $textLength): $($_.Exception.Message)"
+  } finally {
+    Release-ComObject $targetRange
+    Release-ComObject $definedName
+  }
+}
+
 $excel = $null
 $workbook = $null
 try {
@@ -1847,6 +1975,8 @@ try {
   $contractResult = Update-ContractSheet $workbook $payload $dateFields $numberFields
   Write-SyncProgress 95 "Обновление промосообщений и почтовых сообщений программ..."
   $programPromoResult = Update-ProgramPromoMessages $workbook $payload
+  Write-SyncProgress 96 "Обновление перечней событий и настроек интернет-магазина..."
+  $macroSettingsResult = Update-MacroSettings $workbook $payload
   Write-SyncProgress 96 "Обновление ставок и констант оплаты..."
   $paymentResult = Update-PaymentSettings $workbook $payload
 
@@ -1871,6 +2001,9 @@ try {
     programPromoMessages = $programPromoResult.Messages
     programEmailMessages = $programPromoResult.EmailMessages
     programPromoSkipped = $programPromoResult.Skipped
+    studentEventTemplates = $macroSettingsResult.StudentEvents
+    contractEventTemplates = $macroSettingsResult.ContractEvents
+    macroSettingsUpdated = $macroSettingsResult.Provided
     paymentConstants = $paymentResult.Count
     agentPaymentRates = [pscustomobject]@{
       withAuthorPercent = $agentRateResult.WithAuthorPercent

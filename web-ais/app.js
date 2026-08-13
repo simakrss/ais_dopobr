@@ -20,12 +20,12 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.141",
+    version: "1.7.142",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
     {
-      version: "1.7.141",
+      version: "1.7.142",
       releasedAt: "2026-08-13",
       changes: [
         "При импорте заявок список сопоставления разделён на наиболее подходящие и остальные программы, а после выбора программа и слушатель повторно проверяются по общей базе.",
@@ -3499,6 +3499,95 @@ MAX - https://bizvmax.ru/zifra_plus
     { key: "criminalRecordCertificate", label: "Справка об отсутствии судимости" }
   ];
 
+  function normalizeEventTemplateLabel(value) {
+    return String(value || "")
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function buildMacroEventKey(label, knownTemplates = studentEventTemplates) {
+    const normalizedLabel = normalizeEventTemplateLabel(label);
+    const aliases = new Map([
+      ...knownTemplates.map((event) => [normalizeEventTemplateLabel(event.label), event.key]),
+      [normalizeEventTemplateLabel("Уведомление с перечнем документов в мессенжер (whApp, tlg)"), "docsListNotice"],
+      [normalizeEventTemplateLabel("Запрошена рекомендация учебного центра коллегам, знакомым"), "recommendationRequested"],
+      [normalizeEventTemplateLabel("Сформировано личное дело"), "personalCasePrinted"]
+    ]);
+    const knownKey = aliases.get(normalizedLabel);
+    if (knownKey) return knownKey;
+    let hash = 2166136261;
+    for (let index = 0; index < normalizedLabel.length; index += 1) {
+      hash = Math.imul(hash ^ normalizedLabel.charCodeAt(index), 16777619);
+    }
+    return `macro_${(hash >>> 0).toString(36)}`;
+  }
+
+  function normalizeEventTemplateProgramTypes(value) {
+    return unique((Array.isArray(value) ? value : [])
+      .map(normalizeEducationProgramType)
+      .filter((type) => ["КПК", "ППП", "ДОП", "ПРО"].includes(type)));
+  }
+
+  function normalizeConfiguredEventTemplates(values, options = {}) {
+    if (!Array.isArray(values)) return [];
+    const knownTemplates = options.contract ? contractEventTemplates : studentEventTemplates;
+    const usedKeys = new Set();
+    return values.map((item) => {
+      const label = String(item?.label || "").trim();
+      if (!label) return null;
+      let key = String(item?.key || buildMacroEventKey(label, knownTemplates))
+        .trim()
+        .replace(/[^A-Za-z0-9_-]/g, "");
+      if (!key) key = buildMacroEventKey(label, knownTemplates);
+      if (usedKeys.has(key)) return null;
+      usedKeys.add(key);
+      return {
+        key,
+        label,
+        includeTypes: options.contract ? [] : normalizeEventTemplateProgramTypes(item?.includeTypes),
+        excludeTypes: options.contract ? [] : normalizeEventTemplateProgramTypes(item?.excludeTypes)
+      };
+    }).filter(Boolean);
+  }
+
+  function getStudentEventTemplates() {
+    const configured = normalizeConfiguredEventTemplates(state.data.meta.studentEventTemplates);
+    return configured.length ? configured : studentEventTemplates;
+  }
+
+  function getContractEventTemplates() {
+    const configured = normalizeConfiguredEventTemplates(
+      state.data.meta.contractEventTemplates,
+      { contract: true }
+    );
+    return configured.length ? configured : contractEventTemplates;
+  }
+
+  function studentEventTemplateMatchesProgram(event, record = {}) {
+    const program = findProgramByName(record.program);
+    const programType = normalizeEducationProgramType(program?.type || record.educationType);
+    if (!programType) return true;
+    const includeTypes = normalizeEventTemplateProgramTypes(event?.includeTypes);
+    const excludeTypes = normalizeEventTemplateProgramTypes(event?.excludeTypes);
+    if (excludeTypes.includes(programType)) return false;
+    return !includeTypes.length || includeTypes.includes(programType);
+  }
+
+  function getStudentEventTemplatesForRecord(record = {}) {
+    return getStudentEventTemplates().filter((event) => studentEventTemplateMatchesProgram(event, record));
+  }
+
+  function applyStudentEventTemplateDefaults(record = {}) {
+    const nextRecord = { ...record };
+    const templates = getStudentEventTemplatesForRecord(nextRecord);
+    nextRecord.eventOrder = templates.map((event) => event.key).join(",");
+    nextRecord.eventDeleted = "";
+    nextRecord.eventCustomKeys = String(nextRecord.eventCustomKeys || "");
+    return nextRecord;
+  }
+
   const studentCardDefaultTabIds = ["main", "documents", "income", "communications", "ordersSdo", "results"];
   const visibleStudentCardTabs = studentCardDefaultTabIds
     .map((id) => studentCardTabs.find((tab) => tab.id === id))
@@ -4129,6 +4218,13 @@ MAX - https://bizvmax.ru/zifra_plus
       data.meta.applicationsMysqlManagedByEnvironment
     );
     data.meta.applicationsSqlQuery = String(data.meta.applicationsSqlQuery || "");
+    data.meta.studentEventTemplates = normalizeConfiguredEventTemplates(
+      data.meta.studentEventTemplates
+    );
+    data.meta.contractEventTemplates = normalizeConfiguredEventTemplates(
+      data.meta.contractEventTemplates,
+      { contract: true }
+    );
     data.meta.applicationsOrderAdminUrlTemplate = String(
       data.meta.applicationsOrderAdminUrlTemplate || DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE
     ).trim();
@@ -10677,7 +10773,10 @@ MAX - https://bizvmax.ru/zifra_plus
       ].filter(Boolean).join("; ") : "",
       directExpenses: []
     };
-    return calculateStudentFinance(addAutomaticStudentExpenses(record, program).record);
+    return calculateStudentFinance(addAutomaticStudentExpenses(
+      applyStudentEventTemplateDefaults(record),
+      program
+    ).record);
   }
 
   async function ensureStudentDocumentFolders(records) {
@@ -17255,7 +17354,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 >
                   ${renderStudentSidePanel(record, {
                     entityType: "contract",
-                    eventTemplates: contractEventTemplates,
+                    eventTemplates: getContractEventTemplates(),
                     notePlaceholder: "Общее примечание по договору"
                   })}
                 </aside>
@@ -19690,7 +19789,7 @@ MAX - https://bizvmax.ru/zifra_plus
       : "Свернуть область примечаний и перечня событий";
     const eventTemplates = Array.isArray(options.eventTemplates) && options.eventTemplates.length
       ? options.eventTemplates
-      : studentEventTemplates;
+      : getStudentEventTemplatesForRecord(record);
     const notePlaceholder = String(options.notePlaceholder || "Общее примечание по слушателю");
     const orderedEvents = getOrderedStudentEvents(record, eventTemplates);
     return `
@@ -19794,7 +19893,7 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function getOrderedStudentEvents(record, eventTemplates = studentEventTemplates) {
+  function getOrderedStudentEvents(record, eventTemplates = getStudentEventTemplatesForRecord(record)) {
     const catalog = getStudentEventCatalog(record, eventTemplates);
     const keys = String(record.eventOrder || "")
       .split(",")
@@ -19809,9 +19908,26 @@ MAX - https://bizvmax.ru/zifra_plus
     ];
   }
 
-  function getStudentEventCatalog(record, eventTemplates = studentEventTemplates) {
+  function getStudentEventCatalog(record, eventTemplates = getStudentEventTemplatesForRecord(record)) {
     const deleted = new Set(csvList(record.eventDeleted));
-    const baseEvents = eventTemplates.filter((event) => !deleted.has(event.key));
+    const configuredEvents = [
+      ...getStudentEventTemplates(),
+      ...eventTemplates
+    ];
+    const configuredByKey = new Map(configuredEvents.map((event) => [event.key, event]));
+    const preservedKeys = new Set([
+      ...csvList(record.eventOrder),
+      ...configuredEvents
+        .filter((event) => (
+          normalizeEventState(record[`event_${event.key}_state`], record[`event_${event.key}_date`])
+          || String(record[`event_${event.key}_date`] || "").trim()
+        ))
+        .map((event) => event.key)
+    ]);
+    const baseEvents = unique([
+      ...eventTemplates.map((event) => event.key),
+      ...preservedKeys
+    ]).map((key) => configuredByKey.get(key)).filter((event) => event && !deleted.has(event.key));
     const customEvents = csvList(record.eventCustomKeys).map((key) => ({
       key,
       label: record[`event_${key}_label`] || "Новое событие",
@@ -24492,6 +24608,8 @@ MAX - https://bizvmax.ru/zifra_plus
     bindComboFieldEvents();
 
     document.querySelectorAll("[data-action='set-student-program']").forEach((input) => {
+      const openedWithoutProgram = !String(state.modal?.draft?.program || "").trim();
+      let initialEventTemplatesApplied = false;
       const syncProgramType = (event) => {
         const program = findProgramByName(event.target.value);
         const educationTypeInput = document.querySelector("[name='educationType']");
@@ -24501,6 +24619,23 @@ MAX - https://bizvmax.ru/zifra_plus
         if (studyFormInput && program) studyFormInput.value = normalizeStudyForm(program.studyForm);
         if (hoursInput && program?.hours) hoursInput.value = program.hours;
         updateStudentProgramPromoTitle(event.target.value);
+        if (
+          event.type === "change"
+          && program
+          && openedWithoutProgram
+          && !initialEventTemplatesApplied
+          && state.modal?.config === "students"
+        ) {
+          initialEventTemplatesApplied = true;
+          const draft = applyStudentEventTemplateDefaults({
+            ...collectStudentFormDraft(),
+            program: program.name,
+            educationType: program.type || educationTypeInput?.value || ""
+          });
+          state.modal.draft = draft;
+          state.modal.hasDraftChanges = true;
+          render();
+        }
       };
       updateStudentProgramPromoTitle(input.value);
       input.addEventListener("input", syncProgramType);
@@ -34171,6 +34306,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function runStudentBulkEvents(records, events, updateProgress) {
+    const availableEventTemplates = getStudentEventTemplates();
     const normalizedEvents = (Array.isArray(events) ? events : [])
       .map((event) => ({
         key: String(event?.key || "").trim(),
@@ -34178,7 +34314,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }))
       .filter((event, index, items) => (
         event.key
-        && studentEventTemplates.some((item) => item.key === event.key)
+        && availableEventTemplates.some((item) => item.key === event.key)
         && items.findIndex((item) => item.key === event.key) === index
       ));
     const result = { success: 0, skipped: 0, failed: 0, details: [] };
@@ -34200,7 +34336,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const record = { ...source };
         const changes = [];
         normalizedEvents.forEach(({ key, date }) => {
-          const definition = studentEventTemplates.find((item) => item.key === key);
+          const definition = availableEventTemplates.find((item) => item.key === key);
           const label = definition?.label || source[`event_${key}_label`] || "Событие";
           record[`event_${key}_state`] = date ? "dated" : "checked";
           record[`event_${key}_date`] = date;
@@ -34389,7 +34525,7 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         record.event_portalCredentialsSent_state = "dated";
         record.event_portalCredentialsSent_date = date;
-        record.event_portalCredentialsSent_label = studentEventTemplates
+        record.event_portalCredentialsSent_label = getStudentEventTemplates()
           .find((item) => item.key === "portalCredentialsSent")?.label || "Отправлены данные для доступа к порталу";
         replaceStudentBulkRecord(record);
         addAudit("Отправлены данные для доступа к порталу", configs.students.title, record.name || record.id, {
@@ -34616,7 +34752,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="student-bulk-operation-event-panel" data-student-bulk-panel="event" hidden>
             <strong>Выберите одно или несколько событий и укажите для каждого дату</strong>
             <div class="student-bulk-event-list">
-              ${studentEventTemplates.map((item, index) => `
+              ${getStudentEventTemplates().map((item, index) => `
                 <div class="student-bulk-event-row">
                   <label class="checkbox-line">
                     <input name="eventKeys" type="checkbox" value="${escapeAttr(item.key)}" ${index === 0 ? "checked" : ""}>
@@ -39245,6 +39381,23 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function buildStudentDatabaseExportMacroSettings() {
+    return {
+      provided: true,
+      studentEventTemplates: getStudentEventTemplates().map((event) => ({
+        key: event.key,
+        label: event.label,
+        includeTypes: normalizeEventTemplateProgramTypes(event.includeTypes),
+        excludeTypes: normalizeEventTemplateProgramTypes(event.excludeTypes)
+      })),
+      contractEventTemplates: getContractEventTemplates().map((event) => ({
+        key: event.key,
+        label: event.label
+      })),
+      applicationsSqlQuery: String(state.data.meta.applicationsSqlQuery || "")
+    };
+  }
+
   function getDownloadFileNameFromResponse(response, fallback) {
     const disposition = String(response.headers.get("Content-Disposition") || "");
     const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
@@ -39291,6 +39444,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const programs = buildStudentDatabaseExportPrograms();
       const paymentConstants = buildStudentDatabaseExportPaymentConstants();
       const agentPaymentRates = buildStudentDatabaseExportAgentPaymentRates();
+      const macroSettings = buildStudentDatabaseExportMacroSettings();
       const result = await runStudentDatabaseExport({
         databasePath: getStudentDatabaseWebDavPath(),
         source: syncSource,
@@ -39300,7 +39454,8 @@ MAX - https://bizvmax.ru/zifra_plus
         generalExpenses,
         programs,
         paymentConstants,
-        agentPaymentRates
+        agentPaymentRates,
+        macroSettings
       });
       const duration = formatDatabaseOperationDuration(startedAt);
       state.data.meta.studentDatabaseLastExportedAt = new Date().toISOString();
@@ -39380,6 +39535,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const programs = buildStudentDatabaseExportPrograms();
       const paymentConstants = buildStudentDatabaseExportPaymentConstants();
       const agentPaymentRates = buildStudentDatabaseExportAgentPaymentRates();
+      const macroSettings = buildStudentDatabaseExportMacroSettings();
       const result = await runStudentDatabaseExport({
         databasePath: getStudentDatabaseWebDavPath(),
         source: exportSource,
@@ -39390,7 +39546,8 @@ MAX - https://bizvmax.ru/zifra_plus
         generalExpenses,
         programs,
         paymentConstants,
-        agentPaymentRates
+        agentPaymentRates,
+        macroSettings
       });
       if (!result.jobId || !result.downloadReady) {
         throw new Error("Сервер не подготовил файл базы для скачивания.");
@@ -39805,6 +39962,16 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       const inventoryLinkedExpenseCount = Number(payload.inventoryLinkedExpenseCount || 0);
       const inventoryGeneratedExpenseCount = Number(payload.inventoryGeneratedExpenseCount || 0);
+      const importedMacroSettings = payload.macroSettings && typeof payload.macroSettings === "object"
+        ? payload.macroSettings
+        : {};
+      const importedStudentEventTemplates = normalizeConfiguredEventTemplates(
+        importedMacroSettings.studentEventTemplates
+      );
+      const importedContractEventTemplates = normalizeConfiguredEventTemplates(
+        importedMacroSettings.contractEventTemplates,
+        { contract: true }
+      );
       updateDatabaseImportIndicator({
         status: `Применение данных: ${nextStudents.length} слушателей, ${nextContracts.length} договоров, ${nextTrainingPlans.length} строк учебных планов, ${totalDirectExpenseCount} прямых и ${nextGeneralExpenses.length} общих затрат, ${nextInventory.length} позиций запасов...`,
         progress: 100
@@ -39815,7 +39982,46 @@ MAX - https://bizvmax.ru/zifra_plus
           ...previousData.meta,
           sourceWorkbook: payload.sourceName || "АИС Допобразование.xlsb",
           studentDatabaseLastImportedAt: payload.importedAt || new Date().toISOString(),
-          defaultAuthorPaymentPercent
+          defaultAuthorPaymentPercent,
+          studentEventTemplates: importedStudentEventTemplates.length
+            ? importedStudentEventTemplates
+            : previousData.meta.studentEventTemplates,
+          contractEventTemplates: importedContractEventTemplates.length
+            ? importedContractEventTemplates
+            : previousData.meta.contractEventTemplates,
+          applicationsSqlQuery: String(
+            importedMacroSettings.applicationsSqlQuery
+            || previousData.meta.applicationsSqlQuery
+            || ""
+          ),
+          applicationsMysqlHost: String(
+            importedMacroSettings.applicationsMysqlHost
+            || previousData.meta.applicationsMysqlHost
+            || ""
+          ),
+          applicationsMysqlPort: Number(
+            importedMacroSettings.applicationsMysqlPort
+            || previousData.meta.applicationsMysqlPort
+            || 3306
+          ),
+          applicationsMysqlDatabase: String(
+            importedMacroSettings.applicationsMysqlDatabase
+            || previousData.meta.applicationsMysqlDatabase
+            || ""
+          ),
+          applicationsMysqlUser: String(
+            importedMacroSettings.applicationsMysqlUser
+            || previousData.meta.applicationsMysqlUser
+            || ""
+          ),
+          applicationsMysqlHasPassword: Boolean(
+            importedMacroSettings.applicationsMysqlHasPassword
+            ?? previousData.meta.applicationsMysqlHasPassword
+          ),
+          applicationsMysqlConfigured: Boolean(
+            importedMacroSettings.applicationsMysqlConfigured
+            ?? previousData.meta.applicationsMysqlConfigured
+          )
         },
         dictionaries: {
           ...previousData.dictionaries,
@@ -40293,9 +40499,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function buildRecordAuditChanges(configId, before = {}, after = {}, fields = []) {
     const eventTemplates = configId === "students"
-      ? studentEventTemplates
+      ? getStudentEventTemplates()
       : configId === "contracts"
-        ? contractEventTemplates
+        ? getContractEventTemplates()
         : null;
     if (!eventTemplates) return buildAuditChanges(before, after, fields);
     const ordinaryFields = (fields || []).filter((field) => !isEventAuditValueField(field.key));
