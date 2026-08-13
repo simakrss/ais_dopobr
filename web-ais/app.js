@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.167",
+    version: "1.7.168",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.168",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Поля «Специальность» и «Квалификация» в карточке слушателя и результатах распознавания стали поисковыми списками из ранее сохранённых значений со свободным вводом.",
+        "Предпросмотр распознанных полей показывает все доступные сканы из папки, включая не выбранные для OCR, а переключение документов кнопками и списком больше не прерывается при потере фокуса поля."
+      ]
+    },
     {
       version: "1.7.167",
       releasedAt: "2026-08-13",
@@ -2972,6 +2980,8 @@ MAX - https://bizvmax.ru/zifra_plus
     educationLevels: ["СПО", "Бакалавр", "Специалист", "Магистр", "Аттестат"],
     educationDocumentTypes: ["Диплом о начальном профессиональном образовании", "Диплом о среднем профессиональном образовании", "Диплом о высшем образовании"],
     educationDocumentIssuers: [],
+    educationSpecialties: [],
+    educationQualifications: [],
     programTypes: ["КПК", "ППП", "ДОП", "ПРО", "ИТ"],
     trainingPlanAttestationTypes: ["Зачет", "Экзамен"],
     workPlaces: [],
@@ -3042,6 +3052,8 @@ MAX - https://bizvmax.ru/zifra_plus
     citizenship: { dict: "citizenships", fields: [["students", "citizenship"]] },
     passportType: { dict: "documentTypes", fields: [["students", "passportType"]] },
     customerPassportType: { dict: "documentTypes", fields: [["students", "customerPassportType"]] },
+    educationSpecialty: { dict: "educationSpecialties", fields: [["students", "educationSpecialty"]] },
+    educationQualification: { dict: "educationQualifications", fields: [["students", "educationQualification"]] },
     workPlace: { dict: "workPlaces", fields: [["students", "workPlace"]] },
     position: { dict: "positions", fields: [["students", "position"]] }
   };
@@ -31773,6 +31785,24 @@ MAX - https://bizvmax.ru/zifra_plus
     return normalized;
   }
 
+  function normalizeStudentDocumentRecognitionPreviewReference(value) {
+    if (!value || typeof value !== "object") return null;
+    const normalized = {
+      page: Math.max(1, Math.min(99, Number(value.page) || 1))
+    };
+    const sourceBox = value.box;
+    if (sourceBox && typeof sourceBox === "object") {
+      const box = {
+        x: clamp(Number(sourceBox.x) || 0, 0, 1),
+        y: clamp(Number(sourceBox.y) || 0, 0, 1),
+        width: clamp(Number(sourceBox.width) || 0, 0, 1),
+        height: clamp(Number(sourceBox.height) || 0, 0, 1)
+      };
+      if (box.width > 0 && box.height > 0) normalized.box = box;
+    }
+    return normalized;
+  }
+
   function normalizeStudentDocumentRecognitionPagePreview(value) {
     if (!value || typeof value !== "object") return null;
     const mimeType = String(value.mimeType || "").toLowerCase();
@@ -31820,6 +31850,17 @@ MAX - https://bizvmax.ru/zifra_plus
         return normalizedFile;
       })
       : [];
+    const sourceFiles = Array.isArray(value.sourceFiles)
+      ? value.sourceFiles.slice(0, 40).map((file) => ({
+        fileName: String(file?.fileName || "").trim().slice(0, 260),
+        relativeName: String(file?.relativeName || file?.fileName || "").trim().slice(0, 600),
+        contentType: String(file?.contentType || "").trim().slice(0, 120),
+        size: Math.max(0, Number(file?.size) || 0),
+        ...(Number(file?.pageCount) > 0
+          ? { pageCount: Math.max(1, Math.min(99, Number(file.pageCount) || 1)) }
+          : {})
+      })).filter((file) => file.relativeName || file.fileName)
+      : [];
     const fields = Array.isArray(value.fields)
       ? value.fields.slice(0, 40).map((field) => {
         const normalizedField = { ...field };
@@ -31828,6 +31869,11 @@ MAX - https://bizvmax.ru/zifra_plus
           : null;
         if (preview) normalizedField.preview = preview;
         else delete normalizedField.preview;
+        const previewReference = normalizeStudentDocumentRecognitionPreviewReference(
+          field?.previewReference || field?.preview
+        );
+        if (previewReference) normalizedField.previewReference = previewReference;
+        else delete normalizedField.previewReference;
         return normalizedField;
       })
       : [];
@@ -31865,6 +31911,7 @@ MAX - https://bizvmax.ru/zifra_plus
       skippedCount: Math.max(0, Number(value.skippedCount) || 0),
       fields,
       photoCandidates,
+      sourceFiles,
       files
     };
   }
@@ -32382,6 +32429,43 @@ MAX - https://bizvmax.ru/zifra_plus
     return /\.(?:jpe?g|png|pdf)$/i.test(String(file?.fileName || file?.relativeName || ""));
   }
 
+  function getStudentRecognitionFileKey(file) {
+    return String(file?.relativeName || file?.fileName || "")
+      .replace(/\\/g, "/")
+      .trim()
+      .toLocaleLowerCase("ru-RU");
+  }
+
+  function getStudentDocumentRecognitionPreviewFiles(payload = {}) {
+    const processedFiles = Array.isArray(payload.files) ? payload.files : [];
+    const sourceFiles = Array.isArray(payload.sourceFiles) ? payload.sourceFiles : [];
+    const processedByKey = new Map(processedFiles.map((file) => [
+      getStudentRecognitionFileKey(file),
+      file
+    ]).filter(([key]) => key));
+    const mergedKeys = new Set();
+    const mergedFiles = sourceFiles.flatMap((sourceFile) => {
+      const key = getStudentRecognitionFileKey(sourceFile);
+      if (!key || mergedKeys.has(key)) return [];
+      mergedKeys.add(key);
+      const processedFile = processedByKey.get(key);
+      return [{
+        ...sourceFile,
+        ...(processedFile || {}),
+        fileName: processedFile?.fileName || sourceFile.fileName || "",
+        relativeName: processedFile?.relativeName || sourceFile.relativeName || sourceFile.fileName || "",
+        contentType: processedFile?.contentType || sourceFile.contentType || ""
+      }];
+    });
+    processedFiles.forEach((file) => {
+      const key = getStudentRecognitionFileKey(file);
+      if (!key || mergedKeys.has(key)) return;
+      mergedKeys.add(key);
+      mergedFiles.push(file);
+    });
+    return mergedFiles;
+  }
+
   function getStudentRecognitionExtractionLabel(value) {
     const method = String(value || "").trim().toLowerCase();
     if (method === "text-layer") return "прочитан текстовый слой";
@@ -32513,7 +32597,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ` : ""}
         ${renderStudentDocumentPhotoCandidates(photoCandidates, {
           personLabel,
-          hasVisualFiles: (payload.files || []).some(isStudentRecognitionVisualFile)
+          hasVisualFiles: getStudentDocumentRecognitionPreviewFiles(payload).some(isStudentRecognitionVisualFile)
         })}
         ${groupedFields.length ? groupedFields.map((group) => `
           <section class="student-document-recognition-group student-document-recognition-field-group" data-ocr-field-group="${escapeAttr(group.id)}">
@@ -32885,7 +32969,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function findStudentDocumentRecognitionPagePreview(field, files) {
-    const fieldPreview = normalizeStudentDocumentRecognitionPreview(field?.preview);
+    const fieldPreview = normalizeStudentDocumentRecognitionPreview(field?.preview)
+      || normalizeStudentDocumentRecognitionPreviewReference(field?.previewReference);
     if (!fieldPreview) return { fieldPreview: null, pagePreview: null };
     const sourceNames = String(field?.sourceFile || "")
       .split(/;\s*/g)
@@ -32946,7 +33031,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function bindStudentDocumentRecognitionFieldPreviews(modal, fields, payload = {}) {
-    const files = Array.isArray(payload.files) ? payload.files : [];
+    const files = getStudentDocumentRecognitionPreviewFiles(payload);
+    const previewPayload = { ...payload, files };
     const availableFiles = files
       .map((file, index) => ({ file, index }))
       .filter(({ file }) => file && isStudentRecognitionVisualFile(file));
@@ -33199,7 +33285,7 @@ MAX - https://bizvmax.ru/zifra_plus
       image.style.visibility = message ? "hidden" : "";
     };
     const loadPreviewDocumentPage = async (filePosition, page = 1) => {
-      if (!availableFiles.length || !activeInput) return;
+      if (!availableFiles.length || !activeField || popup.hidden) return;
       const sequence = ++previewLoadSequence;
       activeFilePosition = clamp(Number(filePosition) || 0, 0, availableFiles.length - 1);
       const entry = availableFiles[activeFilePosition];
@@ -33215,10 +33301,10 @@ MAX - https://bizvmax.ru/zifra_plus
         const cacheKey = `${activeFilePosition}:${activePage}`;
         let pageResult = pageCache.get(cacheKey);
         if (!pageResult) {
-          pageResult = await loadStudentDocumentPhotoCropPage(payload, entry.file, activePage);
+          pageResult = await loadStudentDocumentPhotoCropPage(previewPayload, entry.file, activePage);
           pageCache.set(cacheKey, pageResult);
         }
-        if (sequence !== previewLoadSequence || !activeInput) return;
+        if (sequence !== previewLoadSequence || popup.hidden || !activeField) return;
         activePageCount = Math.max(1, Number(pageResult.pageCount) || activePageCount);
         entry.file.pageCount = activePageCount;
         activePage = clamp(Number(pageResult.page) || activePage, 1, activePageCount);
@@ -33320,6 +33406,15 @@ MAX - https://bizvmax.ru/zifra_plus
         return;
       }
       const displayedPreview = pagePreview || fieldPreview;
+      if (!displayedPreview?.mimeType || !displayedPreview?.base64) {
+        if (activeFilePosition >= 0) {
+          void loadPreviewDocumentPage(activeFilePosition, activePage);
+        } else {
+          setPreviewLoading("Файл распознанного поля отсутствует в перечне документов.");
+        }
+        requestAnimationFrame(() => placePopup());
+        return;
+      }
       setPreviewLoading("");
       image.src = `data:${displayedPreview.mimeType};base64,${displayedPreview.base64}`;
       requestAnimationFrame(() => {
@@ -33340,7 +33435,7 @@ MAX - https://bizvmax.ru/zifra_plus
         sourceName === String(file?.relativeName || "")
         || sourceName === String(file?.fileName || "")
       ))));
-      openStudentDocumentPhotoCropper(modal.closest("[data-student-document-recognition-dialog]"), payload, initialFileIndex, {
+      openStudentDocumentPhotoCropper(modal.closest("[data-student-document-recognition-dialog]"), previewPayload, initialFileIndex, {
         title: "Указать область в документе",
         ariaLabel: `Выбор области для поля ${field?.label || field?.key || ""}`,
         useLabel: "Использовать область",
@@ -33393,8 +33488,16 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       input.addEventListener("blur", () => {
         window.setTimeout(() => {
-          if (document.activeElement !== activeInput && !popup.contains(document.activeElement)) hide();
+          if (
+            document.activeElement !== activeInput
+            && !popup.contains(document.activeElement)
+          ) hide();
         }, 0);
+      });
+    });
+    popup.querySelectorAll("button").forEach((button) => {
+      button.addEventListener("pointerdown", (event) => {
+        if (event.button === 0) event.preventDefault();
       });
     });
     const openDocumentAt = (filePosition) => {
@@ -34676,9 +34779,17 @@ MAX - https://bizvmax.ru/zifra_plus
         throw new Error(result.error || "Не удалось получить результаты распознавания.");
       }
       if (!dialog.isStudentDocumentRecognitionClosed?.()) {
+        const resultWithSourceFiles = {
+          ...result,
+          source: result.source || selectedSource,
+          sourceLabel: result.sourceLabel || filesPayload.sourceLabel,
+          sourceFiles: Array.isArray(result.sourceFiles) && result.sourceFiles.length
+            ? result.sourceFiles
+            : availableFiles
+        };
         const storedResult = isContract
-          ? storeContractDocumentRecognitionResult(result)
-          : storeStudentDocumentRecognitionResult(result);
+          ? storeContractDocumentRecognitionResult(resultWithSourceFiles)
+          : storeStudentDocumentRecognitionResult(resultWithSourceFiles);
         renderStudentDocumentRecognitionResults(dialog, storedResult, currentRecord);
       }
     } catch (error) {
@@ -44499,6 +44610,8 @@ MAX - https://bizvmax.ru/zifra_plus
       educationLevels: "Уровни образования",
       educationDocumentTypes: "Виды документов об образовании",
       educationDocumentIssuers: "Кем выдан документ об образовании",
+      educationSpecialties: "Специальности",
+      educationQualifications: "Квалификации",
       frdoProfessionalAreas: "Области профессиональной деятельности (ФРДО)",
       economicActivities: "Виды экономической деятельности (1-ПК)",
       minimumEducationLevels: "Минимальные уровни образования слушателей",

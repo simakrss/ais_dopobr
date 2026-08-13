@@ -8071,6 +8071,12 @@ async function runStudentDocumentRecognitionJob(job, options) {
       skippedCount: sourceResult.skippedCount,
       fields: aggregatedFields,
       photoCandidates,
+      sourceFiles: sourceResult.documents.map((document) => ({
+        fileName: document.fileName,
+        relativeName: document.relativeName,
+        contentType: document.contentType,
+        size: Number(document.size) || 0
+      })),
       files: fileResults.map(({ fields, photoCandidates: ignoredPhotoCandidates, ...fileResult }) => {
         if (!previewSourceFiles.has(fileResult.relativeName)) delete fileResult.pagePreviews;
         return fileResult;
