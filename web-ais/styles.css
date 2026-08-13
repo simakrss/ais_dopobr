@@ -3171,16 +3171,20 @@ body.is-resizing-column {
 }
 
 .select-col {
-  width: 30px;
-  min-width: 30px;
-  padding-inline: 3px !important;
+  width: 34px;
+  min-width: 34px;
+  max-width: 34px;
+  box-sizing: border-box;
+  padding: 6px 3px 6px 7px !important;
   text-align: center;
 }
 
 .select-col input {
+  display: block;
   width: 15px;
   height: 15px;
-  margin: 0;
+  margin: 0 auto;
+  vertical-align: middle;
 }
 
 .table-primary-col {
