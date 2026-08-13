@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260813-bulk-document-full-name-v1";
+  const AUTH_BUILD = "20260813-employee-mail-documents-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

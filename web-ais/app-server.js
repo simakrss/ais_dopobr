@@ -12471,7 +12471,8 @@ async function importStudentMailboxMessages(body, authUser, req) {
     .filter((value) => /^\d+$/.test(value)))].slice(0, 20);
   if (!uids.length) throw new Error("Выберите хотя бы одно письмо.");
   const folder = String(body.folder || "").trim();
-  if (!folder) throw new Error("Не указана папка документов слушателя.");
+  const isContract = String(body.entityType || "").trim().toLowerCase() === "contract";
+  if (!folder) throw new Error(`Не указана папка документов ${isContract ? "сотрудника" : "слушателя"}.`);
   const client = await connectStudentApplicationsImap(settings);
   const warnings = [];
   let messages;
@@ -12525,8 +12526,8 @@ async function importStudentMailboxMessages(body, authUser, req) {
   }
   await safelyAppendAuditEntry({
     action: "Загружены документы из электронной почты",
-    area: "Документы слушателя",
-    entityType: "students",
+    area: isContract ? "Документы сотрудника" : "Документы слушателя",
+    entityType: isContract ? "contracts" : "students",
     entityId: auditText(body.studentId, 240),
     entityLabel: auditText(body.studentName, 500),
     field: "documents",

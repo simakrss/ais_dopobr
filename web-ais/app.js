@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.159",
+    version: "1.7.160",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.160",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Во вкладку документов сотрудника добавлена загрузка писем и вложений из настроенных почтовых ящиков; файлы сохраняются в папку сотрудника, а действие записывается в его журнал."
+      ]
+    },
     {
       version: "1.7.159",
       releasedAt: "2026-08-13",
@@ -18834,7 +18841,12 @@ MAX - https://bizvmax.ru/zifra_plus
           >
             ${renderOrdersSdoIcon("history")}
           </button>
-          ${isContract ? "" : renderStudentMailboxDocumentsButton(record, "student-document-recognition-button", true)}
+          ${renderStudentMailboxDocumentsButton(
+            record,
+            "student-document-recognition-button",
+            true,
+            isContract ? "contract" : "student"
+          )}
           <button
             class="ghost-button student-document-recognition-button"
             data-action="recognize-${actionPrefix}-documents"
@@ -20160,13 +20172,17 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderStudentMailboxDocumentsButton(record, extraClass = "", showLabel = false) {
-    const documentsFolder = getStudentYandexDocumentsFolder(record);
+  function renderStudentMailboxDocumentsButton(record, extraClass = "", showLabel = false, entityType = "student") {
+    const isContract = entityType === "contract";
+    const documentsFolder = isContract
+      ? getContractDocumentsFolder(record)
+      : getStudentYandexDocumentsFolder(record);
     const title = "Загрузить документы из писем электронной почты";
     return `
       <button
         class="ghost-button student-mailbox-documents-button ${escapeAttr(extraClass)}"
         data-action="open-student-mailbox-documents"
+        data-mailbox-entity-type="${escapeAttr(isContract ? "contract" : "student")}"
         data-student-id="${escapeAttr(record?.id || "")}"
         data-student-name="${escapeAttr(record?.name || "")}"
         data-student-email="${escapeAttr(record?.email || "")}"
@@ -30369,17 +30385,22 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function openStudentMailboxDocuments(event) {
     const button = event.currentTarget;
+    const isContract = button.dataset.mailboxEntityType === "contract";
+    const currentRecord = isContract ? collectContractFormDraft() : collectStudentFormDraft();
+    const personLabel = isContract ? "сотрудника" : "слушателя";
     const mailboxes = getAvailableStudentDocumentMailboxes();
     if (!mailboxes.length) {
       alert("В админке не настроены почтовые ящики.");
       return;
     }
-    const studentId = String(button.dataset.studentId || "").trim();
-    const studentName = String(button.dataset.studentName || "").trim();
-    const studentEmail = String(button.dataset.studentEmail || "").trim();
-    const folder = String(button.dataset.studentDocumentsFolder || "").trim();
+    const studentId = String(currentRecord?.id || button.dataset.studentId || "").trim();
+    const studentName = String(currentRecord?.name || button.dataset.studentName || "").trim();
+    const studentEmail = String(currentRecord?.email || button.dataset.studentEmail || "").trim();
+    const folder = isContract
+      ? getContractDocumentsFolder(currentRecord)
+      : getStudentYandexDocumentsFolder(currentRecord);
     if (!folder) {
-      alert("Не удалось определить папку документов слушателя.");
+      alert(`Не удалось определить папку документов ${personLabel}.`);
       return;
     }
     document.querySelector("[data-student-mailbox-dialog]")?.remove();
@@ -30391,12 +30412,12 @@ MAX - https://bizvmax.ru/zifra_plus
     backdrop.innerHTML = `
       <section class="student-mailbox-dialog" role="dialog" aria-modal="true" aria-labelledby="studentMailboxTitle">
         <header class="student-mailbox-head">
-          <div><h2 id="studentMailboxTitle">Письма: ${escapeHtml(studentName || "слушатель")}</h2><p>Выберите письма — их текст и вложения будут сохранены в папку «Документы».</p></div>
+          <div><h2 id="studentMailboxTitle">Письма: ${escapeHtml(studentName || personLabel)}</h2><p>Выберите письма — их текст и вложения будут сохранены в папку «Документы».</p></div>
           <button class="icon-button" data-action="close-student-mailbox" type="button" title="Закрыть" aria-label="Закрыть">×</button>
         </header>
         <form class="student-mailbox-filters" data-student-mailbox-filters>
           <label><span>Почтовый ящик</span><select name="mailboxId">${mailboxes.map((mailbox) => `<option value="${escapeAttr(mailbox.id)}" ${mailbox.id === preferredMailbox.id ? "selected" : ""}>${escapeHtml(getStudentMailboxOptionLabel(mailbox))}</option>`).join("")}</select></label>
-          <label><span>Email слушателя</span><input name="email" type="email" value="${escapeAttr(studentEmail)}" placeholder="email@example.ru"></label>
+          <label><span>Email ${escapeHtml(personLabel)}</span><input name="email" type="email" value="${escapeAttr(studentEmail)}" placeholder="email@example.ru"></label>
           <label><span>С</span><input name="dateFrom" type="date" value="${studentMailboxDateOffset(-180)}"></label>
           <label><span>По</span><input name="dateTo" type="date" value="${studentMailboxDateOffset(0)}"></label>
           <label class="student-mailbox-query"><span>Текст или тема</span><input name="query" type="search" placeholder="Дополнительный поиск"></label>
@@ -30532,7 +30553,8 @@ MAX - https://bizvmax.ru/zifra_plus
             uids,
             folder,
             studentId,
-            studentName
+            studentName,
+            entityType: isContract ? "contract" : "student"
           })
         });
         const payload = await response.json().catch(() => ({}));
