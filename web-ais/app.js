@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.165",
+    version: "1.7.166",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.166",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Правила автоматического назначения оплат, включая вид выплаты, формулу, ставку и исключения, теперь берутся из раздела «Настройки системы → Оплата → Назначение»; карточка программы определяет только получателей специальных выплат."
+      ]
+    },
     {
       version: "1.7.165",
       releasedAt: "2026-08-13",
@@ -10996,7 +11003,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!recipient || rule.exclusions.some((item) => normalizeProgramName(item) === normalizedRecipient)) {
         return null;
       }
-      const amountFormula = String(author.amountFormula || rule.amountFormula || "[АвторскаяСтавка]").trim();
+      const amountFormula = String(rule.amountFormula || "").trim();
       const paymentPercent = getProgramAuthorPaymentPercent(amountFormula);
       const amount = evaluateProgramAuthorPaymentFormula(amountFormula, paymentTotal);
       return {
@@ -13025,6 +13032,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <textarea name="${escapeAttr(automaticExpenseRules.key)}" rows="10" spellcheck="false">${escapeHtml(automaticExpenseRules.value)}</textarea>
           </label>
           <p class="payment-settings-hint">
+            Этот список является источником правил автоматического назначения оплат: вида выплаты, формулы, ставки, примечания и исключений.
             Формат строки: <code>Вид затрат, Сумма или формула, Примечание</code>.
             Значения примечания со знаком «-» не добавляются. Несколько исключений разделяются точкой с запятой.
             Для «Оплаты преподавателю» и «Оплаты председателю ИАК» получатель определяется из настроек программы,
