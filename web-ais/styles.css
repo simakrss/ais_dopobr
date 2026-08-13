@@ -14265,10 +14265,31 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   gap: 3px;
 }
 
-.student-document-recognition-field-value > input {
+.student-document-recognition-field-value > input,
+.student-document-recognition-field-value > select {
   width: 100%;
   min-height: 28px;
   padding: 3px 6px;
+}
+
+.student-document-recognition-field-value .combo-input-wrap > input {
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 40px 3px 6px;
+}
+
+.student-document-recognition-field-value .combo-field {
+  width: 100%;
+  min-width: 0;
+}
+
+.student-document-recognition-field-value .combo-field.is-open {
+  z-index: 75;
+}
+
+.student-document-recognition-field-value .combo-options {
+  width: 100%;
+  max-width: min(640px, calc(100vw - 32px));
 }
 
 .student-document-recognition-field-value > small {

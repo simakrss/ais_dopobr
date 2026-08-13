@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.156",
+    version: "1.7.157",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.157",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В итогах распознавания поля со справочниками используют те же списки, поиск и свободный ввод, что и карточки слушателя и сотрудника."
+      ]
+    },
     {
       version: "1.7.156",
       releasedAt: "2026-08-13",
@@ -31950,8 +31957,93 @@ MAX - https://bizvmax.ru/zifra_plus
     return source.replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
   }
 
-  function renderStudentDocumentRecognitionField(field, currentRecord) {
+  function getDocumentRecognitionAlternativeValues(field) {
+    return (Array.isArray(field?.alternatives) ? field.alternatives : [])
+      .map((item) => String(item?.value ?? item ?? "").trim())
+      .filter(Boolean);
+  }
+
+  function getDocumentRecognitionFieldDefinition(key, isContract = false) {
+    const fields = isContract ? configs.contracts.fields : studentCardFields;
+    return fields.find((item) => item.key === key) || null;
+  }
+
+  function getDocumentRecognitionListControl(field, isContract = false) {
+    const key = String(field?.key || "");
+    const value = String(field?.value || "").trim();
+    const item = getDocumentRecognitionFieldDefinition(key, isContract);
+    const alternatives = getDocumentRecognitionAlternativeValues(field);
+    const makeOptions = (values) => unique([
+      ...(Array.isArray(values) ? values : []),
+      ...alternatives,
+      value
+    ].map((option) => String(option ?? "").trim()).filter(Boolean));
+    let mode = "";
+    let dictionary = "";
+    let options = [];
+
+    if (key === "gender") {
+      mode = "select";
+      options = makeOptions(["Женский", "Мужской"]);
+    } else if (key === "program" && !isContract) {
+      mode = "combo";
+      options = sortProgramNames(makeOptions(getProgramRows().map((program) => program.name).filter(Boolean)));
+    } else if (!isContract && searchableStudentFields[key]) {
+      mode = "combo";
+      dictionary = searchableStudentFields[key].dict;
+      options = makeOptions(getLookupOptions(searchableStudentFields[key], [value]));
+    } else if (!isContract && ["passportIssuer", "educationDocumentIssuer"].includes(key)) {
+      mode = "combo";
+      dictionary = key === "educationDocumentIssuer" ? "educationDocumentIssuers" : "passportIssuers";
+      options = makeOptions(key === "educationDocumentIssuer"
+        ? getEducationDocumentIssuerOptions(value)
+        : getPassportIssuerOptions(value));
+    } else if (item?.type === "select") {
+      mode = "select";
+      dictionary = String(item.dict || "");
+      const configuredOptions = Array.isArray(item.options)
+        ? item.options
+        : (state.data.dictionaries[item.dict] || []);
+      options = makeOptions(configuredOptions);
+    }
+
+    if (!mode || !options.length) return null;
+    const ariaLabel = String(field.label || key);
+    if (mode === "combo") {
+      return {
+        mode,
+        options,
+        markup: renderComboField({
+          name: `ocr_${isContract ? "contract" : "student"}_${key}`,
+          type: "search",
+          value,
+          options,
+          dictionary,
+          attrs: `data-ocr-field-value aria-label="${escapeAttr(ariaLabel)}"`
+        })
+      };
+    }
+    return {
+      mode,
+      options,
+      markup: `
+        <select
+          data-ocr-field-value
+          ${dictionary ? `data-settings-dictionary="${escapeAttr(dictionary)}"` : ""}
+          aria-label="${escapeAttr(ariaLabel)}"
+        >
+          <option value=""></option>
+          ${options.map((option) => `
+            <option value="${escapeAttr(option)}"${option === value ? " selected" : ""}>${escapeHtml(option)}</option>
+          `).join("")}
+        </select>
+      `
+    };
+  }
+
+  function renderStudentDocumentRecognitionField(field, currentRecord, options = {}) {
     const key = String(field.key || "");
+    const listControl = getDocumentRecognitionListControl(field, options.isContract === true);
     const manualEntry = field.manualEntry === true && !String(field.value || "").trim();
     const isIdentityNumber = ["inn", "snils"].includes(key);
     const currentValue = String(currentRecord[key] || "").trim();
@@ -31965,7 +32057,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const confidenceTone = confidence >= 85 ? "high" : confidence >= 65 ? "medium" : "low";
     const selected = !currentValue && confidence >= 60;
     const alternatives = Array.isArray(field.alternatives) ? field.alternatives : [];
-    const listId = alternatives.length ? `ocr-options-${key}-${Math.random().toString(36).slice(2)}` : "";
+    const listId = !listControl && alternatives.length ? `ocr-options-${key}-${Math.random().toString(36).slice(2)}` : "";
     const status = conflict
       ? '<span class="student-document-recognition-conflict">Есть другое значение</span>'
       : sameValue
@@ -31982,14 +32074,16 @@ MAX - https://bizvmax.ru/zifra_plus
           <span>${escapeHtml(field.label || key)}</span>
         </label>
         <div class="student-document-recognition-field-value">
-          <input
-            type="text"
-            data-ocr-field-value
-            value="${escapeAttr(field.value || "")}"
-            ${manualEntry ? 'placeholder="Введите адрес по фрагменту паспорта"' : ""}
-            ${listId ? `list="${escapeAttr(listId)}"` : ""}
-            aria-label="${escapeAttr(field.label || key)}"
-          >
+          ${listControl?.markup || `
+            <input
+              type="text"
+              data-ocr-field-value
+              value="${escapeAttr(field.value || "")}"
+              ${manualEntry ? 'placeholder="Введите адрес по фрагменту паспорта"' : ""}
+              ${listId ? `list="${escapeAttr(listId)}"` : ""}
+              aria-label="${escapeAttr(field.label || key)}"
+            >
+          `}
           ${listId ? `
             <datalist id="${escapeAttr(listId)}">
               ${alternatives.map((item) => `<option value="${escapeAttr(item.value || "")}"></option>`).join("")}
@@ -32002,7 +32096,8 @@ MAX - https://bizvmax.ru/zifra_plus
             <span title="${escapeAttr(field.evidence || "")}">Источник: ${escapeHtml(field.sourceFile || "документ")}</span>
           </div>
           ${currentValue ? `<small>Сейчас в карточке: <strong>${escapeHtml(currentValue)}</strong></small>` : ""}
-          ${alternatives.length ? `<small>Другие варианты доступны в списке поля: ${alternatives.length}</small>` : ""}
+          ${listControl ? `<small>${listControl.mode === "combo" ? "Выберите значение из списка или введите своё." : "Выберите значение из списка."}</small>` : ""}
+          ${!listControl && alternatives.length ? `<small>Другие варианты доступны в списке поля: ${alternatives.length}</small>` : ""}
         </div>
       </div>
     `;
@@ -32214,7 +32309,7 @@ MAX - https://bizvmax.ru/zifra_plus
               </label>
               <small data-ocr-group-selected-count></small>
             </div>
-            ${group.fields.map((field) => renderStudentDocumentRecognitionField(field, currentRecord)).join("")}
+            ${group.fields.map((field) => renderStudentDocumentRecognitionField(field, currentRecord, { isContract })).join("")}
           </section>
         `).join("") : `
           <div class="student-document-recognition-empty">
@@ -32375,6 +32470,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     bindStudentDocumentRecognitionSelectAll(modal);
     bindStudentDocumentRecognitionIdentityValidation(modal);
+    bindComboFieldEvents(modal);
     bindStudentDocumentRecognitionFieldPreviews(modal, fields, payload);
   }
 
@@ -32453,7 +32549,7 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
     modal.addEventListener("change", (event) => {
-      if (event.target.matches("[data-ocr-field-enabled]")) sync();
+      if (event.target.matches("[data-ocr-field-enabled], [data-ocr-field-value]")) sync();
     });
     modal.addEventListener("input", (event) => {
       if (event.target.matches("[data-ocr-field-value]")) sync();
