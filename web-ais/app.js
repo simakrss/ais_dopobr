@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.169",
+    version: "1.7.170",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.170",
+      releasedAt: "2026-08-13",
+      changes: [
+        "При выборе «Все» в базе слушателей записи сортируются по дате заявки от новых к старым."
+      ]
+    },
     {
       version: "1.7.169",
       releasedAt: "2026-08-13",
@@ -11369,7 +11376,7 @@ MAX - https://bizvmax.ru/zifra_plus
     state.studentProgramTypeFilter = [];
     state.studentImportedViewIds = imported.map((record) => record.id);
     state.selected.students = [];
-    state.sort = getDefaultTableSort("students");
+    state.sort = getStudentStatusTableSort(state.statusFilter);
     state.tablePages.students = 1;
     state.tableOptions = null;
     state.studentApplicationsImport.open = false;
@@ -11919,9 +11926,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentStatusTableSort(status) {
-    return String(status || "").trim().toLocaleLowerCase("ru-RU") === "отчислен"
-      ? { key: "endDate", dir: "desc" }
-      : getDefaultTableSort("students");
+    const normalizedStatus = String(status || "").trim().toLocaleLowerCase("ru-RU");
+    if (normalizedStatus === "все") return { key: "applicationDate", dir: "desc" };
+    if (normalizedStatus === "отчислен") return { key: "endDate", dir: "desc" };
+    return getDefaultTableSort("students");
   }
 
   function parseTableSortDate(value) {
@@ -24943,6 +24951,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='clear-student-imported-view']")?.addEventListener("click", () => {
       state.studentImportedViewIds = [];
       state.statusFilter = getDefaultStatusFilter("students");
+      state.sort = getStudentStatusTableSort(state.statusFilter);
       state.tablePages.students = 1;
       render();
     });
