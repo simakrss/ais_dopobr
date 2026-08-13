@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.160",
+    version: "1.7.161",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.161",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Названия документов и почтовых вложений при групповой генерации формируются по тем же данным карточки слушателя и тому же шаблону, что и при генерации непосредственно из карточки."
+      ]
+    },
     {
       version: "1.7.160",
       releasedAt: "2026-08-13",
@@ -9702,52 +9709,6 @@ MAX - https://bizvmax.ru/zifra_plus
       email ? `email:${email}` : "",
       phone.length === 10 ? `phone:${phone}` : ""
     ].filter(Boolean);
-  }
-
-  function getStudentDocumentNameParts(value) {
-    return normalizeStudentApplicationPersonName(value)
-      .split(" ")
-      .map((part) => part.trim())
-      .filter(Boolean);
-  }
-
-  function isFullStudentDocumentName(value) {
-    const parts = getStudentDocumentNameParts(value);
-    return parts.length >= 3 && parts.slice(0, 3).every((part) => part.length > 1);
-  }
-
-  function studentDocumentNamesMatch(shortName, fullName) {
-    const shortParts = getStudentDocumentNameParts(shortName);
-    const fullParts = getStudentDocumentNameParts(fullName);
-    if (shortParts.length < 2 || fullParts.length < 3 || shortParts[0] !== fullParts[0]) return false;
-    return shortParts.slice(1, 3).every((part, index) => {
-      const fullPart = fullParts[index + 1] || "";
-      return part.length === 1 ? fullPart.startsWith(part) : fullPart === part;
-    });
-  }
-
-  function resolveStudentBulkDocumentRecord(record) {
-    if (!record || isFullStudentDocumentName(record.name)) return record;
-    const sourceEmail = String(record.email || "").trim().toLocaleLowerCase("ru-RU");
-    const sourcePhone = String(record.phone || "").replace(/\D/g, "").slice(-10);
-    const candidatesByName = new Map();
-    (state.data.collections.students || []).forEach((candidate) => {
-      if (!candidate || String(candidate.id || "") === String(record.id || "")) return;
-      if (!isFullStudentDocumentName(candidate.name)) return;
-      if (!studentDocumentNamesMatch(record.name, candidate.name)) return;
-      const candidateEmail = String(candidate.email || "").trim().toLocaleLowerCase("ru-RU");
-      const candidatePhone = String(candidate.phone || "").replace(/\D/g, "").slice(-10);
-      const emailMatches = Boolean(sourceEmail && candidateEmail === sourceEmail);
-      const phoneMatches = Boolean(sourcePhone.length === 10 && candidatePhone === sourcePhone);
-      if (!emailMatches && !phoneMatches) return;
-      const nameKey = normalizeStudentApplicationPersonName(candidate.name);
-      const score = (emailMatches ? 2 : 0) + (phoneMatches ? 2 : 0);
-      const current = candidatesByName.get(nameKey);
-      if (!current || score > current.score) candidatesByName.set(nameKey, { candidate, score });
-    });
-    const matches = [...candidatesByName.values()].sort((left, right) => right.score - left.score);
-    if (!matches.length || (matches[1] && matches[1].score === matches[0].score)) return record;
-    return { ...record, name: String(matches[0].candidate.name || record.name).trim() };
   }
 
   function getStudentApplicationProgram(row, selectedProgramId = "") {
@@ -35323,15 +35284,14 @@ MAX - https://bizvmax.ru/zifra_plus
     for (let index = 0; index < generationGroups.length; index += 1) {
       const { record, count } = generationGroups[index];
       updateProgress(preparedRecords.length + index, `Формирование: ${record.name || record.id}`);
-      const documentRecord = resolveStudentBulkDocumentRecord(record);
-      const documentTemplate = getStudentBulkDocumentTemplate(documentRecord, operation);
+      const documentTemplate = getStudentBulkDocumentTemplate(record, operation);
       if (!documentTemplate) {
         result.failed += count;
         result.details.push({ tone: "error", name: record.name, message: "Не найден подходящий шаблон в Конструкторе документов." });
         continue;
       }
-      const programType = operation === "education" ? getStudentProgramTypeCode(documentRecord) : "";
-      const missing = getMissingStudentDocumentFields(documentRecord, documentTemplate, programType);
+      const programType = operation === "education" ? getStudentProgramTypeCode(record) : "";
+      const missing = getMissingStudentDocumentFields(record, documentTemplate, programType);
       if (missing.length) {
         result.skipped += count;
         result.details.push({
@@ -35357,7 +35317,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const storageRequest = getStudentBulkDocumentStorageRequest(record, effectiveTemplate);
       const generated = await downloadStudentDocumentFromTemplate(
         effectiveTemplate,
-        documentRecord,
+        record,
         null,
         "Не удалось сформировать групповой документ",
         {
