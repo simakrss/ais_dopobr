@@ -9,6 +9,17 @@ const AIS_MAIL_MAX_ATTACHMENT_BYTES = 24 * 1024 * 1024;
 const AIS_MAIL_MAX_SUBJECT_LENGTH = 200;
 const AIS_MAIL_RATE_LIMIT = 20;
 const AIS_MAIL_RATE_WINDOW = 60;
+const AIS_MAIL_SMTP_DEADLINE_SECONDS = 120.0;
+const AIS_MAIL_SMTP_COMMAND_TIMEOUT_SECONDS = 30.0;
+const AIS_MAIL_SMTP_MESSAGE_TIMEOUT_SECONDS = 60.0;
+
+final class SmtpDeliveryUnknownException extends RuntimeException
+{
+}
+
+final class SmtpResponseRejectedException extends RuntimeException
+{
+}
 
 $authLibraryCandidates = [
     dirname(__DIR__, 2) . '/lms-runtime/app/auth-lib.php',
@@ -205,11 +216,53 @@ function load_mail_settings(): array
     ];
 }
 
-function smtp_read_response($socket, array $expectedCodes, string $action): string
+function smtp_remaining_timeout(
+    float $deadline,
+    string $action,
+    float $maximumTimeout = AIS_MAIL_SMTP_COMMAND_TIMEOUT_SECONDS
+): float
+{
+    $remaining = $deadline - microtime(true);
+    if ($remaining <= 0) {
+        throw new RuntimeException($action . ': превышен общий лимит времени SMTP-соединения.');
+    }
+    return max(0.001, min($remaining, $maximumTimeout));
+}
+
+function smtp_apply_stream_timeout(
+    $socket,
+    float $deadline,
+    string $action,
+    float $maximumTimeout = AIS_MAIL_SMTP_COMMAND_TIMEOUT_SECONDS
+): void
+{
+    $timeout = smtp_remaining_timeout($deadline, $action, $maximumTimeout);
+    $seconds = (int) floor($timeout);
+    $microseconds = (int) floor(($timeout - $seconds) * 1000000);
+    if ($seconds === 0 && $microseconds === 0) {
+        $microseconds = 1000;
+    }
+    if (!stream_set_timeout($socket, $seconds, $microseconds)) {
+        throw new RuntimeException($action . ': не удалось установить ограничение времени SMTP-соединения.');
+    }
+}
+
+function smtp_read_response(
+    $socket,
+    array $expectedCodes,
+    string $action,
+    float $deadline,
+    float $maximumTimeout = AIS_MAIL_SMTP_COMMAND_TIMEOUT_SECONDS
+): string
 {
     $response = '';
     $code = 0;
-    while (($line = fgets($socket, 8192)) !== false) {
+    while (true) {
+        smtp_apply_stream_timeout($socket, $deadline, $action, $maximumTimeout);
+        $line = fgets($socket, 8192);
+        if ($line === false) {
+            break;
+        }
         $response .= $line;
         if (preg_match('/^(\d{3}) /', $line, $matches)) {
             $code = (int) $matches[1];
@@ -221,28 +274,50 @@ function smtp_read_response($socket, array $expectedCodes, string $action): stri
         throw new RuntimeException($action . ': SMTP-сервер не ответил вовремя.');
     }
     if (!in_array($code, $expectedCodes, true)) {
-        throw new RuntimeException($action . ': ' . trim($response ?: 'SMTP-сервер закрыл соединение.'));
+        $message = $action . ': ' . trim($response ?: 'SMTP-сервер закрыл соединение.');
+        if ($code > 0) {
+            throw new SmtpResponseRejectedException($message);
+        }
+        throw new RuntimeException($message);
     }
     return $response;
 }
 
-function smtp_write_all($socket, string $value): void
+function smtp_write_all(
+    $socket,
+    string $value,
+    float $deadline,
+    string $action,
+    float $maximumTimeout = AIS_MAIL_SMTP_COMMAND_TIMEOUT_SECONDS
+): void
 {
     $length = strlen($value);
     $offset = 0;
     while ($offset < $length) {
-        $written = fwrite($socket, substr($value, $offset));
+        smtp_apply_stream_timeout($socket, $deadline, $action, $maximumTimeout);
+        $written = fwrite($socket, substr($value, $offset, 65536));
         if ($written === false || $written === 0) {
-            throw new RuntimeException('Не удалось передать данные SMTP-серверу.');
+            $meta = stream_get_meta_data($socket);
+            if (!empty($meta['timed_out'])) {
+                throw new RuntimeException($action . ': SMTP-сервер не принял данные вовремя.');
+            }
+            throw new RuntimeException($action . ': не удалось передать данные SMTP-серверу.');
         }
         $offset += $written;
     }
 }
 
-function smtp_command($socket, string $command, array $expectedCodes, string $action): string
+function smtp_command(
+    $socket,
+    string $command,
+    array $expectedCodes,
+    string $action,
+    float $deadline,
+    float $maximumTimeout = AIS_MAIL_SMTP_COMMAND_TIMEOUT_SECONDS
+): string
 {
-    smtp_write_all($socket, $command . "\r\n");
-    return smtp_read_response($socket, $expectedCodes, $action);
+    smtp_write_all($socket, $command . "\r\n", $deadline, $action, $maximumTimeout);
+    return smtp_read_response($socket, $expectedCodes, $action, $deadline, $maximumTimeout);
 }
 
 function smtp_response_supports_extension(string $response, string $extensionName): bool
@@ -270,6 +345,8 @@ function send_smtp_mail(
     ?array $attachment = null
 ): array
 {
+    $deadline = microtime(true) + AIS_MAIL_SMTP_DEADLINE_SECONDS;
+    @set_time_limit((int) AIS_MAIL_SMTP_DEADLINE_SECONDS + 5);
     $context = stream_context_create([
         'ssl' => [
             'verify_peer' => true,
@@ -280,40 +357,52 @@ function send_smtp_mail(
     ]);
     $errorNumber = 0;
     $errorMessage = '';
+    $connectTimeout = smtp_remaining_timeout(
+        $deadline,
+        'Подключение к SMTP',
+        AIS_MAIL_SMTP_COMMAND_TIMEOUT_SECONDS
+    );
     $socket = @stream_socket_client(
         'ssl://' . $settings['host'] . ':' . $settings['port'],
         $errorNumber,
         $errorMessage,
-        30,
+        $connectTimeout,
         STREAM_CLIENT_CONNECT,
         $context
     );
     if ($socket === false) {
         throw new RuntimeException('Не удалось подключиться к SMTP-серверу: ' . ($errorMessage ?: $errorNumber));
     }
-    stream_set_timeout($socket, 30);
     try {
-        smtp_read_response($socket, [220], 'Подключение к SMTP');
-        $ehloResponse = smtp_command($socket, 'EHLO ais-dopobrazovanie.local', [250], 'Инициализация SMTP');
+        smtp_read_response($socket, [220], 'Подключение к SMTP', $deadline);
+        $ehloResponse = smtp_command(
+            $socket,
+            'EHLO ais-dopobrazovanie.local',
+            [250],
+            'Инициализация SMTP',
+            $deadline
+        );
         $dsnSupported = smtp_response_supports_extension($ehloResponse, 'DSN');
         $requestReceipts = !empty($settings['requestDeliveryAndReadReceipts']);
         $requestDeliveryReceipt = $requestReceipts && $dsnSupported;
-        smtp_command($socket, 'AUTH LOGIN', [334], 'Авторизация SMTP');
-        smtp_command($socket, base64_encode($settings['login']), [334], 'Передача логина SMTP');
-        smtp_command($socket, base64_encode($settings['password']), [235], 'Передача пароля SMTP');
+        smtp_command($socket, 'AUTH LOGIN', [334], 'Авторизация SMTP', $deadline);
+        smtp_command($socket, base64_encode($settings['login']), [334], 'Передача логина SMTP', $deadline);
+        smtp_command($socket, base64_encode($settings['password']), [235], 'Передача пароля SMTP', $deadline);
         smtp_command(
             $socket,
             'MAIL FROM:<' . $settings['login'] . '>' . ($requestDeliveryReceipt ? ' RET=HDRS' : ''),
             [250],
-            'Адрес отправителя'
+            'Адрес отправителя',
+            $deadline
         );
         smtp_command(
             $socket,
             'RCPT TO:<' . $to . '>' . ($requestDeliveryReceipt ? ' NOTIFY=SUCCESS,FAILURE,DELAY' : ''),
             [250, 251],
-            'Адрес получателя'
+            'Адрес получателя',
+            $deadline
         );
-        smtp_command($socket, 'DATA', [354], 'Подготовка письма');
+        smtp_command($socket, 'DATA', [354], 'Подготовка письма', $deadline);
 
         $normalizedMessage = preg_replace("/\r\n|\r|\n/", "\r\n", $message);
         $encodedBody = encode_mail_body($normalizedMessage);
@@ -356,10 +445,34 @@ function send_smtp_mail(
                 '--' . $boundary . '--',
             ]);
         }
-        smtp_write_all($socket, implode("\r\n", $headers) . "\r\n\r\n" . $mailBody . "\r\n.\r\n");
-        smtp_read_response($socket, [250], 'Отправка письма');
         try {
-            smtp_command($socket, 'QUIT', [221], 'Завершение SMTP');
+            smtp_write_all(
+                $socket,
+                implode("\r\n", $headers) . "\r\n\r\n" . $mailBody . "\r\n.\r\n",
+                $deadline,
+                'Передача письма',
+                AIS_MAIL_SMTP_MESSAGE_TIMEOUT_SECONDS
+            );
+            smtp_read_response(
+                $socket,
+                [250],
+                'Отправка письма',
+                $deadline,
+                AIS_MAIL_SMTP_MESSAGE_TIMEOUT_SECONDS
+            );
+        } catch (SmtpResponseRejectedException $error) {
+            throw $error;
+        } catch (Throwable $error) {
+            throw new SmtpDeliveryUnknownException(
+                'SMTP-сервер не подтвердил приём письма. Результат отправки неизвестен; '
+                    . 'проверьте журнал и папку «Отправленные» перед повтором. '
+                    . $error->getMessage(),
+                0,
+                $error
+            );
+        }
+        try {
+            smtp_command($socket, 'QUIT', [221], 'Завершение SMTP', $deadline, 5.0);
         } catch (Throwable $error) {
             // The message is already accepted; a QUIT failure must not trigger a duplicate retry.
         }
@@ -521,7 +634,9 @@ try {
 } catch (Throwable $error) {
     error_log('AIS mail sender failed for recipient: ' . $to);
     ais_audit_try_append([
-        'action' => 'Ошибка отправки письма',
+        'action' => $error instanceof SmtpDeliveryUnknownException
+            ? 'Отправка письма не подтверждена'
+            : 'Ошибка отправки письма',
         'area' => 'Электронная почта',
         'entityType' => $entityType,
         'entityId' => $entityId,
@@ -539,7 +654,8 @@ try {
     ], $currentUser);
     send_json(502, [
         'ok' => false,
-        'error' => $error->getMessage()
+        'error' => $error->getMessage(),
+        'deliveryUnknown' => $error instanceof SmtpDeliveryUnknownException,
     ]);
 }
 

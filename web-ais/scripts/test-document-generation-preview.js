@@ -308,7 +308,7 @@ assert.match(appSource, /student-document-preview\/finalize/u);
 assert.match(appSource, /student-document-preview\/cancel/u);
 assert.match(appSource, /closeGeneratedDocumentPreview/u);
 assert.match(appSource, /Отправка по email:/u);
-assert.match(appSource, /previewOpened\s*&&\s*button\?\.isConnected/u);
+assert.match(appSource, /button\?\.isConnected\s*&&\s*!button\.disabled/u);
 
 const pipelineStart = appSource.indexOf("async function downloadStudentDocumentFromTemplate");
 const pipelineEnd = appSource.indexOf("async function openStudentEducationDocument", pipelineStart);

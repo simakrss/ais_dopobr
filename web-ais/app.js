@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.183",
+    version: "1.7.184",
     releasedAt: "2026-08-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.184",
+      releasedAt: "2026-08-14",
+      changes: [
+        "При отправке сформированного документа по электронной почте локальная копия автоматически сохраняется в папку документов без блокирующего системного окна; индикатор показывает текущий этап формирования, сохранения и отправки.",
+        "Формирование файла и SMTP-отправка получили полные ограничения времени; при неоднозначном результате система просит проверить журнал и папку «Отправленные» перед повтором, чтобы не создать дубликат письма."
+      ]
+    },
     {
       version: "1.7.183",
       releasedAt: "2026-08-14",
@@ -23494,7 +23502,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const resolvedAttachment = typeof prepareAttachment === "function"
         ? await prepareAttachment()
         : attachment;
-      const response = await fetch("send-mail.php", {
+      const { response, payload } = await fetchWithTimeout("send-mail.php", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -23529,16 +23537,29 @@ MAX - https://bizvmax.ru/zifra_plus
               : (entityType === "contracts" ? "employee" : "student")
           }
         })
+      }, 150000, "Сервер не завершил отправку письма за 2,5 минуты. Результат отправки неизвестен: проверьте журнал действий и папку «Отправленные» перед повторной отправкой.", async (emailResponse) => {
+        const responseText = await emailResponse.text();
+        let responsePayload = {};
+        try {
+          responsePayload = JSON.parse(responseText);
+        } catch {
+          responsePayload = {};
+        }
+        return { response: emailResponse, payload: responsePayload };
       });
-      const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+        const serverError = new Error(payload.error || `Ошибка сервера: ${response.status}`);
+        serverError.deliveryUnknown = Boolean(payload.deliveryUnknown);
+        throw serverError;
       }
       if (!quiet) alert(`Письмо отправлено на адрес ${recipient}.`);
       return true;
     } catch (error) {
+      if (/результат отправки неизвестен/iu.test(String(error?.message || ""))) {
+        error.deliveryUnknown = true;
+      }
       if (!quiet) alert(`Не удалось отправить письмо через сервер: ${error.message}`);
-      return false;
+      return error.deliveryUnknown ? null : false;
     } finally {
       if (button) button.disabled = originalDisabled;
     }
@@ -36025,6 +36046,14 @@ MAX - https://bizvmax.ru/zifra_plus
         entityName: record.name
       });
       if (sent) result.success += 1;
+      else if (sent === null) {
+        result.failed += 1;
+        result.details.push({
+          tone: "warning",
+          name: record.name,
+          message: "Отправка письма не подтверждена. Проверьте журнал действий и папку «Отправленные» перед повтором."
+        });
+      }
       else {
         result.failed += 1;
         result.details.push({ tone: "error", name: record.name, message: "Письмо не отправлено: проверьте Email и текст сообщения." });
@@ -36248,7 +36277,13 @@ MAX - https://bizvmax.ru/zifra_plus
         });
         if (!sent) {
           result.failed += 1;
-          result.details.push({ tone: "error", name: record.name, message: "Письмо с данными доступа не отправлено; новые учётные данные не сохранены." });
+          result.details.push({
+            tone: sent === null ? "warning" : "error",
+            name: record.name,
+            message: sent === null
+              ? "Отправка данных доступа не подтверждена; новые учётные данные не сохранены. Проверьте журнал и папку «Отправленные» перед повтором."
+              : "Письмо с данными доступа не отправлено; новые учётные данные не сохранены."
+          });
           continue;
         }
         record.event_portalCredentialsSent_state = "dated";
@@ -36393,13 +36428,21 @@ MAX - https://bizvmax.ru/zifra_plus
       if (generated?.generated) {
         result.success += count;
         if (!firstLocalDocument && generated.storageResult?.localSaveResult?.saved) {
+          const savedPath = String(generated.storageResult.localSaveResult.path || "")
+            .replace(/\\/g, "/");
           firstLocalDocument = {
             folder: storageRequest.studentFolder,
-            fileName: generated.fileName
+            fileName: savedPath.split("/").filter(Boolean).at(-1) || generated.fileName
           };
         }
         if (emailDeliveryMode !== "off" && !generated.emailed) {
-          result.details.push({ tone: "warning", name: record.name, message: "Документ сформирован, но не отправлен по электронной почте." });
+          result.details.push({
+            tone: "warning",
+            name: record.name,
+            message: generated.emailed === null
+              ? "Документ сформирован, но отправка письма не подтверждена. Проверьте журнал и папку «Отправленные» перед повтором."
+              : "Документ сформирован, но не отправлен по электронной почте."
+          });
         }
       }
       else {
@@ -43782,6 +43825,39 @@ MAX - https://bizvmax.ru/zifra_plus
     return indicator;
   }
 
+  async function fetchWithTimeout(
+    url,
+    options = {},
+    timeoutMs = 120000,
+    timeoutMessage = "Сервер не ответил вовремя.",
+    readResponse = null
+  ) {
+    const controller = new AbortController();
+    const inheritedSignal = options.signal;
+    const abortFromParent = () => controller.abort(inheritedSignal?.reason);
+    if (inheritedSignal) {
+      if (inheritedSignal.aborted) abortFromParent();
+      else inheritedSignal.addEventListener("abort", abortFromParent, { once: true });
+    }
+    let timedOut = false;
+    const timer = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, Math.max(1000, Number(timeoutMs) || 120000));
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      return typeof readResponse === "function"
+        ? await readResponse(response, controller.signal)
+        : response;
+    } catch (error) {
+      if (timedOut) throw new Error(timeoutMessage);
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+      inheritedSignal?.removeEventListener?.("abort", abortFromParent);
+    }
+  }
+
   function updateDocumentGenerationIndicator() {
     const indicator = getDocumentGenerationIndicator();
     const tasks = [...activeDocumentGenerationTasks.values()];
@@ -43789,17 +43865,29 @@ MAX - https://bizvmax.ru/zifra_plus
       indicator.hidden = true;
       return;
     }
-    const title = tasks.at(-1) || "Документ";
+    const task = tasks.at(-1) || {};
+    const title = String(task.title || "Документ").trim() || "Документ";
     const status = indicator.querySelector("[data-document-generation-status]");
-    if (status) status.textContent = `Формируется: ${title}`;
+    if (status) status.textContent = String(task.status || `Формируется: ${title}`);
     indicator.hidden = false;
   }
 
   function beginDocumentGeneration(title) {
     const taskId = `document-generation-${++documentGenerationTaskSequence}`;
-    activeDocumentGenerationTasks.set(taskId, String(title || "Документ").trim() || "Документ");
+    const normalizedTitle = String(title || "Документ").trim() || "Документ";
+    activeDocumentGenerationTasks.set(taskId, {
+      title: normalizedTitle,
+      status: `Формируется: ${normalizedTitle}`
+    });
     updateDocumentGenerationIndicator();
     return taskId;
+  }
+
+  function setDocumentGenerationStatus(taskId, status) {
+    const task = activeDocumentGenerationTasks.get(taskId);
+    if (!task) return;
+    task.status = String(status || "").trim() || `Формируется: ${task.title}`;
+    updateDocumentGenerationIndicator();
   }
 
   function endDocumentGeneration(taskId) {
@@ -43825,7 +43913,13 @@ MAX - https://bizvmax.ru/zifra_plus
     window.setTimeout(close, 9000);
   }
 
-  async function finishStudentDocumentGeneration(response, fileName, storageRequest) {
+  async function finishStudentDocumentGeneration(
+    response,
+    fileName,
+    storageRequest,
+    generatedBlob = null,
+    options = {}
+  ) {
     const localSaveResult = readLocalDocumentSaveResult(
       response,
       storageRequest.promptLocalSave || storageRequest.autoSaveLocal
@@ -43834,12 +43928,30 @@ MAX - https://bizvmax.ru/zifra_plus
       response,
       storageRequest.saveToYandexDisk
     );
-    const blob = await response.blob();
+    const blob = generatedBlob || await response.blob();
     if (localSaveResult?.saved || localSaveResult?.cancelled) {
       return { localSaveResult, yandexSaveResult, downloaded: false };
     }
     if (yandexSaveResult?.saved) {
       return { localSaveResult, yandexSaveResult, downloaded: false };
+    }
+    if (options.suppressDownloadFallback) {
+      const saveErrors = [
+        localSaveResult && !localSaveResult.saved ? localSaveResult.error : "",
+        yandexSaveResult && !yandexSaveResult.saved ? yandexSaveResult.error : ""
+      ].filter(Boolean);
+      if (!options.quietWarning) {
+        showDocumentGenerationNotice(
+          `Документ сформирован, но локальную копию сохранить не удалось${saveErrors.length ? `: ${saveErrors.join("; ")}` : ""}. Отправка по электронной почте продолжена.`,
+          "warning"
+        );
+      }
+      return {
+        localSaveResult,
+        yandexSaveResult,
+        downloaded: false,
+        saveWarning: saveErrors.join("; ")
+      };
     }
     downloadBlob(fileName, blob);
     if (localSaveResult && !localSaveResult.saved) {
@@ -43901,7 +44013,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function requestGeneratedDocumentPreview(generationRequest) {
-    const response = await fetch(photoApiUrl("/api/contracts/student-document"), {
+    return fetchWithTimeout(photoApiUrl("/api/contracts/student-document"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -43911,32 +44023,39 @@ MAX - https://bizvmax.ru/zifra_plus
         promptLocalSave: false,
         autoSaveLocal: false
       })
+    }, 5 * 60 * 1000, "Сервер не подготовил предварительный просмотр документа за 5 минут.", async (response) => {
+      if (!response.ok) {
+        const responseText = await response.text();
+        let payload = {};
+        try {
+          payload = JSON.parse(responseText);
+        } catch {
+          payload = {};
+        }
+        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      }
+      const previewToken = String(response.headers.get("X-Document-Preview-Token") || "").trim();
+      if (!previewToken) {
+        throw new Error("Сервер не создал подтверждаемый предварительный просмотр. Перезапустите сервер приложения.");
+      }
+      const contentType = String(response.headers.get("Content-Type") || "").toLowerCase();
+      if (!contentType.includes("application/pdf")) {
+        throw new Error("Сервер вернул неподдерживаемый формат предварительного просмотра.");
+      }
+      return {
+        previewToken,
+        blob: await response.blob()
+      };
     });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
-    }
-    const previewToken = String(response.headers.get("X-Document-Preview-Token") || "").trim();
-    if (!previewToken) {
-      throw new Error("Сервер не создал подтверждаемый предварительный просмотр. Перезапустите сервер приложения.");
-    }
-    const contentType = String(response.headers.get("Content-Type") || "").toLowerCase();
-    if (!contentType.includes("application/pdf")) {
-      throw new Error("Сервер вернул неподдерживаемый формат предварительного просмотра.");
-    }
-    return {
-      previewToken,
-      blob: await response.blob()
-    };
   }
 
   async function cancelGeneratedDocumentPreview(previewToken) {
     if (!String(previewToken || "").trim()) return;
-    await fetch(photoApiUrl("/api/contracts/student-document-preview/cancel"), {
+    await fetchWithTimeout(photoApiUrl("/api/contracts/student-document-preview/cancel"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ previewToken })
-    }).catch(() => null);
+    }, 5000, "").catch(() => null);
   }
 
   function showGeneratedDocumentPreview(previewBlob, options = {}) {
@@ -44105,14 +44224,22 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
-  async function createStudentDocumentEmailAttachment(response, fileName, outputFormat) {
-    const blob = await response.blob();
+  async function createStudentDocumentEmailAttachment(blob, fileName, outputFormat) {
     return {
       fileName,
       contentType: blob.type || (outputFormat === "docx"
         ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         : "application/pdf"),
       base64: await blobToBase64(blob)
+    };
+  }
+
+  function prepareDocumentStorageRequestForEmail(storageRequest, emailRequest) {
+    if (!storageRequest || !emailRequest || !storageRequest.promptLocalSave) return storageRequest;
+    return {
+      ...storageRequest,
+      promptLocalSave: false,
+      autoSaveLocal: true
     };
   }
 
@@ -44142,7 +44269,6 @@ MAX - https://bizvmax.ru/zifra_plus
       button.classList.add("is-document-generating");
     }
     let pendingPreviewToken = "";
-    let previewOpened = false;
     try {
       const fieldValues = evaluateContractTemplateFields(record, documentTemplate.fields);
       const sourceValues = collectContractTemplateSourceValues(record);
@@ -44175,9 +44301,10 @@ MAX - https://bizvmax.ru/zifra_plus
         outputFormat
       };
       if (previewEnabled) {
+        setDocumentGenerationStatus(generationTaskId, `Подготовка предварительного просмотра: ${documentTemplate.title}`);
         const preview = await requestGeneratedDocumentPreview(generationRequest);
         pendingPreviewToken = preview.previewToken;
-        previewOpened = true;
+        setDocumentGenerationStatus(generationTaskId, `Ожидается подтверждение: ${documentTemplate.title}`);
         const confirmed = await showGeneratedDocumentPreview(preview.blob, {
           title: documentTemplate.title,
           fileName,
@@ -44190,18 +44317,28 @@ MAX - https://bizvmax.ru/zifra_plus
           return { generated: false, cancelled: true, previewed: true };
         }
       }
-      const storageRequest = options.storageRequest || await prepareStudentDocumentStorageRequest(
+      const requestedStorage = options.storageRequest || await prepareStudentDocumentStorageRequest(
         record,
         documentTemplate,
         fileName
       );
+      const storageRequest = prepareDocumentStorageRequestForEmail(requestedStorage, emailRequest);
       if (!storageRequest) {
         await cancelGeneratedDocumentPreview(pendingPreviewToken);
         pendingPreviewToken = "";
         return;
       }
       const finalizingPreview = Boolean(pendingPreviewToken);
-      const response = await fetch(photoApiUrl(finalizingPreview
+      setDocumentGenerationStatus(
+        generationTaskId,
+        storageRequest.promptLocalSave
+          ? `Ожидается выбор места сохранения: ${documentTemplate.title}`
+          : (storageRequest.autoSaveLocal || storageRequest.saveToYandexDisk
+            ? `Формирование и сохранение: ${documentTemplate.title}`
+            : `Формирование: ${documentTemplate.title}`)
+      );
+      const generationTimeoutMs = storageRequest.promptLocalSave ? 15 * 60 * 1000 : 5 * 60 * 1000;
+      const generatedDocument = await fetchWithTimeout(photoApiUrl(finalizingPreview
         ? "/api/contracts/student-document-preview/finalize"
         : "/api/contracts/student-document"), {
         method: "POST",
@@ -44209,18 +44346,40 @@ MAX - https://bizvmax.ru/zifra_plus
         body: JSON.stringify(finalizingPreview
           ? { previewToken: pendingPreviewToken, ...storageRequest }
           : { ...generationRequest, ...storageRequest })
+      }, generationTimeoutMs, storageRequest.promptLocalSave
+        ? "Формирование документа или окно сохранения не завершились за 15 минут."
+        : "Сервер не завершил формирование, сохранение и передачу документа за 5 минут.", async (response) => {
+        if (!response.ok) {
+          const responseText = await response.text();
+          let payload = {};
+          try {
+            payload = JSON.parse(responseText);
+          } catch {
+            payload = {};
+          }
+          throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+        }
+        const responseDetails = getGeneratedDocumentResponseDetails(response, fileName, outputFormat);
+        return {
+          response,
+          responseDetails,
+          blob: await response.blob()
+        };
       });
       if (finalizingPreview) pendingPreviewToken = "";
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
-      }
-      const responseDetails = getGeneratedDocumentResponseDetails(response, fileName, outputFormat);
-      const emailResponse = emailRequest ? response.clone() : null;
+      const { response, responseDetails, blob: generatedBlob } = generatedDocument;
+      setDocumentGenerationStatus(generationTaskId, `Завершение формирования: ${documentTemplate.title}`);
       const storageResult = await finishStudentDocumentGeneration(
         response,
         responseDetails.fileName,
-        storageRequest
+        storageRequest,
+        generatedBlob,
+        {
+          suppressDownloadFallback: Boolean(
+            emailRequest && (storageRequest.autoSaveLocal || storageRequest.saveToYandexDisk)
+          ),
+          quietWarning: options.quietEmail === true
+        }
       );
       addAudit(
         "Сформирован документ",
@@ -44234,12 +44393,14 @@ MAX - https://bizvmax.ru/zifra_plus
         }
       );
       let emailSent = false;
-      if (emailRequest && emailResponse) {
+      if (emailRequest) {
+        setDocumentGenerationStatus(generationTaskId, `Подготовка вложения: ${responseDetails.fileName}`);
         const attachment = await createStudentDocumentEmailAttachment(
-          emailResponse,
+          generatedBlob,
           responseDetails.fileName,
           responseDetails.outputFormat
         );
+        setDocumentGenerationStatus(generationTaskId, `Отправка письма: ${emailRequest.recipientDescription}`);
         emailSent = await sendServerEmail({
           email: String(record.email || "").trim(),
           subject: emailRequest.subject,
@@ -44282,7 +44443,7 @@ MAX - https://bizvmax.ru/zifra_plus
         else button.setAttribute("aria-busy", wasAriaBusy);
         if (!hadGeneratingClass) button.classList.remove("is-document-generating");
       }
-      if (previewOpened && button?.isConnected && !button.disabled) {
+      if (button?.isConnected && !button.disabled) {
         queueMicrotask(() => button.focus({ preventScroll: true }));
       }
     }

@@ -93,6 +93,9 @@ const MAX_FRDO_EXPORT_RECORDS = 5000;
 const MAX_PROGRAM_PROMO_MESSAGE_LENGTH = 32767;
 const MAX_PAYMENT_DATABASE_CONSTANTS = 200;
 const MAX_EMAIL_SUBJECT_LENGTH = 200;
+const SMTP_SESSION_DEADLINE_MS = 120 * 1000;
+const SMTP_COMMAND_TIMEOUT_MS = 30 * 1000;
+const SMTP_MESSAGE_TIMEOUT_MS = 60 * 1000;
 const STUDENT_IMPORT_JOB_TTL_MS = 15 * 60 * 1000;
 const STUDENT_DOCUMENT_RECOGNITION_JOB_TTL_MS = 30 * 60 * 1000;
 const studentImportJobs = new Map();
@@ -4492,10 +4495,32 @@ async function saveStudentDocumentLocally(bytes, fileName, body) {
   if (!serverSettings.openDocumentsLocally) {
     throw new Error("Включите режим работы с документами на локальном компьютере.");
   }
-  const targetPath = resolveLocalDocumentFile(body.studentFolder, fileName);
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  await fs.writeFile(targetPath, bytes);
-  return { saved: true, cancelled: false, path: targetPath };
+  const canonicalPath = resolveLocalDocumentFile(body.studentFolder, fileName);
+  const folderPath = path.dirname(canonicalPath);
+  await fs.mkdir(folderPath, { recursive: true });
+  for (let attempt = 0; attempt < 10000; attempt += 1) {
+    const candidateName = getStudentMailboxFileNameCandidate(path.basename(canonicalPath), attempt);
+    const targetPath = path.resolve(folderPath, candidateName);
+    const relativeTarget = path.relative(folderPath, targetPath);
+    if (relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget)) {
+      throw new Error("Недопустимое имя сформированного документа.");
+    }
+    try {
+      await fs.writeFile(targetPath, bytes, { flag: "wx" });
+      return { saved: true, cancelled: false, path: targetPath };
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      try {
+        const existingBytes = await fs.readFile(targetPath);
+        if (existingBytes.length === bytes.length && existingBytes.equals(bytes)) {
+          return { saved: true, cancelled: false, path: targetPath, reused: true };
+        }
+      } catch (readError) {
+        if (readError.code !== "ENOENT") throw readError;
+      }
+    }
+  }
+  throw new Error("Не удалось подобрать свободное имя сформированного документа.");
 }
 
 async function loadSystemDocumentFromYandexDisk(relativePath) {
@@ -11300,6 +11325,88 @@ function createSmtpResponseReader(socket) {
   };
 }
 
+function getRemainingSmtpTimeout(deadlineAt, action, maximumTimeout = SMTP_COMMAND_TIMEOUT_MS) {
+  const remaining = Math.floor(Number(deadlineAt) - Date.now());
+  if (!Number.isFinite(remaining) || remaining <= 0) {
+    throw new Error(`${action}: превышен общий лимит времени SMTP-соединения.`);
+  }
+  return Math.max(1, Math.min(remaining, maximumTimeout));
+}
+
+function writeSmtpSocketData(
+  socket,
+  value,
+  deadlineAt,
+  action,
+  maximumTimeout = SMTP_COMMAND_TIMEOUT_MS
+) {
+  let timeout;
+  try {
+    timeout = getRemainingSmtpTimeout(deadlineAt, action, maximumTimeout);
+  } catch (error) {
+    if (!socket.destroyed) socket.destroy(error);
+    return Promise.reject(error);
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let writeCompleted = false;
+    let drainCompleted = true;
+    let needsDrain = false;
+    let timer;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.removeListener("error", onError);
+      socket.removeListener("close", onClose);
+      socket.removeListener("drain", onDrain);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const finish = () => {
+      if (settled || !writeCompleted || (needsDrain && !drainCompleted)) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const onError = (error) => fail(error);
+    const onClose = () => fail(new Error(`${action}: SMTP-сервер закрыл соединение.`));
+    const onDrain = () => {
+      drainCompleted = true;
+      finish();
+    };
+
+    socket.once("error", onError);
+    socket.once("close", onClose);
+    timer = setTimeout(() => {
+      const error = new Error(`${action}: SMTP-сервер не принял данные вовремя.`);
+      fail(error);
+      if (!socket.destroyed) socket.destroy(error);
+    }, timeout);
+
+    try {
+      const canContinue = socket.write(value, (error) => {
+        if (error) {
+          fail(error);
+          return;
+        }
+        writeCompleted = true;
+        queueMicrotask(finish);
+      });
+      if (!canContinue) {
+        needsDrain = true;
+        drainCompleted = false;
+        socket.once("drain", onDrain);
+      }
+    } catch (error) {
+      fail(error);
+    }
+  });
+}
+
 function assertSmtpResponse(response, expectedCodes, action) {
   const codes = Array.isArray(expectedCodes) ? expectedCodes : [expectedCodes];
   if (codes.includes(response.code)) return response;
@@ -11349,32 +11456,69 @@ async function runAuthenticatedSmtpSession(action) {
     rejectUnauthorized: true,
     ...(trustedCertificates.length ? { ca: trustedCertificates } : {})
   });
+  const deadlineAt = Date.now() + SMTP_SESSION_DEADLINE_MS;
+  const deadlineError = new Error("Превышен общий лимит времени SMTP-соединения.");
+  const deadlineTimer = setTimeout(() => {
+    if (!socket.destroyed) socket.destroy(deadlineError);
+  }, SMTP_SESSION_DEADLINE_MS);
   const reader = createSmtpResponseReader(socket);
   const writeCommand = async (command, expectedCodes, actionLabel) => {
-    socket.write(`${command}\r\n`);
-    return assertSmtpResponse(await reader.waitForResponse(), expectedCodes, actionLabel);
+    await writeSmtpSocketData(socket, `${command}\r\n`, deadlineAt, actionLabel);
+    return assertSmtpResponse(
+      await reader.waitForResponse(getRemainingSmtpTimeout(deadlineAt, actionLabel)),
+      expectedCodes,
+      actionLabel
+    );
   };
+  let sessionSucceeded = false;
   try {
-    assertSmtpResponse(await reader.waitForResponse(), 220, "Подключение к SMTP");
+    assertSmtpResponse(
+      await reader.waitForResponse(getRemainingSmtpTimeout(deadlineAt, "Подключение к SMTP")),
+      220,
+      "Подключение к SMTP"
+    );
     const ehloResponse = await writeCommand("EHLO ais-dopobrazovanie.local", 250, "Инициализация SMTP");
     await writeCommand("AUTH LOGIN", 334, "Авторизация SMTP");
     await writeCommand(Buffer.from(settings.login, "utf8").toString("base64"), 334, "Передача логина SMTP");
     await writeCommand(Buffer.from(settings.password, "utf8").toString("base64"), 235, "Передача пароля SMTP");
-    return await action({
+    const result = await action({
       settings,
       socket,
       reader,
       writeCommand,
+      writeData: (value, actionLabel, maximumTimeout = SMTP_MESSAGE_TIMEOUT_MS) => (
+        writeSmtpSocketData(socket, value, deadlineAt, actionLabel, maximumTimeout)
+      ),
+      waitForResponse: (actionLabel, maximumTimeout = SMTP_COMMAND_TIMEOUT_MS) => (
+        reader.waitForResponse(getRemainingSmtpTimeout(deadlineAt, actionLabel, maximumTimeout))
+      ),
       supportsDsn: smtpResponseSupportsExtension(ehloResponse, "DSN")
     });
+    sessionSucceeded = true;
+    return result;
   } finally {
+    clearTimeout(deadlineTimer);
     if (!socket.destroyed) {
-      try {
-        socket.write("QUIT\r\n");
-      } catch {
-        // The connection may already be closing after a server error.
+      if (sessionSucceeded) {
+        let quitTimer;
+        const clearQuitTimer = () => clearTimeout(quitTimer);
+        socket.once("close", clearQuitTimer);
+        quitTimer = setTimeout(() => {
+          socket.removeListener("close", clearQuitTimer);
+          if (!socket.destroyed) socket.destroy();
+        }, 5000);
+        quitTimer.unref?.();
+        try {
+          socket.end("QUIT\r\n");
+        } catch {
+          clearQuitTimer();
+          socket.removeListener("close", clearQuitTimer);
+          socket.destroy();
+          // The completed SMTP action must not fail because QUIT was rejected.
+        }
+      } else {
+        socket.destroy();
       }
-      socket.end();
     }
   }
 }
@@ -11464,7 +11608,13 @@ function createEmailMessage({
 }
 
 async function sendEmailThroughConfiguredMailbox({ to, subject, message, attachment }) {
-  return runAuthenticatedSmtpSession(async ({ settings, socket, reader, writeCommand, supportsDsn }) => {
+  return runAuthenticatedSmtpSession(async ({
+    settings,
+    writeCommand,
+    writeData,
+    waitForResponse,
+    supportsDsn
+  }) => {
     if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(settings.login) || /[\r\n]/u.test(settings.login)) {
       throw new Error("Логин исходящего почтового ящика должен быть адресом электронной почты.");
     }
@@ -11477,15 +11627,25 @@ async function sendEmailThroughConfiguredMailbox({ to, subject, message, attachm
     await writeCommand(envelope.mailFrom, 250, "Адрес отправителя");
     await writeCommand(envelope.recipient, [250, 251], "Адрес получателя");
     await writeCommand("DATA", 354, "Подготовка письма");
-    socket.write(`${createEmailMessage({
-      from: settings.login,
-      to,
-      subject,
-      message,
-      attachment,
-      requestDeliveryAndReadReceipts: settings.requestDeliveryAndReadReceipts
-    })}\r\n.\r\n`);
-    assertSmtpResponse(await reader.waitForResponse(60000), 250, "Отправка письма");
+    let deliveryResponse;
+    try {
+      await writeData(`${createEmailMessage({
+        from: settings.login,
+        to,
+        subject,
+        message,
+        attachment,
+        requestDeliveryAndReadReceipts: settings.requestDeliveryAndReadReceipts
+      })}\r\n.\r\n`, "Передача письма", SMTP_MESSAGE_TIMEOUT_MS);
+      deliveryResponse = await waitForResponse("Отправка письма", SMTP_MESSAGE_TIMEOUT_MS);
+    } catch (error) {
+      const deliveryError = new Error(
+        `SMTP-сервер не подтвердил приём письма. Результат отправки неизвестен; проверьте журнал и папку «Отправленные» перед повтором. ${error.message}`
+      );
+      deliveryError.deliveryUnknown = true;
+      throw deliveryError;
+    }
+    assertSmtpResponse(deliveryResponse, 250, "Отправка письма");
     return {
       ...settings,
       dsnSupported: Boolean(supportsDsn),
@@ -16256,7 +16416,7 @@ async function handleServerEmail(req, res, authUser) {
   } catch (error) {
     console.warn(`Не удалось отправить письмо через настроенный ящик: ${error.message}`);
     await writeEmailAudit(
-      "Ошибка отправки письма",
+      error.deliveryUnknown ? "Отправка письма не подтверждена" : "Ошибка отправки письма",
       [
         auditContext.messageType ? `Тип: ${auditText(auditContext.messageType, 240)}` : "Тип: письмо",
         auditRecipient ? `Получатель: ${auditRecipient}` : "Получатель не определён",
@@ -16265,7 +16425,11 @@ async function handleServerEmail(req, res, authUser) {
         `Ошибка: ${auditText(error.message, 1000)}`
       ].join("; ")
     );
-    sendError(res, 502, error.message);
+    sendJson(res, 502, {
+      ok: false,
+      error: error.message,
+      deliveryUnknown: Boolean(error.deliveryUnknown)
+    });
   }
 }
 
@@ -16702,5 +16866,7 @@ module.exports = {
   smtpResponseSupportsExtension,
   createEmailEnvelopeCommands,
   createEmailMessage,
+  getRemainingSmtpTimeout,
+  writeSmtpSocketData,
   route
 };
