@@ -46,6 +46,7 @@ const STUDENT_DATABASE_SYNC_SCRIPT = path.join(ROOT, "scripts", "sync-student-da
 const STUDENT_APPLICATIONS_QUERY_SCRIPT = path.join(ROOT, "scripts", "query-student-applications.ps1");
 const FRDO_EXPORT_TEMPLATE_PATH = path.join(ROOT, "data", "frdo-export-template.xlsx");
 const DEFAULT_FRDO_EXPORT_FOLDER = "ФРДО";
+const FRDO_UPLOAD_DEADLINE_POLICY_VERSION = 2;
 let defaultStudentApplicationsSqlQuery = "";
 const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH = "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
 const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
@@ -4837,7 +4838,28 @@ function normalizeSharedApplicationData(value) {
   if (Buffer.byteLength(serialized, "utf8") > MAX_SHARED_APPLICATION_STATE_BYTES) {
     throw new Error("Общая база превышает допустимый размер 36 МБ.");
   }
-  return JSON.parse(serialized);
+  const normalized = JSON.parse(serialized);
+  normalized.meta = normalized.meta && typeof normalized.meta === "object" && !Array.isArray(normalized.meta)
+    ? normalized.meta
+    : {};
+  if (Number(normalized.meta.frdoUploadDeadlinePolicyVersion || 0) < FRDO_UPLOAD_DEADLINE_POLICY_VERSION) {
+    const settings = Array.isArray(normalized.dictionaries.issuedDocumentSettings)
+      ? normalized.dictionaries.issuedDocumentSettings.map((setting) => ({ ...setting }))
+      : [];
+    const deadlineIndex = settings.findIndex((setting) => setting?.key === "frdoUploadDeadlineDays");
+    if (deadlineIndex < 0) {
+      settings.push({
+        key: "frdoUploadDeadlineDays",
+        label: "Норматив выгрузки в ФРДО, дней",
+        value: "30"
+      });
+    } else if (Number(settings[deadlineIndex].value) === 60) {
+      settings[deadlineIndex].value = "30";
+    }
+    normalized.dictionaries.issuedDocumentSettings = settings;
+    normalized.meta.frdoUploadDeadlinePolicyVersion = FRDO_UPLOAD_DEADLINE_POLICY_VERSION;
+  }
+  return normalized;
 }
 
 function normalizeSharedApplicationStatePatch(value) {

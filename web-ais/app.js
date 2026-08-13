@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.150",
+    version: "1.7.151",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.151",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Норматив выгрузки документов в ФРДО уменьшен с 60 до 30 дней; ранее сохранённое стандартное значение автоматически обновляется, а расчётный срок с резервом 5 дней составляет 25 дней от даты выдачи."
+      ]
+    },
     {
       version: "1.7.150",
       releasedAt: "2026-08-13",
@@ -2703,7 +2710,7 @@ MAX - https://bizvmax.ru/zifra_plus
     {
       key: "frdoUploadDeadlineDays",
       label: "Норматив выгрузки в ФРДО, дней",
-      value: "60"
+      value: "30"
     },
     {
       key: "frdoExportFolder",
@@ -2711,6 +2718,7 @@ MAX - https://bizvmax.ru/zifra_plus
       value: "ФРДО"
     }
   ];
+  const FRDO_UPLOAD_DEADLINE_POLICY_VERSION = 2;
   const FRDO_UPLOAD_RESERVE_DAYS = 5;
   const ISSUED_DOCUMENT_TABLE_CONFIG_ID = "issuedDocuments";
   const issuedDocumentTableConfig = Object.freeze({
@@ -4422,9 +4430,22 @@ MAX - https://bizvmax.ru/zifra_plus
     data.dictionaries.finalAttestationSettings = normalizeFinalAttestationSettings(
       data.dictionaries.finalAttestationSettings
     );
+    const savedIssuedDocumentSettings = Array.isArray(data.dictionaries.issuedDocumentSettings)
+      ? data.dictionaries.issuedDocumentSettings
+      : [];
+    const shouldMigrateIssuedDocumentDeadline = Number(
+      data.meta.frdoUploadDeadlinePolicyVersion || 0
+    ) < FRDO_UPLOAD_DEADLINE_POLICY_VERSION;
     data.dictionaries.issuedDocumentSettings = normalizeIssuedDocumentSettings(
-      data.dictionaries.issuedDocumentSettings
+      shouldMigrateIssuedDocumentDeadline
+        ? savedIssuedDocumentSettings.map((setting) => (
+          setting?.key === "frdoUploadDeadlineDays" && Number(setting.value) === 60
+            ? { ...setting, value: "30" }
+            : setting
+        ))
+        : savedIssuedDocumentSettings
     );
+    data.meta.frdoUploadDeadlinePolicyVersion = FRDO_UPLOAD_DEADLINE_POLICY_VERSION;
     delete data.dictionaries.moodlePortalUrls;
     data.collections = data.collections || {};
     data.collections.programs = mergeProgramPaymentRegistry(data, mergeProgramRegistry(data))
@@ -4557,7 +4578,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getIssuedDocumentDeadlineDays() {
     return Number(normalizeIssuedDocumentSettings(state.data.dictionaries.issuedDocumentSettings)
-      .find((setting) => setting.key === "frdoUploadDeadlineDays")?.value) || 60;
+      .find((setting) => setting.key === "frdoUploadDeadlineDays")?.value) || 30;
   }
 
   function getFrdoExportFolder() {
@@ -37338,9 +37359,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function resetIssuedDocumentSettings() {
-    if (!confirm("Восстановить норматив выгрузки в ФРДО — 60 дней и папку «ФРДО»?")) return;
+    if (!confirm("Восстановить норматив выгрузки в ФРДО — 30 дней и папку «ФРДО»?")) return;
     state.data.dictionaries.issuedDocumentSettings = normalizeIssuedDocumentSettings([]);
-    addAudit("Изменен справочник", dictionaryTitle("issuedDocumentSettings"), "Восстановлены норматив выгрузки в ФРДО: 60 дней и папка «ФРДО»");
+    addAudit("Изменен справочник", dictionaryTitle("issuedDocumentSettings"), "Восстановлены норматив выгрузки в ФРДО: 30 дней и папка «ФРДО»");
     persist();
     render();
   }
