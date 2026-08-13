@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.152",
+    version: "1.7.153",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.153",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Основная панель настроек на широких экранах растягивается до нижней границы окна; перечень справочников и содержимое используют всю доступную высоту и прокручиваются внутри панели."
+      ]
+    },
     {
       version: "1.7.152",
       releasedAt: "2026-08-13",
@@ -12460,7 +12467,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     return `
-      <section class="panel">
+      <section class="panel settings-page-panel">
         <div class="section-head">
           <div>
             <p class="eyebrow">Настройки</p>
