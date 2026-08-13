@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.153",
+    version: "1.7.154",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.154",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Виджет ФРДО на рабочем столе отображается только при наличии документов, ожидающих выгрузки; после выгрузки всех документов виджет автоматически скрывается."
+      ]
+    },
     {
       version: "1.7.153",
       releasedAt: "2026-08-13",
@@ -7887,6 +7894,7 @@ MAX - https://bizvmax.ru/zifra_plus
           : `Осталось дней: ${nearestFrdoDays}`));
 
     return `
+      ${pendingIssuedDocuments.length ? `
       <button
         class="panel dashboard-frdo-widget ${frdoWidgetTone}"
         data-view-shortcut="issuedDocuments"
@@ -7910,6 +7918,7 @@ MAX - https://bizvmax.ru/zifra_plus
         </span>
         <span class="dashboard-frdo-widget-open" aria-hidden="true">↗</span>
       </button>
+      ` : ""}
 
       <section class="panel">
         <div class="panel-head">
