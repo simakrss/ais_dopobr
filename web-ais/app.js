@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.177",
+    version: "1.7.178",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.178",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В журнале действий длинные значения изменений, адреса и подробности переносятся внутри своих колонок и больше не накладываются друг на друга."
+      ]
+    },
     {
       version: "1.7.177",
       releasedAt: "2026-08-13",

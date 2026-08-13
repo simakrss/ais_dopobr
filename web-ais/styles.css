@@ -9289,8 +9289,10 @@ body.card-window-moving {
 }
 
 .admin-audit-table td {
+  min-width: 0;
   max-width: 270px;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 .admin-audit-date,
@@ -9314,10 +9316,11 @@ body.card-window-moving {
 }
 
 .admin-audit-details {
-  max-width: 270px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .admin-audit-changes summary {
@@ -9330,7 +9333,10 @@ body.card-window-moving {
 .admin-audit-change-list {
   display: grid;
   gap: 5px;
-  min-width: 360px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   margin-top: 5px;
   padding: 6px;
   border: 1px solid var(--line);
@@ -9341,14 +9347,26 @@ body.card-window-moving {
 .admin-audit-change-item,
 .admin-audit-single-change {
   display: grid;
-  grid-template-columns: minmax(90px, .8fr) minmax(100px, 1fr) 12px minmax(100px, 1fr);
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 12px minmax(0, 1fr);
   align-items: start;
   gap: 4px;
 }
 
-.admin-audit-change-item span,
-.admin-audit-single-change span {
+.admin-audit-change-item > strong,
+.admin-audit-single-change > strong {
+  grid-column: 1 / -1;
+}
+
+.admin-audit-change-item > *,
+.admin-audit-single-change > *,
+.admin-audit-source {
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.admin-audit-source {
+  display: block;
 }
 
 .admin-audit-change-item .is-before {
@@ -9360,7 +9378,7 @@ body.card-window-moving {
 }
 
 .admin-audit-change-item .admin-audit-legacy-event-note {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   color: var(--muted);
   font-style: italic;
 }
