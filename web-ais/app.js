@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.174",
+    version: "1.7.175",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.175",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В «Настройки системы → Оплата → Назначение» добавлен редактор с подсветкой частей правил и констант; константы можно вставлять щелчком и перетаскивать в нужное место формулы."
+      ]
+    },
     {
       version: "1.7.174",
       releasedAt: "2026-08-13",
@@ -1607,7 +1614,9 @@
     "[data-finance-row-drag]",
     "[data-employee-payment-row-drag]",
     "[data-action='drag-program-training-plan-row']",
-    "[data-contract-field-drag-handle]"
+    "[data-contract-field-drag-handle]",
+    "[data-program-payment-constant-token]",
+    "[data-automatic-expense-rule-token]"
   ].join(", ");
   const STUDENT_CARD_TAB_ORDER_KEY = "ais-dopobr-student-card-tab-order-v1";
   const TAB_ORDER_SETTINGS_KEY = "ais-dopobr-tab-orders-v1";
@@ -13138,10 +13147,7 @@ MAX - https://bizvmax.ru/zifra_plus
           role="tabpanel"
           ${activeTab === "assignment" ? "" : "hidden"}
         >
-          <label class="payment-settings-textarea">
-            <span>${escapeHtml(automaticExpenseRules.label)}</span>
-            <textarea name="${escapeAttr(automaticExpenseRules.key)}" rows="10" spellcheck="false">${escapeHtml(automaticExpenseRules.value)}</textarea>
-          </label>
+          ${renderAutomaticExpenseRulesEditor(automaticExpenseRules)}
           <p class="payment-settings-hint">
             Этот список является источником правил автоматического назначения оплат: вида выплаты, формулы, ставки, примечания и исключений.
             При работе с XLSB он синхронизируется с ключом <code>АвтоНазнОплат</code> диапазона <code>НастройкиМакросов</code>.
@@ -13187,6 +13193,98 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
       </form>
     `;
+  }
+
+  function renderAutomaticExpenseRulesEditor(setting = {}) {
+    const value = String(setting.value || "");
+    return `
+      <section class="payment-assignment-editor-shell" data-automatic-expense-rules-shell>
+        <div class="payment-assignment-editor-head">
+          <div>
+            <h4>${escapeHtml(setting.label || "Автоматическое назначение оплат")}</h4>
+            <p>Установите курсор в нужной строке, затем перетащите или щёлкните константу — она будет вставлена в формулу.</p>
+          </div>
+          <div class="payment-assignment-syntax-legend" aria-label="Обозначения подсветки">
+            <span class="is-type">Вид выплаты</span>
+            <span class="is-formula">Формула</span>
+            <span class="is-note">Примечание</span>
+            <span class="is-exclusion">Исключение</span>
+          </div>
+        </div>
+        <div class="payment-assignment-constant-palette">
+          ${renderProgramPaymentConstantPalette({ assignment: true })}
+        </div>
+        <textarea
+          name="${escapeAttr(setting.key || "automaticExpenseRules")}"
+          data-automatic-expense-rules-value
+          hidden
+          aria-hidden="true"
+        >${escapeHtml(value)}</textarea>
+        <div
+          class="payment-assignment-rules-editor"
+          contenteditable="true"
+          data-automatic-expense-rules-editor
+          data-placeholder="Вид затрат, Сумма или формула, Примечание"
+          role="textbox"
+          aria-label="Правила автоматического назначения оплат"
+          aria-multiline="true"
+          spellcheck="false"
+        >${renderAutomaticExpenseRulesEditorContent(value)}</div>
+      </section>
+    `;
+  }
+
+  function renderAutomaticExpenseRulesEditorContent(value) {
+    const lines = String(value || "").replace(/\r\n?/gu, "\n").split("\n");
+    if (lines.length === 1 && !lines[0]) return "";
+    return lines.map((line) => {
+      const firstComma = line.indexOf(",");
+      if (firstComma < 0) {
+        const invalid = line ? " is-invalid" : "";
+        return `<span class="payment-assignment-rule-line${invalid}">${renderAutomaticExpenseRuleFormula(line)}</span>`;
+      }
+      const secondComma = line.indexOf(",", firstComma + 1);
+      const type = line.slice(0, firstComma);
+      const formula = secondComma < 0
+        ? line.slice(firstComma + 1)
+        : line.slice(firstComma + 1, secondComma);
+      const note = secondComma < 0 ? "" : line.slice(secondComma + 1);
+      const invalid = !type.trim() || !formula.trim() ? " is-invalid" : "";
+      return `<span class="payment-assignment-rule-line${invalid}"><span class="payment-assignment-rule-type">${escapeHtml(type)}</span><span class="payment-assignment-rule-separator">,</span><span class="payment-assignment-rule-formula">${renderAutomaticExpenseRuleFormula(formula)}</span>${secondComma < 0 ? "" : `<span class="payment-assignment-rule-separator">,</span>${renderAutomaticExpenseRuleNote(note)}`}</span>`;
+    }).join("<br>");
+  }
+
+  function renderAutomaticExpenseRuleFormula(formula) {
+    const constants = new Map(getPaymentConstantSettings().map((setting) => [
+      normalizePaymentConstantMarker(setting.marker).toLocaleLowerCase("ru-RU"),
+      setting
+    ]));
+    return String(formula || "")
+      .split(/(\[[^\[\]\r\n]+\])/gu)
+      .map((part) => {
+        const match = part.match(/^\[([^\[\]\r\n]+)\]$/u);
+        if (!match) return escapeHtml(part);
+        const marker = normalizePaymentConstantMarker(match[1]);
+        const setting = constants.get(marker.toLocaleLowerCase("ru-RU"));
+        const title = setting
+          ? `Константа: ${setting.label}. Значение: ${formatPaymentConstantValue(setting)}. Перетащите или нажмите правой кнопкой мыши.`
+          : "Неизвестная константа. Нажмите правой кнопкой мыши, чтобы создать или удалить её.";
+        return `<span class="communication-template-block payment-formula-constant payment-assignment-rule-token ${setting ? "is-known" : "is-unresolved"}" contenteditable="false" draggable="true" data-template-token="${escapeAttr(part)}" data-payment-constant-marker="${escapeAttr(marker)}" data-automatic-expense-rule-token title="${escapeAttr(title)}">${escapeHtml(part)}</span>`;
+      })
+      .join("");
+  }
+
+  function renderAutomaticExpenseRuleNote(note) {
+    return String(note || "")
+      .split(/(;)/gu)
+      .map((part) => {
+        if (part === ";") return `<span class="payment-assignment-rule-separator">;</span>`;
+        const className = part.trim().startsWith("-")
+          ? "payment-assignment-rule-exclusion"
+          : "payment-assignment-rule-note";
+        return `<span class="${className}">${escapeHtml(part)}</span>`;
+      })
+      .join("");
   }
 
   function renderPaymentConstantRow(setting = {}, index = 0) {
@@ -18537,31 +18635,34 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderProgramPaymentConstantPalette() {
+  function renderProgramPaymentConstantPalette(options = {}) {
+    const assignment = Boolean(options.assignment);
     return `
-      <aside class="program-payment-constant-palette" data-program-payment-constant-palette aria-label="Доступные константы оплаты">
+      <aside class="program-payment-constant-palette ${assignment ? "is-assignment-palette" : ""}" data-program-payment-constant-palette ${assignment ? "data-automatic-expense-constant-palette" : ""} aria-label="Доступные константы оплаты">
         <div class="program-payment-constant-palette-head">
           <span class="program-payment-constant-palette-label">Доступные константы</span>
-          <span class="program-payment-constant-palette-hint">Перетащите в формулу. Правый щелчок: редактировать.</span>
+          <span class="program-payment-constant-palette-hint">${assignment ? "Перетащите или щёлкните для вставки. Правый щелчок: редактировать." : "Перетащите в формулу. Правый щелчок: редактировать."}</span>
         </div>
         <div class="program-payment-constant-tokens" data-program-payment-constant-tokens>
-          ${renderProgramPaymentConstantTokens()}
+          ${renderProgramPaymentConstantTokens({ assignment })}
         </div>
       </aside>
     `;
   }
 
-  function renderProgramPaymentConstantTokens() {
+  function renderProgramPaymentConstantTokens(options = {}) {
+    const assignment = Boolean(options.assignment);
     return getPaymentConstantSettings().map((setting) => {
       const marker = normalizePaymentConstantMarker(setting.marker);
       const label = String(setting.label || marker).trim();
       const displayValue = formatPaymentConstantValue(setting);
-      const title = `${label}: ${displayValue}. Перетащите в формулу. Правый щелчок: редактировать`;
+      const title = `${label}: ${displayValue}. ${assignment ? "Перетащите или щёлкните для вставки." : "Перетащите в формулу."} Правый щелчок: редактировать`;
       return `
         <span
           class="program-payment-constant-token"
           data-program-payment-constant-token="${escapeAttr(marker)}"
           draggable="true"
+          ${assignment ? 'role="button" tabindex="0" data-automatic-expense-constant-choice' : ""}
           title="${escapeAttr(title)}"
         >
           <strong>${escapeHtml(`[${marker}]`)}</strong>
@@ -18572,8 +18673,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function refreshProgramPaymentConstantPalette() {
-    const container = document.querySelector("[data-program-payment-constant-tokens]");
-    if (container) container.innerHTML = renderProgramPaymentConstantTokens();
+    document.querySelectorAll("[data-program-payment-constant-tokens]").forEach((container) => {
+      const assignment = Boolean(container.closest("[data-automatic-expense-constant-palette]"));
+      container.innerHTML = renderProgramPaymentConstantTokens({ assignment });
+    });
   }
 
   function renderProgramAuthorPaymentRow(item = {}, index = 0) {
@@ -25727,6 +25830,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindPaymentConstantListActions(paymentConstantList);
     bindPaymentConstantRowDrag(paymentConstantList);
     bindPaymentSettingsTabs();
+    bindAutomaticExpenseRulesEditor();
     bindOrderableTabs();
     document.querySelector("form[data-action='save-document-path-settings']")?.addEventListener("submit", saveDocumentPathSettings);
     document.querySelector("[data-action='reset-document-path-settings']")?.addEventListener("click", resetDocumentPathSettings);
@@ -28883,6 +28987,20 @@ MAX - https://bizvmax.ru/zifra_plus
     if (hiddenInput) hiddenInput.value = serializeCommunicationTemplateEditor(editor).trim();
   }
 
+  function syncAutomaticExpenseRulesEditor(editor) {
+    const hiddenInput = editor?.closest("form")?.elements.automaticExpenseRules;
+    if (hiddenInput) hiddenInput.value = serializeCommunicationTemplateEditor(editor);
+  }
+
+  function refreshAutomaticExpenseRulesEditor(editor, preserveCaret = false) {
+    if (!editor) return;
+    const value = serializeCommunicationTemplateEditor(editor);
+    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
+    editor.innerHTML = renderAutomaticExpenseRulesEditorContent(value);
+    syncAutomaticExpenseRulesEditor(editor);
+    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
+  }
+
   function refreshPaymentFormulaEditor(editor, preserveCaret = false) {
     if (!editor) return;
     const formula = serializeCommunicationTemplateEditor(editor).trim();
@@ -28893,13 +29011,17 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function deletePaymentFormulaConstantToken(token) {
-    const editor = token?.closest("[data-payment-formula-editor]");
+    const editor = token?.closest("[data-payment-formula-editor], [data-automatic-expense-rules-editor]");
     hideCommunicationTemplateFieldMenu();
     if (!editor) return;
     const beforeValue = serializeCommunicationTemplateEditor(editor);
     token.remove();
     commitCommunicationTemplateEditorChange(editor, beforeValue);
-    syncPaymentFormulaEditor(editor);
+    if (editor.matches("[data-automatic-expense-rules-editor]")) {
+      refreshAutomaticExpenseRulesEditor(editor, true);
+    } else {
+      syncPaymentFormulaEditor(editor);
+    }
     editor.focus({ preventScroll: true });
   }
 
@@ -28961,12 +29083,26 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       editor.innerHTML = renderPaymentFormulaEditorContent(formula);
       syncPaymentFormulaEditor(editor);
+      syncCommunicationTemplateEditorHistoryCurrent(editor, formula);
+    });
+    document.querySelectorAll("[data-automatic-expense-rules-editor]").forEach((editor) => {
+      const rules = replacePaymentConstantMarkerInFormula(
+        serializeCommunicationTemplateEditor(editor),
+        previous,
+        next
+      );
+      editor.innerHTML = renderAutomaticExpenseRulesEditorContent(rules);
+      syncAutomaticExpenseRulesEditor(editor);
+      syncCommunicationTemplateEditorHistoryCurrent(editor, rules);
     });
   }
 
   function refreshVisiblePaymentFormulaEditors() {
     document.querySelectorAll("[data-payment-formula-editor]").forEach((editor) => {
       refreshPaymentFormulaEditor(editor);
+    });
+    document.querySelectorAll("[data-automatic-expense-rules-editor]").forEach((editor) => {
+      refreshAutomaticExpenseRulesEditor(editor);
     });
   }
 
@@ -29292,6 +29428,174 @@ MAX - https://bizvmax.ru/zifra_plus
         event.stopPropagation();
         showProgramPaymentConstantMenu(token, event.clientX, event.clientY);
       });
+    });
+  }
+
+  function bindAutomaticExpenseRulesEditor(root = document) {
+    root.querySelectorAll("[data-automatic-expense-rules-shell]").forEach((shell) => {
+      if (shell.dataset.automaticExpenseRulesBound === "true") return;
+      shell.dataset.automaticExpenseRulesBound = "true";
+      const editor = shell.querySelector("[data-automatic-expense-rules-editor]");
+      const palette = shell.querySelector("[data-automatic-expense-constant-palette]");
+      if (!editor) return;
+      initializeCommunicationTemplateEditorHistory(editor);
+      let highlightTimer = 0;
+      let draggedToken = null;
+      let paletteWasDragged = false;
+      const getFormulaRange = (range) => {
+        if (!range || !editor.contains(range.startContainer)) return null;
+        const container = range.startContainer.nodeType === Node.ELEMENT_NODE
+          ? range.startContainer
+          : range.startContainer.parentElement;
+        const formula = container?.closest?.(".payment-assignment-rule-formula")
+          || container?.closest?.(".payment-assignment-rule-line")?.querySelector?.(".payment-assignment-rule-formula")
+          || (container === editor
+            ? Array.from(editor.querySelectorAll(".payment-assignment-rule-formula")).at(-1)
+            : null);
+        if (!formula || !editor.contains(formula)) return null;
+        if (formula.contains(range.startContainer) || formula === range.startContainer) return range;
+        const formulaRange = document.createRange();
+        formulaRange.selectNodeContents(formula);
+        formulaRange.collapse(false);
+        return formulaRange;
+      };
+      const rememberCaret = () => {
+        const selection = window.getSelection?.();
+        if (!selection?.rangeCount || !editor.contains(selection.anchorNode)) return;
+        editor.dataset.automaticExpenseCaretOffset = String(getCommunicationTemplateEditorCaretOffset(editor));
+      };
+      const insertConstantAtRememberedCaret = (marker) => {
+        const normalizedMarker = normalizePaymentConstantMarker(marker);
+        if (!normalizedMarker) return;
+        const beforeValue = serializeCommunicationTemplateEditor(editor);
+        const offset = Number(editor.dataset.automaticExpenseCaretOffset);
+        const range = getFormulaRange(getCommunicationTemplateRangeAtOffset(
+          editor,
+          Number.isFinite(offset) ? offset : beforeValue.length
+        ));
+        if (!range) return;
+        const textNode = document.createTextNode(`[${normalizedMarker}]`);
+        range.insertNode(textNode);
+        const selection = window.getSelection?.();
+        const caret = document.createRange();
+        caret.setStartAfter(textNode);
+        caret.collapse(true);
+        selection?.removeAllRanges();
+        selection?.addRange(caret);
+        commitCommunicationTemplateEditorChange(editor, beforeValue);
+        refreshAutomaticExpenseRulesEditor(editor, true);
+        rememberCaret();
+        editor.focus({ preventScroll: true });
+      };
+      editor.addEventListener("compositionstart", () => {
+        window.clearTimeout(highlightTimer);
+        editor.dataset.composing = "true";
+      });
+      editor.addEventListener("compositionend", () => {
+        editor.dataset.composing = "";
+        refreshAutomaticExpenseRulesEditor(editor, true);
+        rememberCaret();
+      });
+      editor.addEventListener("paste", (event) => {
+        const text = event.clipboardData?.getData("text/plain");
+        if (typeof text !== "string") return;
+        event.preventDefault();
+        insertPlainTextIntoContentEditable(editor, text);
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      editor.addEventListener("input", () => {
+        syncAutomaticExpenseRulesEditor(editor);
+        rememberCaret();
+        if (editor.dataset.composing === "true") return;
+        window.clearTimeout(highlightTimer);
+        highlightTimer = window.setTimeout(() => {
+          if (editor.isConnected && editor.dataset.composing !== "true") {
+            refreshAutomaticExpenseRulesEditor(editor, true);
+            rememberCaret();
+          }
+        }, 160);
+      });
+      ["focus", "click", "keyup", "pointerup"].forEach((eventName) => {
+        editor.addEventListener(eventName, rememberCaret);
+      });
+      editor.addEventListener("blur", () => {
+        window.clearTimeout(highlightTimer);
+        refreshAutomaticExpenseRulesEditor(editor);
+      });
+      editor.addEventListener("contextmenu", (event) => {
+        const token = event.target.closest("[data-payment-constant-marker]");
+        if (!token || !editor.contains(token)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        showPaymentFormulaConstantMenu(token, event.clientX, event.clientY);
+      });
+      editor.addEventListener("dragstart", (event) => {
+        const token = event.target.closest("[data-automatic-expense-rule-token]");
+        if (!token || !editor.contains(token) || !event.dataTransfer) return;
+        draggedToken = token;
+        const marker = normalizePaymentConstantMarker(token.dataset.paymentConstantMarker);
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData(PAYMENT_FORMULA_CONSTANT_MIME, marker);
+        event.dataTransfer.setData("text/plain", token.dataset.templateToken || `[${marker}]`);
+        token.classList.add("is-dragging");
+      });
+      editor.addEventListener("dragover", (event) => {
+        if (!Array.from(event.dataTransfer?.types || []).includes(PAYMENT_FORMULA_CONSTANT_MIME)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = draggedToken ? "move" : "copy";
+        editor.classList.add("is-drop-target");
+      });
+      editor.addEventListener("dragleave", (event) => {
+        if (!editor.contains(event.relatedTarget)) editor.classList.remove("is-drop-target");
+      });
+      editor.addEventListener("drop", (event) => {
+        const marker = normalizePaymentConstantMarker(event.dataTransfer?.getData(PAYMENT_FORMULA_CONSTANT_MIME));
+        if (!marker) return;
+        event.preventDefault();
+        editor.classList.remove("is-drop-target");
+        const range = getFormulaRange(getCommunicationTemplateDropRange(editor, event.clientX, event.clientY));
+        if (!range || draggedToken?.contains(range.startContainer)) return;
+        const beforeValue = serializeCommunicationTemplateEditor(editor);
+        const text = draggedToken?.dataset.templateToken || `[${marker}]`;
+        if (draggedToken) draggedToken.remove();
+        const textNode = document.createTextNode(text);
+        range.insertNode(textNode);
+        const selection = window.getSelection?.();
+        const caret = document.createRange();
+        caret.setStartAfter(textNode);
+        caret.collapse(true);
+        selection?.removeAllRanges();
+        selection?.addRange(caret);
+        commitCommunicationTemplateEditorChange(editor, beforeValue);
+        refreshAutomaticExpenseRulesEditor(editor, true);
+        rememberCaret();
+        editor.focus({ preventScroll: true });
+        draggedToken = null;
+      });
+      editor.addEventListener("dragend", () => {
+        draggedToken?.classList.remove("is-dragging");
+        draggedToken = null;
+        editor.classList.remove("is-drop-target");
+      });
+      palette?.addEventListener("dragstart", () => { paletteWasDragged = true; }, true);
+      palette?.addEventListener("dragend", () => {
+        window.setTimeout(() => { paletteWasDragged = false; });
+      }, true);
+      const insertFromPalette = (token) => {
+        if (!token || paletteWasDragged) return;
+        insertConstantAtRememberedCaret(token.dataset.programPaymentConstantToken);
+      };
+      palette?.addEventListener("click", (event) => {
+        insertFromPalette(event.target.closest("[data-automatic-expense-constant-choice]"));
+      });
+      palette?.addEventListener("keydown", (event) => {
+        if (!['Enter', ' '].includes(event.key)) return;
+        const token = event.target.closest("[data-automatic-expense-constant-choice]");
+        if (!token) return;
+        event.preventDefault();
+        insertFromPalette(token);
+      });
+      syncAutomaticExpenseRulesEditor(editor);
     });
   }
 
@@ -38067,6 +38371,8 @@ MAX - https://bizvmax.ru/zifra_plus
   function savePaymentSettings(event) {
     event.preventDefault();
     const form = event.currentTarget;
+    form.querySelectorAll("[data-automatic-expense-rules-editor]")
+      .forEach(syncAutomaticExpenseRulesEditor);
     const previousAuthorRate = normalizePaymentRateValue(getPaymentSettingValue("authorRate"));
     const constantsResult = collectPaymentConstantSettings(form);
     if (constantsResult.error) {
@@ -38099,11 +38405,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const invalidRule = String(automaticRules?.value || "").split(/\r?\n/u)
       .map((line) => line.trim())
       .filter(Boolean)
-      .find((line) => line.split(",").length < 2);
+      .find((line) => {
+        const parts = line.split(",");
+        return parts.length < 2 || !parts[0].trim() || !parts[1].trim();
+      });
     if (invalidRule) {
       alert(`Некорректная строка автоматической оплаты:\n${invalidRule}`);
       switchPaymentSettingsTab("assignment");
-      form.elements.automaticExpenseRules?.focus();
+      form.querySelector("[data-automatic-expense-rules-editor]")?.focus({ preventScroll: true });
       return;
     }
     const sourceAssignments = settings.find((setting) => setting.key === "sourceAgentAssignments");
@@ -38409,6 +38718,14 @@ MAX - https://bizvmax.ru/zifra_plus
     history.current = nextValue;
   }
 
+  function syncCommunicationTemplateEditorHistoryCurrent(editor, value = serializeCommunicationTemplateEditor(editor)) {
+    if (!editor) return;
+    initializeCommunicationTemplateEditorHistory(editor);
+    const history = communicationTemplateEditorHistories.get(editor);
+    if (!history) return;
+    history.current = String(value ?? "");
+  }
+
   function syncCommunicationTemplateEditorByType(editor) {
     if (!editor) return;
     if (editor.matches("[data-contract-formula-editor]")) syncContractFormulaEditor(editor);
@@ -38418,6 +38735,7 @@ MAX - https://bizvmax.ru/zifra_plus
     else if (editor.matches("[data-document-email-editor]")) syncDocumentEmailTemplateEditor(editor);
     else if (editor.matches("[data-document-path-value-editor]")) syncDocumentPathValueEditor(editor);
     else if (editor.matches("[data-document-save-folder-editor]")) syncDocumentSaveFolderEditor(editor);
+    else if (editor.matches("[data-automatic-expense-rules-editor]")) syncAutomaticExpenseRulesEditor(editor);
     else if (editor.matches("[data-payment-formula-editor]")) syncPaymentFormulaEditor(editor);
     else if (editor.matches("[data-admin-sql-query-editor]")) syncAdminSqlQueryEditor(editor);
     else syncCommunicationTemplateEditor(editor);
@@ -38445,6 +38763,9 @@ MAX - https://bizvmax.ru/zifra_plus
     } else if (editor.matches("[data-document-save-folder-editor]")) {
       editor.textContent = value;
       refreshDocumentSaveFolderEditor(editor);
+    } else if (editor.matches("[data-automatic-expense-rules-editor]")) {
+      editor.innerHTML = renderAutomaticExpenseRulesEditorContent(value);
+      syncAutomaticExpenseRulesEditor(editor);
     } else if (editor.matches("[data-payment-formula-editor]")) {
       editor.textContent = value;
       refreshPaymentFormulaEditor(editor);

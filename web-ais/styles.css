@@ -5920,6 +5920,200 @@ body.long-press-dragging * {
   line-height: 1.45;
 }
 
+.payment-assignment-editor-shell {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.payment-assignment-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.payment-assignment-editor-head h4,
+.payment-assignment-editor-head p {
+  margin: 0;
+}
+
+.payment-assignment-editor-head h4 {
+  color: #17211e;
+  font-size: 13px;
+}
+
+.payment-assignment-editor-head p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.payment-assignment-syntax-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.payment-assignment-syntax-legend span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.payment-assignment-syntax-legend .is-type {
+  border-color: #99d7cf;
+  background: #ecf9f6;
+  color: #08766e;
+}
+
+.payment-assignment-syntax-legend .is-formula {
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.payment-assignment-syntax-legend .is-note {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #9a6500;
+}
+
+.payment-assignment-syntax-legend .is-exclusion {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.payment-assignment-constant-palette .program-payment-constant-palette {
+  max-height: none;
+  position: static;
+  padding: 7px;
+}
+
+.payment-assignment-constant-palette .program-payment-constant-palette-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.payment-assignment-constant-palette .program-payment-constant-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+.payment-assignment-constant-palette .program-payment-constant-token {
+  flex: 1 1 170px;
+  width: auto;
+  min-width: 140px;
+  max-width: 260px;
+  cursor: pointer;
+}
+
+.payment-assignment-constant-palette .program-payment-constant-token:active {
+  cursor: grabbing;
+}
+
+.payment-assignment-constant-palette .program-payment-constant-token:focus-visible {
+  border-color: #8b5cf6;
+  outline: 2px solid rgba(139, 92, 246, 0.25);
+  outline-offset: 1px;
+}
+
+.payment-assignment-rules-editor {
+  width: 100%;
+  min-width: 0;
+  min-height: 250px;
+  max-height: min(470px, calc(100vh - 360px));
+  overflow: auto;
+  border: 1px solid #b9c9c4;
+  border-radius: 8px;
+  background: #fcfefd;
+  padding: 10px 12px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  outline: 0;
+}
+
+.payment-assignment-rules-editor:focus {
+  border-color: #0e817a;
+  box-shadow: 0 0 0 2px rgba(14, 129, 122, 0.12);
+}
+
+.payment-assignment-rules-editor.is-drop-target {
+  border-color: #7c3aed;
+  background: #faf9ff;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.14);
+}
+
+.payment-assignment-rules-editor:empty::before {
+  content: attr(data-placeholder);
+  color: #9aa5a1;
+  pointer-events: none;
+}
+
+.payment-assignment-rule-line.is-invalid {
+  border-bottom: 1px wavy #dc2626;
+  background: #fff1f2;
+}
+
+.payment-assignment-rule-type {
+  color: #08766e;
+  font-weight: 800;
+}
+
+.payment-assignment-rule-formula {
+  color: #4338ca;
+  font-weight: 700;
+}
+
+.payment-assignment-rule-separator {
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+.payment-assignment-rule-note {
+  color: #9a6500;
+}
+
+.payment-assignment-rule-exclusion {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.payment-assignment-rule-token {
+  cursor: grab;
+}
+
+.payment-assignment-rule-token.is-dragging {
+  cursor: grabbing;
+  opacity: 0.45;
+}
+
+@media (max-width: 760px) {
+  .payment-assignment-editor-head,
+  .payment-assignment-constant-palette .program-payment-constant-palette-head {
+    display: grid;
+  }
+
+  .payment-assignment-syntax-legend {
+    justify-content: flex-start;
+  }
+
+  .payment-assignment-rules-editor {
+    min-height: 220px;
+    font-size: 12px;
+  }
+}
+
 .admin-system-documents-head {
   display: flex;
   align-items: center;
