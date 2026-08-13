@@ -14346,7 +14346,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   position: fixed;
   z-index: 70;
   width: min(390px, calc(100vw - 16px));
-  height: min(330px, calc(100vh - 16px));
+  height: min(390px, calc(100vh - 16px));
   min-width: min(300px, calc(100vw - 16px));
   min-height: min(240px, calc(100vh - 16px));
   max-width: calc(100vw - 16px);
@@ -14418,13 +14418,58 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .student-document-recognition-preview-controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: flex-end;
   gap: 3px;
   padding: 4px 7px;
   border-bottom: 1px solid var(--line);
   background: #f8fbfa;
+}
+
+.student-document-recognition-preview-document-navigation {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 3px;
+}
+
+.student-document-recognition-preview-page-navigation,
+.student-document-recognition-preview-view-tools {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+}
+
+.student-document-recognition-preview-view-tools {
+  justify-content: flex-end;
+}
+
+.student-document-recognition-preview-document-navigation[hidden],
+.student-document-recognition-preview-page-navigation[hidden] {
+  display: none;
+}
+
+.student-document-recognition-preview-document-navigation select {
+  width: 100%;
+  min-width: 0;
+  height: 25px;
+  padding: 2px 22px 2px 6px;
+  border: 1px solid #b7ccc6;
+  border-radius: 4px;
+  color: #225d54;
+  background-color: #fff;
+  font: inherit;
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
+.student-document-recognition-preview-document-navigation select:focus-visible {
+  border-color: var(--teal);
+  outline: 2px solid rgba(15, 118, 110, 0.2);
+  outline-offset: 1px;
 }
 
 .student-document-recognition-preview-position,
@@ -14496,6 +14541,10 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   text-align: center;
 }
 
+.student-document-recognition-preview-document-count {
+  white-space: nowrap;
+}
+
 .student-document-recognition-preview-viewport {
   position: relative;
   min-width: 0;
@@ -14538,6 +14587,25 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   pointer-events: none;
   transform-origin: 0 0;
   user-select: none;
+}
+
+.student-document-recognition-preview-loading {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  color: #225d54;
+  background: rgba(239, 247, 244, 0.92);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+}
+
+.student-document-recognition-preview-loading[hidden] {
+  display: none;
 }
 
 .student-document-recognition-preview-hint {
@@ -15492,11 +15560,16 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .student-document-recognition-preview-controls {
-    justify-content: flex-start;
+    grid-template-columns: 1fr;
     overflow-x: auto;
     padding: 4px 6px;
     scrollbar-width: thin;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .student-document-recognition-preview-page-navigation,
+  .student-document-recognition-preview-view-tools {
+    justify-content: flex-start;
   }
 
   .student-document-recognition-preview-controls button {

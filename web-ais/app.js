@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.155",
+    version: "1.7.156",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.156",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В окне просмотра источника распознанного поля добавлены выбор всех доступных документов и переходы между документами и их страницами."
+      ]
+    },
     {
       version: "1.7.155",
       releasedAt: "2026-08-13",
@@ -32235,12 +32242,25 @@ MAX - https://bizvmax.ru/zifra_plus
             </button>
           </div>
         </div>
-        <div class="student-document-recognition-preview-controls" aria-label="Масштаб изображения">
-          <button type="button" data-ocr-preview-zoom-out title="Уменьшить" aria-label="Уменьшить">−</button>
-          <span data-ocr-preview-zoom>100%</span>
-          <button type="button" data-ocr-preview-zoom-in title="Увеличить" aria-label="Увеличить">+</button>
-          <button type="button" data-ocr-preview-focus title="Перейти к найденной области">Область</button>
-          <button type="button" data-ocr-preview-fit title="Показать весь лист">Вписать</button>
+        <div class="student-document-recognition-preview-controls">
+          <div class="student-document-recognition-preview-document-navigation" data-ocr-preview-document-navigation hidden>
+            <button type="button" data-ocr-preview-document-prev title="Предыдущий документ" aria-label="Предыдущий документ">‹</button>
+            <select data-ocr-preview-document-select aria-label="Документ для просмотра"></select>
+            <span class="student-document-recognition-preview-document-count" data-ocr-preview-document-count></span>
+            <button type="button" data-ocr-preview-document-next title="Следующий документ" aria-label="Следующий документ">›</button>
+          </div>
+          <div class="student-document-recognition-preview-page-navigation" data-ocr-preview-page-navigation hidden>
+            <button type="button" data-ocr-preview-page-prev title="Предыдущая страница" aria-label="Предыдущая страница">‹</button>
+            <span data-ocr-preview-page-count>Страница 1 из 1</span>
+            <button type="button" data-ocr-preview-page-next title="Следующая страница" aria-label="Следующая страница">›</button>
+          </div>
+          <div class="student-document-recognition-preview-view-tools" role="group" aria-label="Масштаб изображения">
+            <button type="button" data-ocr-preview-zoom-out title="Уменьшить" aria-label="Уменьшить">−</button>
+            <span data-ocr-preview-zoom>100%</span>
+            <button type="button" data-ocr-preview-zoom-in title="Увеличить" aria-label="Увеличить">+</button>
+            <button type="button" data-ocr-preview-focus title="Перейти к найденной области">Область</button>
+            <button type="button" data-ocr-preview-fit title="Показать весь лист">Вписать</button>
+          </div>
         </div>
         <div
           class="student-document-recognition-preview-viewport"
@@ -32248,9 +32268,10 @@ MAX - https://bizvmax.ru/zifra_plus
           tabindex="0"
           title="Удерживайте левую кнопку мыши и перемещайте изображение"
         >
+          <span class="student-document-recognition-preview-loading" data-ocr-preview-loading hidden></span>
           <img data-ocr-field-preview-image alt="Страница документа с распознанным полем" draggable="false">
         </div>
-        <small class="student-document-recognition-preview-hint">Изображение можно перемещать · правый нижний угол меняет размер окна</small>
+        <small class="student-document-recognition-preview-hint">Можно выбрать любой доступный документ · изображение перемещается мышью</small>
         <button class="student-document-recognition-preview-resize" type="button" data-ocr-preview-resize title="Изменить размер окна" aria-label="Изменить размер окна">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M9 20h11V9M14 20l6-6M18 20l2-2" />
@@ -32615,12 +32636,25 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindStudentDocumentRecognitionFieldPreviews(modal, fields, payload = {}) {
     const files = Array.isArray(payload.files) ? payload.files : [];
+    const availableFiles = files
+      .map((file, index) => ({ file, index }))
+      .filter(({ file }) => file && isStudentRecognitionVisualFile(file));
     const popup = modal?.querySelector("[data-ocr-field-preview]");
     const image = popup?.querySelector("[data-ocr-field-preview-image]");
     const title = popup?.querySelector("[data-ocr-field-preview-title]");
     const meta = popup?.querySelector("[data-ocr-field-preview-meta]");
     const viewport = popup?.querySelector("[data-ocr-preview-viewport]");
     const zoomLabel = popup?.querySelector("[data-ocr-preview-zoom]");
+    const loadingLabel = popup?.querySelector("[data-ocr-preview-loading]");
+    const documentNavigation = popup?.querySelector("[data-ocr-preview-document-navigation]");
+    const documentSelect = popup?.querySelector("[data-ocr-preview-document-select]");
+    const documentCountLabel = popup?.querySelector("[data-ocr-preview-document-count]");
+    const previousDocumentButton = popup?.querySelector("[data-ocr-preview-document-prev]");
+    const nextDocumentButton = popup?.querySelector("[data-ocr-preview-document-next]");
+    const pageNavigation = popup?.querySelector("[data-ocr-preview-page-navigation]");
+    const pageCountLabel = popup?.querySelector("[data-ocr-preview-page-count]");
+    const previousPageButton = popup?.querySelector("[data-ocr-preview-page-prev]");
+    const nextPageButton = popup?.querySelector("[data-ocr-preview-page-next]");
     const zoomOutButton = popup?.querySelector("[data-ocr-preview-zoom-out]");
     const zoomInButton = popup?.querySelector("[data-ocr-preview-zoom-in]");
     const focusButton = popup?.querySelector("[data-ocr-preview-focus]");
@@ -32633,10 +32667,38 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!popup || !image || !title || !meta || !viewport || !zoomLabel) return;
     let activeInput = null;
     let activeField = null;
+    let activeFieldPreview = null;
+    let activeFieldFilePosition = -1;
+    let activeFilePosition = -1;
+    let activePage = 1;
+    let activePageCount = 1;
+    let previewLoadSequence = 0;
     let activeBox = null;
     let showingFullPage = false;
     let manualPosition = null;
     let storedSizes = {};
+    const pageCache = new Map();
+    availableFiles.forEach(({ file }, filePosition) => {
+      (file.pagePreviews || [])
+        .map(normalizeStudentDocumentRecognitionPagePreview)
+        .filter(Boolean)
+        .forEach((preview) => {
+          pageCache.set(`${filePosition}:${preview.page}`, {
+            preview,
+            page: preview.page,
+            pageCount: Math.max(1, Number(file.pageCount) || 1)
+          });
+        });
+    });
+    if (documentSelect) {
+      documentSelect.replaceChildren(...availableFiles.map(({ file }, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+        option.textContent = String(file.relativeName || file.fileName || `Документ ${index + 1}`);
+        option.title = option.textContent;
+        return option;
+      }));
+    }
     try {
       const storedPosition = JSON.parse(localStorage.getItem(STUDENT_DOCUMENT_RECOGNITION_PREVIEW_POSITION_KEY) || "null");
       if (Number.isFinite(storedPosition?.left) && Number.isFinite(storedPosition?.top)) {
@@ -32785,6 +32847,83 @@ MAX - https://bizvmax.ru/zifra_plus
       view.y = anchorY - imageY * view.zoom;
       paintView();
     };
+    const getFieldFilePosition = (field) => {
+      const sourceNames = String(field?.sourceFile || "")
+        .split(/;\s*/g)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      return availableFiles.findIndex(({ file }) => sourceNames.some((sourceName) => (
+        sourceName === String(file?.relativeName || "")
+        || sourceName === String(file?.fileName || "")
+      )));
+    };
+    const updatePreviewNavigation = () => {
+      const hasDocuments = availableFiles.length > 0;
+      if (documentNavigation) documentNavigation.hidden = !hasDocuments;
+      if (pageNavigation) pageNavigation.hidden = !hasDocuments;
+      if (!hasDocuments) return;
+      activeFilePosition = clamp(activeFilePosition, 0, availableFiles.length - 1);
+      const currentFile = availableFiles[activeFilePosition]?.file;
+      const currentName = String(currentFile?.relativeName || currentFile?.fileName || `Документ ${activeFilePosition + 1}`);
+      if (documentSelect) {
+        documentSelect.value = String(activeFilePosition);
+        documentSelect.title = currentName;
+      }
+      if (documentCountLabel) documentCountLabel.textContent = `${activeFilePosition + 1} из ${availableFiles.length}`;
+      if (previousDocumentButton) previousDocumentButton.disabled = activeFilePosition <= 0;
+      if (nextDocumentButton) nextDocumentButton.disabled = activeFilePosition >= availableFiles.length - 1;
+      if (pageCountLabel) pageCountLabel.textContent = `Страница ${activePage} из ${activePageCount}`;
+      if (previousPageButton) previousPageButton.disabled = activePage <= 1;
+      if (nextPageButton) nextPageButton.disabled = activePage >= activePageCount;
+      meta.textContent = `${currentName}, стр. ${activePage}${showingFullPage ? " · весь лист" : " · фрагмент"}`;
+      meta.title = meta.textContent;
+      focusButton.disabled = !showingFullPage || !activeBox;
+    };
+    const setPreviewLoading = (message = "") => {
+      if (!loadingLabel) return;
+      loadingLabel.textContent = message;
+      loadingLabel.hidden = !message;
+      viewport.classList.toggle("is-loading", Boolean(message));
+      if (message) image.removeAttribute("src");
+      image.style.visibility = message ? "hidden" : "";
+    };
+    const loadPreviewDocumentPage = async (filePosition, page = 1) => {
+      if (!availableFiles.length || !activeInput) return;
+      const sequence = ++previewLoadSequence;
+      activeFilePosition = clamp(Number(filePosition) || 0, 0, availableFiles.length - 1);
+      const entry = availableFiles[activeFilePosition];
+      activePageCount = Math.max(1, Number(entry.file.pageCount) || 1);
+      activePage = clamp(Number(page) || 1, 1, activePageCount);
+      showingFullPage = true;
+      activeBox = activeFilePosition === activeFieldFilePosition && activePage === activeFieldPreview?.page
+        ? activeFieldPreview?.box || null
+        : null;
+      updatePreviewNavigation();
+      setPreviewLoading("Загрузка страницы…");
+      try {
+        const cacheKey = `${activeFilePosition}:${activePage}`;
+        let pageResult = pageCache.get(cacheKey);
+        if (!pageResult) {
+          pageResult = await loadStudentDocumentPhotoCropPage(payload, entry.file, activePage);
+          pageCache.set(cacheKey, pageResult);
+        }
+        if (sequence !== previewLoadSequence || !activeInput) return;
+        activePageCount = Math.max(1, Number(pageResult.pageCount) || activePageCount);
+        entry.file.pageCount = activePageCount;
+        activePage = clamp(Number(pageResult.page) || activePage, 1, activePageCount);
+        activeBox = activeFilePosition === activeFieldFilePosition && activePage === activeFieldPreview?.page
+          ? activeFieldPreview?.box || null
+          : null;
+        showingFullPage = true;
+        updatePreviewNavigation();
+        image.src = `data:${pageResult.preview.mimeType};base64,${pageResult.preview.base64}`;
+      } catch (error) {
+        if (sequence !== previewLoadSequence) return;
+        setPreviewLoading(error.message || "Не удалось загрузить документ.");
+        meta.textContent = String(error.message || "Не удалось загрузить документ.");
+        meta.title = meta.textContent;
+      }
+    };
     const focusRecognizedArea = () => {
       if (!showingFullPage || !activeBox || !view.baseWidth || !view.baseHeight) return;
       const boxWidth = Math.max(1, view.baseWidth * activeBox.width);
@@ -32800,13 +32939,18 @@ MAX - https://bizvmax.ru/zifra_plus
       paintView();
     };
     const hide = () => {
+      previewLoadSequence += 1;
       activeInput = null;
       activeField = null;
+      activeFieldPreview = null;
+      activeFieldFilePosition = -1;
+      activeFilePosition = -1;
       activeBox = null;
       showingFullPage = false;
       view.pointerId = null;
       popup.hidden = true;
       viewport.classList.remove("is-panning", "can-pan");
+      setPreviewLoading("");
       image.removeAttribute("src");
       image.removeAttribute("style");
     };
@@ -32834,13 +32978,28 @@ MAX - https://bizvmax.ru/zifra_plus
         && view.baseWidth > 0
         && view.baseHeight > 0
       );
+      if (!preserveCurrentView) previewLoadSequence += 1;
       activeInput = input;
       activeField = field;
-      activeBox = fieldPreview.box || null;
-      showingFullPage = Boolean(pagePreview);
+      activeFieldPreview = fieldPreview;
+      activeFieldFilePosition = getFieldFilePosition(field);
+      if (!preserveCurrentView) {
+        activeFilePosition = activeFieldFilePosition >= 0 ? activeFieldFilePosition : 0;
+        activePage = fieldPreview.page;
+        activePageCount = Math.max(
+          1,
+          Number(availableFiles[activeFilePosition]?.file?.pageCount) || 1,
+          fieldPreview.page
+        );
+        activeBox = fieldPreview.box || null;
+        showingFullPage = Boolean(pagePreview);
+      }
       title.textContent = String(field.label || key || "Распознанное поле");
-      meta.textContent = `${field.sourceFile || "Документ"}, стр. ${fieldPreview.page} · ${showingFullPage ? "весь лист" : "фрагмент"}`;
-      focusButton.disabled = !showingFullPage || !activeBox;
+      updatePreviewNavigation();
+      if (!availableFiles.length) {
+        meta.textContent = `${field.sourceFile || "Документ"}, стр. ${fieldPreview.page} · ${showingFullPage ? "весь лист" : "фрагмент"}`;
+        focusButton.disabled = !showingFullPage || !activeBox;
+      }
       popup.hidden = false;
       if (preserveCurrentView) {
         requestAnimationFrame(() => {
@@ -32850,6 +33009,7 @@ MAX - https://bizvmax.ru/zifra_plus
         return;
       }
       const displayedPreview = pagePreview || fieldPreview;
+      setPreviewLoading("");
       image.src = `data:${displayedPreview.mimeType};base64,${displayedPreview.base64}`;
       requestAnimationFrame(() => {
         if (image.complete && image.naturalWidth) {
@@ -32926,6 +33086,22 @@ MAX - https://bizvmax.ru/zifra_plus
         }, 0);
       });
     });
+    const openDocumentAt = (filePosition) => {
+      const nextPosition = clamp(Number(filePosition) || 0, 0, Math.max(0, availableFiles.length - 1));
+      const nextPage = nextPosition === activeFieldFilePosition
+        ? Math.max(1, Number(activeFieldPreview?.page) || 1)
+        : 1;
+      void loadPreviewDocumentPage(nextPosition, nextPage);
+    };
+    documentSelect?.addEventListener("change", () => openDocumentAt(documentSelect.value));
+    previousDocumentButton?.addEventListener("click", () => openDocumentAt(activeFilePosition - 1));
+    nextDocumentButton?.addEventListener("click", () => openDocumentAt(activeFilePosition + 1));
+    previousPageButton?.addEventListener("click", () => {
+      void loadPreviewDocumentPage(activeFilePosition, activePage - 1);
+    });
+    nextPageButton?.addEventListener("click", () => {
+      void loadPreviewDocumentPage(activeFilePosition, activePage + 1);
+    });
     popup.addEventListener("contextmenu", (event) => {
       if (!activeField || !activeInput) return;
       event.preventDefault();
@@ -32936,6 +33112,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ));
     });
     image.addEventListener("load", () => {
+      setPreviewLoading("");
       fitView();
       if (showingFullPage && activeBox) focusRecognizedArea();
       placePopup();
