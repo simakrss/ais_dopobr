@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.171",
+    version: "1.7.172",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.172",
+      releasedAt: "2026-08-13",
+      changes: [
+        "Заголовки реестров, включая «Слушатели и заявки», сохраняются в одной строке."
+      ]
+    },
     {
       version: "1.7.171",
       releasedAt: "2026-08-13",
@@ -9262,7 +9269,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <section class="panel collection-register" data-main-registry>
         <div class="section-head">
-          <div class="${state.view === "directExpenses" ? "direct-expenses-section-heading" : ""}">
+          <div class="collection-section-heading ${state.view === "directExpenses" ? "direct-expenses-section-heading" : ""}">
             <p class="eyebrow">${config.subtitle}</p>
             <h2>${config.title}</h2>
           </div>

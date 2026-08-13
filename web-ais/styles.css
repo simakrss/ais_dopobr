@@ -1706,6 +1706,14 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   min-width: 0;
 }
 
+.section-head > .collection-section-heading {
+  flex: 0 0 auto;
+}
+
+.collection-section-heading h2 {
+  white-space: nowrap;
+}
+
 .section-head > .direct-expenses-section-heading {
   flex: 0 0 auto;
 }
