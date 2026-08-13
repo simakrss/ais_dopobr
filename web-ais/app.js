@@ -20,12 +20,12 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.144",
+    version: "1.7.145",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
     {
-      version: "1.7.144",
+      version: "1.7.145",
       releasedAt: "2026-08-13",
       changes: [
         "При импорте заявок список сопоставления разделён на наиболее подходящие и остальные программы, а после выбора программа и слушатель повторно проверяются по общей базе.",
@@ -9885,7 +9885,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <div class="student-application-detail-grid">
         ${details.map(([label, value]) => `
-          <div>
+          <div class="${label === "Примечание" ? "is-wide" : ""}">
             <dt>${escapeHtml(label)}</dt>
             <dd>${escapeHtml(value || "—")}</dd>
           </div>
@@ -9925,8 +9925,13 @@ MAX - https://bizvmax.ru/zifra_plus
             ? `Платёж ${financialTerms.installmentPercent}%: ${escapeHtml(money(paymentAmount))}; сумма договора: ${escapeHtml(money(contractAmount))}`
             : `Оплата: ${escapeHtml(money(paymentAmount))}; сумма договора: ${escapeHtml(money(contractAmount))}`)
           : `Без оплаты; сумма договора: ${escapeHtml(money(contractAmount))}`}</small>
-        ${repeatComment ? `<small class="student-application-repeat-comment">${escapeHtml(repeatComment)}</small>` : ""}
       </div>
+      ${repeatComment ? `
+        <div class="student-application-listener-comment">
+          <strong>Комментарий по слушателю</strong>
+          <span>${escapeHtml(repeatComment)}</span>
+        </div>
+      ` : ""}
     `;
   }
 
@@ -10103,7 +10108,7 @@ MAX - https://bizvmax.ru/zifra_plus
                           <input data-student-application-select="${escapeAttr(row.id)}" data-payment-amount="${escapeAttr(paymentAmount)}" type="checkbox" ${selected ? "checked" : ""} aria-label="Выбрать заявку">
                         </td>
                         <td>${escapeHtml(row.date || "")}</td>
-                        <td>${escapeHtml(row.name || "")}${repeatComment ? `<small>${escapeHtml(repeatComment)}</small>` : ""}</td>
+                        <td>${escapeHtml(row.name || "")}</td>
                         <td>${escapeHtml(row.order || "")}</td>
                         <td class="student-applications-payment-cell">${paymentAmount > 0 || row.paid ? escapeHtml(money(paymentAmount)) : "—"}</td>
                         <td>${escapeHtml(row.program || "")}${recommendation
@@ -10114,6 +10119,11 @@ MAX - https://bizvmax.ru/zifra_plus
                         <td>${escapeHtml(row.city || "")}</td>
                         <td>${escapeHtml(row.source || "")}</td>
                       </tr>
+                      ${repeatComment ? `
+                        <tr class="student-application-table-comment">
+                          <td colspan="10"><small>${escapeHtml(repeatComment)}</small></td>
+                        </tr>
+                      ` : ""}
                     `;
                   }).join("") : `
                     <tr>

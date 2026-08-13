@@ -8383,6 +8383,28 @@ body.card-window-moving {
   font-weight: 700;
 }
 
+.student-applications-import-table tbody tr.student-application-table-comment {
+  cursor: default;
+}
+
+.student-applications-import-table .student-application-table-comment td {
+  padding: 2px 8px 3px;
+  border-right: 0;
+  background: #fffbeb;
+}
+
+.student-applications-import-table .student-application-table-comment small {
+  margin: 0;
+  color: #92400e;
+  font-size: 10px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.student-applications-import-table tbody tr.is-active + .student-application-table-comment td {
+  background: #dbeafe;
+}
+
 .student-applications-import-table tbody tr.is-repeat:hover td {
   background: #fef3c7;
 }
@@ -8407,11 +8429,11 @@ body.card-window-moving {
 }
 
 .student-applications-import-detail {
-  min-height: 118px;
+  min-height: 88px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(240px, 0.32fr);
-  gap: 6px 12px;
-  padding: 7px 12px;
+  gap: 3px 8px;
+  padding: 4px 8px;
   border-top: 1px solid var(--line);
   background: #fbfcfa;
 }
@@ -8425,21 +8447,30 @@ body.card-window-moving {
 .student-application-detail-grid {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 3px 10px;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  align-content: start;
+  gap: 2px 8px;
 }
 
 .student-application-detail-grid div {
   min-width: 0;
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
-  gap: 4px;
+  gap: 1px;
+  padding: 1px 0;
+}
+
+.student-application-detail-grid div.is-wide {
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
 }
 
 .student-application-detail-grid dt {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
+  line-height: 1.1;
 }
 
 .student-application-detail-grid dd {
@@ -8447,7 +8478,8 @@ body.card-window-moving {
   margin: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -8455,8 +8487,8 @@ body.card-window-moving {
 .student-application-import-preview {
   display: grid;
   align-content: start;
-  gap: 3px;
-  padding: 6px 8px;
+  gap: 2px;
+  padding: 4px 6px;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: #fff;
@@ -8475,9 +8507,9 @@ body.card-window-moving {
 .student-application-program-mapping {
   min-width: 0;
   display: grid;
-  gap: 3px;
-  margin: 3px 0;
-  padding: 5px;
+  gap: 2px;
+  margin: 1px 0;
+  padding: 3px 4px;
   border: 1px solid #f59e0b;
   border-radius: 4px;
   background: #fffbeb;
@@ -8496,10 +8528,10 @@ body.card-window-moving {
 .student-application-program-mapping select {
   width: 100%;
   min-width: 0;
-  min-height: 28px;
+  min-height: 24px;
   border: 1px solid var(--line);
   border-radius: 4px;
-  padding: 3px 24px 3px 6px;
+  padding: 2px 22px 2px 5px;
   background: #fff;
   color: var(--text);
   font: inherit;
@@ -8517,10 +8549,24 @@ body.card-window-moving {
   color: var(--muted);
 }
 
-.student-application-import-preview .student-application-repeat-comment {
+.student-application-listener-comment {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 6px;
+  border-left: 3px solid #f59e0b;
+  background: #fffbeb;
   color: #92400e;
-  font-weight: 700;
-  line-height: 1.3;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.student-application-listener-comment span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .student-applications-import-actions {
