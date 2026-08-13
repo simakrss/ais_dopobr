@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.170",
+    version: "1.7.171",
     releasedAt: "2026-08-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.171",
+      releasedAt: "2026-08-13",
+      changes: [
+        "В таблице слушателей колонка «Документы» заменена вычисляемой колонкой «Дней до конца», которая учитывает продлённый срок обучения и показывает в том числе отрицательные значения."
+      ]
+    },
     {
       version: "1.7.170",
       releasedAt: "2026-08-13",
@@ -1566,6 +1573,8 @@
   const GENERAL_EXPENSES_TABLE_LAYOUT_VERSION = "counterparty-first-with-expense-number";
   const CONTRACTS_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-contracts-table-layout-v1";
   const CONTRACTS_TABLE_LAYOUT_VERSION = "agency-after-services";
+  const STUDENTS_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-students-table-layout-v1";
+  const STUDENTS_TABLE_LAYOUT_VERSION = "days-until-end-replaces-documents";
   const SYSTEM_HELP_TOOLTIP_DELAY_MS = 1000;
   const DRAG_TOOLTIP_DELAY_MS = SYSTEM_HELP_TOOLTIP_DELAY_MS;
   const SYSTEM_HELP_TWO_FINGER_TAP_MAX_MS = 800;
@@ -2882,7 +2891,7 @@ MAX - https://bizvmax.ru/zifra_plus
       phone: 120,
       balance: 82,
       endDate: 105,
-      documentsStatus: 105
+      daysUntilEnd: 105
     },
     contracts: {
       name: 230,
@@ -3153,10 +3162,11 @@ MAX - https://bizvmax.ru/zifra_plus
         field("startDate", "Начало обучения", "date"),
         field("endDate", "Окончание", "date"),
         field("documentsStatus", "Документы"),
+        field("daysUntilEnd", "Дней до конца", "number"),
         field("manager", "Ответственный"),
         field("tags", "Теги", "textarea")
       ],
-      table: ["name", "status", "program", "applicationDate", "phone", "balance", "endDate", "documentsStatus"]
+      table: ["name", "status", "program", "applicationDate", "phone", "balance", "endDate", "daysUntilEnd"]
     },
     contracts: {
       title: "Сотрудники",
@@ -7469,6 +7479,26 @@ MAX - https://bizvmax.ru/zifra_plus
     } catch (error) {
       console.warn("Не удалось прочитать настройки таблиц", error);
     }
+    if (localStorage.getItem(STUDENTS_TABLE_LAYOUT_VERSION_KEY) !== STUDENTS_TABLE_LAYOUT_VERSION) {
+      const current = settings.students && typeof settings.students === "object"
+        ? settings.students
+        : {};
+      const order = Array.isArray(current.order)
+        ? current.order.map((key) => key === "documentsStatus" ? "daysUntilEnd" : key)
+        : [];
+      const widths = { ...(current.widths || {}) };
+      if (widths.documentsStatus !== undefined && widths.daysUntilEnd === undefined) {
+        widths.daysUntilEnd = widths.documentsStatus;
+      }
+      delete widths.documentsStatus;
+      settings.students = { ...current, order: unique(order), widths };
+      try {
+        localStorage.setItem(TABLE_SETTINGS_KEY, JSON.stringify(settings));
+        localStorage.setItem(STUDENTS_TABLE_LAYOUT_VERSION_KEY, STUDENTS_TABLE_LAYOUT_VERSION);
+      } catch (error) {
+        console.warn("Не удалось сохранить новую колонку срока обучения слушателей", error);
+      }
+    }
     if (localStorage.getItem(DIRECT_EXPENSES_TABLE_LAYOUT_VERSION_KEY) !== DIRECT_EXPENSES_TABLE_LAYOUT_VERSION) {
       const current = settings.directExpenses && typeof settings.directExpenses === "object"
         ? settings.directExpenses
@@ -7773,6 +7803,14 @@ MAX - https://bizvmax.ru/zifra_plus
     if (["amount", "price", "oldPrice", "paid", "agencyAmount", "balance", "contractAmount", "paidAmount"].includes(key) && !Number.isNaN(Number(value))) return money(value);
     if (key.toLowerCase().includes("date") || key.endsWith("At") || key === "paid") return dateRu(value);
     return String(value);
+  }
+
+  function getTableCellValue(config, row, key) {
+    const collection = typeof config === "string" ? configs[config]?.collection : config?.collection;
+    if (collection === "students" && key === "daysUntilEnd") {
+      return calculateDaysUntilDate(row?.extendedEndDate || row?.endDate);
+    }
+    return row?.[key];
   }
 
   function pushStudentStatusHistory(status) {
@@ -12033,8 +12071,8 @@ MAX - https://bizvmax.ru/zifra_plus
       const dir = state.sort.dir === "asc" ? 1 : -1;
       const sortField = config.fields?.find((fieldDefinition) => fieldDefinition.key === state.sort.key);
       filtered = filtered.slice().sort((a, b) => {
-        const left = a[state.sort.key];
-        const right = b[state.sort.key];
+        const left = getTableCellValue(config, a, state.sort.key);
+        const right = getTableCellValue(config, b, state.sort.key);
         if (sortField?.type === "number") {
           const leftNumber = String(left ?? "").trim() === "" ? null : Number(left);
           const rightNumber = String(right ?? "").trim() === "" ? null : Number(right);
@@ -12200,7 +12238,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   <input type="checkbox" data-action="toggle-row-selection" data-config="${configId}" data-id="${row.id}" ${selected.includes(String(row?.id || "").trim()) ? "checked" : ""} aria-label="Выбрать строку">
                 </td>
                 ${fields.map((fieldItem, index) => {
-                  const rawValue = row[fieldItem.key];
+                  const rawValue = getTableCellValue(config, row, fieldItem.key);
                   const displayValue = valueForDisplay(fieldItem.key, rawValue, configId) || "Открыть";
                   const externalUrl = configId === "programs" && fieldItem.key === "promoSite"
                     ? normalizeExternalUrl(rawValue)
@@ -41203,7 +41241,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const rows = rowsOverride || getVisibleRows(config);
     const fields = getTableFields(config, configId);
     const header = fields.map((item) => csvCell(item.label)).join(";");
-    const body = rows.map((row) => fields.map((item) => csvCell(row[item.key])).join(";")).join("\n");
+    const body = rows.map((row) => fields.map((item) => csvCell(getTableCellValue(config, row, item.key))).join(";")).join("\n");
     download(`${config.collection}.csv`, "\ufeff" + header + "\n" + body, "text/csv;charset=utf-8");
   }
 
