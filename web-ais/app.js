@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.184",
+    version: "1.7.185",
     releasedAt: "2026-08-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.185",
+      releasedAt: "2026-08-14",
+      changes: [
+        "При импорте заявки на программу ПРО дополнительный статус автоматически устанавливается в «Вебинары», а при установке статуса «Отчислен» — в «Вебинары. Архив»."
+      ]
+    },
     {
       version: "1.7.184",
       releasedAt: "2026-08-14",
@@ -1696,6 +1703,8 @@
   const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
   const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
   const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
+  const PRO_STUDENT_ADDITIONAL_STATUS = "Вебинары";
+  const PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS = "Вебинары. Архив";
   let browserStateIndexedDbMode = false;
   try {
     browserStateIndexedDbMode = localStorage.getItem(BROWSER_OFFLINE_MODE_STORAGE_KEY) === "indexeddb";
@@ -3089,7 +3098,11 @@ MAX - https://bizvmax.ru/zifra_plus
     frdoProfessionalAreas: [],
     economicActivities: [],
     minimumEducationLevels: [],
-    studentAdditionalStatuses: [DEFAULT_STUDENT_ADDITIONAL_STATUS],
+    studentAdditionalStatuses: [
+      DEFAULT_STUDENT_ADDITIONAL_STATUS,
+      PRO_STUDENT_ADDITIONAL_STATUS,
+      PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS
+    ],
     fundingSources: ["Собственные средства", "За счет организации", "Федеральный бюджет", "Местный бюджет"],
     citizenships: ["Российская Федерация"],
     documentTypes: ["Паспорт гражданина РФ", "Иностранный паспорт", "Вид на жительство", "Свидетельство о рождении"],
@@ -11358,7 +11371,7 @@ MAX - https://bizvmax.ru/zifra_plus
       status: status || "На зачисление",
       program: String(program?.name || getStudentApplicationProgramTitle(row)).trim(),
       studyForm: String(program?.studyForm || ""),
-      educationType: String(getStudentApplicationInferredProgramType(row) || program?.type || ""),
+      educationType: String(program?.type || getStudentApplicationInferredProgramType(row) || ""),
       hours: program?.hours || "",
       phone: String(row.phone || "").trim(),
       email: String(row.email || "").trim(),
@@ -11392,6 +11405,11 @@ MAX - https://bizvmax.ru/zifra_plus
       directExpenses: []
     };
     record = reuseExistingStudentPersonalData(record, row, existingStudentsLookup, selectedProgramId);
+    record.additionalStatus = resolveProStudentAdditionalStatus(
+      record,
+      program?.type || record.educationType,
+      { imported: true }
+    );
     return calculateStudentFinance(addAutomaticStudentExpenses(
       applyStudentEventTemplateDefaults(record),
       program
@@ -19138,6 +19156,32 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function syncProStudentAdditionalStatusControl(form) {
+    if (!form || form.dataset.config !== "students") return false;
+    const additionalStatusControl = form.elements.additionalStatus;
+    if (!(additionalStatusControl instanceof HTMLInputElement)
+      && !(additionalStatusControl instanceof HTMLSelectElement)) return false;
+    const programName = String(form.elements.program?.value || "").trim();
+    const programType = findProgramByName(programName)?.type
+      || String(form.elements.educationType?.value || "").trim();
+    const nextStatus = resolveProStudentAdditionalStatus({
+      status: form.elements.status?.value,
+      additionalStatus: additionalStatusControl.value,
+      educationType: programType
+    }, programType);
+    if (!nextStatus || nextStatus === String(additionalStatusControl.value || "").trim()) return false;
+    if (additionalStatusControl instanceof HTMLSelectElement
+      && ![...additionalStatusControl.options].some((option) => option.value === nextStatus)) {
+      const option = document.createElement("option");
+      option.value = nextStatus;
+      option.textContent = nextStatus;
+      additionalStatusControl.appendChild(option);
+    }
+    additionalStatusControl.value = nextStatus;
+    additionalStatusControl.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }
+
   function getStudentCardTitle(record) {
     const uid = String(record.uid || "").trim();
     const name = String(record.name || "").trim() || (state.modal.id ? "Без ФИО" : "Новая запись");
@@ -19771,6 +19815,16 @@ MAX - https://bizvmax.ru/zifra_plus
     if (text.includes("ДОП")) return "ДОП";
     if (text.includes("ПРО")) return "ПРО";
     return text.replace(/[^А-ЯA-Z0-9]/g, "").slice(0, 8);
+  }
+
+  function resolveProStudentAdditionalStatus(record = {}, programType = "", options = {}) {
+    const current = String(record.additionalStatus || "").trim();
+    const normalizedProgramType = normalizeEducationProgramType(programType || record.educationType);
+    if (normalizedProgramType !== "ПРО") return current;
+    if (String(record.status || "").trim().toLocaleLowerCase("ru-RU") === "отчислен") {
+      return PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS;
+    }
+    return options.imported === true ? PRO_STUDENT_ADDITIONAL_STATUS : current;
   }
 
   function isFrdoProgramType(programType) {
@@ -25769,7 +25823,12 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     });
 
-    document.getElementById("recordForm")?.addEventListener("submit", saveRecord);
+    const recordForm = document.getElementById("recordForm");
+    recordForm?.addEventListener("change", (event) => {
+      if (!["status", "program", "educationType"].includes(String(event.target?.name || ""))) return;
+      syncProStudentAdditionalStatusControl(recordForm);
+    });
+    recordForm?.addEventListener("submit", saveRecord);
     document.querySelector("[data-action='open-contract-student-picker']")
       ?.addEventListener("click", openContractStudentPicker);
     document.querySelector("[data-action='generate-employee-coupon']")
@@ -30022,6 +30081,14 @@ MAX - https://bizvmax.ru/zifra_plus
       if (selectedProgram) {
         values.educationType = selectedProgram.type || values.educationType || "";
         values.hours = selectedProgram.hours || values.hours || "";
+      }
+      const previousStatus = String(currentRecord.status || "").trim().toLocaleLowerCase("ru-RU");
+      const nextStatus = String(values.status || "").trim().toLocaleLowerCase("ru-RU");
+      if (!formElement.dataset.id || previousStatus !== nextStatus) {
+        values.additionalStatus = resolveProStudentAdditionalStatus(
+          values,
+          selectedProgram?.type || values.educationType
+        );
       }
       Object.assign(values, calculateStudentFinance(values));
       values.expenseTotal = Math.round(sumStudentExpenses(values) * 100) / 100;
@@ -35796,10 +35863,28 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     const selectedSet = new Set(selected);
-    state.data.collections[config.collection] = (state.data.collections[config.collection] || []).map((row) => (
-      selectedSet.has(row.id) ? { ...row, status } : row
-    ));
-    addAudit("Массовое изменение статуса", config.title, `${selected.length} записей: ${status}`, {
+    let proArchiveCount = 0;
+    state.data.collections[config.collection] = (state.data.collections[config.collection] || []).map((row) => {
+      if (!selectedSet.has(row.id)) return row;
+      const nextRecord = { ...row, status };
+      if (configId !== "students") return nextRecord;
+      const nextAdditionalStatus = resolveProStudentAdditionalStatus(
+        nextRecord,
+        findProgramByName(nextRecord.program)?.type || nextRecord.educationType
+      );
+      if (nextAdditionalStatus !== String(nextRecord.additionalStatus || "").trim()) {
+        nextRecord.additionalStatus = nextAdditionalStatus;
+        proArchiveCount += 1;
+      }
+      return nextRecord;
+    });
+    const bulkStatusAuditDetails = [
+      `${selected.length} записей: ${status}`,
+      proArchiveCount
+        ? `для программ ПРО дополнительный статус «${PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS}»: ${proArchiveCount}`
+        : ""
+    ].filter(Boolean).join("; ");
+    addAudit("Массовое изменение статуса", config.title, bulkStatusAuditDetails, {
       entityType: config.collection,
       entityId: selected.join(", "),
       field: "status",
