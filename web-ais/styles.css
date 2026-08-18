@@ -10396,6 +10396,29 @@ body.card-window-moving {
   font-size: 13px;
 }
 
+.program-form-grid label[data-field-key="hours"].is-hours-mismatch > span,
+.program-hours-plan-warning {
+  color: #b91c1c;
+}
+
+.program-form-grid input[name="hours"].is-hours-mismatch {
+  border-color: #dc2626;
+  background: #fff1f2;
+  color: #991b1b;
+  font-weight: 800;
+}
+
+.program-form-grid input[name="hours"].is-hours-mismatch:focus {
+  border-color: #b91c1c;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
+}
+
+.program-hours-plan-warning {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
 .program-landing-code-control {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 32px;
@@ -11176,6 +11199,73 @@ body.card-window-moving {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.35;
+}
+
+.program-training-plan-hours-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-left: 4px solid #94a3b8;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px 10px;
+}
+
+.program-training-plan-hours-summary > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 6px 8px;
+}
+
+.program-training-plan-hours-summary span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.program-training-plan-hours-summary strong {
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.program-training-plan-hours-summary p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.program-training-plan-hours-summary.is-balanced {
+  border-color: #86d1af;
+  border-left-color: #15803d;
+  background: #f0fdf4;
+}
+
+.program-training-plan-hours-summary.is-balanced .program-training-plan-hours-remaining strong {
+  color: #15803d;
+}
+
+.program-training-plan-hours-summary.is-mismatch {
+  border-color: #f1a0a0;
+  border-left-color: #dc2626;
+  background: #fff1f2;
+}
+
+.program-training-plan-hours-summary.is-mismatch .program-training-plan-hours-remaining strong,
+.program-training-plan-hours-summary.is-mismatch p {
+  color: #b91c1c;
+}
+
+.program-hours-mismatch-cell {
+  background: #fff1f2 !important;
+  color: #b91c1c;
+  font-weight: 800;
 }
 
 .contract-student-picker-body {

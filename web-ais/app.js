@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.186",
+    version: "1.7.187",
     releasedAt: "2026-08-18"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.187",
+      releasedAt: "2026-08-18",
+      changes: [
+        "Объём часов образовательной программы сверяется с суммой часов привязанного учебного плана: расхождение выделяется красным, а на вкладке «Учебный план» показываются распределённые и нераспределённые часы."
+      ]
+    },
     {
       version: "1.7.186",
       releasedAt: "2026-08-18",
@@ -12342,6 +12349,9 @@ MAX - https://bizvmax.ru/zifra_plus
           <tbody>
             ${pageRows.map((row) => {
               const recordLock = getRecordLock(recordLockEntityType(configId), row.id);
+              const programHoursSummary = configId === "programs"
+                ? getProgramTrainingPlanHoursSummary(row)
+                : null;
               const lockedByOther = Boolean(recordLock && !recordLock.ownedByClient);
               const lockedByCurrentSession = Boolean(recordLock?.ownedByClient);
               const accountingPending = configId === "contracts" && !isChecked(row.accountingRecorded);
@@ -12379,6 +12389,12 @@ MAX - https://bizvmax.ru/zifra_plus
                     : escapeHtml(displayValue);
                   const style = columnStyleAttr(configId, fieldItem.key);
                   const attrs = columnDataAttrs(configId, fieldItem.key);
+                  const hoursMismatch = configId === "programs"
+                    && fieldItem.key === "hours"
+                    && programHoursSummary?.mismatch;
+                  const mismatchAttrs = hoursMismatch
+                    ? `class="program-hours-mismatch-cell" title="${escapeAttr(getProgramTrainingPlanHoursMismatchTitle(programHoursSummary))}"`
+                    : "";
                   if (index === 0) {
                     return `
                       <td class="table-primary-col" ${attrs} ${style}>
@@ -12389,7 +12405,7 @@ MAX - https://bizvmax.ru/zifra_plus
                       </td>
                     `;
                   }
-                  return `<td ${attrs} ${style}>${value}</td>`;
+                  return `<td ${mismatchAttrs} ${attrs} ${style}>${value}</td>`;
                 }).join("")}
               </tr>
             `;
@@ -18863,6 +18879,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderProgramTrainingPlanSection(record) {
     const rows = getProgramTrainingPlanRows(record);
+    const hoursSummary = getProgramTrainingPlanHoursSummary(record, rows);
     const nextIndex = rows.length;
     return `
       <section class="form-section program-training-plan-section">
@@ -18872,6 +18889,27 @@ MAX - https://bizvmax.ru/zifra_plus
             <p class="program-training-plan-hint">Строки привязываются к этой программе и подставляются в поле «УчебныйПлан» документов об образовании.</p>
           </div>
           <button class="ghost-button payment-add-button" data-action="add-program-training-plan-row" type="button">Добавить строку</button>
+        </div>
+        <div
+          class="program-training-plan-hours-summary ${hoursSummary.hasPlan ? (hoursSummary.mismatch ? "is-mismatch" : "is-balanced") : "is-empty"}"
+          data-program-training-plan-hours-summary
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <div>
+            <span>Объём программы</span>
+            <strong data-program-training-plan-program-hours>${escapeHtml(formatTrainingPlanHours(hoursSummary.programHours))}</strong>
+          </div>
+          <div>
+            <span>Распределено по плану</span>
+            <strong data-program-training-plan-distributed-hours>${escapeHtml(formatTrainingPlanHours(hoursSummary.distributedHours))}</strong>
+          </div>
+          <div class="program-training-plan-hours-remaining">
+            <span>Нераспределено</span>
+            <strong data-program-training-plan-remaining-hours>${escapeHtml(formatTrainingPlanHours(hoursSummary.remainingHours))}</strong>
+          </div>
+          <p data-program-training-plan-hours-status>${escapeHtml(getProgramTrainingPlanHoursStatus(hoursSummary))}</p>
         </div>
         <div class="program-training-plan-scroll">
           <div class="editable-grid program-training-plan-grid" data-program-training-plan-body data-next-index="${nextIndex}">
@@ -19235,8 +19273,9 @@ MAX - https://bizvmax.ru/zifra_plus
           value,
           required,
           options: programHourOptions,
-          attrs: 'min="0" step="1" inputmode="numeric"'
+          attrs: 'min="0" step="1" inputmode="numeric" aria-describedby="program-hours-plan-warning"'
         })}
+        <small class="program-hours-plan-warning" id="program-hours-plan-warning" data-program-hours-plan-warning hidden></small>
       </label>
     `;
   }
@@ -21593,6 +21632,69 @@ MAX - https://bizvmax.ru/zifra_plus
   function getProgramTrainingPlanRows(programRecord = {}, fallbackName = "") {
     return (state.data.collections.trainingPlans || [])
       .filter((item) => isTrainingPlanRowLinkedToProgram(item, programRecord, fallbackName));
+  }
+
+  function parseTrainingPlanHoursValue(value) {
+    const text = String(value ?? "").replace(/\s+/gu, "").replace(",", ".").trim();
+    if (!text) return null;
+    const number = Number(text);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function roundTrainingPlanHours(value) {
+    return Math.round(Number(value || 0) * 1000000) / 1000000;
+  }
+
+  function calculateProgramTrainingPlanHoursSummary(programHoursValue, rows = []) {
+    const planRows = Array.isArray(rows) ? rows : [];
+    const programHours = parseTrainingPlanHoursValue(programHoursValue);
+    const distributedHours = roundTrainingPlanHours(planRows.reduce((sum, row) => {
+      const rowHours = parseTrainingPlanHoursValue(row?.totalHours);
+      return sum + (rowHours === null ? 0 : rowHours);
+    }, 0));
+    const remainingHours = programHours === null
+      ? null
+      : roundTrainingPlanHours(programHours - distributedHours);
+    const hasPlan = planRows.length > 0;
+    return {
+      hasPlan,
+      programHours,
+      distributedHours,
+      remainingHours,
+      mismatch: hasPlan && (programHours === null || Math.abs(remainingHours) > 0.000001)
+    };
+  }
+
+  function getProgramTrainingPlanHoursSummary(programRecord = {}, rows = null, fallbackName = "") {
+    const planRows = Array.isArray(rows)
+      ? rows
+      : getProgramTrainingPlanRows(programRecord, fallbackName);
+    return calculateProgramTrainingPlanHoursSummary(programRecord?.hours, planRows);
+  }
+
+  function formatTrainingPlanHours(value) {
+    if (value === null || !Number.isFinite(Number(value))) return "—";
+    return `${Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 6 })} ч`;
+  }
+
+  function getProgramTrainingPlanHoursStatus(summary = {}) {
+    if (!summary.hasPlan) return "Учебный план пока не заполнен.";
+    if (summary.programHours === null) return "Укажите объём часов программы для сверки с учебным планом.";
+    if (!summary.mismatch) return "Все часы программы распределены по учебному плану.";
+    if (summary.remainingHours > 0) {
+      return `По учебному плану не распределено ${formatTrainingPlanHours(summary.remainingHours)}.`;
+    }
+    return `Учебный план превышает объём программы на ${formatTrainingPlanHours(Math.abs(summary.remainingHours))}.`;
+  }
+
+  function getProgramTrainingPlanHoursMismatchTitle(summary = {}) {
+    if (!summary.mismatch) return "";
+    return [
+      "Сумма часов учебного плана не совпадает с объёмом образовательной программы.",
+      `Объём программы: ${formatTrainingPlanHours(summary.programHours)}.`,
+      `Распределено: ${formatTrainingPlanHours(summary.distributedHours)}.`,
+      `Нераспределено: ${formatTrainingPlanHours(summary.remainingHours)}.`
+    ].join(" ");
   }
 
   function getStudentGroupNumber(programName, startDate) {
@@ -25000,8 +25102,20 @@ MAX - https://bizvmax.ru/zifra_plus
         return;
       }
     });
+    const programForm = document.querySelector('#recordForm[data-config="programs"]');
+    programForm?.querySelector('[name="hours"]')?.addEventListener("input", () => {
+      refreshProgramTrainingPlanHoursState(programForm);
+    });
+    programTrainingPlanBody?.addEventListener("input", (event) => {
+      if (event.target.matches('[data-plan-field="totalHours"]')) {
+        refreshProgramTrainingPlanHoursState(programForm);
+      }
+    });
     bindProgramTrainingPlanRowDrag(programTrainingPlanBody);
-    if (programTrainingPlanBody) updateProgramTrainingPlanRowNumbers(programTrainingPlanBody);
+    if (programTrainingPlanBody) {
+      updateProgramTrainingPlanRowNumbers(programTrainingPlanBody);
+      refreshProgramTrainingPlanHoursState(programForm);
+    }
     document.querySelectorAll("[data-action='switch-program-tab']").forEach((button) => {
       button.addEventListener("click", () => switchProgramTab(button.dataset.programTab));
     });
@@ -29132,7 +29246,54 @@ MAX - https://bizvmax.ru/zifra_plus
     body.dataset.nextIndex = String(index + 1);
     updateProgramTrainingPlanRowNumbers(body);
     body.closest(".program-training-plan-section")?.querySelector(".payment-empty")?.remove();
+    refreshProgramTrainingPlanHoursState(body.closest("form"));
     body.querySelector(`[name="trainingPlan_${index}_discipline"]`)?.focus({ preventScroll: true });
+  }
+
+  function getProgramTrainingPlanHoursSummaryFromForm(formElement) {
+    const rows = [...(formElement?.querySelectorAll("[data-program-training-plan-row]") || [])]
+      .map((row) => ({
+        totalHours: row.querySelector('[data-plan-field="totalHours"]')?.value || ""
+      }));
+    return calculateProgramTrainingPlanHoursSummary(
+      formElement?.querySelector('[name="hours"]')?.value || "",
+      rows
+    );
+  }
+
+  function refreshProgramTrainingPlanHoursState(formElement = document.querySelector('#recordForm[data-config="programs"]')) {
+    if (!formElement || formElement.dataset.config !== "programs") return;
+    const summary = getProgramTrainingPlanHoursSummaryFromForm(formElement);
+    const summaryElement = formElement.querySelector("[data-program-training-plan-hours-summary]");
+    const hoursField = formElement.querySelector('[data-field-key="hours"]');
+    const hoursInput = hoursField?.querySelector('[name="hours"]');
+    const warning = hoursField?.querySelector("[data-program-hours-plan-warning]");
+    const mismatchTitle = getProgramTrainingPlanHoursMismatchTitle(summary);
+
+    hoursField?.classList.toggle("is-hours-mismatch", summary.mismatch);
+    if (hoursInput) {
+      hoursInput.classList.toggle("is-hours-mismatch", summary.mismatch);
+      if (summary.mismatch) hoursInput.setAttribute("aria-invalid", "true");
+      else hoursInput.removeAttribute("aria-invalid");
+      hoursInput.title = mismatchTitle;
+    }
+    if (warning) {
+      warning.hidden = !summary.mismatch;
+      warning.textContent = mismatchTitle;
+    }
+    if (!summaryElement) return;
+    summaryElement.classList.toggle("is-empty", !summary.hasPlan);
+    summaryElement.classList.toggle("is-balanced", summary.hasPlan && !summary.mismatch);
+    summaryElement.classList.toggle("is-mismatch", summary.mismatch);
+    summaryElement.title = mismatchTitle;
+    const programHours = summaryElement.querySelector("[data-program-training-plan-program-hours]");
+    const distributedHours = summaryElement.querySelector("[data-program-training-plan-distributed-hours]");
+    const remainingHours = summaryElement.querySelector("[data-program-training-plan-remaining-hours]");
+    const status = summaryElement.querySelector("[data-program-training-plan-hours-status]");
+    if (programHours) programHours.textContent = formatTrainingPlanHours(summary.programHours);
+    if (distributedHours) distributedHours.textContent = formatTrainingPlanHours(summary.distributedHours);
+    if (remainingHours) remainingHours.textContent = formatTrainingPlanHours(summary.remainingHours);
+    if (status) status.textContent = getProgramTrainingPlanHoursStatus(summary);
   }
 
   function updateProgramAuthorPaymentRowNames(list) {
@@ -29854,7 +30015,10 @@ MAX - https://bizvmax.ru/zifra_plus
   function deleteProgramTrainingPlanRow(button) {
     const body = button?.closest("[data-program-training-plan-body]");
     button?.closest("[data-program-training-plan-row]")?.remove();
-    if (body) updateProgramTrainingPlanRowNumbers(body);
+    if (body) {
+      updateProgramTrainingPlanRowNumbers(body);
+      refreshProgramTrainingPlanHoursState(body.closest("form"));
+    }
   }
 
   function moveProgramTrainingPlanRow(button, direction) {
