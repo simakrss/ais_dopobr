@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.185",
-    releasedAt: "2026-08-14"
+    version: "1.7.186",
+    releasedAt: "2026-08-18"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.186",
+      releasedAt: "2026-08-18",
+      changes: [
+        "При загрузке XLSB в админке постоянно показывается предупреждение о замене данных загружаемых разделов; подтверждения загрузки и синхронизации подробно перечисляют последствия и резервное копирование.",
+        "Дата выгрузки в ФРДО синхронизируется с XLSB как настоящая дата Excel в формате ГГГГ-ММ-ДД без временной части T; текстовые статусы, включая «Не требуется», сохраняются."
+      ]
+    },
     {
       version: "1.7.185",
       releasedAt: "2026-08-14",
@@ -15573,7 +15581,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     <small>Импорт, синхронизация и экспорт файла XLSB, а также размещение документов системы.</small>
                   </div>
                   <div class="sdo-settings-actions admin-database-actions">
-                    <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseImportTooltip())}" ${state.databaseImport.running ? "disabled" : ""}>
+                    <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" aria-describedby="admin-database-replace-warning" title="${escapeMultilineAttr(getStudentDatabaseImportTooltip())}" ${state.databaseImport.running ? "disabled" : ""}>
                       <span data-import-button-label>${state.databaseImport.running ? "Импорт..." : "Загрузить из базы"}</span>
                     </button>
                     <button class="ghost-button ${state.databaseExport.running && state.databaseExport.operation === "download" ? "is-loading" : ""}" data-action="download-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseDownloadTooltip())}" ${state.databaseExport.running ? "disabled" : ""}>
@@ -15583,6 +15591,17 @@ MAX - https://bizvmax.ru/zifra_plus
                       <span data-database-export-button-label>${state.databaseExport.running && state.databaseExport.operation !== "download" ? "Синхронизация..." : "Синхронизировать с базой"}</span>
                     </button>
                   </div>
+                </div>
+                <div class="admin-database-replace-warning" id="admin-database-replace-warning" role="note">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M12 3 2.5 20h19z"></path>
+                    <path d="M12 9v5"></path>
+                    <path d="M12 17.5h.01"></path>
+                  </svg>
+                  <span>
+                    <strong>Внимание: при загрузке данные веб-базы будут заменены</strong>
+                    <small>Все текущие данные загружаемых разделов заменяются данными из XLSB. Полностью перезаписываются слушатели, договоры, прямые и общие затраты и запасы; программы, учебные планы, ставки, справочники и параметры подключения обновляются по файлу.</small>
+                  </span>
                 </div>
                 <label>
                   <span>WebDAV-путь или ссылка на АИС Допобразование.xlsb</span>
@@ -15650,7 +15669,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 <div class="admin-database-copy system-action-notes">
                   <section class="system-action-note">
                     <strong>Загрузить из базы</strong>
-                    <p>Заменяет текущие списки слушателей, прямых и общих затрат, а также запасов данными из XLSB. Обычный щелчок использует выбранный режим хранения, Shift + щелчок — альтернативный источник.</p>
+                    <p>Заменяет все текущие данные загружаемых разделов: слушателей, договоры, прямые и общие затраты и запасы; программы и учебные планы обновляются по XLSB. Обычный щелчок использует выбранный режим хранения, Shift + щелчок — альтернативный источник.</p>
                   </section>
                   <section class="system-action-note">
                     <strong>Синхронизировать с базой</strong>
@@ -40570,12 +40589,14 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentDatabaseImportTooltip() {
+    const replacementWarning = "ВНИМАНИЕ: данные загружаемых разделов веб-базы будут заменены данными из XLSB.";
     if (!isLocalDocumentsAvailable()) {
       return [
         "Загрузить из базы",
         "",
         "Локальная папка системы недоступна.",
-        "Данные будут загружены через WebDAV независимо от Shift."
+        "Данные будут загружены через WebDAV независимо от Shift.",
+        replacementWarning
       ].join("\n");
     }
     return [
@@ -40583,7 +40604,32 @@ MAX - https://bizvmax.ru/zifra_plus
       "",
       `Обычный щелчок: источник — ${getStudentDatabaseSourceLabel(getStudentDocumentsSource())}.`,
       `Shift + щелчок: источник — ${getStudentDatabaseSourceLabel(getStudentDocumentsSource(true))}.`,
-      "Данные системы будут заменены содержимым XLSB по указанному пути."
+      replacementWarning
+    ].join("\n");
+  }
+
+  function getStudentDatabaseImportConfirmation(sourceLabel) {
+    return [
+      "ВНИМАНИЕ: при загрузке все текущие данные загружаемых разделов веб-базы будут заменены данными из XLSB.",
+      "",
+      "Полностью заменяются слушатели, договоры, прямые и общие затраты и запасы. Записи этих разделов, которых нет в XLSB, будут удалены из системы.",
+      "Программы, учебные планы, ставки, связанные справочники и параметры подключения будут обновлены по данным XLSB. Журнал действий сохраняется.",
+      "",
+      `Источник: ${sourceLabel}.`,
+      "Продолжить загрузку и замену данных?"
+    ].join("\n");
+  }
+
+  function getStudentDatabaseSyncConfirmation(sourceLabel) {
+    return [
+      "ВНИМАНИЕ: синхронизация заменит данные управляемых листов рабочего XLSB текущими данными веб-базы.",
+      "",
+      "Будут обновлены листы «База», «Реестр договоров», «Прямые затраты» и «Общие затраты»; промосообщения будут записаны в примечания листа «Реестр программ».",
+      "Также обновятся ставки и константы оплаты на листе «Настройки» и именованный диапазон «НастройкиМакросов» (правила назначения оплат, шаблоны событий и сообщений и другие синхронизируемые параметры).",
+      "Строки и значения слушателей, договоров и затрат, которых больше нет в веб-базе, будут очищены на синхронизируемых листах.",
+      `Перед обновлением будет создана резервная копия, затем база ${sourceLabel} будет заменена.`,
+      "",
+      "Продолжить синхронизацию?"
     ].join("\n");
   }
 
@@ -41634,11 +41680,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const sourceLabel = syncSource === "local"
       ? "на локальном компьютере"
       : "на Яндекс-Диске через WebDAV";
-    const confirmed = confirm(
-      "Текущие данные веб-базы будут перенесены в листы «База», «Реестр договоров», «Прямые затраты» и «Общие затраты» исходного XLSB; промосообщения — в примечания листа «Реестр программ». "
-      + "Строки слушателей, которых больше нет в веб-базе, будут очищены. "
-      + `Перед обновлением будет создана резервная копия, затем база ${sourceLabel} будет заменена. Продолжить?`
-    );
+    const confirmed = confirm(getStudentDatabaseSyncConfirmation(sourceLabel));
     if (!confirmed) return;
     const startedAt = performance.now();
     updateDatabaseExportIndicator({
@@ -42047,15 +42089,14 @@ MAX - https://bizvmax.ru/zifra_plus
         : "Дождитесь завершения синхронизации базы.");
       return;
     }
+    if (state.databaseImport.running) return;
     const importSource = getStudentDocumentsSource(Boolean(event?.shiftKey));
     const sourceLabel = importSource === "local"
       ? "с локального компьютера"
       : "с Яндекс-Диска через WebDAV";
     if (!event?.skipConfirmation && !confirm(
-      `Данные по всем слушателям, договорам, прямым и общим затратам, программам, учебным планам и запасам будут перезаписаны `
-      + `данными из базы АИС Допобразование.xlsb ${sourceLabel}. Продолжить?`
+      getStudentDatabaseImportConfirmation(sourceLabel)
     )) return;
-    if (state.databaseImport.running) return;
     const startedAt = performance.now();
     updateDatabaseImportIndicator({
       running: true,

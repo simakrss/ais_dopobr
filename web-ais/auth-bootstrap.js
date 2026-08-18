@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260814-pro-additional-status-v1";
+  const AUTH_BUILD = "20260818-database-confirmations-frdo-date-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

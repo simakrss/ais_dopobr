@@ -8714,6 +8714,24 @@ function normalizeStudentDatabaseDate(value) {
   return date.toISOString().slice(0, 10);
 }
 
+function splitStudentDatabaseFrdoValue(value) {
+  const text = String(value ?? "").trim();
+  const looksLikeDate = value instanceof Date
+    || (
+      typeof value === "number"
+      && Number.isFinite(value)
+      && value >= 10000
+      && value <= 2958465
+    )
+    || /^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/u.test(text)
+    || /^\d{1,2}[./]\d{1,2}[./]\d{2,4}(?:[T\s].*)?$/u.test(text);
+  const frdoDate = looksLikeDate ? normalizeStudentDatabaseDate(value) : "";
+  return {
+    frdoDate,
+    frdoStatus: frdoDate ? "" : text
+  };
+}
+
 const FRDO_EXPORT_HEADERS = Object.freeze([
   "Вид документа",
   "Статус документа",
@@ -10671,6 +10689,12 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
     if (!uid || !name) continue;
     const student = {};
     mappedColumns.forEach((column) => {
+      if (column.fieldName === "frdoStatus") {
+        const frdo = splitStudentDatabaseFrdoValue(row[column.index]);
+        if (frdo.frdoDate) student.frdoDate = frdo.frdoDate;
+        if (frdo.frdoStatus) student.frdoStatus = frdo.frdoStatus;
+        return;
+      }
       const value = normalizeStudentDatabaseValue(row[column.index], column.fieldName);
       if (value === "") return;
       student[column.fieldName] = value;
@@ -13368,6 +13392,12 @@ function sanitizeStudentDatabaseExportPayload(body) {
         directExpenses,
         ...databaseFields
       } = student;
+      const explicitFrdoDate = normalizeStudentDatabaseDate(databaseFields.frdoDate);
+      const frdo = splitStudentDatabaseFrdoValue(
+        explicitFrdoDate || databaseFields.frdoStatus
+      );
+      databaseFields.frdoStatus = frdo.frdoDate || frdo.frdoStatus;
+      if (explicitFrdoDate) databaseFields.frdoDate = explicitFrdoDate;
       return databaseFields;
     });
   const contracts = body.contracts

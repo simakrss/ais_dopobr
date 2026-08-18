@@ -89,6 +89,8 @@ function Convert-DateToExcelSerial {
   param([object]$Value)
   $text = ([string]$Value).Trim()
   if (-not $text) { return $null }
+  $isoMatch = [regex]::Match($text, '^(?<date>\d{4}-\d{2}-\d{2})(?:[T\s].*)?$')
+  if ($isoMatch.Success) { $text = $isoMatch.Groups['date'].Value }
   $date = [datetime]::MinValue
   if ([datetime]::TryParseExact(
     $text,
@@ -113,6 +115,16 @@ function Convert-CellValue {
     [Collections.Generic.HashSet[string]]$NumberFields
   )
   if ($null -eq $Value) { return $null }
+  if ($FieldName -eq "frdoStatus") {
+    $frdoText = ([string]$Value).Trim()
+    $isDateValue = $Value -is [datetime] `
+      -or $frdoText -match '^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$' `
+      -or $frdoText -match '^\d{1,2}[./]\d{1,2}[./]\d{2,4}$'
+    if ($isDateValue) {
+      $frdoDate = Convert-DateToExcelSerial $Value
+      if ($null -ne $frdoDate) { return [Math]::Floor([double]$frdoDate) }
+    }
+  }
   if ($DateFields.Contains($FieldName)) {
     return Convert-DateToExcelSerial $Value
   }
@@ -704,10 +716,20 @@ function Update-MappedColumn {
         $nextValues[$offset, 0] = $currentValue
         continue
       }
-      $value = Get-ObjectProperty $record $FieldName
+      $value = if ($FieldName -eq "frdoStatus") {
+        $frdoDate = Get-ObjectProperty $record "frdoDate"
+        if (-not [string]::IsNullOrWhiteSpace([string]$frdoDate)) {
+          $frdoDate
+        } else {
+          Get-ObjectProperty $record $FieldName
+        }
+      } else {
+        Get-ObjectProperty $record $FieldName
+      }
       $nextValues[$offset, 0] = Convert-CellValue $value $FieldName $DateFields $NumberFields
     }
     $range.Formula = $nextValues
+    if ($FieldName -eq "frdoStatus") { $range.NumberFormat = "yyyy-mm-dd" }
   } finally {
     Release-ComObject $range
   }
