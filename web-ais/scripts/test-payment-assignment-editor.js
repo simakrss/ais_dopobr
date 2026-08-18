@@ -11,6 +11,7 @@ const end = source.indexOf("  function renderPaymentConstantRow(", start);
 assert.ok(start >= 0 && end > start, "Не найден блок редактора правил назначения");
 
 const block = source.slice(start, end);
+const styles = fs.readFileSync(path.resolve(__dirname, "..", "styles.css"), "utf8");
 const settings = [
   { marker: "АвторскаяСтавка", label: "Авторская ставка", value: "50" },
   { marker: "СтавкаОплатыСотруднику", label: "Ставка сотруднику", value: "500" }
@@ -83,6 +84,17 @@ assert.equal(
   htmlToText(renderAutomaticExpenseRulesEditorContent(productionRules)),
   productionRules,
   "Штатные правила изменились после подсветки"
+);
+assert.match(block, /class="payment-assignment-editor-columns"/u);
+assert.match(
+  styles,
+  /\.payment-assignment-editor-columns\s*\{[^}]*grid-template-columns:\s*minmax\(240px,\s*0\.38fr\)\s+minmax\(0,\s*1fr\)/su,
+  "На широком экране редактор назначения должен состоять из двух столбцов"
+);
+assert.match(
+  styles,
+  /@media\s*\(max-width:\s*900px\)[\s\S]*?\.payment-assignment-editor-columns\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/u,
+  "На узком экране столбцы должны складываться в один"
 );
 
 console.log("Payment assignment editor source round-trip: OK");

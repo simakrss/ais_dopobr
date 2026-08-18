@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.188",
+    version: "1.7.189",
     releasedAt: "2026-08-18"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.189",
+      releasedAt: "2026-08-18",
+      changes: [
+        "Вкладка «Оплата → Назначение» разделена на два вертикальных столбца: доступные константы расположены слева, а правила автоматического назначения — справа.",
+        "При синхронизации ФРДО дата сохраняется как настоящая дата Excel в формате ГГГГ-ММ-ДД без признака времени."
+      ]
+    },
     {
       version: "1.7.188",
       releasedAt: "2026-08-18",
@@ -13340,25 +13348,27 @@ MAX - https://bizvmax.ru/zifra_plus
             <span class="is-exclusion">Исключение</span>
           </div>
         </div>
-        <div class="payment-assignment-constant-palette">
-          ${renderProgramPaymentConstantPalette({ assignment: true })}
-        </div>
         <textarea
           name="${escapeAttr(setting.key || "automaticExpenseRules")}"
           data-automatic-expense-rules-value
           hidden
           aria-hidden="true"
         >${escapeHtml(value)}</textarea>
-        <div
-          class="payment-assignment-rules-editor"
-          contenteditable="true"
-          data-automatic-expense-rules-editor
-          data-placeholder="Вид затрат, Сумма или формула, Примечание"
-          role="textbox"
-          aria-label="Правила автоматического назначения оплат"
-          aria-multiline="true"
-          spellcheck="false"
-        >${renderAutomaticExpenseRulesEditorContent(value)}</div>
+        <div class="payment-assignment-editor-columns">
+          <div class="payment-assignment-constant-palette">
+            ${renderProgramPaymentConstantPalette({ assignment: true })}
+          </div>
+          <div
+            class="payment-assignment-rules-editor"
+            contenteditable="true"
+            data-automatic-expense-rules-editor
+            data-placeholder="Вид затрат, Сумма или формула, Примечание"
+            role="textbox"
+            aria-label="Правила автоматического назначения оплат"
+            aria-multiline="true"
+            spellcheck="false"
+          >${renderAutomaticExpenseRulesEditorContent(value)}</div>
+        </div>
       </section>
     `;
   }
