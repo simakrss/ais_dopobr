@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.187",
+    version: "1.7.188",
     releasedAt: "2026-08-18"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.188",
+      releasedAt: "2026-08-18",
+      changes: [
+        "На вкладке «Итоги» карточки слушателя добавлен цветной переключатель «Личное дело сформировано», связанный с колонкой «Признак оформления» базы XLSB: включённое состояние сохраняется знаком «+», выключенное — пустой ячейкой."
+      ]
+    },
     {
       version: "1.7.187",
       releasedAt: "2026-08-18",
@@ -3283,7 +3290,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("applicationDate", "Дата заявки", "date"),
         field("startDate", "Начало обучения", "date"),
         field("endDate", "Окончание", "date"),
-        field("documentsStatus", "Документы"),
+        field("documentsStatus", "Личное дело сформировано", "checkbox"),
         field("daysUntilEnd", "Дней до конца", "number"),
         field("manager", "Ответственный"),
         field("tags", "Теги", "textarea")
@@ -3813,7 +3820,8 @@ MAX - https://bizvmax.ru/zifra_plus
             field("chairman", "Председатель"),
             field("commissionMember1", "Член комиссии 1"),
             field("commissionMember2", "Член комиссии 2"),
-            field("secretary", "Секретарь")
+            field("secretary", "Секретарь"),
+            field("documentsStatus", "Личное дело сформировано", "checkbox")
           ]
         },
         {
@@ -21142,6 +21150,28 @@ MAX - https://bizvmax.ru/zifra_plus
       const options = ["", ...getFinalAttestationGradeOptions(value)];
       return `${label}<select name="${item.key}" data-settings-dictionary="finalAttestationSettings">${options.map((option) => `<option value="${escapeAttr(option)}" ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
+    if (item.key === "documentsStatus") {
+      const checked = isChecked(value);
+      return `
+        <label class="student-personal-case-toggle">
+          <input
+            class="student-personal-case-toggle-input"
+            name="documentsStatus"
+            type="checkbox"
+            value="+"
+            ${checked ? "checked" : ""}
+          >
+          <span class="student-personal-case-toggle-card">
+            <span class="student-personal-case-toggle-track" aria-hidden="true"><span></span></span>
+            <span class="student-personal-case-toggle-copy">
+              <strong>Личное дело сформировано</strong>
+              <small class="student-personal-case-state is-pending">Не сформировано</small>
+              <small class="student-personal-case-state is-complete">Сформировано</small>
+            </span>
+          </span>
+        </label>
+      `;
+    }
     if (item.key === "educationDocumentSurname") {
       const copyTitle = "Скопировать фамилию слушателя";
       return `
@@ -22319,6 +22349,15 @@ MAX - https://bizvmax.ru/zifra_plus
     const normalized = String(value || "").trim().toLowerCase();
     if (!normalized || ["нет", "не", "false", "0", "off"].includes(normalized)) return false;
     return true;
+  }
+
+  function getStoredCheckboxValue(configId, fieldKey, checked) {
+    if (!checked) return "";
+    if (
+      (configId === "students" && fieldKey === "documentsStatus")
+      || (configId === "generalExpenses" && fieldKey === "accountingClosed")
+    ) return "+";
+    return "Да";
   }
 
   function paymentRowHasData(record, index) {
@@ -26883,7 +26922,7 @@ MAX - https://bizvmax.ru/zifra_plus
     studentAllFields.forEach((item) => {
       if (item.type === "checkbox") {
         if (!formElement.elements[item.key]) return;
-        values[item.key] = formData.has(item.key) ? "Да" : "";
+        values[item.key] = getStoredCheckboxValue("students", item.key, formData.has(item.key));
         return;
       }
       if (!formData.has(item.key)) return;
@@ -27007,7 +27046,7 @@ MAX - https://bizvmax.ru/zifra_plus
     configs.contracts.fields.forEach((item) => {
       if (item.type === "checkbox") {
         if (!formElement.elements[item.key]) return;
-        values[item.key] = formData.has(item.key) ? "Да" : "";
+        values[item.key] = getStoredCheckboxValue("contracts", item.key, formData.has(item.key));
         return;
       }
       if (!formData.has(item.key)) return;
@@ -30183,9 +30222,11 @@ MAX - https://bizvmax.ru/zifra_plus
     fields.forEach((item) => {
       if (item.type === "checkbox") {
         if (!formElement.elements[item.key]) return;
-        values[item.key] = formData.has(item.key)
-          ? (formElement.dataset.config === "generalExpenses" && item.key === "accountingClosed" ? "+" : "Да")
-          : "";
+        values[item.key] = getStoredCheckboxValue(
+          formElement.dataset.config,
+          item.key,
+          formData.has(item.key)
+        );
         return;
       }
       if (!formData.has(item.key)) return;

@@ -107,6 +107,13 @@ try {
   assert.equal(dateStudent.frdoStatus, undefined);
   assert.ok(notRequiredStudent, "Текстовый статус «Не требуется» потерян при импорте.");
   assert.equal(notRequiredStudent.frdoDate, undefined);
+  const personalCaseStudent = imported.students.find((student) => student.uid && student !== dateStudent);
+  const emptyPersonalCaseStudent = imported.students.find((student) => (
+    student.uid && student !== dateStudent && student !== personalCaseStudent
+  ));
+  assert.ok(personalCaseStudent && emptyPersonalCaseStudent, "Недостаточно слушателей для проверки признака оформления.");
+  personalCaseStudent.documentsStatus = "+";
+  emptyPersonalCaseStudent.documentsStatus = "";
 
   const payload = buildExportPayload(imported.students, {
     ...imported,
@@ -156,10 +163,14 @@ try {
   const roundTrip = parseStudentDatabaseWorkbook(fs.readFileSync(outputPath));
   const savedDateStudent = roundTrip.students.find((student) => student.uid === dateStudent.uid);
   const savedTextStudent = roundTrip.students.find((student) => student.uid === notRequiredStudent.uid);
+  const savedPersonalCaseStudent = roundTrip.students.find((student) => student.uid === personalCaseStudent.uid);
+  const savedEmptyPersonalCaseStudent = roundTrip.students.find((student) => student.uid === emptyPersonalCaseStudent.uid);
   assert.equal(savedDateStudent?.frdoDate, dateStudent.frdoDate);
   assert.equal(savedDateStudent?.frdoStatus, undefined);
   assert.equal(savedTextStudent?.frdoStatus, "Не требуется");
   assert.equal(savedTextStudent?.frdoDate, undefined);
+  assert.equal(savedPersonalCaseStudent?.documentsStatus, "+", "Признак оформления не записан знаком «+».");
+  assert.equal(savedEmptyPersonalCaseStudent?.documentsStatus || "", "", "Снятый признак оформления не очищен.");
   assert.equal(sha256(sourcePath), sourceHash, "Исходная XLSB была изменена во время теста.");
 
   console.log(JSON.stringify({

@@ -16200,6 +16200,109 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   height: 38px;
 }
 
+.student-results-tab .student-personal-case-toggle {
+  position: relative;
+  display: block;
+  min-width: 0;
+  margin-top: 4px;
+}
+
+.student-personal-case-toggle-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.student-personal-case-toggle-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  border: 1px solid #d4a72c;
+  border-radius: 8px;
+  background: #fff7cc;
+  padding: 8px 10px;
+  color: #725500;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.student-personal-case-toggle-track {
+  position: relative;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: #d4a72c;
+  box-shadow: inset 0 0 0 1px rgba(113, 81, 0, 0.18);
+  transition: background 140ms ease;
+}
+
+.student-personal-case-toggle-track > span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(65, 46, 0, 0.3);
+  transition: transform 140ms ease;
+}
+
+.student-personal-case-toggle-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.student-personal-case-toggle-copy strong {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.student-personal-case-state {
+  color: currentColor;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.student-personal-case-state.is-complete {
+  display: none;
+}
+
+.student-personal-case-toggle-input:focus-visible + .student-personal-case-toggle-card {
+  outline: 3px solid rgba(13, 148, 136, 0.25);
+  outline-offset: 2px;
+}
+
+.student-personal-case-toggle-input:checked + .student-personal-case-toggle-card {
+  border-color: #40a86b;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.student-personal-case-toggle-input:checked + .student-personal-case-toggle-card .student-personal-case-toggle-track {
+  background: #22a65a;
+}
+
+.student-personal-case-toggle-input:checked + .student-personal-case-toggle-card .student-personal-case-toggle-track > span {
+  transform: translateX(18px);
+}
+
+.student-personal-case-toggle-input:checked + .student-personal-case-toggle-card .student-personal-case-state.is-pending {
+  display: none;
+}
+
+.student-personal-case-toggle-input:checked + .student-personal-case-toggle-card .student-personal-case-state.is-complete {
+  display: block;
+}
+
 .student-results-tab .student-review-section {
   grid-column: 1 / -1;
 }
