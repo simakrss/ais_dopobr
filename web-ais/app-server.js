@@ -2911,7 +2911,8 @@ function evaluateDocumentFormulaFunction(name, args, context) {
       text(0),
       grammaticalCase,
       mode,
-      formulaValueToBoolean(getFormulaContextValue("ФИО_несклон", context))
+      formulaValueToBoolean(getFormulaContextValue("ФИО_несклон", context)),
+      getFormulaContextValue("Пол", context)
     );
   }
   return `${name}(${args.map((arg) => formulaValueToString(evaluateDocumentFormulaExpression(arg, context))).join(";")})`;
@@ -2984,14 +2985,28 @@ function splitFullName(name) {
   return { surname, firstName, patronymic };
 }
 
-function inferGenderFromFio(name) {
-  const { patronymic, firstName } = splitFullName(name);
-  if (/вна$/i.test(patronymic) || /[ая]$/i.test(firstName)) return "female";
+function normalizeFioGender(value) {
+  const normalized = String(value || "").trim().toLocaleLowerCase("ru-RU");
+  if (/^(?:ж|жен|женский|female|f)$/u.test(normalized)) return "female";
+  if (/^(?:м|муж|мужской|male|m)$/u.test(normalized)) return "male";
+  return "";
+}
+
+function inferGenderFromFio(name, genderHint = "") {
+  const explicitGender = normalizeFioGender(genderHint);
+  if (explicitGender) return explicitGender;
+  const { surname, patronymic, firstName } = splitFullName(name);
+  if (/(?:вна|ична)$/i.test(patronymic) || /кызы$/i.test(patronymic)) return "female";
+  if (/(?:вич|ич)$/i.test(patronymic) || /оглы$/i.test(patronymic)) return "male";
+  if (/(?:ова|ева|ёва|ина|ына|ая|яя|ская|цкая)$/i.test(surname)) return "female";
+  if (/(?:ов|ев|ёв|ин|ын|ый|ой|ий|ский|цкий)$/i.test(surname)) return "male";
+  if (/(?:илья|никита|кузьма|фома|лука|савва|добрыня)$/i.test(firstName)) return "male";
+  if (/[ая]$/i.test(firstName)) return "female";
   return "male";
 }
 
-function inflectFio(name, grammaticalCase = "Р", mode = "ФИО", preserveSurname = false) {
-  const gender = inferGenderFromFio(name);
+function inflectFio(name, grammaticalCase = "Р", mode = "ФИО", preserveSurname = false, genderHint = "") {
+  const gender = inferGenderFromFio(name, genderHint);
   const parts = splitFullName(name);
   const normalizedCase = String(grammaticalCase || "Р").toUpperCase();
   const normalizedMode = String(mode || "ФИО").toUpperCase();
@@ -3035,15 +3050,30 @@ function inflectRussianSimpleNamePart(value, gender, role) {
   const replaceEnding = (pattern, ending) => value.replace(pattern, ending);
   if (gender === "female") {
     if (role === "patronymic" && /(?:вна|ична)$/i.test(value)) return value.replace(/а$/i, "ы");
-    if (/(ская|цкая)$/i.test(value)) return replaceEnding(/ая$/i, "ой");
-    if (/(ая|яя)$/i.test(value)) return replaceEnding(/[ая]$/i, "ой");
-    if (/(ова|ева|ёва|ина)$/i.test(value)) return replaceEnding(/а$/i, "ой");
+    if (role === "surname" && /(ская|цкая)$/i.test(value)) return replaceEnding(/ая$/i, "ой");
+    if (role === "surname" && /яя$/i.test(value)) return replaceEnding(/яя$/i, "ей");
+    if (role === "surname" && /ая$/i.test(value)) return replaceEnding(/ая$/i, "ой");
+    if (role === "surname" && /(ова|ева|ёва|ина|ына)$/i.test(value)) return replaceEnding(/а$/i, "ой");
+    if (role === "firstName" && /^любовь$/i.test(value)) return matchNameLetterCase(value, "Любови");
+    if (role === "firstName" && /ь$/i.test(value)) return replaceEnding(/ь$/i, "и");
     if (/ия$/i.test(value)) return replaceEnding(/ия$/i, "ии");
     if (/я$/i.test(value)) return replaceEnding(/я$/i, "и");
     if (/а$/i.test(value)) return replaceEnding(/а$/i, /[гкхжчшщ]а$/i.test(lower) ? "и" : "ы");
     return value;
   }
   if (role === "patronymic" && /ич$/i.test(value)) return `${value}а`;
+  if (role === "firstName") {
+    const irregular = {
+      павел: "Павла",
+      лев: "Льва",
+      пётр: "Петра",
+      илья: "Ильи"
+    }[lower];
+    if (irregular) return matchNameLetterCase(value, irregular);
+    if (/ия$/i.test(value)) return replaceEnding(/ия$/i, "ии");
+    if (/я$/i.test(value)) return replaceEnding(/я$/i, "и");
+    if (/а$/i.test(value)) return replaceEnding(/а$/i, /[гкхжчшщ]а$/i.test(lower) ? "и" : "ы");
+  }
   if (/(ский|цкий)$/i.test(value)) return value.replace(/ий$/i, "ого");
   if (/(ый|ой)$/i.test(value)) return value.replace(/[ыо]й$/i, "ого");
   if (/ий$/i.test(value)) return value.replace(/ий$/i, "ия");
@@ -3058,21 +3088,42 @@ function inflectRussianSimpleNamePartDative(value, gender, role) {
   const replaceEnding = (pattern, ending) => value.replace(pattern, ending);
   if (gender === "female") {
     if (role === "patronymic" && /(?:вна|ична)$/i.test(value)) return value.replace(/а$/i, "е");
-    if (/(ская|цкая)$/i.test(value)) return replaceEnding(/ая$/i, "ой");
-    if (/яя$/i.test(value)) return replaceEnding(/яя$/i, "ей");
-    if (/ая$/i.test(value)) return replaceEnding(/ая$/i, "ой");
-    if (/(ова|ева|ёва|ина)$/i.test(value)) return replaceEnding(/а$/i, "ой");
+    if (role === "surname" && /(ская|цкая)$/i.test(value)) return replaceEnding(/ая$/i, "ой");
+    if (role === "surname" && /яя$/i.test(value)) return replaceEnding(/яя$/i, "ей");
+    if (role === "surname" && /ая$/i.test(value)) return replaceEnding(/ая$/i, "ой");
+    if (role === "surname" && /(ова|ева|ёва|ина|ына)$/i.test(value)) return replaceEnding(/а$/i, "ой");
+    if (role === "firstName" && /^любовь$/i.test(value)) return matchNameLetterCase(value, "Любови");
+    if (role === "firstName" && /ь$/i.test(value)) return replaceEnding(/ь$/i, "и");
     if (/ия$/i.test(value)) return replaceEnding(/ия$/i, "ии");
     if (/[ая]$/i.test(value)) return replaceEnding(/[ая]$/i, "е");
     return value;
   }
   if (role === "patronymic" && /ич$/i.test(value)) return `${value}у`;
+  if (role === "firstName") {
+    const irregular = {
+      павел: "Павлу",
+      лев: "Льву",
+      пётр: "Петру",
+      илья: "Илье"
+    }[lower];
+    if (irregular) return matchNameLetterCase(value, irregular);
+    if (/ия$/i.test(value)) return replaceEnding(/ия$/i, "ии");
+    if (/[ая]$/i.test(value)) return replaceEnding(/[ая]$/i, "е");
+  }
   if (/(ский|цкий)$/i.test(value)) return value.replace(/ий$/i, "ому");
   if (/(ый|ой)$/i.test(value)) return value.replace(/[ыо]й$/i, "ому");
   if (/ий$/i.test(value)) return value.replace(/ий$/i, "ию");
   if (/[йь]$/i.test(value)) return value.replace(/[йь]$/i, "ю");
   if (/[бвгджзклмнпрстфхцчшщ]$/i.test(lower)) return `${value}у`;
   return value;
+}
+
+function matchNameLetterCase(source, replacement) {
+  const value = String(source || "");
+  const result = String(replacement || "");
+  if (value && value === value.toLocaleUpperCase("ru-RU")) return result.toLocaleUpperCase("ru-RU");
+  if (value && value === value.toLocaleLowerCase("ru-RU")) return result.toLocaleLowerCase("ru-RU");
+  return result;
 }
 
 function applyCustomDocumentPropertyFormulas(templateBytes, fieldValues, sourceValues) {

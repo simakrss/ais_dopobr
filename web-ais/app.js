@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.189",
+    version: "1.7.190",
     releasedAt: "2026-08-18"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.190",
+      releasedAt: "2026-08-18",
+      changes: [
+        "Исправлено склонение ФИО в родительном падеже для заявления: фамилия, имя и отчество обрабатываются раздельно, учитываются пол, составные имена и флажок «Не склоняется фамилия»."
+      ]
+    },
     {
       version: "1.7.189",
       releasedAt: "2026-08-18",
@@ -45731,7 +45738,11 @@ MAX - https://bizvmax.ru/zifra_plus
       case "СрокС": return formatContractDate(raw("Дата начала обучения"));
       case "Сумма": return formatContractMoneyWithWords(raw("Сумма  по договору (руб)"));
       case "Фамилия": return nameParts.surname;
-      case "ФИО_обуч_род": return inflectFioGenitive(record.name || "", isChecked(record.noDeclension));
+      case "ФИО_обуч_род": return inflectFioGenitive(
+        record.name || "",
+        isChecked(record.noDeclension),
+        record.gender || ""
+      );
       case "Фото": return raw("Фото") || "";
       case "Стажировка": return isChecked(record.internship) ? "(со стажировкой)" : "";
       case "Форма обучения": return formatContractStudyForm(raw("Форма обучения"));
@@ -46015,9 +46026,16 @@ MAX - https://bizvmax.ru/zifra_plus
     return { surname, firstName, patronymic };
   }
 
-  function inflectFioGenitive(name, preserveSurname = false) {
+  function normalizeFioGender(value) {
+    const normalized = String(value || "").trim().toLocaleLowerCase("ru-RU");
+    if (/^(?:ж|жен|женский|female|f)$/u.test(normalized)) return "Женский";
+    if (/^(?:м|муж|мужской|male|m)$/u.test(normalized)) return "Мужской";
+    return "";
+  }
+
+  function inflectFioGenitive(name, preserveSurname = false, genderHint = "") {
     const parts = splitFullName(name);
-    const gender = inferStudentGender(name);
+    const gender = normalizeFioGender(genderHint) || inferStudentGender(name) || "Мужской";
     return [
       preserveSurname ? parts.surname : inflectRussianNamePart(parts.surname, gender, "surname"),
       inflectRussianNamePart(parts.firstName, gender, "firstName"),
@@ -46035,21 +46053,44 @@ MAX - https://bizvmax.ru/zifra_plus
     const replaceEnding = (pattern, ending) => value.replace(pattern, ending);
     if (gender === "Женский") {
       if (role === "patronymic" && /(?:вна|ична)$/i.test(value)) return value.replace(/а$/i, "ы");
-      if (/(ская|цкая)$/i.test(value)) return replaceEnding(/ая$/i, "ой");
-      if (/(ая|яя)$/i.test(value)) return replaceEnding(/[ая]$/i, "ой");
-      if (/(ова|ева|ёва|ина)$/i.test(value)) return replaceEnding(/а$/i, "ой");
+      if (role === "surname" && /(ская|цкая)$/i.test(value)) return replaceEnding(/ая$/i, "ой");
+      if (role === "surname" && /яя$/i.test(value)) return replaceEnding(/яя$/i, "ей");
+      if (role === "surname" && /ая$/i.test(value)) return replaceEnding(/ая$/i, "ой");
+      if (role === "surname" && /(ова|ева|ёва|ина|ына)$/i.test(value)) return replaceEnding(/а$/i, "ой");
+      if (role === "firstName" && /^любовь$/i.test(value)) return matchNameLetterCase(value, "Любови");
+      if (role === "firstName" && /ь$/i.test(value)) return replaceEnding(/ь$/i, "и");
       if (/ия$/i.test(value)) return replaceEnding(/ия$/i, "ии");
       if (/я$/i.test(value)) return replaceEnding(/я$/i, "и");
       if (/а$/i.test(value)) return replaceEnding(/а$/i, /[гкхжчшщ]а$/i.test(lower) ? "и" : "ы");
       return value;
     }
     if (role === "patronymic" && /ич$/i.test(value)) return `${value}а`;
+    if (role === "firstName") {
+      const irregular = {
+        павел: "Павла",
+        лев: "Льва",
+        пётр: "Петра",
+        илья: "Ильи"
+      }[lower];
+      if (irregular) return matchNameLetterCase(value, irregular);
+      if (/ия$/i.test(value)) return replaceEnding(/ия$/i, "ии");
+      if (/я$/i.test(value)) return replaceEnding(/я$/i, "и");
+      if (/а$/i.test(value)) return replaceEnding(/а$/i, /[гкхжчшщ]а$/i.test(lower) ? "и" : "ы");
+    }
     if (/(ский|цкий)$/i.test(value)) return value.replace(/ий$/i, "ого");
     if (/(ый|ой)$/i.test(value)) return value.replace(/[ыо]й$/i, "ого");
     if (/ий$/i.test(value)) return value.replace(/ий$/i, "ия");
     if (/[йь]$/i.test(value)) return value.replace(/[йь]$/i, "я");
     if (/[бвгджзклмнпрстфхцчшщ]$/i.test(value)) return `${value}а`;
     return value;
+  }
+
+  function matchNameLetterCase(source, replacement) {
+    const value = String(source || "");
+    const result = String(replacement || "");
+    if (value && value === value.toLocaleUpperCase("ru-RU")) return result.toLocaleUpperCase("ru-RU");
+    if (value && value === value.toLocaleLowerCase("ru-RU")) return result.toLocaleLowerCase("ru-RU");
+    return result;
   }
 
   function applyContractTemplateMarkers(template, fieldValues) {

@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260818-payment-assignment-columns-frdo-date-v1";
+  const AUTH_BUILD = "20260818-fio-declension-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);
