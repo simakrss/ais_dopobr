@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.197",
+    version: "1.7.198",
     releasedAt: "2026-08-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.198",
+      releasedAt: "2026-08-20",
+      changes: [
+        "Исправлено перетаскивание колонок в таблице импорта заявок: заголовки перемещаются обычным движением мыши без удержания Shift."
+      ]
+    },
     {
       version: "1.7.197",
       releasedAt: "2026-08-20",
@@ -1791,7 +1798,8 @@
     "[data-action='drag-program-training-plan-row']",
     "[data-contract-field-drag-handle]",
     "[data-program-payment-constant-token]",
-    "[data-automatic-expense-rule-token]"
+    "[data-automatic-expense-rule-token]",
+    `.table-column-head[data-table-config="${STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID}"][data-column-key]`
   ].join(", ");
   const STUDENT_CARD_TAB_ORDER_KEY = "ais-dopobr-student-card-tab-order-v1";
   const TAB_ORDER_SETTINGS_KEY = "ais-dopobr-tab-orders-v1";
