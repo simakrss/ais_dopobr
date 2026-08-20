@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.196",
+    version: "1.7.197",
     releasedAt: "2026-08-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.197",
+      releasedAt: "2026-08-20",
+      changes: [
+        "В справочнике гражданства оставлено единое значение «Россия»; прежнее «Российская Федерация» автоматически заменяется в карточках, распознавании документов и выгрузке ФРДО."
+      ]
+    },
     {
       version: "1.7.196",
       releasedAt: "2026-08-20",
@@ -3187,6 +3194,24 @@ MAX - https://bizvmax.ru/zifra_plus
     "ПАРТНЕРСКАЯ ПРОГРАММА",
     "ИСТЕКШИЕ ДОГОВОРА"
   ]);
+  const DEFAULT_CITIZENSHIP = "Россия";
+
+  function normalizeCitizenshipValue(value) {
+    const source = String(value ?? "").trim();
+    if (!source) return "";
+    const normalized = source
+      .normalize("NFKC")
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .replace(/^(?:гражданство|гражданин|гражданина|гражданка)\s+/u, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return ["рф", "россия", "российская федерация", "российской федерации"].includes(normalized)
+      ? DEFAULT_CITIZENSHIP
+      : source;
+  }
+
   const dictionaryDefaults = {
     statuses: [...STUDENT_STATUS_ORDER],
     managers: [],
@@ -3201,7 +3226,7 @@ MAX - https://bizvmax.ru/zifra_plus
       PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS
     ],
     fundingSources: ["Собственные средства", "За счет организации", "Федеральный бюджет", "Местный бюджет"],
-    citizenships: ["Российская Федерация"],
+    citizenships: [DEFAULT_CITIZENSHIP],
     documentTypes: ["Паспорт гражданина РФ", "Иностранный паспорт", "Вид на жительство", "Свидетельство о рождении"],
     passportIssuers: [],
     educationLevels: ["СПО", "Бакалавр", "Специалист", "Магистр", "Аттестат"],
@@ -4756,6 +4781,11 @@ MAX - https://bizvmax.ru/zifra_plus
     Object.entries(dictionaryDefaults).forEach(([key, values]) => {
       data.dictionaries[key] = unique([...(data.dictionaries[key] || []), ...values]);
     });
+    data.dictionaries.citizenships = unique(
+      (data.dictionaries.citizenships || [])
+        .map((value) => normalizeCitizenshipValue(value))
+        .filter(Boolean)
+    );
     data.dictionaries.statuses = [...STUDENT_STATUS_ORDER];
     if (!hasDiscountRules) data.dictionaries.discountRules = getDefaultDiscountRuleValues();
     data.dictionaries.communicationTemplates = normalizeCommunicationTemplates(data.dictionaries.communicationTemplates);
@@ -5822,6 +5852,7 @@ MAX - https://bizvmax.ru/zifra_plus
         : student.program,
       educationType: importedApplicationProgramType || student.educationType,
       additionalStatus: String(student.additionalStatus || "").trim(),
+      citizenship: normalizeCitizenshipValue(student.citizenship),
       studyForm: normalizeStudyForm(student.studyForm),
       gender: normalizeStudentGender(student.gender),
       discount: normalizeDiscountPercent(student.discount, student.discountUnit),
@@ -5940,6 +5971,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...contract,
       section,
       status,
+      citizenship: normalizeCitizenshipValue(contract.citizenship),
       amount: Number(contract.amount || 0),
       paid: Number(contract.paid || 0),
       agencyAmount: Number(contract.agencyAmount || 0),
@@ -33373,7 +33405,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   const DOCUMENT_RECOGNITION_CITIZENSHIP_ALIASES = Object.freeze([
     {
-      canonical: "российская федерация",
+      canonical: "россия",
       variants: ["рф", "россия", "российская федерация", "российской федерации"]
     },
     {
@@ -33404,6 +33436,9 @@ MAX - https://bizvmax.ru/zifra_plus
   function getDocumentRecognitionCitizenshipAlias(value) {
     const normalized = normalizeDocumentRecognitionCitizenshipText(value);
     if (!normalized) return "";
+    if (/^(?:рф|россия|российск(?:ая|ой)\s+федераци(?:я|и|ия))$/u.test(normalized)) {
+      return "россия";
+    }
     return DOCUMENT_RECOGNITION_CITIZENSHIP_ALIASES.find((group) => (
       group.variants.includes(normalized)
     ))?.canonical || normalized
@@ -41046,7 +41081,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const separator = dict === "discountRules" ? /[\r\n\t]+/ : /[\r\n\t;]+/;
     return unique(String(text || "")
       .split(separator)
-      .map((value) => value.trim())
+      .map((value) => (
+        dict === "citizenships"
+          ? normalizeCitizenshipValue(value)
+          : value.trim()
+      ))
       .filter(Boolean));
   }
 

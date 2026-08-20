@@ -118,6 +118,8 @@ let sharedStateOfflineSyncPromise = null;
 let sharedStateMySqlUnavailableUntil = 0;
 let sharedApplicationStateCacheMemory = null;
 let sharedApplicationStateCacheLoaded = false;
+let sharedApplicationStateCacheLoadPromise = null;
+let sharedApplicationStateCacheWriteQueue = Promise.resolve();
 let sharedApplicationStatePendingMemory = null;
 let sharedApplicationStatePendingLoaded = false;
 const DOCUMENT_CONVERSION_SOURCE_TTL_MS = 5 * 60 * 1000;
@@ -5043,6 +5045,54 @@ function getSharedRecordLocksLocalPath() {
   );
 }
 
+function normalizeSharedApplicationCitizenshipDictionary(value) {
+  const values = Array.isArray(value) ? value : [];
+  return [...new Set([...values, "Россия"]
+    .map((item) => normalizeCitizenshipValue(item))
+    .filter(Boolean))];
+}
+
+function normalizeSharedApplicationCitizenshipRows(collectionName, value) {
+  if (!Array.isArray(value) || !["students", "contracts"].includes(collectionName)) return value;
+  return value.map((record) => {
+    if (!record || typeof record !== "object" || Array.isArray(record)) return record;
+    const citizenship = normalizeCitizenshipValue(record.citizenship);
+    if (!Object.prototype.hasOwnProperty.call(record, "citizenship") && !citizenship) return record;
+    return { ...record, citizenship };
+  });
+}
+
+function normalizeSharedApplicationCitizenships(data) {
+  data.dictionaries.citizenships = normalizeSharedApplicationCitizenshipDictionary(
+    data.dictionaries.citizenships
+  );
+  for (const collectionName of ["students", "contracts"]) {
+    data.collections[collectionName] = normalizeSharedApplicationCitizenshipRows(
+      collectionName,
+      data.collections[collectionName]
+    );
+  }
+  return data;
+}
+
+function sharedApplicationDataNeedsCitizenshipMigration(data) {
+  const currentDictionary = Array.isArray(data?.dictionaries?.citizenships)
+    ? data.dictionaries.citizenships
+    : [];
+  const normalizedDictionary = normalizeSharedApplicationCitizenshipDictionary(currentDictionary);
+  if (JSON.stringify(currentDictionary) !== JSON.stringify(normalizedDictionary)) return true;
+  return ["students", "contracts"].some((collectionName) => (
+    (Array.isArray(data?.collections?.[collectionName]) ? data.collections[collectionName] : [])
+      .some((record) => (
+        record
+        && typeof record === "object"
+        && !Array.isArray(record)
+        && Object.prototype.hasOwnProperty.call(record, "citizenship")
+        && normalizeCitizenshipValue(record.citizenship) !== String(record.citizenship ?? "").trim()
+      ))
+  ));
+}
+
 function normalizeSharedApplicationData(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Общая база передана в некорректном формате.");
@@ -5061,6 +5111,7 @@ function normalizeSharedApplicationData(value) {
   normalized.meta = normalized.meta && typeof normalized.meta === "object" && !Array.isArray(normalized.meta)
     ? normalized.meta
     : {};
+  normalizeSharedApplicationCitizenships(normalized);
   if (Number(normalized.meta.frdoUploadDeadlinePolicyVersion || 0) < FRDO_UPLOAD_DEADLINE_POLICY_VERSION) {
     const settings = Array.isArray(normalized.dictionaries.issuedDocumentSettings)
       ? normalized.dictionaries.issuedDocumentSettings.map((setting) => ({ ...setting }))
@@ -5095,11 +5146,14 @@ function normalizeSharedApplicationStatePatch(value) {
   for (const [collectionName, rawChange] of Object.entries(collections)) {
     if (!/^[A-Za-z0-9_-]{1,120}$/.test(collectionName) || !rawChange || typeof rawChange !== "object") continue;
     if (Array.isArray(rawChange.replace)) {
-      patch.collections[collectionName] = { replace: rawChange.replace };
+      patch.collections[collectionName] = {
+        replace: normalizeSharedApplicationCitizenshipRows(collectionName, rawChange.replace)
+      };
       continue;
     }
     const upserts = Array.isArray(rawChange.upserts)
-      ? rawChange.upserts.filter((record) => record && typeof record === "object" && !Array.isArray(record) && String(record.id || "").trim())
+      ? normalizeSharedApplicationCitizenshipRows(collectionName, rawChange.upserts)
+        .filter((record) => record && typeof record === "object" && !Array.isArray(record) && String(record.id || "").trim())
       : [];
     const deletes = Array.isArray(rawChange.deletes)
       ? [...new Set(rawChange.deletes.map((id) => String(id || "").trim()).filter(Boolean))]
@@ -5116,7 +5170,9 @@ function normalizeSharedApplicationStatePatch(value) {
     if (!values || typeof values !== "object" || Array.isArray(values)) continue;
     for (const [name, nextValue] of Object.entries(values)) {
       if (String(name).length > 160) continue;
-      patch[key][name] = nextValue;
+      patch[key][name] = key === "dictionaries" && name === "citizenships"
+        ? normalizeSharedApplicationCitizenshipDictionary(nextValue)
+        : nextValue;
     }
   }
   if (Array.isArray(source.recordKeys)) {
@@ -5217,27 +5273,45 @@ function gunzipSharedApplicationState(value) {
   });
 }
 
-async function writeSharedApplicationStateCache(document) {
-  const cachePath = getSharedApplicationStateLocalPath();
-  if (!sharedApplicationStateCacheLoaded) await readSharedApplicationStateCache();
-  if (Number(sharedApplicationStateCacheMemory?.revision) === Number(document?.revision)) return;
-  await writeJsonAtomic(cachePath, document, true);
-  sharedApplicationStateCacheMemory = document;
-  sharedApplicationStateCacheLoaded = true;
+function writeSharedApplicationStateCache(document) {
+  const operation = sharedApplicationStateCacheWriteQueue.catch(() => {}).then(async () => {
+    const cachePath = getSharedApplicationStateLocalPath();
+    if (!sharedApplicationStateCacheLoaded) await readSharedApplicationStateCache();
+    const currentRevision = Math.max(0, Number(sharedApplicationStateCacheMemory?.revision) || 0);
+    const nextRevision = Math.max(0, Number(document?.revision) || 0);
+    if (currentRevision >= nextRevision) return false;
+    await writeJsonAtomic(cachePath, document, true);
+    sharedApplicationStateCacheMemory = document;
+    sharedApplicationStateCacheLoaded = true;
+    return true;
+  });
+  sharedApplicationStateCacheWriteQueue = operation.catch(() => {});
+  return operation;
 }
 
 async function readSharedApplicationStateCache() {
   if (sharedApplicationStateCacheLoaded) return sharedApplicationStateCacheMemory;
+  if (sharedApplicationStateCacheLoadPromise) return sharedApplicationStateCacheLoadPromise;
+  sharedApplicationStateCacheLoadPromise = (async () => {
+    try {
+      const loaded = normalizeSharedApplicationStateDocument(
+        JSON.parse(await fs.readFile(getSharedApplicationStateLocalPath(), "utf8"))
+      );
+      if (Number(loaded.revision) >= Number(sharedApplicationStateCacheMemory?.revision || 0)) {
+        sharedApplicationStateCacheMemory = loaded;
+      }
+      sharedApplicationStateCacheLoaded = true;
+      return sharedApplicationStateCacheMemory;
+    } catch {
+      if (!sharedApplicationStateCacheMemory) sharedApplicationStateCacheMemory = null;
+      sharedApplicationStateCacheLoaded = true;
+      return sharedApplicationStateCacheMemory;
+    }
+  })();
   try {
-    sharedApplicationStateCacheMemory = normalizeSharedApplicationStateDocument(
-      JSON.parse(await fs.readFile(getSharedApplicationStateLocalPath(), "utf8"))
-    );
-    sharedApplicationStateCacheLoaded = true;
-    return sharedApplicationStateCacheMemory;
-  } catch {
-    sharedApplicationStateCacheMemory = null;
-    sharedApplicationStateCacheLoaded = true;
-    return null;
+    return await sharedApplicationStateCacheLoadPromise;
+  } finally {
+    sharedApplicationStateCacheLoadPromise = null;
   }
 }
 
@@ -5944,6 +6018,7 @@ async function readSharedApplicationStateMySqlDocument(pool, connection = null) 
       .map((item) => item.value);
   }
   for (const [name, value] of collectionReplacements) data.collections[name] = value;
+  const needsCitizenshipMigration = sharedApplicationDataNeedsCitizenshipMigration(data);
   const meta = metaRows[0];
   const revision = Math.max(0, Math.floor(Number(meta.revision) || 0));
   const updatedAt = meta.updated_at instanceof Date
@@ -5959,6 +6034,7 @@ async function readSharedApplicationStateMySqlDocument(pool, connection = null) 
   return {
     exists: true,
     document,
+    needsCitizenshipMigration,
     versionTag: sharedApplicationStateMySqlVersionTag(revision),
     source: "mysql",
     offline: false
@@ -6139,7 +6215,22 @@ async function applySharedApplicationStateMySqlPatch(connection, patch) {
 
 async function ensureSharedApplicationStateMySqlDocument(pool) {
   let current = await readSharedApplicationStateMySqlDocument(pool);
-  if (current.exists || process.env.AIS_SHARED_STATE_DISABLE_LEGACY_MIGRATION === "1") return current;
+  if (current.exists) {
+    if (current.needsCitizenshipMigration && current.document) {
+      try {
+        await saveSharedApplicationStateMySqlOperation(pool, {
+          baseRevision: current.document.revision,
+          data: current.document.data,
+          updatedBy: "citizenship-migration"
+        }, null, { skipCache: true });
+        current = await readSharedApplicationStateMySqlDocument(pool);
+      } catch (error) {
+        console.warn(`Не удалось сохранить миграцию гражданства общей базы: ${error.message}`);
+      }
+    }
+    return current;
+  }
+  if (process.env.AIS_SHARED_STATE_DISABLE_LEGACY_MIGRATION === "1") return current;
   const legacy = await readLegacySharedApplicationStateDocument().catch(() => null);
   if (!legacy?.exists || !legacy.document) return current;
   const connection = await pool.getConnection();
@@ -8922,10 +9013,24 @@ function normalizeFrdoEducationLevel(level, documentName) {
 }
 
 function normalizeFrdoCitizenshipCode(value) {
-  const text = normalizeFrdoText(value, 100);
+  const text = normalizeCitizenshipValue(value);
   if (/^\d{1,3}$/.test(text)) return text.padStart(3, "0");
   const normalized = text.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
   return FRDO_CITIZENSHIP_CODES.get(normalized) || "";
+}
+
+function normalizeCitizenshipValue(value) {
+  const text = normalizeFrdoText(value, 100);
+  const normalized = text
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/^(?:гражданство|гражданин|гражданина|гражданка)\s+/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return ["рф", "россия", "российская федерация", "российской федерации"].includes(normalized)
+    ? "Россия"
+    : text;
 }
 
 function isFrdoRecordAlreadyExported(record) {
@@ -8978,7 +9083,7 @@ function sanitizeFrdoExportPayload(body) {
       snils: normalizeFrdoText(record.snils, 100),
       studyForm: normalizeFrdoText(record.studyForm, 100),
       fundingSource: normalizeFrdoText(record.fundingSource, 200),
-      citizenship: normalizeFrdoText(record.citizenship, 100),
+      citizenship: normalizeCitizenshipValue(record.citizenship),
       educationLevel: normalizeFrdoText(record.educationLevel, 300),
       educationDocument: normalizeFrdoText(record.educationDocument, 1000),
       educationDocumentSeries: normalizeFrdoText(record.educationDocumentSeries, 300),
@@ -13656,6 +13761,7 @@ function sanitizeStudentDatabaseExportPayload(body) {
         explicitFrdoDate || databaseFields.frdoStatus
       );
       databaseFields.frdoStatus = frdo.frdoDate || frdo.frdoStatus;
+      databaseFields.citizenship = normalizeCitizenshipValue(databaseFields.citizenship);
       if (explicitFrdoDate) databaseFields.frdoDate = explicitFrdoDate;
       return databaseFields;
     });
@@ -13666,6 +13772,7 @@ function sanitizeStudentDatabaseExportPayload(body) {
         || CONTRACT_DATABASE_SECTIONS.active;
       return {
         ...contract,
+        citizenship: normalizeCitizenshipValue(contract.citizenship),
         section,
         status: section === CONTRACT_DATABASE_SECTIONS.active
           ? "Действует"
@@ -17115,6 +17222,11 @@ module.exports = {
   parseStudentDatabaseWorkbook,
   parseStudentDatabaseMacroSettings,
   sanitizeStudentDatabaseExportPayload,
+  normalizeSharedApplicationData,
+  normalizeSharedApplicationStatePatch,
+  sharedApplicationDataNeedsCitizenshipMigration,
+  writeSharedApplicationStateCache,
+  readSharedApplicationStateCache,
   sanitizeFrdoExportPayload,
   buildFrdoExportWorkbook,
   inspectStudentDatabaseBinary,

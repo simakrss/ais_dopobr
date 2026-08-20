@@ -44,6 +44,7 @@ class OcrExtractionTests(unittest.TestCase):
         self.assertEqual(fields["passportNumber"], "45 18 123456")
         self.assertEqual(fields["passportCode"], "770-001")
         self.assertEqual(fields["passportDate"], "2018-06-15")
+        self.assertEqual(fields["citizenship"], "Россия")
         self.assertEqual(fields["birthDate"], "1990-02-01")
         self.assertEqual(fields["snils"], "112-233-445 95")
         self.assertEqual(fields["inn"], "7707083893")

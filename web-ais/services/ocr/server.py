@@ -1552,7 +1552,7 @@ def extract_passport(
     fields: dict[str, dict[str, Any]],
 ) -> None:
     add_field(fields, "passportType", "Паспорт гражданина РФ", 0.98, "Паспорт РФ")
-    add_field(fields, "citizenship", "Российская Федерация", 0.85, "Российская Федерация")
+    add_field(fields, "citizenship", "Россия", 0.85, "Россия")
     extract_passport_mrz(text, fields)
 
     passport_number_patterns = (
