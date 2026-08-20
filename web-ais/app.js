@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.191",
+    version: "1.7.192",
     releasedAt: "2026-08-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.192",
+      releasedAt: "2026-08-20",
+      changes: [
+        "В информации о выбранной заявке длинные значения показываются полностью без многоточий: заказ, программа, организация и примечание занимают всю ширину, шрифт блока увеличен."
+      ]
+    },
     {
       version: "1.7.191",
       releasedAt: "2026-08-20",
@@ -10487,26 +10494,26 @@ MAX - https://bizvmax.ru/zifra_plus
     const details = [
       ["Дата", row.date],
       ["ФИО", row.name],
-      ["Заказ", row.order],
+      ["Заказ", row.order, true],
       ["Оплата", hasPayment ? money(paymentAmount) : "—"],
       ["Стоимость по реестру", financialTerms.registryPrice ? money(financialTerms.registryPrice) : "—"],
       ["Сумма договора", contractAmount || financialTerms.coupon ? money(contractAmount) : "—"],
       ["Купон", financialTerms.coupon || "—"],
       ["Скидка / рассрочка", benefitDescription],
-      ["Программа", row.program],
+      ["Программа", row.program, true],
       ["Категория", inferredProgramType || "—"],
       ["Телефон", row.phone],
       ["Email", row.email],
       ["Город", row.city],
-      ["Организация", row.organization],
+      ["Организация", row.organization, true],
       ["Должность", row.position],
       ["Источник", row.source],
-      ["Примечание", row.note]
+      ["Примечание", row.note, true]
     ];
     return `
       <div class="student-application-detail-grid">
-        ${details.map(([label, value]) => `
-          <div class="${label === "Примечание" ? "is-wide" : ""}">
+        ${details.map(([label, value, wide]) => `
+          <div class="${wide ? "is-wide" : ""}">
             <dt>${escapeHtml(label)}</dt>
             <dd>${escapeHtml(value || "—")}</dd>
           </div>

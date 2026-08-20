@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260820-ocr-citizenship-match-v1";
+  const AUTH_BUILD = "20260820-application-detail-full-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);
