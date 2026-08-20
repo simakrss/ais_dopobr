@@ -106,11 +106,13 @@ async function main() {
     "isContractDocumentRecognitionDialog",
     "getDocumentRecognitionFieldGroups",
     "getDocumentRecognitionFieldDefinition",
+    "normalizeDocumentRecognitionCitizenshipField",
     `${displayFieldsSource}\nreturn getDocumentRecognitionDisplayFields;`
   )(
     (dialog) => Boolean(dialog?.isContract),
     (dialog) => dialog.groups,
-    (key) => ({ label: `Label ${key}` })
+    (key) => ({ label: `Label ${key}` }),
+    (field) => field
   );
   const studentGroups = [
     { id: "passport", keys: ["passportNumber", "passportDate", "passportCode", "passportIssuer"] },

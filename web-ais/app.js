@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.190",
-    releasedAt: "2026-08-18"
+    version: "1.7.191",
+    releasedAt: "2026-08-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.191",
+      releasedAt: "2026-08-20",
+      changes: [
+        "Распознанное гражданство автоматически сопоставляется с наиболее подходящим значением справочника для карточек слушателей и сотрудников; произвольный текст OCR больше не сохраняется как новое гражданство."
+      ]
+    },
     {
       version: "1.7.190",
       releasedAt: "2026-08-18",
@@ -32779,8 +32786,10 @@ MAX - https://bizvmax.ru/zifra_plus
           "educationDocumentIssuer",
           "educationDocumentSurname"
         ]);
+    const normalizedRecognizedFields = (Array.isArray(recognizedFields) ? recognizedFields : [])
+      .map(normalizeDocumentRecognitionCitizenshipField);
     const fieldsByKey = new Map(
-      (Array.isArray(recognizedFields) ? recognizedFields : [])
+      normalizedRecognizedFields
         .filter((field) => String(field?.key || ""))
         .map((field) => [String(field.key), field])
     );
@@ -32803,7 +32812,7 @@ MAX - https://bizvmax.ru/zifra_plus
         });
       });
     });
-    (Array.isArray(recognizedFields) ? recognizedFields : []).forEach((field) => {
+    normalizedRecognizedFields.forEach((field) => {
       const key = String(field?.key || "");
       if (!key || displayedKeys.has(key)) return;
       displayedKeys.add(key);
@@ -33106,6 +33115,117 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", dialog.closeStudentDocumentRecognitionDialog);
   }
 
+  const DOCUMENT_RECOGNITION_CITIZENSHIP_ALIASES = Object.freeze([
+    {
+      canonical: "российская федерация",
+      variants: ["рф", "россия", "российская федерация", "российской федерации"]
+    },
+    {
+      canonical: "беларусь",
+      variants: ["беларусь", "белоруссия", "республика беларусь", "республики беларусь"]
+    },
+    {
+      canonical: "молдова",
+      variants: ["молдова", "молдавия", "республика молдова", "республики молдова"]
+    },
+    {
+      canonical: "кыргызстан",
+      variants: ["кыргызстан", "киргизия", "кыргызская республика", "киргизская республика"]
+    }
+  ]);
+
+  function normalizeDocumentRecognitionCitizenshipText(value) {
+    return String(value || "")
+      .normalize("NFKC")
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .replace(/(?:^|\s)(?:гражданство|гражданин|гражданина|гражданином|гражданка|гражданки|подданство|страна)(?=\s|$)/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function getDocumentRecognitionCitizenshipAlias(value) {
+    const normalized = normalizeDocumentRecognitionCitizenshipText(value);
+    if (!normalized) return "";
+    return DOCUMENT_RECOGNITION_CITIZENSHIP_ALIASES.find((group) => (
+      group.variants.includes(normalized)
+    ))?.canonical || normalized
+      .replace(/(?:^|\s)(?:республика|республики)(?=\s|$)/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function getDocumentRecognitionEditDistance(firstValue, secondValue) {
+    const first = String(firstValue || "");
+    const second = String(secondValue || "");
+    if (!first) return second.length;
+    if (!second) return first.length;
+    const previous = Array.from({ length: second.length + 1 }, (_, index) => index);
+    for (let firstIndex = 1; firstIndex <= first.length; firstIndex += 1) {
+      const current = [firstIndex];
+      for (let secondIndex = 1; secondIndex <= second.length; secondIndex += 1) {
+        current[secondIndex] = Math.min(
+          current[secondIndex - 1] + 1,
+          previous[secondIndex] + 1,
+          previous[secondIndex - 1] + (first[firstIndex - 1] === second[secondIndex - 1] ? 0 : 1)
+        );
+      }
+      previous.splice(0, previous.length, ...current);
+    }
+    return previous[second.length];
+  }
+
+  function getDocumentRecognitionCitizenshipOptions() {
+    return getLookupOptions({
+      dict: "citizenships",
+      fields: [["students", "citizenship"], ["contracts", "citizenship"]]
+    });
+  }
+
+  function matchDocumentRecognitionCitizenship(value, options = getDocumentRecognitionCitizenshipOptions()) {
+    const sourceValue = String(value || "").trim();
+    const candidates = unique((Array.isArray(options) ? options : [])
+      .map((option) => String(option || "").trim())
+      .filter(Boolean));
+    if (!sourceValue || !candidates.length) return sourceValue;
+    const sourceNormalized = normalizeDocumentRecognitionCitizenshipText(sourceValue);
+    const sourceAlias = getDocumentRecognitionCitizenshipAlias(sourceNormalized);
+    let best = { value: candidates[0], score: Number.NEGATIVE_INFINITY };
+    candidates.forEach((candidate) => {
+      const normalized = normalizeDocumentRecognitionCitizenshipText(candidate);
+      const alias = getDocumentRecognitionCitizenshipAlias(normalized);
+      const editBase = Math.max(sourceAlias.length, alias.length, 1);
+      const editSimilarity = 1 - getDocumentRecognitionEditDistance(sourceAlias, alias) / editBase;
+      const rawEditBase = Math.max(sourceNormalized.length, normalized.length, 1);
+      const rawEditSimilarity = 1
+        - getDocumentRecognitionEditDistance(sourceNormalized, normalized) / rawEditBase;
+      const contains = sourceAlias.includes(alias) || alias.includes(sourceAlias);
+      const score = sourceNormalized === normalized
+        ? 4
+        : sourceAlias === normalized
+          ? 3.8
+          : sourceAlias === alias
+            ? 3.6
+            : (contains ? 1.5 : 0) + editSimilarity + rawEditSimilarity * 0.75;
+      if (score > best.score) best = { value: candidate, score };
+    });
+    return best.value;
+  }
+
+  function normalizeDocumentRecognitionCitizenshipField(field) {
+    if (String(field?.key || "") !== "citizenship") return field;
+    const recognizedValue = String(field?.value || "").trim();
+    if (!recognizedValue) return field;
+    const matchedValue = matchDocumentRecognitionCitizenship(recognizedValue);
+    if (!matchedValue || matchedValue === recognizedValue) return field;
+    return {
+      ...field,
+      value: matchedValue,
+      recognitionOriginalValue: recognizedValue
+    };
+  }
+
   function normalizeRecognitionComparisonValue(key, value) {
     const source = String(value || "").trim();
     if (["inn", "snils", "passportNumber", "passportCode", "identityDocument", "identityDepartmentCode"].includes(key)) {
@@ -33139,7 +33259,11 @@ MAX - https://bizvmax.ru/zifra_plus
     let dictionary = "";
     let options = [];
 
-    if (key === "gender") {
+    if (key === "citizenship") {
+      mode = "select";
+      dictionary = "citizenships";
+      options = getDocumentRecognitionCitizenshipOptions();
+    } else if (key === "gender") {
       mode = "select";
       options = makeOptions(["Женский", "Мужской"]);
     } else if (key === "program" && !isContract) {
@@ -33256,6 +33380,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <span title="${escapeAttr(field.evidence || "")}">Источник: ${escapeHtml(field.sourceFile || "не определён")}</span>
           </div>
           ${currentValue ? `<small>Сейчас в карточке: <strong>${escapeHtml(currentValue)}</strong></small>` : ""}
+          ${field.recognitionOriginalValue ? `<small>Распознано: <strong>${escapeHtml(field.recognitionOriginalValue)}</strong> · Подставлено из списка: <strong>${escapeHtml(field.value)}</strong></small>` : ""}
           ${listControl ? `<small>${listControl.mode === "combo" ? "Выберите значение из списка или введите своё." : "Выберите значение из списка."}</small>` : ""}
           ${!listControl && alternatives.length ? `<small>Другие варианты доступны в списке поля: ${alternatives.length}</small>` : ""}
         </div>
@@ -35540,6 +35665,10 @@ MAX - https://bizvmax.ru/zifra_plus
         value = formatSnils(value);
         row.querySelector("[data-ocr-field-value]").value = value;
         if (!updateStudentDocumentRecognitionIdentityValidation(row)) invalidRow ||= row;
+      }
+      if (key === "citizenship") {
+        value = matchDocumentRecognitionCitizenship(value);
+        row.querySelector("[data-ocr-field-value]").value = value;
       }
       if ([
         "birthDate",
