@@ -15416,6 +15416,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 .student-photo-crop-editor-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 7px;
   padding: 7px 10px;
   border-bottom: 1px solid var(--line);
@@ -15727,6 +15728,14 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   min-width: min(280px, 100%);
 }
 
+.student-photo-crop-editor-rotation,
+.student-document-photo-cropper-rotation {
+  min-width: 34px;
+  color: var(--muted);
+  font-weight: 700;
+  text-align: center;
+}
+
 .student-document-photo-cropper-zoom input {
   width: 150px;
   min-width: 80px;
@@ -15845,9 +15854,12 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .student-document-photo-cropper-stage img {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
   max-width: none;
   max-height: none;
   object-fit: contain;
@@ -16011,6 +16023,11 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     flex: 1 1 auto;
   }
 
+  .student-photo-crop-editor-rotation {
+    order: 3;
+    align-self: center;
+  }
+
   .student-photo-crop-editor-hint {
     display: grid;
     gap: 3px;
@@ -16140,6 +16157,10 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     grid-column: 1 / -1;
   }
 
+  .student-document-photo-cropper-rotation {
+    display: none;
+  }
+
   .student-document-photo-cropper-toolbar span {
     text-align: center;
   }
@@ -16157,7 +16178,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .student-document-photo-cropper-stage img {
-    max-height: calc(100dvh - 285px);
+    max-height: none;
   }
 
   .student-document-photo-cropper-handle {

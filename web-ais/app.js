@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.200",
+    version: "1.7.201",
     releasedAt: "2026-08-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.201",
+      releasedAt: "2026-08-20",
+      changes: [
+        "В редакторах фото добавлен поворот исходного изображения влево и вправо при выделении фотографии после распознавания и при повторном кадрировании фото."
+      ]
+    },
     {
       version: "1.7.200",
       releasedAt: "2026-08-20",
@@ -31147,6 +31154,93 @@ MAX - https://bizvmax.ru/zifra_plus
     saveSharedApplicationStateInBackground({ generation, lock });
   }
 
+  function normalizeStudentPhotoRotation(value) {
+    return (((Math.round((Number(value) || 0) / 90) * 90) % 360) + 360) % 360;
+  }
+
+  function getStudentPhotoRotatedSize(width, height, rotation = 0) {
+    const sideways = normalizeStudentPhotoRotation(rotation) % 180 !== 0;
+    return {
+      width: sideways ? Number(height) || 0 : Number(width) || 0,
+      height: sideways ? Number(width) || 0 : Number(height) || 0
+    };
+  }
+
+  function rotateStudentPhotoNormalizedRect(rect = {}, rotation = 0) {
+    const x = clamp(Number(rect.x) || 0, 0, 1);
+    const y = clamp(Number(rect.y) || 0, 0, 1);
+    const width = clamp(Number(rect.width) || 0, 0, 1 - x);
+    const height = clamp(Number(rect.height) || 0, 0, 1 - y);
+    const angle = normalizeStudentPhotoRotation(rotation);
+    if (angle === 90) return { x: 1 - y - height, y: x, width: height, height: width };
+    if (angle === 180) return { x: 1 - x - width, y: 1 - y - height, width, height };
+    if (angle === 270) return { x: y, y: 1 - x - width, width: height, height: width };
+    return { x, y, width, height };
+  }
+
+  function getStudentPhotoRotationOffset(width, height, rotation = 0) {
+    const angle = normalizeStudentPhotoRotation(rotation);
+    if (angle === 90) return { x: Number(height) || 0, y: 0 };
+    if (angle === 180) return { x: Number(width) || 0, y: Number(height) || 0 };
+    if (angle === 270) return { x: 0, y: Number(width) || 0 };
+    return { x: 0, y: 0 };
+  }
+
+  function rotateStudentPhotoCanvas(sourceCanvas, rotation = 0) {
+    const angle = normalizeStudentPhotoRotation(rotation);
+    if (!angle) return sourceCanvas;
+    const size = getStudentPhotoRotatedSize(sourceCanvas.width, sourceCanvas.height, angle);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(size.width));
+    canvas.height = Math.max(1, Math.round(size.height));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Браузер не смог повернуть выбранное фото.");
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const offset = getStudentPhotoRotationOffset(sourceCanvas.width, sourceCanvas.height, angle);
+    context.translate(offset.x, offset.y);
+    context.rotate(angle * Math.PI / 180);
+    context.drawImage(sourceCanvas, 0, 0);
+    return canvas;
+  }
+
+  function createStudentPhotoCropCanvas(image, normalizedSourceRect = {}, rotation = 0, maxOutputSize = 1600) {
+    const sourceX = clamp(Math.round((Number(normalizedSourceRect.x) || 0) * image.naturalWidth), 0, image.naturalWidth - 1);
+    const sourceY = clamp(Math.round((Number(normalizedSourceRect.y) || 0) * image.naturalHeight), 0, image.naturalHeight - 1);
+    const sourceWidth = Math.max(1, Math.min(
+      image.naturalWidth - sourceX,
+      Math.round((Number(normalizedSourceRect.width) || 0) * image.naturalWidth)
+    ));
+    const sourceHeight = Math.max(1, Math.min(
+      image.naturalHeight - sourceY,
+      Math.round((Number(normalizedSourceRect.height) || 0) * image.naturalHeight)
+    ));
+    const rotatedSize = getStudentPhotoRotatedSize(sourceWidth, sourceHeight, rotation);
+    const outputScale = Math.min(1, Math.max(1, Number(maxOutputSize) || 1600) / Math.max(
+      rotatedSize.width,
+      rotatedSize.height
+    ));
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = Math.max(1, Math.round(sourceWidth * outputScale));
+    sourceCanvas.height = Math.max(1, Math.round(sourceHeight * outputScale));
+    const context = sourceCanvas.getContext("2d");
+    if (!context) throw new Error("Браузер не смог подготовить выбранную область фото.");
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+    context.drawImage(
+      image,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      sourceCanvas.width,
+      sourceCanvas.height
+    );
+    return rotateStudentPhotoCanvas(sourceCanvas, rotation);
+  }
+
   function openStudentPhotoCropEditor(dataUrl, options = {}) {
     const personLabel = String(options.personLabel || "слушателя").trim() || "слушателя";
     return new Promise((resolve, reject) => {
@@ -31179,6 +31273,9 @@ MAX - https://bizvmax.ru/zifra_plus
               <strong data-photo-crop-zoom-label>100%</strong>
               <button class="ghost-button" data-photo-crop-zoom-in type="button" title="Увеличить">+</button>
             </div>
+            <button class="ghost-button" data-photo-crop-rotate-left type="button" title="Повернуть фото влево" aria-label="Повернуть фото влево">↶ Влево</button>
+            <button class="ghost-button" data-photo-crop-rotate-right type="button" title="Повернуть фото вправо" aria-label="Повернуть фото вправо">Вправо ↷</button>
+            <span class="student-photo-crop-editor-rotation" data-photo-crop-rotation aria-live="polite">0°</span>
             <button class="ghost-button" data-photo-crop-fit type="button">Вписать</button>
             <button class="ghost-button" data-photo-crop-focus type="button">К рамке</button>
             <button class="ghost-button" data-photo-crop-full type="button">Весь снимок</button>
@@ -31186,6 +31283,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="student-photo-crop-editor-hint">
             <span><strong>1. Область фото:</strong> перетаскивайте рамку за центр, а за круглые маркеры по углам меняйте её размер.</span>
             <span><strong>2. Снимок:</strong> колесо мыши меняет масштаб в точке курсора, а зажатое колёсико перемещает изображение. На сенсорном экране используйте «Двигать снимок».</span>
+            <span><strong>3. Поворот:</strong> ориентация применяется к сохраняемому фото, исходный файл не изменяется.</span>
           </div>
           <div class="student-photo-crop-editor-viewport" data-photo-crop-viewport tabindex="0">
             <div class="student-photo-crop-editor-loading" data-photo-crop-loading>Загрузка изображения...</div>
@@ -31213,6 +31311,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const loading = backdrop.querySelector("[data-photo-crop-loading]");
       const zoomInput = backdrop.querySelector("[data-photo-crop-zoom]");
       const zoomLabel = backdrop.querySelector("[data-photo-crop-zoom-label]");
+      const rotationLabel = backdrop.querySelector("[data-photo-crop-rotation]");
       const useButton = backdrop.querySelector("[data-action='use-student-photo-crop']");
       let naturalWidth = 0;
       let naturalHeight = 0;
@@ -31222,6 +31321,7 @@ MAX - https://bizvmax.ru/zifra_plus
       let panX = 0;
       let panY = 0;
       let mode = "frame";
+      let rotation = 0;
       let selection = null;
       let interaction = null;
       let settled = false;
@@ -31246,20 +31346,23 @@ MAX - https://bizvmax.ru/zifra_plus
         width: Math.max(1, viewport.clientWidth),
         height: Math.max(1, viewport.clientHeight)
       });
+      const rotatedImageSize = () => getStudentPhotoRotatedSize(naturalWidth, naturalHeight, rotation);
       const updateFitScale = () => {
         if (!naturalWidth || !naturalHeight) return;
         const size = viewportSize();
+        const rotatedSize = rotatedImageSize();
         fitScale = Math.max(0.01, Math.min(
-          (size.width - 28) / naturalWidth,
-          (size.height - 28) / naturalHeight
+          (size.width - 28) / rotatedSize.width,
+          (size.height - 28) / rotatedSize.height
         ));
         scale = fitScale * zoomRatio;
       };
       const clampPan = () => {
         if (!naturalWidth || !naturalHeight) return;
         const size = viewportSize();
-        const displayWidth = naturalWidth * scale;
-        const displayHeight = naturalHeight * scale;
+        const rotatedSize = rotatedImageSize();
+        const displayWidth = rotatedSize.width * scale;
+        const displayHeight = rotatedSize.height * scale;
         const visible = 48;
         panX = displayWidth <= visible * 2
           ? (size.width - displayWidth) / 2
@@ -31270,18 +31373,22 @@ MAX - https://bizvmax.ru/zifra_plus
       };
       const isUsableSelection = () => Boolean(
         selection
-        && selection.width >= Math.min(naturalWidth, Math.max(12, naturalWidth * 0.01))
-        && selection.height >= Math.min(naturalHeight, Math.max(12, naturalHeight * 0.01))
+        && selection.width >= Math.min(rotatedImageSize().width, Math.max(12, rotatedImageSize().width * 0.01))
+        && selection.height >= Math.min(rotatedImageSize().height, Math.max(12, rotatedImageSize().height * 0.01))
       );
       const renderEditor = () => {
         if (!naturalWidth || !naturalHeight) return;
         clampPan();
+        const rotationOffset = getStudentPhotoRotationOffset(naturalWidth, naturalHeight, rotation);
         image.style.left = `${panX}px`;
         image.style.top = `${panY}px`;
         image.style.width = `${naturalWidth * scale}px`;
         image.style.height = `${naturalHeight * scale}px`;
+        image.style.transformOrigin = "0 0";
+        image.style.transform = `translate(${rotationOffset.x * scale}px, ${rotationOffset.y * scale}px) rotate(${rotation}deg)`;
         zoomInput.value = String(Math.round(zoomRatio * 100));
         zoomLabel.textContent = `${Math.round(zoomRatio * 100)}%`;
+        rotationLabel.textContent = `${rotation}°`;
         viewport.classList.toggle("is-pan-mode", mode === "pan");
         backdrop.querySelectorAll("[data-photo-crop-mode]").forEach((button) => {
           button.classList.toggle("is-active", button.dataset.photoCropMode === mode);
@@ -31301,8 +31408,9 @@ MAX - https://bizvmax.ru/zifra_plus
       };
       const centerImage = () => {
         const size = viewportSize();
-        panX = (size.width - naturalWidth * scale) / 2;
-        panY = (size.height - naturalHeight * scale) / 2;
+        const rotatedSize = rotatedImageSize();
+        panX = (size.width - rotatedSize.width * scale) / 2;
+        panY = (size.height - rotatedSize.height * scale) / 2;
       };
       const focusSelection = () => {
         if (!selection) return;
@@ -31331,12 +31439,45 @@ MAX - https://bizvmax.ru/zifra_plus
         renderEditor();
       };
       const imagePointFromEvent = (event) => ({
-        x: clamp((event.clientX - viewport.getBoundingClientRect().left - panX) / scale, 0, naturalWidth),
-        y: clamp((event.clientY - viewport.getBoundingClientRect().top - panY) / scale, 0, naturalHeight)
+        x: clamp((event.clientX - viewport.getBoundingClientRect().left - panX) / scale, 0, rotatedImageSize().width),
+        y: clamp((event.clientY - viewport.getBoundingClientRect().top - panY) / scale, 0, rotatedImageSize().height)
       });
       const setFullSelection = () => {
-        selection = { x: 0, y: 0, width: naturalWidth, height: naturalHeight };
+        const rotatedSize = rotatedImageSize();
+        selection = { x: 0, y: 0, width: rotatedSize.width, height: rotatedSize.height };
         renderEditor();
+      };
+      const rotatePhoto = (delta) => {
+        if (!naturalWidth || !naturalHeight) return;
+        const previousRotation = rotation;
+        const previousSize = rotatedImageSize();
+        const sourceSelection = selection
+          ? rotateStudentPhotoNormalizedRect({
+              x: selection.x / previousSize.width,
+              y: selection.y / previousSize.height,
+              width: selection.width / previousSize.width,
+              height: selection.height / previousSize.height
+            }, -previousRotation)
+          : null;
+        rotation = normalizeStudentPhotoRotation(rotation + delta);
+        const nextSize = rotatedImageSize();
+        if (sourceSelection) {
+          const nextSelection = rotateStudentPhotoNormalizedRect(sourceSelection, rotation);
+          selection = {
+            x: nextSelection.x * nextSize.width,
+            y: nextSelection.y * nextSize.height,
+            width: nextSelection.width * nextSize.width,
+            height: nextSelection.height * nextSize.height
+          };
+        }
+        interaction = null;
+        viewport.classList.remove("is-panning");
+        updateFitScale();
+        if (selection) focusSelection();
+        else {
+          centerImage();
+          renderEditor();
+        }
       };
 
       image.addEventListener("load", () => {
@@ -31348,12 +31489,13 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         loading.hidden = true;
         image.hidden = false;
-        const initialWidth = naturalWidth * 0.68;
-        const initialHeight = Math.min(naturalHeight * 0.84, initialWidth * 4 / 3);
+        const rotatedSize = rotatedImageSize();
+        const initialWidth = rotatedSize.width * 0.68;
+        const initialHeight = Math.min(rotatedSize.height * 0.84, initialWidth * 4 / 3);
         const adjustedWidth = Math.min(initialWidth, initialHeight * 3 / 4);
         selection = {
-          x: (naturalWidth - adjustedWidth) / 2,
-          y: (naturalHeight - initialHeight) / 2,
+          x: (rotatedSize.width - adjustedWidth) / 2,
+          y: (rotatedSize.height - initialHeight) / 2,
           width: adjustedWidth,
           height: initialHeight
         };
@@ -31379,6 +31521,8 @@ MAX - https://bizvmax.ru/zifra_plus
       backdrop.querySelector("[data-photo-crop-fit]")?.addEventListener("click", fitImage);
       backdrop.querySelector("[data-photo-crop-focus]")?.addEventListener("click", focusSelection);
       backdrop.querySelector("[data-photo-crop-full]")?.addEventListener("click", setFullSelection);
+      backdrop.querySelector("[data-photo-crop-rotate-left]")?.addEventListener("click", () => rotatePhoto(-90));
+      backdrop.querySelector("[data-photo-crop-rotate-right]")?.addEventListener("click", () => rotatePhoto(90));
       viewport.addEventListener("wheel", (event) => {
         if (!naturalWidth) return;
         event.preventDefault();
@@ -31466,25 +31610,26 @@ MAX - https://bizvmax.ru/zifra_plus
         const dx = (event.clientX - interaction.startX) / scale;
         const dy = (event.clientY - interaction.startY) / scale;
         const start = interaction.selection;
+        const viewSize = rotatedImageSize();
         if (interaction.type === "move") {
           selection = {
             ...start,
-            x: clamp(start.x + dx, 0, naturalWidth - start.width),
-            y: clamp(start.y + dy, 0, naturalHeight - start.height)
+            x: clamp(start.x + dx, 0, viewSize.width - start.width),
+            y: clamp(start.y + dy, 0, viewSize.height - start.height)
           };
           renderEditor();
           return;
         }
-        const minWidth = Math.min(naturalWidth, Math.max(12, naturalWidth * 0.01));
-        const minHeight = Math.min(naturalHeight, Math.max(12, naturalHeight * 0.01));
+        const minWidth = Math.min(viewSize.width, Math.max(12, viewSize.width * 0.01));
+        const minHeight = Math.min(viewSize.height, Math.max(12, viewSize.height * 0.01));
         let left = start.x;
         let right = start.x + start.width;
         let top = start.y;
         let bottom = start.y + start.height;
         if (interaction.handle.includes("w")) left = clamp(start.x + dx, 0, right - minWidth);
-        if (interaction.handle.includes("e")) right = clamp(start.x + start.width + dx, left + minWidth, naturalWidth);
+        if (interaction.handle.includes("e")) right = clamp(start.x + start.width + dx, left + minWidth, viewSize.width);
         if (interaction.handle.includes("n")) top = clamp(start.y + dy, 0, bottom - minHeight);
-        if (interaction.handle.includes("s")) bottom = clamp(start.y + start.height + dy, top + minHeight, naturalHeight);
+        if (interaction.handle.includes("s")) bottom = clamp(start.y + start.height + dy, top + minHeight, viewSize.height);
         selection = { x: left, y: top, width: right - left, height: bottom - top };
         renderEditor();
       });
@@ -31502,8 +31647,9 @@ MAX - https://bizvmax.ru/zifra_plus
         const step = event.shiftKey ? 10 : 1;
         const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
         const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-        selection.x = clamp(selection.x + dx, 0, naturalWidth - selection.width);
-        selection.y = clamp(selection.y + dy, 0, naturalHeight - selection.height);
+        const viewSize = rotatedImageSize();
+        selection.x = clamp(selection.x + dx, 0, viewSize.width - selection.width);
+        selection.y = clamp(selection.y + dy, 0, viewSize.height - selection.height);
         renderEditor();
       });
 
@@ -31518,33 +31664,21 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       useButton.addEventListener("click", () => {
         if (!isUsableSelection()) return;
-        const sourceX = Math.round(selection.x);
-        const sourceY = Math.round(selection.y);
-        const sourceWidth = Math.max(1, Math.round(selection.width));
-        const sourceHeight = Math.max(1, Math.round(selection.height));
-        const outputScale = Math.min(1, 1600 / Math.max(sourceWidth, sourceHeight));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(sourceWidth * outputScale));
-        canvas.height = Math.max(1, Math.round(sourceHeight * outputScale));
-        const context = canvas.getContext("2d");
-        if (!context) {
-          fail(new Error("Браузер не смог подготовить выбранную область фото."));
-          return;
+        const viewSize = rotatedImageSize();
+        const normalizedSourceSelection = rotateStudentPhotoNormalizedRect({
+          x: selection.x / viewSize.width,
+          y: selection.y / viewSize.height,
+          width: selection.width / viewSize.width,
+          height: selection.height / viewSize.height
+        }, -rotation);
+        try {
+          const canvas = createStudentPhotoCropCanvas(image, normalizedSourceSelection, rotation, 1600);
+          finish(canvas.toDataURL("image/jpeg", 0.92));
+        } catch (error) {
+          fail(error instanceof Error
+            ? error
+            : new Error("Браузер не смог подготовить выбранную область фото."));
         }
-        context.fillStyle = "#fff";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        context.drawImage(
-          image,
-          sourceX,
-          sourceY,
-          sourceWidth,
-          sourceHeight,
-          0,
-          0,
-          canvas.width,
-          canvas.height
-        );
-        finish(canvas.toDataURL("image/jpeg", 0.92));
       });
       backdrop.querySelector("[data-action='close-student-photo-editor']")?.focus({ preventScroll: true });
     });
@@ -35799,6 +35933,9 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="student-document-photo-cropper-view-tools" role="group" aria-label="Инструменты просмотра документа">
             <button class="ghost-button is-active" data-ocr-crop-mode="select" type="button" aria-pressed="true">Выделить область</button>
             <button class="ghost-button" data-ocr-crop-mode="pan" type="button" aria-pressed="false">Перемещать документ</button>
+            <button class="ghost-button" data-ocr-crop-rotate-left type="button" title="Повернуть документ влево" aria-label="Повернуть документ влево">↶ Влево</button>
+            <button class="ghost-button" data-ocr-crop-rotate-right type="button" title="Повернуть документ вправо" aria-label="Повернуть документ вправо">Вправо ↷</button>
+            <span class="student-document-photo-cropper-rotation" data-ocr-crop-rotation aria-live="polite">0°</span>
             <span class="student-document-photo-cropper-zoom" role="group" aria-label="Масштаб документа">
               <button class="ghost-button" data-ocr-crop-zoom-out type="button" title="Уменьшить масштаб" aria-label="Уменьшить масштаб">−</button>
               <input data-ocr-crop-zoom type="range" min="25" max="400" step="5" value="100" aria-label="Масштаб документа">
@@ -35807,7 +35944,7 @@ MAX - https://bizvmax.ru/zifra_plus
             </span>
             <button class="ghost-button" data-ocr-crop-fit type="button">Вписать страницу</button>
           </div>
-          <small><strong>Как работать:</strong> колесо мыши меняет масштаб в точке курсора; удерживайте колёсико и тяните документ для перемещения. На сенсорном экране используйте режим «Перемещать документ».</small>
+          <small><strong>Как работать:</strong> поворачивайте документ кнопками «Влево» и «Вправо»; колесо мыши меняет масштаб, а зажатое колёсико перемещает страницу. Исходный файл не изменяется.</small>
         </div>
         <div class="student-document-photo-cropper-viewport" data-ocr-crop-viewport tabindex="0" aria-label="Просмотр страницы документа">
           <div class="student-document-photo-cropper-loading" data-ocr-crop-loading>Загрузка страницы...</div>
@@ -35851,16 +35988,21 @@ MAX - https://bizvmax.ru/zifra_plus
     const zoomLabel = backdrop.querySelector("[data-ocr-crop-zoom-label]");
     const zoomOutButton = backdrop.querySelector("[data-ocr-crop-zoom-out]");
     const zoomInButton = backdrop.querySelector("[data-ocr-crop-zoom-in]");
+    const rotateLeftButton = backdrop.querySelector("[data-ocr-crop-rotate-left]");
+    const rotateRightButton = backdrop.querySelector("[data-ocr-crop-rotate-right]");
+    const rotationLabel = backdrop.querySelector("[data-ocr-crop-rotation]");
     const fitButton = backdrop.querySelector("[data-ocr-crop-fit]");
     const useButton = backdrop.querySelector("[data-action='use-student-photo-crop']");
     const pageCache = new Map();
     const selections = new Map();
+    const rotations = new Map();
     let currentPage = clamp(Number(options.initialPage) || 1, 1, Math.max(1, Number(file.pageCount) || 1));
     let pageCount = Math.max(1, Number(file.pageCount) || 1);
     let interaction = null;
     let loadSequence = 0;
     let editMode = "select";
     let zoom = 1;
+    let rotation = 0;
     let baseWidth = 0;
     let baseHeight = 0;
 
@@ -35870,6 +36012,11 @@ MAX - https://bizvmax.ru/zifra_plus
     backdrop.closeStudentDocumentRegionSelector = close;
     const currentFileEntry = () => availableFiles[currentFilePosition];
     const currentPageKey = () => `${currentFileEntry().index}:${currentPage}`;
+    const rotatedPageSize = () => getStudentPhotoRotatedSize(
+      image.naturalWidth,
+      image.naturalHeight,
+      rotation
+    );
     const setEditMode = (mode) => {
       editMode = mode === "pan" ? "pan" : "select";
       const panMode = editMode === "pan";
@@ -35906,6 +36053,13 @@ MAX - https://bizvmax.ru/zifra_plus
         : { x: 0.5, y: 0.5, viewportX: viewport.clientWidth / 2, viewportY: viewport.clientHeight / 2 };
       stage.style.width = `${Math.max(1, baseWidth * zoom)}px`;
       stage.style.height = `${Math.max(1, baseHeight * zoom)}px`;
+      const rotatedSize = rotatedPageSize();
+      const displayScale = rotatedSize.width ? (baseWidth * zoom) / rotatedSize.width : 1;
+      const rotationOffset = getStudentPhotoRotationOffset(image.naturalWidth, image.naturalHeight, rotation);
+      image.style.width = `${Math.max(1, image.naturalWidth * displayScale)}px`;
+      image.style.height = `${Math.max(1, image.naturalHeight * displayScale)}px`;
+      image.style.transformOrigin = "0 0";
+      image.style.transform = `translate(${rotationOffset.x * displayScale}px, ${rotationOffset.y * displayScale}px) rotate(${rotation}deg)`;
       stage.style.marginTop = `${Math.max(0, (viewport.clientHeight - baseHeight * zoom - 20) / 2)}px`;
       stage.style.marginBottom = stage.style.marginTop;
       zoomInput.value = String(Math.round(zoom * 100));
@@ -35929,13 +36083,14 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!image.naturalWidth || !image.naturalHeight) return;
       const availableWidth = Math.max(160, viewport.clientWidth - 20);
       const availableHeight = Math.max(160, viewport.clientHeight - 20);
+      const rotatedSize = rotatedPageSize();
       const fitScale = Math.min(
         1,
-        availableWidth / image.naturalWidth,
-        availableHeight / image.naturalHeight
+        availableWidth / rotatedSize.width,
+        availableHeight / rotatedSize.height
       );
-      baseWidth = Math.max(1, image.naturalWidth * fitScale);
-      baseHeight = Math.max(1, image.naturalHeight * fitScale);
+      baseWidth = Math.max(1, rotatedSize.width * fitScale);
+      baseHeight = Math.max(1, rotatedSize.height * fitScale);
       zoom = 1;
       paintDocumentView(false);
     };
@@ -35967,6 +36122,7 @@ MAX - https://bizvmax.ru/zifra_plus
       pagesLabel.textContent = String(pageCount);
       previousButton.disabled = currentPage <= 1;
       nextButton.disabled = currentPage >= pageCount;
+      rotationLabel.textContent = `${rotation}°`;
     };
     const loadPage = async (page, filePosition = currentFilePosition) => {
       const sequence = ++loadSequence;
@@ -35974,6 +36130,7 @@ MAX - https://bizvmax.ru/zifra_plus
       file = currentFileEntry().file;
       pageCount = Math.max(1, Number(file.pageCount) || 1);
       currentPage = clamp(Number(page) || 1, 1, pageCount);
+      rotation = normalizeStudentPhotoRotation(rotations.get(currentPageKey()) || 0);
       updateNavigation();
       loading.hidden = false;
       loading.textContent = "Загрузка страницы...";
@@ -35982,6 +36139,9 @@ MAX - https://bizvmax.ru/zifra_plus
       stage.style.removeProperty("height");
       stage.style.removeProperty("margin-top");
       stage.style.removeProperty("margin-bottom");
+      image.style.removeProperty("width");
+      image.style.removeProperty("height");
+      image.style.removeProperty("transform");
       viewport.scrollLeft = 0;
       viewport.scrollTop = 0;
       zoom = 1;
@@ -36016,24 +36176,27 @@ MAX - https://bizvmax.ru/zifra_plus
             if (isInitialRegion) {
               const initialX = clamp(Number(options.initialBox.x) || 0, 0, 1);
               const initialY = clamp(Number(options.initialBox.y) || 0, 0, 1);
-              selections.set(selectionKey, {
+              selections.set(selectionKey, rotateStudentPhotoNormalizedRect({
                 x: initialX,
                 y: initialY,
                 width: clamp(Number(options.initialBox.width) || 0, 0, 1 - initialX),
                 height: clamp(Number(options.initialBox.height) || 0, 0, 1 - initialY)
-              });
+              }, rotation));
             } else if (selectRegionMode && options.defaultSelection) {
               const defaultSelection = options.defaultSelection;
               const defaultX = clamp(Number(defaultSelection.x) || 0, 0, 1);
               const defaultY = clamp(Number(defaultSelection.y) || 0, 0, 1);
-              selections.set(selectionKey, {
+              selections.set(selectionKey, rotateStudentPhotoNormalizedRect({
                 x: defaultX,
                 y: defaultY,
                 width: clamp(Number(defaultSelection.width) || 0, 0, 1 - defaultX),
                 height: clamp(Number(defaultSelection.height) || 0, 0, 1 - defaultY)
-              });
+              }, rotation));
             } else if (!selectRegionMode) {
-              selections.set(selectionKey, { x: 0.22, y: 0.08, width: 0.56, height: 0.84 });
+              selections.set(selectionKey, rotateStudentPhotoNormalizedRect(
+                { x: 0.22, y: 0.08, width: 0.56, height: 0.84 },
+                rotation
+              ));
             }
           }
           paintSelection();
@@ -36046,7 +36209,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     };
     const pointFromEvent = (event) => {
-      const rect = image.getBoundingClientRect();
+      const rect = stage.getBoundingClientRect();
       return {
         x: clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1),
         y: clamp((event.clientY - rect.top) / Math.max(1, rect.height), 0, 1)
@@ -36120,7 +36283,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     selectionElement.addEventListener("pointermove", (event) => {
       if (!interaction || interaction.pointerId !== event.pointerId || !["move", "resize"].includes(interaction.type)) return;
-      const rect = image.getBoundingClientRect();
+      const rect = stage.getBoundingClientRect();
       const dx = (event.clientX - interaction.startX) / Math.max(1, rect.width);
       const dy = (event.clientY - interaction.startY) / Math.max(1, rect.height);
       const start = interaction.selection;
@@ -36188,6 +36351,23 @@ MAX - https://bizvmax.ru/zifra_plus
     zoomInput.addEventListener("input", () => setDocumentZoom(Number(zoomInput.value) / 100));
     zoomOutButton.addEventListener("click", () => setDocumentZoom(zoom - 0.15));
     zoomInButton.addEventListener("click", () => setDocumentZoom(zoom + 0.15));
+    const rotateDocumentPage = (delta) => {
+      if (!image.naturalWidth || !image.naturalHeight) return;
+      const key = currentPageKey();
+      const sourceSelection = selections.has(key)
+        ? rotateStudentPhotoNormalizedRect(selections.get(key), -rotation)
+        : null;
+      rotation = normalizeStudentPhotoRotation(rotation + delta);
+      rotations.set(key, rotation);
+      if (sourceSelection) selections.set(key, rotateStudentPhotoNormalizedRect(sourceSelection, rotation));
+      interaction = null;
+      stage.classList.remove("is-panning");
+      rotationLabel.textContent = `${rotation}°`;
+      fitDocumentPage();
+      paintSelection();
+    };
+    rotateLeftButton.addEventListener("click", () => rotateDocumentPage(-90));
+    rotateRightButton.addEventListener("click", () => rotateDocumentPage(90));
     fitButton.addEventListener("click", fitDocumentPage);
     viewport.addEventListener("wheel", (event) => {
       if (!event.deltaY) return;
@@ -36241,27 +36421,20 @@ MAX - https://bizvmax.ru/zifra_plus
     useButton.addEventListener("click", async () => {
       const selection = selections.get(currentPageKey());
       if (!selection || !image.naturalWidth || !image.naturalHeight) return;
-      const sourceX = Math.round(selection.x * image.naturalWidth);
-      const sourceY = Math.round(selection.y * image.naturalHeight);
-      const sourceWidth = Math.max(1, Math.round(selection.width * image.naturalWidth));
-      const sourceHeight = Math.max(1, Math.round(selection.height * image.naturalHeight));
       const maxOutputSize = Math.max(320, Number(options.maxOutputSize) || 1200);
-      const scale = Math.min(1, maxOutputSize / Math.max(sourceWidth, sourceHeight));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(sourceWidth * scale));
-      canvas.height = Math.max(1, Math.round(sourceHeight * scale));
-      canvas.getContext("2d")?.drawImage(
-        image,
-        sourceX,
-        sourceY,
-        sourceWidth,
-        sourceHeight,
-        0,
-        0,
-        canvas.width,
-        canvas.height
-      );
-      let outputCanvas = canvas;
+      const normalizedSourceSelection = rotateStudentPhotoNormalizedRect(selection, -rotation);
+      let outputCanvas;
+      try {
+        outputCanvas = createStudentPhotoCropCanvas(
+          image,
+          normalizedSourceSelection,
+          rotation,
+          maxOutputSize
+        );
+      } catch (error) {
+        alert(error.message || "Не удалось подготовить выделенное фото.");
+        return;
+      }
       let quality = clamp(Number(options.outputQuality) || 0.9, 0.5, 0.95);
       let base64 = outputCanvas.toDataURL("image/jpeg", quality).split(",")[1] || "";
       while (base64.length > 300000 && quality > 0.55) {
@@ -36287,7 +36460,8 @@ MAX - https://bizvmax.ru/zifra_plus
             file: selectedFile,
             fileIndex: currentFileEntry().index,
             page: selectedPage,
-            selection: { ...selection },
+            selection: { ...normalizedSourceSelection },
+            rotation,
             cropPreview: { mimeType: "image/jpeg", base64 },
             pagePreview: pageResult?.preview || null
           });
