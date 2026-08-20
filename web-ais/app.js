@@ -20,10 +20,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.195",
+    version: "1.7.196",
     releasedAt: "2026-08-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.196",
+      releasedAt: "2026-08-20",
+      changes: [
+        "Распознавание DOCX обрабатывает не только текстовый слой, но и встроенные сканы и изображения.",
+        "ZIP-вложения из почты автоматически распаковываются в папку документов слушателя; исходный архив сохраняется рядом."
+      ]
+    },
     {
       version: "1.7.195",
       releasedAt: "2026-08-20",
@@ -31758,7 +31766,7 @@ MAX - https://bizvmax.ru/zifra_plus
       busy = true;
       importButton.disabled = true;
       setImportProgress(true, uids.length);
-      status.textContent = "Сохранение текста писем, преобразование изображений и загрузка вложений…";
+      status.textContent = "Сохранение писем, распаковка архивов, преобразование изображений и загрузка вложений…";
       try {
         const response = await fetch(photoApiUrl("/api/students/mailbox-documents/import"), {
           method: "POST",
@@ -31778,7 +31786,10 @@ MAX - https://bizvmax.ru/zifra_plus
         const converted = Number(payload.convertedImages) > 0
           ? ` Изображений преобразовано в JPG: ${Number(payload.convertedImages)}.`
           : "";
-        alert(`Загружено писем: ${payload.messages || 0}. Сохранено файлов: ${payload.files?.length || 0}.${converted}${warning}`);
+        const extracted = Number(payload.extractedArchiveFiles) > 0
+          ? ` Из архивов распаковано файлов: ${Number(payload.extractedArchiveFiles)}.`
+          : "";
+        alert(`Загружено писем: ${payload.messages || 0}. Сохранено файлов: ${payload.files?.length || 0}.${extracted}${converted}${warning}`);
         backdrop.remove();
       } catch (error) {
         status.textContent = `Ошибка: ${error.message}`;

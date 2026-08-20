@@ -42,6 +42,13 @@ MAX_PDF_PAGES = 20
 MAX_TEXT_CHARS = 240_000
 PDF_RENDER_MAX_DIMENSION = 2600
 OCR_PAGE_WORKERS = max(1, min(2, int(os.environ.get("OCR_PAGE_WORKERS", "2"))))
+MAX_OFFICE_ZIP_ENTRIES = 2048
+MAX_OFFICE_TEXT_ENTRY_BYTES = 4 * 1024 * 1024
+MAX_OFFICE_TEXT_TOTAL_BYTES = 8 * 1024 * 1024
+MAX_DOCX_EMBEDDED_IMAGES = 20
+MAX_DOCX_EMBEDDED_MEDIA_ENTRIES = 80
+MAX_DOCX_EMBEDDED_IMAGE_BYTES = 16 * 1024 * 1024
+MAX_DOCX_EMBEDDED_IMAGES_TOTAL_BYTES = 64 * 1024 * 1024
 PAGE_PREVIEW_MAX_BYTES = 220 * 1024
 PHOTO_CANDIDATE_MAX_BYTES = 220 * 1024
 MAX_PHOTO_CANDIDATES = 8
@@ -184,27 +191,106 @@ def extract_rtf_text(file_bytes: bytes) -> str:
     return normalize_text(source)
 
 
+def read_safe_office_zip_member(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    max_bytes: int,
+) -> bytes:
+    if info.flag_bits & 0x1:
+        raise ValueError("Зашифрованные элементы DOCX не поддерживаются.")
+    if info.file_size < 0 or info.file_size > max_bytes:
+        raise ValueError("Элемент DOCX после распаковки превышает допустимый размер.")
+    with archive.open(info, "r") as source:
+        content = source.read(max_bytes + 1)
+    if len(content) > max_bytes or len(content) != info.file_size:
+        raise ValueError("Некорректный размер распакованного элемента DOCX.")
+    return content
+
+
+def validate_office_zip(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+    entries = archive.infolist()
+    if len(entries) > MAX_OFFICE_ZIP_ENTRIES:
+        raise ValueError("DOCX содержит слишком много вложенных файлов.")
+    return entries
+
+
 def extract_openxml_text(file_bytes: bytes, mime_type: str) -> str:
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
+            entries = validate_office_zip(archive)
             if mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                names = [
-                    name
-                    for name in archive.namelist()
-                    if re.fullmatch(r"word/(?:document|header\d+|footer\d+)\.xml", name)
+                selected = [
+                    info
+                    for info in entries
+                    if re.fullmatch(r"word/(?:document|header\d+|footer\d+)\.xml", info.filename)
                 ]
             else:
-                names = ["content.xml"] if "content.xml" in archive.namelist() else []
+                selected = [info for info in entries if info.filename == "content.xml"]
             blocks: list[str] = []
-            for name in names:
-                xml = archive.read(name).decode("utf-8", "replace")
+            total_bytes = 0
+            for info in selected:
+                content = read_safe_office_zip_member(archive, info, MAX_OFFICE_TEXT_ENTRY_BYTES)
+                total_bytes += len(content)
+                if total_bytes > MAX_OFFICE_TEXT_TOTAL_BYTES:
+                    raise ValueError("Текстовый слой DOCX превышает допустимый размер.")
+                xml = content.decode("utf-8", "replace")
                 xml = re.sub(r"<w:(?:br|cr|tab)\b[^>]*/?>", "\n", xml, flags=re.IGNORECASE)
                 xml = re.sub(r"</(?:w:p|text:p|text:h)>", "\n", xml, flags=re.IGNORECASE)
                 xml = re.sub(r"<[^>]+>", "", xml)
                 blocks.append(html.unescape(xml))
             return normalize_text("\n".join(blocks))
-    except (KeyError, OSError, zipfile.BadZipFile):
+    except (KeyError, OSError, ValueError, zipfile.BadZipFile):
         return ""
+
+
+def embedded_image_extension(content: bytes) -> str:
+    if content.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if content.startswith((b"II*\x00", b"MM\x00*")):
+        return ".tif"
+    if content.startswith(b"BM"):
+        return ".bmp"
+    if content.startswith((b"GIF87a", b"GIF89a")):
+        return ".gif"
+    if len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        return ".webp"
+    return ""
+
+
+def extract_docx_embedded_images(file_bytes: bytes, workdir: Path) -> list[Path]:
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
+            entries = validate_office_zip(archive)
+            media_entries = [
+                info
+                for info in entries
+                if not info.is_dir()
+                and re.fullmatch(r"word/media/[^/]+", info.filename.replace("\\", "/"), re.IGNORECASE)
+            ]
+            media_entries.sort(key=lambda info: [
+                int(part) if part.isdigit() else part.casefold()
+                for part in re.split(r"(\d+)", info.filename)
+            ])
+            result: list[Path] = []
+            total_bytes = 0
+            for info in media_entries[:MAX_DOCX_EMBEDDED_MEDIA_ENTRIES]:
+                if len(result) >= MAX_DOCX_EMBEDDED_IMAGES:
+                    break
+                content = read_safe_office_zip_member(archive, info, MAX_DOCX_EMBEDDED_IMAGE_BYTES)
+                total_bytes += len(content)
+                if total_bytes > MAX_DOCX_EMBEDDED_IMAGES_TOTAL_BYTES:
+                    raise ValueError("Встроенные изображения DOCX превышают допустимый общий размер.")
+                extension = embedded_image_extension(content)
+                if not extension:
+                    continue
+                target = workdir / f"docx-page-{len(result) + 1:03d}{extension}"
+                target.write_bytes(content)
+                result.append(target)
+            return result
+    except (KeyError, OSError, zipfile.BadZipFile) as error:
+        raise ValueError("Не удалось прочитать встроенные изображения DOCX.") from error
 
 
 def extract_text_document(file_bytes: bytes, mime_type: str) -> str:
@@ -2371,9 +2457,15 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
         workdir = Path(temp_dir)
         source_path = workdir / f"source{extension}"
         source_path.write_bytes(file_bytes)
-        is_visual_document = mime_type.startswith("image/") or mime_type == "application/pdf"
+        native_visual_document = mime_type.startswith("image/") or mime_type == "application/pdf"
+        document_text_layer = ""
+        embedded_docx_pages: list[Path] = []
+        if mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            document_text_layer = extract_text_document(file_bytes, mime_type)
+            embedded_docx_pages = extract_docx_embedded_images(file_bytes, workdir)
+        is_visual_document = native_visual_document or bool(embedded_docx_pages)
         if not is_visual_document:
-            text = extract_text_document(file_bytes, mime_type)
+            text = document_text_layer or extract_text_document(file_bytes, mime_type)
             if not is_usable_text_layer(text):
                 raise ValueError("В текстовом файле не найден пригодный для обработки текст.")
             document_types, fields = extract_fields(text, file_name)
@@ -2397,7 +2489,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 "durationMs": round((time.perf_counter() - started_at) * 1000),
             }
 
-        page_paths = render_pages(source_path, mime_type, workdir)
+        page_paths = embedded_docx_pages or render_pages(source_path, mime_type, workdir)
         pdf_text_pages = extract_pdf_text_pages(source_path) if mime_type == "application/pdf" else []
         passport_hint = bool(re.search(r"(?:паспорт|passport)", file_name, re.IGNORECASE))
         snils_hint = bool(re.search(r"(?:снилс|snils|страхов)", file_name, re.IGNORECASE))
@@ -2461,7 +2553,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
             }
             for item in recognized_pages
         ]
-        all_text = [item["text"] for item in recognized_pages]
+        all_text = [document_text_layer, *[item["text"] for item in recognized_pages]]
         text = normalize_text("\n".join(all_text))[:MAX_TEXT_CHARS]
         document_types, fields = extract_fields(text, file_name)
         registration_page_present = any(
@@ -2492,6 +2584,8 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
             mime_type,
         )
         extraction_methods = {str(item.get("method") or "ocr") for item in recognized_pages}
+        if is_usable_text_layer(document_text_layer):
+            extraction_methods.add("text")
         text_extraction = (
             next(iter(extraction_methods))
             if len(extraction_methods) == 1

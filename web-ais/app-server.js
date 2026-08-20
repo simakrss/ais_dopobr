@@ -152,6 +152,14 @@ const MAX_OFFICE_TEXT_ZIP_ENTRIES = 128;
 const MAX_OFFICE_TEXT_ZIP_ENTRY_BYTES = 4 * 1024 * 1024;
 const MAX_OFFICE_TEXT_ZIP_UNCOMPRESSED_BYTES = 8 * 1024 * 1024;
 const MAX_OFFICE_TEXT_ZIP_COMPRESSED_BYTES = 5 * 1024 * 1024;
+const MAX_STUDENT_MAILBOX_ARCHIVE_ENTRIES = 200;
+const MAX_STUDENT_MAILBOX_ARCHIVE_ENTRY_BYTES = 24 * 1024 * 1024;
+const MAX_STUDENT_MAILBOX_ARCHIVE_UNCOMPRESSED_BYTES = 80 * 1024 * 1024;
+const STUDENT_MAILBOX_ARCHIVE_BLOCKED_EXTENSIONS = new Set([
+  ".apk", ".app", ".bat", ".cmd", ".com", ".cpl", ".dll", ".exe", ".hta", ".jar",
+  ".jse", ".lnk", ".msi", ".msp", ".ps1", ".reg", ".scr", ".sys", ".url", ".vbe",
+  ".vbs", ".wsf", ".wsh"
+]);
 const OCR_DOCUMENT_CONTENT_TYPES = Object.freeze({
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -1669,7 +1677,7 @@ function findZipEnd(buffer) {
   for (let offset = buffer.length - 22; offset >= minimumOffset; offset -= 1) {
     if (buffer.readUInt32LE(offset) === 0x06054B50) return offset;
   }
-  throw new Error("Некорректный DOCX: не найден центральный каталог ZIP");
+  throw new Error("Некорректный ZIP-документ: не найден центральный каталог");
 }
 
 function readDocxZipEntries(buffer) {
@@ -12928,6 +12936,170 @@ async function prepareStudentMailboxAttachmentForSave(attachment) {
   };
 }
 
+function getStudentMailboxArchiveKind(attachment = {}) {
+  const fileName = String(attachment.fileName || "");
+  const extension = path.extname(fileName).toLowerCase();
+  const contentType = String(attachment.contentType || "").split(";", 1)[0].trim().toLowerCase();
+  const bytes = Buffer.from(attachment.bytes || "");
+  if (
+    extension === ".zip"
+    || ["application/zip", "application/x-zip-compressed"].includes(contentType)
+  ) return "zip";
+  if (
+    extension === ".7z"
+    || contentType === "application/x-7z-compressed"
+    || bytes.subarray(0, 6).equals(Buffer.from([0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]))
+  ) return "7z";
+  if (
+    extension === ".rar"
+    || ["application/vnd.rar", "application/x-rar-compressed"].includes(contentType)
+    || bytes.subarray(0, 7).equals(Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]))
+    || bytes.subarray(0, 8).equals(Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00]))
+  ) return "rar";
+  return "";
+}
+
+function decodeStudentMailboxZipEntryName(bytes, flags) {
+  if (flags & 0x0800) return Buffer.from(bytes).toString("utf8");
+  try {
+    return new TextDecoder("ibm866", { fatal: true }).decode(bytes);
+  } catch {
+    return Buffer.from(bytes).toString("utf8");
+  }
+}
+
+function normalizeStudentMailboxArchiveEntryName(value) {
+  const normalized = String(value || "").replace(/\\/g, "/").replace(/^\.\//u, "");
+  const segments = normalized.split("/").filter(Boolean);
+  if (
+    !normalized
+    || normalized.endsWith("/")
+    || normalized.startsWith("/")
+    || /^[A-Za-z]:/u.test(normalized)
+    || segments.some((segment) => segment === ".." || segment.includes("\u0000"))
+  ) return "";
+  return safeStudentMailboxAttachmentName(segments.at(-1), "Файл-из-архива");
+}
+
+function extractStudentMailboxZipAttachments(attachment = {}) {
+  const archiveName = safeStudentMailboxAttachmentName(attachment.fileName, "Архив.zip");
+  const buffer = Buffer.from(attachment.bytes || "");
+  if (
+    buffer.length < 22
+    || ![0x04034B50, 0x06054B50, 0x08074B50].includes(buffer.readUInt32LE(0))
+  ) throw new Error("файл не является корректным ZIP-архивом");
+  const endOffset = findZipEnd(buffer);
+  const diskNumber = buffer.readUInt16LE(endOffset + 4);
+  const centralDisk = buffer.readUInt16LE(endOffset + 6);
+  const diskEntries = buffer.readUInt16LE(endOffset + 8);
+  const totalEntries = buffer.readUInt16LE(endOffset + 10);
+  const centralSize = buffer.readUInt32LE(endOffset + 12);
+  const centralOffset = buffer.readUInt32LE(endOffset + 16);
+  if (diskNumber || centralDisk || diskEntries !== totalEntries) {
+    throw new Error("многотомные ZIP-архивы не поддерживаются");
+  }
+  if (totalEntries > MAX_STUDENT_MAILBOX_ARCHIVE_ENTRIES) {
+    throw new Error(`архив содержит больше ${MAX_STUDENT_MAILBOX_ARCHIVE_ENTRIES} файлов`);
+  }
+  if (centralOffset + centralSize > endOffset || centralOffset < 0) {
+    throw new Error("повреждён центральный каталог ZIP-архива");
+  }
+  const files = [];
+  const warnings = [];
+  let cursor = centralOffset;
+  let totalUncompressedBytes = 0;
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (cursor + 46 > buffer.length || buffer.readUInt32LE(cursor) !== 0x02014B50) {
+      throw new Error("повреждён центральный каталог ZIP-архива");
+    }
+    const flags = buffer.readUInt16LE(cursor + 8);
+    const method = buffer.readUInt16LE(cursor + 10);
+    const expectedCrc = buffer.readUInt32LE(cursor + 16);
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const uncompressedSize = buffer.readUInt32LE(cursor + 24);
+    const nameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const externalAttributes = buffer.readUInt32LE(cursor + 38);
+    const localOffset = buffer.readUInt32LE(cursor + 42);
+    const nextCursor = cursor + 46 + nameLength + extraLength + commentLength;
+    if (nextCursor > buffer.length) throw new Error("повреждён центральный каталог ZIP-архива");
+    const entrySourceName = decodeStudentMailboxZipEntryName(
+      buffer.subarray(cursor + 46, cursor + 46 + nameLength),
+      flags
+    );
+    const fileName = normalizeStudentMailboxArchiveEntryName(entrySourceName);
+    const unixMode = (externalAttributes >>> 16) & 0xFFFF;
+    const isSymlink = (unixMode & 0o170000) === 0o120000;
+    cursor = nextCursor;
+    if (!fileName) {
+      if (entrySourceName && !entrySourceName.endsWith("/")) warnings.push(`Пропущён небезопасный путь: ${entrySourceName}`);
+      continue;
+    }
+    if (isSymlink) {
+      warnings.push(`Пропущена ссылка: ${entrySourceName}`);
+      continue;
+    }
+    if (STUDENT_MAILBOX_ARCHIVE_BLOCKED_EXTENSIONS.has(path.extname(fileName).toLowerCase())) {
+      warnings.push(`Пропущён потенциально опасный файл: ${entrySourceName}`);
+      continue;
+    }
+    if (flags & 0x1) {
+      warnings.push(`Пропущён зашифрованный файл: ${entrySourceName}`);
+      continue;
+    }
+    if (![0, 8].includes(method)) {
+      warnings.push(`Пропущён файл с неподдерживаемым методом сжатия: ${entrySourceName}`);
+      continue;
+    }
+    if (
+      uncompressedSize > MAX_STUDENT_MAILBOX_ARCHIVE_ENTRY_BYTES
+      || totalUncompressedBytes + uncompressedSize > MAX_STUDENT_MAILBOX_ARCHIVE_UNCOMPRESSED_BYTES
+    ) {
+      warnings.push(`Пропущён слишком большой файл: ${entrySourceName}`);
+      continue;
+    }
+    if (method === 0 && compressedSize !== uncompressedSize) {
+      warnings.push(`Пропущён файл с некорректным размером: ${entrySourceName}`);
+      continue;
+    }
+    if (localOffset + 30 > buffer.length || buffer.readUInt32LE(localOffset) !== 0x04034B50) {
+      warnings.push(`Пропущена повреждённая запись: ${entrySourceName}`);
+      continue;
+    }
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    if (dataOffset + compressedSize > buffer.length) {
+      warnings.push(`Пропущены повреждённые данные: ${entrySourceName}`);
+      continue;
+    }
+    const compressed = buffer.subarray(dataOffset, dataOffset + compressedSize);
+    let bytes;
+    try {
+      bytes = method === 0
+        ? Buffer.from(compressed)
+        : zlib.inflateRawSync(compressed, { maxOutputLength: MAX_STUDENT_MAILBOX_ARCHIVE_ENTRY_BYTES });
+    } catch {
+      warnings.push(`Не удалось распаковать файл: ${entrySourceName}`);
+      continue;
+    }
+    if (bytes.length !== uncompressedSize || crc32(bytes) !== expectedCrc) {
+      warnings.push(`Пропущён повреждённый файл: ${entrySourceName}`);
+      continue;
+    }
+    totalUncompressedBytes += bytes.length;
+    files.push({
+      fileName,
+      contentType: getWebDavBrowserContentType(fileName),
+      bytes,
+      archiveName,
+      archiveEntryName: entrySourceName
+    });
+  }
+  return { files, warnings, totalBytes: totalUncompressedBytes };
+}
+
 function getStudentMailboxFileNameCandidate(fileName, attempt = 0) {
   const safeName = safeWebDavUploadFileName(fileName);
   if (!attempt) return safeName;
@@ -13001,7 +13173,50 @@ async function importStudentMailboxMessages(body, authUser, req) {
   }
   const files = [];
   let convertedImages = 0;
+  let extractedArchiveFiles = 0;
   let totalBytes = 0;
+  const saveAttachment = async (attachment, options = {}) => {
+    if (!attachment.bytes.length) return false;
+    if (attachment.bytes.length > MAX_STUDENT_MAILBOX_ARCHIVE_ENTRY_BYTES) {
+      warnings.push(`Файл «${attachment.fileName}» пропущен: размер превышает 24 МБ.`);
+      return false;
+    }
+    let preparedAttachment;
+    try {
+      preparedAttachment = await prepareStudentMailboxAttachmentForSave(attachment);
+    } catch (error) {
+      if (options.archiveEntry) {
+        warnings.push(`Файл «${attachment.fileName}» из архива «${options.archiveName}» пропущен: ${error.message}`);
+        return false;
+      }
+      throw new Error(`Не удалось преобразовать вложение «${attachment.fileName}» в JPG: ${error.message}`);
+    }
+    if (totalBytes + preparedAttachment.bytes.length > 100 * 1024 * 1024) {
+      if (options.archiveEntry) {
+        warnings.push(`Файл «${attachment.fileName}» из архива «${options.archiveName}» пропущен: превышен общий лимит 100 МБ.`);
+        return false;
+      }
+      throw new Error("Общий размер выбранных писем превышает 100 МБ.");
+    }
+    totalBytes += preparedAttachment.bytes.length;
+    const target = await saveStudentMailboxDocument(
+      folder,
+      preparedAttachment.fileName,
+      preparedAttachment.bytes,
+      preparedAttachment.contentType
+    );
+    if (preparedAttachment.converted) convertedImages += 1;
+    if (options.archiveEntry) extractedArchiveFiles += 1;
+    files.push({
+      name: target.name || preparedAttachment.fileName,
+      size: preparedAttachment.bytes.length,
+      type: options.archiveEntry ? "archive-entry" : "attachment",
+      archiveName: options.archiveEntry ? options.archiveName : undefined,
+      converted: preparedAttachment.converted,
+      ...target
+    });
+    return true;
+  };
   for (const source of messages) {
     const message = parseStudentMailboxMessage(source.uid, source.bytes);
     const prefix = buildStudentMailboxFilePrefix(message);
@@ -13013,33 +13228,25 @@ async function importStudentMailboxMessages(body, authUser, req) {
     files.push({ name: textTarget.name || textName, size: textBytes.length, type: "text", ...textTarget });
     for (let index = 0; index < message.attachments.length; index += 1) {
       const attachment = message.attachments[index];
-      if (!attachment.bytes.length) continue;
-      if (attachment.bytes.length > 24 * 1024 * 1024) {
-        warnings.push(`Вложение «${attachment.fileName}» пропущено: размер превышает 24 МБ.`);
-        continue;
+      if (!await saveAttachment(attachment)) continue;
+      const archiveKind = getStudentMailboxArchiveKind(attachment);
+      if (archiveKind === "zip") {
+        try {
+          const extracted = extractStudentMailboxZipAttachments(attachment);
+          extracted.warnings.forEach((warning) => warnings.push(`Архив «${attachment.fileName}»: ${warning}`));
+          for (const archiveEntry of extracted.files) {
+            await saveAttachment(archiveEntry, {
+              archiveEntry: true,
+              archiveName: attachment.fileName
+            });
+          }
+          if (!extracted.files.length) warnings.push(`Архив «${attachment.fileName}» не содержит доступных для извлечения файлов.`);
+        } catch (error) {
+          warnings.push(`Архив «${attachment.fileName}» сохранён без распаковки: ${error.message}`);
+        }
+      } else if (["7z", "rar"].includes(archiveKind)) {
+        warnings.push(`Архив «${attachment.fileName}» сохранён без распаковки: автоматическая распаковка формата ${archiveKind.toUpperCase()} пока недоступна.`);
       }
-      let preparedAttachment;
-      try {
-        preparedAttachment = await prepareStudentMailboxAttachmentForSave(attachment);
-      } catch (error) {
-        throw new Error(`Не удалось преобразовать вложение «${attachment.fileName}» в JPG: ${error.message}`);
-      }
-      totalBytes += preparedAttachment.bytes.length;
-      if (totalBytes > 100 * 1024 * 1024) throw new Error("Общий размер выбранных писем превышает 100 МБ.");
-      const target = await saveStudentMailboxDocument(
-        folder,
-        preparedAttachment.fileName,
-        preparedAttachment.bytes,
-        preparedAttachment.contentType
-      );
-      if (preparedAttachment.converted) convertedImages += 1;
-      files.push({
-        name: target.name || preparedAttachment.fileName,
-        size: preparedAttachment.bytes.length,
-        type: "attachment",
-        converted: preparedAttachment.converted,
-        ...target
-      });
     }
   }
   await safelyAppendAuditEntry({
@@ -13050,7 +13257,7 @@ async function importStudentMailboxMessages(body, authUser, req) {
     entityLabel: auditText(body.studentName, 500),
     field: "documents",
     after: `${messages.length} писем, ${files.length} файлов`,
-    details: `Ящик: ${settings.login}; папка: ${folder}`,
+    details: `Ящик: ${settings.login}; папка: ${folder}; распаковано из архивов: ${extractedArchiveFiles}`,
     source: "imap"
   }, authUser, req);
   return {
@@ -13058,6 +13265,7 @@ async function importStudentMailboxMessages(body, authUser, req) {
     messages: messages.length,
     files,
     convertedImages,
+    extractedArchiveFiles,
     warnings
   };
 }
@@ -16916,6 +17124,8 @@ module.exports = {
   parseImapBodyStructureAttachments,
   parseStudentMailboxMessage,
   prepareStudentMailboxAttachmentForSave,
+  getStudentMailboxArchiveKind,
+  extractStudentMailboxZipAttachments,
   getStudentMailboxFileNameCandidate,
   publicStudentDocumentMailboxes,
   queryStudentMailboxMessages,

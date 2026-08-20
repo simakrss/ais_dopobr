@@ -1,11 +1,18 @@
+import base64
 import io
+import tempfile
 import unittest
 import zipfile
+from pathlib import Path
+from unittest.mock import patch
+
+import server as ocr_server
 
 from server import (
     decode_text_bytes,
     expand_face_photo_box,
     extract_fields,
+    extract_docx_embedded_images,
     extract_text_document,
     is_valid_inn,
     is_valid_snils,
@@ -201,6 +208,43 @@ class OcrExtractionTests(unittest.TestCase):
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         self.assertEqual(text, "Заявление поступающего\nФамилия Иванова")
+
+    def test_docx_embedded_scan_is_extracted_and_recognized(self):
+        png_bytes = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("word/document.xml", "<w:document xmlns:w='urn:test'><w:body/></w:document>")
+            archive.writestr("word/media/image1.png", png_bytes)
+            archive.writestr("word/media/not-an-image.png", b"not an image")
+
+        with tempfile.TemporaryDirectory(prefix="ais-docx-image-test-") as temp_dir:
+            images = extract_docx_embedded_images(buffer.getvalue(), Path(temp_dir))
+            self.assertEqual(len(images), 1)
+            self.assertEqual(images[0].read_bytes(), png_bytes)
+
+        recognized_text = """
+        ПАСПОРТ РОССИЙСКАЯ ФЕДЕРАЦИЯ
+        Серия 45 18 Номер 123456
+        Фамилия ИВАНОВ Имя ИВАН Отчество ИВАНОВИЧ
+        """
+        payload = {
+            "fileName": "Скан паспорта.docx",
+            "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "base64": base64.b64encode(buffer.getvalue()).decode("ascii"),
+        }
+        with (
+            patch.object(ocr_server, "ocr_image", side_effect=lambda image_path, **kwargs: (recognized_text, image_path, [])),
+            patch.object(ocr_server, "attach_field_previews"),
+            patch.object(ocr_server, "render_referenced_page_previews", return_value=[]),
+            patch.object(ocr_server, "detect_photo_candidates", return_value=[]),
+        ):
+            result = ocr_server.recognize(payload)
+        fields = {field["key"]: field["value"] for field in result["fields"]}
+        self.assertEqual(result["pageCount"], 1)
+        self.assertEqual(result["textExtraction"], "ocr")
+        self.assertEqual(fields["passportNumber"], "45 18 123456")
 
     def test_education_document_fields(self):
         text = """
