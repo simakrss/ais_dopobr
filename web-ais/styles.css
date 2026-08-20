@@ -8863,18 +8863,33 @@ body.card-window-moving {
 
 .student-applications-import-detail {
   min-height: 88px;
+  max-height: min(300px, 28vh);
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(240px, 0.32fr);
   gap: 3px 8px;
   padding: 4px 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   border-top: 1px solid var(--line);
   background: #fbfcfa;
 }
 
 .student-applications-import-detail h3 {
   grid-column: 1 / -1;
+  position: sticky;
+  top: 0;
+  z-index: 3;
   margin: 0;
+  padding-bottom: 3px;
+  background: #fbfcfa;
   font-size: 15px;
+}
+
+.student-applications-import-detail:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
 }
 
 .student-application-detail-grid {
@@ -18433,7 +18448,15 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .student-applications-import-detail {
     grid-template-columns: 1fr;
+    max-height: none;
     padding: 7px 8px;
+    overflow: visible;
+    overscroll-behavior: auto;
+    scrollbar-gutter: auto;
+  }
+
+  .student-applications-import-detail h3 {
+    position: static;
   }
 
   .student-applications-import-actions {

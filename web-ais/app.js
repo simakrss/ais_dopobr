@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.198",
+    version: "1.7.199",
     releasedAt: "2026-08-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.199",
+      releasedAt: "2026-08-20",
+      changes: [
+        "В информации о выбранной заявке телефон, email и город перенесены в свободную верхнюю строку; длинный блок получил собственную вертикальную прокрутку."
+      ]
+    },
     {
       version: "1.7.198",
       releasedAt: "2026-08-20",
@@ -10682,6 +10689,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const details = [
       ["Дата", row.date],
       ["ФИО", row.name],
+      ["Телефон", row.phone],
+      ["Email", row.email],
+      ["Город", row.city],
       ["Заказ", row.order, true],
       ["Оплата", hasPayment ? money(paymentAmount) : "—"],
       ["Стоимость по реестру", financialTerms.registryPrice ? money(financialTerms.registryPrice) : "—"],
@@ -10690,9 +10700,6 @@ MAX - https://bizvmax.ru/zifra_plus
       ["Скидка / рассрочка", benefitDescription],
       ["Программа", row.program, true],
       ["Категория", inferredProgramType || "—"],
-      ["Телефон", row.phone],
-      ["Email", row.email],
-      ["Город", row.city],
       ["Организация", row.organization, true],
       ["Должность", row.position],
       ["Источник", row.source],
@@ -11047,8 +11054,8 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
             ${renderStudentApplicationsImportPagination(visibleRows.length, pagination)}
 
-            <div class="student-applications-import-detail" data-student-applications-detail>
-              <h3>Информация о выбранной заявке</h3>
+            <div class="student-applications-import-detail" data-student-applications-detail role="region" tabindex="0" aria-labelledby="student-applications-detail-title">
+              <h3 id="student-applications-detail-title">Информация о выбранной заявке</h3>
               ${renderStudentApplicationDetail(activeRow, importedLookup)}
             </div>
             </div>
@@ -11257,12 +11264,13 @@ MAX - https://bizvmax.ru/zifra_plus
       const detail = document.querySelector("[data-student-applications-detail]");
       if (detail) {
         detail.innerHTML = `
-          <h3>Информация о выбранной заявке</h3>
+          <h3 id="student-applications-detail-title">Информация о выбранной заявке</h3>
           ${renderStudentApplicationDetail(
             activeRow,
             state.studentApplicationsImport.importedLookup || buildStudentApplicationsImportLookup()
           )}
         `;
+        detail.scrollTop = 0;
         bindStudentApplicationProgramMappingControl(detail);
       }
     }
