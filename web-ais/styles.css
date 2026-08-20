@@ -12333,6 +12333,58 @@ body.card-window-moving {
   color: var(--muted);
 }
 
+.student-expense-editor-backdrop {
+  z-index: 65;
+}
+
+.student-expense-editor {
+  width: min(680px, 100%);
+  max-height: min(720px, 92dvh);
+  overscroll-behavior: contain;
+}
+
+.student-expense-editor .modal-head p:last-child {
+  max-width: 520px;
+  margin: 3px 0 0;
+  color: var(--muted);
+}
+
+.student-expense-editor-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 18px 20px;
+}
+
+.student-expense-editor-wide,
+.student-expense-editor-hint {
+  grid-column: 1 / -1;
+}
+
+.student-expense-editor-hint {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid #fde68a;
+  border-radius: 7px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.student-expense-editor-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  background: var(--panel);
+}
+
+.student-expense-editor-missing {
+  padding: 20px;
+  color: var(--muted);
+}
+
 .employee-payment-status {
   display: inline-flex;
   align-items: center;
@@ -17827,6 +17879,43 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   opacity: 0.72;
 }
 
+.student-expense-edit-button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--teal);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.student-expense-edit-button:hover:not(:disabled),
+.student-expense-edit-button:focus-visible:not(:disabled) {
+  border-color: rgba(15, 118, 110, 0.28);
+  background: rgba(15, 118, 110, 0.08);
+  opacity: 1;
+}
+
+.student-expense-edit-button:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.28;
+}
+
+.student-expense-edit-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .payment-row-duplicate:hover:not(:disabled),
 .payment-row-duplicate:focus-visible:not(:disabled) {
   background: #ecfdf5;
@@ -18014,7 +18103,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .expense-grid {
-  grid-template-columns: 42px minmax(108px, 0.65fr) minmax(160px, 1.1fr) minmax(92px, 0.55fr) minmax(180px, 1.45fr) 52px;
+  grid-template-columns: 42px minmax(108px, 0.65fr) minmax(160px, 1.1fr) minmax(92px, 0.55fr) minmax(180px, 1.45fr) 78px;
   gap: 3px 5px;
 }
 
@@ -18102,14 +18191,16 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .student-income-tab .payment-grid .payment-row-delete,
 .student-income-tab .expense-grid .payment-row-delete,
-.student-income-tab .expense-grid .payment-row-duplicate {
+.student-income-tab .expense-grid .payment-row-duplicate,
+.student-income-tab .expense-grid .student-expense-edit-button {
   width: 24px;
   height: 24px;
 }
 
 .student-income-tab .payment-grid .payment-row-delete svg,
 .student-income-tab .expense-grid .payment-row-delete svg,
-.student-income-tab .expense-grid .payment-row-duplicate svg {
+.student-income-tab .expense-grid .payment-row-duplicate svg,
+.student-income-tab .expense-grid .student-expense-edit-button svg {
   width: 14px;
   height: 14px;
 }
@@ -18795,7 +18886,53 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .expense-grid .expense-row-actions {
-    grid-template-columns: minmax(86px, 0.34fr) auto auto;
+    grid-template-columns: minmax(86px, 0.34fr) auto auto auto;
+  }
+
+  .student-income-tab .expense-grid :is(.student-expense-edit-button, .payment-row-duplicate, .payment-row-delete) {
+    width: 36px;
+    height: 36px;
+  }
+
+  .student-expense-editor-backdrop {
+    padding: 0;
+  }
+
+  .student-expense-editor {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .student-expense-editor form {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .student-expense-editor-grid {
+    flex: 1 0 auto;
+    grid-template-columns: 1fr;
+    align-content: start;
+    padding: 14px 12px;
+  }
+
+  .student-expense-editor-wide,
+  .student-expense-editor-hint {
+    grid-column: 1;
+  }
+
+  .student-expense-editor-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+  }
+
+  .student-expense-editor-actions button {
+    width: 100%;
   }
 
   .payment-grid .row-number-cell,

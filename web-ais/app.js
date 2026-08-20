@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.199",
+    version: "1.7.200",
     releasedAt: "2026-08-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.200",
+      releasedAt: "2026-08-20",
+      changes: [
+        "В карточке слушателя строки расходов получили значок редактирования и отдельное всплывающее окно по образцу раздела оплаты сотрудников."
+      ]
+    },
     {
       version: "1.7.199",
       releasedAt: "2026-08-20",
@@ -4351,6 +4358,7 @@ MAX - https://bizvmax.ru/zifra_plus
       error: ""
     },
     employeeExpenseEditor: null,
+    studentExpenseEditor: null,
     modal: null,
     data: loadState()
   };
@@ -8095,6 +8103,7 @@ MAX - https://bizvmax.ru/zifra_plus
         && activeRecordLock?.entityType === recordLockEntityType("documentTemplates")
         ? activeRecordLock
         : null;
+      state.studentExpenseEditor = null;
       state.modal = null;
       resetCardWindowState();
       state.studentApplicationsImport.open = false;
@@ -8192,6 +8201,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ${state.studentApplicationsImport.open ? renderStudentApplicationsImport() : ""}
       ${state.financeDetails.open ? renderFinanceDetailsDialog() : ""}
       ${state.modal ? renderModal() : ""}
+      ${state.studentExpenseEditor ? renderStudentExpenseEditor() : ""}
       ${state.employeeExpenseEditor ? renderEmployeeExpenseEditor() : ""}
       ${state.documentTemplateDialogId ? renderDocumentTemplateDialog() : ""}
       ${state.profileOpen ? renderProfileDialog() : ""}
@@ -22959,14 +22969,18 @@ MAX - https://bizvmax.ru/zifra_plus
     inventoryLink,
     typeOptions,
     index,
-    direct = false
+    direct = false,
+    editor = false,
+    disabled = false
   }) {
     const selectedInventoryId = String(inventoryId || "").trim();
     const inventoryOptions = getStudentExpenseInventoryOptions(selectedInventoryId);
     const selectedInventory = inventoryOptions.find((item) => String(item.id || "") === selectedInventoryId);
-    const dataIndex = direct
-      ? `data-direct-expense-index="${index}"`
-      : `data-expense-index="${index}"`;
+    const dataIndex = editor
+      ? "data-student-expense-editor-type"
+      : direct
+        ? `data-direct-expense-index="${index}"`
+        : `data-expense-index="${index}"`;
     const missingInventoryOption = selectedInventoryId && !selectedInventory
       ? `<option value="inventory:${escapeAttr(selectedInventoryId)}" data-inventory-id="${escapeAttr(selectedInventoryId)}" selected>[Запас недоступен] ${escapeHtml(inventoryLink || type || selectedInventoryId)}</option>`
       : "";
@@ -22978,6 +22992,7 @@ MAX - https://bizvmax.ru/zifra_plus
         data-expense-prefix="${escapeAttr(prefix)}"
         data-settings-dictionary="expenseTypes"
         aria-label="Вид затрат или запас"
+        ${disabled ? "disabled" : ""}
       >
         <option value=""></option>
         <optgroup label="Виды затрат">
@@ -23013,7 +23028,7 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function applyStudentExpenseInventoryChoice(select) {
+  function applyStudentExpenseInventoryChoice(select, options = {}) {
     const prefix = String(select?.dataset.expensePrefix || "").trim();
     const form = select?.form;
     if (!prefix || !form) return;
@@ -23041,7 +23056,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (inventoryIdInput) inventoryIdInput.value = "";
       if (inventoryLinkInput) inventoryLinkInput.value = "";
     }
-    syncStudentFinanceFields();
+    if (options.syncFinance !== false) syncStudentFinanceFields();
   }
 
   function getStudentInventoryAllocationCounts(record = {}) {
@@ -23176,6 +23191,7 @@ MAX - https://bizvmax.ru/zifra_plus
           ${manualRowIndexes.map((n, rowIndex) => {
             const type = record[`expense${n}Type`] || "";
             const hasExpense = expenseRowHasData(record, n);
+            const editLabel = `Редактировать расход ${rowIndex + 1}: ${type || "вид не указан"}, ${money(record[`expense${n}Amount`] || 0)}`;
             return `
               <div class="editable-grid-row expense-grid-row" data-student-finance-row data-finance-row-key="manual-${n}">
                 <div class="editable-grid-cell row-number-cell finance-row-number-cell" data-label="№">
@@ -23209,6 +23225,21 @@ MAX - https://bizvmax.ru/zifra_plus
                   })}
                 </div>
                 <div class="editable-grid-cell row-action-cell expense-row-actions" data-label="Действия">
+                  <button
+                    class="student-expense-edit-button"
+                    data-action="edit-student-expense"
+                    data-expense-index="${n}"
+                    data-expense-row-number="${rowIndex + 1}"
+                    type="button"
+                    title="Редактировать расход во всплывающем окне"
+                    aria-label="${escapeAttr(editLabel)}"
+                    ${hasExpense ? "" : "disabled"}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M4 20h4l11-11-4-4L4 16v4z"></path>
+                      <path d="M13.5 6.5l4 4"></path>
+                    </svg>
+                  </button>
                   <button
                     class="payment-row-duplicate"
                     data-action="duplicate-expense-row"
@@ -23247,6 +23278,7 @@ MAX - https://bizvmax.ru/zifra_plus
           ${directExpenses.map((expense, index) => {
             const rowNumber = manualRowIndexes.length + index + 1;
             const type = expense.type || "";
+            const editLabel = `Редактировать расход ${rowNumber}: ${type || "вид не указан"}, ${money(expense.amount || 0)}`;
             return `
               <div class="editable-grid-row expense-grid-row" data-student-finance-row data-finance-row-key="direct-${index}">
                 <div class="editable-grid-cell row-number-cell finance-row-number-cell" data-label="№">
@@ -23282,6 +23314,21 @@ MAX - https://bizvmax.ru/zifra_plus
                 </div>
                 <div class="editable-grid-cell row-action-cell expense-row-actions" data-label="Действия">
                   <button
+                    class="student-expense-edit-button"
+                    data-action="edit-student-expense"
+                    data-direct-expense-index="${index}"
+                    data-direct-expense-id="${escapeAttr(expense.id || "")}"
+                    data-expense-row-number="${rowNumber}"
+                    type="button"
+                    title="Редактировать расход во всплывающем окне"
+                    aria-label="${escapeAttr(editLabel)}"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M4 20h4l11-11-4-4L4 16v4z"></path>
+                      <path d="M13.5 6.5l4 4"></path>
+                    </svg>
+                  </button>
+                  <button
                     class="payment-row-duplicate"
                     data-action="duplicate-direct-expense-row"
                     data-direct-expense-index="${index}"
@@ -23316,6 +23363,170 @@ MAX - https://bizvmax.ru/zifra_plus
           }).join("")}
         </div>` : `<p class="payment-empty">Расходы пока не добавлены.</p>`}
       </section>
+    `;
+  }
+
+  function findStudentExpenseEditorDirectIndex(record = {}, editor = {}) {
+    const directExpenses = Array.isArray(record.directExpenses) ? record.directExpenses : [];
+    const sourceId = String(editor.id || "").trim();
+    if (sourceId) {
+      return directExpenses.findIndex((expense) => String(expense?.id || "").trim() === sourceId);
+    }
+    const fallbackIndex = Number(editor.fallbackIndex);
+    return Number.isInteger(fallbackIndex) && fallbackIndex >= 0 && fallbackIndex < directExpenses.length
+      ? fallbackIndex
+      : -1;
+  }
+
+  function getStudentExpenseEditorContext() {
+    const editor = state.studentExpenseEditor;
+    const draft = state.modal?.config === "students" && state.modal?.draft
+      ? state.modal.draft
+      : null;
+    if (!editor || !draft) return null;
+    const kind = String(editor.kind || "");
+    const rowNumber = Math.max(1, Number(editor.rowNumber) || 1);
+    if (kind === "manual") {
+      const slot = Number(editor.slot);
+      if (!Number.isInteger(slot) || slot < 1 || slot > 6 || !expenseRowHasData(draft, slot)) return null;
+      return {
+        editor,
+        draft,
+        kind,
+        slot,
+        rowNumber,
+        expense: {
+          date: draft[`expense${slot}Date`] || "",
+          type: draft[`expense${slot}Type`] || "",
+          amount: draft[`expense${slot}Amount`] ?? "",
+          note: draft[`expense${slot}Note`] || "",
+          inventoryId: draft[`expense${slot}InventoryId`] || "",
+          inventoryLink: draft[`expense${slot}InventoryLink`] || ""
+        }
+      };
+    }
+    if (kind !== "direct") return null;
+    const directIndex = findStudentExpenseEditorDirectIndex(draft, editor);
+    const expense = directIndex >= 0 ? draft.directExpenses[directIndex] : null;
+    if (!expense) return null;
+    return { editor, draft, kind, directIndex, rowNumber, expense };
+  }
+
+  function applyStudentExpenseEditorValues(record = {}, editor = {}, values = {}) {
+    const normalizedValues = {
+      date: String(values.date || ""),
+      type: String(values.type || ""),
+      amount: Number(values.amount || 0),
+      note: String(values.note || ""),
+      inventoryId: String(values.inventoryId || ""),
+      inventoryLink: String(values.inventoryLink || "")
+    };
+    if (String(editor.kind || "") === "manual") {
+      const slot = Number(editor.slot);
+      if (!Number.isInteger(slot) || slot < 1 || slot > 6) return record;
+      return {
+        ...record,
+        [`expense${slot}Date`]: normalizedValues.date,
+        [`expense${slot}Type`]: normalizedValues.type,
+        [`expense${slot}Amount`]: normalizedValues.amount,
+        [`expense${slot}Note`]: normalizedValues.note,
+        [`expense${slot}InventoryId`]: normalizedValues.inventoryId,
+        [`expense${slot}InventoryLink`]: normalizedValues.inventoryLink
+      };
+    }
+    if (String(editor.kind || "") !== "direct") return record;
+    const directExpenses = Array.isArray(record.directExpenses) ? record.directExpenses : [];
+    const sourceId = String(editor.id || "").trim();
+    const fallbackIndex = Number(editor.fallbackIndex);
+    const directIndex = sourceId
+      ? directExpenses.findIndex((expense) => String(expense?.id || "").trim() === sourceId)
+      : (Number.isInteger(fallbackIndex) && fallbackIndex >= 0 && fallbackIndex < directExpenses.length
+        ? fallbackIndex
+        : -1);
+    if (directIndex < 0) return record;
+    return {
+      ...record,
+      directExpenses: directExpenses.map((expense, index) => (
+        index === directIndex ? { ...expense, ...normalizedValues } : expense
+      ))
+    };
+  }
+
+  function renderStudentExpenseEditor() {
+    const context = getStudentExpenseEditorContext();
+    if (!context) {
+      return `
+        <div class="modal-backdrop student-expense-editor-backdrop" data-student-expense-editor data-action="close-student-expense-editor">
+          <section class="modal student-expense-editor" role="dialog" aria-modal="true" aria-labelledby="student-expense-editor-title">
+            <header class="modal-head">
+              <div><h2 id="student-expense-editor-title">Запись расхода не найдена</h2></div>
+              <button class="icon-button" data-action="close-student-expense-editor" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+            </header>
+            <div class="student-expense-editor-missing">Строка была удалена или перемещена.</div>
+          </section>
+        </div>
+      `;
+    }
+    const { draft, expense, rowNumber } = context;
+    const typeOptions = getStudentExpenseTypeOptions(draft);
+    const noteOptions = getStudentExpenseNoteOptions(draft);
+    const automaticHint = isAutomaticProgramAuthorExpense(expense)
+      ? "Вид, сумма и получатель этого автоматического расхода пересчитываются по формуле образовательной программы."
+      : "";
+    return `
+      <div class="modal-backdrop student-expense-editor-backdrop" data-student-expense-editor data-action="close-student-expense-editor">
+        <section class="modal student-expense-editor" role="dialog" aria-modal="true" aria-labelledby="student-expense-editor-title">
+          <form id="studentExpenseEditorForm">
+            <header class="modal-head">
+              <div>
+                <p class="eyebrow">Расходы слушателя</p>
+                <h2 id="student-expense-editor-title">Редактирование расхода</h2>
+                <p>${escapeHtml(draft.name || "Слушатель")} · строка № ${rowNumber}</p>
+              </div>
+              <button class="icon-button" data-action="close-student-expense-editor" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+            </header>
+            <div class="form-grid student-expense-editor-grid">
+              <label data-field-key="studentExpenseEditorDate">
+                <span>Дата</span>
+                <input name="studentExpenseEditorDate" type="date" value="${escapeAttr(expense.date || "")}">
+              </label>
+              <label data-field-key="studentExpenseEditorAmount">
+                <span>Сумма</span>
+                <input name="studentExpenseEditorAmount" type="number" step="0.01" value="${escapeAttr(expense.amount ?? "")}">
+              </label>
+              <label class="student-expense-editor-wide" data-field-key="studentExpenseEditorType">
+                <span>Вид затрат или запас</span>
+                ${renderStudentExpenseTypeSelect({
+                  prefix: "studentExpenseEditor",
+                  type: expense.type,
+                  inventoryId: expense.inventoryId,
+                  inventoryLink: expense.inventoryLink,
+                  typeOptions,
+                  index: context.kind === "manual" ? context.slot : context.directIndex,
+                  direct: context.kind === "direct",
+                  editor: true
+                })}
+              </label>
+              <label class="student-expense-editor-wide" data-field-key="studentExpenseEditorNote">
+                <span>Примечание</span>
+                ${renderComboField({
+                  name: "studentExpenseEditorNote",
+                  type: "search",
+                  value: expense.note || "",
+                  options: noteOptions,
+                  dictionary: "expenseNotes",
+                  attrs: 'data-student-expense-editor-note'
+                })}
+              </label>
+              ${automaticHint ? `<p class="student-expense-editor-hint">${escapeHtml(automaticHint)}</p>` : ""}
+            </div>
+            <footer class="modal-actions student-expense-editor-actions">
+              <button class="ghost-button" data-action="close-student-expense-editor" type="button">Отмена</button>
+              <button class="primary-button" type="submit">Сохранить расход</button>
+            </footer>
+          </form>
+        </section>
+      </div>
     `;
   }
 
@@ -23491,6 +23702,152 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     );
     render();
+  }
+
+  function getStudentExpenseEditorButtonSelector(editor = {}) {
+    if (String(editor.kind || "") === "manual") {
+      return `[data-action='edit-student-expense'][data-expense-index="${Number(editor.slot)}"]`;
+    }
+    const sourceId = String(editor.id || "").trim();
+    if (sourceId) {
+      return `[data-action='edit-student-expense'][data-direct-expense-id="${CSS.escape(sourceId)}"]`;
+    }
+    return `[data-action='edit-student-expense'][data-direct-expense-index="${Number(editor.fallbackIndex)}"]`;
+  }
+
+  function setStudentExpenseEditorBackgroundInert(inert) {
+    const cardBackdrop = document.querySelector("#recordForm[data-config='students']")
+      ?.closest(".student-modal-backdrop");
+    if (!cardBackdrop) return;
+    if (inert) {
+      cardBackdrop.setAttribute("inert", "");
+      cardBackdrop.setAttribute("aria-hidden", "true");
+    } else {
+      cardBackdrop.removeAttribute("inert");
+      cardBackdrop.removeAttribute("aria-hidden");
+    }
+  }
+
+  function openStudentExpenseEditor(event) {
+    const button = event.target.closest("[data-action='edit-student-expense']");
+    if (!button || !state.modal || state.modal.config !== "students") return;
+    const recordForm = document.querySelector("#recordForm[data-config='students']");
+    if (!recordForm) return;
+    state.modal.hasDraftChanges = state.modal.hasDraftChanges || hasUnsavedFormChanges(recordForm);
+    state.modal.draft = collectStudentFormDraft();
+    const direct = button.hasAttribute("data-direct-expense-index");
+    state.studentExpenseEditor = direct
+      ? {
+          kind: "direct",
+          id: String(button.dataset.directExpenseId || ""),
+          fallbackIndex: Number(button.dataset.directExpenseIndex),
+          rowNumber: Number(button.dataset.expenseRowNumber)
+        }
+      : {
+          kind: "manual",
+          slot: Number(button.dataset.expenseIndex),
+          rowNumber: Number(button.dataset.expenseRowNumber)
+        };
+    if (!getStudentExpenseEditorContext()) {
+      state.studentExpenseEditor = null;
+      alert("Запись расхода не найдена.");
+      return;
+    }
+    document.querySelector("[data-student-expense-editor]")?.remove();
+    app.insertAdjacentHTML("beforeend", renderStudentExpenseEditor());
+    bindStudentExpenseEditorEvents();
+    bindComboFieldEvents(document.querySelector("[data-student-expense-editor]"));
+    initializeRecordFormSnapshot(document.getElementById("studentExpenseEditorForm"));
+    enhanceSettingsLinkedDropdowns();
+  }
+
+  function closeStudentExpenseEditor() {
+    if (!state.studentExpenseEditor) return;
+    const form = document.getElementById("studentExpenseEditorForm");
+    if (hasUnsavedFormChanges(form) && !confirm("Есть несохранённые изменения расхода. Закрыть без сохранения?")) return;
+    const editor = { ...state.studentExpenseEditor };
+    state.studentExpenseEditor = null;
+    setStudentExpenseEditorBackgroundInert(false);
+    document.querySelector("[data-student-expense-editor]")?.remove();
+    requestAnimationFrame(() => {
+      document.querySelector(getStudentExpenseEditorButtonSelector(editor))?.focus({ preventScroll: true });
+    });
+  }
+
+  function bindStudentExpenseEditorEvents() {
+    const backdrop = document.querySelector("[data-student-expense-editor]");
+    if (!backdrop || backdrop.dataset.studentExpenseEditorBound === "true") return;
+    backdrop.dataset.studentExpenseEditorBound = "true";
+    backdrop.querySelectorAll("[data-action='close-student-expense-editor']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (element.matches("button") || event.target === element) closeStudentExpenseEditor();
+      });
+    });
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) closeStudentExpenseEditor();
+    });
+    backdrop.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab") return;
+      const focusable = [...backdrop.querySelectorAll(
+        "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+      )].filter((element) => !element.hidden && element.getClientRects().length);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    });
+    const form = backdrop.querySelector("#studentExpenseEditorForm");
+    form?.addEventListener("submit", saveStudentExpenseEditor);
+    const inventoryChoice = form?.elements?.studentExpenseEditorInventoryChoice;
+    inventoryChoice?.addEventListener("change", () => {
+      applyStudentExpenseInventoryChoice(inventoryChoice, { syncFinance: false });
+    });
+    if (!backdrop.contains(document.activeElement)) {
+      const focusTarget = backdrop.querySelector(
+        "#studentExpenseEditorForm [name='studentExpenseEditorDate'], [data-action='close-student-expense-editor']"
+      );
+      document.activeElement?.blur?.();
+      focusTarget?.focus({ preventScroll: true });
+    }
+    setStudentExpenseEditorBackgroundInert(true);
+  }
+
+  function saveStudentExpenseEditor(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const context = getStudentExpenseEditorContext();
+    if (!context || !state.modal) {
+      state.studentExpenseEditor = null;
+      setStudentExpenseEditorBackgroundInert(false);
+      document.querySelector("[data-student-expense-editor]")?.remove();
+      return;
+    }
+    const editor = { ...context.editor };
+    const values = {
+      date: form.elements.studentExpenseEditorDate?.value,
+      type: form.elements.studentExpenseEditorType?.value,
+      amount: form.elements.studentExpenseEditorAmount?.value,
+      note: form.elements.studentExpenseEditorNote?.value,
+      inventoryId: form.elements.studentExpenseEditorInventoryId?.value,
+      inventoryLink: form.elements.studentExpenseEditorInventoryLink?.value
+    };
+    const nextDraft = calculateStudentFinance(
+      applyStudentExpenseEditorValues(context.draft, editor, values)
+    );
+    nextDraft.expenseTotal = Math.round(sumStudentExpenses(nextDraft) * 100) / 100;
+    state.modal.draft = nextDraft;
+    state.modal.hasDraftChanges = true;
+    state.studentExpenseEditor = null;
+    render();
+    requestAnimationFrame(() => {
+      document.querySelector(getStudentExpenseEditorButtonSelector(editor))?.focus({ preventScroll: true });
+    });
   }
 
   function reorderStudentPayments(rowKeys) {
@@ -25068,6 +25425,10 @@ MAX - https://bizvmax.ru/zifra_plus
       closeStudentAuditLog();
       return true;
     }
+    if (state.studentExpenseEditor) {
+      closeStudentExpenseEditor();
+      return true;
+    }
     if (state.employeeExpenseEditor) {
       closeEmployeeExpenseEditor();
       return true;
@@ -25101,7 +25462,9 @@ MAX - https://bizvmax.ru/zifra_plus
     bindFieldEditHistory();
     bindStudentApplicationsImportEvents();
     bindFinanceDetailsEvents();
+    bindStudentExpenseEditorEvents();
     initializeRecordFormSnapshot(document.getElementById("recordForm"));
+    initializeRecordFormSnapshot(document.getElementById("studentExpenseEditorForm"));
     initializeRecordFormSnapshot(document.getElementById("employeeExpenseEditorForm"));
 
     document.querySelector("[data-action='open-profile']")?.addEventListener("click", () => {
@@ -25432,6 +25795,9 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='delete-expense-row']").forEach((button) => {
       button.addEventListener("click", () => clearStudentExpenseRow(button.dataset.expenseIndex));
     });
+    document.querySelectorAll("[data-action='edit-student-expense']").forEach((button) => {
+      button.addEventListener("click", openStudentExpenseEditor);
+    });
     document.querySelectorAll("[data-action='delete-direct-expense-row']").forEach((button) => {
       button.addEventListener("click", () => clearStudentDirectExpenseRow(button.dataset.directExpenseIndex));
     });
@@ -25531,7 +25897,9 @@ MAX - https://bizvmax.ru/zifra_plus
       input?.addEventListener("input", syncStudentFinanceFields);
       input?.addEventListener("change", syncStudentFinanceFields);
     });
-    document.querySelectorAll("[data-student-expense-inventory-choice]").forEach((select) => {
+    document.querySelectorAll(
+      "[data-student-expense-inventory-choice]:not([data-student-expense-editor-type])"
+    ).forEach((select) => {
       select.addEventListener("change", () => applyStudentExpenseInventoryChoice(select));
     });
     document.querySelectorAll("[data-expense-index]").forEach((input) => {
@@ -26960,6 +27328,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function resetStudentCardTransientState() {
     state.openPaymentRows = [];
     state.openExpenseRows = [];
+    state.studentExpenseEditor = null;
     state.discountPickerOpen = false;
     state.discountPicker = null;
   }
@@ -28715,6 +29084,7 @@ MAX - https://bizvmax.ru/zifra_plus
     discardEmployeePaymentTransaction();
     activeRecordLock = null;
     stopRecordLockHeartbeat();
+    state.studentExpenseEditor = null;
     state.employeeExpenseEditor = null;
     state.modal = null;
     resetCardWindowState();
@@ -30765,6 +31135,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const lock = activeRecordLock;
     activeRecordLock = null;
     stopRecordLockHeartbeat();
+    state.studentExpenseEditor = null;
     state.employeeExpenseEditor = null;
     state.modal = null;
     resetCardWindowState();
