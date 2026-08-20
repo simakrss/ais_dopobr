@@ -2924,6 +2924,16 @@ body.is-resizing-column {
   color: #8b5a00;
 }
 
+.issued-documents-auto-fallback {
+  padding: 8px 10px;
+  border: 1px solid #b8dfd3;
+  border-radius: 8px;
+  background: #edf9f5;
+  color: #176a5e;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 .issued-documents-filters {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

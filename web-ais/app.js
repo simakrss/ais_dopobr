@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.193",
+    version: "1.7.194",
     releasedAt: "2026-08-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.194",
+      releasedAt: "2026-08-20",
+      changes: [
+        "Если документов для выгрузки в ФРДО нет, реестр автоматически показывает уже выгруженные документы по убыванию даты выдачи."
+      ]
+    },
     {
       version: "1.7.193",
       releasedAt: "2026-08-20",
@@ -4142,6 +4149,8 @@ MAX - https://bizvmax.ru/zifra_plus
       programType: ""
     },
     issuedDocumentSort: { key: "issueDate", dir: "asc" },
+    issuedDocumentViewInitialized: false,
+    issuedDocumentAutoFallback: false,
     issuedDocumentExportRunning: false,
     programRegistryTypeFilter: [],
     contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
@@ -9104,6 +9113,33 @@ MAX - https://bizvmax.ru/zifra_plus
       && Boolean(String(row.documentNumber || "").trim());
   }
 
+  function getIssuedDocumentsOpeningView(rows = []) {
+    const hasPendingDocuments = rows.some(isIssuedDocumentFrdoExportEligible);
+    return {
+      frdo: hasPendingDocuments ? "pending" : "exported",
+      sort: { key: "issueDate", dir: hasPendingDocuments ? "asc" : "desc" },
+      autoFallback: !hasPendingDocuments
+    };
+  }
+
+  function prepareIssuedDocumentsRegistryOnOpen(rows = getIssuedDocumentRows()) {
+    const openingView = getIssuedDocumentsOpeningView(rows);
+    state.issuedDocumentFilters = {
+      documentNumber: "",
+      issueDateFrom: "",
+      issueDateTo: "",
+      frdo: openingView.frdo,
+      student: "",
+      program: "",
+      programType: ""
+    };
+    state.issuedDocumentSort = { ...openingView.sort };
+    state.issuedDocumentAutoFallback = openingView.autoFallback;
+    state.issuedDocumentViewInitialized = true;
+    state.tablePages.issuedDocuments = 1;
+    return openingView;
+  }
+
   function buildIssuedDocumentFrdoExportRecords() {
     const studentsById = new Map(
       (state.data.collections.students || []).map((student) => [String(student.id || ""), student])
@@ -9337,6 +9373,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderIssuedDocumentsRegistry() {
     const allRows = getIssuedDocumentRows();
+    if (!state.issuedDocumentViewInitialized) prepareIssuedDocumentsRegistryOnOpen(allRows);
     const rows = getVisibleIssuedDocumentRows(allRows);
     const filters = state.issuedDocumentFilters || {};
     const programs = unique(allRows.map((row) => row.program).filter(Boolean))
@@ -9362,6 +9399,11 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </div>
         ${renderTableOptions(ISSUED_DOCUMENT_TABLE_CONFIG_ID)}
+        ${state.issuedDocumentAutoFallback ? `
+          <div class="issued-documents-auto-fallback" role="status">
+            Документов для выгрузки в ФРДО нет. Показаны ранее выгруженные документы, начиная с последних выданных.
+          </div>
+        ` : ""}
         <div class="issued-documents-filters" data-issued-document-filters>
           <label>
             <span>Номер документа</span>
@@ -25094,6 +25136,11 @@ MAX - https://bizvmax.ru/zifra_plus
         state.sort = state.view === "students"
           ? getStudentStatusTableSort(state.statusFilter)
           : getDefaultTableSort(state.view);
+        if (state.view === "issuedDocuments") prepareIssuedDocumentsRegistryOnOpen();
+        else {
+          state.issuedDocumentViewInitialized = false;
+          state.issuedDocumentAutoFallback = false;
+        }
         state.tableOptions = null;
         if (window.matchMedia("(max-width: 1120px)").matches) {
           document.body.classList.remove("sidebar-open");
@@ -25117,18 +25164,10 @@ MAX - https://bizvmax.ru/zifra_plus
         state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
         state.generalExpenseWorkTypeFilter = [];
         state.studentImportedViewIds = [];
-        if (state.view === "issuedDocuments" && button.dataset.issuedDocumentScope === "pending") {
-          state.issuedDocumentFilters = {
-            documentNumber: "",
-            issueDateFrom: "",
-            issueDateTo: "",
-            frdo: "pending",
-            student: "",
-            program: "",
-            programType: ""
-          };
-          state.issuedDocumentSort = { key: "issueDate", dir: "asc" };
-          state.tablePages.issuedDocuments = 1;
+        if (state.view === "issuedDocuments") prepareIssuedDocumentsRegistryOnOpen();
+        else {
+          state.issuedDocumentViewInitialized = false;
+          state.issuedDocumentAutoFallback = false;
         }
         state.sort = state.view === "students"
           ? getStudentStatusTableSort(state.statusFilter)
@@ -25769,6 +25808,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const key = String(control?.dataset.issuedDocumentFilter || "");
         if (!key || !Object.prototype.hasOwnProperty.call(state.issuedDocumentFilters, key)) return;
         state.issuedDocumentFilters[key] = control.value;
+        if (key === "frdo") state.issuedDocumentAutoFallback = false;
         state.tablePages.issuedDocuments = 1;
         const selectionStart = Number(control.selectionStart);
         render();
@@ -25805,16 +25845,7 @@ MAX - https://bizvmax.ru/zifra_plus
         });
       });
       issuedDocumentsRegister.querySelector("[data-action='reset-issued-document-filters']")?.addEventListener("click", () => {
-        state.issuedDocumentFilters = {
-          documentNumber: "",
-          issueDateFrom: "",
-          issueDateTo: "",
-          frdo: "pending",
-          student: "",
-          program: "",
-          programType: ""
-        };
-        state.tablePages.issuedDocuments = 1;
+        prepareIssuedDocumentsRegistryOnOpen();
         render();
       });
       issuedDocumentsRegister.querySelector("[data-action='export-issued-documents-frdo']")?.addEventListener("click", (event) => {
