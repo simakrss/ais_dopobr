@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260820-issued-documents-fallback-v1";
+  const AUTH_BUILD = "20260820-receivable-student-eligibility-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

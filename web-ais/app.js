@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.194",
+    version: "1.7.195",
     releasedAt: "2026-08-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.195",
+      releasedAt: "2026-08-20",
+      changes: [
+        "Дебиторская задолженность учитывается только по обучающимся слушателям и завершившим обучение с выданным документом об образовании."
+      ]
+    },
     {
       version: "1.7.194",
       releasedAt: "2026-08-20",
@@ -8368,7 +8375,15 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function isStudentEligibleForReceivable(record) {
+    const status = String(record?.status || "").trim().toLocaleLowerCase("ru-RU");
+    if (status === "учится") return true;
+    if (!["отчислен", "архив"].includes(status)) return false;
+    return hasStudentEducationDocumentIssued(record);
+  }
+
   function calculateDashboardStudentReceivable(record) {
+    if (!isStudentEligibleForReceivable(record)) return 0;
     if (!String(record?.enrollmentDate || "").trim()) return 0;
     const contractAmount = Number(record?.contractAmount || 0);
     if (!Number.isFinite(contractAmount) || contractAmount <= 0) return 0;
