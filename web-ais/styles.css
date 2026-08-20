@@ -8743,50 +8743,38 @@ body.card-window-moving {
   text-align: center;
 }
 
-.student-applications-import-table th:nth-child(2),
-.student-applications-import-table td:nth-child(2) {
-  width: 9%;
-}
-
-.student-applications-import-table th:nth-child(3),
-.student-applications-import-table td:nth-child(3) {
-  width: 18%;
-}
-
-.student-applications-import-table th:nth-child(4),
-.student-applications-import-table td:nth-child(4) {
-  width: 10%;
-}
-
-.student-applications-import-table th:nth-child(5),
-.student-applications-import-table td:nth-child(5) {
-  width: 8%;
+.student-applications-payment-cell {
   text-align: right;
 }
 
-.student-applications-import-table th:nth-child(6),
-.student-applications-import-table td:nth-child(6) {
-  width: 27%;
+.student-applications-import-table .table-head-cell button {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
-.student-applications-import-table th:nth-child(7),
-.student-applications-import-table td:nth-child(7) {
-  width: 10%;
+.student-applications-import-table th:last-child .column-resize-handle {
+  right: -8px;
 }
 
-.student-applications-import-table th:nth-child(8),
-.student-applications-import-table td:nth-child(8) {
-  width: 14%;
+.student-applications-table-options-backdrop {
+  z-index: 36;
 }
 
-.student-applications-import-table th:nth-child(9),
-.student-applications-import-table td:nth-child(9) {
-  width: 9%;
-}
-
-.student-applications-import-table th:nth-child(10),
-.student-applications-import-table td:nth-child(10) {
-  width: 10%;
+.student-applications-table-options-panel {
+  top: 118px;
+  right: 34px;
+  z-index: 37;
 }
 
 .student-applications-import-table tbody tr {

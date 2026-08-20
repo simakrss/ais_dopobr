@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.192",
+    version: "1.7.193",
     releasedAt: "2026-08-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.193",
+      releasedAt: "2026-08-20",
+      changes: [
+        "В таблицу импорта заявок добавлены сортировка по заголовкам, изменение ширины и перетаскивание колонок; компоновка сохраняется, а команда «Восстановить исходный вид» возвращает начальные настройки."
+      ]
+    },
     {
       version: "1.7.192",
       releasedAt: "2026-08-20",
@@ -1725,6 +1732,23 @@
   const CONTRACTS_TABLE_LAYOUT_VERSION = "agency-after-services";
   const STUDENTS_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-students-table-layout-v1";
   const STUDENTS_TABLE_LAYOUT_VERSION = "days-until-end-replaces-documents";
+  const STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID = "studentApplicationsImport";
+  const STUDENT_APPLICATIONS_IMPORT_DEFAULT_SORT = Object.freeze({ key: "date", dir: "desc" });
+  const STUDENT_APPLICATIONS_IMPORT_TABLE_COLUMNS = Object.freeze([
+    Object.freeze({ key: "date", label: "Дата", type: "date", defaultWidth: 145 }),
+    Object.freeze({ key: "name", label: "ФИО", defaultWidth: 230 }),
+    Object.freeze({ key: "order", label: "Заказ", defaultWidth: 140 }),
+    Object.freeze({ key: "payment", label: "Оплата", type: "number", defaultWidth: 105 }),
+    Object.freeze({ key: "program", label: "Программа", defaultWidth: 330 }),
+    Object.freeze({ key: "phone", label: "Телефон", defaultWidth: 140 }),
+    Object.freeze({ key: "email", label: "Email", defaultWidth: 190 }),
+    Object.freeze({ key: "city", label: "Город", defaultWidth: 140 }),
+    Object.freeze({ key: "source", label: "Источник", defaultWidth: 160 })
+  ]);
+  const studentApplicationsImportTableConfig = Object.freeze({
+    table: Object.freeze(STUDENT_APPLICATIONS_IMPORT_TABLE_COLUMNS.map((column) => column.key)),
+    fields: STUDENT_APPLICATIONS_IMPORT_TABLE_COLUMNS
+  });
   const SYSTEM_HELP_TOOLTIP_DELAY_MS = 1000;
   const DRAG_TOOLTIP_DELAY_MS = SYSTEM_HELP_TOOLTIP_DELAY_MS;
   const SYSTEM_HELP_TWO_FINGER_TAP_MAX_MS = 800;
@@ -4177,6 +4201,7 @@ MAX - https://bizvmax.ru/zifra_plus
       truncated: false,
       error: "",
       warnings: [],
+      sort: { ...STUDENT_APPLICATIONS_IMPORT_DEFAULT_SORT },
       filters: {
         programId: "",
         programIds: [],
@@ -9550,6 +9575,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function openStudentApplicationsImport() {
     const dates = getStudentApplicationsDefaultDates(30);
+    state.tableOptions = null;
     state.studentApplicationsImport = {
       open: true,
       loading: false,
@@ -9563,6 +9589,7 @@ MAX - https://bizvmax.ru/zifra_plus
       truncated: false,
       error: "",
       warnings: [],
+      sort: { ...STUDENT_APPLICATIONS_IMPORT_DEFAULT_SORT },
       filters: {
         programId: "",
         programIds: [],
@@ -9582,6 +9609,7 @@ MAX - https://bizvmax.ru/zifra_plus
     clearTimeout(studentApplicationsSearchTimer);
     state.studentApplicationsImport.open = false;
     state.studentApplicationsImport.loading = false;
+    if (state.tableOptions === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) state.tableOptions = null;
     document.querySelector("[data-student-applications-import-backdrop]")?.remove();
   }
 
@@ -10334,11 +10362,65 @@ MAX - https://bizvmax.ru/zifra_plus
     return getStudentApplicationPreviousMatches(row, lookup).length > 0;
   }
 
+  function parseStudentApplicationSortDate(value) {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    const ru = /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/u.exec(text);
+    if (ru) {
+      return Date.UTC(
+        Number(ru[3]),
+        Number(ru[2]) - 1,
+        Number(ru[1]),
+        Number(ru[4] || 0),
+        Number(ru[5] || 0),
+        Number(ru[6] || 0)
+      );
+    }
+    const timestamp = Date.parse(text);
+    return Number.isNaN(timestamp) ? null : timestamp;
+  }
+
+  function getStudentApplicationSortValue(row, key) {
+    if (key === "payment") return getStudentApplicationReceiptAmount(row);
+    return row?.[key];
+  }
+
+  function sortStudentApplicationRows(rows, sort = STUDENT_APPLICATIONS_IMPORT_DEFAULT_SORT) {
+    const key = String(sort?.key || "");
+    if (!key) return rows;
+    const column = STUDENT_APPLICATIONS_IMPORT_TABLE_COLUMNS.find((item) => item.key === key);
+    if (!column) return rows;
+    const direction = sort.dir === "desc" ? -1 : 1;
+    return rows.slice().sort((leftRow, rightRow) => {
+      const left = getStudentApplicationSortValue(leftRow, key);
+      const right = getStudentApplicationSortValue(rightRow, key);
+      if (column.type === "number") {
+        const leftNumber = String(left ?? "").trim() === "" ? null : Number(left);
+        const rightNumber = String(right ?? "").trim() === "" ? null : Number(right);
+        const hasLeft = Number.isFinite(leftNumber);
+        const hasRight = Number.isFinite(rightNumber);
+        if (!hasLeft && hasRight) return 1;
+        if (hasLeft && !hasRight) return -1;
+        if (hasLeft && hasRight && leftNumber !== rightNumber) return (leftNumber - rightNumber) * direction;
+      }
+      if (column.type === "date") {
+        const leftDate = parseStudentApplicationSortDate(left);
+        const rightDate = parseStudentApplicationSortDate(right);
+        if (leftDate === null && rightDate !== null) return 1;
+        if (leftDate !== null && rightDate === null) return -1;
+        if (leftDate !== null && rightDate !== null && leftDate !== rightDate) return (leftDate - rightDate) * direction;
+      }
+      return String(left || "").localeCompare(String(right || ""), "ru", {
+        numeric: true,
+        sensitivity: "base"
+      }) * direction;
+    });
+  }
+
   function getVisibleStudentApplications() {
     const query = String(state.studentApplicationsImport.filters.search || "").trim().toLocaleLowerCase("ru-RU");
     const rows = state.studentApplicationsImport.rows || [];
-    if (!query) return rows;
-    return rows.filter((row) => (
+    const filteredRows = query ? rows.filter((row) => (
       [
         row.date,
         row.name,
@@ -10354,7 +10436,8 @@ MAX - https://bizvmax.ru/zifra_plus
         row.coupon,
         row.note
       ].some((value) => String(value || "").toLocaleLowerCase("ru-RU").includes(query))
-    ));
+    )) : rows;
+    return sortStudentApplicationRows(filteredRows, state.studentApplicationsImport.sort);
   }
 
   function getStudentApplicationCouponTerms(row = {}) {
@@ -10604,6 +10687,47 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderStudentApplicationImportTableCell(row, column, context = {}) {
+    const attrs = columnDataAttrs(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID, column.key);
+    const style = columnStyleAttr(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID, column.key);
+    const paymentAmount = Number(context.paymentAmount) || 0;
+    const plainCell = (value, className = "") => {
+      const text = String(value || "");
+      return `
+        <td ${className ? `class="${className}"` : ""} title="${escapeAttr(text)}" ${attrs} ${style}>
+          <div class="student-application-cell-content">${escapeHtml(text)}</div>
+        </td>
+      `;
+    };
+    if (column.key === "name") {
+      return `
+        <td title="${escapeAttr(row.name || "")}" ${attrs} ${style}>
+          <div class="student-application-name-cell">
+            <span>${escapeHtml(row.name || "")}</span>
+            ${context.imported ? `<span class="student-application-repeat-badge" title="${escapeMultilineAttr(context.repeatTooltip)}">Повтор</span>` : ""}
+          </div>
+        </td>
+      `;
+    }
+    if (column.key === "payment") {
+      const value = paymentAmount > 0 || row.paid ? money(paymentAmount) : "—";
+      return `<td class="student-applications-payment-cell" title="${escapeAttr(value)}" ${attrs} ${style}>${escapeHtml(value)}</td>`;
+    }
+    if (column.key === "program") {
+      const recommendation = context.recommendation;
+      const recommendationText = recommendation
+        ? `Рекомендуется: ${recommendation.program.name} (${Math.round(recommendation.score * 100)}%)`
+        : "";
+      const title = [row.program, recommendationText].filter(Boolean).join(" · ");
+      return `
+        <td title="${escapeAttr(title)}" ${attrs} ${style}>
+          <div class="student-application-cell-content">${escapeHtml(row.program || "")}${recommendation ? ` · ${escapeHtml(recommendationText)}` : ""}</div>
+        </td>
+      `;
+    }
+    return plainCell(row[column.key] || "");
+  }
+
   function renderStudentApplicationsImport() {
     const importState = state.studentApplicationsImport;
     const filters = importState.filters;
@@ -10637,6 +10761,11 @@ MAX - https://bizvmax.ru/zifra_plus
       ...(state.data.dictionaries.statuses || []),
       filters.status || "На зачисление"
     ].filter(Boolean));
+    const tableColumns = getTableFields(
+      studentApplicationsImportTableConfig,
+      STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID
+    );
+    const tableSort = importState.sort || STUDENT_APPLICATIONS_IMPORT_DEFAULT_SORT;
     return `
       <div class="modal-backdrop student-applications-import-backdrop" data-student-applications-import-backdrop data-action="close-student-applications-import">
         <section class="modal student-applications-import-modal" role="dialog" aria-modal="true" aria-label="Импорт слушателей">
@@ -10715,6 +10844,7 @@ MAX - https://bizvmax.ru/zifra_plus
               </label>
               <button class="ghost-button" data-action="select-all-student-applications" type="button" ${visibleRows.length ? "" : "disabled"}>Выделить все</button>
               <button class="ghost-button" data-action="clear-student-applications-filters" type="button">Очистить фильтры</button>
+              <button class="ghost-button icon-only table-options-button" data-action="toggle-student-applications-table-options" type="button" title="Опции таблицы" aria-label="Опции таблицы">⋯</button>
               <label class="student-applications-status-filter">
                 <span>Установить статус</span>
                 <select name="importStatus" data-settings-dictionary="statuses">
@@ -10728,6 +10858,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${importedCount ? `<span>Повторные заявки: <strong>${importedCount}</strong></span>` : ""}
               </div>
             </div>
+            ${renderTableOptions(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID)}
 
             <div class="student-applications-import-messages">
               ${importState.error ? `<div class="student-applications-import-error">${escapeHtml(importState.error)}</div>` : ""}
@@ -10740,15 +10871,40 @@ MAX - https://bizvmax.ru/zifra_plus
                 <thead>
                   <tr>
                     <th aria-label="Выбор"></th>
-                    <th>Дата</th>
-                    <th>ФИО</th>
-                    <th>Заказ</th>
-                    <th>Оплата</th>
-                    <th>Программа</th>
-                    <th>Телефон</th>
-                    <th>Email</th>
-                    <th>Город</th>
-                    <th>Источник</th>
+                    ${tableColumns.map((column) => {
+                      const sorted = tableSort.key === column.key;
+                      const directionLabel = sorted
+                        ? (tableSort.dir === "asc" ? "по возрастанию" : "по убыванию")
+                        : "без сортировки";
+                      return `
+                        <th
+                          class="table-column-head"
+                          ${columnDataAttrs(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID, column.key)}
+                          ${columnStyleAttr(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID, column.key)}
+                          draggable="true"
+                          aria-sort="${sorted ? (tableSort.dir === "asc" ? "ascending" : "descending") : "none"}"
+                          title="Перетащите заголовок для смены порядка"
+                        >
+                          <div class="table-head-cell">
+                            <button
+                              data-action="sort-student-applications"
+                              data-key="${escapeAttr(column.key)}"
+                              type="button"
+                              aria-label="${escapeAttr(`${column.label}: ${directionLabel}`)}"
+                            >
+                              ${escapeHtml(column.label)}${sorted ? (tableSort.dir === "asc" ? " ↑" : " ↓") : ""}
+                            </button>
+                            <span
+                              class="column-resize-handle"
+                              data-action="resize-column"
+                              data-config="${STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID}"
+                              data-field="${escapeAttr(column.key)}"
+                              title="Изменить ширину"
+                            ></span>
+                          </div>
+                        </th>
+                      `;
+                    }).join("")}
                   </tr>
                 </thead>
                 <tbody>
@@ -10764,27 +10920,17 @@ MAX - https://bizvmax.ru/zifra_plus
                         <td>
                           <input data-student-application-select="${escapeAttr(row.id)}" data-payment-amount="${escapeAttr(paymentAmount)}" type="checkbox" ${selected ? "checked" : ""} aria-label="Выбрать заявку">
                         </td>
-                        <td title="${escapeAttr(row.date || "")}"><div class="student-application-cell-content">${escapeHtml(row.date || "")}</div></td>
-                        <td title="${escapeAttr(row.name || "")}">
-                          <div class="student-application-name-cell">
-                            <span>${escapeHtml(row.name || "")}</span>
-                            ${imported ? `<span class="student-application-repeat-badge" title="${escapeMultilineAttr(repeatTooltip)}">Повтор</span>` : ""}
-                          </div>
-                        </td>
-                        <td title="${escapeAttr(row.order || "")}"><div class="student-application-cell-content">${escapeHtml(row.order || "")}</div></td>
-                        <td class="student-applications-payment-cell">${paymentAmount > 0 || row.paid ? escapeHtml(money(paymentAmount)) : "—"}</td>
-                        <td title="${escapeAttr([row.program, recommendation ? `Рекомендуется: ${recommendation.program.name} (${Math.round(recommendation.score * 100)}%)` : ""].filter(Boolean).join(" · "))}">
-                          <div class="student-application-cell-content">${escapeHtml(row.program || "")}${recommendation ? ` · Рекомендуется: ${escapeHtml(recommendation.program.name)} (${Math.round(recommendation.score * 100)}%)` : ""}</div>
-                        </td>
-                        <td title="${escapeAttr(row.phone || "")}"><div class="student-application-cell-content">${escapeHtml(row.phone || "")}</div></td>
-                        <td title="${escapeAttr(row.email || "")}"><div class="student-application-cell-content">${escapeHtml(row.email || "")}</div></td>
-                        <td title="${escapeAttr(row.city || "")}"><div class="student-application-cell-content">${escapeHtml(row.city || "")}</div></td>
-                        <td title="${escapeAttr(row.source || "")}"><div class="student-application-cell-content">${escapeHtml(row.source || "")}</div></td>
+                        ${tableColumns.map((column) => renderStudentApplicationImportTableCell(row, column, {
+                          imported,
+                          repeatTooltip,
+                          recommendation,
+                          paymentAmount
+                        })).join("")}
                       </tr>
                     `;
                   }).join("") : `
                     <tr>
-                      <td colspan="10">
+                      <td colspan="${tableColumns.length + 1}">
                         <div class="student-applications-import-empty">
                           ${importState.loading ? "Получение заявок из базы и электронной почты..." : "Задайте условия и получите список заявок."}
                         </div>
@@ -10888,7 +11034,9 @@ MAX - https://bizvmax.ru/zifra_plus
       state.studentApplicationsImport.page = 1;
       state.studentApplicationsImport.selected = [];
       state.studentApplicationsImport.selectedPayment = 0;
-      state.studentApplicationsImport.activeId = String(rows[0]?.id || "");
+      state.studentApplicationsImport.activeId = String(
+        sortStudentApplicationRows(rows, state.studentApplicationsImport.sort)[0]?.id || ""
+      );
       state.studentApplicationsImport.truncated = Boolean(payload.truncated);
       state.studentApplicationsImport.warnings = Array.isArray(payload.warnings)
         ? payload.warnings.map(String).filter(Boolean)
@@ -11719,6 +11867,37 @@ MAX - https://bizvmax.ru/zifra_plus
       state.studentApplicationsImport.activeId = String(getVisibleStudentApplications()[0]?.id || "");
       refreshStudentApplicationsImportDialog();
     });
+    scope.querySelectorAll("[data-action='sort-student-applications']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = String(button.dataset.key || "");
+        if (!STUDENT_APPLICATIONS_IMPORT_TABLE_COLUMNS.some((column) => column.key === key)) return;
+        const currentSort = state.studentApplicationsImport.sort || STUDENT_APPLICATIONS_IMPORT_DEFAULT_SORT;
+        state.studentApplicationsImport.sort = {
+          key,
+          dir: currentSort.key === key && currentSort.dir === "asc" ? "desc" : "asc"
+        };
+        state.studentApplicationsImport.page = 1;
+        refreshStudentApplicationsImportDialog();
+      });
+    });
+    scope.querySelector("[data-action='toggle-student-applications-table-options']")?.addEventListener("click", () => {
+      state.tableOptions = state.tableOptions === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID
+        ? null
+        : STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID;
+      refreshStudentApplicationsImportDialog();
+    });
+    scope.querySelector("[data-action='reset-table-options']")?.addEventListener("click", (event) => {
+      if (event.currentTarget.dataset.config !== STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) return;
+      resetTableOptions(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID);
+    });
+    scope.querySelectorAll("[data-action='close-table-options']").forEach((element) => {
+      element.addEventListener("click", () => {
+        state.tableOptions = null;
+        refreshStudentApplicationsImportDialog();
+      });
+    });
+    bindTableColumnEvents(scope);
+    annotateShiftRequiredDraggableElements(scope);
     bindStudentApplicationProgramMappingControl(scope);
     scope.querySelectorAll("[data-student-application-select]").forEach((input) => {
       input.addEventListener("click", (event) => event.stopPropagation());
@@ -12456,19 +12635,26 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderTableOptions(configId) {
     const isOpen = state.tableOptions === configId;
+    const isStudentApplicationsImport = configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID;
     return `
       ${isOpen ? `
-        <div class="table-options-backdrop" data-action="close-table-options"></div>
-        <div class="table-options-panel" role="dialog" aria-label="Опции таблицы">
+        <div class="table-options-backdrop ${isStudentApplicationsImport ? "student-applications-table-options-backdrop" : ""}" data-action="close-table-options"></div>
+        <div class="table-options-panel ${isStudentApplicationsImport ? "student-applications-table-options-panel" : ""}" role="dialog" aria-label="Опции таблицы">
           <div class="table-options-head">
             <strong>Опции таблицы</strong>
             <button class="icon-button" data-action="close-table-options" type="button" title="Закрыть">×</button>
           </div>
-          <button class="ghost-button table-option-command" data-action="refresh-table-data" data-config="${configId}" type="button">Обновить данные</button>
+          ${isStudentApplicationsImport ? "" : `<button class="ghost-button table-option-command" data-action="refresh-table-data" data-config="${configId}" type="button">Обновить данные</button>`}
           <button class="ghost-button table-option-command" data-action="reset-table-options" data-config="${configId}" type="button">Восстановить исходный вид</button>
         </div>
       ` : ""}
     `;
+  }
+
+  function getTableLayoutConfig(configId) {
+    if (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) return studentApplicationsImportTableConfig;
+    if (configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID) return issuedDocumentTableConfig;
+    return configs[configId];
   }
 
   function getTableFields(config, configId) {
@@ -12504,6 +12690,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID) {
       const column = issuedDocumentTableConfig.fields.find((item) => item.key === key);
       if (column) return { min: 80, max: 640 };
+    }
+    if (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) {
+      return { min: key === "payment" ? 70 : 80, max: 640 };
     }
     return { min: 80, max: 640 };
   }
@@ -12561,10 +12750,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function columnStyleAttr(configId, key) {
-    const config = configs[configId];
+    const config = getTableLayoutConfig(configId);
     if (!config) return "";
     const columns = getTableFields(config, configId);
-    const percentage = getRegistryColumnPercentages(configId, columns, "", 0, 96.5).get(key) || 0;
+    const totalPercent = configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID ? 96.8 : 96.5;
+    const percentage = getRegistryColumnPercentages(configId, columns, "", 0, totalPercent).get(key) || 0;
     return `style="width:${percentage.toFixed(4)}%;min-width:0"`;
   }
 
@@ -12583,9 +12773,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function moveTableColumn(configId, fieldKey, dir) {
-    const config = configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID
-      ? issuedDocumentTableConfig
-      : configs[configId];
+    const config = getTableLayoutConfig(configId);
     if (!config) return;
     const order = getTableKeys(config, configId);
     const from = order.indexOf(fieldKey);
@@ -12593,7 +12781,8 @@ MAX - https://bizvmax.ru/zifra_plus
     if (from < 0 || to < 0 || to >= order.length) return;
     [order[from], order[to]] = [order[to], order[from]];
     updateTableSettings(configId, (settings) => ({ ...settings, order }));
-    render();
+    if (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) refreshStudentApplicationsImportDialog();
+    else render();
   }
 
   function setTableColumnWidth(configId, fieldKey, value) {
@@ -12610,9 +12799,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function reorderTableColumn(configId, fromKey, toKey) {
-    const config = configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID
-      ? issuedDocumentTableConfig
-      : configs[configId];
+    const config = getTableLayoutConfig(configId);
     if (!config || !fromKey || !toKey || fromKey === toKey) return;
     const order = getTableKeys(config, configId);
     const from = order.indexOf(fromKey);
@@ -12620,21 +12807,26 @@ MAX - https://bizvmax.ru/zifra_plus
     if (from < 0 || to < 0) return;
     [order[from], order[to]] = [order[to], order[from]];
     updateTableSettings(configId, (settings) => ({ ...settings, order }));
-    render();
+    if (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) refreshStudentApplicationsImportDialog();
+    else render();
   }
 
   function resetTableOptions(configId) {
     delete state.tableSettings[configId];
     delete state.tablePages[configId];
     const activeTableConfigId = state.view === "documentConstructor" ? "documentTemplates" : state.view;
-    if (configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID) {
+    if (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) {
+      state.studentApplicationsImport.sort = { ...STUDENT_APPLICATIONS_IMPORT_DEFAULT_SORT };
+      state.studentApplicationsImport.page = 1;
+    } else if (configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID) {
       state.issuedDocumentSort = { key: "issueDate", dir: "asc" };
     } else if (activeTableConfigId === configId) {
       state.sort = getDefaultTableSort(configId);
     }
     state.tableOptions = null;
     persistTableSettings();
-    render();
+    if (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) refreshStudentApplicationsImportDialog();
+    else render();
   }
 
   async function refreshTableData(configId) {
@@ -12659,8 +12851,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
-  function bindTableColumnEvents() {
-    document.querySelectorAll(".table-column-head").forEach((header) => {
+  function bindTableColumnEvents(root = document) {
+    root.querySelectorAll(".table-column-head").forEach((header) => {
       header.addEventListener("dragstart", (event) => {
         if (event.target.closest(".column-resize-handle")) {
           event.preventDefault();
@@ -12692,7 +12884,7 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
 
-    document.querySelectorAll("[data-action='resize-column']").forEach((handle) => {
+    root.querySelectorAll("[data-action='resize-column']").forEach((handle) => {
       if (handle.dataset.config === EMPLOYEE_PAYMENT_TABLE_CONFIG_ID) {
         handle.addEventListener("pointerdown", startEmployeePaymentColumnResize);
         handle.addEventListener("dblclick", resetEmployeePaymentColumnWidth);
@@ -12895,9 +13087,7 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       return;
     }
-    const config = configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID
-      ? issuedDocumentTableConfig
-      : configs[configId];
+    const config = getTableLayoutConfig(configId);
     if (!config) return;
     const columns = getTableFields(config, configId);
     const percentages = getRegistryColumnPercentages(
@@ -12905,7 +13095,9 @@ MAX - https://bizvmax.ru/zifra_plus
       columns,
       fieldKey,
       width,
-      configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID ? 100 : 96.5
+      configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID
+        ? 100
+        : (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID ? 96.8 : 96.5)
     );
     document.querySelectorAll(scope).forEach((cell) => {
       if (cell.dataset.tableConfig !== configId) return;
