@@ -97,7 +97,10 @@ async function main() {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 
-  const clientSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
+  const clientPath = process.env.AIS_TEST_APP_SOURCE
+    ? path.resolve(process.env.AIS_TEST_APP_SOURCE)
+    : path.join(__dirname, "..", "app.js");
+  const clientSource = fs.readFileSync(clientPath, "utf8");
   const displayFieldsStart = clientSource.indexOf("  function getDocumentRecognitionDisplayFields");
   const displayFieldsEnd = clientSource.indexOf("\n\n  function storeStudentDocumentRecognitionResult", displayFieldsStart);
   assert.ok(displayFieldsStart >= 0 && displayFieldsEnd > displayFieldsStart);
@@ -115,8 +118,8 @@ async function main() {
     (field) => field
   );
   const studentGroups = [
-    { id: "passport", keys: ["passportNumber", "passportDate", "passportCode", "passportIssuer"] },
-    { id: "education", keys: ["educationDocumentSeries", "educationDocumentNumber", "educationDocumentIssuer", "educationDocumentSurname"] },
+    { id: "passport", keys: ["birthDate", "passportNumber", "passportDate", "passportCode", "passportIssuer"] },
+    { id: "education", keys: ["educationDocumentSeries", "educationDocumentNumber", "educationDocumentDate", "educationDocumentIssuer", "educationDocumentSurname"] },
     { id: "application", keys: ["phone"] }
   ];
   const displayFields = getDisplayFields(
@@ -126,19 +129,25 @@ async function main() {
   assert.deepStrictEqual(
     displayFields.map((field) => field.key),
     [
+      "birthDate",
       "passportNumber",
       "passportDate",
       "passportCode",
       "passportIssuer",
       "educationDocumentSeries",
       "educationDocumentNumber",
+      "educationDocumentDate",
       "educationDocumentIssuer",
-      "educationDocumentSurname"
+      "educationDocumentSurname",
+      "phone"
     ]
   );
   assert.strictEqual(displayFields.find((field) => field.key === "passportDate").recognitionMissing, true);
   assert.strictEqual(displayFields.find((field) => field.key === "passportDate").value, "");
-  assert.strictEqual(displayFields.some((field) => field.key === "phone"), false);
+  assert.strictEqual(displayFields.find((field) => field.key === "birthDate").recognitionMissing, true);
+  assert.strictEqual(displayFields.find((field) => field.key === "educationDocumentDate").recognitionMissing, true);
+  assert.strictEqual(displayFields.find((field) => field.key === "educationDocumentDate").label, "Дата выдачи документа об образовании");
+  assert.strictEqual(displayFields.find((field) => field.key === "phone").recognitionMissing, true);
   const contractDisplayFields = getDisplayFields({
     isContract: true,
     groups: [{
@@ -148,9 +157,30 @@ async function main() {
   }, []);
   assert.deepStrictEqual(
     contractDisplayFields.map((field) => field.key),
-    ["identityIssueDate", "identityDepartmentCode", "identityIssuer"]
+    ["name", "identityDocument", "identityIssueDate", "identityDepartmentCode", "identityIssuer"]
   );
   assert.ok(contractDisplayFields.every((field) => field.recognitionMissing === true));
+
+  const dateHelpersStart = clientSource.indexOf("  const studentDocumentRecognitionDisplayDateKeys");
+  const dateHelpersEnd = clientSource.indexOf("\n\n  function getDocumentRecognitionAlternativeValues", dateHelpersStart);
+  assert.ok(dateHelpersStart >= 0 && dateHelpersEnd > dateHelpersStart);
+  const dateHelpersSource = clientSource.slice(dateHelpersStart, dateHelpersEnd);
+  const dateHelpers = new Function(
+    dateHelpersSource + "\nreturn { normalizeStudentDocumentRecognitionDate, formatStudentDocumentRecognitionDate, normalizeRecognitionComparisonValue };"
+  )();
+  assert.strictEqual(dateHelpers.formatStudentDocumentRecognitionDate("2016-03-05"), "05.03.2016");
+  assert.strictEqual(dateHelpers.formatStudentDocumentRecognitionDate("2016-03-05T00:00:00.000Z"), "05.03.2016");
+  assert.strictEqual(dateHelpers.normalizeStudentDocumentRecognitionDate("05.03.2016"), "2016-03-05");
+  assert.strictEqual(dateHelpers.normalizeStudentDocumentRecognitionDate("29.02.2016"), "2016-02-29");
+  assert.strictEqual(dateHelpers.normalizeStudentDocumentRecognitionDate("29.02.2015"), "");
+  assert.strictEqual(dateHelpers.normalizeStudentDocumentRecognitionDate("31.04.2016"), "");
+  assert.strictEqual(
+    dateHelpers.normalizeRecognitionComparisonValue("educationDocumentDate", "05.03.2016"),
+    dateHelpers.normalizeRecognitionComparisonValue("educationDocumentDate", "2016-03-05")
+  );
+  assert.match(clientSource, /studentDocumentRecognitionDisplayDateKeys\.has\(key\)[\s\S]*?normalizeStudentDocumentRecognitionDate\(value\)/u);
+  assert.match(clientSource, /value="\$\{escapeAttr\(displayValue\)\}"/u);
+  assert.match(clientSource, /Сейчас в карточке:[\s\S]*?escapeHtml\(currentDisplayValue\)/u);
   assert.match(clientSource, /data-ocr-field-preview-text/u);
   assert.match(clientSource, /data-ocr-preview-rotate-left/u);
   assert.match(clientSource, /data-ocr-preview-rotate-right/u);
@@ -162,6 +192,18 @@ async function main() {
   assert.match(clientSource, /signal: controller\.signal/u);
   assert.match(clientSource, /Не распознано — заполните вручную/u);
   assert.match(clientSource, /recognizedFieldPreview \|\| \(availableFiles\.length \? \{ page: 1 \} : null\)/u);
+  assert.match(clientSource, /const recognitionFiles = getStudentDocumentRecognitionPreviewFiles\(payload\);/u);
+  assert.match(clientSource, /const previewPayload = \{ \.\.\.payload, files: recognitionFiles \};/u);
+  assert.match(clientSource, /data-action="select-student-photo-area-any"/u);
+  assert.match(clientSource, /data-action="recognize-student-document-field-region"/u);
+  assert.match(clientSource, /photoApiUrl\("\/api\/students\/recognize-documents\/field-region"\)/u);
+  assert.match(clientSource, /body: JSON\.stringify\(\{ key, mimeType, base64 \}\)/u);
+  assert.match(clientSource, /title: "Источник, область и повторное распознавание"/u);
+  assert.match(clientSource, /useLabel: "Распознать это поле"/u);
+  assert.match(clientSource, /maxOutputSize: 1800/u);
+  assert.match(clientSource, /storeStudentDocumentRecognitionTargetedField\([\s\S]*?payload,[\s\S]*?field/u);
+  assert.match(clientSource, /\.filter\(\(\{ file \}\) => file && isStudentRecognitionRegionSourceFile\(file\)\)/u);
+  assert.match(clientSource, /Нет изображений, PDF или DOCX со сканами, доступных для выбора области\./u);
 
   const serverSource = fs.readFileSync(path.join(__dirname, "..", "app-server.js"), "utf8");
   assert.match(serverSource, /kind: "text"/u);

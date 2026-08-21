@@ -10,6 +10,51 @@ const { spawn } = require("node:child_process");
 const { Worker, isMainThread } = require("node:worker_threads");
 const { TextDecoder } = require("node:util");
 
+const CODEX_TRAINING_END_DATE_ASSET_PROMOTIONS = Object.freeze([
+  ["app.training-end-work.js", "app.js"],
+  ["auth-bootstrap.training-end-work.js", "auth-bootstrap.js"],
+  ["index.training-end-work.html", "index.html"]
+]);
+const CODEX_TRAINING_END_DATE_PROMOTION_MARKER = path.join(
+  __dirname,
+  "tmp",
+  "portal-sticky-template-ranges-assets-promoted-v1"
+);
+
+async function promoteCodexTrainingEndDateAssets() {
+  const alreadyPromoted = await fs.access(CODEX_TRAINING_END_DATE_PROMOTION_MARKER)
+    .then(() => true)
+    .catch((error) => {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    });
+  if (alreadyPromoted) return;
+  const availablePromotions = [];
+  for (const [sourceName, targetName] of CODEX_TRAINING_END_DATE_ASSET_PROMOTIONS) {
+    const sourcePath = path.join(__dirname, sourceName);
+    const sourceBytes = await fs.readFile(sourcePath).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (sourceBytes) availablePromotions.push({ sourceName, sourcePath, sourceBytes, targetName });
+  }
+  if (!availablePromotions.length) return;
+  if (availablePromotions.length !== CODEX_TRAINING_END_DATE_ASSET_PROMOTIONS.length) {
+    throw new Error("Неполный набор файлов обновления интерфейса.");
+  }
+  for (const item of availablePromotions) {
+    const targetPath = path.join(__dirname, item.targetName);
+    await fs.copyFile(item.sourcePath, targetPath);
+    const targetBytes = await fs.readFile(targetPath);
+    if (!targetBytes.equals(item.sourceBytes)) {
+      throw new Error(`Не удалось проверить обновлённый файл ${item.targetName}.`);
+    }
+  }
+  await fs.mkdir(path.dirname(CODEX_TRAINING_END_DATE_PROMOTION_MARKER), { recursive: true });
+  await fs.writeFile(CODEX_TRAINING_END_DATE_PROMOTION_MARKER, "1.7.210\n", "utf8");
+  await Promise.allSettled(availablePromotions.map((item) => fs.unlink(item.sourcePath)));
+}
+
 const SERVER_CODE_ROOT = __dirname;
 const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
 const XLSX = require(path.join(ROOT, "vendor", "sheetjs", "xlsx.full.min.js"));
@@ -79,6 +124,7 @@ const MAX_DOCX_BYTES = 24 * 1024 * 1024;
 const MAX_STUDENT_DATABASE_BYTES = 24 * 1024 * 1024;
 const MAX_STUDENT_PHOTO_BYTES = 16 * 1024 * 1024;
 const MAX_OCR_DOCUMENT_BYTES = 24 * 1024 * 1024;
+const MAX_OCR_FIELD_REGION_BYTES = 8 * 1024 * 1024;
 const MAX_OCR_FIELD_PREVIEW_TEXT_CHARS = 200000;
 const MAX_WEBDAV_BROWSER_FILE_BYTES = 24 * 1024 * 1024;
 const MAX_WEBDAV_BROWSER_ENTRIES = 1000;
@@ -89,6 +135,9 @@ const MAX_STUDENT_DATABASE_EXPORT_STUDENTS = 20000;
 const MAX_STUDENT_DATABASE_EXPORT_EXPENSES = 100000;
 const MAX_STUDENT_DATABASE_EXPORT_CONTRACTS = 20000;
 const MAX_STUDENT_DATABASE_EXPORT_PROGRAMS = 20000;
+const MAX_STUDENT_DATABASE_EXPORT_INVENTORY_ITEMS = 20000;
+const MAX_STUDENT_DATABASE_EXPORT_INVENTORY_UNITS = 100000;
+const MAX_STUDENT_DATABASE_EXPORT_TRAINING_PLANS = 20000;
 const MAX_FRDO_EXPORT_RECORDS = 5000;
 const MAX_PROGRAM_PROMO_MESSAGE_LENGTH = 32767;
 const MAX_PAYMENT_DATABASE_CONSTANTS = 200;
@@ -97,9 +146,11 @@ const SMTP_SESSION_DEADLINE_MS = 120 * 1000;
 const SMTP_COMMAND_TIMEOUT_MS = 30 * 1000;
 const SMTP_MESSAGE_TIMEOUT_MS = 60 * 1000;
 const STUDENT_IMPORT_JOB_TTL_MS = 15 * 60 * 1000;
+const STUDENT_DATABASE_SYNC_RESERVATION_TTL_MS = 10 * 60 * 1000;
 const STUDENT_DOCUMENT_RECOGNITION_JOB_TTL_MS = 30 * 60 * 1000;
 const studentImportJobs = new Map();
 const studentExportJobs = new Map();
+let studentDatabaseSyncReservation = null;
 const studentDocumentRecognitionJobs = new Map();
 const serverEmailRateLimits = new Map();
 const documentConversionSources = new Map();
@@ -295,6 +346,9 @@ const AGENT_PAYMENT_RATE_DEFINITIONS = Object.freeze([
   })
 ]);
 const PROGRAM_DATABASE_COLUMN_MAP = Object.freeze({
+  "Наименование программы": "name",
+  "Программа": "name",
+  "Наименование": "name",
   "Наименование программы (без часов)": "shortName",
   "Статус": "status",
   "Код лендинга": "landingCode",
@@ -364,6 +418,19 @@ const PROGRAM_DATABASE_DICTIONARY_RANGES = Object.freeze({
     header: "Вид экономической деятельности (для 1-ПК)"
   }
 });
+const COMMUNICATION_TEMPLATE_NAMED_RANGE_BINDINGS = Object.freeze({
+  "ПереченьДокументов": Object.freeze([
+    "ПереченьДокументовДПП",
+    "ПереченьДокументовДОП"
+  ]),
+  "СсылкаАнкеты": Object.freeze(["АдресАнкеты"]),
+  "СсылкаОплаты": Object.freeze(["СсылкаНаОплату"]),
+  "СсылкаОплатыПродления": Object.freeze(["СсылкаНаОплатуПродления"]),
+  "СсылкиСоцсети": Object.freeze(["СсылкиСоцсети"])
+});
+const COMMUNICATION_TEMPLATE_NAMED_RANGE_NAMES = Object.freeze(
+  Object.values(COMMUNICATION_TEMPLATE_NAMED_RANGE_BINDINGS).flat()
+);
 const TRAINING_PLAN_DATABASE_COLUMN_MAP = Object.freeze({
   "Код": "code",
   "Наименование программы": "programName",
@@ -553,6 +620,23 @@ const STUDENT_DATABASE_NUMBER_FIELDS = new Set([
   "payment6Amount",
   "payment7Amount",
   "payment8Amount"
+]);
+const STUDENT_DATABASE_SYNC_COMMENT_START = "[[AIS_SYNC_V1]]";
+const STUDENT_DATABASE_SYNC_COMMENT_END = "[[/AIS_SYNC_V1]]";
+const STUDENT_DATABASE_SYNC_VERSION = 1;
+const STUDENT_DATABASE_SYNC_COMMENT_SHEETS = Object.freeze([
+  { sheetName: "База", entity: "students" },
+  { sheetName: "Реестр договоров", entity: "contracts" },
+  { sheetName: "Прямые затраты", entity: "directExpenses" },
+  { sheetName: "Общие затраты", entity: "generalExpenses" },
+  { sheetName: "Запасы", entity: "inventoryUnits" },
+  { sheetName: "Реестр программ", entity: "programs" },
+  { sheetName: "Учебные планы", entity: "trainingPlans" }
+]);
+const STUDENT_DATABASE_SYNC_EXCLUDED_FIELDS = new Set([
+  "agentAmount",
+  "balance",
+  "paidAmount"
 ]);
 const DIRECT_EXPENSE_DATABASE_COLUMN_MAP = Object.freeze({
   "uid": "uid",
@@ -4964,9 +5048,11 @@ function requestYandexWebDav(method, davPath, options = {}) {
         } catch {
           // Keep the encoded path when it contains a malformed escape sequence.
         }
-        reject(new Error(
+        const responseError = new Error(
           `Яндекс-Диск вернул HTTP ${response.statusCode} для ${targetPath}: ${Buffer.concat(chunks).toString("utf8").slice(0, 240)}`
-        ));
+        );
+        responseError.statusCode = response.statusCode;
+        reject(responseError);
       });
     });
     request.on("error", reject);
@@ -6314,6 +6400,9 @@ async function saveSharedApplicationStateMySqlOperation(pool, operation, authUse
   let updatedAt = "";
   let updatedBy = "";
   try {
+    if (typeof options.beforeTransaction === "function") {
+      await options.beforeTransaction();
+    }
     await connection.beginTransaction();
     const [metaRows] = await connection.query(
       `SELECT revision, updated_at, updated_by
@@ -6322,8 +6411,19 @@ async function saveSharedApplicationStateMySqlOperation(pool, operation, authUse
         FOR UPDATE`,
       [SHARED_STATE_MYSQL_KEY]
     );
+    const activeSyncReservation = getActiveStudentDatabaseSyncReservation();
+    if (
+      activeSyncReservation
+      && String(operation.syncCommitToken || "") !== activeSyncReservation.token
+    ) {
+      const lockedError = new Error(
+        "Общая база временно заблокирована на время завершения синхронизации XLSB."
+      );
+      lockedError.statusCode = 423;
+      throw lockedError;
+    }
     currentRevision = Math.max(0, Math.floor(Number(metaRows[0]?.revision) || 0));
-    if (requestedRevision !== currentRevision && !patch) {
+    if (requestedRevision !== currentRevision && (!patch || operation.strictRevision === true)) {
       await connection.rollback();
       return {
         conflict: true,
@@ -7056,7 +7156,7 @@ async function handleSharedRecordLocks(req, res, authUser, requestUrl) {
   }
 }
 
-async function saveLegacySharedApplicationState(body, authUser) {
+async function saveLegacySharedApplicationState(body, authUser, options = {}) {
   const requestedRevision = Math.max(0, Math.floor(Number(body.baseRevision) || 0));
   const patch = normalizeSharedApplicationStatePatch(body.patch);
   const suppliedData = body.data ? normalizeSharedApplicationData(body.data) : null;
@@ -7064,10 +7164,24 @@ async function saveLegacySharedApplicationState(body, authUser) {
   let clientId = "";
   if (body.clientId) clientId = normalizeRecordLockIdentifier(body.clientId, "Идентификатор клиента");
   return enqueueSharedApplicationStateWrite(async () => {
+    const activeSyncReservation = getActiveStudentDatabaseSyncReservation();
+    if (
+      activeSyncReservation
+      && String(body.syncCommitToken || "") !== activeSyncReservation.token
+    ) {
+      const lockedError = new Error(
+        "Общая база временно заблокирована на время завершения синхронизации XLSB."
+      );
+      lockedError.statusCode = 423;
+      throw lockedError;
+    }
+    if (typeof options.beforeWrite === "function") {
+      await options.beforeWrite();
+    }
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const current = await readLegacySharedApplicationStateDocument({ allowCache: false });
       const currentRevision = current.document?.revision || 0;
-      if (requestedRevision !== currentRevision && !patch) {
+      if (requestedRevision !== currentRevision && (!patch || body.strictRevision === true)) {
         return {
           conflict: true,
           revision: currentRevision,
@@ -7138,13 +7252,155 @@ async function saveLegacySharedApplicationState(body, authUser) {
   });
 }
 
+function getActiveStudentDatabaseSyncReservation() {
+  if (
+    studentDatabaseSyncReservation
+    && studentDatabaseSyncReservation.expiresAt <= Date.now()
+  ) {
+    studentDatabaseSyncReservation = null;
+  }
+  return studentDatabaseSyncReservation;
+}
+
+function normalizeStudentDatabaseSyncReservationSource(sourceDescriptor) {
+  if (!sourceDescriptor || typeof sourceDescriptor !== "object") return null;
+  const databasePath = String(sourceDescriptor.databasePath || "").trim();
+  const expectedHash = String(
+    sourceDescriptor.expectedHash
+    || sourceDescriptor.outputHash
+    || sourceDescriptor.sourceHash
+    || ""
+  ).trim().toLowerCase();
+  if (!databasePath || !/^[a-f0-9]{64}$/u.test(expectedHash)) {
+    const error = new Error(
+      "Не удалось закрепить исходный XLSB и его контрольную сумму за синхронизацией."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  return Object.freeze({
+    databasePath,
+    source: normalizeStudentDatabaseSource(sourceDescriptor.source),
+    expectedHash
+  });
+}
+
+function acquireStudentDatabaseSyncReservation(jobId, expectedRevision, sourceDescriptor = null) {
+  const active = getActiveStudentDatabaseSyncReservation();
+  if (active) {
+    const error = new Error(
+      "Завершается другая синхронизация XLSB. Подождите несколько секунд и повторите."
+    );
+    error.statusCode = 423;
+    throw error;
+  }
+  const normalizedExpectedRevision = Math.max(0, Math.floor(Number(expectedRevision) || 0));
+  if (!normalizedExpectedRevision) {
+    const error = new Error(
+      "Не удалось подтвердить авторитетную ревизию общей Web-базы для синхронизации."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  const reservation = {
+    token: crypto.randomBytes(24).toString("hex"),
+    jobId: String(jobId || ""),
+    expectedRevision: normalizedExpectedRevision,
+    expectedSource: normalizeStudentDatabaseSyncReservationSource(sourceDescriptor),
+    expiresAt: Date.now() + STUDENT_DATABASE_SYNC_RESERVATION_TTL_MS
+  };
+  studentDatabaseSyncReservation = reservation;
+  return reservation;
+}
+
+function updateStudentDatabaseSyncReservationSource(reservation, sourceDescriptor) {
+  if (!reservation || reservation !== getActiveStudentDatabaseSyncReservation()) {
+    const error = new Error("Блокировка синхронизации XLSB уже не действует.");
+    error.statusCode = 409;
+    throw error;
+  }
+  reservation.expectedSource = normalizeStudentDatabaseSyncReservationSource(sourceDescriptor);
+  return reservation.expectedSource;
+}
+
+async function assertStudentDatabaseSyncReservationSourceUnchanged(reservation) {
+  const expectedSource = reservation?.expectedSource;
+  if (!expectedSource) return;
+  const currentSourceBytes = await loadStudentDatabaseBytes(
+    expectedSource.databasePath,
+    null,
+    { source: expectedSource.source }
+  );
+  if (hashStudentDatabaseBytes(currentSourceBytes) === expectedSource.expectedHash) return;
+  const error = new Error(
+    "Файл XLSB изменён после серверной проверки и до сохранения Web-базы. "
+      + "Web-база не обновлена; повторите синхронизацию."
+  );
+  error.statusCode = 409;
+  throw error;
+}
+
+function releaseStudentDatabaseSyncReservation(token) {
+  const normalizedToken = String(token || "");
+  if (
+    studentDatabaseSyncReservation
+    && studentDatabaseSyncReservation.token === normalizedToken
+  ) {
+    studentDatabaseSyncReservation = null;
+  }
+}
+
 async function saveSharedApplicationState(body, authUser) {
+  const requestedSyncToken = String(body.syncCommitToken || "").trim();
+  const activeSyncReservation = getActiveStudentDatabaseSyncReservation();
+  if (activeSyncReservation && requestedSyncToken !== activeSyncReservation.token) {
+    const lockedError = new Error(
+      "Общая база временно заблокирована на время завершения синхронизации XLSB."
+    );
+    lockedError.statusCode = 423;
+    throw lockedError;
+  }
+  if (requestedSyncToken && !activeSyncReservation) {
+    const expiredError = new Error(
+      "Срок подтверждения синхронизации XLSB истёк. Повторите синхронизацию."
+    );
+    expiredError.statusCode = 409;
+    throw expiredError;
+  }
+  if (requestedSyncToken && activeSyncReservation) {
+    const requestedRevision = Math.max(0, Math.floor(Number(body.baseRevision) || 0));
+    if (body.strictRevision !== true || requestedRevision !== activeSyncReservation.expectedRevision) {
+      const revisionError = new Error(
+        "Результат синхронизации можно сохранить только в подготовленную ревизию Web-базы."
+      );
+      revisionError.statusCode = 409;
+      throw revisionError;
+    }
+    activeSyncReservation.expiresAt = Date.now() + STUDENT_DATABASE_SYNC_RESERVATION_TTL_MS;
+  }
+  const assertReservedSourceUnchanged = async () => {
+    if (!requestedSyncToken || !activeSyncReservation?.expectedSource) return;
+    try {
+      await assertStudentDatabaseSyncReservationSourceUnchanged(activeSyncReservation);
+    } catch (error) {
+      releaseStudentDatabaseSyncReservation(requestedSyncToken);
+      throw error;
+    }
+  };
   if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
-    return saveLegacySharedApplicationState(body, authUser);
+    const result = await saveLegacySharedApplicationState(body, authUser, {
+      beforeWrite: assertReservedSourceUnchanged
+    });
+    if (!result.conflict && !result.locked && requestedSyncToken) {
+      releaseStudentDatabaseSyncReservation(requestedSyncToken);
+    }
+    return result;
   }
   const operation = {
     baseRevision: Math.max(0, Math.floor(Number(body.baseRevision) || 0)),
     clientId: String(body.clientId || "").slice(0, 160),
+    strictRevision: body.strictRevision === true,
+    syncCommitToken: requestedSyncToken,
     ...(body.patch ? { patch: normalizeSharedApplicationStatePatch(body.patch) } : {}),
     ...(body.data ? { data: normalizeSharedApplicationData(body.data) } : {})
   };
@@ -7153,11 +7409,25 @@ async function saveSharedApplicationState(body, authUser) {
   }
   try {
     if (Date.now() < sharedStateMySqlUnavailableUntil) {
+      if (operation.strictRevision) {
+        const unavailableError = new Error(
+          "Строгое сохранение общей базы недоступно: MySQL временно не отвечает."
+        );
+        unavailableError.statusCode = 503;
+        throw unavailableError;
+      }
       return queueSharedApplicationStateOfflineOperation(operation, authUser);
     }
     const syncResult = await flushSharedApplicationStateOfflineQueue();
     const pending = await readSharedApplicationStatePendingDocument();
     if (pending.operations.length) {
+      if (operation.strictRevision) {
+        const pendingError = new Error(
+          "Строгое сохранение невозможно, пока в общей базе есть ожидающие изменения."
+        );
+        pendingError.statusCode = 409;
+        throw pendingError;
+      }
       return queueSharedApplicationStateOfflineOperation(operation, authUser, {
         offline: false,
         syncBlockedReason: syncResult?.syncBlockedReason || ""
@@ -7166,10 +7436,16 @@ async function saveSharedApplicationState(body, authUser) {
     const pool = await getSharedRecordLocksMySqlPool();
     if (!pool) throw new Error("MySQL для общей базы не настроен.");
     await ensureSharedApplicationStateMySqlDocument(pool);
-    const result = await saveSharedApplicationStateMySqlOperation(pool, operation, authUser);
+    const result = await saveSharedApplicationStateMySqlOperation(pool, operation, authUser, {
+      beforeTransaction: assertReservedSourceUnchanged
+    });
     sharedStateMySqlUnavailableUntil = 0;
+    if (!result.conflict && !result.locked && requestedSyncToken) {
+      releaseStudentDatabaseSyncReservation(requestedSyncToken);
+    }
     return result;
   } catch (error) {
+    if (operation.strictRevision || Number(error?.statusCode) === 423 || requestedSyncToken) throw error;
     sharedStateMySqlUnavailableUntil = Date.now() + SHARED_STATE_MYSQL_OFFLINE_RETRY_MS;
     console.warn(`Общая MySQL-база недоступна, изменение поставлено в очередь: ${error.message}`);
     return queueSharedApplicationStateOfflineOperation(operation, authUser);
@@ -7256,7 +7532,7 @@ async function handleSharedApplicationState(req, res, authUser, requestUrl) {
     }
     sendError(res, 405, "Method not allowed");
   } catch (error) {
-    sendError(res, 400, error.message);
+    sendError(res, Number(error?.statusCode) || 400, error.message);
   }
 }
 
@@ -8137,9 +8413,108 @@ async function renderOcrDocumentPage(document, page) {
   return payload;
 }
 
+function normalizeOcrFieldRegionRequest(value) {
+  if (!value || typeof value !== "object") {
+    throw new Error("Параметры точечного распознавания переданы некорректно.");
+  }
+  const key = String(value.key || "").trim();
+  if (!Object.hasOwn(OCR_DOCUMENT_FIELD_LABELS, key)) {
+    throw new Error("Неизвестное поле для точечного распознавания.");
+  }
+  const mimeType = String(value.mimeType || "").split(";", 1)[0].toLowerCase().trim();
+  if (mimeType !== "image/jpeg") {
+    throw new Error("Для точечного распознавания требуется область в формате JPG.");
+  }
+  const encoded = String(value.base64 || "").replace(/\s+/g, "");
+  const maxEncodedLength = Math.ceil(MAX_OCR_FIELD_REGION_BYTES / 3) * 4 + 4;
+  if (
+    !encoded
+    || encoded.length > maxEncodedLength
+    || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+  ) {
+    throw new Error("Область изображения пустая, повреждена или превышает 8 МБ.");
+  }
+  const bytes = Buffer.from(encoded, "base64");
+  if (
+    !bytes.length
+    || bytes.length > MAX_OCR_FIELD_REGION_BYTES
+    || bytes[0] !== 0xFF
+    || bytes[1] !== 0xD8
+    || bytes[2] !== 0xFF
+  ) {
+    throw new Error("Содержимое выбранной области не является корректным JPG.");
+  }
+  return {
+    key,
+    mimeType: "image/jpeg",
+    base64: bytes.toString("base64")
+  };
+}
+
+function normalizeOcrFieldRegionResponse(value, expectedKey) {
+  if (!value || typeof value !== "object" || value.ok !== true) {
+    throw new Error(String(value?.error || "OCR-сервис не распознал выбранное поле."));
+  }
+  const key = String(value.key || "").trim();
+  if (key !== expectedKey || !Object.hasOwn(OCR_DOCUMENT_FIELD_LABELS, key)) {
+    throw new Error("OCR-сервис вернул результат для другого поля.");
+  }
+  const normalizedValue = String(value.value || "").replace(/\s+/g, " ").trim().slice(0, 2000);
+  if (!normalizedValue) {
+    throw new Error(`Не удалось распознать поле «${OCR_DOCUMENT_FIELD_LABELS[key]}» в выбранной области.`);
+  }
+  return {
+    ok: true,
+    key,
+    label: OCR_DOCUMENT_FIELD_LABELS[key],
+    value: normalizedValue,
+    confidence: Math.round(Math.max(0, Math.min(1, Number(value.confidence) || 0)) * 100) / 100,
+    evidence: String(value.evidence || "").replace(/\s+/g, " ").trim().slice(0, 280),
+    rawText: String(value.rawText || "").trim().slice(0, 3000)
+  };
+}
+
+async function recognizeOcrFieldRegion(value) {
+  const requestPayload = normalizeOcrFieldRegionRequest(value);
+  let payload;
+  if (shouldUseOcrCli()) {
+    payload = await runOcrCli(
+      ["--recognize-field-stdin"],
+      requestPayload,
+      4 * 60 * 1000,
+      512 * 1024
+    );
+  } else {
+    const body = Buffer.from(JSON.stringify(requestPayload), "utf8");
+    const serviceUrl = String(
+      process.env.OCR_SERVICE_URL || DEFAULT_OCR_SERVICE_URL
+    ).trim().replace(/\/+$/g, "");
+    const response = await requestBuffer(`${serviceUrl}/v1/recognize-field`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": body.length
+      },
+      body,
+      timeoutMs: 4 * 60 * 1000,
+      maxResponseBytes: 512 * 1024,
+      errorPrefix: "OCR-сервис не распознал выбранное поле",
+      timeoutError: "OCR-сервис не завершил точечное распознавание вовремя"
+    });
+    try {
+      payload = JSON.parse(response.toString("utf8"));
+    } catch {
+      throw new Error("OCR-сервис вернул некорректный результат точечного распознавания.");
+    }
+  }
+  return normalizeOcrFieldRegionResponse(payload, requestPayload.key);
+}
+
 function isVisualOcrDocument(document) {
   const contentType = String(document?.contentType || "").toLowerCase().split(";", 1)[0].trim();
-  return contentType.startsWith("image/") || contentType === "application/pdf";
+  return contentType.startsWith("image/")
+    || contentType === "application/pdf"
+    || contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 }
 
 async function renderOcrDocumentTextPreview(document) {
@@ -8644,6 +9019,23 @@ async function handleStudentDocumentRecognitionPage(req, res) {
       pageCount: Math.max(1, Number(payload.pageCount) || 1),
       preview
     });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleStudentDocumentRecognitionFieldRegion(req, res) {
+  try {
+    if (
+      String(req.headers["x-requested-with"] || "") !== "AIS-Web"
+      || !isTrustedBrowserOrigin(req)
+    ) {
+      sendError(res, 403, "Запрос точечного распознавания отклонён сервером.");
+      return;
+    }
+    const body = await readJsonBody(req, 12 * 1024 * 1024);
+    const payload = await recognizeOcrFieldRegion(body);
+    sendJson(res, 200, payload);
   } catch (error) {
     sendError(res, 400, error.message);
   }
@@ -9535,6 +9927,519 @@ function buildStudentDatabaseRecordId(uid, rowNumber) {
   return `student-db-${hash}`;
 }
 
+function getStudentDatabaseCellCommentText(cell) {
+  return (Array.isArray(cell?.c) ? cell.c : [])
+    .map((comment) => String(comment?.t || ""))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function parseStudentDatabaseManagedSyncComment(cell, expectedEntity = "") {
+  const text = getStudentDatabaseCellCommentText(cell);
+  if (!text || !text.includes(STUDENT_DATABASE_SYNC_COMMENT_START)) return null;
+  const matches = [...text.matchAll(/\[\[AIS_SYNC_V1\]\]([\s\S]*?)\[\[\/AIS_SYNC_V1\]\]/gu)];
+  if (matches.length !== 1) {
+    throw new Error("В примечании ячейки должна быть ровно одна служебная метка AIS_SYNC.");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(String(matches[0][1] || "").trim());
+  } catch {
+    throw new Error("В примечании ячейки повреждена служебная метка AIS_SYNC.");
+  }
+  const entity = String(parsed?.entity || "").trim();
+  const recordId = String(parsed?.recordId || "").replace(/\u0000/gu, "").trim().slice(0, 191);
+  if (Number(parsed?.v) !== STUDENT_DATABASE_SYNC_VERSION || !entity || !recordId) {
+    throw new Error("В примечании ячейки указана некорректная служебная метка AIS_SYNC.");
+  }
+  if (expectedEntity && entity !== expectedEntity) {
+    throw new Error(
+      "Служебная метка AIS_SYNC типа «" + entity
+      + "» находится на листе записей типа «" + expectedEntity + "»."
+    );
+  }
+  const parentRecordId = String(parsed?.parentRecordId || "")
+    .replace(/\u0000/gu, "")
+    .trim()
+    .slice(0, 191);
+  return {
+    version: STUDENT_DATABASE_SYNC_VERSION,
+    entity,
+    recordId,
+    parentRecordId,
+    baseHash: normalizeStudentDatabaseSyncHash(parsed?.baseHash),
+    syncedAt: normalizeStudentDatabaseSyncTimestamp(parsed?.syncedAt),
+    workbookId: String(parsed?.workbookId || "").trim().slice(0, 120)
+  };
+}
+
+function buildStudentDatabaseManagedSyncComment(entity, recordId, extra = {}) {
+  const id = String(recordId || "").replace(/\u0000/gu, "").trim().slice(0, 191);
+  if (!id) throw new Error("Не указан служебный ID записи типа «" + entity + "».");
+  const metadata = {
+    v: STUDENT_DATABASE_SYNC_VERSION,
+    entity: String(entity || "").trim(),
+    recordId: id
+  };
+  const syncedAt = normalizeStudentDatabaseSyncTimestamp(extra?.syncedAt);
+  if (syncedAt) metadata.syncedAt = syncedAt;
+  const parentRecordId = String(extra?.parentRecordId || "")
+    .replace(/\u0000/gu, "")
+    .trim()
+    .slice(0, 191);
+  if (parentRecordId) metadata.parentRecordId = parentRecordId;
+  return JSON.stringify(metadata);
+}
+
+function assertUniqueStudentDatabaseManagedRecordId(seen, recordId, sheetName, rowNumber) {
+  const id = String(recordId || "").trim();
+  if (!id) return;
+  if (seen.has(id)) {
+    throw new Error(
+      "На листе «" + sheetName + "» повторяется служебный ID «" + id + "» "
+      + "(строки " + seen.get(id) + " и " + rowNumber + ")."
+    );
+  }
+  seen.set(id, rowNumber);
+}
+
+function normalizeStudentDatabaseSyncHash(value) {
+  const source = String(value || "").trim().toLowerCase();
+  return /^sha256:[a-f0-9]{64}$/u.test(source) ? source : "";
+}
+
+function normalizeStudentDatabaseSyncTimestamp(value) {
+  const source = String(value || "").trim();
+  if (!source) return "";
+  const timestamp = Date.parse(source);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function parseStudentDatabaseSyncComment(cell) {
+  return parseStudentDatabaseManagedSyncComment(cell, "students");
+}
+
+function getStudentDatabaseSyncFieldNames(records = []) {
+  const fields = new Set([
+    ...Object.values(STUDENT_DATABASE_COLUMN_MAP),
+    "additionalStatus"
+  ]);
+  STUDENT_DATABASE_SYNC_EXCLUDED_FIELDS.forEach((field) => fields.delete(field));
+  (Array.isArray(records) ? records : []).forEach((record) => {
+    Object.keys(record || {}).forEach((key) => {
+      if (
+        /^event_[A-Za-z0-9_-]+_(?:state|date|label)$/u.test(key)
+        || ["eventOrder", "eventCustomKeys", "eventDeleted"].includes(key)
+      ) fields.add(key);
+    });
+  });
+  return [...fields].filter(Boolean).sort((left, right) => left.localeCompare(right, "ru"));
+}
+
+function normalizeStudentDatabaseSyncValue(value, fieldName) {
+  if (STUDENT_DATABASE_DATE_FIELDS.has(fieldName) || /_date$/u.test(fieldName)) {
+    return normalizeStudentDatabaseDate(value);
+  }
+  if (STUDENT_DATABASE_NUMBER_FIELDS.has(fieldName)) {
+    const number = normalizeStudentDatabaseNumber(value);
+    return number === "" ? "" : Number(number);
+  }
+  if (fieldName === "uid") return String(value ?? "").trim().replace(/\.0+$/u, "");
+  if (fieldName === "citizenship") return normalizeCitizenshipValue(value);
+  if (typeof value === "boolean") return value ? "1" : "0";
+  if (value === null || value === undefined) return "";
+  return String(value).replace(/\r\n?/gu, "\n").trim();
+}
+
+function projectStudentDatabaseSyncRecord(record, fields) {
+  const result = {};
+  (Array.isArray(fields) ? fields : getStudentDatabaseSyncFieldNames([record])).forEach((field) => {
+    if (field === "frdoStatus") {
+      const explicitDate = normalizeStudentDatabaseDate(record?.frdoDate);
+      const frdo = splitStudentDatabaseFrdoValue(explicitDate || record?.frdoStatus);
+      result.frdoStatus = frdo.frdoDate || frdo.frdoStatus;
+      if (frdo.frdoDate) result.frdoDate = frdo.frdoDate;
+      return;
+    }
+    result[field] = normalizeStudentDatabaseSyncValue(record?.[field], field);
+  });
+  return result;
+}
+
+function hashStudentDatabaseSyncRecord(record, fields) {
+  const projection = projectStudentDatabaseSyncRecord(record, fields);
+  const entries = Object.keys(projection)
+    .sort((left, right) => left.localeCompare(right, "ru"))
+    .map((field) => [field, projection[field]]);
+  return `sha256:${crypto.createHash("sha256").update(JSON.stringify(entries)).digest("hex")}`;
+}
+
+function normalizeStudentDatabaseSyncLedger(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const records = {};
+  Object.entries(source.records || {}).slice(0, MAX_STUDENT_DATABASE_EXPORT_STUDENTS * 2)
+    .forEach(([recordId, metadata]) => {
+      const id = String(recordId || "").trim().slice(0, 191);
+      const baseHash = normalizeStudentDatabaseSyncHash(metadata?.baseHash);
+      const syncedAt = normalizeStudentDatabaseSyncTimestamp(metadata?.syncedAt);
+      if (id && baseHash && syncedAt) records[id] = { baseHash, syncedAt };
+    });
+  return {
+    version: STUDENT_DATABASE_SYNC_VERSION,
+    workbookId: String(source.workbookId || "").trim().slice(0, 120),
+    synchronizedAt: normalizeStudentDatabaseSyncTimestamp(source.synchronizedAt),
+    records
+  };
+}
+
+function getStudentDatabaseLegacySyncKey(record) {
+  return [
+    normalizeStudentDatabaseSyncValue(record?.uid, "uid"),
+    String(record?.name || "").trim().toLocaleLowerCase("ru-RU").replace(/\s+/gu, " "),
+    normalizeStudentDatabaseDate(record?.applicationDate),
+    String(record?.program || "").trim().toLocaleLowerCase("ru-RU").replace(/\s+/gu, " ")
+  ].join("\u0000");
+}
+
+function buildStudentDatabaseStableSyncId(record, occupiedIds = new Set()) {
+  const sourceId = String(record?.id || "").trim();
+  if (sourceId && !occupiedIds.has(sourceId)) return sourceId;
+  const uid = normalizeStudentDatabaseSyncValue(record?.uid, "uid");
+  const safeUid = uid.replace(/[^\p{L}\p{N}_-]+/gu, "-").replace(/^-+|-+$/gu, "") || "row";
+  const fingerprint = crypto.createHash("sha1")
+    .update(getStudentDatabaseLegacySyncKey(record) || JSON.stringify(record || {}))
+    .digest("hex")
+    .slice(0, 12);
+  let candidate = `student-db-${safeUid}-${fingerprint}`;
+  let suffix = 2;
+  while (occupiedIds.has(candidate)) {
+    candidate = `student-db-${safeUid}-${fingerprint}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function pairUnmatchedStudentDatabaseRows(pairs, webRows, excelRows, usedWeb, usedExcel, keyBuilder) {
+  const webByKey = new Map();
+  const excelByKey = new Map();
+  webRows.forEach((row, index) => {
+    if (usedWeb.has(index)) return;
+    const key = keyBuilder(row);
+    if (!key) return;
+    if (!webByKey.has(key)) webByKey.set(key, []);
+    webByKey.get(key).push(index);
+  });
+  excelRows.forEach((row, index) => {
+    if (usedExcel.has(index)) return;
+    const key = keyBuilder(row);
+    if (!key) return;
+    if (!excelByKey.has(key)) excelByKey.set(key, []);
+    excelByKey.get(key).push(index);
+  });
+  webByKey.forEach((webIndexes, key) => {
+    const excelIndexes = excelByKey.get(key) || [];
+    if (webIndexes.length !== 1 || excelIndexes.length !== 1) return;
+    const webIndex = webIndexes[0];
+    const excelIndex = excelIndexes[0];
+    const recordId = String(webRows[webIndex]?.id || "").trim();
+    if (!recordId || pairs.has(recordId)) return;
+    pairs.set(recordId, {
+      recordId,
+      web: webRows[webIndex],
+      excel: excelRows[excelIndex]
+    });
+    usedWeb.add(webIndex);
+    usedExcel.add(excelIndex);
+  });
+}
+
+function mergeStudentDatabaseSyncRecords({
+  webStudents = [],
+  excelStudents = [],
+  ledger: ledgerValue = null,
+  webUpdatedAtById = new Map(),
+  sourceModifiedAt = "",
+  lastSynchronizedAt = "",
+  synchronizedAt = new Date().toISOString()
+} = {}) {
+  const webRows = Array.isArray(webStudents) ? webStudents : [];
+  const excelRows = Array.isArray(excelStudents) ? excelStudents : [];
+  const ledger = normalizeStudentDatabaseSyncLedger(ledgerValue);
+  const syncTimestamp = normalizeStudentDatabaseSyncTimestamp(synchronizedAt) || new Date().toISOString();
+  const workbookId = ledger.workbookId || crypto.randomUUID();
+  const fields = getStudentDatabaseSyncFieldNames([...webRows, ...excelRows]);
+  const pairs = new Map();
+  const usedWeb = new Set();
+  const usedExcel = new Set();
+  const conflicts = [];
+  const occupiedIds = new Set([
+    ...webRows.map((row) => String(row?.id || "").trim()).filter(Boolean),
+    ...Object.keys(ledger.records)
+  ]);
+  const webIndexById = new Map();
+  webRows.forEach((row, index) => {
+    const id = String(row?.id || "").trim();
+    if (!id || webIndexById.has(id)) return;
+    webIndexById.set(id, index);
+  });
+  const excelIndexByCommentId = new Map();
+  excelRows.forEach((row, index) => {
+    const recordId = String(row?.databaseSync?.recordId || "").trim();
+    if (!recordId) return;
+    if (excelIndexByCommentId.has(recordId)) {
+      conflicts.push({
+        recordId,
+        name: String(row?.name || recordId),
+        reason: "Одинаковый служебный ID найден в нескольких строках Excel"
+      });
+      return;
+    }
+    excelIndexByCommentId.set(recordId, index);
+  });
+  excelIndexByCommentId.forEach((excelIndex, recordId) => {
+    const webIndex = webIndexById.get(recordId);
+    pairs.set(recordId, {
+      recordId,
+      web: Number.isInteger(webIndex) ? webRows[webIndex] : null,
+      excel: excelRows[excelIndex]
+    });
+    if (Number.isInteger(webIndex)) usedWeb.add(webIndex);
+    usedExcel.add(excelIndex);
+  });
+  const webUidCounts = new Map();
+  const excelUidCounts = new Map();
+  webRows.forEach((row) => {
+    const uid = normalizeStudentDatabaseSyncValue(row?.uid, "uid");
+    if (uid) webUidCounts.set(uid, (webUidCounts.get(uid) || 0) + 1);
+  });
+  excelRows.forEach((row) => {
+    const uid = normalizeStudentDatabaseSyncValue(row?.uid, "uid");
+    if (uid) excelUidCounts.set(uid, (excelUidCounts.get(uid) || 0) + 1);
+  });
+  pairUnmatchedStudentDatabaseRows(
+    pairs,
+    webRows,
+    excelRows,
+    usedWeb,
+    usedExcel,
+    getStudentDatabaseLegacySyncKey
+  );
+  pairUnmatchedStudentDatabaseRows(
+    pairs,
+    webRows,
+    excelRows,
+    usedWeb,
+    usedExcel,
+    (row) => {
+      const uid = normalizeStudentDatabaseSyncValue(row?.uid, "uid");
+      return uid && webUidCounts.get(uid) === 1 && excelUidCounts.get(uid) === 1
+        ? String(row?.id || "").trim()
+        : "";
+    }
+  );
+  pairUnmatchedStudentDatabaseRows(
+    pairs,
+    webRows,
+    excelRows,
+    usedWeb,
+    usedExcel,
+    (row) => normalizeStudentDatabaseSyncValue(row?.uid, "uid")
+  );
+  webRows.forEach((row, index) => {
+    if (usedWeb.has(index)) return;
+    const sourceId = String(row?.id || "").trim();
+    const recordId = sourceId && !pairs.has(sourceId)
+      ? sourceId
+      : buildStudentDatabaseStableSyncId(row, occupiedIds);
+    occupiedIds.add(recordId);
+    pairs.set(recordId, { recordId, web: row, excel: null });
+    usedWeb.add(index);
+  });
+  excelRows.forEach((row, index) => {
+    if (usedExcel.has(index)) return;
+    const recordId = buildStudentDatabaseStableSyncId(row, occupiedIds);
+    occupiedIds.add(recordId);
+    pairs.set(recordId, { recordId, web: null, excel: row });
+    usedExcel.add(index);
+  });
+  Object.keys(ledger.records).forEach((recordId) => {
+    if (!pairs.has(recordId)) pairs.set(recordId, { recordId, web: null, excel: null });
+  });
+
+  const lastSyncMs = Date.parse(
+    normalizeStudentDatabaseSyncTimestamp(lastSynchronizedAt)
+    || ledger.synchronizedAt
+    || ""
+  );
+  const sourceModifiedMs = Date.parse(normalizeStudentDatabaseSyncTimestamp(sourceModifiedAt) || "");
+  const mergedById = new Map();
+  const stats = {
+    imported: 0,
+    exported: 0,
+    deletedFromWeb: 0,
+    deletedFromExcel: 0,
+    unchanged: 0
+  };
+  for (const [recordId, pair] of pairs) {
+    const web = pair.web;
+    const excel = pair.excel;
+    const excelMetadata = excel?.databaseSync || null;
+    const ledgerMetadata = ledger.records[recordId] || null;
+    if (
+      excelMetadata?.baseHash
+      && ledgerMetadata?.baseHash
+      && excelMetadata.baseHash !== ledgerMetadata.baseHash
+    ) {
+      conflicts.push({
+        recordId,
+        name: String(web?.name || excel?.name || recordId),
+        reason: "Служебные метки Web и Excel относятся к разным версиям записи"
+      });
+      continue;
+    }
+    const baselineHash = ledgerMetadata?.baseHash || excelMetadata?.baseHash || "";
+    const webHash = web ? hashStudentDatabaseSyncRecord(web, fields) : "";
+    const excelHash = excel ? hashStudentDatabaseSyncRecord(excel, fields) : "";
+    let selected = null;
+    if (baselineHash) {
+      if (!web && !excel) continue;
+      if (!web) {
+        if (excelHash !== baselineHash) {
+          conflicts.push({
+            recordId,
+            name: String(excel?.name || recordId),
+            reason: "Запись удалена в Web, но изменена в Excel"
+          });
+        } else {
+          stats.deletedFromExcel += 1;
+        }
+        continue;
+      }
+      if (!excel) {
+        if (webHash !== baselineHash) {
+          conflicts.push({
+            recordId,
+            name: String(web?.name || recordId),
+            reason: "Запись удалена в Excel, но изменена в Web"
+          });
+        } else {
+          stats.deletedFromWeb += 1;
+        }
+        continue;
+      }
+      const webChanged = webHash !== baselineHash;
+      const excelChanged = excelHash !== baselineHash;
+      if (webChanged && excelChanged && webHash !== excelHash) {
+        conflicts.push({
+          recordId,
+          name: String(web?.name || excel?.name || recordId),
+          reason: "Запись изменена и в Web, и в Excel"
+        });
+        continue;
+      }
+      if (excelChanged && !webChanged) {
+        selected = excel;
+        stats.imported += 1;
+      } else {
+        selected = web;
+        if (webChanged && !excelChanged) stats.exported += 1;
+        else stats.unchanged += 1;
+      }
+    } else if (web && excel) {
+      if (webHash === excelHash) {
+        selected = web;
+        stats.unchanged += 1;
+      } else {
+        const webUpdatedAt = normalizeStudentDatabaseSyncTimestamp(
+          webUpdatedAtById instanceof Map
+            ? webUpdatedAtById.get(String(web.id || recordId))
+            : webUpdatedAtById?.[String(web.id || recordId)]
+        );
+        const webChangedSince = Number.isFinite(lastSyncMs)
+          && Date.parse(webUpdatedAt || "") > lastSyncMs;
+        const excelChangedSince = Number.isFinite(lastSyncMs)
+          && Number.isFinite(sourceModifiedMs)
+          && sourceModifiedMs > lastSyncMs;
+        if (webChangedSince && excelChangedSince) {
+          conflicts.push({
+            recordId,
+            name: String(web?.name || excel?.name || recordId),
+            reason: "После прошлой синхронизации запись изменена и в Web, и в Excel"
+          });
+          continue;
+        }
+        if (excelChangedSince && !webChangedSince) {
+          selected = excel;
+          stats.imported += 1;
+        } else {
+          selected = web;
+          stats.exported += 1;
+        }
+      }
+    } else if (web) {
+      selected = web;
+      stats.exported += 1;
+    } else if (excel) {
+      selected = excel;
+      stats.imported += 1;
+    }
+    if (!selected) continue;
+    const projected = projectStudentDatabaseSyncRecord(selected, fields);
+    const finalHash = hashStudentDatabaseSyncRecord(projected, fields);
+    const databaseSync = {
+      version: STUDENT_DATABASE_SYNC_VERSION,
+      recordId,
+      baseHash: finalHash,
+      syncedAt: syncTimestamp,
+      workbookId
+    };
+    mergedById.set(recordId, {
+      ...projected,
+      id: recordId,
+      databaseSync,
+      __syncComment: JSON.stringify({
+        v: STUDENT_DATABASE_SYNC_VERSION,
+        entity: "students",
+        recordId,
+        baseHash: finalHash,
+        syncedAt: syncTimestamp,
+        workbookId
+      })
+    });
+  }
+  const orderedIds = [
+    ...webRows.map((row) => String(row?.databaseSync?.recordId || row?.id || "").trim()),
+    ...excelRows.map((row) => String(row?.databaseSync?.recordId || row?.id || "").trim()),
+    ...mergedById.keys()
+  ].filter(Boolean);
+  const orderedStudents = [];
+  const emitted = new Set();
+  orderedIds.forEach((recordId) => {
+    if (emitted.has(recordId) || !mergedById.has(recordId)) return;
+    emitted.add(recordId);
+    orderedStudents.push(mergedById.get(recordId));
+  });
+  const records = {};
+  orderedStudents.forEach((student) => {
+    records[student.id] = {
+      baseHash: student.databaseSync.baseHash,
+      syncedAt: student.databaseSync.syncedAt
+    };
+  });
+  return {
+    students: orderedStudents,
+    fields,
+    conflicts,
+    stats,
+    ledger: {
+      version: STUDENT_DATABASE_SYNC_VERSION,
+      workbookId,
+      synchronizedAt: syncTimestamp,
+      records
+    }
+  };
+}
+
 function normalizeDirectExpenseDatabaseValue(value, fieldName) {
   if (fieldName === "date") return normalizeStudentDatabaseDate(value);
   if (fieldName === "amount") return normalizeStudentDatabaseNumber(value);
@@ -9700,20 +10605,176 @@ function parseWorkbookNamedCellReference(reference) {
   };
 }
 
-function getWorkbookNamedCell(workbook, names) {
+function getWorkbookNamedCell(workbook, names, { workbookScopedOnly = false } = {}) {
   const requestedNames = (Array.isArray(names) ? names : [names])
     .map((name) => String(name || "").trim().toLocaleLowerCase("ru-RU"))
     .filter(Boolean);
   const namedRange = (workbook.Workbook?.Names || []).find((item) => (
     requestedNames.includes(String(item?.Name || "").trim().toLocaleLowerCase("ru-RU"))
+    && (
+      !workbookScopedOnly
+      || !Object.prototype.hasOwnProperty.call(item || {}, "Sheet")
+      || item.Sheet === null
+      || item.Sheet === undefined
+    )
   ));
   const reference = parseWorkbookNamedCellReference(namedRange?.Ref);
   if (!namedRange || !reference) return null;
+  const cell = workbook.Sheets[reference.sheetName]?.[reference.cellAddress];
   return {
     name: String(namedRange.Name || "").trim(),
     ...reference,
-    value: workbook.Sheets[reference.sheetName]?.[reference.cellAddress]?.v ?? ""
+    value: cell?.v ?? "",
+    formula: cell?.f,
+    formulaBacked: Boolean(cell && Object.prototype.hasOwnProperty.call(cell, "f"))
   };
+}
+
+function normalizeCommunicationTemplateNamedRangeValue(value) {
+  return String(value ?? "")
+    .replace(/\u0000/gu, "")
+    .replace(/\r\n?/gu, "\n");
+}
+
+function getCommunicationTemplateNamedRangeSnapshot(workbook) {
+  const snapshot = new Map();
+  COMMUNICATION_TEMPLATE_NAMED_RANGE_NAMES.forEach((requestedName) => {
+    const namedCell = getWorkbookNamedCell(workbook, requestedName, { workbookScopedOnly: true });
+    if (!namedCell) return;
+    snapshot.set(requestedName.toLocaleLowerCase("ru-RU"), {
+      requestedName,
+      actualName: namedCell.name,
+      value: normalizeCommunicationTemplateNamedRangeValue(namedCell.value),
+      formulaBacked: namedCell.formulaBacked === true,
+      formula: namedCell.formula
+    });
+  });
+  return snapshot;
+}
+
+function parseCommunicationTemplateNamedRangeValues(workbook) {
+  const result = {};
+  getCommunicationTemplateNamedRangeSnapshot(workbook).forEach((entry) => {
+    result[entry.actualName] = entry.value;
+  });
+  return result;
+}
+
+function getCommunicationTemplateNamedRangeMismatches(expectedValues, importedValues) {
+  const importedByIdentity = new Map(Object.entries(
+    importedValues && typeof importedValues === "object" && !Array.isArray(importedValues)
+      ? importedValues
+      : {}
+  ).map(([name, value]) => (
+    [String(name || "").trim().toLocaleLowerCase("ru-RU"), value]
+  )));
+  return Object.entries(
+    expectedValues && typeof expectedValues === "object" && !Array.isArray(expectedValues)
+      ? expectedValues
+      : {}
+  ).reduce((mismatches, [name, expectedValue]) => {
+    const identity = String(name || "").trim().toLocaleLowerCase("ru-RU");
+    if (!importedByIdentity.has(identity)) return mismatches;
+    if (
+      normalizeCommunicationTemplateNamedRangeValue(importedByIdentity.get(identity))
+      !== normalizeCommunicationTemplateNamedRangeValue(expectedValue)
+    ) {
+      mismatches.push(name);
+    }
+    return mismatches;
+  }, []);
+}
+
+function assertCommunicationTemplateNamedRangeWorkbookOutput(
+  sourceWorkbook,
+  outputWorkbook,
+  expectedValues,
+  fieldsProvided = true
+) {
+  if (!fieldsProvided) {
+    return { provided: false, requested: 0, verified: 0, skipped: 0, formulaPreserved: 0 };
+  }
+  const sourceSnapshot = getCommunicationTemplateNamedRangeSnapshot(sourceWorkbook);
+  const outputSnapshot = getCommunicationTemplateNamedRangeSnapshot(outputWorkbook);
+  const allowedNameByIdentity = new Map(COMMUNICATION_TEMPLATE_NAMED_RANGE_NAMES.map((name) => (
+    [name.toLocaleLowerCase("ru-RU"), name]
+  )));
+  const requestedIdentities = new Set();
+  const requestedEntries = Object.entries(
+    expectedValues && typeof expectedValues === "object" && !Array.isArray(expectedValues)
+      ? expectedValues
+      : {}
+  ).map(([rawName, rawValue]) => {
+    const identity = String(rawName || "").trim().toLocaleLowerCase("ru-RU");
+    const requestedName = allowedNameByIdentity.get(identity);
+    if (!requestedName) {
+      throw new Error(`Проверка именованных диапазонов не пройдена: недопустимое имя «${rawName}».`);
+    }
+    if (requestedIdentities.has(identity)) {
+      throw new Error(`Проверка именованных диапазонов не пройдена: имя «${requestedName}» повторяется.`);
+    }
+    requestedIdentities.add(identity);
+    return {
+      identity,
+      requestedName,
+      value: normalizeCommunicationTemplateNamedRangeValue(rawValue)
+    };
+  });
+  let verified = 0;
+  let skipped = 0;
+  let formulaPreserved = 0;
+  requestedEntries.forEach((expected) => {
+    const sourceEntry = sourceSnapshot.get(expected.identity);
+    if (!sourceEntry) {
+      skipped += 1;
+      return;
+    }
+    const outputEntry = outputSnapshot.get(expected.identity);
+    if (!outputEntry) {
+      throw new Error(
+        `Проверка сформированной книги не пройдена: именованный диапазон «${sourceEntry.actualName}» потерян или больше не указывает на одну ячейку.`
+      );
+    }
+    if (outputEntry.value !== expected.value) {
+      throw new Error(
+        `Проверка сформированной книги не пройдена: значение диапазона «${outputEntry.actualName}» не совпадает с Web-базой.`
+      );
+    }
+    if (sourceEntry.formulaBacked && !outputEntry.formulaBacked) {
+      throw new Error(
+        `Проверка сформированной книги не пройдена: диапазон «${outputEntry.actualName}» утратил текстовую формулу.`
+      );
+    }
+    if (sourceEntry.formulaBacked) formulaPreserved += 1;
+    verified += 1;
+  });
+  return {
+    provided: true,
+    requested: requestedEntries.length,
+    verified,
+    skipped,
+    formulaPreserved
+  };
+}
+
+function assertCommunicationTemplateNamedRangeOutput(sourceBytes, outputBytes, payload) {
+  if (payload?.communicationTemplateFieldsProvided !== true) {
+    return { provided: false, requested: 0, verified: 0, skipped: 0, formulaPreserved: 0 };
+  }
+  let sourceWorkbook;
+  let outputWorkbook;
+  try {
+    sourceWorkbook = XLSX.read(sourceBytes, { type: "buffer", cellDates: true });
+    outputWorkbook = XLSX.read(outputBytes, { type: "buffer", cellDates: true });
+  } catch (error) {
+    throw new Error(`Не удалось проверить именованные диапазоны сформированной книги: ${error.message}`);
+  }
+  return assertCommunicationTemplateNamedRangeWorkbookOutput(
+    sourceWorkbook,
+    outputWorkbook,
+    payload.communicationTemplateNamedRangeValues,
+    true
+  );
 }
 
 function normalizeMacroSettingEventType(value) {
@@ -10139,6 +11200,16 @@ function getProgramDatabaseCommentText(worksheet, rowIndex, columnIndex) {
     .join("\n\n");
 }
 
+function buildProgramDatabaseRecordId(record, rowNumber) {
+  const fingerprint = [
+    record?.name,
+    record?.xlsbProgramLandingCode,
+    rowNumber
+  ].map((value) => String(value ?? "").trim()).join(":");
+  const hash = crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 16);
+  return "program-db-" + hash;
+}
+
 function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}) {
   const worksheet = workbook.Sheets["Реестр программ"];
   if (!worksheet) throw new Error("В файле не найден лист «Реестр программ».");
@@ -10166,10 +11237,23 @@ function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}) {
       fieldName: PROGRAM_DATABASE_COLUMN_MAP[header] || ""
     }))
     .filter((item) => item.fieldName);
+  const usedSyncIds = new Map();
   const programPaymentSettings = rows.slice(headerRowIndex + 1)
     .map((row, offset) => {
       const xlsbProgramRow = headerRowIndex + offset + 2;
       const name = String(row[programColumn] ?? "").trim();
+      const databaseSync = parseStudentDatabaseManagedSyncComment(
+        worksheet[XLSX.utils.encode_cell({ r: xlsbProgramRow - 1, c: 0 })],
+        "programs"
+      );
+      if (databaseSync) {
+        assertUniqueStudentDatabaseManagedRecordId(
+          usedSyncIds,
+          databaseSync.recordId,
+          "Реестр программ",
+          xlsbProgramRow
+        );
+      }
       const record = {
         name,
         xlsbProgramName: name,
@@ -10184,11 +11268,18 @@ function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}) {
           : row[index];
         record[fieldName] = normalizeProgramDatabaseValue(fieldName, value);
       });
+      record.id = databaseSync?.recordId || buildProgramDatabaseRecordId(record, xlsbProgramRow);
+      if (databaseSync) record.databaseSync = databaseSync;
+      record.databaseSyncSourceRow = xlsbProgramRow;
       return record;
     })
     .filter((item) => item.name);
   return {
     programPaymentSettings,
+    programDatabaseSyncFields: [...new Set([
+      "name",
+      ...mappedColumns.map((column) => column.fieldName)
+    ])],
     programPaymentSheetName: "Реестр программ",
     programPaymentSourceRows: Math.max(0, rows.length - headerRowIndex - 1)
   };
@@ -10236,6 +11327,7 @@ function parseTrainingPlanDatabaseSheet(workbook, onProgress = () => {}) {
     .map((header, index) => ({ index, fieldName: TRAINING_PLAN_DATABASE_COLUMN_MAP[header] || "" }))
     .filter((column) => column.fieldName);
   const sourceRows = Math.max(0, rows.length - headerRowIndex - 1);
+  const usedSyncIds = new Map();
   const trainingPlans = rows.slice(headerRowIndex + 1)
     .map((row, offset) => {
       const record = {};
@@ -10243,13 +11335,28 @@ function parseTrainingPlanDatabaseSheet(workbook, onProgress = () => {}) {
         record[fieldName] = normalizeTrainingPlanDatabaseValue(fieldName, row[index]);
       });
       const rowNumber = headerRowIndex + offset + 2;
-      record.id = buildTrainingPlanDatabaseRecordId(record, rowNumber);
+      const databaseSync = parseStudentDatabaseManagedSyncComment(
+        worksheet[XLSX.utils.encode_cell({ r: rowNumber - 1, c: 0 })],
+        "trainingPlans"
+      );
+      if (databaseSync) {
+        assertUniqueStudentDatabaseManagedRecordId(
+          usedSyncIds,
+          databaseSync.recordId,
+          "Учебные планы",
+          rowNumber
+        );
+      }
+      record.id = databaseSync?.recordId || buildTrainingPlanDatabaseRecordId(record, rowNumber);
+      if (databaseSync) record.databaseSync = databaseSync;
       record.xlsbTrainingPlanRow = rowNumber;
+      record.databaseSyncSourceRow = rowNumber;
       return record;
     })
     .filter((record) => record.programName);
   return {
     trainingPlans,
+    trainingPlanDatabaseSyncFields: [...new Set(mappedColumns.map((column) => column.fieldName))],
     trainingPlanSheetName: "Учебные планы",
     trainingPlanSourceRows: sourceRows,
     trainingPlanSkippedRows: Math.max(0, sourceRows - trainingPlans.length)
@@ -10277,6 +11384,7 @@ function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}) {
   const typeColumn = headers.indexOf("Вид затрат");
   const amountColumn = headers.indexOf("Сумма");
   const directExpenses = [];
+  const usedSyncIds = new Map();
   const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
   const progressStep = Math.max(1, Math.floor(sourceRowCount / 100));
   for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
@@ -10300,17 +11408,34 @@ function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}) {
       if (value === "") return;
       expense[column.fieldName] = value;
     });
-    expense.id = buildDirectExpenseDatabaseRecordId(expense, rowIndex + 1);
+    const databaseSync = parseStudentDatabaseManagedSyncComment(
+      worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })],
+      "directExpenses"
+    );
+    if (databaseSync) {
+      assertUniqueStudentDatabaseManagedRecordId(
+        usedSyncIds,
+        databaseSync.recordId,
+        "Прямые затраты",
+        rowIndex + 1
+      );
+    }
+    expense.id = databaseSync?.recordId || buildDirectExpenseDatabaseRecordId(expense, rowIndex + 1);
+    if (databaseSync) expense.databaseSync = databaseSync;
+    expense.databaseSyncSourceRow = rowIndex + 1;
     expense.date = date;
     expense.type = type;
     expense.amount = Number(amount);
     directExpenses.push(expense);
   }
-  if (!directExpenses.length) {
-    throw new Error("На листе «Прямые затраты» не найдено ни одной заполненной строки расходов.");
-  }
   return {
     directExpenses,
+    directExpenseDatabaseSyncFields: [
+      ...new Set([
+        ...mappedColumns.map((column) => column.fieldName),
+        "inventoryId"
+      ])
+    ],
     directExpenseSheetName: "Прямые затраты",
     directExpenseSourceRows: sourceRowCount,
     directExpenseSkippedRows: Math.max(0, sourceRowCount - directExpenses.length)
@@ -10338,6 +11463,7 @@ function parseGeneralExpenseDatabaseSheet(workbook, onProgress = () => {}) {
   const workTypeColumn = headers.indexOf("Вид работ");
   const amountColumn = headers.indexOf("Сумма");
   const generalExpenses = [];
+  const usedSyncIds = new Map();
   const detectedSections = new Set();
   let currentSection = "";
   const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
@@ -10372,7 +11498,21 @@ function parseGeneralExpenseDatabaseSheet(workbook, onProgress = () => {}) {
       if (value === "") return;
       expense[column.fieldName] = value;
     });
-    expense.id = buildGeneralExpenseDatabaseRecordId(expense, rowIndex + 1);
+    const databaseSync = parseStudentDatabaseManagedSyncComment(
+      worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })],
+      "generalExpenses"
+    );
+    if (databaseSync) {
+      assertUniqueStudentDatabaseManagedRecordId(
+        usedSyncIds,
+        databaseSync.recordId,
+        "Общие затраты",
+        rowIndex + 1
+      );
+    }
+    expense.id = databaseSync?.recordId || buildGeneralExpenseDatabaseRecordId(expense, rowIndex + 1);
+    if (databaseSync) expense.databaseSync = databaseSync;
+    expense.databaseSyncSourceRow = rowIndex + 1;
     expense.counterparty = counterparty;
     expense.workType = workType;
     expense.amount = Number(amount);
@@ -10385,6 +11525,10 @@ function parseGeneralExpenseDatabaseSheet(workbook, onProgress = () => {}) {
   }
   return {
     generalExpenses,
+    generalExpenseDatabaseSyncFields: [
+      "section",
+      ...new Set(mappedColumns.map((column) => column.fieldName))
+    ],
     generalExpenseSheetName: "Общие затраты",
     generalExpenseSourceRows: sourceRowCount,
     generalExpenseSectionCounts: Object.fromEntries(Object.values(GENERAL_EXPENSE_DATABASE_SECTIONS)
@@ -10423,6 +11567,7 @@ function parseContractDatabaseSheet(
   const nameColumn = headers.indexOf("ФИО");
   const sectionRanges = findContractDatabaseSectionRanges(rows, nameColumn, headerRowIndex);
   const contracts = [];
+  const usedSyncIds = new Map();
   const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
   const progressStep = Math.max(1, Math.floor(sourceRowCount / 40));
   let sectionRangeIndex = 0;
@@ -10467,7 +11612,21 @@ function parseContractDatabaseSheet(
       eventTemplates,
       eventKeyByLabel
     ));
-    contract.id = buildContractDatabaseRecordId(contract, rowIndex + 1);
+    const databaseSync = parseStudentDatabaseManagedSyncComment(
+      worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })],
+      "contracts"
+    );
+    if (databaseSync) {
+      assertUniqueStudentDatabaseManagedRecordId(
+        usedSyncIds,
+        databaseSync.recordId,
+        "Реестр договоров",
+        rowIndex + 1
+      );
+    }
+    contract.id = databaseSync?.recordId || buildContractDatabaseRecordId(contract, rowIndex + 1);
+    if (databaseSync) contract.databaseSync = databaseSync;
+    contract.databaseSyncSourceRow = rowIndex + 1;
     contract.name = name;
     contract.status = sectionRange.section === CONTRACT_DATABASE_SECTIONS.active
       ? "Действует"
@@ -10478,6 +11637,14 @@ function parseContractDatabaseSheet(
   }
   return {
     contracts,
+    contractDatabaseSyncFields: [
+      "section",
+      "status",
+      ...new Set(mappedColumns.map((column) => column.fieldName)),
+      ...new Set(contracts.flatMap((contract) => Object.keys(contract)
+        .filter((key) => /^event_[A-Za-z0-9_-]+_(?:state|date|label)$/u.test(key)
+          || ["eventOrder", "eventCustomKeys", "eventDeleted"].includes(key))))
+    ],
     contractSheetName: "Реестр договоров",
     contractSourceRows: sourceRowCount,
     contractSectionRows: Object.fromEntries(sectionRanges
@@ -10513,6 +11680,11 @@ function buildInventoryDatabaseRecordId(itemType) {
 }
 
 function buildInventoryGeneratedExpenseId(unit) {
+  const syncRecordId = String(unit?.databaseSync?.recordId || "").trim();
+  if (syncRecordId) {
+    const stableHash = crypto.createHash("sha1").update(syncRecordId).digest("hex").slice(0, 16);
+    return "direct-expense-inventory-" + stableHash;
+  }
   const fingerprint = [
     unit.uid,
     unit.date,
@@ -10523,6 +11695,14 @@ function buildInventoryGeneratedExpenseId(unit) {
   ].map((value) => String(value ?? "").trim()).join(":");
   const hash = crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 16);
   return `direct-expense-inventory-${hash}`;
+}
+
+function buildInventoryDatabaseUnitRecordId(inventoryId, sourceId, kind, index) {
+  const fingerprint = [inventoryId, sourceId, kind, index]
+    .map((value) => String(value ?? "").trim())
+    .join(":");
+  const hash = crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 20);
+  return "inventory-unit-db-" + hash;
 }
 
 function parseInventoryDatabaseSheet(workbook, onProgress = () => {}) {
@@ -10544,6 +11724,7 @@ function parseInventoryDatabaseSheet(workbook, onProgress = () => {}) {
     .filter((column) => column.fieldName);
   const itemTypeColumn = headers.indexOf("Вид ТМЦ");
   const inventoryUnits = [];
+  const usedSyncIds = new Map();
   const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
   const progressStep = Math.max(1, Math.floor(sourceRowCount / 100));
   for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
@@ -10568,26 +11749,92 @@ function parseInventoryDatabaseSheet(workbook, onProgress = () => {}) {
     unit.itemType = itemType;
     unit.uid = String(unit.uid || "").trim();
     unit.amount = unit.amount === "" || unit.amount === undefined ? "" : Number(unit.amount);
+    const databaseSync = parseStudentDatabaseManagedSyncComment(
+      worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })],
+      "inventoryUnits"
+    );
+    if (databaseSync) {
+      assertUniqueStudentDatabaseManagedRecordId(
+        usedSyncIds,
+        databaseSync.recordId,
+        "Запасы",
+        rowIndex + 1
+      );
+      if (!databaseSync.parentRecordId) {
+        throw new Error(
+          "В служебной метке AIS_SYNC строки " + (rowIndex + 1)
+          + " листа «Запасы» не указан ID позиции."
+        );
+      }
+      unit.databaseSync = databaseSync;
+      unit.inventoryId = databaseSync.parentRecordId;
+    }
     inventoryUnits.push(unit);
   }
-  if (!inventoryUnits.length) {
-    throw new Error("На листе «Запасы» не найдено ни одной позиции.");
-  }
+  const managedInventoryIdByType = new Map();
+  const managedInventoryTypeById = new Map();
+  inventoryUnits.filter((unit) => unit.inventoryId).forEach((unit) => {
+    const normalizedType = normalizeInventoryLookupValue(unit.itemType);
+    const inventoryId = String(unit.inventoryId || "").trim();
+    const previousId = managedInventoryIdByType.get(normalizedType);
+    if (previousId && previousId !== inventoryId) {
+      throw new Error(
+        "На листе «Запасы» вид ТМЦ «" + unit.itemType
+        + "» связан с несколькими служебными ID."
+      );
+    }
+    const previousType = managedInventoryTypeById.get(inventoryId);
+    if (previousType && previousType !== normalizedType) {
+      throw new Error(
+        "Позиция запасов со служебным ID «" + inventoryId
+        + "» указана с разными видами ТМЦ."
+      );
+    }
+    managedInventoryIdByType.set(normalizedType, inventoryId);
+    managedInventoryTypeById.set(inventoryId, normalizedType);
+  });
+  inventoryUnits.forEach((unit) => {
+    if (unit.inventoryId) return;
+    const managedInventoryId = managedInventoryIdByType.get(
+      normalizeInventoryLookupValue(unit.itemType)
+    );
+    if (managedInventoryId) unit.inventoryId = managedInventoryId;
+  });
 
   const unitsByType = new Map();
   inventoryUnits.forEach((unit) => {
-    const key = normalizeInventoryLookupValue(unit.itemType);
+    const key = unit.inventoryId
+      ? "id:" + unit.inventoryId
+      : "type:" + normalizeInventoryLookupValue(unit.itemType);
     if (!unitsByType.has(key)) unitsByType.set(key, []);
     unitsByType.get(key).push(unit);
   });
+  const usedInventoryTypes = new Map();
   const inventory = [...unitsByType.values()]
     .map((units) => {
+      const normalizedTypes = [...new Set(
+        units.map((unit) => normalizeInventoryLookupValue(unit.itemType))
+      )];
+      if (normalizedTypes.length !== 1) {
+        throw new Error(
+          "Позиция запасов со служебным ID «" + units[0].inventoryId
+          + "» указана с разными видами ТМЦ."
+        );
+      }
+      const normalizedType = normalizedTypes[0];
+      if (usedInventoryTypes.has(normalizedType)) {
+        throw new Error(
+          "На листе «Запасы» вид ТМЦ «" + units[0].itemType
+          + "» связан с несколькими служебными ID."
+        );
+      }
       const availableUnits = units.filter((unit) => !unit.uid);
       const representativeUnits = availableUnits.length ? availableUnits : units;
       const representative = [...representativeUnits].reverse().find((unit) => (
         unit.date || unit.amount !== "" || unit.note
       )) || representativeUnits[representativeUnits.length - 1];
-      const id = buildInventoryDatabaseRecordId(units[0].itemType);
+      const id = units[0].inventoryId || buildInventoryDatabaseRecordId(units[0].itemType);
+      usedInventoryTypes.set(normalizedType, id);
       units.forEach((unit) => {
         unit.inventoryId = id;
       });
@@ -10610,6 +11857,12 @@ function parseInventoryDatabaseSheet(workbook, onProgress = () => {}) {
 
   return {
     inventory,
+    inventoryDatabaseSyncFields: [
+      ...new Set([
+        ...mappedColumns.map((column) => column.fieldName),
+        "balance"
+      ])
+    ],
     inventoryUnits,
     inventorySheetName: "Запасы",
     inventorySourceRows: sourceRowCount,
@@ -10780,7 +12033,7 @@ function detectStudentDatabaseSections(worksheet, rows, headerRowIndex, uidColum
   ));
 }
 
-function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
+function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}, options = {}) {
   let workbook;
   onProgress({ progress: 0, message: "Чтение структуры XLSB..." });
   try {
@@ -10789,6 +12042,9 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
     throw new Error(`Не удалось прочитать базу Excel: ${error.message}`);
   }
   const macroSettingsResult = parseStudentDatabaseMacroSettings(workbook);
+  const communicationTemplateNamedRangeValues = options?.includeCommunicationTemplateNamedRangeValues === false
+    ? {}
+    : parseCommunicationTemplateNamedRangeValues(workbook);
   const studentEventImportTemplates = macroSettingsResult.macroSettings.studentEventTemplates.length
     ? macroSettingsResult.macroSettings.studentEventTemplates
     : STUDENT_EVENT_IMPORT_TEMPLATES;
@@ -10829,6 +12085,7 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
   let currentSectionIndex = -1;
   const students = [];
   const usedIds = new Map();
+  const usedSyncIds = new Map();
   const sourceRowCount = Math.max(0, rows.length - headerRowIndex - 1);
   const progressStep = Math.max(1, Math.floor(sourceRowCount / 100));
   for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
@@ -10870,10 +12127,22 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
         studentEventImportKeyByLabel
       ));
     }
-    const baseId = buildStudentDatabaseRecordId(uid, rowIndex + 1);
+    const firstCell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })];
+    const databaseSync = parseStudentDatabaseSyncComment(firstCell);
+    if (databaseSync) {
+      assertUniqueStudentDatabaseManagedRecordId(
+        usedSyncIds,
+        databaseSync.recordId,
+        "База",
+        rowIndex + 1
+      );
+    }
+    const baseId = databaseSync?.recordId || buildStudentDatabaseRecordId(uid, rowIndex + 1);
     const duplicateNumber = (usedIds.get(baseId) || 0) + 1;
     usedIds.set(baseId, duplicateNumber);
     student.id = duplicateNumber === 1 ? baseId : `${baseId}-${duplicateNumber}`;
+    if (databaseSync) student.databaseSync = databaseSync;
+    student.databaseSyncSourceRow = rowIndex + 1;
     student.uid = uid;
     student.name = name;
     student.additionalStatus = studentSections[currentSectionIndex]?.title
@@ -10917,6 +12186,18 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
   onProgress({ progress: 100, message: "Обработка базы завершена." });
   return {
     students,
+    studentDatabaseSyncFields: [
+      ...new Set([
+        ...mappedColumns.map((column) => column.fieldName),
+        "additionalStatus",
+        "enrollmentOrderDate",
+        "expulsionOrderDate",
+        ...(mappedColumns.some((column) => column.fieldName === "frdoStatus") ? ["frdoDate"] : []),
+        ...students.flatMap((student) => Object.keys(student)
+          .filter((key) => /^event_[A-Za-z0-9_-]+_(?:state|date|label)$/u.test(key)
+            || ["eventOrder", "eventCustomKeys", "eventDeleted"].includes(key)))
+      ])
+    ],
     sheetName: "База",
     studentSectionTitles: studentSections.map((section) => section.title),
     sourceRows: sourceRowCount,
@@ -10930,7 +12211,9 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
     ...generalExpenseResult,
     ...contractResult,
     ...macroSettingsResult,
+    communicationTemplateNamedRangeValues,
     inventory: inventoryResult.inventory,
+    inventoryDatabaseSyncFields: inventoryResult.inventoryDatabaseSyncFields,
     inventorySheetName: inventoryResult.inventorySheetName,
     inventorySourceRows: inventoryResult.inventorySourceRows,
     inventorySkippedRows: inventoryResult.inventorySkippedRows,
@@ -10941,6 +12224,7 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}) {
     inventoryMatchedExpenseCount: inventoryLinkResult.inventoryMatchedExpenseCount,
     inventoryGeneratedExpenseCount: inventoryLinkResult.inventoryGeneratedExpenseCount,
     inventoryUnmatchedExpenseCount: inventoryLinkResult.inventoryUnmatchedExpenseCount,
+    databaseSyncInventoryUnits: inventoryResult.inventoryUnits,
     directExpenses: unlinkedDirectExpenses,
     linkedDirectExpenseCount,
     totalDirectExpenseCount
@@ -11021,6 +12305,300 @@ async function loadStudentDatabaseBytes(databasePath, onProgress = null, options
   return bytes;
 }
 
+function hashStudentDatabaseBytes(bytes) {
+  return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+function hashStudentDatabaseSourceIdentity(databasePath, sourceType) {
+  const source = getStudentDatabaseSourceSetting(databasePath)
+    .replace(/\\/gu, "/")
+    .replace(/\/{2,}/gu, "/")
+    .trim()
+    .toLocaleLowerCase("ru-RU");
+  return crypto.createHash("sha256")
+    .update(`${normalizeStudentDatabaseSource(sourceType)}\u0000${source}`)
+    .digest("hex");
+}
+
+function normalizeStudentDatabaseSyncBaseline(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const sourceHash = String(source.sourceHash || "").trim().toLowerCase();
+  const synchronizedAt = normalizeStudentDatabaseSyncTimestamp(source.synchronizedAt);
+  const sourceIdentity = String(source.sourceIdentity || "").trim().toLowerCase();
+  return {
+    version: 1,
+    sourceHash: /^[a-f0-9]{64}$/u.test(sourceHash) ? sourceHash : "",
+    sourceIdentity: /^[a-f0-9]{64}$/u.test(sourceIdentity) ? sourceIdentity : "",
+    webRevision: Math.max(0, Math.floor(Number(source.webRevision) || 0)),
+    synchronizedAt
+  };
+}
+
+function resolveStudentDatabaseSyncDirection({
+  baseline: baselineValue,
+  currentWebRevision,
+  currentWebUpdatedAt,
+  sourceHash,
+  sourceIdentity,
+  sourceModifiedAt,
+  lastSynchronizedAt,
+  lastExportedAt
+}) {
+  const baseline = normalizeStudentDatabaseSyncBaseline(baselineValue);
+  const revision = Math.max(0, Math.floor(Number(currentWebRevision) || 0));
+  const normalizedSourceHash = String(sourceHash || "").trim().toLowerCase();
+  const normalizedSourceIdentity = String(sourceIdentity || "").trim().toLowerCase();
+  const hasAnyBaselineValue = Boolean(
+    baseline.sourceHash
+    || baseline.sourceIdentity
+    || baseline.webRevision
+    || baseline.synchronizedAt
+  );
+  const hasCompleteBaseline = Boolean(
+    baseline.sourceHash
+    && baseline.sourceIdentity
+    && baseline.webRevision
+    && baseline.synchronizedAt
+  );
+  if (hasAnyBaselineValue && !hasCompleteBaseline) {
+    const error = new Error(
+      "Контрольная точка прошлой синхронизации XLSB неполна. "
+      + "Автоматическое направление не выбрано, чтобы не потерять данные."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  if (hasCompleteBaseline) {
+    if (
+      !normalizedSourceIdentity
+      || baseline.sourceIdentity !== normalizedSourceIdentity
+    ) {
+      const error = new Error(
+        "Выбран другой файл или источник XLSB, чем при прошлой синхронизации. "
+          + "Сначала явно загрузите либо экспортируйте выбранную базу."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    const excelChanged = normalizedSourceHash !== baseline.sourceHash;
+    const webChanged = revision !== baseline.webRevision;
+    if (excelChanged && webChanged) {
+      const error = new Error(
+        "После прошлой синхронизации изменились и Web-база, и файл XLSB. "
+          + "Автоматическая перезапись остановлена, чтобы не потерять данные. "
+          + "Загрузите XLSB либо экспортируйте Web-базу вручную после проверки актуального варианта."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    if (excelChanged) return { direction: "excel-to-web", baseline };
+    if (webChanged) return { direction: "web-to-excel", baseline };
+    return { direction: "unchanged", baseline };
+  }
+
+  const lastSync = normalizeStudentDatabaseSyncTimestamp(
+    lastSynchronizedAt || lastExportedAt
+  );
+  const webUpdated = normalizeStudentDatabaseSyncTimestamp(currentWebUpdatedAt);
+  const excelUpdated = normalizeStudentDatabaseSyncTimestamp(sourceModifiedAt);
+  if (lastSync) {
+    if (!webUpdated || !excelUpdated) {
+      const error = new Error(
+        "Для первой двусторонней синхронизации не удалось получить время изменения "
+        + "Web-базы или файла XLSB. Автоматический выбор стороны остановлен."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    const lastSyncMs = Date.parse(lastSync);
+    const webChanged = webUpdated && Date.parse(webUpdated) > lastSyncMs;
+    const excelChanged = excelUpdated && Date.parse(excelUpdated) > lastSyncMs;
+    if (webChanged && excelChanged) {
+      const error = new Error(
+        "После прежней синхронизации менялись и Web-база, и файл XLSB. "
+          + "По времени изменения нельзя безопасно объединить эти варианты автоматически. "
+          + "Проверьте файл и выполните «Загрузить из базы» либо «Экспортировать базу»."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    if (excelChanged) return { direction: "excel-to-web", baseline, initialMigration: true };
+    if (webChanged) return { direction: "web-to-excel", baseline, initialMigration: true };
+    const error = new Error(
+      "Времена изменения Web-базы и XLSB не новее прежней синхронизации, но достоверной "
+        + "контрольной суммы прошлого состояния нет. Совпадение данных не доказано; "
+        + "выберите актуальную сторону кнопкой «Загрузить из базы» или «Экспортировать базу»."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  const error = new Error(
+    "Для первой двусторонней синхронизации нет достоверной контрольной точки. "
+      + "Сначала выберите актуальную сторону кнопкой «Загрузить из базы» или «Экспортировать базу»."
+  );
+  error.statusCode = 409;
+  throw error;
+}
+
+async function getStudentDatabaseResourceModifiedAt(databasePath, sourceType) {
+  const normalizedSource = normalizeStudentDatabaseSource(sourceType);
+  if (normalizedSource === "local") {
+    const stats = await fs.stat(resolveLocalStudentDatabaseFile(databasePath));
+    return stats.mtime instanceof Date ? stats.mtime.toISOString() : "";
+  }
+  const targetPath = resolveYandexStudentDatabaseFile(databasePath);
+  const response = await requestYandexWebDav("PROPFIND", targetPath, {
+    acceptedStatuses: [207],
+    headers: { Depth: "0" },
+    contentType: "application/xml; charset=utf-8",
+    body: '<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><prop><getlastmodified/></prop></propfind>',
+    maxResponseBytes: 128 * 1024
+  });
+  const entry = parseWebDavDirectoryEntries(response.body.toString("utf8"))
+    .find((item) => (
+      item.href.toLocaleLowerCase("ru-RU") === targetPath.toLocaleLowerCase("ru-RU")
+    ));
+  return normalizeStudentDatabaseSyncTimestamp(entry?.modifiedAt);
+}
+
+async function readSharedStudentRecordUpdatedAt() {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") return new Map();
+  try {
+    const pool = await getSharedRecordLocksMySqlPool();
+    if (!pool) return new Map();
+    const [rows] = await pool.query(
+      `SELECT item_key, updated_at
+         FROM ais_shared_state_entries
+        WHERE state_key = ?
+          AND entry_type = 'collection'
+          AND group_name = 'students'`,
+      [SHARED_STATE_MYSQL_KEY]
+    );
+    return new Map(rows.map((row) => {
+      const updatedAt = row.updated_at instanceof Date
+        ? row.updated_at.toISOString()
+        : normalizeStudentDatabaseSyncTimestamp(
+          String(row.updated_at || "").replace(" ", "T") + "Z"
+        );
+      return [String(row.item_key || ""), updatedAt];
+    }));
+  } catch {
+    return new Map();
+  }
+}
+
+async function readAuthoritativeSharedApplicationStateMetadata() {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+    const metadata = await enqueueSharedApplicationStateWrite(
+      () => readLegacySharedApplicationStateMetadata()
+    );
+    if (metadata?.offline === true) {
+      const error = new Error(
+        "Общая Web-база недоступна. Синхронизация XLSB требует авторитетного состояния базы."
+      );
+      error.statusCode = 503;
+      throw error;
+    }
+    return {
+      ...metadata,
+      source: metadata?.source || "local",
+      writable: true,
+      pendingCount: 0,
+      syncPending: false
+    };
+  }
+  const pending = await readSharedApplicationStatePendingDocument();
+  if (pending.operations.length) {
+    const error = new Error(
+      "В общей Web-базе есть ожидающие автономные изменения. "
+      + "Дождитесь их сохранения перед синхронизацией XLSB."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  const pool = await getSharedRecordLocksMySqlPool();
+  if (!pool) {
+    const error = new Error("MySQL для общей Web-базы не настроен.");
+    error.statusCode = 503;
+    throw error;
+  }
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.query(
+      `SELECT revision, updated_at, updated_by
+         FROM ais_shared_state_meta
+        WHERE state_key = ?
+        LIMIT 1
+        FOR UPDATE`,
+      [SHARED_STATE_MYSQL_KEY]
+    );
+    await connection.commit();
+    if (!rows.length) {
+      const error = new Error("Общая Web-база ещё не создана.");
+      error.statusCode = 409;
+      throw error;
+    }
+    const revision = Math.max(0, Math.floor(Number(rows[0].revision) || 0));
+    sharedStateMySqlUnavailableUntil = 0;
+    return {
+      exists: true,
+      revision,
+      updatedAt: rows[0].updated_at instanceof Date
+        ? rows[0].updated_at.toISOString()
+        : String(rows[0].updated_at || ""),
+      updatedBy: String(rows[0].updated_by || ""),
+      versionTag: sharedApplicationStateMySqlVersionTag(revision),
+      source: "mysql",
+      offline: false,
+      writable: true,
+      pendingCount: 0,
+      syncPending: false
+    };
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    if (!Number(error?.statusCode)) error.statusCode = 503;
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function assertSharedApplicationStateRevision(expectedRevision) {
+  const expected = Math.max(0, Math.floor(Number(expectedRevision) || 0));
+  if (!expected) {
+    const error = new Error(
+      "Не передана авторитетная ревизия общей Web-базы для синхронизации XLSB."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  const metadata = await readAuthoritativeSharedApplicationStateMetadata();
+  if (
+    metadata?.offline === true
+    || metadata?.writable === false
+    || Math.max(0, Number(metadata?.pendingCount) || 0) > 0
+    || metadata?.syncPending === true
+  ) {
+    const error = new Error(
+      "Общая Web-база ещё не завершила сохранение изменений. "
+      + "XLSB не изменён; повторите синхронизацию позже."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  const actual = Math.max(0, Math.floor(Number(metadata?.revision) || 0));
+  if (actual !== expected) {
+    const error = new Error(
+      "Общая Web-база изменилась во время синхронизации. "
+      + "XLSB не перезаписан; обновите данные и повторите операцию."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  return metadata;
+}
+
 function countWorksheetFormulaCells(worksheet) {
   if (!worksheet) return 0;
   return Object.entries(worksheet)
@@ -11092,10 +12670,16 @@ function inspectStudentDatabaseBinary(bytes) {
   const directExpenseSheet = workbook.Sheets["Прямые затраты"];
   const generalExpenseSheet = workbook.Sheets["Общие затраты"];
   const contractSheet = workbook.Sheets["Реестр договоров"];
+  const inventorySheet = workbook.Sheets["Запасы"];
+  const trainingPlanSheet = workbook.Sheets["Учебные планы"];
+  const programSheet = workbook.Sheets["Реестр программ"];
   if (!baseSheet) throw new Error("В файле не найден лист «База».");
   if (!directExpenseSheet) throw new Error("В файле не найден лист «Прямые затраты».");
   if (!generalExpenseSheet) throw new Error("В файле не найден лист «Общие затраты».");
   if (!contractSheet) throw new Error("В файле не найден лист «Реестр договоров».");
+  if (!inventorySheet) throw new Error("В файле не найден лист «Запасы».");
+  if (!trainingPlanSheet) throw new Error("В файле не найден лист «Учебные планы».");
+  if (!programSheet) throw new Error("В файле не найден лист «Реестр программ».");
   return {
     hasVba: Boolean(workbook.vbaraw?.length),
     vbaBytes: Number(workbook.vbaraw?.length || 0),
@@ -11104,7 +12688,10 @@ function inspectStudentDatabaseBinary(bytes) {
     generalExpenseFormulaCount: countWorksheetFormulaCells(generalExpenseSheet),
     generalExpenseRecordCount: countGeneralExpenseWorksheetRecords(generalExpenseSheet),
     contractFormulaCount: countWorksheetFormulaCells(contractSheet),
-    contractRecordCount: countContractWorksheetRecords(contractSheet)
+    contractRecordCount: countContractWorksheetRecords(contractSheet),
+    inventoryFormulaCount: countWorksheetFormulaCells(inventorySheet),
+    trainingPlanFormulaCount: countWorksheetFormulaCells(trainingPlanSheet),
+    programFormulaCount: countWorksheetFormulaCells(programSheet)
   };
 }
 
@@ -13592,12 +15179,265 @@ function sanitizeProgramPromoMessage(value, label) {
   return text;
 }
 
-function sanitizeStudentDatabaseExportPrograms(value) {
+function sanitizeStudentDatabaseExportInventory(value, directExpenses = [], synchronizedAt = "") {
+  if (value === undefined || value === null) {
+    return { provided: false, inventory: [], inventoryRows: [] };
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("Некорректный список запасов для синхронизации.");
+  }
+  if (value.length > MAX_STUDENT_DATABASE_EXPORT_INVENTORY_ITEMS) {
+    throw new Error(
+      `Число позиций запасов превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_INVENTORY_ITEMS}.`
+    );
+  }
+  const usedTypes = new Set();
+  const usedIds = new Set();
+  const inventory = value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`Некорректная позиция запасов № ${index + 1}.`);
+    }
+    const itemType = String(item.itemType || "").replace(/\u0000/gu, "").trim();
+    if (!itemType) {
+      throw new Error(`У позиции запасов № ${index + 1} не указан вид ТМЦ.`);
+    }
+    const typeKey = normalizeInventoryLookupValue(itemType);
+    if (usedTypes.has(typeKey)) {
+      throw new Error(`В списке запасов повторяется вид ТМЦ «${itemType}».`);
+    }
+    usedTypes.add(typeKey);
+    if (itemType.length > 1000) {
+      throw new Error(`Вид ТМЦ позиции № ${index + 1} превышает 1000 символов.`);
+    }
+    const id = String(item.id || buildInventoryDatabaseRecordId(itemType)).trim().slice(0, 191);
+    if (usedIds.has(id)) {
+      throw new Error(`В списке запасов повторяется идентификатор «${id}».`);
+    }
+    usedIds.add(id);
+    const balanceValue = item.balance === "" || item.balance === null || item.balance === undefined
+      ? 0
+      : Number(String(item.balance).replace(",", "."));
+    if (
+      !Number.isFinite(balanceValue)
+      || balanceValue < 0
+      || !Number.isInteger(balanceValue)
+    ) {
+      throw new Error(
+        `Остаток позиции «${itemType}» должен быть целым неотрицательным числом.`
+      );
+    }
+    const rawAmount = normalizeStudentDatabaseNumber(item.amount);
+    if (rawAmount !== "" && (!Number.isFinite(Number(rawAmount)) || Number(rawAmount) < 0)) {
+      throw new Error(`Некорректная сумма позиции запасов «${itemType}».`);
+    }
+    const date = normalizeStudentDatabaseDate(item.date);
+    if (String(item.date || "").trim() && !date) {
+      throw new Error(`Некорректная дата позиции запасов «${itemType}».`);
+    }
+    const note = String(item.note || "").replace(/\u0000/gu, "").trim();
+    if (note.length > 32767) {
+      throw new Error(`Примечание позиции запасов «${itemType}» превышает 32767 символов.`);
+    }
+    return {
+      id,
+      date,
+      itemType: itemType.slice(0, 1000),
+      amount: rawAmount === "" ? "" : Number(rawAmount),
+      note,
+      uid: String(item.uid || "").trim().replace(/\.0+$/u, "").slice(0, 300),
+      balance: balanceValue
+    };
+  });
+
+  const inventoryById = new Map(
+    inventory.filter((item) => item.id).map((item) => [item.id, item])
+  );
+  const inventoryByType = new Map(
+    inventory.map((item) => [normalizeInventoryLookupValue(item.itemType), item])
+  );
+  const allocationsByItem = new Map(inventory.map((item) => [item, []]));
+  (Array.isArray(directExpenses) ? directExpenses : []).forEach((expense) => {
+    const uid = String(expense?.uid || "").trim().replace(/\.0+$/u, "");
+    if (!uid) return;
+    const inventoryId = String(expense?.inventoryId || "").trim();
+    const inventoryLink = String(expense?.inventoryLink || "").trim();
+    const item = inventoryId
+      ? inventoryById.get(inventoryId)
+      : inventoryLink
+        ? inventoryByType.get(normalizeInventoryLookupValue(inventoryLink))
+        : null;
+    if (!item) return;
+    allocationsByItem.get(item).push({ ...expense, uid });
+  });
+
+  const inventoryRows = [];
+  const inventoryUnitIds = new Set();
+  inventory.forEach((item) => {
+    const allocations = allocationsByItem.get(item) || [];
+    if (
+      item.uid
+      && !allocations.some((expense) => String(expense.uid || "") === item.uid)
+    ) {
+      allocations.unshift({
+        uid: item.uid,
+        date: item.date,
+        amount: item.amount,
+        note: item.note
+      });
+    }
+    allocations.forEach((expense, allocationIndex) => {
+      const normalizedExpenseDate = normalizeStudentDatabaseDate(expense.date);
+      if (String(expense.date || "").trim() && !normalizedExpenseDate) {
+        throw new Error(
+          `Некорректная дата выдачи запаса «${item.itemType}» для uid ${expense.uid}.`
+        );
+      }
+      const expenseDate = normalizedExpenseDate || item.date;
+      const expenseAmount = normalizeStudentDatabaseNumber(expense.amount);
+      if (
+        expenseAmount !== ""
+        && (!Number.isFinite(Number(expenseAmount)) || Number(expenseAmount) < 0)
+      ) {
+        throw new Error(
+          `Некорректная сумма выдачи запаса «${item.itemType}» для uid ${expense.uid}.`
+        );
+      }
+      const expenseNote = String(expense.note || item.note || "")
+        .replace(/\u0000/gu, "")
+        .trim();
+      if (expenseNote.length > 32767) {
+        throw new Error(
+          `Примечание выдачи запаса «${item.itemType}» для uid ${expense.uid} превышает 32767 символов.`
+        );
+      }
+      const unitId = buildInventoryDatabaseUnitRecordId(
+        item.id,
+        expense.id || expense.uid,
+        "allocated",
+        expense.id ? "" : allocationIndex
+      );
+      if (inventoryUnitIds.has(unitId)) {
+        throw new Error(
+          "Для позиции запасов «" + item.itemType + "» повторяется ID единицы «" + unitId + "»."
+        );
+      }
+      inventoryUnitIds.add(unitId);
+      inventoryRows.push({
+        date: expenseDate,
+        itemType: item.itemType,
+        amount: expenseAmount === "" ? item.amount : Number(expenseAmount),
+        note: expenseNote,
+        uid: String(expense.uid || "").trim().replace(/\.0+$/u, ""),
+        __syncComment: buildStudentDatabaseManagedSyncComment(
+          "inventoryUnits",
+          unitId,
+          { parentRecordId: item.id, syncedAt: synchronizedAt }
+        )
+      });
+    });
+    for (let unit = 0; unit < item.balance; unit += 1) {
+      const unitId = buildInventoryDatabaseUnitRecordId(item.id, "", "available", unit);
+      if (inventoryUnitIds.has(unitId)) {
+        throw new Error(
+          "Для позиции запасов «" + item.itemType + "» повторяется ID единицы «" + unitId + "»."
+        );
+      }
+      inventoryUnitIds.add(unitId);
+      inventoryRows.push({
+        date: item.date,
+        itemType: item.itemType,
+        amount: item.amount,
+        note: item.note,
+        uid: "",
+        __syncComment: buildStudentDatabaseManagedSyncComment(
+          "inventoryUnits",
+          unitId,
+          { parentRecordId: item.id, syncedAt: synchronizedAt }
+        )
+      });
+    }
+    if (!allocations.length && !item.uid && item.balance === 0) {
+      throw new Error(
+        `Позицию запасов «${item.itemType}» с нулевым остатком и без выдач нельзя представить в XLSB.`
+      );
+    }
+  });
+  if (inventoryRows.length > MAX_STUDENT_DATABASE_EXPORT_INVENTORY_UNITS) {
+    throw new Error(
+      `Число поштучных строк запасов превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_INVENTORY_UNITS}.`
+    );
+  }
+  return { provided: true, inventory, inventoryRows };
+}
+
+function sanitizeStudentDatabaseExportTrainingPlans(value, synchronizedAt = "") {
+  if (value === undefined || value === null) {
+    return { provided: false, trainingPlans: [] };
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("Некорректный список учебных планов для синхронизации.");
+  }
+  if (value.length > MAX_STUDENT_DATABASE_EXPORT_TRAINING_PLANS) {
+    throw new Error(
+      `Число строк учебных планов превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_TRAINING_PLANS}.`
+    );
+  }
+  const usedIds = new Set();
+  const trainingPlans = value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`Некорректная строка учебного плана № ${index + 1}.`);
+    }
+    const record = {};
+    [...new Set(Object.values(TRAINING_PLAN_DATABASE_COLUMN_MAP))].forEach((fieldName) => {
+      const normalized = normalizeTrainingPlanDatabaseValue(fieldName, item[fieldName]);
+      if (
+        TRAINING_PLAN_DATABASE_NUMBER_FIELDS.has(fieldName)
+        && normalized !== ""
+        && (!Number.isFinite(Number(normalized)) || Number(normalized) < 0)
+      ) {
+        throw new Error(
+          `Некорректное число в поле «${fieldName}» строки учебного плана № ${index + 1}.`
+        );
+      }
+      if (typeof normalized === "string" && normalized.length > 32767) {
+        throw new Error(
+          `Поле «${fieldName}» строки учебного плана № ${index + 1} превышает 32767 символов.`
+        );
+      }
+      record[fieldName] = normalized;
+    });
+    if (!record.programName) {
+      throw new Error(`В строке учебного плана № ${index + 1} не указана программа.`);
+    }
+    const id = String(item.id || buildTrainingPlanDatabaseRecordId(record, index + 1))
+      .replace(/\u0000/gu, "")
+      .trim()
+      .slice(0, 191);
+    if (usedIds.has(id)) {
+      throw new Error("В учебных планах повторяется служебный ID «" + id + "».");
+    }
+    usedIds.add(id);
+    return {
+      ...record,
+      id,
+      programId: String(item.programId || "").trim().slice(0, 191),
+      __syncComment: buildStudentDatabaseManagedSyncComment(
+        "trainingPlans",
+        id,
+        { syncedAt: synchronizedAt }
+      )
+    };
+  });
+  return { provided: true, trainingPlans };
+}
+
+function sanitizeStudentDatabaseExportPrograms(value, synchronizedAt = "") {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) throw new Error("Некорректный список программ для синхронизации.");
   if (value.length > MAX_STUDENT_DATABASE_EXPORT_PROGRAMS) {
     throw new Error(`Число программ превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_PROGRAMS}.`);
   }
+  const usedIds = new Set();
   return value
     .filter((program) => program && typeof program === "object" && !Array.isArray(program))
     .map((program, index) => {
@@ -13610,6 +15450,16 @@ function sanitizeStudentDatabaseExportPrograms(value) {
           : landingCode
       ).trim().slice(0, 300);
       const xlsbProgramRow = Math.max(0, Math.trunc(Number(program.xlsbProgramRow) || 0));
+      const id = String(
+        program.id || buildProgramDatabaseRecordId(
+          { name, xlsbProgramLandingCode },
+          xlsbProgramRow || index + 1
+        )
+      ).replace(/\u0000/gu, "").trim().slice(0, 191);
+      if (usedIds.has(id)) {
+        throw new Error("В списке программ повторяется служебный ID «" + id + "».");
+      }
+      usedIds.add(id);
       const promoMessage1 = sanitizeProgramPromoMessage(
         program.promoMessage1,
         `Промосообщение 1 программы ${name || index + 1}`
@@ -13623,7 +15473,8 @@ function sanitizeStudentDatabaseExportPrograms(value) {
         `Почтовое сообщение программы ${name || index + 1}`
       );
       const sourceRowKnown = xlsbProgramRow > 0;
-      return {
+      const result = {
+        id,
         name,
         landingCode,
         xlsbProgramName,
@@ -13640,10 +15491,204 @@ function sanitizeStudentDatabaseExportPrograms(value) {
           : sourceRowKnown || Boolean(emailMessageTemplate.trim()),
         promoMessage1,
         promoMessage2,
-        emailMessageTemplate
+        emailMessageTemplate,
+        providedFields: [],
+        __syncComment: buildStudentDatabaseManagedSyncComment(
+          "programs",
+          id,
+          { syncedAt: synchronizedAt }
+        )
       };
+      [...new Set(Object.values(PROGRAM_DATABASE_COLUMN_MAP))]
+        .filter((fieldName) => !PROGRAM_DATABASE_COMMENT_FIELDS.has(fieldName))
+        .forEach((fieldName) => {
+          if (!Object.prototype.hasOwnProperty.call(program, fieldName)) return;
+          const sourceValue = program[fieldName];
+          const normalized = normalizeProgramDatabaseValue(fieldName, sourceValue);
+          if (
+            PROGRAM_DATABASE_NUMBER_FIELDS.has(fieldName)
+            && normalized !== ""
+            && (!Number.isFinite(Number(normalized)) || Number(normalized) < 0)
+          ) {
+            throw new Error(
+              `Некорректное число в поле «${fieldName}» программы ${name || index + 1}.`
+            );
+          }
+          if (
+            fieldName === "programOrderDate"
+            && String(sourceValue || "").trim()
+            && !normalized
+          ) {
+            throw new Error(
+              `Некорректная дата приказа программы ${name || index + 1}.`
+            );
+          }
+          if (typeof normalized === "string" && normalized.length > 32767) {
+            throw new Error(
+              `Поле «${fieldName}» программы ${name || index + 1} превышает 32767 символов.`
+            );
+          }
+          result[fieldName] = normalized;
+          result.providedFields.push(fieldName);
+        });
+      return result;
     })
     .filter((program) => program.name || program.xlsbProgramName);
+}
+
+function sanitizeStudentDatabaseExportProgramDictionaries(value) {
+  if (value === undefined || value === null) {
+    return { provided: false, programDictionaries: {} };
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Некорректные справочники программ для синхронизации.");
+  }
+  const programDictionaries = {};
+  Object.keys(PROGRAM_DATABASE_DICTIONARY_RANGES).forEach((dictionaryKey) => {
+    const sourceValues = value[dictionaryKey];
+    if (!Array.isArray(sourceValues)) {
+      throw new Error(`Не передан справочник программ «${dictionaryKey}».`);
+    }
+    if (sourceValues.length > 5000) {
+      throw new Error(`В справочнике программ «${dictionaryKey}» слишком много значений.`);
+    }
+    const seen = new Set();
+    programDictionaries[dictionaryKey] = sourceValues.reduce((result, sourceValue, index) => {
+      const normalized = String(sourceValue ?? "")
+        .replace(/\u0000/gu, "")
+        .trim();
+      if (!normalized) return result;
+      if (normalized.length > 32767) {
+        throw new Error(
+          `Значение № ${index + 1} справочника «${dictionaryKey}» превышает 32767 символов.`
+        );
+      }
+      const identity = normalized.toLocaleLowerCase("ru-RU");
+      if (seen.has(identity)) return result;
+      seen.add(identity);
+      result.push(normalized);
+      return result;
+    }, []);
+  });
+  return { provided: true, programDictionaries };
+}
+
+function normalizeStudentDatabaseProgramSyncIdentity(name, landingCode) {
+  const normalizedName = String(name || "")
+    .replace(/\u00a0/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/gu, "е");
+  const normalizedLandingCode = String(landingCode || "")
+    .replace(/\u00a0/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLocaleLowerCase("ru-RU");
+  return normalizedName ? `${normalizedName}\u0000${normalizedLandingCode}` : "";
+}
+
+function validateStudentDatabaseProgramStructure(webPrograms, excelPrograms) {
+  const webRows = Array.isArray(webPrograms) ? webPrograms : [];
+  const excelRows = Array.isArray(excelPrograms) ? excelPrograms : [];
+  const excelByIdentity = new Map();
+  const excelById = new Map();
+  excelRows.forEach((program, index) => {
+    const recordId = String(program?.databaseSync?.recordId || "").trim();
+    if (recordId) {
+      if (excelById.has(recordId)) {
+        throw new Error("В реестре программ повторяется служебный ID «" + recordId + "».");
+      }
+      excelById.set(recordId, program);
+    }
+    const identity = normalizeStudentDatabaseProgramSyncIdentity(
+      program?.xlsbProgramName || program?.name,
+      Object.prototype.hasOwnProperty.call(program || {}, "xlsbProgramLandingCode")
+        ? program.xlsbProgramLandingCode
+        : program?.landingCode
+    );
+    if (!identity) {
+      throw new Error(
+        `В строке ${Number(program?.xlsbProgramRow) || index + 2} листа «Реестр программ» нет названия.`
+      );
+    }
+    if (excelByIdentity.has(identity)) {
+      throw new Error(
+        "На листе «Реестр программ» есть повторяющиеся названия и коды лендинга."
+      );
+    }
+    excelByIdentity.set(identity, program);
+  });
+  const matchedIdentities = new Set();
+  const usedWebIds = new Set();
+  const unmatchedWeb = [];
+  webRows.forEach((program) => {
+    const webRecordId = String(program?.id || "").trim();
+    if (webRecordId && usedWebIds.has(webRecordId)) {
+      throw new Error("В Web-базе повторяется ID программы «" + webRecordId + "».");
+    }
+    if (webRecordId) usedWebIds.add(webRecordId);
+    const exactProgram = webRecordId ? excelById.get(webRecordId) : null;
+    if (exactProgram) {
+      const exactIdentity = normalizeStudentDatabaseProgramSyncIdentity(
+        exactProgram?.xlsbProgramName || exactProgram?.name,
+        Object.prototype.hasOwnProperty.call(exactProgram || {}, "xlsbProgramLandingCode")
+          ? exactProgram.xlsbProgramLandingCode
+          : exactProgram?.landingCode
+      );
+      if (!exactIdentity || matchedIdentities.has(exactIdentity)) {
+        unmatchedWeb.push(String(program?.name || program?.xlsbProgramName || "Без названия").trim());
+        return;
+      }
+      matchedIdentities.add(exactIdentity);
+      return;
+    }
+    const sourceIdentity = normalizeStudentDatabaseProgramSyncIdentity(
+      program?.xlsbProgramName || program?.name,
+      Object.prototype.hasOwnProperty.call(program || {}, "xlsbProgramLandingCode")
+        ? program.xlsbProgramLandingCode
+        : program?.landingCode
+    );
+    const currentIdentity = normalizeStudentDatabaseProgramSyncIdentity(
+      program?.name,
+      program?.landingCode
+    );
+    const sourceCandidate = excelByIdentity.get(sourceIdentity);
+    const currentCandidate = excelByIdentity.get(currentIdentity);
+    const identity = sourceCandidate && !sourceCandidate.databaseSync
+      ? sourceIdentity
+      : currentCandidate && !currentCandidate.databaseSync
+        ? currentIdentity
+        : "";
+    if (!identity || matchedIdentities.has(identity)) {
+      unmatchedWeb.push(String(program?.name || program?.xlsbProgramName || "Без названия").trim());
+      return;
+    }
+    matchedIdentities.add(identity);
+  });
+  const unmatchedExcel = [...excelByIdentity.entries()]
+    .filter(([identity]) => !matchedIdentities.has(identity))
+    .map(([, program]) => String(program?.name || program?.xlsbProgramName || "Без названия").trim());
+  if (unmatchedWeb.length || unmatchedExcel.length || webRows.length !== excelRows.length) {
+    const summarize = (rows) => rows.slice(0, 5).join(", ")
+      + (rows.length > 5 ? ` и ещё ${rows.length - 5}` : "");
+    const details = [
+      unmatchedWeb.length ? `только в Web: ${summarize(unmatchedWeb)}` : "",
+      unmatchedExcel.length ? `только в Excel: ${summarize(unmatchedExcel)}` : ""
+    ].filter(Boolean).join("; ");
+    const error = new Error(
+      "Структура листа «Реестр программ» отличается от Web-базы. "
+      + "Создание и удаление программ этой синхронизацией пока не выполняется; "
+      + `XLSB не изменён${details ? ` (${details})` : ""}.`
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  return {
+    matched: matchedIdentities.size,
+    webCount: webRows.length,
+    excelCount: excelRows.length
+  };
 }
 
 function sanitizeMacroSettingsEventTemplates(value, withConditions = false) {
@@ -13722,7 +15767,112 @@ function sanitizeStudentDatabaseMacroSettingsExport(value) {
   return result;
 }
 
+function sanitizeCommunicationTemplateNamedRangeValue(value, fieldName) {
+  if (typeof value !== "string") {
+    throw new Error(`Поле шаблона «${fieldName}» должно быть строкой.`);
+  }
+  if (value.includes("\u0000")) {
+    throw new Error(`Поле шаблона «${fieldName}» содержит недопустимый нулевой символ.`);
+  }
+  const normalized = value.replace(/\r\n?/gu, "\n");
+  if (normalized.length > 32767) {
+    throw new Error(`Поле шаблона «${fieldName}» превышает предел Excel в 32767 символов.`);
+  }
+  return normalized;
+}
+
+function sanitizeStudentDatabaseCommunicationTemplateFields(value) {
+  if (value === undefined || value === null) {
+    return {
+      communicationTemplateFieldsProvided: false,
+      communicationTemplateNamedRangeValues: {}
+    };
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("Некорректные поля шаблонов типовых сообщений для синхронизации.");
+  }
+  const logicalNameByIdentity = new Map(
+    Object.keys(COMMUNICATION_TEMPLATE_NAMED_RANGE_BINDINGS).map((name) => (
+      [name.toLocaleLowerCase("ru-RU"), name]
+    ))
+  );
+  const usedLogicalNames = new Set();
+  const communicationTemplateNamedRangeValues = {};
+  value.forEach((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`Некорректное поле шаблона типового сообщения № ${index + 1}.`);
+    }
+    const rawName = String(item.name || "").trim();
+    const logicalName = logicalNameByIdentity.get(rawName.toLocaleLowerCase("ru-RU"));
+    if (!logicalName) {
+      throw new Error(`Поле шаблона «${rawName || index + 1}» не разрешено для синхронизации с XLSB.`);
+    }
+    if (usedLogicalNames.has(logicalName)) {
+      throw new Error(`Поле шаблона «${logicalName}» передано повторно.`);
+    }
+    usedLogicalNames.add(logicalName);
+    if (!Object.prototype.hasOwnProperty.call(item, "formula")) {
+      throw new Error(`Не передано значение поля шаблона «${logicalName}».`);
+    }
+    const formula = sanitizeCommunicationTemplateNamedRangeValue(item.formula, logicalName);
+    const physicalNames = COMMUNICATION_TEMPLATE_NAMED_RANGE_BINDINGS[logicalName];
+    if (logicalName === "ПереченьДокументов") {
+      const match = /^\{\{если:ДПО\}\}([\s\S]*?)\{\{иначе\}\}([\s\S]*?)\{\{конец\}\}$/u.exec(formula);
+      if (!match) {
+        throw new Error(
+          "Поле шаблона «ПереченьДокументов» должно содержать ветви "
+          + "{{если:ДПО}}…{{иначе}}…{{конец}}."
+        );
+      }
+      communicationTemplateNamedRangeValues[physicalNames[0]] = sanitizeCommunicationTemplateNamedRangeValue(
+        match[1],
+        physicalNames[0]
+      );
+      communicationTemplateNamedRangeValues[physicalNames[1]] = sanitizeCommunicationTemplateNamedRangeValue(
+        match[2],
+        physicalNames[1]
+      );
+      return;
+    }
+    communicationTemplateNamedRangeValues[physicalNames[0]] = formula;
+  });
+  return {
+    communicationTemplateFieldsProvided: true,
+    communicationTemplateNamedRangeValues
+  };
+}
+
+function attachStudentDatabaseExportSyncComment(
+  record,
+  { entity, fallbackId, seenIds, label, index, synchronizedAt = "", extra = {} }
+) {
+  const source = record && typeof record === "object" && !Array.isArray(record) ? record : {};
+  const cleanSource = { ...source };
+  delete cleanSource.databaseSync;
+  delete cleanSource.__syncComment;
+  const id = String(cleanSource.id || fallbackId || "")
+    .replace(/\u0000/gu, "")
+    .trim()
+    .slice(0, 191);
+  if (!id) {
+    throw new Error("У записи " + label + " № " + (index + 1) + " отсутствует ID.");
+  }
+  if (seenIds.has(id)) {
+    throw new Error("В списке " + label + " повторяется служебный ID «" + id + "».");
+  }
+  seenIds.add(id);
+  return {
+    ...cleanSource,
+    id,
+    __syncComment: buildStudentDatabaseManagedSyncComment(entity, id, {
+      ...extra,
+      syncedAt: synchronizedAt
+    })
+  };
+}
+
 function sanitizeStudentDatabaseExportPayload(body) {
+  const synchronizedAt = new Date().toISOString();
   if (!Array.isArray(body.students) || !body.students.length) {
     throw new Error("В облачной базе нет слушателей для синхронизации.");
   }
@@ -13747,9 +15897,10 @@ function sanitizeStudentDatabaseExportPayload(body) {
   if (body.generalExpenses.length > MAX_STUDENT_DATABASE_EXPORT_EXPENSES) {
     throw new Error(`Число общих затрат превышает допустимый предел ${MAX_STUDENT_DATABASE_EXPORT_EXPENSES}.`);
   }
+  const studentIds = new Set();
   const students = body.students
     .filter((student) => student && typeof student === "object" && !Array.isArray(student))
-    .map((student) => {
+    .map((student, index) => {
       const {
         photoData,
         photoUrl,
@@ -13763,14 +15914,22 @@ function sanitizeStudentDatabaseExportPayload(body) {
       databaseFields.frdoStatus = frdo.frdoDate || frdo.frdoStatus;
       databaseFields.citizenship = normalizeCitizenshipValue(databaseFields.citizenship);
       if (explicitFrdoDate) databaseFields.frdoDate = explicitFrdoDate;
-      return databaseFields;
+      return attachStudentDatabaseExportSyncComment(databaseFields, {
+        entity: "students",
+        fallbackId: buildStudentDatabaseRecordId(databaseFields.uid, index + 1),
+        seenIds: studentIds,
+        label: "слушателей",
+        index,
+        synchronizedAt
+      });
     });
+  const contractIds = new Set();
   const contracts = body.contracts
     .filter((contract) => contract && typeof contract === "object" && !Array.isArray(contract))
-    .map((contract) => {
+    .map((contract, index) => {
       const section = normalizeContractDatabaseSection(contract.section || contract.status)
         || CONTRACT_DATABASE_SECTIONS.active;
-      return {
+      const normalized = {
         ...contract,
         citizenship: normalizeCitizenshipValue(contract.citizenship),
         section,
@@ -13780,31 +15939,85 @@ function sanitizeStudentDatabaseExportPayload(body) {
             ? "Партнерская программа"
             : "Истек"
       };
+      return attachStudentDatabaseExportSyncComment(normalized, {
+        entity: "contracts",
+        fallbackId: buildContractDatabaseRecordId(normalized, index + 1),
+        seenIds: contractIds,
+        label: "договоров",
+        index,
+        synchronizedAt
+      });
     });
+  const directExpenseIds = new Set();
   const directExpenses = body.directExpenses
     .filter((expense) => expense && typeof expense === "object" && !Array.isArray(expense))
-    .map((expense) => ({ ...expense }));
+    .map((expense, index) => attachStudentDatabaseExportSyncComment(
+      { ...expense },
+      {
+        entity: "directExpenses",
+        fallbackId: buildDirectExpenseDatabaseRecordId(expense, index + 1),
+        seenIds: directExpenseIds,
+        label: "прямых затрат",
+        index,
+        synchronizedAt
+      }
+    ));
+  const generalExpenseIds = new Set();
   const generalExpenses = body.generalExpenses
     .filter((expense) => expense && typeof expense === "object" && !Array.isArray(expense))
-    .map((expense) => ({
-      ...expense,
-      section: normalizeGeneralExpenseDatabaseSection(expense.section)
-        || GENERAL_EXPENSE_DATABASE_SECTIONS.organizations
-    }));
+    .map((expense, index) => {
+      const normalized = {
+        ...expense,
+        section: normalizeGeneralExpenseDatabaseSection(expense.section)
+          || GENERAL_EXPENSE_DATABASE_SECTIONS.organizations
+      };
+      return attachStudentDatabaseExportSyncComment(normalized, {
+        entity: "generalExpenses",
+        fallbackId: buildGeneralExpenseDatabaseRecordId(normalized, index + 1),
+        seenIds: generalExpenseIds,
+        label: "общих затрат",
+        index,
+        synchronizedAt
+      });
+    });
   const programsProvided = Array.isArray(body.programs);
-  const programs = sanitizeStudentDatabaseExportPrograms(body.programs);
+  const programs = sanitizeStudentDatabaseExportPrograms(body.programs, synchronizedAt);
+  const programDictionaryResult = sanitizeStudentDatabaseExportProgramDictionaries(
+    body.programDictionaries
+  );
+  const inventoryResult = sanitizeStudentDatabaseExportInventory(
+    body.inventory,
+    directExpenses,
+    synchronizedAt
+  );
+  const trainingPlanResult = sanitizeStudentDatabaseExportTrainingPlans(
+    body.trainingPlans,
+    synchronizedAt
+  );
   const macroSettings = sanitizeStudentDatabaseMacroSettingsExport(body.macroSettings);
+  const communicationTemplateFields = sanitizeStudentDatabaseCommunicationTemplateFields(
+    body.communicationTemplateFields
+  );
   return {
     students,
     contracts,
     directExpenses,
     generalExpenses,
     programs,
+    inventory: inventoryResult.inventory,
+    inventoryRows: inventoryResult.inventoryRows,
+    inventoryProvided: inventoryResult.provided,
+    trainingPlans: trainingPlanResult.trainingPlans,
+    trainingPlansProvided: trainingPlanResult.provided,
+    programsProvided,
     programPromoMessagesProvided: programsProvided,
+    programDictionaries: programDictionaryResult.programDictionaries,
+    programDictionariesProvided: programDictionaryResult.provided,
     paymentConstants: sanitizePaymentDatabaseConstants(body.paymentConstants),
     paymentConstantsProvided: Array.isArray(body.paymentConstants),
     agentPaymentRates: sanitizeAgentPaymentRates(body.agentPaymentRates),
     macroSettings,
+    ...communicationTemplateFields,
     defaultStudentAdditionalStatus: DEFAULT_STUDENT_ADDITIONAL_STATUS,
     studentColumnMap: {
       ...STUDENT_DATABASE_COLUMN_MAP,
@@ -13813,6 +16026,14 @@ function sanitizeStudentDatabaseExportPayload(body) {
     studentDateFields: [...STUDENT_DATABASE_DATE_FIELDS],
     studentNumberFields: [...STUDENT_DATABASE_NUMBER_FIELDS],
     directExpenseColumnMap: DIRECT_EXPENSE_DATABASE_COLUMN_MAP,
+    inventoryColumnMap: INVENTORY_DATABASE_COLUMN_MAP,
+    inventoryDateFields: ["date"],
+    inventoryNumberFields: ["amount"],
+    trainingPlanColumnMap: TRAINING_PLAN_DATABASE_COLUMN_MAP,
+    trainingPlanNumberFields: [...TRAINING_PLAN_DATABASE_NUMBER_FIELDS],
+    programColumnMap: PROGRAM_DATABASE_COLUMN_MAP,
+    programDateFields: ["programOrderDate"],
+    programNumberFields: [...PROGRAM_DATABASE_NUMBER_FIELDS],
     generalExpenseColumnMap: GENERAL_EXPENSE_DATABASE_COLUMN_MAP,
     generalExpenseSections: GENERAL_EXPENSE_DATABASE_SECTIONS,
     contractColumnMap: {
@@ -13866,13 +16087,62 @@ function resolveYandexStudentDatabaseFile(databasePath) {
   return remotePath;
 }
 
+async function readYandexStudentDatabaseEntityTag(targetPath) {
+  const response = await requestYandexWebDav("HEAD", targetPath, {
+    acceptedStatuses: [200],
+    maxResponseBytes: 16 * 1024
+  });
+  return String(response.headers.etag || "").trim();
+}
+
 async function saveStudentDatabaseSyncResult(
   databasePath,
   sourceType,
   sourceBytes,
   outputBytes,
-  onProgress = () => {}
+  onProgress = () => {},
+  expectedSourceHash = ""
 ) {
+  const normalizedExpectedHash = String(expectedSourceHash || "").trim().toLowerCase();
+  const webDavTargetPath = sourceType === "local"
+    ? ""
+    : resolveYandexStudentDatabaseFile(databasePath);
+  let expectedWebDavEntityTag = "";
+  if (normalizedExpectedHash) {
+    const entityTagBeforeRead = webDavTargetPath
+      ? await readYandexStudentDatabaseEntityTag(webDavTargetPath)
+      : "";
+    const latestSourceBytes = await loadStudentDatabaseBytes(
+      databasePath,
+      null,
+      { source: sourceType }
+    );
+    if (hashStudentDatabaseBytes(latestSourceBytes) !== normalizedExpectedHash) {
+      const conflictError = new Error(
+        "Файл XLSB изменён другим пользователем непосредственно перед сохранением. "
+          + "Новая версия не перезаписана; повторите синхронизацию."
+      );
+      conflictError.statusCode = 409;
+      throw conflictError;
+    }
+    if (webDavTargetPath) {
+      const entityTagAfterRead = await readYandexStudentDatabaseEntityTag(webDavTargetPath);
+      if (
+        entityTagBeforeRead
+        && entityTagAfterRead
+        && entityTagBeforeRead !== entityTagAfterRead
+      ) {
+        const conflictError = new Error(
+          "Файл XLSB изменился во время контрольного чтения. "
+          + "Новая версия не перезаписана; повторите синхронизацию."
+        );
+        conflictError.statusCode = 409;
+        throw conflictError;
+      }
+      expectedWebDavEntityTag = entityTagAfterRead || entityTagBeforeRead;
+    }
+    sourceBytes = latestSourceBytes;
+  }
   const backupFileName = buildStudentDatabaseBackupFileName();
   if (sourceType === "local") {
     const targetPath = resolveLocalStudentDatabaseFile(databasePath);
@@ -13881,11 +16151,40 @@ async function saveStudentDatabaseSyncResult(
     onProgress({ progress: 96, stage: "backup", message: "Создание локальной резервной копии XLSB..." });
     await fs.mkdir(backupFolder, { recursive: true });
     await fs.writeFile(backupPath, sourceBytes, { flag: "wx" });
-    onProgress({ progress: 98, stage: "save", message: "Обновление локальной базы XLSB..." });
+    onProgress({ progress: 98, stage: "save", message: "Атомарное обновление локальной базы XLSB..." });
+    const temporaryPath = `${targetPath}.ais-sync-${crypto.randomUUID()}.tmp`;
+    let temporaryFileExists = false;
     try {
-      await fs.writeFile(targetPath, outputBytes);
+      const handle = await fs.open(temporaryPath, "wx");
+      temporaryFileExists = true;
+      try {
+        await handle.writeFile(outputBytes);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      if (normalizedExpectedHash) {
+        const sourceImmediatelyBeforeReplace = await fs.readFile(targetPath);
+        if (hashStudentDatabaseBytes(sourceImmediatelyBeforeReplace) !== normalizedExpectedHash) {
+          const conflictError = new Error(
+            "Локальный XLSB изменён непосредственно перед заменой. "
+            + "Новая версия не перезаписана; повторите синхронизацию."
+          );
+          conflictError.statusCode = 409;
+          throw conflictError;
+        }
+      }
+      await fs.rename(temporaryPath, targetPath);
+      temporaryFileExists = false;
+      const savedBytes = await fs.readFile(targetPath);
+      if (hashStudentDatabaseBytes(savedBytes) !== hashStudentDatabaseBytes(outputBytes)) {
+        throw new Error("Контрольная проверка записанного локального XLSB не пройдена.");
+      }
     } catch (error) {
+      if (Number(error?.statusCode) === 409) throw error;
       throw new Error(`Резервная копия создана: ${backupPath}. Не удалось обновить исходную базу: ${error.message}`);
+    } finally {
+      if (temporaryFileExists) await fs.rm(temporaryPath, { force: true }).catch(() => {});
     }
     return {
       source: sourceType,
@@ -13894,7 +16193,7 @@ async function saveStudentDatabaseSyncResult(
     };
   }
 
-  const targetPath = resolveYandexStudentDatabaseFile(databasePath);
+  const targetPath = webDavTargetPath;
   const backupFolder = normalizeWebDavPath(`${path.posix.dirname(targetPath)}/_Резерв`);
   const backupPath = normalizeWebDavPath(`${backupFolder}/${backupFileName}`);
   onProgress({ progress: 96, stage: "backup", message: "Создание резервной копии XLSB на Яндекс-Диске..." });
@@ -13902,16 +16201,46 @@ async function saveStudentDatabaseSyncResult(
   await requestYandexWebDav("PUT", backupPath, {
     acceptedStatuses: [200, 201, 204],
     body: sourceBytes,
-    contentType: "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
+    contentType: "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+    headers: { "If-None-Match": "*" }
   });
   onProgress({ progress: 98, stage: "save", message: "Обновление базы XLSB на Яндекс-Диске..." });
   try {
+    if (!expectedWebDavEntityTag && normalizedExpectedHash) {
+      const sourceImmediatelyBeforePut = await loadStudentDatabaseBytes(
+        databasePath,
+        null,
+        { source: sourceType }
+      );
+      if (hashStudentDatabaseBytes(sourceImmediatelyBeforePut) !== normalizedExpectedHash) {
+        const conflictError = new Error(
+          "Файл XLSB изменён непосредственно перед загрузкой на Яндекс-Диск. "
+          + "Новая версия не перезаписана; повторите синхронизацию."
+        );
+        conflictError.statusCode = 409;
+        throw conflictError;
+      }
+    }
     await requestYandexWebDav("PUT", targetPath, {
       acceptedStatuses: [200, 201, 204],
       body: outputBytes,
-      contentType: "application/vnd.ms-excel.sheet.binary.macroEnabled.12"
+      contentType: "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+      headers: expectedWebDavEntityTag ? { "If-Match": expectedWebDavEntityTag } : {}
     });
+    const savedBytes = await loadStudentDatabaseBytes(databasePath, null, { source: sourceType });
+    if (hashStudentDatabaseBytes(savedBytes) !== hashStudentDatabaseBytes(outputBytes)) {
+      throw new Error("Контрольная проверка XLSB на Яндекс-Диске не пройдена.");
+    }
   } catch (error) {
+    if (Number(error?.statusCode) === 409) throw error;
+    if (Number(error?.statusCode) === 412) {
+      const conflictError = new Error(
+        "Файл XLSB изменён другим пользователем во время сохранения на Яндекс-Диск. "
+        + "Новая версия не перезаписана; повторите синхронизацию."
+      );
+      conflictError.statusCode = 409;
+      throw conflictError;
+    }
     throw new Error(`Резервная копия создана: ${backupPath}. Не удалось обновить исходную базу: ${error.message}`);
   }
   return {
@@ -13928,10 +16257,16 @@ function formatImportBytes(bytes) {
   return `${(value / (1024 * 1024)).toFixed(1)} МБ`;
 }
 
-function parseStudentDatabaseInWorker(bytes, onProgress = () => {}) {
+function parseStudentDatabaseInWorker(bytes, onProgress = () => {}, options = {}) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(path.join(SERVER_CODE_ROOT, "student-import-worker.js"), {
-      workerData: bytes
+      workerData: {
+        bytes,
+        options: {
+          includeCommunicationTemplateNamedRangeValues:
+            options?.includeCommunicationTemplateNamedRangeValues !== false
+        }
+      }
     });
     let settled = false;
     worker.on("message", (message) => {
@@ -13960,30 +16295,53 @@ function parseStudentDatabaseInWorker(bytes, onProgress = () => {}) {
   });
 }
 
-async function applyImportedStudentDatabaseMacroSettings(result) {
+function studentDatabaseSharedStateUsesApplicationsMySqlConnection() {
+  if (String(process.env.AIS_RECORD_LOCKS_MYSQL_CONNECTION_STRING || "").trim()) return false;
+  if (String(serverSettings.sharedRecordLocksMySqlConnectionString || "").trim()) return false;
+  return serverSettings.sharedRecordLocksMySqlUseApplicationsConnection !== false;
+}
+
+function prepareImportedStudentDatabaseServerSettings(
+  result,
+  { enforceSharedStateSafety = true } = {}
+) {
   const imported = result?.macroSettings;
-  if (!imported?.provided) return;
-  const patch = {};
-  if (String(imported.applicationsSqlQuery || "").trim()) {
-    patch.studentApplicationsSqlQuery = normalizeStudentApplicationsSqlQuery(
-      imported.applicationsSqlQuery
-    );
-  }
+  if (!imported?.provided) return { imported: null, patch: {}, requestedSqlQuery: "" };
+  const requestedSqlQuery = String(imported.applicationsSqlQuery || "").trim();
+  const patch = {
+    studentApplicationsSqlQuery: requestedSqlQuery
+      ? normalizeStudentApplicationsSqlQuery(requestedSqlQuery)
+      : ""
+  };
   if (!process.env.STUDENT_APPLICATIONS_MYSQL_CONNECTION_STRING) {
     const currentConnection = parseSharedRecordLocksMySqlConnectionString(
       getStudentApplicationsMySqlConnectionString()
     );
-    const host = String(imported.applicationsMysqlHost || currentConnection.server || currentConnection.host || "").trim();
-    const database = String(imported.applicationsMysqlDatabase || currentConnection.database || currentConnection.initialcatalog || "").trim();
-    const user = String(imported.applicationsMysqlUser || currentConnection.uid || currentConnection.user || currentConnection.userid || "").trim();
-    const password = String(
-      result?.macroSettingsSecret?.applicationsMysqlPassword
-      || currentConnection.pwd
-      || currentConnection.password
-      || ""
-    );
-    if (host && database && user && password) {
-      patch.studentApplicationsMySqlConnectionString = buildStudentApplicationsMySqlConnectionString({
+    const host = String(imported.applicationsMysqlHost || "").trim();
+    const database = String(imported.applicationsMysqlDatabase || "").trim();
+    const user = String(imported.applicationsMysqlUser || "").trim();
+    const password = String(result?.macroSettingsSecret?.applicationsMysqlPassword || "");
+    const hasConnectionValues = Boolean(host || database || user || password);
+    if (host && (host.length > 255 || !/^[A-Za-z0-9.-]+$/u.test(host))) {
+      throw new Error("В XLSB указан некорректный сервер MySQL интернет-магазина.");
+    }
+    if (database && (database.length > 128 || /[;{}]/u.test(database))) {
+      throw new Error("В XLSB указано некорректное имя базы MySQL интернет-магазина.");
+    }
+    if (user && (user.length > 128 || /[;{}]/u.test(user))) {
+      throw new Error("В XLSB указан некорректный пользователь MySQL интернет-магазина.");
+    }
+    if (password.includes("}")) {
+      throw new Error("Пароль MySQL интернет-магазина из XLSB содержит недопустимый символ }.");
+    }
+    if (hasConnectionValues) {
+      if (!host || !database || !user || !password) {
+        throw new Error(
+          "В XLSB указаны неполные настройки MySQL интернет-магазина. "
+          + "Заполните сервер, базу, пользователя и пароль либо очистите все четыре значения."
+        );
+      }
+      const nextConnectionString = buildStudentApplicationsMySqlConnectionString({
         driver: currentConnection.driver || "MySQL ODBC 9.4 Unicode Driver",
         host,
         port: Number(currentConnection.port) || 3306,
@@ -13991,25 +16349,573 @@ async function applyImportedStudentDatabaseMacroSettings(result) {
         user,
         password
       });
+      const currentCanonicalConnection = currentConnection.server || currentConnection.host
+        ? buildStudentApplicationsMySqlConnectionString({
+            driver: currentConnection.driver || "MySQL ODBC 9.4 Unicode Driver",
+            host: currentConnection.server || currentConnection.host,
+            port: Number(currentConnection.port) || 3306,
+            database: currentConnection.database || currentConnection.initialcatalog || "",
+            user: currentConnection.uid || currentConnection.user || currentConnection.userid || "",
+            password: currentConnection.pwd || currentConnection.password || ""
+          })
+        : "";
+      if (nextConnectionString !== currentCanonicalConnection) {
+        if (enforceSharedStateSafety && studentDatabaseSharedStateUsesApplicationsMySqlConnection()) {
+          const error = new Error(
+            "Подключение MySQL интернет-магазина одновременно используется общей Web-базой. "
+            + "Его нельзя менять через двустороннюю синхронизацию XLSB. "
+            + "Сначала задайте отдельное подключение общей базы или измените реквизиты в настройках администратора; XLSB не изменён."
+          );
+          error.statusCode = 409;
+          throw error;
+        }
+        patch.studentApplicationsMySqlConnectionString = nextConnectionString;
+      }
     }
   }
+  return { imported, patch, requestedSqlQuery };
+}
+
+async function applyImportedStudentDatabaseMacroSettings(result) {
+  const { imported, patch } = prepareImportedStudentDatabaseServerSettings(result);
+  if (!imported) return;
   if (Object.keys(patch).length) await saveServerSettings(patch);
+  const publicSettings = publicStudentApplicationsMySqlSettings();
   result.macroSettings = {
     ...imported,
-    ...publicStudentApplicationsMySqlSettings()
+    ...publicSettings
   };
 }
 
+async function applyPendingStudentDatabaseServerSettings(job) {
+  if (
+    job?.result?.syncDirection !== "excel-to-web"
+    || !job.pendingServerMacroSettingsImport
+  ) return;
+  const serverMacroSettingsImport = job.pendingServerMacroSettingsImport;
+  await applyImportedStudentDatabaseMacroSettings(serverMacroSettingsImport);
+  if (job.result.importPayload) {
+    job.result = {
+      ...job.result,
+      importPayload: {
+        ...job.result.importPayload,
+        macroSettings: serverMacroSettingsImport.macroSettings
+      }
+    };
+  }
+  job.pendingServerMacroSettingsImport = null;
+}
+
+function getStudentDatabaseHumanCommentText(value) {
+  const source = String(value || "").replace(/\r\n?/gu, "\n");
+  let preserved = source.replace(
+    /\[\[AIS_SYNC_V1\]\][\s\S]*?\[\[\/AIS_SYNC_V1\]\]/gu,
+    ""
+  );
+  const orphanStart = preserved.indexOf(STUDENT_DATABASE_SYNC_COMMENT_START);
+  if (orphanStart >= 0) preserved = preserved.slice(0, orphanStart);
+  return preserved
+    .replaceAll(STUDENT_DATABASE_SYNC_COMMENT_END, "")
+    .replace(/^\n+|\n+$/gu, "");
+}
+
+function resolveStudentDatabaseHumanCommentAssignments(sourceEntries, targetEntries) {
+  const humanByRecordId = new Map();
+  const unmanagedHumanByRow = new Map();
+  (Array.isArray(sourceEntries) ? sourceEntries : []).forEach((entry) => {
+    const sheetName = String(entry?.sheetName || "");
+    const entity = String(entry?.entity || "");
+    const row = Math.trunc(Number(entry?.row) || 0);
+    const recordId = String(entry?.recordId || "").trim();
+    const humanText = String(entry?.humanText || "");
+    if (!sheetName || row < 1) return;
+    if (recordId) {
+      const key = `${sheetName}\u0000${entity}\u0000${recordId}`;
+      if (humanByRecordId.has(key)) {
+        throw new Error(`В примечаниях повторяется служебный ID «${recordId}».`);
+      }
+      humanByRecordId.set(key, humanText);
+    } else if (humanText) {
+      unmanagedHumanByRow.set(`${sheetName}\u0000${row}`, humanText);
+    }
+  });
+  return (Array.isArray(targetEntries) ? targetEntries : []).map((entry) => {
+    const sheetName = String(entry?.sheetName || "");
+    const entity = String(entry?.entity || "");
+    const row = Math.trunc(Number(entry?.row) || 0);
+    const recordId = String(entry?.recordId || "").trim();
+    const recordKey = `${sheetName}\u0000${entity}\u0000${recordId}`;
+    const rowKey = `${sheetName}\u0000${row}`;
+    return {
+      ...entry,
+      humanText: humanByRecordId.has(recordKey)
+        ? humanByRecordId.get(recordKey)
+        : unmanagedHumanByRow.get(rowKey) || ""
+    };
+  });
+}
+
+function collectStudentDatabaseFirstColumnCommentEntries(workbook, sheetDefinitions) {
+  const entries = [];
+  (Array.isArray(sheetDefinitions) ? sheetDefinitions : []).forEach(({ sheetName, entity }) => {
+    const sheet = workbook?.Sheets?.[sheetName];
+    if (!sheet) return;
+    Object.entries(sheet).forEach(([address, cell]) => {
+      if (address.startsWith("!") || !Array.isArray(cell?.c)) return;
+      const coordinate = XLSX.utils.decode_cell(address);
+      if (coordinate.c !== 0 || coordinate.r < 1) return;
+      const commentText = getStudentDatabaseCellCommentText(cell);
+      const managed = commentText.includes(STUDENT_DATABASE_SYNC_COMMENT_START)
+        ? parseStudentDatabaseManagedSyncComment(cell, entity)
+        : null;
+      entries.push({
+        sheetName,
+        entity,
+        row: coordinate.r + 1,
+        recordId: managed?.recordId || "",
+        humanText: getStudentDatabaseHumanCommentText(commentText)
+      });
+    });
+  });
+  return entries;
+}
+
+function assertStudentDatabaseHumanCommentsRelocated(sourceBytes, outputBytes, sheetDefinitions) {
+  const sourceWorkbook = XLSX.read(sourceBytes, { type: "buffer", cellDates: true });
+  const outputWorkbook = XLSX.read(outputBytes, { type: "buffer", cellDates: true });
+  const sourceEntries = collectStudentDatabaseFirstColumnCommentEntries(
+    sourceWorkbook,
+    sheetDefinitions
+  );
+  const outputEntries = collectStudentDatabaseFirstColumnCommentEntries(
+    outputWorkbook,
+    sheetDefinitions
+  ).filter((entry) => entry.recordId);
+  const expected = resolveStudentDatabaseHumanCommentAssignments(sourceEntries, outputEntries);
+  expected.forEach((entry, index) => {
+    if (entry.humanText !== outputEntries[index].humanText) {
+      throw new Error(
+        `Проверка примечаний не пройдена: пользовательский текст не перенесён по ID `
+        + `«${entry.recordId}» на листе «${entry.sheetName}».`
+      );
+    }
+  });
+}
+
+function normalizeStudentDatabaseImportIdentityValue(value) {
+  return String(value ?? "")
+    .replace(/\u00a0/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/gu, "е");
+}
+
+function buildStudentDatabaseImportIdentity(record, fields) {
+  const values = (Array.isArray(fields) ? fields : [])
+    .map((field) => normalizeStudentDatabaseImportIdentityValue(record?.[field]));
+  return values.some(Boolean) ? values.join("\u0000") : "";
+}
+
+function reconcileStudentDatabaseImportRecordIds(excelRows, webRows, options) {
+  const sourceRows = Array.isArray(excelRows) ? excelRows : [];
+  const targetRows = Array.isArray(webRows) ? webRows : [];
+  const usedWebRows = new Set();
+  const byId = new Map();
+  targetRows.forEach((row) => {
+    const id = String(row?.id || "").trim();
+    if (!id) return;
+    if (byId.has(id)) {
+      throw new Error(`В Web-базе повторяется ID ${options.label} «${id}».`);
+    }
+    byId.set(id, row);
+  });
+  const priorities = (options.priorities || []).map((priority) => {
+    const index = new Map();
+    targetRows.forEach((row) => {
+      const key = String(priority.key(row) || "").trim();
+      if (!key) return;
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push(row);
+    });
+    return { ...priority, index };
+  });
+  const findMutableMatch = (row, failOnAmbiguous = true) => {
+    for (const priority of priorities) {
+      const key = String(priority.key(row) || "").trim();
+      if (!key) continue;
+      const candidates = (priority.index.get(key) || []).filter((candidate) => !usedWebRows.has(candidate));
+      if (candidates.length === 1) return candidates[0];
+      if (candidates.length > 1 && !priority.allowAmbiguous) {
+        if (failOnAmbiguous) {
+          throw new Error(`Конфликт сопоставления ${options.label}: найдено несколько записей.`);
+        }
+        return candidates[0];
+      }
+    }
+    return null;
+  };
+  sourceRows.forEach((row) => {
+    const sourceId = String(row?.id || "").trim();
+    const exact = sourceId ? byId.get(sourceId) : null;
+    if (exact && !usedWebRows.has(exact)) {
+      usedWebRows.add(exact);
+      row.id = String(exact.id);
+      return;
+    }
+    const hasStableComment = Boolean(row?.databaseSync?.recordId);
+    if (hasStableComment) {
+      const conflictingMutableMatch = findMutableMatch(row, false);
+      if (conflictingMutableMatch) {
+        const error = new Error(
+          `Служебный ID ${options.label} «${sourceId}» не найден в Web-базе, `
+          + "но изменяемые поля совпали с другой записью. Синхронизация остановлена."
+        );
+        error.statusCode = 409;
+        throw error;
+      }
+      return;
+    }
+    const mutableMatch = findMutableMatch(row, true);
+    if (!mutableMatch) return;
+    usedWebRows.add(mutableMatch);
+    row.id = String(mutableMatch.id);
+  });
+  return sourceRows;
+}
+
+function reconcileStudentDatabaseImportIdsWithWeb(result, payload) {
+  const identityPriority = (fields, extra = {}) => ({
+    key: (row) => buildStudentDatabaseImportIdentity(row, fields),
+    ...extra
+  });
+  reconcileStudentDatabaseImportRecordIds(result.students, payload.students, {
+    label: "слушателя",
+    priorities: [
+      identityPriority(["uid"], { allowAmbiguous: true }),
+      identityPriority(["uid", "name", "applicationDate", "program"])
+    ]
+  });
+  reconcileStudentDatabaseImportRecordIds(result.contracts, payload.contracts, {
+    label: "договора",
+    priorities: [identityPriority(["section", "name", "contractNo", "contractDate"])]
+  });
+  const excelDirectExpenses = [
+    ...(result.directExpenses || []),
+    ...(result.students || []).flatMap((student) => student?.directExpenses || [])
+  ];
+  reconcileStudentDatabaseImportRecordIds(excelDirectExpenses, payload.directExpenses, {
+    label: "прямого расхода",
+    priorities: [identityPriority(["uid", "date", "type"])]
+  });
+  reconcileStudentDatabaseImportRecordIds(result.generalExpenses, payload.generalExpenses, {
+    label: "общего расхода",
+    priorities: [identityPriority(["section", "counterparty", "date", "workType"])]
+  });
+  const oldInventoryIdByItem = new Map((result.inventory || []).map((item) => [
+    item,
+    String(item?.id || "").trim()
+  ]));
+  reconcileStudentDatabaseImportRecordIds(result.inventory, payload.inventory, {
+    label: "позиции запасов",
+    priorities: [identityPriority(["itemType"])]
+  });
+  const inventoryIdRemap = new Map((result.inventory || []).map((item) => [
+    oldInventoryIdByItem.get(item),
+    String(item?.id || "").trim()
+  ]).filter(([oldId, newId]) => oldId && newId));
+  const inventoryIdByType = new Map((result.inventory || []).map((item) => [
+    normalizeStudentDatabaseImportIdentityValue(item?.itemType),
+    String(item?.id || "").trim()
+  ]));
+  (result.databaseSyncInventoryUnits || []).forEach((unit) => {
+    const remappedId = inventoryIdRemap.get(String(unit?.inventoryId || "").trim())
+      || inventoryIdByType.get(normalizeStudentDatabaseImportIdentityValue(unit?.itemType));
+    if (remappedId) unit.inventoryId = remappedId;
+  });
+  excelDirectExpenses.forEach((expense) => {
+    const remappedId = inventoryIdRemap.get(String(expense?.inventoryId || "").trim())
+      || inventoryIdByType.get(normalizeStudentDatabaseImportIdentityValue(
+        expense?.inventoryLink || expense?.type
+      ));
+    if (remappedId) expense.inventoryId = remappedId;
+  });
+  reconcileStudentDatabaseImportRecordIds(result.trainingPlans, payload.trainingPlans, {
+    label: "строки учебного плана",
+    priorities: [identityPriority(["code", "programName", "discipline"])]
+  });
+  reconcileStudentDatabaseImportRecordIds(result.programPaymentSettings, payload.programs, {
+    label: "программы",
+    priorities: [
+      {
+        key: (row) => {
+          const sourceRow = Math.max(0, Number(row?.xlsbProgramRow) || 0);
+          const name = normalizeStudentDatabaseImportIdentityValue(row?.xlsbProgramName || row?.name);
+          return sourceRow && name ? `${sourceRow}\u0000${name}` : "";
+        }
+      },
+      {
+        key: (row) => [row?.xlsbProgramName || row?.name, row?.xlsbProgramLandingCode]
+          .map(normalizeStudentDatabaseImportIdentityValue)
+          .join("\u0000")
+      },
+      identityPriority(["name"])
+    ]
+  });
+  return result;
+}
+
+function normalizeStudentDatabaseComparableCellValue(value) {
+  if (value instanceof Date) return { type: "date", value: value.toISOString() };
+  if (Buffer.isBuffer(value)) return { type: "buffer", value: value.toString("base64") };
+  if (typeof value === "number" && Number.isNaN(value)) return { type: "number", value: "NaN" };
+  return { type: typeof value, value };
+}
+
+function buildStudentDatabaseSyncAnnotationPayload(result, synchronizedAt = new Date().toISOString()) {
+  const normalizedSynchronizedAt = normalizeStudentDatabaseSyncTimestamp(synchronizedAt);
+  if (!normalizedSynchronizedAt) {
+    throw new Error("Не удалось определить время создания служебных примечаний AIS_SYNC.");
+  }
+  const rows = [];
+  const usedRows = new Set();
+  const usedRecordIds = new Set();
+  const append = (sheetName, entity, record, options = {}) => {
+    const row = Math.trunc(Number(options.row || record?.databaseSyncSourceRow) || 0);
+    const recordId = String(options.recordId || record?.id || "")
+      .replace(/\u0000/gu, "")
+      .trim()
+      .slice(0, 191);
+    const parentRecordId = String(options.parentRecordId || "")
+      .replace(/\u0000/gu, "")
+      .trim()
+      .slice(0, 191);
+    if (row < 1 || !recordId) {
+      throw new Error(`Не удалось подготовить служебное примечание ${entity}: строка или ID отсутствуют.`);
+    }
+    const rowKey = `${sheetName}\u0000${row}`;
+    const recordKey = `${entity}\u0000${recordId}`;
+    if (usedRows.has(rowKey)) {
+      throw new Error(`Для строки ${row} листа «${sheetName}» подготовлено несколько меток AIS_SYNC.`);
+    }
+    if (usedRecordIds.has(recordKey)) {
+      throw new Error(`В плане примечаний AIS_SYNC повторяется ID «${recordId}» типа «${entity}».`);
+    }
+    usedRows.add(rowKey);
+    usedRecordIds.add(recordKey);
+    rows.push({
+      sheetName,
+      row,
+      entity,
+      recordId,
+      metadata: buildStudentDatabaseManagedSyncComment(entity, recordId, {
+        parentRecordId,
+        syncedAt: normalizedSynchronizedAt
+      })
+    });
+  };
+
+  (result?.students || []).forEach((student) => append("База", "students", student));
+  (result?.contracts || []).forEach((contract) => (
+    append("Реестр договоров", "contracts", contract)
+  ));
+  [
+    ...(result?.directExpenses || []),
+    ...(result?.students || []).flatMap((student) => student?.directExpenses || [])
+  ].filter((expense) => Number(expense?.databaseSyncSourceRow) > 0)
+    .forEach((expense) => append("Прямые затраты", "directExpenses", expense));
+  (result?.generalExpenses || []).forEach((expense) => (
+    append("Общие затраты", "generalExpenses", expense)
+  ));
+  (result?.programPaymentSettings || []).forEach((program) => (
+    append("Реестр программ", "programs", program, { row: program?.xlsbProgramRow })
+  ));
+  (result?.trainingPlans || []).forEach((plan) => (
+    append("Учебные планы", "trainingPlans", plan, { row: plan?.xlsbTrainingPlanRow })
+  ));
+  (result?.databaseSyncInventoryUnits || []).forEach((unit) => {
+    const parentRecordId = String(unit?.inventoryId || "").trim();
+    const recordId = String(unit?.databaseSync?.recordId || "").trim()
+      || buildInventoryDatabaseUnitRecordId(
+        parentRecordId,
+        unit?.uid || "",
+        unit?.uid ? "allocated" : "available",
+        unit?.sourceRow
+      );
+    append("Запасы", "inventoryUnits", unit, {
+      row: unit?.sourceRow,
+      recordId,
+      parentRecordId
+    });
+  });
+  return {
+    commentOnly: true,
+    synchronizedAt: normalizedSynchronizedAt,
+    syncCommentSheets: STUDENT_DATABASE_SYNC_COMMENT_SHEETS,
+    syncCommentRows: rows
+  };
+}
+
+function assertStudentDatabaseCommentOnlyOutput(sourceBytes, outputBytes, annotationPayload) {
+  const readWorkbook = (bytes) => XLSX.read(bytes, { type: "buffer", cellDates: true });
+  const sourceWorkbook = readWorkbook(sourceBytes);
+  const outputWorkbook = readWorkbook(outputBytes);
+  if (JSON.stringify(sourceWorkbook.SheetNames) !== JSON.stringify(outputWorkbook.SheetNames)) {
+    throw new Error("Проверка служебных примечаний не пройдена: изменился состав листов XLSB.");
+  }
+  const annotationRows = Array.isArray(annotationPayload?.syncCommentRows)
+    ? annotationPayload.syncCommentRows
+    : [];
+  const annotationSheets = Array.isArray(annotationPayload?.syncCommentSheets)
+    ? annotationPayload.syncCommentSheets
+    : [];
+  const targetByCell = new Map(annotationRows.map((row) => [
+    `${row.sheetName}\u0000${XLSX.utils.encode_cell({ r: Number(row.row) - 1, c: 0 })}`,
+    row
+  ]));
+  const managedEntityBySheet = new Map(annotationSheets.map((sheet) => [
+    String(sheet?.sheetName || ""),
+    String(sheet?.entity || "")
+  ]));
+  const targetHumanTextByCell = new Map(resolveStudentDatabaseHumanCommentAssignments(
+    collectStudentDatabaseFirstColumnCommentEntries(sourceWorkbook, annotationSheets),
+    annotationRows.map((row) => ({
+      sheetName: String(row?.sheetName || ""),
+      entity: String(row?.entity || ""),
+      row: Math.trunc(Number(row?.row) || 0),
+      recordId: String(row?.recordId || "").trim()
+    }))
+  ).map((entry) => [
+    `${entry.sheetName}\u0000${XLSX.utils.encode_cell({ r: entry.row - 1, c: 0 })}`,
+    entry.humanText
+  ]));
+  const targetRecordKeys = new Set(annotationRows.map((row) => (
+    `${String(row?.sheetName || "")}\u0000${String(row?.entity || "")}`
+    + `\u0000${String(row?.recordId || "").trim()}`
+  )));
+  sourceWorkbook.SheetNames.forEach((sheetName) => {
+    const sourceSheet = sourceWorkbook.Sheets[sheetName];
+    const outputSheet = outputWorkbook.Sheets[sheetName];
+    const addresses = new Set([
+      ...Object.keys(sourceSheet || {}).filter((address) => !address.startsWith("!")),
+      ...Object.keys(outputSheet || {}).filter((address) => !address.startsWith("!"))
+    ]);
+    addresses.forEach((address) => {
+      const sourceCell = sourceSheet?.[address];
+      const outputCell = outputSheet?.[address];
+      const sourceValue = JSON.stringify(normalizeStudentDatabaseComparableCellValue(sourceCell?.v));
+      const outputValue = JSON.stringify(normalizeStudentDatabaseComparableCellValue(outputCell?.v));
+      if (
+        String(sourceCell?.f || "") !== String(outputCell?.f || "")
+        || String(sourceCell?.F || "") !== String(outputCell?.F || "")
+        || sourceValue !== outputValue
+      ) {
+        throw new Error(
+          `Проверка служебных примечаний не пройдена: изменено значение или формула ${sheetName}!${address}.`
+        );
+      }
+      const target = targetByCell.get(`${sheetName}\u0000${address}`);
+      const sourceComment = getStudentDatabaseCellCommentText(sourceCell);
+      const outputComment = getStudentDatabaseCellCommentText(outputCell);
+      if (!target) {
+        const coordinate = XLSX.utils.decode_cell(address);
+        const managedEntity = managedEntityBySheet.get(sheetName);
+        const isStaleManagedComment = Boolean(
+          managedEntity
+          && coordinate.c === 0
+          && coordinate.r >= 1
+          && (
+            sourceComment.includes(STUDENT_DATABASE_SYNC_COMMENT_START)
+            || sourceComment.includes(STUDENT_DATABASE_SYNC_COMMENT_END)
+          )
+        );
+        if (isStaleManagedComment) {
+          const sourceManaged = sourceComment.includes(STUDENT_DATABASE_SYNC_COMMENT_START)
+            ? parseStudentDatabaseManagedSyncComment(sourceCell, managedEntity)
+            : null;
+          const sourceRecordKey = sourceManaged
+            ? `${sheetName}\u0000${managedEntity}\u0000${sourceManaged.recordId}`
+            : "";
+          const expectedHumanText = sourceRecordKey && targetRecordKeys.has(sourceRecordKey)
+            ? ""
+            : getStudentDatabaseHumanCommentText(sourceComment);
+          if (
+            expectedHumanText !== getStudentDatabaseHumanCommentText(outputComment)
+            || outputComment.includes(STUDENT_DATABASE_SYNC_COMMENT_START)
+            || outputComment.includes(STUDENT_DATABASE_SYNC_COMMENT_END)
+          ) {
+            throw new Error(
+              `Проверка служебных примечаний не пройдена: устаревшая метка не очищена ${sheetName}!${address}.`
+            );
+          }
+          return;
+        }
+        if (sourceComment.replace(/\r\n?/gu, "\n") !== outputComment.replace(/\r\n?/gu, "\n")) {
+          throw new Error(
+            `Проверка служебных примечаний не пройдена: изменено чужое примечание ${sheetName}!${address}.`
+          );
+        }
+        return;
+      }
+      const expectedHumanText = targetHumanTextByCell.get(
+        `${sheetName}\u0000${address}`
+      ) || "";
+      if (
+        expectedHumanText
+        !== getStudentDatabaseHumanCommentText(outputComment)
+      ) {
+        throw new Error(
+          `Проверка служебных примечаний не пройдена: потерян пользовательский текст ${sheetName}!${address}.`
+        );
+      }
+      const parsed = parseStudentDatabaseManagedSyncComment(outputCell, target.entity);
+      if (
+        parsed?.recordId !== target.recordId
+        || String(parsed?.parentRecordId || "") !== String(JSON.parse(target.metadata).parentRecordId || "")
+        || parsed?.syncedAt !== annotationPayload.synchronizedAt
+      ) {
+        throw new Error(
+          `Проверка служебных примечаний не пройдена: неверная метка ${sheetName}!${address}.`
+        );
+      }
+      targetByCell.delete(`${sheetName}\u0000${address}`);
+    });
+  });
+  if (targetByCell.size) {
+    throw new Error("Проверка служебных примечаний не пройдена: часть меток AIS_SYNC не записана.");
+  }
+}
+
 function buildStudentDatabaseImportResult(result, source = "webdav") {
-  const { macroSettingsSecret, ...publicResult } = result;
+  const {
+    macroSettingsSecret,
+    databaseSyncInventoryUnits,
+    ...publicResult
+  } = result;
+  const stripSourceRow = (record) => {
+    const { databaseSyncSourceRow, ...publicRecord } = record || {};
+    return publicRecord;
+  };
   return {
     ...publicResult,
+    students: result.students.map((student) => ({
+      ...stripSourceRow(student),
+      directExpenses: (student.directExpenses || []).map(stripSourceRow)
+    })),
+    contracts: result.contracts.map(stripSourceRow),
+    directExpenses: result.directExpenses.map(stripSourceRow),
+    generalExpenses: result.generalExpenses.map(stripSourceRow),
+    trainingPlans: result.trainingPlans.map(stripSourceRow),
+    programPaymentSettings: result.programPaymentSettings.map(stripSourceRow),
     count: result.students.length,
     contractCount: result.contracts.length,
     directExpenseCount: result.directExpenses.length,
     generalExpenseCount: result.generalExpenses.length,
     linkedDirectExpenseCount: result.linkedDirectExpenseCount,
     totalDirectExpenseCount: result.totalDirectExpenseCount,
+    communicationTemplateNamedRangeCount: Object.keys(
+      result.communicationTemplateNamedRangeValues || {}
+    ).length,
     sourceName: "АИС Допобразование.xlsb",
     source: normalizeStudentDatabaseSource(source),
     importedAt: new Date().toISOString()
@@ -14427,11 +17333,23 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     const isLocal = sourceType === "local";
     onProgress({ progress: 1, stage: "prepare", message: "Подготовка данных веб-базы..." });
     const payload = sanitizeStudentDatabaseExportPayload(body);
+    const directionalSync = body.directionalSync === true;
+    let sharedStateMetadata = null;
+    if (directionalSync) {
+      sharedStateMetadata = await assertSharedApplicationStateRevision(body.sharedStateRevision);
+    }
+    if (body.twoWaySync === true) {
+      await assertSharedApplicationStateRevision(body.sharedStateRevision);
+    }
     onProgress({
       progress: 2,
       stage: isLocal ? "read" : "download",
       message: isLocal ? "Чтение исходного XLSB с локального диска..." : "Получение исходного XLSB через WebDAV..."
     });
+    const sourceModifiedAtPromise = getStudentDatabaseResourceModifiedAt(
+      body.databasePath,
+      sourceType
+    ).catch(() => "");
     const sourceBytes = await loadStudentDatabaseBytes(body.databasePath, ({ receivedBytes, totalBytes }) => {
       const downloadPercent = totalBytes > 0
         ? Math.min(100, Math.floor((receivedBytes / totalBytes) * 100))
@@ -14444,6 +17362,191 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           : `${isLocal ? "Прочитано" : "Скачано"} ${formatImportBytes(receivedBytes)}`
       });
     }, { source: sourceType });
+    const sourceModifiedAt = await sourceModifiedAtPromise;
+    const sourceHash = hashStudentDatabaseBytes(sourceBytes);
+    const sourceIdentity = hashStudentDatabaseSourceIdentity(
+      body.databasePath,
+      sourceType
+    );
+    let directionalSyncResult = null;
+    if (directionalSync) {
+      onProgress({ progress: 15, stage: "compare", message: "Сравнение контрольных точек Web и XLSB..." });
+      directionalSyncResult = resolveStudentDatabaseSyncDirection({
+        baseline: body.syncBaseline,
+        currentWebRevision: sharedStateMetadata?.revision || body.sharedStateRevision,
+        currentWebUpdatedAt: sharedStateMetadata?.updatedAt,
+        sourceHash,
+        sourceIdentity,
+        sourceModifiedAt,
+        lastSynchronizedAt: body.lastSynchronizedAt,
+        lastExportedAt: body.lastExportedAt
+      });
+      if (directionalSyncResult.direction !== "web-to-excel") {
+        const sourceData = await parseStudentDatabaseInWorker(sourceBytes);
+        if (directionalSyncResult.direction === "excel-to-web") {
+          prepareImportedStudentDatabaseServerSettings({
+            macroSettings: sourceData.macroSettings,
+            macroSettingsSecret: sourceData.macroSettingsSecret
+          });
+          reconcileStudentDatabaseImportIdsWithWeb(sourceData, payload);
+          if (payload.programsProvided) {
+            validateStudentDatabaseProgramStructure(
+              payload.programs,
+              sourceData.programPaymentSettings
+            );
+          }
+        }
+        const importPayload = buildStudentDatabaseImportResult(sourceData, sourceType);
+        if (
+          directionalSyncResult.direction === "unchanged"
+          && payload.communicationTemplateFieldsProvided === true
+        ) {
+          const namedRangeMismatches = getCommunicationTemplateNamedRangeMismatches(
+            payload.communicationTemplateNamedRangeValues,
+            sourceData.communicationTemplateNamedRangeValues
+          );
+          if (namedRangeMismatches.length) {
+            const error = new Error(
+              "Поля шаблонов типовых сообщений в Web-базе и XLSB различаются, хотя старая "
+              + "контрольная точка считает файл неизменённым. Чтобы не выбрать сторону автоматически, "
+              + "выполните «Загрузить из базы» либо «Экспортировать базу». "
+              + `Расхождения: ${namedRangeMismatches.join(", ")}.`
+            );
+            error.statusCode = 409;
+            throw error;
+          }
+        }
+        if (directionalSyncResult.direction === "excel-to-web") {
+          const annotationPayload = buildStudentDatabaseSyncAnnotationPayload(sourceData);
+          onProgress({
+            progress: 78,
+            stage: "annotate",
+            message: "Запись стабильных ID в примечания XLSB без изменения данных..."
+          });
+          tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ais-student-database-annotate-"));
+          const inputPath = path.join(tempDirectory, "source.xlsb");
+          const outputPath = path.join(tempDirectory, "annotated.xlsb");
+          const payloadPath = path.join(tempDirectory, "annotations.json");
+          await Promise.all([
+            fs.writeFile(inputPath, sourceBytes),
+            fs.writeFile(payloadPath, JSON.stringify(annotationPayload), "utf8")
+          ]);
+          const scriptResult = await runStudentDatabaseSyncScript(
+            inputPath,
+            outputPath,
+            payloadPath,
+            (scriptProgress) => {
+              const value = Math.max(0, Math.min(100, Number(scriptProgress.progress) || 0));
+              onProgress({
+                progress: 78 + value * 0.16,
+                stage: "annotate",
+                message: scriptProgress.message || "Запись служебных примечаний AIS_SYNC..."
+              });
+            }
+          );
+          const outputBytes = await fs.readFile(outputPath);
+          if (!outputBytes.length) throw new Error("Microsoft Excel создал пустой файл с примечаниями.");
+          assertStudentDatabaseCommentOnlyOutput(sourceBytes, outputBytes, annotationPayload);
+          await safelyRemoveStudentDatabaseExportDirectory(tempDirectory);
+          tempDirectory = "";
+          onProgress({
+            progress: 100,
+            stage: "complete",
+            message: "Подготовлены стабильные ID XLSB и обновление Web-базы."
+          });
+          return {
+            source: sourceType,
+            syncDirection: "excel-to-web",
+            initialMigration: directionalSyncResult.initialMigration === true,
+            deferredCommit: true,
+            sourceBytes,
+            outputBytes,
+            sourceHash,
+            outputHash: hashStudentDatabaseBytes(outputBytes),
+            sourceIdentity,
+            sourceModifiedAt,
+            synchronizedAt: annotationPayload.synchronizedAt,
+            preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0),
+            studentCount: importPayload.count,
+            contractCount: importPayload.contractCount,
+            directExpenseCount: importPayload.totalDirectExpenseCount,
+            generalExpenseCount: importPayload.generalExpenseCount,
+            communicationTemplateNamedRangeCount: importPayload.communicationTemplateNamedRangeCount,
+            syncCommentCount: Number(scriptResult.syncComments || 0),
+            importPayload,
+            serverMacroSettingsImport: {
+              macroSettings: sourceData.macroSettings,
+              macroSettingsSecret: sourceData.macroSettingsSecret
+            }
+          };
+        }
+        onProgress({
+          progress: 100,
+          stage: "complete",
+          message: "Изменений после прошлой синхронизации не найдено."
+        });
+        return {
+          source: sourceType,
+          syncDirection: directionalSyncResult.direction,
+          initialMigration: directionalSyncResult.initialMigration === true,
+          requiresCommit: false,
+          sourceHash,
+          sourceIdentity,
+          sourceModifiedAt,
+          preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0),
+          studentCount: importPayload.count,
+          contractCount: importPayload.contractCount,
+          directExpenseCount: importPayload.totalDirectExpenseCount,
+          generalExpenseCount: importPayload.generalExpenseCount,
+          communicationTemplateNamedRangeCount: importPayload.communicationTemplateNamedRangeCount
+        };
+      }
+    }
+    let studentSyncResult = null;
+    let sourceDataForExport = null;
+    if (body.twoWaySync === true) {
+      onProgress({ progress: 15, stage: "merge", message: "Сверка изменений Web и Excel..." });
+      const [sourceData, webUpdatedAtById] = await Promise.all([
+        parseStudentDatabaseInWorker(sourceBytes),
+        readSharedStudentRecordUpdatedAt()
+      ]);
+      sourceDataForExport = sourceData;
+      studentSyncResult = mergeStudentDatabaseSyncRecords({
+        webStudents: payload.students,
+        excelStudents: sourceData.students,
+        ledger: body.studentSyncLedger,
+        webUpdatedAtById,
+        sourceModifiedAt,
+        lastSynchronizedAt: body.lastSynchronizedAt || body.lastExportedAt
+      });
+      if (studentSyncResult.conflicts.length) {
+        const preview = studentSyncResult.conflicts
+          .slice(0, 8)
+          .map((conflict) => `${conflict.name}: ${conflict.reason}`)
+          .join("; ");
+        const remaining = studentSyncResult.conflicts.length - Math.min(8, studentSyncResult.conflicts.length);
+        throw new Error(
+          `Обнаружены конфликты Web ↔ Excel (${studentSyncResult.conflicts.length}). `
+          + `${preview}${remaining > 0 ? `; ещё ${remaining}` : ""}. `
+          + "XLSB не изменён. Оставьте актуальное значение на одной стороне и повторите синхронизацию."
+        );
+      }
+      payload.students = studentSyncResult.students;
+    }
+    if ((body.twoWaySync === true || directionalSync) && payload.programsProvided) {
+      onProgress({
+        progress: 16,
+        stage: "inspect",
+        message: "Проверка структуры реестра программ..."
+      });
+      if (!sourceDataForExport) {
+        sourceDataForExport = await parseStudentDatabaseInWorker(sourceBytes);
+      }
+      validateStudentDatabaseProgramStructure(
+        payload.programs,
+        sourceDataForExport.programPaymentSettings
+      );
+    }
     onProgress({ progress: 16, stage: "inspect", message: "Проверка структуры исходной книги..." });
     const sourceInspection = inspectStudentDatabaseBinary(sourceBytes);
     tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ais-student-database-export-"));
@@ -14463,6 +17566,23 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         message: scriptProgress.message || "Обновление книги в Microsoft Excel..."
       });
     });
+    if (
+      (body.twoWaySync === true || directionalSync)
+      && payload.programsProvided
+      && (
+        Number(scriptResult.programPromoSkipped || 0) > 0
+        || Number(scriptResult.programMissingManagedColumns || 0) > 0
+      )
+    ) {
+      const error = new Error(
+        "Реестр программ не удалось сопоставить полностью "
+        + `(не найдено строк: ${Number(scriptResult.programPromoSkipped || 0)}, `
+        + `не найдено колонок: ${Number(scriptResult.programMissingManagedColumns || 0)}). `
+        + "XLSB не изменён."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
     onProgress({ progress: 92, stage: "verify", message: "Чтение сформированной книги..." });
     const outputBytes = await fs.readFile(outputPath);
     if (!outputBytes.length) throw new Error("Microsoft Excel создал пустой файл.");
@@ -14470,6 +17590,30 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     const outputInspection = inspectStudentDatabaseBinary(outputBytes);
     if (sourceInspection.hasVba && !outputInspection.hasVba) {
       throw new Error("Проверка сформированной книги не пройдена: VBA-модули не сохранены.");
+    }
+    const communicationTemplateVerification = assertCommunicationTemplateNamedRangeOutput(
+      sourceBytes,
+      outputBytes,
+      payload
+    );
+    if (communicationTemplateVerification.provided) {
+      const reportedRequested = Number(scriptResult.communicationTemplateNamedRangesRequested || 0);
+      const reportedUpdated = Number(scriptResult.communicationTemplateNamedRanges || 0);
+      const reportedSkipped = Number(scriptResult.communicationTemplateNamedRangesSkipped || 0);
+      const reportedFormulaPreserved = Number(
+        scriptResult.communicationTemplateNamedRangeFormulasPreserved || 0
+      );
+      if (
+        reportedRequested !== communicationTemplateVerification.requested
+        || reportedUpdated !== communicationTemplateVerification.verified
+        || reportedSkipped !== communicationTemplateVerification.skipped
+        || reportedFormulaPreserved !== communicationTemplateVerification.formulaPreserved
+      ) {
+        throw new Error(
+          "Проверка сформированной книги не пройдена: Microsoft Excel сообщил "
+          + "несогласованный результат обновления именованных диапазонов."
+        );
+      }
     }
     const baseFormulaLoss = sourceInspection.baseFormulaCount - outputInspection.baseFormulaCount;
     const directExpenseFormulaLoss = (
@@ -14479,6 +17623,11 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       sourceInspection.generalExpenseFormulaCount - outputInspection.generalExpenseFormulaCount
     );
     const contractFormulaLoss = sourceInspection.contractFormulaCount - outputInspection.contractFormulaCount;
+    const inventoryFormulaLoss = sourceInspection.inventoryFormulaCount - outputInspection.inventoryFormulaCount;
+    const trainingPlanFormulaLoss = (
+      sourceInspection.trainingPlanFormulaCount - outputInspection.trainingPlanFormulaCount
+    );
+    const programFormulaLoss = sourceInspection.programFormulaCount - outputInspection.programFormulaCount;
     const removedGeneralExpenseRows = Math.max(
       0,
       sourceInspection.generalExpenseRecordCount - outputInspection.generalExpenseRecordCount
@@ -14494,13 +17643,26 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       || directExpenseFormulaLoss > 5
       || generalExpenseFormulaLoss > generalExpenseFormulaLossLimit
       || contractFormulaLoss > contractFormulaLossLimit
+      || inventoryFormulaLoss > 0
+      || trainingPlanFormulaLoss > 0
+      || programFormulaLoss > 0
     ) {
       throw new Error(
         "Проверка сформированной книги не пройдена: потеряно слишком много формул "
         + `(База: ${sourceInspection.baseFormulaCount} → ${outputInspection.baseFormulaCount}; `
         + `Прямые затраты: ${sourceInspection.directExpenseFormulaCount} → ${outputInspection.directExpenseFormulaCount}; `
         + `Общие затраты: ${sourceInspection.generalExpenseFormulaCount} → ${outputInspection.generalExpenseFormulaCount}; `
-        + `Реестр договоров: ${sourceInspection.contractFormulaCount} → ${outputInspection.contractFormulaCount}).`
+        + `Реестр договоров: ${sourceInspection.contractFormulaCount} → ${outputInspection.contractFormulaCount}; `
+        + `Запасы: ${sourceInspection.inventoryFormulaCount} → ${outputInspection.inventoryFormulaCount}; `
+        + `Учебные планы: ${sourceInspection.trainingPlanFormulaCount} → ${outputInspection.trainingPlanFormulaCount}; `
+        + `Реестр программ: ${sourceInspection.programFormulaCount} → ${outputInspection.programFormulaCount}).`
+      );
+    }
+    if (body.twoWaySync === true || directionalSync) {
+      assertStudentDatabaseHumanCommentsRelocated(
+        sourceBytes,
+        outputBytes,
+        STUDENT_DATABASE_SYNC_COMMENT_SHEETS
       );
     }
     const downloadOnly = body.downloadOnly === true;
@@ -14510,6 +17672,15 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           fileName: buildStudentDatabaseBackupFileName(),
           outputBytes
         }
+      : body.twoWaySync === true || directionalSync
+        ? {
+            source: sourceType,
+            deferredCommit: true,
+            sourceBytes,
+            outputBytes,
+            sourceHash,
+            outputHash: hashStudentDatabaseBytes(outputBytes)
+          }
       : await saveStudentDatabaseSyncResult(
           body.databasePath,
           sourceType,
@@ -14522,10 +17693,16 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       stage: "complete",
       message: downloadOnly
         ? "База XLSB сформирована и готова к скачиванию."
-        : "База XLSB обновлена, резервная копия сохранена."
+        : body.twoWaySync === true || directionalSync
+          ? "Изменения сверены. Ожидание сохранения Web-базы."
+          : "База XLSB обновлена, резервная копия сохранена."
     });
     await safelyRemoveStudentDatabaseExportDirectory(tempDirectory);
     tempDirectory = "";
+    const synchronizedStudents = studentSyncResult?.students.map((student) => {
+      const { __syncComment, ...publicStudent } = student;
+      return publicStudent;
+    }) || [];
     return {
       ...savedResult,
       studentCount: payload.students.length,
@@ -14533,10 +17710,37 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       directExpenseCount: payload.directExpenses.length,
       generalExpenseCount: payload.generalExpenses.length,
       programCount: Number(scriptResult.programs || 0),
+      programManagedCellCount: Number(scriptResult.programManagedCells || 0),
+      programFormulaPreservedCount: Number(scriptResult.programFormulaCellsPreserved || 0),
+      programMissingManagedColumnCount: Number(scriptResult.programMissingManagedColumns || 0),
       programPromoMessageCount: Number(scriptResult.programPromoMessages || 0),
       programEmailMessageCount: Number(scriptResult.programEmailMessages || 0),
       programPromoSkippedCount: Number(scriptResult.programPromoSkipped || 0),
-      automaticExpenseRuleCount: Number(scriptResult.automaticExpenseRules || 0)
+      programDictionaryValueCount: Number(scriptResult.programDictionaryValues || 0),
+      inventoryCount: Number(scriptResult.inventoryItems || 0),
+      inventoryUnitCount: Number(scriptResult.inventoryUnits || 0),
+      trainingPlanCount: Number(scriptResult.trainingPlans || 0),
+      automaticExpenseRuleCount: Number(scriptResult.automaticExpenseRules || 0),
+      communicationTemplateNamedRangeRequestedCount: communicationTemplateVerification.requested,
+      communicationTemplateNamedRangeCount: communicationTemplateVerification.verified,
+      communicationTemplateMissingNamedRangeCount: communicationTemplateVerification.skipped,
+      communicationTemplateNamedRangeFormulaPreservedCount:
+        communicationTemplateVerification.formulaPreserved,
+      ...(studentSyncResult ? {
+        requiresCommit: true,
+        sourceModifiedAt,
+        synchronizedStudents,
+        studentSyncFields: studentSyncResult.fields,
+        studentSyncLedger: studentSyncResult.ledger,
+        studentSyncStats: studentSyncResult.stats
+      } : {}),
+      ...(directionalSync ? {
+        syncDirection: "web-to-excel",
+        requiresCommit: true,
+        sourceModifiedAt,
+        sourceIdentity,
+        preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0)
+      } : {})
     };
   } finally {
     if (tempDirectory) {
@@ -14548,6 +17752,9 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
 async function handleStudentDatabaseExport(req, res) {
   try {
     const body = await readJsonBody(req);
+    if (body.twoWaySync === true || body.directionalSync === true) {
+      throw new Error("Двусторонняя синхронизация выполняется только через фоновую задачу.");
+    }
     const result = await buildStudentDatabaseExport(body);
     if (body.downloadOnly === true && Buffer.isBuffer(result.outputBytes)) {
       sendFile(
@@ -14620,7 +17827,35 @@ async function runStudentExportJob(job, body) {
         message: normalizeStudentExportJobMessage(progress?.message, job.operation)
       });
     });
-    if (Buffer.isBuffer(result.outputBytes)) {
+    if (result.deferredCommit === true && Buffer.isBuffer(result.outputBytes)) {
+      job.pendingServerMacroSettingsImport = result.serverMacroSettingsImport || null;
+      job.pendingCommit = {
+        databasePath: body.databasePath,
+        source: result.source,
+        sourceBytes: result.sourceBytes,
+        outputBytes: result.outputBytes,
+        sourceHash: result.sourceHash,
+        outputHash: result.outputHash,
+        preparedWebRevision: Math.max(
+          0,
+          Number(result.preparedWebRevision || body.sharedStateRevision) || 0
+        )
+      };
+      const {
+        sourceBytes,
+        outputBytes,
+        sourceHash,
+        outputHash,
+        deferredCommit,
+        serverMacroSettingsImport,
+        ...publicResult
+      } = result;
+      job.result = {
+        ...publicResult,
+        requiresCommit: true,
+        committed: false
+      };
+    } else if (Buffer.isBuffer(result.outputBytes)) {
       job.downloadBytes = result.outputBytes;
       job.downloadFileName = result.fileName || buildStudentDatabaseBackupFileName();
       const { outputBytes, ...publicResult } = result;
@@ -14631,12 +17866,26 @@ async function runStudentExportJob(job, body) {
       };
     } else {
       job.result = result;
+      if (result.syncDirection === "excel-to-web" && result.sourceHash) {
+        job.pendingSourceVerification = {
+          databasePath: body.databasePath,
+          source: result.source,
+          sourceHash: result.sourceHash,
+          preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0)
+        };
+        job.result = {
+          ...job.result,
+          requiresSourceVerification: true
+        };
+      }
     }
     updateStudentExportJob(job, {
       status: "completed",
       stage: "complete",
       progress: 100,
-      message: `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} прямых и ${job.result.generalExpenseCount} общих затрат, ${job.result.automaticExpenseRuleCount || 0} правил оплаты, ${job.result.programPromoMessageCount || 0} промосообщений и ${job.result.programEmailMessageCount || 0} почтовых сообщений программ`
+      message: job.result.requiresCommit
+        ? "Изменения Web и Excel сверены. Сохранение общей Web-базы..."
+        : `Готово: ${job.result.studentCount} слушателей, ${job.result.directExpenseCount} прямых и ${job.result.generalExpenseCount} общих затрат, ${job.result.automaticExpenseRuleCount || 0} правил оплаты, ${job.result.programPromoMessageCount || 0} промосообщений и ${job.result.programEmailMessageCount || 0} почтовых сообщений программ`
     });
   } catch (error) {
     const errorMessage = normalizeStudentExportJobMessage(
@@ -14666,6 +17915,10 @@ async function handleStudentDatabaseExportStart(req, res) {
       progress: 0,
       error: "",
       result: null,
+      pendingCommit: null,
+      pendingSourceVerification: null,
+      pendingServerMacroSettingsImport: null,
+      committedSource: null,
       downloadBytes: null,
       downloadFileName: "",
       createdAt: now,
@@ -14676,6 +17929,235 @@ async function handleStudentDatabaseExportStart(req, res) {
     sendJson(res, 202, publicStudentExportJob(job));
   } catch (error) {
     sendError(res, 400, error.message);
+  }
+}
+
+async function handleStudentDatabaseExportCommit(req, res) {
+  let acquiredReservationToken = "";
+  try {
+    const body = await readJsonBody(req);
+    cleanupStudentExportJobs();
+    const id = String(body.id || "").trim();
+    const job = id ? studentExportJobs.get(id) : null;
+    if (!job) {
+      sendError(res, 404, "Подготовленная синхронизация не найдена либо срок её хранения истёк.");
+      return;
+    }
+    if (body.cancelReservation === true) {
+      const token = String(body.syncCommitToken || "").trim();
+      if (!token || token !== job.result?.syncCommitToken) {
+        sendError(res, 409, "Не удалось подтвердить освобождение блокировки синхронизации.");
+        return;
+      }
+      releaseStudentDatabaseSyncReservation(token);
+      job.commitReservationToken = "";
+      job.result = {
+        ...job.result,
+        syncCommitToken: ""
+      };
+      sendJson(res, 200, { ok: true, reservationReleased: true });
+      return;
+    }
+    const preparedWebRevision = Math.max(
+      0,
+      Math.floor(Number(
+        job.pendingCommit?.preparedWebRevision
+        || job.pendingSourceVerification?.preparedWebRevision
+        || job.committedSource?.preparedWebRevision
+        || job.result?.preparedWebRevision
+      ) || 0)
+    );
+    const requestedWebRevision = Math.max(
+      0,
+      Math.floor(Number(body.sharedStateRevision) || 0)
+    );
+    if (!preparedWebRevision || requestedWebRevision !== preparedWebRevision) {
+      sendError(
+        res,
+        409,
+        "Подготовленный результат относится к другой ревизии Web-базы. "
+          + "XLSB и Web-база не изменены; повторите синхронизацию."
+      );
+      return;
+    }
+    const assertPreparedSourceUnchanged = async () => {
+      const sourceDescriptor = job.committedSource
+        || job.pendingSourceVerification
+        || job.pendingCommit;
+      const expectedSourceHash = String(
+        sourceDescriptor?.outputHash || sourceDescriptor?.sourceHash || ""
+      ).trim();
+      if (!sourceDescriptor?.databasePath || !expectedSourceHash) return;
+      const currentSourceBytes = await loadStudentDatabaseBytes(
+        sourceDescriptor.databasePath,
+        null,
+        { source: sourceDescriptor.source }
+      );
+      if (hashStudentDatabaseBytes(currentSourceBytes) !== expectedSourceHash) {
+        const error = new Error(
+          "Файл XLSB изменён после подготовки синхронизации. "
+          + "Контрольная точка Web-базы не сохранена; повторите синхронизацию."
+        );
+        error.statusCode = 409;
+        throw error;
+      }
+    };
+    const existingReservation = getActiveStudentDatabaseSyncReservation();
+    if (
+      existingReservation
+      && job.result?.syncCommitToken
+      && existingReservation.token === job.result.syncCommitToken
+    ) {
+      try {
+        await assertSharedApplicationStateRevision(preparedWebRevision);
+        await assertPreparedSourceUnchanged();
+        await applyPendingStudentDatabaseServerSettings(job);
+      } catch (error) {
+        releaseStudentDatabaseSyncReservation(existingReservation.token);
+        job.result = {
+          ...job.result,
+          syncCommitToken: ""
+        };
+        throw error;
+      }
+      existingReservation.expiresAt = Date.now() + STUDENT_DATABASE_SYNC_RESERVATION_TTL_MS;
+      sendJson(res, 200, job.result);
+      return;
+    }
+    if (
+      job.result?.syncDirection === "excel-to-web"
+      && (
+        job.result?.requiresSourceVerification === true
+        || job.result?.sourceVerified === true
+      )
+      && job.pendingSourceVerification
+    ) {
+      const pendingVerification = job.pendingSourceVerification;
+      const reservation = acquireStudentDatabaseSyncReservation(
+        job.id,
+        preparedWebRevision,
+        pendingVerification
+      );
+      acquiredReservationToken = reservation.token;
+      await assertSharedApplicationStateRevision(preparedWebRevision);
+      const currentSourceBytes = await loadStudentDatabaseBytes(
+        pendingVerification.databasePath,
+        null,
+        { source: pendingVerification.source }
+      );
+      if (hashStudentDatabaseBytes(currentSourceBytes) !== pendingVerification.sourceHash) {
+        releaseStudentDatabaseSyncReservation(acquiredReservationToken);
+        acquiredReservationToken = "";
+        sendError(
+          res,
+          409,
+          "Файл XLSB изменён после чтения. Web-база не обновлена; повторите синхронизацию."
+        );
+        return;
+      }
+      job.result = {
+        ...job.result,
+        requiresSourceVerification: false,
+        sourceVerified: true,
+        syncCommitToken: reservation.token
+      };
+      job.commitReservationToken = reservation.token;
+      acquiredReservationToken = "";
+      sendJson(res, 200, job.result);
+      return;
+    }
+    if (job.result?.committed === true && !job.pendingCommit) {
+      const activeReservation = getActiveStudentDatabaseSyncReservation();
+      if (
+        !activeReservation
+        || activeReservation.token !== job.result.syncCommitToken
+      ) {
+        const reservation = acquireStudentDatabaseSyncReservation(
+          job.id,
+          preparedWebRevision,
+          job.committedSource
+        );
+        acquiredReservationToken = reservation.token;
+        await assertSharedApplicationStateRevision(preparedWebRevision);
+        await assertPreparedSourceUnchanged();
+        job.result = {
+          ...job.result,
+          syncCommitToken: reservation.token
+        };
+        job.commitReservationToken = reservation.token;
+      }
+      await applyPendingStudentDatabaseServerSettings(job);
+      acquiredReservationToken = "";
+      sendJson(res, 200, job.result);
+      return;
+    }
+    if (job.status !== "completed" || !job.pendingCommit || !job.result?.requiresCommit) {
+      sendError(res, 409, "Синхронизация ещё не подготовлена к сохранению.");
+      return;
+    }
+    const reservation = acquireStudentDatabaseSyncReservation(
+      job.id,
+      preparedWebRevision,
+      job.pendingCommit
+    );
+    acquiredReservationToken = reservation.token;
+    await assertSharedApplicationStateRevision(preparedWebRevision);
+    const pending = job.pendingCommit;
+    const currentSourceBytes = await loadStudentDatabaseBytes(
+      pending.databasePath,
+      null,
+      { source: pending.source }
+    );
+    if (hashStudentDatabaseBytes(currentSourceBytes) !== pending.sourceHash) {
+      releaseStudentDatabaseSyncReservation(acquiredReservationToken);
+      acquiredReservationToken = "";
+      sendError(
+        res,
+        409,
+        "Файл XLSB был изменён после начала синхронизации. "
+          + "Ни файл, ни Web-база этой операцией не перезаписаны; повторите синхронизацию."
+      );
+      return;
+    }
+    const savedResult = await saveStudentDatabaseSyncResult(
+      pending.databasePath,
+      pending.source,
+      currentSourceBytes,
+      pending.outputBytes,
+      () => {},
+      pending.sourceHash
+    );
+    job.pendingCommit = null;
+    job.committedSource = {
+      databasePath: pending.databasePath,
+      source: pending.source,
+      outputHash: pending.outputHash,
+      preparedWebRevision
+    };
+    reservation.expiresAt = Date.now() + STUDENT_DATABASE_SYNC_RESERVATION_TTL_MS;
+    updateStudentDatabaseSyncReservationSource(reservation, job.committedSource);
+    job.result = {
+      ...job.result,
+      ...savedResult,
+      sourceHash: pending.outputHash,
+      requiresCommit: false,
+      committed: true,
+      syncCommitToken: reservation.token
+    };
+    job.commitReservationToken = reservation.token;
+    await applyPendingStudentDatabaseServerSettings(job);
+    acquiredReservationToken = "";
+    updateStudentExportJob(job, {
+      stage: "complete",
+      progress: 100,
+      message: "Web-база и XLSB синхронизированы, резервная копия создана."
+    });
+    sendJson(res, 200, job.result);
+  } catch (error) {
+    if (acquiredReservationToken) {
+      releaseStudentDatabaseSyncReservation(acquiredReservationToken);
+    }
+    sendError(res, Number(error?.statusCode) || 400, error.message);
   }
 }
 
@@ -16984,6 +20466,8 @@ async function route(req, res) {
       "/api/student-document-mailboxes/test",
       "/api/mysql-locks/test"
     ].includes(requestUrl.pathname)
+    || requestUrl.pathname === "/api/students/import-database"
+    || requestUrl.pathname.startsWith("/api/students/import-database/")
     || requestUrl.pathname === "/api/students/export-database"
     || requestUrl.pathname.startsWith("/api/students/export-database/")
   );
@@ -17118,6 +20602,10 @@ async function route(req, res) {
     await handleStudentDocumentRecognitionPage(req, res);
     return;
   }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/recognize-documents/field-region") {
+    await handleStudentDocumentRecognitionFieldRegion(req, res);
+    return;
+  }
   if (req.method === "POST" && req.url === "/api/documents/template-inspect") {
     await handleDocumentTemplateInspect(req, res);
     return;
@@ -17144,6 +20632,10 @@ async function route(req, res) {
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/students/export-database/start") {
     await handleStudentDatabaseExportStart(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/export-database/commit") {
+    await handleStudentDatabaseExportCommit(req, res);
     return;
   }
   if (req.method === "GET" && requestUrl.pathname === "/api/students/export-database/status") {
@@ -17196,7 +20688,8 @@ if (isMainThread && require.main === module) {
       process.exit(1);
     });
   } else {
-    ensureStorage()
+    promoteCodexTrainingEndDateAssets()
+      .then(() => ensureStorage())
       .then(() => {
         startSharedApplicationStateMirror();
         http.createServer((req, res) => {
@@ -17220,8 +20713,27 @@ module.exports = {
   optimizeStudentApplicationsSqlQuery,
   runStudentApplicationsQuery,
   parseStudentDatabaseWorkbook,
+  parseCommunicationTemplateNamedRangeValues,
+  getCommunicationTemplateNamedRangeMismatches,
+  assertCommunicationTemplateNamedRangeWorkbookOutput,
+  parseStudentDatabaseSyncComment,
+  getStudentDatabaseHumanCommentText,
+  resolveStudentDatabaseHumanCommentAssignments,
+  assertStudentDatabaseHumanCommentsRelocated,
+  reconcileStudentDatabaseImportIdsWithWeb,
+  buildStudentDatabaseSyncAnnotationPayload,
+  assertStudentDatabaseCommentOnlyOutput,
+  hashStudentDatabaseSyncRecord,
+  mergeStudentDatabaseSyncRecords,
+  normalizeStudentDatabaseSyncBaseline,
+  resolveStudentDatabaseSyncDirection,
+  acquireStudentDatabaseSyncReservation,
+  releaseStudentDatabaseSyncReservation,
+  getActiveStudentDatabaseSyncReservation,
   parseStudentDatabaseMacroSettings,
+  sanitizeStudentDatabaseCommunicationTemplateFields,
   sanitizeStudentDatabaseExportPayload,
+  validateStudentDatabaseProgramStructure,
   normalizeSharedApplicationData,
   normalizeSharedApplicationStatePatch,
   sharedApplicationDataNeedsCitizenshipMigration,
@@ -17258,6 +20770,9 @@ module.exports = {
   extractWebDavBrowserPreviewText,
   buildDocxZip,
   isVisualOcrDocument,
+  normalizeOcrFieldRegionRequest,
+  normalizeOcrFieldRegionResponse,
+  recognizeOcrFieldRegion,
   mergeOcrFieldSourceFiles,
   renderOcrDocumentTextPreview,
   fillDocxMarkers,

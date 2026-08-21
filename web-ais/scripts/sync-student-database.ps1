@@ -14,6 +14,17 @@ $ErrorActionPreference = "Stop"
 $AgentRateWithAuthorDefinedName = "AIS_AgentRateWithAuthor"
 $AgentRateWithoutAuthorDefinedName = "AIS_AgentRateWithoutAuthor"
 
+if (-not ("AisExcelNativeMethods" -as [type])) {
+  Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class AisExcelNativeMethods {
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+}
+
 function Release-ComObject {
   param([object]$Value)
   if ($null -ne $Value -and [Runtime.InteropServices.Marshal]::IsComObject($Value)) {
@@ -58,6 +69,21 @@ function Get-ObjectProperty {
   $property = $Record.PSObject.Properties[$Name]
   if ($null -eq $property) { return $null }
   return $property.Value
+}
+
+function Get-ExcelApplicationProcessId {
+  param([object]$Application)
+  if ($null -eq $Application) { return 0 }
+  try {
+    [uint32]$processId = 0
+    [void][AisExcelNativeMethods]::GetWindowThreadProcessId(
+      [IntPtr]([int64]$Application.Hwnd),
+      [ref]$processId
+    )
+    return [int]$processId
+  } catch {
+    return 0
+  }
 }
 
 function Test-ObjectProperty {
@@ -206,6 +232,147 @@ function Set-WorkbookDefinedName {
     $createdName = $Workbook.Names.Add($Name, $Reference)
   } finally {
     Release-ComObject $createdName
+  }
+}
+
+function Normalize-CommunicationTemplateNamedRangeValue {
+  param([AllowEmptyString()][string]$Value)
+  if ($null -eq $Value) { return "" }
+  return ([string]$Value).Replace("`r`n", "`n").Replace("`r", "`n")
+}
+
+function Test-StaticCommunicationTemplateTextFormula {
+  param([AllowEmptyString()][string]$Formula)
+  $pattern = '^\s*=\s*(?:"(?:[^"]|"")*"|CHAR\(\s*(?:10|13)\s*\))(?:\s*&\s*(?:"(?:[^"]|"")*"|CHAR\(\s*(?:10|13)\s*\)))*\s*$'
+  return [regex]::IsMatch(
+    [string]$Formula,
+    $pattern,
+    [Text.RegularExpressions.RegexOptions]::IgnoreCase
+  )
+}
+
+function ConvertTo-CommunicationTemplateTextFormula {
+  param([AllowEmptyString()][string]$Value)
+  $normalized = Normalize-CommunicationTemplateNamedRangeValue $Value
+  $tokens = [Collections.Generic.List[string]]::new()
+  $lines = @([regex]::Split($normalized, "`n"))
+  for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex += 1) {
+    if ($lineIndex -gt 0) { [void]$tokens.Add("CHAR(13)") }
+    $line = [string]$lines[$lineIndex]
+    if (-not $line.Length) {
+      [void]$tokens.Add('""')
+      continue
+    }
+    for ($offset = 0; $offset -lt $line.Length;) {
+      $length = [Math]::Min(240, $line.Length - $offset)
+      if (
+        $offset + $length -lt $line.Length `
+        -and [char]::IsHighSurrogate($line[$offset + $length - 1])
+      ) {
+        $length -= 1
+      }
+      if ($length -lt 1) { $length = [Math]::Min(2, $line.Length - $offset) }
+      $chunk = $line.Substring($offset, $length)
+      [void]$tokens.Add('"' + $chunk.Replace('"', '""') + '"')
+      $offset += $length
+    }
+  }
+  $formula = "=" + ($tokens -join " & ")
+  if ($formula.Length -gt 8192) {
+    throw "Текстовая формула именованного диапазона превышает предел Excel в 8192 символа."
+  }
+  return $formula
+}
+
+function Update-CommunicationTemplateNamedRanges {
+  param(
+    [object]$Workbook,
+    [object]$Payload
+  )
+  if (-not [bool](Get-ObjectProperty $Payload "communicationTemplateFieldsProvided")) {
+    return [pscustomobject]@{
+      Provided = $false
+      Requested = 0
+      Updated = 0
+      Skipped = 0
+      FormulaPreserved = 0
+      UpdatedNames = @()
+      MissingNames = @()
+    }
+  }
+  $values = Get-ObjectProperty $Payload "communicationTemplateNamedRangeValues"
+  if ($null -eq $values -or $null -eq $values.PSObject) {
+    throw "Не переданы значения именованных диапазонов шаблонов типовых сообщений."
+  }
+  $allowedNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+  foreach ($allowedName in @(
+    "ПереченьДокументовДПП",
+    "ПереченьДокументовДОП",
+    "АдресАнкеты",
+    "СсылкаНаОплату",
+    "СсылкаНаОплатуПродления",
+    "СсылкиСоцсети"
+  )) {
+    [void]$allowedNames.Add($allowedName)
+  }
+  $properties = @($values.PSObject.Properties)
+  $updatedNames = [Collections.Generic.List[string]]::new()
+  $missingNames = [Collections.Generic.List[string]]::new()
+  $formulaPreserved = 0
+  foreach ($property in $properties) {
+    $requestedName = ([string]$property.Name).Trim()
+    if (-not $allowedNames.Contains($requestedName)) {
+      throw "Недопустимый именованный диапазон '$requestedName' в данных синхронизации."
+    }
+    $definedName = $null
+    $targetRange = $null
+    try {
+      $definedName = Get-WorkbookDefinedName $Workbook @($requestedName)
+      if ($null -eq $definedName) {
+        [void]$missingNames.Add($requestedName)
+        continue
+      }
+      $parentName = ""
+      try { $parentName = [string]$definedName.Parent.Name } catch {}
+      if (-not $parentName -or -not $parentName.Equals([string]$Workbook.Name, [StringComparison]::OrdinalIgnoreCase)) {
+        [void]$missingNames.Add($requestedName)
+        continue
+      }
+      try { $targetRange = $definedName.RefersToRange } catch {}
+      if ($null -eq $targetRange -or [double]$targetRange.CountLarge -ne 1) {
+        throw "Именованный диапазон '$requestedName' должен указывать ровно на одну ячейку."
+      }
+      $value = Normalize-CommunicationTemplateNamedRangeValue ([string]$property.Value)
+      if ($value.Length -gt 32767) {
+        throw "Значение именованного диапазона '$requestedName' превышает предел Excel в 32767 символов."
+      }
+      $currentFormula = [string]$targetRange.Formula
+      if ($currentFormula.TrimStart().StartsWith("=")) {
+        if (-not (Test-StaticCommunicationTemplateTextFormula $currentFormula)) {
+          throw "Именованный диапазон '$requestedName' содержит динамическую формулу; книга не изменена."
+        }
+        $targetRange.Formula = [object](ConvertTo-CommunicationTemplateTextFormula $value)
+        $formulaPreserved += 1
+      } else {
+        $targetRange.Value2 = [object]$value
+      }
+      try { $targetRange.Calculate() } catch {}
+      [void]$updatedNames.Add($requestedName)
+    } catch {
+      throw "Ошибка обновления именованного диапазона '$requestedName': $($_.Exception.Message)"
+    } finally {
+      Release-ComObject $targetRange
+      Release-ComObject $definedName
+    }
+  }
+  return [pscustomobject]@{
+    Provided = $true
+    Requested = $properties.Count
+    Updated = $updatedNames.Count
+    Skipped = $missingNames.Count
+    FormulaPreserved = $formulaPreserved
+    UpdatedNames = @($updatedNames)
+    MissingNames = @($missingNames)
   }
 }
 
@@ -729,7 +896,12 @@ function Update-MappedColumn {
       $nextValues[$offset, 0] = Convert-CellValue $value $FieldName $DateFields $NumberFields
     }
     $range.Formula = $nextValues
-    if ($FieldName -eq "frdoStatus") { $range.NumberFormat = "yyyy-mm-dd" }
+    if ($FieldName -eq "frdoStatus") {
+      # The source workbook already carries the FRDO column format. Some Excel
+      # builds reject reapplying NumberFormat to the mixed date/text range;
+      # that cosmetic refusal must not abort the entire atomic synchronization.
+      try { $range.NumberFormat = "yyyy-mm-dd" } catch {}
+    }
   } finally {
     Release-ComObject $range
   }
@@ -1040,6 +1212,79 @@ function Remove-StudentRows {
   }
 }
 
+function Sort-StudentLearningSectionByDaysUntilEnd {
+  param(
+    [object]$Sheet,
+    [int]$HeaderRow,
+    [int]$LastColumn,
+    [int]$StartRow,
+    [int]$RecordCount
+  )
+  if ($RecordCount -le 1) { return }
+
+  $headerRange = $null
+  $keyRange = $null
+  $sortRange = $null
+  $sort = $null
+  $sortFields = $null
+  $sortField = $null
+  try {
+    $headerRange = $Sheet.Range($Sheet.Cells.Item($HeaderRow, 1), $Sheet.Cells.Item($HeaderRow, $LastColumn))
+    $headerValues = $headerRange.Value2
+    $daysColumn = 0
+    for ($column = 1; $column -le $LastColumn; $column += 1) {
+      if (([string](Get-MatrixValue $headerValues 1 $column)).Trim() -eq "Дней до окончания") {
+        $daysColumn = $column
+        break
+      }
+    }
+    if ($daysColumn -le 0) {
+      throw "На листе 'База' не найдена колонка 'Дней до окончания'."
+    }
+
+    $endRow = $StartRow + $RecordCount - 1
+    $keyRange = $Sheet.Range($Sheet.Cells.Item($StartRow, $daysColumn), $Sheet.Cells.Item($endRow, $daysColumn))
+    $sortRange = $Sheet.Range($Sheet.Cells.Item($StartRow, 1), $Sheet.Cells.Item($endRow, $LastColumn))
+    [void]$Sheet.Calculate()
+
+    $sort = $Sheet.Sort
+    $sortFields = $sort.SortFields
+    [void]$sortFields.Clear()
+    $sortField = $sortFields.Add($keyRange, 0, 1)
+    [void]$sort.SetRange($sortRange)
+    $sort.Header = 2
+    $sort.MatchCase = $false
+    $sort.Orientation = 1
+    $sort.SortMethod = 1
+    [void]$sort.Apply()
+    [void]$sortFields.Clear()
+  } finally {
+    Release-ComObject $sortField
+    Release-ComObject $sortFields
+    Release-ComObject $sort
+    Release-ComObject $sortRange
+    Release-ComObject $keyRange
+    Release-ComObject $headerRange
+  }
+}
+
+function Sort-StudentLearningRecordsByEndDate {
+  param([Collections.Generic.List[object]]$Records)
+  if ($null -eq $Records -or $Records.Count -le 1) { return }
+  $indexed = for ($index = 0; $index -lt $Records.Count; $index += 1) {
+    $endDate = ([string](Get-ObjectProperty $Records[$index] "endDate")).Trim()
+    [pscustomobject]@{
+      Record = $Records[$index]
+      Missing = $(if ($endDate) { 0 } else { 1 })
+      EndDate = $endDate
+      Index = $index
+    }
+  }
+  $ordered = @($indexed | Sort-Object Missing, EndDate, Index)
+  $Records.Clear()
+  foreach ($item in $ordered) { $Records.Add($item.Record) | Out-Null }
+}
+
 function Update-StudentSheet {
   param(
     [object]$Workbook,
@@ -1140,6 +1385,14 @@ function Update-StudentSheet {
         $sectionKey = $defaultSectionKey
       }
       $recordsBySection[$sectionKey].Add($student) | Out-Null
+    }
+
+    $learningRecordsKey = "обучающиеся"
+    if ($recordsBySection.ContainsKey($learningRecordsKey)) {
+      # The workbook formula for «Дней до окончания» is monotonic in endDate.
+      # Pre-order the records so synchronization remains correct even when an
+      # unlicensed Excel build refuses the optional COM Sort operation.
+      Sort-StudentLearningRecordsByEndDate $recordsBySection[$learningRecordsKey]
     }
 
     $totalRowDelta = 0
@@ -1278,9 +1531,35 @@ function Update-StudentSheet {
         8 + [Math]::Floor(($processedColumns / [Math]::Max(1, $columns.Count)) * 62)
       ) "Обновление слушателей: $processedColumns из $($columns.Count) колонок"
     }
+    $syncCommentCount = Update-AisSyncCommentsForRows $sheet $recordByRow $startRow $lastRow 1
+    $learningSection = @($finalSections | Where-Object {
+      ([string]$_.Title).Trim().ToLowerInvariant() -eq "обучающиеся"
+    } | Select-Object -First 1)
+    if ($learningSection.Count -gt 0) {
+      $learningSectionKey = ([string]$learningSection[0].Title).Trim().ToLowerInvariant()
+      $learningRecordCount = if ($recordsBySection.ContainsKey($learningSectionKey)) {
+        [int]$recordsBySection[$learningSectionKey].Count
+      } else {
+        0
+      }
+      if ($learningRecordCount -gt 1) {
+        Write-SyncProgress 72 "Сортировка раздела 'Обучающиеся' по дням до окончания..."
+        try {
+          Sort-StudentLearningSectionByDaysUntilEnd `
+            $sheet $header.Row $header.LastColumn ([int]$learningSection[0].Row + 1) $learningRecordCount
+        } catch {
+          if ($_.Exception.Message -notmatch "лицензи") { throw }
+          Write-SyncProgress 72 (
+            "Excel не выполнил дополнительную сортировку из-за ограничения лицензии; " +
+            "сохранён предварительно рассчитанный порядок по дате окончания."
+          )
+        }
+      }
+    }
     return [pscustomobject]@{
       Count = $recordByRow.Count
       LastRow = $lastRow
+      SyncCommentCount = $syncCommentCount
       AgentFormulaCount = $agentFormulaResult.UpdatedCount
       AgentFormulaSkippedUnknownCount = $agentFormulaResult.SkippedUnknownFormulaCount
       AgentFormulaPreservedConstantCount = $agentFormulaResult.PreservedConstantCount
@@ -1319,6 +1598,7 @@ function Update-DirectExpenseSheet {
         70 + [Math]::Floor(($processedColumns / [Math]::Max(1, $columns.Count)) * 20)
       ) "Обновление прямых затрат: $processedColumns из $($columns.Count) колонок"
     }
+    [void](Update-AisSyncCommentsForRows $sheet $recordByRow $startRow $lastRow 1)
     return [pscustomobject]@{
       Count = $expenses.Count
       LastRow = $lastRow
@@ -1445,8 +1725,13 @@ function Limit-ContractDataRowHeight {
       $row = $Sheet.Rows.Item($StartRow + $offset)
       $currentHeight = [double]$row.RowHeight
       if ($currentHeight -gt $MaxHeightPoints) {
-        $row.RowHeight = $MaxHeightPoints
-        $currentHeight = $MaxHeightPoints
+        # Row height is a presentation-only constraint. An expired/restricted
+        # Excel license can reject it even though workbook data remains fully
+        # writable, so keep the source height instead of aborting the sync.
+        try {
+          $row.RowHeight = $MaxHeightPoints
+          $currentHeight = $MaxHeightPoints
+        } catch {}
       }
       $maximumHeight = [Math]::Max($maximumHeight, $currentHeight)
     } finally {
@@ -1523,6 +1808,7 @@ function Update-ContractSheet {
       $processedColumns += 1
       Write-SyncProgress 95 "Обновление договоров: $processedColumns из $($columns.Count) колонок"
     }
+    [void](Update-AisSyncCommentsForRows $sheet $recordByRow ($header.Row + 1) $lastRow 1)
     $maximumRowHeight = @(
       (Limit-ContractDataRowHeight $sheet $activeStart $records.active.Count),
       (Limit-ContractDataRowHeight $sheet $partnerStart $records.partners.Count),
@@ -1649,6 +1935,14 @@ function Update-GeneralExpenseSheet {
         90 + [Math]::Floor(($processedColumns / [Math]::Max(1, $columns.Count)) * 5)
       ) "Обновление общих затрат: $processedColumns из $($columns.Count) колонок"
     }
+    $allGeneralExpenseRecords = @{}
+    foreach ($row in $individualRecordByRow.Keys) {
+      $allGeneralExpenseRecords[[int]$row] = $individualRecordByRow[$row]
+    }
+    foreach ($row in $organizationRecordByRow.Keys) {
+      $allGeneralExpenseRecords[[int]$row] = $organizationRecordByRow[$row]
+    }
+    [void](Update-AisSyncCommentsForRows $sheet $allGeneralExpenseRecords $scanStartRow $lastExistingRow 1)
     return [pscustomobject]@{
       Count = $expenses.Count
       Individuals = $individualExpenses.Count
@@ -1659,6 +1953,146 @@ function Update-GeneralExpenseSheet {
     throw "Ошибка обновления листа 'Общие затраты': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
   } finally {
     Release-ComObject $counterpartyRange
+    Release-ComObject $sheet
+  }
+}
+
+function Update-InventorySheet {
+  param(
+    [object]$Workbook,
+    [object]$Payload,
+    [Collections.Generic.HashSet[string]]$DateFields,
+    [Collections.Generic.HashSet[string]]$NumberFields
+  )
+  $provided = [bool](Get-ObjectProperty $Payload "inventoryProvided")
+  $items = @(Get-ObjectProperty $Payload "inventory")
+  $records = @(Get-ObjectProperty $Payload "inventoryRows")
+  if (-not $provided) {
+    return [pscustomobject]@{
+      Provided = $false
+      Items = 0
+      Units = 0
+      LastRow = 0
+      InsertedRows = 0
+    }
+  }
+
+  $sheet = $null
+  try {
+    $sheet = $Workbook.Worksheets.Item("Запасы")
+    $header = Find-HeaderRow $sheet @("Вид ТМЦ", "Сумма", "uid")
+    $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn $Payload.inventoryColumnMap)
+    foreach ($fieldName in @("date", "itemType", "amount", "note", "uid")) {
+      [void](Find-MappedColumn $columns $fieldName)
+    }
+    $startRow = [int]$header.Row + 1
+    $lastRow = [int]$header.LastRow
+    if ($lastRow -lt $startRow) {
+      throw "На листе нет шаблонной строки для безопасного добавления запасов."
+    }
+    $desiredLastRow = $startRow + $records.Count - 1
+    $insertedRows = [Math]::Max(0, $desiredLastRow - $lastRow)
+    if ($insertedRows -gt 0) {
+      Insert-StudentTemplateRows $sheet $lastRow ($lastRow + 1) $header.LastColumn $insertedRows
+      $lastRow = $desiredLastRow
+    }
+
+    $recordByRow = @{}
+    for ($index = 0; $index -lt $records.Count; $index += 1) {
+      $recordByRow[$startRow + $index] = $records[$index]
+    }
+    $processedColumns = 0
+    foreach ($column in $columns) {
+      Update-MappedColumn $sheet $startRow $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null
+      $processedColumns += 1
+      Write-SyncProgress 94 "Обновление запасов: $processedColumns из $($columns.Count) колонок"
+    }
+    [void](Update-AisSyncCommentsForRows $sheet $recordByRow $startRow $lastRow 1)
+    return [pscustomobject]@{
+      Provided = $true
+      Items = $items.Count
+      Units = $records.Count
+      LastRow = $lastRow
+      InsertedRows = $insertedRows
+    }
+  } catch {
+    throw "Ошибка обновления листа 'Запасы': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
+  } finally {
+    Release-ComObject $sheet
+  }
+}
+
+function Update-TrainingPlanSheet {
+  param(
+    [object]$Workbook,
+    [object]$Payload,
+    [Collections.Generic.HashSet[string]]$DateFields,
+    [Collections.Generic.HashSet[string]]$NumberFields
+  )
+  $provided = [bool](Get-ObjectProperty $Payload "trainingPlansProvided")
+  $records = @(Get-ObjectProperty $Payload "trainingPlans")
+  if (-not $provided) {
+    return [pscustomobject]@{
+      Provided = $false
+      Count = 0
+      LastRow = 0
+      InsertedRows = 0
+    }
+  }
+
+  $sheet = $null
+  try {
+    $sheet = $Workbook.Worksheets.Item("Учебные планы")
+    $header = Find-HeaderRow $sheet @("Код", "Наименование программы")
+    $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn $Payload.trainingPlanColumnMap)
+    foreach ($fieldName in @(
+      "code",
+      "programName",
+      "discipline",
+      "description",
+      "totalHours",
+      "theoryHours",
+      "practiceHours",
+      "attestation",
+      "teacher",
+      "materials",
+      "content"
+    )) {
+      [void](Find-MappedColumn $columns $fieldName)
+    }
+    $startRow = [int]$header.Row + 1
+    $lastRow = [int]$header.LastRow
+    if ($lastRow -lt $startRow) {
+      throw "На листе нет шаблонной строки для безопасного добавления учебного плана."
+    }
+    $desiredLastRow = $startRow + $records.Count - 1
+    $insertedRows = [Math]::Max(0, $desiredLastRow - $lastRow)
+    if ($insertedRows -gt 0) {
+      Insert-StudentTemplateRows $sheet $startRow ($lastRow + 1) $header.LastColumn $insertedRows
+      $lastRow = $desiredLastRow
+    }
+
+    $recordByRow = @{}
+    for ($index = 0; $index -lt $records.Count; $index += 1) {
+      $recordByRow[$startRow + $index] = $records[$index]
+    }
+    Ensure-ContractFormulaRows $sheet $columns $startRow $startRow $records.Count
+    $processedColumns = 0
+    foreach ($column in $columns) {
+      Update-MappedColumn $sheet $startRow $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null
+      $processedColumns += 1
+      Write-SyncProgress 95 "Обновление учебных планов: $processedColumns из $($columns.Count) колонок"
+    }
+    [void](Update-AisSyncCommentsForRows $sheet $recordByRow $startRow $lastRow 1)
+    return [pscustomobject]@{
+      Provided = $true
+      Count = $records.Count
+      LastRow = $lastRow
+      InsertedRows = $insertedRows
+    }
+  } catch {
+    throw "Ошибка обновления листа 'Учебные планы': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
+  } finally {
     Release-ComObject $sheet
   }
 }
@@ -1707,45 +2141,344 @@ function Set-ProgramPromoMessageCell {
   }
 }
 
+function Set-ProgramManagedValueCell {
+  param(
+    [object]$Sheet,
+    [int]$Row,
+    [int]$Column,
+    [string]$FieldName,
+    [object]$Value,
+    [Collections.Generic.HashSet[string]]$DateFields,
+    [Collections.Generic.HashSet[string]]$NumberFields
+  )
+  $cell = $null
+  try {
+    $cell = $Sheet.Cells.Item($Row, $Column)
+    $currentFormula = [string]$cell.Formula
+    if ($currentFormula.StartsWith("=")) {
+      if (
+        $FieldName -eq "name" `
+        -and (Normalize-Header $cell.Value2) -ne (Normalize-Header $Value)
+      ) {
+        throw "Название программы в строке $Row вычисляется формулой и не совпадает с Web-базой."
+      }
+      return "formula"
+    }
+    $cell.Formula = Convert-CellValue $Value $FieldName $DateFields $NumberFields
+    return "updated"
+  } finally {
+    Release-ComObject $cell
+  }
+}
+
+function Get-CellCommentText {
+  param([object]$Cell)
+  $comment = $null
+  try {
+    $comment = $Cell.Comment
+    if ($null -eq $comment) { return "" }
+    try { return [string]$comment.Text() } catch {
+      return [string]$comment.Text
+    }
+  } catch {
+    return ""
+  } finally {
+    Release-ComObject $comment
+  }
+}
+
+function Get-AisSyncHumanCommentText {
+  param([object]$Value)
+  $source = ([string]$Value).Replace("`r`n", "`n").Replace("`r", "`n")
+  $managedPattern = "(?s)\[\[AIS_SYNC_V1\]\].*?\[\[/AIS_SYNC_V1\]\]"
+  $preserved = [regex]::Replace($source, $managedPattern, "")
+  $orphanStart = $preserved.IndexOf("[[AIS_SYNC_V1]]", [StringComparison]::Ordinal)
+  if ($orphanStart -ge 0) { $preserved = $preserved.Substring(0, $orphanStart) }
+  return $preserved.Replace("[[/AIS_SYNC_V1]]", "").Trim([char]13, [char]10)
+}
+
+function Set-AisSyncCommentCell {
+  param(
+    [object]$Cell,
+    [object]$MetadataJson,
+    [string]$HumanText = "",
+    [switch]$UseProvidedHumanText
+  )
+  $metadata = ([string]$MetadataJson).Trim()
+  $existing = (Get-CellCommentText $Cell).Replace("`r`n", "`n").Replace("`r", "`n")
+  $preserved = if ($UseProvidedHumanText) {
+    (Get-AisSyncHumanCommentText $HumanText)
+  } else {
+    (Get-AisSyncHumanCommentText $existing)
+  }
+  $managed = if ($metadata) { "[[AIS_SYNC_V1]]`n$metadata`n[[/AIS_SYNC_V1]]" } else { "" }
+  $text = if ($preserved -and $managed) {
+    "$preserved`n`n$managed"
+  } elseif ($preserved) {
+    $preserved
+  } else {
+    $managed
+  }
+  if ($existing -ceq $text) { return $false }
+  $comment = $null
+  try {
+    try { $comment = $Cell.Comment } catch { $comment = $null }
+    if (-not $text) {
+      if ($null -ne $comment) { [void]$comment.Delete() }
+      return ($existing -ne "")
+    }
+    if ($null -eq $comment) {
+      $comment = $Cell.AddComment($text)
+    } else {
+      [void]$comment.Text($text)
+    }
+    try { $comment.Visible = $false } catch {}
+    return $true
+  } finally {
+    Release-ComObject $comment
+  }
+}
+
+function Get-AisSyncMetadataObject {
+  param([object]$MetadataJson)
+  $metadata = ([string]$MetadataJson).Trim()
+  if (-not $metadata) { return $null }
+  try {
+    $parsed = $metadata | ConvertFrom-Json
+  } catch {
+    throw "Некорректная служебная метка AIS_SYNC: $($_.Exception.Message)"
+  }
+  $recordId = ([string](Get-ObjectProperty $parsed "recordId")).Trim()
+  $entity = ([string](Get-ObjectProperty $parsed "entity")).Trim()
+  if ([int](Get-ObjectProperty $parsed "v") -ne 1 -or -not $recordId -or -not $entity) {
+    throw "Некорректная служебная метка AIS_SYNC: отсутствует версия, тип или ID записи."
+  }
+  return $parsed
+}
+
+function Get-AisSyncCommentMetadata {
+  param(
+    [object]$Cell,
+    [string]$ExpectedEntity = ""
+  )
+  $text = (Get-CellCommentText $Cell).Replace("`r`n", "`n").Replace("`r", "`n")
+  if (-not $text.Contains("[[AIS_SYNC_V1]]")) { return $null }
+  $matches = [regex]::Matches(
+    $text,
+    "(?s)\[\[AIS_SYNC_V1\]\](.*?)\[\[/AIS_SYNC_V1\]\]"
+  )
+  if ($matches.Count -ne 1) {
+    throw "В примечании ячейки должна быть ровно одна служебная метка AIS_SYNC."
+  }
+  $parsed = Get-AisSyncMetadataObject $matches[0].Groups[1].Value
+  $entity = ([string](Get-ObjectProperty $parsed "entity")).Trim()
+  if ($ExpectedEntity -and $entity -ne $ExpectedEntity) {
+    throw "Служебная метка AIS_SYNC типа '$entity' находится на листе '$ExpectedEntity'."
+  }
+  return $parsed
+}
+
+function Update-AisSyncCommentsForRows {
+  param(
+    [object]$Sheet,
+    [hashtable]$RecordByRow,
+    [int]$StartRow,
+    [int]$LastRow,
+    [int]$FirstColumn = 1
+  )
+  $updated = 0
+  $usedIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+  $recordIdByRow = @{}
+  foreach ($row in @($RecordByRow.Keys | Sort-Object)) {
+    $record = $RecordByRow[[int]$row]
+    $metadata = Get-ObjectProperty $record "__syncComment"
+    if ([string]::IsNullOrWhiteSpace([string]$metadata)) {
+      throw "Для строки $row не передана служебная метка AIS_SYNC."
+    }
+    $parsed = Get-AisSyncMetadataObject $metadata
+    $recordId = ([string](Get-ObjectProperty $parsed "recordId")).Trim()
+    if (-not $usedIds.Add($recordId)) {
+      throw "В переданных данных повторяется служебный ID '$recordId'."
+    }
+    $recordIdByRow[[int]$row] = $recordId
+  }
+
+  $humanTextByRecordId = @{}
+  $unmanagedHumanTextByRow = @{}
+  $existingComments = $null
+  try {
+    $existingComments = $Sheet.Comments
+    for ($index = 1; $index -le [int]$existingComments.Count; $index += 1) {
+      $existingComment = $null
+      $existingParent = $null
+      try {
+        $existingComment = $existingComments.Item($index)
+        $existingParent = $existingComment.Parent
+        $existingRow = [int]$existingParent.Row
+        $existingColumn = [int]$existingParent.Column
+        if (
+          $existingColumn -ne $FirstColumn `
+          -or $existingRow -lt $StartRow `
+          -or $existingRow -gt $LastRow
+        ) { continue }
+        $existingText = try { [string]$existingComment.Text() } catch { [string]$existingComment.Text }
+        $humanText = Get-AisSyncHumanCommentText $existingText
+        $existingMetadata = Get-AisSyncCommentMetadata $existingParent
+        if ($null -ne $existingMetadata) {
+          $existingRecordId = ([string](Get-ObjectProperty $existingMetadata "recordId")).Trim()
+          if ($humanTextByRecordId.ContainsKey($existingRecordId)) {
+            throw "В примечаниях листа '$([string]$Sheet.Name)' повторяется служебный ID '$existingRecordId'."
+          }
+          $humanTextByRecordId[$existingRecordId] = $humanText
+        } elseif ($humanText) {
+          $unmanagedHumanTextByRow[$existingRow] = $humanText
+        }
+      } finally {
+        Release-ComObject $existingParent
+        Release-ComObject $existingComment
+      }
+    }
+  } finally {
+    Release-ComObject $existingComments
+  }
+
+  $comments = $null
+  try {
+    $comments = $Sheet.Comments
+    for ($index = [int]$comments.Count; $index -ge 1; $index -= 1) {
+      $comment = $null
+      $parent = $null
+      try {
+        $comment = $comments.Item($index)
+        $parent = $comment.Parent
+        $row = [int]$parent.Row
+        $column = [int]$parent.Column
+        if (
+          $column -eq $FirstColumn `
+          -and $row -ge $StartRow `
+          -and $row -le $LastRow `
+          -and -not $RecordByRow.ContainsKey($row)
+        ) {
+          $commentText = try { [string]$comment.Text() } catch { [string]$comment.Text }
+          if (
+            $commentText.Contains("[[AIS_SYNC_V1]]") `
+            -or $commentText.Contains("[[/AIS_SYNC_V1]]")
+          ) {
+            $staleMetadata = Get-AisSyncCommentMetadata $parent
+            $staleRecordId = if ($null -ne $staleMetadata) {
+              ([string](Get-ObjectProperty $staleMetadata "recordId")).Trim()
+            } else {
+              ""
+            }
+            if ($staleRecordId -and $usedIds.Contains($staleRecordId)) {
+              if (
+                Set-AisSyncCommentCell $parent "" -HumanText "" -UseProvidedHumanText
+              ) { $updated += 1 }
+            } elseif (Set-AisSyncCommentCell $parent "") {
+              $updated += 1
+            }
+          }
+        }
+      } finally {
+        Release-ComObject $parent
+        Release-ComObject $comment
+      }
+    }
+  } finally {
+    Release-ComObject $comments
+  }
+
+  foreach ($row in @($RecordByRow.Keys | Sort-Object)) {
+    $record = $RecordByRow[[int]$row]
+    $metadata = Get-ObjectProperty $record "__syncComment"
+    $recordId = [string]$recordIdByRow[[int]$row]
+    $humanText = if ($humanTextByRecordId.ContainsKey($recordId)) {
+      [string]$humanTextByRecordId[$recordId]
+    } elseif ($unmanagedHumanTextByRow.ContainsKey([int]$row)) {
+      [string]$unmanagedHumanTextByRow[[int]$row]
+    } else {
+      ""
+    }
+    $cell = $null
+    try {
+      $cell = $Sheet.Cells.Item([int]$row, $FirstColumn)
+      if (Set-AisSyncCommentCell $cell $metadata -HumanText $humanText -UseProvidedHumanText) {
+        $updated += 1
+      }
+    } finally {
+      Release-ComObject $cell
+    }
+  }
+  return $updated
+}
+
 function Update-ProgramPromoMessages {
   param(
     [object]$Workbook,
-    [object]$Payload
+    [object]$Payload,
+    [Collections.Generic.HashSet[string]]$DateFields,
+    [Collections.Generic.HashSet[string]]$NumberFields
   )
   $provided = Get-ObjectProperty $Payload "programPromoMessagesProvided"
   $programs = @(Get-ObjectProperty $Payload "programs")
   if (-not $provided) {
-    return [pscustomobject]@{ Count = 0; Messages = 0; EmailMessages = 0; Skipped = 0; Provided = $false }
+    return [pscustomobject]@{
+      Count = 0
+      Messages = 0
+      EmailMessages = 0
+      ManagedCells = 0
+      FormulaCellsPreserved = 0
+      MissingManagedColumns = 0
+      Skipped = 0
+      Provided = $false
+    }
   }
 
   $sheet = $null
   $dataRange = $null
   try {
     $sheet = $Workbook.Worksheets.Item("Реестр программ")
-    $header = Find-HeaderRow $sheet @("Наименование программы", "Промосообщение1", "Промосообщение2", "СообщПочты")
-    $columnMap = [pscustomobject]@{
+    $header = Find-HeaderRow $sheet @("Наименование программы", "Автор")
+    $columnMapValues = [ordered]@{
       "Наименование программы" = "name"
-      "Код лендинга" = "landingCode"
-      "Промосообщение1" = "promoMessage1"
-      "Промосообщение2" = "promoMessage2"
-      "СообщПочты" = "emailMessageTemplate"
     }
+    foreach ($property in $Payload.programColumnMap.PSObject.Properties) {
+      $columnMapValues[$property.Name] = [string]$property.Value
+    }
+    $columnMap = [pscustomobject]$columnMapValues
     $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn $columnMap)
     $nameColumn = Find-MappedColumn $columns "name"
     $landingCodeColumn = Find-MappedColumn $columns "landingCode"
     $promoMessage1Column = Find-MappedColumn $columns "promoMessage1"
     $promoMessage2Column = Find-MappedColumn $columns "promoMessage2"
     $emailMessageTemplateColumn = Find-MappedColumn $columns "emailMessageTemplate"
+    $columnByField = @{}
+    foreach ($column in $columns) {
+      if (-not $columnByField.ContainsKey([string]$column.FieldName)) {
+        $columnByField[[string]$column.FieldName] = [int]$column.Column
+      }
+    }
     $startRow = [int]$header.Row + 1
     $lastRow = [int]$header.LastRow
     if ($lastRow -lt $startRow) {
-      return [pscustomobject]@{ Count = 0; Messages = 0; EmailMessages = 0; Skipped = $programs.Count; Provided = $true }
+      return [pscustomobject]@{
+        Count = 0
+        Messages = 0
+        EmailMessages = 0
+        ManagedCells = 0
+        FormulaCellsPreserved = 0
+        MissingManagedColumns = 0
+        Skipped = $programs.Count
+        Provided = $true
+      }
     }
 
     $dataRange = $sheet.Range($sheet.Cells.Item($startRow, 1), $sheet.Cells.Item($lastRow, $header.LastColumn))
     $values = $dataRange.Value2
     $rowByIdentity = @{}
     $identityByRow = @{}
+    $rowByRecordId = @{}
+    $recordIdByRow = @{}
     for ($row = $startRow; $row -le $lastRow; $row += 1) {
       $offset = $row - $startRow + 1
       $name = Get-MatrixValue $values $offset $nameColumn
@@ -1757,19 +2490,48 @@ function Update-ProgramPromoMessages {
       }
       $rowByIdentity[$identity] = $row
       $identityByRow[$row] = $identity
+      $firstCell = $null
+      try {
+        $firstCell = $sheet.Cells.Item($row, 1)
+        $syncMetadata = Get-AisSyncCommentMetadata $firstCell "programs"
+        if ($null -ne $syncMetadata) {
+          $recordId = ([string](Get-ObjectProperty $syncMetadata "recordId")).Trim()
+          if ($rowByRecordId.ContainsKey($recordId)) {
+            throw "В реестре программ повторяется служебный ID '$recordId' (строки $($rowByRecordId[$recordId]) и $row)."
+          }
+          $rowByRecordId[$recordId] = $row
+          $recordIdByRow[$row] = $recordId
+        }
+      } finally {
+        Release-ComObject $firstCell
+      }
     }
 
     $updatedRows = [Collections.Generic.HashSet[int]]::new()
+    $programRecordByRow = @{}
     $updatedCount = 0
     $messageCount = 0
     $emailMessageCount = 0
+    $managedCellCount = 0
+    $formulaCellsPreserved = 0
+    $missingManagedColumns = 0
     $skippedCount = 0
     foreach ($program in $programs) {
       if ($null -eq $program) { continue }
+      $providedFields = @(
+        @(Get-ObjectProperty $program "providedFields") |
+          ForEach-Object { ([string]$_).Trim() } |
+          Where-Object { $_ }
+      )
       $promoMessage1Provided = [bool](Get-ObjectProperty $program "promoMessage1Provided")
       $promoMessage2Provided = [bool](Get-ObjectProperty $program "promoMessage2Provided")
       $emailMessageTemplateProvided = [bool](Get-ObjectProperty $program "emailMessageTemplateProvided")
-      if (-not $promoMessage1Provided -and -not $promoMessage2Provided -and -not $emailMessageTemplateProvided) { continue }
+      $hasManagedValues = -not (
+        $providedFields.Count -eq 0 `
+        -and -not $promoMessage1Provided `
+        -and -not $promoMessage2Provided `
+        -and -not $emailMessageTemplateProvided
+      )
       $sourceName = Get-ObjectProperty $program "xlsbProgramName"
       if (-not (Normalize-Header $sourceName)) { $sourceName = Get-ObjectProperty $program "name" }
       if (Test-ObjectProperty $program "xlsbProgramLandingCode") {
@@ -1782,17 +2544,32 @@ function Update-ProgramPromoMessages {
         (Get-ObjectProperty $program "name") `
         (Get-ObjectProperty $program "landingCode")
       $requestedRow = [int](Get-ObjectProperty $program "xlsbProgramRow")
+      $requestedRecordId = ([string](Get-ObjectProperty $program "id")).Trim()
       $targetRow = 0
       if (
+        $requestedRecordId `
+        -and $rowByRecordId.ContainsKey($requestedRecordId)
+      ) {
+        $targetRow = [int]$rowByRecordId[$requestedRecordId]
+      } elseif (
         $requestedRow -ge $startRow `
         -and $requestedRow -le $lastRow `
         -and $identityByRow.ContainsKey($requestedRow) `
-        -and $identityByRow[$requestedRow] -eq $sourceIdentity
+        -and $identityByRow[$requestedRow] -eq $sourceIdentity `
+        -and -not $recordIdByRow.ContainsKey($requestedRow)
       ) {
         $targetRow = $requestedRow
-      } elseif ($sourceIdentity -and $rowByIdentity.ContainsKey($sourceIdentity)) {
+      } elseif (
+        $sourceIdentity `
+        -and $rowByIdentity.ContainsKey($sourceIdentity) `
+        -and -not $recordIdByRow.ContainsKey([int]$rowByIdentity[$sourceIdentity])
+      ) {
         $targetRow = [int]$rowByIdentity[$sourceIdentity]
-      } elseif ($currentIdentity -and $rowByIdentity.ContainsKey($currentIdentity)) {
+      } elseif (
+        $currentIdentity `
+        -and $rowByIdentity.ContainsKey($currentIdentity) `
+        -and -not $recordIdByRow.ContainsKey([int]$rowByIdentity[$currentIdentity])
+      ) {
         $targetRow = [int]$rowByIdentity[$currentIdentity]
       }
       if ($targetRow -le 0) {
@@ -1801,6 +2578,30 @@ function Update-ProgramPromoMessages {
       }
       if (-not $updatedRows.Add($targetRow)) {
         throw "Несколько записей веб-базы сопоставлены с одной строкой $targetRow листа 'Реестр программ'."
+      }
+      $programRecordByRow[$targetRow] = $program
+      if (-not $hasManagedValues) { continue }
+      foreach ($fieldName in $providedFields) {
+        if ($fieldName -in @("promoMessage1", "promoMessage2", "emailMessageTemplate")) {
+          continue
+        }
+        if (-not $columnByField.ContainsKey($fieldName)) {
+          $missingManagedColumns += 1
+          continue
+        }
+        $result = Set-ProgramManagedValueCell `
+          $sheet `
+          $targetRow `
+          ([int]$columnByField[$fieldName]) `
+          $fieldName `
+          (Get-ObjectProperty $program $fieldName) `
+          $DateFields `
+          $NumberFields
+        if ($result -eq "formula") {
+          $formulaCellsPreserved += 1
+        } else {
+          $managedCellCount += 1
+        }
       }
       if ($promoMessage1Provided) {
         if (Set-ProgramPromoMessageCell $sheet $targetRow $promoMessage1Column (Get-ObjectProperty $program "promoMessage1")) {
@@ -1819,15 +2620,19 @@ function Update-ProgramPromoMessages {
       }
       $updatedCount += 1
     }
+    [void](Update-AisSyncCommentsForRows $sheet $programRecordByRow $startRow $lastRow 1)
     return [pscustomobject]@{
       Count = $updatedCount
       Messages = $messageCount
       EmailMessages = $emailMessageCount
+      ManagedCells = $managedCellCount
+      FormulaCellsPreserved = $formulaCellsPreserved
+      MissingManagedColumns = $missingManagedColumns
       Skipped = $skippedCount
       Provided = $true
     }
   } catch {
-    throw "Ошибка обновления промосообщений на листе 'Реестр программ': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
+    throw "Ошибка обновления листа 'Реестр программ': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
   } finally {
     Release-ComObject $dataRange
     Release-ComObject $sheet
@@ -1892,6 +2697,106 @@ function ConvertTo-ContractEventMacroSettingValue {
   return (@($Templates) | ForEach-Object {
     ConvertTo-MacroSettingSingleLine (Get-ObjectProperty $_ "label")
   } | Where-Object { $_ }) -join $separator
+}
+
+function Update-ProgramDictionaries {
+  param(
+    [object]$Workbook,
+    [object]$Payload
+  )
+  if (-not [bool](Get-ObjectProperty $Payload "programDictionariesProvided")) {
+    return [pscustomobject]@{ Provided = $false; Count = 0 }
+  }
+  $dictionaries = Get-ObjectProperty $Payload "programDictionaries"
+  if ($null -eq $dictionaries) { throw "Не переданы справочники программ." }
+  $definitions = @(
+    [pscustomobject]@{ Key = "frdoProfessionalAreas"; Name = "Деятельность" },
+    [pscustomobject]@{ Key = "economicActivities"; Name = "ВидыДеятПК1" }
+  )
+  $totalCount = 0
+  foreach ($definition in $definitions) {
+    $sheet = $null
+    $definedName = $null
+    $currentRange = $null
+    $targetRange = $null
+    $extraRange = $null
+    try {
+      $definedName = Get-WorkbookDefinedName $Workbook @($definition.Name)
+      if ($null -eq $definedName) {
+        throw "В книге не найден именованный диапазон '$($definition.Name)'."
+      }
+      try { $currentRange = $definedName.RefersToRange } catch {}
+      if ($null -eq $currentRange) {
+        throw "Именованный диапазон '$($definition.Name)' не указывает на ячейки."
+      }
+      $sheet = $currentRange.Worksheet
+      $startRow = [int]$currentRange.Row
+      $column = [int]$currentRange.Column
+      $currentCount = [int]$currentRange.Rows.Count
+      $values = @(
+        @(Get-ObjectProperty $dictionaries $definition.Key) |
+          ForEach-Object { ([string]$_).Trim() } |
+          Where-Object { $_ }
+      )
+      $targetCount = [Math]::Max(1, $values.Count)
+      if ($targetCount -gt $currentCount) {
+        $extraRange = $sheet.Range(
+          $sheet.Cells.Item($startRow + $currentCount, $column),
+          $sheet.Cells.Item($startRow + $targetCount - 1, $column)
+        )
+        for ($offset = 1; $offset -le [int]$extraRange.Rows.Count; $offset += 1) {
+          $extraCell = $null
+          try {
+            $extraCell = $extraRange.Cells.Item($offset, 1)
+            if (
+              ([string]$extraCell.Formula).StartsWith("=") `
+              -or ([string]$extraCell.Value2).Trim()
+            ) {
+              throw "Нельзя расширить диапазон '$($definition.Name)': следующая ячейка уже занята."
+            }
+          } finally {
+            Release-ComObject $extraCell
+          }
+        }
+      }
+      for ($offset = 1; $offset -le $currentCount; $offset += 1) {
+        $currentCell = $null
+        try {
+          $currentCell = $currentRange.Cells.Item($offset, 1)
+          if (([string]$currentCell.Formula).StartsWith("=")) {
+            throw "Диапазон '$($definition.Name)' содержит формулу; книга не изменена."
+          }
+        } finally {
+          Release-ComObject $currentCell
+        }
+      }
+      $currentRange.ClearContents()
+      $targetRange = $sheet.Range(
+        $sheet.Cells.Item($startRow, $column),
+        $sheet.Cells.Item($startRow + $targetCount - 1, $column)
+      )
+      for ($offset = 0; $offset -lt $values.Count; $offset += 1) {
+        $targetCell = $null
+        try {
+          $targetCell = $targetRange.Cells.Item($offset + 1, 1)
+          $targetCell.Value2 = [string]$values[$offset]
+        } finally {
+          Release-ComObject $targetCell
+        }
+      }
+      $definedName.RefersTo = Get-ExcelRangeReference $sheet $targetRange
+      $totalCount += $values.Count
+    } catch {
+      throw "Ошибка обновления справочника '$($definition.Name)': $($_.Exception.Message)"
+    } finally {
+      Release-ComObject $extraRange
+      Release-ComObject $targetRange
+      Release-ComObject $currentRange
+      Release-ComObject $definedName
+      Release-ComObject $sheet
+    }
+  }
+  return [pscustomobject]@{ Provided = $true; Count = $totalCount }
 }
 
 function Update-MacroSettings {
@@ -1970,29 +2875,246 @@ function Update-MacroSettings {
   }
 }
 
+function Update-AisSyncCommentOnlyWorkbook {
+  param(
+    [object]$Workbook,
+    [object]$Payload
+  )
+  $rows = @(Get-ObjectProperty $Payload "syncCommentRows")
+  $sheetDefinitions = @(Get-ObjectProperty $Payload "syncCommentSheets")
+  if ($sheetDefinitions.Count -eq 0) { throw "Не передан список управляемых листов AIS_SYNC." }
+  $usedCells = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+  $usedRecordIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+  $entityBySheet = @{}
+  $entriesBySheet = @{}
+  $targetRecordIdsBySheet = @{}
+  foreach ($definition in $sheetDefinitions) {
+    $definedSheetName = ([string](Get-ObjectProperty $definition "sheetName")).Trim()
+    $definedEntity = ([string](Get-ObjectProperty $definition "entity")).Trim()
+    if (-not $definedSheetName -or -not $definedEntity -or $entityBySheet.ContainsKey($definedSheetName)) {
+      throw "Некорректный список управляемых листов AIS_SYNC."
+    }
+    $entityBySheet[$definedSheetName] = $definedEntity
+    $entriesBySheet[$definedSheetName] = [Collections.Generic.List[object]]::new()
+    $targetRecordIdsBySheet[$definedSheetName] = (
+      [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    )
+  }
+  $updated = 0
+  $removed = 0
+  for ($index = 0; $index -lt $rows.Count; $index += 1) {
+    $entry = $rows[$index]
+    $sheetName = ([string](Get-ObjectProperty $entry "sheetName")).Trim()
+    $entity = ([string](Get-ObjectProperty $entry "entity")).Trim()
+    $recordId = ([string](Get-ObjectProperty $entry "recordId")).Trim()
+    $row = [int](Get-ObjectProperty $entry "row")
+    $metadata = ([string](Get-ObjectProperty $entry "metadata")).Trim()
+    if (-not $sheetName -or -not $entity -or -not $recordId -or $row -lt 2 -or -not $metadata) {
+      throw "Некорректная строка плана служебных примечаний № $($index + 1)."
+    }
+    if (-not $entityBySheet.ContainsKey($sheetName) -or $entityBySheet[$sheetName] -ne $entity) {
+      throw "Строка $row указывает на неуправляемый лист или тип AIS_SYNC '$sheetName' / '$entity'."
+    }
+    $parsed = Get-AisSyncMetadataObject $metadata
+    if (
+      ([string](Get-ObjectProperty $parsed "entity")).Trim() -ne $entity `
+      -or ([string](Get-ObjectProperty $parsed "recordId")).Trim() -ne $recordId
+    ) {
+      throw "Содержимое метки AIS_SYNC не совпадает с планом для строки $row листа '$sheetName'."
+    }
+    $cellKey = "$sheetName$([char]0)$row"
+    $recordKey = "$entity$([char]0)$recordId"
+    if (-not $usedCells.Add($cellKey)) {
+      throw "Для строки $row листа '$sheetName' передано несколько меток AIS_SYNC."
+    }
+    if (-not $usedRecordIds.Add($recordKey)) {
+      throw "В плане примечаний повторяется служебный ID '$recordId'."
+    }
+    [void]($targetRecordIdsBySheet[$sheetName].Add($recordId))
+    [void]$entriesBySheet[$sheetName].Add($entry)
+  }
+
+  foreach ($definition in $sheetDefinitions) {
+    $sheetName = ([string](Get-ObjectProperty $definition "sheetName")).Trim()
+    $entity = [string]$entityBySheet[$sheetName]
+    $sheet = $null
+    try {
+      $sheet = $Workbook.Worksheets.Item($sheetName)
+      $humanTextByRecordId = @{}
+      $unmanagedHumanTextByRow = @{}
+      $sourceComments = $null
+      try {
+        $sourceComments = $sheet.Comments
+        for ($commentIndex = 1; $commentIndex -le [int]$sourceComments.Count; $commentIndex += 1) {
+          $sourceComment = $null
+          $sourceParent = $null
+          try {
+            $sourceComment = $sourceComments.Item($commentIndex)
+            $sourceParent = $sourceComment.Parent
+            $sourceRow = [int]$sourceParent.Row
+            if ([int]$sourceParent.Column -ne 1 -or $sourceRow -lt 2) { continue }
+            $sourceText = try {
+              [string]$sourceComment.Text()
+            } catch {
+              [string]$sourceComment.Text
+            }
+            $sourceHumanText = Get-AisSyncHumanCommentText $sourceText
+            $sourceMetadata = Get-AisSyncCommentMetadata $sourceParent $entity
+            if ($null -ne $sourceMetadata) {
+              $sourceRecordId = ([string](Get-ObjectProperty $sourceMetadata "recordId")).Trim()
+              if ($humanTextByRecordId.ContainsKey($sourceRecordId)) {
+                throw "В примечаниях листа '$sheetName' повторяется служебный ID '$sourceRecordId'."
+              }
+              $humanTextByRecordId[$sourceRecordId] = $sourceHumanText
+            } elseif ($sourceHumanText) {
+              $unmanagedHumanTextByRow[$sourceRow] = $sourceHumanText
+            }
+          } finally {
+            Release-ComObject $sourceParent
+            Release-ComObject $sourceComment
+          }
+        }
+      } finally {
+        Release-ComObject $sourceComments
+      }
+
+      foreach ($entry in @($entriesBySheet[$sheetName])) {
+        $row = [int](Get-ObjectProperty $entry "row")
+        $recordId = ([string](Get-ObjectProperty $entry "recordId")).Trim()
+        $metadata = ([string](Get-ObjectProperty $entry "metadata")).Trim()
+        $cell = $null
+        try {
+          $cell = $sheet.Cells.Item($row, 1)
+          $humanText = if ($humanTextByRecordId.ContainsKey($recordId)) {
+            [string]$humanTextByRecordId[$recordId]
+          } elseif ($unmanagedHumanTextByRow.ContainsKey($row)) {
+            [string]$unmanagedHumanTextByRow[$row]
+          } else {
+            ""
+          }
+          if (Set-AisSyncCommentCell $cell $metadata -HumanText $humanText -UseProvidedHumanText) {
+            $updated += 1
+          }
+        } finally {
+          Release-ComObject $cell
+        }
+      }
+
+      $comments = $null
+      try {
+        $comments = $sheet.Comments
+        for ($commentIndex = [int]$comments.Count; $commentIndex -ge 1; $commentIndex -= 1) {
+          $comment = $null
+          $parent = $null
+          try {
+            $comment = $comments.Item($commentIndex)
+            $parent = $comment.Parent
+            $commentRow = [int]$parent.Row
+            if ([int]$parent.Column -ne 1 -or $commentRow -lt 2) { continue }
+            $cellKey = "$sheetName$([char]0)$commentRow"
+            if ($usedCells.Contains($cellKey)) { continue }
+            $commentText = try { [string]$comment.Text() } catch { [string]$comment.Text }
+            if (
+              -not $commentText.Contains("[[AIS_SYNC_V1]]") `
+              -and -not $commentText.Contains("[[/AIS_SYNC_V1]]")
+            ) { continue }
+            $staleMetadata = Get-AisSyncCommentMetadata $parent $entity
+            $staleRecordId = if ($null -ne $staleMetadata) {
+              ([string](Get-ObjectProperty $staleMetadata "recordId")).Trim()
+            } else {
+              ""
+            }
+            if (
+              $staleRecordId `
+              -and $targetRecordIdsBySheet[$sheetName].Contains($staleRecordId)
+            ) {
+              if (
+                Set-AisSyncCommentCell $parent "" -HumanText "" -UseProvidedHumanText
+              ) { $removed += 1 }
+            } elseif (Set-AisSyncCommentCell $parent "") {
+              $removed += 1
+            }
+          } finally {
+            Release-ComObject $parent
+            Release-ComObject $comment
+          }
+        }
+      } finally {
+        Release-ComObject $comments
+      }
+    } finally {
+      Release-ComObject $sheet
+    }
+  }
+  return [pscustomobject]@{ Count = $updated; Requested = $rows.Count; Removed = $removed }
+}
+
 $excel = $null
 $workbook = $null
+$ownedExcelProcessId = 0
 try {
   Write-SyncProgress 1 "Чтение данных веб-базы..."
   $payload = Get-Content -LiteralPath $PayloadPath -Raw -Encoding UTF8 | ConvertFrom-Json
   $dateFields = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
   foreach ($field in @($payload.studentDateFields)) { [void]$dateFields.Add([string]$field) }
   foreach ($field in @($payload.contractDateFields)) { [void]$dateFields.Add([string]$field) }
+  foreach ($field in @($payload.inventoryDateFields)) { [void]$dateFields.Add([string]$field) }
+  foreach ($field in @($payload.programDateFields)) { [void]$dateFields.Add([string]$field) }
   [void]$dateFields.Add("date")
   [void]$dateFields.Add("paid")
   $numberFields = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
   foreach ($field in @($payload.studentNumberFields)) { [void]$numberFields.Add([string]$field) }
   foreach ($field in @($payload.contractNumberFields)) { [void]$numberFields.Add([string]$field) }
+  foreach ($field in @($payload.inventoryNumberFields)) { [void]$numberFields.Add([string]$field) }
+  foreach ($field in @($payload.trainingPlanNumberFields)) { [void]$numberFields.Add([string]$field) }
+  foreach ($field in @($payload.programNumberFields)) { [void]$numberFields.Add([string]$field) }
   [void]$numberFields.Add("amount")
 
   Write-SyncProgress 3 "Запуск Microsoft Excel..."
+  $excelProcessIdsBefore = [Collections.Generic.HashSet[int]]::new()
+  @(Get-Process -Name EXCEL -ErrorAction SilentlyContinue).ForEach({
+    [void]$excelProcessIdsBefore.Add([int]$_.Id)
+  })
   $excel = New-Object -ComObject Excel.Application
+  $excelProcessId = Get-ExcelApplicationProcessId $excel
+  if ($excelProcessId -le 0 -or $excelProcessIdsBefore.Contains($excelProcessId)) {
+    $newExcelProcesses = @(Get-Process -Name EXCEL -ErrorAction SilentlyContinue | Where-Object {
+      -not $excelProcessIdsBefore.Contains([int]$_.Id)
+    } | Sort-Object StartTime -Descending)
+    if ($newExcelProcesses.Count -eq 1) {
+      $excelProcessId = [int]$newExcelProcesses[0].Id
+    }
+  }
+  if ($excelProcessId -gt 0 -and -not $excelProcessIdsBefore.Contains($excelProcessId)) {
+    $ownedExcelProcessId = $excelProcessId
+  }
   $excel.Visible = $false
   $excel.DisplayAlerts = $false
   $excel.EnableEvents = $false
   $excel.AskToUpdateLinks = $false
   $excel.AutomationSecurity = 3
   $workbook = $excel.Workbooks.Open($InputPath, 0, $false)
+  # Hundreds of mapped columns are updated in batches. Automatic calculation
+  # after every batch makes a full XLSB synchronization take many minutes;
+  # calculate once, immediately before SaveAs, instead.
+  try { $excel.Calculation = -4135 } catch {} # xlCalculationManual
+
+  if ([bool](Get-ObjectProperty $payload "commentOnly")) {
+    Write-SyncProgress 20 "Запись стабильных ID в примечания первого столбца..."
+    $commentResult = Update-AisSyncCommentOnlyWorkbook $workbook $payload
+    Write-SyncProgress 95 "Сохранение книги только с обновлёнными примечаниями..."
+    $workbook.SaveAs($OutputPath, 50)
+    Write-SyncProgress 100 "Служебные примечания AIS_SYNC сохранены."
+    [pscustomobject]@{
+      type = "result"
+      commentOnly = $true
+      syncComments = $commentResult.Count
+      requestedSyncComments = $commentResult.Requested
+      removedSyncComments = $commentResult.Removed
+      outputPath = $OutputPath
+    } | ConvertTo-Json -Compress | Write-Output
+    return
+  }
 
   Write-SyncProgress 7 "Книга открыта. Обновление ставок агентских выплат..."
   $agentRateResult = Update-AgentPaymentRates `
@@ -2000,13 +3122,21 @@ try {
     (Get-ObjectProperty $payload "agentPaymentRates")
   Write-SyncProgress 7 "Проверка событий, правил оплаты и настроек интернет-магазина..."
   $macroSettingsResult = Update-MacroSettings $workbook $payload
+  Write-SyncProgress 7 "Обновление полей шаблонов типовых сообщений..."
+  $communicationTemplateResult = Update-CommunicationTemplateNamedRanges $workbook $payload
+  Write-SyncProgress 7 "Обновление справочников программ..."
+  $programDictionaryResult = Update-ProgramDictionaries $workbook $payload
   Write-SyncProgress 8 "Обновление слушателей..."
   $studentResult = Update-StudentSheet $workbook $payload $dateFields $numberFields
   $expenseResult = Update-DirectExpenseSheet $workbook $payload $dateFields $numberFields
   $generalExpenseResult = Update-GeneralExpenseSheet $workbook $payload $dateFields $numberFields
   $contractResult = Update-ContractSheet $workbook $payload $dateFields $numberFields
-  Write-SyncProgress 95 "Обновление промосообщений и почтовых сообщений программ..."
-  $programPromoResult = Update-ProgramPromoMessages $workbook $payload
+  Write-SyncProgress 94 "Обновление запасов..."
+  $inventoryResult = Update-InventorySheet $workbook $payload $dateFields $numberFields
+  Write-SyncProgress 95 "Обновление учебных планов..."
+  $trainingPlanResult = Update-TrainingPlanSheet $workbook $payload $dateFields $numberFields
+  Write-SyncProgress 95 "Обновление реестра программ..."
+  $programPromoResult = Update-ProgramPromoMessages $workbook $payload $dateFields $numberFields
   Write-SyncProgress 96 "Обновление ставок и констант оплаты..."
   $paymentResult = Update-PaymentSettings $workbook $payload
 
@@ -2014,12 +3144,18 @@ try {
   try { $workbook.ForceFullCalculation = $true } catch {}
   try { $workbook.FullCalculationOnLoad = $true } catch {}
   try { $workbook.CalculateBeforeSave = $true } catch {}
+  try {
+    $excel.CalculateFullRebuild()
+  } catch {
+    try { $workbook.Calculate() } catch {}
+  }
   $workbook.SaveAs($OutputPath, 50)
   Write-SyncProgress 100 "Книга сохранена."
 
   [pscustomobject]@{
     type = "result"
     students = $studentResult.Count
+    studentSyncComments = $studentResult.SyncCommentCount
     agentFormulaCount = $studentResult.AgentFormulaCount
     agentFormulaSkippedUnknownCount = $studentResult.AgentFormulaSkippedUnknownCount
     agentFormulaPreservedConstantCount = $studentResult.AgentFormulaPreservedConstantCount
@@ -2028,13 +3164,28 @@ try {
     directExpenses = $expenseResult.Count
     generalExpenses = $generalExpenseResult.Count
     programs = $programPromoResult.Count
+    programManagedCells = $programPromoResult.ManagedCells
+    programFormulaCellsPreserved = $programPromoResult.FormulaCellsPreserved
+    programMissingManagedColumns = $programPromoResult.MissingManagedColumns
     programPromoMessages = $programPromoResult.Messages
     programEmailMessages = $programPromoResult.EmailMessages
     programPromoSkipped = $programPromoResult.Skipped
+    programDictionaryValues = $programDictionaryResult.Count
+    inventoryItems = $inventoryResult.Items
+    inventoryUnits = $inventoryResult.Units
+    inventoryRowsInserted = $inventoryResult.InsertedRows
+    trainingPlans = $trainingPlanResult.Count
+    trainingPlanRowsInserted = $trainingPlanResult.InsertedRows
     studentEventTemplates = $macroSettingsResult.StudentEvents
     contractEventTemplates = $macroSettingsResult.ContractEvents
     automaticExpenseRules = $macroSettingsResult.PaymentRules
     macroSettingsUpdated = $macroSettingsResult.Provided
+    communicationTemplateNamedRangesRequested = $communicationTemplateResult.Requested
+    communicationTemplateNamedRanges = $communicationTemplateResult.Updated
+    communicationTemplateNamedRangesSkipped = $communicationTemplateResult.Skipped
+    communicationTemplateNamedRangeFormulasPreserved = $communicationTemplateResult.FormulaPreserved
+    communicationTemplateNamedRangeNames = @($communicationTemplateResult.UpdatedNames)
+    communicationTemplateMissingNamedRangeNames = @($communicationTemplateResult.MissingNames)
     paymentConstants = $paymentResult.Count
     agentPaymentRates = [pscustomobject]@{
       withAuthorPercent = $agentRateResult.WithAuthorPercent
@@ -2053,4 +3204,14 @@ try {
   }
   [GC]::Collect()
   [GC]::WaitForPendingFinalizers()
+  if ($ownedExcelProcessId -gt 0) {
+    $ownedExcelProcess = Get-Process -Id $ownedExcelProcessId -ErrorAction SilentlyContinue
+    if ($null -ne $ownedExcelProcess) {
+      try { [void]$ownedExcelProcess.WaitForExit(3000) } catch {}
+      if (-not $ownedExcelProcess.HasExited) {
+        Stop-Process -Id $ownedExcelProcessId -Force -ErrorAction SilentlyContinue
+        Wait-Process -Id $ownedExcelProcessId -Timeout 5 -ErrorAction SilentlyContinue
+      }
+    }
+  }
 }

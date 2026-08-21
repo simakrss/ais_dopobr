@@ -8907,6 +8907,14 @@ body.card-window-moving {
   padding: 1px 0;
 }
 
+.student-application-detail-grid > .student-application-detail-order-line {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 2.2fr) minmax(0, 1fr);
+  gap: 2px 8px;
+  padding: 0;
+}
+
 .student-application-detail-grid div.is-wide {
   grid-column: 1 / -1;
   grid-template-columns: auto minmax(0, 1fr);
@@ -13713,6 +13721,20 @@ body.event-reorder-dragging .student-event-row.is-dragging {
   background: #fff;
 }
 
+.student-modal .student-tabs[data-student-tabs],
+.contract-modal .student-tabs.contract-tabs {
+  position: sticky;
+  top: var(--card-window-sticky-tabs-top, 0px);
+  z-index: 3;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(19, 54, 48, 0.08);
+}
+
+.student-modal-head,
+.contract-modal-head {
+  z-index: 4;
+}
+
 [data-orderable-tabs] [data-orderable-tab][draggable="true"] {
   cursor: default;
 }
@@ -14730,6 +14752,15 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   font-size: 11px;
 }
 
+.student-document-photo-group-actions {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .student-document-photo-enable {
   flex: 0 0 auto;
   display: inline-flex;
@@ -14849,6 +14880,13 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   min-width: 0;
   display: grid;
   gap: 3px;
+}
+
+.student-document-recognition-field-region-button {
+  justify-self: start;
+  min-height: 32px;
+  padding: 5px 10px;
+  font-size: 0.82rem;
 }
 
 .student-document-recognition-field-value > input,
@@ -16085,6 +16123,19 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .student-document-photo-enable {
     align-self: flex-start;
+  }
+
+  .student-document-photo-group-actions {
+    width: 100%;
+    align-items: stretch;
+    justify-content: stretch;
+    flex-direction: column;
+  }
+
+  .student-document-photo-group-actions .ghost-button,
+  .student-document-recognition-field-region-button {
+    width: 100%;
+    justify-content: center;
   }
 
   .student-document-photo-candidates {
@@ -18587,6 +18638,11 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .student-application-detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .student-application-detail-grid > .student-application-detail-order-line {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 2.2fr) minmax(0, 1fr);
+    gap: 2px 6px;
   }
 
   .student-application-detail-grid div.is-wide {

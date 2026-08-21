@@ -4,7 +4,11 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..");
-const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
+const requestedSource = String(process.env.AIS_TEST_APP_SOURCE || "").trim();
+const appSource = fs.readFileSync(
+  requestedSource ? path.resolve(process.cwd(), requestedSource) : path.join(root, "app.js"),
+  "utf8"
+);
 
 function extractBetween(startMarker, endMarker) {
   const start = appSource.indexOf(startMarker);
@@ -74,7 +78,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /previousStatus\s*!==\s*nextStatus[\s\S]*?values\.additionalStatus\s*=\s*resolveProStudentAdditionalStatus/u,
+  /previousStatus\s*!==\s*nextStatus[\s\S]*?values\.additionalStatus\s*=\s*resolveStudentAdditionalStatusAfterMainStatusChange/u,
   "Карточка должна применять правило при изменении основного статуса"
 );
 assert.match(

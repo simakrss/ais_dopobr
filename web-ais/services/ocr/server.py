@@ -38,6 +38,8 @@ PDFTOPPM_BINARY = os.environ.get("OCR_PDFTOPPM_BINARY", "pdftoppm")
 PDFTOTEXT_BINARY = os.environ.get("OCR_PDFTOTEXT_BINARY", "pdftotext")
 MAX_REQUEST_BYTES = 36 * 1024 * 1024
 MAX_FILE_BYTES = 24 * 1024 * 1024
+MAX_FIELD_REGION_BYTES = 8 * 1024 * 1024
+MAX_FIELD_REGION_PIXELS = 40_000_000
 MAX_PDF_PAGES = 20
 MAX_TEXT_CHARS = 240_000
 PDF_RENDER_MAX_DIMENSION = 2600
@@ -103,6 +105,43 @@ FIELD_LABELS = {
     "contractNo": "Номер договора",
     "contractDate": "Дата договора",
 }
+
+DATE_FIELD_KEYS = frozenset({
+    "birthDate",
+    "passportDate",
+    "educationDocumentDate",
+    "applicationDate",
+    "startDate",
+    "endDate",
+    "contractDate",
+})
+SINGLE_LINE_FIELD_KEYS = frozenset({
+    "name",
+    "birthDate",
+    "gender",
+    "citizenship",
+    "passportType",
+    "passportNumber",
+    "passportDate",
+    "passportCode",
+    "snils",
+    "inn",
+    "educationLevel",
+    "educationDocument",
+    "educationDocumentSeries",
+    "educationDocumentNumber",
+    "educationDocumentDate",
+    "educationDocumentSurname",
+    "phone",
+    "email",
+    "studyForm",
+    "hours",
+    "applicationDate",
+    "startDate",
+    "endDate",
+    "contractNo",
+    "contractDate",
+})
 
 
 def run_command(arguments: list[str], timeout: int = 120) -> str:
@@ -1840,6 +1879,216 @@ def extract_fields(text: str, file_name: str) -> tuple[list[str], list[dict[str,
     return kinds, list(fields.values())
 
 
+FIELD_LABEL_ALIASES = {
+    "name": (r"фио", r"фамилия\s+имя\s+отчество"),
+    "birthDate": (r"дата\s+рождения",),
+    "gender": (r"пол",),
+    "citizenship": (r"гражданство",),
+    "passportType": (r"вид\s+документа",),
+    "passportNumber": (r"серия\s+и\s+номер(?:\s+паспорта)?", r"паспорт"),
+    "passportDate": (r"дата\s+выдачи(?:\s+паспорта)?",),
+    "passportCode": (r"код\s+подразделения",),
+    "passportIssuer": (r"кем\s+выдан(?:\s+паспорт)?", r"паспорт\s+выдан"),
+    "registrationAddress": (r"адрес(?:\s+места)?\s+регистрации", r"место\s+жительства"),
+    "snils": (r"снилс", r"страховой\s+номер"),
+    "inn": (r"инн",),
+    "educationLevel": (r"уровень\s+образования",),
+    "educationDocument": (r"документ\s+об\s+образовании",),
+    "educationDocumentSeries": (r"серия\s+документа(?:\s+об\s+образовании)?",),
+    "educationDocumentNumber": (r"номер\s+документа(?:\s+об\s+образовании)?",),
+    "educationDocumentDate": (r"дата\s+выдачи\s+документа(?:\s+об\s+образовании)?",),
+    "educationDocumentIssuer": (r"кем\s+выдан\s+документ(?:\s+об\s+образовании)?",),
+    "educationSpecialty": (r"специальность",),
+    "educationQualification": (r"квалификация",),
+    "educationDocumentSurname": (r"фамилия(?:\s+в\s+документе)?",),
+    "mailingAddress": (r"адрес\s+для\s+отправки(?:\s+документов)?",),
+    "phone": (r"мобильный\s+телефон", r"телефон"),
+    "email": (r"адрес\s+электронной\s+почты", r"e-?mail"),
+    "workPlace": (r"место\s+работы",),
+    "position": (r"должность",),
+    "program": (r"программа\s+обучения", r"образовательная\s+программа"),
+    "studyForm": (r"форма\s+обучения",),
+    "hours": (r"количество\s+часов", r"об[ъь]ем\s+часов"),
+    "applicationDate": (r"дата\s+подачи\s+заявления",),
+    "startDate": (r"дата\s+начала\s+обучения",),
+    "endDate": (r"дата\s+окончания\s+обучения",),
+    "contractNo": (r"номер\s+договора", r"договор\s*№?"),
+    "contractDate": (r"дата\s+договора",),
+}
+
+
+def strip_recognized_field_label(key: str, value: str) -> str:
+    source = normalize_text(value)
+    patterns = FIELD_LABEL_ALIASES.get(key, ())
+    if not source or not patterns:
+        return source
+    label = re.compile(
+        r"^\s*(?:" + "|".join(patterns) + r")\s*(?:[:№#]|[-–—]\s+)?\s*",
+        re.IGNORECASE,
+    )
+    lines = []
+    for line in source.splitlines():
+        cleaned = label.sub("", line).strip(" |_=,:;–—-")
+        if cleaned:
+            lines.append(cleaned)
+    return normalize_text("\n".join(lines))
+
+
+def parse_recognized_field_date(value: str) -> str:
+    parsed = parse_date(value)
+    if parsed:
+        try:
+            year, month, day = (int(item) for item in parsed.split("-"))
+            return date(year, month, day).isoformat()
+        except (TypeError, ValueError):
+            return ""
+    digits = only_digits(value)
+    if len(digits) != 8:
+        return ""
+    for year, month, day in (
+        (int(digits[4:]), int(digits[2:4]), int(digits[:2])),
+        (int(digits[:4]), int(digits[4:6]), int(digits[6:])),
+    ):
+        try:
+            return date(year, month, day).isoformat()
+        except ValueError:
+            continue
+    return ""
+
+
+def normalized_field_plain_text(key: str, value: str) -> str:
+    source = strip_recognized_field_label(key, value)
+    source = re.sub(r"[|_=]+", " ", source)
+    return re.sub(r"\s+", " ", source).strip(" ,;:–—-")[:2000]
+
+
+def normalize_recognized_field_value(key: str, raw_text: str) -> tuple[str, float]:
+    """Normalize one selected OCR region without deriving any other field."""
+    if key not in FIELD_LABELS:
+        raise ValueError("Неизвестное поле для точечного распознавания.")
+    source = normalize_text(raw_text)
+    plain = normalized_field_plain_text(key, source)
+    folded = plain.casefold().replace("ё", "е")
+    if not source:
+        return "", 0.0
+
+    if key in DATE_FIELD_KEYS:
+        value = parse_recognized_field_date(source)
+        return (value, 0.96) if value else ("", 0.0)
+    if key == "gender":
+        if re.search(r"\bжен(?:ский|щина|\.)?\b", folded):
+            return "Женский", 0.96
+        if re.search(r"\bмуж(?:ской|чина|\.)?\b", folded):
+            return "Мужской", 0.96
+        return "", 0.0
+    if key == "citizenship":
+        if re.search(r"\b(?:россия|российская\s+федерация|рф|rus)\b", folded):
+            return "Россия", 0.96
+        return (plain, 0.72) if re.search(r"[А-ЯЁа-яёA-Za-z]{3,}", plain) else ("", 0.0)
+    if key == "passportType":
+        if "паспорт" in folded:
+            return "Паспорт гражданина РФ", 0.93
+        return (plain, 0.68) if len(plain) >= 3 else ("", 0.0)
+    if key == "passportNumber":
+        digits = only_digits(plain)
+        if len(digits) == 10:
+            return f"{digits[:2]} {digits[2:4]} {digits[4:]}", 0.96
+        return "", 0.0
+    if key == "passportCode":
+        digits = only_digits(plain)
+        return (f"{digits[:3]}-{digits[3:]}", 0.96) if len(digits) == 6 else ("", 0.0)
+    if key == "passportIssuer":
+        issuer = normalize_passport_issuer(plain)
+        return (issuer, 0.88) if len(issuer) >= 5 else ("", 0.0)
+    if key == "snils":
+        digits = only_digits(plain)
+        if len(digits) != 11:
+            return "", 0.0
+        value = format_snils(digits)
+        return value, 0.96 if is_valid_snils(digits) else 0.58
+    if key == "inn":
+        digits = only_digits(plain)
+        if len(digits) not in (10, 12):
+            return "", 0.0
+        return digits, 0.96 if is_valid_inn(digits) else 0.58
+    if key == "email":
+        compact = re.sub(r"\s+", "", plain).replace(",", ".")
+        match = re.search(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", compact, re.IGNORECASE)
+        return (match.group(0).lower(), 0.96) if match else ("", 0.0)
+    if key == "phone":
+        digits = only_digits(plain)
+        if len(digits) == 10:
+            digits = "7" + digits
+        if len(digits) != 11:
+            return "", 0.0
+        if digits.startswith("8"):
+            digits = "7" + digits[1:]
+        return "+" + digits, 0.94
+    if key == "hours":
+        match = re.search(r"(?<!\d)(\d{1,5})(?!\d)", source)
+        if not match:
+            return "", 0.0
+        hours = int(match.group(1))
+        return (str(hours), 0.94) if 0 < hours <= 10000 else ("", 0.0)
+    if key == "studyForm":
+        if "очно-заоч" in folded or "очно заоч" in folded:
+            return "Очно-заочная", 0.94
+        if "дистан" in folded:
+            return "Дистанционная", 0.94
+        if "заоч" in folded:
+            return "Заочная", 0.94
+        if "очн" in folded:
+            return "Очная", 0.94
+        return (plain, 0.62) if len(plain) >= 3 else ("", 0.0)
+    if key == "educationLevel":
+        if re.search(r"\bспо\b|средн\w*\s+профессион", folded):
+            return "СПО", 0.92
+        if re.search(r"высш|бакалавр|магистр|специалист", folded):
+            return "Высшее", 0.9
+        return (plain, 0.66) if len(plain) >= 2 else ("", 0.0)
+    if key == "educationDocument":
+        if "диплом" in folded and re.search(r"средн\w*\s+профессион", folded):
+            return "Диплом о среднем профессиональном образовании", 0.92
+        if "диплом" in folded and re.search(r"высш|бакалавр|магистр|специалист", folded):
+            return "Диплом о высшем образовании", 0.92
+        return (plain, 0.74) if len(plain) >= 3 else ("", 0.0)
+    if key == "educationDocumentSurname":
+        surname = normalize_education_surname_candidate(plain)
+        return (surname, 0.9) if surname else ("", 0.0)
+    if key == "name":
+        words = re.findall(r"[А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{1,}", plain, re.IGNORECASE)
+        words = [word for word in words if word.casefold() not in {"фио", "фамилия", "имя", "отчество"}]
+        name = " ".join(word[:1].upper() + word[1:].lower() for word in words[:4])
+        return (name, 0.9) if len(name.split()) >= 2 else ("", 0.0)
+    if key in {"educationDocumentSeries", "educationDocumentNumber", "contractNo"}:
+        value = re.sub(r"^(?:серия|номер|договор)\s*№?\s*", "", plain, flags=re.IGNORECASE)
+        value = re.sub(r"[^0-9A-Za-zА-ЯЁа-яё./\-]+", " ", value).strip(" ./-")
+        minimum = 2 if key != "educationDocumentNumber" else 3
+        return (value[:120], 0.86) if len(value) >= minimum else ("", 0.0)
+    if key in {"registrationAddress", "mailingAddress"}:
+        address_lines = [
+            clean_registration_address_line(line)
+            for line in strip_recognized_field_label(key, source).splitlines()
+        ]
+        value = ", ".join(item for item in address_lines if item)
+        value = re.sub(r"(?:\s*,\s*){2,}", ", ", value).strip(" ,;:.-")
+        return (value[:2000], 0.82) if len(value) >= 5 and re.search(r"[А-ЯЁа-яёA-Za-z0-9]", value) else ("", 0.0)
+
+    # Remaining canonical keys are descriptive free-text values. Keeping this
+    # branch explicit via the set makes additions to FIELD_LABELS fail closed.
+    free_text_keys = {
+        "educationDocumentIssuer",
+        "educationSpecialty",
+        "educationQualification",
+        "workPlace",
+        "position",
+        "program",
+    }
+    if key in free_text_keys:
+        return (plain, 0.8) if len(plain) >= 2 and re.search(r"[А-ЯЁа-яёA-Za-z0-9]", plain) else ("", 0.0)
+    raise ValueError("Для поля не настроена нормализация точечного распознавания.")
+
+
 def normalize_preview_match_text(value: str) -> str:
     source = unicodedata.normalize("NFKC", str(value or "")).casefold()
     source = re.sub(r"\b(\d{4})-(\d{2})-(\d{2})\b", r"\3.\2.\1", source)
@@ -2423,16 +2672,144 @@ def convert_image_to_jpeg(payload: dict[str, Any]) -> dict[str, Any]:
         }
 
 
+def decode_field_region_payload(payload: dict[str, Any]) -> tuple[str, bytes]:
+    if not isinstance(payload, dict):
+        raise ValueError("Параметры точечного распознавания переданы некорректно.")
+    key = str(payload.get("key") or "").strip()
+    if key not in FIELD_LABELS:
+        raise ValueError("Неизвестное поле для точечного распознавания.")
+    mime_type = str(payload.get("mimeType") or "").split(";", 1)[0].lower().strip()
+    if mime_type != "image/jpeg":
+        raise ValueError("Для точечного распознавания требуется область в формате JPG.")
+    encoded = str(payload.get("base64") or "").strip()
+    if not encoded or len(encoded) > ((MAX_FIELD_REGION_BYTES + 2) // 3) * 4 + 4:
+        raise ValueError("Область изображения пустая или превышает 8 МБ.")
+    try:
+        image_bytes = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as error:
+        raise ValueError("Область изображения передана в некорректном формате.") from error
+    if (
+        not image_bytes
+        or len(image_bytes) > MAX_FIELD_REGION_BYTES
+        or not image_bytes.startswith(b"\xff\xd8\xff")
+    ):
+        raise ValueError("Содержимое выбранной области не является корректным JPG.")
+    return key, image_bytes
+
+
+def recognize_field(payload: dict[str, Any]) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    key, image_bytes = decode_field_region_payload(payload)
+    numeric_keys = DATE_FIELD_KEYS | {
+        "passportNumber",
+        "passportCode",
+        "snils",
+        "inn",
+        "phone",
+        "hours",
+    }
+    with tempfile.TemporaryDirectory(prefix="ais-ocr-field-") as temp_dir:
+        workdir = Path(temp_dir)
+        source_path = workdir / "field-region.jpg"
+        prepared_path = workdir / "field-region-prepared.png"
+        source_path.write_bytes(image_bytes)
+        width, height = image_dimensions(source_path)
+        if width < 8 or height < 8 or width * height > MAX_FIELD_REGION_PIXELS:
+            raise ValueError("Размер выбранной области изображения недопустим.")
+        run_command(
+            [
+                CONVERT_BINARY,
+                str(source_path),
+                "-auto-orient",
+                "-strip",
+                "-background",
+                "white",
+                "-alpha",
+                "remove",
+                "-alpha",
+                "off",
+                "-colorspace",
+                "Gray",
+                "-resize",
+                "2600x1600>",
+                "-contrast-stretch",
+                "1%x1%",
+                "-sharpen",
+                "0x0.8",
+                str(prepared_path),
+            ],
+            timeout=60,
+        )
+        languages = "eng" if key in numeric_keys or key == "email" else "rus+eng"
+        whitelist = ""
+        if key in DATE_FIELD_KEYS:
+            whitelist = "0123456789.-/ "
+        elif key in {"passportNumber", "passportCode", "snils", "inn", "phone", "hours"}:
+            whitelist = "0123456789+-/() "
+        elif key == "email":
+            whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-@,"
+        primary_psm = 7 if key in SINGLE_LINE_FIELD_KEYS else 6
+        secondary_psm = 6 if primary_psm == 7 else 11
+        primary = tesseract_text(
+            prepared_path,
+            primary_psm,
+            languages=languages,
+            whitelist=whitelist,
+            timeout=60,
+        )
+        secondary = tesseract_text(
+            prepared_path,
+            secondary_psm,
+            languages=languages,
+            whitelist=whitelist,
+            timeout=60,
+        )
+        raw_text = merge_ocr_text(primary, secondary)[:MAX_TEXT_CHARS]
+        normalized_candidates = []
+        for candidate_text in (primary, secondary):
+            candidate_value, candidate_confidence = normalize_recognized_field_value(key, candidate_text)
+            if not candidate_value:
+                continue
+            normalized_candidates.append((
+                candidate_confidence + min(len(candidate_value), 200) / 10_000,
+                candidate_value,
+                candidate_confidence,
+            ))
+        if normalized_candidates:
+            _, value, confidence = max(normalized_candidates, key=lambda item: item[0])
+        else:
+            value, confidence = normalize_recognized_field_value(key, raw_text)
+        if not value:
+            raise ValueError(f"Не удалось распознать поле «{FIELD_LABELS[key]}» в выбранной области.")
+        return {
+            "ok": True,
+            "key": key,
+            "label": FIELD_LABELS[key],
+            "value": value,
+            "confidence": round(max(0.0, min(1.0, confidence)), 2),
+            "evidence": re.sub(r"\s+", " ", raw_text).strip()[:280],
+            "rawText": raw_text[:3000],
+            "durationMs": round((time.perf_counter() - started_at) * 1000),
+        }
+
+
 def render_document_page(payload: dict[str, Any]) -> dict[str, Any]:
     file_name, mime_type, extension, file_bytes = decode_document_payload(payload)
-    if not (mime_type.startswith("image/") or mime_type == "application/pdf"):
+    docx_mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if not (mime_type.startswith("image/") or mime_type in {"application/pdf", docx_mime_type}):
         raise ValueError("Для текстового файла выбор области изображения недоступен.")
     requested_page = max(1, min(MAX_PDF_PAGES, int(payload.get("page") or 1)))
     with tempfile.TemporaryDirectory(prefix="ais-ocr-page-") as temp_dir:
         workdir = Path(temp_dir)
         source_path = workdir / f"source{extension}"
         source_path.write_bytes(file_bytes)
-        page_paths = render_pages(source_path, mime_type, workdir)
+        page_paths = (
+            extract_docx_embedded_images(file_bytes, workdir)
+            if mime_type == docx_mime_type
+            else render_pages(source_path, mime_type, workdir)
+        )
+        if not page_paths:
+            raise ValueError("DOCX не содержит встроенных изображений для выбора области.")
         if requested_page > len(page_paths):
             raise ValueError("Указанная страница отсутствует в документе.")
         preview = render_page_preview({
@@ -2630,7 +3007,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "Not found"})
 
     def do_POST(self) -> None:
-        if self.path not in {"/v1/recognize", "/v1/render-page", "/v1/convert-image"}:
+        if self.path not in {
+            "/v1/recognize",
+            "/v1/recognize-field",
+            "/v1/render-page",
+            "/v1/convert-image",
+        }:
             self.send_json(404, {"error": "Not found"})
             return
         try:
@@ -2640,6 +3022,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
             if self.path == "/v1/render-page":
                 result = render_document_page(payload)
+            elif self.path == "/v1/recognize-field":
+                result = recognize_field(payload)
             elif self.path == "/v1/convert-image":
                 result = convert_image_to_jpeg(payload)
             else:
@@ -2681,6 +3065,11 @@ def run_cli(arguments: list[str]) -> int:
             if not source or len(source) > MAX_REQUEST_BYTES:
                 raise ValueError("Запрос пустой или превышает допустимый размер.")
             payload = recognize(json.loads(source.decode("utf-8")))
+        elif arguments == ["--recognize-field-stdin"]:
+            source = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
+            if not source or len(source) > MAX_REQUEST_BYTES:
+                raise ValueError("Запрос пустой или превышает допустимый размер.")
+            payload = recognize_field(json.loads(source.decode("utf-8")))
         elif arguments == ["--render-page-stdin"]:
             source = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
             if not source or len(source) > MAX_REQUEST_BYTES:

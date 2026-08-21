@@ -20,10 +20,79 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.201",
-    releasedAt: "2026-08-20"
+    version: "1.7.210",
+    releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.210",
+      releasedAt: "2026-08-22",
+      changes: [
+        "В сообщении о доступе к порталу срок обучения автоматически обновляется по актуальной дате окончания, сохраняя ручные правки текста.",
+        "Вкладки карточек слушателя и сотрудника остаются видимыми при прокрутке.",
+        "Поля шаблонов типовых сообщений синхронизируются в обе стороны с соответствующими именованными диапазонами АИС Допобразование.xlsb."
+      ]
+    },
+    {
+      version: "1.7.209",
+      releasedAt: "2026-08-21",
+      changes: [
+        "Для кнопок почтовой отправки с сочетанием Shift + щелчок добавлено контекстное меню выбора обычного получателя или системного ящика."
+      ]
+    },
+    {
+      version: "1.7.208",
+      releasedAt: "2026-08-21",
+      changes: [
+        "Денежные суммы в карточках, реестрах, оплатах и расходах изменяются с шагом 50 рублей без округления ранее сохранённых значений.",
+        "При записи Web-данных в АИС Допобразование.xlsb слушатели раздела «Обучающиеся» сортируются по возрастанию колонки «Дней до окончания»."
+      ]
+    },
+    {
+      version: "1.7.207",
+      releasedAt: "2026-08-21",
+      changes: [
+        "При открытии списка слушателей со статусом «Учится» и при выборе этого статуса таблица автоматически сортируется по возрастанию колонки «Дней до конца»."
+      ]
+    },
+    {
+      version: "1.7.206",
+      releasedAt: "2026-08-21",
+      changes: [
+        "При установке статуса слушателя «Учится» дополнительный статус автоматически меняется на «Обучающиеся»."
+      ]
+    },
+    {
+      version: "1.7.205",
+      releasedAt: "2026-08-21",
+      changes: [
+        "Исправлен автоматический расчёт даты окончания обучения: используется срок программы, а при его отсутствии — количество недель по нормативу 40 часов с округлением вверх; окончание в воскресенье переносится на понедельник.",
+        "Групповая генерация использует то же правило, а для программ ПРО дата окончания совпадает с датой начала обучения."
+      ]
+    },
+    {
+      version: "1.7.204",
+      releasedAt: "2026-08-20",
+      changes: [
+        "Исправлен выбор произвольной области фотографии; для каждого поля распознавания можно выбрать источник и область, затем повторно распознать только это поле."
+      ]
+    },
+    {
+      version: "1.7.203",
+      releasedAt: "2026-08-20",
+      changes: [
+        "В информации о выбранной заявке заказ, программа курса и категория объединены в одну строку сразу после контактных данных."
+      ]
+    },
+    {
+      version: "1.7.202",
+      releasedAt: "2026-08-20",
+      changes: [
+        "Синхронизация базы АИС Допобразование.xlsb стала двусторонней: изменения переносятся между Excel и Web, а одновременные правки останавливаются как конфликт без перезаписи данных.",
+        "Стабильные идентификаторы строк синхронизации сохраняются в служебной части примечаний первого столбца без удаления пользовательского текста.",
+        "В результатах распознавания дата рождения и дата выдачи документа об образовании всегда показываются в формате ДД.ММ.ГГГГ."
+      ]
+    },
     {
       version: "1.7.201",
       releasedAt: "2026-08-20",
@@ -1836,6 +1905,7 @@
   const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
   const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
   const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
+  const STUDENT_LEARNING_ADDITIONAL_STATUS = "Обучающиеся";
   const PRO_STUDENT_ADDITIONAL_STATUS = "Вебинары";
   const PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS = "Вебинары. Архив";
   let browserStateIndexedDbMode = false;
@@ -2135,6 +2205,13 @@ https://edu-plus.ru`,
     ...studentCommunicationTemplateEditableFields,
     ...employeeCommunicationTemplateCardFields
   ]);
+  const communicationTemplateNamedRangeBindings = Object.freeze({
+    ПереченьДокументов: ["ПереченьДокументовДПП", "ПереченьДокументовДОП"],
+    СсылкаАнкеты: ["АдресАнкеты"],
+    СсылкаОплаты: ["СсылкаНаОплату"],
+    СсылкаОплатыПродления: ["СсылкаНаОплатуПродления"],
+    СсылкиСоцсети: ["СсылкиСоцсети"]
+  });
   const studentCommunicationTemplateFieldFormulaDefaults = {
     Приветствие: "{{если:ЕстьИмяОтчество}}Здравствуйте, {ИмяОтчество}!{{иначе}}Здравствуйте!{{конец}}",
     ПереченьДокументов: `{{если:ДПО}}- скан паспорта с пропиской
@@ -3251,6 +3328,7 @@ MAX - https://bizvmax.ru/zifra_plus
     minimumEducationLevels: [],
     studentAdditionalStatuses: [
       DEFAULT_STUDENT_ADDITIONAL_STATUS,
+      STUDENT_LEARNING_ADDITIONAL_STATUS,
       PRO_STUDENT_ADDITIONAL_STATUS,
       PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS
     ],
@@ -4224,7 +4302,9 @@ MAX - https://bizvmax.ru/zifra_plus
     programRegistryTypeFilter: [],
     contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
     studentImportedViewIds: [],
-    sort: getDefaultTableSort(initialView),
+    sort: initialView === "students"
+      ? getStudentStatusTableSort(getDefaultStatusFilter(initialView))
+      : getDefaultTableSort(initialView),
     navItemOrder: loadNavItemOrder(),
     dashboardStudentStatusOrder: loadDashboardStudentStatusOrder(),
     studentCardTab: "main",
@@ -4385,6 +4465,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let employeePaymentPreviewFrame = 0;
   let mainRegistryViewportFitFrame = 0;
   let mainRegistryViewportFitTimer = 0;
+  let cardWindowStickyTabsResizeObserver = null;
   let pendingEmployeePaymentPreview = null;
   let fieldEditHistoryBound = false;
   let globalEscapeKeyBound = false;
@@ -4456,6 +4537,47 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function field(key, label, type = "text", required = false, dict = null, options = null) {
     return { key, label, type, required, dict, options };
+  }
+
+  const MONEY_INPUT_STEP = 50;
+  const MONEY_FIELD_KEYS_BY_CONFIG = Object.freeze({
+    students: new Set(["contractAmount", "monthlyAmount", "paidAmount", "balance", "expenseTotal"]),
+    contracts: new Set(["amount", "paid", "agencyAmount", "balance"]),
+    programs: new Set(["price", "oldPrice"]),
+    webinars: new Set(["payment"]),
+    directExpenses: new Set(["amount"]),
+    generalExpenses: new Set(["amount"]),
+    inventory: new Set(["amount"])
+  });
+
+  function getMoneyInputStepAttribute(configId, key) {
+    return MONEY_FIELD_KEYS_BY_CONFIG[String(configId || "")]?.has(String(key || ""))
+      ? `data-money-input step="${MONEY_INPUT_STEP}"`
+      : "";
+  }
+
+  function synchronizeMoneyInputStepBase(input) {
+    if (!input || typeof input.setAttribute !== "function") return;
+    input.setAttribute("value", String(input.value ?? ""));
+    const amount = Number(input.value);
+    input.setCustomValidity?.(
+      input.hasAttribute?.("data-money-nonnegative")
+        && String(input.value || "")
+        && Number.isFinite(amount)
+        && amount < 0
+        ? "Сумма не может быть отрицательной."
+        : ""
+    );
+  }
+
+  function bindMoneyInputStepControls(root = document) {
+    root?.querySelectorAll?.("input[data-money-input]").forEach((input) => {
+      if (input.dataset.moneyInputBound === "true") return;
+      input.dataset.moneyInputBound = "true";
+      input.addEventListener("input", () => synchronizeMoneyInputStepBase(input));
+      input.addEventListener("change", () => synchronizeMoneyInputStepBase(input));
+      synchronizeMoneyInputStepBase(input);
+    });
   }
 
   function synchronizeSettingsDictionariesWithSelectableValues(data) {
@@ -4717,6 +4839,13 @@ MAX - https://bizvmax.ru/zifra_plus
     data.meta.studentDatabaseWebDavPath = String(
       data.meta.studentDatabaseWebDavPath || DEFAULT_STUDENT_DATABASE_WEBDAV_PATH
     ).trim();
+    data.meta.studentDatabaseSyncBaseline = normalizeStudentDatabaseSyncBaseline(
+      data.meta.studentDatabaseSyncBaseline
+    );
+    data.meta.studentDatabaseLastSynchronizedAt = String(
+      data.meta.studentDatabaseLastSynchronizedAt || ""
+    ).trim();
+    delete data.meta.studentDatabaseSyncLedger;
     delete data.meta.studentDatabaseUrl;
     delete data.meta.studentPhotoBasePath;
     delete data.meta.systemDocumentsPublicUrl;
@@ -5127,6 +5256,11 @@ MAX - https://bizvmax.ru/zifra_plus
   function getPaymentConstantUnit(setting) {
     if (setting?.unit) return String(setting.unit);
     return setting?.key === "authorRate" ? "%" : "";
+  }
+
+  function getPaymentConstantInputAttributes(setting, value = setting?.value) {
+    if (getPaymentConstantUnit(setting) === "%") return 'min="0" step="10"';
+    return `data-money-input data-money-nonnegative step="${MONEY_INPUT_STEP}"`;
   }
 
   function formatPaymentConstantValue(setting) {
@@ -5858,6 +5992,60 @@ MAX - https://bizvmax.ru/zifra_plus
       custom: true
     }));
     return [...builtIns, ...customFields];
+  }
+
+  function buildStudentDatabaseExportCommunicationTemplateFields() {
+    const fieldsByName = new Map(
+      getCommunicationTemplateFieldDefinitions().map((field) => [field.name, field])
+    );
+    return Object.keys(communicationTemplateNamedRangeBindings).map((name) => ({
+      name,
+      formula: String(fieldsByName.get(name)?.formula ?? "")
+    }));
+  }
+
+  function splitStudentCommunicationDocumentsFormula(value) {
+    const source = String(value ?? "").replace(/\r\n?/g, "\n");
+    const match = /^\{\{если:ДПО\}\}([\s\S]*?)\{\{иначе\}\}([\s\S]*?)\{\{конец\}\}$/u.exec(source);
+    return match
+      ? { dpo: match[1], dop: match[2] }
+      : { dpo: source, dop: source };
+  }
+
+  function mergeImportedCommunicationTemplateNamedRanges(previousOverrides, namedRangeValues) {
+    const next = normalizeCommunicationTemplateFieldOverrides(previousOverrides);
+    if (!namedRangeValues || typeof namedRangeValues !== "object" || Array.isArray(namedRangeValues)) {
+      return next;
+    }
+    const imported = new Map(Object.entries(namedRangeValues).map(([name, value]) => [
+      String(name || "").trim().toLocaleLowerCase("ru-RU"),
+      String(value ?? "").replace(/\r\n?/g, "\n")
+    ]));
+    const read = (name) => imported.get(name.toLocaleLowerCase("ru-RU"));
+    const has = (name) => imported.has(name.toLocaleLowerCase("ru-RU"));
+
+    const documentsNames = communicationTemplateNamedRangeBindings.ПереченьДокументов;
+    if (documentsNames.some(has)) {
+      const currentFormula = Object.prototype.hasOwnProperty.call(next, "ПереченьДокументов")
+        ? next.ПереченьДокументов
+        : studentCommunicationTemplateFieldFormulaDefaults.ПереченьДокументов || "";
+      const current = splitStudentCommunicationDocumentsFormula(currentFormula);
+      const dpo = has(documentsNames[0]) ? read(documentsNames[0]) : current.dpo;
+      const dop = has(documentsNames[1]) ? read(documentsNames[1]) : current.dop;
+      next.ПереченьДокументов = `{{если:ДПО}}${dpo}{{иначе}}${dop}{{конец}}`;
+    }
+
+    Object.entries(communicationTemplateNamedRangeBindings).forEach(([fieldName, rangeNames]) => {
+      if (fieldName === "ПереченьДокументов") return;
+      const providedNames = rangeNames.filter(has);
+      if (!providedNames.length) return;
+      const values = unique(providedNames.map(read));
+      if (values.length > 1) {
+        throw new Error(`Именованные диапазоны поля «${fieldName}» содержат разные значения.`);
+      }
+      next[fieldName] = values[0] ?? "";
+    });
+    return next;
   }
 
   function sortCommunicationTemplateFieldDefinitions(fields, order = "asc") {
@@ -6704,24 +6892,44 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function mergeImportedTrainingPlanRows(currentRows = [], importedRows = []) {
-    const normalizedImportedRows = (Array.isArray(importedRows) ? importedRows : [])
-      .map((item, index) => normalizeTrainingPlanRecord(item, index))
+  function mergeImportedTrainingPlanRows(currentRows = [], importedRows = [], managedFields = []) {
+    const normalizedManagedFields = normalizeStudentDatabaseImportManagedFields(managedFields);
+    const remapProgramIdFromImportedName = normalizedManagedFields.includes("programName");
+    const sourceRows = normalizedManagedFields.length
+      ? mergeStudentDatabaseImportedRecords(importedRows, currentRows, {
+        label: "строки учебного плана",
+        identity: (item) => [
+          item?.code,
+          item?.programName,
+          item?.discipline
+        ],
+        managedFields: normalizedManagedFields
+      })
+      : importedRows;
+    const normalizedImportedRows = (Array.isArray(sourceRows) ? sourceRows : [])
+      .map((item, index) => {
+        const record = { ...item };
+        delete record.databaseSync;
+        if (remapProgramIdFromImportedName) record.programId = "";
+        return normalizeTrainingPlanRecord(record, index);
+      })
       .filter((item) => item.programName);
     const importedIds = new Set(normalizedImportedRows
       .map((item) => String(item.id || "").trim())
       .filter(Boolean));
     const importedKeys = new Set(normalizedImportedRows.map(trainingPlanImportKey));
-    const customRows = (Array.isArray(currentRows) ? currentRows : [])
-      .map((item, index) => normalizeTrainingPlanRecord(item, index))
-      .filter((item) => {
-        const id = String(item?.id || "").trim();
-        return id
-          && !/^plan-\d+$/i.test(id)
-          && !id.startsWith("training-plan-db-")
-          && !importedIds.has(id)
-          && !importedKeys.has(trainingPlanImportKey(item));
-      });
+    const customRows = normalizedManagedFields.length
+      ? []
+      : (Array.isArray(currentRows) ? currentRows : [])
+        .map((item, index) => normalizeTrainingPlanRecord(item, index))
+        .filter((item) => {
+          const id = String(item?.id || "").trim();
+          return id
+            && !/^plan-\d+$/i.test(id)
+            && !id.startsWith("training-plan-db-")
+            && !importedIds.has(id)
+            && !importedKeys.has(trainingPlanImportKey(item));
+        });
     return [...normalizedImportedRows, ...customRows];
   }
 
@@ -7089,9 +7297,17 @@ MAX - https://bizvmax.ru/zifra_plus
     }, Math.max(0, delay));
   }
 
-  function flushSharedApplicationState() {
-    if (sharedStateSavePromise) return sharedStateSavePromise;
-    const savePromise = performSharedApplicationStateSave();
+  function flushSharedApplicationState(options = {}) {
+    const saveOptions = options && typeof options === "object" ? options : {};
+    if (sharedStateSavePromise) {
+      if (saveOptions.strictRevision === true) {
+        return Promise.reject(new Error(
+          "Строгое сохранение не запущено: уже выполняется другое сохранение общей базы."
+        ));
+      }
+      return sharedStateSavePromise;
+    }
+    const savePromise = performSharedApplicationStateSave(saveOptions);
     sharedStateSavePromise = savePromise;
     savePromise.finally(() => {
       if (sharedStateSavePromise === savePromise) sharedStateSavePromise = null;
@@ -7099,7 +7315,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return savePromise;
   }
 
-  async function performSharedApplicationStateSave() {
+  async function performSharedApplicationStateSave(options = {}) {
     if (
       !sharedStateReady
       || sharedStateConflict
@@ -7108,7 +7324,12 @@ MAX - https://bizvmax.ru/zifra_plus
     sharedStateSaveRunning = true;
     const generation = sharedStateChangeGeneration;
     const data = clone(state.data);
-    const baseRevision = sharedStateRevision;
+    const strictRevision = options.strictRevision === true;
+    const syncCommitToken = String(options.syncCommitToken || "").trim();
+    const requestedBaseRevision = Number(options.baseRevision);
+    const baseRevision = strictRevision && Number.isInteger(requestedBaseRevision)
+      ? Math.max(0, requestedBaseRevision)
+      : sharedStateRevision;
     const patch = mergeSharedApplicationStatePatches(
       sharedStatePendingPatch,
       buildSharedApplicationStatePatch(sharedStateBaseData, data)
@@ -7126,7 +7347,13 @@ MAX - https://bizvmax.ru/zifra_plus
     try {
       const payload = await requestSharedApplicationState("", {
         method: "POST",
-        body: JSON.stringify({ baseRevision, patch, clientId: recordLockClientId })
+        body: JSON.stringify({
+          baseRevision,
+          patch,
+          clientId: recordLockClientId,
+          ...(strictRevision ? { strictRevision: true } : {}),
+          ...(syncCommitToken ? { syncCommitToken } : {})
+        })
       });
       sharedStateRevision = Math.max(0, Number(payload.revision) || sharedStateRevision);
       sharedStateVersionTag = String(payload.versionTag || sharedStateVersionTag);
@@ -7163,6 +7390,13 @@ MAX - https://bizvmax.ru/zifra_plus
         return false;
       }
       if (error.status === 409) {
+        if (
+          strictRevision
+          && syncCommitToken
+          && /срок подтверждения синхронизации XLSB ист[её]к/iu.test(String(error.message || ""))
+        ) {
+          throw error;
+        }
         sharedStateConflict = true;
         updateSharedStateStatusUi();
         if (!sharedStateConflictShown) {
@@ -7174,6 +7408,12 @@ MAX - https://bizvmax.ru/zifra_plus
           );
         }
         return false;
+      }
+      if (strictRevision) {
+        sharedStateConflict = true;
+        sharedStateSyncBlockedReason = "conflict";
+        persistSharedStateRecovery();
+        throw error;
       }
       sharedStateOffline = true;
       sharedStateReady = true;
@@ -7191,7 +7431,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return saved;
   }
 
-  async function flushSharedApplicationStateThroughGeneration(targetGeneration) {
+  async function flushSharedApplicationStateThroughGeneration(targetGeneration, options = {}) {
     const target = Math.max(0, Number(targetGeneration) || 0);
     while (
       sharedStateReady
@@ -7199,7 +7439,7 @@ MAX - https://bizvmax.ru/zifra_plus
       && sharedStatePersistedGeneration < target
       && sharedStateDirty
     ) {
-      const saved = await flushSharedApplicationState();
+      const saved = await flushSharedApplicationState(options);
       if (!saved) return false;
     }
     return !sharedStateConflict && sharedStatePersistedGeneration >= target;
@@ -8147,6 +8387,7 @@ MAX - https://bizvmax.ru/zifra_plus
     hideSystemHelpTooltip();
     hideCommunicationTemplateFieldMenu();
     closeNavItemMenu();
+    closeSystemMailboxEmailMenu();
     document.querySelector("[data-communication-template-field-dialog]")?.remove();
     if (!canAccessView(state.view)) state.view = "dashboard";
     const current = navItems.find((item) => item.id === state.view) || navItems[0];
@@ -10703,33 +10944,42 @@ MAX - https://bizvmax.ru/zifra_plus
         ? `${financialTerms.percent}% — ${financialTerms.description}`
         : financialTerms.description)
       : "—";
-    const details = [
+    const topDetails = [
       ["Дата", row.date],
       ["ФИО", row.name],
       ["Телефон", row.phone],
       ["Email", row.email],
-      ["Город", row.city],
-      ["Заказ", row.order, true],
+      ["Город", row.city]
+    ];
+    const orderLineDetails = [
+      ["Заказ", row.order],
+      ["Программа", row.program],
+      ["Категория", inferredProgramType || "—"]
+    ];
+    const details = [
       ["Оплата", hasPayment ? money(paymentAmount) : "—"],
       ["Стоимость по реестру", financialTerms.registryPrice ? money(financialTerms.registryPrice) : "—"],
       ["Сумма договора", contractAmount || financialTerms.coupon ? money(contractAmount) : "—"],
       ["Купон", financialTerms.coupon || "—"],
       ["Скидка / рассрочка", benefitDescription],
-      ["Программа", row.program, true],
-      ["Категория", inferredProgramType || "—"],
       ["Организация", row.organization, true],
       ["Должность", row.position],
       ["Источник", row.source],
       ["Примечание", row.note, true]
     ];
+    const renderDetailItems = (items) => items.map(([label, value, wide]) => `
+      <div class="${wide ? "is-wide" : ""}">
+        <dt>${escapeHtml(label)}</dt>
+        <dd>${escapeHtml(value || "—")}</dd>
+      </div>
+    `).join("");
     return `
       <div class="student-application-detail-grid">
-        ${details.map(([label, value, wide]) => `
-          <div class="${wide ? "is-wide" : ""}">
-            <dt>${escapeHtml(label)}</dt>
-            <dd>${escapeHtml(value || "—")}</dd>
-          </div>
-        `).join("")}
+        ${renderDetailItems(topDetails)}
+        <div class="student-application-detail-order-line">
+          ${renderDetailItems(orderLineDetails)}
+        </div>
+        ${renderDetailItems(details)}
       </div>
       <div class="student-application-import-preview">
         <span>Будет добавлено</span>
@@ -12449,6 +12699,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getStudentStatusTableSort(status) {
     const normalizedStatus = String(status || "").trim().toLocaleLowerCase("ru-RU");
+    if (normalizedStatus === "учится") return { key: "daysUntilEnd", dir: "asc" };
     if (normalizedStatus === "все") return { key: "applicationDate", dir: "desc" };
     if (normalizedStatus === "отчислен") return { key: "endDate", dir: "desc" };
     return getDefaultTableSort("students");
@@ -13805,7 +14056,7 @@ MAX - https://bizvmax.ru/zifra_plus
         </label>
         <label class="payment-constant-value-cell">
           <span class="sr-only">Значение</span>
-          <input data-payment-constant-field="value" type="number" min="0" step="10" value="${escapeAttr(setting.value ?? "")}" required>
+          <input data-payment-constant-field="value" type="number" ${getPaymentConstantInputAttributes(setting)} value="${escapeAttr(setting.value ?? "")}" required>
           ${unit ? `<span class="payment-constant-unit" aria-hidden="true">${escapeHtml(unit)}</span>` : ""}
         </label>
         <button
@@ -13862,6 +14113,7 @@ MAX - https://bizvmax.ru/zifra_plus
       custom: true
     }, index));
     const row = list.lastElementChild;
+    bindMoneyInputStepControls(row);
     updatePaymentConstantRowNumbers(list);
     row?.querySelector('[data-payment-constant-field="marker"]')?.focus({ preventScroll: true });
   }
@@ -16925,7 +17177,7 @@ MAX - https://bizvmax.ru/zifra_plus
               ${renderOrdersSdoIcon("laptop")}
               <span>Экспорт в СДО</span>
             </button>
-            <button class="ghost-button orders-sdo-tool-button" data-action="email-employee-portal-access" type="button" title="Отправить сотруднику&#10;Shift + щелчок: отправить на системный ящик">
+            <button class="ghost-button orders-sdo-tool-button" data-action="email-employee-portal-access" data-email-recipient-mode="employee" type="button" aria-haspopup="menu" aria-expanded="false" title="Отправить сотруднику&#10;Правый щелчок: выбрать получателя&#10;Shift + щелчок: отправить на системный ящик">
               ${renderOrdersSdoIcon("mail")}
               <span>Отправить</span>
             </button>
@@ -17861,7 +18113,7 @@ MAX - https://bizvmax.ru/zifra_plus
                         attrs: `data-employee-payment-field="description" title="${escapeAttr(row.description)}" aria-label="Основание выплаты" ${editable ? "" : "disabled"}`
                       })}
                     </td>
-                    <td><input data-employee-payment-field="amount" type="number" min="0" step="0.01" value="${escapeAttr(row.amount)}" ${amountReadOnly ? 'readonly title="Сумма рассчитывается автоматически по поступлениям слушателя"' : (editable ? "" : "disabled")}></td>
+                    <td><input data-employee-payment-field="amount" data-money-input data-money-nonnegative type="number" step="${MONEY_INPUT_STEP}" value="${escapeAttr(row.amount)}" ${amountReadOnly ? 'readonly title="Сумма рассчитывается автоматически по поступлениям слушателя"' : (editable ? "" : "disabled")}></td>
                     <td class="employee-payment-check-cell">
                       <input data-employee-payment-field="recommendation" type="checkbox" ${row.recommendation ? "checked" : ""} aria-label="Рекомендовать к выплате" title="${escapeAttr(row.recommendationManual ? "Рекомендация изменена вручную" : "Рекомендацию можно изменить вручную")}" ${editable ? "" : "disabled"}>
                     </td>
@@ -18328,7 +18580,7 @@ MAX - https://bizvmax.ru/zifra_plus
       </label>
       <label data-field-key="paymentAmount">
         <span>Сумма</span>
-        <input name="paymentAmount" type="number" min="0" step="0.01" value="${escapeAttr(row.amount)}" ${automaticAgentAmount ? 'readonly title="Сумма рассчитывается автоматически по поступлениям слушателя"' : ""} required>
+        <input name="paymentAmount" data-money-input data-money-nonnegative type="number" step="${MONEY_INPUT_STEP}" value="${escapeAttr(row.amount)}" ${automaticAgentAmount ? 'readonly title="Сумма рассчитывается автоматически по поступлениям слушателя"' : ""} required>
       </label>
       <label class="employee-payment-editor-check" data-field-key="paymentRecommendation">
         <span>Рекомендация к оплате</span>
@@ -19444,7 +19696,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const programExternalLinkAttrs = isProgramExternalLink
       ? `data-program-external-link-field="${escapeAttr(item.key)}" title="Ctrl + щелчок: открыть ссылку из поля «${escapeAttr(item.label)}»"`
       : "";
-    return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${layoutOptions.readOnly ? "readonly" : ""} ${programExternalLinkAttrs}></label>`;
+    const moneyStepAttribute = item.type === "number"
+      ? getMoneyInputStepAttribute(state.modal?.config, item.key)
+      : "";
+    return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${layoutOptions.readOnly ? "readonly" : ""} ${moneyStepAttribute} ${programExternalLinkAttrs}></label>`;
   }
 
   function renderStudentModal(record) {
@@ -19574,7 +19829,7 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function syncProStudentAdditionalStatusControl(form) {
+  function syncProStudentAdditionalStatusControl(form, options = {}) {
     if (!form || form.dataset.config !== "students") return false;
     const additionalStatusControl = form.elements.additionalStatus;
     if (!(additionalStatusControl instanceof HTMLInputElement)
@@ -19582,11 +19837,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const programName = String(form.elements.program?.value || "").trim();
     const programType = findProgramByName(programName)?.type
       || String(form.elements.educationType?.value || "").trim();
-    const nextStatus = resolveProStudentAdditionalStatus({
+    const statusContext = {
       status: form.elements.status?.value,
       additionalStatus: additionalStatusControl.value,
       educationType: programType
-    }, programType);
+    };
+    const nextStatus = options.mainStatusChanged === true
+      ? resolveStudentAdditionalStatusAfterMainStatusChange(statusContext, programType)
+      : resolveProStudentAdditionalStatus(statusContext, programType);
     if (!nextStatus || nextStatus === String(additionalStatusControl.value || "").trim()) return false;
     if (additionalStatusControl instanceof HTMLSelectElement
       && ![...additionalStatusControl.options].some((option) => option.value === nextStatus)) {
@@ -19874,7 +20132,10 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderStudentOrdersSdoTab(record) {
     const generatedMessages = generateStudentCommunicationMessages(record);
-    const portalMessage = record.portalAccessMessage || generatedMessages.portalAccessMessage || "";
+    const portalMessage = syncStudentPortalEndDateLine(
+      record.portalAccessMessage || generatedMessages.portalAccessMessage || "",
+      record
+    );
     return `
       <section class="form-section student-orders-sdo-panel">
         <div class="orders-sdo-contract-grid">
@@ -19932,7 +20193,7 @@ MAX - https://bizvmax.ru/zifra_plus
               ${renderOrdersSdoIcon("laptop")}
               <span>Экспорт в СДО</span>
             </button>
-            <button class="ghost-button orders-sdo-tool-button" data-action="email-portal-access" type="button" title="Отправить слушателю&#10;Shift + щелчок: отправить на системный ящик">
+            <button class="ghost-button orders-sdo-tool-button" data-action="email-portal-access" data-email-recipient-mode="student" type="button" aria-haspopup="menu" aria-expanded="false" title="Отправить слушателю&#10;Правый щелчок: выбрать получателя&#10;Shift + щелчок: отправить на системный ящик">
               ${renderOrdersSdoIcon("mail")}
               <span>Отправить</span>
             </button>
@@ -19992,7 +20253,7 @@ MAX - https://bizvmax.ru/zifra_plus
         generateEnrollmentOrderNo: ["generate-enrollment-order-number", "Сформировать номер приказа о зачислении"],
         generateExpulsionOrderNo: ["generate-expulsion-order-number", "Сформировать номер приказа об отчислении"],
         generateGroupNo: ["generate-group-number", "Сформировать номер группы"],
-        generateEndDate: ["generate-training-end-date", "Рассчитать по 40 часам в неделю; с Shift — по 54 часам"]
+        generateEndDate: ["generate-training-end-date", "Рассчитать по сроку программы; если срок не указан — по 40 часам в неделю"]
       };
       const [action, title] = actionMap[tool];
       return `
@@ -20207,14 +20468,59 @@ MAX - https://bizvmax.ru/zifra_plus
     input.focus({ preventScroll: true });
   }
 
-  function getTrainingEndDate(startDate, hours, hoursPerWeek = 40) {
+  function parseTrainingProgramDuration(value) {
+    const text = String(value || "").trim().toLocaleLowerCase("ru-RU").replace(/\s+/g, " ");
+    if (!text) return null;
+    const match = /^(\d+(?:[.,]\d+)?)\s*([а-яё]+)\.?$/iu.exec(text);
+    if (!match) return null;
+    const amount = Number(match[1].replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    const unit = match[2];
+    if (/^д(?:н|ень)/u.test(unit)) return { amount, unit: "days" };
+    if (/^нед/u.test(unit)) return { amount, unit: "weeks" };
+    if (/^(?:мес|месяц)/u.test(unit)) return { amount, unit: "months" };
+    return null;
+  }
+
+  function addTrainingProgramDuration(date, duration) {
+    if (!duration) return null;
+    if (duration.unit === "days") {
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate() + Math.ceil(duration.amount));
+    }
+    if (duration.unit === "weeks") {
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate() + Math.ceil(duration.amount * 7));
+    }
+    if (duration.unit !== "months") return null;
+    const wholeMonths = Math.floor(duration.amount);
+    const fractionalDays = Math.round((duration.amount - wholeMonths) * 30);
+    const targetMonth = new Date(date.getFullYear(), date.getMonth() + wholeMonths, 1);
+    const lastDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate();
+    targetMonth.setDate(Math.min(date.getDate(), lastDay));
+    if (fractionalDays) targetMonth.setDate(targetMonth.getDate() + fractionalDays);
+    return targetMonth;
+  }
+
+  function getTrainingEndDate(startDate, options = {}) {
     const date = parseOrdersSdoDate(startDate);
-    const numericHours = Number(String(hours ?? "").replace(",", "."));
-    const weeklyLimit = Number(hoursPerWeek);
-    if (!date || !Number.isFinite(numericHours) || numericHours <= 0
-      || !Number.isFinite(weeklyLimit) || weeklyLimit <= 0) return null;
-    const fullWeeks = Math.floor(numericHours / weeklyLimit);
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + fullWeeks * 7);
+    if (!date) return null;
+    if (options.sameDayForPro && normalizeEducationProgramType(options.programType) === "ПРО") {
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    }
+    const durationText = String(options.duration || "").trim();
+    let result = null;
+    if (durationText) {
+      result = addTrainingProgramDuration(date, parseTrainingProgramDuration(durationText));
+    } else {
+      const numericHours = Number(String(options.hours ?? "").replace(",", "."));
+      const weeklyLimit = Number(options.hoursPerWeek ?? 40);
+      if (!Number.isFinite(numericHours) || numericHours <= 0
+        || !Number.isFinite(weeklyLimit) || weeklyLimit <= 0) return null;
+      const fullWeeks = Math.ceil(numericHours / weeklyLimit);
+      result = new Date(date.getFullYear(), date.getMonth(), date.getDate() + fullWeeks * 7);
+    }
+    if (!result) return null;
+    if (result.getDay() === 0) result.setDate(result.getDate() + 1);
+    return result;
   }
 
   function setOrdersSdoFieldValue(form, fieldName, value) {
@@ -20244,6 +20550,13 @@ MAX - https://bizvmax.ru/zifra_plus
       return PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS;
     }
     return options.imported === true ? PRO_STUDENT_ADDITIONAL_STATUS : current;
+  }
+
+  function resolveStudentAdditionalStatusAfterMainStatusChange(record = {}, programType = "") {
+    if (String(record.status || "").trim().toLocaleLowerCase("ru-RU") === "учится") {
+      return STUDENT_LEARNING_ADDITIONAL_STATUS;
+    }
+    return resolveProStudentAdditionalStatus(record, programType);
   }
 
   function isFrdoProgramType(programType) {
@@ -20376,16 +20689,21 @@ MAX - https://bizvmax.ru/zifra_plus
       form.querySelector("[name='program']")?.focus();
       return null;
     }
+    const duration = String(program.duration || "").trim();
     const hours = Number(String(getStudentProgramHours(record)).replace(",", "."));
-    if (!Number.isFinite(hours) || hours <= 0) {
-      alert("Укажите срок обучения в часах для выбранной программы.");
+    if (duration && !parseTrainingProgramDuration(duration)) {
+      alert(`Не удалось распознать срок программы «${duration}». Укажите его в днях, неделях или месяцах.`);
+      return null;
+    }
+    if (!duration && (!Number.isFinite(hours) || hours <= 0)) {
+      alert("Укажите поле «Срок» или количество часов для выбранной программы.");
       form.querySelector("[name='hours']")?.focus();
       return null;
     }
-    return { form, record, program, programName, hours };
+    return { form, record, program, programName, duration, hours };
   }
 
-  function generateTrainingEndDate(event) {
+  function generateTrainingEndDate() {
     const context = getOrdersSdoAutofillContext();
     if (!context) return;
     const startDateInput = context.form.elements.startDate;
@@ -20395,7 +20713,10 @@ MAX - https://bizvmax.ru/zifra_plus
       startDateInput?.focus({ preventScroll: true });
       return;
     }
-    const endDate = getTrainingEndDate(startDate, context.hours, event?.shiftKey ? 54 : 40);
+    const endDate = getTrainingEndDate(startDate, {
+      duration: context.duration,
+      hours: context.hours
+    });
     if (!endDate) return;
     setOrdersSdoFieldValue(context.form, "endDate", formatOrdersSdoDate(endDate));
     state.modal.draft = collectStudentFormDraft();
@@ -20425,7 +20746,10 @@ MAX - https://bizvmax.ru/zifra_plus
     );
     if (!confirmed) return;
 
-    const endDate = getTrainingEndDate(baseDateValue, context.hours);
+    const endDate = getTrainingEndDate(baseDateValue, {
+      duration: context.duration,
+      hours: context.hours
+    });
     const contract = getGeneratedNumberFromDataFormula("contractNumber", baseDate, context.form.dataset.id);
     const enrollmentOrder = getGeneratedNumberFromDataFormula("enrollmentOrderNumber", baseDate, context.form.dataset.id);
     const group = getStudentGroupNumber(context.programName, baseDateValue);
@@ -20589,7 +20913,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${renderCommunicationActionIcon("restore")}
                   <span>Восстановить</span>
                 </button>
-                <button data-action="email-communication-message" data-message-key="${item.key}" type="button" title="Отправить слушателю&#10;Shift + щелчок: отправить на системный ящик">
+                <button data-action="email-communication-message" data-message-key="${item.key}" data-email-recipient-mode="student" type="button" aria-haspopup="menu" aria-expanded="false" title="Отправить слушателю&#10;Правый щелчок: выбрать получателя&#10;Shift + щелчок: отправить на системный ящик">
                   ${renderCommunicationActionIcon("mail")}
                   <span>Отправить по почте</span>
                 </button>
@@ -20866,7 +21190,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     ${renderCommunicationActionIcon("restore")}
                     <span>Восстановить</span>
                   </button>
-                  <button data-action="email-communication-message" data-message-key="${message.key}" type="button" title="Отправить сотруднику&#10;Shift + щелчок: отправить на системный ящик">
+                  <button data-action="email-communication-message" data-message-key="${message.key}" data-email-recipient-mode="employee" type="button" aria-haspopup="menu" aria-expanded="false" title="Отправить сотруднику&#10;Правый щелчок: выбрать получателя&#10;Shift + щелчок: отправить на системный ящик">
                     ${renderCommunicationActionIcon("mail")}
                     <span>Отправить по почте</span>
                   </button>
@@ -21563,7 +21887,10 @@ MAX - https://bizvmax.ru/zifra_plus
       const options = item.required ? dictionaryOptions : ["", ...dictionaryOptions];
       return `${label}<select name="${item.key}" ${item.dict ? `data-settings-dictionary="${escapeAttr(item.dict)}"` : ""} ${required}>${options.map((option) => `<option ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>`;
     }
-    return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${isCalculatedFinanceField ? 'readonly class="calculated-finance-field"' : ""}></label>`;
+    const moneyStepAttribute = item.type === "number"
+      ? getMoneyInputStepAttribute("students", item.key)
+      : "";
+    return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${moneyStepAttribute} ${isCalculatedFinanceField ? 'readonly class="calculated-finance-field"' : ""}></label>`;
   }
 
   function getStudentOrderAdminUrlTemplate() {
@@ -22218,6 +22545,31 @@ MAX - https://bizvmax.ru/zifra_plus
     state.modal.hasDraftChanges = true;
   }
 
+  function updatePortalAccessEndDate() {
+    const form = document.getElementById("recordForm");
+    const messageInput = form?.querySelector("[name='portalAccessMessage']");
+    if (!form || !messageInput || form.dataset.config !== "students") return;
+    const currentStudent = (state.data.collections.students || [])
+      .find((student) => student.id === state.modal?.id) || {};
+    const values = {
+      ...currentStudent,
+      ...(state.modal?.draft || {}),
+      ...collectStudentFormDraft(),
+      endDate: String(form.querySelector("[name='endDate']")?.value || ""),
+      extendedEndDate: String(form.querySelector("[name='extendedEndDate']")?.value || "")
+    };
+    const syncedMessage = syncStudentPortalEndDateLine(messageInput.value, values);
+    messageInput.value = syncedMessage;
+    const generatedMessage = getGeneratedPortalAccessMessage(form);
+    state.modal.draft = {
+      ...(state.modal.draft || {}),
+      endDate: values.endDate,
+      extendedEndDate: values.extendedEndDate,
+      portalAccessMessage: syncedMessage === generatedMessage ? "" : syncedMessage
+    };
+    state.modal.hasDraftChanges = true;
+  }
+
   function openSdoCourses() {
     const coursesUrl = normalizeExternalUrl(getSdoSettingValue("coursesUrl"));
     if (!coursesUrl) {
@@ -22781,7 +23133,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   <input name="payment${n}Date" data-payment-index="${n}" type="date" value="${escapeAttr(record[`payment${n}Date`] || "")}">
                 </label>
                 <label class="editable-grid-cell" data-label="Сумма">
-                  <input name="payment${n}Amount" data-payment-index="${n}" type="number" value="${escapeAttr(record[`payment${n}Amount`] || "")}">
+                  <input name="payment${n}Amount" data-payment-index="${n}" data-money-input type="number" step="${MONEY_INPUT_STEP}" value="${escapeAttr(record[`payment${n}Amount`] || "")}">
                 </label>
                 <label class="editable-grid-cell" data-label="Примечание">
                   <input name="payment${n}Note" data-payment-index="${n}" value="${escapeAttr(record[`payment${n}Note`] || "")}">
@@ -23219,7 +23571,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   })}
                 </label>
                 <label class="editable-grid-cell" data-label="Сумма">
-                  <input name="expense${n}Amount" data-expense-index="${n}" type="number" value="${escapeAttr(record[`expense${n}Amount`] || "")}">
+                  <input name="expense${n}Amount" data-expense-index="${n}" data-money-input type="number" step="${MONEY_INPUT_STEP}" value="${escapeAttr(record[`expense${n}Amount`] || "")}">
                 </label>
                 <div class="editable-grid-cell expense-note-cell" data-label="Примечание">
                   ${renderComboField({
@@ -23307,7 +23659,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   })}
                 </label>
                 <label class="editable-grid-cell" data-label="Сумма">
-                  <input name="directExpense${index}Amount" data-direct-expense-index="${index}" type="number" value="${escapeAttr(expense.amount || "")}">
+                  <input name="directExpense${index}Amount" data-direct-expense-index="${index}" data-money-input type="number" step="${MONEY_INPUT_STEP}" value="${escapeAttr(expense.amount || "")}">
                 </label>
                 <div class="editable-grid-cell expense-note-cell" data-label="Примечание">
                   ${renderComboField({
@@ -23499,7 +23851,7 @@ MAX - https://bizvmax.ru/zifra_plus
               </label>
               <label data-field-key="studentExpenseEditorAmount">
                 <span>Сумма</span>
-                <input name="studentExpenseEditorAmount" type="number" step="0.01" value="${escapeAttr(expense.amount ?? "")}">
+                <input name="studentExpenseEditorAmount" data-money-input type="number" step="${MONEY_INPUT_STEP}" value="${escapeAttr(expense.amount ?? "")}">
               </label>
               <label class="student-expense-editor-wide" data-field-key="studentExpenseEditorType">
                 <span>Вид затрат или запас</span>
@@ -23762,6 +24114,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     document.querySelector("[data-student-expense-editor]")?.remove();
     app.insertAdjacentHTML("beforeend", renderStudentExpenseEditor());
+    bindMoneyInputStepControls(document.querySelector("[data-student-expense-editor]"));
     bindStudentExpenseEditorEvents();
     bindComboFieldEvents(document.querySelector("[data-student-expense-editor]"));
     initializeRecordFormSnapshot(document.getElementById("studentExpenseEditorForm"));
@@ -24018,7 +24371,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const noEducationDocumentOption = isDpo
       ? ""
       : "\n\nВы можете не предоставлять данные документы, в случае отсутствия необходимости получения документа об образовании\n\nКакой вариант Вам подходит, с выдачей документа или без выдачи?";
-    return renderStudentCommunicationTemplates({
+    const messages = renderStudentCommunicationTemplates({
       ИмяОтчество: getStudentCommunicationAddressee(record),
       ЕстьИмяОтчество: Boolean(getStudentCommunicationAddressee(record)),
       ДПО: isDpo,
@@ -24045,6 +24398,11 @@ MAX - https://bizvmax.ru/zifra_plus
       СрокОбученияПоКарточки: portalEndDate,
       ТелеграмГруппаПрограммыКарточки: telegramGroup
     });
+    messages.portalAccessMessage = syncStudentPortalEndDateLine(
+      messages.portalAccessMessage,
+      record
+    );
+    return messages;
     /*
      * Старый встроенный набор строк оставлен ниже как справочная копия формул XLSB.
      * Рабочие тексты собираются из редактируемого справочника шаблонов выше.
@@ -24218,6 +24576,31 @@ MAX - https://bizvmax.ru/zifra_plus
     }).format(date);
     const weekday = new Intl.DateTimeFormat("ru-RU", { weekday: "long" }).format(date);
     return `${numericDate} (${weekday})`;
+  }
+
+  function syncStudentPortalEndDateLine(message, record = {}) {
+    const source = String(message ?? "");
+    if (!source) return source;
+    const endDate = formatStudentCommunicationPortalEndDate(
+      getStudentCommunicationEndDate(record)
+    ) || "неограничен";
+    const targetLine = `Срок обучения по: ${endDate}`;
+    const newline = source.includes("\r\n") ? "\r\n" : source.includes("\r") ? "\r" : "\n";
+    const existingLine = /(^|[\r\n])([ \t]*)(Срок обучения по|Срок окончания обучения|Дата окончания обучения)(\s*:\s*)[^\r\n]*/giu;
+    if (existingLine.test(source)) {
+      existingLine.lastIndex = 0;
+      return source.replace(existingLine, (match, prefix, indent, label, separator) => (
+        `${prefix}${indent}${label}${separator}${endDate}`
+      ));
+    }
+    const programLine = /(^|[\r\n])([ \t]*Программа\s*:[^\r\n]*)/iu;
+    if (programLine.test(source)) {
+      return source.replace(programLine, (match, prefix, line) => (
+        `${prefix}${line}${newline}${targetLine}`
+      ));
+    }
+    const separator = source.endsWith("\r") || source.endsWith("\n") ? "" : newline;
+    return `${source}${separator}${targetLine}`;
   }
 
   function getStudentReferralCode(record) {
@@ -24479,7 +24862,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
-  async function emailStudentCommunicationMessage(messageKey, button, event) {
+  async function emailStudentCommunicationMessage(messageKey, button, event, recipientMode = "") {
     const textarea = getStudentCommunicationTextarea(messageKey);
     const isEmployee = textarea?.dataset.communicationEntity === "contract";
     const email = isEmployee ? getCurrentContractCardValue("email") : getCurrentStudentCardValue("email");
@@ -24493,6 +24876,7 @@ MAX - https://bizvmax.ru/zifra_plus
       confirmText: `Отправить сообщение «${message?.label || "Сообщение от учебного центра"}»?`,
       button,
       event,
+      recipientMode,
       messageType: message?.label || "Сообщение от учебного центра",
       recipientLabel: isEmployee ? "сотрудника" : "слушателя",
       entityType: isEmployee ? "contracts" : "students",
@@ -24500,7 +24884,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  async function emailPortalAccessMessage(event) {
+  async function emailPortalAccessMessage(event, recipientMode = "") {
     const email = getCurrentStudentCardValue("email");
     const message = String(document.querySelector("[name='portalAccessMessage']")?.value || "").trim();
     if (!message) {
@@ -24517,6 +24901,7 @@ MAX - https://bizvmax.ru/zifra_plus
       confirmText: "Отправить письмо с доступом к порталу?",
       button: event?.currentTarget,
       event,
+      recipientMode,
       messageType: "Доступ к порталу дистанционного обучения"
     });
   }
@@ -24558,7 +24943,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  async function emailEmployeePortalAccessMessage(event) {
+  async function emailEmployeePortalAccessMessage(event, recipientMode = "") {
     const email = getCurrentContractCardValue("email");
     const messageInput = document.querySelector("#recordForm[data-config='contracts'] [name='portalCredentials']");
     const message = String(messageInput?.value || "").trim();
@@ -24573,13 +24958,160 @@ MAX - https://bizvmax.ru/zifra_plus
       email,
       subject,
       message,
-      confirmText: "Отправить сотруднику письмо с доступом к порталу?",
+      confirmText: "Отправить письмо с доступом к порталу?",
       button: event?.currentTarget,
       event,
+      recipientMode,
       messageType: "Доступ к порталу дистанционного обучения",
       recipientLabel: "сотрудника",
       entityType: "contracts",
       entityName: getCurrentContractCardValue("name")
+    });
+  }
+
+  const SYSTEM_MAILBOX_EMAIL_BUTTON_SELECTOR = [
+    "[data-action='email-portal-access']",
+    "[data-action='email-employee-portal-access']",
+    "[data-action='email-communication-message']"
+  ].join(", ");
+
+  function closeSystemMailboxEmailMenu(options = {}) {
+    document.removeEventListener("pointerdown", closeSystemMailboxEmailMenuOnOutsidePointer, { capture: true });
+    window.removeEventListener("resize", closeSystemMailboxEmailMenuOnViewportChange);
+    window.removeEventListener("scroll", closeSystemMailboxEmailMenuOnViewportChange, true);
+    const menu = document.querySelector("[data-system-mailbox-email-menu]");
+    const opener = menu?.systemMailboxEmailOpener;
+    if (opener instanceof Element) opener.setAttribute("aria-expanded", "false");
+    menu?.remove();
+    if (options.restoreFocus && opener?.isConnected && !opener.disabled) {
+      opener.focus({ preventScroll: true });
+    }
+  }
+
+  function closeSystemMailboxEmailMenuOnOutsidePointer(event) {
+    if (event.target?.closest?.("[data-system-mailbox-email-menu]")) return;
+    closeSystemMailboxEmailMenu();
+  }
+
+  function closeSystemMailboxEmailMenuOnViewportChange() {
+    closeSystemMailboxEmailMenu();
+  }
+
+  async function runSystemMailboxEmailButtonAction(button, recipientMode) {
+    const action = String(button?.dataset?.action || "");
+    const syntheticEvent = { currentTarget: button, shiftKey: false };
+    if (action === "email-portal-access") {
+      await emailPortalAccessMessage(syntheticEvent, recipientMode);
+      return;
+    }
+    if (action === "email-employee-portal-access") {
+      await emailEmployeePortalAccessMessage(syntheticEvent, recipientMode);
+      return;
+    }
+    if (action === "email-communication-message") {
+      await emailStudentCommunicationMessage(
+        button.dataset.messageKey,
+        button,
+        syntheticEvent,
+        recipientMode
+      );
+    }
+  }
+
+  function showSystemMailboxEmailMenu(button, x, y) {
+    closeSystemMailboxEmailMenu();
+    if (
+      !(button instanceof Element)
+      || !button.isConnected
+      || button.disabled
+      || button.getAttribute("aria-disabled") === "true"
+    ) return;
+    const defaultMode = button.dataset.emailRecipientMode === "employee" ? "employee" : "student";
+    const defaultLabel = defaultMode === "employee" ? "Отправить сотруднику" : "Отправить слушателю";
+    const menu = document.createElement("div");
+    menu.className = "field-copy-popup system-mailbox-email-menu";
+    menu.dataset.systemMailboxEmailMenu = "true";
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "Выбор получателя письма");
+    menu.systemMailboxEmailOpener = button;
+    menu.innerHTML = `
+      <button data-email-menu-recipient="${defaultMode}" type="button" role="menuitem" tabindex="0">
+        <span>${escapeHtml(defaultLabel)}</span>
+      </button>
+      <button data-email-menu-recipient="system" type="button" role="menuitem" tabindex="-1">
+        <span>Отправить на системный ящик</span>
+      </button>
+    `;
+    document.body.appendChild(menu);
+    button.setAttribute("aria-expanded", "true");
+    const openerRect = button.getBoundingClientRect();
+    const useOpenerPosition = !(Number.isFinite(x) && Number.isFinite(y)) || (x === 0 && y === 0);
+    const desiredX = useOpenerPosition ? openerRect.left : x;
+    const desiredY = useOpenerPosition ? openerRect.bottom + 4 : y;
+    const menuRect = menu.getBoundingClientRect();
+    menu.style.left = `${clamp(desiredX, 8, Math.max(8, window.innerWidth - menuRect.width - 8))}px`;
+    menu.style.top = `${clamp(desiredY, 8, Math.max(8, window.innerHeight - menuRect.height - 8))}px`;
+    const menuItems = Array.from(menu.querySelectorAll("[data-email-menu-recipient]"));
+    let actionStarted = false;
+    menuItems.forEach((menuItem) => {
+      menuItem.addEventListener("click", async () => {
+        if (actionStarted) return;
+        actionStarted = true;
+        const recipientMode = menuItem.dataset.emailMenuRecipient;
+        closeSystemMailboxEmailMenu();
+        button.focus({ preventScroll: true });
+        await runSystemMailboxEmailButtonAction(button, recipientMode);
+      });
+    });
+    menu.addEventListener("keydown", (event) => {
+      const currentIndex = Math.max(0, menuItems.indexOf(document.activeElement));
+      let nextIndex = currentIndex;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSystemMailboxEmailMenu({ restoreFocus: true });
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        closeSystemMailboxEmailMenu({ restoreFocus: true });
+        return;
+      }
+      if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % menuItems.length;
+      else if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + menuItems.length) % menuItems.length;
+      else if (event.key === "Home") nextIndex = 0;
+      else if (event.key === "End") nextIndex = menuItems.length - 1;
+      else return;
+      event.preventDefault();
+      menuItems.forEach((item, index) => { item.tabIndex = index === nextIndex ? 0 : -1; });
+      menuItems[nextIndex]?.focus({ preventScroll: true });
+    });
+    menu.addEventListener("contextmenu", (event) => event.preventDefault());
+    window.setTimeout(() => {
+      if (!menu.isConnected) return;
+      document.addEventListener("pointerdown", closeSystemMailboxEmailMenuOnOutsidePointer, { capture: true });
+      window.addEventListener("resize", closeSystemMailboxEmailMenuOnViewportChange);
+      window.addEventListener("scroll", closeSystemMailboxEmailMenuOnViewportChange, true);
+      menuItems[0]?.focus({ preventScroll: true });
+    });
+  }
+
+  function bindSystemMailboxEmailMenus(root = document) {
+    root.querySelectorAll?.(SYSTEM_MAILBOX_EMAIL_BUTTON_SELECTOR).forEach((button) => {
+      if (button.dataset.systemMailboxEmailMenuBound === "true") return;
+      button.dataset.systemMailboxEmailMenuBound = "true";
+      button.addEventListener("contextmenu", (event) => {
+        if (button.disabled || button.getAttribute("aria-disabled") === "true") return;
+        event.preventDefault();
+        event.stopPropagation();
+        showSystemMailboxEmailMenu(button, event.clientX, event.clientY);
+      });
+      button.addEventListener("keydown", (event) => {
+        if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+        if (button.disabled || button.getAttribute("aria-disabled") === "true") return;
+        event.preventDefault();
+        event.stopPropagation();
+        showSystemMailboxEmailMenu(button, 0, 0);
+      });
     });
   }
 
@@ -25170,6 +25702,36 @@ MAX - https://bizvmax.ru/zifra_plus
     cardWindow.style.setProperty("--card-window-offset-y", `${windowState.offsetY}px`);
   }
 
+  function syncCardWindowStickyTabsOffset(cardWindow) {
+    if (!cardWindow) return;
+    const head = cardWindow.querySelector(":scope > form > .modal-head");
+    const tabs = cardWindow.matches(".student-modal")
+      ? cardWindow.querySelector("[data-student-tabs]")
+      : cardWindow.querySelector(".contract-tabs");
+    if (!head || !tabs) {
+      cardWindow.style.removeProperty("--card-window-sticky-tabs-top");
+      return;
+    }
+    const top = getComputedStyle(head).position === "sticky"
+      ? Math.ceil(head.getBoundingClientRect().height)
+      : 0;
+    cardWindow.style.setProperty("--card-window-sticky-tabs-top", `${top}px`);
+  }
+
+  function bindCardWindowStickyTabs(cardWindow) {
+    cardWindowStickyTabsResizeObserver?.disconnect();
+    cardWindowStickyTabsResizeObserver = null;
+    if (!cardWindow) return;
+    const head = cardWindow.querySelector(":scope > form > .modal-head");
+    syncCardWindowStickyTabsOffset(cardWindow);
+    if (!head || !("ResizeObserver" in window)) return;
+    cardWindowStickyTabsResizeObserver = new ResizeObserver(() => {
+      syncCardWindowStickyTabsOffset(cardWindow);
+    });
+    cardWindowStickyTabsResizeObserver.observe(cardWindow);
+    cardWindowStickyTabsResizeObserver.observe(head);
+  }
+
   function clampCardWindowPosition(cardWindow) {
     const windowState = getCardWindowState();
     if (!cardWindow || windowState.fullscreen || window.innerWidth <= 720) return;
@@ -25210,6 +25772,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function bindCardWindowControls() {
     const cardWindow = document.querySelector("[data-card-window]");
     const dragHandle = cardWindow?.querySelector("[data-card-window-drag-handle]");
+    bindCardWindowStickyTabs(cardWindow);
     if (!cardWindow || !dragHandle) return;
     document.querySelector("[data-action='toggle-card-window-minimize']")
       ?.addEventListener("click", (event) => {
@@ -25326,6 +25889,10 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (document.querySelector("[data-student-document-recognition-field-menu]")) {
       hideStudentDocumentRecognitionFieldMenu();
+      return true;
+    }
+    if (document.querySelector("[data-system-mailbox-email-menu]")) {
+      closeSystemMailboxEmailMenu({ restoreFocus: true });
       return true;
     }
     const studentWebDavBrowser = document.querySelector("[data-student-webdav-browser]");
@@ -25470,6 +26037,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindStudentApplicationsImportEvents();
     bindFinanceDetailsEvents();
     bindStudentExpenseEditorEvents();
+    bindMoneyInputStepControls(document);
     initializeRecordFormSnapshot(document.getElementById("recordForm"));
     initializeRecordFormSnapshot(document.getElementById("studentExpenseEditorForm"));
     initializeRecordFormSnapshot(document.getElementById("employeeExpenseEditorForm"));
@@ -25758,6 +26326,11 @@ MAX - https://bizvmax.ru/zifra_plus
       input?.addEventListener("input", updatePortalAccessMessage);
       input?.addEventListener("change", updatePortalAccessMessage);
     });
+    ["endDate", "extendedEndDate"].forEach((fieldName) => {
+      const input = document.querySelector(`form[data-config="students"] [name="${fieldName}"]`);
+      input?.addEventListener("input", updatePortalAccessEndDate);
+      input?.addEventListener("change", updatePortalAccessEndDate);
+    });
     document.querySelector("[data-action='copy-extended-end-date-up']")?.addEventListener("click", copyExtendedEndDateToEndDate);
     document.querySelectorAll("[data-action='copy-communication-message']").forEach((button) => {
       button.addEventListener("click", () => copyStudentCommunicationMessage(button));
@@ -25773,6 +26346,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='email-communication-message']").forEach((button) => {
       button.addEventListener("click", (event) => emailStudentCommunicationMessage(button.dataset.messageKey, button, event));
     });
+    bindSystemMailboxEmailMenus();
     document.querySelectorAll("[data-action='copy-address-to']").forEach((button) => {
       button.addEventListener("click", () => copyStudentAddressToField(button.dataset.source, button.dataset.target));
     });
@@ -26697,8 +27271,11 @@ MAX - https://bizvmax.ru/zifra_plus
 
     const recordForm = document.getElementById("recordForm");
     recordForm?.addEventListener("change", (event) => {
-      if (!["status", "program", "educationType"].includes(String(event.target?.name || ""))) return;
-      syncProStudentAdditionalStatusControl(recordForm);
+      const targetName = String(event.target?.name || "");
+      if (!["status", "program", "educationType"].includes(targetName)) return;
+      syncProStudentAdditionalStatusControl(recordForm, {
+        mainStatusChanged: targetName === "status"
+      });
     });
     recordForm?.addEventListener("submit", saveRecord);
     document.querySelector("[data-action='open-contract-student-picker']")
@@ -28037,6 +28614,7 @@ MAX - https://bizvmax.ru/zifra_plus
     state.employeeExpenseEditor = { sourceType, sourceId };
     document.querySelector("[data-employee-expense-editor]")?.remove();
     app.insertAdjacentHTML("beforeend", renderEmployeeExpenseEditor());
+    bindMoneyInputStepControls(document.querySelector("[data-employee-expense-editor]"));
     bindEmployeeExpenseEditorEvents();
     bindComboFieldEvents(document.querySelector("[data-employee-expense-editor]"));
     initializeRecordFormSnapshot(document.getElementById("employeeExpenseEditorForm"));
@@ -30246,7 +30824,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <label>
               <span>Значение</span>
               <div class="payment-constant-dialog-value-control">
-                <input name="value" type="number" min="0" step="10" value="${escapeAttr(currentSetting?.value ?? "0")}" required>
+                <input name="value" type="number" ${getPaymentConstantInputAttributes(currentSetting, currentSetting?.value ?? "0")} value="${escapeAttr(currentSetting?.value ?? "0")}" required>
                 ${unit ? `<span class="payment-constant-unit" aria-hidden="true">${escapeHtml(unit)}</span>` : ""}
               </div>
             </label>
@@ -30259,6 +30837,7 @@ MAX - https://bizvmax.ru/zifra_plus
       </section>
     `;
     document.body.appendChild(backdrop);
+    bindMoneyInputStepControls(backdrop);
     const close = () => {
       document.removeEventListener("keydown", handleKeydown, true);
       backdrop.remove();
@@ -31011,7 +31590,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const previousStatus = String(currentRecord.status || "").trim().toLocaleLowerCase("ru-RU");
       const nextStatus = String(values.status || "").trim().toLocaleLowerCase("ru-RU");
       if (!formElement.dataset.id || previousStatus !== nextStatus) {
-        values.additionalStatus = resolveProStudentAdditionalStatus(
+        values.additionalStatus = resolveStudentAdditionalStatusAfterMainStatusChange(
           values,
           selectedProgram?.type || values.educationType
         );
@@ -33339,6 +33918,19 @@ MAX - https://bizvmax.ru/zifra_plus
     startDate: "startDate",
     endDate: "endDate"
   });
+  const contractDocumentRecognitionOcrFieldKeyMap = Object.freeze({
+    identityDocumentType: "passportType",
+    identityDocument: "passportNumber",
+    identityIssueDate: "passportDate",
+    identityDepartmentCode: "passportCode",
+    identityIssuer: "passportIssuer",
+    address: "registrationAddress"
+  });
+
+  function getDocumentRecognitionOcrFieldKey(key) {
+    const normalizedKey = String(key || "").trim();
+    return contractDocumentRecognitionOcrFieldKeyMap[normalizedKey] || normalizedKey;
+  }
 
   const contractDocumentRecognitionFieldGroups = [
     {
@@ -33584,17 +34176,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function getDocumentRecognitionDisplayFields(dialog, recognizedFields = []) {
     const isContract = isContractDocumentRecognitionDialog(dialog);
     const groups = getDocumentRecognitionFieldGroups(dialog);
-    const alwaysVisibleKeys = new Set(isContract
-      ? ["identityIssueDate", "identityDepartmentCode", "identityIssuer"]
-      : [
-          "passportDate",
-          "passportCode",
-          "passportIssuer",
-          "educationDocumentSeries",
-          "educationDocumentNumber",
-          "educationDocumentIssuer",
-          "educationDocumentSurname"
-        ]);
+    const alwaysVisibleKeys = new Set(groups.flatMap((group) => group.keys));
     const normalizedRecognizedFields = (Array.isArray(recognizedFields) ? recognizedFields : [])
       .map(normalizeDocumentRecognitionCitizenshipField);
     const fieldsByKey = new Map(
@@ -33612,7 +34194,9 @@ MAX - https://bizvmax.ru/zifra_plus
         displayedKeys.add(key);
         displayFields.push(recognizedField || {
           key,
-          label: getDocumentRecognitionFieldDefinition(key, isContract)?.label || key,
+          label: key === "educationDocumentDate"
+            ? "Дата выдачи документа об образовании"
+            : (getDocumentRecognitionFieldDefinition(key, isContract)?.label || key),
           value: "",
           confidence: 0,
           sourceFile: "",
@@ -34038,8 +34622,42 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  const studentDocumentRecognitionDisplayDateKeys = new Set([
+    "birthDate",
+    "educationDocumentDate"
+  ]);
+
+  function normalizeStudentDocumentRecognitionDate(value) {
+    const text = String(value || "").trim();
+    const iso = /^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/.exec(text);
+    const ru = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(text);
+    const year = Number(iso?.[1] || ru?.[3]);
+    const month = Number(iso?.[2] || ru?.[2]);
+    const day = Number(iso?.[3] || ru?.[1]);
+    if (!year || !month || !day) return "";
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() !== year
+      || date.getUTCMonth() !== month - 1
+      || date.getUTCDate() !== day
+    ) return "";
+    return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  function formatStudentDocumentRecognitionDate(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    const normalized = normalizeStudentDocumentRecognitionDate(text);
+    if (!normalized) return text;
+    const [year, month, day] = normalized.split("-");
+    return `${day}.${month}.${year}`;
+  }
+
   function normalizeRecognitionComparisonValue(key, value) {
     const source = String(value || "").trim();
+    if (studentDocumentRecognitionDisplayDateKeys.has(String(key || ""))) {
+      return normalizeStudentDocumentRecognitionDate(source) || source;
+    }
     if (["inn", "snils", "passportNumber", "passportCode", "identityDocument", "identityDepartmentCode"].includes(key)) {
       return source.replace(/\D/g, "");
     }
@@ -34136,11 +34754,18 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderStudentDocumentRecognitionField(field, currentRecord, options = {}) {
     const key = String(field.key || "");
+    const isDisplayDate = studentDocumentRecognitionDisplayDateKeys.has(key);
+    const displayValue = isDisplayDate
+      ? formatStudentDocumentRecognitionDate(field.value)
+      : String(field.value || "");
     const listControl = getDocumentRecognitionListControl(field, options.isContract === true);
     const manualEntry = field.manualEntry === true && !String(field.value || "").trim();
     const recognitionMissing = field.recognitionMissing === true;
     const isIdentityNumber = ["inn", "snils"].includes(key);
     const currentValue = String(currentRecord[key] || "").trim();
+    const currentDisplayValue = isDisplayDate
+      ? formatStudentDocumentRecognitionDate(currentValue)
+      : currentValue;
     const sameValue = Boolean(
       currentValue
       && normalizeRecognitionComparisonValue(key, currentValue)
@@ -34174,8 +34799,10 @@ MAX - https://bizvmax.ru/zifra_plus
             <input
               type="text"
               data-ocr-field-value
-              value="${escapeAttr(field.value || "")}"
-              ${manualEntry ? 'placeholder="Введите адрес по фрагменту паспорта"' : ""}
+              value="${escapeAttr(displayValue)}"
+              ${isDisplayDate
+                ? 'inputmode="numeric" placeholder="ДД.ММ.ГГГГ"'
+                : (manualEntry ? 'placeholder="Введите адрес по фрагменту паспорта"' : "")}
               ${listId ? `list="${escapeAttr(listId)}"` : ""}
               aria-label="${escapeAttr(field.label || key)}"
             >
@@ -34185,13 +34812,28 @@ MAX - https://bizvmax.ru/zifra_plus
               ${alternatives.map((item) => `<option value="${escapeAttr(item.value || "")}"></option>`).join("")}
             </datalist>
           ` : ""}
-          <div class="student-document-recognition-field-meta">
-            ${recognitionMissing ? "" : `<span class="student-document-recognition-confidence is-${confidenceTone}">${manualEntry ? "Требуется проверка" : `Уверенность ${confidence}%`}</span>`}
+          <div class="student-document-recognition-field-meta" aria-live="polite">
+            <span
+              class="student-document-recognition-confidence is-${confidenceTone}"
+              data-ocr-field-confidence
+              ${recognitionMissing ? "hidden" : ""}
+            >${manualEntry ? "Требуется проверка" : `Уверенность ${confidence}%`}</span>
             ${isIdentityNumber ? '<span class="student-document-recognition-identity-status" data-ocr-identity-status aria-live="polite"></span>' : ""}
-            ${status}
-            <span title="${escapeAttr(field.evidence || "")}">Источник: ${escapeHtml(field.sourceFile || "не определён")}</span>
+            <span data-ocr-field-state>${status}</span>
+            <span
+              data-ocr-field-source-label
+              title="${escapeAttr(field.evidence || "")}"
+            >Источник: ${escapeHtml(field.sourceFile || "не определён")}</span>
           </div>
-          ${currentValue ? `<small>Сейчас в карточке: <strong>${escapeHtml(currentValue)}</strong></small>` : ""}
+          <button
+            class="ghost-button student-document-recognition-field-region-button"
+            data-action="recognize-student-document-field-region"
+            type="button"
+            title="Выбрать документ, страницу и область, затем распознать только это поле"
+          >
+            Источник, область и распознать
+          </button>
+          ${currentValue ? `<small>Сейчас в карточке: <strong>${escapeHtml(currentDisplayValue)}</strong></small>` : ""}
           ${field.recognitionOriginalValue ? `<small>Распознано: <strong>${escapeHtml(field.recognitionOriginalValue)}</strong> · Подставлено из списка: <strong>${escapeHtml(field.value)}</strong></small>` : ""}
           ${listControl ? `<small>${listControl.mode === "combo" ? "Выберите значение из списка или введите своё." : "Выберите значение из списка."}</small>` : ""}
           ${!listControl && alternatives.length ? `<small>Другие варианты доступны в списке поля: ${alternatives.length}</small>` : ""}
@@ -34239,17 +34881,25 @@ MAX - https://bizvmax.ru/zifra_plus
             <h3>Фото ${escapeHtml(personLabel)}</h3>
             <p>Выберите найденный портрет или выделите произвольную область в любом документе.</p>
           </div>
-          <label class="student-document-photo-enable">
-            <input type="checkbox" data-ocr-photo-enabled ${candidates.length ? "" : "disabled"}>
-            <span>Сохранить в карточку</span>
-          </label>
+          <div class="student-document-photo-group-actions">
+            <button
+              class="ghost-button"
+              data-action="select-student-photo-area-any"
+              type="button"
+              ${hasVisualFiles ? "" : "disabled"}
+            >Выбрать произвольную область</button>
+            <label class="student-document-photo-enable">
+              <input type="checkbox" data-ocr-photo-enabled ${candidates.length ? "" : "disabled"}>
+              <span>Сохранить в карточку</span>
+            </label>
+          </div>
         </div>
         <div class="student-document-photo-candidates" data-ocr-photo-candidates>
           ${candidates.map((candidate, index) => renderStudentDocumentPhotoCandidate(candidate, index, index === 0, { personLabel })).join("")}
         </div>
         <p class="student-document-photo-empty" data-ocr-photo-empty ${candidates.length ? "hidden" : ""}>
           ${hasVisualFiles
-            ? "Автоматически фото не найдено. Используйте кнопку «Выделить фото» у нужного файла."
+            ? "Автоматически фото не найдено. Нажмите «Выбрать произвольную область»."
             : "В выбранных текстовых файлах нет изображения для фотографии."}
         </p>
       </section>
@@ -34262,6 +34912,15 @@ MAX - https://bizvmax.ru/zifra_plus
       return contentType.startsWith("image/") || contentType === "application/pdf";
     }
     return /\.(?:jpe?g|png|pdf)$/i.test(String(file?.fileName || file?.relativeName || ""));
+  }
+
+  function isStudentRecognitionRegionSourceFile(file) {
+    if (isStudentRecognitionVisualFile(file)) return true;
+    const contentType = String(file?.contentType || "").toLowerCase().split(";", 1)[0].trim();
+    return (
+      contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      || /\.docx$/i.test(String(file?.fileName || file?.relativeName || ""))
+    );
   }
 
   function isStudentRecognitionTextFile(file) {
@@ -34361,7 +35020,7 @@ MAX - https://bizvmax.ru/zifra_plus
           : educationOnly
             ? "Документ об образовании не используется"
             : "Тип не определён";
-      const visualFile = isStudentRecognitionVisualFile(file);
+      const visualFile = isStudentRecognitionRegionSourceFile(file);
       const extractionLabel = file.error ? "" : getStudentRecognitionExtractionLabel(file.textExtraction);
       return `
         <details class="student-document-recognition-file ${file.error ? "has-error" : ""}">
@@ -34396,6 +35055,8 @@ MAX - https://bizvmax.ru/zifra_plus
     dialog.stopStudentDocumentRecognitionTimer?.();
     const recognizedFields = Array.isArray(payload.fields) ? payload.fields : [];
     const fields = getDocumentRecognitionDisplayFields(dialog, recognizedFields);
+    const recognitionFiles = getStudentDocumentRecognitionPreviewFiles(payload);
+    const previewPayload = { ...payload, files: recognitionFiles };
     const photoCandidates = Array.isArray(payload.photoCandidates)
       ? payload.photoCandidates.map(normalizeStudentDocumentRecognitionPhotoCandidate).filter(Boolean)
       : [];
@@ -34469,7 +35130,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ` : ""}
         ${renderStudentDocumentPhotoCandidates(photoCandidates, {
           personLabel,
-          hasVisualFiles: getStudentDocumentRecognitionPreviewFiles(payload).some(isStudentRecognitionVisualFile)
+          hasVisualFiles: recognitionFiles.some(isStudentRecognitionRegionSourceFile)
         })}
         ${groupedFields.length ? groupedFields.map((group) => `
           <section class="student-document-recognition-group student-document-recognition-field-group" data-ocr-field-group="${escapeAttr(group.id)}">
@@ -34487,7 +35148,7 @@ MAX - https://bizvmax.ru/zifra_plus
             Проверьте качество сканов и названия файлов. Полный распознанный текст доступен ниже.
           </div>
         `}
-        ${renderStudentDocumentRecognitionFiles(payload.files, { includeEducation: !isContract })}
+        ${renderStudentDocumentRecognitionFiles(recognitionFiles, { includeEducation: !isContract })}
       </div>
       <aside class="student-document-recognition-preview" data-ocr-field-preview hidden aria-label="Просмотр документа">
         <div class="student-document-recognition-preview-head" data-ocr-preview-drag-handle title="Перетащить окно">
@@ -34597,13 +35258,13 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     });
     const findPhotoCandidateFileIndex = (candidate) => {
-      const matchedIndex = findStudentRecognitionSourceFilePosition(payload.files, candidate?.sourceFile);
+      const matchedIndex = findStudentRecognitionSourceFilePosition(recognitionFiles, candidate?.sourceFile);
       return Math.max(0, matchedIndex);
     };
     const openStudentPhotoAreaSelector = (fileIndex = 0, candidate = null) => {
       openStudentDocumentPhotoCropper(
         dialog,
-        payload,
+        previewPayload,
         fileIndex,
         {
           title: `Выбрать фотографию ${personLabel}`,
@@ -34619,6 +35280,8 @@ MAX - https://bizvmax.ru/zifra_plus
         Number(button.dataset.ocrFileIndex) || 0
       ));
     });
+    modal.querySelector("[data-action='select-student-photo-area-any']")
+      ?.addEventListener("click", () => openStudentPhotoAreaSelector(0));
     modal.querySelector("[data-ocr-photo-group]")?.addEventListener("contextmenu", (event) => {
       const candidateCard = event.target.closest("[data-ocr-photo-candidate-index]");
       const candidatesArea = event.target.closest("[data-ocr-photo-candidates], [data-ocr-photo-empty]");
@@ -34639,7 +35302,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindStudentDocumentRecognitionSelectAll(modal);
     bindStudentDocumentRecognitionIdentityValidation(modal);
     bindComboFieldEvents(modal);
-    bindStudentDocumentRecognitionFieldPreviews(modal, fields, payload);
+    bindStudentDocumentRecognitionFieldPreviews(modal, fields, previewPayload);
   }
 
   function bindStudentDocumentRecognitionSelectAll(modal) {
@@ -34901,6 +35564,93 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  async function recognizeStudentDocumentFieldRegion(fieldKey, cropPreview, signal = null) {
+    const key = getDocumentRecognitionOcrFieldKey(fieldKey);
+    const mimeType = String(cropPreview?.mimeType || "").toLowerCase();
+    const base64 = String(cropPreview?.base64 || "").replace(/\s+/g, "");
+    if (!key || mimeType !== "image/jpeg" || !base64) {
+      throw new Error("Выбранная область документа не подготовлена для распознавания.");
+    }
+    return fetchWithTimeout(
+      photoApiUrl("/api/students/recognize-documents/field-region"),
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({ key, mimeType, base64 }),
+        ...(signal ? { signal } : {})
+      },
+      270000,
+      "Сервер не распознал выбранное поле за 4,5 минуты.",
+      async (response) => {
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(result.error || "Не удалось распознать выбранное поле.");
+        }
+        const value = String(result.value || "").trim();
+        if (!value || String(result.key || "") !== key) {
+          throw new Error("В выбранной области значение поля не распознано.");
+        }
+        return {
+          key,
+          label: String(result.label || "").trim(),
+          value,
+          confidence: clamp(Number(result.confidence) || 0, 0, 1),
+          evidence: String(result.evidence || result.rawText || "").trim().slice(0, 280)
+        };
+      }
+    );
+  }
+
+  function setStudentDocumentRecognitionFieldControlValue(control, value) {
+    if (!control) return;
+    const normalizedValue = String(value || "");
+    if (control.tagName === "SELECT" && normalizedValue) {
+      const hasOption = Array.from(control.options || [])
+        .some((option) => String(option.value || "") === normalizedValue);
+      if (!hasOption) {
+        const option = document.createElement("option");
+        option.value = normalizedValue;
+        option.textContent = normalizedValue;
+        control.appendChild(option);
+      }
+    }
+    control.value = normalizedValue;
+    control.dispatchEvent(new Event("input", { bubbles: true }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function storeStudentDocumentRecognitionTargetedField(dialog, payload, field) {
+    const key = String(field?.key || "");
+    if (!key) return;
+    const nextFields = (Array.isArray(payload.fields) ? payload.fields : [])
+      .filter((item) => String(item?.key || "") !== key);
+    nextFields.push({ ...field });
+    payload.fields = nextFields;
+    const isContract = isContractDocumentRecognitionDialog(dialog);
+    const normalizeResult = isContract
+      ? normalizeContractDocumentRecognitionResult
+      : normalizeStudentDocumentRecognitionResult;
+    const storedResult = normalizeResult({ ...payload, fields: nextFields });
+    const cachedResult = normalizeResult({ ...payload, fields: nextFields }, { keepPreviews: true });
+    const currentDraft = isContract ? collectContractFormDraft() : collectStudentFormDraft();
+    if (storedResult) {
+      state.modal.draft = {
+        ...currentDraft,
+        documentRecognitionResult: storedResult
+      };
+      state.modal.hasDraftChanges = true;
+    }
+    const cache = isContract
+      ? state.contractDocumentRecognitionPreviewCache
+      : state.studentDocumentRecognitionPreviewCache;
+    if (cache && cachedResult && String(cache.recognizedAt || "") === String(payload.recognizedAt || "")) {
+      cache.result = cachedResult;
+    }
+  }
+
   function bindStudentDocumentRecognitionFieldPreviews(modal, fields, payload = {}) {
     const files = getStudentDocumentRecognitionPreviewFiles(payload);
     const previewPayload = { ...payload, files };
@@ -34949,6 +35699,8 @@ MAX - https://bizvmax.ru/zifra_plus
     let activePreviewKind = "image";
     let previewLoadSequence = 0;
     let previewLoadController = null;
+    let targetedRecognitionSequence = 0;
+    let targetedRecognitionController = null;
     let activeBox = null;
     let showingFullPage = false;
     let manualPosition = null;
@@ -35418,20 +36170,26 @@ MAX - https://bizvmax.ru/zifra_plus
         placePopup();
       });
     };
+    const cancelTargetedRecognition = () => {
+      targetedRecognitionSequence += 1;
+      targetedRecognitionController?.abort();
+      targetedRecognitionController = null;
+    };
     const selectFieldDocumentArea = (field, input, row) => {
       const { fieldPreview } = findStudentDocumentRecognitionPagePreview(field, files);
       const matchedFileIndex = findStudentRecognitionSourceFilePosition(files, field?.sourceFile);
       const initialFileIndex = Math.max(0, matchedFileIndex);
       openStudentDocumentPhotoCropper(modal.closest("[data-student-document-recognition-dialog]"), previewPayload, initialFileIndex, {
-        title: "Указать область в документе",
-        ariaLabel: `Выбор области для поля ${field?.label || field?.key || ""}`,
-        useLabel: "Использовать область",
+        title: "Источник, область и повторное распознавание",
+        ariaLabel: `Выбор источника и области для поля ${field?.label || field?.key || ""}`,
+        useLabel: "Распознать это поле",
         initialPage: fieldPreview?.page || 1,
         initialBox: fieldPreview?.box || null,
         initialSource: field?.sourceFile || "",
-        maxOutputSize: 900,
-        outputQuality: 0.84,
-        onSelect: ({ file, page, selection, cropPreview, pagePreview }) => {
+        maxOutputSize: 1800,
+        outputQuality: 0.92,
+        onCancel: cancelTargetedRecognition,
+        onSelect: async ({ file, page, selection, cropPreview, pagePreview }) => {
           const normalizedCrop = normalizeStudentDocumentRecognitionPreview({
             ...cropPreview,
             page,
@@ -35444,16 +36202,108 @@ MAX - https://bizvmax.ru/zifra_plus
           if (!normalizedCrop || !normalizedPage) {
             throw new Error("Не удалось подготовить выбранную область документа.");
           }
+          cancelTargetedRecognition();
+          const requestSequence = ++targetedRecognitionSequence;
+          const requestController = new AbortController();
+          targetedRecognitionController = requestController;
+          let recognized;
+          try {
+            recognized = await recognizeStudentDocumentFieldRegion(
+              field.key,
+              normalizedCrop,
+              requestController.signal
+            );
+            if (
+              requestController.signal.aborted
+              || requestSequence !== targetedRecognitionSequence
+              || !row.isConnected
+              || !input.isConnected
+            ) {
+              const abortedError = new Error("Точечное распознавание отменено.");
+              abortedError.name = "AbortError";
+              throw abortedError;
+            }
+          } finally {
+            if (targetedRecognitionController === requestController) {
+              targetedRecognitionController = null;
+            }
+          }
           const sourceFile = String(file.relativeName || file.fileName || "Документ");
+          const recognizedSourceValue = String(recognized.value || "").trim();
+          let recognizedValue = recognizedSourceValue;
+          if (field.key === "citizenship") {
+            recognizedValue = matchDocumentRecognitionCitizenship(recognizedValue);
+          } else if (field.key === "inn") {
+            recognizedValue = normalizeInn(recognizedValue);
+          } else if (field.key === "snils") {
+            recognizedValue = formatSnils(recognizedValue);
+          }
+          if (!recognizedValue) {
+            throw new Error("В выбранной области значение поля не распознано.");
+          }
+          const currentDraft = isContractDocumentRecognitionDialog(
+            modal.closest("[data-student-document-recognition-dialog]")
+          ) ? collectContractFormDraft() : collectStudentFormDraft();
+          const currentValue = String(currentDraft[field.key] || "").trim();
           field.preview = normalizedCrop;
           field.sourceFile = sourceFile;
-          field.evidence = "Область указана вручную";
+          field.value = recognizedValue;
+          field.confidence = recognized.confidence;
+          field.evidence = recognized.evidence || "Поле повторно распознано по выбранной области";
+          field.recognitionMissing = false;
+          field.manualEntry = false;
+          if (recognizedSourceValue !== recognizedValue) {
+            field.recognitionOriginalValue = recognizedSourceValue;
+          } else {
+            delete field.recognitionOriginalValue;
+          }
           const otherPagePreviews = (file.pagePreviews || [])
             .map(normalizeStudentDocumentRecognitionPagePreview)
             .filter((preview) => preview && preview.page !== page);
           file.pagePreviews = [...otherPagePreviews, normalizedPage].sort((first, second) => first.page - second.page);
           row.dataset.ocrFieldSource = sourceFile;
           row.classList.add("has-manual-region");
+          row.classList.remove("is-recognition-missing");
+          const sameValue = Boolean(
+            currentValue
+            && normalizeRecognitionComparisonValue(field.key, currentValue)
+              === normalizeRecognitionComparisonValue(field.key, recognizedValue)
+          );
+          const conflict = Boolean(currentValue && !sameValue);
+          row.classList.toggle("has-conflict", conflict);
+          const stateLabel = row.querySelector("[data-ocr-field-state]");
+          if (stateLabel) {
+            stateLabel.innerHTML = conflict
+              ? '<span class="student-document-recognition-conflict">Есть другое значение</span>'
+              : sameValue
+                ? '<span class="student-document-recognition-match">Совпадает</span>'
+                : "";
+          }
+          const confidence = Math.round(recognized.confidence * 100);
+          const confidenceTone = confidence >= 85 ? "high" : confidence >= 65 ? "medium" : "low";
+          const confidenceLabel = row.querySelector("[data-ocr-field-confidence]");
+          if (confidenceLabel) {
+            confidenceLabel.hidden = false;
+            confidenceLabel.className = `student-document-recognition-confidence is-${confidenceTone}`;
+            confidenceLabel.textContent = `Уверенность ${confidence}%`;
+          }
+          const sourceLabel = row.querySelector("[data-ocr-field-source-label]");
+          if (sourceLabel) {
+            sourceLabel.textContent = `Источник: ${sourceFile}, стр. ${page}`;
+            sourceLabel.title = field.evidence;
+          }
+          const controlValue = studentDocumentRecognitionDisplayDateKeys.has(field.key)
+            ? formatStudentDocumentRecognitionDate(recognizedValue)
+            : recognizedValue;
+          const checkbox = row.querySelector("[data-ocr-field-enabled]");
+          if (checkbox) checkbox.checked = true;
+          setStudentDocumentRecognitionFieldControlValue(input, controlValue);
+          updateStudentDocumentRecognitionIdentityValidation(row, true);
+          storeStudentDocumentRecognitionTargetedField(
+            modal.closest("[data-student-document-recognition-dialog]"),
+            payload,
+            field
+          );
           showFieldPreview(field, input, false);
         }
       });
@@ -35465,6 +36315,8 @@ MAX - https://bizvmax.ru/zifra_plus
         : null;
       const input = row?.querySelector("[data-ocr-field-value]");
       if (!input) return;
+      row.querySelector("[data-action='recognize-student-document-field-region']")
+        ?.addEventListener("click", () => selectFieldDocumentArea(field, input, row));
       input.addEventListener("focus", () => showFieldPreview(field, input));
       input.addEventListener("contextmenu", (event) => {
         event.preventDefault();
@@ -35879,8 +36731,11 @@ MAX - https://bizvmax.ru/zifra_plus
   function openStudentDocumentPhotoCropper(dialog, payload, fileIndex, options = {}) {
     const availableFiles = (payload.files || [])
       .map((file, index) => ({ file, index }))
-      .filter(({ file }) => file && !file.error && isStudentRecognitionVisualFile(file));
-    if (!availableFiles.length) return;
+      .filter(({ file }) => file && isStudentRecognitionRegionSourceFile(file));
+    if (!availableFiles.length) {
+      alert("Нет изображений, PDF или DOCX со сканами, доступных для выбора области.");
+      return false;
+    }
     let currentFilePosition = Math.max(0, availableFiles.findIndex(({ index }) => index === fileIndex));
     let file = availableFiles[currentFilePosition].file;
     const selectRegionMode = typeof options.onSelect === "function";
@@ -35898,7 +36753,10 @@ MAX - https://bizvmax.ru/zifra_plus
         file = availableFiles[currentFilePosition].file;
       }
     }
-    document.querySelector("[data-student-document-photo-cropper]")?.remove();
+    const existingCropper = document.querySelector("[data-student-document-photo-cropper]");
+    existingCropper?.closeStudentDocumentRegionSelector?.();
+    existingCropper?.remove();
+    const previouslyFocused = document.activeElement;
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop student-document-photo-cropper-backdrop";
     backdrop.dataset.studentDocumentPhotoCropper = "";
@@ -35950,7 +36808,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="student-document-photo-cropper-loading" data-ocr-crop-loading>Загрузка страницы...</div>
           <div class="student-document-photo-cropper-stage" data-ocr-crop-stage hidden>
             <img data-ocr-crop-image alt="Страница документа" draggable="false">
-            <div class="student-document-photo-cropper-selection" data-ocr-crop-selection tabindex="0" aria-label="Выбранная область фото">
+            <div class="student-document-photo-cropper-selection" data-ocr-crop-selection tabindex="0" aria-label="Выбранная область документа">
               <span class="student-document-photo-cropper-move-label">Переместить</span>
               ${["nw", "ne", "se", "sw"].map((direction) => (
                 `<span class="student-document-photo-cropper-handle is-${direction}" data-ocr-crop-handle="${direction}" aria-hidden="true"></span>`
@@ -36006,8 +36864,13 @@ MAX - https://bizvmax.ru/zifra_plus
     let baseWidth = 0;
     let baseHeight = 0;
 
-    const close = () => {
-      if (backdrop.isConnected) backdrop.remove();
+    const close = (cancelled = true) => {
+      if (!backdrop.isConnected) return;
+      if (cancelled) options.onCancel?.();
+      backdrop.remove();
+      if (previouslyFocused?.isConnected && typeof previouslyFocused.focus === "function") {
+        requestAnimationFrame(() => previouslyFocused.focus({ preventScroll: true }));
+      }
     };
     backdrop.closeStudentDocumentRegionSelector = close;
     const currentFileEntry = () => availableFiles[currentFilePosition];
@@ -36406,10 +37269,10 @@ MAX - https://bizvmax.ru/zifra_plus
     previousButton.addEventListener("click", () => loadPage(currentPage - 1));
     nextButton.addEventListener("click", () => loadPage(currentPage + 1));
     backdrop.querySelectorAll("[data-action='close-student-photo-cropper']").forEach((button) => {
-      button.addEventListener("click", close);
+      button.addEventListener("click", () => close());
     });
     backdrop.querySelector("[data-action='choose-student-photo-file']")?.addEventListener("click", () => {
-      close();
+      close(false);
       options.onChooseFile?.();
     });
     backdrop.addEventListener("pointerdown", (event) => {
@@ -36465,11 +37328,15 @@ MAX - https://bizvmax.ru/zifra_plus
             cropPreview: { mimeType: "image/jpeg", base64 },
             pagePreview: pageResult?.preview || null
           });
-          close();
+          close(false);
         } catch (error) {
-          alert(error.message || "Не удалось подготовить выбранную область документа.");
-          useButton.disabled = false;
-          useButton.removeAttribute("aria-busy");
+          if (error?.name !== "AbortError") {
+            alert(error.message || "Не удалось подготовить выбранную область документа.");
+          }
+          if (backdrop.isConnected) {
+            useButton.disabled = false;
+            useButton.removeAttribute("aria-busy");
+          }
         }
         return;
       }
@@ -36492,10 +37359,11 @@ MAX - https://bizvmax.ru/zifra_plus
       } catch (error) {
         alert(`Не удалось обновить фото в карточке: ${error.message}`);
       }
-      close();
+      close(false);
     });
     backdrop.querySelector("[data-action='close-student-photo-cropper']")?.focus({ preventScroll: true });
     loadPage(currentPage, currentFilePosition);
+    return true;
   }
 
   async function applyStudentDocumentRecognition(dialog, applyButton = null) {
@@ -36521,6 +37389,11 @@ MAX - https://bizvmax.ru/zifra_plus
       if (key === "citizenship") {
         value = matchDocumentRecognitionCitizenship(value);
         row.querySelector("[data-ocr-field-value]").value = value;
+      }
+      if (studentDocumentRecognitionDisplayDateKeys.has(key)) {
+        const normalizedDate = normalizeStudentDocumentRecognitionDate(value);
+        if (normalizedDate) value = normalizedDate;
+        else invalidRow ||= row;
       }
       if ([
         "birthDate",
@@ -37193,7 +38066,18 @@ MAX - https://bizvmax.ru/zifra_plus
     const record = { ...source };
     const program = findProgramByName(record.program);
     const programType = normalizeEducationProgramType(program?.type || record.educationType);
-    const baseDate = getStudentBulkBaseDate(record, preferredDate);
+    const isCompletionDocumentOperation = ["expulsionOrder", "education"].includes(operation);
+    const existingTrainingStartDate = [
+      record.startDate,
+      record.enrollmentDate,
+      record.contractDate,
+      record.applicationDate
+    ].map((value) => String(value || "").trim()).find((value) => parseOrdersSdoDate(value)) || "";
+    const preferredTrainingDate = isCompletionDocumentOperation ? "" : preferredDate;
+    const baseDate = getStudentBulkBaseDate(record, preferredTrainingDate);
+    const fallbackTrainingStartDate = preferredTrainingDate
+      || existingTrainingStartDate
+      || (isCompletionDocumentOperation ? "" : baseDate);
     const baseDateObject = parseOrdersSdoDate(baseDate) || new Date();
     const hasOperationDate = Boolean(parseOrdersSdoDate(preferredDate));
     const recalculateContractDetails = operation === "contract" && hasOperationDate;
@@ -37206,13 +38090,12 @@ MAX - https://bizvmax.ru/zifra_plus
         record.enrollmentOrderDate = baseDate;
       }
       if (["expulsionOrder", "education"].includes(operation)) {
-        record.endDate = baseDate;
-        record.expulsionDate = baseDate;
-        record.expulsionOrderDate = baseDate;
+        record.expulsionDate = preferredDate;
+        record.expulsionOrderDate = preferredDate;
       }
       if (operation === "education") {
-        record.diplomaIssueDate = baseDate;
-        record.protocolDate = baseDate;
+        record.diplomaIssueDate = preferredDate;
+        record.protocolDate = preferredDate;
       }
     }
     if (program) {
@@ -37223,12 +38106,11 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (["contract", "enrollmentOrder", "studyCertificate", "education"].includes(operation)) {
       if (recalculateContractDetails || !parseOrdersSdoDate(record.contractDate)) record.contractDate = baseDate;
-      if (recalculateContractDetails || !parseOrdersSdoDate(record.startDate)) record.startDate = baseDate;
-      if (recalculateContractDetails || !parseOrdersSdoDate(record.enrollmentDate)) record.enrollmentDate = record.startDate;
-      if (recalculateEnrollmentDetails || !parseOrdersSdoDate(record.endDate)) {
-        const endDate = getTrainingEndDate(record.startDate, getStudentProgramHours(record));
-        if (endDate) record.endDate = formatOrdersSdoDate(endDate);
+      if (recalculateContractDetails) record.startDate = baseDate;
+      else if (!parseOrdersSdoDate(record.startDate) && fallbackTrainingStartDate) {
+        record.startDate = fallbackTrainingStartDate;
       }
+      if (recalculateContractDetails || !parseOrdersSdoDate(record.enrollmentDate)) record.enrollmentDate = record.startDate;
       if (recalculateContractDetails || !String(record.contractNo || "").trim()) {
         record.contractNo = getGeneratedNumberFromDataFormula("contractNumber", baseDateObject, record.id).value;
       }
@@ -37242,6 +38124,15 @@ MAX - https://bizvmax.ru/zifra_plus
       if ((recalculateEnrollmentDetails || !String(record.group || "").trim()) && program?.groupIndex) {
         record.group = getStudentGroupNumber(record.program, record.startDate);
       }
+    }
+    if (["contract", "enrollmentOrder", "expulsionOrder", "studyCertificate", "education"].includes(operation)) {
+      const endDate = getTrainingEndDate(record.startDate, {
+        duration: program?.duration,
+        hours: getStudentProgramHours(record),
+        programType,
+        sameDayForPro: true
+      });
+      if (endDate) record.endDate = formatOrdersSdoDate(endDate);
     }
     if (operation === "enrollmentOrder") {
       record.enrollmentDate = preferredDate || record.enrollmentDate || record.startDate || baseDate;
@@ -37279,7 +38170,6 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       if (educationValues) Object.assign(record, educationValues);
       if (hasOperationDate) {
-        record.endDate = issueDate;
         record.expulsionOrderDate = issueDate;
         record.protocolDate = issueDate;
       }
@@ -37337,7 +38227,12 @@ MAX - https://bizvmax.ru/zifra_plus
       const record = records[index];
       updateProgress(index, `Отправка: ${record.name || record.id}`);
       const generated = generateStudentCommunicationMessages(record);
-      const message = String(record[messageKey] || generated[messageKey] || "").trim();
+      const sourceMessage = record[messageKey] || generated[messageKey] || "";
+      const message = String(
+        messageKey === "portalAccessMessage"
+          ? syncStudentPortalEndDateLine(sourceMessage, record)
+          : sourceMessage
+      ).trim();
       const sent = await sendServerEmail({
         email: record.email,
         subject: `Учебный центр: ${definition?.label || "Сообщение"}`,
@@ -41829,12 +42724,15 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getStudentDatabaseSyncConfirmation(sourceLabel) {
     return [
-      "ВНИМАНИЕ: синхронизация заменит данные управляемых листов рабочего XLSB текущими данными веб-базы.",
+      "ВНИМАНИЕ: будет выполнена двусторонняя синхронизация Web-базы и рабочего XLSB.",
       "",
-      "Будут обновлены листы «База», «Реестр договоров», «Прямые затраты» и «Общие затраты»; промосообщения будут записаны в примечания листа «Реестр программ».",
-      "Также обновятся ставки и константы оплаты на листе «Настройки» и именованный диапазон «НастройкиМакросов» (правила назначения оплат, шаблоны событий и сообщений и другие синхронизируемые параметры).",
-      "Строки и значения слушателей, договоров и затрат, которых больше нет в веб-базе, будут очищены на синхронизируемых листах.",
-      `Перед обновлением будет создана резервная копия, затем база ${sourceLabel} будет заменена.`,
+      "Система сравнит контрольную сумму XLSB и ревизию Web-базы с последней успешной синхронизацией.",
+      "Если изменилась только одна сторона, она считается актуальной: записи всех синхронизируемых разделов на другой стороне будут обновлены, а отсутствующие — удалены.",
+      "Если после прошлой синхронизации изменились и Web-база, и XLSB, операция остановится без перезаписи данных.",
+      "",
+      "Синхронизируются слушатели, договоры, прямые и общие затраты, запасы, программы, учебные планы, ставки, справочники и параметры.",
+      "Создание или удаление образовательных программ требует отдельной загрузки либо экспорта и при обычной синхронизации будет остановлено без перезаписи.",
+      `При переносе Web → Excel перед сохранением будет создана резервная копия, затем база ${sourceLabel} будет заменена.`,
       "",
       "Продолжить синхронизацию?"
     ].join("\n");
@@ -42628,9 +43526,65 @@ MAX - https://bizvmax.ru/zifra_plus
     return `${seconds} сек`;
   }
 
+  function normalizeStudentDatabaseSyncBaseline(value) {
+    const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    const sourceHash = String(source.sourceHash || "").trim().toLowerCase();
+    const sourceIdentity = String(source.sourceIdentity || "").trim().toLowerCase();
+    const synchronizedAt = String(source.synchronizedAt || "").trim();
+    return {
+      version: 1,
+      sourceHash: /^[a-f0-9]{64}$/u.test(sourceHash) ? sourceHash : "",
+      sourceIdentity: /^[a-f0-9]{64}$/u.test(sourceIdentity) ? sourceIdentity : "",
+      webRevision: Math.max(0, Math.floor(Number(source.webRevision) || 0)),
+      synchronizedAt: Number.isFinite(Date.parse(synchronizedAt))
+        ? new Date(synchronizedAt).toISOString()
+        : ""
+    };
+  }
+
+  function isValidStudentDatabaseSyncBaseline(value) {
+    const baseline = normalizeStudentDatabaseSyncBaseline(value);
+    return Boolean(
+      baseline.sourceHash
+      && baseline.sourceIdentity
+      && baseline.webRevision
+      && baseline.synchronizedAt
+    );
+  }
+
+  function buildStudentDatabaseSyncBaseline(
+    sourceHash,
+    sourceIdentity,
+    webRevision,
+    synchronizedAt = ""
+  ) {
+    const baseline = normalizeStudentDatabaseSyncBaseline({
+      sourceHash,
+      sourceIdentity,
+      webRevision,
+      synchronizedAt: synchronizedAt || new Date().toISOString()
+    });
+    if (!isValidStudentDatabaseSyncBaseline(baseline)) {
+      throw new Error("Сервер не вернул корректную контрольную точку синхронизации.");
+    }
+    return baseline;
+  }
+
+  function getLatestStudentDatabaseSynchronizationTimestamp(...values) {
+    const timestamps = values
+      .map((value) => Date.parse(String(value || "").trim()))
+      .filter(Number.isFinite);
+    return timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : "";
+  }
+
   async function readStudentImportResponse(response) {
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      error.status = Number(response.status) || 0;
+      error.payload = payload;
+      throw error;
+    }
     return payload;
   }
 
@@ -42638,7 +43592,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const startResponse = await fetch(photoApiUrl("/api/students/import-database/start"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ databasePath, source })
+      body: JSON.stringify({
+        databasePath,
+        source,
+        communicationTemplateFields: buildStudentDatabaseExportCommunicationTemplateFields()
+      })
     });
     const job = await readStudentImportResponse(startResponse);
     if (!job.id) throw new Error("Сервер не вернул идентификатор задачи импорта.");
@@ -42725,6 +43683,127 @@ MAX - https://bizvmax.ru/zifra_plus
     return { ...result, jobId: job.id };
   }
 
+  function isRetryableStudentDatabaseCommitError(error) {
+    const status = Math.max(0, Number(error?.status) || 0);
+    return !status
+      || status === 408
+      || status === 423
+      || status === 425
+      || status === 429
+      || status >= 500;
+  }
+
+  async function commitStudentDatabaseExport(jobId, revision) {
+    const requestBody = JSON.stringify({
+      id: String(jobId || ""),
+      sharedStateRevision: Math.max(0, Number(revision) || 0)
+    });
+    let lastError = null;
+    const maxAttempts = 4;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        const result = await fetchWithTimeout(
+          photoApiUrl("/api/students/export-database/commit"),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            cache: "no-store",
+            body: requestBody
+          },
+          180000,
+          "Сервер не подтвердил commit синхронизации за 180 секунд.",
+          (response) => readStudentImportResponse(response)
+        );
+        if (!String(result?.syncCommitToken || "").trim()) {
+          const incompleteResponseError = new Error(
+            "Сервер вернул неполный ответ на подтверждение синхронизации."
+          );
+          incompleteResponseError.status = 0;
+          throw incompleteResponseError;
+        }
+        return result;
+      } catch (error) {
+        if (!isRetryableStudentDatabaseCommitError(error)) throw error;
+        lastError = error;
+        if (attempt + 1 < maxAttempts) {
+          await waitForStudentImportPoll(400 * (2 ** attempt));
+        }
+      }
+    }
+    const unknownError = new Error(
+      "После повторных запросов сервер не подтвердил результат операции синхронизации."
+    );
+    unknownError.status = Math.max(0, Number(lastError?.status) || 0);
+    unknownError.studentDatabaseCommitState = "unknown";
+    throw unknownError;
+  }
+
+  async function cancelStudentDatabaseSyncReservation(jobId, syncCommitToken) {
+    const token = String(syncCommitToken || "").trim();
+    if (!token) return false;
+    try {
+      const payload = await fetchWithTimeout(
+        photoApiUrl("/api/students/export-database/commit"),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: String(jobId || ""),
+            cancelReservation: true,
+            syncCommitToken: token
+          })
+        },
+        5000,
+        "Сервер не подтвердил освобождение блокировки синхронизации.",
+        (response) => readStudentImportResponse(response)
+      );
+      return payload.reservationReleased === true || payload.ok === true;
+    } catch {
+      return false;
+    }
+  }
+
+  function cancelScheduledSharedApplicationStateSave() {
+    window.clearTimeout(sharedStateSaveTimer);
+    sharedStateSaveTimer = 0;
+  }
+
+  function isExpiredStudentDatabaseSyncTokenError(error) {
+    return Number(error?.status) === 409
+      && /срок подтверждения синхронизации XLSB ист[её]к/iu.test(String(error?.message || ""));
+  }
+
+  async function flushStudentDatabaseSynchronizationState({
+    targetGeneration,
+    baseRevision,
+    jobId,
+    syncCommitToken,
+    onToken = null
+  }) {
+    let commitResult = { syncCommitToken: String(syncCommitToken || "").trim() };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const saved = await flushSharedApplicationStateThroughGeneration(targetGeneration, {
+          strictRevision: true,
+          baseRevision,
+          syncCommitToken: commitResult.syncCommitToken
+        });
+        if (!saved || sharedStateConflict || sharedStateOffline) {
+          throw new Error("Не удалось строго сохранить результат синхронизации в общей Web-базе.");
+        }
+        return commitResult;
+      } catch (error) {
+        if (attempt > 0 || !isExpiredStudentDatabaseSyncTokenError(error)) throw error;
+        commitResult = await commitStudentDatabaseExport(jobId, baseRevision);
+        if (!String(commitResult.syncCommitToken || "").trim()) {
+          throw new Error("Сервер не обновил подтверждение синхронизации XLSB.");
+        }
+        if (typeof onToken === "function") onToken(commitResult.syncCommitToken);
+      }
+    }
+    throw new Error("Не удалось завершить строгое сохранение синхронизации.");
+  }
+
   function buildStudentDatabaseExportStudents() {
     return (state.data.collections.students || []).map((student) => {
       const agentCalculation = getStudentAgentCommissionCalculation(
@@ -42736,6 +43815,7 @@ MAX - https://bizvmax.ru/zifra_plus
         photoData,
         photoUrl,
         directExpenses,
+        databaseSync,
         ...databaseFields
       } = student;
       return {
@@ -42768,11 +43848,17 @@ MAX - https://bizvmax.ru/zifra_plus
         const hasAmount = amountValue !== "" && amountValue !== null && amountValue !== undefined;
         if (!date && !type && !note && !hasAmount) return null;
         return {
+          id: buildLegacyRecordId("student-expense", [
+            student.id,
+            student.uid,
+            number
+          ]),
           uid: String(student.uid || "").trim(),
           date,
           type,
           amount: hasAmount ? Number(amountValue) || 0 : "",
           note,
+          inventoryId: String(student[`expense${number}InventoryId`] || "").trim(),
           inventoryLink: String(student[`expense${number}InventoryLink`] || "").trim()
         };
       }).filter(Boolean)
@@ -42792,41 +43878,63 @@ MAX - https://bizvmax.ru/zifra_plus
       .map((contract) => normalizeContractRecord(contract));
   }
 
+  function buildStudentDatabaseExportInventory() {
+    return (state.data.collections.inventory || [])
+      .filter((item) => item && typeof item === "object")
+      .map((item) => ({
+        ...item,
+        amount: Number(item.amount || 0),
+        balance: Number(item.balance || 0)
+      }));
+  }
+
+  function buildStudentDatabaseExportTrainingPlans() {
+    return (state.data.collections.trainingPlans || [])
+      .filter((item) => item && typeof item === "object")
+      .map((item, index) => normalizeTrainingPlanRecord(item, index));
+  }
+
   function buildStudentDatabaseExportPrograms() {
     return (state.data.collections.programs || [])
       .filter((program) => program && typeof program === "object")
-      .filter((program) => (
-        Number(program.xlsbProgramRow) > 0
-        || program.promoMessage1Touched === true
-        || program.promoMessage2Touched === true
-        || program.emailMessageTemplateTouched === true
-        || String(program.promoMessage1 || "").trim()
-        || String(program.promoMessage2 || "").trim()
-        || String(program.emailMessageTemplate || "").trim()
-      ))
-      .map((program) => ({
-        name: String(program.name || "").trim(),
-        landingCode: String(program.landingCode || "").trim(),
-        xlsbProgramName: String(program.xlsbProgramName || program.name || "").trim(),
-        xlsbProgramLandingCode: String(
-          Object.prototype.hasOwnProperty.call(program, "xlsbProgramLandingCode")
-            ? program.xlsbProgramLandingCode
-            : program.landingCode || ""
-        ).trim(),
-        xlsbProgramRow: Number(program.xlsbProgramRow) || 0,
-        promoMessage1Provided: Number(program.xlsbProgramRow) > 0
-          || program.promoMessage1Touched === true
-          || Boolean(String(program.promoMessage1 || "").trim()),
-        promoMessage2Provided: Number(program.xlsbProgramRow) > 0
-          || program.promoMessage2Touched === true
-          || Boolean(String(program.promoMessage2 || "").trim()),
-        emailMessageTemplateProvided: Number(program.xlsbProgramRow) > 0
-          || program.emailMessageTemplateTouched === true
-          || Boolean(String(program.emailMessageTemplate || "").trim()),
-        promoMessage1: String(program.promoMessage1 || ""),
-        promoMessage2: String(program.promoMessage2 || ""),
-        emailMessageTemplate: String(program.emailMessageTemplate || "")
-      }));
+      .map((source) => {
+        const program = normalizeProgramRecord(source);
+        return {
+          ...program,
+          name: String(program.name || "").trim(),
+          landingCode: String(program.landingCode || "").trim(),
+          xlsbProgramName: String(program.xlsbProgramName || program.name || "").trim(),
+          xlsbProgramLandingCode: String(
+            Object.prototype.hasOwnProperty.call(program, "xlsbProgramLandingCode")
+              ? program.xlsbProgramLandingCode
+              : program.landingCode || ""
+          ).trim(),
+          xlsbProgramRow: Number(program.xlsbProgramRow) || 0,
+          promoMessage1Provided: Number(program.xlsbProgramRow) > 0
+            || program.promoMessage1Touched === true
+            || Boolean(String(program.promoMessage1 || "").trim()),
+          promoMessage2Provided: Number(program.xlsbProgramRow) > 0
+            || program.promoMessage2Touched === true
+            || Boolean(String(program.promoMessage2 || "").trim()),
+          emailMessageTemplateProvided: Number(program.xlsbProgramRow) > 0
+            || program.emailMessageTemplateTouched === true
+            || Boolean(String(program.emailMessageTemplate || "").trim()),
+          promoMessage1: String(program.promoMessage1 || ""),
+          promoMessage2: String(program.promoMessage2 || ""),
+          emailMessageTemplate: String(program.emailMessageTemplate || "")
+        };
+      });
+  }
+
+  function buildStudentDatabaseExportProgramDictionaries() {
+    return {
+      frdoProfessionalAreas: (state.data.dictionaries.frdoProfessionalAreas || [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+      economicActivities: (state.data.dictionaries.economicActivities || [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    };
   }
 
   function buildStudentDatabaseExportPaymentConstants() {
@@ -42887,9 +43995,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const sourceLabel = syncSource === "local"
       ? "на локальном компьютере"
       : "на Яндекс-Диске через WebDAV";
-    const confirmed = confirm(getStudentDatabaseSyncConfirmation(sourceLabel));
-    if (!confirmed) return;
+    if (!confirm(getStudentDatabaseSyncConfirmation(sourceLabel))) return;
     const startedAt = performance.now();
+    let activeReservation = { jobId: "", token: "" };
+    let xlsbCommitted = false;
+    let xlsbCommitState = "not-started";
     updateDatabaseExportIndicator({
       running: true,
       visible: true,
@@ -42900,77 +44010,273 @@ MAX - https://bizvmax.ru/zifra_plus
       operation: "sync"
     });
     try {
+      const flushedBeforeSync = await flushSharedApplicationState();
+      if (!flushedBeforeSync || sharedStateConflict || sharedStateOffline) {
+        throw new Error(
+          "Двусторонняя синхронизация требует доступной общей Web-базы без ожидающих изменений."
+        );
+      }
+      const syncBaseRevision = sharedStateRevision;
+      const syncPreparedGeneration = sharedStateChangeGeneration;
+      const syncBaseline = normalizeStudentDatabaseSyncBaseline(
+        state.data.meta.studentDatabaseSyncBaseline
+      );
+      const hadValidBaseline = isValidStudentDatabaseSyncBaseline(syncBaseline);
       const students = buildStudentDatabaseExportStudents();
       const contracts = buildStudentDatabaseExportContracts();
       const directExpenses = buildStudentDatabaseExportDirectExpenses();
       const generalExpenses = buildStudentDatabaseExportGeneralExpenses();
+      const inventory = buildStudentDatabaseExportInventory();
+      const trainingPlans = buildStudentDatabaseExportTrainingPlans();
       const programs = buildStudentDatabaseExportPrograms();
+      const programDictionaries = buildStudentDatabaseExportProgramDictionaries();
+      const communicationTemplateFields = buildStudentDatabaseExportCommunicationTemplateFields();
       const paymentConstants = buildStudentDatabaseExportPaymentConstants();
       const agentPaymentRates = buildStudentDatabaseExportAgentPaymentRates();
       const macroSettings = buildStudentDatabaseExportMacroSettings();
       const result = await runStudentDatabaseExport({
         databasePath: getStudentDatabaseWebDavPath(),
         source: syncSource,
+        directionalSync: true,
+        sharedStateRevision: syncBaseRevision,
+        syncBaseline,
+        lastSynchronizedAt: syncBaseline.synchronizedAt
+          || getLatestStudentDatabaseSynchronizationTimestamp(
+            state.data.meta.studentDatabaseLastSynchronizedAt,
+            state.data.meta.studentDatabaseLastImportedAt,
+            state.data.meta.studentDatabaseLastExportedAt
+          )
+          || "",
+        lastExportedAt: state.data.meta.studentDatabaseLastExportedAt || "",
         students,
         contracts,
         directExpenses,
         generalExpenses,
+        inventory,
+        trainingPlans,
         programs,
+        programDictionaries,
+        communicationTemplateFields,
         paymentConstants,
         agentPaymentRates,
         macroSettings
       });
+      if (sharedStateChangeGeneration !== syncPreparedGeneration) {
+        throw new Error(
+          "Web-данные были изменены во время подготовки синхронизации. "
+          + "XLSB не перезаписан; сохраните изменения и повторите операцию."
+        );
+      }
+      const direction = String(result.syncDirection || "");
+      if (!["excel-to-web", "web-to-excel", "unchanged"].includes(direction)) {
+        throw new Error("Сервер не определил безопасное направление синхронизации.");
+      }
+      if (direction === "unchanged" && !hadValidBaseline) {
+        throw new Error(
+          "Без полной контрольной точки нельзя доказать совпадение XLSB и Web-базы. "
+          + "Выберите актуальную сторону через загрузку или экспорт."
+        );
+      }
+
+      let operationSummary = null;
+      let committedResult = {};
+      if (direction === "excel-to-web") {
+        if (!result.importPayload || result.requiresCommit !== true || !result.jobId) {
+          throw new Error("Сервер не подготовил запись стабильных ID в XLSB перед импортом.");
+        }
+        updateDatabaseExportIndicator({
+          status: "Создание резервной копии и запись стабильных ID в XLSB...",
+          progress: 94
+        });
+        xlsbCommitState = "unknown";
+        try {
+          committedResult = await commitStudentDatabaseExport(result.jobId, syncBaseRevision);
+        } catch (error) {
+          if (error?.studentDatabaseCommitState !== "unknown") xlsbCommitState = "not-committed";
+          throw error;
+        }
+        xlsbCommitted = committedResult.committed === true;
+        xlsbCommitState = xlsbCommitted ? "committed" : "not-committed";
+        const token = String(committedResult.syncCommitToken || "").trim();
+        if (!xlsbCommitted || !token) {
+          throw new Error("Сервер не подтвердил сохранение стабильных ID в XLSB.");
+        }
+        activeReservation = { jobId: result.jobId, token };
+        if (sharedStateChangeGeneration !== syncPreparedGeneration) {
+          throw new Error(
+            "Web-данные изменены во время сохранения служебных примечаний XLSB. "
+            + "Контрольная точка не обновлена; повторная синхронизация безопасно завершит импорт."
+          );
+        }
+        const baseline = buildStudentDatabaseSyncBaseline(
+          committedResult.sourceHash,
+          committedResult.sourceIdentity || result.sourceIdentity,
+          syncBaseRevision + 1,
+          committedResult.synchronizedAt || new Date().toISOString()
+        );
+        updateDatabaseExportIndicator({
+          status: "Применение изменений Excel к общей Web-базе...",
+          progress: 97
+        });
+        operationSummary = await importStudentsFromDatabase({
+          synchronizationPayload: committedResult.importPayload || result.importPayload,
+          syncSource,
+          sourceLabel,
+          syncBaseline: baseline
+        });
+        cancelScheduledSharedApplicationStateSave();
+        const syncGeneration = sharedStateChangeGeneration;
+        await flushStudentDatabaseSynchronizationState({
+          targetGeneration: syncGeneration,
+          baseRevision: syncBaseRevision,
+          jobId: result.jobId,
+          syncCommitToken: token,
+          onToken: (nextToken) => {
+            activeReservation = { jobId: result.jobId, token: String(nextToken || "") };
+          }
+        });
+        activeReservation = { jobId: "", token: "" };
+        if (operationSummary?.auditEntry) void postAuditEntry(operationSummary.auditEntry);
+      } else if (direction === "web-to-excel") {
+        if (!result.requiresCommit || !result.jobId) {
+          throw new Error("Сервер не подготовил сохранение изменений Web в XLSB.");
+        }
+        updateDatabaseExportIndicator({
+          status: "Создание резервной копии и сохранение XLSB...",
+          progress: 96
+        });
+        xlsbCommitState = "unknown";
+        try {
+          committedResult = await commitStudentDatabaseExport(result.jobId, syncBaseRevision);
+        } catch (error) {
+          if (error?.studentDatabaseCommitState !== "unknown") xlsbCommitState = "not-committed";
+          throw error;
+        }
+        xlsbCommitted = committedResult.committed === true;
+        xlsbCommitState = xlsbCommitted ? "committed" : "not-committed";
+        const token = String(committedResult.syncCommitToken || "").trim();
+        if (!xlsbCommitted || !token) {
+          throw new Error("Сервер не подтвердил сохранение XLSB.");
+        }
+        activeReservation = { jobId: result.jobId, token };
+        if (sharedStateChangeGeneration !== syncPreparedGeneration) {
+          throw new Error(
+            "Web-данные изменены во время сохранения XLSB. "
+            + "Контрольная точка не обновлена; повторная синхронизация безопасно обнаружит конфликт."
+          );
+        }
+        const synchronizedAt = new Date().toISOString();
+        state.data.meta.studentDatabaseSyncBaseline = buildStudentDatabaseSyncBaseline(
+          committedResult.sourceHash,
+          committedResult.sourceIdentity || result.sourceIdentity,
+          syncBaseRevision + 1,
+          synchronizedAt
+        );
+        state.data.meta.studentDatabaseLastExportedAt = synchronizedAt;
+        const auditEntry = addAudit(
+          "Двусторонняя синхронизация с базой",
+          "Слушатели, договоры, затраты, запасы, программы и учебные планы",
+          "Web → Excel; " + students.length + " слушателей; " + contracts.length
+            + " договоров; " + directExpenses.length + " прямых и "
+            + generalExpenses.length + " общих затрат; " + inventory.length
+            + " позиций запасов; " + programs.length + " программ; "
+            + trainingPlans.length + " строк учебных планов; " + sourceLabel
+            + "; резервная копия: " + (committedResult.backupPath || "создана"),
+          {
+            entityType: "database",
+            entityLabel: "АИС Допобразование.xlsb",
+            source: "xlsb-sync-" + syncSource,
+            deferPost: true
+          }
+        );
+        persist();
+        cancelScheduledSharedApplicationStateSave();
+        const syncGeneration = sharedStateChangeGeneration;
+        await flushStudentDatabaseSynchronizationState({
+          targetGeneration: syncGeneration,
+          baseRevision: syncBaseRevision,
+          jobId: result.jobId,
+          syncCommitToken: token,
+          onToken: (nextToken) => {
+            activeReservation = { jobId: result.jobId, token: String(nextToken || "") };
+          }
+        });
+        activeReservation = { jobId: "", token: "" };
+        void postAuditEntry(auditEntry);
+      }
+
       const duration = formatDatabaseOperationDuration(startedAt);
-      state.data.meta.studentDatabaseLastExportedAt = new Date().toISOString();
-      addAudit(
-        "Синхронизация с базой",
-        "Слушатели, договоры, затраты и сообщения программ",
-        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.automaticExpenseRuleCount || 0} правил назначения оплат; ${result.programPromoMessageCount || 0} промосообщений; ${result.programEmailMessageCount || 0} почтовых сообщений программ; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; ${sourceLabel}; резервная копия: ${result.backupPath || "создана"}; время выполнения: ${duration}`,
-        { entityType: "database", entityLabel: "АИС Допобразование.xlsb", source: `xlsb-sync-${syncSource}` }
-      );
-      persist();
       state.databaseExport.running = false;
       render();
+      const directionLabel = direction === "excel-to-web"
+        ? "Excel → Web"
+        : direction === "web-to-excel"
+          ? "Web → Excel"
+          : "Изменений нет";
       finishDatabaseExportIndicator(
         "success",
-        `Готово: ${students.length} слушателей, ${contracts.length} договоров, ${directExpenses.length} прямых и ${generalExpenses.length} общих затрат, ${result.programPromoMessageCount || 0} промосообщений и ${result.programEmailMessageCount || 0} почтовых сообщений программ. Резервная копия создана. Время выполнения: ${duration}`
+        "Готово: " + directionLabel + ". Время выполнения: " + duration
       );
       showDatabaseOperationResult({
         eyebrow: "Синхронизация с XLSB",
-        title: "Синхронизация завершена",
-        summary: `База успешно обновлена ${sourceLabel}.`,
+        title: direction === "unchanged" ? "Изменений не найдено" : "Синхронизация завершена",
+        summary: direction === "excel-to-web"
+          ? "Стабильные ID записаны в XLSB, затем изменения перенесены в общую Web-базу; Web-поля совпавших записей сохранены."
+          : direction === "web-to-excel"
+            ? "Изменения Web перенесены в XLSB " + sourceLabel + "; резервная копия создана."
+            : "XLSB и Web-база не изменились после прошлой синхронизации.",
         items: [
-          { label: "Слушатели", value: students.length },
-          { label: "Договоры", value: contracts.length },
-          { label: "Прямые затраты", value: directExpenses.length },
-          { label: "Общие затраты", value: generalExpenses.length },
-          { label: "Правила оплаты", value: result.automaticExpenseRuleCount || 0 },
-          { label: "Промосообщения", value: result.programPromoMessageCount || 0 },
-          { label: "Почтовые сообщения программ", value: result.programEmailMessageCount || 0 },
+          { label: "Направление", value: directionLabel },
+          { label: "Слушатели", value: operationSummary?.studentCount ?? result.studentCount ?? students.length },
+          { label: "Договоры", value: operationSummary?.contractCount ?? result.contractCount ?? contracts.length },
           {
-            label: "Не сопоставлено программ",
-            value: result.programPromoSkippedCount || 0,
-            note: result.programPromoSkippedCount ? "Проверьте название и код лендинга" : "Все программы сопоставлены"
+            label: "Прямые затраты",
+            value: operationSummary?.directExpenseCount ?? result.directExpenseCount ?? directExpenses.length
+          },
+          {
+            label: "Общие затраты",
+            value: operationSummary?.generalExpenseCount ?? result.generalExpenseCount ?? generalExpenses.length
+          },
+          { label: "Запасы", value: operationSummary?.inventoryCount ?? result.inventoryCount ?? inventory.length },
+          { label: "Программы", value: operationSummary?.programCount ?? result.programCount ?? programs.length },
+          {
+            label: "Учебные планы",
+            value: operationSummary?.trainingPlanCount ?? result.trainingPlanCount ?? trainingPlans.length
           }
         ],
         details: [
           { label: "Источник", value: sourceLabel },
-          { label: "Резервная копия", value: result.backupPath || "Создана в папке _Резерв" },
+          ...(direction === "web-to-excel" || direction === "excel-to-web"
+            ? [{ label: "Резервная копия", value: committedResult.backupPath || "Создана в папке _Резерв" }]
+            : []),
           { label: "Время выполнения", value: duration }
         ]
       });
     } catch (error) {
-      finishDatabaseExportIndicator("error", `Ошибка: ${error.message}`, 6500);
+      if (activeReservation.token) {
+        await cancelStudentDatabaseSyncReservation(
+          activeReservation.jobId,
+          activeReservation.token
+        ).catch(() => false);
+      }
+      const commitStateUnknown = xlsbCommitState === "unknown"
+        || error?.studentDatabaseCommitState === "unknown";
+      const failureMessage = xlsbCommitted
+        ? "XLSB сохранён, но контрольная точка Web-базы не подтверждена: " + error.message
+        : commitStateUnknown
+          ? "Состояние XLSB неизвестно: сервер не подтвердил, был ли файл сохранён. "
+            + "Не заменяйте данные вручную; повторите синхронизацию — сервер безопасно сверит результат."
+          : error.message;
+      finishDatabaseExportIndicator("error", "Ошибка: " + failureMessage, 6500);
       showDatabaseOperationResult({
         tone: "error",
         eyebrow: "Синхронизация с XLSB",
-        title: "Синхронизация не выполнена",
-        summary: error.message,
+        title: "Синхронизация не выполнена полностью",
+        summary: failureMessage,
         details: [{ label: "Источник", value: sourceLabel }]
       });
     }
   }
-
   async function downloadStudentsDatabase(event) {
     if (state.databaseExport.running) return;
     if (state.databaseImport.running) {
@@ -42996,7 +44302,11 @@ MAX - https://bizvmax.ru/zifra_plus
       const contracts = buildStudentDatabaseExportContracts();
       const directExpenses = buildStudentDatabaseExportDirectExpenses();
       const generalExpenses = buildStudentDatabaseExportGeneralExpenses();
+      const inventory = buildStudentDatabaseExportInventory();
+      const trainingPlans = buildStudentDatabaseExportTrainingPlans();
       const programs = buildStudentDatabaseExportPrograms();
+      const programDictionaries = buildStudentDatabaseExportProgramDictionaries();
+      const communicationTemplateFields = buildStudentDatabaseExportCommunicationTemplateFields();
       const paymentConstants = buildStudentDatabaseExportPaymentConstants();
       const agentPaymentRates = buildStudentDatabaseExportAgentPaymentRates();
       const macroSettings = buildStudentDatabaseExportMacroSettings();
@@ -43008,7 +44318,11 @@ MAX - https://bizvmax.ru/zifra_plus
         contracts,
         directExpenses,
         generalExpenses,
+        inventory,
+        trainingPlans,
         programs,
+        programDictionaries,
+        communicationTemplateFields,
         paymentConstants,
         agentPaymentRates,
         macroSettings
@@ -43163,6 +44477,196 @@ MAX - https://bizvmax.ru/zifra_plus
     return parts.some(Boolean) ? parts.join("|") : "";
   }
 
+  function normalizeStudentDatabaseImportIdentityValue(value) {
+    return String(value ?? "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е");
+  }
+
+  function buildStudentDatabaseImportCompositeIdentity(student = {}) {
+    const values = [student.uid, student.name, student.applicationDate, student.program]
+      .map((value) => normalizeStudentDatabaseImportIdentityValue(value));
+    return values.some(Boolean) ? values.join("\u0000") : "";
+  }
+
+  function indexStudentDatabaseImportRows(rows, keyGetter) {
+    const index = new Map();
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const key = String(keyGetter(row) || "").trim();
+      if (!key) return;
+      const matches = index.get(key) || [];
+      matches.push(row);
+      index.set(key, matches);
+    });
+    return index;
+  }
+
+  function normalizeStudentDatabaseImportManagedFields(value) {
+    return [...new Set((Array.isArray(value) ? value : [])
+      .map((field) => String(field || "").trim())
+      .filter((field) => /^[A-Za-z][A-Za-z0-9_-]{0,119}$/u.test(field)))];
+  }
+
+  function projectStudentDatabaseImportedManagedFields(imported, managedFields) {
+    return Object.fromEntries(normalizeStudentDatabaseImportManagedFields(managedFields)
+      .map((field) => [
+        field,
+        Object.prototype.hasOwnProperty.call(imported || {}, field) ? imported[field] : ""
+      ]));
+  }
+
+  function mergeStudentDatabaseImportedStudents(
+    importedRows,
+    previousRows,
+    managedFields,
+    directExpenseManagedFields,
+    previousDirectExpenseRows = null,
+    usedPreviousDirectExpenseRows = null
+  ) {
+    const previous = Array.isArray(previousRows) ? previousRows : [];
+    const directExpenseIdRows = Array.isArray(previousDirectExpenseRows)
+      ? previousDirectExpenseRows
+      : previous.flatMap((student) => (
+        Array.isArray(student?.directExpenses) ? student.directExpenses : []
+      ));
+    const usedDirectExpenseRows = usedPreviousDirectExpenseRows
+      && typeof usedPreviousDirectExpenseRows.has === "function"
+      && typeof usedPreviousDirectExpenseRows.add === "function"
+      ? usedPreviousDirectExpenseRows
+      : new Set();
+    const byId = indexStudentDatabaseImportRows(previous, (row) => row?.id);
+    const byUid = indexStudentDatabaseImportRows(
+      previous,
+      (row) => normalizeStudentDatabaseImportIdentityValue(row?.uid)
+    );
+    const byComposite = indexStudentDatabaseImportRows(
+      previous,
+      buildStudentDatabaseImportCompositeIdentity
+    );
+    const used = new Set();
+    const takeUnique = (matches, label, { allowAmbiguous = false } = {}) => {
+      const available = (Array.isArray(matches) ? matches : []).filter((row) => !used.has(row));
+      if (available.length > 1 && !allowAmbiguous) {
+        throw new Error(`Конфликт сопоставления слушателя: ${label}.`);
+      }
+      return available.length === 1 ? available[0] : null;
+    };
+    return (Array.isArray(importedRows) ? importedRows : []).map((imported) => {
+      const id = String(imported?.id || "").trim();
+      const uid = normalizeStudentDatabaseImportIdentityValue(imported?.uid);
+      const composite = buildStudentDatabaseImportCompositeIdentity(imported);
+      let matched = takeUnique(byId.get(id), `ID ${id || "не указан"}`, {
+        allowAmbiguous: true
+      });
+      if (!matched && uid) {
+        matched = takeUnique(byUid.get(uid), `UID ${String(imported?.uid || "").trim()}`, {
+          allowAmbiguous: true
+        });
+      }
+      if (!matched && composite) {
+        matched = takeUnique(byComposite.get(composite), "неоднозначные ФИО, дата заявки и программа");
+      }
+      if (!matched && uid) {
+        const availableUidMatches = (byUid.get(uid) || []).filter((row) => !used.has(row));
+        if (availableUidMatches.length > 1) {
+          throw new Error(
+            `Конфликт сопоставления слушателя: UID ${String(imported?.uid || "").trim()} встречается несколько раз.`
+          );
+        }
+      }
+      if (matched) used.add(matched);
+      const mergedDirectExpenses = Array.isArray(imported?.directExpenses)
+        ? mergeStudentDatabaseImportedRecords(
+          imported.directExpenses,
+          matched?.directExpenses,
+          {
+            label: "расхода слушателя",
+            identity: (expense) => [
+              expense?.uid,
+              expense?.date,
+              expense?.type
+            ],
+            managedFields: directExpenseManagedFields,
+            idLookupRows: directExpenseIdRows,
+            usedMatches: usedDirectExpenseRows
+          }
+        )
+        : imported?.directExpenses;
+      const importedManagedFields = projectStudentDatabaseImportedManagedFields(
+        imported,
+        managedFields
+      );
+      const merged = {
+        ...(matched || imported || {}),
+        ...importedManagedFields,
+        ...(matched ? { id: String(matched.id || imported?.id || "") } : {}),
+        ...(Array.isArray(mergedDirectExpenses) ? { directExpenses: mergedDirectExpenses } : {})
+      };
+      delete merged.databaseSync;
+      return merged;
+    });
+  }
+
+  function buildStudentDatabaseImportRecordIdentity(record, fields) {
+    const values = typeof fields === "function" ? fields(record || {}) : [];
+    const normalized = (Array.isArray(values) ? values : [values])
+      .map((value) => normalizeStudentDatabaseImportIdentityValue(value));
+    return normalized.some(Boolean) ? normalized.join("\u0000") : "";
+  }
+
+  function mergeStudentDatabaseImportedRecords(
+    importedRows,
+    previousRows,
+    {
+      label,
+      identity,
+      managedFields,
+      idLookupRows = null,
+      usedMatches = null
+    }
+  ) {
+    const previous = Array.isArray(previousRows) ? previousRows : [];
+    const idRows = Array.isArray(idLookupRows) ? idLookupRows : previous;
+    const byId = indexStudentDatabaseImportRows(idRows, (row) => row?.id);
+    const byIdentity = indexStudentDatabaseImportRows(
+      previous,
+      (row) => buildStudentDatabaseImportRecordIdentity(row, identity)
+    );
+    const used = usedMatches
+      && typeof usedMatches.has === "function"
+      && typeof usedMatches.add === "function"
+      ? usedMatches
+      : new Set();
+    const take = (matches, description) => {
+      const available = (Array.isArray(matches) ? matches : []).filter((row) => !used.has(row));
+      if (available.length > 1) {
+        throw new Error(`Конфликт сопоставления ${label}: ${description}.`);
+      }
+      return available[0] || null;
+    };
+    return (Array.isArray(importedRows) ? importedRows : []).map((imported) => {
+      const id = String(imported?.id || "").trim();
+      const identityKey = buildStudentDatabaseImportRecordIdentity(imported, identity);
+      const matched = take(byId.get(id), `ID ${id || "не указан"}`)
+        || take(byIdentity.get(identityKey), "совпало несколько записей");
+      if (matched) used.add(matched);
+      const importedManagedFields = projectStudentDatabaseImportedManagedFields(
+        imported,
+        managedFields
+      );
+      const merged = {
+        ...(matched || imported || {}),
+        ...importedManagedFields,
+        ...(matched ? { id: String(matched.id || imported?.id || "") } : {})
+      };
+      delete merged.databaseSync;
+      return merged;
+    });
+  }
+
   function mergeImportedStudentAgentPaymentMetadata(imported = {}, previous = null) {
     if (!previous || typeof previous !== "object") return imported;
     const next = { ...imported };
@@ -43214,13 +44718,25 @@ MAX - https://bizvmax.ru/zifra_plus
     return normalizedName ? `${normalizedName}\u0000${normalizedLandingCode}` : "";
   }
 
-  function mergeImportedProgramPaymentSettings(programs, importedSettings, defaultAuthorPercent) {
+  function mergeImportedProgramPaymentSettings(
+    programs,
+    importedSettings,
+    defaultAuthorPercent,
+    managedFields = []
+  ) {
+    const normalizedManagedFields = normalizeStudentDatabaseImportManagedFields(managedFields);
     const importedRows = (Array.isArray(importedSettings) ? importedSettings : [])
       .filter((item) => normalizeProgramName(item?.name));
+    const importedById = new Map();
     const importedByIdentity = new Map();
     const importedByName = new Map();
     const importedByRow = new Map();
     importedRows.forEach((item) => {
+      const recordId = String(item?.databaseSync?.recordId || item?.id || "").trim();
+      if (item?.databaseSync && recordId) {
+        if (!importedById.has(recordId)) importedById.set(recordId, []);
+        importedById.get(recordId).push(item);
+      }
       const name = normalizeProgramName(item.name);
       const identity = getProgramWorkbookIdentity(item.name, item.xlsbProgramLandingCode);
       if (!importedByIdentity.has(identity)) importedByIdentity.set(identity, []);
@@ -43236,23 +44752,44 @@ MAX - https://bizvmax.ru/zifra_plus
     const usedImportedRows = new Set();
     const takeSingleUnused = (rows) => {
       const available = (Array.isArray(rows) ? rows : []).filter((item) => !usedImportedRows.has(item));
+      if (normalizedManagedFields.length && available.length > 1) {
+        throw new Error("Конфликт сопоставления программы: найдено несколько строк XLSB.");
+      }
       return available.length === 1 ? available[0] : null;
     };
     const applyImportedFields = (program, imported) => {
       if (!imported) return program;
       usedImportedRows.add(imported);
-      const authorSource = String(imported.authorSource || "").trim();
-      const importedFields = clone(imported);
-      delete importedFields.name;
+      const importedFields = normalizedManagedFields.length
+        ? projectStudentDatabaseImportedManagedFields(imported, normalizedManagedFields)
+        : clone(imported);
+      delete importedFields.databaseSync;
+      const importedName = String(
+        Object.prototype.hasOwnProperty.call(importedFields, "name")
+          ? importedFields.name
+          : imported.name || program?.name || ""
+      ).trim();
+      const authorSource = String(
+        Object.prototype.hasOwnProperty.call(importedFields, "authorSource")
+          ? importedFields.authorSource
+          : program?.authorSource || program?.author || ""
+      ).trim();
       return {
         ...(program || {}),
         ...importedFields,
-        id: String(program?.id || "").trim() || buildLegacyRecordId("program-xlsb", [
+        id: String(program?.id || imported?.id || "").trim() || buildLegacyRecordId("program-xlsb", [
           imported.xlsbProgramRow,
           imported.name,
           imported.xlsbProgramLandingCode
         ]),
-        name: String(program?.name || imported.name || "").trim(),
+        name: importedName,
+        xlsbProgramName: String(imported.name || importedName).trim(),
+        xlsbProgramRow: Math.max(0, Number(imported.xlsbProgramRow) || 0),
+        xlsbProgramLandingCode: String(
+          Object.prototype.hasOwnProperty.call(imported, "xlsbProgramLandingCode")
+            ? imported.xlsbProgramLandingCode
+            : imported.landingCode || ""
+        ).trim(),
         author: authorSource,
         authorSource,
         authorPayments: parseProgramAuthorPayments(authorSource, defaultAuthorPercent),
@@ -43260,6 +44797,7 @@ MAX - https://bizvmax.ru/zifra_plus
       };
     };
     const mergedPrograms = (Array.isArray(programs) ? programs : []).map((program) => {
+      const recordId = String(program?.id || "").trim();
       const sourceLandingCode = Object.prototype.hasOwnProperty.call(
         program || {},
         "xlsbProgramLandingCode"
@@ -43273,16 +44811,21 @@ MAX - https://bizvmax.ru/zifra_plus
       const sourceRow = Math.max(0, Number(program?.xlsbProgramRow) || 0);
       const sourceName = normalizeProgramName(program?.xlsbProgramName || program?.name);
       const sameRowRows = sourceRow
-        ? (importedByRow.get(sourceRow) || []).filter((item) => normalizeProgramName(item?.name) === sourceName)
+        ? (importedByRow.get(sourceRow) || []).filter((item) => (
+          !item?.databaseSync && normalizeProgramName(item?.name) === sourceName
+        ))
         : [];
-      const sameIdentityRows = importedByIdentity.get(identity) || [];
-      const sameNameRows = importedByName.get(normalizeProgramName(program?.name)) || [];
-      const imported = takeSingleUnused(sameRowRows)
+      const sameIdentityRows = (importedByIdentity.get(identity) || [])
+        .filter((item) => !item?.databaseSync);
+      const sameNameRows = (importedByName.get(normalizeProgramName(program?.name)) || [])
+        .filter((item) => !item?.databaseSync);
+      const imported = takeSingleUnused(importedById.get(recordId))
+        || takeSingleUnused(sameRowRows)
         || takeSingleUnused(sameIdentityRows)
         || takeSingleUnused(sameNameRows);
-      if (!imported) return program;
+      if (!imported) return normalizedManagedFields.length ? null : program;
       return applyImportedFields(program, imported);
-    });
+    }).filter(Boolean);
     const addedPrograms = importedRows
       .filter((imported) => !usedImportedRows.has(imported))
       .map((imported) => applyImportedFields(null, imported));
@@ -43290,31 +44833,41 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function importStudentsFromDatabase(event) {
-    if (state.databaseExport.running) {
+    const synchronizationPayload = event?.synchronizationPayload
+      && typeof event.synchronizationPayload === "object"
+      ? event.synchronizationPayload
+      : null;
+    const isSynchronizationImport = Boolean(synchronizationPayload);
+    if (!isSynchronizationImport && state.databaseExport.running) {
       alert(state.databaseExport.operation === "download"
         ? "Дождитесь завершения экспорта базы."
         : "Дождитесь завершения синхронизации базы.");
       return;
     }
-    if (state.databaseImport.running) return;
-    const importSource = getStudentDocumentsSource(Boolean(event?.shiftKey));
-    const sourceLabel = importSource === "local"
+    if (!isSynchronizationImport && state.databaseImport.running) return;
+    const importSource = isSynchronizationImport
+      ? String(event?.syncSource || "webdav")
+      : getStudentDocumentsSource(Boolean(event?.shiftKey));
+    const sourceLabel = String(event?.sourceLabel || (importSource === "local"
       ? "с локального компьютера"
-      : "с Яндекс-Диска через WebDAV";
-    if (!event?.skipConfirmation && !confirm(
+      : "с Яндекс-Диска через WebDAV"));
+    if (!isSynchronizationImport && !event?.skipConfirmation && !confirm(
       getStudentDatabaseImportConfirmation(sourceLabel)
     )) return;
     const startedAt = performance.now();
-    updateDatabaseImportIndicator({
-      running: true,
-      visible: true,
-      status: `Подготовка импорта ${sourceLabel}...`,
-      progress: 0,
-      tone: "active",
-      indeterminate: false
-    });
+    if (!isSynchronizationImport) {
+      updateDatabaseImportIndicator({
+        running: true,
+        visible: true,
+        status: `Подготовка импорта ${sourceLabel}...`,
+        progress: 0,
+        tone: "active",
+        indeterminate: false
+      });
+    }
     try {
-      const payload = await runStudentDatabaseImport(getStudentDatabaseWebDavPath(), importSource);
+      const payload = synchronizationPayload
+        || await runStudentDatabaseImport(getStudentDatabaseWebDavPath(), importSource);
       if (!Array.isArray(payload.students) || !payload.students.length) {
         throw new Error("В базе не найдено ни одного слушателя.");
       }
@@ -43336,37 +44889,180 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!Array.isArray(payload.trainingPlans)) {
         throw new Error("Не удалось прочитать лист «Учебные планы».");
       }
+      if (isSynchronizationImport) {
+        const requiredSchemas = [
+          ["слушателей", payload.studentDatabaseSyncFields],
+          ["договоров", payload.contractDatabaseSyncFields],
+          ["прямых затрат", payload.directExpenseDatabaseSyncFields],
+          ["общих затрат", payload.generalExpenseDatabaseSyncFields],
+          ["запасов", payload.inventoryDatabaseSyncFields],
+          ["учебных планов", payload.trainingPlanDatabaseSyncFields],
+          ["программ", payload.programDatabaseSyncFields]
+        ];
+        const missingSchema = requiredSchemas.find(([, fields]) => (
+          !normalizeStudentDatabaseImportManagedFields(fields).length
+        ));
+        if (missingSchema) {
+          throw new Error(`Сервер не вернул схему синхронизируемых полей ${missingSchema[0]}.`);
+        }
+      }
       const previousData = state.data;
       const responsibleLogin = getCurrentUserLogin();
       const previousStudentsByIdentity = new Map((previousData.collections.students || [])
         .map((student) => [getStudentAgentPaymentImportIdentity(student), student])
         .filter(([identity]) => identity));
-      const nextStudents = payload.students.map((student) => {
+      const previousDirectExpenseRows = [
+        ...(previousData.collections.students || []).flatMap((student) => (
+          Array.isArray(student?.directExpenses) ? student.directExpenses : []
+        )),
+        ...(previousData.collections.directExpenses || [])
+      ];
+      const usedPreviousDirectExpenseRows = new Set();
+      const importedStudentRows = isSynchronizationImport
+        ? mergeStudentDatabaseImportedStudents(
+          payload.students,
+          previousData.collections.students,
+          payload.studentDatabaseSyncFields,
+          payload.directExpenseDatabaseSyncFields,
+          previousDirectExpenseRows,
+          usedPreviousDirectExpenseRows
+        )
+        : payload.students;
+      const nextStudents = importedStudentRows.map((student) => {
+        const studentFields = { ...(student || {}) };
+        delete studentFields.databaseSync;
+        if (Array.isArray(studentFields.directExpenses)) {
+          studentFields.directExpenses = studentFields.directExpenses.map((expense) => {
+            const record = { ...expense };
+            delete record.databaseSync;
+            return record;
+          });
+        }
         let normalized = applyMappedAgentToStudentRecord(
-          normalizeStudentRecord(student),
+          normalizeStudentRecord(studentFields),
           { onlyWhenEmpty: true }
         );
         normalized = mergeImportedStudentAgentPaymentMetadata(
           normalized,
           previousStudentsByIdentity.get(getStudentAgentPaymentImportIdentity(normalized)) || null
         );
-        return {
-          ...normalized,
-          manager: responsibleLogin
-        };
+        return isSynchronizationImport
+          ? normalized
+          : { ...normalized, manager: responsibleLogin };
       });
-      const nextDirectExpenses = payload.directExpenses.map((expense) => ({ ...expense }));
-      const nextGeneralExpenses = payload.generalExpenses.map((expense) => normalizeGeneralExpenseRecord(expense));
-      const nextContracts = payload.contracts.map((contract) => normalizeContractRecord(contract));
+      const importedDirectExpenses = isSynchronizationImport
+        ? mergeStudentDatabaseImportedRecords(
+          payload.directExpenses,
+          previousData.collections.directExpenses,
+          {
+            label: "прямого расхода",
+            identity: (expense) => [
+              expense?.uid,
+              expense?.date,
+              expense?.type
+            ],
+            managedFields: payload.directExpenseDatabaseSyncFields,
+            idLookupRows: previousDirectExpenseRows,
+            usedMatches: usedPreviousDirectExpenseRows
+          }
+        )
+        : payload.directExpenses;
+      const importedGeneralExpenses = isSynchronizationImport
+        ? mergeStudentDatabaseImportedRecords(
+          payload.generalExpenses,
+          previousData.collections.generalExpenses,
+          {
+            label: "общего расхода",
+            identity: (expense) => [
+              expense?.section,
+              expense?.counterparty,
+              expense?.date,
+              expense?.workType
+            ],
+            managedFields: payload.generalExpenseDatabaseSyncFields
+          }
+        )
+        : payload.generalExpenses;
+      const importedContracts = isSynchronizationImport
+        ? mergeStudentDatabaseImportedRecords(
+          payload.contracts,
+          previousData.collections.contracts,
+          {
+            label: "договора",
+            identity: (contract) => [
+              contract?.section,
+              contract?.name,
+              contract?.contractNo,
+              contract?.contractDate
+            ],
+            managedFields: payload.contractDatabaseSyncFields
+          }
+        )
+        : payload.contracts;
+      const importedInventory = isSynchronizationImport
+        ? mergeStudentDatabaseImportedRecords(
+          payload.inventory,
+          previousData.collections.inventory,
+          {
+            label: "позиции запасов",
+            identity: (item) => [item?.itemType],
+            managedFields: payload.inventoryDatabaseSyncFields
+          }
+        )
+        : payload.inventory;
+      const nextDirectExpenses = importedDirectExpenses.map((expense) => {
+        const record = { ...expense };
+        delete record.databaseSync;
+        return record;
+      });
+      const nextGeneralExpenses = importedGeneralExpenses
+        .map((expense) => {
+          const record = { ...expense };
+          delete record.databaseSync;
+          return normalizeGeneralExpenseRecord(record);
+        });
+      const nextContracts = importedContracts.map((contract) => {
+        const record = { ...contract };
+        delete record.databaseSync;
+        return normalizeContractRecord(record);
+      });
       const contractSectionSummary = formatContractDatabaseSectionSummary(
         payload.contractSectionCounts,
         payload.contractSectionRows
       );
-      const nextInventory = payload.inventory.map((item) => ({
-        ...item,
-        amount: Number(item.amount || 0),
-        balance: Number(item.balance || 0)
-      }));
+      const nextInventory = importedInventory.map((item) => {
+        const record = {
+          ...item,
+          amount: Number(item.amount || 0),
+          balance: Number(item.balance || 0)
+        };
+        delete record.databaseSync;
+        return record;
+      });
+      const importedInventoryIdRemap = new Map();
+      (payload.inventory || []).forEach((sourceItem, index) => {
+        const sourceId = String(sourceItem?.id || "").trim();
+        const targetId = String(nextInventory[index]?.id || "").trim();
+        if (sourceId && targetId) importedInventoryIdRemap.set(sourceId, targetId);
+      });
+      const inventoryIdByType = new Map(nextInventory.map((item) => [
+        normalizeStudentDatabaseImportIdentityValue(item?.itemType),
+        String(item?.id || "").trim()
+      ]).filter(([itemType, id]) => itemType && id));
+      const remapInventoryExpense = (expense) => {
+        if (!expense || typeof expense !== "object") return;
+        const sourceId = String(expense.inventoryId || "").trim();
+        const matchedId = importedInventoryIdRemap.get(sourceId)
+          || inventoryIdByType.get(normalizeStudentDatabaseImportIdentityValue(
+            expense.inventoryLink || expense.type
+          ));
+        if (matchedId) expense.inventoryId = matchedId;
+      };
+      nextDirectExpenses.forEach(remapInventoryExpense);
+      nextStudents.forEach((student) => {
+        (Array.isArray(student.directExpenses) ? student.directExpenses : [])
+          .forEach(remapInventoryExpense);
+      });
       const previousAuthorRate = normalizePaymentRateValue(
         normalizePaymentSettings(previousData.dictionaries.paymentSettings)
           .find((setting) => setting.key === "authorRate")?.value
@@ -43406,14 +45102,16 @@ MAX - https://bizvmax.ru/zifra_plus
         mergeImportedProgramPaymentSettings(
           previousData.collections.programs,
           payload.programPaymentSettings,
-          defaultAuthorPaymentPercent
+          defaultAuthorPaymentPercent,
+          isSynchronizationImport ? payload.programDatabaseSyncFields : []
         ),
         previousAuthorRate,
         defaultAuthorPaymentPercent
       );
       const nextTrainingPlans = mergeImportedTrainingPlanRows(
         previousData.collections.trainingPlans,
-        payload.trainingPlans
+        payload.trainingPlans,
+        isSynchronizationImport ? payload.trainingPlanDatabaseSyncFields : []
       );
       const nextProgramDictionaries = {};
       Object.entries(PROGRAM_DICTIONARY_FIELDS).forEach(([fieldKey, dictionaryKey]) => {
@@ -43430,6 +45128,10 @@ MAX - https://bizvmax.ru/zifra_plus
           ...importedValues
         ]);
       });
+      const nextCommunicationTemplateFieldOverrides = mergeImportedCommunicationTemplateNamedRanges(
+        previousData.dictionaries.communicationTemplateFieldOverrides,
+        payload.communicationTemplateNamedRangeValues
+      );
       const nextAdditionalStatuses = unique(
         (payload.studentSectionTitles || [])
           .map((value) => String(value || "").trim())
@@ -43451,10 +45153,12 @@ MAX - https://bizvmax.ru/zifra_plus
         importedMacroSettings.contractEventTemplates,
         { contract: true }
       );
-      updateDatabaseImportIndicator({
-        status: `Применение данных: ${nextStudents.length} слушателей, ${nextContracts.length} договоров, ${nextTrainingPlans.length} строк учебных планов, ${totalDirectExpenseCount} прямых и ${nextGeneralExpenses.length} общих затрат, ${nextInventory.length} позиций запасов...`,
-        progress: 100
-      });
+      if (!isSynchronizationImport) {
+        updateDatabaseImportIndicator({
+          status: `Применение данных: ${nextStudents.length} слушателей, ${nextContracts.length} договоров, ${nextTrainingPlans.length} строк учебных планов, ${totalDirectExpenseCount} прямых и ${nextGeneralExpenses.length} общих затрат, ${nextInventory.length} позиций запасов...`,
+          progress: 100
+        });
+      }
       state.data = ensureDataShape({
         ...previousData,
         meta: {
@@ -43462,34 +45166,48 @@ MAX - https://bizvmax.ru/zifra_plus
           sourceWorkbook: payload.sourceName || "АИС Допобразование.xlsb",
           studentDatabaseLastImportedAt: payload.importedAt || new Date().toISOString(),
           defaultAuthorPaymentPercent,
-          studentEventTemplates: importedStudentEventTemplates.length
+          studentEventTemplates: isSynchronizationImport
+            ? importedStudentEventTemplates
+            : importedStudentEventTemplates.length
             ? importedStudentEventTemplates
             : previousData.meta.studentEventTemplates,
-          contractEventTemplates: importedContractEventTemplates.length
+          contractEventTemplates: isSynchronizationImport
+            ? importedContractEventTemplates
+            : importedContractEventTemplates.length
             ? importedContractEventTemplates
             : previousData.meta.contractEventTemplates,
           applicationsSqlQuery: String(
-            importedMacroSettings.applicationsSqlQuery
+            isSynchronizationImport
+              ? importedMacroSettings.applicationsSqlQuery || ""
+              : importedMacroSettings.applicationsSqlQuery
             || previousData.meta.applicationsSqlQuery
             || ""
           ),
           applicationsMysqlHost: String(
-            importedMacroSettings.applicationsMysqlHost
+            isSynchronizationImport
+              ? importedMacroSettings.applicationsMysqlHost || ""
+              : importedMacroSettings.applicationsMysqlHost
             || previousData.meta.applicationsMysqlHost
             || ""
           ),
           applicationsMysqlPort: Number(
-            importedMacroSettings.applicationsMysqlPort
+            isSynchronizationImport
+              ? importedMacroSettings.applicationsMysqlPort || 3306
+              : importedMacroSettings.applicationsMysqlPort
             || previousData.meta.applicationsMysqlPort
             || 3306
           ),
           applicationsMysqlDatabase: String(
-            importedMacroSettings.applicationsMysqlDatabase
+            isSynchronizationImport
+              ? importedMacroSettings.applicationsMysqlDatabase || ""
+              : importedMacroSettings.applicationsMysqlDatabase
             || previousData.meta.applicationsMysqlDatabase
             || ""
           ),
           applicationsMysqlUser: String(
-            importedMacroSettings.applicationsMysqlUser
+            isSynchronizationImport
+              ? importedMacroSettings.applicationsMysqlUser || ""
+              : importedMacroSettings.applicationsMysqlUser
             || previousData.meta.applicationsMysqlUser
             || ""
           ),
@@ -43511,7 +45229,8 @@ MAX - https://bizvmax.ru/zifra_plus
             getCurrentUserLogin()
           ].filter(Boolean)),
           studentAdditionalStatuses: nextAdditionalStatuses,
-          paymentSettings: nextPaymentSettings
+          paymentSettings: nextPaymentSettings,
+          communicationTemplateFieldOverrides: nextCommunicationTemplateFieldOverrides
         },
         collections: {
           ...previousData.collections,
@@ -43525,6 +45244,19 @@ MAX - https://bizvmax.ru/zifra_plus
           audit: [...(previousData.collections.audit || [])]
         }
       });
+      if (isSynchronizationImport) {
+        state.data.collections.programs = nextPrograms.map((program) => normalizeProgramRecord(program));
+        state.data.collections.trainingPlans = linkTrainingPlanRecordsToPrograms(
+          nextTrainingPlans.map((item, index) => normalizeTrainingPlanRecord(item, index)),
+          state.data.collections.programs
+        );
+        const syncBaseline = normalizeStudentDatabaseSyncBaseline(event?.syncBaseline);
+        if (!isValidStudentDatabaseSyncBaseline(syncBaseline)) {
+          state.data = previousData;
+          throw new Error("Не удалось сохранить контрольную точку синхронизации XLSB.");
+        }
+        state.data.meta.studentDatabaseSyncBaseline = syncBaseline;
+      }
       state.selected.students = [];
       state.selected.contracts = [];
       state.selected.directExpenses = [];
@@ -43538,10 +45270,10 @@ MAX - https://bizvmax.ru/zifra_plus
       state.lastEditedRow = { config: "", id: "" };
       state.search = "";
       const duration = formatDatabaseOperationDuration(startedAt);
-      addAudit(
-        "Загрузка из базы",
+      const importAuditEntry = addAudit(
+        isSynchronizationImport ? "Двусторонняя синхронизация с базой" : "Загрузка из базы",
         "Слушатели, договоры, затраты и запасы",
-        `${sourceLabel}; ${payload.count || nextStudents.length} слушателей; ${nextContracts.length} договоров; ${linkedDirectExpenseCount} расходов привязано; `
+        `${isSynchronizationImport ? "Excel → Web; " : ""}${sourceLabel}; ${payload.count || nextStudents.length} слушателей; ${nextContracts.length} договоров; ${linkedDirectExpenseCount} расходов привязано; `
         + `разделы договоров по расположению строк: ${contractSectionSummary}; `
         + `${nextDirectExpenses.length} не привязано; ${nextGeneralExpenses.length} общих затрат; ${nextInventory.length} позиций запасов; `
         + `${payload.programPaymentSettings.length} программ с характеристиками и ставками; ${nextTrainingPlans.length} строк учебных планов; `
@@ -43549,17 +45281,44 @@ MAX - https://bizvmax.ru/zifra_plus
         + `${inventoryLinkedExpenseCount} выдач связано с карточками`
         + `${inventoryGeneratedExpenseCount ? `, ${inventoryGeneratedExpenseCount} восстановлено` : ""}; `
         + `время выполнения: ${duration}`,
-        { entityType: "database", entityLabel: "АИС Допобразование.xlsb", source: `xlsb-${importSource}` }
+        {
+          entityType: "database",
+          entityLabel: "АИС Допобразование.xlsb",
+          source: isSynchronizationImport ? `xlsb-sync-${importSource}` : `xlsb-${importSource}`,
+          deferPost: isSynchronizationImport
+        }
       );
-      updateDatabaseImportIndicator({
-        status: "Сохранение импортированных данных...",
-        progress: 100
-      });
+      if (!isSynchronizationImport) {
+        updateDatabaseImportIndicator({
+          status: "Сохранение импортированных данных...",
+          progress: 100
+        });
+      }
       try {
         persist();
       } catch (error) {
         state.data = previousData;
         throw new Error(`Не удалось сохранить загруженные данные: ${error.message}`);
+      }
+      if (isSynchronizationImport) {
+        return {
+          payload,
+          previousData,
+          duration,
+          studentCount: payload.count || nextStudents.length,
+          contractCount: nextContracts.length,
+          linkedDirectExpenseCount,
+          directExpenseCount: nextDirectExpenses.length,
+          generalExpenseCount: nextGeneralExpenses.length,
+          inventoryCount: nextInventory.length,
+          programCount: payload.programPaymentSettings.length,
+          trainingPlanCount: nextTrainingPlans.length,
+          importedAutomaticExpenseRuleCount,
+          inventoryLinkedExpenseCount,
+          inventoryGeneratedExpenseCount,
+          contractSectionSummary,
+          auditEntry: importAuditEntry
+        };
       }
       render();
       finishDatabaseImportIndicator(
@@ -43598,6 +45357,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ]
       });
     } catch (error) {
+      if (isSynchronizationImport) throw error;
       finishDatabaseImportIndicator("error", `Ошибка: ${error.message}`, 6500);
       showDatabaseOperationResult({
         tone: "error",
@@ -44042,7 +45802,8 @@ MAX - https://bizvmax.ru/zifra_plus
       ...entry
     });
     state.data.collections.audit = audit.slice(-200);
-    void postAuditEntry(entry);
+    if (context.deferPost !== true) void postAuditEntry(entry);
+    return entry;
   }
 
   function miniTable(rows, keys, options = {}) {

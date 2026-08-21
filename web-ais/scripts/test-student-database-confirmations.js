@@ -38,10 +38,15 @@ assert.match(importConfirmation, /Журнал действий сохраняе
 assert.match(importConfirmation, /Продолжить загрузку и замену данных\?/u);
 
 const syncConfirmation = helperContext.syncConfirmation("на локальном компьютере");
-assert.match(syncConfirmation, /ВНИМАНИЕ:[\s\S]*синхронизация заменит/iu);
+assert.match(syncConfirmation, /ВНИМАНИЕ:[\s\S]*двусторонняя синхронизация/iu);
 assert.match(syncConfirmation, /резервная копия/iu);
-assert.match(syncConfirmation, /слушателей, договоров и затрат, которых больше нет[\s\S]*будут очищены/iu);
-assert.match(syncConfirmation, /ставки и константы оплаты[\s\S]*НастройкиМакросов/iu);
+assert.match(syncConfirmation, /контрольную сумму XLSB и ревизию Web-базы/iu);
+assert.match(
+  syncConfirmation,
+  /изменилась только одна сторона[\s\S]*считается актуальной[\s\S]*всех синхронизируемых разделов[\s\S]*отсутствующие — удалены/iu
+);
+assert.match(syncConfirmation, /изменились и Web-база, и XLSB[\s\S]*остановится без перезаписи/iu);
+assert.match(syncConfirmation, /запасы, программы, учебные планы, ставки, справочники и параметры/iu);
 
 assert.match(
   helperContext.importTooltip(),
