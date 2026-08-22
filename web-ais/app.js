@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.217",
+    version: "1.7.218",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.218",
+      releasedAt: "2026-08-22",
+      changes: [
+        "Добавлен отдельный кабинет партнёра с начислениями, реестром выплат, материалами Яндекс‑Диска, профилем сотрудника и обратной связью через общую точку входа АИС."
+      ]
+    },
     {
       version: "1.7.217",
       releasedAt: "2026-08-22",
@@ -1947,6 +1954,7 @@
   const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH =
     "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
   const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
+  const DEFAULT_PARTNER_MATERIALS_URL = "https://disk.yandex.ru/d/9BBGBNBIum252w";
   const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
   const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
   const STUDENT_LEARNING_ADDITIONAL_STATUS = "Обучающиеся";
@@ -4939,6 +4947,9 @@ MAX - https://bizvmax.ru/zifra_plus
     delete data.meta.systemDocumentsHasPublicPassword;
     data.meta.yandexDiskBasePath = String(
       data.meta.yandexDiskBasePath || DEFAULT_YANDEX_DISK_BASE_PATH
+    ).trim();
+    data.meta.partnerMaterialsUrl = String(
+      data.meta.partnerMaterialsUrl || DEFAULT_PARTNER_MATERIALS_URL
     ).trim();
     data.meta.localDocumentsRoot = String(
       data.meta.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
@@ -16872,6 +16883,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderAdmin() {
     const databasePath = getAdminSettingRenderValue("studentDatabaseWebDavPath", getStudentDatabaseWebDavPath());
     const basePath = getAdminSettingRenderValue("yandexDiskBasePath", getYandexDiskBasePath());
+    const partnerMaterialsUrl = getAdminSettingRenderValue("partnerMaterialsUrl", getPartnerMaterialsUrl());
     const localDocumentsRoot = getAdminSettingRenderValue("localDocumentsRoot", getLocalDocumentsRoot());
     const localDocumentsRootIsSystemParent = Boolean(getAdminSettingRenderValue(
       "localDocumentsRootIsSystemParent",
@@ -17145,6 +17157,11 @@ MAX - https://bizvmax.ru/zifra_plus
                 <label>
                   <span>Путь папки в Яндекс-Диске</span>
                   <input name="yandexDiskBasePath" type="text" value="${escapeAttr(basePath)}" required spellcheck="false">
+                </label>
+                <label>
+                  <span>Папка рекламных материалов партнёра</span>
+                  <input name="partnerMaterialsUrl" type="url" value="${escapeAttr(partnerMaterialsUrl)}" required spellcheck="false" placeholder="https://disk.yandex.ru/d/…">
+                  <small class="sdo-settings-hint">Публичная папка Яндекс‑Диска отображается в разделе «Материалы партнёра».</small>
                 </label>
                 <div class="admin-local-documents-root-row">
                   <label>
@@ -44092,6 +44109,12 @@ MAX - https://bizvmax.ru/zifra_plus
     ).trim();
   }
 
+  function getPartnerMaterialsUrl() {
+    return String(
+      state.data.meta?.partnerMaterialsUrl || DEFAULT_PARTNER_MATERIALS_URL
+    ).trim();
+  }
+
   function getLocalDocumentsRoot() {
     return String(
       state.data.meta?.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
@@ -44519,6 +44542,7 @@ MAX - https://bizvmax.ru/zifra_plus
   async function saveYandexDiskSettings(form) {
     const databasePath = String(form.elements.studentDatabaseWebDavPath?.value || "").trim();
     const basePath = String(form.elements.yandexDiskBasePath?.value || "").trim();
+    const partnerMaterialsUrl = String(form.elements.partnerMaterialsUrl?.value || "").trim();
     const localDocumentsRoot = String(form.elements.localDocumentsRoot?.value || "").trim();
     const localDocumentsRootIsSystemParent = Boolean(
       form.elements.localDocumentsRootIsSystemParent?.checked
@@ -44585,6 +44609,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const mysqlPassword = String(form.elements.mysqlPassword?.value || "");
     if (!databasePath) throw new Error("Укажите WebDAV-путь или ссылку на базу слушателей.");
     if (!basePath) throw new Error("Укажите путь папки документов в Яндекс-Диске.");
+    if (!/^https:\/\/(?:disk\.yandex\.ru|yadi\.sk)\//iu.test(partnerMaterialsUrl)) {
+      throw new Error("Укажите публичную HTTPS-ссылку Яндекс‑Диска для материалов партнёра.");
+    }
     if (!localDocumentsRoot) throw new Error("Укажите расположение документов на локальном диске.");
     if (!emailHost) throw new Error("Укажите IMAP-сервер.");
     if (!Number.isInteger(emailPort) || emailPort < 1 || emailPort > 65535) {
@@ -44661,6 +44688,7 @@ MAX - https://bizvmax.ru/zifra_plus
       body: JSON.stringify({
         databasePath,
         basePath,
+        partnerMaterialsUrl,
         localDocumentsRoot,
         localDocumentsRootIsSystemParent,
         openDocumentsLocally,
@@ -44718,6 +44746,9 @@ MAX - https://bizvmax.ru/zifra_plus
       payload.databasePath || getStudentDatabaseWebDavPath()
     ).trim();
     state.data.meta.yandexDiskBasePath = String(payload.basePath || getYandexDiskBasePath()).trim();
+    state.data.meta.partnerMaterialsUrl = String(
+      payload.partnerMaterialsUrl || getPartnerMaterialsUrl()
+    ).trim();
     state.data.meta.localDocumentsRoot = String(
       payload.localDocumentsRoot || getLocalDocumentsRoot()
     ).trim();

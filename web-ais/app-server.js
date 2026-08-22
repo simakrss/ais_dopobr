@@ -101,6 +101,8 @@ const DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST = "imap.timeweb.ru";
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_SMTP_HOST = "smtp.timeweb.ru";
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN = "mail@edu-plus.ru";
 const DEFAULT_WOOCOMMERCE_EMAIL_LOGIN = "mail@zifra-plus.ru";
+const DEFAULT_PARTNER_MATERIALS_URL = "https://disk.yandex.ru/d/9BBGBNBIum252w";
+const PARTNER_FEEDBACK_RECIPIENT = DEFAULT_WOOCOMMERCE_EMAIL_LOGIN;
 const DEFAULT_TRAINING_END_NOTIFICATION_DAYS = 5;
 const TRAINING_END_NOTIFICATION_JOB_NAME = "training-end-notification";
 const TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS = 60 * 60 * 1000;
@@ -110,6 +112,7 @@ const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin
 const DEFAULT_ASSISTANT_STATISTICS_MYSQL_HOST = "vh458.timeweb.ru";
 const DEFAULT_ASSISTANT_STATISTICS_MYSQL_DATABASE = "cl11741_omidpo";
 let serverSettings = {};
+const partnerFeedbackLastSentAt = new Map();
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -854,6 +857,7 @@ async function ensureStorage() {
   } catch (error) {
     console.warn(`Не удалось прочитать стандартный SQL-запрос интернет-магазина: ${error.message}`);
   }
+  const partnerMaterialsSettingMissing = !String(serverSettings.partnerMaterialsUrl || "").trim();
   serverSettings = {
     studentDatabaseWebDavPath: DEFAULT_STUDENT_DATABASE_WEBDAV_PATH,
     yandexDiskBasePath: DEFAULT_YANDEX_DISK_BASE_PATH,
@@ -885,10 +889,15 @@ async function ensureStorage() {
     documentConverterSourceUrl: DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL,
     yandexDiskLogin: "",
     yandexDiskAutoSave: false,
+    partnerMaterialsUrl: DEFAULT_PARTNER_MATERIALS_URL,
     ...serverSettings
   };
   const mailboxMigration = migrateStudentApplicationsMailboxSettings(serverSettings);
   serverSettings = mailboxMigration.settings;
+  if (partnerMaterialsSettingMissing) {
+    serverSettings.partnerMaterialsUrl = DEFAULT_PARTNER_MATERIALS_URL;
+    mailboxMigration.changed = true;
+  }
   const savedApplicationsSqlQuery = String(serverSettings.studentApplicationsSqlQuery || "").trim();
   const optimizedApplicationsSqlQuery = optimizeStudentApplicationsSqlQuery(savedApplicationsSqlQuery);
   if (savedApplicationsSqlQuery && optimizedApplicationsSqlQuery !== savedApplicationsSqlQuery) {
@@ -1097,6 +1106,7 @@ function publicAuthUser(user) {
     status: String(user?.status || "blocked"),
     email: String(user?.email || ""),
     phone: String(user?.phone || ""),
+    employeeId: String(user?.employeeId || ""),
     createdAt: String(user?.createdAt || ""),
     updatedAt: String(user?.updatedAt || ""),
     lastLoginAt: String(user?.lastLoginAt || "")
@@ -1426,13 +1436,24 @@ function authCookieHeader(token, req, maxAge = null) {
   return parts.join("; ");
 }
 
-async function createAuthSession(userId) {
+async function createAuthSession(principal) {
   const token = crypto.randomBytes(32).toString("base64url");
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
   const now = Date.now();
   const expiresAt = now + AUTH_SESSION_TTL_MS;
   const sessions = (await loadAuthSessions()).filter((session) => Number(session.expiresAt) > now);
-  sessions.push({ tokenHash, userId, createdAt: now, expiresAt });
+  const session = principal && typeof principal === "object"
+    ? {
+        tokenHash,
+        principalType: String(principal.role || "") === "partner" ? "partner" : "user",
+        userId: String(principal.id || ""),
+        employeeId: String(principal.employeeId || ""),
+        login: String(principal.login || ""),
+        createdAt: now,
+        expiresAt
+      }
+    : { tokenHash, userId: String(principal || ""), createdAt: now, expiresAt };
+  sessions.push(session);
   await saveAuthSessions(sessions);
   return { token, expiresAt };
 }
@@ -1465,12 +1486,19 @@ async function getRequestAuthUser(req) {
   if (process.env.AIS_TRUST_GATEWAY === "1" && requestHasGatewaySecret(req)) {
     const gatewayUserId = String(req.headers["x-ais-user-id"] || "gateway").slice(0, 160);
     const gatewaySessionId = String(req.headers["x-ais-session-id"] || gatewayUserId).slice(0, 256);
+    const requestedRole = String(req.headers["x-ais-user-role"] || "admin");
+    const role = ["admin", "manager", "partner"].includes(requestedRole)
+      ? requestedRole
+      : "manager";
     return {
       id: gatewayUserId,
       login: String(req.headers["x-ais-user-login"] || "gateway").slice(0, 160),
       name: String(req.headers["x-ais-user-name"] || "Gateway").slice(0, 240),
-      role: String(req.headers["x-ais-user-role"] || "admin") === "manager" ? "manager" : "admin",
+      role,
       status: "active",
+      employeeId: role === "partner"
+        ? String(req.headers["x-ais-employee-id"] || "").slice(0, 160)
+        : "",
       authSessionKey: `gateway:${gatewaySessionId}`
     };
   }
@@ -1481,6 +1509,19 @@ async function getRequestAuthUser(req) {
   const sessions = await loadAuthSessions();
   const session = sessions.find((item) => item.tokenHash === tokenHash && Number(item.expiresAt) > now);
   if (!session) return null;
+  if (session.principalType === "partner") {
+    const employee = await getPartnerEmployeeFromSharedState({
+      employeeId: session.employeeId,
+      login: session.login
+    }).catch(() => null);
+    return employee
+      ? {
+          ...publicPartnerAuthUser(employee),
+          sessionExpiresAt: Number(session.expiresAt) || 0,
+          authSessionKey: `node:${tokenHash}`
+        }
+      : null;
+  }
   const users = await loadAuthUsers();
   const user = users.find((item) => item.id === session.userId && item.status === "active");
   return user
@@ -1511,24 +1552,48 @@ async function handleAuthLogin(req, res) {
   const users = await loadAuthUsers();
   const login = normalizeAuthLogin(body.login);
   const index = users.findIndex((user) => normalizeAuthLogin(user.login) === login);
-  if (index < 0 || users[index].status !== "active" || !authVerifyPassword(body.password, users[index].passwordHash)) {
+  if (
+    index >= 0
+    && users[index].status === "active"
+    && authVerifyPassword(body.password, users[index].passwordHash)
+  ) {
+    users[index].lastLoginAt = new Date().toISOString();
+    await saveAuthUsers(users);
+    const session = await createAuthSession(users[index]);
+    await safelyAppendAuditEntry({
+      action: "Вход в систему",
+      area: "Авторизация",
+      entityType: "user",
+      entityId: users[index].id,
+      entityLabel: users[index].login
+    }, publicAuthUser(users[index]), req);
+    sendJson(res, 200, {
+      ok: true,
+      user: publicAuthUser(users[index]),
+      sessionExpiresAt: session.expiresAt
+    }, {
+      "Set-Cookie": authCookieHeader(session.token, req)
+    });
+    return;
+  }
+  const employee = await authenticatePartnerEmployee(body.login, body.password).catch(() => null);
+  if (!employee) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     sendError(res, 401, "Неверный логин или пароль.");
     return;
   }
-  users[index].lastLoginAt = new Date().toISOString();
-  await saveAuthUsers(users);
-  const session = await createAuthSession(users[index].id);
+  const partnerUser = publicPartnerAuthUser(employee);
+  const session = await createAuthSession(partnerUser);
   await safelyAppendAuditEntry({
     action: "Вход в систему",
     area: "Авторизация",
-    entityType: "user",
-    entityId: users[index].id,
-    entityLabel: users[index].login
-  }, publicAuthUser(users[index]), req);
+    entityType: "employee",
+    entityId: employee.id,
+    entityLabel: employee.name
+  }, partnerUser, req);
   sendJson(res, 200, {
     ok: true,
-    user: publicAuthUser(users[index]),
+    user: partnerUser,
     sessionExpiresAt: session.expiresAt
   }, {
     "Set-Cookie": authCookieHeader(session.token, req)
@@ -1565,6 +1630,10 @@ async function handleAuthLogout(req, res) {
 }
 
 async function handleAuthProfile(req, res, user) {
+  if (user.role === "partner") {
+    sendError(res, 403, "Данные партнёра изменяются в карточке сотрудника.");
+    return;
+  }
   const body = await readJsonBody(req);
   const users = await loadAuthUsers();
   const index = users.findIndex((item) => item.id === user.id);
@@ -1588,6 +1657,10 @@ async function handleAuthProfile(req, res, user) {
 }
 
 async function handleAuthPassword(req, res, user) {
+  if (user.role === "partner") {
+    sendError(res, 403, "Пароль партнёра изменяется в реквизитах СДО сотрудника.");
+    return;
+  }
   const body = await readJsonBody(req);
   const newPassword = String(body.newPassword || "");
   if (Array.from(newPassword).length < 6) throw new Error("Новый пароль должен содержать не менее 6 символов.");
@@ -20726,6 +20799,681 @@ async function handleStudentSourcePhoto(req, res, requestUrl) {
   }
 }
 
+function normalizePartnerIdentity(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .trim()
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/gu, "е")
+    .replace(/\s+/gu, " ");
+}
+
+function partnerCredentialsEqual(left, right) {
+  const expected = Buffer.from(String(left || ""), "utf8");
+  const actual = Buffer.from(String(right || ""), "utf8");
+  return expected.length > 0
+    && expected.length === actual.length
+    && crypto.timingSafeEqual(expected, actual);
+}
+
+function normalizePartnerDate(value) {
+  const source = String(value || "").trim();
+  if (!source) return "";
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/u.exec(source);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const russian = /^(\d{1,2})\.(\d{1,2})\.(\d{4})/u.exec(source);
+  if (russian) {
+    return `${russian[3]}-${russian[2].padStart(2, "0")}-${russian[1].padStart(2, "0")}`;
+  }
+  const date = new Date(source);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+}
+
+function getPartnerEmployeeRank(employee = {}) {
+  const section = normalizePartnerIdentity(employee.section || employee.status);
+  const sectionScore = section.includes("действующ") || section === "действует"
+    ? 3
+    : section.includes("партнер")
+      ? 2
+      : 1;
+  const date = normalizePartnerDate(employee.endDate || employee.contractDate);
+  return [sectionScore, date, String(employee.contractNo || "")];
+}
+
+function comparePartnerEmployeeRank(left, right) {
+  const leftRank = getPartnerEmployeeRank(left);
+  const rightRank = getPartnerEmployeeRank(right);
+  return rightRank[0] - leftRank[0]
+    || rightRank[1].localeCompare(leftRank[1], "ru")
+    || rightRank[2].localeCompare(leftRank[2], "ru", { numeric: true, sensitivity: "base" });
+}
+
+function selectPartnerEmployee(contracts, criteria = {}) {
+  const rows = Array.isArray(contracts) ? contracts.filter((row) => row && typeof row === "object") : [];
+  const employeeId = String(criteria.employeeId || "").trim();
+  const login = normalizePartnerIdentity(criteria.login);
+  const passwordProvided = Object.prototype.hasOwnProperty.call(criteria, "password");
+  const password = String(criteria.password || "");
+  const candidates = rows.filter((employee) => {
+    if (employeeId && String(employee.id || "").trim() === employeeId) return true;
+    if (!login || normalizePartnerIdentity(employee.login) !== login) return false;
+    return !passwordProvided || partnerCredentialsEqual(employee.password, password);
+  });
+  return candidates.sort(comparePartnerEmployeeRank)[0] || null;
+}
+
+function publicPartnerAuthUser(employee = {}) {
+  const employeeId = String(employee.id || "").trim();
+  return {
+    id: `partner:${employeeId}`,
+    employeeId,
+    login: String(employee.login || "").trim(),
+    name: String(employee.name || "Партнёр").trim() || "Партнёр",
+    role: "partner",
+    status: "active",
+    email: String(employee.email || "").trim(),
+    phone: String(employee.phone || "").trim(),
+    createdAt: "",
+    updatedAt: "",
+    lastLoginAt: ""
+  };
+}
+
+async function readPartnerSharedData() {
+  const result = await readSharedApplicationStateDocument();
+  const data = result.document?.data;
+  if (!data || typeof data !== "object") {
+    throw new Error("Общая база АИС ещё не создана.");
+  }
+  return data;
+}
+
+async function getPartnerEmployeeFromSharedState(criteria = {}) {
+  const data = await readPartnerSharedData();
+  return selectPartnerEmployee(data.collections?.contracts, criteria);
+}
+
+async function authenticatePartnerEmployee(login, password) {
+  if (!String(login || "").trim() || !String(password || "")) return null;
+  const data = await readPartnerSharedData();
+  return selectPartnerEmployee(data.collections?.contracts, { login, password });
+}
+
+function partnerValueIsChecked(value) {
+  if (value === true || value === 1) return true;
+  return ["1", "+", "да", "true", "yes", "on"].includes(normalizePartnerIdentity(value));
+}
+
+function partnerEmployeeField(key, label, value, kind = "text") {
+  return { key, label, value: value ?? "", kind };
+}
+
+function buildPartnerProfile(employee = {}) {
+  const passwordValue = String(employee.password || "").trim() ? "••••••••" : "";
+  return {
+    id: String(employee.id || ""),
+    name: String(employee.name || "Партнёр").trim() || "Партнёр",
+    contractNo: String(employee.contractNo || "").trim(),
+    photoAvailable: Boolean(String(employee.photoPath || "").trim() || String(employee.photoData || "").trim()),
+    tabs: {
+      main: [
+        partnerEmployeeField("name", "ФИО / контрагент", employee.name),
+        partnerEmployeeField("position", "Должность", employee.position),
+        partnerEmployeeField("degree", "Учёная степень", employee.degree),
+        partnerEmployeeField("academicTitle", "Учёное звание", employee.academicTitle),
+        partnerEmployeeField("phone", "Телефон", employee.phone, "phone"),
+        partnerEmployeeField("email", "Email", employee.email, "email"),
+        partnerEmployeeField("coupon", "Персональный купон", employee.coupon),
+        partnerEmployeeField("couponId", "ID купона", employee.couponId),
+        partnerEmployeeField(
+          "notificationEmail",
+          "Уведомления по email",
+          partnerValueIsChecked(employee.notificationEmail),
+          "boolean"
+        ),
+        partnerEmployeeField("photoPath", "Путь к фотографии", employee.photoPath)
+      ],
+      contract: [
+        partnerEmployeeField("contractNo", "Номер договора", employee.contractNo),
+        partnerEmployeeField("contractDate", "Дата договора", normalizePartnerDate(employee.contractDate), "date"),
+        partnerEmployeeField("type", "Вид договора", employee.type),
+        partnerEmployeeField("startDate", "Срок с", normalizePartnerDate(employee.startDate), "date"),
+        partnerEmployeeField("endDate", "Срок по", normalizePartnerDate(employee.endDate), "date"),
+        partnerEmployeeField("subject", "Предмет договора", employee.subject, "multiline"),
+        partnerEmployeeField("paymentTerms", "Сумма / условия оплаты", employee.paymentTerms, "multiline"),
+        partnerEmployeeField(
+          "accountingRecorded",
+          "Договор передан в бухгалтерию",
+          partnerValueIsChecked(employee.accountingRecorded),
+          "boolean"
+        ),
+        partnerEmployeeField("bank", "Банк", employee.bank),
+        partnerEmployeeField("settlementAccount", "Расчётный счёт", employee.settlementAccount),
+        partnerEmployeeField("correspondentAccount", "Корреспондентский счёт", employee.correspondentAccount),
+        partnerEmployeeField("bic", "БИК", employee.bic)
+      ],
+      documents: [
+        partnerEmployeeField("citizenship", "Гражданство", employee.citizenship),
+        partnerEmployeeField("birthDate", "Дата рождения", normalizePartnerDate(employee.birthDate), "date"),
+        partnerEmployeeField("identityDocumentType", "Документ", employee.identityDocumentType),
+        partnerEmployeeField("identityDocument", "Серия и номер", employee.identityDocument),
+        partnerEmployeeField("identityIssueDate", "Дата выдачи", normalizePartnerDate(employee.identityIssueDate), "date"),
+        partnerEmployeeField("identityDepartmentCode", "Код подразделения", employee.identityDepartmentCode),
+        partnerEmployeeField("identityIssuer", "Кем выдан", employee.identityIssuer, "multiline"),
+        partnerEmployeeField("address", "Адрес регистрации", employee.address, "multiline"),
+        partnerEmployeeField("snils", "СНИЛС", employee.snils),
+        partnerEmployeeField("inn", "ИНН", employee.inn),
+        partnerEmployeeField("login", "Логин СДО", employee.login),
+        partnerEmployeeField("password", "Пароль СДО", passwordValue, "password")
+      ]
+    }
+  };
+}
+
+function getPartnerAgentRates(paymentSettings) {
+  const settings = Array.isArray(paymentSettings) ? paymentSettings : [];
+  const read = (key, fallback) => {
+    const raw = settings.find((setting) => String(setting?.key || "") === key)?.value;
+    const number = Number(String(raw ?? fallback).replace(",", "."));
+    return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : fallback;
+  };
+  return {
+    withAuthor: read("agentRateWithAuthor", 10),
+    withoutAuthor: read("agentRateWithoutAuthor", 25)
+  };
+}
+
+function findPartnerProgram(programs, value) {
+  const name = normalizePartnerIdentity(value);
+  if (!name) return null;
+  return (Array.isArray(programs) ? programs : []).find((program) => (
+    normalizePartnerIdentity(program?.name) === name
+    || normalizePartnerIdentity(program?.shortName) === name
+  )) || null;
+}
+
+function calculatePartnerStudentCommission(student = {}, data = {}) {
+  const program = findPartnerProgram(data.collections?.programs, student.program);
+  const hasAuthor = Boolean(String(program?.authorSource || program?.author || "").trim());
+  const rates = getPartnerAgentRates(data.dictionaries?.paymentSettings);
+  const rate = hasAuthor ? rates.withAuthor : rates.withoutAuthor;
+  const receipts = Array.from({ length: 8 }, (_, index) => ({
+    amount: Number(student[`payment${index + 1}Amount`] || 0),
+    date: normalizePartnerDate(student[`payment${index + 1}Date`])
+  }));
+  const hasDetailedReceipts = receipts.some((item) => item.amount !== 0);
+  const receiptsTotal = Math.round(Math.max(
+    0,
+    hasDetailedReceipts
+      ? receipts.reduce((sum, item) => sum + item.amount, 0)
+      : Number(student.paidAmount || 0)
+  ) * 100) / 100;
+  const accrued = String(student.name || "").trim() && String(student.agent || "").trim()
+    && receiptsTotal > 0 && rate > 0
+    ? Math.ceil(((receiptsTotal * rate) / 100) / 50) * 50
+    : 0;
+  const payment1Amount = Math.max(0, Number(student.agentPayment1Amount || 0));
+  const payment1Date = normalizePartnerDate(student.agentPayment1Date);
+  const payment2Amount = Math.max(0, Number(student.agentPayment2Amount || 0));
+  const payment2Date = normalizePartnerDate(student.agentPayment2Date);
+  const paidTotal = Math.round((
+    (payment1Date ? payment1Amount : 0) + (payment2Date ? payment2Amount : 0)
+  ) * 100) / 100;
+  const calculatedOutstanding = Math.round((accrued - paidTotal) * 100) / 100;
+  const importedOutstanding = Number(student.agentAmount || student.agencyAmount || student.partnerAmount || 0);
+  const outstanding = partnerValueIsChecked(student.agentPaymentAmountManual)
+    ? importedOutstanding
+    : calculatedOutstanding;
+  return {
+    hasAuthor,
+    rate,
+    receiptsTotal,
+    accrued,
+    payment1Amount,
+    payment1Date,
+    payment2Amount,
+    payment2Date,
+    paidTotal,
+    outstanding: Math.round(outstanding * 100) / 100,
+    lastReceiptDate: receipts.map((item) => item.date).filter(Boolean).sort().reverse()[0] || "",
+    basis: `Агентские ${rate}%${hasAuthor ? " — авторский курс" : " — курс без автора"}`
+  };
+}
+
+function collectPartnerDirectExpenseEntries(data = {}) {
+  const entries = [];
+  const seen = new Set();
+  (data.collections?.students || []).forEach((student) => {
+    (Array.isArray(student?.directExpenses) ? student.directExpenses : []).forEach((expense, index) => {
+      if (!expense || typeof expense !== "object") return;
+      const id = String(expense.id || "").trim()
+        || `student:${String(student.id || student.uid || "")}:${index}`;
+      if (seen.has(id)) return;
+      seen.add(id);
+      entries.push({ expense, student, id });
+    });
+  });
+  (data.collections?.directExpenses || []).forEach((expense, index) => {
+    if (!expense || typeof expense !== "object") return;
+    const id = String(expense.id || "").trim() || `global:${index}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    entries.push({ expense, student: null, id });
+  });
+  return entries;
+}
+
+function isPartnerPaymentSettled(row = {}) {
+  return Boolean(row.historicalPayment
+    || normalizePartnerDate(row.paid)
+    || normalizePartnerIdentity(row.actStatus) === "получен");
+}
+
+function getPartnerPaymentStatus(row = {}) {
+  if (isPartnerPaymentSettled(row)) return { key: "paid", label: "Оплачено" };
+  if (row.paymentDateMissing) return { key: "missing-date", label: "Дата оплаты не указана" };
+  if (Number(row.amount || 0) < 0) return { key: "overpayment", label: "Переплата" };
+  const actStatus = normalizePartnerIdentity(row.actStatus);
+  if (actStatus === "отправлен") return { key: "act-sent", label: "Акт отправлен" };
+  if (row.act) return { key: "act-formed", label: "Акт сформирован" };
+  if (row.recommendation) return { key: "payable", label: "К выплате" };
+  return { key: "waiting", label: "Ожидает рекомендации" };
+}
+
+function createPartnerPaymentRow(source = {}) {
+  const date = normalizePartnerDate(source.date);
+  const paid = normalizePartnerDate(source.paid);
+  const row = {
+    id: String(source.id || crypto.randomBytes(8).toString("hex")),
+    date,
+    paid,
+    source: String(source.source || "").trim(),
+    description: String(source.description || "Оплата сотруднику").trim(),
+    comment: String(source.comment || "").trim(),
+    amount: Math.round(Number(source.amount || 0) * 100) / 100,
+    recommendation: Boolean(source.recommendation),
+    act: Boolean(source.act),
+    actStatus: String(source.actStatus || "").trim(),
+    historicalPayment: Boolean(source.historicalPayment),
+    paymentDateMissing: Boolean(source.paymentDateMissing)
+  };
+  const status = getPartnerPaymentStatus(row);
+  const effectiveDate = paid || date;
+  return {
+    ...row,
+    statusKey: status.key,
+    status: status.label,
+    effectiveDate,
+    monthKey: effectiveDate ? effectiveDate.slice(0, 7) : "undated"
+  };
+}
+
+function formatPartnerMonthLabel(monthKey) {
+  if (!/^\d{4}-\d{2}$/u.test(String(monthKey || ""))) return "Без даты";
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" })
+    .format(new Date(Date.UTC(year, month - 1, 1)))
+    .replace(/^./u, (character) => character.toLocaleUpperCase("ru-RU"));
+}
+
+function buildPartnerPaymentData(data = {}, employeeContracts = []) {
+  const names = new Set(employeeContracts.map((employee) => normalizePartnerIdentity(employee?.name)).filter(Boolean));
+  const rows = [];
+  collectPartnerDirectExpenseEntries(data).forEach(({ expense, student, id }) => {
+    if (!names.has(normalizePartnerIdentity(expense.note))) return;
+    rows.push(createPartnerPaymentRow({
+      id: `direct:${id}`,
+      date: expense.date,
+      paid: expense.paid,
+      source: "Прямые затраты",
+      description: expense.type || "Оплата сотруднику",
+      comment: [expense.additionalInfo, student?.name].map((value) => String(value || "").trim()).filter(Boolean).join(" · "),
+      amount: expense.amount,
+      recommendation: String(expense.recommendation || "").trim() === "+",
+      act: String(expense.act || "").trim() === "+",
+      actStatus: expense.actStatus
+    }));
+  });
+  (data.collections?.generalExpenses || []).forEach((expense, index) => {
+    if (!names.has(normalizePartnerIdentity(expense?.counterparty))) return;
+    const recommendationProvided = expense.recommendation !== undefined && expense.recommendation !== null;
+    rows.push(createPartnerPaymentRow({
+      id: `general:${String(expense.id || index)}`,
+      date: expense.date,
+      paid: expense.paid,
+      source: "Общие затраты",
+      description: expense.workType || "Оплата сотруднику",
+      comment: expense.description,
+      amount: expense.amount,
+      recommendation: recommendationProvided ? String(expense.recommendation || "").trim() === "+" : true,
+      act: String(expense.act || "").trim() === "+",
+      actStatus: expense.actStatus
+    }));
+  });
+  (data.collections?.students || []).forEach((student) => {
+    if (!names.has(normalizePartnerIdentity(student?.agent))) return;
+    const calculation = calculatePartnerStudentCommission(student, data);
+    [1, 2].forEach((number) => {
+      const amount = calculation[`payment${number}Amount`];
+      const paymentDate = calculation[`payment${number}Date`];
+      if (!amount && !paymentDate) return;
+      const prefix = `agentPayment${number}`;
+      rows.push(createPartnerPaymentRow({
+        id: `partner:${String(student.id || student.uid || "")}:paid${number}`,
+        date: paymentDate,
+        paid: paymentDate,
+        source: `База слушателей · выплата ${number}`,
+        description: student[`${prefix}Basis`] || `Агентская выплата ${number}`,
+        comment: student[`${prefix}Comment`] || [student.name, student.program].filter(Boolean).join(" · "),
+        amount,
+        recommendation: true,
+        act: String(student[`${prefix}Act`] || "").trim() === "+",
+        actStatus: student[`${prefix}ActStatus`],
+        historicalPayment: Boolean(paymentDate),
+        paymentDateMissing: amount > 0 && !paymentDate
+      }));
+    });
+    const hasDueMetadata = [
+      "agentPaymentDate", "agentPaymentComment", "agentPaymentBasis",
+      "agentPaymentRecommendation", "agentPaymentAct", "agentPaymentActStatus", "agentPaymentPaid"
+    ].some((key) => String(student[key] || "").trim());
+    if (partnerValueIsChecked(student.agentPaymentAutoDisabled)
+      || (calculation.outstanding === 0 && !hasDueMetadata)) return;
+    const recommendationProvided = student.agentPaymentRecommendation !== undefined
+      && student.agentPaymentRecommendation !== null;
+    rows.push(createPartnerPaymentRow({
+      id: `partner:${String(student.id || student.uid || "")}:due`,
+      date: student.agentPaymentDate || calculation.lastReceiptDate,
+      paid: student.agentPaymentPaid,
+      source: "База слушателей",
+      description: student.agentPaymentBasis || calculation.basis,
+      comment: student.agentPaymentComment || [
+        student.name,
+        student.program,
+        `Поступления: ${calculation.receiptsTotal}`,
+        `Начислено: ${calculation.accrued}`
+      ].filter(Boolean).join(" · "),
+      amount: calculation.outstanding,
+      recommendation: recommendationProvided
+        ? String(student.agentPaymentRecommendation || "").trim() === "+"
+        : true,
+      act: String(student.agentPaymentAct || "").trim() === "+",
+      actStatus: student.agentPaymentActStatus
+    }));
+  });
+  rows.sort((left, right) => (
+    String(right.effectiveDate || "").localeCompare(String(left.effectiveDate || ""), "ru")
+    || String(left.source || "").localeCompare(String(right.source || ""), "ru", { sensitivity: "base" })
+    || String(left.id || "").localeCompare(String(right.id || ""), "ru")
+  ));
+  const currentPayable = Math.round(rows.reduce((sum, row) => (
+    row.statusKey === "payable" && row.amount > 0 ? sum + row.amount : sum
+  ), 0) * 100) / 100;
+  const totalPaid = Math.round(rows.reduce((sum, row) => (
+    row.statusKey === "paid" && row.amount > 0 ? sum + row.amount : sum
+  ), 0) * 100) / 100;
+  const monthlyMap = new Map();
+  rows.filter((row) => row.statusKey === "paid" && /^\d{4}-\d{2}/u.test(row.effectiveDate)).forEach((row) => {
+    const monthKey = row.effectiveDate.slice(0, 7);
+    monthlyMap.set(monthKey, Math.round(((monthlyMap.get(monthKey) || 0) + row.amount) * 100) / 100);
+  });
+  const monthly = [...monthlyMap.entries()]
+    .sort(([left], [right]) => right.localeCompare(left, "ru"))
+    .slice(0, 12)
+    .map(([month, amount]) => ({ month, label: formatPartnerMonthLabel(month), amount }));
+  const groupMap = new Map();
+  rows.forEach((row) => {
+    const group = groupMap.get(row.monthKey) || {
+      month: row.monthKey,
+      label: formatPartnerMonthLabel(row.monthKey),
+      count: 0,
+      total: 0,
+      payable: 0,
+      paid: 0
+    };
+    group.count += 1;
+    group.total += row.amount;
+    if (row.statusKey === "payable" && row.amount > 0) group.payable += row.amount;
+    if (row.statusKey === "paid" && row.amount > 0) group.paid += row.amount;
+    groupMap.set(row.monthKey, group);
+  });
+  const groups = [...groupMap.values()]
+    .map((group) => ({
+      ...group,
+      total: Math.round(group.total * 100) / 100,
+      payable: Math.round(group.payable * 100) / 100,
+      paid: Math.round(group.paid * 100) / 100
+    }))
+    .sort((left, right) => {
+      if (left.month === "undated") return 1;
+      if (right.month === "undated") return -1;
+      return right.month.localeCompare(left.month, "ru");
+    });
+  return {
+    summary: {
+      currentPayable,
+      totalPaid,
+      lastPaymentDate: rows.find((row) => row.statusKey === "paid" && row.effectiveDate)?.effectiveDate || "",
+      paymentRows: rows.length
+    },
+    monthly,
+    groups,
+    rows
+  };
+}
+
+async function resolvePartnerPortalContext(authUser) {
+  if (authUser?.role !== "partner") {
+    const error = new Error("Кабинет доступен только партнёру.");
+    error.statusCode = 403;
+    throw error;
+  }
+  const data = await readPartnerSharedData();
+  const employee = selectPartnerEmployee(data.collections?.contracts, {
+    employeeId: authUser.employeeId,
+    login: authUser.login
+  });
+  if (!employee) {
+    const error = new Error("Карточка сотрудника для этой учётной записи не найдена.");
+    error.statusCode = 403;
+    throw error;
+  }
+  const normalizedLogin = normalizePartnerIdentity(employee.login || authUser.login);
+  const normalizedName = normalizePartnerIdentity(employee.name);
+  const relatedContracts = (data.collections?.contracts || []).filter((contract) => (
+    normalizePartnerIdentity(contract?.login) === normalizedLogin
+    && normalizePartnerIdentity(contract?.name) === normalizedName
+  ));
+  return { data, employee, relatedContracts: relatedContracts.length ? relatedContracts : [employee] };
+}
+
+function normalizePartnerMaterialsUrl(value) {
+  const source = String(value || DEFAULT_PARTNER_MATERIALS_URL).trim();
+  let parsed;
+  try {
+    parsed = new URL(source);
+  } catch {
+    throw new Error("Укажите корректную публичную ссылку на папку материалов.");
+  }
+  const host = parsed.hostname.toLocaleLowerCase("ru-RU");
+  if (parsed.protocol !== "https:" || !["disk.yandex.ru", "yadi.sk"].includes(host)) {
+    throw new Error("Для материалов партнёра укажите HTTPS-ссылку Яндекс-Диска.");
+  }
+  return parsed.toString();
+}
+
+function normalizePartnerMaterialsPath(value) {
+  const parts = String(value || "")
+    .replace(/\\/gu, "/")
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.some((part) => part === "." || part === "..")) {
+    throw new Error("Некорректный путь в папке материалов.");
+  }
+  return parts.length ? `/${parts.join("/")}` : "/";
+}
+
+function safePartnerExternalUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    return parsed.protocol === "https:" ? parsed.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+async function readPartnerMaterialsFolder(requestedPath = "/") {
+  const publicUrl = normalizePartnerMaterialsUrl(
+    serverSettings.partnerMaterialsUrl || DEFAULT_PARTNER_MATERIALS_URL
+  );
+  const folderPath = normalizePartnerMaterialsPath(requestedPath);
+  const apiUrl = new URL("https://cloud-api.yandex.net/v1/disk/public/resources");
+  apiUrl.searchParams.set("public_key", publicUrl);
+  apiUrl.searchParams.set("path", folderPath);
+  apiUrl.searchParams.set("limit", "200");
+  apiUrl.searchParams.set("fields", "name,type,mime,size,modified,file,preview,_embedded.items");
+  const response = JSON.parse((await requestBuffer(apiUrl, {
+    headers: { Accept: "application/json" },
+    maxResponseBytes: 2 * 1024 * 1024,
+    errorPrefix: "Не удалось прочитать папку материалов"
+  })).toString("utf8"));
+  const items = Array.isArray(response?._embedded?.items) ? response._embedded.items : [];
+  return {
+    publicUrl,
+    path: folderPath,
+    name: String(response?.name || "Материалы партнёра"),
+    items: items.map((item) => {
+      const name = String(item?.name || "").trim();
+      const childPath = normalizePartnerMaterialsPath(`${folderPath}/${name}`);
+      return {
+        name,
+        type: item?.type === "dir" ? "dir" : "file",
+        path: childPath,
+        mime: String(item?.mime_type || item?.mime || ""),
+        size: Math.max(0, Number(item?.size) || 0),
+        modified: String(item?.modified || ""),
+        downloadUrl: safePartnerExternalUrl(item?.file),
+        previewUrl: safePartnerExternalUrl(item?.preview)
+      };
+    }).filter((item) => item.name).sort((left, right) => (
+      Number(right.type === "dir") - Number(left.type === "dir")
+      || left.name.localeCompare(right.name, "ru", { numeric: true, sensitivity: "base" })
+    ))
+  };
+}
+
+async function handlePartnerPhoto(req, res, authUser) {
+  try {
+    const { employee } = await resolvePartnerPortalContext(authUser);
+    const photoData = String(employee.photoData || "").trim();
+    if (photoData.startsWith("data:image/")) {
+      const { bytes, mime } = parseDataUrl(photoData);
+      res.writeHead(200, {
+        ...CORS_HEADERS,
+        "Content-Type": mime,
+        "Content-Length": bytes.length,
+        "Cache-Control": "no-store"
+      });
+      if (req.method !== "HEAD") res.end(bytes);
+      else res.end();
+      return;
+    }
+    const photoPath = String(employee.photoPath || "").trim();
+    if (!photoPath) {
+      sendError(res, 404, "Фото не найдено.");
+      return;
+    }
+    const photoUrl = new URL("http://localhost/api/student-photo");
+    photoUrl.searchParams.set("path", photoPath);
+    await handleStudentSourcePhoto(req, res, photoUrl);
+  } catch (error) {
+    sendError(res, Number(error?.statusCode) || 404, error.message);
+  }
+}
+
+async function handlePartnerFeedback(req, res, authUser) {
+  const context = await resolvePartnerPortalContext(authUser);
+  const body = await readJsonBody(req, 32 * 1024);
+  const subject = normalizeEmailSubject(body.subject || "Обратная связь из кабинета партнёра");
+  const message = String(body.message || "").replace(/\r\n?/gu, "\n").trim();
+  if (subject.length < 3) throw new Error("Укажите тему сообщения.");
+  if (message.length < 10) throw new Error("Сообщение должно содержать не менее 10 символов.");
+  if (message.length > 10000) throw new Error("Сообщение превышает допустимый размер.");
+  const throttleKey = String(context.employee.id || authUser.employeeId || authUser.login);
+  const lastSentAt = Number(partnerFeedbackLastSentAt.get(throttleKey) || 0);
+  if (Date.now() - lastSentAt < 30000) {
+    const error = new Error("Повторное сообщение можно отправить через 30 секунд.");
+    error.statusCode = 429;
+    throw error;
+  }
+  const emailText = [
+    "Сообщение из кабинета партнёра Цифровизации Плюс",
+    "",
+    `Партнёр: ${String(context.employee.name || "").trim()}`,
+    `Договор: ${String(context.employee.contractNo || "не указан").trim()}`,
+    `Логин СДО: ${String(context.employee.login || "").trim()}`,
+    `Email: ${String(context.employee.email || "не указан").trim()}`,
+    `Телефон: ${String(context.employee.phone || "не указан").trim()}`,
+    "",
+    message
+  ].join("\n");
+  await sendEmailThroughConfiguredMailbox({
+    to: PARTNER_FEEDBACK_RECIPIENT,
+    subject: `Партнёр: ${subject}`,
+    message: emailText
+  });
+  partnerFeedbackLastSentAt.set(throttleKey, Date.now());
+  await safelyAppendAuditEntry({
+    action: "Отправлена обратная связь",
+    area: "Кабинет партнёра",
+    entityType: "employee",
+    entityId: context.employee.id,
+    entityLabel: context.employee.name,
+    details: `Получатель: ${PARTNER_FEEDBACK_RECIPIENT}; тема: ${subject}`
+  }, authUser, req);
+  sendJson(res, 200, { ok: true, message: "Сообщение отправлено." });
+}
+
+async function handlePartnerPortalRequest(req, res, authUser, requestUrl) {
+  if (authUser?.role !== "partner") {
+    sendError(res, 403, "Кабинет доступен только партнёру.");
+    return;
+  }
+  try {
+    if (req.method === "GET" && requestUrl.pathname === "/api/partner/portal") {
+      const context = await resolvePartnerPortalContext(authUser);
+      const payments = buildPartnerPaymentData(context.data, context.relatedContracts);
+      sendJson(res, 200, {
+        profile: buildPartnerProfile(context.employee),
+        payments,
+        materials: {
+          publicUrl: normalizePartnerMaterialsUrl(
+            serverSettings.partnerMaterialsUrl || DEFAULT_PARTNER_MATERIALS_URL
+          )
+        },
+        feedbackRecipient: PARTNER_FEEDBACK_RECIPIENT
+      });
+      return;
+    }
+    if (req.method === "GET" && requestUrl.pathname === "/api/partner/materials") {
+      sendJson(res, 200, await readPartnerMaterialsFolder(requestUrl.searchParams.get("path") || "/"));
+      return;
+    }
+    if (["GET", "HEAD"].includes(req.method) && requestUrl.pathname === "/api/partner/photo") {
+      await handlePartnerPhoto(req, res, authUser);
+      return;
+    }
+    if (req.method === "POST" && requestUrl.pathname === "/api/partner/feedback") {
+      await handlePartnerFeedback(req, res, authUser);
+      return;
+    }
+    sendError(res, 404, "Раздел кабинета не найден.");
+  } catch (error) {
+    sendError(res, Number(error?.statusCode) || 400, error.message);
+  }
+}
+
 async function publicSystemDocumentSettings(includeAdminSettings = false) {
   const localDocuments = await getLocalSystemDocumentsAvailability();
   const trainingEndNotificationConfiguration = await readTrainingEndNotificationConfiguration()
@@ -20755,6 +21503,9 @@ async function publicSystemDocumentSettings(includeAdminSettings = false) {
       serverSettings.yandexDiskPassword || process.env.YANDEX_DISK_PASSWORD
     ),
     autoSave: Boolean(serverSettings.yandexDiskAutoSave),
+    partnerMaterialsUrl: normalizePartnerMaterialsUrl(
+      serverSettings.partnerMaterialsUrl || DEFAULT_PARTNER_MATERIALS_URL
+    ),
     emailHost: String(serverSettings.studentApplicationsEmailHost || "").trim(),
     emailPort: Number(serverSettings.studentApplicationsEmailPort || 993),
     emailSmtpHost: String(
@@ -20799,6 +21550,11 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       DEFAULT_STUDENT_DATABASE_WEBDAV_PATH
     );
     const basePath = normalizeWebDavPath(body.basePath || DEFAULT_YANDEX_DISK_BASE_PATH);
+    const partnerMaterialsUrl = normalizePartnerMaterialsUrl(
+      body.partnerMaterialsUrl
+        || serverSettings.partnerMaterialsUrl
+        || DEFAULT_PARTNER_MATERIALS_URL
+    );
     const localDocumentsRoot = String(
       body.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
     ).trim();
@@ -21025,6 +21781,7 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     const patch = {
       studentDatabaseWebDavPath: databasePath,
       yandexDiskBasePath: basePath.replace(/^\/+/, ""),
+      partnerMaterialsUrl,
       localDocumentsRoot: normalizedLocalDocumentsRoot,
       localDocumentsRootIsSystemParent: Boolean(body.localDocumentsRootIsSystemParent),
       openDocumentsLocally: body.openDocumentsLocally !== false,
@@ -21537,6 +22294,14 @@ async function route(req, res) {
     sendError(res, 401, "Требуется вход в систему.");
     return;
   }
+  if (requestUrl.pathname.startsWith("/api/partner/")) {
+    await handlePartnerPortalRequest(req, res, authUser, requestUrl);
+    return;
+  }
+  if (authUser?.role === "partner" && protectedRequest) {
+    sendError(res, 403, "Этот раздел недоступен в кабинете партнёра.");
+    return;
+  }
   try {
     if (await handleAuditRequest(req, res, authUser, requestUrl)) return;
   } catch (error) {
@@ -21923,6 +22688,10 @@ module.exports = {
   getTrainingEndNotificationCandidates,
   buildTrainingEndNotificationMessage,
   maybeRunTrainingEndNotificationJob,
+  selectPartnerEmployee,
+  buildPartnerProfile,
+  buildPartnerPaymentData,
+  normalizePartnerMaterialsUrl,
   getRemainingSmtpTimeout,
   writeSmtpSocketData,
   route

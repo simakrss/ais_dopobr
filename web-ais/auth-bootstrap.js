@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260822-live-powerbi-statistics-v1";
+  const AUTH_BUILD = "20260822-partner-portal-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);
@@ -354,12 +354,16 @@
     setAuthenticatedSession(user, expiresAt);
     window.AIS_AUTH_API = Object.freeze({ request, appUrl });
     installAuthenticatedFetch();
-    renderLoading();
+    renderLoading(user?.role === "partner" ? "Загрузка кабинета партнёра..." : "Загрузка системы...");
     try {
-      await loadScript("data/program-registry.js");
-      await loadScript("data/program-payment-registry.js");
-      await loadScript("data/seed.js");
-      await loadScript("app.js");
+      if (user?.role === "partner") {
+        await loadScript("partner-app.js");
+      } else {
+        await loadScript("data/program-registry.js");
+        await loadScript("data/program-payment-registry.js");
+        await loadScript("data/seed.js");
+        await loadScript("app.js");
+      }
       applicationStarted = true;
     } catch (error) {
       window.clearTimeout(sessionExpiryTimer);

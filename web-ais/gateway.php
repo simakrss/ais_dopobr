@@ -319,6 +319,55 @@ function gateway_require_admin(array $user): void
     }
 }
 
+function gateway_partner_record_rank(array $employee): int
+{
+    $section = mb_strtolower(trim((string) ($employee['section'] ?? $employee['status'] ?? '')), 'UTF-8');
+    $sectionScore = str_contains($section, 'действующ') || $section === 'действует'
+        ? 3000000000
+        : (str_contains($section, 'партнер') || str_contains($section, 'партнёр')
+            ? 2000000000
+            : 1000000000);
+    $date = trim((string) ($employee['endDate'] ?? $employee['contractDate'] ?? ''));
+    $timestamp = $date !== '' ? strtotime($date) : false;
+    return $sectionScore + ($timestamp === false ? 0 : (int) floor($timestamp / 86400));
+}
+
+function gateway_find_partner_employee(string $login, string $password): ?array
+{
+    $normalizedLogin = ais_auth_normalize_login($login);
+    if ($normalizedLogin === '' || $password === '') {
+        return null;
+    }
+    $data = gateway_shared_state_read_data(gateway_record_locks_pdo());
+    $contracts = is_array($data['collections']['contracts'] ?? null)
+        ? $data['collections']['contracts']
+        : [];
+    $matches = [];
+    foreach ($contracts as $employee) {
+        if (!is_array($employee)
+            || ais_auth_normalize_login((string) ($employee['login'] ?? '')) !== $normalizedLogin) {
+            continue;
+        }
+        $expectedPassword = (string) ($employee['password'] ?? '');
+        if ($expectedPassword === '' || !hash_equals($expectedPassword, $password)) {
+            continue;
+        }
+        $employeeId = trim((string) ($employee['id'] ?? ''));
+        if ($employeeId === '') {
+            $employeeId = substr(hash('sha256', $normalizedLogin . '|' . (string) ($employee['contractNo'] ?? '')), 0, 24);
+        }
+        $employee['id'] = $employeeId;
+        $matches[] = $employee;
+    }
+    if ($matches === []) {
+        return null;
+    }
+    usort($matches, static fn (array $left, array $right): int =>
+        gateway_partner_record_rank($right) <=> gateway_partner_record_rank($left)
+    );
+    return $matches[0];
+}
+
 function gateway_read_json_body(string $body): array
 {
     $payload = json_decode($body, true);
@@ -333,6 +382,19 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
     if ($method === 'POST' && $path === '/api/auth/login') {
         $payload = gateway_read_json_body($body);
         $user = ais_auth_login((string) ($payload['login'] ?? ''), (string) ($payload['password'] ?? ''));
+        if ($user === null) {
+            try {
+                $employee = gateway_find_partner_employee(
+                    (string) ($payload['login'] ?? ''),
+                    (string) ($payload['password'] ?? '')
+                );
+                if ($employee !== null) {
+                    $user = ais_auth_login_partner($employee);
+                }
+            } catch (Throwable $partnerLoginError) {
+                error_log('Partner authentication is temporarily unavailable: ' . $partnerLoginError->getMessage());
+            }
+        }
         if ($user === null) {
             gateway_fail(401, 'Неверный логин или пароль.');
         }
@@ -376,6 +438,9 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
     }
     if ($method === 'POST' && $path === '/api/auth/profile') {
         $user = gateway_require_user();
+        if ((string) ($user['role'] ?? '') === 'partner') {
+            gateway_fail(403, 'Данные партнёра изменяются в карточке сотрудника.');
+        }
         $payload = gateway_read_json_body($body);
         $updated = ais_auth_update_profile(
             (string) $user['id'],
@@ -397,6 +462,9 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
     }
     if ($method === 'POST' && $path === '/api/auth/password') {
         $user = gateway_require_user();
+        if ((string) ($user['role'] ?? '') === 'partner') {
+            gateway_fail(403, 'Пароль партнёра изменяется в реквизитах СДО сотрудника.');
+        }
         $payload = gateway_read_json_body($body);
         ais_auth_change_password(
             (string) $user['id'],
@@ -561,7 +629,10 @@ function gateway_handle_admin_users(string $method, string $path, string $body, 
 
 function gateway_serve_protected_data(string $path): void
 {
-    gateway_require_user();
+    $user = gateway_require_user();
+    if ((string) ($user['role'] ?? '') === 'partner') {
+        gateway_fail(403, 'Раздел недоступен в кабинете партнёра.');
+    }
     $runtimeDataRoot = dirname(__DIR__, 2) . '/lms-runtime/data';
     $dataRoot = is_dir($runtimeDataRoot) ? $runtimeDataRoot : __DIR__ . '/data';
     $allowed = [
@@ -1863,7 +1934,12 @@ try {
     $authenticatedHeaders['x-ais-user-login'] = (string) ($currentUser['login'] ?? '');
     $authenticatedHeaders['x-ais-user-name'] = (string) ($currentUser['name'] ?? '');
     $authenticatedHeaders['x-ais-user-role'] = (string) ($currentUser['role'] ?? 'manager');
+    $authenticatedHeaders['x-ais-employee-id'] = (string) ($currentUser['employeeId'] ?? '');
     $authenticatedHeaders['x-ais-session-id'] = hash('sha256', (string) session_id());
+    if ((string) ($currentUser['role'] ?? '') === 'partner'
+        && !str_starts_with($requestPath, '/api/partner/')) {
+        gateway_fail(403, 'Раздел недоступен в кабинете партнёра.');
+    }
     gateway_handle_audit_routes($method, $requestPath, $body, $currentUser);
     gateway_handle_admin_users($method, $requestPath, $body, $currentUser);
     gateway_handle_admin_external_services($method, $requestPath, $currentUser);

@@ -54,6 +54,7 @@ function Test-DeployablePath([string]$PathValue) {
     "favicon.ico",
     "gateway.php",
     "index.html",
+    "partner-app.js",
     "send-mail.php",
     "services/ocr/server.py",
     "server-cli.js",

@@ -185,6 +185,7 @@ function ais_auth_public_user(array $user): array
         'status' => (string) ($user['status'] ?? 'blocked'),
         'email' => (string) ($user['email'] ?? ''),
         'phone' => (string) ($user['phone'] ?? ''),
+        'employeeId' => (string) ($user['employeeId'] ?? ''),
         'createdAt' => (string) ($user['createdAt'] ?? ''),
         'updatedAt' => (string) ($user['updatedAt'] ?? ''),
         'lastLoginAt' => (string) ($user['lastLoginAt'] ?? ''),
@@ -206,6 +207,19 @@ function ais_auth_find_user(array $users, string $idOrLogin): ?array
 function ais_auth_current_user(): ?array
 {
     ais_auth_start_session();
+    $partner = is_array($_SESSION['ais_partner'] ?? null) ? $_SESSION['ais_partner'] : null;
+    if ($partner !== null) {
+        $expiresAt = (int) ($_SESSION['ais_expires_at'] ?? 0);
+        if ($expiresAt <= time()) {
+            ais_auth_logout();
+            return null;
+        }
+        return ais_auth_public_user([
+            ...$partner,
+            'role' => 'partner',
+            'status' => 'active',
+        ]);
+    }
     $userId = (string) ($_SESSION['ais_user_id'] ?? '');
     if ($userId === '') {
         return null;
@@ -255,9 +269,40 @@ function ais_auth_login(string $login, string $password): ?array
     $users[$matchIndex]['updatedAt'] = (string) ($users[$matchIndex]['updatedAt'] ?? gmdate('c'));
     ais_auth_write_users($users);
     session_regenerate_id(true);
+    unset($_SESSION['ais_partner']);
     $_SESSION['ais_user_id'] = (string) $users[$matchIndex]['id'];
     $_SESSION['ais_expires_at'] = time() + AIS_AUTH_SESSION_TTL_SECONDS;
     return ais_auth_public_user($users[$matchIndex]);
+}
+
+function ais_auth_login_partner(array $employee): array
+{
+    ais_auth_start_session();
+    $employeeId = trim((string) ($employee['id'] ?? ''));
+    $login = trim((string) ($employee['login'] ?? ''));
+    $name = trim((string) ($employee['name'] ?? ''));
+    if ($employeeId === '' || $login === '' || $name === '') {
+        throw new InvalidArgumentException('Карточка партнёра заполнена не полностью.');
+    }
+    $now = gmdate('c');
+    $partner = [
+        'id' => 'partner:' . $employeeId,
+        'employeeId' => $employeeId,
+        'login' => mb_substr($login, 0, 160, 'UTF-8'),
+        'name' => mb_substr($name, 0, 240, 'UTF-8'),
+        'role' => 'partner',
+        'status' => 'active',
+        'email' => mb_substr(trim((string) ($employee['email'] ?? '')), 0, 160, 'UTF-8'),
+        'phone' => mb_substr(trim((string) ($employee['phone'] ?? '')), 0, 40, 'UTF-8'),
+        'createdAt' => $now,
+        'updatedAt' => $now,
+        'lastLoginAt' => $now,
+    ];
+    session_regenerate_id(true);
+    unset($_SESSION['ais_user_id']);
+    $_SESSION['ais_partner'] = $partner;
+    $_SESSION['ais_expires_at'] = time() + AIS_AUTH_SESSION_TTL_SECONDS;
+    return ais_auth_public_user($partner);
 }
 
 function ais_auth_logout(): void
