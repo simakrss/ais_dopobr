@@ -6007,6 +6007,83 @@ async function closeStudentApplicationsMySqlStorage() {
   if (pool) await pool.end().catch(() => {});
 }
 
+async function readPublicDownloadStatistics() {
+  const pool = await getStudentApplicationsMySqlPool();
+  if (!pool) throw new Error("Подключение к базе сайта не настроено.");
+  const [rows] = await pool.query({
+    sql: `
+      SELECT
+        'generated' AS event_type,
+        YEAR(time) AS event_year,
+        MONTH(time) AS event_month,
+        COALESCE(NULLIF(TRIM(file), ''), 'Без имени') AS file_name,
+        COUNT(*) AS event_count,
+        MIN(time) AS first_at,
+        MAX(time) AS last_at
+      FROM wp_dae_links
+      WHERE time IS NOT NULL AND YEAR(time) BETWEEN 2000 AND 2100
+      GROUP BY YEAR(time), MONTH(time), COALESCE(NULLIF(TRIM(file), ''), 'Без имени')
+      UNION ALL
+      SELECT
+        'downloaded' AS event_type,
+        YEAR(time_used) AS event_year,
+        MONTH(time_used) AS event_month,
+        COALESCE(NULLIF(TRIM(file), ''), 'Без имени') AS file_name,
+        COUNT(*) AS event_count,
+        MIN(time_used) AS first_at,
+        MAX(time_used) AS last_at
+      FROM wp_dae_links
+      WHERE time_used IS NOT NULL AND YEAR(time_used) BETWEEN 2000 AND 2100
+      GROUP BY YEAR(time_used), MONTH(time_used), COALESCE(NULLIF(TRIM(file), ''), 'Без имени')
+      ORDER BY event_year, event_month, event_type, file_name
+    `,
+    timeout: 10000
+  });
+  const events = (Array.isArray(rows) ? rows : []).flatMap((row) => {
+    const year = Math.floor(Number(row.event_year));
+    const month = Math.floor(Number(row.event_month));
+    const count = Math.max(0, Math.floor(Number(row.event_count) || 0));
+    if (year < 2000 || year > 2100 || month < 1 || month > 12 || !count) return [];
+    return [{
+      kind: row.event_type === "downloaded" ? "downloaded" : "generated",
+      year,
+      month,
+      file: String(row.file_name || "Без имени").trim().slice(0, 240) || "Без имени",
+      count,
+      firstAt: row.first_at instanceof Date ? row.first_at.toISOString() : String(row.first_at || ""),
+      lastAt: row.last_at instanceof Date ? row.last_at.toISOString() : String(row.last_at || "")
+    }];
+  });
+  const years = [...new Set(events.map((event) => event.year))].sort((left, right) => right - left);
+  const summary = events.reduce((result, event) => {
+    result[event.kind] += event.count;
+    const firstTime = Date.parse(event.firstAt);
+    const lastTime = Date.parse(event.lastAt);
+    if (Number.isFinite(firstTime) && (!result.firstAt || firstTime < Date.parse(result.firstAt))) {
+      result.firstAt = new Date(firstTime).toISOString();
+    }
+    if (Number.isFinite(lastTime) && (!result.lastAt || lastTime > Date.parse(result.lastAt))) {
+      result.lastAt = new Date(lastTime).toISOString();
+    }
+    return result;
+  }, { generated: 0, downloaded: 0, firstAt: "", lastAt: "" });
+  return {
+    source: "База сайта",
+    refreshedAt: new Date().toISOString(),
+    years,
+    summary,
+    events
+  };
+}
+
+async function handlePublicDownloadStatistics(res) {
+  try {
+    sendJson(res, 200, await readPublicDownloadStatistics());
+  } catch (error) {
+    sendError(res, 503, `Не удалось получить статистику скачиваний: ${error.message}`);
+  }
+}
+
 function getSharedRecordLocksMySqlConnectionString() {
   const environmentConnection = String(
     process.env.AIS_RECORD_LOCKS_MYSQL_CONNECTION_STRING || ""
@@ -20649,6 +20726,10 @@ async function route(req, res) {
     && requestUrl.pathname === "/api/settings/system-documents"
   ) {
     await handleSystemDocumentSettings(req, res, authUser);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/statistics/downloads") {
+    await handlePublicDownloadStatistics(res);
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/local-documents/open-folder") {

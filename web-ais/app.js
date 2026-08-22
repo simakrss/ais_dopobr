@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.212",
+    version: "1.7.213",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.213",
+      releasedAt: "2026-08-22",
+      changes: [
+        "Добавлен раздел «Статистика» с интерактивными отчётами по доходам, расходам, Ассистенту и скачиваниям на основе модели Power BI."
+      ]
+    },
     {
       version: "1.7.212",
       releasedAt: "2026-08-22",
@@ -1909,7 +1916,7 @@
   const TAB_ORDER_SETTINGS_KEY = "ais-dopobr-tab-orders-v1";
   const NAV_ITEM_ORDER_KEY = "ais-dopobr-nav-item-order-v1";
   const NAV_ITEM_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-nav-item-order-layout-v1";
-  const NAV_ITEM_ORDER_LAYOUT_VERSION = "issued-documents-after-programs";
+  const NAV_ITEM_ORDER_LAYOUT_VERSION = "statistics-before-settings";
   const DASHBOARD_STATUS_ORDER_KEY = "ais-dopobr-dashboard-status-order-v1";
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-dashboard-status-layout-v1";
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION = "enrollment-study-first";
@@ -3315,6 +3322,52 @@ MAX - https://bizvmax.ru/zifra_plus
     { key: "general", label: "Общие затраты" },
     { key: "profit", label: "Прибыль" }
   ];
+  const statisticsTabs = Object.freeze([
+    { id: "income", label: "Доходы" },
+    { id: "expenses", label: "Расходы" },
+    { id: "assistant", label: "Ассистент и скачивания" }
+  ]);
+  const POWER_BI_ASSISTANT_SNAPSHOT = Object.freeze({
+    sourceUpdatedAt: "2026-07-19T21:40:58",
+    firstEventAt: "2022-06-12T07:55:12",
+    installs: 3702,
+    removals: 232,
+    actionsTotal: 77038,
+    monthlyInstalls: [
+      ["2022-06", 37], ["2022-07", 64], ["2022-08", 16], ["2022-09", 17],
+      ["2022-10", 71], ["2022-11", 71], ["2022-12", 142], ["2023-01", 77],
+      ["2023-02", 75], ["2023-03", 98], ["2023-04", 73], ["2023-05", 119],
+      ["2023-06", 57], ["2023-07", 24], ["2023-08", 25], ["2023-09", 68],
+      ["2023-10", 39], ["2023-11", 311], ["2023-12", 125], ["2024-01", 73],
+      ["2024-02", 76], ["2024-03", 84], ["2024-04", 133], ["2024-05", 73],
+      ["2024-06", 62], ["2024-07", 43], ["2024-08", 25], ["2024-09", 42],
+      ["2024-10", 52], ["2024-11", 157], ["2024-12", 58], ["2025-01", 39],
+      ["2025-02", 49], ["2025-03", 45], ["2025-04", 149], ["2025-05", 51],
+      ["2025-06", 29], ["2025-07", 28], ["2025-08", 5], ["2025-09", 40],
+      ["2025-10", 81], ["2025-11", 205], ["2025-12", 131], ["2026-01", 92],
+      ["2026-02", 43], ["2026-03", 72], ["2026-04", 108], ["2026-05", 71],
+      ["2026-06", 66], ["2026-07", 11]
+    ],
+    topActions: [
+      ["Вставка без форматирования", 19544],
+      ["Обновление полей", 8798],
+      ["Открытие списка мастера шаблонов", 8133],
+      ["Запуск мастера шаблонов", 7639],
+      ["Выделение текста фоном", 4031],
+      ["Отправка письма по электронной почте", 3754],
+      ["Открытие настроек мастера шаблонов", 2912],
+      ["Открытие пути сохранения документов", 2559],
+      ["Вставка или обновление оглавления", 1908],
+      ["Вставка изображения со сканера", 1526],
+      ["Открытие редактора полей", 1308],
+      ["Вставка номера литературы", 1199]
+    ],
+    versions: [
+      ["2.73", 1656], ["2.75", 459], ["2.90 (26.12.2025)", 229], ["2.79", 204],
+      ["2.83", 202], ["2.74", 162], ["2.80", 145], ["2.88 (30.08.2025)", 133],
+      ["2.82", 118], ["2.76", 116]
+    ]
+  });
   const GENERAL_EXPENSE_SECTIONS = Object.freeze(["Физлица", "Организации"]);
   const CONTRACT_SECTIONS = Object.freeze([
     "ДЕЙСТВУЮЩИЕ ДОГОВОРА",
@@ -3447,6 +3500,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "generalExpenses", label: "Общие затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8c0-2 3.6-3.5 8-3.5S20 6 20 8s-3.6 3.5-8 3.5S4 10 4 8z"></path><path d="M4 8v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V8"></path><path d="M4 12v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5v-4"></path></svg>' },
     { id: "inventory", label: "Запасы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8l8-4 8 4-8 4z"></path><path d="M4 8v8l8 4 8-4V8"></path><path d="M12 12v8"></path><path d="M8 6l8 4"></path></svg>' },
     { id: "documentConstructor", label: "Конструктор документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><path d="M4 7h2"></path><path d="M4 11h2"></path><path d="M4 15h2"></path></svg>' },
+    { id: "statistics", label: "Статистика", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20V10"></path><path d="M10 20V4"></path><path d="M16 20v-7"></path><path d="M22 20H2"></path><path d="M3 7l6-4 6 6 6-5"></path></svg>' },
     { id: "settings", label: "Настройки", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 17h2"></path><path d="M10 17h10"></path><circle cx="8" cy="17" r="2"></circle></svg>' },
     { id: "admin", label: "Админка", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 4.6-2.8 7.9-7 10-4.2-2.1-7-5.4-7-10V6z"></path><circle cx="12" cy="12" r="2.4"></circle><path d="M12 8.2v1.2"></path><path d="M12 14.6v1.2"></path><path d="M15.8 12h-1.2"></path><path d="M9.4 12H8.2"></path><path d="M14.7 9.3l-.9.9"></path><path d="M10.2 13.8l-.9.9"></path><path d="M14.7 14.7l-.9-.9"></path><path d="M10.2 10.2l-.9-.9"></path></svg>' }
   ];
@@ -4412,6 +4466,23 @@ MAX - https://bizvmax.ru/zifra_plus
     activeContractTemplateFieldId: "",
     pendingContractTemplateFieldFocus: "",
     financeChart: { revenue: true, direct: true, general: true },
+    statistics: {
+      tab: "income",
+      filters: {
+        year: String(new Date().getFullYear()),
+        month: "",
+        program: "",
+        source: "",
+        expenseType: "",
+        query: ""
+      },
+      downloads: {
+        loading: false,
+        loaded: false,
+        error: "",
+        data: null
+      }
+    },
     financeDetails: {
       open: false,
       metric: "all",
@@ -8191,8 +8262,16 @@ MAX - https://bizvmax.ru/zifra_plus
         if (programsIndex >= 0 && issuedDocumentsIndex >= 0) {
           order.splice(issuedDocumentsIndex, 1);
           order.splice(order.indexOf("programs") + 1, 0, "issuedDocuments");
-          localStorage.setItem(NAV_ITEM_ORDER_KEY, JSON.stringify(order));
         }
+        const statisticsIndex = order.indexOf("statistics");
+        if (statisticsIndex >= 0) order.splice(statisticsIndex, 1);
+        const settingsIndex = order.indexOf("settings");
+        const adminIndex = order.indexOf("admin");
+        const insertIndex = settingsIndex >= 0
+          ? settingsIndex
+          : (adminIndex >= 0 ? adminIndex : order.length);
+        order.splice(insertIndex, 0, "statistics");
+        localStorage.setItem(NAV_ITEM_ORDER_KEY, JSON.stringify(order));
         localStorage.setItem(NAV_ITEM_ORDER_LAYOUT_VERSION_KEY, NAV_ITEM_ORDER_LAYOUT_VERSION);
       }
       return order;
@@ -8507,6 +8586,13 @@ MAX - https://bizvmax.ru/zifra_plus
     ) {
       queueMicrotask(() => loadExternalServices());
     }
+    if (
+      state.view === "statistics"
+      && !state.statistics.downloads.loaded
+      && !state.statistics.downloads.loading
+    ) {
+      queueMicrotask(() => loadStatisticsDownloads());
+    }
   }
 
   function fitMainRegistryTablesToViewport() {
@@ -8558,6 +8644,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderView() {
     if (!canAccessView(state.view)) return renderDashboard();
     if (state.view === "dashboard") return renderDashboard();
+    if (state.view === "statistics") return renderStatistics();
     if (state.view === "issuedDocuments") return renderIssuedDocumentsRegistry();
     if (state.view === "documentConstructor") return renderDocumentConstructor();
     if (state.view === "settings") return renderSettings();
@@ -8568,6 +8655,643 @@ MAX - https://bizvmax.ru/zifra_plus
       return renderDashboard();
     }
     return renderCollection(config);
+  }
+
+  function statisticsDateParts(value) {
+    const timestamp = parseTableSortDate(value);
+    if (timestamp === null) return null;
+    const date = new Date(timestamp);
+    return {
+      year: String(date.getUTCFullYear()),
+      month: String(date.getUTCMonth() + 1).padStart(2, "0"),
+      key: `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`
+    };
+  }
+
+  function getStatisticsFinanceRows() {
+    const studentsById = new Map((state.data.collections.students || [])
+      .map((student) => [String(student.id || ""), student]));
+    const enrichStudentRow = (row) => {
+      const student = studentsById.get(String(row.sourceId || "")) || null;
+      return {
+        ...row,
+        program: String(student?.program || row.context || "Не задано").trim() || "Не задано",
+        source: String(student?.source || "Не задано").trim() || "Не задано",
+        studentId: String(student?.id || row.sourceId || ""),
+        studentUid: String(student?.uid || row.uid || "")
+      };
+    };
+    const income = getFinanceReceiptRows().map(enrichStudentRow);
+    const direct = getFinanceDirectExpenseRows().map((row) => {
+      const enriched = enrichStudentRow(row);
+      return {
+        ...enriched,
+        expenseGroup: "Прямые затраты",
+        expenseType: String(row.context || "Не задано").trim() || "Не задано"
+      };
+    });
+    const general = getFinanceGeneralExpenseRows().map((row) => ({
+      ...row,
+      program: "",
+      source: "",
+      studentId: "",
+      studentUid: "",
+      expenseGroup: "Общие затраты",
+      expenseType: String(row.context || "Не задано").trim() || "Не задано"
+    }));
+    return { income, direct, general };
+  }
+
+  function statisticsRowMatches(row, options = {}) {
+    const filters = state.statistics.filters;
+    const date = statisticsDateParts(row.date);
+    if (filters.year && date?.year !== filters.year) return false;
+    if (filters.month && date?.month !== filters.month) return false;
+    if (filters.program && row.program !== filters.program) return false;
+    if (filters.source && row.source !== filters.source) return false;
+    if (options.expense && filters.expenseType && row.expenseType !== filters.expenseType) return false;
+    const query = String(filters.query || "").trim().toLocaleLowerCase("ru-RU");
+    if (options.query && query) {
+      const haystack = [
+        row.date, row.category, row.uid, row.subject, row.context, row.description,
+        row.program, row.source, row.expenseGroup, row.expenseType, row.amount
+      ].join(" ").toLocaleLowerCase("ru-RU");
+      if (!haystack.includes(query)) return false;
+    }
+    return true;
+  }
+
+  function formatStatisticsInteger(value) {
+    return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(Number(value) || 0);
+  }
+
+  function statisticsMonthLabel(key) {
+    const [year, month] = String(key || "").split("-").map(Number);
+    if (!year || !month) return key || "—";
+    return new Intl.DateTimeFormat("ru-RU", { month: "short", year: "2-digit", timeZone: "UTC" })
+      .format(new Date(Date.UTC(year, month - 1, 1)))
+      .replace(" г.", "");
+  }
+
+  function buildStatisticsMonthlySeries(incomeRows = [], expenseRows = []) {
+    const grouped = new Map();
+    const ensure = (key) => {
+      if (!grouped.has(key)) grouped.set(key, { key, income: 0, direct: 0, general: 0, expenses: 0 });
+      return grouped.get(key);
+    };
+    incomeRows.forEach((row) => {
+      const key = statisticsDateParts(row.date)?.key;
+      if (key) ensure(key).income += Number(row.amount || 0);
+    });
+    expenseRows.forEach((row) => {
+      const key = statisticsDateParts(row.date)?.key;
+      if (!key) return;
+      const item = ensure(key);
+      const amount = Math.abs(Number(row.amount || 0));
+      if (row.expenseGroup === "Общие затраты") item.general += amount;
+      else item.direct += amount;
+      item.expenses += amount;
+    });
+    const result = [...grouped.values()]
+      .sort((left, right) => left.key.localeCompare(right.key))
+      .map((item) => ({ ...item, label: statisticsMonthLabel(item.key) }));
+    return state.statistics.filters.year ? result : result.slice(-24);
+  }
+
+  function renderStatisticsKpis(items = []) {
+    return `
+      <div class="statistics-kpi-grid">
+        ${items.map((item) => `
+          <article class="statistics-kpi-card tone-${escapeAttr(item.tone || "teal")}">
+            <span>${escapeHtml(item.label)}</span>
+            <strong>${escapeHtml(item.value)}</strong>
+            ${item.note ? `<small>${escapeHtml(item.note)}</small>` : ""}
+          </article>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function renderStatisticsSeriesChart(series = [], metrics = [], options = {}) {
+    if (!series.length || !metrics.length) {
+      return `<div class="empty-state compact"><span>Нет данных для выбранного периода.</span></div>`;
+    }
+    const maxValue = Math.max(
+      ...series.flatMap((item) => metrics.map((metric) => Math.abs(Number(item[metric.key] || 0)))),
+      1
+    );
+    const valueLabel = (value) => options.money
+      ? `${formatStatisticsInteger(Number(value || 0) / 1000)} т.р.`
+      : formatStatisticsInteger(value);
+    return `
+      <div class="statistics-chart">
+        <div class="statistics-chart-scroll">
+          <div class="statistics-chart-columns" style="--statistics-series-count:${Math.max(1, series.length)}">
+            ${series.map((item) => `
+              <div class="statistics-chart-period">
+                <div class="statistics-chart-bars" style="grid-template-columns:repeat(${metrics.length}, minmax(16px, 1fr))">
+                  ${metrics.map((metric) => {
+                    const value = Number(item[metric.key] || 0);
+                    const height = value ? Math.max(4, (Math.abs(value) / maxValue) * 100) : 0;
+                    return `
+                      <span class="statistics-chart-bar-column" title="${escapeAttr(`${metric.label}: ${options.money ? money(value) : formatStatisticsInteger(value)}`)}">
+                        <small>${escapeHtml(valueLabel(value))}</small>
+                        <span class="statistics-chart-bar-area"><i class="tone-${escapeAttr(metric.tone)}" style="height:${height}%"></i></span>
+                      </span>
+                    `;
+                  }).join("")}
+                </div>
+                <span>${escapeHtml(item.label || statisticsMonthLabel(item.key))}</span>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+        <div class="statistics-chart-legend">
+          ${metrics.map((metric) => `<span><i class="tone-${escapeAttr(metric.tone)}"></i>${escapeHtml(metric.label)}</span>`).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function compactStatisticsItems(items = [], limit = 7) {
+    const sorted = items
+      .filter((item) => Number(item.value) > 0)
+      .sort((left, right) => Number(right.value) - Number(left.value));
+    if (sorted.length <= limit) return sorted;
+    const visible = sorted.slice(0, Math.max(1, limit - 1));
+    visible.push({
+      label: "Прочие",
+      value: sorted.slice(Math.max(1, limit - 1)).reduce((sum, item) => sum + Number(item.value || 0), 0)
+    });
+    return visible;
+  }
+
+  function renderStatisticsDonut(title, items = [], options = {}) {
+    const compact = compactStatisticsItems(items, options.limit || 7);
+    const total = compact.reduce((sum, item) => sum + Number(item.value || 0), 0);
+    if (!total) return `<div class="empty-state compact"><span>Нет данных для диаграммы.</span></div>`;
+    const colors = ["#158070", "#2f6fed", "#e4a11b", "#c84c4c", "#7b61c9", "#3e9b45", "#64748b"];
+    let cursor = 0;
+    const segments = compact.map((item, index) => {
+      const start = cursor;
+      cursor += (Number(item.value) / total) * 100;
+      return `${colors[index % colors.length]} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
+    }).join(",");
+    const formatValue = options.money ? money : formatStatisticsInteger;
+    return `
+      <div class="statistics-donut-layout">
+        <div class="statistics-donut" style="background:conic-gradient(${segments})" role="img" aria-label="${escapeAttr(title)}">
+          <span><strong>${escapeHtml(formatValue(total))}</strong><small>всего</small></span>
+        </div>
+        <div class="statistics-donut-legend">
+          ${compact.map((item, index) => `
+            <span title="${escapeAttr(item.label)}"><i style="background:${colors[index % colors.length]}"></i><b>${escapeHtml(item.label)}</b><em>${escapeHtml(formatValue(item.value))}</em></span>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderStatisticsRanking(items = [], options = {}) {
+    const rows = items
+      .filter((item) => Number(item.value) > 0)
+      .sort((left, right) => Number(right.value) - Number(left.value))
+      .slice(0, options.limit || 12);
+    if (!rows.length) return `<div class="empty-state compact"><span>Нет данных для выбранного периода.</span></div>`;
+    const max = Math.max(...rows.map((item) => Number(item.value || 0)), 1);
+    const formatValue = options.money ? money : formatStatisticsInteger;
+    return `
+      <div class="statistics-ranking">
+        ${rows.map((item) => `
+          <div class="statistics-ranking-row" title="${escapeAttr(item.label)}">
+            <span>${escapeHtml(item.label)}</span>
+            <span class="statistics-ranking-track"><i style="width:${Math.max(3, (Number(item.value) / max) * 100)}%"></i></span>
+            <strong>${escapeHtml(formatValue(item.value))}</strong>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function buildStatisticsIncomeReport() {
+    const finance = getStatisticsFinanceRows();
+    const income = finance.income.filter((row) => statisticsRowMatches(row));
+    const expenses = [...finance.direct, ...finance.general]
+      .filter((row) => statisticsRowMatches(row, { expense: false }));
+    const incomeTotal = income.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    const expenseTotal = expenses.reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0);
+    const studentIds = new Set(income.map((row) => row.studentId || row.studentUid || row.subject).filter(Boolean));
+    const sourceStudents = new Map();
+    income.forEach((row) => {
+      const source = row.source || "Не задано";
+      if (!sourceStudents.has(source)) sourceStudents.set(source, new Set());
+      sourceStudents.get(source).add(row.studentId || row.studentUid || row.subject || row.id);
+    });
+    const programs = new Map();
+    income.forEach((row) => {
+      const name = row.program || "Не задано";
+      if (!programs.has(name)) programs.set(name, { program: name, income: 0, students: new Set() });
+      const item = programs.get(name);
+      item.income += Number(row.amount || 0);
+      item.students.add(row.studentId || row.studentUid || row.subject || row.id);
+    });
+    return {
+      income,
+      expenses,
+      incomeTotal,
+      expenseTotal,
+      profit: incomeTotal - expenseTotal,
+      studentCount: studentIds.size,
+      monthly: buildStatisticsMonthlySeries(income, expenses),
+      sources: [...sourceStudents.entries()].map(([label, values]) => ({ label, value: values.size })),
+      programs: [...programs.values()]
+        .map((item) => ({ program: item.program, students: item.students.size, income: item.income }))
+        .sort((left, right) => right.income - left.income)
+    };
+  }
+
+  function renderStatisticsIncome() {
+    const report = buildStatisticsIncomeReport();
+    const profitability = report.incomeTotal
+      ? Math.round((report.profit / report.incomeTotal) * 1000) / 10
+      : 0;
+    return `
+      ${renderStatisticsKpis([
+        { label: "Суммарные доходы", value: money(report.incomeTotal), note: "Фактические поступления", tone: "teal" },
+        { label: "Количество слушателей", value: formatStatisticsInteger(report.studentCount), note: "С поступлениями в периоде", tone: "blue" },
+        { label: "Суммарные затраты", value: money(report.expenseTotal), note: "Прямые и общие", tone: "amber" },
+        { label: "Финансовый результат", value: money(report.profit), note: `Рентабельность: ${percent(profitability)}`, tone: report.profit < 0 ? "red" : "green" }
+      ])}
+      <div class="statistics-two-column">
+        <section class="panel statistics-visual-panel statistics-wide-panel">
+          <div class="panel-head"><div><p class="eyebrow">Динамика</p><h2>Доходы и затраты по месяцам</h2></div></div>
+          ${renderStatisticsSeriesChart(report.monthly, [
+            { key: "income", label: "Доходы", tone: "teal" },
+            { key: "direct", label: "Прямые затраты", tone: "red" },
+            { key: "general", label: "Общие затраты", tone: "amber" }
+          ], { money: true })}
+        </section>
+        <section class="panel statistics-visual-panel">
+          <div class="panel-head"><div><p class="eyebrow">Клиенты</p><h2>Источники заявок</h2></div></div>
+          ${renderStatisticsDonut("Источники заявок", report.sources)}
+        </section>
+      </div>
+      <section class="panel statistics-table-panel">
+        <div class="panel-head"><div><p class="eyebrow">Программы</p><h2>Доходы по программам</h2></div><span class="statistics-row-count">${report.programs.length}</span></div>
+        ${report.programs.length ? `
+          <div class="table-wrap statistics-table-wrap">
+            <table class="data-table statistics-table">
+              <thead><tr><th>Программа</th><th>Слушателей</th><th class="statistics-number-cell">Доход</th></tr></thead>
+              <tbody>${report.programs.map((row) => `
+                <tr><td>${escapeHtml(row.program)}</td><td>${formatStatisticsInteger(row.students)}</td><td class="statistics-number-cell">${money(row.income)}</td></tr>
+              `).join("")}</tbody>
+            </table>
+          </div>
+        ` : `<div class="empty-state compact"><span>Нет поступлений для выбранных условий.</span></div>`}
+      </section>
+    `;
+  }
+
+  function buildStatisticsExpenseReport() {
+    const finance = getStatisticsFinanceRows();
+    const rows = [...finance.direct, ...finance.general]
+      .filter((row) => statisticsRowMatches(row, { expense: true, query: true }))
+      .sort((left, right) => (parseTableSortDate(right.date) || 0) - (parseTableSortDate(left.date) || 0));
+    const direct = rows.filter((row) => row.expenseGroup === "Прямые затраты");
+    const general = rows.filter((row) => row.expenseGroup === "Общие затраты");
+    const total = rows.reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0);
+    const groupBy = (key) => {
+      const grouped = new Map();
+      rows.forEach((row) => {
+        const label = String(row[key] || "Не задано").trim() || "Не задано";
+        grouped.set(label, (grouped.get(label) || 0) + Math.abs(Number(row.amount || 0)));
+      });
+      return [...grouped.entries()].map(([label, value]) => ({ label, value }));
+    };
+    return {
+      rows,
+      directTotal: direct.reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0),
+      generalTotal: general.reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0),
+      total,
+      categories: groupBy("expenseType"),
+      counterparties: groupBy("subject"),
+      monthly: buildStatisticsMonthlySeries([], rows)
+    };
+  }
+
+  function renderStatisticsExpenses() {
+    const report = buildStatisticsExpenseReport();
+    const pagination = getTablePagination("statisticsExpenses", report.rows.length);
+    const pageRows = report.rows.slice(pagination.start, pagination.end);
+    return `
+      ${renderStatisticsKpis([
+        { label: "Всего затрат", value: money(report.total), note: `${formatStatisticsInteger(report.rows.length)} операций`, tone: "red" },
+        { label: "Прямые затраты", value: money(report.directTotal), note: "По слушателям и программам", tone: "amber" },
+        { label: "Общие затраты", value: money(report.generalTotal), note: "Физлица и организации", tone: "blue" },
+        { label: "Средняя операция", value: money(report.rows.length ? report.total / report.rows.length : 0), note: "В выбранном периоде", tone: "teal" }
+      ])}
+      <div class="statistics-two-column">
+        <section class="panel statistics-visual-panel">
+          <div class="panel-head"><div><p class="eyebrow">Структура</p><h2>Виды затрат</h2></div></div>
+          ${renderStatisticsRanking(report.categories, { money: true, limit: 10 })}
+        </section>
+        <section class="panel statistics-visual-panel">
+          <div class="panel-head"><div><p class="eyebrow">Контрагенты</p><h2>Крупнейшие получатели</h2></div></div>
+          ${renderStatisticsRanking(report.counterparties, { money: true, limit: 10 })}
+        </section>
+      </div>
+      <section class="panel statistics-table-panel">
+        <div class="panel-head"><div><p class="eyebrow">Детализация</p><h2>Операции затрат</h2></div><span class="statistics-row-count">${report.rows.length}</span></div>
+        ${pageRows.length ? `
+          <div class="table-wrap statistics-table-wrap">
+            <table class="data-table statistics-table">
+              <thead><tr><th>Дата</th><th>Раздел</th><th>Вид затрат</th><th>Слушатель / контрагент</th><th>Описание</th><th class="statistics-number-cell">Сумма</th></tr></thead>
+              <tbody>${pageRows.map((row) => `
+                <tr>
+                  <td>${escapeHtml(dateRu(row.date) || "—")}</td>
+                  <td>${escapeHtml(row.expenseGroup)}</td>
+                  <td>${escapeHtml(row.expenseType)}</td>
+                  <td>${escapeHtml(row.subject || "—")}</td>
+                  <td>${escapeHtml(row.description || row.program || "—")}</td>
+                  <td class="statistics-number-cell">${money(Math.abs(Number(row.amount || 0)))}</td>
+                </tr>
+              `).join("")}</tbody>
+            </table>
+          </div>
+          ${renderTablePagination("statisticsExpenses", report.rows.length, pagination)}
+        ` : `<div class="empty-state compact"><span>Операции не найдены.</span></div>`}
+      </section>
+    `;
+  }
+
+  function getFilteredStatisticsDownloadEvents() {
+    const filters = state.statistics.filters;
+    return (state.statistics.downloads.data?.events || []).filter((event) => (
+      (!filters.year || String(event.year) === filters.year)
+      && (!filters.month || String(event.month).padStart(2, "0") === filters.month)
+    ));
+  }
+
+  function buildStatisticsAssistantReport() {
+    const filters = state.statistics.filters;
+    const installsByMonth = POWER_BI_ASSISTANT_SNAPSHOT.monthlyInstalls
+      .filter(([key]) => (
+        (!filters.year || key.startsWith(`${filters.year}-`))
+        && (!filters.month || key.endsWith(`-${filters.month}`))
+      ));
+    const downloadEvents = getFilteredStatisticsDownloadEvents();
+    const monthly = new Map(installsByMonth.map(([key, installs]) => [key, {
+      key,
+      label: statisticsMonthLabel(key),
+      installs: Number(installs || 0),
+      downloads: 0
+    }]));
+    const files = new Map();
+    let generated = 0;
+    let downloaded = 0;
+    downloadEvents.forEach((event) => {
+      const key = `${event.year}-${String(event.month).padStart(2, "0")}`;
+      if (!monthly.has(key)) monthly.set(key, { key, label: statisticsMonthLabel(key), installs: 0, downloads: 0 });
+      if (event.kind === "downloaded") {
+        monthly.get(key).downloads += Number(event.count || 0);
+        files.set(event.file, (files.get(event.file) || 0) + Number(event.count || 0));
+        downloaded += Number(event.count || 0);
+      } else {
+        generated += Number(event.count || 0);
+      }
+    });
+    return {
+      installs: installsByMonth.reduce((sum, [, value]) => sum + Number(value || 0), 0),
+      generated,
+      downloaded,
+      monthly: [...monthly.values()].sort((left, right) => left.key.localeCompare(right.key)),
+      files: [...files.entries()].map(([label, value]) => ({ label, value })),
+      actions: POWER_BI_ASSISTANT_SNAPSHOT.topActions.map(([label, value]) => ({ label, value })),
+      versions: POWER_BI_ASSISTANT_SNAPSHOT.versions.map(([label, value]) => ({ label, value }))
+    };
+  }
+
+  function renderStatisticsAssistant() {
+    const report = buildStatisticsAssistantReport();
+    const downloads = state.statistics.downloads;
+    const snapshotDate = dateRu(POWER_BI_ASSISTANT_SNAPSHOT.sourceUpdatedAt.slice(0, 10));
+    return `
+      <div class="statistics-source-note">
+        <strong>Источники данных</strong>
+        <span>Ассистент: срез Power BI по ${escapeHtml(snapshotDate)}. Скачивания файлов: текущая база сайта.</span>
+      </div>
+      ${renderStatisticsKpis([
+        { label: "Установки Ассистента", value: formatStatisticsInteger(report.installs), note: state.statistics.filters.year || "За весь период", tone: "teal" },
+        { label: "Удаления Ассистента", value: formatStatisticsInteger(POWER_BI_ASSISTANT_SNAPSHOT.removals), note: "За весь срез Power BI", tone: "red" },
+        { label: "Действия в Ассистенте", value: formatStatisticsInteger(POWER_BI_ASSISTANT_SNAPSHOT.actionsTotal), note: "За весь срез Power BI", tone: "blue" },
+        { label: "Скачано файлов", value: downloads.loading ? "…" : formatStatisticsInteger(report.downloaded), note: downloads.error ? "Источник временно недоступен" : `${formatStatisticsInteger(report.generated)} ссылок сформировано`, tone: "amber" }
+      ])}
+      ${downloads.error ? `<div class="statistics-inline-error" role="alert">${escapeHtml(downloads.error)}</div>` : ""}
+      <div class="statistics-two-column">
+        <section class="panel statistics-visual-panel statistics-wide-panel">
+          <div class="panel-head"><div><p class="eyebrow">Динамика</p><h2>Установки и скачивания</h2></div></div>
+          ${downloads.loading
+            ? `<div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Получение статистики скачиваний…</span></div>`
+            : renderStatisticsSeriesChart(report.monthly, [
+              { key: "installs", label: "Установки Ассистента", tone: "teal" },
+              { key: "downloads", label: "Скачивания файлов", tone: "blue" }
+            ])}
+        </section>
+        <section class="panel statistics-visual-panel">
+          <div class="panel-head"><div><p class="eyebrow">Версии</p><h2>Установки версий Ассистента</h2></div></div>
+          ${renderStatisticsDonut("Версии Ассистента", report.versions, { limit: 7 })}
+        </section>
+      </div>
+      <div class="statistics-two-column">
+        <section class="panel statistics-visual-panel">
+          <div class="panel-head"><div><p class="eyebrow">Использование</p><h2>Популярные действия</h2></div></div>
+          ${renderStatisticsRanking(report.actions, { limit: 12 })}
+        </section>
+        <section class="panel statistics-visual-panel">
+          <div class="panel-head"><div><p class="eyebrow">Файлы</p><h2>Структура скачиваний</h2></div></div>
+          ${downloads.loading
+            ? `<div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Обновление…</span></div>`
+            : renderStatisticsRanking(report.files, { limit: 12 })}
+        </section>
+      </div>
+    `;
+  }
+
+  function getStatisticsFilterOptions() {
+    const finance = getStatisticsFinanceRows();
+    const years = new Set(POWER_BI_ASSISTANT_SNAPSHOT.monthlyInstalls.map(([key]) => key.slice(0, 4)));
+    [...finance.income, ...finance.direct, ...finance.general].forEach((row) => {
+      const year = statisticsDateParts(row.date)?.year;
+      if (year) years.add(year);
+    });
+    (state.statistics.downloads.data?.years || []).forEach((year) => years.add(String(year)));
+    return {
+      years: [...years].sort((left, right) => right.localeCompare(left)),
+      programs: unique((state.data.collections.students || [])
+        .map((student) => String(student.program || "").trim()).filter(Boolean))
+        .sort((left, right) => left.localeCompare(right, "ru", { sensitivity: "base" })),
+      sources: unique((state.data.collections.students || [])
+        .map((student) => String(student.source || "").trim()).filter(Boolean))
+        .sort((left, right) => left.localeCompare(right, "ru", { sensitivity: "base" })),
+      expenseTypes: unique([...finance.direct, ...finance.general]
+        .map((row) => row.expenseType).filter(Boolean))
+        .sort((left, right) => left.localeCompare(right, "ru", { sensitivity: "base" }))
+    };
+  }
+
+  function renderStatistics() {
+    const filters = state.statistics.filters;
+    const options = getStatisticsFilterOptions();
+    const tabs = getOrderedTabs("statistics", statisticsTabs);
+    const activeTab = statisticsTabs.some((tab) => tab.id === state.statistics.tab)
+      ? state.statistics.tab
+      : "income";
+    const monthNames = Array.from({ length: 12 }, (_, index) => ({
+      value: String(index + 1).padStart(2, "0"),
+      label: new Intl.DateTimeFormat("ru-RU", { month: "long", timeZone: "UTC" })
+        .format(new Date(Date.UTC(2020, index, 1)))
+    }));
+    return `
+      <section class="statistics-page" data-statistics-page>
+        <section class="panel statistics-controls-panel">
+          <div class="statistics-heading">
+            <div><p class="eyebrow">Аналитика учебного центра</p><h2>Интерактивная статистика</h2></div>
+            <div class="statistics-heading-actions">
+              ${activeTab === "assistant" ? `<button class="ghost-button" data-action="refresh-statistics-downloads" type="button" ${state.statistics.downloads.loading ? "disabled" : ""}>Обновить данные</button>` : ""}
+              <button class="ghost-button" data-action="export-statistics" type="button">Экспорт CSV</button>
+            </div>
+          </div>
+          <nav class="statistics-tabs" data-orderable-tabs="statistics" role="tablist" aria-label="Разделы статистики">
+            ${tabs.map((tab) => `
+              <button class="${activeTab === tab.id ? "active" : ""}" data-action="switch-statistics-tab" data-statistics-tab="${escapeAttr(tab.id)}" data-orderable-tab="${escapeAttr(tab.id)}" data-orderable-tab-default-index="${tab.defaultTabIndex}" type="button" role="tab" aria-selected="${activeTab === tab.id ? "true" : "false"}">${escapeHtml(tab.label)}</button>
+            `).join("")}
+          </nav>
+          <div class="statistics-filters">
+            <label><span>Год</span><select data-statistics-filter="year"><option value="">Все годы</option>${options.years.map((year) => `<option value="${escapeAttr(year)}" ${filters.year === year ? "selected" : ""}>${escapeHtml(year)}</option>`).join("")}</select></label>
+            <label><span>Месяц</span><select data-statistics-filter="month"><option value="">Все месяцы</option>${monthNames.map((month) => `<option value="${month.value}" ${filters.month === month.value ? "selected" : ""}>${escapeHtml(month.label)}</option>`).join("")}</select></label>
+            ${activeTab !== "assistant" ? `
+              <label class="statistics-filter-wide"><span>Программа</span><select data-statistics-filter="program"><option value="">Все программы</option>${options.programs.map((program) => `<option value="${escapeAttr(program)}" ${filters.program === program ? "selected" : ""}>${escapeHtml(program)}</option>`).join("")}</select></label>
+              <label><span>Источник</span><select data-statistics-filter="source"><option value="">Все источники</option>${options.sources.map((source) => `<option value="${escapeAttr(source)}" ${filters.source === source ? "selected" : ""}>${escapeHtml(source)}</option>`).join("")}</select></label>
+            ` : ""}
+            ${activeTab === "expenses" ? `
+              <label><span>Вид затрат</span><select data-statistics-filter="expenseType"><option value="">Все виды</option>${options.expenseTypes.map((type) => `<option value="${escapeAttr(type)}" ${filters.expenseType === type ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}</select></label>
+              <label class="statistics-filter-wide"><span>Поиск</span><input data-statistics-filter="query" value="${escapeAttr(filters.query)}" placeholder="Контрагент, описание, сумма" autocomplete="off"></label>
+            ` : ""}
+            <button class="ghost-button statistics-reset-button" data-action="reset-statistics-filters" type="button">Сбросить</button>
+          </div>
+        </section>
+        <div class="statistics-report">
+          ${activeTab === "expenses"
+            ? renderStatisticsExpenses()
+            : (activeTab === "assistant" ? renderStatisticsAssistant() : renderStatisticsIncome())}
+        </div>
+      </section>
+    `;
+  }
+
+  async function loadStatisticsDownloads(options = {}) {
+    const downloads = state.statistics.downloads;
+    if (downloads.loading || (downloads.loaded && !options.force)) return;
+    downloads.loading = true;
+    downloads.error = "";
+    if (state.view === "statistics") render();
+    try {
+      const response = await fetch(photoApiUrl("/api/statistics/downloads"), {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "X-Requested-With": "AIS-Web" }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      downloads.data = payload;
+      downloads.loaded = true;
+    } catch (error) {
+      downloads.error = error.message || "Не удалось получить статистику скачиваний.";
+      downloads.loaded = true;
+    } finally {
+      downloads.loading = false;
+      if (state.view === "statistics") render();
+    }
+  }
+
+  function exportStatisticsReport() {
+    const tab = state.statistics.tab;
+    let fileSuffix = tab;
+    let content = "";
+    if (tab === "income") {
+      const rows = buildStatisticsIncomeReport().programs;
+      content = [
+        ["Программа", "Слушателей", "Доход"].map(csvCell).join(";"),
+        ...rows.map((row) => [row.program, row.students, row.income].map(csvCell).join(";"))
+      ].join("\n");
+    } else if (tab === "expenses") {
+      const rows = buildStatisticsExpenseReport().rows;
+      content = [
+        ["Дата", "Раздел", "Вид затрат", "Слушатель / контрагент", "Описание", "Сумма"].map(csvCell).join(";"),
+        ...rows.map((row) => [row.date, row.expenseGroup, row.expenseType, row.subject, row.description, Math.abs(Number(row.amount || 0))].map(csvCell).join(";"))
+      ].join("\n");
+    } else {
+      const report = buildStatisticsAssistantReport();
+      content = [
+        ["Популярные действия Ассистента", "Количество"].map(csvCell).join(";"),
+        ...report.actions.map((row) => [row.label, row.value].map(csvCell).join(";")),
+        "",
+        ["Скачанный файл", "Количество"].map(csvCell).join(";"),
+        ...report.files.map((row) => [row.label, row.value].map(csvCell).join(";"))
+      ].join("\n");
+      fileSuffix = "assistant-downloads";
+    }
+    download(
+      `statistics-${fileSuffix}-${new Date().toISOString().slice(0, 10)}.csv`,
+      `\ufeff${content}`,
+      "text/csv;charset=utf-8"
+    );
+  }
+
+  function bindStatisticsEvents() {
+    if (state.view !== "statistics") return;
+    document.querySelectorAll("[data-action='switch-statistics-tab']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const tab = String(button.dataset.statisticsTab || "");
+        if (!statisticsTabs.some((item) => item.id === tab) || tab === state.statistics.tab) return;
+        state.statistics.tab = tab;
+        state.tablePages.statisticsExpenses = 1;
+        render();
+      });
+    });
+    document.querySelectorAll("[data-statistics-filter]").forEach((control) => {
+      const apply = () => {
+        const key = String(control.dataset.statisticsFilter || "");
+        if (!Object.prototype.hasOwnProperty.call(state.statistics.filters, key)) return;
+        state.statistics.filters[key] = control.value;
+        state.tablePages.statisticsExpenses = 1;
+        render();
+      };
+      control.addEventListener("change", apply);
+      if (control.matches("input")) {
+        control.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          apply();
+        });
+      }
+    });
+    document.querySelector("[data-action='reset-statistics-filters']")?.addEventListener("click", () => {
+      state.statistics.filters = {
+        year: String(new Date().getFullYear()),
+        month: "",
+        program: "",
+        source: "",
+        expenseType: "",
+        query: ""
+      };
+      state.tablePages.statisticsExpenses = 1;
+      render();
+    });
+    document.querySelector("[data-action='export-statistics']")?.addEventListener("click", exportStatisticsReport);
+    document.querySelector("[data-action='refresh-statistics-downloads']")?.addEventListener("click", () => {
+      loadStatisticsDownloads({ force: true });
+    });
   }
 
   function renderDashboard() {
@@ -26255,6 +26979,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindFieldEditHistory();
     bindStudentApplicationsImportEvents();
     bindFinanceDetailsEvents();
+    bindStatisticsEvents();
     bindStudentExpenseEditorEvents();
     bindMoneyInputStepControls(document);
     initializeRecordFormSnapshot(document.getElementById("recordForm"));
