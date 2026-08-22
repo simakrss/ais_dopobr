@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.221",
+    version: "1.7.222",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.222",
+      releasedAt: "2026-08-23",
+      changes: [
+        "В статистику Ассистента добавлен обновляемый график установок и удалений по городам с сортировкой, итогами и общей нулевой линией."
+      ]
+    },
     {
       version: "1.7.221",
       releasedAt: "2026-08-22",
@@ -8929,6 +8936,69 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderStatisticsLocationChart(series = [], totals = {}) {
+    const orderedSeries = [...series]
+      .filter((item) => Number(item.installs || 0) > 0 || Number(item.removals || 0) > 0)
+      .sort((left, right) => (
+        Number(right.installs || 0) - Number(left.installs || 0)
+        || Number(right.removals || 0) - Number(left.removals || 0)
+        || String(left.label || "").localeCompare(String(right.label || ""), "ru", { sensitivity: "base" })
+      ));
+    if (!orderedSeries.length) {
+      return `<div class="empty-state compact"><span>Нет данных по городам для выбранного периода.</span></div>`;
+    }
+    const visibleSeries = orderedSeries.slice(0, 30);
+    const maxValue = Math.max(
+      ...visibleSeries.flatMap((item) => [Number(item.installs || 0), Number(item.removals || 0)]),
+      1
+    );
+    const barHeight = (value) => value ? Math.max(3, Math.round((Number(value) / maxValue) * 210)) : 0;
+    const negativeAreaHeight = Math.max(
+      62,
+      barHeight(Math.max(...visibleSeries.map((item) => Number(item.removals || 0)), 0)) + 8
+    );
+    return `
+      <div class="statistics-location-chart">
+        <div class="statistics-location-chart-main">
+          <div class="statistics-chart-legend statistics-comparison-chart-legend" aria-label="Показатели графика">
+            <strong>Действие</strong>
+            <span><i></i>Установки</span>
+            <span><i class="tone-red"></i>Удаления</span>
+            ${orderedSeries.length > visibleSeries.length ? `<small>Показано ${visibleSeries.length} из ${orderedSeries.length} городов</small>` : ""}
+          </div>
+          <div class="statistics-location-chart-scroll">
+            <div class="statistics-location-chart-periods" style="--statistics-location-count:${Math.max(1, visibleSeries.length)};--statistics-negative-height:${negativeAreaHeight}px">
+              ${visibleSeries.map((item) => {
+                const installs = Math.max(0, Number(item.installs || 0));
+                const removals = Math.max(0, Number(item.removals || 0));
+                const installHeight = barHeight(installs);
+                const removalHeight = barHeight(removals);
+                return `
+                  <div class="statistics-location-chart-period" title="${escapeAttr(`${item.label}: установки ${formatStatisticsInteger(installs)}, удаления ${formatStatisticsInteger(removals)}`)}">
+                    <div class="statistics-location-positive">
+                      ${installs && installHeight < 26 ? `<small>${escapeHtml(formatStatisticsInteger(installs))}</small>` : ""}
+                      <i style="height:${installHeight}px">${installHeight >= 26 ? `<em>${escapeHtml(formatStatisticsInteger(installs))}</em>` : ""}</i>
+                    </div>
+                    <span class="statistics-location-baseline" aria-hidden="true"></span>
+                    <div class="statistics-location-negative">
+                      <i style="height:${removalHeight}px">${removalHeight >= 24 ? `<em>${escapeHtml(formatStatisticsInteger(removals))}</em>` : ""}</i>
+                      ${removals && removalHeight < 24 ? `<small>${escapeHtml(formatStatisticsInteger(removals))}</small>` : ""}
+                    </div>
+                    <span class="statistics-location-label">${escapeHtml(item.label)}</span>
+                  </div>
+                `;
+              }).join("")}
+            </div>
+          </div>
+        </div>
+        <aside class="statistics-comparison-totals" aria-label="Итоги выбранного периода">
+          <div class="statistics-comparison-total"><span>Установки</span><strong>${escapeHtml(formatStatisticsInteger(totals.installs))}</strong></div>
+          <div class="statistics-comparison-total tone-red"><span>Удаления</span><strong>${escapeHtml(formatStatisticsInteger(totals.removals))}</strong></div>
+        </aside>
+      </div>
+    `;
+  }
+
   function compactStatisticsItems(items = [], limit = 7) {
     const sorted = items
       .filter((item) => Number(item.value) > 0)
@@ -9168,6 +9238,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }));
     const files = new Map();
     const versions = new Map();
+    const locations = new Map();
     let generated = 0;
     let downloaded = 0;
     (assistantData.versions || []).forEach((row) => {
@@ -9177,6 +9248,16 @@ MAX - https://bizvmax.ru/zifra_plus
       ) return;
       const label = String(row.label || "Без версии").trim() || "Без версии";
       versions.set(label, (versions.get(label) || 0) + Number(row.value || 0));
+    });
+    (assistantData.locations || []).forEach((row) => {
+      if (
+        (filters.year && String(row.year) !== filters.year)
+        || (filters.month && String(row.month).padStart(2, "0") !== filters.month)
+      ) return;
+      const label = String(row.label || "Не указано").trim() || "Не указано";
+      if (!locations.has(label)) locations.set(label, { label, installs: 0, removals: 0 });
+      locations.get(label).installs += Number(row.installs || 0);
+      locations.get(label).removals += Number(row.removals || 0);
     });
     downloadEvents.forEach((event) => {
       const key = `${event.year}-${String(event.month).padStart(2, "0")}`;
@@ -9206,7 +9287,8 @@ MAX - https://bizvmax.ru/zifra_plus
       monthly: sortStatisticsMonthSeries([...monthly.values()], filters.year ? 12 : 24),
       files: [...files.entries()].map(([label, value]) => ({ label, value })),
       actions: Array.isArray(assistantData.actions) ? assistantData.actions : [],
-      versions: [...versions.entries()].map(([label, value]) => ({ label, value }))
+      versions: [...versions.entries()].map(([label, value]) => ({ label, value })),
+      locations: [...locations.values()]
     };
   }
 
@@ -9247,6 +9329,12 @@ MAX - https://bizvmax.ru/zifra_plus
             : renderStatisticsDonut("Версии Ассистента", report.versions, { limit: 7 })}
         </section>
       </div>
+      <section class="panel statistics-visual-panel">
+        <div class="panel-head"><div><p class="eyebrow">География</p><h2>Установки и удаления Ассистента по городам</h2></div></div>
+        ${assistant.loading
+          ? `<div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Обновление географии…</span></div>`
+          : renderStatisticsLocationChart(report.locations, { installs: report.installs, removals: report.removals })}
+      </section>
       <div class="statistics-two-column">
         <section class="panel statistics-visual-panel">
           <div class="panel-head"><div><p class="eyebrow">Использование</p><h2>Популярные действия</h2></div></div>
