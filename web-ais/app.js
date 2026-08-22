@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.214",
+    version: "1.7.215",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.215",
+      releasedAt: "2026-08-22",
+      changes: [
+        "Исправлены поддержка DOCX, выбор подходящего документа и повторное распознавание отдельных полей без смешивания паспортных данных со СНИЛС."
+      ]
+    },
     {
       version: "1.7.214",
       releasedAt: "2026-08-22",
@@ -35957,7 +35964,7 @@ MAX - https://bizvmax.ru/zifra_plus
             class="ghost-button student-document-recognition-field-region-button"
             data-action="recognize-student-document-field-region"
             type="button"
-            title="Выбрать документ, страницу и область, затем распознать только это поле"
+            title="Повторно распознать поле «${escapeAttr(field.label || key)}»: выбрать документ, страницу и область"
           >
             Источник, область и распознать
           </button>
@@ -36092,6 +36099,96 @@ MAX - https://bizvmax.ru/zifra_plus
         || sourceName === normalizeStudentRecognitionFileName(file?.fileName)
       ));
     }, -1);
+  }
+
+  const studentRecognitionFieldSourcePreferences = Object.freeze({
+    name: { kinds: ["passport", "application"], strict: false },
+    birthDate: { kinds: ["passport", "application"], strict: false },
+    gender: { kinds: ["passport"], strict: false },
+    citizenship: { kinds: ["passport", "application"], strict: false },
+    passportType: { kinds: ["passport"], strict: true },
+    passportNumber: { kinds: ["passport"], strict: true },
+    passportDate: { kinds: ["passport"], strict: true },
+    passportCode: { kinds: ["passport"], strict: true },
+    passportIssuer: { kinds: ["passport"], strict: true },
+    registrationAddress: { kinds: ["passport", "application"], strict: false },
+    snils: { kinds: ["snils"], strict: true },
+    inn: { kinds: ["inn"], strict: true },
+    educationLevel: { kinds: ["education"], strict: true },
+    educationDocument: { kinds: ["education"], strict: true },
+    educationDocumentSeries: { kinds: ["education"], strict: true },
+    educationDocumentNumber: { kinds: ["education"], strict: true },
+    educationDocumentDate: { kinds: ["education"], strict: true },
+    educationDocumentIssuer: { kinds: ["education"], strict: true },
+    educationSpecialty: { kinds: ["education"], strict: true },
+    educationQualification: { kinds: ["education"], strict: true },
+    educationDocumentSurname: { kinds: ["education"], strict: true },
+    mailingAddress: { kinds: ["application"], strict: false },
+    phone: { kinds: ["application"], strict: false },
+    email: { kinds: ["application"], strict: false },
+    workPlace: { kinds: ["application"], strict: false },
+    position: { kinds: ["application"], strict: false },
+    program: { kinds: ["application"], strict: false },
+    studyForm: { kinds: ["application"], strict: false },
+    hours: { kinds: ["application"], strict: false },
+    applicationDate: { kinds: ["application"], strict: false },
+    startDate: { kinds: ["application"], strict: false },
+    endDate: { kinds: ["application"], strict: false },
+    contractNo: { kinds: ["application"], strict: false },
+    contractDate: { kinds: ["application"], strict: false }
+  });
+
+  const studentRecognitionSourceKindPatterns = Object.freeze({
+    passport: /(?:паспорт|passport)/iu,
+    snils: /(?:снилс|snils|страхов)/iu,
+    inn: /(?:\bинн\b|\binn\b|налог)/iu,
+    education: /(?:диплом|аттестат|образован|удостоверен)/iu,
+    application: /(?:заявлен|договор|сведен)/iu
+  });
+
+  function getStudentRecognitionFileSourceKinds(file) {
+    const fileName = String(file?.relativeName || file?.fileName || "");
+    return Object.entries(studentRecognitionSourceKindPatterns)
+      .filter(([, pattern]) => pattern.test(fileName))
+      .map(([kind]) => kind);
+  }
+
+  function getStudentRecognitionFieldSourceScore(field, file) {
+    const ocrKey = getDocumentRecognitionOcrFieldKey(field?.key);
+    const preference = studentRecognitionFieldSourcePreferences[ocrKey];
+    const sourcePosition = findStudentRecognitionSourceFilePosition([file], field?.sourceFile);
+    let score = sourcePosition === 0 ? 20 : 0;
+    if (!preference) return score + (file?.error ? 0 : 4);
+    const explicitKinds = getStudentRecognitionFileSourceKinds(file);
+    const identityKinds = ["passport", "snils", "inn", "education"];
+    if (
+      preference.strict
+      && explicitKinds.some((kind) => identityKinds.includes(kind))
+      && !explicitKinds.some((kind) => preference.kinds.includes(kind))
+    ) return -1000;
+    const documentTypes = (Array.isArray(file?.documentTypes) ? file.documentTypes : [])
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean);
+    if (explicitKinds.some((kind) => preference.kinds.includes(kind))) score += 120;
+    if (documentTypes.some((kind) => preference.kinds.includes(kind))) score += 60;
+    if (!file?.error) score += 4;
+    return score;
+  }
+
+  function findStudentRecognitionRecommendedSourceFilePosition(files, field) {
+    let bestPosition = -1;
+    let bestScore = -Infinity;
+    (files || []).forEach((file, index) => {
+      if (!file || !isStudentRecognitionRegionSourceFile(file)) return;
+      const score = getStudentRecognitionFieldSourceScore(field, file);
+      if (score > bestScore) {
+        bestPosition = index;
+        bestScore = score;
+      }
+    });
+    if (bestPosition >= 0 && bestScore > -1000) return bestPosition;
+    const sourcePosition = findStudentRecognitionSourceFilePosition(files, field?.sourceFile);
+    return sourcePosition >= 0 ? sourcePosition : Math.max(0, bestPosition);
   }
 
   function getStudentDocumentRecognitionPreviewFiles(payload = {}) {
@@ -37307,14 +37404,23 @@ MAX - https://bizvmax.ru/zifra_plus
     const selectFieldDocumentArea = (field, input, row) => {
       const { fieldPreview } = findStudentDocumentRecognitionPagePreview(field, files);
       const matchedFileIndex = findStudentRecognitionSourceFilePosition(files, field?.sourceFile);
-      const initialFileIndex = Math.max(0, matchedFileIndex);
+      const recommendedFileIndex = findStudentRecognitionRecommendedSourceFilePosition(files, field);
+      const initialFileIndex = Math.max(0, recommendedFileIndex);
+      const recommendedFile = files[initialFileIndex] || null;
+      const recommendedSource = String(
+        recommendedFile?.relativeName || recommendedFile?.fileName || ""
+      );
+      const useExistingRegion = matchedFileIndex === initialFileIndex;
+      const fieldLabel = String(field?.label || field?.key || "Поле");
       openStudentDocumentPhotoCropper(modal.closest("[data-student-document-recognition-dialog]"), previewPayload, initialFileIndex, {
-        title: "Источник, область и повторное распознавание",
-        ariaLabel: `Выбор источника и области для поля ${field?.label || field?.key || ""}`,
+        title: "Повторное распознавание",
+        fieldLabel,
+        ariaLabel: `Выбор источника и области для поля ${fieldLabel}`,
         useLabel: "Распознать это поле",
-        initialPage: fieldPreview?.page || 1,
-        initialBox: fieldPreview?.box || null,
-        initialSource: field?.sourceFile || "",
+        initialPage: useExistingRegion ? fieldPreview?.page || 1 : 1,
+        initialBox: useExistingRegion ? fieldPreview?.box || null : null,
+        initialSource: recommendedSource,
+        recommendedSource,
         maxOutputSize: 1800,
         outputQuality: 0.92,
         onCancel: cancelTargetedRecognition,
@@ -37876,6 +37982,16 @@ MAX - https://bizvmax.ru/zifra_plus
       .split(/;\s*/g)
       .map((item) => item.trim())
       .filter(Boolean);
+    const recommendedSourceNames = String(options.recommendedSource || "")
+      .split(/;\s*/g)
+      .map(normalizeStudentRecognitionFileName)
+      .filter(Boolean);
+    const isRecommendedFile = (candidate) => {
+      const names = [candidate?.relativeName, candidate?.fileName]
+        .map(normalizeStudentRecognitionFileName)
+        .filter(Boolean);
+      return names.some((name) => recommendedSourceNames.includes(name));
+    };
     if (initialSourceNames.length) {
       const sourcePosition = availableFiles.findIndex(({ file: candidate }) => initialSourceNames.some((sourceName) => (
         sourceName === String(candidate.relativeName || "")
@@ -37898,7 +38014,10 @@ MAX - https://bizvmax.ru/zifra_plus
         <header class="modal-head">
           <div>
             <h2>${escapeHtml(options.title || "Выделение фото")}</h2>
-            <p data-ocr-crop-file-name>${escapeHtml(file.relativeName || file.fileName || "Документ")}</p>
+            <p class="student-document-photo-cropper-context">
+              ${options.fieldLabel ? `<strong>Поле: ${escapeHtml(options.fieldLabel)}</strong>` : ""}
+              <span>Документ: <span data-ocr-crop-file-name>${escapeHtml(file.relativeName || file.fileName || "Документ")}</span></span>
+            </p>
           </div>
           <button class="icon-button" data-action="close-student-photo-cropper" type="button" title="Закрыть" aria-label="Закрыть">×</button>
         </header>
@@ -37909,7 +38028,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <span>Документ</span>
               <select data-ocr-crop-file-select aria-label="Документ для выбора области">
                 ${availableFiles.map(({ file: candidate }, index) => `
-                  <option value="${index}"${index === currentFilePosition ? " selected" : ""}>${escapeHtml(candidate.relativeName || candidate.fileName || `Документ ${index + 1}`)}</option>
+                  <option value="${index}"${index === currentFilePosition ? " selected" : ""}>${escapeHtml(candidate.relativeName || candidate.fileName || `Документ ${index + 1}`)}${isRecommendedFile(candidate) ? " — рекомендуется" : ""}</option>
                 `).join("")}
               </select>
             </label>

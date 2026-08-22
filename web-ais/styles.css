@@ -19900,6 +19900,17 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
 }
 
+.student-document-photo-cropper-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.75rem;
+  align-items: baseline;
+}
+
+.student-document-photo-cropper-context strong {
+  color: var(--accent-strong, #0f766e);
+}
+
 .admin-training-end-notification {
   display: grid;
   gap: 12px;

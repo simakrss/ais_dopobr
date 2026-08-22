@@ -1141,15 +1141,30 @@ def extract_education_surname(
 
 def classify_document(text: str, file_name: str) -> list[str]:
     source = f"{file_name}\n{text}".casefold()
+    file_source = file_name.casefold()
+    snils_score = sum(marker in source for marker in (
+        "снилс", "страховое свидетельство", "индивидуального лицевого счета"
+    ))
+    passport_explicit = bool(
+        re.search(r"(?:паспорт|passport)", file_source, re.IGNORECASE)
+        or re.search(r"\b(?:паспорт|passport)\b|код\s+подразделения", source, re.IGNORECASE)
+    )
+    passport_identity_score = sum(marker in source for marker in (
+        "российская федерация", "дата выдачи", "место рождения", "личный код"
+    ))
+    # В СНИЛС также присутствуют «Российская Федерация» и «место рождения».
+    # Эти общие надписи без явного паспортного маркера не делают файл паспортом.
+    passport_score = int(
+        passport_explicit
+        or (snils_score == 0 and passport_identity_score >= 2)
+    )
     scores = {
-        "passport": sum(marker in source for marker in (
-            "паспорт", "passport", "российская федерация", "код подразделения", "место рождения"
-        )),
-        "snils": sum(marker in source for marker in (
-            "снилс", "страховое свидетельство", "индивидуального лицевого счета"
-        )),
-        "inn": sum(marker in source for marker in (
-            "инн", "идентификационный номер налогоплательщика", "налоговом органе"
+        "passport": passport_score,
+        "snils": snils_score,
+        "inn": sum(bool(re.search(pattern, source, re.IGNORECASE)) for pattern in (
+            r"\bинн\b",
+            r"идентификационный\s+номер\s+налогоплательщика",
+            r"налоговом\s+органе",
         )),
         "education": sum(marker in source for marker in (
             "диплом", "документ об образовании", "квалификац", "специальност"
@@ -3002,7 +3017,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            self.send_json(200, {"ok": True, "engine": "tesseract", "languages": ["rus", "eng"]})
+            self.send_json(200, {
+                "ok": True,
+                "engine": "tesseract",
+                "languages": ["rus", "eng"],
+                "version": "1.1",
+                "formats": ["jpg", "png", "pdf", "docx"],
+                "features": ["document-recognition", "field-recognition", "page-rendering"],
+            })
             return
         self.send_json(404, {"error": "Not found"})
 
@@ -3053,6 +3075,9 @@ def runtime_health() -> dict[str, Any]:
         "engine": "tesseract",
         "languages": sorted(required_languages),
         "mode": "cli",
+        "version": "1.1",
+        "formats": ["jpg", "png", "pdf", "docx"],
+        "features": ["document-recognition", "field-recognition", "page-rendering"],
     }
 
 

@@ -14,6 +14,30 @@ async function main() {
     server.mergeOcrFieldSourceFiles("Паспорт.pdf; сведения.txt", "сведения.txt; Диплом.docx"),
     "Паспорт.pdf; сведения.txt; Диплом.docx"
   );
+  assert.strictEqual(server.getOcrFieldSourceSuitability("passportCode", {
+    relativeName: "СНИЛС.jpg",
+    documentTypes: ["passport", "snils"]
+  }), -1000);
+  assert.ok(server.getOcrFieldSourceSuitability("passportCode", {
+    relativeName: "паспорт Колюпановой.pdf",
+    documentTypes: ["passport"]
+  }) > 100);
+  const aggregatedPassportFields = server.aggregateOcrFieldCandidates([
+    {
+      relativeName: "СНИЛС.jpg",
+      documentTypes: ["passport", "snils"],
+      fields: [{ key: "passportCode", value: "212-604", confidence: 0.99 }]
+    },
+    {
+      relativeName: "паспорт Колюпановой.pdf",
+      documentTypes: ["passport"],
+      fields: [{ key: "passportCode", value: "610-068", confidence: 0.82 }]
+    }
+  ]);
+  assert.strictEqual(
+    aggregatedPassportFields.find((field) => field.key === "passportCode")?.value,
+    "610-068"
+  );
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ais-ocr-preview-"));
   try {
@@ -198,7 +222,10 @@ async function main() {
   assert.match(clientSource, /data-action="recognize-student-document-field-region"/u);
   assert.match(clientSource, /documentProcessingApiUrl\("\/api\/students\/recognize-documents\/field-region", recognitionOrigin\)/u);
   assert.match(clientSource, /body: JSON\.stringify\(\{ key, mimeType, base64 \}\)/u);
-  assert.match(clientSource, /title: "Источник, область и повторное распознавание"/u);
+  assert.match(clientSource, /title: "Повторное распознавание"/u);
+  assert.match(clientSource, /fieldLabel,/u);
+  assert.match(clientSource, /findStudentRecognitionRecommendedSourceFilePosition\(files, field\)/u);
+  assert.match(clientSource, /— рекомендуется/u);
   assert.match(clientSource, /useLabel: "Распознать это поле"/u);
   assert.match(clientSource, /maxOutputSize: 1800/u);
   assert.match(clientSource, /storeStudentDocumentRecognitionTargetedField\([\s\S]*?payload,[\s\S]*?field/u);

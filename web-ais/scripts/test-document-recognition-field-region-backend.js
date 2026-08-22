@@ -67,6 +67,20 @@ assert module.normalize_recognized_field_value("inn", "ИНН 7707083893")[0] ==
 assert module.normalize_recognized_field_value("phone", "Телефон +7 999 123-45-67")[0] == "+79991234567"
 assert module.normalize_recognized_field_value("passportNumber", "not a passport")[0] == ""
 assert module.normalize_recognized_field_value("birthDate", "31.02.2020")[0] == ""
+snils_text = """РОССИЙСКАЯ ФЕДЕРАЦИЯ
+СТРАХОВОЕ СВИДЕТЕЛЬСТВО
+ОБЯЗАТЕЛЬНОГО ПЕНСИОННОГО СТРАХОВАНИЯ
+Дата и место рождения
+212-604-024 00
+"""
+snils_kinds, snils_fields = module.extract_fields(snils_text, "СНИЛС.jpg")
+assert "snils" in snils_kinds
+assert "passport" not in snils_kinds
+assert not any(field["key"] == "passportCode" for field in snils_fields)
+assert "passport" in module.classify_document(
+    "РОССИЙСКАЯ ФЕДЕРАЦИЯ\nКод подразделения 610-068",
+    "паспорт.pdf",
+)
 key, content = module.decode_field_region_payload({
     "key": "inn",
     "mimeType": "image/jpeg",
@@ -159,6 +173,7 @@ function main() {
   assert.match(ocrSource, /"\/v1\/recognize-field"/u);
   assert.match(ocrSource, /arguments == \["--recognize-field-stdin"\]/u);
   assert.match(ocrSource, /extract_docx_embedded_images\(file_bytes, workdir\)/u);
+  assert.match(ocrSource, /"formats": \["jpg", "png", "pdf", "docx"\]/u);
 
   const pythonChecked = runPythonUnitChecks(process.env.OCR_PYTHON_BINARY || "", pythonSource);
   console.log(`document recognition field-region backend tests: OK${pythonChecked ? " (Python checked)" : ""}`);

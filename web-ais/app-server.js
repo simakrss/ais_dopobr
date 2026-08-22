@@ -8853,18 +8853,81 @@ function mergeOcrFieldSourceFiles(...values) {
   return sources.join("; ").slice(0, MAX_OCR_DOCUMENT_FILES * 605);
 }
 
+const OCR_FIELD_SOURCE_KIND_BY_KEY = Object.freeze({
+  passportType: "passport",
+  passportNumber: "passport",
+  passportDate: "passport",
+  passportCode: "passport",
+  passportIssuer: "passport",
+  snils: "snils",
+  inn: "inn",
+  educationLevel: "education",
+  educationDocument: "education",
+  educationDocumentSeries: "education",
+  educationDocumentNumber: "education",
+  educationDocumentDate: "education",
+  educationDocumentIssuer: "education",
+  educationSpecialty: "education",
+  educationQualification: "education",
+  educationDocumentSurname: "education"
+});
+
+const OCR_EXPLICIT_SOURCE_KIND_PATTERNS = Object.freeze({
+  passport: /(?:паспорт|passport)/iu,
+  snils: /(?:снилс|snils|страхов)/iu,
+  inn: /(?:\bинн\b|\binn\b|налог)/iu,
+  education: /(?:диплом|аттестат|образован|удостоверен)/iu
+});
+
+function getOcrExplicitSourceKinds(fileResult) {
+  const fileName = String(fileResult?.relativeName || fileResult?.fileName || "");
+  return Object.entries(OCR_EXPLICIT_SOURCE_KIND_PATTERNS)
+    .filter(([, pattern]) => pattern.test(fileName))
+    .map(([kind]) => kind);
+}
+
+function getOcrFieldSourceSuitability(fieldKey, fileResult) {
+  const expectedKind = OCR_FIELD_SOURCE_KIND_BY_KEY[String(fieldKey || "")];
+  if (!expectedKind) return 0;
+  const explicitKinds = getOcrExplicitSourceKinds(fileResult);
+  if (explicitKinds.length && !explicitKinds.includes(expectedKind)) return -1000;
+  const documentTypes = new Set(
+    (Array.isArray(fileResult?.documentTypes) ? fileResult.documentTypes : [])
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  let score = 0;
+  if (explicitKinds.includes(expectedKind)) score += 100;
+  if (documentTypes.has(expectedKind)) score += 40;
+  if (
+    documentTypes.size
+    && !documentTypes.has(expectedKind)
+    && [...documentTypes].some((kind) => Object.hasOwn(OCR_EXPLICIT_SOURCE_KIND_PATTERNS, kind))
+  ) score -= 20;
+  return score;
+}
+
 function aggregateOcrFieldCandidates(fileResults) {
   const candidatesByKey = new Map();
   fileResults.forEach((fileResult) => {
     (fileResult.fields || []).forEach((field) => {
       const candidate = normalizeOcrFieldCandidate(field, fileResult.relativeName);
       if (!candidate) return;
+      const sourceSuitability = getOcrFieldSourceSuitability(candidate.key, fileResult);
+      if (sourceSuitability <= -1000) return;
+      candidate.sourceSuitability = sourceSuitability;
       const candidates = candidatesByKey.get(candidate.key) || [];
       const duplicate = candidates.find((item) => (
         item.value.toLocaleLowerCase("ru-RU") === candidate.value.toLocaleLowerCase("ru-RU")
       ));
       if (duplicate) {
-        if (candidate.confidence > duplicate.confidence) {
+        if (
+          candidate.sourceSuitability > duplicate.sourceSuitability
+          || (
+            candidate.sourceSuitability === duplicate.sourceSuitability
+            && candidate.confidence > duplicate.confidence
+          )
+        ) {
           const sourceFile = mergeOcrFieldSourceFiles(candidate.sourceFile, duplicate.sourceFile);
           Object.assign(duplicate, candidate);
           duplicate.sourceFile = sourceFile;
@@ -8879,11 +8942,15 @@ function aggregateOcrFieldCandidates(fileResults) {
   });
   return Object.keys(OCR_DOCUMENT_FIELD_LABELS).flatMap((key) => {
     const candidates = (candidatesByKey.get(key) || [])
-      .sort((left, right) => right.confidence - left.confidence);
+      .sort((left, right) => (
+        right.sourceSuitability - left.sourceSuitability
+        || right.confidence - left.confidence
+      ));
     if (!candidates.length) return [];
+    const [{ sourceSuitability: ignoredSuitability, ...best }, ...otherCandidates] = candidates;
     return [{
-      ...candidates[0],
-      alternatives: candidates.slice(1).map((item) => ({
+      ...best,
+      alternatives: otherCandidates.map((item) => ({
         value: item.value,
         confidence: item.confidence,
         sourceFile: item.sourceFile,
@@ -21501,6 +21568,8 @@ module.exports = {
   normalizeOcrFieldRegionResponse,
   recognizeOcrFieldRegion,
   mergeOcrFieldSourceFiles,
+  getOcrFieldSourceSuitability,
+  aggregateOcrFieldCandidates,
   renderOcrDocumentTextPreview,
   fillDocxMarkers,
   getWebDavBrowserIconKind,

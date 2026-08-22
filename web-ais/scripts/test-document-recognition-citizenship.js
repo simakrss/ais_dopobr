@@ -3,9 +3,9 @@ const fs = require("fs");
 const path = require("path");
 
 const appPath = path.join(__dirname, "..", "app.js");
-const source = fs.readFileSync(appPath, "utf8");
+const source = fs.readFileSync(appPath, "utf8").replace(/\r\n/g, "\n");
 const matcherStart = source.indexOf("  const DOCUMENT_RECOGNITION_CITIZENSHIP_ALIASES");
-const matcherEnd = source.indexOf("\n\n  function normalizeRecognitionComparisonValue", matcherStart);
+const matcherEnd = source.indexOf("\n\n  const studentDocumentRecognitionDisplayDateKeys", matcherStart);
 assert.ok(matcherStart >= 0 && matcherEnd > matcherStart, "citizenship matcher source must exist");
 
 const options = [

@@ -135,6 +135,9 @@ async function main() {
   assert.match(appSource, /const alwaysVisibleKeys = new Set\(groups\.flatMap\(\(group\) => group\.keys\)\)/u);
   assert.match(appSource, /data-action="select-student-photo-area-any"/u);
   assert.match(appSource, /data-action="recognize-student-document-field-region"/u);
+  assert.match(appSource, /findStudentRecognitionRecommendedSourceFilePosition\(files, field\)/u);
+  assert.match(appSource, /Поле: \$\{escapeHtml\(options\.fieldLabel\)\}/u);
+  assert.match(appSource, /— рекомендуется/u);
   assert.match(appSource, /const recognitionFiles = getStudentDocumentRecognitionPreviewFiles\(payload\);/u);
   assert.match(appSource, /const previewPayload = \{ \.\.\.payload, files: recognitionFiles \};/u);
   assert.match(appSource, /\.filter\(\(\{ file \}\) => file && isStudentRecognitionRegionSourceFile\(file\)\)/u);
@@ -153,6 +156,40 @@ async function main() {
   assert.match(appSource, /error\?\.name !== "AbortError"/u);
   assert.match(appSource, /const checkbox = row\.querySelector\("\[data-ocr-field-enabled\]"\);[\s\S]*?checkbox\.checked = true;[\s\S]*?setStudentDocumentRecognitionFieldControlValue/u);
   assert.match(appSource, /aria-live="polite"/u);
+
+  const sourcePreferenceBlock = extractSource(
+    appSource,
+    "  const studentRecognitionFieldSourcePreferences",
+    "\n\n  function getStudentDocumentRecognitionPreviewFiles"
+  );
+  const sourceHelpers = new Function(
+    "getDocumentRecognitionOcrFieldKey",
+    "findStudentRecognitionSourceFilePosition",
+    "isStudentRecognitionRegionSourceFile",
+    `${sourcePreferenceBlock}\nreturn { getStudentRecognitionFieldSourceScore, findStudentRecognitionRecommendedSourceFilePosition };`
+  )(
+    (key) => key,
+    (files, source) => files.findIndex((file) => String(file.relativeName || "") === String(source || "")),
+    () => true
+  );
+  const sourceFiles = [
+    { relativeName: "СНИЛС.jpg", documentTypes: ["passport", "snils"] },
+    { relativeName: "паспорт Колюпановой.pdf", documentTypes: ["passport"] },
+    { relativeName: "Диплом И.Ю..docx", documentTypes: ["education"] }
+  ];
+  const passportCodeField = {
+    key: "passportCode",
+    label: "Код подразделения",
+    sourceFile: "СНИЛС.jpg"
+  };
+  assert.strictEqual(
+    sourceHelpers.findStudentRecognitionRecommendedSourceFilePosition(sourceFiles, passportCodeField),
+    1
+  );
+  assert.ok(
+    sourceHelpers.getStudentRecognitionFieldSourceScore(passportCodeField, sourceFiles[1])
+      > sourceHelpers.getStudentRecognitionFieldSourceScore(passportCodeField, sourceFiles[0])
+  );
 
   console.log("document recognition targeted-field tests: OK");
 }
