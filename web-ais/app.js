@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.218",
+    version: "1.7.219",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.219",
+      releasedAt: "2026-08-22",
+      changes: [
+        "График установок и скачиваний Ассистента оформлен с крупными итогами и помесячными столбцами; финансовые графики показывают месяцы от текущего к прошлым и визуально разделяют периоды."
+      ]
+    },
     {
       version: "1.7.218",
       releasedAt: "2026-08-22",
@@ -8765,6 +8772,14 @@ MAX - https://bizvmax.ru/zifra_plus
       .replace(" г.", "");
   }
 
+  function sortStatisticsMonthSeries(series = [], limit = 24) {
+    const sorted = series
+      .slice()
+      .sort((left, right) => String(right?.key || "").localeCompare(String(left?.key || "")));
+    const normalizedLimit = Math.max(0, Math.floor(Number(limit) || 0));
+    return normalizedLimit ? sorted.slice(0, normalizedLimit) : sorted;
+  }
+
   function buildStatisticsMonthlySeries(incomeRows = [], expenseRows = []) {
     const grouped = new Map();
     const ensure = (key) => {
@@ -8785,9 +8800,8 @@ MAX - https://bizvmax.ru/zifra_plus
       item.expenses += amount;
     });
     const result = [...grouped.values()]
-      .sort((left, right) => left.key.localeCompare(right.key))
       .map((item) => ({ ...item, label: statisticsMonthLabel(item.key) }));
-    return state.statistics.filters.year ? result : result.slice(-24);
+    return sortStatisticsMonthSeries(result, state.statistics.filters.year ? 12 : 24);
   }
 
   function renderStatisticsKpis(items = []) {
@@ -8841,6 +8855,62 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="statistics-chart-legend">
           ${metrics.map((metric) => `<span><i class="tone-${escapeAttr(metric.tone)}"></i>${escapeHtml(metric.label)}</span>`).join("")}
         </div>
+      </div>
+    `;
+  }
+
+  function renderStatisticsInstallDownloadChart(series = [], metrics = []) {
+    if (!series.length || !metrics.length) {
+      return `<div class="empty-state compact"><span>Нет данных для выбранного периода.</span></div>`;
+    }
+    const orderedSeries = sortStatisticsMonthSeries(
+      series,
+      state.statistics.filters.year ? 12 : 24
+    );
+    const maxValue = Math.max(
+      ...orderedSeries.flatMap((item) => metrics.map((metric) => Math.max(0, Number(item[metric.key] || 0)))),
+      1
+    );
+    return `
+      <div class="statistics-comparison-chart">
+        <div class="statistics-comparison-chart-main">
+          <div class="statistics-chart-legend statistics-comparison-chart-legend" aria-label="Показатели графика">
+            <strong>Действие</strong>
+            ${metrics.map((metric) => `<span><i class="tone-${escapeAttr(metric.tone)}"></i>${escapeHtml(metric.label)}</span>`).join("")}
+          </div>
+          <div class="statistics-comparison-chart-scroll">
+            <div class="statistics-comparison-chart-periods" style="--statistics-series-count:${Math.max(1, orderedSeries.length)}">
+              ${orderedSeries.map((item) => `
+                <div class="statistics-comparison-chart-period">
+                  <div class="statistics-comparison-chart-bars" style="grid-template-columns:repeat(${metrics.length}, minmax(24px, 1fr))">
+                    ${metrics.map((metric) => {
+                      const value = Math.max(0, Number(item[metric.key] || 0));
+                      const height = value ? Math.max(4, (value / maxValue) * 100) : 0;
+                      const valueText = formatStatisticsInteger(value);
+                      return `
+                        <span class="statistics-comparison-bar-column" title="${escapeAttr(`${metric.label}: ${valueText}`)}">
+                          <small>${height < 18 ? escapeHtml(valueText) : ""}</small>
+                          <span class="statistics-comparison-bar-area">
+                            <i class="tone-${escapeAttr(metric.tone)}" style="height:${height}%">${height >= 18 ? `<em>${escapeHtml(valueText)}</em>` : ""}</i>
+                          </span>
+                        </span>
+                      `;
+                    }).join("")}
+                  </div>
+                  <span>${escapeHtml(item.label || statisticsMonthLabel(item.key))}</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        </div>
+        <aside class="statistics-comparison-totals" aria-label="Итоги выбранного периода">
+          ${metrics.map((metric) => `
+            <div class="statistics-comparison-total tone-${escapeAttr(metric.tone)}">
+              <span>${escapeHtml(metric.label)}</span>
+              <strong>${escapeHtml(formatStatisticsInteger(metric.total))}</strong>
+            </div>
+          `).join("")}
+        </aside>
       </div>
     `;
   }
@@ -9119,7 +9189,7 @@ MAX - https://bizvmax.ru/zifra_plus
       actionsTotal: Number(assistantData.summary?.actions || 0),
       generated,
       downloaded,
-      monthly: [...monthly.values()].sort((left, right) => left.key.localeCompare(right.key)),
+      monthly: sortStatisticsMonthSeries([...monthly.values()], filters.year ? 12 : 24),
       files: [...files.entries()].map(([label, value]) => ({ label, value })),
       actions: Array.isArray(assistantData.actions) ? assistantData.actions : [],
       versions: [...versions.entries()].map(([label, value]) => ({ label, value }))
@@ -9151,9 +9221,9 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="panel-head"><div><p class="eyebrow">Динамика</p><h2>Установки и скачивания</h2></div></div>
           ${assistant.loading || downloads.loading
             ? `<div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Получение актуальной статистики…</span></div>`
-            : renderStatisticsSeriesChart(report.monthly, [
-              { key: "installs", label: "Установки Ассистента", tone: "teal" },
-              { key: "downloads", label: "Скачивания файлов", tone: "blue" }
+            : renderStatisticsInstallDownloadChart(report.monthly, [
+              { key: "installs", label: "Установки", tone: "teal", total: report.installs },
+              { key: "downloads", label: "Скачивания", tone: "blue", total: report.downloaded }
             ])}
         </section>
         <section class="panel statistics-visual-panel">

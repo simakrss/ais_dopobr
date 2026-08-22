@@ -18,19 +18,65 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.217"/u);
+assert.match(appSource, /version: "1\.7\.219"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 assert.match(appSource, /state\.view === "statistics"\) return renderStatistics\(\)/u);
 assert.match(appSource, /getOrderedTabs\("statistics", statisticsTabs\)/u);
 assert.match(appSource, /data-orderable-tabs="statistics"/u);
 assert.match(appSource, /Интерактивная статистика/u);
 assert.match(appSource, /Доходы и затраты по месяцам/u);
+assert.match(appSource, /renderStatisticsInstallDownloadChart/u);
+assert.match(appSource, /sortStatisticsMonthSeries/u);
 assert.match(appSource, /Популярные действия/u);
 assert.match(appSource, /Экспорт CSV/u);
 
 assert.doesNotMatch(appSource, /POWER_BI_ASSISTANT_SNAPSHOT/u);
 assert.match(appSource, /fetch\(photoApiUrl\("\/api\/statistics\/assistant"\)/u);
 assert.match(appSource, /обновляемые MySQL-запросы модели Power BI/u);
+
+const sortStatisticsMonthSeriesBlock = sourceBlock(
+  appSource,
+  "function sortStatisticsMonthSeries(",
+  "function buildStatisticsMonthlySeries("
+);
+const sortStatisticsMonthSeries = new Function(
+  `${sortStatisticsMonthSeriesBlock}\nreturn sortStatisticsMonthSeries;`
+)();
+assert.deepEqual(
+  sortStatisticsMonthSeries([
+    { key: "2026-06" },
+    { key: "2026-08" },
+    { key: "2026-07" }
+  ], 2).map((row) => row.key),
+  ["2026-08", "2026-07"]
+);
+
+const renderStatisticsInstallDownloadChartBlock = sourceBlock(
+  appSource,
+  "function renderStatisticsInstallDownloadChart(",
+  "function compactStatisticsItems("
+);
+const renderStatisticsInstallDownloadChart = new Function(`
+  const state = { statistics: { filters: { year: "2026" } } };
+  const escapeHtml = (value) => String(value ?? "");
+  const escapeAttr = escapeHtml;
+  const formatStatisticsInteger = (value) => String(Number(value) || 0);
+  const statisticsMonthLabel = (key) => key;
+  ${sortStatisticsMonthSeriesBlock}
+  ${renderStatisticsInstallDownloadChartBlock}
+  return renderStatisticsInstallDownloadChart;
+`)();
+const comparisonChart = renderStatisticsInstallDownloadChart([
+  { key: "2026-07", label: "Июль", installs: 2, downloads: 1 },
+  { key: "2026-08", label: "Август", installs: 5, downloads: 3 }
+], [
+  { key: "installs", label: "Установки", tone: "teal", total: 7 },
+  { key: "downloads", label: "Скачивания", tone: "blue", total: 4 }
+]);
+assert.match(comparisonChart, /statistics-comparison-totals/u);
+assert.ok(comparisonChart.indexOf("Август") < comparisonChart.indexOf("Июль"));
+assert.match(comparisonChart, />7<\/strong>/u);
+assert.match(comparisonChart, />4<\/strong>/u);
 
 const normalizeAssistantStatisticsBlock = sourceBlock(
   serverSource,
@@ -90,6 +136,10 @@ assert.match(appSource, /data-action="test-assistant-statistics-mysql"/u);
 
 assert.match(styles, /\.statistics-kpi-grid\s*\{/u);
 assert.match(styles, /\.statistics-chart-columns\s*\{/u);
+assert.match(styles, /\.statistics-comparison-chart\s*\{/u);
+assert.match(styles, /\.statistics-comparison-totals\s*\{/u);
+assert.match(styles, /\.statistics-chart-period:last-child\s*\{/u);
+assert.match(styles, /\.finance-month:last-child\s*\{/u);
 assert.match(styles, /\.statistics-donut\s*\{/u);
 assert.match(styles, /@media \(max-width: 640px\)[\s\S]*\.statistics-filters/su);
 const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authSource)?.[1] || "";
