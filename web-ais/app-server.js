@@ -101,6 +101,11 @@ const DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST = "imap.timeweb.ru";
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_SMTP_HOST = "smtp.timeweb.ru";
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN = "mail@edu-plus.ru";
 const DEFAULT_WOOCOMMERCE_EMAIL_LOGIN = "mail@zifra-plus.ru";
+const DEFAULT_TRAINING_END_NOTIFICATION_DAYS = 5;
+const TRAINING_END_NOTIFICATION_JOB_NAME = "training-end-notification";
+const TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const TRAINING_END_NOTIFICATION_RUNNING_STALE_MS = 20 * 60 * 1000;
+const TRAINING_END_NOTIFICATION_FAILED_RETRY_MS = 30 * 60 * 1000;
 const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
 let serverSettings = {};
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
@@ -170,6 +175,9 @@ let sharedRecordLocksMySqlPool = null;
 let sharedRecordLocksMySqlInitialization = null;
 let studentApplicationsMySqlPool = null;
 let studentApplicationsMySqlInitialization = null;
+let trainingEndNotificationJobPromise = null;
+let trainingEndNotificationSchedulerTimer = null;
+let scheduledJobRunsTableInitialization = null;
 let sharedStateMirrorRunning = false;
 let sharedStateMirrorVersionTag = "";
 let sharedStateMirrorLastError = "";
@@ -865,6 +873,8 @@ async function ensureStorage() {
     studentApplicationsEmailSmtpSecure: true,
     studentApplicationsEmailLogin: DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN,
     emailRequestDeliveryAndReadReceipts: true,
+    trainingEndNotificationsEnabled: true,
+    trainingEndNotificationDays: DEFAULT_TRAINING_END_NOTIFICATION_DAYS,
     studentDocumentMailboxes: [],
     documentConverterUrl: DEFAULT_DOCUMENT_CONVERTER_URL,
     documentConverterSourceUrl: DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL,
@@ -7074,6 +7084,7 @@ async function mutateSharedRecordLockMySql(pool, action, entityType, entityId, c
 async function closeSharedRecordLocksStorage() {
   const pool = sharedRecordLocksMySqlPool;
   sharedRecordLocksMySqlPool = null;
+  scheduledJobRunsTableInitialization = null;
   if (pool) await pool.end().catch(() => {});
 }
 
@@ -13634,6 +13645,434 @@ async function sendEmailThroughConfiguredMailbox({ to, subject, message, attachm
   });
 }
 
+function getMoscowCalendarDate(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+  const year = Number(parts.year);
+  const month = Number(parts.month);
+  const day = Number(parts.day);
+  if (!year || !month || !day) return null;
+  return {
+    key: `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+    utcDay: Date.UTC(year, month - 1, day)
+  };
+}
+
+function parseTrainingEndNotificationDate(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/u.exec(text);
+  const toUtcDay = (year, month, day) => {
+    const timestamp = Date.UTC(year, month - 1, day);
+    const date = new Date(timestamp);
+    return date.getUTCFullYear() === year
+      && date.getUTCMonth() === month - 1
+      && date.getUTCDate() === day
+      ? timestamp
+      : null;
+  };
+  if (iso) return toUtcDay(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+  const russian = /^(\d{1,2})\.(\d{1,2})\.(\d{4})/u.exec(text);
+  if (russian) return toUtcDay(Number(russian[3]), Number(russian[2]), Number(russian[1]));
+  return getMoscowCalendarDate(text)?.utcDay ?? null;
+}
+
+function formatTrainingEndNotificationDate(value) {
+  const timestamp = parseTrainingEndNotificationDate(value);
+  if (!Number.isFinite(timestamp)) return String(value || "");
+  const date = new Date(timestamp);
+  return `${String(date.getUTCDate()).padStart(2, "0")}.${String(date.getUTCMonth() + 1).padStart(2, "0")}.${date.getUTCFullYear()}`;
+}
+
+function getTrainingEndNotificationCandidates(students, options = {}) {
+  const today = getMoscowCalendarDate(options.today || new Date());
+  if (!today) return [];
+  const days = Math.min(60, Math.max(1, Math.floor(Number(options.days) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS)));
+  return (Array.isArray(students) ? students : []).flatMap((student) => {
+    if (String(student?.status || "").trim().toLocaleLowerCase("ru-RU") !== "учится") return [];
+    const endDate = String(student?.extendedEndDate || student?.endDate || "").trim();
+    const endDay = parseTrainingEndNotificationDate(endDate);
+    if (!Number.isFinite(endDay)) return [];
+    const daysRemaining = Math.round((endDay - today.utcDay) / 86400000);
+    if (daysRemaining < 0 || daysRemaining > days) return [];
+    return [{
+      id: String(student?.id || "").trim(),
+      uid: String(student?.uid || "").trim(),
+      name: String(student?.name || "Без ФИО").trim() || "Без ФИО",
+      program: String(student?.program || "Не указана").trim() || "Не указана",
+      responsible: String(student?.responsible || "").trim(),
+      endDate,
+      daysRemaining
+    }];
+  }).sort((left, right) => (
+    left.daysRemaining - right.daysRemaining
+    || left.name.localeCompare(right.name, "ru", { sensitivity: "base" })
+  ));
+}
+
+function getTrainingEndNotificationConfiguration(meta = {}) {
+  const hasSharedEnabled = Object.prototype.hasOwnProperty.call(meta, "trainingEndNotificationsEnabled")
+    || Object.prototype.hasOwnProperty.call(meta, "enabled");
+  const hasSharedDays = Object.prototype.hasOwnProperty.call(meta, "trainingEndNotificationDays")
+    || Object.prototype.hasOwnProperty.call(meta, "days");
+  const enabledValue = Object.prototype.hasOwnProperty.call(meta, "trainingEndNotificationsEnabled")
+    ? meta.trainingEndNotificationsEnabled
+    : meta.enabled;
+  const daysValue = Object.prototype.hasOwnProperty.call(meta, "trainingEndNotificationDays")
+    ? meta.trainingEndNotificationDays
+    : meta.days;
+  return {
+    enabled: hasSharedEnabled
+      ? enabledValue !== false
+      : serverSettings.trainingEndNotificationsEnabled !== false,
+    days: Math.min(60, Math.max(1, Math.floor(Number(
+      hasSharedDays ? daysValue : serverSettings.trainingEndNotificationDays
+    ) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS))),
+    recipient: DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN
+  };
+}
+
+async function readTrainingEndNotificationConfiguration() {
+  const fallback = getTrainingEndNotificationConfiguration({});
+  const pool = await getSharedRecordLocksMySqlPool();
+  if (!pool) return fallback;
+  await ensureScheduledJobRunsTable(pool);
+  const [rows] = await pool.query(
+    "SELECT settings_json FROM ais_scheduled_job_settings WHERE job_name = ? LIMIT 1",
+    [TRAINING_END_NOTIFICATION_JOB_NAME]
+  );
+  if (!rows?.[0]?.settings_json) return fallback;
+  try {
+    return getTrainingEndNotificationConfiguration(JSON.parse(String(rows[0].settings_json)));
+  } catch {
+    return fallback;
+  }
+}
+
+async function saveTrainingEndNotificationConfiguration(settings, authUser = null) {
+  const normalized = getTrainingEndNotificationConfiguration(settings || {});
+  const pool = await getSharedRecordLocksMySqlPool();
+  if (!pool) throw new Error("Общая MySQL-база недоступна для сохранения ежедневных уведомлений.");
+  await ensureScheduledJobRunsTable(pool);
+  await pool.query(`
+    INSERT INTO ais_scheduled_job_settings (job_name, settings_json, updated_at, updated_by)
+    VALUES (?, ?, UTC_TIMESTAMP(3), ?)
+    ON DUPLICATE KEY UPDATE
+      settings_json = VALUES(settings_json), updated_at = UTC_TIMESTAMP(3), updated_by = VALUES(updated_by)
+  `, [
+    TRAINING_END_NOTIFICATION_JOB_NAME,
+    JSON.stringify({ enabled: normalized.enabled, days: normalized.days }),
+    String(authUser?.login || "system").slice(0, 160)
+  ]);
+  return normalized;
+}
+
+function publicTrainingEndNotificationRun(row = null) {
+  if (!row) return { status: "never" };
+  return {
+    status: String(row.status || "never"),
+    runDate: row.run_date instanceof Date
+      ? row.run_date.toISOString().slice(0, 10)
+      : String(row.run_date || "").slice(0, 10),
+    candidateCount: Math.max(0, Number(row.candidate_count) || 0),
+    sentCount: Math.max(0, Number(row.sent_count) || 0),
+    startedAt: row.started_at instanceof Date ? row.started_at.toISOString() : String(row.started_at || ""),
+    completedAt: row.completed_at instanceof Date ? row.completed_at.toISOString() : String(row.completed_at || ""),
+    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at || ""),
+    lastError: String(row.last_error || "").slice(0, 1000)
+  };
+}
+
+async function ensureScheduledJobRunsTable(pool) {
+  if (scheduledJobRunsTableInitialization) return scheduledJobRunsTableInitialization;
+  scheduledJobRunsTableInitialization = (async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ais_scheduled_job_runs (
+        run_key VARCHAR(191) NOT NULL PRIMARY KEY,
+        job_name VARCHAR(96) NOT NULL,
+        run_date DATE NOT NULL,
+        status VARCHAR(24) NOT NULL,
+        token VARCHAR(64) NOT NULL,
+        attempts INT UNSIGNED NOT NULL DEFAULT 1,
+        candidate_count INT UNSIGNED NOT NULL DEFAULT 0,
+        sent_count INT UNSIGNED NOT NULL DEFAULT 0,
+        started_at DATETIME(3) NOT NULL,
+        completed_at DATETIME(3) NULL,
+        updated_at DATETIME(3) NOT NULL,
+        last_error TEXT NULL,
+        result_json LONGTEXT NULL,
+        INDEX ais_scheduled_job_runs_name_date (job_name, run_date),
+        INDEX ais_scheduled_job_runs_updated (updated_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ais_scheduled_job_settings (
+        job_name VARCHAR(96) NOT NULL PRIMARY KEY,
+        settings_json TEXT NOT NULL,
+        updated_at DATETIME(3) NOT NULL,
+        updated_by VARCHAR(160) NOT NULL DEFAULT ''
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+  })().catch((error) => {
+    scheduledJobRunsTableInitialization = null;
+    throw error;
+  });
+  return scheduledJobRunsTableInitialization;
+}
+
+async function claimTrainingEndNotificationRun({ runDate, force = false }) {
+  const pool = await getSharedRecordLocksMySqlPool();
+  if (!pool) throw new Error("Общая MySQL-база недоступна для ежедневных уведомлений.");
+  await ensureScheduledJobRunsTable(pool);
+  const runKey = force
+    ? `${TRAINING_END_NOTIFICATION_JOB_NAME}:${runDate}:manual:${Date.now()}:${crypto.randomBytes(4).toString("hex")}`
+    : `${TRAINING_END_NOTIFICATION_JOB_NAME}:${runDate}`;
+  const lockName = `ais-job-${crypto.createHash("sha256").update(runKey).digest("hex").slice(0, 48)}`;
+  const token = crypto.randomBytes(24).toString("hex");
+  const connection = await pool.getConnection();
+  let lockAcquired = false;
+  try {
+    const [lockRows] = await connection.query("SELECT GET_LOCK(?, 3) AS acquired", [lockName]);
+    lockAcquired = Number(lockRows?.[0]?.acquired) === 1;
+    if (!lockAcquired) return { claimed: false, reason: "busy", runKey };
+    const [rows] = await connection.query(
+      "SELECT * FROM ais_scheduled_job_runs WHERE run_key = ? LIMIT 1",
+      [runKey]
+    );
+    const current = rows?.[0] || null;
+    if (current && !force) {
+      const age = Math.max(0, Date.now() - new Date(current.updated_at || current.started_at || 0).getTime());
+      if (current.status === "completed") {
+        return { claimed: false, reason: "completed", runKey, status: publicTrainingEndNotificationRun(current) };
+      }
+      if (current.status === "running" && age < TRAINING_END_NOTIFICATION_RUNNING_STALE_MS) {
+        return { claimed: false, reason: "running", runKey, status: publicTrainingEndNotificationRun(current) };
+      }
+      if (current.status === "failed" && age < TRAINING_END_NOTIFICATION_FAILED_RETRY_MS) {
+        return { claimed: false, reason: "retry-later", runKey, status: publicTrainingEndNotificationRun(current) };
+      }
+    }
+    await connection.query(`
+      INSERT INTO ais_scheduled_job_runs (
+        run_key, job_name, run_date, status, token, attempts,
+        candidate_count, sent_count, started_at, completed_at, updated_at, last_error, result_json
+      ) VALUES (?, ?, ?, 'running', ?, 1, 0, 0, UTC_TIMESTAMP(3), NULL, UTC_TIMESTAMP(3), '', NULL)
+      ON DUPLICATE KEY UPDATE
+        status = 'running', token = VALUES(token), attempts = attempts + 1,
+        candidate_count = 0, sent_count = 0, started_at = UTC_TIMESTAMP(3),
+        completed_at = NULL, updated_at = UTC_TIMESTAMP(3), last_error = '', result_json = NULL
+    `, [runKey, TRAINING_END_NOTIFICATION_JOB_NAME, runDate, token]);
+    return { claimed: true, runKey, token };
+  } finally {
+    if (lockAcquired) await connection.query("SELECT RELEASE_LOCK(?)", [lockName]).catch(() => {});
+    connection.release();
+  }
+}
+
+async function finishTrainingEndNotificationRun(claim, result = {}) {
+  const pool = await getSharedRecordLocksMySqlPool();
+  if (!pool) throw new Error("Общая MySQL-база недоступна для записи результата уведомления.");
+  await pool.query(`
+    UPDATE ais_scheduled_job_runs
+       SET status = 'completed', candidate_count = ?, sent_count = ?,
+           completed_at = UTC_TIMESTAMP(3), updated_at = UTC_TIMESTAMP(3),
+           last_error = '', result_json = ?
+     WHERE run_key = ? AND token = ?
+  `, [
+    Math.max(0, Number(result.candidateCount) || 0),
+    Math.max(0, Number(result.sentCount) || 0),
+    JSON.stringify({ outcome: String(result.outcome || "completed") }),
+    claim.runKey,
+    claim.token
+  ]);
+}
+
+async function failTrainingEndNotificationRun(claim, error) {
+  const pool = await getSharedRecordLocksMySqlPool().catch(() => null);
+  if (!pool || !claim?.runKey || !claim?.token) return;
+  await pool.query(`
+    UPDATE ais_scheduled_job_runs
+       SET status = 'failed', completed_at = UTC_TIMESTAMP(3), updated_at = UTC_TIMESTAMP(3),
+           last_error = ?
+     WHERE run_key = ? AND token = ?
+  `, [String(error?.message || error || "Неизвестная ошибка").slice(0, 4000), claim.runKey, claim.token]).catch(() => {});
+}
+
+async function readTrainingEndNotificationStatus() {
+  const pool = await getSharedRecordLocksMySqlPool();
+  if (!pool) return { status: "never" };
+  await ensureScheduledJobRunsTable(pool);
+  const [rows] = await pool.query(`
+    SELECT status, run_date, candidate_count, sent_count, started_at, completed_at, updated_at, last_error
+      FROM ais_scheduled_job_runs
+     WHERE job_name = ?
+     ORDER BY updated_at DESC
+     LIMIT 1
+  `, [TRAINING_END_NOTIFICATION_JOB_NAME]);
+  return publicTrainingEndNotificationRun(rows?.[0] || null);
+}
+
+function escapeEmailHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildTrainingEndNotificationMessage(candidates, options = {}) {
+  const days = Math.min(60, Math.max(1, Math.floor(Number(options.days) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS)));
+  const rows = candidates.map((student, index) => `
+    <tr>
+      <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${index + 1}</td>
+      <td style="padding:8px;border:1px solid #d9e2df"><strong>${escapeEmailHtml(student.name)}</strong>${student.uid ? `<br><small>UID: ${escapeEmailHtml(student.uid)}</small>` : ""}</td>
+      <td style="padding:8px;border:1px solid #d9e2df">${escapeEmailHtml(student.program)}</td>
+      <td style="padding:8px;border:1px solid #d9e2df;white-space:nowrap">${escapeEmailHtml(formatTrainingEndNotificationDate(student.endDate))}</td>
+      <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${student.daysRemaining}</td>
+      <td style="padding:8px;border:1px solid #d9e2df">${escapeEmailHtml(student.responsible || "—")}</td>
+    </tr>
+  `).join("");
+  return `
+    <p>Здравствуйте!</p>
+    <p>У следующих слушателей со статусом <strong>«Учится»</strong> срок обучения заканчивается в ближайшие ${days} дн.</p>
+    <table style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:14px">
+      <thead>
+        <tr style="background:#edf7f4">
+          <th style="padding:8px;border:1px solid #d9e2df">№</th>
+          <th style="padding:8px;border:1px solid #d9e2df">Слушатель</th>
+          <th style="padding:8px;border:1px solid #d9e2df">Программа</th>
+          <th style="padding:8px;border:1px solid #d9e2df">Дата окончания</th>
+          <th style="padding:8px;border:1px solid #d9e2df">Осталось дней</th>
+          <th style="padding:8px;border:1px solid #d9e2df">Ответственный</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p><a href="https://edu-plus.ru/lms/">Открыть АИС Допобразование</a></p>
+    <p style="color:#64748b;font-size:12px">Сообщение сформировано автоматически. Повторная сводка за текущий день не отправляется.</p>
+  `.trim();
+}
+
+async function executeTrainingEndNotificationJob(options = {}) {
+  const force = options.force === true;
+  const sharedState = await readSharedApplicationStateDocument({ allowCache: false });
+  const data = sharedState.document?.data || {};
+  const configuration = await readTrainingEndNotificationConfiguration();
+  if (!configuration.enabled && !force) {
+    return {
+      ok: true,
+      outcome: "disabled",
+      message: "Ежедневные уведомления об окончании обучения отключены.",
+      status: await readTrainingEndNotificationStatus().catch(() => ({ status: "never" }))
+    };
+  }
+  const calendarDate = getMoscowCalendarDate(options.now || new Date());
+  if (!calendarDate) throw new Error("Не удалось определить текущую дату для уведомления.");
+  const claim = await claimTrainingEndNotificationRun({ runDate: calendarDate.key, force });
+  if (!claim.claimed) {
+    const messages = {
+      completed: "Ежедневная проверка за сегодня уже выполнена.",
+      running: "Ежедневная проверка уже выполняется.",
+      "retry-later": "Повторная проверка после ошибки будет выполнена автоматически позднее.",
+      busy: "Проверка выполняется другим сервером."
+    };
+    return {
+      ok: true,
+      outcome: claim.reason,
+      message: messages[claim.reason] || "Проверка сейчас не требуется.",
+      status: claim.status || await readTrainingEndNotificationStatus().catch(() => ({ status: "never" }))
+    };
+  }
+  try {
+    const candidates = getTrainingEndNotificationCandidates(data.collections?.students, {
+      today: options.now || new Date(),
+      days: configuration.days
+    });
+    if (!candidates.length) {
+      await finishTrainingEndNotificationRun(claim, {
+        outcome: "no-candidates",
+        candidateCount: 0,
+        sentCount: 0
+      });
+      return {
+        ok: true,
+        outcome: "no-candidates",
+        message: `Слушателей с окончанием обучения в ближайшие ${configuration.days} дней не найдено.`,
+        status: await readTrainingEndNotificationStatus()
+      };
+    }
+    const subject = normalizeEmailSubject(
+      `Окончание срока обучения в ближайшие ${configuration.days} дней — ${candidates.length}`
+    );
+    const message = buildTrainingEndNotificationMessage(candidates, { days: configuration.days });
+    const mailSettings = await sendEmailThroughConfiguredMailbox({
+      to: configuration.recipient,
+      subject,
+      message,
+      attachment: null
+    });
+    await finishTrainingEndNotificationRun(claim, {
+      outcome: "sent",
+      candidateCount: candidates.length,
+      sentCount: 1
+    });
+    await safelyAppendAuditEntry({
+      action: "Отправлено уведомление об окончании обучения",
+      area: "Электронная почта",
+      entityType: "training-end-notification",
+      entityId: calendarDate.key,
+      entityLabel: configuration.recipient,
+      field: "email",
+      after: configuration.recipient,
+      details: `Слушателей: ${candidates.length}; период: ${configuration.days} дн.; отправитель: ${mailSettings.login}`,
+      source: options.source || "scheduler"
+    }, {
+      id: "system-training-end-notifications",
+      login: "system",
+      name: "Система",
+      role: "admin"
+    }, { headers: {}, socket: {} });
+    return {
+      ok: true,
+      outcome: "sent",
+      message: `Сводка отправлена на ${configuration.recipient}. Слушателей: ${candidates.length}.`,
+      status: await readTrainingEndNotificationStatus()
+    };
+  } catch (error) {
+    await failTrainingEndNotificationRun(claim, error);
+    throw error;
+  }
+}
+
+function maybeRunTrainingEndNotificationJob(options = {}) {
+  if (trainingEndNotificationJobPromise) return trainingEndNotificationJobPromise;
+  trainingEndNotificationJobPromise = executeTrainingEndNotificationJob(options)
+    .finally(() => {
+      trainingEndNotificationJobPromise = null;
+    });
+  return trainingEndNotificationJobPromise;
+}
+
+function startTrainingEndNotificationScheduler() {
+  if (trainingEndNotificationSchedulerTimer) return;
+  const run = () => {
+    maybeRunTrainingEndNotificationJob({ source: "scheduler" }).catch((error) => {
+      console.warn(`Ежедневное уведомление об окончании обучения не отправлено: ${error.message}`);
+    });
+  };
+  const initialTimer = setTimeout(run, 15 * 1000);
+  initialTimer.unref?.();
+  trainingEndNotificationSchedulerTimer = setInterval(run, TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS);
+  trainingEndNotificationSchedulerTimer.unref?.();
+}
+
 function quoteImapValue(value) {
   return `"${String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
@@ -20006,6 +20445,12 @@ async function handleStudentSourcePhoto(req, res, requestUrl) {
 
 async function publicSystemDocumentSettings(includeAdminSettings = false) {
   const localDocuments = await getLocalSystemDocumentsAvailability();
+  const trainingEndNotificationConfiguration = await readTrainingEndNotificationConfiguration()
+    .catch(() => getTrainingEndNotificationConfiguration({}));
+  const trainingEndNotificationStatus = await readTrainingEndNotificationStatus().catch((error) => ({
+    status: "failed",
+    lastError: `Статус ежедневной проверки недоступен: ${error.message}`
+  }));
   const settings = {
     databasePath: normalizeYandexDiskResourceSetting(
       serverSettings.studentDatabaseWebDavPath,
@@ -20041,6 +20486,9 @@ async function publicSystemDocumentSettings(includeAdminSettings = false) {
     ),
     emailRequestDeliveryAndReadReceipts:
       serverSettings.emailRequestDeliveryAndReadReceipts !== false,
+    trainingEndNotificationsEnabled: trainingEndNotificationConfiguration.enabled,
+    trainingEndNotificationDays: trainingEndNotificationConfiguration.days,
+    trainingEndNotificationStatus,
     documentMailboxes: publicStudentDocumentMailboxes(),
     applicationsOrderAdminUrlTemplate: normalizeStudentApplicationsOrderAdminUrlTemplate(
       serverSettings.studentApplicationsOrderAdminUrlTemplate
@@ -20092,6 +20540,17 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     )
       ? body.emailRequestDeliveryAndReadReceipts !== false
       : serverSettings.emailRequestDeliveryAndReadReceipts !== false;
+    const trainingEndNotificationsEnabled = Object.prototype.hasOwnProperty.call(
+      body,
+      "trainingEndNotificationsEnabled"
+    )
+      ? body.trainingEndNotificationsEnabled !== false
+      : serverSettings.trainingEndNotificationsEnabled !== false;
+    const trainingEndNotificationDays = Number(
+      body.trainingEndNotificationDays
+        || serverSettings.trainingEndNotificationDays
+        || DEFAULT_TRAINING_END_NOTIFICATION_DAYS
+    );
     const currentDocumentMailboxes = new Map(
       (Array.isArray(serverSettings.studentDocumentMailboxes)
         ? serverSettings.studentDocumentMailboxes
@@ -20180,6 +20639,13 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     if (!Number.isInteger(emailSmtpPort) || emailSmtpPort < 1 || emailSmtpPort > 65535) {
       throw new Error("Укажите корректный порт SMTP.");
     }
+    if (
+      !Number.isInteger(trainingEndNotificationDays)
+      || trainingEndNotificationDays < 1
+      || trainingEndNotificationDays > 60
+    ) {
+      throw new Error("Укажите срок уведомления от 1 до 60 дней.");
+    }
     if (!mysqlUseApplicationsConnection) {
       if (!mysqlHost || mysqlHost.length > 255 || !/^[A-Za-z0-9.-]+$/.test(mysqlHost)) {
         throw new Error("Укажите корректный сервер MySQL.");
@@ -20216,6 +20682,8 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       studentApplicationsEmailSmtpSecure: true,
       studentApplicationsEmailLogin: emailLogin,
       emailRequestDeliveryAndReadReceipts,
+      trainingEndNotificationsEnabled,
+      trainingEndNotificationDays,
       studentApplicationsSqlQuery: applicationsSqlQuery,
       studentApplicationsOrderAdminUrlTemplate: applicationsOrderAdminUrlTemplate,
       sharedRecordLocksMySqlUseApplicationsConnection: mysqlUseApplicationsConnection
@@ -20247,9 +20715,28 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     if (emailPassword) patch.studentApplicationsEmailPassword = emailPassword;
     if (body.clearEmailPassword) patch.studentApplicationsEmailPassword = "";
     await saveServerSettings(patch);
+    await saveTrainingEndNotificationConfiguration({
+      trainingEndNotificationsEnabled,
+      trainingEndNotificationDays
+    }, authUser);
     sendJson(res, 200, await publicSystemDocumentSettings(includeAdminSettings));
   } catch (error) {
     sendError(res, 400, error.message);
+  }
+}
+
+async function handleTrainingEndNotificationCheck(req, res, options = {}) {
+  try {
+    if (String(req.headers["x-requested-with"] || "") !== "AIS-Web") {
+      sendError(res, 400, "Некорректный запрос проверки сроков обучения.");
+      return;
+    }
+    sendJson(res, 200, await maybeRunTrainingEndNotificationJob({
+      force: options.force === true,
+      source: options.source || "web"
+    }));
+  } catch (error) {
+    sendError(res, 502, `Не удалось выполнить проверку сроков обучения: ${error.message}`);
   }
 }
 
@@ -20690,7 +21177,8 @@ async function route(req, res) {
       "/api/student-applications-email/test",
       "/api/student-applications-mysql/test",
       "/api/student-document-mailboxes/test",
-      "/api/mysql-locks/test"
+      "/api/mysql-locks/test",
+      "/api/admin/training-end-notifications/run"
     ].includes(requestUrl.pathname)
     || requestUrl.pathname === "/api/students/import-database"
     || requestUrl.pathname.startsWith("/api/students/import-database/")
@@ -20726,6 +21214,14 @@ async function route(req, res) {
     && requestUrl.pathname === "/api/settings/system-documents"
   ) {
     await handleSystemDocumentSettings(req, res, authUser);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/training-end-notifications/check") {
+    await handleTrainingEndNotificationCheck(req, res, { source: "web" });
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/admin/training-end-notifications/run") {
+    await handleTrainingEndNotificationCheck(req, res, { force: true, source: "admin" });
     return;
   }
   if (req.method === "GET" && requestUrl.pathname === "/api/statistics/downloads") {
@@ -20922,6 +21418,7 @@ if (isMainThread && require.main === module) {
       .then(() => ensureStorage())
       .then(() => {
         startSharedApplicationStateMirror();
+        startTrainingEndNotificationScheduler();
         http.createServer((req, res) => {
           route(req, res).catch((error) => sendError(res, 500, error.message));
         }).listen(PORT, HOST, () => {
@@ -21014,6 +21511,11 @@ module.exports = {
   smtpResponseSupportsExtension,
   createEmailEnvelopeCommands,
   createEmailMessage,
+  getMoscowCalendarDate,
+  parseTrainingEndNotificationDate,
+  getTrainingEndNotificationCandidates,
+  buildTrainingEndNotificationMessage,
+  maybeRunTrainingEndNotificationJob,
   getRemainingSmtpTimeout,
   writeSmtpSocketData,
   route

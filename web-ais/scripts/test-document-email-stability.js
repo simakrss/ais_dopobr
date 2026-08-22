@@ -128,8 +128,8 @@ async function main() {
   assert.match(appSource, /результат отправки неизвестен[\s\S]+error\.deliveryUnknown = true/u);
   assert.match(appSource, /return error\.deliveryUnknown \? null : false/u);
   assert.match(appSource, /const generationTimeoutMs = storageRequest\.promptLocalSave \? 15 \* 60 \* 1000 : 5 \* 60 \* 1000/u);
-  assert.match(appSource, /fetchWithTimeout\(photoApiUrl\(finalizingPreview[\s\S]+generationTimeoutMs/u);
-  assert.match(appSource, /fetchWithTimeout\(photoApiUrl\("\/api\/contracts\/student-document-preview\/cancel"\)[\s\S]+5000/u);
+  assert.match(appSource, /fetchWithTimeout\(documentProcessingApiUrl\([\s\S]+finalizingPreview[\s\S]+generationTimeoutMs/u);
+  assert.match(appSource, /fetchWithTimeout\(documentProcessingApiUrl\([\s\S]+"\/api\/contracts\/student-document-preview\/cancel"[\s\S]+5000/u);
   assert.match(appSource, /emailRequest && \(storageRequest\.autoSaveLocal \|\| storageRequest\.saveToYandexDisk\)/u);
   assert.match(appSource, /Ожидается подтверждение: \$\{documentTemplate\.title\}/u);
   assert.match(appSource, /Отправка письма: \$\{emailRequest\.recipientDescription\}/u);

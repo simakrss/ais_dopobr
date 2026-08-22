@@ -8,6 +8,8 @@
     smtpPort: 465
   });
   const DEFAULT_WOOCOMMERCE_EMAIL_LOGIN = "mail@zifra-plus.ru";
+  const DEFAULT_TRAINING_END_NOTIFICATION_DAYS = 5;
+  const TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS = 60 * 60 * 1000;
   const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
   const ADMIN_SQL_KEYWORDS = new Set([
     "ADD", "ALL", "ALTER", "AND", "AS", "ASC", "BETWEEN", "BY", "CASE", "CAST",
@@ -20,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.213",
+    version: "1.7.214",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.214",
+      releasedAt: "2026-08-22",
+      changes: [
+        "Добавлены ежедневные серверные уведомления на системную почту о слушателях, у которых срок обучения завершится в ближайшие пять дней."
+      ]
+    },
     {
       version: "1.7.213",
       releasedAt: "2026-08-22",
@@ -4985,6 +4994,16 @@ MAX - https://bizvmax.ru/zifra_plus
     );
     data.meta.emailRequestDeliveryAndReadReceipts =
       data.meta.emailRequestDeliveryAndReadReceipts !== false;
+    data.meta.trainingEndNotificationsEnabled =
+      data.meta.trainingEndNotificationsEnabled !== false;
+    data.meta.trainingEndNotificationDays = Math.min(
+      60,
+      Math.max(1, Math.floor(Number(data.meta.trainingEndNotificationDays) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS))
+    );
+    data.meta.trainingEndNotificationStatus = data.meta.trainingEndNotificationStatus
+      && typeof data.meta.trainingEndNotificationStatus === "object"
+      ? data.meta.trainingEndNotificationStatus
+      : {};
     data.meta.applicationsMysqlDriver = String(
       data.meta.applicationsMysqlDriver || "MySQL ODBC 9.4 Unicode Driver"
     ).trim();
@@ -16767,6 +16786,22 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function getTrainingEndNotificationStatusLabel(status = {}) {
+    const stateValue = String(status.status || "never").trim().toLowerCase();
+    if (stateValue === "completed") {
+      const completedAt = formatDateTimeRu(status.completedAt || status.updatedAt || "");
+      const candidates = Math.max(0, Number(status.candidateCount) || 0);
+      const sent = Math.max(0, Number(status.sentCount) || 0);
+      return `${completedAt ? `Последняя проверка: ${completedAt}. ` : ""}Найдено слушателей: ${candidates}; отправлено писем: ${sent}.`;
+    }
+    if (stateValue === "running") return "Ежедневная проверка выполняется.";
+    if (stateValue === "failed") {
+      const error = String(status.lastError || "Неизвестная ошибка").trim();
+      return `Последняя проверка завершилась с ошибкой: ${error}`;
+    }
+    return "Ежедневная проверка ещё не выполнялась.";
+  }
+
   function renderAdmin() {
     const databasePath = getAdminSettingRenderValue("studentDatabaseWebDavPath", getStudentDatabaseWebDavPath());
     const basePath = getAdminSettingRenderValue("yandexDiskBasePath", getYandexDiskBasePath());
@@ -16810,6 +16845,17 @@ MAX - https://bizvmax.ru/zifra_plus
       "emailRequestDeliveryAndReadReceipts",
       state.data.meta.emailRequestDeliveryAndReadReceipts !== false
     ));
+    const trainingEndNotificationsEnabled = Boolean(getAdminSettingRenderValue(
+      "trainingEndNotificationsEnabled",
+      state.data.meta.trainingEndNotificationsEnabled !== false
+    ));
+    const trainingEndNotificationDays = Math.min(60, Math.max(1, Math.floor(Number(
+      getAdminSettingRenderValue(
+        "trainingEndNotificationDays",
+        state.data.meta.trainingEndNotificationDays || DEFAULT_TRAINING_END_NOTIFICATION_DAYS
+      )
+    ) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS)));
+    const trainingEndNotificationStatus = state.data.meta.trainingEndNotificationStatus || {};
     const applicationsMysqlDriver = getAdminSettingRenderValue(
       "applicationsMysqlDriver",
       state.data.meta.applicationsMysqlDriver || "MySQL ODBC 9.4 Unicode Driver"
@@ -17248,6 +17294,48 @@ MAX - https://bizvmax.ru/zifra_plus
                     <small>Применяется ко всем исходящим письмам. Уведомление о доставке зависит от поддержки SMTP-сервера, а подтверждение прочтения — от почтовой программы и решения получателя.</small>
                   </span>
                 </label>
+                <section class="admin-training-end-notification" aria-labelledby="training-end-notification-title">
+                  <div class="admin-training-end-notification-head">
+                    <div>
+                      <strong id="training-end-notification-title">Окончание срока обучения</strong>
+                      <small>Один раз в день система отправляет на основной ящик сводку по слушателям со статусом «Учится», срок которых заканчивается в указанном интервале.</small>
+                    </div>
+                    <label class="admin-training-end-notification-switch">
+                      <input
+                        name="trainingEndNotificationsEnabled"
+                        type="checkbox"
+                        ${trainingEndNotificationsEnabled ? "checked" : ""}
+                      >
+                      <span>Включено</span>
+                    </label>
+                  </div>
+                  <div class="admin-training-end-notification-fields">
+                    <label>
+                      <span>Уведомлять за (дней)</span>
+                      <input
+                        name="trainingEndNotificationDays"
+                        type="number"
+                        min="1"
+                        max="60"
+                        step="1"
+                        value="${escapeAttr(trainingEndNotificationDays)}"
+                        required
+                      >
+                    </label>
+                    <label>
+                      <span>Получатель</span>
+                      <input type="email" value="${escapeAttr(emailLogin)}" readonly aria-readonly="true">
+                    </label>
+                    <label>
+                      <span>Периодичность</span>
+                      <input type="text" value="Ежедневно" readonly aria-readonly="true">
+                    </label>
+                  </div>
+                  <div class="admin-training-end-notification-status is-${escapeAttr(trainingEndNotificationStatus.status || "never")}" role="status">
+                    <span>${escapeHtml(getTrainingEndNotificationStatusLabel(trainingEndNotificationStatus))}</span>
+                    <button class="ghost-button compact-button" data-action="run-training-end-notifications" type="button">Проверить и отправить сейчас</button>
+                  </div>
+                </section>
                 <div class="admin-document-mailboxes is-applications-list">
                   ${renderAdminApplicationsMailbox({
                     host: emailHost,
@@ -27172,6 +27260,8 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='test-mysql-locks']")?.addEventListener("click", testMySqlLocksConnection);
     document.querySelector("[data-action='test-student-applications-email']")
       ?.addEventListener("click", testStudentApplicationsEmailConnection);
+    document.querySelector("[data-action='run-training-end-notifications']")
+      ?.addEventListener("click", runTrainingEndNotificationsNow);
     document.querySelector("[data-action='add-document-mailbox']")
       ?.addEventListener("click", addDocumentMailbox);
     document.querySelectorAll("[data-action='remove-document-mailbox']").forEach((button) => {
@@ -44159,6 +44249,12 @@ MAX - https://bizvmax.ru/zifra_plus
     const emailRequestDeliveryAndReadReceipts = Boolean(
       form.elements.emailRequestDeliveryAndReadReceipts?.checked
     );
+    const trainingEndNotificationsEnabled = Boolean(
+      form.elements.trainingEndNotificationsEnabled?.checked
+    );
+    const trainingEndNotificationDays = Number(
+      form.elements.trainingEndNotificationDays?.value || DEFAULT_TRAINING_END_NOTIFICATION_DAYS
+    );
     const documentMailboxes = collectDocumentMailboxesFromForm(form);
     const applicationsMysqlDriver = String(form.elements.applicationsMysqlDriver?.value || "").trim();
     const applicationsMysqlHost = String(form.elements.applicationsMysqlHost?.value || "").trim();
@@ -44192,6 +44288,13 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!emailLogin) throw new Error("Укажите логин электронной почты.");
     if (emailLogin.toLowerCase() !== DEFAULT_STUDENT_APPLICATIONS_EMAIL.login) {
       throw new Error(`Для сбора заявок используется ящик ${DEFAULT_STUDENT_APPLICATIONS_EMAIL.login}.`);
+    }
+    if (
+      !Number.isInteger(trainingEndNotificationDays)
+      || trainingEndNotificationDays < 1
+      || trainingEndNotificationDays > 60
+    ) {
+      throw new Error("Укажите срок уведомления от 1 до 60 дней.");
     }
     if (!applicationsSqlQuery) throw new Error("Укажите SQL-запрос интернет-магазина.");
     if (!applicationsOrderAdminUrlTemplate) {
@@ -44239,6 +44342,8 @@ MAX - https://bizvmax.ru/zifra_plus
         emailLogin,
         emailPassword,
         emailRequestDeliveryAndReadReceipts,
+        trainingEndNotificationsEnabled,
+        trainingEndNotificationDays,
         documentMailboxes,
         applicationsMysqlDriver,
         applicationsMysqlHost,
@@ -44302,6 +44407,16 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.meta.studentApplicationsEmailHasPassword = Boolean(payload.emailHasPassword);
     state.data.meta.emailRequestDeliveryAndReadReceipts =
       payload.emailRequestDeliveryAndReadReceipts !== false;
+    state.data.meta.trainingEndNotificationsEnabled =
+      payload.trainingEndNotificationsEnabled !== false;
+    state.data.meta.trainingEndNotificationDays = Math.min(
+      60,
+      Math.max(1, Math.floor(Number(payload.trainingEndNotificationDays) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS))
+    );
+    state.data.meta.trainingEndNotificationStatus = payload.trainingEndNotificationStatus
+      && typeof payload.trainingEndNotificationStatus === "object"
+      ? payload.trainingEndNotificationStatus
+      : state.data.meta.trainingEndNotificationStatus || {};
     state.data.meta.documentMailboxes = Array.isArray(payload.documentMailboxes)
       ? payload.documentMailboxes
       : [];
@@ -44376,6 +44491,61 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
     } catch (error) {
       alert(`Проверка почты не выполнена: ${error.message}`);
+      button.disabled = false;
+    }
+  }
+
+  async function checkTrainingEndNotifications() {
+    try {
+      const response = await fetch(photoApiUrl("/api/training-end-notifications/check"), {
+        method: "POST",
+        headers: { "X-Requested-With": "AIS-Web" },
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Не удалось проверить сроки обучения.");
+      if (payload.status && typeof payload.status === "object") {
+        state.data.meta.trainingEndNotificationStatus = payload.status;
+        if (state.view === "admin" && state.adminTab === "email" && !state.adminSettingsDirty) render();
+      }
+    } catch (error) {
+      console.warn("Не удалось выполнить ежедневную проверку сроков обучения", error);
+    }
+  }
+
+  async function runTrainingEndNotificationsNow(event) {
+    const button = event.currentTarget;
+    const form = button.closest("form");
+    if (!form) return;
+    if (!confirm(
+      "Проверить сроки обучения сейчас и отправить сводку на основной системный ящик, если найдены подходящие слушатели?"
+    )) return;
+    button.disabled = true;
+    try {
+      const settings = await saveYandexDiskSettings(form);
+      applyYandexDiskSettings(settings);
+      clearAdminSettingsDirtyState(form);
+      persist();
+      const response = await fetch(photoApiUrl("/api/admin/training-end-notifications/run"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        credentials: "same-origin",
+        cache: "no-store",
+        body: JSON.stringify({ force: true })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Не удалось отправить уведомление.");
+      if (payload.status && typeof payload.status === "object") {
+        state.data.meta.trainingEndNotificationStatus = payload.status;
+      }
+      alert(payload.message || "Проверка сроков обучения завершена.");
+      render();
+    } catch (error) {
+      alert(`Проверка сроков обучения не выполнена: ${error.message}`);
       button.disabled = false;
     }
   }
@@ -44521,6 +44691,10 @@ MAX - https://bizvmax.ru/zifra_plus
           emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword,
           emailRequestDeliveryAndReadReceipts:
             state.data.meta.emailRequestDeliveryAndReadReceipts !== false,
+          trainingEndNotificationsEnabled:
+            state.data.meta.trainingEndNotificationsEnabled !== false,
+          trainingEndNotificationDays: state.data.meta.trainingEndNotificationDays,
+          trainingEndNotificationStatus: state.data.meta.trainingEndNotificationStatus,
           documentMailboxes: state.data.meta.documentMailboxes,
           mysqlUseApplicationsConnection: state.data.meta.mysqlUseApplicationsConnection,
           mysqlHost: state.data.meta.mysqlHost,
@@ -44549,6 +44723,10 @@ MAX - https://bizvmax.ru/zifra_plus
           emailHasPassword: state.data.meta.studentApplicationsEmailHasPassword,
           emailRequestDeliveryAndReadReceipts:
             state.data.meta.emailRequestDeliveryAndReadReceipts !== false,
+          trainingEndNotificationsEnabled:
+            state.data.meta.trainingEndNotificationsEnabled !== false,
+          trainingEndNotificationDays: state.data.meta.trainingEndNotificationDays,
+          trainingEndNotificationStatus: state.data.meta.trainingEndNotificationStatus,
           documentMailboxes: state.data.meta.documentMailboxes,
           mysqlUseApplicationsConnection: state.data.meta.mysqlUseApplicationsConnection,
           mysqlHost: state.data.meta.mysqlHost,
@@ -50382,6 +50560,9 @@ MAX - https://bizvmax.ru/zifra_plus
       }, 50);
     }
     const connectionSettingsSync = syncServerConnectionSettings();
+    connectionSettingsSync.finally(() => {
+      void checkTrainingEndNotifications();
+    });
     if (shouldBootstrapHostedDatabase) {
       connectionSettingsSync.finally(() => {
         window.setTimeout(() => {
@@ -50390,6 +50571,7 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     }
     window.setInterval(pollSharedApplicationState, SHARED_STATE_POLL_INTERVAL_MS);
+    window.setInterval(checkTrainingEndNotifications, TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS);
     if (sharedStateDirty) scheduleSharedApplicationStateSave(1000);
     await pollSharedRecordLocks({ renderAfter: false });
     window.setInterval(pollSharedRecordLocks, RECORD_LOCK_POLL_INTERVAL_MS);
@@ -50397,11 +50579,13 @@ MAX - https://bizvmax.ru/zifra_plus
       if (document.visibilityState !== "visible") return;
       pollSharedApplicationState();
       pollSharedRecordLocks();
+      void checkTrainingEndNotifications();
     });
     window.addEventListener("online", () => {
       scheduleSharedApplicationStateSave(0);
       pollSharedApplicationState();
       pollSharedRecordLocks();
+      void checkTrainingEndNotifications();
     });
     window.addEventListener("pagehide", () => {
       const lock = activeRecordLock;

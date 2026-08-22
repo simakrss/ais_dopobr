@@ -59,7 +59,8 @@ assert.match(styles, /\.statistics-kpi-grid\s*\{/u);
 assert.match(styles, /\.statistics-chart-columns\s*\{/u);
 assert.match(styles, /\.statistics-donut\s*\{/u);
 assert.match(styles, /@media \(max-width: 640px\)[\s\S]*\.statistics-filters/su);
-assert.match(indexSource, /20260822-statistics-v1/u);
-assert.match(authSource, /const AUTH_BUILD = "20260822-statistics-v1"/u);
+const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authSource)?.[1] || "";
+assert.ok(authBuild, "Не найден идентификатор сборки загрузчика");
+assert.match(indexSource, new RegExp(`(?:styles\\.css|auth-bootstrap\\.js)\\?v=${authBuild}`, "u"));
 
 console.log("statistics view checks: OK");
