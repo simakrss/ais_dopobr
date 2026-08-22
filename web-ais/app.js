@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.219",
+    version: "1.7.220",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.220",
+      releasedAt: "2026-08-22",
+      changes: [
+        "Партнёр может редактировать собственные контактные, банковские и документные данные и открывать защищённую облачную папку своих документов на Яндекс‑Диске."
+      ]
+    },
     {
       version: "1.7.219",
       releasedAt: "2026-08-22",

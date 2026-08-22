@@ -34,6 +34,15 @@
     profileTab: "main",
     profileTabs: loadProfileTabOrder(),
     draggedProfileTab: "",
+    profileDraft: {},
+    profileSaving: false,
+    profileStatus: "",
+    profileError: "",
+    documentsOpen: false,
+    documentsPath: "",
+    documentsData: null,
+    documentsLoading: false,
+    documentsError: "",
     feedbackStatus: "",
     feedbackError: "",
     feedbackSending: false,
@@ -389,7 +398,7 @@
     const tabsById = new Map(PROFILE_TABS.map((tab) => [tab.id, tab]));
     const activeFields = profile.tabs?.[state.profileTab] || [];
     return `
-      <section class="partner-page-heading"><div><p>Личные данные</p><h2>${escapeHtml(profile.name || "Профиль")}</h2></div><span>${profile.contractNo ? `Договор № ${escapeHtml(profile.contractNo)}` : "Договор не указан"}</span></section>
+      <section class="partner-page-heading"><div><p>Личные данные</p><h2>${escapeHtml(profile.name || "Профиль")}</h2></div><button class="partner-secondary-button" data-action="open-documents" type="button">${icon("folder")}Документы на Яндекс‑Диске</button></section>
       <section class="partner-profile-layout">
         <aside class="partner-profile-summary partner-panel">
           ${profile.photoAvailable ? `<img src="${escapeAttr(authApi.appUrl("api/partner/photo"))}" alt="Фотография ${escapeAttr(profile.name)}">` : `<div class="partner-profile-placeholder">${icon("profile")}</div>`}
@@ -399,14 +408,35 @@
           <div class="partner-profile-tabs" role="tablist" aria-label="Разделы профиля" title="Вкладки можно менять местами. Щёлкните правой кнопкой, чтобы восстановить исходный порядок.">
             ${state.profileTabs.map((id) => { const tab = tabsById.get(id); return `<button class="${state.profileTab === id ? "is-active" : ""}" data-profile-tab="${id}" draggable="true" role="tab" aria-selected="${state.profileTab === id}">${escapeHtml(tab.label)}</button>`; }).join("")}
           </div>
-          <div class="partner-profile-fields">${activeFields.map(renderProfileField).join("") || renderEmpty("Данные этого раздела не заполнены.")}</div>
+          <form data-profile-form>
+            <div class="partner-profile-fields">${activeFields.map(renderProfileField).join("") || renderEmpty("Данные этого раздела не заполнены.")}</div>
+            <div class="partner-profile-actions">
+              <span>${profile.contractNo ? `Договор № ${escapeHtml(profile.contractNo)}` : "Договор не указан"}</span>
+              ${state.profileError ? `<p class="partner-form-message is-error">${escapeHtml(state.profileError)}</p>` : ""}
+              ${state.profileStatus ? `<p class="partner-form-message is-success">${escapeHtml(state.profileStatus)}</p>` : ""}
+              <button class="partner-primary-button" type="submit" ${state.profileSaving ? "disabled" : ""}>${state.profileSaving ? "Сохранение..." : "Сохранить изменения"}</button>
+            </div>
+          </form>
         </section>
       </section>
+      ${state.documentsOpen ? renderDocumentsModal() : ""}
     `;
   }
 
   function renderProfileField(field) {
-    let value = field.value;
+    let value = Object.prototype.hasOwnProperty.call(state.profileDraft, field.key)
+      ? state.profileDraft[field.key] : field.value;
+    if (field.editable) {
+      if (field.kind === "boolean") {
+        return `<label class="partner-profile-field is-checkbox"><span>${escapeHtml(field.label)}</span><input data-profile-field="${escapeAttr(field.key)}" type="checkbox" ${value ? "checked" : ""}></label>`;
+      }
+      const type = { date: "date", email: "email", phone: "tel", password: "password" }[field.kind] || "text";
+      const placeholder = field.kind === "password" ? "Оставьте пустым, чтобы не менять" : "";
+      const control = field.kind === "multiline"
+        ? `<textarea data-profile-field="${escapeAttr(field.key)}" rows="3">${escapeHtml(value)}</textarea>`
+        : `<input data-profile-field="${escapeAttr(field.key)}" type="${type}" value="${field.kind === "password" ? "" : escapeAttr(value)}" placeholder="${placeholder}">`;
+      return `<label class="partner-profile-field ${field.kind === "multiline" ? "is-wide" : ""}"><span>${escapeHtml(field.label)}</span>${control}</label>`;
+    }
     if (field.kind === "boolean") value = value ? "Да" : "Нет";
     if (field.kind === "date") value = formatDate(value);
     const empty = value === "" || value === null || value === undefined;
@@ -417,6 +447,21 @@
         ? `<a href="tel:${escapeAttr(content.replace(/[^+\d]/gu, ""))}">${escapeHtml(content)}</a>`
         : escapeHtml(content).replaceAll("\n", "<br>");
     return `<div class="partner-profile-field ${field.kind === "multiline" ? "is-wide" : ""} ${empty ? "is-empty" : ""}"><span>${escapeHtml(field.label)}</span><strong>${display}</strong></div>`;
+  }
+
+  function renderDocumentsModal() {
+    const data = state.documentsData;
+    const parts = String(data?.path || "").split("/").filter(Boolean);
+    const crumbs = [{ label: "Документы", path: "" }, ...parts.map((part, index) => ({
+      label: part, path: parts.slice(0, index + 1).join("/")
+    }))];
+    return `<div class="partner-modal-backdrop" data-action="close-documents"><section class="partner-documents-modal" role="dialog" aria-modal="true" aria-label="Документы партнёра" onclick="event.stopPropagation()">
+      <header><div><p>Яндекс‑Диск</p><h3>Документы партнёра</h3></div><button data-action="close-documents" type="button" title="Закрыть">${icon("close")}</button></header>
+      <nav class="partner-breadcrumbs">${crumbs.map((crumb, index) => `${index ? icon("chevron") : ""}<button data-action="open-document-folder" data-path="${escapeAttr(crumb.path)}" type="button" ${index === crumbs.length - 1 ? "disabled" : ""}>${escapeHtml(crumb.label)}</button>`).join("")}</nav>
+      <div class="partner-documents-body">${state.documentsLoading ? `<div class="partner-loading-inline"><span class="auth-spinner"></span>Загрузка папки...</div>` : state.documentsError ? `<div class="partner-error-panel">${escapeHtml(state.documentsError)}</div>` : data?.entries?.length ? `<div class="partner-file-grid">${data.entries.map((item) => item.isDirectory
+        ? `<button class="partner-file-card is-folder" data-action="open-document-folder" data-path="${escapeAttr(item.path)}" type="button"><span class="partner-file-icon">${icon("folder")}</span><span><strong>${escapeHtml(item.name)}</strong><small>Папка</small></span>${icon("chevron")}</button>`
+        : `<a class="partner-file-card is-file" href="${escapeAttr(authApi.appUrl(`api/partner/documents/file?path=${encodeURIComponent(item.path)}`))}" target="_blank" rel="noopener"><span class="partner-file-icon">${icon("file")}</span><span><strong>${escapeHtml(item.name)}</strong><small>${formatFileSize(item.size)} · ${formatDateTime(item.modifiedAt)}</small></span>${icon("external")}</a>`).join("")}</div>` : renderEmpty("В папке пока нет документов.")}</div>
+    </section></div>`;
   }
 
   function renderFeedback() {
@@ -462,6 +507,7 @@
     render();
     try {
       state.portal = await authApi.request("api/partner/portal");
+      state.profileDraft = {};
       state.loading = false;
       document.title = "Кабинет партнёра · Цифровизация Плюс";
       render();
@@ -483,6 +529,24 @@
       state.materialsError = error.message;
     } finally {
       state.materialsLoading = false;
+      render();
+    }
+  }
+
+  async function loadDocuments(path = "") {
+    state.documentsOpen = true;
+    state.documentsLoading = true;
+    state.documentsError = "";
+    render();
+    try {
+      state.documentsData = await authApi.request("api/partner/documents/list", {
+        method: "POST", body: JSON.stringify({ path })
+      });
+      state.documentsPath = state.documentsData.path || "";
+    } catch (error) {
+      state.documentsError = error.message;
+    } finally {
+      state.documentsLoading = false;
       render();
     }
   }
@@ -568,6 +632,9 @@
     if (action === "sort-group") changeSort("group", button.dataset.key);
     if (action === "open-material-folder") loadMaterials(button.dataset.path || "/");
     if (action === "refresh-materials") loadMaterials(state.materials?.path || "/");
+    if (action === "open-documents") loadDocuments("");
+    if (action === "open-document-folder") loadDocuments(button.dataset.path || "");
+    if (action === "close-documents") { state.documentsOpen = false; render(); }
   });
 
   app.addEventListener("input", (event) => {
@@ -575,10 +642,18 @@
     if (event.target.closest("[data-feedback-form]") && event.target.name in state.feedbackDraft) {
       state.feedbackDraft[event.target.name] = event.target.value;
     }
+    if (event.target.matches("[data-profile-field]")) {
+      state.profileDraft[event.target.dataset.profileField] = event.target.type === "checkbox"
+        ? event.target.checked : event.target.value;
+      state.profileStatus = "";
+    }
   });
 
   app.addEventListener("change", (event) => {
     if (event.target.matches("[data-filter]")) updateFilter(event.target);
+    if (event.target.matches("[data-profile-field][type='checkbox']")) {
+      state.profileDraft[event.target.dataset.profileField] = event.target.checked;
+    }
   });
 
   app.addEventListener("keydown", (event) => {
@@ -588,13 +663,29 @@
       state.selectedMonth = row.dataset.month || "";
       render();
     }
-    if (event.key === "Escape" && state.sidebarOpen) {
-      state.sidebarOpen = false;
+    if (event.key === "Escape" && (state.sidebarOpen || state.documentsOpen)) {
+      state.sidebarOpen = false; state.documentsOpen = false;
       render();
     }
   });
 
   app.addEventListener("submit", async (event) => {
+    const profileForm = event.target.closest("[data-profile-form]");
+    if (profileForm) {
+      event.preventDefault();
+      if (state.profileSaving) return;
+      state.profileSaving = true; state.profileError = ""; state.profileStatus = ""; render();
+      try {
+        const result = await authApi.request("api/partner/profile", {
+          method: "PUT", body: JSON.stringify({ values: state.profileDraft })
+        });
+        state.portal.profile = result.profile;
+        state.profileDraft = {};
+        state.profileStatus = result.message || "Профиль сохранён.";
+      } catch (error) { state.profileError = error.message; }
+      finally { state.profileSaving = false; render(); }
+      return;
+    }
     const form = event.target.closest("[data-feedback-form]");
     if (!form) return;
     event.preventDefault();

@@ -20904,8 +20904,45 @@ function partnerValueIsChecked(value) {
   return ["1", "+", "да", "true", "yes", "on"].includes(normalizePartnerIdentity(value));
 }
 
+const PARTNER_EDITABLE_PROFILE_FIELDS = new Set([
+  "name", "position", "degree", "academicTitle", "phone", "email", "notificationEmail",
+  "bank", "settlementAccount", "correspondentAccount", "bic", "citizenship", "birthDate",
+  "identityDocumentType", "identityDocument", "identityIssueDate", "identityDepartmentCode",
+  "identityIssuer", "address", "snils", "inn", "login", "password"
+]);
+
 function partnerEmployeeField(key, label, value, kind = "text") {
-  return { key, label, value: value ?? "", kind };
+  return { key, label, value: value ?? "", kind, editable: PARTNER_EDITABLE_PROFILE_FIELDS.has(key) };
+}
+
+function getPartnerCompactFolderName(value) {
+  const parts = String(value || "").trim().split(/\s+/u).filter(Boolean);
+  return `${parts[0] || "Партнёр"}${parts.slice(1, 3).map((part) => part.slice(0, 1)).join("")}`
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/gu, "_");
+}
+
+function getPartnerDocumentsFolder(employee = {}) {
+  const photoPath = String(employee.photoPath || "").trim().replace(/\\/g, "/");
+  if (photoPath) {
+    const folder = (/\.[a-z0-9]{2,6}$/iu.test(photoPath) ? path.posix.dirname(photoPath) : photoPath)
+      .replace(/^\/+|\/+$/g, "");
+    if (folder && !folder.split("/").some((part) => part === "." || part === "..")) return folder;
+  }
+  return `Сотрудники/${getPartnerCompactFolderName(employee.name)}/Документы`;
+}
+
+function sanitizePartnerProfileUpdate(values = {}) {
+  const source = values && typeof values === "object" && !Array.isArray(values) ? values : {};
+  const result = {};
+  for (const key of PARTNER_EDITABLE_PROFILE_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+    if (key === "notificationEmail") result[key] = Boolean(source[key]);
+    else if (key === "password" && !String(source[key] || "")) continue;
+    else result[key] = String(source[key] ?? "").trim().slice(0, ["identityIssuer", "address"].includes(key) ? 2000 : 500);
+  }
+  if (Object.prototype.hasOwnProperty.call(result, "name") && !result.name) throw new Error("Укажите ФИО или наименование партнёра.");
+  if (Object.prototype.hasOwnProperty.call(result, "login") && !result.login) throw new Error("Логин СДО не может быть пустым.");
+  return result;
 }
 
 function buildPartnerProfile(employee = {}) {
@@ -20915,6 +20952,7 @@ function buildPartnerProfile(employee = {}) {
     name: String(employee.name || "Партнёр").trim() || "Партнёр",
     contractNo: String(employee.contractNo || "").trim(),
     photoAvailable: Boolean(String(employee.photoPath || "").trim() || String(employee.photoData || "").trim()),
+    documentsFolder: getPartnerDocumentsFolder(employee),
     tabs: {
       main: [
         partnerEmployeeField("name", "ФИО / контрагент", employee.name),
@@ -20968,6 +21006,83 @@ function buildPartnerProfile(employee = {}) {
       ]
     }
   };
+}
+
+async function updatePartnerProfile(req, res, authUser) {
+  const body = await readJsonBody(req);
+  const values = sanitizePartnerProfileUpdate(body.values);
+  const current = await readSharedApplicationStateDocument();
+  const contracts = Array.isArray(current.document?.data?.collections?.contracts)
+    ? current.document.data.collections.contracts : [];
+  const employee = selectPartnerEmployee(contracts, { employeeId: authUser.employeeId, login: authUser.login });
+  if (!employee) throw new Error("Карточка партнёра не найдена.");
+  if (values.login && contracts.some((item) => item !== employee
+    && normalizePartnerIdentity(item?.login) === normalizePartnerIdentity(values.login))) {
+    throw new Error("Этот логин уже используется другой учётной записью.");
+  }
+  const updated = { ...employee, ...values };
+  const result = await saveSharedApplicationState({
+    baseRevision: current.document?.revision || 0,
+    patch: {
+      collections: { contracts: { upserts: [updated] } },
+      recordKeys: [`contracts:${updated.id}`]
+    }
+  }, authUser);
+  if (result.locked) throw Object.assign(new Error("Карточка сейчас редактируется другим пользователем."), { statusCode: 423 });
+  if (result.conflict) throw Object.assign(new Error("Данные были изменены. Обновите профиль и повторите сохранение."), { statusCode: 409 });
+  await safelyAppendAuditEntry({
+    action: "Обновлён профиль партнёра", area: "Кабинет партнёра", entityType: "employee",
+    entityId: updated.id, entityLabel: updated.name,
+    details: `Изменены поля: ${Object.keys(values).filter((key) => key !== "password").join(", ") || "пароль"}`
+  }, authUser, req);
+  sendJson(res, 200, { ok: true, profile: buildPartnerProfile(updated), message: "Профиль сохранён." });
+}
+
+async function getPartnerDocumentsContext(authUser) {
+  const context = await resolvePartnerPortalContext(authUser);
+  return { folder: getPartnerDocumentsFolder(context.employee) };
+}
+
+async function handlePartnerDocumentsList(req, res, authUser) {
+  const body = await readJsonBody(req);
+  const { folder } = await getPartnerDocumentsContext(authUser);
+  const location = resolveStudentWebDavBrowserResource(folder, body.path || "");
+  const targetKey = location.targetPath.toLocaleLowerCase("ru-RU");
+  const entries = (await readWebDavDirectory(location.targetPath)).filter((entry) => {
+    const entryPath = normalizeWebDavPath(entry.href).replace(/\/+$/g, "");
+    const entryKey = entryPath.toLocaleLowerCase("ru-RU");
+    return entryKey !== targetKey && entryKey.startsWith(`${targetKey}/`)
+      && !path.posix.relative(location.targetPath, entryPath).includes("/");
+  }).slice(0, MAX_WEBDAV_BROWSER_ENTRIES).map((entry) => {
+    const name = String(path.posix.basename(normalizeWebDavPath(entry.href))).trim();
+    return {
+      name,
+      path: normalizeStudentWebDavRelativePath([location.relativePath, name].filter(Boolean).join("/"), false),
+      isDirectory: Boolean(entry.isCollection), size: Number(entry.contentLength || 0),
+      modifiedAt: String(entry.modifiedAt || ""), iconKind: getWebDavBrowserIconKind(name, entry.isCollection)
+    };
+  }).sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory)
+    || left.name.localeCompare(right.name, "ru", { numeric: true, sensitivity: "base" }));
+  sendJson(res, 200, { path: location.relativePath, entries });
+}
+
+async function handlePartnerDocumentFile(req, res, authUser, requestUrl) {
+  const { folder } = await getPartnerDocumentsContext(authUser);
+  const location = resolveStudentWebDavBrowserResource(folder, requestUrl.searchParams.get("path") || "", false);
+  const fileName = path.posix.basename(location.relativePath);
+  const response = await requestYandexWebDav("GET", location.targetPath, {
+    acceptedStatuses: [200], maxResponseBytes: MAX_WEBDAV_BROWSER_FILE_BYTES
+  });
+  const encodedName = encodeURIComponent(fileName).replace(/['()]/g, escape);
+  const contentType = getWebDavBrowserContentType(fileName);
+  const securityHeaders = {
+    "Content-Disposition": `${requestUrl.searchParams.get("download") === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodedName}`,
+    "X-Content-Type-Options": "nosniff"
+  };
+  if (/^(?:text\/html|image\/svg\+xml|application\/(?:xml|xhtml\+xml))/iu.test(contentType)) {
+    securityHeaders["Content-Security-Policy"] = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:";
+  }
+  sendFile(res, 200, response.body, fileName, contentType, securityHeaders);
 }
 
 function getPartnerAgentRates(paymentSettings) {
@@ -21458,6 +21573,18 @@ async function handlePartnerPortalRequest(req, res, authUser, requestUrl) {
     }
     if (req.method === "GET" && requestUrl.pathname === "/api/partner/materials") {
       sendJson(res, 200, await readPartnerMaterialsFolder(requestUrl.searchParams.get("path") || "/"));
+      return;
+    }
+    if (req.method === "PUT" && requestUrl.pathname === "/api/partner/profile") {
+      await updatePartnerProfile(req, res, authUser);
+      return;
+    }
+    if (req.method === "POST" && requestUrl.pathname === "/api/partner/documents/list") {
+      await handlePartnerDocumentsList(req, res, authUser);
+      return;
+    }
+    if (req.method === "GET" && requestUrl.pathname === "/api/partner/documents/file") {
+      await handlePartnerDocumentFile(req, res, authUser, requestUrl);
       return;
     }
     if (["GET", "HEAD"].includes(req.method) && requestUrl.pathname === "/api/partner/photo") {
@@ -22690,6 +22817,8 @@ module.exports = {
   maybeRunTrainingEndNotificationJob,
   selectPartnerEmployee,
   buildPartnerProfile,
+  getPartnerDocumentsFolder,
+  sanitizePartnerProfileUpdate,
   buildPartnerPaymentData,
   normalizePartnerMaterialsUrl,
   getRemainingSmtpTimeout,

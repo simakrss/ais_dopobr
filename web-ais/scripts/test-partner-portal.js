@@ -9,6 +9,8 @@ process.env.AIS_SHARED_STATE_LOCAL_ONLY = "1";
 const {
   selectPartnerEmployee,
   buildPartnerProfile,
+  getPartnerDocumentsFolder,
+  sanitizePartnerProfileUpdate,
   buildPartnerPaymentData,
   normalizePartnerMaterialsUrl
 } = require("../app-server.js");
@@ -61,6 +63,14 @@ assert.doesNotMatch(profileText, /must-not-be-public/u);
 assert.doesNotMatch(profileText, /section/u);
 assert.match(profileText, /••••••••/u);
 assert.deepEqual(Object.keys(profile.tabs), ["main", "contract", "documents"]);
+assert.equal(profile.tabs.main.find((field) => field.key === "name").editable, true);
+assert.equal(profile.tabs.contract.find((field) => field.key === "contractNo").editable, false);
+assert.equal(getPartnerDocumentsFolder({ name: "Иванов Иван Иванович" }), "Сотрудники/ИвановИИ/Документы");
+assert.equal(getPartnerDocumentsFolder({ photoPath: "Сотрудники/ИвановИИ/Документы/ИвановИИ.jpg" }), "Сотрудники/ИвановИИ/Документы");
+assert.deepEqual(sanitizePartnerProfileUpdate({ email: " partner@example.test ", contractNo: "hack" }), {
+  email: "partner@example.test"
+});
+assert.deepEqual(sanitizePartnerProfileUpdate({ password: "" }), {});
 
 const paymentData = buildPartnerPaymentData({
   collections: {
@@ -140,6 +150,8 @@ assert.match(
 );
 assert.match(partnerSource, /data-action="open-payable"/u);
 assert.match(partnerSource, /data-feedback-form/u);
+assert.match(partnerSource, /data-profile-form/u);
+assert.match(partnerSource, /api\/partner\/documents\/list/u);
 assert.match(partnerSource, /PROFILE_TAB_STORAGE_KEY/u);
 assert.match(deploySource, /"partner-app\.js"/u);
 
