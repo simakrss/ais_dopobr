@@ -37,6 +37,7 @@ const appRoot = path.resolve(__dirname, "..");
 const logRoot = path.join(appRoot, "tmp", "lan-system");
 const statusPath = path.join(logRoot, "status.json");
 const secretPath = path.join(logRoot, "onlyoffice-jwt-secret.txt");
+const gatewaySecretPath = path.join(logRoot, "local-service-gateway-secret.txt");
 const composePath = path.join(appRoot, "docker-compose.onlyoffice.yml");
 const argumentsLower = new Set(process.argv.slice(2).map((value) => value.toLowerCase()));
 const skipDocker = argumentsLower.has("--skip-docker") || argumentsLower.has("-skipdocker");
@@ -138,6 +139,18 @@ function getOnlyOfficeSecret() {
   }
   const secret = crypto.randomBytes(32).toString("hex");
   fs.writeFileSync(secretPath, `${secret}\n`, "utf8");
+  return secret;
+}
+
+function getLocalServiceGatewaySecret() {
+  try {
+    const current = fs.readFileSync(gatewaySecretPath, "utf8").trim();
+    if (current.length >= 48) return current;
+  } catch (_error) {
+    // The local gateway secret is created on the first launch.
+  }
+  const secret = crypto.randomBytes(48).toString("base64url");
+  fs.writeFileSync(gatewaySecretPath, `${secret}\n`, "utf8");
   return secret;
 }
 
@@ -421,7 +434,11 @@ async function main() {
     printExistingSystemStatus(previousStatus);
     return;
   }
-  const commonEnvironment = { ONLYOFFICE_JWT_SECRET: getOnlyOfficeSecret() };
+  const commonEnvironment = {
+    ONLYOFFICE_JWT_SECRET: getOnlyOfficeSecret(),
+    AIS_TRUST_GATEWAY: "1",
+    AIS_GATEWAY_SHARED_SECRET: getLocalServiceGatewaySecret()
+  };
   const offlineState = readOfflineStateStatus();
   const status = {
     startedAt: new Date().toISOString(),

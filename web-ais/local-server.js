@@ -8,13 +8,125 @@ const yandexGeocoderApiKey = process.env.YANDEX_GEOCODER_API_KEY || "";
 const dgisApiKey = process.env.DGIS_API_KEY || process.env.TWOGIS_API_KEY || "";
 const appServerRetryDelays = [0, 250, 500, 1000, 1500, 2000, 2500];
 const maxProxyRequestBytes = 48 * 1024 * 1024;
+const localDocumentServicesHealthPath = "/api/local-document-services/health";
+const ocrHealthUrl = process.env.AIS_OCR_HEALTH_URL || "http://127.0.0.1:8083/health";
+const documentConversionHealthUrl = process.env.AIS_DOCUMENT_CONVERSION_HEALTH_URL
+  || "http://127.0.0.1:8082/healthcheck";
+const trustedRemoteAppOrigins = new Set(
+  String(process.env.AIS_REMOTE_APP_ORIGINS || "https://edu-plus.ru,https://www.edu-plus.ru")
+    .split(",")
+    .map((value) => normalizeOrigin(value))
+    .filter(Boolean)
+);
 
-function send(res, status, body, contentType = "text/plain; charset=utf-8") {
+function send(res, status, body, contentType = "text/plain; charset=utf-8", headers = {}) {
   res.writeHead(status, {
     "Content-Type": contentType,
-    "Cache-Control": "no-store"
+    "Cache-Control": "no-store",
+    ...headers
   });
   res.end(body);
+}
+
+function normalizeOrigin(value) {
+  try {
+    return new URL(String(value || "").trim()).origin;
+  } catch {
+    return "";
+  }
+}
+
+function isLoopbackAddress(value) {
+  const address = String(value || "").trim().toLowerCase();
+  return address === "127.0.0.1"
+    || address === "::1"
+    || address === "::ffff:127.0.0.1";
+}
+
+function isSameRequestOrigin(req, origin) {
+  if (!origin) return true;
+  try {
+    return new URL(origin).host.toLowerCase() === String(req.headers.host || "").trim().toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+function isRemoteDocumentServicePath(pathname) {
+  return pathname === localDocumentServicesHealthPath
+    || pathname === "/api/contracts/student-document"
+    || pathname.startsWith("/api/contracts/student-document-preview/")
+    || pathname.startsWith("/api/students/recognize-documents/");
+}
+
+function getRequestAccessContext(req, url) {
+  const origin = normalizeOrigin(req.headers.origin);
+  const crossOrigin = Boolean(origin) && !isSameRequestOrigin(req, origin);
+  const trustedRemoteService = crossOrigin
+    && trustedRemoteAppOrigins.has(origin)
+    && isLoopbackAddress(req.socket.remoteAddress)
+    && isRemoteDocumentServicePath(url.pathname);
+  return {
+    origin,
+    crossOrigin,
+    trustedRemoteService,
+    attachGatewayIdentity: Boolean(appServerToken) && isLoopbackAddress(req.socket.remoteAddress),
+    forwardedHost: trustedRemoteService ? new URL(origin).host : String(req.headers.host || `${host}:${port}`)
+  };
+}
+
+function getRemoteServiceCorsHeaders(origin) {
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-Requested-With",
+    "Access-Control-Allow-Private-Network": "true",
+    "Access-Control-Expose-Headers": "Content-Disposition, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-AIS-Processing",
+    "Access-Control-Max-Age": "600",
+    "Vary": "Origin, Access-Control-Request-Private-Network"
+  };
+}
+
+async function testHttpService(url, timeoutMilliseconds = 1800) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMilliseconds);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function handleLocalDocumentServicesHealth(req, res, accessContext) {
+  const [appServerAvailable, ocrAvailable, documentConversionAvailable] = await Promise.all([
+    testHttpService(new URL("/api/health", appServerOrigin).toString()),
+    testHttpService(ocrHealthUrl),
+    testHttpService(documentConversionHealthUrl)
+  ]);
+  const payload = JSON.stringify({
+    ok: appServerAvailable && (ocrAvailable || documentConversionAvailable),
+    appServerAvailable,
+    ocrAvailable: appServerAvailable && ocrAvailable,
+    documentConversionAvailable: appServerAvailable && documentConversionAvailable
+  });
+  const headers = accessContext.trustedRemoteService
+    ? getRemoteServiceCorsHeaders(accessContext.origin)
+    : {};
+  headers["X-AIS-Processing"] = "local-docker";
+  send(
+    res,
+    200,
+    req.method === "HEAD" ? "" : payload,
+    "application/json; charset=utf-8",
+    headers
+  );
 }
 
 function normalizePostalIndex(value) {
@@ -184,15 +296,32 @@ function isRetryableAppServerError(error) {
   return ["ECONNREFUSED", "ECONNRESET", "EPIPE", "ETIMEDOUT"].includes(String(error?.code || ""));
 }
 
-function forwardToAppServer(req, res, body, attempt = 0) {
+function forwardToAppServer(req, res, body, accessContext, attempt = 0) {
   const target = new URL(req.url, appServerOrigin);
   const headers = {
     ...req.headers,
-    "x-forwarded-host": req.headers.host || `${host}:${port}`,
-    "x-forwarded-proto": "http",
-    "x-forwarded-for": req.socket.remoteAddress || "",
-    ...(appServerToken ? { "x-ais-gateway-token": appServerToken } : {})
+    "x-forwarded-host": accessContext.forwardedHost,
+    "x-forwarded-proto": accessContext.trustedRemoteService ? "https" : "http",
+    "x-forwarded-for": req.socket.remoteAddress || ""
   };
+  for (const name of [
+    "x-ais-gateway-token",
+    "x-ais-session-id",
+    "x-ais-user-id",
+    "x-ais-user-login",
+    "x-ais-user-name",
+    "x-ais-user-role"
+  ]) delete headers[name];
+  if (accessContext.attachGatewayIdentity) {
+    headers["x-ais-gateway-token"] = appServerToken;
+    if (accessContext.trustedRemoteService) {
+      headers["x-ais-session-id"] = "local-browser-services";
+      headers["x-ais-user-id"] = "local-browser-services";
+      headers["x-ais-user-login"] = "local-services";
+      headers["x-ais-user-name"] = "Local services";
+      headers["x-ais-user-role"] = "manager";
+    }
+  }
   delete headers["transfer-encoding"];
   headers["content-length"] = String(body.length);
   let appServerConnected = false;
@@ -204,7 +333,12 @@ function forwardToAppServer(req, res, body, attempt = 0) {
     path: `${target.pathname}${target.search}`,
     headers
   }, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+    const responseHeaders = { ...proxyRes.headers };
+    if (accessContext.trustedRemoteService) {
+      Object.assign(responseHeaders, getRemoteServiceCorsHeaders(accessContext.origin));
+      responseHeaders["x-ais-processing"] = "local-docker";
+    }
+    res.writeHead(proxyRes.statusCode || 502, responseHeaders);
     proxyRes.pipe(res);
   });
   proxyReq.once("socket", (socket) => {
@@ -223,7 +357,7 @@ function forwardToAppServer(req, res, body, attempt = 0) {
       && nextAttempt < appServerRetryDelays.length
     ) {
       setTimeout(
-        () => forwardToAppServer(req, res, body, nextAttempt),
+        () => forwardToAppServer(req, res, body, accessContext, nextAttempt),
         appServerRetryDelays[nextAttempt]
       );
       return;
@@ -245,10 +379,10 @@ function forwardToAppServer(req, res, body, attempt = 0) {
   proxyReq.end(body);
 }
 
-async function proxyToAppServer(req, res) {
+async function proxyToAppServer(req, res, accessContext) {
   try {
     const body = await readProxyRequestBody(req);
-    forwardToAppServer(req, res, body);
+    forwardToAppServer(req, res, body, accessContext);
   } catch (error) {
     if (!res.headersSent) {
       send(res, 413, JSON.stringify({ error: error.message }), "application/json; charset=utf-8");
@@ -258,11 +392,31 @@ async function proxyToAppServer(req, res) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
+  const accessContext = getRequestAccessContext(req, url);
+  if (accessContext.crossOrigin && !accessContext.trustedRemoteService) {
+    send(res, 403, "Cross-origin request denied.");
+    return;
+  }
+  if (req.method === "OPTIONS" && accessContext.trustedRemoteService) {
+    send(res, 204, "", "text/plain; charset=utf-8", getRemoteServiceCorsHeaders(accessContext.origin));
+    return;
+  }
+  if (
+    ["GET", "HEAD"].includes(String(req.method || "GET").toUpperCase())
+    && url.pathname === localDocumentServicesHealthPath
+  ) {
+    handleLocalDocumentServicesHealth(req, res, accessContext).catch((error) => {
+      if (!res.headersSent) {
+        send(res, 500, JSON.stringify({ ok: false, error: error.message }), "application/json; charset=utf-8");
+      }
+    });
+    return;
+  }
   if (url.pathname === "/api/postal-index") {
     handlePostalIndex(req, res, url);
     return;
   }
-  proxyToAppServer(req, res);
+  proxyToAppServer(req, res, accessContext);
 });
 
 server.listen(port, host, () => {

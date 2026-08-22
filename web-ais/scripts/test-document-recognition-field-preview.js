@@ -100,7 +100,7 @@ async function main() {
   const clientPath = process.env.AIS_TEST_APP_SOURCE
     ? path.resolve(process.env.AIS_TEST_APP_SOURCE)
     : path.join(__dirname, "..", "app.js");
-  const clientSource = fs.readFileSync(clientPath, "utf8");
+  const clientSource = fs.readFileSync(clientPath, "utf8").replace(/\r\n/g, "\n");
   const displayFieldsStart = clientSource.indexOf("  function getDocumentRecognitionDisplayFields");
   const displayFieldsEnd = clientSource.indexOf("\n\n  function storeStudentDocumentRecognitionResult", displayFieldsStart);
   assert.ok(displayFieldsStart >= 0 && displayFieldsEnd > displayFieldsStart);
@@ -196,7 +196,7 @@ async function main() {
   assert.match(clientSource, /const previewPayload = \{ \.\.\.payload, files: recognitionFiles \};/u);
   assert.match(clientSource, /data-action="select-student-photo-area-any"/u);
   assert.match(clientSource, /data-action="recognize-student-document-field-region"/u);
-  assert.match(clientSource, /photoApiUrl\("\/api\/students\/recognize-documents\/field-region"\)/u);
+  assert.match(clientSource, /documentProcessingApiUrl\("\/api\/students\/recognize-documents\/field-region", recognitionOrigin\)/u);
   assert.match(clientSource, /body: JSON\.stringify\(\{ key, mimeType, base64 \}\)/u);
   assert.match(clientSource, /title: "Источник, область и повторное распознавание"/u);
   assert.match(clientSource, /useLabel: "Распознать это поле"/u);

@@ -13,7 +13,7 @@ async function main() {
   const appPath = process.env.AIS_TEST_APP_SOURCE
     ? path.resolve(process.env.AIS_TEST_APP_SOURCE)
     : path.join(__dirname, "..", "app.js");
-  const appSource = fs.readFileSync(appPath, "utf8");
+  const appSource = fs.readFileSync(appPath, "utf8").replace(/\r\n/g, "\n");
 
   const keyMapSource = extractSource(
     appSource,
@@ -37,7 +37,8 @@ async function main() {
   const recognizeField = new Function(
     "getDocumentRecognitionOcrFieldKey",
     "fetchWithTimeout",
-    "photoApiUrl",
+    "resolveDocumentProcessingOrigin",
+    "documentProcessingApiUrl",
     "clamp",
     `${recognizeSource}\nreturn recognizeStudentDocumentFieldRegion;`
   )(
@@ -56,7 +57,8 @@ async function main() {
         })
       });
     },
-    (value) => value,
+    async () => "http://127.0.0.1:8081",
+    (pathname, origin) => `${origin}${pathname}`,
     (value, min, max) => Math.max(min, Math.min(max, value))
   );
   const requestController = new AbortController();
@@ -66,7 +68,10 @@ async function main() {
   }, requestController.signal);
   assert.strictEqual(recognized.key, "passportNumber");
   assert.strictEqual(recognized.value, "12 34 567890");
-  assert.strictEqual(capturedRequest.url, "/api/students/recognize-documents/field-region");
+  assert.strictEqual(
+    capturedRequest.url,
+    "http://127.0.0.1:8081/api/students/recognize-documents/field-region"
+  );
   assert.strictEqual(capturedRequest.timeout, 270000);
   assert.strictEqual(capturedRequest.options.signal, requestController.signal);
   assert.deepStrictEqual(

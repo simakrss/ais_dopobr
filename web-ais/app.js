@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.210",
+    version: "1.7.211",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.211",
+      releasedAt: "2026-08-22",
+      changes: [
+        "OCR и формирование документов при работе через сайт сначала используют Docker-сервисы на текущем компьютере, а защищённый туннель включается только как резерв."
+      ]
+    },
     {
       version: "1.7.210",
       releasedAt: "2026-08-22",
@@ -3164,6 +3171,13 @@ MAX - https://bizvmax.ru/zifra_plus
     { programType: "ПРО", code: "ПРО" }
   ];
   const defaultPhotoServerOrigin = "http://localhost:8081";
+  const localDocumentServicesOrigin = "http://127.0.0.1:8081";
+  const localDocumentServicesCacheMilliseconds = 10000;
+  const localDocumentServicesState = {
+    checkedAt: 0,
+    capabilities: null,
+    request: null
+  };
   const financeMetrics = [
     { key: "revenue", label: "Поступления", tone: "income" },
     { key: "direct", label: "Прямые затраты", tone: "direct" }
@@ -32380,9 +32394,13 @@ MAX - https://bizvmax.ru/zifra_plus
       button.setAttribute("aria-busy", "true");
     }
     try {
+      const recognitionOrigin = await resolveDocumentProcessingOrigin("ocr");
       for (const source of sourceCandidates) {
         try {
-          const response = await fetch(photoApiUrl("/api/students/recognize-documents/files"), {
+          const response = await fetch(documentProcessingApiUrl(
+            "/api/students/recognize-documents/files",
+            recognitionOrigin
+          ), {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -32642,6 +32660,86 @@ MAX - https://bizvmax.ru/zifra_plus
     return window.location.protocol === "file:"
       ? `${defaultPhotoServerOrigin}/${relativePath}`
       : new URL(relativePath, APP_BASE_URL).toString();
+  }
+
+  function documentProcessingApiUrl(pathname, origin) {
+    const relativePath = String(pathname || "").replace(/^\/+/, "");
+    const baseOrigin = String(origin || photoServerOrigin()).replace(/\/+$/, "");
+    return `${baseOrigin}/${relativePath}`;
+  }
+
+  function unavailableLocalDocumentServiceCapabilities() {
+    return {
+      appServerAvailable: false,
+      ocrAvailable: false,
+      documentConversionAvailable: false
+    };
+  }
+
+  async function probeLocalDocumentServices(force = false) {
+    if (window.location.protocol === "file:") {
+      return {
+        appServerAvailable: true,
+        ocrAvailable: true,
+        documentConversionAvailable: true
+      };
+    }
+    const now = Date.now();
+    if (
+      !force
+      && localDocumentServicesState.capabilities
+      && now - localDocumentServicesState.checkedAt < localDocumentServicesCacheMilliseconds
+    ) {
+      return localDocumentServicesState.capabilities;
+    }
+    if (localDocumentServicesState.request) return localDocumentServicesState.request;
+    localDocumentServicesState.request = (async () => {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 2500);
+      try {
+        const response = await fetch(
+          `${localDocumentServicesOrigin}/api/local-document-services/health`,
+          {
+            method: "GET",
+            mode: "cors",
+            targetAddressSpace: "local",
+            cache: "no-store",
+            headers: { "X-Requested-With": "AIS-Web" },
+            signal: controller.signal
+          }
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || response.headers.get("X-AIS-Processing") !== "local-docker") {
+          return unavailableLocalDocumentServiceCapabilities();
+        }
+        return {
+          appServerAvailable: payload.appServerAvailable === true,
+          ocrAvailable: payload.ocrAvailable === true,
+          documentConversionAvailable: payload.documentConversionAvailable === true
+        };
+      } catch {
+        return unavailableLocalDocumentServiceCapabilities();
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    })();
+    try {
+      localDocumentServicesState.capabilities = await localDocumentServicesState.request;
+      localDocumentServicesState.checkedAt = Date.now();
+      return localDocumentServicesState.capabilities;
+    } finally {
+      localDocumentServicesState.request = null;
+    }
+  }
+
+  async function resolveDocumentProcessingOrigin(capability) {
+    if (window.location.protocol === "file:") return defaultPhotoServerOrigin;
+    const capabilities = await probeLocalDocumentServices();
+    const localAvailable = capabilities.appServerAvailable === true
+      && (capability === "ocr"
+        ? capabilities.ocrAvailable === true
+        : capabilities.documentConversionAvailable === true);
+    return localAvailable ? localDocumentServicesOrigin : photoServerOrigin();
   }
 
   function photoPublicUrl(pathOrUrl) {
@@ -34315,7 +34413,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const folder = String(result?.folder || "").trim();
     if (!folder) return result;
     try {
-      const response = await fetch(photoApiUrl("/api/students/recognize-documents/files"), {
+      const recognitionOrigin = await resolveDocumentProcessingOrigin("ocr");
+      const response = await fetch(documentProcessingApiUrl(
+        "/api/students/recognize-documents/files",
+        recognitionOrigin
+      ), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -35571,8 +35673,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!key || mimeType !== "image/jpeg" || !base64) {
       throw new Error("Выбранная область документа не подготовлена для распознавания.");
     }
+    const recognitionOrigin = await resolveDocumentProcessingOrigin("ocr");
     return fetchWithTimeout(
-      photoApiUrl("/api/students/recognize-documents/field-region"),
+      documentProcessingApiUrl("/api/students/recognize-documents/field-region", recognitionOrigin),
       {
         method: "POST",
         headers: {
@@ -36696,7 +36799,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function loadStudentDocumentPhotoCropPage(payload, file, page, options = {}) {
-    const response = await fetch(photoApiUrl("/api/students/recognize-documents/page"), {
+    const recognitionOrigin = await resolveDocumentProcessingOrigin("ocr");
+    const response = await fetch(documentProcessingApiUrl(
+      "/api/students/recognize-documents/page",
+      recognitionOrigin
+    ), {
       method: "POST",
       signal: options.signal,
       headers: {
@@ -37643,7 +37750,11 @@ MAX - https://bizvmax.ru/zifra_plus
       button.setAttribute("aria-busy", "true");
     }
     try {
-      const filesResponse = await fetch(photoApiUrl("/api/students/recognize-documents/files"), {
+      const recognitionOrigin = await resolveDocumentProcessingOrigin("ocr");
+      const filesResponse = await fetch(documentProcessingApiUrl(
+        "/api/students/recognize-documents/files",
+        recognitionOrigin
+      ), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -37667,7 +37778,10 @@ MAX - https://bizvmax.ru/zifra_plus
       const selectedSource = String(filesPayload.source || source);
       state.modal.draft = currentRecord;
       dialog = createStudentDocumentRecognitionDialog({ entityType: isContract ? "contract" : "student" });
-      const startResponse = await fetch(photoApiUrl("/api/students/recognize-documents/start"), {
+      const startResponse = await fetch(documentProcessingApiUrl(
+        "/api/students/recognize-documents/start",
+        recognitionOrigin
+      ), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -37687,7 +37801,10 @@ MAX - https://bizvmax.ru/zifra_plus
         updateStudentDocumentRecognitionProgress(dialog, status);
         await waitForStudentImportPoll(650);
         const statusResponse = await fetch(
-          photoApiUrl(`/api/students/recognize-documents/status?jobId=${encodeURIComponent(jobId)}`)
+          documentProcessingApiUrl(
+            `/api/students/recognize-documents/status?jobId=${encodeURIComponent(jobId)}`,
+            recognitionOrigin
+          )
         );
         status = await statusResponse.json().catch(() => ({}));
         if (!statusResponse.ok) {
@@ -37699,7 +37816,10 @@ MAX - https://bizvmax.ru/zifra_plus
         throw new Error(status.error || "Распознавание завершилось с ошибкой.");
       }
       const resultResponse = await fetch(
-        photoApiUrl(`/api/students/recognize-documents/result?jobId=${encodeURIComponent(jobId)}`)
+        documentProcessingApiUrl(
+          `/api/students/recognize-documents/result?jobId=${encodeURIComponent(jobId)}`,
+          recognitionOrigin
+        )
       );
       const result = await resultResponse.json().catch(() => ({}));
       if (!resultResponse.ok) {
@@ -47106,8 +47226,11 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
-  async function requestGeneratedDocumentPreview(generationRequest) {
-    return fetchWithTimeout(photoApiUrl("/api/contracts/student-document"), {
+  async function requestGeneratedDocumentPreview(generationRequest, processingOrigin) {
+    return fetchWithTimeout(documentProcessingApiUrl(
+      "/api/contracts/student-document",
+      processingOrigin
+    ), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -47143,9 +47266,12 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  async function cancelGeneratedDocumentPreview(previewToken) {
+  async function cancelGeneratedDocumentPreview(previewToken, processingOrigin) {
     if (!String(previewToken || "").trim()) return;
-    await fetchWithTimeout(photoApiUrl("/api/contracts/student-document-preview/cancel"), {
+    await fetchWithTimeout(documentProcessingApiUrl(
+      "/api/contracts/student-document-preview/cancel",
+      processingOrigin
+    ), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ previewToken })
@@ -47363,6 +47489,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button.classList.add("is-document-generating");
     }
     let pendingPreviewToken = "";
+    let documentProcessingOrigin = "";
     try {
       const fieldValues = evaluateContractTemplateFields(record, documentTemplate.fields);
       const sourceValues = collectContractTemplateSourceValues(record);
@@ -47394,9 +47521,10 @@ MAX - https://bizvmax.ru/zifra_plus
         preferLocalTemplate: getEffectiveLocalDocumentsMode(),
         outputFormat
       };
+      documentProcessingOrigin = await resolveDocumentProcessingOrigin("documentConversion");
       if (previewEnabled) {
         setDocumentGenerationStatus(generationTaskId, `Подготовка предварительного просмотра: ${documentTemplate.title}`);
-        const preview = await requestGeneratedDocumentPreview(generationRequest);
+        const preview = await requestGeneratedDocumentPreview(generationRequest, documentProcessingOrigin);
         pendingPreviewToken = preview.previewToken;
         setDocumentGenerationStatus(generationTaskId, `Ожидается подтверждение: ${documentTemplate.title}`);
         const confirmed = await showGeneratedDocumentPreview(preview.blob, {
@@ -47406,7 +47534,7 @@ MAX - https://bizvmax.ru/zifra_plus
           emailDescription: emailRequest?.recipientDescription || ""
         });
         if (!confirmed) {
-          await cancelGeneratedDocumentPreview(pendingPreviewToken);
+          await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
           pendingPreviewToken = "";
           return { generated: false, cancelled: true, previewed: true };
         }
@@ -47418,7 +47546,7 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       const storageRequest = prepareDocumentStorageRequestForEmail(requestedStorage, emailRequest);
       if (!storageRequest) {
-        await cancelGeneratedDocumentPreview(pendingPreviewToken);
+        await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
         pendingPreviewToken = "";
         return;
       }
@@ -47432,9 +47560,12 @@ MAX - https://bizvmax.ru/zifra_plus
             : `Формирование: ${documentTemplate.title}`)
       );
       const generationTimeoutMs = storageRequest.promptLocalSave ? 15 * 60 * 1000 : 5 * 60 * 1000;
-      const generatedDocument = await fetchWithTimeout(photoApiUrl(finalizingPreview
-        ? "/api/contracts/student-document-preview/finalize"
-        : "/api/contracts/student-document"), {
+      const generatedDocument = await fetchWithTimeout(documentProcessingApiUrl(
+        finalizingPreview
+          ? "/api/contracts/student-document-preview/finalize"
+          : "/api/contracts/student-document",
+        documentProcessingOrigin
+      ), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(finalizingPreview
@@ -47524,7 +47655,7 @@ MAX - https://bizvmax.ru/zifra_plus
       };
     } catch (error) {
       if (pendingPreviewToken) {
-        await cancelGeneratedDocumentPreview(pendingPreviewToken);
+        await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
         pendingPreviewToken = "";
       }
       alert(`${errorTitle}: ${error.message}`);
@@ -49304,6 +49435,7 @@ MAX - https://bizvmax.ru/zifra_plus
     window.visualViewport?.addEventListener("resize", scheduleMainRegistryTableViewportFit, { passive: true });
     document.addEventListener("scroll", repositionOpenComboPanels, { passive: true, capture: true });
     render();
+    void probeLocalDocumentServices();
     if (sharedStateError) {
       window.setTimeout(() => {
         alert(
