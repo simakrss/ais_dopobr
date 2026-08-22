@@ -22,15 +22,15 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.215",
+    version: "1.7.216",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
     {
-      version: "1.7.215",
+      version: "1.7.216",
       releasedAt: "2026-08-22",
       changes: [
-        "Исправлены поддержка DOCX, выбор подходящего документа и повторное распознавание отдельных полей без смешивания паспортных данных со СНИЛС."
+        "Исправлены поддержка DOCX, выбор подходящего документа и повторное распознавание отдельных полей без смешивания паспортных данных со СНИЛС; устаревшие ошибочные связки очищаются при открытии результата."
       ]
     },
     {
@@ -35189,6 +35189,42 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function isStudentDocumentRecognitionFieldSourceCompatible(field) {
+    const key = String(field?.key || "").trim();
+    let expectedKind = "";
+    if (["passportType", "passportNumber", "passportDate", "passportCode", "passportIssuer"].includes(key)) {
+      expectedKind = "passport";
+    } else if (key === "snils") {
+      expectedKind = "snils";
+    } else if (key === "inn") {
+      expectedKind = "inn";
+    } else if ([
+      "educationLevel",
+      "educationDocument",
+      "educationDocumentSeries",
+      "educationDocumentNumber",
+      "educationDocumentDate",
+      "educationDocumentIssuer",
+      "educationSpecialty",
+      "educationQualification",
+      "educationDocumentSurname"
+    ].includes(key)) {
+      expectedKind = "education";
+    }
+    if (!expectedKind) return true;
+    const explicitKinds = String(field?.sourceFile || "")
+      .split(/;\s*/g)
+      .flatMap((sourceName) => {
+        const kinds = [];
+        if (/(?:паспорт|passport)/iu.test(sourceName)) kinds.push("passport");
+        if (/(?:снилс|snils|страхов)/iu.test(sourceName)) kinds.push("snils");
+        if (/(?:\bинн\b|\binn\b|налог)/iu.test(sourceName)) kinds.push("inn");
+        if (/(?:диплом|аттестат|образован|удостоверен)/iu.test(sourceName)) kinds.push("education");
+        return kinds;
+      });
+    return !explicitKinds.length || explicitKinds.includes(expectedKind);
+  }
+
   function normalizeStudentDocumentRecognitionResult(value, { keepPreviews = false } = {}) {
     if (!value || typeof value !== "object") return null;
     const recognizedAt = String(value.recognizedAt || "").trim();
@@ -35220,7 +35256,7 @@ MAX - https://bizvmax.ru/zifra_plus
       })).filter((file) => file.relativeName || file.fileName)
       : [];
     const fields = Array.isArray(value.fields)
-      ? value.fields.slice(0, 40).map((field) => {
+      ? value.fields.slice(0, 40).filter(isStudentDocumentRecognitionFieldSourceCompatible).map((field) => {
         const normalizedField = { ...field };
         const preview = keepPreviews
           ? normalizeStudentDocumentRecognitionPreview(field?.preview)

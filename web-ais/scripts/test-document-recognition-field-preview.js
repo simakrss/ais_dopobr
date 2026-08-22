@@ -125,6 +125,29 @@ async function main() {
     ? path.resolve(process.env.AIS_TEST_APP_SOURCE)
     : path.join(__dirname, "..", "app.js");
   const clientSource = fs.readFileSync(clientPath, "utf8").replace(/\r\n/g, "\n");
+  const sourceCompatibilityStart = clientSource.indexOf(
+    "  function isStudentDocumentRecognitionFieldSourceCompatible"
+  );
+  const sourceCompatibilityEnd = clientSource.indexOf(
+    "\n\n  function normalizeStudentDocumentRecognitionResult",
+    sourceCompatibilityStart
+  );
+  assert.ok(sourceCompatibilityStart >= 0 && sourceCompatibilityEnd > sourceCompatibilityStart);
+  const isSourceCompatible = new Function(
+    `${clientSource.slice(sourceCompatibilityStart, sourceCompatibilityEnd)}\nreturn isStudentDocumentRecognitionFieldSourceCompatible;`
+  )();
+  assert.strictEqual(isSourceCompatible({ key: "passportCode", sourceFile: "СНИЛС.jpg" }), false);
+  assert.strictEqual(isSourceCompatible({ key: "passportCode", sourceFile: "паспорт Колюпановой.pdf" }), true);
+  assert.strictEqual(isSourceCompatible({ key: "passportCode", sourceFile: "скан.pdf" }), true);
+  assert.strictEqual(isSourceCompatible({
+    key: "passportCode",
+    sourceFile: "СНИЛС.jpg; паспорт Колюпановой.pdf"
+  }), true);
+  assert.strictEqual(isSourceCompatible({ key: "snils", sourceFile: "паспорт Колюпановой.pdf" }), false);
+  assert.match(
+    clientSource,
+    /value\.fields\.slice\(0, 40\)\.filter\(isStudentDocumentRecognitionFieldSourceCompatible\)/u
+  );
   const displayFieldsStart = clientSource.indexOf("  function getDocumentRecognitionDisplayFields");
   const displayFieldsEnd = clientSource.indexOf("\n\n  function storeStudentDocumentRecognitionResult", displayFieldsStart);
   assert.ok(displayFieldsStart >= 0 && displayFieldsEnd > displayFieldsStart);
