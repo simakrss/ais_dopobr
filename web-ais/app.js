@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.222",
+    version: "1.7.223",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.223",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Исправлен выход из системы при несохранённых настройках админки; после завершения сессии гарантированно открывается форма входа для выбора другой учётной записи."
+      ]
+    },
     {
       version: "1.7.222",
       releasedAt: "2026-08-23",
@@ -18244,7 +18251,11 @@ MAX - https://bizvmax.ru/zifra_plus
     } catch (error) {
       console.warn("Не удалось завершить сессию на сервере", error);
     }
-    window.location.reload();
+    if (window.AIS_AUTH_API?.redirectToLogin) {
+      window.AIS_AUTH_API.redirectToLogin();
+      return;
+    }
+    window.location.replace(photoApiUrl("/"));
   }
 
   async function loadAuthUsers({ clearEditor = false } = {}) {
@@ -44669,13 +44680,25 @@ MAX - https://bizvmax.ru/zifra_plus
       || targetView === "admin"
       || !state.adminSettingsDirty
     ) return true;
-    if (state.adminSettingsSaving) return false;
-    const form = document.querySelector("form[data-action='save-student-database-settings']");
-    if (!form) return false;
-    if (!confirm("В админке есть несохранённые изменения. Сохранить их перед выходом?")) {
+    if (state.adminSettingsSaving) {
+      alert("Дождитесь завершения сохранения настроек.");
       return false;
     }
-    return persistStudentDatabaseSettings(form, { renderAfterSave: false });
+    const form = document.querySelector("form[data-action='save-student-database-settings']");
+    if (form && confirm(
+      "В админке есть несохранённые изменения.\n\n"
+      + "Нажмите «ОК», чтобы сохранить их перед выходом.\n"
+      + "Нажмите «Отмена», чтобы выбрать выход без сохранения."
+    )) {
+      return persistStudentDatabaseSettings(form, { renderAfterSave: false });
+    }
+    if (!confirm(
+      "Выйти без сохранения изменений?\n\n"
+      + "Нажмите «ОК», чтобы выйти без сохранения.\n"
+      + "Нажмите «Отмена», чтобы остаться в админке."
+    )) return false;
+    clearAdminSettingsDirtyState(form);
+    return true;
   }
 
   async function saveStudentDatabaseSettings(event) {

@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260823-assistant-locations-v1";
+  const AUTH_BUILD = "20260823-auth-logout-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);
@@ -43,6 +43,15 @@
     authenticatedUser = user && typeof user === "object" ? { ...user } : null;
     window.AIS_AUTH_USER = authenticatedUser;
     scheduleSessionExpiration(expiresAt);
+  }
+
+  function redirectToLogin() {
+    setAuthenticatedSession(null, 0);
+    closeSessionExpiredDialog();
+    const target = new URL(appUrl(""));
+    target.hash = "";
+    target.searchParams.set("signed-out", String(Date.now()));
+    window.location.replace(target.toString());
   }
 
   async function request(pathname, options = {}) {
@@ -352,7 +361,7 @@
 
   async function startApplication(user, expiresAt) {
     setAuthenticatedSession(user, expiresAt);
-    window.AIS_AUTH_API = Object.freeze({ request, appUrl });
+    window.AIS_AUTH_API = Object.freeze({ request, appUrl, redirectToLogin });
     installAuthenticatedFetch();
     renderLoading(user?.role === "partner" ? "Загрузка кабинета партнёра..." : "Загрузка системы...");
     try {
@@ -373,6 +382,26 @@
 
   async function initialize() {
     renderLoading("Проверка доступа...");
+    const navigationUrl = new URL(window.location.href);
+    if (navigationUrl.searchParams.has("signed-out") || navigationUrl.searchParams.has("switch-account")) {
+      try {
+        await nativeFetch(appUrl("api/auth/logout"), {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json", "X-Requested-With": "AIS-Web" },
+          body: "{}"
+        });
+      } catch (error) {
+        console.warn("Не удалось подтвердить завершение предыдущей сессии", error);
+      }
+      setAuthenticatedSession(null, 0);
+      navigationUrl.searchParams.delete("signed-out");
+      navigationUrl.searchParams.delete("switch-account");
+      window.history.replaceState({}, "", `${navigationUrl.pathname}${navigationUrl.search}${navigationUrl.hash}`);
+      renderLogin();
+      return;
+    }
     try {
       const payload = await request("api/auth/me");
       await startApplication(payload.user, payload.sessionExpiresAt);

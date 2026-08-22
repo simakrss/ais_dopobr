@@ -311,14 +311,22 @@ function ais_auth_logout(): void
     $_SESSION = [];
     if (ini_get('session.use_cookies')) {
         $params = session_get_cookie_params();
-        setcookie(session_name(), '', [
-            'expires' => time() - 42000,
-            'path' => $params['path'],
-            'domain' => $params['domain'],
-            'secure' => $params['secure'],
-            'httponly' => $params['httponly'],
-            'samesite' => 'Strict',
-        ]);
+        $basePath = ais_auth_base_path();
+        $cookiePaths = array_values(array_unique(array_filter([
+            (string) ($params['path'] ?? ''),
+            $basePath,
+            rtrim($basePath, '/'),
+        ])));
+        foreach ($cookiePaths as $cookiePath) {
+            setcookie(session_name(), '', [
+                'expires' => time() - 42000,
+                'path' => $cookiePath,
+                'domain' => $params['domain'],
+                'secure' => $params['secure'],
+                'httponly' => $params['httponly'],
+                'samesite' => 'Strict',
+            ]);
+        }
     }
     session_destroy();
 }

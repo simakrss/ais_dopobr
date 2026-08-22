@@ -631,7 +631,8 @@
 
   async function logout() {
     try { await authApi.request("api/auth/logout", { method: "POST" }); } catch { /* reload clears the view */ }
-    window.location.replace(authApi.appUrl(""));
+    if (authApi.redirectToLogin) authApi.redirectToLogin();
+    else window.location.replace(authApi.appUrl(""));
   }
 
   function showProfileTabMenu(x, y) {
