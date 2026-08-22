@@ -12,7 +12,9 @@ const {
   getPartnerDocumentsFolder,
   sanitizePartnerProfileUpdate,
   buildPartnerPaymentData,
-  normalizePartnerMaterialsUrl
+  normalizePartnerMaterialsUrl,
+  requestHasGatewayIdentity,
+  requestHasTrustedGatewayIdentity
 } = require("../app-server.js");
 
 const root = path.resolve(__dirname, "..");
@@ -137,6 +139,51 @@ assert.equal(
 );
 assert.throws(() => normalizePartnerMaterialsUrl("http://disk.yandex.ru/d/test"), /HTTPS-ссылку/u);
 assert.throws(() => normalizePartnerMaterialsUrl("https://example.test/materials"), /Яндекс-Диска/u);
+
+const previousGatewayEnvironment = {
+  trust: process.env.AIS_TRUST_GATEWAY,
+  secret: process.env.AIS_GATEWAY_SHARED_SECRET,
+  cli: process.env.AIS_OCR_CLI
+};
+try {
+  process.env.AIS_TRUST_GATEWAY = "1";
+  delete process.env.AIS_GATEWAY_SHARED_SECRET;
+  delete process.env.AIS_OCR_CLI;
+  assert.equal(requestHasGatewayIdentity({ headers: {} }), false);
+  assert.equal(requestHasTrustedGatewayIdentity({ headers: {} }), false);
+  assert.equal(requestHasTrustedGatewayIdentity({ headers: {
+    "x-ais-user-id": "partner:employee-active",
+    "x-ais-user-role": "partner"
+  } }), false);
+  process.env.AIS_OCR_CLI = "1";
+  assert.equal(requestHasTrustedGatewayIdentity({ headers: {
+    "x-ais-user-id": "partner:employee-active",
+    "x-ais-user-role": "partner"
+  } }), true);
+  process.env.AIS_GATEWAY_SHARED_SECRET = "gateway-secret";
+  process.env.AIS_OCR_CLI = "1";
+  assert.equal(requestHasTrustedGatewayIdentity({ headers: {
+    "x-ais-user-id": "partner:employee-active",
+    "x-ais-user-role": "partner"
+  } }), true);
+  delete process.env.AIS_OCR_CLI;
+  assert.equal(requestHasTrustedGatewayIdentity({ headers: {
+    "x-ais-user-id": "partner:employee-active",
+    "x-ais-user-role": "partner",
+    "x-ais-gateway-token": "gateway-secret"
+  } }), true);
+  assert.equal(requestHasTrustedGatewayIdentity({ headers: {
+    "x-ais-user-id": "partner:employee-active",
+    "x-ais-user-role": "partner"
+  } }), false);
+} finally {
+  if (previousGatewayEnvironment.trust === undefined) delete process.env.AIS_TRUST_GATEWAY;
+  else process.env.AIS_TRUST_GATEWAY = previousGatewayEnvironment.trust;
+  if (previousGatewayEnvironment.secret === undefined) delete process.env.AIS_GATEWAY_SHARED_SECRET;
+  else process.env.AIS_GATEWAY_SHARED_SECRET = previousGatewayEnvironment.secret;
+  if (previousGatewayEnvironment.cli === undefined) delete process.env.AIS_OCR_CLI;
+  else process.env.AIS_OCR_CLI = previousGatewayEnvironment.cli;
+}
 
 assert.match(authSource, /user\?\.role === "partner"[\s\S]*loadScript\("partner-app\.js"\)/u);
 assert.match(authSource, /else \{[\s\S]*loadScript\("data\/seed\.js"\)/u);

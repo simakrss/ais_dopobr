@@ -18,7 +18,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.224"/u);
+assert.match(appSource, /version: "1\.7\.225"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 assert.match(appSource, /state\.view === "statistics"\) return renderStatistics\(\)/u);
 assert.match(appSource, /getOrderedTabs\("statistics", statisticsTabs\)/u);

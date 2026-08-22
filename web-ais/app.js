@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.224",
+    version: "1.7.225",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.225",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Исправлено открытие кабинета партнёра на локальном сервере: обычные запросы браузера больше не подменяются служебной ролью шлюза."
+      ]
+    },
     {
       version: "1.7.224",
       releasedAt: "2026-08-23",

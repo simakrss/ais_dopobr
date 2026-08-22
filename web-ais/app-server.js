@@ -1482,14 +1482,24 @@ function requestHasConfiguredGatewaySecret(req) {
     && requestHasGatewaySecret(req);
 }
 
+function requestHasGatewayIdentity(req) {
+  const userId = String(req.headers["x-ais-user-id"] || "").trim();
+  const role = String(req.headers["x-ais-user-role"] || "").trim();
+  return Boolean(userId) && ["admin", "manager", "partner"].includes(role);
+}
+
+function requestHasTrustedGatewayIdentity(req) {
+  if (process.env.AIS_TRUST_GATEWAY !== "1" || !requestHasGatewayIdentity(req)) return false;
+  if (process.env.AIS_OCR_CLI === "1") return true;
+  if (String(process.env.AIS_GATEWAY_SHARED_SECRET || "")) return requestHasGatewaySecret(req);
+  return false;
+}
+
 async function getRequestAuthUser(req) {
-  if (process.env.AIS_TRUST_GATEWAY === "1" && requestHasGatewaySecret(req)) {
-    const gatewayUserId = String(req.headers["x-ais-user-id"] || "gateway").slice(0, 160);
+  if (requestHasTrustedGatewayIdentity(req)) {
+    const gatewayUserId = String(req.headers["x-ais-user-id"]).slice(0, 160);
     const gatewaySessionId = String(req.headers["x-ais-session-id"] || gatewayUserId).slice(0, 256);
-    const requestedRole = String(req.headers["x-ais-user-role"] || "admin");
-    const role = ["admin", "manager", "partner"].includes(requestedRole)
-      ? requestedRole
-      : "manager";
+    const role = String(req.headers["x-ais-user-role"]);
     return {
       id: gatewayUserId,
       login: String(req.headers["x-ais-user-login"] || "gateway").slice(0, 160),
@@ -22852,6 +22862,8 @@ module.exports = {
   sanitizePartnerProfileUpdate,
   buildPartnerPaymentData,
   normalizePartnerMaterialsUrl,
+  requestHasGatewayIdentity,
+  requestHasTrustedGatewayIdentity,
   getRemainingSmtpTimeout,
   writeSmtpSocketData,
   route
