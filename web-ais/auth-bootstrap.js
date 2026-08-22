@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260823-local-partner-auth-v1";
+  const AUTH_BUILD = "20260823-partner-role-switch-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);
@@ -307,7 +307,7 @@
           body: "{}"
         });
       } finally {
-        window.location.reload();
+        redirectToLogin();
       }
     });
     form.addEventListener("submit", async (event) => {
@@ -329,8 +329,10 @@
           })
         });
         const nextLogin = String(payload.user?.login || "").trim();
+        const previousRole = String(authenticatedUser?.role || "").trim();
+        const nextRole = String(payload.user?.role || "").trim();
         setAuthenticatedSession(payload.user, payload.sessionExpiresAt);
-        if (previousLogin && nextLogin !== previousLogin) {
+        if ((previousLogin && nextLogin !== previousLogin) || (previousRole && nextRole !== previousRole)) {
           window.location.reload();
           return;
         }

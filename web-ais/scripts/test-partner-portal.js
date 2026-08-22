@@ -187,6 +187,8 @@ try {
 
 assert.match(authSource, /user\?\.role === "partner"[\s\S]*loadScript\("partner-app\.js"\)/u);
 assert.match(authSource, /else \{[\s\S]*loadScript\("data\/seed\.js"\)/u);
+assert.match(authSource, /previousRole[\s\S]{0,240}nextRole !== previousRole/u);
+assert.match(authSource, /data-session-expired-logout[\s\S]{0,420}redirectToLogin\(\)/u);
 assert.match(
   gatewaySource,
   /\(string\) \(\$currentUser\['role'\] \?\? ''\) === 'partner'[\s\S]{0,180}!str_starts_with\(\$requestPath, '\/api\/partner\/'\)/u
@@ -204,6 +206,9 @@ assert.match(partnerSource, /data-view-mode="tiles"/u);
 assert.match(partnerSource, /data-view-mode="table"/u);
 assert.doesNotMatch(partnerSource, /onclick="event\.stopPropagation\(\)"/u);
 assert.match(partnerSource, /PROFILE_TAB_STORAGE_KEY/u);
+assert.match(partnerSource, /data-action="switch-account"/u);
+assert.match(partnerSource, /Для кабинета используйте реквизиты СДО партнёра/u);
+assert.match(partnerSource, /sessionUser\?\.role === "partner"[\s\S]{0,100}loadPortal\(false\)/u);
 assert.match(deploySource, /"partner-app\.js"/u);
 
 console.log("partner portal tests: OK");

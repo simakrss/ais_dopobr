@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.225",
+    version: "1.7.226",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.226",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Исправлено переключение между учетными записями менеджера и партнёра; при неверной роли кабинет предлагает сразу сменить учетную запись."
+      ]
+    },
     {
       version: "1.7.225",
       releasedAt: "2026-08-23",

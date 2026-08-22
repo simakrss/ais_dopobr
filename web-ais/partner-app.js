@@ -22,6 +22,7 @@
   const state = {
     loading: true,
     error: "",
+    switchAccountAvailable: false,
     portal: null,
     view: "dashboard",
     sidebarOpen: false,
@@ -528,15 +529,18 @@
       return;
     }
     if (state.error) {
-      app.innerHTML = `<main class="partner-boot"><div class="partner-error-panel"><h1>Не удалось открыть кабинет</h1><p>${escapeHtml(state.error)}</p><button class="partner-primary-button" data-action="reload-portal" type="button">Повторить</button></div></main>`;
+      app.innerHTML = `<main class="partner-boot"><div class="partner-error-panel"><h1>Не удалось открыть кабинет</h1><p>${escapeHtml(state.error)}</p>${state.switchAccountAvailable
+        ? '<button class="partner-primary-button" data-action="switch-account" type="button">Сменить учетную запись</button>'
+        : '<button class="partner-primary-button" data-action="reload-portal" type="button">Повторить</button>'}</div></main>`;
       return;
     }
     app.innerHTML = `<div class="partner-shell">${renderSidebar()}<div class="partner-workspace">${renderHeader()}<main class="partner-content">${renderMainView()}</main><footer class="partner-footer">ООО «Цифровизация Плюс» · Кабинет партнёра</footer></div></div>`;
   }
 
-  async function loadPortal() {
+  async function loadPortal(retryAfterRoleCheck = true) {
     state.loading = true;
     state.error = "";
+    state.switchAccountAvailable = false;
     render();
     try {
       state.portal = await authApi.request("api/partner/portal");
@@ -546,6 +550,22 @@
       render();
       if (state.view === "materials") loadMaterials("/");
     } catch (error) {
+      if (error.status === 403 && /только партн[её]ру/iu.test(String(error.message || ""))) {
+        let sessionUser = null;
+        try {
+          sessionUser = (await authApi.request("api/auth/me"))?.user || null;
+        } catch { /* исходная ошибка точнее описывает проблему доступа */ }
+        if (retryAfterRoleCheck && sessionUser?.role === "partner") {
+          await loadPortal(false);
+          return;
+        }
+        const currentLogin = String(sessionUser?.login || authUser.login || "").trim();
+        state.loading = false;
+        state.switchAccountAvailable = true;
+        state.error = `Сейчас выполнен вход${currentLogin ? ` под логином «${currentLogin}»` : ""} без роли партнёра. Для кабинета используйте реквизиты СДО партнёра.`;
+        render();
+        return;
+      }
       state.loading = false;
       state.error = error.message;
       render();
@@ -661,6 +681,7 @@
     const action = button.dataset.action;
     if (action === "toggle-sidebar") { state.sidebarOpen = !state.sidebarOpen; render(); }
     if (action === "logout") logout();
+    if (action === "switch-account") authApi.redirectToLogin?.();
     if (action === "reload-portal") loadPortal();
     if (action === "open-payable") navigate("payments", { status: "payable" });
     if (["open-month", "open-payment-row"].includes(action)) { state.selectedMonth = button.dataset.month || ""; navigate("payments"); }
