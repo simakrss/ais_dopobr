@@ -5,6 +5,7 @@
   const authApi = window.AIS_AUTH_API;
   const authUser = window.AIS_AUTH_USER || {};
   const PROFILE_TAB_STORAGE_KEY = "ais-partner-profile-tabs-v1";
+  const DOCUMENTS_VIEW_STORAGE_KEY = "ais-partner-documents-view-v1";
   const PROFILE_TABS = Object.freeze([
     { id: "main", label: "Основное" },
     { id: "contract", label: "Договор" },
@@ -43,6 +44,7 @@
     documentsData: null,
     documentsLoading: false,
     documentsError: "",
+    documentsView: localStorage.getItem(DOCUMENTS_VIEW_STORAGE_KEY) === "table" ? "table" : "tiles",
     feedbackStatus: "",
     feedbackError: "",
     feedbackSending: false,
@@ -79,7 +81,9 @@
       chevron: '<path d="m9 6 6 6-6 6"/>',
       chart: '<path d="M4 19V9m5 10V5m5 14v-7m5 7V3"/>',
       filter: '<path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z"/>',
-      refresh: '<path d="M20 7v5h-5M4 17v-5h5m10-2a8 8 0 0 0-14-3l-1 2m1 5a8 8 0 0 0 14 3l1-2"/>'
+      refresh: '<path d="M20 7v5h-5M4 17v-5h5m10-2a8 8 0 0 0-14-3l-1 2m1 5a8 8 0 0 0 14 3l1-2"/>',
+      tiles: '<path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/>',
+      table: '<path d="M4 5h16v14H4V5Zm0 5h16M9 5v14"/>'
     };
     return `<svg class="partner-icon ${escapeAttr(className)}" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.file}</svg>`;
   }
@@ -455,13 +459,42 @@
     const crumbs = [{ label: "Документы", path: "" }, ...parts.map((part, index) => ({
       label: part, path: parts.slice(0, index + 1).join("/")
     }))];
-    return `<div class="partner-modal-backdrop" data-action="close-documents"><section class="partner-documents-modal" role="dialog" aria-modal="true" aria-label="Документы партнёра" onclick="event.stopPropagation()">
-      <header><div><p>Яндекс‑Диск</p><h3>Документы партнёра</h3></div><button data-action="close-documents" type="button" title="Закрыть">${icon("close")}</button></header>
-      <nav class="partner-breadcrumbs">${crumbs.map((crumb, index) => `${index ? icon("chevron") : ""}<button data-action="open-document-folder" data-path="${escapeAttr(crumb.path)}" type="button" ${index === crumbs.length - 1 ? "disabled" : ""}>${escapeHtml(crumb.label)}</button>`).join("")}</nav>
-      <div class="partner-documents-body">${state.documentsLoading ? `<div class="partner-loading-inline"><span class="auth-spinner"></span>Загрузка папки...</div>` : state.documentsError ? `<div class="partner-error-panel">${escapeHtml(state.documentsError)}</div>` : data?.entries?.length ? `<div class="partner-file-grid">${data.entries.map((item) => item.isDirectory
-        ? `<button class="partner-file-card is-folder" data-action="open-document-folder" data-path="${escapeAttr(item.path)}" type="button"><span class="partner-file-icon">${icon("folder")}</span><span><strong>${escapeHtml(item.name)}</strong><small>Папка</small></span>${icon("chevron")}</button>`
-        : `<a class="partner-file-card is-file" href="${escapeAttr(authApi.appUrl(`api/partner/documents/file?path=${encodeURIComponent(item.path)}`))}" target="_blank" rel="noopener"><span class="partner-file-icon">${icon("file")}</span><span><strong>${escapeHtml(item.name)}</strong><small>${formatFileSize(item.size)} · ${formatDateTime(item.modifiedAt)}</small></span>${icon("external")}</a>`).join("")}</div>` : renderEmpty("В папке пока нет документов.")}</div>
+    return `<div class="student-webdav-browser-backdrop partner-modal-backdrop" data-documents-backdrop><section class="student-webdav-browser-dialog partner-documents-modal" role="dialog" aria-modal="true" aria-label="Документы партнёра">
+      <header class="student-webdav-browser-head"><div><h2>Документы партнёра</h2><p>Облачная папка на Яндекс‑Диске</p></div><button class="icon-button" data-action="close-documents" type="button" title="Закрыть" aria-label="Закрыть">×</button></header>
+      <div class="student-webdav-browser-toolbar partner-documents-toolbar">
+        <nav class="student-webdav-browser-path">${crumbs.map((crumb, index) => `<button data-action="open-document-folder" data-path="${escapeAttr(crumb.path)}" type="button" ${index === crumbs.length - 1 ? 'aria-current="page" disabled' : ""}>${escapeHtml(crumb.label)}</button>`).join("")}</nav>
+        <div class="partner-documents-view-switch" role="group" aria-label="Режим отображения">
+          <button class="icon-button ${state.documentsView === "tiles" ? "is-active" : ""}" data-action="set-documents-view" data-view-mode="tiles" type="button" title="Плитка" aria-label="Плитка" aria-pressed="${state.documentsView === "tiles"}">${icon("tiles")}</button>
+          <button class="icon-button ${state.documentsView === "table" ? "is-active" : ""}" data-action="set-documents-view" data-view-mode="table" type="button" title="Таблица" aria-label="Таблица" aria-pressed="${state.documentsView === "table"}">${icon("table")}</button>
+        </div>
+        <button class="ghost-button" data-action="refresh-documents" type="button">Обновить</button>
+      </div>
+      <div class="student-webdav-browser-workspace partner-documents-workspace"><section class="student-webdav-browser-files partner-documents-body">${state.documentsLoading ? `<div class="partner-loading-inline"><span class="auth-spinner"></span>Загрузка папки...</div>` : state.documentsError ? `<div class="student-webdav-browser-empty is-error">${escapeHtml(state.documentsError)}</div>` : data?.entries?.length ? renderPartnerDocumentEntries(data.entries) : `<div class="student-webdav-browser-empty">В папке пока нет документов.</div>`}</section></div>
     </section></div>`;
+  }
+
+  function partnerDocumentType(item) {
+    if (item.isDirectory) return "Папка";
+    const name = String(item.name || "");
+    const extension = name.includes(".") ? name.split(".").pop() : "";
+    return extension ? extension.toLocaleUpperCase("ru-RU") : "Файл";
+  }
+
+  function partnerDocumentUrl(item, download = false) {
+    const params = new URLSearchParams({ path: item.path });
+    if (download) params.set("download", "1");
+    return authApi.appUrl(`api/partner/documents/file?${params}`);
+  }
+
+  function renderPartnerDocumentEntries(entries) {
+    if (state.documentsView === "table") {
+      return `<div class="partner-documents-table-wrap"><table class="partner-documents-table"><thead><tr><th>Название</th><th>Тип</th><th>Размер</th><th>Изменён</th><th></th></tr></thead><tbody>${entries.map((item) => `<tr class="${item.isDirectory ? "is-directory" : "is-file"}"><td>${item.isDirectory
+        ? `<button class="partner-document-name" data-action="open-document-folder" data-path="${escapeAttr(item.path)}" type="button">${icon("folder")}<strong>${escapeHtml(item.name)}</strong></button>`
+        : `<a class="partner-document-name" href="${escapeAttr(partnerDocumentUrl(item))}" target="_blank" rel="noopener">${icon("file")}<strong>${escapeHtml(item.name)}</strong></a>`}</td><td>${escapeHtml(partnerDocumentType(item))}</td><td>${item.isDirectory ? "—" : escapeHtml(formatFileSize(item.size))}</td><td>${escapeHtml(formatDateTime(item.modifiedAt))}</td><td>${item.isDirectory ? icon("chevron") : `<a class="icon-button" href="${escapeAttr(partnerDocumentUrl(item, true))}" title="Скачать" aria-label="Скачать">${icon("download")}</a>`}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+    return `<div class="partner-file-grid partner-documents-tiles">${entries.map((item) => item.isDirectory
+      ? `<button class="partner-file-card is-folder" data-action="open-document-folder" data-path="${escapeAttr(item.path)}" type="button"><span class="partner-file-icon">${icon("folder")}</span><span><strong>${escapeHtml(item.name)}</strong><small>Папка</small></span>${icon("chevron")}</button>`
+      : `<a class="partner-file-card is-file" href="${escapeAttr(partnerDocumentUrl(item))}" target="_blank" rel="noopener"><span class="partner-file-icon">${icon("file")}</span><span><strong>${escapeHtml(item.name)}</strong><small>${formatFileSize(item.size)} · ${formatDateTime(item.modifiedAt)}</small></span>${icon("external")}</a>`).join("")}</div>`;
   }
 
   function renderFeedback() {
@@ -612,6 +645,11 @@
   }
 
   app.addEventListener("click", (event) => {
+    if (event.target.matches("[data-documents-backdrop]")) {
+      state.documentsOpen = false;
+      render();
+      return;
+    }
     const viewButton = event.target.closest("[data-view]");
     if (viewButton) {
       navigate(viewButton.dataset.view);
@@ -634,6 +672,12 @@
     if (action === "refresh-materials") loadMaterials(state.materials?.path || "/");
     if (action === "open-documents") loadDocuments("");
     if (action === "open-document-folder") loadDocuments(button.dataset.path || "");
+    if (action === "refresh-documents") loadDocuments(state.documentsData?.path || "");
+    if (action === "set-documents-view") {
+      state.documentsView = button.dataset.viewMode === "table" ? "table" : "tiles";
+      localStorage.setItem(DOCUMENTS_VIEW_STORAGE_KEY, state.documentsView);
+      render();
+    }
     if (action === "close-documents") { state.documentsOpen = false; render(); }
   });
 

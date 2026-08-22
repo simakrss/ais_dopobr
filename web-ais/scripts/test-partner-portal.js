@@ -152,6 +152,10 @@ assert.match(partnerSource, /data-action="open-payable"/u);
 assert.match(partnerSource, /data-feedback-form/u);
 assert.match(partnerSource, /data-profile-form/u);
 assert.match(partnerSource, /api\/partner\/documents\/list/u);
+assert.match(partnerSource, /DOCUMENTS_VIEW_STORAGE_KEY/u);
+assert.match(partnerSource, /data-view-mode="tiles"/u);
+assert.match(partnerSource, /data-view-mode="table"/u);
+assert.doesNotMatch(partnerSource, /onclick="event\.stopPropagation\(\)"/u);
 assert.match(partnerSource, /PROFILE_TAB_STORAGE_KEY/u);
 assert.match(deploySource, /"partner-app\.js"/u);
 

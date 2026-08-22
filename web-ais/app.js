@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.220",
+    version: "1.7.221",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.221",
+      releasedAt: "2026-08-22",
+      changes: [
+        "Исправлено закрытие облачного окна документов партнёра; добавлены режимы отображения плиткой и таблицей с сохранением выбора."
+      ]
+    },
     {
       version: "1.7.220",
       releasedAt: "2026-08-22",
