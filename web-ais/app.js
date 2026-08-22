@@ -20,10 +20,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.211",
+    version: "1.7.212",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.212",
+      releasedAt: "2026-08-22",
+      changes: [
+        "В админке добавлена вкладка «Внешние сервисы» с безопасными параметрами локального подключения и защищённого туннеля для распознавания и формирования документов."
+      ]
+    },
     {
       version: "1.7.211",
       releasedAt: "2026-08-22",
@@ -4428,6 +4435,13 @@ MAX - https://bizvmax.ru/zifra_plus
     adminSettingsDraft: null,
     adminSettingsBaseline: "",
     adminSettingsSaving: false,
+    externalServices: {
+      data: null,
+      localCapabilities: null,
+      loading: false,
+      loaded: false,
+      error: ""
+    },
     auditLog: {
       items: [],
       total: 0,
@@ -8483,6 +8497,15 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (state.view === "admin" && state.adminTab === "users" && isAdminUser() && !state.authUsersLoaded && !state.authUsersLoading) {
       queueMicrotask(() => loadAuthUsers());
+    }
+    if (
+      state.view === "admin"
+      && state.adminTab === "external-services"
+      && isAdminUser()
+      && !state.externalServices.loaded
+      && !state.externalServices.loading
+    ) {
+      queueMicrotask(() => loadExternalServices());
     }
   }
 
@@ -16118,12 +16141,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const releaseDateLabel = releaseDateParts.length === 3
       ? `${releaseDateParts[2]}.${releaseDateParts[1]}.${releaseDateParts[0]}`
       : APPLICATION_RELEASE.releasedAt;
-    const adminTabs = [
+    const adminTabs = getOrderedTabs("admin", [
       { id: "database", label: "Подключение к базе" },
       { id: "email", label: "Электронная почта" },
+      { id: "external-services", label: "Внешние сервисы" },
       { id: "audit", label: "Журнал действий" },
       { id: "users", label: "Пользователи и роли" }
-    ];
+    ]);
     const adminTab = adminTabs.some((tab) => tab.id === state.adminTab)
       ? state.adminTab
       : "database";
@@ -16156,12 +16180,14 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </dl>
       </section>
-      <nav class="admin-tabs" role="tablist" aria-label="Разделы админки">
+      <nav class="admin-tabs" data-orderable-tabs="admin" role="tablist" aria-label="Разделы админки">
         ${adminTabs.map((tab) => `
           <button
             class="admin-tab-button ${adminTab === tab.id ? "is-active" : ""}"
             data-action="switch-admin-tab"
             data-admin-tab="${escapeAttr(tab.id)}"
+            data-orderable-tab="${escapeAttr(tab.id)}"
+            data-orderable-tab-default-index="${tab.defaultTabIndex}"
             type="button"
             role="tab"
             aria-selected="${adminTab === tab.id ? "true" : "false"}"
@@ -16524,8 +16550,164 @@ MAX - https://bizvmax.ru/zifra_plus
             </form>
           </div>
       </section>
+      ${adminTab === "external-services" ? renderAdminExternalServicesPanel() : ""}
       ${adminTab === "users" ? renderAdminUsersPanel() : ""}
       ${adminTab === "audit" ? renderAdminAuditPanel() : ""}
+    `;
+  }
+
+  function renderExternalServiceValue(value, emptyLabel = "Не настроено") {
+    const text = String(value || "").trim();
+    return text
+      ? `<code class="admin-external-service-value">${escapeHtml(text)}</code>`
+      : `<span class="admin-external-service-empty">${escapeHtml(emptyLabel)}</span>`;
+  }
+
+  function renderExternalServiceStatus(available, availableLabel, unavailableLabel) {
+    if (available === null) {
+      return '<span class="admin-external-service-status is-pending">Проверка...</span>';
+    }
+    return `
+      <span class="admin-external-service-status ${available ? "is-available" : "is-unavailable"}">
+        ${escapeHtml(available ? availableLabel : unavailableLabel)}
+      </span>
+    `;
+  }
+
+  function renderAdminExternalServiceCard({
+    title,
+    description,
+    localAvailable,
+    localAvailableLabel,
+    localUnavailableLabel,
+    tunnelConfigured,
+    rows
+  }) {
+    return `
+      <article class="admin-external-service-card">
+        <header class="admin-external-service-card-head">
+          <div>
+            <h3>${escapeHtml(title)}</h3>
+            <p>${escapeHtml(description)}</p>
+          </div>
+          <div class="admin-external-service-statuses">
+            ${renderExternalServiceStatus(localAvailable, localAvailableLabel, localUnavailableLabel)}
+            ${renderExternalServiceStatus(
+              tunnelConfigured,
+              "Туннель настроен",
+              "Туннель не настроен"
+            )}
+          </div>
+        </header>
+        <dl class="admin-external-service-parameters">
+          ${rows.map((row) => `
+            <div>
+              <dt>${escapeHtml(row.label)}</dt>
+              <dd>${row.html ?? renderExternalServiceValue(row.value, row.emptyLabel)}</dd>
+            </div>
+          `).join("")}
+        </dl>
+      </article>
+    `;
+  }
+
+  function renderAdminExternalServicesPanel() {
+    const externalServices = state.externalServices || {};
+    const data = externalServices.data || {};
+    const tunnel = data.tunnel || {};
+    const recognition = data.recognition || {};
+    const documentGeneration = data.documentGeneration || {};
+    const localCapabilities = externalServices.localCapabilities;
+    const localRecognitionAvailable = localCapabilities
+      ? localCapabilities.appServerAvailable === true && localCapabilities.ocrAvailable === true
+      : null;
+    const localDocumentGenerationAvailable = localCapabilities
+      ? localCapabilities.appServerAvailable === true
+        && localCapabilities.documentConversionAvailable === true
+      : null;
+    const tunnelConfigured = externalServices.loaded ? tunnel.configured === true : null;
+    const tunnelKeyLabel = tunnel.secretConfigured
+      ? "Настроен, значение скрыто"
+      : "Не настроен";
+    const converterKeyLabel = documentGeneration.accessKeyConfigured === true
+      ? "Настроен, значение скрыто"
+      : documentGeneration.accessKeyConfigured === false
+        ? "Не настроен"
+        : "Управляется локальным сервисом";
+    const tunnelUpdatedAt = tunnel.updatedAt
+      ? formatDateTimeRu(tunnel.updatedAt)
+      : "Нет данных";
+    const documentRoutes = Array.isArray(documentGeneration.routes)
+      ? documentGeneration.routes
+      : [];
+    return `
+      <section class="panel admin-external-services-panel" id="admin-tab-external-services" role="tabpanel">
+        <div class="section-head admin-external-services-head">
+          <div>
+            <p class="eyebrow">Подключение</p>
+            <h2>Внешние сервисы</h2>
+            <p class="admin-tab-summary">Система сначала использует Docker-сервисы на текущем компьютере, а при их недоступности обращается к этому компьютеру через защищённый туннель.</p>
+          </div>
+          <button
+            class="ghost-button ${externalServices.loading ? "is-loading" : ""}"
+            data-action="refresh-external-services"
+            type="button"
+            ${externalServices.loading ? "disabled" : ""}
+          >${externalServices.loading ? "Проверка..." : "Обновить состояние"}</button>
+        </div>
+        <div class="admin-external-services-priority" role="note">
+          <strong>Порядок подключения</strong>
+          <span>Локальный Docker</span>
+          <span aria-hidden="true">→</span>
+          <span>Защищённый туннель</span>
+          <small>Секретные ключи хранятся только на сервере и в браузер не передаются.</small>
+        </div>
+        ${externalServices.error ? `
+          <p class="admin-external-services-error" role="alert">${escapeHtml(externalServices.error)}</p>
+        ` : ""}
+        <div class="admin-external-services-grid" aria-live="polite">
+          ${renderAdminExternalServiceCard({
+            title: "Распознавание",
+            description: "Паспорт, ИНН, СНИЛС, документы об образовании и выбранные области сканов.",
+            localAvailable: localRecognitionAvailable,
+            localAvailableLabel: "Локальный OCR доступен",
+            localUnavailableLabel: "Локальный OCR недоступен",
+            tunnelConfigured,
+            rows: [
+              { label: "OCR-сервис Docker", value: recognition.serviceUrl },
+              { label: "Локальный API", value: recognition.localApiUrl },
+              { label: "API через туннель", value: recognition.tunnelApiUrl },
+              { label: "Разрешённый маршрут", value: recognition.route },
+              { label: "Ключ туннеля", value: tunnelKeyLabel }
+            ]
+          })}
+          ${renderAdminExternalServiceCard({
+            title: "Формирование документов",
+            description: "Генерация DOCX, предварительный просмотр и преобразование документов в PDF.",
+            localAvailable: localDocumentGenerationAvailable,
+            localAvailableLabel: "Конвертер доступен",
+            localUnavailableLabel: "Конвертер недоступен",
+            tunnelConfigured,
+            rows: [
+              { label: "Конвертер Docker", value: documentGeneration.serviceUrl },
+              { label: "Источник для конвертера", value: documentGeneration.sourceUrl },
+              { label: "Локальный API", value: documentGeneration.localApiUrl },
+              { label: "API через туннель", value: documentGeneration.tunnelApiUrl },
+              {
+                label: "Разрешённые маршруты",
+                html: documentRoutes.length
+                  ? `<span class="admin-external-service-routes">${documentRoutes.map((route) => renderExternalServiceValue(route)).join("")}</span>`
+                  : renderExternalServiceValue("")
+              },
+              { label: "Ключ конвертера", value: converterKeyLabel }
+            ]
+          })}
+        </div>
+        <footer class="admin-external-services-foot">
+          <span>Адрес туннеля: ${renderExternalServiceValue(tunnel.baseUrl)}</span>
+          <span>Параметры обновлены: <strong>${escapeHtml(tunnelUpdatedAt)}</strong></span>
+        </footer>
+      </section>
     `;
   }
 
@@ -16942,6 +17124,29 @@ MAX - https://bizvmax.ru/zifra_plus
     } finally {
       state.authUsersLoading = false;
       state.authUsersLoaded = true;
+      render();
+    }
+  }
+
+  async function loadExternalServices({ force = false } = {}) {
+    if (!isAdminUser() || state.externalServices.loading) return;
+    if (state.externalServices.loaded && !force) return;
+    state.externalServices.loading = true;
+    state.externalServices.error = "";
+    render();
+    try {
+      const [payload, localCapabilities] = await Promise.all([
+        authRequest("api/admin/external-services"),
+        probeLocalDocumentServices(force)
+      ]);
+      state.externalServices.data = payload && typeof payload === "object" ? payload : null;
+      state.externalServices.localCapabilities = localCapabilities;
+    } catch (error) {
+      state.externalServices.error = `Не удалось получить параметры внешних сервисов: ${error.message}`;
+      state.externalServices.localCapabilities = await probeLocalDocumentServices(force);
+    } finally {
+      state.externalServices.loading = false;
+      state.externalServices.loaded = true;
       render();
     }
   }
@@ -26072,7 +26277,10 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='switch-admin-tab']").forEach((button) => {
       button.addEventListener("click", () => {
         const tab = String(button.dataset.adminTab || "");
-        if (!["database", "email", "audit", "users"].includes(tab) || tab === state.adminTab) return;
+        if (
+          !["database", "email", "external-services", "audit", "users"].includes(tab)
+          || tab === state.adminTab
+        ) return;
         state.adminTab = tab;
         render();
         requestAnimationFrame(() => {
@@ -26080,6 +26288,9 @@ MAX - https://bizvmax.ru/zifra_plus
             ?.focus({ preventScroll: true });
         });
       });
+    });
+    document.querySelector("[data-action='refresh-external-services']")?.addEventListener("click", () => {
+      loadExternalServices({ force: true });
     });
     document.querySelectorAll("[data-action='switch-admin-database-tab']").forEach((button) => {
       button.addEventListener("click", () => {

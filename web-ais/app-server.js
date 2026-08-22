@@ -109,6 +109,14 @@ const HOST = process.env.HOST || "127.0.0.1";
 const DEFAULT_DOCUMENT_CONVERTER_URL = "http://127.0.0.1:8082";
 const DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL = `http://host.docker.internal:${PORT}`;
 const DEFAULT_OCR_SERVICE_URL = "http://127.0.0.1:8083";
+const DEFAULT_LOCAL_DOCUMENT_SERVICES_ORIGIN = "http://127.0.0.1:8081";
+const TUNNEL_RUNTIME_PATHS = Object.freeze([
+  path.resolve(
+    process.env.AIS_TUNNEL_RUNTIME_PATH
+      || path.join(SERVER_CODE_ROOT, ".runtime", "tunnel-runtime.json")
+  ),
+  path.join(STORAGE_ROOT, "tunnel-runtime.json")
+]);
 const OCR_CLI_SCRIPT = path.join(SERVER_CODE_ROOT, "services", "ocr", "server.py");
 const OCR_CLI_RUNTIME_ROOT = path.join(SERVER_CODE_ROOT, "services", "ocr", "runtime");
 const MAX_JSON_BYTES = 40 * 1024 * 1024;
@@ -1709,6 +1717,106 @@ function sendJson(res, status, payload, extraHeaders = {}) {
 function sendError(res, status, message) {
   sendJson(res, status, { error: message });
 }
+
+function sanitizeExternalServiceAdminUrl(value, fallback = "") {
+  const source = String(value || fallback || "").trim();
+  if (!source || source.length > 500) return "";
+  try {
+    const result = new URL(source);
+    if (!["http:", "https:"].includes(result.protocol)) return "";
+    result.username = "";
+    result.password = "";
+    result.search = "";
+    result.hash = "";
+    result.pathname = result.pathname.replace(/\/+$/u, "");
+    return result.toString().replace(/\/$/u, "");
+  } catch {
+    return "";
+  }
+}
+
+function joinExternalServiceAdminUrl(baseUrl, route) {
+  const base = String(baseUrl || "").replace(/\/+$/u, "");
+  return base ? `${base}/${String(route || "").replace(/^\/+/, "")}` : "";
+}
+
+async function readTunnelRuntimeAdminSummary() {
+  let runtime = {};
+  for (const runtimePath of TUNNEL_RUNTIME_PATHS) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(runtimePath, "utf8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        runtime = parsed;
+        break;
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        console.warn(`Не удалось прочитать параметры туннеля: ${error.message}`);
+      }
+    }
+  }
+  const sanitizedBaseUrl = sanitizeExternalServiceAdminUrl(runtime.baseUrl);
+  const baseUrl = sanitizedBaseUrl.startsWith("https://") ? sanitizedBaseUrl : "";
+  const secretLength = String(runtime.secret || "").length;
+  const secretConfigured = secretLength >= 32 && secretLength <= 512;
+  const enabled = runtime.enabled === true;
+  return {
+    enabled,
+    configured: enabled && Boolean(baseUrl) && secretConfigured,
+    baseUrl,
+    updatedAt: String(runtime.updatedAt || "").trim().slice(0, 80),
+    secretConfigured
+  };
+}
+
+async function buildExternalServicesAdminPayload() {
+  const tunnel = await readTunnelRuntimeAdminSummary();
+  const localGatewayUrl = sanitizeExternalServiceAdminUrl(
+    process.env.AIS_LOCAL_DOCUMENT_SERVICES_ORIGIN,
+    DEFAULT_LOCAL_DOCUMENT_SERVICES_ORIGIN
+  );
+  const ocrServiceUrl = sanitizeExternalServiceAdminUrl(
+    process.env.AIS_OCR_SERVICE_URL || serverSettings.ocrServiceUrl,
+    DEFAULT_OCR_SERVICE_URL
+  );
+  const documentConverterUrl = sanitizeExternalServiceAdminUrl(
+    process.env.ONLYOFFICE_CONVERTER_URL || serverSettings.documentConverterUrl,
+    DEFAULT_DOCUMENT_CONVERTER_URL
+  );
+  const documentConverterSourceUrl = sanitizeExternalServiceAdminUrl(
+    process.env.ONLYOFFICE_SOURCE_URL || serverSettings.documentConverterSourceUrl,
+    DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL
+  );
+  return {
+    ok: true,
+    mode: "local-first",
+    localGateway: {
+      baseUrl: localGatewayUrl,
+      healthUrl: joinExternalServiceAdminUrl(localGatewayUrl, "/api/local-document-services/health")
+    },
+    tunnel,
+    recognition: {
+      serviceUrl: ocrServiceUrl,
+      localApiUrl: joinExternalServiceAdminUrl(localGatewayUrl, "/api/students/recognize-documents"),
+      tunnelApiUrl: joinExternalServiceAdminUrl(tunnel.baseUrl, "/api/students/recognize-documents"),
+      route: "/api/students/recognize-documents/*"
+    },
+    documentGeneration: {
+      serviceUrl: documentConverterUrl,
+      sourceUrl: documentConverterSourceUrl,
+      localApiUrl: joinExternalServiceAdminUrl(localGatewayUrl, "/api/contracts/student-document"),
+      tunnelApiUrl: joinExternalServiceAdminUrl(tunnel.baseUrl, "/api/contracts/student-document"),
+      routes: [
+        "/api/contracts/student-document",
+        "/api/contracts/student-document-preview/*"
+      ],
+      accessKeyConfigured: Boolean(
+        String(process.env.ONLYOFFICE_JWT_SECRET || serverSettings.documentConverterJwtSecret || "").trim()
+      )
+    }
+  };
+}
+
 function sendFile(res, status, bytes, fileName, contentType, extraHeaders = {}) {
   const encodedName = encodeURIComponent(fileName).replace(/['()]/g, escape);
   res.writeHead(status, {
@@ -20484,6 +20592,18 @@ async function route(req, res) {
     } catch (error) {
       sendError(res, 400, error.message);
     }
+    return;
+  }
+  if (requestUrl.pathname === "/api/admin/external-services") {
+    if (authUser?.role !== "admin") {
+      sendError(res, 403, "Раздел доступен только администратору.");
+      return;
+    }
+    if (req.method !== "GET") {
+      sendError(res, 405, "Method not allowed");
+      return;
+    }
+    sendJson(res, 200, await buildExternalServicesAdminPayload());
     return;
   }
   const adminOnlyRequest = (

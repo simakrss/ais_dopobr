@@ -623,6 +623,140 @@ function gateway_tunnel_settings(): ?array
     return ['baseUrl' => $baseUrl, 'secret' => $secret];
 }
 
+function gateway_sanitize_external_service_url(string $value, string $fallback = ''): string
+{
+    $source = trim($value !== '' ? $value : $fallback);
+    if ($source === '' || strlen($source) > 500) {
+        return '';
+    }
+    $parts = parse_url($source);
+    if (!is_array($parts)) {
+        return '';
+    }
+    $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+    $host = trim((string) ($parts['host'] ?? ''));
+    if (!in_array($scheme, ['http', 'https'], true) || $host === '') {
+        return '';
+    }
+    if (str_contains($host, ':') && !str_starts_with($host, '[')) {
+        $host = '[' . $host . ']';
+    }
+    $port = isset($parts['port']) ? ':' . (int) $parts['port'] : '';
+    $path = rtrim((string) ($parts['path'] ?? ''), '/');
+    return $scheme . '://' . $host . $port . $path;
+}
+
+function gateway_join_external_service_url(string $baseUrl, string $route): string
+{
+    $base = rtrim($baseUrl, '/');
+    return $base === '' ? '' : $base . '/' . ltrim($route, '/');
+}
+
+function gateway_tunnel_admin_summary(): array
+{
+    $path = __DIR__ . '/storage/tunnel-runtime.json';
+    $text = is_file($path) ? file_get_contents($path) : false;
+    $runtime = $text === false ? null : json_decode($text, true);
+    if (!is_array($runtime)) {
+        $runtime = [];
+    }
+    $baseUrl = gateway_sanitize_external_service_url((string) ($runtime['baseUrl'] ?? ''));
+    if (!str_starts_with($baseUrl, 'https://')) {
+        $baseUrl = '';
+    }
+    $secretLength = strlen((string) ($runtime['secret'] ?? ''));
+    $secretConfigured = $secretLength >= 32 && $secretLength <= 512;
+    $enabled = ($runtime['enabled'] ?? false) === true;
+    return [
+        'enabled' => $enabled,
+        'configured' => $enabled && $baseUrl !== '' && $secretConfigured,
+        'baseUrl' => $baseUrl,
+        'updatedAt' => substr(trim((string) ($runtime['updatedAt'] ?? '')), 0, 80),
+        'secretConfigured' => $secretConfigured,
+    ];
+}
+
+function gateway_external_services_admin_payload(): array
+{
+    $settings = gateway_server_settings();
+    $tunnel = gateway_tunnel_admin_summary();
+    $localGatewayUrl = gateway_sanitize_external_service_url(
+        (string) (getenv('AIS_LOCAL_DOCUMENT_SERVICES_ORIGIN') ?: ''),
+        'http://127.0.0.1:8081'
+    );
+    $ocrServiceUrl = gateway_sanitize_external_service_url(
+        (string) (getenv('AIS_OCR_SERVICE_URL') ?: ($settings['ocrServiceUrl'] ?? '')),
+        'http://127.0.0.1:8083'
+    );
+    $documentConverterUrl = gateway_sanitize_external_service_url(
+        (string) (getenv('ONLYOFFICE_CONVERTER_URL') ?: ($settings['documentConverterUrl'] ?? '')),
+        'http://127.0.0.1:8082'
+    );
+    $documentConverterSourceUrl = gateway_sanitize_external_service_url(
+        (string) (getenv('ONLYOFFICE_SOURCE_URL') ?: ($settings['documentConverterSourceUrl'] ?? '')),
+        'http://host.docker.internal:19081'
+    );
+    $converterSecret = (string) (
+        getenv('ONLYOFFICE_JWT_SECRET') ?: ($settings['documentConverterJwtSecret'] ?? '')
+    );
+    return [
+        'ok' => true,
+        'mode' => 'local-first',
+        'localGateway' => [
+            'baseUrl' => $localGatewayUrl,
+            'healthUrl' => gateway_join_external_service_url(
+                $localGatewayUrl,
+                '/api/local-document-services/health'
+            ),
+        ],
+        'tunnel' => $tunnel,
+        'recognition' => [
+            'serviceUrl' => $ocrServiceUrl,
+            'localApiUrl' => gateway_join_external_service_url(
+                $localGatewayUrl,
+                '/api/students/recognize-documents'
+            ),
+            'tunnelApiUrl' => gateway_join_external_service_url(
+                (string) $tunnel['baseUrl'],
+                '/api/students/recognize-documents'
+            ),
+            'route' => '/api/students/recognize-documents/*',
+        ],
+        'documentGeneration' => [
+            'serviceUrl' => $documentConverterUrl,
+            'sourceUrl' => $documentConverterSourceUrl,
+            'localApiUrl' => gateway_join_external_service_url(
+                $localGatewayUrl,
+                '/api/contracts/student-document'
+            ),
+            'tunnelApiUrl' => gateway_join_external_service_url(
+                (string) $tunnel['baseUrl'],
+                '/api/contracts/student-document'
+            ),
+            'routes' => [
+                '/api/contracts/student-document',
+                '/api/contracts/student-document-preview/*',
+            ],
+            'accessKeyConfigured' => trim($converterSecret) !== '' ? true : null,
+        ],
+    ];
+}
+
+function gateway_handle_admin_external_services(
+    string $method,
+    string $path,
+    array $currentUser
+): void {
+    if ($path !== '/api/admin/external-services') {
+        return;
+    }
+    gateway_require_admin($currentUser);
+    if ($method !== 'GET') {
+        gateway_fail(405, 'Method not allowed');
+    }
+    gateway_json(200, gateway_external_services_admin_payload());
+}
+
 function gateway_tunnel_handles(string $method, string $path): bool
 {
     if (
@@ -1732,6 +1866,7 @@ try {
     $authenticatedHeaders['x-ais-session-id'] = hash('sha256', (string) session_id());
     gateway_handle_audit_routes($method, $requestPath, $body, $currentUser);
     gateway_handle_admin_users($method, $requestPath, $body, $currentUser);
+    gateway_handle_admin_external_services($method, $requestPath, $currentUser);
     if (
         ($method === 'POST' && $requestPath === '/api/settings/system-documents')
         || in_array($requestPath, [
