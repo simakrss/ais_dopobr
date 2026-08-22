@@ -18,7 +18,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.222"/u);
+assert.match(appSource, /version: "1\.7\.224"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 assert.match(appSource, /state\.view === "statistics"\) return renderStatistics\(\)/u);
 assert.match(appSource, /getOrderedTabs\("statistics", statisticsTabs\)/u);
@@ -78,6 +78,9 @@ assert.match(comparisonChart, /statistics-comparison-totals/u);
 assert.ok(comparisonChart.indexOf("Август") < comparisonChart.indexOf("Июль"));
 assert.match(comparisonChart, />7<\/strong>/u);
 assert.match(comparisonChart, />4<\/strong>/u);
+assert.match(comparisonChart, /<small>5<\/small>[\s\S]*<i class="tone-teal"/u);
+assert.match(comparisonChart, /<small>3<\/small>[\s\S]*<i class="tone-blue"/u);
+assert.doesNotMatch(comparisonChart, /<em>/u);
 
 const normalizeAssistantStatisticsBlock = sourceBlock(
   serverSource,
@@ -140,6 +143,9 @@ assert.ok(locationChart.indexOf("Омск") < locationChart.indexOf("Москв�
 assert.match(locationChart, /statistics-location-negative/u);
 assert.match(locationChart, /Установки[\s\S]*25/u);
 assert.match(locationChart, /Удаления[\s\S]*3/u);
+assert.match(locationChart, /statistics-location-positive[\s\S]*<small>15<\/small>[\s\S]*<i/u);
+assert.match(locationChart, /statistics-location-negative[\s\S]*<i[\s\S]*<small>1<\/small>/u);
+assert.doesNotMatch(locationChart, /<em>/u);
 
 const serverStatisticsBlock = sourceBlock(
   serverSource,
@@ -173,6 +179,8 @@ assert.match(styles, /\.statistics-comparison-chart\s*\{/u);
 assert.match(styles, /\.statistics-comparison-totals\s*\{/u);
 assert.match(styles, /\.statistics-location-chart\s*\{/u);
 assert.match(styles, /\.statistics-location-negative\s*\{/u);
+assert.match(styles, /grid-auto-columns:\s*minmax\(24px, 1fr\)/u);
+assert.match(styles, /grid-auto-columns:\s*minmax\(44px, 1fr\)/u);
 assert.match(styles, /\.statistics-chart-period:last-child\s*\{/u);
 assert.match(styles, /\.finance-month:last-child\s*\{/u);
 assert.match(styles, /\.statistics-donut\s*\{/u);

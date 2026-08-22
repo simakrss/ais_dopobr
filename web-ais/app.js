@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.223",
-    releasedAt: "2026-08-22"
+    version: "1.7.224",
+    releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.224",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Уплотнены столбцы графиков географии, установок и скачиваний; значения вынесены над столбцами, а удаления в географии подписаны снизу."
+      ]
+    },
     {
       version: "1.7.223",
       releasedAt: "2026-08-23",
@@ -8910,16 +8917,16 @@ MAX - https://bizvmax.ru/zifra_plus
             <div class="statistics-comparison-chart-periods" style="--statistics-series-count:${Math.max(1, orderedSeries.length)}">
               ${orderedSeries.map((item) => `
                 <div class="statistics-comparison-chart-period">
-                  <div class="statistics-comparison-chart-bars" style="grid-template-columns:repeat(${metrics.length}, minmax(24px, 1fr))">
+                  <div class="statistics-comparison-chart-bars" style="grid-template-columns:repeat(${metrics.length}, minmax(13px, 1fr))">
                     ${metrics.map((metric) => {
                       const value = Math.max(0, Number(item[metric.key] || 0));
                       const height = value ? Math.max(4, (value / maxValue) * 100) : 0;
                       const valueText = formatStatisticsInteger(value);
                       return `
                         <span class="statistics-comparison-bar-column" title="${escapeAttr(`${metric.label}: ${valueText}`)}">
-                          <small>${height < 18 ? escapeHtml(valueText) : ""}</small>
+                          <small>${value ? escapeHtml(valueText) : ""}</small>
                           <span class="statistics-comparison-bar-area">
-                            <i class="tone-${escapeAttr(metric.tone)}" style="height:${height}%">${height >= 18 ? `<em>${escapeHtml(valueText)}</em>` : ""}</i>
+                            <i class="tone-${escapeAttr(metric.tone)}" style="height:${height}%"></i>
                           </span>
                         </span>
                       `;
@@ -8959,10 +8966,10 @@ MAX - https://bizvmax.ru/zifra_plus
       ...visibleSeries.flatMap((item) => [Number(item.installs || 0), Number(item.removals || 0)]),
       1
     );
-    const barHeight = (value) => value ? Math.max(3, Math.round((Number(value) / maxValue) * 210)) : 0;
+    const barHeight = (value) => value ? Math.max(3, Math.round((Number(value) / maxValue) * 185)) : 0;
     const negativeAreaHeight = Math.max(
       62,
-      barHeight(Math.max(...visibleSeries.map((item) => Number(item.removals || 0)), 0)) + 8
+      barHeight(Math.max(...visibleSeries.map((item) => Number(item.removals || 0)), 0)) + 18
     );
     return `
       <div class="statistics-location-chart">
@@ -8983,13 +8990,13 @@ MAX - https://bizvmax.ru/zifra_plus
                 return `
                   <div class="statistics-location-chart-period" title="${escapeAttr(`${item.label}: установки ${formatStatisticsInteger(installs)}, удаления ${formatStatisticsInteger(removals)}`)}">
                     <div class="statistics-location-positive">
-                      ${installs && installHeight < 26 ? `<small>${escapeHtml(formatStatisticsInteger(installs))}</small>` : ""}
-                      <i style="height:${installHeight}px">${installHeight >= 26 ? `<em>${escapeHtml(formatStatisticsInteger(installs))}</em>` : ""}</i>
+                      ${installs ? `<small>${escapeHtml(formatStatisticsInteger(installs))}</small>` : ""}
+                      <i style="height:${installHeight}px"></i>
                     </div>
                     <span class="statistics-location-baseline" aria-hidden="true"></span>
                     <div class="statistics-location-negative">
-                      <i style="height:${removalHeight}px">${removalHeight >= 24 ? `<em>${escapeHtml(formatStatisticsInteger(removals))}</em>` : ""}</i>
-                      ${removals && removalHeight < 24 ? `<small>${escapeHtml(formatStatisticsInteger(removals))}</small>` : ""}
+                      <i style="height:${removalHeight}px"></i>
+                      ${removals ? `<small>${escapeHtml(formatStatisticsInteger(removals))}</small>` : ""}
                     </div>
                     <span class="statistics-location-label">${escapeHtml(item.label)}</span>
                   </div>

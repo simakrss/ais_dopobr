@@ -20885,9 +20885,9 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   position: relative;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(88px, 1fr);
+  grid-auto-columns: minmax(44px, 1fr);
   gap: 0;
-  min-width: max(100%, calc(var(--statistics-series-count) * 88px));
+  min-width: max(100%, calc(var(--statistics-series-count) * 44px));
 }
 
 .statistics-comparison-chart-periods::before {
@@ -20909,7 +20909,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   gap: 6px;
   min-width: 0;
   border-inline-end: 1px solid rgba(71, 85, 105, 0.2);
-  padding-inline: 7px;
+  padding-inline: 3px;
   color: var(--muted);
   font-size: 11px;
   text-align: center;
@@ -20921,7 +20921,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .statistics-comparison-chart-bars {
   display: grid;
-  gap: 5px;
+  gap: 3px;
   align-items: end;
   min-width: 0;
 }
@@ -20934,12 +20934,12 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .statistics-comparison-bar-column > small {
-  overflow: hidden;
+  overflow: visible;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 800;
   line-height: 1;
-  text-overflow: ellipsis;
+  text-align: center;
   white-space: nowrap;
 }
 
@@ -21041,8 +21041,8 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   position: relative;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(58px, 1fr);
-  min-width: max(100%, calc(var(--statistics-location-count) * 58px));
+  grid-auto-columns: minmax(24px, 1fr);
+  min-width: max(100%, calc(var(--statistics-location-count) * 24px));
   background-image: linear-gradient(to bottom, rgba(71, 85, 105, 0.22) 1px, transparent 1px);
   background-position: 0 0;
   background-size: 100% 53px;
@@ -21053,7 +21053,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   grid-template-rows: 210px 1px var(--statistics-negative-height, 62px) 125px;
   min-width: 0;
   border-inline-end: 1px solid rgba(71, 85, 105, 0.2);
-  padding-inline: 5px;
+  padding-inline: 2px;
   color: var(--muted);
   font-size: 11px;
   text-align: center;
@@ -21067,16 +21067,17 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 .statistics-location-negative {
   position: relative;
   display: flex;
-  justify-content: center;
+  align-items: center;
+  flex-direction: column;
   min-width: 0;
 }
 
 .statistics-location-positive {
-  align-items: flex-end;
+  justify-content: flex-end;
 }
 
 .statistics-location-negative {
-  align-items: flex-start;
+  justify-content: flex-start;
 }
 
 .statistics-location-positive > i,
@@ -21084,7 +21085,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   position: relative;
   display: flex;
   justify-content: center;
-  width: min(38px, 88%);
+  width: min(16px, 86%);
   min-height: 0;
   background: #08bd91;
 }
@@ -21100,31 +21101,21 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   background: #dc4b59;
 }
 
-.statistics-location-positive em,
-.statistics-location-negative em {
-  color: #fff;
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 800;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-}
-
 .statistics-location-positive small,
 .statistics-location-negative small {
-  position: absolute;
   z-index: 1;
   color: var(--muted);
-  font-size: 9px;
+  min-height: 10px;
+  overflow: visible;
+  font-size: 8px;
   font-weight: 800;
+  line-height: 10px;
+  white-space: nowrap;
 }
-
-.statistics-location-positive small { bottom: 4px; }
-.statistics-location-negative small { top: 4px; }
 
 .statistics-location-baseline {
   display: block;
-  margin-inline: -5px;
+  margin-inline: -2px;
   background: rgba(51, 65, 85, 0.5);
 }
 
@@ -21413,12 +21404,12 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .statistics-comparison-chart-periods {
-    grid-auto-columns: 80px;
-    min-width: max(100%, calc(var(--statistics-series-count) * 80px));
+    grid-auto-columns: 44px;
+    min-width: max(100%, calc(var(--statistics-series-count) * 44px));
   }
 
   .statistics-comparison-chart-period {
-    padding-inline: 5px;
+    padding-inline: 3px;
   }
 
   .statistics-comparison-total > span {
