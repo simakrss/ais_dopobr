@@ -1422,8 +1422,24 @@ async function destroyAuthSession(req) {
   await saveAuthSessions(sessions);
 }
 
+function requestHasGatewaySecret(req) {
+  const configuredSecret = String(process.env.AIS_GATEWAY_SHARED_SECRET || "");
+  if (!configuredSecret) return true;
+  const providedSecret = String(req.headers["x-ais-gateway-token"] || "");
+  const expected = Buffer.from(configuredSecret, "utf8");
+  const actual = Buffer.from(providedSecret, "utf8");
+  return expected.length === actual.length
+    && expected.length > 0
+    && crypto.timingSafeEqual(expected, actual);
+}
+
+function requestHasConfiguredGatewaySecret(req) {
+  return Boolean(String(process.env.AIS_GATEWAY_SHARED_SECRET || ""))
+    && requestHasGatewaySecret(req);
+}
+
 async function getRequestAuthUser(req) {
-  if (process.env.AIS_TRUST_GATEWAY === "1") {
+  if (process.env.AIS_TRUST_GATEWAY === "1" && requestHasGatewaySecret(req)) {
     const gatewayUserId = String(req.headers["x-ais-user-id"] || "gateway").slice(0, 160);
     const gatewaySessionId = String(req.headers["x-ais-session-id"] || gatewayUserId).slice(0, 256);
     return {
@@ -8710,8 +8726,11 @@ function isTrustedBrowserOrigin(req) {
   const origin = String(req.headers.origin || "").trim();
   if (!origin || origin === "null") return true;
   try {
+    const requestHost = requestHasConfiguredGatewaySecret(req)
+      ? String(req.headers["x-forwarded-host"] || req.headers.host || "")
+      : String(req.headers.host || "");
     return new URL(origin).host.toLocaleLowerCase("en-US")
-      === String(req.headers.host || "").trim().toLocaleLowerCase("en-US");
+      === requestHost.trim().toLocaleLowerCase("en-US");
   } catch {
     return false;
   }
@@ -20366,6 +20385,16 @@ async function serveStatic(req, res) {
 
 async function route(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const tunnelRequestExempt = requestUrl.pathname === "/api/health"
+    || requestUrl.pathname.startsWith("/api/document-conversion/source/");
+  if (
+    process.env.AIS_TUNNEL_ONLY === "1"
+    && !tunnelRequestExempt
+    && !requestHasConfiguredGatewaySecret(req)
+  ) {
+    sendError(res, 404, "Not found");
+    return;
+  }
   if (
     useGeneratedDocumentPreviewFileStore()
     && process.env.AIS_GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER !== "1"

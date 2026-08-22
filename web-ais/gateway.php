@@ -599,6 +599,174 @@ function gateway_send_node_response(array $response): void
     exit;
 }
 
+function gateway_tunnel_settings(): ?array
+{
+    $path = __DIR__ . '/storage/tunnel-runtime.json';
+    $text = is_file($path) ? file_get_contents($path) : false;
+    $settings = $text === false ? null : json_decode($text, true);
+    if (!is_array($settings) || ($settings['enabled'] ?? false) !== true) {
+        return null;
+    }
+    $baseUrl = rtrim(trim((string) ($settings['baseUrl'] ?? '')), '/');
+    $secret = (string) ($settings['secret'] ?? '');
+    $parts = parse_url($baseUrl);
+    if (
+        !is_array($parts)
+        || strtolower((string) ($parts['scheme'] ?? '')) !== 'https'
+        || trim((string) ($parts['host'] ?? '')) === ''
+        || strlen($baseUrl) > 500
+        || strlen($secret) < 32
+        || strlen($secret) > 512
+    ) {
+        return null;
+    }
+    return ['baseUrl' => $baseUrl, 'secret' => $secret];
+}
+
+function gateway_tunnel_handles(string $method, string $path): bool
+{
+    if (
+        $method === 'POST'
+        && (
+            $path === '/api/contracts/student-document'
+            || str_starts_with($path, '/api/contracts/student-document-preview/')
+        )
+    ) {
+        return true;
+    }
+    return in_array($method, ['GET', 'HEAD', 'POST'], true)
+        && str_starts_with($path, '/api/students/recognize-documents/');
+}
+
+function gateway_parse_tunnel_response_headers(array $lines): array
+{
+    $headers = [];
+    foreach ($lines as $line) {
+        $separator = strpos((string) $line, ':');
+        if ($separator === false) {
+            continue;
+        }
+        $name = trim(substr((string) $line, 0, $separator));
+        $value = trim(substr((string) $line, $separator + 1));
+        if ($name !== '' && $value !== '') {
+            $headers[$name] = $value;
+        }
+    }
+    return $headers;
+}
+
+function gateway_run_tunnel(
+    array $settings,
+    string $url,
+    string $method,
+    array $headers,
+    string $body
+): array {
+    $target = $settings['baseUrl'] . '/' . ltrim($url, '/');
+    $outgoingHeaders = [];
+    $blocked = [
+        'connection',
+        'content-length',
+        'cookie',
+        'host',
+        'transfer-encoding',
+        'x-ais-gateway-token',
+        'x-forwarded-host',
+        'x-forwarded-proto',
+    ];
+    foreach ($headers as $name => $value) {
+        if (!in_array(strtolower((string) $name), $blocked, true) && is_scalar($value)) {
+            $outgoingHeaders[] = (string) $name . ': ' . (string) $value;
+        }
+    }
+    $originalHost = preg_replace(
+        '/[\r\n].*$/s',
+        '',
+        trim((string) ($headers['host'] ?? ($_SERVER['HTTP_HOST'] ?? '')))
+    );
+    if ($originalHost !== '') {
+        $outgoingHeaders[] = 'X-Forwarded-Host: ' . $originalHost;
+    }
+    $outgoingHeaders[] = 'X-Forwarded-Proto: https';
+    $outgoingHeaders[] = 'X-AIS-Gateway-Token: ' . $settings['secret'];
+
+    if (function_exists('curl_init')) {
+        $responseHeaders = [];
+        $curl = curl_init($target);
+        if ($curl === false) {
+            throw new RuntimeException('Не удалось подготовить туннельный запрос.');
+        }
+        curl_setopt_array($curl, [
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_HTTPHEADER => $outgoingHeaders,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CONNECTTIMEOUT => 20,
+            CURLOPT_TIMEOUT => AIS_GATEWAY_TIMEOUT_SECONDS,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_HEADERFUNCTION => static function ($handle, string $line) use (&$responseHeaders): int {
+                $trimmed = trim($line);
+                if (str_starts_with($trimmed, 'HTTP/')) {
+                    $responseHeaders = [];
+                } elseif ($trimmed !== '') {
+                    $responseHeaders[] = $trimmed;
+                }
+                return strlen($line);
+            },
+        ]);
+        if ($method === 'HEAD') {
+            curl_setopt($curl, CURLOPT_NOBODY, true);
+        } elseif ($method !== 'GET' || $body !== '') {
+            curl_setopt($curl, CURLOPT_POSTFIELDS, $body);
+        }
+        $responseBody = curl_exec($curl);
+        if ($responseBody === false) {
+            $message = curl_error($curl);
+            curl_close($curl);
+            throw new RuntimeException($message !== '' ? $message : 'Туннель не ответил.');
+        }
+        $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+        curl_close($curl);
+        return [
+            'status' => $status > 0 ? $status : 502,
+            'headers' => gateway_parse_tunnel_response_headers($responseHeaders),
+            'body' => (string) $responseBody,
+        ];
+    }
+
+    $context = stream_context_create([
+        'http' => [
+            'method' => $method,
+            'header' => implode("\r\n", $outgoingHeaders),
+            'content' => in_array($method, ['GET', 'HEAD'], true) ? '' : $body,
+            'ignore_errors' => true,
+            'follow_location' => 0,
+            'max_redirects' => 0,
+            'timeout' => AIS_GATEWAY_TIMEOUT_SECONDS,
+        ],
+        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+    ]);
+    $responseBody = @file_get_contents($target, false, $context);
+    $responseLines = isset($http_response_header) && is_array($http_response_header)
+        ? $http_response_header
+        : [];
+    if ($responseBody === false && $responseLines === []) {
+        throw new RuntimeException('Туннель не ответил.');
+    }
+    $status = 502;
+    foreach ($responseLines as $line) {
+        if (preg_match('#^HTTP/\S+\s+(\d{3})#i', (string) $line, $matches)) {
+            $status = (int) $matches[1];
+        }
+    }
+    return [
+        'status' => $status,
+        'headers' => gateway_parse_tunnel_response_headers($responseLines),
+        'body' => $method === 'HEAD' ? '' : (string) $responseBody,
+    ];
+}
+
 function gateway_server_settings(): array
 {
     $path = __DIR__ . '/storage/server-settings.json';
@@ -1587,6 +1755,27 @@ try {
 
     if ($path === '/api/shared-state/locks') {
         gateway_handle_record_locks($method, $body, $currentUser);
+    }
+
+    $tunnelSettings = gateway_tunnel_settings();
+    if ($tunnelSettings !== null && gateway_tunnel_handles($method, $path)) {
+        try {
+            $response = gateway_run_tunnel(
+                $tunnelSettings,
+                $url,
+                $method,
+                $authenticatedHeaders,
+                $body
+            );
+            $response['headers']['X-AIS-Processing'] = 'local-tunnel';
+            gateway_send_node_response($response);
+        } catch (Throwable $tunnelError) {
+            gateway_fail(
+                503,
+                'Локальные сервисы распознавания и формирования документов недоступны. '
+                . 'Проверьте, что компьютер включён и туннель запущен.'
+            );
+        }
     }
 
     if ($method === 'POST' && $path === '/api/students/recognize-documents/start') {

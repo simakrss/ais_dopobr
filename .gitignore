@@ -11,6 +11,7 @@ web-ais/.htpasswd
 *.lnk
 *.url
 web-ais/tmp/
+web-ais/.runtime/
 web-ais/*.log
 web-ais/storage/*.log
 web-ais/* (2).js

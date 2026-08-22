@@ -3,7 +3,8 @@ param(
   [Parameter(Position = 0)]
   [string[]]$RelativePath = @(),
   [switch]$All,
-  [switch]$ListDeployable
+  [switch]$ListDeployable,
+  [switch]$TunnelRuntime
 )
 
 Set-StrictMode -Version Latest
@@ -68,8 +69,16 @@ function Test-DeployablePath([string]$PathValue) {
     -or $path.StartsWith("storage/document-templates/", [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Get-GitPath {
+  $command = Get-Command git.exe -ErrorAction SilentlyContinue
+  if ($command) { return $command.Source }
+  $candidate = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe"
+  if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+  throw "Git was not found."
+}
+
 function Get-TrackedDeployablePaths {
-  $tracked = @(& git -c core.quotepath=false -C $repositoryRoot ls-files -- web-ais)
+  $tracked = @(& (Get-GitPath) -c core.quotepath=false -c safe.directory=* -C $repositoryRoot ls-files -- web-ais)
   if ($LASTEXITCODE -ne 0) { throw "Could not read the Git tracked-file list." }
   $generatedSafePaths = @(
     "vendor/mysql2-bundle.cjs",
@@ -87,13 +96,18 @@ function Get-TrackedDeployablePaths {
   )
 }
 
-$trackedDeployable = @(Get-TrackedDeployablePaths)
+$trackedDeployable = if ($TunnelRuntime) { @() } else { @(Get-TrackedDeployablePaths) }
 if ($ListDeployable) {
   $trackedDeployable
   exit 0
 }
 
-if ($All) {
+if ($TunnelRuntime) {
+  if ($All -or $RelativePath.Count) {
+    throw "-TunnelRuntime нельзя объединять с -All или -RelativePath."
+  }
+  $pathsToDeploy = @(".runtime/tunnel-runtime.json")
+} elseif ($All) {
   $pathsToDeploy = $trackedDeployable
 } else {
   $requested = @($RelativePath | ForEach-Object { Normalize-RelativePath $_ } | Where-Object { $_ })
@@ -301,6 +315,10 @@ function Publish-FileTarget(
 }
 
 $results = foreach ($relativeFile in $pathsToDeploy) {
+  if ($relativeFile -eq ".runtime/tunnel-runtime.json") {
+    Publish-FileTarget $relativeFile "$remoteRoot/storage/tunnel-runtime.json" "protected runtime"
+    continue
+  }
   Publish-FileTarget $relativeFile "$remoteRoot/$relativeFile" "public"
   $mirrorToRuntime = ($runtimeMirrorFiles -contains $relativeFile) -or `
     $relativeFile.StartsWith("storage/document-templates/employee-contract-", [StringComparison]::OrdinalIgnoreCase)

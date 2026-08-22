@@ -3,6 +3,7 @@ const http = require("http");
 const port = Number(process.env.PORT || 8081);
 const host = process.env.HOST || "127.0.0.1";
 const appServerOrigin = process.env.AIS_APP_SERVER_ORIGIN || "http://127.0.0.1:8080";
+const appServerToken = process.env.AIS_GATEWAY_SHARED_SECRET || "";
 const yandexGeocoderApiKey = process.env.YANDEX_GEOCODER_API_KEY || "";
 const dgisApiKey = process.env.DGIS_API_KEY || process.env.TWOGIS_API_KEY || "";
 const appServerRetryDelays = [0, 250, 500, 1000, 1500, 2000, 2500];
@@ -189,7 +190,8 @@ function forwardToAppServer(req, res, body, attempt = 0) {
     ...req.headers,
     "x-forwarded-host": req.headers.host || `${host}:${port}`,
     "x-forwarded-proto": "http",
-    "x-forwarded-for": req.socket.remoteAddress || ""
+    "x-forwarded-for": req.socket.remoteAddress || "",
+    ...(appServerToken ? { "x-ais-gateway-token": appServerToken } : {})
   };
   delete headers["transfer-encoding"];
   headers["content-length"] = String(body.length);
@@ -231,7 +233,7 @@ function forwardToAppServer(req, res, body, attempt = 0) {
         res,
         502,
         JSON.stringify({
-          error: "Сервер приложения на порту 8080 не ответил после автоматического восстановления. Повторите операцию."
+          error: `Сервер приложения ${appServerOrigin} не ответил после автоматического восстановления. Повторите операцию.`
         }),
         "application/json; charset=utf-8"
       );
