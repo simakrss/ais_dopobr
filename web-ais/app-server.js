@@ -107,6 +107,8 @@ const TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const TRAINING_END_NOTIFICATION_RUNNING_STALE_MS = 20 * 60 * 1000;
 const TRAINING_END_NOTIFICATION_FAILED_RETRY_MS = 30 * 60 * 1000;
 const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
+const DEFAULT_ASSISTANT_STATISTICS_MYSQL_HOST = "vh458.timeweb.ru";
+const DEFAULT_ASSISTANT_STATISTICS_MYSQL_DATABASE = "cl11741_omidpo";
 let serverSettings = {};
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
@@ -175,6 +177,8 @@ let sharedRecordLocksMySqlPool = null;
 let sharedRecordLocksMySqlInitialization = null;
 let studentApplicationsMySqlPool = null;
 let studentApplicationsMySqlInitialization = null;
+let assistantStatisticsMySqlPool = null;
+let assistantStatisticsMySqlInitialization = null;
 let trainingEndNotificationJobPromise = null;
 let trainingEndNotificationSchedulerTimer = null;
 let scheduledJobRunsTableInitialization = null;
@@ -863,6 +867,7 @@ async function ensureStorage() {
     sharedRecordLocksMySqlDatabase: "",
     sharedRecordLocksMySqlUser: "",
     sharedRecordLocksMySqlPassword: "",
+    assistantStatisticsMySqlConnectionString: "",
     studentApplicationsMySqlConnectionString: "",
     studentApplicationsOrderAdminUrlTemplate: DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE,
     studentApplicationsEmailHost: DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST,
@@ -6015,6 +6020,217 @@ async function closeStudentApplicationsMySqlStorage() {
   const pool = studentApplicationsMySqlPool;
   studentApplicationsMySqlPool = null;
   if (pool) await pool.end().catch(() => {});
+}
+
+function getAssistantStatisticsMySqlConnectionString() {
+  return String(
+    process.env.ASSISTANT_STATISTICS_MYSQL_CONNECTION_STRING
+      || serverSettings.assistantStatisticsMySqlConnectionString
+      || ""
+  ).trim();
+}
+
+function publicAssistantStatisticsMySqlSettings() {
+  const connectionString = getAssistantStatisticsMySqlConnectionString();
+  const connection = parseSharedRecordLocksMySqlConnectionString(connectionString);
+  return {
+    assistantStatisticsMysqlHost: String(
+      connection.server || connection.host || DEFAULT_ASSISTANT_STATISTICS_MYSQL_HOST
+    ).trim(),
+    assistantStatisticsMysqlPort: Math.max(1, Number(connection.port) || 3306),
+    assistantStatisticsMysqlDatabase: String(
+      connection.database || connection.initialcatalog || DEFAULT_ASSISTANT_STATISTICS_MYSQL_DATABASE
+    ).trim(),
+    assistantStatisticsMysqlUser: String(
+      connection.uid || connection.user || connection.userid || ""
+    ).trim(),
+    assistantStatisticsMysqlHasPassword: Boolean(connection.pwd || connection.password),
+    assistantStatisticsMysqlConfigured: Boolean(connectionString),
+    assistantStatisticsMysqlManagedByEnvironment: Boolean(
+      process.env.ASSISTANT_STATISTICS_MYSQL_CONNECTION_STRING
+    )
+  };
+}
+
+async function getAssistantStatisticsMySqlPool() {
+  const connectionString = getAssistantStatisticsMySqlConnectionString();
+  if (!connectionString) return null;
+  if (assistantStatisticsMySqlPool) return assistantStatisticsMySqlPool;
+  if (assistantStatisticsMySqlInitialization) return assistantStatisticsMySqlInitialization;
+  assistantStatisticsMySqlInitialization = (async () => {
+    const connection = parseSharedRecordLocksMySqlConnectionString(connectionString);
+    let host = String(connection.server || connection.host || "").trim();
+    const database = String(connection.database || connection.initialcatalog || "").trim();
+    const user = String(connection.uid || connection.user || connection.userid || "").trim();
+    const password = String(connection.pwd || connection.password || "");
+    if (!host || !database || !user || !password) {
+      throw new Error("Не настроено подключение MySQL к статистике Power BI.");
+    }
+    if (process.platform !== "win32" && /(?:^localhost$|\.timeweb\.ru$)/i.test(host)) {
+      host = "127.0.0.1";
+    }
+    let mysql;
+    try {
+      mysql = require(MYSQL2_BUNDLE_PATH);
+    } catch (error) {
+      throw new Error(`Драйвер MySQL статистики не установлен: ${error.message}`);
+    }
+    const pool = mysql.createPool({
+      host,
+      port: Math.max(1, Number(connection.port) || 3306),
+      database,
+      user,
+      password,
+      charset: "utf8mb4",
+      dateStrings: true,
+      waitForConnections: true,
+      connectionLimit: 3,
+      maxIdle: 1,
+      idleTimeout: 30000,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 0,
+      connectTimeout: 5000
+    });
+    try {
+      await pool.query({ sql: "SELECT 1 AS ok", timeout: 7000 });
+    } catch (error) {
+      await pool.end().catch(() => {});
+      throw error;
+    }
+    assistantStatisticsMySqlPool = pool;
+    return pool;
+  })();
+  try {
+    return await assistantStatisticsMySqlInitialization;
+  } finally {
+    assistantStatisticsMySqlInitialization = null;
+  }
+}
+
+async function closeAssistantStatisticsMySqlStorage() {
+  const pool = assistantStatisticsMySqlPool;
+  assistantStatisticsMySqlPool = null;
+  if (pool) await pool.end().catch(() => {});
+}
+
+function normalizeAssistantStatisticsRows(monthlyRows, versionRows, actionRows) {
+  const monthly = (Array.isArray(monthlyRows) ? monthlyRows : []).flatMap((row) => {
+    const year = Math.floor(Number(row.event_year));
+    const month = Math.floor(Number(row.event_month));
+    if (year < 2000 || year > 2100 || month < 1 || month > 12) return [];
+    return [{
+      year,
+      month,
+      installs: Math.max(0, Math.floor(Number(row.install_count) || 0)),
+      removals: Math.max(0, Math.floor(Number(row.removal_count) || 0)),
+      firstAt: String(row.first_at || ""),
+      lastAt: String(row.last_at || "")
+    }];
+  });
+  const versions = (Array.isArray(versionRows) ? versionRows : []).flatMap((row) => {
+    const year = Math.floor(Number(row.event_year));
+    const month = Math.floor(Number(row.event_month));
+    const count = Math.max(0, Math.floor(Number(row.event_count) || 0));
+    if (year < 2000 || year > 2100 || month < 1 || month > 12 || !count) return [];
+    return [{
+      year,
+      month,
+      label: String(row.version_name || "Без версии").trim().slice(0, 120) || "Без версии",
+      value: count
+    }];
+  });
+  const actions = (Array.isArray(actionRows) ? actionRows : []).flatMap((row) => {
+    const value = Math.max(0, Math.floor(Number(row.action_count) || 0));
+    if (!value) return [];
+    return [{
+      label: String(row.action_name || `Действие ${row.action_id || ""}`).trim().slice(0, 240)
+        || "Без названия",
+      value
+    }];
+  });
+  const summary = monthly.reduce((result, row) => {
+    result.installs += row.installs;
+    result.removals += row.removals;
+    const firstTime = Date.parse(row.firstAt);
+    const lastTime = Date.parse(row.lastAt);
+    if (Number.isFinite(firstTime) && (!result.firstAt || firstTime < Date.parse(result.firstAt))) {
+      result.firstAt = new Date(firstTime).toISOString();
+    }
+    if (Number.isFinite(lastTime) && (!result.lastAt || lastTime > Date.parse(result.lastAt))) {
+      result.lastAt = new Date(lastTime).toISOString();
+    }
+    return result;
+  }, { installs: 0, removals: 0, actions: 0, firstAt: "", lastAt: "" });
+  summary.actions = actions.reduce((sum, row) => sum + row.value, 0);
+  return {
+    source: "MySQL-запросы Power BI",
+    refreshedAt: new Date().toISOString(),
+    years: [...new Set(monthly.map((row) => row.year))].sort((left, right) => right - left),
+    summary,
+    monthly,
+    versions,
+    actions
+  };
+}
+
+async function readAssistantStatistics() {
+  const pool = await getAssistantStatisticsMySqlPool();
+  if (!pool) throw new Error("Подключение к статистике Power BI не настроено.");
+  const [monthlyResult, versionResult, actionResult] = await Promise.all([
+    pool.query({
+      sql: `
+        SELECT
+          YEAR(date) AS event_year,
+          MONTH(date) AS event_month,
+          SUM(CASE WHEN action = 1 THEN 1 ELSE 0 END) AS install_count,
+          SUM(CASE WHEN action IN (0, -1) THEN 1 ELSE 0 END) AS removal_count,
+          MIN(date) AS first_at,
+          MAX(date) AS last_at
+        FROM wp_ass_reg
+        WHERE date IS NOT NULL AND YEAR(date) BETWEEN 2000 AND 2100
+        GROUP BY YEAR(date), MONTH(date)
+        ORDER BY event_year, event_month
+      `,
+      timeout: 12000
+    }),
+    pool.query({
+      sql: `
+        SELECT
+          YEAR(date) AS event_year,
+          MONTH(date) AS event_month,
+          COALESCE(NULLIF(TRIM(version), ''), 'Без версии') AS version_name,
+          COUNT(version) AS event_count
+        FROM wp_ass_reg
+        WHERE date IS NOT NULL AND YEAR(date) BETWEEN 2000 AND 2100
+        GROUP BY YEAR(date), MONTH(date), COALESCE(NULLIF(TRIM(version), ''), 'Без версии')
+        HAVING COUNT(version) > 0
+        ORDER BY event_year, event_month, event_count DESC
+      `,
+      timeout: 12000
+    }),
+    pool.query({
+      sql: `
+        SELECT
+          logs.action AS action_id,
+          COALESCE(NULLIF(TRIM(structure.description), ''), CONCAT('Действие ', logs.action)) AS action_name,
+          COUNT(logs.action) AS action_count
+        FROM wp_ass_logs AS logs
+        INNER JOIN wp_ass_logs_structure AS structure ON logs.action = structure.action
+        GROUP BY logs.action, structure.description
+        ORDER BY action_count DESC
+      `,
+      timeout: 12000
+    })
+  ]);
+  return normalizeAssistantStatisticsRows(monthlyResult[0], versionResult[0], actionResult[0]);
+}
+
+async function handleAssistantStatistics(res) {
+  try {
+    sendJson(res, 200, await readAssistantStatistics());
+  } catch (error) {
+    sendError(res, 503, `Не удалось получить статистику Ассистента: ${error.message}`);
+  }
 }
 
 async function readPublicDownloadStatistics() {
@@ -20564,6 +20780,7 @@ async function publicSystemDocumentSettings(includeAdminSettings = false) {
   if (includeAdminSettings) Object.assign(
     settings,
     publicStudentApplicationsMySqlSettings(),
+    publicAssistantStatisticsMySqlSettings(),
     publicSharedRecordLocksMySqlSettings()
   );
   return settings;
@@ -20690,6 +20907,78 @@ async function handleSystemDocumentSettings(req, res, authUser) {
         throw new Error("Введите пароль базы интернет-магазина без фигурных скобок.");
       }
     }
+    const assistantStatisticsMysqlManagedByEnvironment = Boolean(
+      process.env.ASSISTANT_STATISTICS_MYSQL_CONNECTION_STRING
+    );
+    const currentAssistantStatisticsConnection = parseSharedRecordLocksMySqlConnectionString(
+      getAssistantStatisticsMySqlConnectionString()
+    );
+    const assistantStatisticsMysqlHost = String(
+      body.assistantStatisticsMysqlHost
+        ?? currentAssistantStatisticsConnection.server
+        ?? currentAssistantStatisticsConnection.host
+        ?? DEFAULT_ASSISTANT_STATISTICS_MYSQL_HOST
+    ).trim();
+    const assistantStatisticsMysqlPort = Number(
+      body.assistantStatisticsMysqlPort ?? currentAssistantStatisticsConnection.port ?? 3306
+    );
+    const assistantStatisticsMysqlDatabase = String(
+      body.assistantStatisticsMysqlDatabase
+        ?? currentAssistantStatisticsConnection.database
+        ?? currentAssistantStatisticsConnection.initialcatalog
+        ?? DEFAULT_ASSISTANT_STATISTICS_MYSQL_DATABASE
+    ).trim();
+    const assistantStatisticsMysqlUser = String(
+      body.assistantStatisticsMysqlUser
+        ?? currentAssistantStatisticsConnection.uid
+        ?? currentAssistantStatisticsConnection.user
+        ?? currentAssistantStatisticsConnection.userid
+        ?? ""
+    ).trim();
+    const assistantStatisticsMysqlPassword = String(
+      body.assistantStatisticsMysqlPassword
+        || currentAssistantStatisticsConnection.pwd
+        || currentAssistantStatisticsConnection.password
+        || ""
+    );
+    const assistantStatisticsConnectionRequested = Boolean(
+      assistantStatisticsMysqlUser
+      || assistantStatisticsMysqlPassword
+      || getAssistantStatisticsMySqlConnectionString()
+    );
+    if (!assistantStatisticsMysqlManagedByEnvironment && assistantStatisticsConnectionRequested) {
+      if (
+        !assistantStatisticsMysqlHost
+        || assistantStatisticsMysqlHost.length > 255
+        || !/^[A-Za-z0-9.-]+$/u.test(assistantStatisticsMysqlHost)
+      ) {
+        throw new Error("Укажите корректный сервер MySQL статистики Power BI.");
+      }
+      if (
+        !Number.isInteger(assistantStatisticsMysqlPort)
+        || assistantStatisticsMysqlPort < 1
+        || assistantStatisticsMysqlPort > 65535
+      ) {
+        throw new Error("Укажите корректный порт MySQL статистики Power BI.");
+      }
+      if (
+        !assistantStatisticsMysqlDatabase
+        || assistantStatisticsMysqlDatabase.length > 128
+        || /[;{}]/u.test(assistantStatisticsMysqlDatabase)
+      ) {
+        throw new Error("Укажите корректное имя базы статистики Power BI.");
+      }
+      if (
+        !assistantStatisticsMysqlUser
+        || assistantStatisticsMysqlUser.length > 128
+        || /[;{}]/u.test(assistantStatisticsMysqlUser)
+      ) {
+        throw new Error("Укажите корректного пользователя базы статистики Power BI.");
+      }
+      if (!assistantStatisticsMysqlPassword || /[{}]/u.test(assistantStatisticsMysqlPassword)) {
+        throw new Error("Введите пароль базы статистики Power BI без фигурных скобок.");
+      }
+    }
     const mysqlUseApplicationsConnection = body.mysqlUseApplicationsConnection !== false;
     const mysqlHost = String(body.mysqlHost || "").trim();
     const mysqlPort = Number(body.mysqlPort || 3306);
@@ -20765,6 +21054,16 @@ async function handleSystemDocumentSettings(req, res, authUser) {
         password: applicationsMysqlPassword
       });
     }
+    if (!assistantStatisticsMysqlManagedByEnvironment && assistantStatisticsConnectionRequested) {
+      patch.assistantStatisticsMySqlConnectionString = buildStudentApplicationsMySqlConnectionString({
+        driver: "MySQL",
+        host: assistantStatisticsMysqlHost,
+        port: assistantStatisticsMysqlPort,
+        database: assistantStatisticsMysqlDatabase,
+        user: assistantStatisticsMysqlUser,
+        password: assistantStatisticsMysqlPassword
+      });
+    }
     if (documentMailboxesProvided) patch.studentDocumentMailboxes = documentMailboxes;
     if (!mysqlUseApplicationsConnection) {
       Object.assign(patch, {
@@ -20782,6 +21081,7 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     if (emailPassword) patch.studentApplicationsEmailPassword = emailPassword;
     if (body.clearEmailPassword) patch.studentApplicationsEmailPassword = "";
     await saveServerSettings(patch);
+    await closeAssistantStatisticsMySqlStorage();
     await saveTrainingEndNotificationConfiguration({
       trainingEndNotificationsEnabled,
       trainingEndNotificationDays
@@ -20899,6 +21199,32 @@ async function handleStudentApplicationsMySqlConnectionTest(req, res) {
       database: settings.applicationsMysqlDatabase,
       rows: Number(result?.total || 0),
       message: "Подключение к базе интернет-магазина и SQL-запрос работают."
+    });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleAssistantStatisticsMySqlConnectionTest(req, res) {
+  try {
+    const pool = await getAssistantStatisticsMySqlPool();
+    if (!pool) throw new Error("Подключение к статистике Power BI не настроено.");
+    const [[row]] = await pool.query({
+      sql: `
+        SELECT
+          DATABASE() AS database_name,
+          COUNT(*) AS event_count,
+          MAX(date) AS last_at
+        FROM wp_ass_reg
+      `,
+      timeout: 10000
+    });
+    sendJson(res, 200, {
+      ok: true,
+      database: String(row?.database_name || ""),
+      events: Math.max(0, Math.floor(Number(row?.event_count) || 0)),
+      lastAt: String(row?.last_at || ""),
+      message: "Подключение к статистике Power BI работает."
     });
   } catch (error) {
     sendError(res, 400, error.message);
@@ -21243,6 +21569,7 @@ async function route(req, res) {
       "/api/yandex-disk/test",
       "/api/student-applications-email/test",
       "/api/student-applications-mysql/test",
+      "/api/assistant-statistics-mysql/test",
       "/api/student-document-mailboxes/test",
       "/api/mysql-locks/test",
       "/api/admin/training-end-notifications/run"
@@ -21295,6 +21622,10 @@ async function route(req, res) {
     await handlePublicDownloadStatistics(res);
     return;
   }
+  if (req.method === "GET" && requestUrl.pathname === "/api/statistics/assistant") {
+    await handleAssistantStatistics(res);
+    return;
+  }
   if (req.method === "POST" && requestUrl.pathname === "/api/local-documents/open-folder") {
     await handleOpenLocalDocumentsFolder(req, res);
     return;
@@ -21325,6 +21656,10 @@ async function route(req, res) {
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/student-applications-mysql/test") {
     await handleStudentApplicationsMySqlConnectionTest(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/assistant-statistics-mysql/test") {
+    await handleAssistantStatisticsMySqlConnectionTest(req, res);
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/student-document-mailboxes/test") {
@@ -21504,6 +21839,9 @@ module.exports = {
   ensureStorage,
   closeSharedRecordLocksStorage,
   closeStudentApplicationsMySqlStorage,
+  closeAssistantStatisticsMySqlStorage,
+  normalizeAssistantStatisticsRows,
+  readAssistantStatistics,
   optimizeStudentApplicationsSqlQuery,
   runStudentApplicationsQuery,
   parseStudentDatabaseWorkbook,

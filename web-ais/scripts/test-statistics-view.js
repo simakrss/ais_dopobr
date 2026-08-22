@@ -18,7 +18,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.213"/u);
+assert.match(appSource, /version: "1\.7\.217"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 assert.match(appSource, /state\.view === "statistics"\) return renderStatistics\(\)/u);
 assert.match(appSource, /getOrderedTabs\("statistics", statisticsTabs\)/u);
@@ -28,21 +28,40 @@ assert.match(appSource, /Доходы и затраты по месяцам/u);
 assert.match(appSource, /Популярные действия/u);
 assert.match(appSource, /Экспорт CSV/u);
 
-const snapshotBlock = sourceBlock(
-  appSource,
-  "  const POWER_BI_ASSISTANT_SNAPSHOT",
-  "  const GENERAL_EXPENSE_SECTIONS"
+assert.doesNotMatch(appSource, /POWER_BI_ASSISTANT_SNAPSHOT/u);
+assert.match(appSource, /fetch\(photoApiUrl\("\/api\/statistics\/assistant"\)/u);
+assert.match(appSource, /обновляемые MySQL-запросы модели Power BI/u);
+
+const normalizeAssistantStatisticsBlock = sourceBlock(
+  serverSource,
+  "function normalizeAssistantStatisticsRows(",
+  "async function readAssistantStatistics()"
 );
-const snapshot = new Function(
-  `${snapshotBlock.replace("  const POWER_BI_ASSISTANT_SNAPSHOT", "const POWER_BI_ASSISTANT_SNAPSHOT")}\nreturn POWER_BI_ASSISTANT_SNAPSHOT;`
+const normalizeAssistantStatisticsRows = new Function(
+  `${normalizeAssistantStatisticsBlock}\nreturn normalizeAssistantStatisticsRows;`
 )();
-assert.equal(
-  snapshot.monthlyInstalls.reduce((sum, [, count]) => sum + count, 0),
-  snapshot.installs,
-  "Сумма месячных установок должна совпадать с итогом PBIX"
+const normalizedAssistantStatistics = normalizeAssistantStatisticsRows(
+  [
+    { event_year: 2026, event_month: 7, install_count: "4", removal_count: "1", first_at: "2026-07-01 10:00:00", last_at: "2026-07-31 10:00:00" },
+    { event_year: 2026, event_month: 8, install_count: "3", removal_count: "2", first_at: "2026-08-01 10:00:00", last_at: "2026-08-20 10:00:00" }
+  ],
+  [
+    { event_year: 2026, event_month: 8, version_name: "2.90", event_count: "3" }
+  ],
+  [
+    { action_id: 1, action_name: "Обновление полей", action_count: "12" }
+  ]
 );
-assert.equal(snapshot.actionsTotal, 77038);
-assert.ok(snapshot.topActions.length >= 10);
+assert.deepEqual(normalizedAssistantStatistics.years, [2026]);
+assert.equal(normalizedAssistantStatistics.summary.installs, 7);
+assert.equal(normalizedAssistantStatistics.summary.removals, 3);
+assert.equal(normalizedAssistantStatistics.summary.actions, 12);
+assert.deepEqual(normalizedAssistantStatistics.versions[0], {
+  year: 2026,
+  month: 8,
+  label: "2.90",
+  value: 3
+});
 
 const serverStatisticsBlock = sourceBlock(
   serverSource,
@@ -54,6 +73,20 @@ assert.match(serverStatisticsBlock, /'generated' AS event_type/u);
 assert.match(serverStatisticsBlock, /'downloaded' AS event_type/u);
 assert.doesNotMatch(serverStatisticsBlock, /\b(?:email|fio|ip_used|form_content)\b/iu);
 assert.match(serverSource, /requestUrl\.pathname === "\/api\/statistics\/downloads"/u);
+
+const assistantStatisticsBlock = sourceBlock(
+  serverSource,
+  "async function readAssistantStatistics()",
+  "async function handleAssistantStatistics(res)"
+);
+assert.match(assistantStatisticsBlock, /FROM wp_ass_reg/u);
+assert.match(assistantStatisticsBlock, /FROM wp_ass_logs AS logs/u);
+assert.match(assistantStatisticsBlock, /INNER JOIN wp_ass_logs_structure/u);
+assert.doesNotMatch(assistantStatisticsBlock, /\b(?:fio|email|ip|org|notes|location)\b/iu);
+assert.match(serverSource, /requestUrl\.pathname === "\/api\/statistics\/assistant"/u);
+assert.match(serverSource, /ASSISTANT_STATISTICS_MYSQL_CONNECTION_STRING/u);
+assert.match(appSource, /data-admin-database-panel="statistics"/u);
+assert.match(appSource, /data-action="test-assistant-statistics-mysql"/u);
 
 assert.match(styles, /\.statistics-kpi-grid\s*\{/u);
 assert.match(styles, /\.statistics-chart-columns\s*\{/u);

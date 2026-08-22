@@ -104,7 +104,8 @@ assert.match(serverSource, /status === "completed"/u);
 assert.match(serverSource, /Некорректный запрос проверки сроков обучения/u);
 assert.match(serverSource, /startTrainingEndNotificationScheduler\(\)/u);
 assert.match(stylesSource, /\.admin-training-end-notification/u);
-assert.match(authSource, /20260822-training-end-notifications-v1/u);
-assert.match(indexSource, /20260822-training-end-notifications-v1/u);
+const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authSource)?.[1] || "";
+assert.ok(authBuild, "Не найден идентификатор клиентской сборки.");
+assert.match(indexSource, new RegExp(`(?:styles\\.css|auth-bootstrap\\.js)\\?v=${authBuild}`, "u"));
 
 console.log("training end notification tests: OK");

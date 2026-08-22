@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.216",
+    version: "1.7.217",
     releasedAt: "2026-08-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.217",
+      releasedAt: "2026-08-22",
+      changes: [
+        "Статистика Ассистента переведена со статического снимка на обновляемые MySQL-запросы исходной модели Power BI; подключение вынесено в отдельную вкладку админки."
+      ]
+    },
     {
       version: "1.7.216",
       releasedAt: "2026-08-22",
@@ -3343,47 +3350,6 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "expenses", label: "Расходы" },
     { id: "assistant", label: "Ассистент и скачивания" }
   ]);
-  const POWER_BI_ASSISTANT_SNAPSHOT = Object.freeze({
-    sourceUpdatedAt: "2026-07-19T21:40:58",
-    firstEventAt: "2022-06-12T07:55:12",
-    installs: 3702,
-    removals: 232,
-    actionsTotal: 77038,
-    monthlyInstalls: [
-      ["2022-06", 37], ["2022-07", 64], ["2022-08", 16], ["2022-09", 17],
-      ["2022-10", 71], ["2022-11", 71], ["2022-12", 142], ["2023-01", 77],
-      ["2023-02", 75], ["2023-03", 98], ["2023-04", 73], ["2023-05", 119],
-      ["2023-06", 57], ["2023-07", 24], ["2023-08", 25], ["2023-09", 68],
-      ["2023-10", 39], ["2023-11", 311], ["2023-12", 125], ["2024-01", 73],
-      ["2024-02", 76], ["2024-03", 84], ["2024-04", 133], ["2024-05", 73],
-      ["2024-06", 62], ["2024-07", 43], ["2024-08", 25], ["2024-09", 42],
-      ["2024-10", 52], ["2024-11", 157], ["2024-12", 58], ["2025-01", 39],
-      ["2025-02", 49], ["2025-03", 45], ["2025-04", 149], ["2025-05", 51],
-      ["2025-06", 29], ["2025-07", 28], ["2025-08", 5], ["2025-09", 40],
-      ["2025-10", 81], ["2025-11", 205], ["2025-12", 131], ["2026-01", 92],
-      ["2026-02", 43], ["2026-03", 72], ["2026-04", 108], ["2026-05", 71],
-      ["2026-06", 66], ["2026-07", 11]
-    ],
-    topActions: [
-      ["Вставка без форматирования", 19544],
-      ["Обновление полей", 8798],
-      ["Открытие списка мастера шаблонов", 8133],
-      ["Запуск мастера шаблонов", 7639],
-      ["Выделение текста фоном", 4031],
-      ["Отправка письма по электронной почте", 3754],
-      ["Открытие настроек мастера шаблонов", 2912],
-      ["Открытие пути сохранения документов", 2559],
-      ["Вставка или обновление оглавления", 1908],
-      ["Вставка изображения со сканера", 1526],
-      ["Открытие редактора полей", 1308],
-      ["Вставка номера литературы", 1199]
-    ],
-    versions: [
-      ["2.73", 1656], ["2.75", 459], ["2.90 (26.12.2025)", 229], ["2.79", 204],
-      ["2.83", 202], ["2.74", 162], ["2.80", 145], ["2.88 (30.08.2025)", 133],
-      ["2.82", 118], ["2.76", 116]
-    ]
-  });
   const GENERAL_EXPENSE_SECTIONS = Object.freeze(["Физлица", "Организации"]);
   const CONTRACT_SECTIONS = Object.freeze([
     "ДЕЙСТВУЮЩИЕ ДОГОВОРА",
@@ -4497,6 +4463,12 @@ MAX - https://bizvmax.ru/zifra_plus
         loaded: false,
         error: "",
         data: null
+      },
+      assistant: {
+        loading: false,
+        loaded: false,
+        error: "",
+        data: null
       }
     },
     financeDetails: {
@@ -5024,6 +4996,27 @@ MAX - https://bizvmax.ru/zifra_plus
       data.meta.applicationsMysqlManagedByEnvironment
     );
     data.meta.applicationsSqlQuery = String(data.meta.applicationsSqlQuery || "");
+    data.meta.assistantStatisticsMysqlHost = String(
+      data.meta.assistantStatisticsMysqlHost || "vh458.timeweb.ru"
+    ).trim();
+    data.meta.assistantStatisticsMysqlPort = Number(
+      data.meta.assistantStatisticsMysqlPort || 3306
+    );
+    data.meta.assistantStatisticsMysqlDatabase = String(
+      data.meta.assistantStatisticsMysqlDatabase || "cl11741_omidpo"
+    ).trim();
+    data.meta.assistantStatisticsMysqlUser = String(
+      data.meta.assistantStatisticsMysqlUser || ""
+    ).trim();
+    data.meta.assistantStatisticsMysqlHasPassword = Boolean(
+      data.meta.assistantStatisticsMysqlHasPassword
+    );
+    data.meta.assistantStatisticsMysqlConfigured = Boolean(
+      data.meta.assistantStatisticsMysqlConfigured
+    );
+    data.meta.assistantStatisticsMysqlManagedByEnvironment = Boolean(
+      data.meta.assistantStatisticsMysqlManagedByEnvironment
+    );
     data.meta.studentEventTemplates = normalizeConfiguredEventTemplates(
       data.meta.studentEventTemplates
     );
@@ -8614,10 +8607,12 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (
       state.view === "statistics"
-      && !state.statistics.downloads.loaded
-      && !state.statistics.downloads.loading
+      && (
+        (!state.statistics.downloads.loaded && !state.statistics.downloads.loading)
+        || (!state.statistics.assistant.loaded && !state.statistics.assistant.loading)
+      )
     ) {
-      queueMicrotask(() => loadStatisticsDownloads());
+      queueMicrotask(() => loadStatisticsData());
     }
   }
 
@@ -9060,24 +9055,45 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function buildStatisticsAssistantReport() {
     const filters = state.statistics.filters;
-    const installsByMonth = POWER_BI_ASSISTANT_SNAPSHOT.monthlyInstalls
-      .filter(([key]) => (
-        (!filters.year || key.startsWith(`${filters.year}-`))
-        && (!filters.month || key.endsWith(`-${filters.month}`))
-      ));
+    const assistantData = state.statistics.assistant.data || {};
+    const assistantMonths = (assistantData.monthly || []).filter((row) => (
+      (!filters.year || String(row.year) === filters.year)
+      && (!filters.month || String(row.month).padStart(2, "0") === filters.month)
+    ));
     const downloadEvents = getFilteredStatisticsDownloadEvents();
-    const monthly = new Map(installsByMonth.map(([key, installs]) => [key, {
-      key,
-      label: statisticsMonthLabel(key),
-      installs: Number(installs || 0),
-      downloads: 0
-    }]));
+    const monthly = new Map(assistantMonths.map((row) => {
+      const key = `${row.year}-${String(row.month).padStart(2, "0")}`;
+      return [key, {
+        key,
+        label: statisticsMonthLabel(key),
+        installs: Number(row.installs || 0),
+        removals: Number(row.removals || 0),
+        downloads: 0
+      }];
+    }));
     const files = new Map();
+    const versions = new Map();
     let generated = 0;
     let downloaded = 0;
+    (assistantData.versions || []).forEach((row) => {
+      if (
+        (filters.year && String(row.year) !== filters.year)
+        || (filters.month && String(row.month).padStart(2, "0") !== filters.month)
+      ) return;
+      const label = String(row.label || "Без версии").trim() || "Без версии";
+      versions.set(label, (versions.get(label) || 0) + Number(row.value || 0));
+    });
     downloadEvents.forEach((event) => {
       const key = `${event.year}-${String(event.month).padStart(2, "0")}`;
-      if (!monthly.has(key)) monthly.set(key, { key, label: statisticsMonthLabel(key), installs: 0, downloads: 0 });
+      if (!monthly.has(key)) {
+        monthly.set(key, {
+          key,
+          label: statisticsMonthLabel(key),
+          installs: 0,
+          removals: 0,
+          downloads: 0
+        });
+      }
       if (event.kind === "downloaded") {
         monthly.get(key).downloads += Number(event.count || 0);
         files.set(event.file, (files.get(event.file) || 0) + Number(event.count || 0));
@@ -9087,37 +9103,43 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     });
     return {
-      installs: installsByMonth.reduce((sum, [, value]) => sum + Number(value || 0), 0),
+      installs: assistantMonths.reduce((sum, row) => sum + Number(row.installs || 0), 0),
+      removals: assistantMonths.reduce((sum, row) => sum + Number(row.removals || 0), 0),
+      actionsTotal: Number(assistantData.summary?.actions || 0),
       generated,
       downloaded,
       monthly: [...monthly.values()].sort((left, right) => left.key.localeCompare(right.key)),
       files: [...files.entries()].map(([label, value]) => ({ label, value })),
-      actions: POWER_BI_ASSISTANT_SNAPSHOT.topActions.map(([label, value]) => ({ label, value })),
-      versions: POWER_BI_ASSISTANT_SNAPSHOT.versions.map(([label, value]) => ({ label, value }))
+      actions: Array.isArray(assistantData.actions) ? assistantData.actions : [],
+      versions: [...versions.entries()].map(([label, value]) => ({ label, value }))
     };
   }
 
   function renderStatisticsAssistant() {
     const report = buildStatisticsAssistantReport();
     const downloads = state.statistics.downloads;
-    const snapshotDate = dateRu(POWER_BI_ASSISTANT_SNAPSHOT.sourceUpdatedAt.slice(0, 10));
+    const assistant = state.statistics.assistant;
+    const assistantUpdatedAt = formatDateTimeRu(assistant.data?.refreshedAt || "");
+    const selectedPeriod = [state.statistics.filters.month, state.statistics.filters.year]
+      .filter(Boolean).join(".") || "За весь период";
     return `
       <div class="statistics-source-note">
         <strong>Источники данных</strong>
-        <span>Ассистент: срез Power BI по ${escapeHtml(snapshotDate)}. Скачивания файлов: текущая база сайта.</span>
+        <span>Ассистент: обновляемые MySQL-запросы модели Power BI${assistantUpdatedAt ? `, получено ${escapeHtml(assistantUpdatedAt)}` : ""}. Скачивания файлов: текущая база сайта.</span>
       </div>
       ${renderStatisticsKpis([
-        { label: "Установки Ассистента", value: formatStatisticsInteger(report.installs), note: state.statistics.filters.year || "За весь период", tone: "teal" },
-        { label: "Удаления Ассистента", value: formatStatisticsInteger(POWER_BI_ASSISTANT_SNAPSHOT.removals), note: "За весь срез Power BI", tone: "red" },
-        { label: "Действия в Ассистенте", value: formatStatisticsInteger(POWER_BI_ASSISTANT_SNAPSHOT.actionsTotal), note: "За весь срез Power BI", tone: "blue" },
+        { label: "Установки Ассистента", value: assistant.loading ? "…" : formatStatisticsInteger(report.installs), note: selectedPeriod, tone: "teal" },
+        { label: "Удаления Ассистента", value: assistant.loading ? "…" : formatStatisticsInteger(report.removals), note: selectedPeriod, tone: "red" },
+        { label: "Действия в Ассистенте", value: assistant.loading ? "…" : formatStatisticsInteger(report.actionsTotal), note: "Весь журнал Power BI", tone: "blue" },
         { label: "Скачано файлов", value: downloads.loading ? "…" : formatStatisticsInteger(report.downloaded), note: downloads.error ? "Источник временно недоступен" : `${formatStatisticsInteger(report.generated)} ссылок сформировано`, tone: "amber" }
       ])}
+      ${assistant.error ? `<div class="statistics-inline-error" role="alert">${escapeHtml(assistant.error)}</div>` : ""}
       ${downloads.error ? `<div class="statistics-inline-error" role="alert">${escapeHtml(downloads.error)}</div>` : ""}
       <div class="statistics-two-column">
         <section class="panel statistics-visual-panel statistics-wide-panel">
           <div class="panel-head"><div><p class="eyebrow">Динамика</p><h2>Установки и скачивания</h2></div></div>
-          ${downloads.loading
-            ? `<div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Получение статистики скачиваний…</span></div>`
+          ${assistant.loading || downloads.loading
+            ? `<div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Получение актуальной статистики…</span></div>`
             : renderStatisticsSeriesChart(report.monthly, [
               { key: "installs", label: "Установки Ассистента", tone: "teal" },
               { key: "downloads", label: "Скачивания файлов", tone: "blue" }
@@ -9125,13 +9147,17 @@ MAX - https://bizvmax.ru/zifra_plus
         </section>
         <section class="panel statistics-visual-panel">
           <div class="panel-head"><div><p class="eyebrow">Версии</p><h2>Установки версий Ассистента</h2></div></div>
-          ${renderStatisticsDonut("Версии Ассистента", report.versions, { limit: 7 })}
+          ${assistant.loading
+            ? `<div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Обновление версий…</span></div>`
+            : renderStatisticsDonut("Версии Ассистента", report.versions, { limit: 7 })}
         </section>
       </div>
       <div class="statistics-two-column">
         <section class="panel statistics-visual-panel">
           <div class="panel-head"><div><p class="eyebrow">Использование</p><h2>Популярные действия</h2></div></div>
-          ${renderStatisticsRanking(report.actions, { limit: 12 })}
+          ${assistant.loading
+            ? `<div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Обновление действий…</span></div>`
+            : renderStatisticsRanking(report.actions, { limit: 12 })}
         </section>
         <section class="panel statistics-visual-panel">
           <div class="panel-head"><div><p class="eyebrow">Файлы</p><h2>Структура скачиваний</h2></div></div>
@@ -9145,7 +9171,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getStatisticsFilterOptions() {
     const finance = getStatisticsFinanceRows();
-    const years = new Set(POWER_BI_ASSISTANT_SNAPSHOT.monthlyInstalls.map(([key]) => key.slice(0, 4)));
+    const years = new Set(
+      (state.statistics.assistant.data?.years || []).map((year) => String(year))
+    );
     [...finance.income, ...finance.direct, ...finance.general].forEach((row) => {
       const year = statisticsDateParts(row.date)?.year;
       if (year) years.add(year);
@@ -9183,7 +9211,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="statistics-heading">
             <div><p class="eyebrow">Аналитика учебного центра</p><h2>Интерактивная статистика</h2></div>
             <div class="statistics-heading-actions">
-              ${activeTab === "assistant" ? `<button class="ghost-button" data-action="refresh-statistics-downloads" type="button" ${state.statistics.downloads.loading ? "disabled" : ""}>Обновить данные</button>` : ""}
+              ${activeTab === "assistant" ? `<button class="ghost-button" data-action="refresh-statistics-data" type="button" ${state.statistics.downloads.loading || state.statistics.assistant.loading ? "disabled" : ""}>Обновить данные</button>` : ""}
               <button class="ghost-button" data-action="export-statistics" type="button">Экспорт CSV</button>
             </div>
           </div>
@@ -9238,6 +9266,38 @@ MAX - https://bizvmax.ru/zifra_plus
       downloads.loading = false;
       if (state.view === "statistics") render();
     }
+  }
+
+  async function loadStatisticsAssistant(options = {}) {
+    const assistant = state.statistics.assistant;
+    if (assistant.loading || (assistant.loaded && !options.force)) return;
+    assistant.loading = true;
+    assistant.error = "";
+    if (state.view === "statistics") render();
+    try {
+      const response = await fetch(photoApiUrl("/api/statistics/assistant"), {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "X-Requested-With": "AIS-Web" }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      assistant.data = payload;
+      assistant.loaded = true;
+    } catch (error) {
+      assistant.error = error.message || "Не удалось получить статистику Ассистента.";
+      assistant.loaded = true;
+    } finally {
+      assistant.loading = false;
+      if (state.view === "statistics") render();
+    }
+  }
+
+  function loadStatisticsData(options = {}) {
+    return Promise.all([
+      loadStatisticsAssistant(options),
+      loadStatisticsDownloads(options)
+    ]);
   }
 
   function exportStatisticsReport() {
@@ -9315,8 +9375,8 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
     });
     document.querySelector("[data-action='export-statistics']")?.addEventListener("click", exportStatisticsReport);
-    document.querySelector("[data-action='refresh-statistics-downloads']")?.addEventListener("click", () => {
-      loadStatisticsDownloads({ force: true });
+    document.querySelector("[data-action='refresh-statistics-data']")?.addEventListener("click", () => {
+      loadStatisticsData({ force: true });
     });
   }
 
@@ -16895,6 +16955,29 @@ MAX - https://bizvmax.ru/zifra_plus
     const applicationsMysqlFieldsDisabled = Boolean(
       state.data.meta.applicationsMysqlManagedByEnvironment
     );
+    const assistantStatisticsMysqlHost = getAdminSettingRenderValue(
+      "assistantStatisticsMysqlHost",
+      state.data.meta.assistantStatisticsMysqlHost || "vh458.timeweb.ru"
+    );
+    const assistantStatisticsMysqlPort = getAdminSettingRenderValue(
+      "assistantStatisticsMysqlPort",
+      state.data.meta.assistantStatisticsMysqlPort || 3306
+    );
+    const assistantStatisticsMysqlDatabase = getAdminSettingRenderValue(
+      "assistantStatisticsMysqlDatabase",
+      state.data.meta.assistantStatisticsMysqlDatabase || "cl11741_omidpo"
+    );
+    const assistantStatisticsMysqlUser = getAdminSettingRenderValue(
+      "assistantStatisticsMysqlUser",
+      state.data.meta.assistantStatisticsMysqlUser || ""
+    );
+    const assistantStatisticsMysqlPassword = getAdminSettingRenderValue(
+      "assistantStatisticsMysqlPassword",
+      ""
+    );
+    const assistantStatisticsMysqlFieldsDisabled = Boolean(
+      state.data.meta.assistantStatisticsMysqlManagedByEnvironment
+    );
     const documentMailboxes = getAdditionalDocumentMailboxesForAdmin();
     const mysqlUseApplicationsConnection = Boolean(getAdminSettingRenderValue(
       "mysqlUseApplicationsConnection",
@@ -16931,6 +17014,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const adminDatabaseTabs = [
       { id: "ais", label: "База АИС Допобразование" },
       { id: "shop", label: "Интернет магазин" },
+      { id: "statistics", label: "Статистика Power BI" },
       { id: "cloud", label: "Облачная база" }
     ];
     const adminDatabaseTab = adminDatabaseTabs.some((tab) => tab.id === state.adminDatabaseTab)
@@ -17209,6 +17293,51 @@ MAX - https://bizvmax.ru/zifra_plus
                   <small class="sdo-settings-hint">Разрешён один запрос SELECT. Два знака <code>?</code> соответствуют началу и концу периода. Запрос должен возвращать перечисленные в стандартном запросе служебные поля и колонки заявки.</small>
                 </label>
                 ${applicationsMysqlFieldsDisabled ? '<small class="sdo-settings-hint">Параметры подключения заданы переменной окружения сервера; в админке можно изменять SQL-запрос.</small>' : ""}
+                </section>
+                <section
+                  class="admin-database-subpanel"
+                  id="admin-database-panel-statistics"
+                  data-admin-database-panel="statistics"
+                  role="tabpanel"
+                  aria-labelledby="admin-database-tab-statistics"
+                  ${adminDatabaseTab === "statistics" ? "" : "hidden"}
+                >
+                <div class="admin-system-documents-head">
+                  <div class="admin-connection-heading-copy">
+                    <strong>Ассистент — SQL модели Power BI</strong>
+                    <small>Живые показатели строятся по тем же таблицам и агрегатам, которые заданы в файле «Аналитика Цифровизация+.pbix».</small>
+                  </div>
+                  <button class="ghost-button admin-connection-test-button" data-action="test-assistant-statistics-mysql" type="button">Проверить статистику</button>
+                </div>
+                <div class="admin-mysql-settings-grid ${assistantStatisticsMysqlFieldsDisabled ? "is-disabled" : ""}">
+                  <label>
+                    <span>Сервер MySQL</span>
+                    <input name="assistantStatisticsMysqlHost" type="text" value="${escapeAttr(assistantStatisticsMysqlHost)}" placeholder="mysql.example.ru" spellcheck="false" ${assistantStatisticsMysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label>
+                    <span>Порт</span>
+                    <input name="assistantStatisticsMysqlPort" type="number" min="1" max="65535" value="${escapeAttr(assistantStatisticsMysqlPort)}" ${assistantStatisticsMysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label>
+                    <span>Имя базы</span>
+                    <input name="assistantStatisticsMysqlDatabase" type="text" value="${escapeAttr(assistantStatisticsMysqlDatabase)}" spellcheck="false" ${assistantStatisticsMysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label>
+                    <span>Пользователь</span>
+                    <input name="assistantStatisticsMysqlUser" type="text" value="${escapeAttr(assistantStatisticsMysqlUser)}" autocomplete="username" spellcheck="false" ${assistantStatisticsMysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                  <label class="admin-mysql-password-field">
+                    <span>Пароль</span>
+                    <input name="assistantStatisticsMysqlPassword" type="password" value="${escapeAttr(assistantStatisticsMysqlPassword)}" placeholder="${state.data.meta.assistantStatisticsMysqlHasPassword ? "Пароль сохранён на сервере" : "Введите пароль MySQL"}" autocomplete="new-password" ${assistantStatisticsMysqlFieldsDisabled ? "disabled" : ""}>
+                  </label>
+                </div>
+                <div class="admin-database-copy system-action-notes">
+                  <section class="system-action-note">
+                    <strong>Обновляемая статистика Ассистента</strong>
+                    <p>Сервер агрегирует установки и удаления из <code>wp_ass_reg</code>, версии — из того же журнала, а популярные действия — из <code>wp_ass_logs</code> и <code>wp_ass_logs_structure</code>. Персональные строки в браузер не передаются.</p>
+                  </section>
+                </div>
+                ${assistantStatisticsMysqlFieldsDisabled ? '<small class="sdo-settings-hint">Параметры подключения заданы переменной окружения сервера.</small>' : ""}
                 </section>
                 <section
                   class="admin-database-subpanel"
@@ -27115,7 +27244,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='switch-admin-database-tab']").forEach((button) => {
       button.addEventListener("click", () => {
         const tab = String(button.dataset.adminDatabaseTab || "");
-        if (!["ais", "shop", "cloud"].includes(tab) || tab === state.adminDatabaseTab) return;
+        if (!["ais", "shop", "statistics", "cloud"].includes(tab) || tab === state.adminDatabaseTab) return;
         state.adminDatabaseTab = tab;
         document.querySelectorAll("[data-admin-database-panel]").forEach((panel) => {
           panel.hidden = panel.dataset.adminDatabasePanel !== tab;
@@ -27264,6 +27393,8 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='test-yandex-disk']")?.addEventListener("click", testYandexDiskConnection);
     document.querySelector("[data-action='test-applications-mysql']")
       ?.addEventListener("click", testStudentApplicationsMySqlConnection);
+    document.querySelector("[data-action='test-assistant-statistics-mysql']")
+      ?.addEventListener("click", testAssistantStatisticsMySqlConnection);
     document.querySelector("[data-action='test-mysql-locks']")?.addEventListener("click", testMySqlLocksConnection);
     document.querySelector("[data-action='test-student-applications-email']")
       ?.addEventListener("click", testStudentApplicationsEmailConnection);
@@ -44421,6 +44552,29 @@ MAX - https://bizvmax.ru/zifra_plus
     const applicationsOrderAdminUrlTemplate = String(
       form.elements.applicationsOrderAdminUrlTemplate?.value || ""
     ).trim();
+    const assistantStatisticsMysqlHost = String(
+      form.elements.assistantStatisticsMysqlHost?.value
+        || state.data.meta.assistantStatisticsMysqlHost
+        || "vh458.timeweb.ru"
+    ).trim();
+    const assistantStatisticsMysqlPort = Number(
+      form.elements.assistantStatisticsMysqlPort?.value
+        || state.data.meta.assistantStatisticsMysqlPort
+        || 3306
+    );
+    const assistantStatisticsMysqlDatabase = String(
+      form.elements.assistantStatisticsMysqlDatabase?.value
+        || state.data.meta.assistantStatisticsMysqlDatabase
+        || "cl11741_omidpo"
+    ).trim();
+    const assistantStatisticsMysqlUser = String(
+      form.elements.assistantStatisticsMysqlUser?.value
+        || state.data.meta.assistantStatisticsMysqlUser
+        || ""
+    ).trim();
+    const assistantStatisticsMysqlPassword = String(
+      form.elements.assistantStatisticsMysqlPassword?.value || ""
+    );
     const mysqlUseApplicationsConnection = Boolean(
       form.elements.mysqlUseApplicationsConnection?.checked
     );
@@ -44467,6 +44621,29 @@ MAX - https://bizvmax.ru/zifra_plus
         throw new Error("Введите пароль базы интернет-магазина.");
       }
     }
+    const assistantStatisticsConnectionRequested = Boolean(
+      assistantStatisticsMysqlUser
+      || assistantStatisticsMysqlPassword
+      || state.data.meta.assistantStatisticsMysqlHasPassword
+    );
+    if (
+      assistantStatisticsConnectionRequested
+      && !state.data.meta.assistantStatisticsMysqlManagedByEnvironment
+    ) {
+      if (!assistantStatisticsMysqlHost) throw new Error("Укажите сервер MySQL статистики Power BI.");
+      if (
+        !Number.isInteger(assistantStatisticsMysqlPort)
+        || assistantStatisticsMysqlPort < 1
+        || assistantStatisticsMysqlPort > 65535
+      ) {
+        throw new Error("Укажите корректный порт MySQL статистики Power BI.");
+      }
+      if (!assistantStatisticsMysqlDatabase) throw new Error("Укажите имя базы статистики Power BI.");
+      if (!assistantStatisticsMysqlUser) throw new Error("Укажите пользователя базы статистики Power BI.");
+      if (!assistantStatisticsMysqlPassword && !state.data.meta.assistantStatisticsMysqlHasPassword) {
+        throw new Error("Введите пароль базы статистики Power BI.");
+      }
+    }
     if (!mysqlUseApplicationsConnection && !state.data.meta.mysqlManagedByEnvironment) {
       if (!mysqlHost) throw new Error("Укажите сервер MySQL.");
       if (!Number.isInteger(mysqlPort) || mysqlPort < 1 || mysqlPort > 65535) {
@@ -44508,6 +44685,11 @@ MAX - https://bizvmax.ru/zifra_plus
         applicationsMysqlPassword,
         applicationsSqlQuery,
         applicationsOrderAdminUrlTemplate,
+        assistantStatisticsMysqlHost,
+        assistantStatisticsMysqlPort,
+        assistantStatisticsMysqlDatabase,
+        assistantStatisticsMysqlUser,
+        assistantStatisticsMysqlPassword,
         mysqlUseApplicationsConnection,
         mysqlHost,
         mysqlPort,
@@ -44524,6 +44706,9 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     form.querySelectorAll('[data-mailbox-field="password"]').forEach((input) => { input.value = ""; });
     if (form.elements.applicationsMysqlPassword) form.elements.applicationsMysqlPassword.value = "";
+    if (form.elements.assistantStatisticsMysqlPassword) {
+      form.elements.assistantStatisticsMysqlPassword.value = "";
+    }
     if (form.elements.mysqlPassword) form.elements.mysqlPassword.value = "";
     return payload;
   }
@@ -44589,6 +44774,27 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.meta.applicationsOrderAdminUrlTemplate = String(
       payload.applicationsOrderAdminUrlTemplate || DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE
     ).trim();
+    state.data.meta.assistantStatisticsMysqlHost = String(
+      payload.assistantStatisticsMysqlHost || "vh458.timeweb.ru"
+    ).trim();
+    state.data.meta.assistantStatisticsMysqlPort = Number(
+      payload.assistantStatisticsMysqlPort || 3306
+    );
+    state.data.meta.assistantStatisticsMysqlDatabase = String(
+      payload.assistantStatisticsMysqlDatabase || "cl11741_omidpo"
+    ).trim();
+    state.data.meta.assistantStatisticsMysqlUser = String(
+      payload.assistantStatisticsMysqlUser || ""
+    ).trim();
+    state.data.meta.assistantStatisticsMysqlHasPassword = Boolean(
+      payload.assistantStatisticsMysqlHasPassword
+    );
+    state.data.meta.assistantStatisticsMysqlConfigured = Boolean(
+      payload.assistantStatisticsMysqlConfigured
+    );
+    state.data.meta.assistantStatisticsMysqlManagedByEnvironment = Boolean(
+      payload.assistantStatisticsMysqlManagedByEnvironment
+    );
     if (Object.prototype.hasOwnProperty.call(payload, "mysqlUseApplicationsConnection")) {
       state.data.meta.mysqlUseApplicationsConnection = payload.mysqlUseApplicationsConnection !== false;
       state.data.meta.mysqlHost = String(payload.mysqlHost || "").trim();
@@ -44789,6 +44995,36 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  async function testAssistantStatisticsMySqlConnection(event) {
+    const button = event.currentTarget;
+    const form = button.closest("form");
+    if (!form) return;
+    button.disabled = true;
+    try {
+      const settings = await saveYandexDiskSettings(form);
+      applyYandexDiskSettings(settings);
+      clearAdminSettingsDirtyState(form);
+      const response = await fetch(photoApiUrl("/api/assistant-statistics-mysql/test"), {
+        method: "POST"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Не удалось получить статистику Power BI.");
+      }
+      const details = [
+        payload.database ? `база ${payload.database}` : "",
+        `записей установки и удаления: ${formatStatisticsInteger(payload.events)}`,
+        payload.lastAt ? `последняя запись: ${formatDateTimeRu(payload.lastAt)}` : ""
+      ].filter(Boolean).join(", ");
+      alert(`${payload.message || "Подключение к статистике Power BI работает."}${details ? `\n${details}` : ""}`);
+      state.statistics.assistant.loaded = false;
+      render();
+    } catch (error) {
+      alert(`Проверка статистики Power BI не выполнена: ${error.message}`);
+      button.disabled = false;
+    }
+  }
+
   async function testMySqlLocksConnection(event) {
     const button = event.currentTarget;
     const form = button.closest("form");
@@ -44851,6 +45087,13 @@ MAX - https://bizvmax.ru/zifra_plus
           trainingEndNotificationDays: state.data.meta.trainingEndNotificationDays,
           trainingEndNotificationStatus: state.data.meta.trainingEndNotificationStatus,
           documentMailboxes: state.data.meta.documentMailboxes,
+          assistantStatisticsMysqlHost: state.data.meta.assistantStatisticsMysqlHost,
+          assistantStatisticsMysqlPort: state.data.meta.assistantStatisticsMysqlPort,
+          assistantStatisticsMysqlDatabase: state.data.meta.assistantStatisticsMysqlDatabase,
+          assistantStatisticsMysqlUser: state.data.meta.assistantStatisticsMysqlUser,
+          assistantStatisticsMysqlHasPassword: state.data.meta.assistantStatisticsMysqlHasPassword,
+          assistantStatisticsMysqlManagedByEnvironment:
+            state.data.meta.assistantStatisticsMysqlManagedByEnvironment,
           mysqlUseApplicationsConnection: state.data.meta.mysqlUseApplicationsConnection,
           mysqlHost: state.data.meta.mysqlHost,
           mysqlPort: state.data.meta.mysqlPort,
@@ -44883,6 +45126,13 @@ MAX - https://bizvmax.ru/zifra_plus
           trainingEndNotificationDays: state.data.meta.trainingEndNotificationDays,
           trainingEndNotificationStatus: state.data.meta.trainingEndNotificationStatus,
           documentMailboxes: state.data.meta.documentMailboxes,
+          assistantStatisticsMysqlHost: state.data.meta.assistantStatisticsMysqlHost,
+          assistantStatisticsMysqlPort: state.data.meta.assistantStatisticsMysqlPort,
+          assistantStatisticsMysqlDatabase: state.data.meta.assistantStatisticsMysqlDatabase,
+          assistantStatisticsMysqlUser: state.data.meta.assistantStatisticsMysqlUser,
+          assistantStatisticsMysqlHasPassword: state.data.meta.assistantStatisticsMysqlHasPassword,
+          assistantStatisticsMysqlManagedByEnvironment:
+            state.data.meta.assistantStatisticsMysqlManagedByEnvironment,
           mysqlUseApplicationsConnection: state.data.meta.mysqlUseApplicationsConnection,
           mysqlHost: state.data.meta.mysqlHost,
           mysqlPort: state.data.meta.mysqlPort,

@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260822-ocr-document-routing-v2";
+  const AUTH_BUILD = "20260822-live-powerbi-statistics-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);
