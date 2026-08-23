@@ -465,7 +465,6 @@
           <form data-profile-form>
             <div class="partner-profile-fields">${activeFields.map(renderProfileField).join("") || renderEmpty("Данные этого раздела не заполнены.")}</div>
             <div class="partner-profile-actions">
-              <span>${profile.contractNo ? `Договор № ${escapeHtml(profile.contractNo)}` : "Договор не указан"}</span>
               ${state.profileError ? `<p class="partner-form-message is-error">${escapeHtml(state.profileError)}</p>` : ""}
               ${state.profileStatus ? `<p class="partner-form-message is-success">${escapeHtml(state.profileStatus)}</p>` : ""}
               <button class="partner-primary-button" type="submit" ${state.profileSaving ? "disabled" : ""}>${state.profileSaving ? "Сохранение..." : profile.onboardingRequired ? "Сохранить и продолжить" : "Сохранить изменения"}</button>

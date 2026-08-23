@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.233",
+    version: "1.7.234",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.234",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Профиль партнёра уплотнён; удалена лишняя строка с договором, а панель сохранения получила единые отступы."
+      ]
+    },
     {
       version: "1.7.233",
       releasedAt: "2026-08-23",

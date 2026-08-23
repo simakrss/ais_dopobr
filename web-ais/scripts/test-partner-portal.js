@@ -212,6 +212,10 @@ assert.match(
 assert.match(partnerSource, /data-action="open-payable"/u);
 assert.match(partnerSource, /data-feedback-form/u);
 assert.match(partnerSource, /data-profile-form/u);
+assert.doesNotMatch(
+  partnerSource,
+  /partner-profile-actions[\s\S]{0,260}(?:Договор №|Договор не указан)/u
+);
 assert.match(partnerSource, /api\/partner\/documents\/list/u);
 assert.match(partnerSource, /DOCUMENTS_VIEW_STORAGE_KEY/u);
 assert.match(partnerSource, /data-view-mode="tiles"/u);
@@ -229,6 +233,8 @@ assert.match(partnerSource, /sessionUser\?\.role === "partner"[\s\S]{0,100}loadP
 assert.match(partnerSource, /title="Экспорт выплат в CSV"[\s\S]{0,120}CSV/u);
 assert.match(stylesSource, /\.partner-filters\s*\{[\s\S]{0,180}minmax\(145px, 1\.3fr\)/u);
 assert.match(stylesSource, /\.partner-filter-actions > :is\([\s\S]{0,180}min-height: 32px/u);
+assert.match(stylesSource, /\.partner-profile-field\s*\{[^}]*padding:\s*7px 6px/u);
+assert.match(stylesSource, /\.partner-profile-actions\s*\{[^}]*padding:\s*10px 18px 14px/u);
 assert.match(deploySource, /"partner-app\.js"/u);
 
 console.log("partner portal tests: OK");
