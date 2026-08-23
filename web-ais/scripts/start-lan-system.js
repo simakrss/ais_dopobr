@@ -35,9 +35,11 @@ enableTimestampedConsole();
 
 const appRoot = path.resolve(__dirname, "..");
 const logRoot = path.join(appRoot, "tmp", "lan-system");
+const runtimeRoot = path.join(appRoot, ".runtime");
 const statusPath = path.join(logRoot, "status.json");
 const secretPath = path.join(logRoot, "onlyoffice-jwt-secret.txt");
-const gatewaySecretPath = path.join(logRoot, "local-service-gateway-secret.txt");
+const gatewaySecretPath = path.join(runtimeRoot, "tunnel-secret.txt");
+const legacyGatewaySecretPath = path.join(logRoot, "local-service-gateway-secret.txt");
 const composePath = path.join(appRoot, "docker-compose.onlyoffice.yml");
 const argumentsLower = new Set(process.argv.slice(2).map((value) => value.toLowerCase()));
 const skipDocker = argumentsLower.has("--skip-docker") || argumentsLower.has("-skipdocker");
@@ -67,6 +69,7 @@ const serverDefinitions = [
 
 function ensureDirectories() {
   fs.mkdirSync(logRoot, { recursive: true });
+  fs.mkdirSync(runtimeRoot, { recursive: true });
 }
 
 function processExists(pid) {
@@ -143,15 +146,25 @@ function getOnlyOfficeSecret() {
 }
 
 function getLocalServiceGatewaySecret() {
-  try {
-    const current = fs.readFileSync(gatewaySecretPath, "utf8").trim();
-    if (current.length >= 48) return current;
-  } catch (_error) {
-    // The local gateway secret is created on the first launch.
+  const configured = String(process.env.AIS_GATEWAY_SHARED_SECRET || "").trim();
+  let secret = configured.length >= 48 ? configured : "";
+  for (const candidatePath of [gatewaySecretPath, legacyGatewaySecretPath]) {
+    if (secret) break;
+    try {
+      const current = fs.readFileSync(candidatePath, "utf8").trim();
+      if (current.length >= 48) secret = current;
+    } catch (_error) {
+      // The first local gateway launch creates a shared secret.
+    }
   }
-  const secret = crypto.randomBytes(48).toString("base64url");
+  if (!secret) secret = crypto.randomBytes(48).toString("base64url");
   fs.writeFileSync(gatewaySecretPath, `${secret}\n`, "utf8");
+  fs.writeFileSync(legacyGatewaySecretPath, `${secret}\n`, "utf8");
   return secret;
+}
+
+function runtimeSecretFingerprint(value) {
+  return crypto.createHash("sha256").update(String(value || ""), "utf8").digest("hex").slice(0, 16);
 }
 
 function listeningPid(port) {
@@ -201,31 +214,114 @@ async function waitForPort(host, port, timeoutMilliseconds = 12000) {
   return false;
 }
 
-async function isAisServiceHealthy(port) {
+async function isAisServiceHealthy(port, commonEnvironment = null) {
   try {
+    const gatewaySecret = String(commonEnvironment?.AIS_GATEWAY_SHARED_SECRET || "");
     const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
       cache: "no-store",
+      ...(gatewaySecret ? { headers: { "X-AIS-Gateway-Token": gatewaySecret } } : {}),
       signal: AbortSignal.timeout(2500),
     });
     if (!response.ok) return false;
     const payload = await response.json();
-    return payload?.ok === true && ["mysql", "yandex-disk"].includes(String(payload.storage || ""));
+    if (payload?.ok !== true || !["mysql", "yandex-disk"].includes(String(payload.storage || ""))) {
+      return false;
+    }
+    if (!commonEnvironment) return true;
+    return payload.runtimeSecrets?.gateway
+        === runtimeSecretFingerprint(commonEnvironment.AIS_GATEWAY_SHARED_SECRET)
+      && payload.runtimeSecrets?.documentConverter
+        === runtimeSecretFingerprint(commonEnvironment.ONLYOFFICE_JWT_SECRET);
   } catch (_error) {
     return false;
   }
 }
 
+function processCommandLine(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return "";
+  try {
+    return execFileSync(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-Command",
+        `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`,
+      ],
+      { encoding: "utf8", timeout: 7000, windowsHide: false },
+    ).trim();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function isExpectedNodeServiceProcess(pid, scriptName) {
+  const commandLine = processCommandLine(pid).replace(/\//g, "\\").toLowerCase();
+  const expectedPath = path.join(appRoot, scriptName).replace(/\//g, "\\").toLowerCase();
+  return commandLine.includes("node") && commandLine.includes(expectedPath);
+}
+
+async function stopExpectedNodeService(pid, scriptName) {
+  if (!isExpectedNodeServiceProcess(pid, scriptName)) {
+    throw new Error(`Процесс ${pid} не принадлежит службе АИС ${scriptName}; автоматический перезапуск отменён.`);
+  }
+  execFileSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+    timeout: 10000,
+    windowsHide: false,
+    stdio: "ignore",
+  });
+  const deadline = Date.now() + 10000;
+  while (processExists(pid) && Date.now() < deadline) await wait(200);
+}
+
+function onlyOfficeContainerSecretMatches(commonEnvironment) {
+  if (skipDocker) return true;
+  try {
+    const dockerPath = process.env.AIS_DOCKER_PATH || "docker.exe";
+    const output = execFileSync(
+      dockerPath,
+      ["inspect", "ais-onlyoffice", "--format", "{{range .Config.Env}}{{println .}}{{end}}"],
+      { encoding: "utf8", timeout: 7000, windowsHide: false },
+    );
+    const configured = output.split(/\r?\n/u)
+      .find((line) => line.startsWith("JWT_SECRET="))
+      ?.slice("JWT_SECRET=".length) || "";
+    return runtimeSecretFingerprint(configured)
+      === runtimeSecretFingerprint(commonEnvironment.ONLYOFFICE_JWT_SECRET);
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function existingSystemRuntimeMatches(status, commonEnvironment) {
+  const launcherPid = Number(status?.launcherPid);
+  return processExists(launcherPid)
+    && isExpectedNodeServiceProcess(launcherPid, path.join("scripts", "start-lan-system.js"))
+    && onlyOfficeContainerSecretMatches(commonEnvironment)
+    && await isAisServiceHealthy(19081, commonEnvironment)
+    && await isAisServiceHealthy(8081, commonEnvironment);
+}
+
 async function startServer(definition, commonEnvironment) {
   const existingPid = listeningPid(definition.port);
   if (existingPid) {
+    if (await isAisServiceHealthy(definition.port, commonEnvironment)) {
+      console.log(`${definition.name} is already running (PID ${existingPid}, port ${definition.port}).`);
+      return existingPid;
+    }
     if (!(await isAisServiceHealthy(definition.port))) {
       throw new Error(
         `Порт ${definition.port} занят другим приложением (PID ${existingPid}). `
         + `Освободите порт и повторите запуск АИС.`,
       );
     }
-    console.log(`${definition.name} is already running (PID ${existingPid}, port ${definition.port}).`);
-    return existingPid;
+    console.log(`${definition.name}: обнаружены несовместимые служебные ключи, выполняется безопасный перезапуск.`);
+    await stopExpectedNodeService(existingPid, definition.scriptName);
+    const portDeadline = Date.now() + 10000;
+    while (await isPortOpen("127.0.0.1", definition.port)) {
+      if (Date.now() >= portDeadline) throw new Error(`Порт ${definition.port} не освободился после остановки службы.`);
+      await wait(200);
+    }
   }
 
   const stdoutPath = path.join(logRoot, `${definition.scriptName}.stdout.log`);
@@ -446,16 +542,26 @@ async function shutdown(exitCode = 0) {
 
 async function main() {
   ensureDirectories();
-  const previousStatus = readLauncherStatus();
-  if (previousStatus && processExists(Number(previousStatus.launcherPid))) {
-    printExistingSystemStatus(previousStatus);
-    return;
-  }
   const commonEnvironment = {
     ONLYOFFICE_JWT_SECRET: getOnlyOfficeSecret(),
     AIS_TRUST_GATEWAY: "1",
     AIS_GATEWAY_SHARED_SECRET: getLocalServiceGatewaySecret()
   };
+  const previousStatus = readLauncherStatus();
+  if (previousStatus && processExists(Number(previousStatus.launcherPid))) {
+    if (await existingSystemRuntimeMatches(previousStatus, commonEnvironment)) {
+      printExistingSystemStatus(previousStatus);
+      return;
+    }
+    const previousLauncherPid = Number(previousStatus.launcherPid);
+    if (isExpectedNodeServiceProcess(previousLauncherPid, path.join("scripts", "start-lan-system.js"))) {
+      console.log("\n[AIS] Обнаружен запущенный экземпляр с устаревшими служебными ключами. Выполняется восстановление.");
+      await stopExpectedNodeService(previousLauncherPid, path.join("scripts", "start-lan-system.js"));
+    } else {
+      console.log("\n[AIS] Файл состояния устарел; запуск будет продолжен без остановки постороннего процесса.");
+      fs.rmSync(statusPath, { force: true });
+    }
+  }
   const offlineState = readOfflineStateStatus();
   const status = {
     startedAt: new Date().toISOString(),
@@ -474,13 +580,13 @@ async function main() {
     pendingChangeCount: offlineState.pendingCount,
   };
 
+  console.log("\n[AIS] Starting document services");
+  status.documentServices = startDocumentServices(commonEnvironment);
+
   console.log("\n[AIS] Starting main servers");
   for (const definition of serverDefinitions) {
     status[`${definition.key}Pid`] = await startServer(definition, commonEnvironment);
   }
-
-  console.log("\n[AIS] Starting document services");
-  status.documentServices = startDocumentServices(commonEnvironment);
   writeStatus(status);
 
   console.log("\n[AIS] System is ready");

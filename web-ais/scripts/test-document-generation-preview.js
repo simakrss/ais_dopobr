@@ -20,6 +20,7 @@ const {
 const owner = { id: "preview-test-owner", login: "owner", authSessionKey: "session-owner" };
 const ownerOtherSession = { ...owner, authSessionKey: "session-owner-other" };
 const stranger = { id: "preview-test-stranger", login: "stranger", authSessionKey: "session-stranger" };
+const testGatewaySecret = "preview-test-gateway-secret".repeat(3);
 const generated = {
   bytes: Buffer.from("previewed document"),
   outputFormat: "docx",
@@ -167,7 +168,8 @@ const runFinalizeWorker = (previewToken) => {
       "x-ais-user-id": "cross-process-owner",
       "x-ais-user-login": "cross-process-owner",
       "x-ais-user-role": "admin",
-      "x-ais-session-id": "cross-process-session"
+      "x-ais-session-id": "cross-process-session",
+      "x-ais-gateway-token": testGatewaySecret
     }
   }));
   fs.writeFileSync(requestBodyPath, JSON.stringify({ previewToken }));
@@ -182,6 +184,7 @@ const runFinalizeWorker = (previewToken) => {
     env: {
       ...process.env,
       AIS_TRUST_GATEWAY: "1",
+      AIS_GATEWAY_SHARED_SECRET: testGatewaySecret,
       AIS_DISABLE_PREVIEW_CLEANUP_WORKER: "1",
       AIS_APP_ROOT: root,
       AIS_GENERATED_DOCUMENT_PREVIEW_STORAGE_ROOT: crossProcessStorageRoot

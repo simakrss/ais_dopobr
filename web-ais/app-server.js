@@ -57,6 +57,12 @@ async function promoteCodexTrainingEndDateAssets() {
 
 const SERVER_CODE_ROOT = __dirname;
 const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
+const LOCAL_ONLYOFFICE_JWT_SECRET_PATH = path.join(
+  ROOT,
+  "tmp",
+  "lan-system",
+  "onlyoffice-jwt-secret.txt"
+);
 const XLSX = require(path.join(ROOT, "vendor", "sheetjs", "xlsx.full.min.js"));
 const PDF_LIB = require(path.join(ROOT, "vendor", "pdf-lib.min.js"));
 const QR_CODE_GENERATOR = require(path.join(
@@ -19591,7 +19597,29 @@ function normalizeDocumentServiceUrl(value, fallback, label) {
   return result;
 }
 
-function getOnlyOfficeConverterSettings() {
+async function readLocalOnlyOfficeJwtSecret() {
+  try {
+    const secret = String(await fs.readFile(LOCAL_ONLYOFFICE_JWT_SECRET_PATH, "utf8")).trim();
+    return secret.length >= 32 && secret.length <= 512 ? secret : "";
+  } catch (error) {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  }
+}
+
+async function resolveOnlyOfficeJwtSecret() {
+  return await readLocalOnlyOfficeJwtSecret()
+    || String(process.env.ONLYOFFICE_JWT_SECRET || serverSettings.documentConverterJwtSecret || "").trim();
+}
+
+function runtimeSecretFingerprint(value) {
+  const secret = String(value || "");
+  return secret
+    ? crypto.createHash("sha256").update(secret, "utf8").digest("hex").slice(0, 16)
+    : "";
+}
+
+async function getOnlyOfficeConverterSettings() {
   const converterUrl = normalizeDocumentServiceUrl(
     process.env.ONLYOFFICE_CONVERTER_URL || serverSettings.documentConverterUrl,
     DEFAULT_DOCUMENT_CONVERTER_URL,
@@ -19602,9 +19630,7 @@ function getOnlyOfficeConverterSettings() {
     DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL,
     "Адрес приложения для ONLYOFFICE"
   );
-  const jwtSecret = String(
-    process.env.ONLYOFFICE_JWT_SECRET || serverSettings.documentConverterJwtSecret || ""
-  ).trim();
+  const jwtSecret = await resolveOnlyOfficeJwtSecret();
   if (!jwtSecret) {
     throw new Error("Для конвертера ONLYOFFICE не настроен JWT-секрет.");
   }
@@ -19853,7 +19879,7 @@ async function requestOnlyOfficeConversion(payload, converterUrl, jwtSecret) {
 }
 
 async function convertDocxBytesToPdf(docxBytes) {
-  const { converterUrl, sourceUrl, jwtSecret } = getOnlyOfficeConverterSettings();
+  const { converterUrl, sourceUrl, jwtSecret } = await getOnlyOfficeConverterSettings();
   const sourceToken = await registerDocumentConversionSource(docxBytes);
   const key = crypto
     .createHash("sha256")
@@ -23494,12 +23520,20 @@ async function route(req, res) {
     return;
   }
   if (req.method === "GET" && req.url === "/api/health") {
+    const includeRuntimeSecrets = requestHasConfiguredGatewaySecret(req);
+    const runtimeSecrets = includeRuntimeSecrets
+      ? {
+          gateway: runtimeSecretFingerprint(process.env.AIS_GATEWAY_SHARED_SECRET),
+          documentConverter: runtimeSecretFingerprint(await resolveOnlyOfficeJwtSecret())
+        }
+      : null;
     sendJson(res, 200, {
       ok: true,
       storage: "mysql",
       sharedStateStorage: "mysql",
       offlineQueueStorage: "local",
-      sharedStatePollIntervalMs: 1000
+      sharedStatePollIntervalMs: 1000,
+      ...(runtimeSecrets ? { runtimeSecrets } : {})
     });
     return;
   }

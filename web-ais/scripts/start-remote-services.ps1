@@ -17,6 +17,7 @@ $runtimeRoot = Join-Path $appRoot ".runtime"
 $logRoot = Join-Path $appRoot "tmp"
 $cloudflaredPath = Join-Path $runtimeRoot "cloudflared.exe"
 $secretPath = Join-Path $runtimeRoot "tunnel-secret.txt"
+$onlyOfficeSecretPath = Join-Path $appRoot "tmp\lan-system\onlyoffice-jwt-secret.txt"
 $runtimeConfigPath = Join-Path $runtimeRoot "tunnel-runtime.json"
 $deployScriptPath = Join-Path $PSScriptRoot "deploy-lms.ps1"
 $appPort = 19081
@@ -86,6 +87,70 @@ function Test-ApplicationHealth([string]$Url, [int]$TimeoutSeconds = 5) {
   }
 }
 
+function Get-SecretFingerprint([string]$Value) {
+  $bytes = [Text.Encoding]::UTF8.GetBytes([string]$Value)
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").Substring(0, 16).ToLowerInvariant()
+  } finally {
+    $sha.Dispose()
+  }
+}
+
+function Get-OnlyOfficeSecret {
+  $configured = [string]$env:ONLYOFFICE_JWT_SECRET
+  if ($configured.Trim().Length -ge 32) { return $configured.Trim() }
+  if (Test-Path -LiteralPath $onlyOfficeSecretPath -PathType Leaf) {
+    $existing = (Get-Content -Raw -LiteralPath $onlyOfficeSecretPath).Trim()
+    if ($existing.Length -ge 32) { return $existing }
+  }
+  New-Item -ItemType Directory -Path (Split-Path -Parent $onlyOfficeSecretPath) -Force | Out-Null
+  $bytes = New-Object byte[] 32
+  $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+  try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+  $secret = ([BitConverter]::ToString($bytes)).Replace("-", "").ToLowerInvariant()
+  [IO.File]::WriteAllText($onlyOfficeSecretPath, "$secret`n", $utf8)
+  return $secret
+}
+
+function Test-ApplicationRuntime(
+  [string]$Url,
+  [string]$GatewaySecret,
+  [string]$OnlyOfficeSecret,
+  [int]$TimeoutSeconds = 5
+) {
+  try {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec $TimeoutSeconds -Headers @{
+      "X-AIS-Gateway-Token" = $GatewaySecret
+    }
+    $payload = $response.Content | ConvertFrom-Json
+    return [int]$response.StatusCode -eq 200 `
+      -and $payload.ok -eq $true `
+      -and (@("mysql", "yandex-disk") -contains [string]$payload.storage) `
+      -and [string]$payload.runtimeSecrets.gateway -eq (Get-SecretFingerprint $GatewaySecret) `
+      -and [string]$payload.runtimeSecrets.documentConverter -eq (Get-SecretFingerprint $OnlyOfficeSecret)
+  } catch {
+    return $false
+  }
+}
+
+function Stop-AisNodeServiceAtPort([int]$Port, [string]$EntryPoint) {
+  $connection = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+  if (-not $connection) { return }
+  $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($connection.OwningProcess)"
+  $expected = [IO.Path]::GetFullPath($EntryPoint).ToLowerInvariant()
+  $commandLine = ([string]$process.CommandLine).Replace("/", "\").ToLowerInvariant()
+  if (-not $commandLine.Contains($expected.Replace("/", "\"))) {
+    throw "Порт $Port занят процессом, который не относится к АИС. Автоматический перезапуск отменён."
+  }
+  Stop-Process -Id $connection.OwningProcess -Force
+  $deadline = (Get-Date).AddSeconds(10)
+  while ((Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 200
+  }
+}
+
 function Test-TunnelHealth([string]$Url, [int]$TimeoutSeconds = 10) {
   try {
     $uri = [Uri]$Url
@@ -147,26 +212,50 @@ function Get-TunnelSecret {
   return $secret
 }
 
-function Ensure-Containers {
-  if ((Test-Health "http://127.0.0.1:8082/healthcheck") -and (Test-Health "http://127.0.0.1:8083/health")) {
-    return
+function Test-OnlyOfficeContainerSecret([string]$OnlyOfficeSecret) {
+  try {
+    $environment = & (Get-DockerPath) inspect ais-onlyoffice --format '{{range .Config.Env}}{{println .}}{{end}}'
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $configured = [string](@($environment | Where-Object { $_ -like "JWT_SECRET=*" } | Select-Object -First 1) -replace '^JWT_SECRET=', '')
+    return (Get-SecretFingerprint $configured) -eq (Get-SecretFingerprint $OnlyOfficeSecret)
+  } catch {
+    return $false
   }
+}
+
+function Ensure-Containers([string]$OnlyOfficeSecret) {
+  $servicesHealthy = (Test-Health "http://127.0.0.1:8082/healthcheck") `
+    -and (Test-Health "http://127.0.0.1:8083/health") `
+    -and (Test-OnlyOfficeContainerSecret $OnlyOfficeSecret)
+  if ($servicesHealthy) { return }
   $composePath = Join-Path $appRoot "docker-compose.onlyoffice.yml"
-  $output = & (Get-DockerPath) compose -f $composePath up -d --build 2>&1 | Out-String
-  if ($LASTEXITCODE -ne 0) {
-    throw "Не удалось запустить OCR и ONLYOFFICE: $($output.Trim())"
+  $previousSecret = [Environment]::GetEnvironmentVariable("ONLYOFFICE_JWT_SECRET", "Process")
+  [Environment]::SetEnvironmentVariable("ONLYOFFICE_JWT_SECRET", $OnlyOfficeSecret, "Process")
+  try {
+    $output = & (Get-DockerPath) compose -f $composePath up -d --build 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+      throw "Не удалось запустить OCR и ONLYOFFICE: $($output.Trim())"
+    }
+  } finally {
+    [Environment]::SetEnvironmentVariable("ONLYOFFICE_JWT_SECRET", $previousSecret, "Process")
   }
   Write-ServiceLog "Контейнеры OCR и ONLYOFFICE запущены."
 }
 
-function Ensure-ApplicationServers([string]$Secret) {
-  if (-not (Test-ApplicationHealth "http://127.0.0.1:$appPort/api/health")) {
+function Ensure-ApplicationServers([string]$Secret, [string]$OnlyOfficeSecret) {
+  $appEntryPoint = Join-Path $appRoot "app-server.js"
+  if (-not (Test-ApplicationRuntime "http://127.0.0.1:$appPort/api/health" $Secret $OnlyOfficeSecret)) {
+    if (Test-ApplicationHealth "http://127.0.0.1:$appPort/api/health") {
+      Write-ServiceLog "API использует устаревшие служебные ключи; выполняется перезапуск."
+      Stop-AisNodeServiceAtPort $appPort $appEntryPoint
+    }
     Start-NodeService "app-server-$appPort" (Join-Path $appRoot "app-server.js") @{
       PORT = $appPort
       AIS_TRUST_GATEWAY = "1"
       AIS_GATEWAY_SHARED_SECRET = $Secret
       AIS_TUNNEL_ONLY = "1"
       ONLYOFFICE_SOURCE_URL = "http://host.docker.internal:$appPort"
+      ONLYOFFICE_JWT_SECRET = $OnlyOfficeSecret
     }
     $deadline = (Get-Date).AddSeconds(20)
     while (-not (Test-ApplicationHealth "http://127.0.0.1:$appPort/api/health") -and (Get-Date) -lt $deadline) {
@@ -176,7 +265,12 @@ function Ensure-ApplicationServers([string]$Secret) {
       throw "Сервер приложения не запустился на порту $appPort."
     }
   }
-  if (-not (Test-ApplicationHealth "http://127.0.0.1:$localPort/api/health")) {
+  $localEntryPoint = Join-Path $appRoot "local-server.js"
+  if (-not (Test-ApplicationRuntime "http://127.0.0.1:$localPort/api/health" $Secret $OnlyOfficeSecret)) {
+    if (Test-ApplicationHealth "http://127.0.0.1:$localPort/api/health") {
+      Write-ServiceLog "Локальный шлюз использует устаревшие служебные ключи; выполняется перезапуск."
+      Stop-AisNodeServiceAtPort $localPort $localEntryPoint
+    }
     Start-NodeService "local-server-$localPort" (Join-Path $appRoot "local-server.js") @{
       PORT = $localPort
       HOST = "127.0.0.1"
@@ -259,6 +353,7 @@ function Start-QuickTunnel {
 }
 
 $secret = Get-TunnelSecret
+$onlyOfficeSecret = Get-OnlyOfficeSecret
 $tunnel = $null
 $failedHealthChecks = 0
 $lastPublishedAt = [DateTime]::MinValue
@@ -267,8 +362,8 @@ try {
   Write-ServiceLog "Супервизор локальных сервисов запущен."
   while ($true) {
     try {
-      Ensure-Containers
-      Ensure-ApplicationServers $secret
+      Ensure-Containers $onlyOfficeSecret
+      Ensure-ApplicationServers $secret $onlyOfficeSecret
       if ($null -eq $tunnel -or $tunnel.Process.HasExited) {
         $tunnel = Start-QuickTunnel
         Publish-TunnelRuntime $tunnel.Url $secret

@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.239",
+    version: "1.7.240",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.240",
+      releasedAt: "2026-08-23",
+      changes: [
+        "BAT-запуск использует единые служебные ключи для API, локального шлюза, туннеля и ONLYOFFICE и автоматически восстанавливает процессы с устаревшими токенами.",
+        "JWT конвертера дополнительно читается из защищённого локального хранилища при каждом формировании документа, поэтому перезапуск фоновых служб больше не рассинхронизирует PDF-предпросмотр."
+      ]
+    },
     {
       version: "1.7.239",
       releasedAt: "2026-08-23",
