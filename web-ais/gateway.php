@@ -1929,6 +1929,7 @@ try {
     }
     if (str_starts_with($requestPath, '/api/auth/')) {
         if (in_array($requestPath, [
+            '/api/auth/partner-registration/challenge',
             '/api/auth/partner-registration',
             '/api/auth/partner-registration/confirm',
         ], true)) {

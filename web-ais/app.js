@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.227",
+    version: "1.7.228",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.228",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Анкета партнёра защищена одноразовой серверной проверкой от спама; направления сотрудничества и сведения о партнёре сохраняются в читаемом примечании карточки сотрудника."
+      ]
+    },
     {
       version: "1.7.227",
       releasedAt: "2026-08-23",

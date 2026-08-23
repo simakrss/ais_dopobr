@@ -730,6 +730,64 @@ body.is-session-expired {
   outline: 3px solid rgba(15, 118, 110, 0.12);
 }
 
+.partner-registration-antispam {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(190px, 260px) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 15px 16px;
+  border: 1px solid #bcded3;
+  border-radius: 12px;
+  background: #f1faf6;
+}
+
+.partner-registration-antispam-copy {
+  display: grid;
+  align-self: center;
+  gap: 3px;
+}
+
+.partner-registration-antispam-copy strong {
+  color: #0b5f58;
+  font-size: 14px;
+}
+
+.partner-registration-antispam-copy span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.partner-registration-antispam label {
+  display: grid;
+  gap: 5px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.partner-registration-antispam input[type="text"] {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid #b9cbc5;
+  border-radius: 9px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+}
+
+.partner-registration-antispam input[type="text"]:focus {
+  border-color: var(--teal);
+  outline: 3px solid rgba(15, 118, 110, 0.12);
+}
+
+.partner-registration-antispam .ghost-button {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
 .partner-registration-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -988,6 +1046,11 @@ body.is-session-expired {
   .partner-registration-grid,
   .partner-registration-options {
     grid-template-columns: 1fr;
+  }
+
+  .partner-registration-antispam {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .partner-registration-actions,

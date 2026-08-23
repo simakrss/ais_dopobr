@@ -119,6 +119,11 @@ const PARTNER_REGISTRATION_MAX_EMAILS_PER_DAY = 5;
 const PARTNER_REGISTRATION_CONFIRMATION_STALE_MS = 5 * 60 * 1000;
 const PARTNER_REGISTRATION_STORE_LOCK_TIMEOUT_MS = 10 * 1000;
 const PARTNER_REGISTRATION_STORE_LOCK_STALE_MS = 3 * 60 * 1000;
+const PARTNER_REGISTRATION_CHALLENGE_TTL_MS = 15 * 60 * 1000;
+const PARTNER_REGISTRATION_CHALLENGE_MIN_AGE_MS = 2 * 1000;
+const PARTNER_REGISTRATION_CHALLENGE_RATE_WINDOW_MS = 10 * 60 * 1000;
+const PARTNER_REGISTRATION_MAX_CHALLENGES_PER_WINDOW = 30;
+const PARTNER_REGISTRATION_MAX_ACTIVE_CHALLENGES = 5000;
 const DEFAULT_TRAINING_END_NOTIFICATION_DAYS = 5;
 const TRAINING_END_NOTIFICATION_JOB_NAME = "training-end-notification";
 const TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS = 60 * 60 * 1000;
@@ -129,6 +134,8 @@ const DEFAULT_ASSISTANT_STATISTICS_MYSQL_HOST = "vh458.timeweb.ru";
 const DEFAULT_ASSISTANT_STATISTICS_MYSQL_DATABASE = "cl11741_omidpo";
 let serverSettings = {};
 const partnerFeedbackLastSentAt = new Map();
+const partnerRegistrationChallenges = new Map();
+const partnerRegistrationChallengeRequests = new Map();
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -21010,6 +21017,97 @@ function getPartnerRegistrationClientIp(req) {
     .slice(0, 80) || "unknown";
 }
 
+function getPartnerRegistrationClientIpHash(req) {
+  return crypto.createHash("sha256")
+    .update(getPartnerRegistrationClientIp(req), "utf8")
+    .digest("hex");
+}
+
+function partnerRegistrationSpamError(message = "Проверка защиты от спама не пройдена.", statusCode = 400) {
+  return partnerRegistrationError(message, statusCode, { publicCode: "PARTNER_SPAM_CHALLENGE_INVALID" });
+}
+
+function prunePartnerRegistrationSpamProtection(now = Date.now()) {
+  for (const [challengeId, challenge] of partnerRegistrationChallenges) {
+    if (Number(challenge?.expiresAt || 0) <= now) partnerRegistrationChallenges.delete(challengeId);
+  }
+  for (const [clientIpHash, timestamps] of partnerRegistrationChallengeRequests) {
+    const current = (Array.isArray(timestamps) ? timestamps : [])
+      .map(Number)
+      .filter((timestamp) => Number.isFinite(timestamp)
+        && timestamp > now - PARTNER_REGISTRATION_CHALLENGE_RATE_WINDOW_MS);
+    if (current.length) partnerRegistrationChallengeRequests.set(clientIpHash, current);
+    else partnerRegistrationChallengeRequests.delete(clientIpHash);
+  }
+  while (partnerRegistrationChallenges.size > PARTNER_REGISTRATION_MAX_ACTIVE_CHALLENGES) {
+    const oldestId = partnerRegistrationChallenges.keys().next().value;
+    if (!oldestId) break;
+    partnerRegistrationChallenges.delete(oldestId);
+  }
+}
+
+function createPartnerRegistrationSpamChallenge(clientIpHash, now = Date.now()) {
+  const subtract = crypto.randomInt(0, 2) === 1;
+  const first = crypto.randomInt(4, 13);
+  const second = crypto.randomInt(2, 10);
+  const left = subtract ? Math.max(first, second) : first;
+  const right = subtract ? Math.min(first, second) : second;
+  const answer = subtract ? left - right : left + right;
+  return {
+    id: crypto.randomBytes(18).toString("base64url"),
+    question: `Сколько будет ${left} ${subtract ? "−" : "+"} ${right}?`,
+    answer: String(answer),
+    clientIpHash,
+    issuedAt: now,
+    expiresAt: now + PARTNER_REGISTRATION_CHALLENGE_TTL_MS
+  };
+}
+
+function issuePartnerRegistrationSpamChallenge(req, now = Date.now()) {
+  prunePartnerRegistrationSpamProtection(now);
+  const clientIpHash = getPartnerRegistrationClientIpHash(req);
+  const attempts = partnerRegistrationChallengeRequests.get(clientIpHash) || [];
+  if (attempts.length >= PARTNER_REGISTRATION_MAX_CHALLENGES_PER_WINDOW) {
+    throw partnerRegistrationSpamError("Слишком много запросов проверки. Повторите через несколько минут.", 429);
+  }
+  partnerRegistrationChallengeRequests.set(clientIpHash, [...attempts, now]);
+  const challenge = createPartnerRegistrationSpamChallenge(clientIpHash, now);
+  partnerRegistrationChallenges.set(challenge.id, challenge);
+  return {
+    challengeId: challenge.id,
+    question: challenge.question,
+    expiresAt: new Date(challenge.expiresAt).toISOString()
+  };
+}
+
+function consumePartnerRegistrationSpamChallenge(req, source = {}, now = Date.now()) {
+  prunePartnerRegistrationSpamProtection(now);
+  const challengeId = String(source.antiSpamChallengeId || "").trim();
+  const answer = String(source.antiSpamAnswer ?? "").normalize("NFKC").trim();
+  if (!/^[A-Za-z0-9_-]{20,64}$/u.test(challengeId) || !/^-?\d{1,3}$/u.test(answer)) {
+    throw partnerRegistrationSpamError("Решите пример в блоке «Защита от спама».");
+  }
+  const challenge = partnerRegistrationChallenges.get(challengeId);
+  if (!challenge) {
+    throw partnerRegistrationSpamError("Проверка защиты от спама устарела. Получите новый пример.");
+  }
+  if (challenge.clientIpHash !== getPartnerRegistrationClientIpHash(req)) {
+    partnerRegistrationChallenges.delete(challengeId);
+    throw partnerRegistrationSpamError();
+  }
+  if (now < Number(challenge.issuedAt || 0) + PARTNER_REGISTRATION_CHALLENGE_MIN_AGE_MS) {
+    throw partnerRegistrationSpamError("Подождите несколько секунд и повторите отправку анкеты.");
+  }
+  partnerRegistrationChallenges.delete(challengeId);
+  if (Number(challenge.expiresAt || 0) <= now) {
+    throw partnerRegistrationSpamError("Проверка защиты от спама устарела. Получите новый пример.");
+  }
+  if (answer !== challenge.answer) {
+    throw partnerRegistrationSpamError("Ответ неверный. Решите новый пример.");
+  }
+  return partnerRegistrationTokenHash(challengeId);
+}
+
 function getPartnerRegistrationPublicBaseUrl(req) {
   const requestHost = String(req.headers.host || "").trim().toLocaleLowerCase("ru-RU");
   let sameOriginReferer = "";
@@ -21137,6 +21235,32 @@ function buildPartnerRegistrationPortalCredentials(employee, portalUrl) {
   ].join("\n");
 }
 
+const PARTNER_REGISTRATION_DIRECTION_LABELS = Object.freeze({
+  "Привлечение слушателей на курсы через социальные сети, знакомых, коллег": "Рекомендация программ",
+  "Разработка авторских курсов повышения квалификации/профессиональной переподготовки": "Авторские курсы",
+  "Проведение вебинаров и других мероприятий на актуальные темы": "Вебинары и мероприятия"
+});
+
+function buildPartnerRegistrationEmployeeNote(data = {}) {
+  const directions = Array.isArray(data.directions) ? data.directions.filter(Boolean) : [];
+  const directionLines = directions.map((direction) => {
+    const value = String(direction || "").trim();
+    const label = PARTNER_REGISTRATION_DIRECTION_LABELS[value];
+    return `• ${label ? `${label}: ${value}` : value}`;
+  });
+  const otherDirection = String(data.otherDirection || "").trim();
+  if (otherDirection) directionLines.push(`• Другое направление: ${otherDirection}`);
+  return [
+    "Анкета партнёра",
+    "",
+    "Направления сотрудничества:",
+    ...(directionLines.length ? directionLines : ["Не указаны"]),
+    "",
+    "О себе:",
+    `Дополнительные сведения: ${String(data.additionalInfo || "").trim() || "не указаны"}`
+  ].join("\n");
+}
+
 function buildPartnerRegistrationEmployee(registration, credentials, portalUrl) {
   const now = new Date().toISOString();
   const directions = [
@@ -21156,6 +21280,7 @@ function buildPartnerRegistrationEmployee(registration, credentials, portalUrl) 
     subject: "Участие в партнерской программе",
     partnerDirections: directions.join("; "),
     additionalInfo: registration.data.additionalInfo,
+    note: buildPartnerRegistrationEmployeeNote(registration.data),
     notificationEmail: true,
     login: credentials.login,
     password: credentials.password,
@@ -21254,6 +21379,11 @@ function assertPartnerRegistrationRequest(req) {
   }
 }
 
+function handlePartnerRegistrationChallenge(req, res) {
+  assertPartnerRegistrationRequest(req);
+  sendJson(res, 200, issuePartnerRegistrationSpamChallenge(req));
+}
+
 async function findExistingPartnerByEmail(email) {
   const data = await readPartnerSharedData();
   return (Array.isArray(data.collections?.contracts) ? data.collections.contracts : [])
@@ -21266,7 +21396,9 @@ async function findExistingPartnerByEmail(email) {
 
 async function handlePartnerRegistrationCreate(req, res) {
   assertPartnerRegistrationRequest(req);
-  const data = sanitizePartnerRegistrationPayload(await readJsonBody(req));
+  const body = await readJsonBody(req);
+  const data = sanitizePartnerRegistrationPayload(body);
+  const antiSpamChallengeHash = consumePartnerRegistrationSpamChallenge(req, body);
   if (await findExistingPartnerByEmail(data.email)) {
     throw partnerRegistrationError(
       "Для этого email уже создана учётная запись партнёра. Используйте форму входа.",
@@ -21275,9 +21407,7 @@ async function handlePartnerRegistrationCreate(req, res) {
   }
   const now = Date.now();
   const nowIso = new Date(now).toISOString();
-  const clientIpHash = crypto.createHash("sha256")
-    .update(getPartnerRegistrationClientIp(req), "utf8")
-    .digest("hex");
+  const clientIpHash = getPartnerRegistrationClientIpHash(req);
   const token = crypto.randomBytes(32).toString("base64url");
   const tokenHash = partnerRegistrationTokenHash(token);
   const registration = await withPartnerRegistrationStore(async (store) => {
@@ -21321,6 +21451,7 @@ async function handlePartnerRegistrationCreate(req, res) {
       expiresAt: new Date(now + PARTNER_REGISTRATION_TTL_MS).toISOString(),
       updatedAt: nowIso,
       clientIpHash,
+      antiSpamChallengeHash,
       verificationAttempts: [...attempts, now],
       lastVerificationError: "",
       processingAt: ""
@@ -23058,6 +23189,10 @@ async function route(req, res) {
   }
   if (requestUrl.pathname.startsWith("/api/auth/")) {
     try {
+      if (req.method === "GET" && requestUrl.pathname === "/api/auth/partner-registration/challenge") {
+        handlePartnerRegistrationChallenge(req, res);
+        return;
+      }
       if (req.method === "POST" && requestUrl.pathname === "/api/auth/partner-registration") {
         await handlePartnerRegistrationCreate(req, res);
         return;
@@ -23093,7 +23228,10 @@ async function route(req, res) {
       }
       sendError(res, 405, "Method not allowed");
     } catch (error) {
-      sendError(res, Number(error?.statusCode) || 400, error.message);
+      sendJson(res, Number(error?.statusCode) || 400, {
+        error: error.message,
+        ...(error?.publicCode ? { code: String(error.publicCode) } : {})
+      });
     }
     return;
   }
@@ -23517,10 +23655,14 @@ module.exports = {
   buildTrainingEndNotificationMessage,
   maybeRunTrainingEndNotificationJob,
   sanitizePartnerRegistrationPayload,
+  createPartnerRegistrationSpamChallenge,
+  issuePartnerRegistrationSpamChallenge,
+  consumePartnerRegistrationSpamChallenge,
   partnerRegistrationTokenHash,
   partnerRegistrationHashesEqual,
   normalizePartnerRegistrationLoginBase,
   createPartnerRegistrationCredentials,
+  buildPartnerRegistrationEmployeeNote,
   buildPartnerRegistrationEmployee,
   getPartnerRegistrationPublicBaseUrl,
   selectPartnerEmployee,

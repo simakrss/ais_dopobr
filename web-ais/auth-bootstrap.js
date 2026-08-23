@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260823-partner-registration-v1";
+  const AUTH_BUILD = "20260823-partner-registration-spam-v2";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);
@@ -244,6 +244,42 @@
     renderLogin();
   }
 
+  async function loadPartnerRegistrationSpamChallenge(form, options = {}) {
+    const challengeId = form?.elements?.antiSpamChallengeId;
+    const answer = form?.elements?.antiSpamAnswer;
+    const question = form?.querySelector?.("[data-partner-spam-question]");
+    const refreshButton = form?.querySelector?.("[data-action='refresh-partner-spam-challenge']");
+    const errorElement = form?.querySelector?.("[data-partner-registration-error]");
+    if (!challengeId || !answer || !question) return false;
+    challengeId.value = "";
+    answer.value = "";
+    answer.disabled = true;
+    answer.placeholder = "Загрузка проверки...";
+    question.textContent = "Получаем новый пример...";
+    if (refreshButton) refreshButton.disabled = true;
+    try {
+      const payload = await request("api/auth/partner-registration/challenge");
+      if (!form.isConnected) return false;
+      challengeId.value = String(payload.challengeId || "");
+      question.textContent = String(payload.question || "Решите пример");
+      answer.disabled = false;
+      answer.placeholder = "Ответ";
+      if (refreshButton) refreshButton.disabled = false;
+      if (options.focus === true) answer.focus({ preventScroll: true });
+      return Boolean(challengeId.value);
+    } catch (error) {
+      if (!form.isConnected) return false;
+      question.textContent = "Не удалось загрузить проверку";
+      answer.placeholder = "Обновите пример";
+      if (refreshButton) refreshButton.disabled = false;
+      if (options.showError !== false && errorElement) {
+        errorElement.textContent = error.message;
+        errorElement.hidden = false;
+      }
+      return false;
+    }
+  }
+
   function renderPartnerRegistration() {
     app.innerHTML = `
       <main class="auth-screen partner-registration-screen">
@@ -287,6 +323,18 @@
               <div class="partner-registration-section-head"><span>3</span><div><h2>О себе</h2><p>Необязательно, но поможет быстрее подобрать формат сотрудничества.</p></div></div>
               <label class="partner-registration-textarea"><span>Дополнительные сведения</span><textarea name="additionalInfo" rows="5" maxlength="5000" placeholder="Должность, учёная степень и звание, достижения, научные интересы, преподаваемые дисциплины"></textarea></label>
             </section>
+            <div class="partner-registration-antispam" data-partner-spam-challenge>
+              <div class="partner-registration-antispam-copy">
+                <strong>Защита от спама</strong>
+                <span>Ответьте на простой вопрос перед отправкой анкеты.</span>
+              </div>
+              <label>
+                <span data-partner-spam-question aria-live="polite">Получаем новый пример...</span>
+                <input name="antiSpamAnswer" type="text" inputmode="numeric" pattern="-?[0-9]{1,3}" maxlength="4" autocomplete="off" required disabled placeholder="Загрузка проверки...">
+              </label>
+              <input name="antiSpamChallengeId" type="hidden">
+              <button class="ghost-button" data-action="refresh-partner-spam-challenge" type="button">Другой пример</button>
+            </div>
             <label class="partner-registration-consent">
               <input name="personalDataConsent" type="checkbox" required>
               <span>Даю согласие на обработку персональных данных в соответствии с <a href="https://edu-plus.ru/wp-content/uploads/policy_pers_signed.pdf" target="_blank" rel="noopener noreferrer">политикой обработки персональных данных</a>.</span>
@@ -305,6 +353,9 @@
       button.addEventListener("click", showLoginWithoutPublicRoute);
     });
     const form = app.querySelector("[data-partner-registration-form]");
+    form?.querySelector("[data-action='refresh-partner-spam-challenge']")?.addEventListener("click", () => {
+      loadPartnerRegistrationSpamChallenge(form, { focus: true });
+    });
     form?.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!form.reportValidity()) return;
@@ -316,6 +367,12 @@
         errorElement.textContent = "Выберите хотя бы одно направление сотрудничества.";
         errorElement.hidden = false;
         form.querySelector("[data-partner-directions] input")?.focus({ preventScroll: true });
+        return;
+      }
+      if (!String(form.elements.antiSpamChallengeId.value || "").trim()) {
+        errorElement.textContent = "Дождитесь загрузки проверки защиты от спама.";
+        errorElement.hidden = false;
+        await loadPartnerRegistrationSpamChallenge(form, { focus: true, showError: false });
         return;
       }
       const submitButton = form.querySelector("button[type='submit']");
@@ -335,6 +392,8 @@
             directions: selectedDirections,
             otherDirection,
             additionalInfo: data.get("additionalInfo"),
+            antiSpamChallengeId: data.get("antiSpamChallengeId"),
+            antiSpamAnswer: data.get("antiSpamAnswer"),
             personalDataConsent: data.get("personalDataConsent") === "on",
             website: data.get("website")
           })
@@ -345,9 +404,11 @@
         errorElement.hidden = false;
         submitButton.disabled = false;
         submitLabel.textContent = "Отправить анкету";
+        loadPartnerRegistrationSpamChallenge(form, { showError: false });
         errorElement.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     });
+    loadPartnerRegistrationSpamChallenge(form);
     window.requestAnimationFrame(() => form?.elements?.name?.focus({ preventScroll: true }));
   }
 
