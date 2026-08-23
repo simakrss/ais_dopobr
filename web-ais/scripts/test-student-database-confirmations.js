@@ -21,11 +21,12 @@ vm.createContext(helperContext);
 vm.runInContext(
   `${extractBetween(
     "  function getStudentDatabaseImportTooltip",
-    "  function getStudentDatabaseSyncTooltip"
+    "  function getAutomaticDocumentSaveHint"
   )}
   this.importTooltip = getStudentDatabaseImportTooltip;
   this.importConfirmation = getStudentDatabaseImportConfirmation;
-  this.syncConfirmation = getStudentDatabaseSyncConfirmation;`,
+  this.syncConfirmation = getStudentDatabaseSyncConfirmation;
+  this.downloadConfirmation = getStudentDatabaseDownloadConfirmation;`,
   helperContext
 );
 
@@ -47,6 +48,12 @@ assert.match(
 );
 assert.match(syncConfirmation, /изменились и Web-база, и XLSB[\s\S]*остановится без перезаписи/iu);
 assert.match(syncConfirmation, /запасы, программы, учебные планы, ставки, справочники и параметры/iu);
+
+const downloadConfirmation = helperContext.downloadConfirmation("локальный компьютер");
+assert.match(downloadConfirmation, /отдельная экспортная копия АИС Допобразование\.xlsb/iu);
+assert.match(downloadConfirmation, /Исходный XLSB не изменяется/iu);
+assert.match(downloadConfirmation, /Источник шаблона: локальный компьютер/iu);
+assert.match(downloadConfirmation, /Продолжить экспорт\?/u);
 
 assert.match(
   helperContext.importTooltip(),
@@ -74,8 +81,10 @@ async function verifyCancelledOperation({ source, functionName, extraContext = {
       return false;
     },
     getStudentDocumentsSource: () => "local",
+    getStudentDatabaseSourceLabel: helperContext.getStudentDatabaseSourceLabel,
     getStudentDatabaseImportConfirmation: helperContext.importConfirmation,
     getStudentDatabaseSyncConfirmation: helperContext.syncConfirmation,
+    getStudentDatabaseDownloadConfirmation: helperContext.downloadConfirmation,
     runStudentDatabaseImport: () => { jobCalls += 1; },
     runStudentDatabaseExport: () => { jobCalls += 1; },
     ...extraContext
@@ -96,6 +105,13 @@ async function verifyCancelledOperation({ source, functionName, extraContext = {
       "  async function downloadStudentsDatabase"
     ),
     functionName: "exportStudentsToDatabase"
+  });
+  await verifyCancelledOperation({
+    source: extractBetween(
+      "  async function downloadStudentsDatabase",
+      "  function mergeImportedPaymentRates"
+    ),
+    functionName: "downloadStudentsDatabase"
   });
   await verifyCancelledOperation({
     source: extractBetween(

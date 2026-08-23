@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.243",
+    version: "1.7.244",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.244",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Перед формированием и скачиванием экспортной копии АИС Допобразование.xlsb система запрашивает подтверждение пользователя."
+      ]
+    },
     {
       version: "1.7.243",
       releasedAt: "2026-08-23",
@@ -44873,6 +44880,18 @@ MAX - https://bizvmax.ru/zifra_plus
     ].join("\n");
   }
 
+  function getStudentDatabaseDownloadConfirmation(sourceLabel) {
+    return [
+      "Будет сформирована отдельная экспортная копия АИС Допобразование.xlsb.",
+      "",
+      "В копию будут выгружены текущие данные Web-базы. Исходный XLSB не изменяется.",
+      `Источник шаблона: ${sourceLabel}.`,
+      "Сформированный файл будет скачан в папку «Загрузки».",
+      "",
+      "Продолжить экспорт?"
+    ].join("\n");
+  }
+
   function getStudentDatabaseSyncTooltip() {
     if (!isLocalDocumentsAvailable()) {
       return [
@@ -46722,6 +46741,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const sourceLabel = exportSource === "local"
       ? "локального файла"
       : "базы на Яндекс-Диске через WebDAV";
+    if (!confirm(getStudentDatabaseDownloadConfirmation(
+      getStudentDatabaseSourceLabel(exportSource)
+    ))) return;
     const startedAt = performance.now();
     updateDatabaseExportIndicator({
       running: true,
