@@ -21749,6 +21749,66 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   background: #f7faf9;
 }
 
+.statistics-download-table {
+  min-width: 1120px;
+  table-layout: fixed;
+}
+
+.statistics-download-table :is(th, td) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.statistics-download-table tbody tr:nth-child(even) {
+  background: #f3f5f4;
+}
+
+.statistics-download-table th:nth-child(1) { width: 70px; }
+.statistics-download-table th:nth-child(2) { width: 76px; }
+.statistics-download-table th:nth-child(3) { width: 112px; }
+.statistics-download-table th:nth-child(4) { width: 70px; }
+.statistics-download-table th:nth-child(5) { width: 170px; }
+.statistics-download-table th:nth-child(6) { width: 210px; }
+.statistics-download-table th:nth-child(7) { width: 240px; }
+.statistics-download-table th:nth-child(8) { width: 180px; }
+.statistics-download-table th:nth-child(9) { width: 120px; }
+
+.statistics-table-sort-button {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.statistics-table-sort-button:hover,
+.statistics-table-sort-button:focus-visible,
+.statistics-table-sort-button.is-active {
+  color: var(--teal);
+}
+
+.statistics-table-sort-button:focus-visible {
+  outline: 2px solid rgba(15, 118, 110, 0.3);
+  outline-offset: 2px;
+}
+
+.statistics-table-sort-indicator {
+  color: #93a39e;
+  font-size: 12px;
+}
+
+.statistics-table-sort-button.is-active .statistics-table-sort-indicator {
+  color: var(--teal);
+}
+
 .statistics-number-cell {
   text-align: right;
   white-space: nowrap;

@@ -18,7 +18,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.229"/u);
+assert.match(appSource, /version: "1\.7\.230"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 const navigationBlock = sourceBlock(appSource, "const navItems = [", "const PROGRAM_LIST_FIELD_KEYS");
 const navigationIds = [...navigationBlock.matchAll(/\{ id: "([^"]+)"/gu)].map((match) => match[1]);
@@ -108,6 +108,20 @@ const normalizedAssistantStatistics = normalizeAssistantStatisticsRows(
   ],
   [
     { event_year: 2026, event_month: 8, location_name: "Омск", install_count: "5", removal_count: "2" }
+  ],
+  [
+    {
+      id: "3962",
+      event_year: 2026,
+      event_month: 7,
+      event_day: 19,
+      event_at: "2026-07-19 10:00:00",
+      location_name: "Санкт-Петербург",
+      organization_name: "ВИ(ИТ)",
+      email_address: "user@example.ru",
+      version_name: "2.91 (12.06.2026)",
+      action_id: 1
+    }
   ]
 );
 assert.deepEqual(normalizedAssistantStatistics.years, [2026]);
@@ -126,6 +140,18 @@ assert.deepEqual(normalizedAssistantStatistics.locations[0], {
   label: "Омск",
   installs: 5,
   removals: 2
+});
+assert.deepEqual(normalizedAssistantStatistics.downloadDetails[0], {
+  id: 3962,
+  year: 2026,
+  month: 7,
+  day: 19,
+  date: "2026-07-19 10:00:00",
+  location: "Санкт-Петербург",
+  organization: "ВИ(ИТ)",
+  email: "user@example.ru",
+  version: "2.91 (12.06.2026)",
+  action: "Установка"
 });
 
 const renderStatisticsLocationChartBlock = sourceBlock(
@@ -171,12 +197,27 @@ const assistantStatisticsBlock = sourceBlock(
 assert.match(assistantStatisticsBlock, /FROM wp_ass_reg/u);
 assert.match(assistantStatisticsBlock, /FROM wp_ass_logs AS logs/u);
 assert.match(assistantStatisticsBlock, /INNER JOIN wp_ass_logs_structure/u);
-assert.doesNotMatch(assistantStatisticsBlock, /\b(?:fio|email|ip|org|notes)\b/iu);
+assert.match(assistantStatisticsBlock, /TRIM\(email\)/u);
+assert.match(assistantStatisticsBlock, /TRIM\(org\)/u);
+assert.match(assistantStatisticsBlock, /AND action = 1/u);
+assert.doesNotMatch(assistantStatisticsBlock, /\b(?:fio|ip|notes)\b/iu);
 assert.match(assistantStatisticsBlock, /TRIM\(location\)/u);
 assert.match(serverSource, /requestUrl\.pathname === "\/api\/statistics\/assistant"/u);
 assert.match(serverSource, /ASSISTANT_STATISTICS_MYSQL_CONNECTION_STRING/u);
 assert.match(appSource, /data-admin-database-panel="statistics"/u);
 assert.match(appSource, /data-action="test-assistant-statistics-mysql"/u);
+const renderStatisticsAssistantBlock = sourceBlock(
+  appSource,
+  "function renderStatisticsAssistant()",
+  "function getStatisticsFilterOptions()"
+);
+assert.match(renderStatisticsAssistantBlock, /Скачивания по месяцам/u);
+assert.match(renderStatisticsAssistantBlock, /Детальная информация о скачиваниях/u);
+assert.match(renderStatisticsAssistantBlock, /statisticsDownloadDetailColumns/u);
+assert.match(renderStatisticsAssistantBlock, /\{ key: "downloads", label: "Скачивания"/u);
+assert.doesNotMatch(renderStatisticsAssistantBlock, /\{ key: "installs", label: "Установки"/u);
+assert.match(appSource, /data-statistics-filter="downloadQuery"/u);
+assert.match(appSource, /data-action="sort-statistics-downloads"/u);
 
 assert.match(styles, /\.statistics-kpi-grid\s*\{/u);
 assert.match(styles, /\.statistics-chart-columns\s*\{/u);
@@ -184,6 +225,8 @@ assert.match(styles, /\.statistics-comparison-chart\s*\{/u);
 assert.match(styles, /\.statistics-comparison-totals\s*\{/u);
 assert.match(styles, /\.statistics-location-chart\s*\{/u);
 assert.match(styles, /\.statistics-location-negative\s*\{/u);
+assert.match(styles, /\.statistics-download-table\s*\{/u);
+assert.match(styles, /\.statistics-table-sort-button\s*\{/u);
 assert.match(styles, /grid-auto-columns:\s*minmax\(24px, 1fr\)/u);
 assert.match(styles, /grid-auto-columns:\s*minmax\(44px, 1fr\)/u);
 assert.match(styles, /\.statistics-chart-period:last-child\s*\{/u);

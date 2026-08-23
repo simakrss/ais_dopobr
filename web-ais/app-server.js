@@ -6217,7 +6217,13 @@ async function closeAssistantStatisticsMySqlStorage() {
   if (pool) await pool.end().catch(() => {});
 }
 
-function normalizeAssistantStatisticsRows(monthlyRows, versionRows, actionRows, locationRows = []) {
+function normalizeAssistantStatisticsRows(
+  monthlyRows,
+  versionRows,
+  actionRows,
+  locationRows = [],
+  downloadDetailRows = []
+) {
   const monthly = (Array.isArray(monthlyRows) ? monthlyRows : []).flatMap((row) => {
     const year = Math.floor(Number(row.event_year));
     const month = Math.floor(Number(row.event_month));
@@ -6264,6 +6270,26 @@ function normalizeAssistantStatisticsRows(monthlyRows, versionRows, actionRows, 
       removals: Math.max(0, Math.floor(Number(row.removal_count) || 0))
     }];
   });
+  const downloadDetails = (Array.isArray(downloadDetailRows) ? downloadDetailRows : []).flatMap((row) => {
+    const id = Math.max(0, Math.floor(Number(row.id) || 0));
+    const year = Math.floor(Number(row.event_year));
+    const month = Math.floor(Number(row.event_month));
+    const day = Math.floor(Number(row.event_day));
+    if (!id || year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return [];
+    const actionId = Number(row.action_id);
+    return [{
+      id,
+      year,
+      month,
+      day,
+      date: String(row.event_at || ""),
+      location: String(row.location_name || "Не указано").trim().slice(0, 160) || "Не указано",
+      organization: String(row.organization_name || "").trim().slice(0, 240),
+      email: String(row.email_address || "").trim().slice(0, 320),
+      version: String(row.version_name || "").trim().slice(0, 160),
+      action: actionId === 1 ? "Установка" : (actionId === 0 || actionId === -1 ? "Удаление" : `Действие ${actionId}`)
+    }];
+  });
   const summary = monthly.reduce((result, row) => {
     result.installs += row.installs;
     result.removals += row.removals;
@@ -6286,14 +6312,15 @@ function normalizeAssistantStatisticsRows(monthlyRows, versionRows, actionRows, 
     monthly,
     versions,
     actions,
-    locations
+    locations,
+    downloadDetails
   };
 }
 
 async function readAssistantStatistics() {
   const pool = await getAssistantStatisticsMySqlPool();
   if (!pool) throw new Error("Подключение к статистике Power BI не настроено.");
-  const [monthlyResult, versionResult, actionResult, locationResult] = await Promise.all([
+  const [monthlyResult, versionResult, actionResult, locationResult, downloadDetailResult] = await Promise.all([
     pool.query({
       sql: `
         SELECT
@@ -6353,10 +6380,35 @@ async function readAssistantStatistics() {
         ORDER BY event_year, event_month, install_count DESC, removal_count DESC
       `,
       timeout: 12000
+    }),
+    pool.query({
+      sql: `
+        SELECT
+          id,
+          YEAR(date) AS event_year,
+          MONTH(date) AS event_month,
+          DAY(date) AS event_day,
+          date AS event_at,
+          COALESCE(NULLIF(TRIM(location), ''), 'Не указано') AS location_name,
+          COALESCE(NULLIF(TRIM(org), ''), '') AS organization_name,
+          COALESCE(NULLIF(TRIM(email), ''), '') AS email_address,
+          COALESCE(NULLIF(TRIM(version), ''), '') AS version_name,
+          action AS action_id
+        FROM wp_ass_reg
+        WHERE date IS NOT NULL
+          AND YEAR(date) BETWEEN 2000 AND 2100
+          AND action = 1
+        ORDER BY id DESC
+      `,
+      timeout: 12000
     })
   ]);
   return normalizeAssistantStatisticsRows(
-    monthlyResult[0], versionResult[0], actionResult[0], locationResult[0]
+    monthlyResult[0],
+    versionResult[0],
+    actionResult[0],
+    locationResult[0],
+    downloadDetailResult[0]
   );
 }
 

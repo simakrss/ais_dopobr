@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.229",
+    version: "1.7.230",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.230",
+      releasedAt: "2026-08-23",
+      changes: [
+        "На графике Ассистента оставлены только скачивания; добавлена детальная таблица скачиваний из Power BI с фильтрацией, сортировкой, пагинацией и экспортом."
+      ]
+    },
     {
       version: "1.7.229",
       releasedAt: "2026-08-23",
@@ -3435,6 +3442,17 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "expenses", label: "Расходы" },
     { id: "assistant", label: "Ассистент и скачивания" }
   ]);
+  const statisticsDownloadDetailColumns = Object.freeze([
+    { key: "id", label: "ID", numeric: true },
+    { key: "year", label: "Год", numeric: true },
+    { key: "month", label: "Месяц", numeric: true },
+    { key: "day", label: "День", numeric: true },
+    { key: "location", label: "Город" },
+    { key: "organization", label: "Организация" },
+    { key: "email", label: "Email" },
+    { key: "version", label: "Версия" },
+    { key: "action", label: "Действие" }
+  ]);
   const GENERAL_EXPENSE_SECTIONS = Object.freeze(["Физлица", "Организации"]);
   const CONTRACT_SECTIONS = Object.freeze([
     "ДЕЙСТВУЮЩИЕ ДОГОВОРА",
@@ -4541,8 +4559,10 @@ MAX - https://bizvmax.ru/zifra_plus
         program: "",
         source: "",
         expenseType: "",
-        query: ""
+        query: "",
+        downloadQuery: ""
       },
+      downloadDetailSort: { key: "id", dir: "desc" },
       downloads: {
         loading: false,
         loaded: false,
@@ -9267,6 +9287,66 @@ MAX - https://bizvmax.ru/zifra_plus
     ));
   }
 
+  function statisticsMonthLongLabel(month) {
+    const monthIndex = Math.max(1, Math.min(12, Number(month) || 1)) - 1;
+    const label = new Intl.DateTimeFormat("ru-RU", { month: "long", timeZone: "UTC" })
+      .format(new Date(Date.UTC(2020, monthIndex, 1)));
+    return label ? `${label.charAt(0).toLocaleUpperCase("ru-RU")}${label.slice(1)}` : "—";
+  }
+
+  function getFilteredStatisticsDownloadDetails() {
+    const filters = state.statistics.filters;
+    const query = String(filters.downloadQuery || "").trim().toLocaleLowerCase("ru-RU");
+    const rows = (state.statistics.assistant.data?.downloadDetails || []).filter((row) => {
+      if (filters.year && String(row.year) !== filters.year) return false;
+      if (filters.month && String(row.month).padStart(2, "0") !== filters.month) return false;
+      if (!query) return true;
+      return [
+        row.id,
+        row.year,
+        statisticsMonthLongLabel(row.month),
+        row.day,
+        row.location,
+        row.organization,
+        row.email,
+        row.version,
+        row.action
+      ].some((value) => String(value || "").toLocaleLowerCase("ru-RU").includes(query));
+    });
+    const sort = state.statistics.downloadDetailSort || { key: "id", dir: "desc" };
+    const column = statisticsDownloadDetailColumns.find((item) => item.key === sort.key)
+      || statisticsDownloadDetailColumns[0];
+    const direction = sort.dir === "asc" ? 1 : -1;
+    return [...rows].sort((left, right) => {
+      const comparison = column.numeric
+        ? (Number(left[column.key] || 0) - Number(right[column.key] || 0))
+        : String(left[column.key] || "").localeCompare(String(right[column.key] || ""), "ru", {
+            numeric: true,
+            sensitivity: "base"
+          });
+      return comparison ? comparison * direction : Number(right.id || 0) - Number(left.id || 0);
+    });
+  }
+
+  function renderStatisticsDownloadSortHeader(column) {
+    const sort = state.statistics.downloadDetailSort || { key: "id", dir: "desc" };
+    const active = sort.key === column.key;
+    const indicator = active ? (sort.dir === "asc" ? "↑" : "↓") : "↕";
+    const direction = active && sort.dir === "asc" ? "по возрастанию" : "по убыванию";
+    return `
+      <button
+        class="statistics-table-sort-button ${active ? "is-active" : ""}"
+        data-action="sort-statistics-downloads"
+        data-sort-key="${escapeAttr(column.key)}"
+        type="button"
+        title="Сортировать ${active ? direction : "по этому столбцу"}"
+      >
+        <span>${escapeHtml(column.label)}</span>
+        <span class="statistics-table-sort-indicator" aria-hidden="true">${indicator}</span>
+      </button>
+    `;
+  }
+
   function buildStatisticsAssistantReport() {
     const filters = state.statistics.filters;
     const assistantData = state.statistics.assistant.data || {};
@@ -9275,16 +9355,7 @@ MAX - https://bizvmax.ru/zifra_plus
       && (!filters.month || String(row.month).padStart(2, "0") === filters.month)
     ));
     const downloadEvents = getFilteredStatisticsDownloadEvents();
-    const monthly = new Map(assistantMonths.map((row) => {
-      const key = `${row.year}-${String(row.month).padStart(2, "0")}`;
-      return [key, {
-        key,
-        label: statisticsMonthLabel(key),
-        installs: Number(row.installs || 0),
-        removals: Number(row.removals || 0),
-        downloads: 0
-      }];
-    }));
+    const monthly = new Map();
     const files = new Map();
     const versions = new Map();
     const locations = new Map();
@@ -9310,16 +9381,14 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     downloadEvents.forEach((event) => {
       const key = `${event.year}-${String(event.month).padStart(2, "0")}`;
-      if (!monthly.has(key)) {
-        monthly.set(key, {
-          key,
-          label: statisticsMonthLabel(key),
-          installs: 0,
-          removals: 0,
-          downloads: 0
-        });
-      }
       if (event.kind === "downloaded") {
+        if (!monthly.has(key)) {
+          monthly.set(key, {
+            key,
+            label: statisticsMonthLabel(key),
+            downloads: 0
+          });
+        }
         monthly.get(key).downloads += Number(event.count || 0);
         files.set(event.file, (files.get(event.file) || 0) + Number(event.count || 0));
         downloaded += Number(event.count || 0);
@@ -9337,7 +9406,8 @@ MAX - https://bizvmax.ru/zifra_plus
       files: [...files.entries()].map(([label, value]) => ({ label, value })),
       actions: Array.isArray(assistantData.actions) ? assistantData.actions : [],
       versions: [...versions.entries()].map(([label, value]) => ({ label, value })),
-      locations: [...locations.values()]
+      locations: [...locations.values()],
+      downloadDetails: getFilteredStatisticsDownloadDetails()
     };
   }
 
@@ -9345,13 +9415,15 @@ MAX - https://bizvmax.ru/zifra_plus
     const report = buildStatisticsAssistantReport();
     const downloads = state.statistics.downloads;
     const assistant = state.statistics.assistant;
+    const downloadPagination = getTablePagination("statisticsDownloads", report.downloadDetails.length);
+    const downloadDetailRows = report.downloadDetails.slice(downloadPagination.start, downloadPagination.end);
     const assistantUpdatedAt = formatDateTimeRu(assistant.data?.refreshedAt || "");
     const selectedPeriod = [state.statistics.filters.month, state.statistics.filters.year]
       .filter(Boolean).join(".") || "За весь период";
     return `
       <div class="statistics-source-note">
         <strong>Источники данных</strong>
-        <span>Ассистент: обновляемые MySQL-запросы модели Power BI${assistantUpdatedAt ? `, получено ${escapeHtml(assistantUpdatedAt)}` : ""}. Скачивания файлов: текущая база сайта.</span>
+        <span>Ассистент и детализация: обновляемые MySQL-запросы модели Power BI${assistantUpdatedAt ? `, получено ${escapeHtml(assistantUpdatedAt)}` : ""}. Скачивания файлов: текущая база сайта.</span>
       </div>
       ${renderStatisticsKpis([
         { label: "Установки Ассистента", value: assistant.loading ? "…" : formatStatisticsInteger(report.installs), note: selectedPeriod, tone: "teal" },
@@ -9363,11 +9435,10 @@ MAX - https://bizvmax.ru/zifra_plus
       ${downloads.error ? `<div class="statistics-inline-error" role="alert">${escapeHtml(downloads.error)}</div>` : ""}
       <div class="statistics-two-column">
         <section class="panel statistics-visual-panel statistics-wide-panel">
-          <div class="panel-head"><div><p class="eyebrow">Динамика</p><h2>Установки и скачивания</h2></div></div>
-          ${assistant.loading || downloads.loading
+          <div class="panel-head"><div><p class="eyebrow">Динамика</p><h2>Скачивания по месяцам</h2></div></div>
+          ${downloads.loading
             ? `<div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Получение актуальной статистики…</span></div>`
             : renderStatisticsInstallDownloadChart(report.monthly, [
-              { key: "installs", label: "Установки", tone: "teal", total: report.installs },
               { key: "downloads", label: "Скачивания", tone: "blue", total: report.downloaded }
             ])}
         </section>
@@ -9378,6 +9449,35 @@ MAX - https://bizvmax.ru/zifra_plus
             : renderStatisticsDonut("Версии Ассистента", report.versions, { limit: 7 })}
         </section>
       </div>
+      <section class="panel statistics-table-panel statistics-download-detail-panel">
+        <div class="panel-head">
+          <div><p class="eyebrow">Power BI</p><h2>Детальная информация о скачиваниях</h2></div>
+          <span class="statistics-row-count">${formatStatisticsInteger(report.downloadDetails.length)}</span>
+        </div>
+        ${assistant.loading
+          ? `<div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Получение детализации…</span></div>`
+          : (downloadDetailRows.length ? `
+            <div class="table-wrap statistics-table-wrap">
+              <table class="data-table statistics-table statistics-download-table">
+                <thead><tr>${statisticsDownloadDetailColumns.map((column) => `<th>${renderStatisticsDownloadSortHeader(column)}</th>`).join("")}</tr></thead>
+                <tbody>${downloadDetailRows.map((row) => `
+                  <tr>
+                    <td class="statistics-number-cell">${formatStatisticsInteger(row.id)}</td>
+                    <td class="statistics-number-cell">${formatStatisticsInteger(row.year)}</td>
+                    <td>${escapeHtml(statisticsMonthLongLabel(row.month))}</td>
+                    <td class="statistics-number-cell">${formatStatisticsInteger(row.day)}</td>
+                    <td>${escapeHtml(row.location || "—")}</td>
+                    <td>${escapeHtml(row.organization || "—")}</td>
+                    <td>${escapeHtml(row.email || "—")}</td>
+                    <td>${escapeHtml(row.version || "—")}</td>
+                    <td>${escapeHtml(row.action || "—")}</td>
+                  </tr>
+                `).join("")}</tbody>
+              </table>
+            </div>
+            ${renderTablePagination("statisticsDownloads", report.downloadDetails.length, downloadPagination)}
+          ` : `<div class="empty-state compact"><span>Скачивания для выбранных условий не найдены.</span></div>`)}
+      </section>
       <section class="panel statistics-visual-panel">
         <div class="panel-head"><div><p class="eyebrow">География</p><h2>Установки и удаления Ассистента по городам</h2></div></div>
         ${assistant.loading
@@ -9462,6 +9562,9 @@ MAX - https://bizvmax.ru/zifra_plus
             ${activeTab === "expenses" ? `
               <label><span>Вид затрат</span><select data-statistics-filter="expenseType"><option value="">Все виды</option>${options.expenseTypes.map((type) => `<option value="${escapeAttr(type)}" ${filters.expenseType === type ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}</select></label>
               <label class="statistics-filter-wide"><span>Поиск</span><input data-statistics-filter="query" value="${escapeAttr(filters.query)}" placeholder="Контрагент, описание, сумма" autocomplete="off"></label>
+            ` : ""}
+            ${activeTab === "assistant" ? `
+              <label class="statistics-filter-wide"><span>Поиск в скачиваниях</span><input data-statistics-filter="downloadQuery" value="${escapeAttr(filters.downloadQuery)}" placeholder="ID, город, организация, email, версия" autocomplete="off"></label>
             ` : ""}
             <button class="ghost-button statistics-reset-button" data-action="reset-statistics-filters" type="button">Сбросить</button>
           </div>
@@ -9551,6 +9654,19 @@ MAX - https://bizvmax.ru/zifra_plus
     } else {
       const report = buildStatisticsAssistantReport();
       content = [
+        ["ID", "Год", "Месяц", "День", "Город", "Организация", "Email", "Версия", "Действие"].map(csvCell).join(";"),
+        ...report.downloadDetails.map((row) => [
+          row.id,
+          row.year,
+          statisticsMonthLongLabel(row.month),
+          row.day,
+          row.location,
+          row.organization,
+          row.email,
+          row.version,
+          row.action
+        ].map(csvCell).join(";")),
+        "",
         ["Популярные действия Ассистента", "Количество"].map(csvCell).join(";"),
         ...report.actions.map((row) => [row.label, row.value].map(csvCell).join(";")),
         "",
@@ -9574,6 +9690,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!statisticsTabs.some((item) => item.id === tab) || tab === state.statistics.tab) return;
         state.statistics.tab = tab;
         state.tablePages.statisticsExpenses = 1;
+        state.tablePages.statisticsDownloads = 1;
         render();
       });
     });
@@ -9583,6 +9700,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!Object.prototype.hasOwnProperty.call(state.statistics.filters, key)) return;
         state.statistics.filters[key] = control.value;
         state.tablePages.statisticsExpenses = 1;
+        state.tablePages.statisticsDownloads = 1;
         render();
       };
       control.addEventListener("change", apply);
@@ -9601,10 +9719,24 @@ MAX - https://bizvmax.ru/zifra_plus
         program: "",
         source: "",
         expenseType: "",
-        query: ""
+        query: "",
+        downloadQuery: ""
       };
       state.tablePages.statisticsExpenses = 1;
+      state.tablePages.statisticsDownloads = 1;
       render();
+    });
+    document.querySelectorAll("[data-action='sort-statistics-downloads']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = String(button.dataset.sortKey || "");
+        if (!statisticsDownloadDetailColumns.some((column) => column.key === key)) return;
+        const current = state.statistics.downloadDetailSort || { key: "id", dir: "desc" };
+        state.statistics.downloadDetailSort = current.key === key
+          ? { key, dir: current.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: statisticsDownloadDetailColumns.find((column) => column.key === key)?.numeric ? "desc" : "asc" };
+        state.tablePages.statisticsDownloads = 1;
+        render();
+      });
     });
     document.querySelector("[data-action='export-statistics']")?.addEventListener("click", exportStatisticsReport);
     document.querySelector("[data-action='refresh-statistics-data']")?.addEventListener("click", () => {
