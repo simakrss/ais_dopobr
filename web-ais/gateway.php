@@ -89,6 +89,18 @@ function gateway_api_url(): string
     return $path . ($query !== '' ? '?' . $query : '');
 }
 
+function gateway_public_app_url(): string
+{
+    $forwardedProto = strtolower(trim(explode(',', (string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0]));
+    $httpsEnabled = !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off';
+    $scheme = $httpsEnabled || $forwardedProto === 'https' ? 'https' : 'http';
+    $host = trim((string) ($_SERVER['HTTP_HOST'] ?? ''));
+    if ($host === '' || preg_match('/[^A-Za-z0-9.\-:\[\]]/', $host)) {
+        throw new RuntimeException('Не удалось определить адрес системы для письма подтверждения.');
+    }
+    return $scheme . '://' . $host . ais_auth_base_path();
+}
+
 function gateway_temp_file(string $prefix): string
 {
     $path = tempnam(sys_get_temp_dir(), $prefix);
@@ -1916,6 +1928,16 @@ try {
         gateway_serve_protected_data($requestPath);
     }
     if (str_starts_with($requestPath, '/api/auth/')) {
+        if (in_array($requestPath, [
+            '/api/auth/partner-registration',
+            '/api/auth/partner-registration/confirm',
+        ], true)) {
+            $publicHeaders = gateway_request_headers();
+            $publicHeaders['x-ais-public-app-url'] = gateway_public_app_url();
+            $publicHeaders['x-ais-client-ip'] = substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 80);
+            $response = gateway_run_node(gateway_api_url(), $method, $publicHeaders, $body);
+            gateway_send_node_response($response);
+        }
         gateway_handle_auth_route($method, $requestPath, $body);
         gateway_fail(405, 'Method not allowed');
     }

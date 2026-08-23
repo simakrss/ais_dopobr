@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260823-partner-role-switch-v1";
+  const AUTH_BUILD = "20260823-partner-registration-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);
@@ -72,6 +72,7 @@
       }
       const error = new Error(payload.error || `Ошибка сервера: ${response.status}`);
       error.status = response.status;
+      error.payload = payload;
       throw error;
     }
     return payload;
@@ -170,6 +171,10 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M14 7l5 5-5 5"/></svg>
               </button>
             </form>
+            <div class="auth-partner-invite">
+              <span>Хотите сотрудничать с учебным центром?</span>
+              <button data-open-partner-registration type="button">Стать партнёром</button>
+            </div>
             <footer class="auth-card-footer">ООО «Цифровизация Плюс»</footer>
           </div>
         </section>
@@ -179,6 +184,12 @@
     const passwordInput = form?.elements?.password;
     const passwordToggle = form?.querySelector("[data-auth-password-toggle]");
     const capsWarning = form?.querySelector("[data-auth-caps-warning]");
+    app.querySelector("[data-open-partner-registration]")?.addEventListener("click", () => {
+      const url = new URL(appUrl(""));
+      url.searchParams.set("partner-registration", "1");
+      window.history.pushState({}, "", `${url.pathname}${url.search}`);
+      renderPartnerRegistration();
+    });
     passwordToggle?.addEventListener("click", () => {
       const showPassword = passwordInput.type === "password";
       passwordInput.type = showPassword ? "text" : "password";
@@ -225,6 +236,178 @@
         if (buttonLabel) buttonLabel.textContent = "Войти";
       }
     });
+  }
+
+  function showLoginWithoutPublicRoute() {
+    const target = new URL(appUrl(""));
+    window.history.pushState({}, "", target.pathname);
+    renderLogin();
+  }
+
+  function renderPartnerRegistration() {
+    app.innerHTML = `
+      <main class="auth-screen partner-registration-screen">
+        <div class="auth-screen-decoration auth-screen-decoration-one" aria-hidden="true"></div>
+        <div class="auth-screen-decoration auth-screen-decoration-two" aria-hidden="true"></div>
+        <section class="partner-registration-card" aria-labelledby="partnerRegistrationTitle">
+          <header class="partner-registration-hero">
+            <div>
+              <button class="partner-registration-back" data-auth-return-login type="button" aria-label="Вернуться ко входу">← Войти в систему</button>
+              <p class="auth-eyebrow">Цифровизация Плюс</p>
+              <h1 id="partnerRegistrationTitle">Партнёрская программа учебного центра</h1>
+              <p>Заполните анкету, подтвердите email и получите доступ к личному кабинету партнёра.</p>
+            </div>
+            <div class="partner-registration-benefits">
+              <span><strong>15%</strong> партнёрская скидка на обучение</span>
+              <span><strong>10–25%</strong> кэшбэк и доход за рекомендации</span>
+              <span><strong>50%</strong> вознаграждение авторам курсов и вебинаров</span>
+              <span><strong>24/7</strong> материалы и начисления в личном кабинете</span>
+            </div>
+          </header>
+          <form class="partner-registration-form" data-partner-registration-form novalidate>
+            <section class="partner-registration-section">
+              <div class="partner-registration-section-head"><span>1</span><div><h2>Контактные данные</h2><p>Эти данные нужны для связи и создания кабинета.</p></div></div>
+              <div class="partner-registration-grid">
+                <label class="is-wide"><span>Ваше ФИО <b>*</b></span><input name="name" type="text" maxlength="240" autocomplete="name" required placeholder="Иванов Иван Иванович"></label>
+                <label><span>Email <b>*</b></span><input name="email" type="email" maxlength="160" autocomplete="email" required placeholder="name@example.ru"></label>
+                <label><span>Мобильный телефон <b>*</b></span><input name="phone" type="tel" maxlength="40" autocomplete="tel" required placeholder="Желательно с WhatsApp"></label>
+                <label class="is-wide"><span>Место проживания <b>*</b></span><input name="residence" type="text" maxlength="300" autocomplete="address-level2" required placeholder="Город, регион"></label>
+              </div>
+            </section>
+            <section class="partner-registration-section">
+              <div class="partner-registration-section-head"><span>2</span><div><h2>Направления сотрудничества</h2><p>Можно выбрать несколько вариантов.</p></div></div>
+              <div class="partner-registration-options" data-partner-directions>
+                <label><input name="directions" type="checkbox" value="Привлечение слушателей на курсы через социальные сети, знакомых, коллег"><span><strong>Рекомендация программ</strong>Привлечение слушателей через социальные сети, знакомых и коллег.</span></label>
+                <label><input name="directions" type="checkbox" value="Разработка авторских курсов повышения квалификации/профессиональной переподготовки"><span><strong>Авторские курсы</strong>Разработка программ повышения квалификации и профессиональной переподготовки.</span></label>
+                <label><input name="directions" type="checkbox" value="Проведение вебинаров и других мероприятий на актуальные темы"><span><strong>Вебинары и мероприятия</strong>Проведение мероприятий на актуальные профессиональные темы.</span></label>
+              </div>
+              <label class="partner-registration-other"><span>Другое направление</span><input name="otherDirection" type="text" maxlength="500" placeholder="Опишите свой вариант"></label>
+            </section>
+            <section class="partner-registration-section">
+              <div class="partner-registration-section-head"><span>3</span><div><h2>О себе</h2><p>Необязательно, но поможет быстрее подобрать формат сотрудничества.</p></div></div>
+              <label class="partner-registration-textarea"><span>Дополнительные сведения</span><textarea name="additionalInfo" rows="5" maxlength="5000" placeholder="Должность, учёная степень и звание, достижения, научные интересы, преподаваемые дисциплины"></textarea></label>
+            </section>
+            <label class="partner-registration-consent">
+              <input name="personalDataConsent" type="checkbox" required>
+              <span>Даю согласие на обработку персональных данных в соответствии с <a href="https://edu-plus.ru/wp-content/uploads/policy_pers_signed.pdf" target="_blank" rel="noopener noreferrer">политикой обработки персональных данных</a>.</span>
+            </label>
+            <label class="auth-honeypot" aria-hidden="true">Сайт<input name="website" type="text" tabindex="-1" autocomplete="off"></label>
+            <p class="auth-error" data-partner-registration-error role="alert" aria-live="assertive" hidden></p>
+            <div class="partner-registration-actions">
+              <button class="ghost-button" data-auth-return-login type="button">Отмена</button>
+              <button class="primary-button auth-submit" type="submit"><span>Отправить анкету</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M14 7l5 5-5 5"/></svg></button>
+            </div>
+          </form>
+        </section>
+      </main>
+    `;
+    app.querySelectorAll("[data-auth-return-login]").forEach((button) => {
+      button.addEventListener("click", showLoginWithoutPublicRoute);
+    });
+    const form = app.querySelector("[data-partner-registration-form]");
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      const selectedDirections = [...form.querySelectorAll("input[name='directions']:checked")]
+        .map((input) => input.value);
+      const otherDirection = String(form.elements.otherDirection.value || "").trim();
+      const errorElement = form.querySelector("[data-partner-registration-error]");
+      if (!selectedDirections.length && !otherDirection) {
+        errorElement.textContent = "Выберите хотя бы одно направление сотрудничества.";
+        errorElement.hidden = false;
+        form.querySelector("[data-partner-directions] input")?.focus({ preventScroll: true });
+        return;
+      }
+      const submitButton = form.querySelector("button[type='submit']");
+      const submitLabel = submitButton.querySelector("span");
+      submitButton.disabled = true;
+      submitLabel.textContent = "Отправка...";
+      errorElement.hidden = true;
+      const data = new FormData(form);
+      try {
+        const payload = await request("api/auth/partner-registration", {
+          method: "POST",
+          body: JSON.stringify({
+            name: data.get("name"),
+            email: data.get("email"),
+            phone: data.get("phone"),
+            residence: data.get("residence"),
+            directions: selectedDirections,
+            otherDirection,
+            additionalInfo: data.get("additionalInfo"),
+            personalDataConsent: data.get("personalDataConsent") === "on",
+            website: data.get("website")
+          })
+        });
+        renderPartnerRegistrationSent(payload.email, payload.message);
+      } catch (error) {
+        errorElement.textContent = error.message;
+        errorElement.hidden = false;
+        submitButton.disabled = false;
+        submitLabel.textContent = "Отправить анкету";
+        errorElement.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+    window.requestAnimationFrame(() => form?.elements?.name?.focus({ preventScroll: true }));
+  }
+
+  function renderPartnerRegistrationSent(email, message) {
+    app.innerHTML = `
+      <main class="auth-screen">
+        <section class="auth-card auth-public-result-card">
+          <div class="auth-public-result-icon" aria-hidden="true">✓</div>
+          <p class="auth-eyebrow">Анкета отправлена</p>
+          <h1>Подтвердите email</h1>
+          <p>${escapeHtml(message || "Анкета принята. Откройте письмо и подтвердите адрес электронной почты.")}</p>
+          <strong>${escapeHtml(email || "")}</strong>
+          <p class="auth-public-result-hint">После подтверждения придёт второе письмо со ссылкой на кабинет, логином и паролем.</p>
+          <button class="primary-button" data-auth-return-login type="button">Вернуться ко входу</button>
+        </section>
+      </main>
+    `;
+    app.querySelector("[data-auth-return-login]")?.addEventListener("click", showLoginWithoutPublicRoute);
+  }
+
+  function renderPartnerConfirmationResult({ ok, confirmed = false, message = "" }) {
+    app.innerHTML = `
+      <main class="auth-screen">
+        <section class="auth-card auth-public-result-card ${ok ? "is-success" : "is-error"}">
+          <div class="auth-public-result-icon" aria-hidden="true">${ok || confirmed ? "✓" : "!"}</div>
+          <p class="auth-eyebrow">Партнёрская программа</p>
+          <h1>${ok || confirmed ? "Email подтверждён" : "Не удалось подтвердить email"}</h1>
+          <p>${escapeHtml(message)}</p>
+          ${ok || confirmed ? '<p class="auth-public-result-hint">Проверьте входящие письма и папку «Спам»: реквизиты кабинета отправляются отдельным сообщением.</p>' : ""}
+          <div class="auth-public-result-actions">
+            ${!ok && !confirmed ? '<button class="ghost-button" data-open-partner-registration type="button">Заполнить анкету снова</button>' : ""}
+            <button class="primary-button" data-auth-return-login type="button">Перейти ко входу</button>
+          </div>
+        </section>
+      </main>
+    `;
+    app.querySelector("[data-auth-return-login]")?.addEventListener("click", showLoginWithoutPublicRoute);
+    app.querySelector("[data-open-partner-registration]")?.addEventListener("click", () => {
+      const url = new URL(appUrl(""));
+      url.searchParams.set("partner-registration", "1");
+      window.history.pushState({}, "", `${url.pathname}${url.search}`);
+      renderPartnerRegistration();
+    });
+  }
+
+  async function confirmPartnerRegistration(token) {
+    renderLoading("Подтверждение электронной почты...");
+    try {
+      const payload = await request("api/auth/partner-registration/confirm", {
+        method: "POST",
+        body: JSON.stringify({ token })
+      });
+      renderPartnerConfirmationResult({ ok: true, confirmed: true, message: payload.message });
+    } catch (error) {
+      renderPartnerConfirmationResult({
+        ok: false,
+        confirmed: error.payload?.confirmed === true,
+        message: error.message
+      });
+    }
   }
 
   function closeSessionExpiredDialog() {
@@ -385,6 +568,17 @@
   async function initialize() {
     renderLoading("Проверка доступа...");
     const navigationUrl = new URL(window.location.href);
+    const partnerConfirmationToken = String(navigationUrl.searchParams.get("partner-confirm") || "").trim();
+    if (partnerConfirmationToken) {
+      navigationUrl.searchParams.delete("partner-confirm");
+      window.history.replaceState({}, "", `${navigationUrl.pathname}${navigationUrl.search}`);
+      await confirmPartnerRegistration(partnerConfirmationToken);
+      return;
+    }
+    if (navigationUrl.searchParams.has("partner-registration")) {
+      renderPartnerRegistration();
+      return;
+    }
     if (navigationUrl.searchParams.has("signed-out") || navigationUrl.searchParams.has("switch-account")) {
       try {
         await nativeFetch(appUrl("api/auth/logout"), {
@@ -417,6 +611,13 @@
     if (document.visibilityState === "visible" && sessionExpiresAt && Date.now() >= sessionExpiresAt) {
       handleSessionExpired();
     }
+  });
+
+  window.addEventListener("popstate", () => {
+    if (applicationStarted) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("partner-registration")) renderPartnerRegistration();
+    else renderLogin();
   });
 
   initialize();

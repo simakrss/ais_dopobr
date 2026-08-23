@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.226",
+    version: "1.7.227",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.227",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Добавлена публичная анкета партнёра с подтверждением email, автоматическим созданием реквизитов СДО и обязательной проверкой профиля при первом входе."
+      ]
+    },
     {
       version: "1.7.226",
       releasedAt: "2026-08-23",

@@ -140,10 +140,19 @@
     if (state.view === "payments" && params.has("status")) {
       state.paymentFilters.status = params.get("status") || "";
     }
+    if (state.portal?.profile?.onboardingRequired) state.view = "profile";
   }
 
   function navigate(view, options = {}) {
     if (!NAV_ITEMS.some((item) => item.id === view)) return;
+    if (state.portal?.profile?.onboardingRequired && view !== "profile") {
+      state.view = "profile";
+      state.profileTab = "main";
+      state.profileError = "Сначала проверьте личные данные и сохраните профиль.";
+      window.history.pushState({}, "", "#partner/profile");
+      render();
+      return;
+    }
     state.view = view;
     state.sidebarOpen = false;
     if (view === "payments" && Object.prototype.hasOwnProperty.call(options, "status")) {
@@ -171,7 +180,7 @@
         </div>
         <nav class="partner-nav">
           ${NAV_ITEMS.map((item) => `
-            <button class="partner-nav-item ${state.view === item.id ? "is-active" : ""}" data-view="${item.id}" type="button">
+            <button class="partner-nav-item ${state.view === item.id ? "is-active" : ""} ${state.portal?.profile?.onboardingRequired && item.id !== "profile" ? "is-locked" : ""}" data-view="${item.id}" type="button" ${state.portal?.profile?.onboardingRequired && item.id !== "profile" ? 'title="Сначала заполните профиль"' : ""}>
               ${icon(item.icon)}<span>${escapeHtml(item.label)}</span>
             </button>
           `).join("")}
@@ -404,6 +413,7 @@
     const activeFields = profile.tabs?.[state.profileTab] || [];
     return `
       <section class="partner-page-heading"><div><p>Личные данные</p><h2>${escapeHtml(profile.name || "Профиль")}</h2></div><button class="partner-secondary-button" data-action="open-documents" type="button">${icon("folder")}Документы на Яндекс‑Диске</button></section>
+      ${profile.onboardingRequired ? `<section class="partner-onboarding-notice" role="status"><div>${icon("profile")}<span><strong>Завершите первый вход</strong>Проверьте и дополните личные данные. После сохранения откроются рабочий стол, начисления и материалы партнёра.</span></div></section>` : ""}
       <section class="partner-profile-layout">
         <aside class="partner-profile-summary partner-panel">
           ${profile.photoAvailable ? `<img src="${escapeAttr(authApi.appUrl("api/partner/photo"))}" alt="Фотография ${escapeAttr(profile.name)}">` : `<div class="partner-profile-placeholder">${icon("profile")}</div>`}
@@ -419,7 +429,7 @@
               <span>${profile.contractNo ? `Договор № ${escapeHtml(profile.contractNo)}` : "Договор не указан"}</span>
               ${state.profileError ? `<p class="partner-form-message is-error">${escapeHtml(state.profileError)}</p>` : ""}
               ${state.profileStatus ? `<p class="partner-form-message is-success">${escapeHtml(state.profileStatus)}</p>` : ""}
-              <button class="partner-primary-button" type="submit" ${state.profileSaving ? "disabled" : ""}>${state.profileSaving ? "Сохранение..." : "Сохранить изменения"}</button>
+              <button class="partner-primary-button" type="submit" ${state.profileSaving ? "disabled" : ""}>${state.profileSaving ? "Сохранение..." : profile.onboardingRequired ? "Сохранить и продолжить" : "Сохранить изменения"}</button>
             </div>
           </form>
         </section>
@@ -545,6 +555,11 @@
     try {
       state.portal = await authApi.request("api/partner/portal");
       state.profileDraft = {};
+      if (state.portal.profile?.onboardingRequired) {
+        state.view = "profile";
+        state.profileTab = "main";
+        window.history.replaceState({}, "", "#partner/profile");
+      }
       state.loading = false;
       document.title = "Кабинет партнёра · Цифровизация Плюс";
       render();
@@ -743,7 +758,11 @@
       state.profileSaving = true; state.profileError = ""; state.profileStatus = ""; render();
       try {
         const result = await authApi.request("api/partner/profile", {
-          method: "PUT", body: JSON.stringify({ values: state.profileDraft })
+          method: "PUT",
+          body: JSON.stringify({
+            values: state.profileDraft,
+            completeOnboarding: state.portal.profile?.onboardingRequired === true
+          })
         });
         state.portal.profile = result.profile;
         state.profileDraft = {};

@@ -73,6 +73,13 @@ const MYSQL2_BUNDLE_PATH = path.join(ROOT, "vendor", "mysql2-bundle.cjs");
 const STORAGE_ROOT = path.join(ROOT, "storage");
 const PHOTO_ROOT = path.join(STORAGE_ROOT, "photos");
 const SERVER_SETTINGS_PATH = path.join(STORAGE_ROOT, "server-settings.json");
+const PARTNER_REGISTRATION_STORE_PATH = path.join(
+  STORAGE_ROOT,
+  "shared-state-backups",
+  "private",
+  "partner-registrations.json"
+);
+const PARTNER_REGISTRATION_STORE_LOCK_PATH = `${PARTNER_REGISTRATION_STORE_PATH}.lock`;
 const AUTH_USERS_PATH = path.join(STORAGE_ROOT, "users.json");
 const AUTH_SESSIONS_PATH = path.join(STORAGE_ROOT, "auth-sessions.json");
 const AUDIT_LOG_PATH = path.join(STORAGE_ROOT, "audit-log.jsonl");
@@ -103,6 +110,15 @@ const DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN = "mail@edu-plus.ru";
 const DEFAULT_WOOCOMMERCE_EMAIL_LOGIN = "mail@zifra-plus.ru";
 const DEFAULT_PARTNER_MATERIALS_URL = "https://disk.yandex.ru/d/9BBGBNBIum252w";
 const PARTNER_FEEDBACK_RECIPIENT = DEFAULT_WOOCOMMERCE_EMAIL_LOGIN;
+const PARTNER_REGISTRATION_POLICY_URL = "https://edu-plus.ru/wp-content/uploads/policy_pers_signed.pdf";
+const PARTNER_REGISTRATION_TTL_MS = 24 * 60 * 60 * 1000;
+const PARTNER_REGISTRATION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const PARTNER_REGISTRATION_RESEND_DELAY_MS = 60 * 1000;
+const PARTNER_REGISTRATION_MAX_PER_IP_HOUR = 10;
+const PARTNER_REGISTRATION_MAX_EMAILS_PER_DAY = 5;
+const PARTNER_REGISTRATION_CONFIRMATION_STALE_MS = 5 * 60 * 1000;
+const PARTNER_REGISTRATION_STORE_LOCK_TIMEOUT_MS = 10 * 1000;
+const PARTNER_REGISTRATION_STORE_LOCK_STALE_MS = 3 * 60 * 1000;
 const DEFAULT_TRAINING_END_NOTIFICATION_DAYS = 5;
 const TRAINING_END_NOTIFICATION_JOB_NAME = "training-end-notification";
 const TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS = 60 * 60 * 1000;
@@ -20849,6 +20865,620 @@ function normalizePartnerIdentity(value) {
     .replace(/\s+/gu, " ");
 }
 
+function partnerRegistrationError(message, statusCode = 400, details = {}) {
+  return Object.assign(new Error(message), { statusCode, ...details });
+}
+
+function sanitizePartnerRegistrationText(value, maxLength, fieldLabel, required = false) {
+  const text = String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "")
+    .trim();
+  if (required && !text) throw partnerRegistrationError(`Заполните поле «${fieldLabel}».`);
+  if (Array.from(text).length > maxLength) {
+    throw partnerRegistrationError(`Поле «${fieldLabel}» заполнено слишком длинным текстом.`);
+  }
+  return text;
+}
+
+function normalizePartnerRegistrationEmail(value) {
+  const email = validateAuthEmail(value).toLocaleLowerCase("ru-RU");
+  if (!email) throw partnerRegistrationError("Укажите email для подтверждения регистрации.");
+  return email;
+}
+
+function sanitizePartnerRegistrationPayload(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  if (String(source.website || "").trim()) {
+    throw partnerRegistrationError("Заявка отклонена.", 400);
+  }
+  const directions = [...new Set((Array.isArray(source.directions) ? source.directions : [])
+    .map((item) => sanitizePartnerRegistrationText(item, 240, "Направления сотрудничества"))
+    .filter(Boolean))].slice(0, 8);
+  const otherDirection = sanitizePartnerRegistrationText(
+    source.otherDirection,
+    500,
+    "Другое направление сотрудничества"
+  );
+  if (!directions.length && !otherDirection) {
+    throw partnerRegistrationError("Выберите хотя бы одно направление сотрудничества.");
+  }
+  if (source.personalDataConsent !== true) {
+    throw partnerRegistrationError("Для регистрации необходимо согласие на обработку персональных данных.");
+  }
+  return {
+    name: sanitizePartnerRegistrationText(source.name, 240, "Ваше ФИО", true),
+    email: normalizePartnerRegistrationEmail(source.email),
+    phone: sanitizePartnerRegistrationText(source.phone, 40, "Мобильный телефон", true),
+    residence: sanitizePartnerRegistrationText(source.residence, 300, "Место проживания", true),
+    directions,
+    otherDirection,
+    additionalInfo: sanitizePartnerRegistrationText(
+      source.additionalInfo,
+      5000,
+      "Дополнительные сведения о себе"
+    ),
+    personalDataConsent: true,
+    policyUrl: PARTNER_REGISTRATION_POLICY_URL
+  };
+}
+
+function partnerRegistrationTokenHash(token) {
+  return crypto.createHash("sha256").update(String(token || ""), "utf8").digest("hex");
+}
+
+function partnerRegistrationHashesEqual(left, right) {
+  const expected = Buffer.from(String(left || ""), "hex");
+  const actual = Buffer.from(String(right || ""), "hex");
+  return expected.length === 32
+    && actual.length === expected.length
+    && crypto.timingSafeEqual(expected, actual);
+}
+
+function normalizePartnerRegistrationStore(value) {
+  const registrations = Array.isArray(value?.registrations)
+    ? value.registrations.filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    : [];
+  return { version: 1, registrations };
+}
+
+function prunePartnerRegistrationStore(store, now = Date.now()) {
+  store.registrations = store.registrations.filter((item) => {
+    const confirmedAt = Date.parse(String(item.confirmedAt || ""));
+    if (Number.isFinite(confirmedAt)) return confirmedAt > now - PARTNER_REGISTRATION_RETENTION_MS;
+    const updatedAt = Date.parse(String(item.updatedAt || item.createdAt || ""));
+    return Number.isFinite(updatedAt) && updatedAt > now - PARTNER_REGISTRATION_RETENTION_MS;
+  }).slice(-5000);
+  return store;
+}
+
+async function readPartnerRegistrationStore() {
+  try {
+    return normalizePartnerRegistrationStore(JSON.parse(
+      await fs.readFile(PARTNER_REGISTRATION_STORE_PATH, "utf8")
+    ));
+  } catch (error) {
+    if (error.code === "ENOENT") return { version: 1, registrations: [] };
+    throw new Error(`Хранилище регистраций партнёров повреждено: ${error.message}`);
+  }
+}
+
+async function acquirePartnerRegistrationStoreLock() {
+  const deadline = Date.now() + PARTNER_REGISTRATION_STORE_LOCK_TIMEOUT_MS;
+  await fs.mkdir(path.dirname(PARTNER_REGISTRATION_STORE_PATH), { recursive: true });
+  while (Date.now() < deadline) {
+    try {
+      const handle = await fs.open(PARTNER_REGISTRATION_STORE_LOCK_PATH, "wx", 0o600);
+      await handle.writeFile(`${process.pid} ${new Date().toISOString()}\n`, "utf8");
+      return handle;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const stat = await fs.stat(PARTNER_REGISTRATION_STORE_LOCK_PATH).catch(() => null);
+      if (stat && Date.now() - stat.mtimeMs > PARTNER_REGISTRATION_STORE_LOCK_STALE_MS) {
+        await fs.unlink(PARTNER_REGISTRATION_STORE_LOCK_PATH).catch(() => {});
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 + crypto.randomInt(0, 75)));
+    }
+  }
+  throw partnerRegistrationError("Регистрация временно занята другим запросом. Повторите через несколько секунд.", 503);
+}
+
+async function withPartnerRegistrationStore(mutator) {
+  const lock = await acquirePartnerRegistrationStoreLock();
+  try {
+    const store = prunePartnerRegistrationStore(await readPartnerRegistrationStore());
+    try {
+      const result = await mutator(store);
+      await writeJsonAtomic(PARTNER_REGISTRATION_STORE_PATH, store, true);
+      return result;
+    } catch (error) {
+      await writeJsonAtomic(PARTNER_REGISTRATION_STORE_PATH, store, true);
+      throw error;
+    }
+  } finally {
+    await lock.close().catch(() => {});
+    await fs.unlink(PARTNER_REGISTRATION_STORE_LOCK_PATH).catch(() => {});
+  }
+}
+
+function getPartnerRegistrationClientIp(req) {
+  const trusted = String(req.headers["x-ais-client-ip"] || req.headers["x-real-ip"] || "").trim();
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return (trusted || forwarded || String(req.socket?.remoteAddress || "unknown"))
+    .replace(/[^a-fA-F0-9:.,_-]/gu, "")
+    .slice(0, 80) || "unknown";
+}
+
+function getPartnerRegistrationPublicBaseUrl(req) {
+  const requestHost = String(req.headers.host || "").trim().toLocaleLowerCase("ru-RU");
+  let sameOriginReferer = "";
+  try {
+    const parsedReferer = new URL(String(req.headers.referer || ""));
+    if (!requestHost || parsedReferer.host.toLocaleLowerCase("ru-RU") === requestHost) {
+      sameOriginReferer = new URL(".", parsedReferer).toString();
+    }
+  } catch { /* referer не обязателен */ }
+  const candidates = [
+    process.env.AIS_PUBLIC_APP_URL,
+    process.env.AIS_TRUST_GATEWAY === "1" && process.env.AIS_OCR_CLI === "1"
+      ? req.headers["x-ais-public-app-url"]
+      : "",
+    sameOriginReferer
+  ];
+  for (const candidate of candidates) {
+    if (!String(candidate || "").trim()) continue;
+    try {
+      const parsed = new URL(String(candidate));
+      if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname) continue;
+      parsed.username = "";
+      parsed.password = "";
+      parsed.search = "";
+      parsed.hash = "";
+      parsed.pathname = `${parsed.pathname.replace(/\/+$/gu, "")}/`;
+      return parsed.toString();
+    } catch { /* пробуем следующий доверенный источник */ }
+  }
+  const host = String(req.headers.host || `${HOST}:${PORT}`).replace(/[^A-Za-z0-9.:[\]-]/gu, "");
+  return `http://${host || `127.0.0.1:${PORT}`}/`;
+}
+
+function escapePartnerRegistrationEmailHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function buildPartnerRegistrationVerificationMessage(registration, confirmationUrl) {
+  const name = escapePartnerRegistrationEmailHtml(registration.data.name);
+  const url = escapePartnerRegistrationEmailHtml(confirmationUrl);
+  return `<p>${name}, здравствуйте!</p>
+<p>Вы заполнили анкету партнёрской программы учебного центра «Цифровизация Плюс».</p>
+<p>Подтвердите адрес электронной почты в течение 24 часов:</p>
+<p><a href="${url}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#0f766e;color:#fff;text-decoration:none;font-weight:700">Подтвердить email</a></p>
+<p>Если кнопка не открывается, перейдите по ссылке:<br><a href="${url}">${url}</a></p>
+<p>После подтверждения мы создадим личный кабинет и отправим реквизиты для входа отдельным письмом.</p>
+<p>Если вы не заполняли анкету, просто проигнорируйте это письмо.</p>
+<p>С уважением,<br>Учебный центр «Цифровизация Плюс»<br><a href="https://edu-plus.ru">https://edu-plus.ru</a></p>`;
+}
+
+function buildPartnerRegistrationWelcomeMessage(registration, employee, portalUrl) {
+  const name = escapePartnerRegistrationEmailHtml(registration.data.name);
+  const login = escapePartnerRegistrationEmailHtml(employee.login);
+  const password = escapePartnerRegistrationEmailHtml(employee.password);
+  const url = escapePartnerRegistrationEmailHtml(portalUrl);
+  return `<p>${name}, здравствуйте!</p>
+<p>Email подтверждён, и для вас создан личный кабинет партнёра «Цифровизации Плюс».</p>
+<p><strong>Логин:</strong> ${login}<br><strong>Пароль:</strong> ${password}</p>
+<p><a href="${url}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#0f766e;color:#fff;text-decoration:none;font-weight:700">Открыть личный кабинет</a></p>
+<p>При первом входе система откроет раздел «Профиль». Проверьте и дополните личные данные, затем сохраните профиль.</p>
+<p>Никому не передавайте реквизиты доступа.</p>
+<p>С уважением,<br>Учебный центр «Цифровизация Плюс»<br><a href="https://edu-plus.ru">https://edu-plus.ru</a></p>`;
+}
+
+async function readPartnerRegistrationReservedLogins(contracts = []) {
+  const logins = new Set((Array.isArray(contracts) ? contracts : [])
+    .map((item) => normalizePartnerIdentity(item?.login))
+    .filter(Boolean));
+  const candidates = [...new Set([
+    AUTH_USERS_PATH,
+    path.resolve(SERVER_CODE_ROOT, "..", "users.json")
+  ])];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(candidate, "utf8"));
+      for (const user of Array.isArray(parsed?.users) ? parsed.users : []) {
+        const login = normalizePartnerIdentity(user?.login);
+        if (login) logins.add(login);
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") console.warn(`Не удалось проверить занятые логины: ${error.message}`);
+    }
+  }
+  return logins;
+}
+
+function normalizePartnerRegistrationLoginBase(email) {
+  const localPart = String(email || "").split("@")[0]
+    .normalize("NFKC")
+    .toLocaleLowerCase("ru-RU")
+    .replace(/[^\p{L}\p{N}._-]+/gu, ".")
+    .replace(/^[._-]+|[._-]+$/gu, "")
+    .replace(/[._-]{2,}/gu, ".")
+    .slice(0, 56);
+  return localPart.length >= 3 ? localPart : `partner.${localPart || "user"}`.slice(0, 56);
+}
+
+function createPartnerRegistrationCredentials(email, reservedLogins = new Set()) {
+  const base = normalizePartnerRegistrationLoginBase(email);
+  let login = base;
+  for (let suffix = 2; reservedLogins.has(normalizePartnerIdentity(login)); suffix += 1) {
+    const marker = `.${suffix}`;
+    login = `${base.slice(0, 64 - marker.length)}${marker}`;
+  }
+  return {
+    login,
+    password: String(crypto.randomInt(0, 1000000)).padStart(6, "0")
+  };
+}
+
+function buildPartnerRegistrationPortalCredentials(employee, portalUrl) {
+  return [
+    `Данные для доступа к личному кабинету партнёра (${portalUrl}):`,
+    "",
+    `Логин: ${employee.login}`,
+    `Пароль: ${employee.password}`,
+    "",
+    "Учебный центр Цифровизация Плюс",
+    "www.edu-plus.ru"
+  ].join("\n");
+}
+
+function buildPartnerRegistrationEmployee(registration, credentials, portalUrl) {
+  const now = new Date().toISOString();
+  const directions = [
+    ...(registration.data.directions || []),
+    registration.data.otherDirection || ""
+  ].filter(Boolean);
+  const employee = {
+    id: `partner-registration-${registration.id}`,
+    section: "ПАРТНЕРСКАЯ ПРОГРАММА",
+    status: "Партнерская программа",
+    type: "Сотрудники",
+    name: registration.data.name,
+    email: registration.data.email,
+    phone: registration.data.phone,
+    city: registration.data.residence,
+    address: registration.data.residence,
+    subject: "Участие в партнерской программе",
+    partnerDirections: directions.join("; "),
+    additionalInfo: registration.data.additionalInfo,
+    notificationEmail: true,
+    login: credentials.login,
+    password: credentials.password,
+    partnerProfileRequired: true,
+    partnerRegistrationId: registration.id,
+    partnerRegisteredAt: registration.createdAt || now,
+    emailConfirmedAt: now,
+    personalDataConsentAt: registration.createdAt || now,
+    personalDataPolicyUrl: registration.data.policyUrl || PARTNER_REGISTRATION_POLICY_URL,
+    source: "Саморегистрация партнёра"
+  };
+  employee.portalCredentials = buildPartnerRegistrationPortalCredentials(employee, portalUrl);
+  return employee;
+}
+
+function partnerRegistrationSystemUser() {
+  return {
+    id: "system:partner-registration",
+    login: "partner-registration",
+    name: "Регистрация партнёров",
+    role: "system"
+  };
+}
+
+async function createPartnerRegistrationEmployee(registration, portalUrl) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const current = await readSharedApplicationStateDocument({ allowCache: false });
+    const contracts = Array.isArray(current.document?.data?.collections?.contracts)
+      ? current.document.data.collections.contracts
+      : [];
+    const existing = contracts.find((item) => (
+      String(item?.partnerRegistrationId || "") === registration.id
+    ));
+    if (existing) return existing;
+    const duplicate = contracts.find((item) => (
+      normalizePartnerIdentity(item?.email) === normalizePartnerIdentity(registration.data.email)
+      && String(item?.login || "").trim()
+      && String(item?.password || "")
+    ));
+    if (duplicate) {
+      throw partnerRegistrationError(
+        "Для этого email уже создана учётная запись партнёра. Используйте форму входа или обратитесь в учебный центр.",
+        409
+      );
+    }
+    const reservedLogins = await readPartnerRegistrationReservedLogins(contracts);
+    const employee = buildPartnerRegistrationEmployee(
+      registration,
+      createPartnerRegistrationCredentials(registration.data.email, reservedLogins),
+      portalUrl
+    );
+    const result = await saveSharedApplicationState({
+      baseRevision: current.document?.revision || 0,
+      strictRevision: true,
+      patch: {
+        collections: { contracts: { upserts: [employee] } },
+        recordKeys: [`contracts:${employee.id}`]
+      }
+    }, partnerRegistrationSystemUser());
+    if (result.conflict) continue;
+    if (result.locked) {
+      throw partnerRegistrationError("Общая база временно занята. Повторите подтверждение через минуту.", 423);
+    }
+    if (result.syncPending || result.offline) {
+      throw partnerRegistrationError("Общая база временно недоступна. Повторите подтверждение позже.", 503);
+    }
+    return employee;
+  }
+  throw partnerRegistrationError("Общая база была изменена другим пользователем. Повторите подтверждение.", 409);
+}
+
+async function findPartnerRegistrationEmployee(registrationId) {
+  const data = await readPartnerSharedData();
+  return (Array.isArray(data.collections?.contracts) ? data.collections.contracts : [])
+    .find((item) => String(item?.partnerRegistrationId || "") === String(registrationId || "")) || null;
+}
+
+async function ensurePartnerRegistrationDocumentsFolder(employee) {
+  const location = resolveStudentWebDavBrowserResource(getPartnerDocumentsFolder(employee), "");
+  await ensureYandexDiskFolder(location.targetPath);
+  return location.targetPath;
+}
+
+function assertPartnerRegistrationRequest(req) {
+  if (String(req.headers["x-requested-with"] || "") !== "AIS-Web") {
+    throw partnerRegistrationError("Запрос регистрации отклонён сервером.", 403);
+  }
+  const origin = String(req.headers.origin || "").trim();
+  const host = String(req.headers.host || "").trim().toLocaleLowerCase("ru-RU");
+  if (!origin || !host) return;
+  try {
+    const originHost = new URL(origin).host.toLocaleLowerCase("ru-RU");
+    if (originHost !== host) throw new Error("origin mismatch");
+  } catch {
+    throw partnerRegistrationError("Запрос регистрации отклонён сервером.", 403);
+  }
+}
+
+async function findExistingPartnerByEmail(email) {
+  const data = await readPartnerSharedData();
+  return (Array.isArray(data.collections?.contracts) ? data.collections.contracts : [])
+    .find((item) => (
+      normalizePartnerIdentity(item?.email) === normalizePartnerIdentity(email)
+      && String(item?.login || "").trim()
+      && String(item?.password || "")
+    )) || null;
+}
+
+async function handlePartnerRegistrationCreate(req, res) {
+  assertPartnerRegistrationRequest(req);
+  const data = sanitizePartnerRegistrationPayload(await readJsonBody(req));
+  if (await findExistingPartnerByEmail(data.email)) {
+    throw partnerRegistrationError(
+      "Для этого email уже создана учётная запись партнёра. Используйте форму входа.",
+      409
+    );
+  }
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const clientIpHash = crypto.createHash("sha256")
+    .update(getPartnerRegistrationClientIp(req), "utf8")
+    .digest("hex");
+  const token = crypto.randomBytes(32).toString("base64url");
+  const tokenHash = partnerRegistrationTokenHash(token);
+  const registration = await withPartnerRegistrationStore(async (store) => {
+    const recentFromIp = store.registrations.filter((item) => (
+      item.clientIpHash === clientIpHash
+      && (item.verificationAttempts || []).some((timestamp) => Number(timestamp) > now - 60 * 60 * 1000)
+    ));
+    if (recentFromIp.length >= PARTNER_REGISTRATION_MAX_PER_IP_HOUR) {
+      throw partnerRegistrationError("Слишком много заявок. Повторите регистрацию позже.", 429);
+    }
+    let current = [...store.registrations].reverse().find((item) => (
+      normalizePartnerIdentity(item.data?.email) === normalizePartnerIdentity(data.email)
+      && item.status !== "confirmed"
+    ));
+    if (current?.status === "confirming"
+      && now - Date.parse(String(current.processingAt || "")) < PARTNER_REGISTRATION_CONFIRMATION_STALE_MS) {
+      throw partnerRegistrationError("Подтверждение этой заявки уже выполняется.", 409);
+    }
+    const attempts = (current?.verificationAttempts || [])
+      .map(Number)
+      .filter((timestamp) => Number.isFinite(timestamp) && timestamp > now - 24 * 60 * 60 * 1000);
+    const previousAttempt = attempts.at(-1) || 0;
+    if (previousAttempt && now - previousAttempt < PARTNER_REGISTRATION_RESEND_DELAY_MS) {
+      throw partnerRegistrationError("Письмо уже отправлено. Повторить отправку можно через минуту.", 429);
+    }
+    if (attempts.length >= PARTNER_REGISTRATION_MAX_EMAILS_PER_DAY) {
+      throw partnerRegistrationError("Лимит писем подтверждения исчерпан. Повторите завтра.", 429);
+    }
+    if (!current) {
+      current = {
+        id: crypto.randomBytes(12).toString("hex"),
+        createdAt: nowIso,
+        verificationAttempts: []
+      };
+      store.registrations.push(current);
+    }
+    Object.assign(current, {
+      status: "pending",
+      data,
+      tokenHash,
+      expiresAt: new Date(now + PARTNER_REGISTRATION_TTL_MS).toISOString(),
+      updatedAt: nowIso,
+      clientIpHash,
+      verificationAttempts: [...attempts, now],
+      lastVerificationError: "",
+      processingAt: ""
+    });
+    return JSON.parse(JSON.stringify(current));
+  });
+  const baseUrl = getPartnerRegistrationPublicBaseUrl(req);
+  const confirmationUrl = new URL(baseUrl);
+  confirmationUrl.searchParams.set("partner-confirm", token);
+  try {
+    await sendEmailThroughConfiguredMailbox({
+      to: data.email,
+      subject: normalizeEmailSubject("Подтверждение регистрации в партнёрской программе Цифровизация Плюс"),
+      message: buildPartnerRegistrationVerificationMessage(registration, confirmationUrl.toString()),
+      attachment: null
+    });
+  } catch (error) {
+    await withPartnerRegistrationStore(async (store) => {
+      const current = store.registrations.find((item) => item.id === registration.id);
+      if (current) current.lastVerificationError = String(error.message || error).slice(0, 1000);
+    }).catch(() => {});
+    throw partnerRegistrationError(
+      "Не удалось отправить письмо подтверждения через системный ящик. Повторите попытку позже.",
+      502
+    );
+  }
+  await safelyAppendAuditEntry({
+    action: "Подана заявка на регистрацию партнёра",
+    area: "Регистрация партнёров",
+    entityType: "partnerRegistration",
+    entityId: registration.id,
+    entityLabel: data.name,
+    after: data.email,
+    details: `Email подтверждения отправлен; направления: ${[
+      ...data.directions,
+      data.otherDirection
+    ].filter(Boolean).join(", ")}`,
+    source: "public-registration"
+  }, partnerRegistrationSystemUser(), req);
+  sendJson(res, 202, {
+    ok: true,
+    email: data.email,
+    message: "Анкета принята. Откройте письмо и подтвердите адрес электронной почты в течение 24 часов."
+  });
+}
+
+async function beginPartnerRegistrationConfirmation(token) {
+  const hash = partnerRegistrationTokenHash(token);
+  const now = Date.now();
+  return withPartnerRegistrationStore(async (store) => {
+    const current = store.registrations.find((item) => (
+      partnerRegistrationHashesEqual(item.tokenHash, hash)
+    ));
+    if (!current) throw partnerRegistrationError("Ссылка подтверждения недействительна.", 404);
+    if (Date.parse(String(current.expiresAt || "")) <= now && current.status !== "confirmed") {
+      current.status = "expired";
+      current.updatedAt = new Date(now).toISOString();
+      throw partnerRegistrationError("Срок действия ссылки истёк. Заполните анкету ещё раз.", 410);
+    }
+    const processingAt = Date.parse(String(current.processingAt || ""));
+    if (current.status === "confirming"
+      && Number.isFinite(processingAt)
+      && now - processingAt < PARTNER_REGISTRATION_CONFIRMATION_STALE_MS) {
+      throw partnerRegistrationError("Подтверждение уже выполняется. Обновите страницу через несколько секунд.", 409);
+    }
+    current.status = "confirming";
+    current.processingAt = new Date(now).toISOString();
+    current.updatedAt = current.processingAt;
+    return JSON.parse(JSON.stringify(current));
+  });
+}
+
+async function finishPartnerRegistrationConfirmation(registration, values) {
+  return withPartnerRegistrationStore(async (store) => {
+    const current = store.registrations.find((item) => item.id === registration.id);
+    if (!current) return null;
+    Object.assign(current, values, { updatedAt: new Date().toISOString(), processingAt: "" });
+    return JSON.parse(JSON.stringify(current));
+  });
+}
+
+async function handlePartnerRegistrationConfirm(req, res) {
+  assertPartnerRegistrationRequest(req);
+  const body = await readJsonBody(req);
+  const token = String(body.token || "").trim();
+  if (!/^[A-Za-z0-9_-]{43}$/u.test(token)) {
+    throw partnerRegistrationError("Ссылка подтверждения недействительна.", 400);
+  }
+  const registration = await beginPartnerRegistrationConfirmation(token);
+  const portalUrl = getPartnerRegistrationPublicBaseUrl(req);
+  let employee = null;
+  try {
+    employee = await findPartnerRegistrationEmployee(registration.id);
+    if (!employee) employee = await createPartnerRegistrationEmployee(registration, portalUrl);
+  } catch (error) {
+    await finishPartnerRegistrationConfirmation(registration, {
+      status: "pending",
+      lastConfirmationError: String(error.message || error).slice(0, 1000)
+    }).catch(() => {});
+    throw error;
+  }
+  let folderWarning = "";
+  try {
+    await ensurePartnerRegistrationDocumentsFolder(employee);
+  } catch (error) {
+    folderWarning = `Папка документов будет создана при первом обращении: ${error.message}`;
+  }
+  const alreadyWelcomed = Boolean(registration.welcomeSentAt);
+  let welcomeError = "";
+  if (!alreadyWelcomed) {
+    try {
+      await sendEmailThroughConfiguredMailbox({
+        to: registration.data.email,
+        subject: normalizeEmailSubject("Доступ к личному кабинету партнёра Цифровизация Плюс"),
+        message: buildPartnerRegistrationWelcomeMessage(registration, employee, portalUrl),
+        attachment: null
+      });
+    } catch (error) {
+      welcomeError = String(error.message || error).slice(0, 1000);
+    }
+  }
+  const confirmedAt = registration.confirmedAt || new Date().toISOString();
+  await finishPartnerRegistrationConfirmation(registration, {
+    status: "confirmed",
+    confirmedAt,
+    employeeId: employee.id,
+    welcomeSentAt: alreadyWelcomed ? registration.welcomeSentAt : (welcomeError ? "" : new Date().toISOString()),
+    welcomeError,
+    folderWarning
+  });
+  await safelyAppendAuditEntry({
+    action: alreadyWelcomed ? "Повторно подтверждена регистрация партнёра" : "Подтверждена регистрация партнёра",
+    area: "Регистрация партнёров",
+    entityType: "employee",
+    entityId: employee.id,
+    entityLabel: employee.name,
+    after: registration.data.email,
+    details: welcomeError
+      ? "Email подтверждён; письмо с реквизитами отправить не удалось."
+      : "Email подтверждён; реквизиты личного кабинета отправлены.",
+    source: "public-registration"
+  }, partnerRegistrationSystemUser(), req);
+  if (welcomeError) {
+    sendJson(res, 502, {
+      error: "Email подтверждён и кабинет создан, но письмо с реквизитами отправить не удалось. Обратитесь в учебный центр.",
+      confirmed: true
+    });
+    return;
+  }
+  sendJson(res, 200, {
+    ok: true,
+    confirmed: true,
+    message: alreadyWelcomed
+      ? "Email уже подтверждён. Можно войти в личный кабинет."
+      : "Email подтверждён. Реквизиты для входа отправлены отдельным письмом."
+  });
+}
+
 function partnerCredentialsEqual(left, right) {
   const expected = Buffer.from(String(left || ""), "utf8");
   const actual = Buffer.from(String(right || ""), "utf8");
@@ -20946,7 +21576,8 @@ function partnerValueIsChecked(value) {
 }
 
 const PARTNER_EDITABLE_PROFILE_FIELDS = new Set([
-  "name", "position", "degree", "academicTitle", "phone", "email", "notificationEmail",
+  "name", "position", "degree", "academicTitle", "phone", "email", "city", "notificationEmail",
+  "partnerDirections", "additionalInfo",
   "bank", "settlementAccount", "correspondentAccount", "bic", "citizenship", "birthDate",
   "identityDocumentType", "identityDocument", "identityIssueDate", "identityDepartmentCode",
   "identityIssuer", "address", "snils", "inn", "login", "password"
@@ -20992,6 +21623,7 @@ function buildPartnerProfile(employee = {}) {
     id: String(employee.id || ""),
     name: String(employee.name || "Партнёр").trim() || "Партнёр",
     contractNo: String(employee.contractNo || "").trim(),
+    onboardingRequired: employee.partnerProfileRequired === true,
     photoAvailable: Boolean(String(employee.photoPath || "").trim() || String(employee.photoData || "").trim()),
     documentsFolder: getPartnerDocumentsFolder(employee),
     tabs: {
@@ -21002,6 +21634,9 @@ function buildPartnerProfile(employee = {}) {
         partnerEmployeeField("academicTitle", "Учёное звание", employee.academicTitle),
         partnerEmployeeField("phone", "Телефон", employee.phone, "phone"),
         partnerEmployeeField("email", "Email", employee.email, "email"),
+        partnerEmployeeField("city", "Место проживания", employee.city),
+        partnerEmployeeField("partnerDirections", "Направления сотрудничества", employee.partnerDirections, "multiline"),
+        partnerEmployeeField("additionalInfo", "Дополнительные сведения", employee.additionalInfo, "multiline"),
         partnerEmployeeField("coupon", "Персональный купон", employee.coupon),
         partnerEmployeeField("couponId", "ID купона", employee.couponId),
         partnerEmployeeField(
@@ -21061,7 +21696,20 @@ async function updatePartnerProfile(req, res, authUser) {
     && normalizePartnerIdentity(item?.login) === normalizePartnerIdentity(values.login))) {
     throw new Error("Этот логин уже используется другой учётной записью.");
   }
+  const completeOnboarding = body.completeOnboarding === true && employee.partnerProfileRequired === true;
   const updated = { ...employee, ...values };
+  if (completeOnboarding) {
+    const missing = [
+      ["name", "ФИО / контрагент"],
+      ["email", "Email"],
+      ["phone", "Телефон"]
+    ].filter(([key]) => !String(updated[key] || "").trim()).map(([, label]) => label);
+    if (missing.length) {
+      throw new Error(`Перед завершением заполнения профиля укажите: ${missing.join(", ")}.`);
+    }
+    updated.partnerProfileRequired = false;
+    updated.partnerProfileCompletedAt = new Date().toISOString();
+  }
   const result = await saveSharedApplicationState({
     baseRevision: current.document?.revision || 0,
     patch: {
@@ -21076,7 +21724,11 @@ async function updatePartnerProfile(req, res, authUser) {
     entityId: updated.id, entityLabel: updated.name,
     details: `Изменены поля: ${Object.keys(values).filter((key) => key !== "password").join(", ") || "пароль"}`
   }, authUser, req);
-  sendJson(res, 200, { ok: true, profile: buildPartnerProfile(updated), message: "Профиль сохранён." });
+  sendJson(res, 200, {
+    ok: true,
+    profile: buildPartnerProfile(updated),
+    message: completeOnboarding ? "Профиль заполнен. Доступны все разделы кабинета." : "Профиль сохранён."
+  });
 }
 
 async function getPartnerDocumentsContext(authUser) {
@@ -22406,6 +23058,14 @@ async function route(req, res) {
   }
   if (requestUrl.pathname.startsWith("/api/auth/")) {
     try {
+      if (req.method === "POST" && requestUrl.pathname === "/api/auth/partner-registration") {
+        await handlePartnerRegistrationCreate(req, res);
+        return;
+      }
+      if (req.method === "POST" && requestUrl.pathname === "/api/auth/partner-registration/confirm") {
+        await handlePartnerRegistrationConfirm(req, res);
+        return;
+      }
       if (req.method === "POST" && requestUrl.pathname === "/api/auth/login") {
         await handleAuthLogin(req, res);
         return;
@@ -22433,7 +23093,7 @@ async function route(req, res) {
       }
       sendError(res, 405, "Method not allowed");
     } catch (error) {
-      sendError(res, 400, error.message);
+      sendError(res, Number(error?.statusCode) || 400, error.message);
     }
     return;
   }
@@ -22856,6 +23516,13 @@ module.exports = {
   getTrainingEndNotificationCandidates,
   buildTrainingEndNotificationMessage,
   maybeRunTrainingEndNotificationJob,
+  sanitizePartnerRegistrationPayload,
+  partnerRegistrationTokenHash,
+  partnerRegistrationHashesEqual,
+  normalizePartnerRegistrationLoginBase,
+  createPartnerRegistrationCredentials,
+  buildPartnerRegistrationEmployee,
+  getPartnerRegistrationPublicBaseUrl,
   selectPartnerEmployee,
   buildPartnerProfile,
   getPartnerDocumentsFolder,
