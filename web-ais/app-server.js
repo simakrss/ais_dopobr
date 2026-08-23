@@ -19117,6 +19117,31 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       const { __syncComment, ...publicStudent } = student;
       return publicStudent;
     }) || [];
+    const programPromoSkippedDetails = (Array.isArray(scriptResult.programPromoSkippedDetails)
+      ? scriptResult.programPromoSkippedDetails
+      : [])
+      .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+      .map((item) => ({
+        id: String(item.id || "").trim(),
+        name: String(item.name || "").trim(),
+        landingCode: String(item.landingCode || "").trim(),
+        sourceName: String(item.sourceName || "").trim(),
+        sourceLandingCode: String(item.sourceLandingCode || "").trim(),
+        requestedRow: Math.max(0, Number(item.requestedRow) || 0),
+        reason: String(item.reason || "Программа не сопоставлена со строкой XLSB.").trim()
+      }));
+    const programMissingManagedColumnNames = (Array.isArray(scriptResult.programMissingManagedColumnNames)
+      ? scriptResult.programMissingManagedColumnNames
+      : [])
+      .map((name) => String(name || "").trim())
+      .filter(Boolean);
+    const communicationTemplateMissingNamedRangeNames = (
+      Array.isArray(scriptResult.communicationTemplateMissingNamedRangeNames)
+        ? scriptResult.communicationTemplateMissingNamedRangeNames
+        : []
+    )
+      .map((name) => String(name || "").trim())
+      .filter(Boolean);
     return {
       ...savedResult,
       studentCount: payload.students.length,
@@ -19127,9 +19152,11 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       programManagedCellCount: Number(scriptResult.programManagedCells || 0),
       programFormulaPreservedCount: Number(scriptResult.programFormulaCellsPreserved || 0),
       programMissingManagedColumnCount: Number(scriptResult.programMissingManagedColumns || 0),
+      programMissingManagedColumnNames,
       programPromoMessageCount: Number(scriptResult.programPromoMessages || 0),
       programEmailMessageCount: Number(scriptResult.programEmailMessages || 0),
       programPromoSkippedCount: Number(scriptResult.programPromoSkipped || 0),
+      programPromoSkippedDetails,
       programDictionaryValueCount: Number(scriptResult.programDictionaryValues || 0),
       inventoryCount: Number(scriptResult.inventoryItems || 0),
       inventoryUnitCount: Number(scriptResult.inventoryUnits || 0),
@@ -19138,6 +19165,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       communicationTemplateNamedRangeRequestedCount: communicationTemplateVerification.requested,
       communicationTemplateNamedRangeCount: communicationTemplateVerification.verified,
       communicationTemplateMissingNamedRangeCount: communicationTemplateVerification.skipped,
+      communicationTemplateMissingNamedRangeNames,
       communicationTemplateNamedRangeFormulaPreservedCount:
         communicationTemplateVerification.formulaPreserved,
       ...(studentSyncResult ? {

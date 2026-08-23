@@ -2437,7 +2437,9 @@ function Update-ProgramPromoMessages {
       ManagedCells = 0
       FormulaCellsPreserved = 0
       MissingManagedColumns = 0
+      MissingManagedColumnNames = @()
       Skipped = 0
+      SkippedPrograms = @()
       Provided = $false
     }
   }
@@ -2469,6 +2471,25 @@ function Update-ProgramPromoMessages {
     $startRow = [int]$header.Row + 1
     $lastRow = [int]$header.LastRow
     if ($lastRow -lt $startRow) {
+      $emptySheetSkippedPrograms = @($programs | Where-Object { $null -ne $_ } | ForEach-Object {
+        $program = $_
+        $sourceName = Get-ObjectProperty $program "xlsbProgramName"
+        if (-not (Normalize-Header $sourceName)) { $sourceName = Get-ObjectProperty $program "name" }
+        $sourceLandingCode = if (Test-ObjectProperty $program "xlsbProgramLandingCode") {
+          Get-ObjectProperty $program "xlsbProgramLandingCode"
+        } else {
+          Get-ObjectProperty $program "landingCode"
+        }
+        [pscustomobject]@{
+          id = ([string](Get-ObjectProperty $program "id")).Trim()
+          name = ([string](Get-ObjectProperty $program "name")).Trim()
+          landingCode = ([string](Get-ObjectProperty $program "landingCode")).Trim()
+          sourceName = ([string]$sourceName).Trim()
+          sourceLandingCode = ([string]$sourceLandingCode).Trim()
+          requestedRow = [int](Get-ObjectProperty $program "xlsbProgramRow")
+          reason = "На листе 'Реестр программ' нет строк данных."
+        }
+      })
       return [pscustomobject]@{
         Count = 0
         Messages = 0
@@ -2476,7 +2497,9 @@ function Update-ProgramPromoMessages {
         ManagedCells = 0
         FormulaCellsPreserved = 0
         MissingManagedColumns = 0
+        MissingManagedColumnNames = @()
         Skipped = $programs.Count
+        SkippedPrograms = $emptySheetSkippedPrograms
         Provided = $true
       }
     }
@@ -2523,7 +2546,9 @@ function Update-ProgramPromoMessages {
     $managedCellCount = 0
     $formulaCellsPreserved = 0
     $missingManagedColumns = 0
+    $missingManagedColumnNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $skippedCount = 0
+    $skippedPrograms = [Collections.Generic.List[object]]::new()
     foreach ($program in $programs) {
       if ($null -eq $program) { continue }
       $providedFields = @(
@@ -2582,6 +2607,15 @@ function Update-ProgramPromoMessages {
       }
       if ($targetRow -le 0) {
         $skippedCount += 1
+        [void]$skippedPrograms.Add([pscustomobject]@{
+          id = $requestedRecordId
+          name = ([string](Get-ObjectProperty $program "name")).Trim()
+          landingCode = ([string](Get-ObjectProperty $program "landingCode")).Trim()
+          sourceName = ([string]$sourceName).Trim()
+          sourceLandingCode = ([string]$sourceLandingCode).Trim()
+          requestedRow = $requestedRow
+          reason = "Не найдена строка по служебному ID, исходному или текущему названию и коду лендинга."
+        })
         continue
       }
       if (-not $updatedRows.Add($targetRow)) {
@@ -2595,6 +2629,7 @@ function Update-ProgramPromoMessages {
         }
         if (-not $columnByField.ContainsKey($fieldName)) {
           $missingManagedColumns += 1
+          [void]$missingManagedColumnNames.Add($fieldName)
           continue
         }
         $result = Set-ProgramManagedValueCell `
@@ -2636,7 +2671,9 @@ function Update-ProgramPromoMessages {
       ManagedCells = $managedCellCount
       FormulaCellsPreserved = $formulaCellsPreserved
       MissingManagedColumns = $missingManagedColumns
+      MissingManagedColumnNames = @($missingManagedColumnNames | Sort-Object)
       Skipped = $skippedCount
+      SkippedPrograms = @($skippedPrograms)
       Provided = $true
     }
   } catch {
@@ -3183,9 +3220,11 @@ try {
     programManagedCells = $programPromoResult.ManagedCells
     programFormulaCellsPreserved = $programPromoResult.FormulaCellsPreserved
     programMissingManagedColumns = $programPromoResult.MissingManagedColumns
+    programMissingManagedColumnNames = @($programPromoResult.MissingManagedColumnNames)
     programPromoMessages = $programPromoResult.Messages
     programEmailMessages = $programPromoResult.EmailMessages
     programPromoSkipped = $programPromoResult.Skipped
+    programPromoSkippedDetails = @($programPromoResult.SkippedPrograms)
     programDictionaryValues = $programDictionaryResult.Count
     inventoryItems = $inventoryResult.Items
     inventoryUnits = $inventoryResult.Units
@@ -3208,7 +3247,7 @@ try {
       withoutAuthorPercent = $agentRateResult.WithoutAuthorPercent
     }
     outputPath = $OutputPath
-  } | ConvertTo-Json -Compress | Write-Output
+  } | ConvertTo-Json -Compress -Depth 6 | Write-Output
 } finally {
   if ($null -ne $workbook) {
     try { $workbook.Close($false) } catch {}

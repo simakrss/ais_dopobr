@@ -1764,15 +1764,47 @@ body.is-session-expired {
 }
 
 .database-operation-result-stat {
+  display: block;
   min-width: 0;
+  width: 100%;
   padding: 10px 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
 }
 
-.database-operation-result-stat dt,
+.database-operation-result-stat:hover,
+.database-operation-result-stat:focus-visible,
+.database-operation-result-stat.is-selected {
+  border-color: #54a99b;
+  box-shadow: 0 0 0 2px rgb(16 129 113 / 13%);
+}
+
+.database-operation-result-stat:hover {
+  transform: translateY(-1px);
+}
+
+.database-operation-result-stat.is-problem {
+  border-color: #e35656;
+  background: #fff1f1;
+  box-shadow: inset 3px 0 0 #c62828;
+}
+
+.database-operation-result-stat.is-problem:hover,
+.database-operation-result-stat.is-problem:focus-visible,
+.database-operation-result-stat.is-problem.is-selected {
+  border-color: #b42318;
+  box-shadow: inset 3px 0 0 #b42318, 0 0 0 2px rgb(180 35 24 / 14%);
+}
+
+.database-operation-result-stat-label,
 .database-operation-result-details dt {
+  display: block;
   color: var(--muted);
   font-size: 10px;
   font-weight: 700;
@@ -1780,12 +1812,18 @@ body.is-session-expired {
   text-transform: uppercase;
 }
 
-.database-operation-result-stat dd {
-  margin: 4px 0 0;
+.database-operation-result-stat strong {
+  display: block;
+  margin-top: 4px;
   color: var(--teal);
   font-size: 22px;
   font-weight: 800;
   line-height: 1;
+}
+
+.database-operation-result-stat.is-problem strong,
+.database-operation-result-stat.is-problem .database-operation-result-stat-hint {
+  color: #b42318;
 }
 
 .database-operation-result-stat small {
@@ -1794,6 +1832,114 @@ body.is-session-expired {
   color: var(--muted);
   font-size: 10px;
   line-height: 1.3;
+}
+
+.database-operation-result-stat-hint {
+  display: block;
+  margin-top: 7px;
+  color: var(--teal);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.database-operation-result-item-details {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #9bcfc4;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.database-operation-result-item-details.is-problem {
+  border-color: #e35656;
+  background: #fff8f8;
+}
+
+.database-operation-result-item-details > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.database-operation-result-item-details h3 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+
+.database-operation-result-item-details > header > span {
+  flex: 0 0 auto;
+  color: var(--teal);
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.database-operation-result-item-details.is-problem > header > span {
+  color: #b42318;
+}
+
+.database-operation-result-item-note,
+.database-operation-result-limit-note {
+  margin: 0 0 9px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.database-operation-result-limit-note {
+  margin: 8px 0 0;
+}
+
+.database-operation-result-table-wrap {
+  max-height: min(360px, 42vh);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.database-operation-result-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.database-operation-result-table-wrap th,
+.database-operation-result-table-wrap td {
+  min-width: 90px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.database-operation-result-table-wrap th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: #edf4f2;
+  color: var(--text);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.database-operation-result-table-wrap tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.database-operation-result-table-wrap tbody tr:nth-child(even) {
+  background: #f8fbfa;
+}
+
+.database-operation-result-empty-detail {
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
 }
 
 .database-operation-result-details {
@@ -19197,6 +19343,16 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   .database-operation-result-details > div {
     grid-template-columns: 1fr;
     gap: 3px;
+  }
+
+  .database-operation-result-item-details > header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .database-operation-result-table-wrap {
+    max-height: 38dvh;
   }
 
   .release-history-modal {

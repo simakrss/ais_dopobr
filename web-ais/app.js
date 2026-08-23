@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.246",
+    version: "1.7.247",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.247",
+      releasedAt: "2026-08-23",
+      changes: [
+        "В результатах импорта, экспорта и синхронизации проблемные показатели выделяются красным; карточки открывают детализацию, полный отчёт можно скачать в CSV."
+      ]
+    },
     {
       version: "1.7.246",
       releasedAt: "2026-08-23",
@@ -18388,11 +18395,134 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  const DATABASE_OPERATION_RESULT_PREVIEW_LIMIT = 250;
+
+  function normalizeDatabaseOperationResultItem(item, index) {
+    const source = item && typeof item === "object" ? item : {};
+    const rows = Array.isArray(source.rows)
+      ? source.rows.filter((row) => row !== null && row !== undefined)
+      : [];
+    const inferredKeys = rows.length && rows[0] && typeof rows[0] === "object" && !Array.isArray(rows[0])
+      ? Object.keys(rows[0])
+      : [];
+    const columns = (Array.isArray(source.columns) && source.columns.length
+      ? source.columns
+      : inferredKeys.map((key) => ({ key, label: key })))
+      .map((column, columnIndex) => {
+        if (typeof column === "string") return { key: column, label: column };
+        const key = String(column?.key || `value${columnIndex + 1}`).trim();
+        return {
+          key,
+          label: String(column?.label || key).trim() || key
+        };
+      })
+      .filter((column) => column.key);
+    return {
+      key: String(source.key || `item-${index + 1}`).trim() || `item-${index + 1}`,
+      label: String(source.label || "Показатель"),
+      value: source.value ?? "",
+      note: String(source.note || ""),
+      problem: source.problem === true || source.tone === "error",
+      columns,
+      rows
+    };
+  }
+
+  function getDatabaseOperationResultRowValue(row, key) {
+    if (row && typeof row === "object" && !Array.isArray(row)) return row[key] ?? "";
+    return key === "value" ? row : "";
+  }
+
+  function renderDatabaseOperationResultItemDetails(item) {
+    const rows = Array.isArray(item?.rows) ? item.rows : [];
+    const columns = Array.isArray(item?.columns) ? item.columns : [];
+    const previewRows = rows.slice(0, DATABASE_OPERATION_RESULT_PREVIEW_LIMIT);
+    return `
+      <section class="database-operation-result-item-details ${item.problem ? "is-problem" : ""}" aria-live="polite">
+        <header>
+          <div>
+            <p class="eyebrow">Детализация показателя</p>
+            <h3>${escapeHtml(item.label)}</h3>
+          </div>
+          <span>${escapeHtml(String(item.value ?? ""))}</span>
+        </header>
+        ${item.note ? `<p class="database-operation-result-item-note">${escapeHtml(item.note)}</p>` : ""}
+        ${rows.length && columns.length ? `
+          <div class="database-operation-result-table-wrap">
+            <table>
+              <thead><tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead>
+              <tbody>
+                ${previewRows.map((row) => `
+                  <tr>${columns.map((column) => `<td>${escapeHtml(String(getDatabaseOperationResultRowValue(row, column.key)))}</td>`).join("")}</tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+          ${rows.length > previewRows.length ? `
+            <p class="database-operation-result-limit-note">
+              Показаны первые ${previewRows.length} из ${rows.length} записей. В CSV-отчёт войдут все записи.
+            </p>
+          ` : ""}
+        ` : `
+          <div class="database-operation-result-empty-detail">
+            Для этого показателя доступно итоговое значение${item.note ? " и пояснение выше" : ""}.
+          </div>
+        `}
+      </section>
+    `;
+  }
+
+  function exportDatabaseOperationResultReport() {
+    const result = state.databaseOperationResult;
+    if (!result) return;
+    const lines = [
+      ["Отчёт об операции с базой"].map(csvCell).join(";"),
+      ["Операция", result.eyebrow].map(csvCell).join(";"),
+      ["Результат", result.title].map(csvCell).join(";"),
+      ["Состояние", result.tone === "error" ? "Ошибка" : "Завершено"].map(csvCell).join(";"),
+      ["Описание", result.summary].map(csvCell).join(";"),
+      ["Дата формирования отчёта", formatDateTimeRu(result.generatedAt)].map(csvCell).join(";"),
+      "",
+      ["Показатель", "Значение", "Состояние", "Комментарий"].map(csvCell).join(";"),
+      ...result.items.map((item) => [
+        item.label,
+        item.value,
+        item.problem ? "Требует внимания" : "Без замечаний",
+        item.note
+      ].map(csvCell).join(";")),
+      "",
+      ["Параметр операции", "Значение"].map(csvCell).join(";"),
+      ...result.details.map((item) => [item.label, item.value].map(csvCell).join(";"))
+    ];
+    result.items.forEach((item) => {
+      if (!item.rows.length || !item.columns.length) return;
+      lines.push(
+        "",
+        [`Детализация: ${item.label}`].map(csvCell).join(";"),
+        item.columns.map((column) => csvCell(column.label)).join(";"),
+        ...item.rows.map((row) => item.columns
+          .map((column) => csvCell(getDatabaseOperationResultRowValue(row, column.key)))
+          .join(";"))
+      );
+    });
+    const operationName = String(result.eyebrow || "операция")
+      .replace(/[^\p{L}\p{N}]+/gu, "-")
+      .replace(/^-+|-+$/gu, "")
+      .slice(0, 60) || "операция";
+    const stamp = new Date().toISOString().replace(/[:T]/gu, "-").slice(0, 19);
+    download(
+      `Отчёт-${operationName}-${stamp}.csv`,
+      `\ufeff${lines.join("\n")}`,
+      "text/csv;charset=utf-8"
+    );
+  }
+
   function renderDatabaseOperationResultDialog() {
     const result = state.databaseOperationResult || {};
     const tone = result.tone === "error" ? "error" : "success";
     const items = Array.isArray(result.items) ? result.items : [];
     const details = Array.isArray(result.details) ? result.details : [];
+    const selectedItem = items.find((item) => item.key === result.selectedItemKey) || null;
     return `
       <div class="modal-backdrop database-operation-result-backdrop" data-action="close-database-operation-result">
         <section class="modal database-operation-result-modal tone-${tone}" role="dialog" aria-modal="true" aria-labelledby="database-operation-result-title">
@@ -18412,16 +18542,25 @@ MAX - https://bizvmax.ru/zifra_plus
               </div>
             </div>
             ${items.length ? `
-              <dl class="database-operation-result-stats">
+              <div class="database-operation-result-stats">
                 ${items.map((item) => `
-                  <div class="database-operation-result-stat">
-                    <dt>${escapeHtml(item.label || "")}</dt>
-                    <dd>${escapeHtml(String(item.value ?? ""))}</dd>
+                  <button
+                    class="database-operation-result-stat ${item.problem ? "is-problem" : ""} ${selectedItem?.key === item.key ? "is-selected" : ""}"
+                    data-action="show-database-operation-result-item"
+                    data-item-key="${escapeAttr(item.key)}"
+                    type="button"
+                    aria-expanded="${selectedItem?.key === item.key ? "true" : "false"}"
+                    title="Открыть детализацию показателя"
+                  >
+                    <span class="database-operation-result-stat-label">${escapeHtml(item.label || "")}</span>
+                    <strong>${escapeHtml(String(item.value ?? ""))}</strong>
                     ${item.note ? `<small>${escapeHtml(item.note)}</small>` : ""}
-                  </div>
+                    <span class="database-operation-result-stat-hint">Подробнее</span>
+                  </button>
                 `).join("")}
-              </dl>
+              </div>
             ` : ""}
+            ${selectedItem ? renderDatabaseOperationResultItemDetails(selectedItem) : ""}
             ${details.length ? `
               <dl class="database-operation-result-details">
                 ${details.map((item) => `
@@ -18434,6 +18573,7 @@ MAX - https://bizvmax.ru/zifra_plus
             ` : ""}
           </div>
           <footer class="modal-actions">
+            <button class="ghost-button" data-action="export-database-operation-result" type="button">Экспорт отчёта CSV</button>
             <button class="primary-button" data-action="close-database-operation-result" type="button">Закрыть</button>
           </footer>
         </section>
@@ -18442,13 +18582,17 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function showDatabaseOperationResult(result = {}) {
+    const items = (Array.isArray(result.items) ? result.items : [])
+      .map((item, index) => normalizeDatabaseOperationResultItem(item, index));
     state.databaseOperationResult = {
       tone: result.tone === "error" ? "error" : "success",
       eyebrow: String(result.eyebrow || "Операция с базой"),
       title: String(result.title || "Результат операции"),
       summary: String(result.summary || ""),
-      items: Array.isArray(result.items) ? result.items : [],
-      details: Array.isArray(result.details) ? result.details : []
+      items,
+      details: Array.isArray(result.details) ? result.details : [],
+      selectedItemKey: "",
+      generatedAt: String(result.generatedAt || new Date().toISOString())
     };
     render();
     requestAnimationFrame(() => {
@@ -27909,6 +28053,25 @@ MAX - https://bizvmax.ru/zifra_plus
         closeDatabaseOperationResult();
       });
     });
+    document.querySelectorAll("[data-action='show-database-operation-result-item']").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (!state.databaseOperationResult) return;
+        const itemKey = String(button.dataset.itemKey || "");
+        state.databaseOperationResult.selectedItemKey = state.databaseOperationResult.selectedItemKey === itemKey
+          ? ""
+          : itemKey;
+        render();
+        requestAnimationFrame(() => {
+          const selected = [...document.querySelectorAll("[data-action='show-database-operation-result-item']")]
+            .find((element) => element.dataset.itemKey === itemKey);
+          selected?.focus({ preventScroll: true });
+          document.querySelector(".database-operation-result-item-details")
+            ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+      });
+    });
+    document.querySelector("[data-action='export-database-operation-result']")
+      ?.addEventListener("click", exportDatabaseOperationResultReport);
 
     document.querySelectorAll("[data-view]").forEach((button) => {
       button.addEventListener("click", async () => {
@@ -46458,6 +46621,81 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function buildDatabaseOperationDetailRows(records, fields) {
+    const sourceRecords = Array.isArray(records) ? records : [];
+    const definitions = Array.isArray(fields) ? fields : [];
+    return sourceRecords.map((record, index) => Object.fromEntries(definitions.map((field) => [
+      field.key,
+      typeof field.value === "function"
+        ? field.value(record, index)
+        : record?.[field.key] ?? ""
+    ])));
+  }
+
+  function databaseOperationDetailColumns(fields) {
+    return (Array.isArray(fields) ? fields : []).map((field) => ({
+      key: field.key,
+      label: field.label
+    }));
+  }
+
+  function databaseOperationRuleRows(value) {
+    return String(value || "")
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((rule, index) => ({ number: index + 1, rule }));
+  }
+
+  const databaseOperationDetailFields = Object.freeze({
+    students: Object.freeze([
+      { key: "uid", label: "UID" },
+      { key: "name", label: "ФИО" },
+      { key: "status", label: "Статус" },
+      { key: "program", label: "Программа" }
+    ]),
+    contracts: Object.freeze([
+      { key: "contractNo", label: "Номер договора" },
+      { key: "name", label: "ФИО / контрагент" },
+      { key: "section", label: "Раздел" },
+      { key: "endDate", label: "Срок по" }
+    ]),
+    directExpenses: Object.freeze([
+      { key: "uid", label: "UID слушателя" },
+      { key: "date", label: "Дата" },
+      { key: "type", label: "Вид затрат" },
+      { key: "amount", label: "Сумма" },
+      { key: "note", label: "Примечание" }
+    ]),
+    generalExpenses: Object.freeze([
+      { key: "section", label: "Раздел" },
+      { key: "date", label: "Дата" },
+      { key: "counterparty", label: "Контрагент" },
+      { key: "workType", label: "Вид работ" },
+      { key: "amount", label: "Сумма" },
+      { key: "description", label: "Описание" }
+    ]),
+    inventory: Object.freeze([
+      { key: "name", label: "Наименование" },
+      { key: "type", label: "Вид" },
+      { key: "amount", label: "Количество" },
+      { key: "balance", label: "Остаток" }
+    ]),
+    programs: Object.freeze([
+      { key: "name", label: "Программа" },
+      { key: "landingCode", label: "Код лендинга" },
+      { key: "type", label: "Тип" },
+      { key: "status", label: "Статус" }
+    ]),
+    trainingPlans: Object.freeze([
+      { key: "programName", label: "Программа" },
+      { key: "code", label: "Код" },
+      { key: "discipline", label: "Дисциплина" },
+      { key: "totalHours", label: "Часы" },
+      { key: "attestation", label: "Аттестация" }
+    ])
+  });
+
   function getDownloadFileNameFromResponse(response, fallback) {
     const disposition = String(response.headers.get("Content-Disposition") || "");
     const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
@@ -46702,6 +46940,25 @@ MAX - https://bizvmax.ru/zifra_plus
         "success",
         "Готово: " + directionLabel + ". Время выполнения: " + duration
       );
+      const detailStudents = direction === "excel-to-web" ? buildStudentDatabaseExportStudents() : students;
+      const detailContracts = direction === "excel-to-web" ? buildStudentDatabaseExportContracts() : contracts;
+      const detailDirectExpenses = direction === "excel-to-web"
+        ? buildStudentDatabaseExportDirectExpenses()
+        : directExpenses;
+      const detailGeneralExpenses = direction === "excel-to-web"
+        ? buildStudentDatabaseExportGeneralExpenses()
+        : generalExpenses;
+      const detailInventory = direction === "excel-to-web" ? buildStudentDatabaseExportInventory() : inventory;
+      const detailPrograms = direction === "excel-to-web" ? buildStudentDatabaseExportPrograms() : programs;
+      const detailTrainingPlans = direction === "excel-to-web"
+        ? buildStudentDatabaseExportTrainingPlans()
+        : trainingPlans;
+      const skippedPrograms = Array.isArray(result.programPromoSkippedDetails)
+        ? result.programPromoSkippedDetails
+        : [];
+      const missingProgramColumns = Array.isArray(result.programMissingManagedColumnNames)
+        ? result.programMissingManagedColumnNames.map((name) => ({ name }))
+        : [];
       showDatabaseOperationResult({
         eyebrow: "Синхронизация с XLSB",
         title: direction === "unchanged" ? "Изменений не найдено" : "Синхронизация завершена",
@@ -46711,23 +46968,80 @@ MAX - https://bizvmax.ru/zifra_plus
             ? "Изменения Web перенесены в XLSB " + sourceLabel + "; резервная копия создана."
             : "XLSB и Web-база не изменились после прошлой синхронизации.",
         items: [
-          { label: "Направление", value: directionLabel },
-          { label: "Слушатели", value: operationSummary?.studentCount ?? result.studentCount ?? students.length },
-          { label: "Договоры", value: operationSummary?.contractCount ?? result.contractCount ?? contracts.length },
+          { key: "direction", label: "Направление", value: directionLabel, note: "Направление переноса изменений" },
           {
+            key: "students",
+            label: "Слушатели",
+            value: operationSummary?.studentCount ?? result.studentCount ?? students.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.students),
+            rows: buildDatabaseOperationDetailRows(detailStudents, databaseOperationDetailFields.students)
+          },
+          {
+            key: "contracts",
+            label: "Договоры",
+            value: operationSummary?.contractCount ?? result.contractCount ?? contracts.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.contracts),
+            rows: buildDatabaseOperationDetailRows(detailContracts, databaseOperationDetailFields.contracts)
+          },
+          {
+            key: "direct-expenses",
             label: "Прямые затраты",
-            value: operationSummary?.directExpenseCount ?? result.directExpenseCount ?? directExpenses.length
+            value: operationSummary?.directExpenseCount ?? result.directExpenseCount ?? directExpenses.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.directExpenses),
+            rows: buildDatabaseOperationDetailRows(detailDirectExpenses, databaseOperationDetailFields.directExpenses)
           },
           {
+            key: "general-expenses",
             label: "Общие затраты",
-            value: operationSummary?.generalExpenseCount ?? result.generalExpenseCount ?? generalExpenses.length
+            value: operationSummary?.generalExpenseCount ?? result.generalExpenseCount ?? generalExpenses.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.generalExpenses),
+            rows: buildDatabaseOperationDetailRows(detailGeneralExpenses, databaseOperationDetailFields.generalExpenses)
           },
-          { label: "Запасы", value: operationSummary?.inventoryCount ?? result.inventoryCount ?? inventory.length },
-          { label: "Программы", value: operationSummary?.programCount ?? result.programCount ?? programs.length },
           {
+            key: "inventory",
+            label: "Запасы",
+            value: operationSummary?.inventoryCount ?? result.inventoryCount ?? inventory.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.inventory),
+            rows: buildDatabaseOperationDetailRows(detailInventory, databaseOperationDetailFields.inventory)
+          },
+          {
+            key: "programs",
+            label: "Программы",
+            value: operationSummary?.programCount ?? result.programCount ?? programs.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.programs),
+            rows: buildDatabaseOperationDetailRows(detailPrograms, databaseOperationDetailFields.programs)
+          },
+          {
+            key: "training-plans",
             label: "Учебные планы",
-            value: operationSummary?.trainingPlanCount ?? result.trainingPlanCount ?? trainingPlans.length
-          }
+            value: operationSummary?.trainingPlanCount ?? result.trainingPlanCount ?? trainingPlans.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.trainingPlans),
+            rows: buildDatabaseOperationDetailRows(detailTrainingPlans, databaseOperationDetailFields.trainingPlans)
+          },
+          ...(Number(result.programPromoSkippedCount || 0) > 0 ? [{
+            key: "unmatched-programs",
+            label: "Не сопоставлено программ",
+            value: Number(result.programPromoSkippedCount || 0),
+            note: "Проверьте название и код лендинга",
+            problem: true,
+            columns: [
+              { key: "name", label: "Программа Web" },
+              { key: "landingCode", label: "Код лендинга Web" },
+              { key: "sourceName", label: "Исходное название XLSB" },
+              { key: "sourceLandingCode", label: "Исходный код XLSB" },
+              { key: "reason", label: "Причина" }
+            ],
+            rows: skippedPrograms
+          }] : []),
+          ...(Number(result.programMissingManagedColumnCount || 0) > 0 ? [{
+            key: "missing-program-columns",
+            label: "Не найдено колонок программ",
+            value: Number(result.programMissingManagedColumnCount || 0),
+            note: "Поля Web отсутствуют в заголовке листа «Реестр программ»",
+            problem: true,
+            columns: [{ key: "name", label: "Поле" }],
+            rows: missingProgramColumns
+          }] : [])
         ],
         details: [
           { label: "Источник", value: sourceLabel },
@@ -46853,23 +47167,133 @@ MAX - https://bizvmax.ru/zifra_plus
         "success",
         `Файл «${fileName}» скачан. Время выполнения: ${duration}`
       );
+      const paymentRuleRows = databaseOperationRuleRows(macroSettings.automaticExpenseRules);
+      const promoMessageRows = programs.flatMap((program) => ([
+        ...(program.promoMessage1Provided ? [{
+          program: program.name,
+          landingCode: program.landingCode,
+          field: "Промосообщение 1",
+          value: program.promoMessage1
+        }] : []),
+        ...(program.promoMessage2Provided ? [{
+          program: program.name,
+          landingCode: program.landingCode,
+          field: "Промосообщение 2",
+          value: program.promoMessage2
+        }] : [])
+      ]));
+      const emailMessageRows = programs
+        .filter((program) => program.emailMessageTemplateProvided)
+        .map((program) => ({
+          program: program.name,
+          landingCode: program.landingCode,
+          value: program.emailMessageTemplate
+        }));
+      const skippedPrograms = Array.isArray(result.programPromoSkippedDetails)
+        ? result.programPromoSkippedDetails
+        : [];
+      const missingProgramColumns = Array.isArray(result.programMissingManagedColumnNames)
+        ? result.programMissingManagedColumnNames.map((name) => ({ name }))
+        : [];
+      const missingNamedRanges = Array.isArray(result.communicationTemplateMissingNamedRangeNames)
+        ? result.communicationTemplateMissingNamedRangeNames.map((name) => ({ name }))
+        : [];
       showDatabaseOperationResult({
         eyebrow: "Экспорт XLSB",
         title: "Экспорт завершён",
         summary: `Файл «${fileName}» сформирован и скачан в папку «Загрузки».`,
         items: [
-          { label: "Слушатели", value: students.length },
-          { label: "Договоры", value: contracts.length },
-          { label: "Прямые затраты", value: directExpenses.length },
-          { label: "Общие затраты", value: generalExpenses.length },
-          { label: "Правила оплаты", value: result.automaticExpenseRuleCount || 0 },
-          { label: "Промосообщения", value: result.programPromoMessageCount || 0 },
-          { label: "Почтовые сообщения программ", value: result.programEmailMessageCount || 0 },
           {
+            key: "students",
+            label: "Слушатели",
+            value: students.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.students),
+            rows: buildDatabaseOperationDetailRows(students, databaseOperationDetailFields.students)
+          },
+          {
+            key: "contracts",
+            label: "Договоры",
+            value: contracts.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.contracts),
+            rows: buildDatabaseOperationDetailRows(contracts, databaseOperationDetailFields.contracts)
+          },
+          {
+            key: "direct-expenses",
+            label: "Прямые затраты",
+            value: directExpenses.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.directExpenses),
+            rows: buildDatabaseOperationDetailRows(directExpenses, databaseOperationDetailFields.directExpenses)
+          },
+          {
+            key: "general-expenses",
+            label: "Общие затраты",
+            value: generalExpenses.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.generalExpenses),
+            rows: buildDatabaseOperationDetailRows(generalExpenses, databaseOperationDetailFields.generalExpenses)
+          },
+          {
+            key: "payment-rules",
+            label: "Правила оплаты",
+            value: result.automaticExpenseRuleCount || 0,
+            columns: [{ key: "number", label: "№" }, { key: "rule", label: "Правило" }],
+            rows: paymentRuleRows
+          },
+          {
+            key: "promo-messages",
+            label: "Промосообщения",
+            value: result.programPromoMessageCount || 0,
+            columns: [
+              { key: "program", label: "Программа" },
+              { key: "landingCode", label: "Код лендинга" },
+              { key: "field", label: "Поле" },
+              { key: "value", label: "Сообщение" }
+            ],
+            rows: promoMessageRows
+          },
+          {
+            key: "email-messages",
+            label: "Почтовые сообщения программ",
+            value: result.programEmailMessageCount || 0,
+            columns: [
+              { key: "program", label: "Программа" },
+              { key: "landingCode", label: "Код лендинга" },
+              { key: "value", label: "Сообщение" }
+            ],
+            rows: emailMessageRows
+          },
+          {
+            key: "unmatched-programs",
             label: "Не сопоставлено программ",
             value: result.programPromoSkippedCount || 0,
-            note: result.programPromoSkippedCount ? "Проверьте название и код лендинга" : "Все программы сопоставлены"
-          }
+            note: result.programPromoSkippedCount ? "Проверьте название и код лендинга" : "Все программы сопоставлены",
+            problem: Number(result.programPromoSkippedCount || 0) > 0,
+            columns: [
+              { key: "name", label: "Программа Web" },
+              { key: "landingCode", label: "Код лендинга Web" },
+              { key: "sourceName", label: "Исходное название XLSB" },
+              { key: "sourceLandingCode", label: "Исходный код XLSB" },
+              { key: "reason", label: "Причина" }
+            ],
+            rows: skippedPrograms
+          },
+          ...(Number(result.programMissingManagedColumnCount || 0) > 0 ? [{
+            key: "missing-program-columns",
+            label: "Не найдено колонок программ",
+            value: Number(result.programMissingManagedColumnCount || 0),
+            note: "Поля Web отсутствуют в заголовке листа «Реестр программ»",
+            problem: true,
+            columns: [{ key: "name", label: "Поле" }],
+            rows: missingProgramColumns
+          }] : []),
+          ...(Number(result.communicationTemplateMissingNamedRangeCount || 0) > 0 ? [{
+            key: "missing-named-ranges",
+            label: "Не найдено именованных диапазонов",
+            value: Number(result.communicationTemplateMissingNamedRangeCount || 0),
+            note: "Параметры сообщений отсутствуют в шаблоне XLSB",
+            problem: true,
+            columns: [{ key: "name", label: "Именованный диапазон" }],
+            rows: missingNamedRanges
+          }] : [])
         ],
         details: [
           { label: "Файл", value: fileName },
@@ -47822,20 +48246,81 @@ MAX - https://bizvmax.ru/zifra_plus
         title: "Импорт завершён",
         summary: `Данные успешно загружены ${sourceLabel} и сохранены в системе.`,
         items: [
-          { label: "Слушатели", value: payload.count || nextStudents.length },
-          { label: "Договоры", value: nextContracts.length },
-          { label: "Затраты привязаны", value: linkedDirectExpenseCount, note: "К карточкам слушателей" },
-          { label: "Затраты не привязаны", value: nextDirectExpenses.length, note: "Оставлены в разделе прямых затрат" },
-          { label: "Общие затраты", value: nextGeneralExpenses.length },
-          { label: "Позиции запасов", value: nextInventory.length },
-          { label: "Настройки программ", value: payload.programPaymentSettings.length },
-          { label: "Учебные планы", value: nextTrainingPlans.length, note: "Строки листа «Учебные планы»" },
+          {
+            key: "students",
+            label: "Слушатели",
+            value: payload.count || nextStudents.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.students),
+            rows: buildDatabaseOperationDetailRows(nextStudents, databaseOperationDetailFields.students)
+          },
+          {
+            key: "contracts",
+            label: "Договоры",
+            value: nextContracts.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.contracts),
+            rows: buildDatabaseOperationDetailRows(nextContracts, databaseOperationDetailFields.contracts)
+          },
+          {
+            key: "linked-expenses",
+            label: "Затраты привязаны",
+            value: linkedDirectExpenseCount,
+            note: "К карточкам слушателей",
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.directExpenses),
+            rows: buildDatabaseOperationDetailRows(
+              nextStudents.flatMap((student) => Array.isArray(student.directExpenses) ? student.directExpenses : []),
+              databaseOperationDetailFields.directExpenses
+            )
+          },
+          {
+            key: "unlinked-expenses",
+            label: "Затраты не привязаны",
+            value: nextDirectExpenses.length,
+            note: "Оставлены в разделе прямых затрат",
+            problem: nextDirectExpenses.length > 0,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.directExpenses),
+            rows: buildDatabaseOperationDetailRows(nextDirectExpenses, databaseOperationDetailFields.directExpenses)
+          },
+          {
+            key: "general-expenses",
+            label: "Общие затраты",
+            value: nextGeneralExpenses.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.generalExpenses),
+            rows: buildDatabaseOperationDetailRows(nextGeneralExpenses, databaseOperationDetailFields.generalExpenses)
+          },
+          {
+            key: "inventory",
+            label: "Позиции запасов",
+            value: nextInventory.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.inventory),
+            rows: buildDatabaseOperationDetailRows(nextInventory, databaseOperationDetailFields.inventory)
+          },
+          {
+            key: "programs",
+            label: "Настройки программ",
+            value: payload.programPaymentSettings.length,
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.programs),
+            rows: buildDatabaseOperationDetailRows(payload.programPaymentSettings, databaseOperationDetailFields.programs)
+          },
+          {
+            key: "training-plans",
+            label: "Учебные планы",
+            value: nextTrainingPlans.length,
+            note: "Строки листа «Учебные планы»",
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.trainingPlans),
+            rows: buildDatabaseOperationDetailRows(nextTrainingPlans, databaseOperationDetailFields.trainingPlans)
+          },
           ...(importedAutomaticExpenseRuleCount === null
             ? []
-            : [{ label: "Правила оплаты", value: importedAutomaticExpenseRuleCount }]),
-          { label: "Выдачи запасов", value: inventoryLinkedExpenseCount, note: "Связаны с карточками" },
+            : [{
+              key: "payment-rules",
+              label: "Правила оплаты",
+              value: importedAutomaticExpenseRuleCount,
+              columns: [{ key: "number", label: "№" }, { key: "rule", label: "Правило" }],
+              rows: databaseOperationRuleRows(getPaymentSettingValue("automaticExpenseRules"))
+            }]),
+          { key: "inventory-issues", label: "Выдачи запасов", value: inventoryLinkedExpenseCount, note: "Связаны с карточками" },
           ...(inventoryGeneratedExpenseCount
-            ? [{ label: "Восстановлено выдач", value: inventoryGeneratedExpenseCount, note: "Из листа «Запасы»" }]
+            ? [{ key: "restored-inventory-issues", label: "Восстановлено выдач", value: inventoryGeneratedExpenseCount, note: "Из листа «Запасы»" }]
             : [])
         ],
         details: [
