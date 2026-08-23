@@ -3,8 +3,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const serverPath = path.resolve(__dirname, "..", "app-server.js");
+const clientPath = path.resolve(__dirname, "..", "app.js");
 const syncScriptPath = path.resolve(__dirname, "sync-student-database.ps1");
 const serverSource = fs.readFileSync(serverPath, "utf8");
+const clientSource = fs.readFileSync(clientPath, "utf8");
 const syncScriptSource = fs.readFileSync(syncScriptPath, "utf8");
 const { sanitizePowerShellErrorOutput } = require(serverPath);
 
@@ -24,7 +26,15 @@ assert.equal(
 assert.match(serverSource, /\$ProgressPreference = 'SilentlyContinue'/u);
 assert.match(serverSource, /STUDENT_DATABASE_SYNC_IDLE_TIMEOUT_MS = 20 \* 60 \* 1000/u);
 assert.match(serverSource, /STUDENT_DATABASE_SYNC_MAX_TIMEOUT_MS = 60 \* 60 \* 1000/u);
+assert.match(serverSource, /STUDENT_EXPORT_JOB_TTL_MS = 2 \* 60 \* 60 \* 1000/u);
+assert.match(
+  serverSource,
+  /function cleanupStudentExportJobs\(\) \{[\s\S]*?STUDENT_EXPORT_JOB_TTL_MS[\s\S]*?job\.status !== "running"/u
+);
 assert.match(serverSource, /AIS_SYNC_EXCEL_PID_PATH/u);
+assert.match(clientSource, /function isMissingStudentDatabaseExportJobError\(error\)/u);
+assert.match(clientSource, /const maxAttempts = 2;[\s\S]*?runStudentDatabaseExportAttempt\(body\)/u);
+assert.match(clientSource, /Сервер был перезапущен\. Подготовка/u);
 assert.match(syncScriptSource, /\$excel\.Calculation = -4135/u);
 assert.match(syncScriptSource, /AIS_SYNC_EXCEL_PID_PATH/u);
 

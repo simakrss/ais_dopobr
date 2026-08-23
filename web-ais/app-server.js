@@ -197,6 +197,7 @@ const SMTP_MESSAGE_TIMEOUT_MS = 60 * 1000;
 const STUDENT_IMPORT_JOB_TTL_MS = 15 * 60 * 1000;
 const STUDENT_DATABASE_SYNC_IDLE_TIMEOUT_MS = 20 * 60 * 1000;
 const STUDENT_DATABASE_SYNC_MAX_TIMEOUT_MS = 60 * 60 * 1000;
+const STUDENT_EXPORT_JOB_TTL_MS = 2 * 60 * 60 * 1000;
 const STUDENT_DATABASE_SYNC_RESERVATION_TTL_MS = 65 * 60 * 1000;
 const STUDENT_DOCUMENT_RECOGNITION_JOB_TTL_MS = 30 * 60 * 1000;
 const studentImportJobs = new Map();
@@ -18338,7 +18339,7 @@ function buildStudentDatabaseImportResult(result, source = "webdav") {
 function cleanupStudentImportJobs() {
   const expiresBefore = Date.now() - STUDENT_IMPORT_JOB_TTL_MS;
   studentImportJobs.forEach((job, id) => {
-    if (job.updatedAt < expiresBefore) studentImportJobs.delete(id);
+    if (job.status !== "running" && job.updatedAt < expiresBefore) studentImportJobs.delete(id);
   });
 }
 
@@ -19186,9 +19187,9 @@ async function handleStudentDatabaseExport(req, res) {
 }
 
 function cleanupStudentExportJobs() {
-  const expiresBefore = Date.now() - STUDENT_IMPORT_JOB_TTL_MS;
+  const expiresBefore = Date.now() - STUDENT_EXPORT_JOB_TTL_MS;
   studentExportJobs.forEach((job, id) => {
-    if (job.updatedAt < expiresBefore) studentExportJobs.delete(id);
+    if (job.status !== "running" && job.updatedAt < expiresBefore) studentExportJobs.delete(id);
   });
 }
 

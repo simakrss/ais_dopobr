@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.242",
+    version: "1.7.243",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.243",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Активная задача синхронизации или экспорта XLSB больше не удаляется по таймеру во время длительной работы Excel.",
+        "После перезапуска сервера подготовка операции автоматически запускается повторно без дублирования изменений в базе."
+      ]
+    },
     {
       version: "1.7.242",
       releasedAt: "2026-08-23",
@@ -46026,7 +46034,12 @@ MAX - https://bizvmax.ru/zifra_plus
     return readStudentImportResponse(resultResponse);
   }
 
-  async function runStudentDatabaseExport(body) {
+  function isMissingStudentDatabaseExportJobError(error) {
+    return Number(error?.status) === 404
+      && /(?:задач[аи]|срок\s+(?:е[её]|хранения))/iu.test(String(error?.message || ""));
+  }
+
+  async function runStudentDatabaseExportAttempt(body) {
     const isFileExport = body.downloadOnly === true;
     const operationGenitive = isFileExport ? "экспорта" : "синхронизации";
     const startResponse = await fetch(photoApiUrl("/api/students/export-database/start"), {
@@ -46081,6 +46094,28 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const result = await readStudentImportResponse(resultResponse);
     return { ...result, jobId: job.id };
+  }
+
+  async function runStudentDatabaseExport(body) {
+    const isFileExport = body.downloadOnly === true;
+    const operationGenitive = isFileExport ? "экспорта" : "синхронизации";
+    const maxAttempts = 2;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        return await runStudentDatabaseExportAttempt(body);
+      } catch (error) {
+        if (attempt + 1 >= maxAttempts || !isMissingStudentDatabaseExportJobError(error)) {
+          throw error;
+        }
+        updateDatabaseExportIndicator({
+          status: `Сервер был перезапущен. Подготовка ${operationGenitive} запускается повторно...`,
+          progress: 0,
+          indeterminate: false
+        });
+        await waitForStudentImportPoll(1200);
+      }
+    }
+    throw new Error(`Не удалось повторно запустить задачу ${operationGenitive}.`);
   }
 
   function isRetryableStudentDatabaseCommitError(error) {

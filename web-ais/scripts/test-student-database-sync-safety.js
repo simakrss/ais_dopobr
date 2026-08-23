@@ -8,8 +8,8 @@ const vm = require("node:vm");
 
 const serverPath = path.resolve(__dirname, "..", "app-server.js");
 const clientPath = path.resolve(__dirname, "..", "app.js");
-const serverSource = fs.readFileSync(serverPath, "utf8");
-const clientSource = fs.readFileSync(clientPath, "utf8");
+const serverSource = fs.readFileSync(serverPath, "utf8").replace(/\r\n?/gu, "\n");
+const clientSource = fs.readFileSync(clientPath, "utf8").replace(/\r\n?/gu, "\n");
 const {
   normalizeStudentDatabaseSyncBaseline,
   resolveStudentDatabaseSyncDirection,
