@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.245",
+    version: "1.7.246",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.246",
+      releasedAt: "2026-08-23",
+      changes: [
+        "В статистику доходов добавлен отдельный показатель средней рентабельности продаж с учётом выбранных фильтров."
+      ]
+    },
     {
       version: "1.7.245",
       releasedAt: "2026-08-23",
@@ -9045,7 +9052,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderStatisticsKpis(items = []) {
     return `
-      <div class="statistics-kpi-grid">
+      <div class="statistics-kpi-grid ${items.length > 4 ? "is-dense" : ""}">
         ${items.map((item) => `
           <article class="statistics-kpi-card tone-${escapeAttr(item.tone || "teal")}">
             <span>${escapeHtml(item.label)}</span>
@@ -9279,6 +9286,14 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function calculateStatisticsSalesProfitability(incomeTotal, expenseTotal) {
+    const income = Number(incomeTotal);
+    const expenses = Number(expenseTotal);
+    if (!Number.isFinite(income) || income <= 0) return null;
+    const normalizedExpenses = Number.isFinite(expenses) ? expenses : 0;
+    return Math.round(((income - normalizedExpenses) / income) * 1000) / 10;
+  }
+
   function buildStatisticsIncomeReport() {
     const finance = getStatisticsFinanceRows();
     const income = finance.income.filter((row) => statisticsRowMatches(row));
@@ -9286,6 +9301,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .filter((row) => statisticsRowMatches(row, { expense: false }));
     const incomeTotal = income.reduce((sum, row) => sum + Number(row.amount || 0), 0);
     const expenseTotal = expenses.reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0);
+    const profit = incomeTotal - expenseTotal;
     const studentIds = new Set(income.map((row) => row.studentId || row.studentUid || row.subject).filter(Boolean));
     const sourceStudents = new Map();
     income.forEach((row) => {
@@ -9306,7 +9322,8 @@ MAX - https://bizvmax.ru/zifra_plus
       expenses,
       incomeTotal,
       expenseTotal,
-      profit: incomeTotal - expenseTotal,
+      profit,
+      salesProfitability: calculateStatisticsSalesProfitability(incomeTotal, expenseTotal),
       studentCount: studentIds.size,
       monthly: buildStatisticsMonthlySeries(income, expenses),
       sources: [...sourceStudents.entries()].map(([label, values]) => ({ label, value: values.size })),
@@ -9318,15 +9335,18 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderStatisticsIncome() {
     const report = buildStatisticsIncomeReport();
-    const profitability = report.incomeTotal
-      ? Math.round((report.profit / report.incomeTotal) * 1000) / 10
-      : 0;
     return `
       ${renderStatisticsKpis([
         { label: "Суммарные доходы", value: money(report.incomeTotal), note: "Фактические поступления", tone: "teal" },
         { label: "Количество слушателей", value: formatStatisticsInteger(report.studentCount), note: "С поступлениями в периоде", tone: "blue" },
         { label: "Суммарные затраты", value: money(report.expenseTotal), note: "Прямые и общие", tone: "amber" },
-        { label: "Финансовый результат", value: money(report.profit), note: `Рентабельность: ${percent(profitability)}`, tone: report.profit < 0 ? "red" : "green" }
+        { label: "Финансовый результат", value: money(report.profit), note: "Доходы за вычетом затрат", tone: report.profit < 0 ? "red" : "green" },
+        {
+          label: "Средняя рентабельность продаж",
+          value: report.salesProfitability === null ? "—" : percent(report.salesProfitability),
+          note: "Прибыль / фактические поступления",
+          tone: report.salesProfitability === null ? "blue" : (report.salesProfitability < 0 ? "red" : "green")
+        }
       ])}
       <div class="statistics-two-column">
         <section class="panel statistics-visual-panel statistics-wide-panel">

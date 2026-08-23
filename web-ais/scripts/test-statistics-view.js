@@ -30,6 +30,7 @@ assert.match(appSource, /getOrderedTabs\("statistics", statisticsTabs\)/u);
 assert.match(appSource, /data-orderable-tabs="statistics"/u);
 assert.match(appSource, /Интерактивная статистика/u);
 assert.match(appSource, /Доходы и затраты по месяцам, тыс\. руб\./u);
+assert.match(appSource, /Средняя рентабельность продаж/u);
 assert.match(appSource, /renderStatisticsInstallDownloadChart/u);
 assert.match(appSource, /renderStatisticsLocationChart/u);
 assert.match(appSource, /sortStatisticsMonthSeries/u);
@@ -110,6 +111,19 @@ assert.match(financeChart, /<small>125<\/small>/u);
 assert.doesNotMatch(financeChart, /т\.р\./u);
 assert.match(financeChart, /--statistics-bar-height:100%/u);
 assert.match(financeChart, /statistics-chart-bar-area[\s\S]*<small>125<\/small>[\s\S]*<i/u);
+
+const salesProfitabilityBlock = sourceBlock(
+  appSource,
+  "function calculateStatisticsSalesProfitability(",
+  "function buildStatisticsIncomeReport("
+);
+const calculateStatisticsSalesProfitability = new Function(
+  `${salesProfitabilityBlock}\nreturn calculateStatisticsSalesProfitability;`
+)();
+assert.equal(calculateStatisticsSalesProfitability(100000, 40000), 60);
+assert.equal(calculateStatisticsSalesProfitability(100000, 125000), -25);
+assert.equal(calculateStatisticsSalesProfitability(0, 0), null);
+assert.equal(calculateStatisticsSalesProfitability("", 1000), null);
 
 const normalizeAssistantStatisticsBlock = sourceBlock(
   serverSource,

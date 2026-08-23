@@ -21171,6 +21171,10 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   gap: 10px;
 }
 
+.statistics-kpi-grid.is-dense {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .statistics-kpi-card {
   position: relative;
   display: grid;
@@ -21924,7 +21928,8 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 @media (max-width: 980px) {
-  .statistics-kpi-grid {
+  .statistics-kpi-grid,
+  .statistics-kpi-grid.is-dense {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
