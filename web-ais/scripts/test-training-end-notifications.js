@@ -8,8 +8,11 @@ process.env.AIS_SHARED_STATE_LOCAL_ONLY = "1";
 
 const {
   getMoscowCalendarDate,
+  getCalendarDateInTimeZone,
   parseTrainingEndNotificationDate,
   getTrainingEndNotificationCandidates,
+  getTrainingEndNotificationConfiguration,
+  getTrainingEndNotificationSchedule,
   buildTrainingEndNotificationMessage
 } = require("../app-server.js");
 
@@ -27,6 +30,60 @@ assert.deepEqual(getMoscowCalendarDate("2026-08-21T21:30:00.000Z"), {
 assert.equal(parseTrainingEndNotificationDate("27.08.2026"), Date.UTC(2026, 7, 27));
 assert.equal(parseTrainingEndNotificationDate("2026-08-27"), Date.UTC(2026, 7, 27));
 assert.equal(parseTrainingEndNotificationDate("31.02.2026"), null);
+
+assert.deepEqual(getCalendarDateInTimeZone("2026-08-24T04:15:00.000Z", "Asia/Yekaterinburg"), {
+  key: "2026-08-24",
+  utcDay: Date.UTC(2026, 7, 24),
+  weekday: 1,
+  minutesOfDay: 9 * 60 + 15,
+  timeZone: "Asia/Yekaterinburg"
+});
+
+assert.deepEqual(getTrainingEndNotificationConfiguration({
+  enabled: true,
+  days: 7,
+  time: "10:30",
+  timeZone: "Asia/Yekaterinburg",
+  frequency: "weekdays"
+}), {
+  enabled: true,
+  days: 7,
+  time: "10:30",
+  timeZone: "Asia/Yekaterinburg",
+  frequency: "weekdays",
+  recipient: "mail@edu-plus.ru"
+});
+
+assert.equal(getTrainingEndNotificationSchedule("2026-08-24T06:29:00.000Z", {
+  time: "09:30",
+  timeZone: "Europe/Moscow",
+  frequency: "daily"
+}).due, false);
+assert.equal(getTrainingEndNotificationSchedule("2026-08-24T06:30:00.000Z", {
+  time: "09:30",
+  timeZone: "Europe/Moscow",
+  frequency: "daily"
+}).due, true);
+assert.deepEqual(getTrainingEndNotificationSchedule("2026-08-23T09:00:00.000Z", {
+  time: "09:00",
+  timeZone: "Europe/Moscow",
+  frequency: "weekdays"
+}), {
+  due: false,
+  reason: "non-working-day",
+  periodKey: "2026-08-23",
+  calendarDate: "2026-08-23",
+  utcDay: Date.UTC(2026, 7, 23),
+  weekday: 0,
+  time: "09:00",
+  timeZone: "Europe/Moscow",
+  frequency: "weekdays"
+});
+assert.equal(getTrainingEndNotificationSchedule("2026-08-26T09:00:00.000Z", {
+  time: "09:00",
+  timeZone: "Europe/Moscow",
+  frequency: "weekly"
+}).periodKey, "2026-08-24");
 
 const candidates = getTrainingEndNotificationCandidates([
   {
@@ -93,9 +150,15 @@ assert.match(appSource, /version: "1\.7\.214"/u);
 assert.match(appSource, /name="trainingEndNotificationsEnabled"/u);
 assert.match(appSource, /name="trainingEndNotificationDays"/u);
 assert.match(appSource, /Уведомлять за \(дней\)/u);
+assert.match(appSource, /name="trainingEndNotificationTime"/u);
+assert.match(appSource, /name="trainingEndNotificationTimeZone"/u);
+assert.match(appSource, /name="trainingEndNotificationFrequency"/u);
+assert.match(appSource, /Еженедельно, по понедельникам/u);
 assert.match(appSource, /\/api\/training-end-notifications\/check/u);
 assert.match(appSource, /\/api\/admin\/training-end-notifications\/run/u);
 assert.match(appSource, /TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS/u);
+assert.match(serverSource, /const TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS = 60 \* 1000;/u);
+assert.match(serverSource, /getTrainingEndNotificationSchedule/u);
 assert.match(serverSource, /DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN = "mail@edu-plus\.ru"/u);
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_scheduled_job_runs/u);
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_scheduled_job_settings/u);

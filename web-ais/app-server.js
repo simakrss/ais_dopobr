@@ -125,8 +125,12 @@ const PARTNER_REGISTRATION_CHALLENGE_RATE_WINDOW_MS = 10 * 60 * 1000;
 const PARTNER_REGISTRATION_MAX_CHALLENGES_PER_WINDOW = 30;
 const PARTNER_REGISTRATION_MAX_ACTIVE_CHALLENGES = 5000;
 const DEFAULT_TRAINING_END_NOTIFICATION_DAYS = 5;
+const DEFAULT_TRAINING_END_NOTIFICATION_TIME = "09:00";
+const DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE = "Europe/Moscow";
+const DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY = "daily";
+const TRAINING_END_NOTIFICATION_FREQUENCIES = new Set(["daily", "weekdays", "weekly"]);
 const TRAINING_END_NOTIFICATION_JOB_NAME = "training-end-notification";
-const TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS = 60 * 1000;
 const TRAINING_END_NOTIFICATION_RUNNING_STALE_MS = 20 * 60 * 1000;
 const TRAINING_END_NOTIFICATION_FAILED_RETRY_MS = 30 * 60 * 1000;
 const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
@@ -905,6 +909,9 @@ async function ensureStorage() {
     emailRequestDeliveryAndReadReceipts: true,
     trainingEndNotificationsEnabled: true,
     trainingEndNotificationDays: DEFAULT_TRAINING_END_NOTIFICATION_DAYS,
+    trainingEndNotificationTime: DEFAULT_TRAINING_END_NOTIFICATION_TIME,
+    trainingEndNotificationTimeZone: DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE,
+    trainingEndNotificationFrequency: DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY,
     studentDocumentMailboxes: [],
     documentConverterUrl: DEFAULT_DOCUMENT_CONVERTER_URL,
     documentConverterSourceUrl: DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL,
@@ -14115,22 +14122,118 @@ async function sendEmailThroughConfiguredMailbox({ to, subject, message, attachm
   });
 }
 
-function getMoscowCalendarDate(value = new Date()) {
+function isValidTrainingEndNotificationTime(value) {
+  return /^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(String(value || "").trim());
+}
+
+function normalizeTrainingEndNotificationTime(value) {
+  const text = String(value || "").trim();
+  return isValidTrainingEndNotificationTime(text)
+    ? text
+    : DEFAULT_TRAINING_END_NOTIFICATION_TIME;
+}
+
+function isValidTrainingEndNotificationTimeZone(value) {
+  const text = String(value || "").trim();
+  if (!text || text.length > 96) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: text }).format(new Date(0));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeTrainingEndNotificationTimeZone(value) {
+  const text = String(value || "").trim();
+  return isValidTrainingEndNotificationTimeZone(text)
+    ? text
+    : DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE;
+}
+
+function normalizeTrainingEndNotificationFrequency(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return TRAINING_END_NOTIFICATION_FREQUENCIES.has(text)
+    ? text
+    : DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY;
+}
+
+function getCalendarDateInTimeZone(value = new Date(), timeZone = DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return null;
+  const normalizedTimeZone = normalizeTrainingEndNotificationTimeZone(timeZone);
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Moscow",
+    timeZone: normalizedTimeZone,
     year: "numeric",
     month: "2-digit",
-    day: "2-digit"
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
   }).formatToParts(date).map((part) => [part.type, part.value]));
   const year = Number(parts.year);
   const month = Number(parts.month);
   const day = Number(parts.day);
   if (!year || !month || !day) return null;
+  const weekday = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6
+  }[parts.weekday];
+  const hour = Number(parts.hour) % 24;
+  const minute = Number(parts.minute);
   return {
     key: `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
-    utcDay: Date.UTC(year, month - 1, day)
+    utcDay: Date.UTC(year, month - 1, day),
+    weekday: Number.isInteger(weekday) ? weekday : new Date(Date.UTC(year, month - 1, day)).getUTCDay(),
+    minutesOfDay: (Number.isFinite(hour) ? hour : 0) * 60 + (Number.isFinite(minute) ? minute : 0),
+    timeZone: normalizedTimeZone
+  };
+}
+
+function getMoscowCalendarDate(value = new Date()) {
+  const calendarDate = getCalendarDateInTimeZone(value, DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE);
+  return calendarDate
+    ? { key: calendarDate.key, utcDay: calendarDate.utcDay }
+    : null;
+}
+
+function getTrainingEndNotificationSchedule(value = new Date(), options = {}) {
+  const time = normalizeTrainingEndNotificationTime(options.time);
+  const timeZone = normalizeTrainingEndNotificationTimeZone(options.timeZone);
+  const frequency = normalizeTrainingEndNotificationFrequency(options.frequency);
+  const calendarDate = getCalendarDateInTimeZone(value, timeZone);
+  if (!calendarDate) return null;
+  const [hour, minute] = time.split(":").map(Number);
+  const scheduledMinutes = hour * 60 + minute;
+  let periodKey = calendarDate.key;
+  let due = calendarDate.minutesOfDay >= scheduledMinutes;
+  let reason = due ? "due" : "before-time";
+  if (frequency === "weekdays" && (calendarDate.weekday === 0 || calendarDate.weekday === 6)) {
+    due = false;
+    reason = "non-working-day";
+  } else if (frequency === "weekly") {
+    const daysSinceMonday = (calendarDate.weekday + 6) % 7;
+    const weekStart = new Date(calendarDate.utcDay - daysSinceMonday * 86400000);
+    periodKey = weekStart.toISOString().slice(0, 10);
+    due = daysSinceMonday > 0 || calendarDate.minutesOfDay >= scheduledMinutes;
+    reason = due ? "due" : "before-time";
+  }
+  return {
+    due,
+    reason,
+    periodKey,
+    calendarDate: calendarDate.key,
+    utcDay: calendarDate.utcDay,
+    weekday: calendarDate.weekday,
+    time,
+    timeZone,
+    frequency
   };
 }
 
@@ -14161,7 +14264,10 @@ function formatTrainingEndNotificationDate(value) {
 }
 
 function getTrainingEndNotificationCandidates(students, options = {}) {
-  const today = getMoscowCalendarDate(options.today || new Date());
+  const today = getCalendarDateInTimeZone(
+    options.today || new Date(),
+    options.timeZone || DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE
+  );
   if (!today) return [];
   const days = Math.min(60, Math.max(1, Math.floor(Number(options.days) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS)));
   return (Array.isArray(students) ? students : []).flatMap((student) => {
@@ -14197,6 +14303,21 @@ function getTrainingEndNotificationConfiguration(meta = {}) {
   const daysValue = Object.prototype.hasOwnProperty.call(meta, "trainingEndNotificationDays")
     ? meta.trainingEndNotificationDays
     : meta.days;
+  const timeValue = Object.prototype.hasOwnProperty.call(meta, "trainingEndNotificationTime")
+    ? meta.trainingEndNotificationTime
+    : Object.prototype.hasOwnProperty.call(meta, "time")
+      ? meta.time
+      : serverSettings.trainingEndNotificationTime;
+  const timeZoneValue = Object.prototype.hasOwnProperty.call(meta, "trainingEndNotificationTimeZone")
+    ? meta.trainingEndNotificationTimeZone
+    : Object.prototype.hasOwnProperty.call(meta, "timeZone")
+      ? meta.timeZone
+      : serverSettings.trainingEndNotificationTimeZone;
+  const frequencyValue = Object.prototype.hasOwnProperty.call(meta, "trainingEndNotificationFrequency")
+    ? meta.trainingEndNotificationFrequency
+    : Object.prototype.hasOwnProperty.call(meta, "frequency")
+      ? meta.frequency
+      : serverSettings.trainingEndNotificationFrequency;
   return {
     enabled: hasSharedEnabled
       ? enabledValue !== false
@@ -14204,6 +14325,9 @@ function getTrainingEndNotificationConfiguration(meta = {}) {
     days: Math.min(60, Math.max(1, Math.floor(Number(
       hasSharedDays ? daysValue : serverSettings.trainingEndNotificationDays
     ) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS))),
+    time: normalizeTrainingEndNotificationTime(timeValue),
+    timeZone: normalizeTrainingEndNotificationTimeZone(timeZoneValue),
+    frequency: normalizeTrainingEndNotificationFrequency(frequencyValue),
     recipient: DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN
   };
 }
@@ -14228,7 +14352,7 @@ async function readTrainingEndNotificationConfiguration() {
 async function saveTrainingEndNotificationConfiguration(settings, authUser = null) {
   const normalized = getTrainingEndNotificationConfiguration(settings || {});
   const pool = await getSharedRecordLocksMySqlPool();
-  if (!pool) throw new Error("Общая MySQL-база недоступна для сохранения ежедневных уведомлений.");
+  if (!pool) throw new Error("Общая MySQL-база недоступна для сохранения расписания уведомлений.");
   await ensureScheduledJobRunsTable(pool);
   await pool.query(`
     INSERT INTO ais_scheduled_job_settings (job_name, settings_json, updated_at, updated_by)
@@ -14237,7 +14361,13 @@ async function saveTrainingEndNotificationConfiguration(settings, authUser = nul
       settings_json = VALUES(settings_json), updated_at = UTC_TIMESTAMP(3), updated_by = VALUES(updated_by)
   `, [
     TRAINING_END_NOTIFICATION_JOB_NAME,
-    JSON.stringify({ enabled: normalized.enabled, days: normalized.days }),
+    JSON.stringify({
+      enabled: normalized.enabled,
+      days: normalized.days,
+      time: normalized.time,
+      timeZone: normalized.timeZone,
+      frequency: normalized.frequency
+    }),
     String(authUser?.login || "system").slice(0, 160)
   ]);
   return normalized;
@@ -14296,13 +14426,17 @@ async function ensureScheduledJobRunsTable(pool) {
   return scheduledJobRunsTableInitialization;
 }
 
-async function claimTrainingEndNotificationRun({ runDate, force = false }) {
+async function claimTrainingEndNotificationRun({ runDate, frequency = DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY, force = false }) {
   const pool = await getSharedRecordLocksMySqlPool();
-  if (!pool) throw new Error("Общая MySQL-база недоступна для ежедневных уведомлений.");
+  if (!pool) throw new Error("Общая MySQL-база недоступна для плановых уведомлений.");
   await ensureScheduledJobRunsTable(pool);
+  const normalizedFrequency = normalizeTrainingEndNotificationFrequency(frequency);
+  const automaticRunKey = normalizedFrequency === "weekly"
+    ? `${TRAINING_END_NOTIFICATION_JOB_NAME}:weekly:${runDate}`
+    : `${TRAINING_END_NOTIFICATION_JOB_NAME}:${runDate}`;
   const runKey = force
     ? `${TRAINING_END_NOTIFICATION_JOB_NAME}:${runDate}:manual:${Date.now()}:${crypto.randomBytes(4).toString("hex")}`
-    : `${TRAINING_END_NOTIFICATION_JOB_NAME}:${runDate}`;
+    : automaticRunKey;
   const lockName = `ais-job-${crypto.createHash("sha256").update(runKey).digest("hex").slice(0, 48)}`;
   const token = crypto.randomBytes(24).toString("hex");
   const connection = await pool.getConnection();
@@ -14426,30 +14560,42 @@ function buildTrainingEndNotificationMessage(candidates, options = {}) {
       <tbody>${rows}</tbody>
     </table>
     <p><a href="https://edu-plus.ru/lms/">Открыть АИС Допобразование</a></p>
-    <p style="color:#64748b;font-size:12px">Сообщение сформировано автоматически. Повторная сводка за текущий день не отправляется.</p>
+    <p style="color:#64748b;font-size:12px">Сообщение сформировано автоматически. Повторная сводка за текущий плановый период не отправляется.</p>
   `.trim();
 }
 
 async function executeTrainingEndNotificationJob(options = {}) {
   const force = options.force === true;
-  const sharedState = await readSharedApplicationStateDocument({ allowCache: false });
-  const data = sharedState.document?.data || {};
   const configuration = await readTrainingEndNotificationConfiguration();
   if (!configuration.enabled && !force) {
     return {
       ok: true,
       outcome: "disabled",
-      message: "Ежедневные уведомления об окончании обучения отключены.",
+      message: "Уведомления об окончании обучения отключены.",
       status: await readTrainingEndNotificationStatus().catch(() => ({ status: "never" }))
     };
   }
-  const calendarDate = getMoscowCalendarDate(options.now || new Date());
-  if (!calendarDate) throw new Error("Не удалось определить текущую дату для уведомления.");
-  const claim = await claimTrainingEndNotificationRun({ runDate: calendarDate.key, force });
+  const schedule = getTrainingEndNotificationSchedule(options.now || new Date(), configuration);
+  if (!schedule) throw new Error("Не удалось определить текущее время для уведомления.");
+  if (!force && !schedule.due) {
+    return {
+      ok: true,
+      outcome: "not-due",
+      message: schedule.reason === "non-working-day"
+        ? "Сегодня отправка не запланирована."
+        : `Плановое время отправки ещё не наступило (${configuration.time}, ${configuration.timeZone}).`,
+      status: await readTrainingEndNotificationStatus().catch(() => ({ status: "never" }))
+    };
+  }
+  const claim = await claimTrainingEndNotificationRun({
+    runDate: force ? schedule.calendarDate : schedule.periodKey,
+    frequency: configuration.frequency,
+    force
+  });
   if (!claim.claimed) {
     const messages = {
-      completed: "Ежедневная проверка за сегодня уже выполнена.",
-      running: "Ежедневная проверка уже выполняется.",
+      completed: "Проверка за текущий период уже выполнена.",
+      running: "Проверка уже выполняется.",
       "retry-later": "Повторная проверка после ошибки будет выполнена автоматически позднее.",
       busy: "Проверка выполняется другим сервером."
     };
@@ -14461,9 +14607,12 @@ async function executeTrainingEndNotificationJob(options = {}) {
     };
   }
   try {
+    const sharedState = await readSharedApplicationStateDocument({ allowCache: false });
+    const data = sharedState.document?.data || {};
     const candidates = getTrainingEndNotificationCandidates(data.collections?.students, {
       today: options.now || new Date(),
-      days: configuration.days
+      days: configuration.days,
+      timeZone: configuration.timeZone
     });
     if (!candidates.length) {
       await finishTrainingEndNotificationRun(claim, {
@@ -14497,11 +14646,11 @@ async function executeTrainingEndNotificationJob(options = {}) {
       action: "Отправлено уведомление об окончании обучения",
       area: "Электронная почта",
       entityType: "training-end-notification",
-      entityId: calendarDate.key,
+      entityId: schedule.calendarDate,
       entityLabel: configuration.recipient,
       field: "email",
       after: configuration.recipient,
-      details: `Слушателей: ${candidates.length}; период: ${configuration.days} дн.; отправитель: ${mailSettings.login}`,
+      details: `Слушателей: ${candidates.length}; интервал: ${configuration.days} дн.; расписание: ${configuration.frequency}, ${configuration.time}, ${configuration.timeZone}; отправитель: ${mailSettings.login}`,
       source: options.source || "scheduler"
     }, {
       id: "system-training-end-notifications",
@@ -14522,7 +14671,14 @@ async function executeTrainingEndNotificationJob(options = {}) {
 }
 
 function maybeRunTrainingEndNotificationJob(options = {}) {
-  if (trainingEndNotificationJobPromise) return trainingEndNotificationJobPromise;
+  if (trainingEndNotificationJobPromise) {
+    if (options.force === true) {
+      return trainingEndNotificationJobPromise
+        .catch(() => undefined)
+        .then(() => maybeRunTrainingEndNotificationJob(options));
+    }
+    return trainingEndNotificationJobPromise;
+  }
   trainingEndNotificationJobPromise = executeTrainingEndNotificationJob(options)
     .finally(() => {
       trainingEndNotificationJobPromise = null;
@@ -14534,7 +14690,7 @@ function startTrainingEndNotificationScheduler() {
   if (trainingEndNotificationSchedulerTimer) return;
   const run = () => {
     maybeRunTrainingEndNotificationJob({ source: "scheduler" }).catch((error) => {
-      console.warn(`Ежедневное уведомление об окончании обучения не отправлено: ${error.message}`);
+      console.warn(`Плановое уведомление об окончании обучения не отправлено: ${error.message}`);
     });
   };
   const initialTimer = setTimeout(run, 15 * 1000);
@@ -22487,7 +22643,7 @@ async function publicSystemDocumentSettings(includeAdminSettings = false) {
     .catch(() => getTrainingEndNotificationConfiguration({}));
   const trainingEndNotificationStatus = await readTrainingEndNotificationStatus().catch((error) => ({
     status: "failed",
-    lastError: `Статус ежедневной проверки недоступен: ${error.message}`
+    lastError: `Статус плановой проверки недоступен: ${error.message}`
   }));
   const settings = {
     databasePath: normalizeYandexDiskResourceSetting(
@@ -22529,6 +22685,9 @@ async function publicSystemDocumentSettings(includeAdminSettings = false) {
       serverSettings.emailRequestDeliveryAndReadReceipts !== false,
     trainingEndNotificationsEnabled: trainingEndNotificationConfiguration.enabled,
     trainingEndNotificationDays: trainingEndNotificationConfiguration.days,
+    trainingEndNotificationTime: trainingEndNotificationConfiguration.time,
+    trainingEndNotificationTimeZone: trainingEndNotificationConfiguration.timeZone,
+    trainingEndNotificationFrequency: trainingEndNotificationConfiguration.frequency,
     trainingEndNotificationStatus,
     documentMailboxes: publicStudentDocumentMailboxes(),
     applicationsOrderAdminUrlTemplate: normalizeStudentApplicationsOrderAdminUrlTemplate(
@@ -22598,6 +22757,21 @@ async function handleSystemDocumentSettings(req, res, authUser) {
         || serverSettings.trainingEndNotificationDays
         || DEFAULT_TRAINING_END_NOTIFICATION_DAYS
     );
+    const trainingEndNotificationTime = String(
+      body.trainingEndNotificationTime
+        ?? serverSettings.trainingEndNotificationTime
+        ?? DEFAULT_TRAINING_END_NOTIFICATION_TIME
+    ).trim();
+    const trainingEndNotificationTimeZone = String(
+      body.trainingEndNotificationTimeZone
+        ?? serverSettings.trainingEndNotificationTimeZone
+        ?? DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE
+    ).trim();
+    const trainingEndNotificationFrequency = String(
+      body.trainingEndNotificationFrequency
+        ?? serverSettings.trainingEndNotificationFrequency
+        ?? DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY
+    ).trim().toLowerCase();
     const currentDocumentMailboxes = new Map(
       (Array.isArray(serverSettings.studentDocumentMailboxes)
         ? serverSettings.studentDocumentMailboxes
@@ -22765,6 +22939,15 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     ) {
       throw new Error("Укажите срок уведомления от 1 до 60 дней.");
     }
+    if (!isValidTrainingEndNotificationTime(trainingEndNotificationTime)) {
+      throw new Error("Укажите корректное время отправки в формате ЧЧ:ММ.");
+    }
+    if (!isValidTrainingEndNotificationTimeZone(trainingEndNotificationTimeZone)) {
+      throw new Error("Укажите корректный часовой пояс.");
+    }
+    if (!TRAINING_END_NOTIFICATION_FREQUENCIES.has(trainingEndNotificationFrequency)) {
+      throw new Error("Укажите корректную периодичность уведомлений.");
+    }
     if (!mysqlUseApplicationsConnection) {
       if (!mysqlHost || mysqlHost.length > 255 || !/^[A-Za-z0-9.-]+$/.test(mysqlHost)) {
         throw new Error("Укажите корректный сервер MySQL.");
@@ -22804,6 +22987,9 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       emailRequestDeliveryAndReadReceipts,
       trainingEndNotificationsEnabled,
       trainingEndNotificationDays,
+      trainingEndNotificationTime,
+      trainingEndNotificationTimeZone,
+      trainingEndNotificationFrequency,
       studentApplicationsSqlQuery: applicationsSqlQuery,
       studentApplicationsOrderAdminUrlTemplate: applicationsOrderAdminUrlTemplate,
       sharedRecordLocksMySqlUseApplicationsConnection: mysqlUseApplicationsConnection
@@ -22848,7 +23034,10 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     await closeAssistantStatisticsMySqlStorage();
     await saveTrainingEndNotificationConfiguration({
       trainingEndNotificationsEnabled,
-      trainingEndNotificationDays
+      trainingEndNotificationDays,
+      trainingEndNotificationTime,
+      trainingEndNotificationTimeZone,
+      trainingEndNotificationFrequency
     }, authUser);
     sendJson(res, 200, await publicSystemDocumentSettings(includeAdminSettings));
   } catch (error) {
@@ -23706,8 +23895,11 @@ module.exports = {
   createEmailEnvelopeCommands,
   createEmailMessage,
   getMoscowCalendarDate,
+  getCalendarDateInTimeZone,
   parseTrainingEndNotificationDate,
   getTrainingEndNotificationCandidates,
+  getTrainingEndNotificationConfiguration,
+  getTrainingEndNotificationSchedule,
   buildTrainingEndNotificationMessage,
   maybeRunTrainingEndNotificationJob,
   sanitizePartnerRegistrationPayload,

@@ -20458,7 +20458,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .admin-training-end-notification-fields {
   display: grid;
-  grid-template-columns: minmax(145px, 0.6fr) minmax(230px, 1fr) minmax(150px, 0.7fr);
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 10px;
 }
 
