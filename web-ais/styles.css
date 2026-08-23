@@ -20460,14 +20460,27 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .admin-training-end-notification-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
   gap: 10px;
 }
 
 .admin-training-end-notification-fields label {
   display: grid;
   gap: 4px;
+  max-width: 100%;
   min-width: 0;
+}
+
+.admin-training-end-notification-fields :is(input, select) {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.admin-training-end-notification-fields select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .admin-training-end-notification-fields label > span {

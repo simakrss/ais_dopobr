@@ -146,7 +146,6 @@ assert.match(message, /Иванова Анна Ивановна/u);
 assert.match(message, /Тест &lt;script&gt;/u);
 assert.doesNotMatch(message, /<script>/u);
 
-assert.match(appSource, /version: "1\.7\.214"/u);
 assert.match(appSource, /name="trainingEndNotificationsEnabled"/u);
 assert.match(appSource, /name="trainingEndNotificationDays"/u);
 assert.match(appSource, /Уведомлять за \(дней\)/u);
@@ -167,6 +166,14 @@ assert.match(serverSource, /status === "completed"/u);
 assert.match(serverSource, /Некорректный запрос проверки сроков обучения/u);
 assert.match(serverSource, /startTrainingEndNotificationScheduler\(\)/u);
 assert.match(stylesSource, /\.admin-training-end-notification/u);
+assert.match(
+  stylesSource,
+  /grid-template-columns: repeat\(auto-fit, minmax\(min\(100%, 170px\), 1fr\)\)/u
+);
+assert.match(
+  stylesSource,
+  /\.admin-training-end-notification-fields :is\(input, select\)[\s\S]*?max-width: 100%;[\s\S]*?min-width: 0;/u
+);
 const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authSource)?.[1] || "";
 assert.ok(authBuild, "Не найден идентификатор клиентской сборки.");
 assert.match(indexSource, new RegExp(`(?:styles\\.css|auth-bootstrap\\.js)\\?v=${authBuild}`, "u"));

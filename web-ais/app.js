@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.240",
+    version: "1.7.241",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.241",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Поля расписания уведомлений об окончании обучения адаптируются к ширине формы и больше не выходят за её границы."
+      ]
+    },
     {
       version: "1.7.240",
       releasedAt: "2026-08-23",
