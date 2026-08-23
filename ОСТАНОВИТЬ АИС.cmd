@@ -4,20 +4,16 @@ chcp 65001 >nul
 title АИС Допобразование — остановка сервера
 set "AIS_APP_DIR=%~dp0web-ais"
 call :log Начало остановки АИС.
-if not exist "%AIS_APP_DIR%\scripts\stop-lan-system.js" goto :path_error
+if not exist "%AIS_APP_DIR%\scripts\stop-lan-system.ps1" goto :path_error
 pushd "%AIS_APP_DIR%"
 if errorlevel 1 goto :path_error
-
-set "AIS_NODE=node.exe"
-where "%AIS_NODE%" >nul 2>nul
-if not errorlevel 1 goto :run
-if exist "C:\Program Files\nodejs\node.exe" set "AIS_NODE=C:\Program Files\nodejs\node.exe"
-if not exist "%AIS_NODE%" goto :node_error
 
 :run
 if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" goto :validation_ok
 call :log Отправлена команда остановки локальных серверов АИС.
-"%AIS_NODE%" ".\scripts\stop-lan-system.js" %*
+set "AIS_STOP_ARGUMENTS="
+if /i "%~1"=="--keep-docker" set "AIS_STOP_ARGUMENTS=-KeepDocker"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\stop-lan-system.ps1" %AIS_STOP_ARGUMENTS%
 set "AIS_EXIT_CODE=%ERRORLEVEL%"
 if "%AIS_EXIT_CODE%"=="0" (
   call :log Локальные серверы АИС остановлены.
@@ -33,13 +29,6 @@ exit /b %AIS_EXIT_CODE%
 call :log Проверка сценария остановки АИС выполнена успешно.
 popd
 exit /b 0
-
-:node_error
-call :log ОШИБКА: Node.js не найден. Установите Node.js или добавьте node.exe в PATH.
-popd
-echo.
-pause
-exit /b 1
 
 :path_error
 call :log ОШИБКА: не найдена папка системы: %AIS_APP_DIR%

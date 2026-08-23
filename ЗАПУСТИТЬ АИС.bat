@@ -5,20 +5,22 @@ title АИС Допобразование — автономный сервер
 set "AIS_APP_DIR=%~dp0web-ais"
 call :log Начало запуска АИС.
 if not exist "%AIS_APP_DIR%\app-server.js" goto :path_error
+if not exist "%AIS_APP_DIR%\scripts\bootstrap-local-system.ps1" goto :bootstrap_error
 pushd "%AIS_APP_DIR%"
 if errorlevel 1 goto :path_error
 
-set "AIS_NODE=node.exe"
-where "%AIS_NODE%" >nul 2>nul
-if not errorlevel 1 goto :run
-if exist "C:\Program Files\nodejs\node.exe" set "AIS_NODE=C:\Program Files\nodejs\node.exe"
-if not exist "%AIS_NODE%" goto :node_error
-
 :run
-if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" goto :validation_ok
-call :log Запуск локальных серверов АИС.
-"%AIS_NODE%" ".\scripts\start-lan-system.js" %*
+if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" (
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\bootstrap-local-system.ps1" -Action Validate -LauncherArguments "%*"
+) else (
+  call :log Проверка и установка необходимых компонентов.
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\bootstrap-local-system.ps1" -Action Start -LauncherArguments "%*"
+)
 set "AIS_EXIT_CODE=%ERRORLEVEL%"
+if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" (
+  popd
+  exit /b %AIS_EXIT_CODE%
+)
 if "%AIS_EXIT_CODE%"=="0" (
   call :log Работа локальных серверов АИС завершена.
 ) else (
@@ -29,14 +31,8 @@ echo.
 pause
 exit /b %AIS_EXIT_CODE%
 
-:validation_ok
-call :log Проверка сценария запуска АИС выполнена успешно.
-popd
-exit /b 0
-
-:node_error
-call :log ОШИБКА: Node.js не найден. Установите Node.js или добавьте node.exe в PATH.
-popd
+:bootstrap_error
+call :log ОШИБКА: не найден сценарий подготовки окружения АИС.
 echo.
 pause
 exit /b 1

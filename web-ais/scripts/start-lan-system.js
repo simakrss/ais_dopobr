@@ -52,7 +52,7 @@ const serverDefinitions = [
     name: "Application server",
     scriptName: "app-server.js",
     host: "127.0.0.1",
-    port: 8080,
+    port: 19081,
     environment: {},
   },
   {
@@ -61,7 +61,7 @@ const serverDefinitions = [
     scriptName: "local-server.js",
     host: "0.0.0.0",
     port: 8081,
-    environment: { AIS_APP_SERVER_ORIGIN: "http://127.0.0.1:8080" },
+    environment: { AIS_APP_SERVER_ORIGIN: "http://127.0.0.1:19081" },
   },
 ];
 
@@ -201,9 +201,29 @@ async function waitForPort(host, port, timeoutMilliseconds = 12000) {
   return false;
 }
 
+async function isAisServiceHealthy(port) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!response.ok) return false;
+    const payload = await response.json();
+    return payload?.ok === true && ["mysql", "yandex-disk"].includes(String(payload.storage || ""));
+  } catch (_error) {
+    return false;
+  }
+}
+
 async function startServer(definition, commonEnvironment) {
   const existingPid = listeningPid(definition.port);
   if (existingPid) {
+    if (!(await isAisServiceHealthy(definition.port))) {
+      throw new Error(
+        `Порт ${definition.port} занят другим приложением (PID ${existingPid}). `
+        + `Освободите порт и повторите запуск АИС.`,
+      );
+    }
     console.log(`${definition.name} is already running (PID ${existingPid}, port ${definition.port}).`);
     return existingPid;
   }
@@ -252,15 +272,16 @@ function startDocumentServices(commonEnvironment) {
     console.log("OCR and OnlyOffice launch was skipped by command-line option.");
     return "skipped";
   }
+  const dockerPath = process.env.AIS_DOCKER_PATH || "docker.exe";
   try {
-    execFileSync("docker.exe", ["info", "--format", "{{.ServerVersion}}"], {
+    execFileSync(dockerPath, ["info", "--format", "{{.ServerVersion}}"], {
       encoding: "utf8",
       timeout: 6000,
       windowsHide: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (_error) {
-    console.log("Docker Desktop is not ready. The main AIS servers will continue without OCR/PDF.");
+    console.log("Docker Desktop не готов. Основная АИС продолжит работу без OCR и преобразования документов.");
     return "unavailable";
   }
 
@@ -269,7 +290,7 @@ function startDocumentServices(commonEnvironment) {
     try {
       console.log("Checking the local OCR image for source updates...");
       execFileSync(
-        "docker.exe",
+        dockerPath,
         ["compose", "-f", composePath, "build", "ocr"],
         {
           cwd: appRoot,
@@ -284,7 +305,7 @@ function startDocumentServices(commonEnvironment) {
     }
     try {
       execFileSync(
-        "docker.exe",
+        dockerPath,
         ["compose", "-f", composePath, "up", "-d", "--no-build"],
         {
           cwd: appRoot,
@@ -294,14 +315,14 @@ function startDocumentServices(commonEnvironment) {
           stdio: "inherit",
         },
       );
-      ensureOnlyOfficeDocumentFonts();
+      ensureOnlyOfficeDocumentFonts(dockerPath);
       console.log("OCR and OnlyOffice containers are running from local images.");
       return "running";
     } catch (_error) {
       console.log("Local Docker images need to be prepared. Starting one-time build...");
     }
     execFileSync(
-      "docker.exe",
+      dockerPath,
       ["compose", "-f", composePath, "up", "-d", "--build"],
       {
         cwd: appRoot,
@@ -311,7 +332,7 @@ function startDocumentServices(commonEnvironment) {
         stdio: "inherit",
       },
     );
-    ensureOnlyOfficeDocumentFonts();
+    ensureOnlyOfficeDocumentFonts(dockerPath);
     console.log("OCR and OnlyOffice containers are running.");
     return "running";
   } catch (error) {
@@ -321,14 +342,14 @@ function startDocumentServices(commonEnvironment) {
   }
 }
 
-function ensureOnlyOfficeDocumentFonts() {
+function ensureOnlyOfficeDocumentFonts(dockerPath = process.env.AIS_DOCKER_PATH || "docker.exe") {
   const fontCachePath = "/var/www/onlyoffice/documentserver/server/FileConverter/bin/AllFonts.js";
   const requiredFontCheck = ["Calibri", "Cambria", "Lucida Sans", "Times New Roman"]
     .map((fontName) => `grep -Fq '${fontName}' '${fontCachePath}'`)
     .join(" && ");
   try {
     execFileSync(
-      "docker.exe",
+      dockerPath,
       ["exec", "ais-onlyoffice", "bash", "-lc", requiredFontCheck],
       {
         timeout: 15000,
@@ -343,7 +364,7 @@ function ensureOnlyOfficeDocumentFonts() {
   }
   try {
     execFileSync(
-      "docker.exe",
+      dockerPath,
       [
         "exec",
         "ais-onlyoffice",
@@ -358,7 +379,7 @@ function ensureOnlyOfficeDocumentFonts() {
       },
     );
     execFileSync(
-      "docker.exe",
+      dockerPath,
       ["exec", "ais-onlyoffice", "bash", "-lc", requiredFontCheck],
       {
         timeout: 15000,
@@ -404,11 +425,7 @@ function writeStatus(values) {
 
 async function ensureServers(commonEnvironment, status) {
   for (const definition of serverDefinitions) {
-    if (!listeningPid(definition.port)) {
-      status[`${definition.key}Pid`] = await startServer(definition, commonEnvironment);
-    } else if (!status[`${definition.key}Pid`]) {
-      status[`${definition.key}Pid`] = listeningPid(definition.port);
-    }
+    status[`${definition.key}Pid`] = await startServer(definition, commonEnvironment);
   }
 }
 

@@ -12,6 +12,19 @@ $logRoot = Join-Path $appRoot "tmp\lan-system"
 $statusPath = Join-Path $logRoot "status.json"
 $composePath = Join-Path $appRoot "docker-compose.onlyoffice.yml"
 
+function Find-DockerCli {
+  $candidates = @(
+    $env:AIS_DOCKER_PATH,
+    (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe"),
+    (Join-Path $env:LOCALAPPDATA "Docker\resources\bin\docker.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\resources\bin\docker.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\resources\bin\docker.exe")
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+  $command = Get-Command docker.exe -ErrorAction SilentlyContinue
+  if ($command) { $candidates += $command.Source }
+  return @($candidates | Select-Object -Unique) | Select-Object -First 1
+}
+
 function Stop-ManagedNode([int]$ProcessId, [string]$ScriptName) {
   if ($ProcessId -le 0) { return }
   $process = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
@@ -26,10 +39,14 @@ function Stop-ManagedNode([int]$ProcessId, [string]$ScriptName) {
 
 if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
   $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
-  Stop-ManagedNode ([int]$status.localServerPid) "local-server.js"
-  Stop-ManagedNode ([int]$status.appServerPid) "app-server.js"
+  $launcherPid = if ($status.PSObject.Properties["launcherPid"]) { [int]$status.launcherPid } else { 0 }
+  $localServerPid = if ($status.PSObject.Properties["localServerPid"]) { [int]$status.localServerPid } else { 0 }
+  $appServerPid = if ($status.PSObject.Properties["appServerPid"]) { [int]$status.appServerPid } else { 0 }
+  Stop-ManagedNode $launcherPid "start-lan-system.js"
+  Stop-ManagedNode $localServerPid "local-server.js"
+  Stop-ManagedNode $appServerPid "app-server.js"
 } else {
-  foreach ($port in @(8081, 8080)) {
+  foreach ($port in @(8081, 19081)) {
     $listener = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $listener) { continue }
     $scriptName = if ($port -eq 8081) { "local-server.js" } else { "app-server.js" }
@@ -37,11 +54,12 @@ if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
   }
 }
 
-if (-not $KeepDocker -and (Get-Command docker.exe -ErrorAction SilentlyContinue)) {
-  $containers = @(docker.exe ps -a --format "{{.Names}}" 2>$null)
+if (-not $KeepDocker) {
+  $dockerPath = Find-DockerCli
+  $containers = if ($dockerPath) { @(& $dockerPath ps -a --format "{{.Names}}" 2>$null) } else { @() }
   $managedContainers = @($containers | Where-Object { $_ -in @("ais-onlyoffice", "ais-ocr") })
   if ($managedContainers.Count) {
-    & docker.exe stop $managedContainers | Out-Null
+    & $dockerPath stop $managedContainers | Out-Null
     Write-Host "OCR и OnlyOffice остановлены."
   }
 }

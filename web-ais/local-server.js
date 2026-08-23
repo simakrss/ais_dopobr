@@ -2,7 +2,7 @@ const http = require("http");
 
 const port = Number(process.env.PORT || 8081);
 const host = process.env.HOST || "127.0.0.1";
-const appServerOrigin = process.env.AIS_APP_SERVER_ORIGIN || "http://127.0.0.1:8080";
+const appServerOrigin = process.env.AIS_APP_SERVER_ORIGIN || "http://127.0.0.1:19081";
 const appServerToken = process.env.AIS_GATEWAY_SHARED_SECRET || "";
 const yandexGeocoderApiKey = process.env.YANDEX_GEOCODER_API_KEY || "";
 const dgisApiKey = process.env.DGIS_API_KEY || process.env.TWOGIS_API_KEY || "";

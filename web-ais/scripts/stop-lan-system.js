@@ -77,11 +77,11 @@ stopProcess(Number(status.launcherPid));
 stopProcess(Number(status.localServerPid));
 stopProcess(Number(status.appServerPid));
 stopProcess(listeningPid(8081));
-stopProcess(listeningPid(8080));
+stopProcess(listeningPid(19081));
 
 if (!keepDocker) {
   try {
-    execFileSync("docker.exe", ["stop", "ais-onlyoffice", "ais-ocr"], {
+    execFileSync(process.env.AIS_DOCKER_PATH || "docker.exe", ["stop", "ais-onlyoffice", "ais-ocr"], {
       timeout: 30000,
       windowsHide: false,
       stdio: "ignore",
