@@ -9,8 +9,8 @@ process.env.AIS_SHARED_STATE_LOCAL_ONLY = "1";
 const {
   sanitizePartnerRegistrationPayload,
   createPartnerRegistrationSpamChallenge,
-  issuePartnerRegistrationSpamChallenge,
-  consumePartnerRegistrationSpamChallenge,
+  issuePartnerRegistrationSpamChallengeInStore,
+  consumePartnerRegistrationSpamChallengeInStore,
   partnerRegistrationTokenHash,
   partnerRegistrationHashesEqual,
   normalizePartnerRegistrationLoginBase,
@@ -72,24 +72,39 @@ function solveSpamChallenge(question) {
   return String(match[2] === "−" ? Number(match[1]) - Number(match[3]) : Number(match[1]) + Number(match[3]));
 }
 
-const issuedChallenge = issuePartnerRegistrationSpamChallenge(challengeRequest, challengeCreatedAt);
+const challengeStore = {
+  version: 2,
+  registrations: [],
+  spamChallenges: [],
+  spamChallengeAttempts: []
+};
+const issuedChallenge = issuePartnerRegistrationSpamChallengeInStore(
+  challengeStore,
+  challengeRequest,
+  challengeCreatedAt
+);
 const issuedAnswer = solveSpamChallenge(issuedChallenge.question);
+const persistedChallengeStore = JSON.parse(JSON.stringify(challengeStore));
+assert.equal(persistedChallengeStore.spamChallenges.length, 1);
+assert.equal(persistedChallengeStore.spamChallengeAttempts.length, 1);
 assert.throws(
-  () => consumePartnerRegistrationSpamChallenge(challengeRequest, {
+  () => consumePartnerRegistrationSpamChallengeInStore(persistedChallengeStore, challengeRequest, {
     antiSpamChallengeId: issuedChallenge.challengeId,
     antiSpamAnswer: issuedAnswer
   }, challengeCreatedAt + 1000),
   /Подождите несколько секунд/u
 );
+assert.equal(persistedChallengeStore.spamChallenges.length, 1);
 assert.match(
-  consumePartnerRegistrationSpamChallenge(challengeRequest, {
+  consumePartnerRegistrationSpamChallengeInStore(persistedChallengeStore, challengeRequest, {
     antiSpamChallengeId: issuedChallenge.challengeId,
     antiSpamAnswer: issuedAnswer
   }, challengeCreatedAt + 2000),
   /^[a-f0-9]{64}$/u
 );
+assert.equal(persistedChallengeStore.spamChallenges.length, 0);
 assert.throws(
-  () => consumePartnerRegistrationSpamChallenge(challengeRequest, {
+  () => consumePartnerRegistrationSpamChallengeInStore(persistedChallengeStore, challengeRequest, {
     antiSpamChallengeId: issuedChallenge.challengeId,
     antiSpamAnswer: issuedAnswer
   }, challengeCreatedAt + 3000),

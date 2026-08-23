@@ -134,8 +134,6 @@ const DEFAULT_ASSISTANT_STATISTICS_MYSQL_HOST = "vh458.timeweb.ru";
 const DEFAULT_ASSISTANT_STATISTICS_MYSQL_DATABASE = "cl11741_omidpo";
 let serverSettings = {};
 const partnerFeedbackLastSentAt = new Map();
-const partnerRegistrationChallenges = new Map();
-const partnerRegistrationChallengeRequests = new Map();
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -20946,7 +20944,13 @@ function normalizePartnerRegistrationStore(value) {
   const registrations = Array.isArray(value?.registrations)
     ? value.registrations.filter((item) => item && typeof item === "object" && !Array.isArray(item))
     : [];
-  return { version: 1, registrations };
+  const spamChallenges = Array.isArray(value?.spamChallenges)
+    ? value.spamChallenges.filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    : [];
+  const spamChallengeAttempts = Array.isArray(value?.spamChallengeAttempts)
+    ? value.spamChallengeAttempts.filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    : [];
+  return { version: 2, registrations, spamChallenges, spamChallengeAttempts };
 }
 
 function prunePartnerRegistrationStore(store, now = Date.now()) {
@@ -20956,6 +20960,12 @@ function prunePartnerRegistrationStore(store, now = Date.now()) {
     const updatedAt = Date.parse(String(item.updatedAt || item.createdAt || ""));
     return Number.isFinite(updatedAt) && updatedAt > now - PARTNER_REGISTRATION_RETENTION_MS;
   }).slice(-5000);
+  store.spamChallenges = (Array.isArray(store.spamChallenges) ? store.spamChallenges : [])
+    .filter((item) => Number(item?.expiresAt || 0) > now)
+    .slice(-PARTNER_REGISTRATION_MAX_ACTIVE_CHALLENGES);
+  store.spamChallengeAttempts = (Array.isArray(store.spamChallengeAttempts) ? store.spamChallengeAttempts : [])
+    .filter((item) => Number(item?.issuedAt || 0) > now - PARTNER_REGISTRATION_CHALLENGE_RATE_WINDOW_MS)
+    .slice(-PARTNER_REGISTRATION_MAX_ACTIVE_CHALLENGES);
   return store;
 }
 
@@ -20965,7 +20975,7 @@ async function readPartnerRegistrationStore() {
       await fs.readFile(PARTNER_REGISTRATION_STORE_PATH, "utf8")
     ));
   } catch (error) {
-    if (error.code === "ENOENT") return { version: 1, registrations: [] };
+    if (error.code === "ENOENT") return normalizePartnerRegistrationStore({});
     throw new Error(`Хранилище регистраций партнёров повреждено: ${error.message}`);
   }
 }
@@ -21027,25 +21037,6 @@ function partnerRegistrationSpamError(message = "Проверка защиты �
   return partnerRegistrationError(message, statusCode, { publicCode: "PARTNER_SPAM_CHALLENGE_INVALID" });
 }
 
-function prunePartnerRegistrationSpamProtection(now = Date.now()) {
-  for (const [challengeId, challenge] of partnerRegistrationChallenges) {
-    if (Number(challenge?.expiresAt || 0) <= now) partnerRegistrationChallenges.delete(challengeId);
-  }
-  for (const [clientIpHash, timestamps] of partnerRegistrationChallengeRequests) {
-    const current = (Array.isArray(timestamps) ? timestamps : [])
-      .map(Number)
-      .filter((timestamp) => Number.isFinite(timestamp)
-        && timestamp > now - PARTNER_REGISTRATION_CHALLENGE_RATE_WINDOW_MS);
-    if (current.length) partnerRegistrationChallengeRequests.set(clientIpHash, current);
-    else partnerRegistrationChallengeRequests.delete(clientIpHash);
-  }
-  while (partnerRegistrationChallenges.size > PARTNER_REGISTRATION_MAX_ACTIVE_CHALLENGES) {
-    const oldestId = partnerRegistrationChallenges.keys().next().value;
-    if (!oldestId) break;
-    partnerRegistrationChallenges.delete(oldestId);
-  }
-}
-
 function createPartnerRegistrationSpamChallenge(clientIpHash, now = Date.now()) {
   const subtract = crypto.randomInt(0, 2) === 1;
   const first = crypto.randomInt(4, 13);
@@ -21063,16 +21054,16 @@ function createPartnerRegistrationSpamChallenge(clientIpHash, now = Date.now()) 
   };
 }
 
-function issuePartnerRegistrationSpamChallenge(req, now = Date.now()) {
-  prunePartnerRegistrationSpamProtection(now);
+function issuePartnerRegistrationSpamChallengeInStore(store, req, now = Date.now()) {
+  prunePartnerRegistrationStore(store, now);
   const clientIpHash = getPartnerRegistrationClientIpHash(req);
-  const attempts = partnerRegistrationChallengeRequests.get(clientIpHash) || [];
+  const attempts = store.spamChallengeAttempts.filter((item) => item.clientIpHash === clientIpHash);
   if (attempts.length >= PARTNER_REGISTRATION_MAX_CHALLENGES_PER_WINDOW) {
     throw partnerRegistrationSpamError("Слишком много запросов проверки. Повторите через несколько минут.", 429);
   }
-  partnerRegistrationChallengeRequests.set(clientIpHash, [...attempts, now]);
   const challenge = createPartnerRegistrationSpamChallenge(clientIpHash, now);
-  partnerRegistrationChallenges.set(challenge.id, challenge);
+  store.spamChallenges.push(challenge);
+  store.spamChallengeAttempts.push({ clientIpHash, issuedAt: now });
   return {
     challengeId: challenge.id,
     question: challenge.question,
@@ -21080,25 +21071,32 @@ function issuePartnerRegistrationSpamChallenge(req, now = Date.now()) {
   };
 }
 
-function consumePartnerRegistrationSpamChallenge(req, source = {}, now = Date.now()) {
-  prunePartnerRegistrationSpamProtection(now);
+async function issuePartnerRegistrationSpamChallenge(req, now = Date.now()) {
+  return withPartnerRegistrationStore(async (store) => (
+    issuePartnerRegistrationSpamChallengeInStore(store, req, now)
+  ));
+}
+
+function consumePartnerRegistrationSpamChallengeInStore(store, req, source = {}, now = Date.now()) {
   const challengeId = String(source.antiSpamChallengeId || "").trim();
   const answer = String(source.antiSpamAnswer ?? "").normalize("NFKC").trim();
   if (!/^[A-Za-z0-9_-]{20,64}$/u.test(challengeId) || !/^-?\d{1,3}$/u.test(answer)) {
     throw partnerRegistrationSpamError("Решите пример в блоке «Защита от спама».");
   }
-  const challenge = partnerRegistrationChallenges.get(challengeId);
+  prunePartnerRegistrationStore(store, now);
+  const challengeIndex = store.spamChallenges.findIndex((item) => item.id === challengeId);
+  const challenge = challengeIndex >= 0 ? store.spamChallenges[challengeIndex] : null;
   if (!challenge) {
     throw partnerRegistrationSpamError("Проверка защиты от спама устарела. Получите новый пример.");
   }
   if (challenge.clientIpHash !== getPartnerRegistrationClientIpHash(req)) {
-    partnerRegistrationChallenges.delete(challengeId);
+    store.spamChallenges.splice(challengeIndex, 1);
     throw partnerRegistrationSpamError();
   }
   if (now < Number(challenge.issuedAt || 0) + PARTNER_REGISTRATION_CHALLENGE_MIN_AGE_MS) {
     throw partnerRegistrationSpamError("Подождите несколько секунд и повторите отправку анкеты.");
   }
-  partnerRegistrationChallenges.delete(challengeId);
+  store.spamChallenges.splice(challengeIndex, 1);
   if (Number(challenge.expiresAt || 0) <= now) {
     throw partnerRegistrationSpamError("Проверка защиты от спама устарела. Получите новый пример.");
   }
@@ -21106,6 +21104,12 @@ function consumePartnerRegistrationSpamChallenge(req, source = {}, now = Date.no
     throw partnerRegistrationSpamError("Ответ неверный. Решите новый пример.");
   }
   return partnerRegistrationTokenHash(challengeId);
+}
+
+async function consumePartnerRegistrationSpamChallenge(req, source = {}, now = Date.now()) {
+  return withPartnerRegistrationStore(async (store) => (
+    consumePartnerRegistrationSpamChallengeInStore(store, req, source, now)
+  ));
 }
 
 function getPartnerRegistrationPublicBaseUrl(req) {
@@ -21379,9 +21383,9 @@ function assertPartnerRegistrationRequest(req) {
   }
 }
 
-function handlePartnerRegistrationChallenge(req, res) {
+async function handlePartnerRegistrationChallenge(req, res) {
   assertPartnerRegistrationRequest(req);
-  sendJson(res, 200, issuePartnerRegistrationSpamChallenge(req));
+  sendJson(res, 200, await issuePartnerRegistrationSpamChallenge(req));
 }
 
 async function findExistingPartnerByEmail(email) {
@@ -21398,7 +21402,7 @@ async function handlePartnerRegistrationCreate(req, res) {
   assertPartnerRegistrationRequest(req);
   const body = await readJsonBody(req);
   const data = sanitizePartnerRegistrationPayload(body);
-  const antiSpamChallengeHash = consumePartnerRegistrationSpamChallenge(req, body);
+  const antiSpamChallengeHash = await consumePartnerRegistrationSpamChallenge(req, body);
   if (await findExistingPartnerByEmail(data.email)) {
     throw partnerRegistrationError(
       "Для этого email уже создана учётная запись партнёра. Используйте форму входа.",
@@ -23190,7 +23194,7 @@ async function route(req, res) {
   if (requestUrl.pathname.startsWith("/api/auth/")) {
     try {
       if (req.method === "GET" && requestUrl.pathname === "/api/auth/partner-registration/challenge") {
-        handlePartnerRegistrationChallenge(req, res);
+        await handlePartnerRegistrationChallenge(req, res);
         return;
       }
       if (req.method === "POST" && requestUrl.pathname === "/api/auth/partner-registration") {
@@ -23656,7 +23660,9 @@ module.exports = {
   maybeRunTrainingEndNotificationJob,
   sanitizePartnerRegistrationPayload,
   createPartnerRegistrationSpamChallenge,
+  issuePartnerRegistrationSpamChallengeInStore,
   issuePartnerRegistrationSpamChallenge,
+  consumePartnerRegistrationSpamChallengeInStore,
   consumePartnerRegistrationSpamChallenge,
   partnerRegistrationTokenHash,
   partnerRegistrationHashesEqual,
