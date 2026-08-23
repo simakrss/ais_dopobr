@@ -22,10 +22,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.228",
+    version: "1.7.229",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.229",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Пункт «Статистика» перемещён сразу после «Рабочего стола» в исходном и сохранённом порядке главного меню."
+      ]
+    },
     {
       version: "1.7.228",
       releasedAt: "2026-08-23",
@@ -2016,7 +2023,7 @@
   const TAB_ORDER_SETTINGS_KEY = "ais-dopobr-tab-orders-v1";
   const NAV_ITEM_ORDER_KEY = "ais-dopobr-nav-item-order-v1";
   const NAV_ITEM_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-nav-item-order-layout-v1";
-  const NAV_ITEM_ORDER_LAYOUT_VERSION = "statistics-before-settings";
+  const NAV_ITEM_ORDER_LAYOUT_VERSION = "statistics-after-dashboard";
   const DASHBOARD_STATUS_ORDER_KEY = "ais-dopobr-dashboard-status-order-v1";
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-dashboard-status-layout-v1";
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION = "enrollment-study-first";
@@ -3553,6 +3560,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   const navItems = [
     { id: "dashboard", label: "Рабочий стол", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M7 16l4-4 3 3 5-7"></path><path d="M16 8h3v3"></path></svg>' },
+    { id: "statistics", label: "Статистика", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20V10"></path><path d="M10 20V4"></path><path d="M16 20v-7"></path><path d="M22 20H2"></path><path d="M3 7l6-4 6 6 6-5"></path></svg>' },
     { id: "students", label: "Слушатели", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg>' },
     { id: "contracts", label: "Сотрудники", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3h7l5 5v13H7z"></path><path d="M14 3v5h5"></path><path d="M10 12h6"></path><path d="M10 16h6"></path></svg>' },
     { id: "programs", label: "Программы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 9l9-5 9 5-9 5z"></path><path d="M7 11v5c3 2 7 2 10 0v-5"></path><path d="M21 9v6"></path></svg>' },
@@ -3560,7 +3568,6 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "generalExpenses", label: "Общие затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8c0-2 3.6-3.5 8-3.5S20 6 20 8s-3.6 3.5-8 3.5S4 10 4 8z"></path><path d="M4 8v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V8"></path><path d="M4 12v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5v-4"></path></svg>' },
     { id: "inventory", label: "Запасы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8l8-4 8 4-8 4z"></path><path d="M4 8v8l8 4 8-4V8"></path><path d="M12 12v8"></path><path d="M8 6l8 4"></path></svg>' },
     { id: "documentConstructor", label: "Конструктор документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><path d="M4 7h2"></path><path d="M4 11h2"></path><path d="M4 15h2"></path></svg>' },
-    { id: "statistics", label: "Статистика", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20V10"></path><path d="M10 20V4"></path><path d="M16 20v-7"></path><path d="M22 20H2"></path><path d="M3 7l6-4 6 6 6-5"></path></svg>' },
     { id: "settings", label: "Настройки", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 17h2"></path><path d="M10 17h10"></path><circle cx="8" cy="17" r="2"></circle></svg>' },
     { id: "admin", label: "Админка", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 4.6-2.8 7.9-7 10-4.2-2.1-7-5.4-7-10V6z"></path><circle cx="12" cy="12" r="2.4"></circle><path d="M12 8.2v1.2"></path><path d="M12 14.6v1.2"></path><path d="M15.8 12h-1.2"></path><path d="M9.4 12H8.2"></path><path d="M14.7 9.3l-.9.9"></path><path d="M10.2 13.8l-.9.9"></path><path d="M14.7 14.7l-.9-.9"></path><path d="M10.2 10.2l-.9-.9"></path></svg>' }
   ];
@@ -8356,20 +8363,20 @@ MAX - https://bizvmax.ru/zifra_plus
     try {
       const parsed = JSON.parse(saved);
       const order = Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
-      if (localStorage.getItem(NAV_ITEM_ORDER_LAYOUT_VERSION_KEY) !== NAV_ITEM_ORDER_LAYOUT_VERSION) {
-        const programsIndex = order.indexOf("programs");
-        const issuedDocumentsIndex = order.indexOf("issuedDocuments");
-        if (programsIndex >= 0 && issuedDocumentsIndex >= 0) {
-          order.splice(issuedDocumentsIndex, 1);
-          order.splice(order.indexOf("programs") + 1, 0, "issuedDocuments");
+      const storedLayoutVersion = localStorage.getItem(NAV_ITEM_ORDER_LAYOUT_VERSION_KEY);
+      if (storedLayoutVersion !== NAV_ITEM_ORDER_LAYOUT_VERSION) {
+        if (storedLayoutVersion !== "statistics-before-settings") {
+          const programsIndex = order.indexOf("programs");
+          const issuedDocumentsIndex = order.indexOf("issuedDocuments");
+          if (programsIndex >= 0 && issuedDocumentsIndex >= 0) {
+            order.splice(issuedDocumentsIndex, 1);
+            order.splice(order.indexOf("programs") + 1, 0, "issuedDocuments");
+          }
         }
         const statisticsIndex = order.indexOf("statistics");
         if (statisticsIndex >= 0) order.splice(statisticsIndex, 1);
-        const settingsIndex = order.indexOf("settings");
-        const adminIndex = order.indexOf("admin");
-        const insertIndex = settingsIndex >= 0
-          ? settingsIndex
-          : (adminIndex >= 0 ? adminIndex : order.length);
+        const dashboardIndex = order.indexOf("dashboard");
+        const insertIndex = dashboardIndex >= 0 ? dashboardIndex + 1 : 0;
         order.splice(insertIndex, 0, "statistics");
         localStorage.setItem(NAV_ITEM_ORDER_KEY, JSON.stringify(order));
         localStorage.setItem(NAV_ITEM_ORDER_LAYOUT_VERSION_KEY, NAV_ITEM_ORDER_LAYOUT_VERSION);

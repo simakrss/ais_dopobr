@@ -18,8 +18,13 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.225"/u);
+assert.match(appSource, /version: "1\.7\.229"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
+const navigationBlock = sourceBlock(appSource, "const navItems = [", "const PROGRAM_LIST_FIELD_KEYS");
+const navigationIds = [...navigationBlock.matchAll(/\{ id: "([^"]+)"/gu)].map((match) => match[1]);
+assert.deepEqual(navigationIds.slice(0, 2), ["dashboard", "statistics"]);
+assert.match(appSource, /NAV_ITEM_ORDER_LAYOUT_VERSION = "statistics-after-dashboard"/u);
+assert.match(appSource, /dashboardIndex >= 0 \? dashboardIndex \+ 1 : 0/u);
 assert.match(appSource, /state\.view === "statistics"\) return renderStatistics\(\)/u);
 assert.match(appSource, /getOrderedTabs\("statistics", statisticsTabs\)/u);
 assert.match(appSource, /data-orderable-tabs="statistics"/u);
