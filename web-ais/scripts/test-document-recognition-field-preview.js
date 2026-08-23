@@ -248,6 +248,9 @@ async function main() {
   assert.match(clientSource, /title: "Повторное распознавание"/u);
   assert.match(clientSource, /fieldLabel,/u);
   assert.match(clientSource, /findStudentRecognitionRecommendedSourceFilePosition\(files, field\)/u);
+  assert.match(clientSource, /initialRotation = matchedRecommendedSource/u);
+  assert.match(clientSource, /rotateStudentPhotoNormalizedRect\(fieldPreview\.box, -initialRotation\)/u);
+  assert.match(clientSource, /initialRotation,/u);
   assert.match(clientSource, /— рекомендуется/u);
   assert.match(clientSource, /useLabel: "Распознать это поле"/u);
   assert.match(clientSource, /maxOutputSize: 1800/u);

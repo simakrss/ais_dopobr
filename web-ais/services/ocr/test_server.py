@@ -25,6 +25,61 @@ class OcrExtractionTests(unittest.TestCase):
         kinds, fields = extract_fields(text, file_name)
         return kinds, {field["key"]: field["value"] for field in fields}
 
+    def test_tesseract_orientation_is_detected(self):
+        completed = ocr_server.subprocess.CompletedProcess(
+            args=["tesseract"],
+            returncode=0,
+            stdout=b"Orientation in degrees: 270\nRotate: 90\n",
+            stderr=b"",
+        )
+        with patch.object(ocr_server.subprocess, "run", return_value=completed):
+            self.assertEqual(ocr_server.detect_tesseract_rotation(Path("page.png")), 90)
+
+    def test_ocr_image_applies_detected_orientation(self):
+        readable_text = "ПАСПОРТ РОССИЙСКАЯ ФЕДЕРАЦИЯ Дата рождения Кем выдан паспорт"
+        with tempfile.TemporaryDirectory(prefix="ais-ocr-orientation-") as temp_dir:
+            source_path = Path(temp_dir) / "passport.jpg"
+            source_path.write_bytes(b"test")
+            with (
+                patch.object(ocr_server, "run_command") as run_mock,
+                patch.object(ocr_server, "detect_tesseract_rotation", return_value=90),
+                patch.object(
+                    ocr_server,
+                    "recognize_ocr_orientation_candidate",
+                    return_value=(readable_text, [{"text": "ПАСПОРТ"}]),
+                ),
+            ):
+                text, prepared_path, words, rotation, content_cropped = ocr_server.ocr_image(source_path)
+        self.assertEqual(text, readable_text)
+        self.assertEqual(rotation, 90)
+        self.assertFalse(content_cropped)
+        self.assertTrue(str(prepared_path).endswith("passport-prepared-90.png"))
+        self.assertEqual(words, [{"text": "ПАСПОРТ"}])
+        self.assertTrue(any("-rotate" in call.args[0] and "90" in call.args[0] for call in run_mock.call_args_list))
+
+    def test_upright_document_scores_higher_than_garbled_text(self):
+        upright = "ПАСПОРТ РОССИЙСКАЯ ФЕДЕРАЦИЯ Дата рождения 01.02.1990 Кем выдан паспорт"
+        garbled = "| | 1 -_ / 7 l1 O0"
+        self.assertGreater(
+            ocr_server.ocr_text_orientation_score(upright),
+            ocr_server.ocr_text_orientation_score(garbled),
+        )
+
+    @unittest.skipIf(ocr_server.cv2 is None or ocr_server.np is None, "OpenCV is unavailable")
+    def test_large_scanner_margins_are_removed(self):
+        with tempfile.TemporaryDirectory(prefix="ais-ocr-margin-") as temp_dir:
+            source_path = Path(temp_dir) / "scan.png"
+            image = ocr_server.np.full((1200, 900), 255, dtype=ocr_server.np.uint8)
+            ocr_server.cv2.rectangle(image, (80, 60), (820, 520), 80, 8)
+            for row in range(130, 470, 55):
+                ocr_server.cv2.line(image, (140, row), (760, row), 120, 5)
+            ocr_server.cv2.imwrite(str(source_path), image)
+            cropped_path, cropped = ocr_server.crop_sparse_scan_content(source_path)
+            cropped_image = ocr_server.cv2.imread(str(cropped_path), ocr_server.cv2.IMREAD_GRAYSCALE)
+        self.assertTrue(cropped)
+        self.assertLess(cropped_image.shape[0], image.shape[0] * 0.75)
+        self.assertLess(cropped_image.shape[1], image.shape[1])
+
     def test_passport_identity_fields(self):
         text = """
         ПАСПОРТ РОССИЙСКАЯ ФЕДЕРАЦИЯ
@@ -236,7 +291,8 @@ class OcrExtractionTests(unittest.TestCase):
             "base64": base64.b64encode(buffer.getvalue()).decode("ascii"),
         }
         with (
-            patch.object(ocr_server, "ocr_image", side_effect=lambda image_path, **kwargs: (recognized_text, image_path, [])),
+            patch.object(ocr_server, "ocr_image", side_effect=lambda image_path, **kwargs: (recognized_text, image_path, [], 0, False)),
+            patch.object(ocr_server, "ocr_passport_regions", return_value=""),
             patch.object(ocr_server, "attach_field_previews"),
             patch.object(ocr_server, "render_referenced_page_previews", return_value=[]),
             patch.object(ocr_server, "detect_photo_candidates", return_value=[]),
@@ -311,6 +367,14 @@ class OcrExtractionTests(unittest.TestCase):
         self.assertEqual(fields["birthDate"], "1990-02-01")
         self.assertEqual(fields["passportCode"], "770-001")
         self.assertEqual(fields["passportIssuer"], "ГУ МВД РОССИИ ПО Г. МОСКВЕ")
+
+    def test_passport_name_is_decoded_from_russian_mrz(self):
+        text = """
+        PNRUSKOL7PANOVA<<IRINA<7R9EVNA<<<<<<<<<<<<
+        6029301704RUS6302212F<<<<<<<0200428610068<78
+        """
+        _, fields = self.field_map(text, "Паспорт.pdf")
+        self.assertEqual(fields["name"], "Колюпанова Ирина Юрьевна")
 
     def test_control_numbers(self):
         self.assertTrue(is_valid_inn("7707083893"))

@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.234",
+    version: "1.7.235",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.235",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Автоматический OCR удаляет крупные поля сканера, определяет ориентацию каждой страницы и при слабом результате проверяет альтернативные повороты.",
+        "При ручном распознавании выбранные ориентация и масштаб запоминаются отдельно для документа и страницы до закрытия блока распознавания."
+      ]
+    },
     {
       version: "1.7.234",
       releasedAt: "2026-08-23",
@@ -35750,6 +35758,8 @@ MAX - https://bizvmax.ru/zifra_plus
       mimeType,
       base64
     };
+    normalized.rotation = normalizeStudentPhotoRotation(value.rotation || 0);
+    normalized.cropped = Boolean(value.cropped);
     const sourceBox = value.box;
     if (sourceBox && typeof sourceBox === "object") {
       const box = {
@@ -35768,6 +35778,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const normalized = {
       page: Math.max(1, Math.min(99, Number(value.page) || 1))
     };
+    normalized.rotation = normalizeStudentPhotoRotation(value.rotation || 0);
+    normalized.cropped = Boolean(value.cropped);
     const sourceBox = value.box;
     if (sourceBox && typeof sourceBox === "object") {
       const box = {
@@ -38066,7 +38078,14 @@ MAX - https://bizvmax.ru/zifra_plus
       const recommendedSource = String(
         recommendedFile?.relativeName || recommendedFile?.fileName || ""
       );
-      const useExistingRegion = matchedFileIndex === initialFileIndex;
+      const matchedRecommendedSource = matchedFileIndex === initialFileIndex;
+      const useExistingRegion = matchedRecommendedSource && !fieldPreview?.cropped;
+      const initialRotation = matchedRecommendedSource
+        ? normalizeStudentPhotoRotation(fieldPreview?.rotation || 0)
+        : 0;
+      const initialBox = useExistingRegion && fieldPreview?.box
+        ? rotateStudentPhotoNormalizedRect(fieldPreview.box, -initialRotation)
+        : null;
       const fieldLabel = String(field?.label || field?.key || "Поле");
       openStudentDocumentPhotoCropper(modal.closest("[data-student-document-recognition-dialog]"), previewPayload, initialFileIndex, {
         title: "Повторное распознавание",
@@ -38074,7 +38093,8 @@ MAX - https://bizvmax.ru/zifra_plus
         ariaLabel: `Выбор источника и области для поля ${fieldLabel}`,
         useLabel: "Распознать это поле",
         initialPage: useExistingRegion ? fieldPreview?.page || 1 : 1,
-        initialBox: useExistingRegion ? fieldPreview?.box || null : null,
+        initialBox,
+        initialRotation,
         initialSource: recommendedSource,
         recommendedSource,
         maxOutputSize: 1800,
@@ -38634,6 +38654,14 @@ MAX - https://bizvmax.ru/zifra_plus
     let currentFilePosition = Math.max(0, availableFiles.findIndex(({ index }) => index === fileIndex));
     let file = availableFiles[currentFilePosition].file;
     const selectRegionMode = typeof options.onSelect === "function";
+    const cropViewState = dialog?.studentDocumentRecognitionCropViewState || {
+      rotations: new Map(),
+      zooms: new Map(),
+      lastDocumentKey: ""
+    };
+    if (!(cropViewState.rotations instanceof Map)) cropViewState.rotations = new Map();
+    if (!(cropViewState.zooms instanceof Map)) cropViewState.zooms = new Map();
+    if (dialog) dialog.studentDocumentRecognitionCropViewState = cropViewState;
     const initialSourceNames = String(options.initialSource || "")
       .split(/;\s*/g)
       .map((item) => item.trim())
@@ -38655,6 +38683,14 @@ MAX - https://bizvmax.ru/zifra_plus
       )));
       if (sourcePosition >= 0) {
         currentFilePosition = sourcePosition;
+        file = availableFiles[currentFilePosition].file;
+      }
+    } else if (cropViewState.lastDocumentKey) {
+      const previousPosition = availableFiles.findIndex(({ file: candidate }) => (
+        getStudentRecognitionFileKey(candidate) === cropViewState.lastDocumentKey
+      ));
+      if (previousPosition >= 0) {
+        currentFilePosition = previousPosition;
         file = availableFiles[currentFilePosition].file;
       }
     }
@@ -38761,7 +38797,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const useButton = backdrop.querySelector("[data-action='use-student-photo-crop']");
     const pageCache = new Map();
     const selections = new Map();
-    const rotations = new Map();
+    const rotations = cropViewState.rotations;
+    const zooms = cropViewState.zooms;
     let currentPage = clamp(Number(options.initialPage) || 1, 1, Math.max(1, Number(file.pageCount) || 1));
     let pageCount = Math.max(1, Number(file.pageCount) || 1);
     let interaction = null;
@@ -38782,7 +38819,10 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     backdrop.closeStudentDocumentRegionSelector = close;
     const currentFileEntry = () => availableFiles[currentFilePosition];
-    const currentPageKey = () => `${currentFileEntry().index}:${currentPage}`;
+    const currentPageKey = () => `${getStudentRecognitionFileKey(currentFileEntry().file)}:${currentPage}`;
+    if (!rotations.has(currentPageKey())) {
+      rotations.set(currentPageKey(), normalizeStudentPhotoRotation(options.initialRotation || 0));
+    }
     const rotatedPageSize = () => getStudentPhotoRotatedSize(
       image.naturalWidth,
       image.naturalHeight,
@@ -38848,9 +38888,10 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     const setDocumentZoom = (nextZoom, preserveAnchor = true, anchor = null) => {
       zoom = clamp(Number(nextZoom) || 1, 0.25, 4);
+      zooms.set(currentPageKey(), zoom);
       paintDocumentView(preserveAnchor, anchor);
     };
-    const fitDocumentPage = () => {
+    const fitDocumentPage = (nextZoom = 1, rememberZoom = true) => {
       if (!image.naturalWidth || !image.naturalHeight) return;
       const availableWidth = Math.max(160, viewport.clientWidth - 20);
       const availableHeight = Math.max(160, viewport.clientHeight - 20);
@@ -38862,7 +38903,8 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       baseWidth = Math.max(1, rotatedSize.width * fitScale);
       baseHeight = Math.max(1, rotatedSize.height * fitScale);
-      zoom = 1;
+      zoom = clamp(Number(nextZoom) || 1, 0.25, 4);
+      if (rememberZoom) zooms.set(currentPageKey(), zoom);
       paintDocumentView(false);
     };
     const selectionIsUsable = (selection) => Boolean(
@@ -38902,6 +38944,8 @@ MAX - https://bizvmax.ru/zifra_plus
       pageCount = Math.max(1, Number(file.pageCount) || 1);
       currentPage = clamp(Number(page) || 1, 1, pageCount);
       rotation = normalizeStudentPhotoRotation(rotations.get(currentPageKey()) || 0);
+      const restoredZoom = clamp(Number(zooms.get(currentPageKey())) || 1, 0.25, 4);
+      cropViewState.lastDocumentKey = getStudentRecognitionFileKey(file);
       updateNavigation();
       loading.hidden = false;
       loading.textContent = "Загрузка страницы...";
@@ -38915,11 +38959,11 @@ MAX - https://bizvmax.ru/zifra_plus
       image.style.removeProperty("transform");
       viewport.scrollLeft = 0;
       viewport.scrollTop = 0;
-      zoom = 1;
+      zoom = restoredZoom;
       baseWidth = 0;
       baseHeight = 0;
-      zoomInput.value = "100";
-      zoomLabel.textContent = "100%";
+      zoomInput.value = String(Math.round(restoredZoom * 100));
+      zoomLabel.textContent = `${Math.round(restoredZoom * 100)}%`;
       useButton.disabled = true;
       try {
         const cacheKey = currentPageKey();
@@ -38934,7 +38978,7 @@ MAX - https://bizvmax.ru/zifra_plus
         image.onload = () => {
           loading.hidden = true;
           stage.hidden = false;
-          fitDocumentPage();
+          fitDocumentPage(restoredZoom, false);
           const selectionKey = currentPageKey();
           if (!selections.has(selectionKey)) {
             const isInitialRegion = selectRegionMode
@@ -39134,12 +39178,12 @@ MAX - https://bizvmax.ru/zifra_plus
       interaction = null;
       stage.classList.remove("is-panning");
       rotationLabel.textContent = `${rotation}°`;
-      fitDocumentPage();
+      fitDocumentPage(zoom, true);
       paintSelection();
     };
     rotateLeftButton.addEventListener("click", () => rotateDocumentPage(-90));
     rotateRightButton.addEventListener("click", () => rotateDocumentPage(90));
-    fitButton.addEventListener("click", fitDocumentPage);
+    fitButton.addEventListener("click", () => fitDocumentPage(1, true));
     viewport.addEventListener("wheel", (event) => {
       if (!event.deltaY) return;
       event.preventDefault();
@@ -39162,7 +39206,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       if (event.key === "0") {
         event.preventDefault();
-        fitDocumentPage();
+        fitDocumentPage(1, true);
         return;
       }
       if (editMode !== "pan" || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;

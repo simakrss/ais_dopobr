@@ -26,8 +26,10 @@ from typing import Any
 
 try:
     import cv2
+    import numpy as np
 except (ImportError, OSError):
     cv2 = None
+    np = None
 
 
 PORT = int(os.environ.get("OCR_PORT", "8083"))
@@ -469,11 +471,134 @@ def tesseract_text_with_words(
     return text, parse_tesseract_words(tsv_text)
 
 
+OCR_ORIENTATION_MARKERS = re.compile(
+    r"(?:российск|паспорт|выдан|дата\s+рождения|место\s+рождения|"
+    r"страхов|снилс|\bинн\b|диплом|удостовер|аттестат|образован|"
+    r"квалификац|фамили|отчество|регистрац|место\s+жительств)",
+    re.IGNORECASE,
+)
+
+
+def ocr_text_orientation_score(value: str) -> int:
+    """Estimate whether OCR output resembles an upright Russian document."""
+    normalized = normalize_text(value)
+    if not normalized:
+        return 0
+    cyrillic_count = len(re.findall(r"[А-ЯЁа-яё]", normalized))
+    letter_count = len(re.findall(r"[A-Za-zА-ЯЁа-яё]", normalized))
+    readable_words = len(re.findall(r"\b[A-Za-zА-ЯЁа-яё]{3,}\b", normalized))
+    marker_count = len(OCR_ORIENTATION_MARKERS.findall(normalized))
+    date_count = len(DATE_PATTERN.findall(normalized))
+    digit_groups = len(re.findall(r"\b\d{3,}\b", normalized))
+    return round(
+        cyrillic_count * 1.35
+        + letter_count * 0.2
+        + readable_words * 3.5
+        + marker_count * 95
+        + date_count * 24
+        + min(digit_groups, 8) * 5
+    )
+
+
+def detect_tesseract_rotation(image_path: Path) -> int | None:
+    """Return the clockwise correction reported by Tesseract OSD."""
+    try:
+        completed = subprocess.run(
+            [
+                TESSERACT_BINARY,
+                str(image_path),
+                "stdout",
+                "-l",
+                "osd",
+                "--psm",
+                "0",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=35,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = "\n".join((
+        completed.stdout.decode("utf-8", "replace"),
+        completed.stderr.decode("utf-8", "replace"),
+    ))
+    match = re.search(r"\bRotate:\s*(0|90|180|270)\b", output, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def recognize_ocr_orientation_candidate(
+    image_path: Path,
+) -> tuple[str, list[dict[str, Any]]]:
+    primary, words = tesseract_text_with_words(image_path, 11)
+    secondary = ""
+    if len(normalize_text(primary)) < 40:
+        secondary = tesseract_text(image_path, 6)
+    return merge_ocr_text(primary, secondary), words
+
+
+def is_reliable_ocr_orientation(value: str, *, try_snils_rotations: bool = False) -> bool:
+    if try_snils_rotations:
+        return snils_ocr_text_score(value) >= 250
+    normalized = normalize_text(value)
+    score = ocr_text_orientation_score(normalized)
+    marker_count = len(OCR_ORIENTATION_MARKERS.findall(normalized))
+    cyrillic_count = len(re.findall(r"[А-ЯЁа-яё]", normalized))
+    return score >= 260 or (marker_count >= 1 and score >= 145) or (
+        len(normalized) >= 180 and cyrillic_count >= 60
+    )
+
+
+def crop_sparse_scan_content(image_path: Path) -> tuple[Path, bool]:
+    """Remove large scanner margins before orientation detection and OCR."""
+    if cv2 is None or np is None:
+        return image_path, False
+    image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    if image is None or min(image.shape[:2]) < 320:
+        return image_path, False
+    mask = (image < 205).astype(np.float32)
+
+    def content_bounds(density: Any) -> tuple[int, int] | None:
+        window = max(5, len(density) // 80)
+        smoothed = np.convolve(
+            density,
+            np.ones(window, dtype=np.float32) / window,
+            mode="same",
+        )
+        threshold = max(0.004, float(np.percentile(smoothed, 80)) * 0.12)
+        indexes = np.flatnonzero(smoothed >= threshold)
+        return (int(indexes[0]), int(indexes[-1] + 1)) if indexes.size else None
+
+    horizontal = content_bounds(mask.mean(axis=0))
+    vertical = content_bounds(mask.mean(axis=1))
+    if not horizontal or not vertical:
+        return image_path, False
+    height, width = image.shape[:2]
+    left, right = horizontal
+    top, bottom = vertical
+    horizontal_padding = max(8, round(width * 0.015))
+    vertical_padding = max(8, round(height * 0.015))
+    left = max(0, left - horizontal_padding)
+    right = min(width, right + horizontal_padding)
+    top = max(0, top - vertical_padding)
+    bottom = min(height, bottom + vertical_padding)
+    crop_width = right - left
+    crop_height = bottom - top
+    retained_area = crop_width * crop_height / max(1, width * height)
+    if crop_width < width * 0.25 or crop_height < height * 0.2 or not 0.08 <= retained_area <= 0.92:
+        return image_path, False
+    target = image_path.with_name(f"{image_path.stem}-content.png")
+    if not cv2.imwrite(str(target), image[top:bottom, left:right]):
+        return image_path, False
+    return target, True
+
+
 def ocr_image(
     image_path: Path,
     *,
     try_snils_rotations: bool = False,
-) -> tuple[str, Path, list[dict[str, Any]]]:
+) -> tuple[str, Path, list[dict[str, Any]], int, bool]:
     processed_path = image_path.with_name(f"{image_path.stem}-prepared.png")
     run_command(
         [
@@ -481,54 +606,83 @@ def ocr_image(
             str(image_path),
             "-auto-orient",
             "-strip",
-            "-colorspace",
-            "Gray",
             "-resize",
             "2600x2600>",
-            "-contrast-stretch",
-            "1%x1%",
-            "-sharpen",
-            "0x0.8",
             str(processed_path),
         ],
         timeout=60,
     )
-    primary, words = tesseract_text_with_words(processed_path, 11)
-    secondary = ""
-    primary_normalized = normalize_text(primary)
-    if len(primary_normalized) < 40:
-        secondary = tesseract_text(processed_path, 6)
-    best_text = merge_ocr_text(primary, secondary)
-    best_path = processed_path
-    best_words = words
-    best_score = snils_ocr_text_score(best_text) if try_snils_rotations else 0
-    if try_snils_rotations and best_score < 250:
-        for angle in (90, 270, 180):
-            rotated_path = image_path.with_name(f"{image_path.stem}-prepared-{angle}.png")
+    content_path, content_cropped = crop_sparse_scan_content(processed_path)
+    detected_rotation = detect_tesseract_rotation(content_path)
+    candidate_angles = [detected_rotation if detected_rotation is not None else 0]
+    best_text = ""
+    best_path = content_path
+    best_words: list[dict[str, Any]] = []
+    best_score = -1
+    best_angle = 0
+
+    def evaluate_angle(angle: int) -> bool:
+        nonlocal best_text, best_path, best_words, best_score, best_angle
+        candidate_path = content_path
+        if angle:
+            candidate_path = content_path.with_name(f"{content_path.stem}-{angle}.png")
             run_command(
                 [
                     CONVERT_BINARY,
-                    str(processed_path),
+                    str(content_path),
                     "-rotate",
                     str(angle),
-                    str(rotated_path),
+                    str(candidate_path),
                 ],
                 timeout=60,
             )
-            rotated_primary, rotated_words = tesseract_text_with_words(rotated_path, 11)
-            rotated_secondary = ""
-            if len(normalize_text(rotated_primary)) < 40:
-                rotated_secondary = tesseract_text(rotated_path, 6)
-            rotated_text = merge_ocr_text(rotated_primary, rotated_secondary)
-            rotated_score = snils_ocr_text_score(rotated_text)
-            if rotated_score > best_score:
-                best_text = rotated_text
-                best_path = rotated_path
-                best_words = rotated_words
-                best_score = rotated_score
-            if best_score >= 250:
+        candidate_text, candidate_words = recognize_ocr_orientation_candidate(candidate_path)
+        candidate_score = ocr_text_orientation_score(candidate_text)
+        if try_snils_rotations:
+            candidate_score += snils_ocr_text_score(candidate_text) * 3
+        if candidate_score > best_score:
+            best_text = candidate_text
+            best_path = candidate_path
+            best_words = candidate_words
+            best_score = candidate_score
+            best_angle = angle
+        return is_reliable_ocr_orientation(
+            candidate_text,
+            try_snils_rotations=try_snils_rotations,
+        )
+
+    reliable = evaluate_angle(candidate_angles[0])
+    if not reliable:
+        for angle in (0, 90, 270, 180):
+            if angle in candidate_angles:
+                continue
+            candidate_angles.append(angle)
+            if evaluate_angle(angle):
                 break
-    return best_text, best_path, best_words
+    if not is_reliable_ocr_orientation(best_text, try_snils_rotations=try_snils_rotations):
+        enhanced_path = best_path.with_name(f"{best_path.stem}-enhanced.png")
+        run_command(
+            [
+                CONVERT_BINARY,
+                str(best_path),
+                "-colorspace",
+                "Gray",
+                "-normalize",
+                "-sharpen",
+                "0x0.7",
+                str(enhanced_path),
+            ],
+            timeout=60,
+        )
+        enhanced_text, enhanced_words = recognize_ocr_orientation_candidate(enhanced_path)
+        enhanced_score = ocr_text_orientation_score(enhanced_text)
+        if try_snils_rotations:
+            enhanced_score += snils_ocr_text_score(enhanced_text) * 3
+        if enhanced_score > best_score:
+            best_text = enhanced_text
+            best_path = enhanced_path
+            best_words = enhanced_words
+    return best_text, best_path, best_words, best_angle, content_cropped
 
 
 def render_pages(source_path: Path, mime_type: str, workdir: Path) -> list[Path]:
@@ -620,18 +774,22 @@ def ocr_passport_regions(image_path: Path) -> str:
     issue_date = crop_ocr_region(
         image_path,
         "passport-date",
-        (0.154, 0.162, 0.41, 0.115),
-        psm=6,
+        (0.20, 0.195, 0.34, 0.07),
+        psm=7,
         languages="eng",
         whitelist="0123456789.-/",
+        normalize=True,
+        resize_percent=300,
     )
     department_code = crop_ocr_region(
         image_path,
         "passport-code",
-        (0.641, 0.162, 0.282, 0.115),
-        psm=7,
+        (0.61, 0.195, 0.24, 0.07),
+        psm=6,
         languages="eng",
         whitelist="0123456789-",
+        normalize=True,
+        resize_percent=300,
     )
     identity = crop_ocr_region(
         image_path,
@@ -643,8 +801,8 @@ def ocr_passport_regions(image_path: Path) -> str:
     mrz = crop_ocr_region(
         image_path,
         "passport-mrz",
-        (0.013, 0.898, 0.974, 0.066),
-        psm=7,
+        (0.08, 0.855, 0.86, 0.11),
+        psm=6,
         languages="eng",
         whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<",
         resize_percent=200,
@@ -843,6 +1001,37 @@ def extract_passport_mrz(
     text: str,
     fields: dict[str, dict[str, Any]],
 ) -> None:
+    mrz_transliteration = {
+        "A": "А", "B": "Б", "V": "В", "G": "Г", "D": "Д", "E": "Е",
+        "2": "Ё", "J": "Ж", "Z": "З", "I": "И", "Q": "Й", "K": "К",
+        "L": "Л", "M": "М", "N": "Н", "O": "О", "P": "П", "R": "Р",
+        "S": "С", "T": "Т", "U": "У", "F": "Ф", "H": "Х", "C": "Ц",
+        "3": "Ч", "4": "Ш", "W": "Щ", "X": "Ъ", "Y": "Ы", "9": "Ь",
+        "6": "Э", "7": "Ю", "8": "Я",
+    }
+
+    def decode_name_part(value: str) -> str:
+        decoded = "".join(mrz_transliteration.get(character, "") for character in value.upper())
+        return decoded[:1] + decoded[1:].lower() if len(decoded) >= 2 else ""
+
+    for raw_line in normalize_text(text).splitlines():
+        compact = re.sub(r"[^A-Z0-9<]", "", raw_line.upper())
+        name_match = re.search(r"P[A-Z]RUS<?([A-Z0-9]{3,})<<([A-Z0-9<]{2,})", compact)
+        if not name_match:
+            continue
+        surname = decode_name_part(name_match.group(1))
+        given_parts = [decode_name_part(part) for part in name_match.group(2).split("<") if part]
+        given_parts = [part for part in given_parts if part]
+        if surname and given_parts:
+            add_field(
+                fields,
+                "name",
+                " ".join((surname, *given_parts[:2])),
+                0.96 if len(given_parts) >= 2 else 0.88,
+                raw_line,
+            )
+            break
+
     for raw_line in normalize_text(text).splitlines():
         compact = re.sub(r"[^A-Z0-9<]", "", raw_line.upper())
         match = re.search(
@@ -2234,6 +2423,8 @@ def render_field_preview(
         "page": int(page_result["page"]),
         "mimeType": "image/jpeg",
         "base64": base64.b64encode(preview_bytes).decode("ascii"),
+        "rotation": int(page_result.get("rotation") or 0),
+        "cropped": bool(page_result.get("contentCropped")),
         "box": {
             "x": round(left / width, 5),
             "y": round(top / height, 5),
@@ -2244,8 +2435,8 @@ def render_field_preview(
 
 
 def render_page_preview(page_result: dict[str, Any]) -> dict[str, Any]:
-    source_path = Path(page_result.get("sourceImagePath") or page_result["imagePath"])
     image_path = Path(page_result["imagePath"])
+    source_path = image_path
     output_path = image_path.with_name(f"{image_path.stem}-page-preview.jpg")
     preview_bytes = b""
     for max_dimension, quality in ((1800, 80), (1500, 68), (1200, 56)):
@@ -2899,8 +3090,10 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 prepared_path = page_path
                 words: list[dict[str, Any]] = []
                 extraction_method = "text-layer"
+                page_rotation = 0
+                page_content_cropped = False
             else:
-                page_text, prepared_path, words = ocr_image(
+                page_text, prepared_path, words, page_rotation, page_content_cropped = ocr_image(
                     page_path,
                     try_snils_rotations=snils_hint,
                 )
@@ -2919,9 +3112,9 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 )
             )
             if extraction_method == "ocr" and passport_hint and page_number == 1 and not registration_hint:
-                page_text = merge_ocr_text(page_text, ocr_passport_regions(page_path))
+                page_text = merge_ocr_text(page_text, ocr_passport_regions(prepared_path))
             if extraction_method == "ocr" and passport_hint and registration_hint:
-                page_text = merge_ocr_text(page_text, ocr_passport_registration_region(page_path))
+                page_text = merge_ocr_text(page_text, ocr_passport_registration_region(prepared_path))
             return {
                 "page": page_number,
                 "text": page_text,
@@ -2930,6 +3123,8 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 "sourceImagePath": str(page_path),
                 "words": words,
                 "method": extraction_method,
+                "rotation": page_rotation,
+                "contentCropped": page_content_cropped,
             }
 
         page_items = list(enumerate(page_paths, 1))
