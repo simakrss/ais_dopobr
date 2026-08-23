@@ -57,6 +57,46 @@ class OcrExtractionTests(unittest.TestCase):
         self.assertEqual(words, [{"text": "ПАСПОРТ"}])
         self.assertTrue(any("-rotate" in call.args[0] and "90" in call.args[0] for call in run_mock.call_args_list))
 
+    def test_education_ocr_checks_every_rotation_and_prefers_extracted_fields(self):
+        readable_but_sparse = "ДИПЛОМ О ВЫСШЕМ ОБРАЗОВАНИИ РОССИЙСКАЯ ФЕДЕРАЦИЯ"
+        rich_education_text = """
+        ТЕСТОВЫЙ ГОСУДАРСТВЕННЫЙ УНИВЕРСИТЕТ
+        ДИПЛОМ О ВЫСШЕМ ОБРАЗОВАНИИ
+        Настоящий диплом свидетельствует о том, что ИВАНОВА АННА ПЕТРОВНА
+        по направлению подготовки 09.03.01 Информатика и вычислительная техника
+        Квалификация Бакалавр
+        Серия 108004 Номер 0005721
+        Дата выдачи 30.06.2015
+        """
+
+        def recognize_candidate(image_path):
+            text = rich_education_text if image_path.stem.endswith("-90") else readable_but_sparse
+            return text, [{"text": image_path.stem}]
+
+        with tempfile.TemporaryDirectory(prefix="ais-ocr-education-rotation-") as temp_dir:
+            source_path = Path(temp_dir) / "diploma.jpg"
+            prepared_path = Path(temp_dir) / "diploma-prepared.png"
+            source_path.write_bytes(b"test")
+            with (
+                patch.object(ocr_server, "run_command"),
+                patch.object(ocr_server, "crop_sparse_scan_content", return_value=(prepared_path, False)),
+                patch.object(ocr_server, "detect_tesseract_rotation", return_value=0),
+                patch.object(
+                    ocr_server,
+                    "recognize_ocr_orientation_candidate",
+                    side_effect=recognize_candidate,
+                ) as recognize_mock,
+            ):
+                text, _, _, rotation, _ = ocr_server.ocr_image(
+                    source_path,
+                    document_hint="education",
+                    file_name="Диплом.docx",
+                )
+
+        self.assertEqual(rotation, 90)
+        self.assertIn("108004", text)
+        self.assertEqual(recognize_mock.call_count, 4)
+
     def test_upright_document_scores_higher_than_garbled_text(self):
         upright = "ПАСПОРТ РОССИЙСКАЯ ФЕДЕРАЦИЯ Дата рождения 01.02.1990 Кем выдан паспорт"
         garbled = "| | 1 -_ / 7 l1 O0"
@@ -351,6 +391,44 @@ class OcrExtractionTests(unittest.TestCase):
         kinds, fields = self.field_map(text, "Диплом.pdf")
         self.assertEqual(kinds, ["education"])
         self.assertEqual(fields["educationDocumentSurname"], "Сидорова")
+
+    def test_noisy_education_scan_fields_are_extracted_across_lines(self):
+        text = """
+        РОССИЙСКАЯ ФЕДЕРАЦИЯ
+        Личный код
+        МИНИСТЕРСТВО НАУКИ И ВЫСШЕГО ОБРАЗОВАНИЯ
+        ФЕДЕРАЛЬНОЕ ГОСУДАРСТВЕННОЕ ОБРАЗОВАТЕЛЬНОЕ УЧРЕЖДЕНИЕ
+        ТЕСТОВЫЙ ГОСУДАРСТВЕННЫЙ УНИВЕРСИТЕТ
+        ДИПЛОМ О ВЫСШЕМ ОБРАЗОВАНИИ
+        Настоящий диплом свидетельствует о том, что
+        | |
+        ИВАНОВА
+        АННА ПЕТРОВНА
+        освоила образовательную программу бакалавриата
+        по направлению подготовки
+        -- служебная строка OCR --
+        09.03.01 Информационные системы и технологии
+        Квалификация
+        Бакалавр
+        108004 0005721
+        Регистрационный номер 12345
+        Дата выдачи
+        --
+        --
+        --
+        --
+        --
+        30 июня 2015 года
+        """
+        kinds, fields = self.field_map(text, "Диплом со сканом.docx")
+        self.assertEqual(kinds, ["education"])
+        self.assertEqual(fields["educationDocumentSurname"], "Иванова")
+        self.assertEqual(fields["educationDocumentSeries"], "108004")
+        self.assertEqual(fields["educationDocumentNumber"], "0005721")
+        self.assertEqual(fields["educationDocumentDate"], "2015-06-30")
+        self.assertEqual(fields["educationSpecialty"], "Информационные системы и технологии")
+        self.assertEqual(fields["educationQualification"], "Бакалавр")
+        self.assertIn("ТЕСТОВЫЙ ГОСУДАРСТВЕННЫЙ УНИВЕРСИТЕТ", fields["educationDocumentIssuer"])
 
     def test_passport_mrz_and_targeted_regions(self):
         text = """

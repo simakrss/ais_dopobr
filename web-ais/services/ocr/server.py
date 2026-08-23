@@ -478,6 +478,24 @@ OCR_ORIENTATION_MARKERS = re.compile(
     re.IGNORECASE,
 )
 
+EDUCATION_DOCUMENT_HINT_PATTERN = re.compile(
+    r"(?:диплом|аттестат|удостоверени[ея]|документ\s+об\s+образовании|"
+    r"высш(?:ем|его)\s+образовани|квалификац|направлени[ея]\s+подготовки)",
+    re.IGNORECASE,
+)
+
+EDUCATION_OCR_FIELD_WEIGHTS = {
+    "educationDocument": 80,
+    "educationLevel": 90,
+    "educationDocumentSurname": 150,
+    "educationDocumentSeries": 150,
+    "educationDocumentNumber": 170,
+    "educationDocumentDate": 170,
+    "educationDocumentIssuer": 130,
+    "educationSpecialty": 140,
+    "educationQualification": 130,
+}
+
 
 def ocr_text_orientation_score(value: str) -> int:
     """Estimate whether OCR output resembles an upright Russian document."""
@@ -550,6 +568,20 @@ def is_reliable_ocr_orientation(value: str, *, try_snils_rotations: bool = False
     )
 
 
+def education_ocr_candidate_score(value: str, file_name: str) -> tuple[int, int]:
+    """Prefer rotations that yield actual education fields, not merely readable text."""
+    try:
+        kinds, fields = extract_fields(value, file_name or "Документ об образовании")
+    except (NameError, KeyError, TypeError, ValueError):
+        return 0, 0
+    field_keys = {str(field.get("key") or "") for field in fields}
+    field_count = sum(key in field_keys for key in EDUCATION_OCR_FIELD_WEIGHTS)
+    score = sum(weight for key, weight in EDUCATION_OCR_FIELD_WEIGHTS.items() if key in field_keys)
+    if "education" in kinds:
+        score += 120
+    return score, field_count
+
+
 def crop_sparse_scan_content(image_path: Path) -> tuple[Path, bool]:
     """Remove large scanner margins before orientation detection and OCR."""
     if cv2 is None or np is None:
@@ -598,6 +630,8 @@ def ocr_image(
     image_path: Path,
     *,
     try_snils_rotations: bool = False,
+    document_hint: str = "",
+    file_name: str = "",
 ) -> tuple[str, Path, list[dict[str, Any]], int, bool]:
     processed_path = image_path.with_name(f"{image_path.stem}-prepared.png")
     run_command(
@@ -620,9 +654,24 @@ def ocr_image(
     best_words: list[dict[str, Any]] = []
     best_score = -1
     best_angle = 0
+    best_education_field_count = 0
+    education_document = document_hint == "education"
+
+    def score_candidate(candidate_text: str) -> tuple[int, int]:
+        candidate_score = ocr_text_orientation_score(candidate_text)
+        education_field_count = 0
+        if try_snils_rotations:
+            candidate_score += snils_ocr_text_score(candidate_text) * 3
+        if education_document:
+            education_score, education_field_count = education_ocr_candidate_score(
+                candidate_text,
+                file_name,
+            )
+            candidate_score += education_score
+        return candidate_score, education_field_count
 
     def evaluate_angle(angle: int) -> bool:
-        nonlocal best_text, best_path, best_words, best_score, best_angle
+        nonlocal best_text, best_path, best_words, best_score, best_angle, best_education_field_count
         candidate_path = content_path
         if angle:
             candidate_path = content_path.with_name(f"{content_path.stem}-{angle}.png")
@@ -637,29 +686,42 @@ def ocr_image(
                 timeout=60,
             )
         candidate_text, candidate_words = recognize_ocr_orientation_candidate(candidate_path)
-        candidate_score = ocr_text_orientation_score(candidate_text)
-        if try_snils_rotations:
-            candidate_score += snils_ocr_text_score(candidate_text) * 3
+        candidate_score, education_field_count = score_candidate(candidate_text)
         if candidate_score > best_score:
             best_text = candidate_text
             best_path = candidate_path
             best_words = candidate_words
             best_score = candidate_score
             best_angle = angle
+            best_education_field_count = education_field_count
         return is_reliable_ocr_orientation(
             candidate_text,
             try_snils_rotations=try_snils_rotations,
         )
 
     reliable = evaluate_angle(candidate_angles[0])
-    if not reliable:
+    if not education_document and EDUCATION_DOCUMENT_HINT_PATTERN.search(best_text):
+        education_document = True
+        best_score, best_education_field_count = score_candidate(best_text)
+    if education_document:
+        # A sideways diploma can still produce plausible Cyrillic text. Check every
+        # quarter-turn and choose the one that exposes the richest education data.
+        for angle in (0, 90, 270, 180):
+            if angle in candidate_angles:
+                continue
+            candidate_angles.append(angle)
+            evaluate_angle(angle)
+    elif not reliable:
         for angle in (0, 90, 270, 180):
             if angle in candidate_angles:
                 continue
             candidate_angles.append(angle)
             if evaluate_angle(angle):
                 break
-    if not is_reliable_ocr_orientation(best_text, try_snils_rotations=try_snils_rotations):
+    if (
+        not is_reliable_ocr_orientation(best_text, try_snils_rotations=try_snils_rotations)
+        or (education_document and best_education_field_count < 6)
+    ):
         enhanced_path = best_path.with_name(f"{best_path.stem}-enhanced.png")
         run_command(
             [
@@ -675,13 +737,12 @@ def ocr_image(
             timeout=60,
         )
         enhanced_text, enhanced_words = recognize_ocr_orientation_candidate(enhanced_path)
-        enhanced_score = ocr_text_orientation_score(enhanced_text)
-        if try_snils_rotations:
-            enhanced_score += snils_ocr_text_score(enhanced_text) * 3
+        enhanced_score, enhanced_education_field_count = score_candidate(enhanced_text)
         if enhanced_score > best_score:
             best_text = enhanced_text
             best_path = enhanced_path
             best_words = enhanced_words
+            best_education_field_count = enhanced_education_field_count
     return best_text, best_path, best_words, best_angle, content_cropped
 
 
@@ -1269,6 +1330,18 @@ EDUCATION_SURNAME_STOP_WORDS = {
     "академия",
     "колледж",
     "техникум",
+    "настоящий",
+    "свидетельствует",
+    "удостоверяет",
+    "подтверждает",
+    "освоил",
+    "освоила",
+    "образовательную",
+    "программу",
+    "бакалавриата",
+    "магистратуры",
+    "том",
+    "что",
 }
 
 
@@ -1326,6 +1399,49 @@ def extract_education_surname(
         surname = normalize_education_surname_candidate(testimony_match.group(1))
         if surname:
             add_field(fields, "educationDocumentSurname", surname, 0.84, testimony_match.group(0))
+            return
+
+    testimony_markers = (
+        "свидетельствует о том",
+        "удостоверяет",
+        "подтверждает",
+        "диплом выдан",
+    )
+    testimony_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if any(marker in line.casefold() for marker in testimony_markers)
+        ),
+        -1,
+    )
+    if testimony_index < 0:
+        return
+    candidates: list[tuple[int, str, str]] = []
+    surname_ending = re.compile(
+        r"(?:ов|ова|ев|ева|ёв|ёва|ин|ина|ын|ына|ский|ская|цкий|цкая|ко|ук|юк|ян|дзе)$",
+        re.IGNORECASE,
+    )
+    for offset, candidate_line in enumerate(lines[testimony_index + 1:testimony_index + 14], 1):
+        folded_line = candidate_line.casefold()
+        if re.search(r"\b(?:освоил[аи]?|образовательн|решением|квалификац)\b", folded_line):
+            break
+        surname = normalize_education_surname_candidate(candidate_line)
+        if not surname:
+            continue
+        words = re.findall(r"[А-ЯЁ][А-ЯЁа-яё-]{2,39}", candidate_line, re.IGNORECASE)
+        score = 100 - offset * 4
+        if len(words) == 1:
+            score += 18
+        if surname_ending.search(surname):
+            score += 45
+        letters = re.sub(r"[^А-ЯЁа-яё]", "", candidate_line)
+        if letters and letters == letters.upper():
+            score += 20
+        candidates.append((score, surname, candidate_line))
+    if candidates:
+        _, surname, evidence = max(candidates, key=lambda item: item[0])
+        add_field(fields, "educationDocumentSurname", surname, 0.78, evidence)
 
 
 def classify_document(text: str, file_name: str) -> list[str]:
@@ -1341,11 +1457,16 @@ def classify_document(text: str, file_name: str) -> list[str]:
     passport_identity_score = sum(marker in source for marker in (
         "российская федерация", "дата выдачи", "место рождения", "личный код"
     ))
+    education_explicit = bool(EDUCATION_DOCUMENT_HINT_PATTERN.search(source))
     # В СНИЛС также присутствуют «Российская Федерация» и «место рождения».
     # Эти общие надписи без явного паспортного маркера не делают файл паспортом.
     passport_score = int(
         passport_explicit
-        or (snils_score == 0 and passport_identity_score >= 2)
+        or (
+            not education_explicit
+            and snils_score == 0
+            and passport_identity_score >= 2
+        )
     )
     scores = {
         "passport": passport_score,
@@ -1356,7 +1477,8 @@ def classify_document(text: str, file_name: str) -> list[str]:
             r"налоговом\s+органе",
         )),
         "education": sum(marker in source for marker in (
-            "диплом", "документ об образовании", "квалификац", "специальност"
+            "диплом", "документ об образовании", "квалификац", "специальност",
+            "направление подготовки", "направления подготовки",
         )),
         "application": sum(marker in source for marker in (
             "заявление поступающего", "персональные данные", "дата подачи заявления"
@@ -1928,16 +2050,33 @@ def extract_education(
         add_field(fields, "educationDocumentSeries", labeled_number.group(1), 0.88, labeled_number.group(0))
         add_field(fields, "educationDocumentNumber", labeled_number.group(2), 0.9, labeled_number.group(0))
     else:
-        number_match = re.search(
-            r"(?:диплом|документ).{0,100}?\b([0-9]{5,6})\s+([0-9]{6,8})\b",
+        number_candidates = list(re.finditer(
+            r"\b([0-9]{5,6})\s+([0-9]{6,8})\b",
             text,
-            re.IGNORECASE | re.DOTALL,
+            re.IGNORECASE,
+        ))
+        number_match = max(
+            number_candidates,
+            key=lambda match: (
+                4 * int("серия" in text[max(0, match.start() - 180):match.end() + 80].casefold())
+                + 2 * int("диплом" in text[max(0, match.start() - 420):match.end() + 80].casefold()),
+                -match.start(),
+            ),
+            default=None,
         )
         if number_match:
             add_field(fields, "educationDocumentSeries", number_match.group(1), 0.68, number_match.group(0))
             add_field(fields, "educationDocumentNumber", number_match.group(2), 0.72, number_match.group(0))
 
     issue_date, issue_evidence = find_labeled_date(lines, ("дата выдачи", "выдан"))
+    if not issue_date:
+        for index, line in enumerate(lines):
+            if "дата выдачи" not in line.casefold():
+                continue
+            issue_evidence = " ".join(lines[index:index + 16])
+            issue_date = parse_date(issue_evidence)
+            if issue_date:
+                break
     if issue_date:
         add_field(fields, "educationDocumentDate", issue_date, 0.88, issue_evidence)
 
@@ -2002,6 +2141,26 @@ def extract_education(
         if qualification_name or program_match:
             break
 
+    training_direction_match = re.search(
+        r"(?:по\s+направлению\s+подготовки|по\s+специальности|специальность)"
+        r".{0,260}?\b\d{2}[.]\d{2}[.]\d{2}\s+([^\n]{4,180})",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if training_direction_match:
+        specialty = re.split(
+            r"\s+(?:квалификац|регистрацион|дата\s+выдачи)\b",
+            training_direction_match.group(1),
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip(" :;,.«»\"")
+        add_field(
+            fields,
+            "educationSpecialty",
+            specialty,
+            0.86,
+            training_direction_match.group(0),
+        )
     specialty_match = re.search(
         r"(?:по\s+специальности|специальность)\s*[:«\"]?\s*([^\n»\"]{4,180})",
         text,
@@ -2023,10 +2182,6 @@ def extract_education(
             qualification_match.group(0),
         )
 
-    diploma_index = next(
-        (index for index, line in enumerate(lines) if "диплом" in line.casefold()),
-        -1,
-    )
     institution_markers = (
         "университет",
         "институт",
@@ -2037,13 +2192,18 @@ def extract_education(
         "образовательн",
     )
     candidates = []
-    search_lines = lines[:diploma_index] if diploma_index > 0 else lines[:12]
+    search_lines = lines[:80]
     for index, line in enumerate(search_lines):
         if any(marker in line.casefold() for marker in institution_markers):
-            candidate = " ".join(search_lines[index:index + 3])
+            candidate = " ".join(search_lines[max(0, index - 2):index + 3])
             candidates.append(candidate)
     if candidates:
-        issuer = max(candidates, key=len)
+        issuer = re.split(
+            r"\s+(?:и\s+успешно|свидетельствует|освоил[аи]?|прош[её]л|присвоен[ао]?|квалификац)\b",
+            max(candidates, key=len),
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip(" ,;.")
         add_field(fields, "educationDocumentIssuer", issuer, 0.68, issuer)
 
     extract_education_surname(text, lines, fields)
@@ -3076,6 +3236,9 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
         pdf_text_pages = extract_pdf_text_pages(source_path) if mime_type == "application/pdf" else []
         passport_hint = bool(re.search(r"(?:паспорт|passport)", file_name, re.IGNORECASE))
         snils_hint = bool(re.search(r"(?:снилс|snils|страхов)", file_name, re.IGNORECASE))
+        education_hint = bool(EDUCATION_DOCUMENT_HINT_PATTERN.search(
+            f"{file_name}\n{document_text_layer}"
+        ))
 
         def recognize_page(item: tuple[int, Path]) -> dict[str, Any]:
             page_number, page_path = item
@@ -3096,6 +3259,8 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 page_text, prepared_path, words, page_rotation, page_content_cropped = ocr_image(
                     page_path,
                     try_snils_rotations=snils_hint,
+                    document_hint="education" if education_hint else "",
+                    file_name=file_name,
                 )
                 extraction_method = "ocr"
             page_source = page_text.casefold()
@@ -3137,6 +3302,8 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 "characters": len(item["text"]),
                 "durationMs": item["durationMs"],
                 "method": item["method"],
+                "rotation": int(item.get("rotation") or 0),
+                "contentCropped": bool(item.get("contentCropped")),
             }
             for item in recognized_pages
         ]

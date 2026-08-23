@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.237",
+    version: "1.7.238",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.238",
+      releasedAt: "2026-08-23",
+      changes: [
+        "OCR документов об образовании автоматически проверяет все повороты страницы и устойчивее извлекает поля из сканов с разрывами и помехами.",
+        "DOCX со встроенными сканами открываются как изображения: для пустого поля выбирается наиболее содержательная страница, сохраняется найденная ориентация и доступны ручной поворот и выделение рамки."
+      ]
+    },
     {
       version: "1.7.237",
       releasedAt: "2026-08-23",
@@ -36743,10 +36751,23 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function isStudentRecognitionVisualFile(file) {
     const contentType = String(file?.contentType || "").toLowerCase().split(";", 1)[0].trim();
+    const fileName = String(file?.fileName || file?.relativeName || "");
+    const isDocx = (
+      contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      || /\.docx$/i.test(fileName)
+    );
+    if (isDocx) {
+      const extractionMethod = String(file?.textExtraction || "").trim().toLowerCase();
+      return (
+        extractionMethod === "ocr"
+        || extractionMethod === "mixed"
+        || (Array.isArray(file?.pagePreviews) && file.pagePreviews.length > 0)
+      );
+    }
     if (contentType) {
       return contentType.startsWith("image/") || contentType === "application/pdf";
     }
-    return /\.(?:jpe?g|png|pdf)$/i.test(String(file?.fileName || file?.relativeName || ""));
+    return /\.(?:jpe?g|png|pdf)$/i.test(fileName);
   }
 
   function isStudentRecognitionRegionSourceFile(file) {
@@ -36774,6 +36795,25 @@ MAX - https://bizvmax.ru/zifra_plus
     if (isStudentRecognitionVisualFile(file)) return "image";
     if (isStudentRecognitionTextFile(file)) return "text";
     return "";
+  }
+
+  function getStudentRecognitionRecommendedPage(file, field) {
+    const pages = Array.isArray(file?.pages)
+      ? file.pages.filter((page) => Number(page?.page) > 0)
+      : [];
+    if (!pages.length) return 1;
+    const key = String(field?.key || "");
+    if (!key.startsWith("education")) return 1;
+    const bestPage = pages.reduce((best, page) => (
+      Number(page.characters) > Number(best?.characters || 0) ? page : best
+    ), pages[0]);
+    return Math.max(1, Number(bestPage?.page) || 1);
+  }
+
+  function getStudentRecognitionPageRotation(file, page) {
+    const pageData = (Array.isArray(file?.pages) ? file.pages : [])
+      .find((item) => Number(item?.page) === Number(page));
+    return normalizeStudentPhotoRotation(pageData?.rotation || 0);
   }
 
   function normalizeStudentRecognitionFileName(value) {
@@ -37831,7 +37871,10 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     const getFieldFilePosition = (field) => {
       const filesForPreview = availableFiles.map(({ file }) => file);
-      return findStudentRecognitionSourceFilePosition(filesForPreview, field?.sourceFile);
+      const sourcePosition = findStudentRecognitionSourceFilePosition(filesForPreview, field?.sourceFile);
+      return sourcePosition >= 0
+        ? sourcePosition
+        : findStudentRecognitionRecommendedSourceFilePosition(filesForPreview, field);
     };
     const getActivePreviewCacheKey = () => `${activeFilePosition}:${activePage}`;
     const setPreviewKind = (kind) => {
@@ -38027,7 +38070,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const showFieldPreview = (field, input, preserveView = true) => {
       const key = String(field?.key || "");
       const { fieldPreview: recognizedFieldPreview, pagePreview } = findStudentDocumentRecognitionPagePreview(field, files);
-      const fieldPreview = recognizedFieldPreview || (availableFiles.length ? { page: 1 } : null);
+      const recommendedFilePosition = getFieldFilePosition(field);
+      const recommendedFile = availableFiles[recommendedFilePosition]?.file;
+      const recommendedPage = getStudentRecognitionRecommendedPage(recommendedFile, field);
+      const fieldPreview = recognizedFieldPreview || (availableFiles.length ? {
+        page: recommendedPage,
+        rotation: getStudentRecognitionPageRotation(recommendedFile, recommendedPage)
+      } : null);
       if (!input || !fieldPreview) {
         hide();
         return;
@@ -38112,9 +38161,12 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       const matchedRecommendedSource = matchedFileIndex === initialFileIndex;
       const useExistingRegion = matchedRecommendedSource && !fieldPreview?.cropped;
-      const initialRotation = matchedRecommendedSource
+      const initialPage = useExistingRegion
+        ? Math.max(1, Number(fieldPreview?.page) || 1)
+        : getStudentRecognitionRecommendedPage(recommendedFile, field);
+      const initialRotation = useExistingRegion
         ? normalizeStudentPhotoRotation(fieldPreview?.rotation || 0)
-        : 0;
+        : getStudentRecognitionPageRotation(recommendedFile, initialPage);
       const initialBox = useExistingRegion && fieldPreview?.box
         ? rotateStudentPhotoNormalizedRect(fieldPreview.box, -initialRotation)
         : null;
@@ -38124,7 +38176,7 @@ MAX - https://bizvmax.ru/zifra_plus
         fieldLabel,
         ariaLabel: `Выбор источника и области для поля ${fieldLabel}`,
         useLabel: "Распознать это поле",
-        initialPage: useExistingRegion ? fieldPreview?.page || 1 : 1,
+        initialPage,
         initialBox,
         initialRotation,
         initialSource: recommendedSource,

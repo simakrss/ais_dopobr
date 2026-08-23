@@ -8,6 +8,9 @@ const server = require("../app-server");
 async function main() {
   assert.strictEqual(server.isVisualOcrDocument({ contentType: "image/jpeg" }), true);
   assert.strictEqual(server.isVisualOcrDocument({ contentType: "application/pdf" }), true);
+  assert.strictEqual(server.isVisualOcrDocument({
+    contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  }), true);
   assert.strictEqual(server.isVisualOcrDocument({ contentType: "text/plain" }), false);
 
   assert.strictEqual(
@@ -125,6 +128,43 @@ async function main() {
     ? path.resolve(process.env.AIS_TEST_APP_SOURCE)
     : path.join(__dirname, "..", "app.js");
   const clientSource = fs.readFileSync(clientPath, "utf8").replace(/\r\n/g, "\n");
+  const previewKindStart = clientSource.indexOf("  function isStudentRecognitionVisualFile");
+  const previewKindEnd = clientSource.indexOf(
+    "\n\n  function normalizeStudentRecognitionFileName",
+    previewKindStart
+  );
+  assert.ok(previewKindStart >= 0 && previewKindEnd > previewKindStart);
+  const previewKinds = new Function(
+    "normalizeStudentPhotoRotation",
+    `${clientSource.slice(previewKindStart, previewKindEnd)}\nreturn { isStudentRecognitionVisualFile, getStudentRecognitionPreviewKind, getStudentRecognitionRecommendedPage, getStudentRecognitionPageRotation };`
+  )((value) => ((Math.round((Number(value) || 0) / 90) * 90) % 360 + 360) % 360);
+  const docxContentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  assert.strictEqual(previewKinds.getStudentRecognitionPreviewKind({
+    fileName: "Скан диплома.docx",
+    contentType: docxContentType,
+    textExtraction: "ocr"
+  }), "image");
+  assert.strictEqual(previewKinds.getStudentRecognitionPreviewKind({
+    fileName: "Диплом со сканом.docx",
+    contentType: docxContentType,
+    textExtraction: "mixed"
+  }), "image");
+  assert.strictEqual(previewKinds.getStudentRecognitionPreviewKind({
+    fileName: "Анкета.docx",
+    contentType: docxContentType,
+    textExtraction: "text"
+  }), "text");
+  const scannedDiploma = {
+    pages: [
+      { page: 1, characters: 115, rotation: 90 },
+      { page: 2, characters: 920, rotation: 90 }
+    ]
+  };
+  assert.strictEqual(
+    previewKinds.getStudentRecognitionRecommendedPage(scannedDiploma, { key: "educationDocumentNumber" }),
+    2
+  );
+  assert.strictEqual(previewKinds.getStudentRecognitionPageRotation(scannedDiploma, 2), 90);
   const sourceCompatibilityStart = clientSource.indexOf(
     "  function isStudentDocumentRecognitionFieldSourceCompatible"
   );
@@ -238,7 +278,7 @@ async function main() {
   assert.match(clientSource, /previewLoadController\?\.abort\(\)/u);
   assert.match(clientSource, /signal: controller\.signal/u);
   assert.match(clientSource, /Не распознано — заполните вручную/u);
-  assert.match(clientSource, /recognizedFieldPreview \|\| \(availableFiles\.length \? \{ page: 1 \} : null\)/u);
+  assert.match(clientSource, /recognizedFieldPreview \|\| \(availableFiles\.length \? \{[\s\S]*?page: recommendedPage,[\s\S]*?\} : null\)/u);
   assert.match(clientSource, /const recognitionFiles = getStudentDocumentRecognitionPreviewFiles\(payload\);/u);
   assert.match(clientSource, /const previewPayload = \{ \.\.\.payload, files: recognitionFiles \};/u);
   assert.match(clientSource, /data-action="select-student-photo-area-any"/u);
@@ -248,9 +288,12 @@ async function main() {
   assert.match(clientSource, /title: "Повторное распознавание"/u);
   assert.match(clientSource, /fieldLabel,/u);
   assert.match(clientSource, /findStudentRecognitionRecommendedSourceFilePosition\(files, field\)/u);
-  assert.match(clientSource, /initialRotation = matchedRecommendedSource/u);
+  assert.match(clientSource, /initialRotation = useExistingRegion/u);
   assert.match(clientSource, /rotateStudentPhotoNormalizedRect\(fieldPreview\.box, -initialRotation\)/u);
   assert.match(clientSource, /initialRotation,/u);
+  assert.match(clientSource, /getStudentRecognitionRecommendedPage\(recommendedFile, field\)/u);
+  assert.match(clientSource, /getStudentRecognitionPageRotation\(recommendedFile, initialPage\)/u);
+  assert.match(clientSource, /initialPage,/u);
   assert.match(clientSource, /— рекомендуется/u);
   assert.match(clientSource, /useLabel: "Распознать это поле"/u);
   assert.match(clientSource, /maxOutputSize: 1800/u);
@@ -262,6 +305,7 @@ async function main() {
   assert.match(serverSource, /kind: "text"/u);
   assert.match(serverSource, /kind: "image"/u);
   assert.match(serverSource, /MAX_OFFICE_ZIP_UNCOMPRESSED_BYTES/u);
+  assert.match(serverSource, /rotation: \(\(Math\.round\(\(Number\(page\?\.rotation\)/u);
 
   console.log("document recognition field preview tests: OK");
 }

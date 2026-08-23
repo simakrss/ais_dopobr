@@ -9438,6 +9438,16 @@ async function runStudentDocumentRecognitionJob(job, options) {
           relativeName: document.relativeName,
           contentType: document.contentType,
           pageCount: Number(payload.pageCount) || 1,
+          pages: Array.isArray(payload.pages)
+            ? payload.pages.slice(0, 20).map((page) => ({
+              page: Math.max(1, Math.min(20, Number(page?.page) || 1)),
+              characters: Math.max(0, Number(page?.characters) || 0),
+              durationMs: Math.max(0, Number(page?.durationMs) || 0),
+              method: String(page?.method || "ocr").slice(0, 24),
+              rotation: ((Math.round((Number(page?.rotation) || 0) / 90) * 90) % 360 + 360) % 360,
+              contentCropped: Boolean(page?.contentCropped)
+            }))
+            : [],
           documentTypes: Array.isArray(payload.documentTypes)
             ? payload.documentTypes.map((item) => String(item || "")).filter(Boolean)
             : [],
@@ -9461,6 +9471,7 @@ async function runStudentDocumentRecognitionJob(job, options) {
           relativeName: document.relativeName,
           contentType: document.contentType,
           pageCount: 0,
+          pages: [],
           documentTypes: [],
           fields: [],
           pagePreviews: [],
