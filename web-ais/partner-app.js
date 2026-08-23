@@ -89,6 +89,45 @@
     return `<svg class="partner-icon ${escapeAttr(className)}" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.file}</svg>`;
   }
 
+  function partnerFileIconKind(item) {
+    if (item?.isDirectory || item?.type === "dir") return "folder";
+    const extension = String(item?.name || "").toLowerCase().match(/\.[^.]+$/u)?.[0] || "";
+    if ([".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".svg", ".tif", ".tiff", ".webp"].includes(extension)) return "image";
+    if (extension === ".pdf") return "pdf";
+    if ([".doc", ".docm", ".docx", ".odt", ".rtf"].includes(extension)) return "word";
+    if ([".csv", ".ods", ".tsv", ".xls", ".xlsb", ".xlsm", ".xlsx"].includes(extension)) return "spreadsheet";
+    if ([".odp", ".ppt", ".pptm", ".pptx"].includes(extension)) return "presentation";
+    if ([".7z", ".gz", ".rar", ".tar", ".zip"].includes(extension)) return "archive";
+    if ([".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav"].includes(extension)) return "audio";
+    if ([".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"].includes(extension)) return "video";
+    if ([".eml", ".htm", ".html", ".ini", ".json", ".log", ".md", ".txt", ".xml", ".yaml", ".yml"].includes(extension)) return "text";
+    const serverKind = String(item?.iconKind || "").trim().toLowerCase();
+    return ["image", "pdf", "word", "spreadsheet", "presentation", "archive", "audio", "video", "text", "file"].includes(serverKind)
+      ? serverKind
+      : "file";
+  }
+
+  function renderPartnerFileTypeIcon(item, compact = false) {
+    const kind = partnerFileIconKind(item);
+    const compactClass = compact ? " is-compact" : "";
+    if (kind === "folder") {
+      return `<span class="student-webdav-browser-entry-icon partner-document-type-icon is-folder${compactClass}" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><path class="folder-back" d="M2.5 8.5h10l2.7 3H29v15H2.5z"></path><path class="folder-front" d="M2.5 12h27l-2.6 14.5H4.4z"></path></svg></span>`;
+    }
+    const badge = ({
+      image: "IMG",
+      pdf: "PDF",
+      word: "W",
+      spreadsheet: "X",
+      presentation: "P",
+      archive: "ZIP",
+      audio: "MP3",
+      video: "VID",
+      text: "TXT",
+      file: ""
+    })[kind] || "";
+    return `<span class="student-webdav-browser-entry-icon partner-document-type-icon is-file-icon is-${escapeAttr(kind)}${compactClass}" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><path class="file-page" d="M6 2.5h13l7 7v20H6z"></path><path class="file-fold" d="M19 2.5v7h7"></path></svg>${badge ? `<b>${escapeHtml(badge)}</b>` : ""}</span>`;
+  }
+
   function formatMoney(value) {
     return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value) || 0)} ₽`;
   }
@@ -404,7 +443,7 @@
     const action = isFolder
       ? `button data-action="open-material-folder" data-path="${escapeAttr(item.path)}" type="button"`
       : `a href="${escapeAttr(item.downloadUrl || item.previewUrl || state.portal.materials?.publicUrl || "#")}" target="_blank" rel="noopener noreferrer"`;
-    return `<${action} class="partner-file-card ${isFolder ? "is-folder" : "is-file"}"><span class="partner-file-icon">${icon(isFolder ? "folder" : "file")}</span><span><strong>${escapeHtml(item.name)}</strong><small>${isFolder ? "Папка" : [formatFileSize(item.size), formatDateTime(item.modified)].filter(Boolean).join(" · ")}</small></span>${icon(isFolder ? "chevron" : "download")}</${isFolder ? "button" : "a"}>`;
+    return `<${action} class="partner-file-card ${isFolder ? "is-folder" : "is-file"}"><span class="partner-file-icon">${renderPartnerFileTypeIcon({ ...item, isDirectory: isFolder })}</span><span><strong>${escapeHtml(item.name)}</strong><small>${isFolder ? "Папка" : [formatFileSize(item.size), formatDateTime(item.modified)].filter(Boolean).join(" · ")}</small></span>${icon(isFolder ? "chevron" : "download")}</${isFolder ? "button" : "a"}>`;
   }
 
   function renderProfile() {
@@ -500,12 +539,12 @@
   function renderPartnerDocumentEntries(entries) {
     if (state.documentsView === "table") {
       return `<div class="partner-documents-table-wrap"><table class="partner-documents-table"><thead><tr><th>Название</th><th>Тип</th><th>Размер</th><th>Изменён</th><th></th></tr></thead><tbody>${entries.map((item) => `<tr class="${item.isDirectory ? "is-directory" : "is-file"}"><td>${item.isDirectory
-        ? `<button class="partner-document-name" data-action="open-document-folder" data-path="${escapeAttr(item.path)}" type="button">${icon("folder")}<strong>${escapeHtml(item.name)}</strong></button>`
-        : `<a class="partner-document-name" href="${escapeAttr(partnerDocumentUrl(item))}" target="_blank" rel="noopener">${icon("file")}<strong>${escapeHtml(item.name)}</strong></a>`}</td><td>${escapeHtml(partnerDocumentType(item))}</td><td>${item.isDirectory ? "—" : escapeHtml(formatFileSize(item.size))}</td><td>${escapeHtml(formatDateTime(item.modifiedAt))}</td><td>${item.isDirectory ? icon("chevron") : `<a class="icon-button" href="${escapeAttr(partnerDocumentUrl(item, true))}" title="Скачать" aria-label="Скачать">${icon("download")}</a>`}</td></tr>`).join("")}</tbody></table></div>`;
+        ? `<button class="partner-document-name" data-action="open-document-folder" data-path="${escapeAttr(item.path)}" type="button">${renderPartnerFileTypeIcon(item, true)}<strong>${escapeHtml(item.name)}</strong></button>`
+        : `<a class="partner-document-name" href="${escapeAttr(partnerDocumentUrl(item))}" target="_blank" rel="noopener">${renderPartnerFileTypeIcon(item, true)}<strong>${escapeHtml(item.name)}</strong></a>`}</td><td>${escapeHtml(partnerDocumentType(item))}</td><td>${item.isDirectory ? "—" : escapeHtml(formatFileSize(item.size))}</td><td>${escapeHtml(formatDateTime(item.modifiedAt))}</td><td>${item.isDirectory ? icon("chevron") : `<a class="icon-button" href="${escapeAttr(partnerDocumentUrl(item, true))}" title="Скачать" aria-label="Скачать">${icon("download")}</a>`}</td></tr>`).join("")}</tbody></table></div>`;
     }
     return `<div class="partner-file-grid partner-documents-tiles">${entries.map((item) => item.isDirectory
-      ? `<button class="partner-file-card is-folder" data-action="open-document-folder" data-path="${escapeAttr(item.path)}" type="button"><span class="partner-file-icon">${icon("folder")}</span><span><strong>${escapeHtml(item.name)}</strong><small>Папка</small></span>${icon("chevron")}</button>`
-      : `<a class="partner-file-card is-file" href="${escapeAttr(partnerDocumentUrl(item))}" target="_blank" rel="noopener"><span class="partner-file-icon">${icon("file")}</span><span><strong>${escapeHtml(item.name)}</strong><small>${formatFileSize(item.size)} · ${formatDateTime(item.modifiedAt)}</small></span>${icon("external")}</a>`).join("")}</div>`;
+      ? `<button class="partner-file-card is-folder" data-action="open-document-folder" data-path="${escapeAttr(item.path)}" type="button"><span class="partner-file-icon">${renderPartnerFileTypeIcon(item)}</span><span><strong>${escapeHtml(item.name)}</strong><small>Папка</small></span>${icon("chevron")}</button>`
+      : `<a class="partner-file-card is-file" href="${escapeAttr(partnerDocumentUrl(item))}" target="_blank" rel="noopener"><span class="partner-file-icon">${renderPartnerFileTypeIcon(item)}</span><span><strong>${escapeHtml(item.name)}</strong><small>${formatFileSize(item.size)} · ${formatDateTime(item.modifiedAt)}</small></span>${icon("external")}</a>`).join("")}</div>`;
   }
 
   function renderFeedback() {

@@ -13,6 +13,7 @@ const {
   sanitizePartnerProfileUpdate,
   buildPartnerPaymentData,
   normalizePartnerMaterialsUrl,
+  getWebDavBrowserIconKind,
   requestHasGatewayIdentity,
   requestHasTrustedGatewayIdentity
 } = require("../app-server.js");
@@ -140,6 +141,16 @@ assert.equal(
 );
 assert.throws(() => normalizePartnerMaterialsUrl("http://disk.yandex.ru/d/test"), /HTTPS-ссылку/u);
 assert.throws(() => normalizePartnerMaterialsUrl("https://example.test/materials"), /Яндекс-Диска/u);
+assert.equal(getWebDavBrowserIconKind("Документ.docx"), "word");
+assert.equal(getWebDavBrowserIconKind("Таблица.xlsx"), "spreadsheet");
+assert.equal(getWebDavBrowserIconKind("Данные.csv"), "spreadsheet");
+assert.equal(getWebDavBrowserIconKind("Презентация.pptx"), "presentation");
+assert.equal(getWebDavBrowserIconKind("Скан.pdf"), "pdf");
+assert.equal(getWebDavBrowserIconKind("Фото.jpg"), "image");
+assert.equal(getWebDavBrowserIconKind("Архив.zip"), "archive");
+assert.equal(getWebDavBrowserIconKind("Запись.mp3"), "audio");
+assert.equal(getWebDavBrowserIconKind("Видео.mp4"), "video");
+assert.equal(getWebDavBrowserIconKind("Папка", true), "folder");
 
 const previousGatewayEnvironment = {
   trust: process.env.AIS_TRUST_GATEWAY,
@@ -205,6 +216,11 @@ assert.match(partnerSource, /api\/partner\/documents\/list/u);
 assert.match(partnerSource, /DOCUMENTS_VIEW_STORAGE_KEY/u);
 assert.match(partnerSource, /data-view-mode="tiles"/u);
 assert.match(partnerSource, /data-view-mode="table"/u);
+assert.match(partnerSource, /function partnerFileIconKind\(item\)/u);
+assert.match(partnerSource, /function renderPartnerFileTypeIcon\(item, compact = false\)/u);
+assert.match(partnerSource, /image: "IMG"[\s\S]{0,180}spreadsheet: "X"[\s\S]{0,180}archive: "ZIP"/u);
+assert.match(stylesSource, /\.student-webdav-browser-entry-icon\.is-audio b/u);
+assert.match(stylesSource, /\.partner-document-type-icon\.is-compact/u);
 assert.doesNotMatch(partnerSource, /onclick="event\.stopPropagation\(\)"/u);
 assert.match(partnerSource, /PROFILE_TAB_STORAGE_KEY/u);
 assert.match(partnerSource, /data-action="switch-account"/u);

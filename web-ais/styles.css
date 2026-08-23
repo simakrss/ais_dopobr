@@ -8586,6 +8586,8 @@ body.card-window-moving {
 .student-webdav-browser-entry-icon.is-spreadsheet b { background: #217346; }
 .student-webdav-browser-entry-icon.is-presentation b { background: #c44b28; }
 .student-webdav-browser-entry-icon.is-archive b { background: #8b5aaa; }
+.student-webdav-browser-entry-icon.is-audio b { background: #7c3fb0; }
+.student-webdav-browser-entry-icon.is-video b { background: #b14478; }
 .student-webdav-browser-entry-icon.is-text b { background: #596774; }
 
 .student-webdav-browser-entry.is-selected .student-webdav-browser-entry-icon {
@@ -22892,6 +22894,21 @@ button.partner-kpi-card:hover {
   background: #fff3d8;
 }
 
+.partner-file-icon .partner-document-type-icon {
+  width: 34px;
+  height: 34px;
+}
+
+.partner-file-icon .partner-document-type-icon svg {
+  width: 34px;
+  height: 34px;
+}
+
+.partner-file-icon .partner-document-type-icon b {
+  bottom: 3px;
+  font-size: 7px;
+}
+
 .partner-file-card strong,
 .partner-file-card small {
   display: block;
@@ -23162,6 +23179,10 @@ button.partner-kpi-card:hover {
 .partner-document-name { min-width: 0; display: inline-flex; align-items: center; gap: 8px; padding: 2px; color: var(--text); text-decoration: none; text-align: left; background: transparent; border: 0; cursor: pointer; }
 .partner-document-name:hover strong { color: var(--accent); text-decoration: underline; }
 .partner-document-name .partner-icon { flex: 0 0 auto; width: 19px; height: 19px; color: var(--accent); }
+.partner-document-name .partner-document-type-icon { flex: 0 0 auto; }
+.partner-document-type-icon.is-compact,
+.partner-document-type-icon.is-compact svg { width: 24px; height: 24px; }
+.partner-document-type-icon.is-compact b { left: 0; right: 0; bottom: 2px; padding: 1px; font-size: 5.5px; }
 .partner-documents-table td > .icon-button { display: inline-grid; place-items: center; width: 30px; height: 30px; color: var(--accent); text-decoration: none; }
 .partner-documents-table td > .partner-icon { width: 15px; height: 15px; color: var(--muted); }
 

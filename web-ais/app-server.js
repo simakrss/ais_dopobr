@@ -8389,13 +8389,15 @@ function getWebDavBrowserPreviewKind(fileName, contentType = "") {
 function getWebDavBrowserIconKind(fileName, isDirectory = false) {
   if (isDirectory) return "folder";
   const extension = path.extname(String(fileName || "")).toLowerCase();
-  if ([".bmp", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"].includes(extension)) return "image";
+  if ([".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".svg", ".tif", ".tiff", ".webp"].includes(extension)) return "image";
   if (extension === ".pdf") return "pdf";
   if ([".doc", ".docm", ".docx", ".odt", ".rtf"].includes(extension)) return "word";
-  if ([".ods", ".xls", ".xlsb", ".xlsm", ".xlsx"].includes(extension)) return "spreadsheet";
-  if ([".ppt", ".pptx"].includes(extension)) return "presentation";
-  if ([".zip", ".7z", ".rar"].includes(extension)) return "archive";
-  if ([".csv", ".eml", ".htm", ".html", ".ini", ".json", ".log", ".md", ".txt", ".tsv", ".xml", ".yaml", ".yml"].includes(extension)) return "text";
+  if ([".csv", ".ods", ".tsv", ".xls", ".xlsb", ".xlsm", ".xlsx"].includes(extension)) return "spreadsheet";
+  if ([".odp", ".ppt", ".pptm", ".pptx"].includes(extension)) return "presentation";
+  if ([".7z", ".gz", ".rar", ".tar", ".zip"].includes(extension)) return "archive";
+  if ([".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav"].includes(extension)) return "audio";
+  if ([".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"].includes(extension)) return "video";
+  if ([".eml", ".htm", ".html", ".ini", ".json", ".log", ".md", ".txt", ".xml", ".yaml", ".yml"].includes(extension)) return "text";
   return "file";
 }
 

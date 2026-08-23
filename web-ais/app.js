@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.232",
+    version: "1.7.233",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.233",
+      releasedAt: "2026-08-23",
+      changes: [
+        "В облачных списках Яндекс‑Диска добавлены различимые иконки папок, документов, таблиц, презентаций, PDF, изображений, архивов, текста, аудио и видео."
+      ]
+    },
     {
       version: "1.7.232",
       releasedAt: "2026-08-23",
@@ -34732,13 +34739,15 @@ MAX - https://bizvmax.ru/zifra_plus
     if (entry?.isDirectory) return "folder";
     if (entry?.iconKind) return entry.iconKind;
     const extension = String(entry?.name || "").toLowerCase().match(/\.[^.]+$/)?.[0] || "";
-    if ([".bmp", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"].includes(extension)) return "image";
+    if ([".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".svg", ".tif", ".tiff", ".webp"].includes(extension)) return "image";
     if (extension === ".pdf") return "pdf";
     if ([".doc", ".docm", ".docx", ".odt", ".rtf"].includes(extension)) return "word";
-    if ([".ods", ".xls", ".xlsb", ".xlsm", ".xlsx"].includes(extension)) return "spreadsheet";
-    if ([".ppt", ".pptx"].includes(extension)) return "presentation";
-    if ([".zip", ".7z", ".rar"].includes(extension)) return "archive";
-    if ([".csv", ".eml", ".htm", ".html", ".ini", ".json", ".log", ".md", ".txt", ".tsv", ".xml", ".yaml", ".yml"].includes(extension)) return "text";
+    if ([".csv", ".ods", ".tsv", ".xls", ".xlsb", ".xlsm", ".xlsx"].includes(extension)) return "spreadsheet";
+    if ([".odp", ".ppt", ".pptm", ".pptx"].includes(extension)) return "presentation";
+    if ([".7z", ".gz", ".rar", ".tar", ".zip"].includes(extension)) return "archive";
+    if ([".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav"].includes(extension)) return "audio";
+    if ([".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"].includes(extension)) return "video";
+    if ([".eml", ".htm", ".html", ".ini", ".json", ".log", ".md", ".txt", ".xml", ".yaml", ".yml"].includes(extension)) return "text";
     return "file";
   }
 
@@ -34758,6 +34767,8 @@ MAX - https://bizvmax.ru/zifra_plus
       spreadsheet: "X",
       presentation: "P",
       archive: "ZIP",
+      audio: "MP3",
+      video: "VID",
       text: "TXT",
       file: ""
     })[kind] || "";
