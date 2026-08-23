@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.235",
+    version: "1.7.236",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.236",
+      releasedAt: "2026-08-23",
+      changes: [
+        "В детализации скачиваний год, месяц и день объединены в сортируемую дату; город, организация и email компактно обрезаются по ширине с подсказкой полного значения."
+      ]
+    },
     {
       version: "1.7.235",
       releasedAt: "2026-08-23",
@@ -3501,9 +3508,7 @@ MAX - https://bizvmax.ru/zifra_plus
   ]);
   const statisticsDownloadDetailColumns = Object.freeze([
     { key: "id", label: "ID", numeric: true },
-    { key: "year", label: "Год", numeric: true },
-    { key: "month", label: "Месяц", numeric: true },
-    { key: "day", label: "День", numeric: true },
+    { key: "date", label: "Дата", date: true },
     { key: "location", label: "Город" },
     { key: "organization", label: "Организация" },
     { key: "email", label: "Email" },
@@ -9366,6 +9371,24 @@ MAX - https://bizvmax.ru/zifra_plus
     return label ? `${label.charAt(0).toLocaleUpperCase("ru-RU")}${label.slice(1)}` : "—";
   }
 
+  function statisticsDownloadDateSortValue(row = {}) {
+    const year = Math.floor(Number(row.year));
+    const month = Math.floor(Number(row.month));
+    const day = Math.floor(Number(row.day));
+    if (year >= 2000 && year <= 2100 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return (year * 10000) + (month * 100) + day;
+    }
+    const match = String(row.date || "").match(/^(\d{4})-(\d{2})-(\d{2})/u);
+    return match ? Number(`${match[1]}${match[2]}${match[3]}`) : 0;
+  }
+
+  function formatStatisticsDownloadDate(row = {}) {
+    const value = statisticsDownloadDateSortValue(row);
+    if (!value) return "—";
+    const source = String(value).padStart(8, "0");
+    return `${source.slice(6, 8)}.${source.slice(4, 6)}.${source.slice(0, 4)}`;
+  }
+
   function getFilteredStatisticsDownloadDetails() {
     const filters = state.statistics.filters;
     const query = String(filters.downloadQuery || "").trim().toLocaleLowerCase("ru-RU");
@@ -9375,6 +9398,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!query) return true;
       return [
         row.id,
+        formatStatisticsDownloadDate(row),
         row.year,
         statisticsMonthLongLabel(row.month),
         row.day,
@@ -9390,12 +9414,14 @@ MAX - https://bizvmax.ru/zifra_plus
       || statisticsDownloadDetailColumns[0];
     const direction = sort.dir === "asc" ? 1 : -1;
     return [...rows].sort((left, right) => {
-      const comparison = column.numeric
-        ? (Number(left[column.key] || 0) - Number(right[column.key] || 0))
-        : String(left[column.key] || "").localeCompare(String(right[column.key] || ""), "ru", {
+      const comparison = column.date
+        ? statisticsDownloadDateSortValue(left) - statisticsDownloadDateSortValue(right)
+        : (column.numeric
+          ? (Number(left[column.key] || 0) - Number(right[column.key] || 0))
+          : String(left[column.key] || "").localeCompare(String(right[column.key] || ""), "ru", {
             numeric: true,
             sensitivity: "base"
-          });
+          }));
       return comparison ? comparison * direction : Number(right.id || 0) - Number(left.id || 0);
     });
   }
@@ -9535,12 +9561,10 @@ MAX - https://bizvmax.ru/zifra_plus
                 <tbody>${downloadDetailRows.map((row) => `
                   <tr>
                     <td class="statistics-number-cell">${formatStatisticsInteger(row.id)}</td>
-                    <td class="statistics-number-cell">${formatStatisticsInteger(row.year)}</td>
-                    <td>${escapeHtml(statisticsMonthLongLabel(row.month))}</td>
-                    <td class="statistics-number-cell">${formatStatisticsInteger(row.day)}</td>
-                    <td>${escapeHtml(row.location || "—")}</td>
-                    <td>${escapeHtml(row.organization || "—")}</td>
-                    <td>${escapeHtml(row.email || "—")}</td>
+                    <td class="statistics-date-cell">${escapeHtml(formatStatisticsDownloadDate(row))}</td>
+                    <td class="statistics-ellipsis-cell" title="${escapeAttr(row.location || "Не указано")}">${escapeHtml(row.location || "—")}</td>
+                    <td class="statistics-ellipsis-cell" title="${escapeAttr(row.organization || "Не указано")}">${escapeHtml(row.organization || "—")}</td>
+                    <td class="statistics-ellipsis-cell" title="${escapeAttr(row.email || "Не указано")}">${escapeHtml(row.email || "—")}</td>
                     <td>${escapeHtml(row.version || "—")}</td>
                     <td>${escapeHtml(row.action || "—")}</td>
                   </tr>
@@ -9726,12 +9750,10 @@ MAX - https://bizvmax.ru/zifra_plus
     } else {
       const report = buildStatisticsAssistantReport();
       content = [
-        ["ID", "Год", "Месяц", "День", "Город", "Организация", "Email", "Версия", "Действие"].map(csvCell).join(";"),
+        ["ID", "Дата", "Город", "Организация", "Email", "Версия", "Действие"].map(csvCell).join(";"),
         ...report.downloadDetails.map((row) => [
           row.id,
-          row.year,
-          statisticsMonthLongLabel(row.month),
-          row.day,
+          formatStatisticsDownloadDate(row),
           row.location,
           row.organization,
           row.email,
@@ -9803,9 +9825,10 @@ MAX - https://bizvmax.ru/zifra_plus
         const key = String(button.dataset.sortKey || "");
         if (!statisticsDownloadDetailColumns.some((column) => column.key === key)) return;
         const current = state.statistics.downloadDetailSort || { key: "id", dir: "desc" };
+        const column = statisticsDownloadDetailColumns.find((item) => item.key === key);
         state.statistics.downloadDetailSort = current.key === key
           ? { key, dir: current.dir === "asc" ? "desc" : "asc" }
-          : { key, dir: statisticsDownloadDetailColumns.find((column) => column.key === key)?.numeric ? "desc" : "asc" };
+          : { key, dir: column?.numeric || column?.date ? "desc" : "asc" };
         state.tablePages.statisticsDownloads = 1;
         render();
       });

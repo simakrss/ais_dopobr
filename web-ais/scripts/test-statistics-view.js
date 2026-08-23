@@ -18,7 +18,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.230"/u);
+assert.match(appSource, /version: "1\.7\.236"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 const navigationBlock = sourceBlock(appSource, "const navItems = [", "const PROGRAM_LIST_FIELD_KEYS");
 const navigationIds = [...navigationBlock.matchAll(/\{ id: "([^"]+)"/gu)].map((match) => match[1]);
@@ -218,6 +218,23 @@ assert.match(renderStatisticsAssistantBlock, /\{ key: "downloads", label: "Ск�
 assert.doesNotMatch(renderStatisticsAssistantBlock, /\{ key: "installs", label: "Установки"/u);
 assert.match(appSource, /data-statistics-filter="downloadQuery"/u);
 assert.match(appSource, /data-action="sort-statistics-downloads"/u);
+assert.match(appSource, /column\?\.numeric \|\| column\?\.date \? "desc" : "asc"/u);
+assert.match(appSource, /\{ key: "date", label: "Дата", date: true \}/u);
+assert.doesNotMatch(appSource, /\{ key: "year", label: "Год"/u);
+const statisticsDownloadDateBlock = sourceBlock(
+  appSource,
+  "function statisticsDownloadDateSortValue(",
+  "function getFilteredStatisticsDownloadDetails()"
+);
+const statisticsDownloadDateHelpers = new Function(`
+  ${statisticsDownloadDateBlock}
+  return { statisticsDownloadDateSortValue, formatStatisticsDownloadDate };
+`)();
+assert.equal(statisticsDownloadDateHelpers.statisticsDownloadDateSortValue({ year: 2026, month: 7, day: 19 }), 20260719);
+assert.equal(statisticsDownloadDateHelpers.formatStatisticsDownloadDate({ year: 2026, month: 7, day: 19 }), "19.07.2026");
+assert.match(renderStatisticsAssistantBlock, /statistics-ellipsis-cell/u);
+assert.match(renderStatisticsAssistantBlock, /title="\$\{escapeAttr\(row\.email/u);
+assert.match(appSource, /\["ID", "Дата", "Город", "Организация", "Email", "Версия", "Действие"\]/u);
 
 assert.match(styles, /\.statistics-kpi-grid\s*\{/u);
 assert.match(styles, /\.statistics-chart-columns\s*\{/u);
@@ -226,6 +243,8 @@ assert.match(styles, /\.statistics-comparison-totals\s*\{/u);
 assert.match(styles, /\.statistics-location-chart\s*\{/u);
 assert.match(styles, /\.statistics-location-negative\s*\{/u);
 assert.match(styles, /\.statistics-download-table\s*\{/u);
+assert.match(styles, /\.statistics-download-table \.statistics-ellipsis-cell[\s\S]*text-overflow:\s*ellipsis/u);
+assert.match(styles, /\.statistics-download-table\s*\{[\s\S]*min-width:\s*760px/u);
 assert.match(styles, /\.statistics-table-sort-button\s*\{/u);
 assert.match(styles, /grid-auto-columns:\s*minmax\(24px, 1fr\)/u);
 assert.match(styles, /grid-auto-columns:\s*minmax\(44px, 1fr\)/u);
