@@ -195,7 +195,9 @@ const SMTP_SESSION_DEADLINE_MS = 120 * 1000;
 const SMTP_COMMAND_TIMEOUT_MS = 30 * 1000;
 const SMTP_MESSAGE_TIMEOUT_MS = 60 * 1000;
 const STUDENT_IMPORT_JOB_TTL_MS = 15 * 60 * 1000;
-const STUDENT_DATABASE_SYNC_RESERVATION_TTL_MS = 10 * 60 * 1000;
+const STUDENT_DATABASE_SYNC_IDLE_TIMEOUT_MS = 20 * 60 * 1000;
+const STUDENT_DATABASE_SYNC_MAX_TIMEOUT_MS = 60 * 60 * 1000;
+const STUDENT_DATABASE_SYNC_RESERVATION_TTL_MS = 65 * 60 * 1000;
 const STUDENT_DOCUMENT_RECOGNITION_JOB_TTL_MS = 30 * 60 * 1000;
 const studentImportJobs = new Map();
 const studentExportJobs = new Map();
@@ -13406,6 +13408,97 @@ function inspectStudentDatabaseBinary(bytes) {
   };
 }
 
+function decodePowerShellSerializedText(value) {
+  const entities = Object.freeze({
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    quot: '"'
+  });
+  return String(value || "")
+    .replace(/&(amp|apos|gt|lt|quot);/gu, (match, name) => entities[name] || match)
+    .replace(/_x([0-9a-f]{4})_/giu, (match, code) => String.fromCharCode(Number.parseInt(code, 16)));
+}
+
+function sanitizePowerShellErrorOutput(value) {
+  const source = String(value || "").replace(/^\uFEFF/u, "").trim();
+  if (!source) return "";
+  if (!source.includes("#< CLIXML") && !/<Objs\b/iu.test(source)) return source;
+  const serializedErrors = Array.from(
+    source.matchAll(/<S\s+S=["']Error["'][^>]*>([\s\S]*?)<\/S>/giu),
+    (match) => decodePowerShellSerializedText(match[1]).trim()
+  ).filter(Boolean);
+  if (serializedErrors.length) {
+    return serializedErrors
+      .filter((line) => !/Подготовка модулей к первому использованию/iu.test(line))
+      .join("\n")
+      .trim();
+  }
+  return decodePowerShellSerializedText(
+    source
+      .replace(/^#< CLIXML\s*/iu, "")
+      .replace(/<[^>]+>/gu, " ")
+  ).replace(/\s+/gu, " ").trim();
+}
+
+function waitForChildProcessExit(child, timeoutMs = 3000) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    let completed = false;
+    const finish = () => {
+      if (completed) return;
+      completed = true;
+      clearTimeout(timeout);
+      child.off("close", finish);
+      resolve();
+    };
+    const timeout = setTimeout(finish, timeoutMs);
+    child.once("close", finish);
+  });
+}
+
+async function terminateOwnedStudentDatabaseExcel(powershellPath, pidFilePath) {
+  const rawProcessId = await fs.readFile(pidFilePath, "utf8").catch(() => "");
+  await fs.unlink(pidFilePath).catch(() => {});
+  const processId = Number.parseInt(String(rawProcessId).trim(), 10);
+  if (!Number.isSafeInteger(processId) || processId <= 0) return false;
+  const command = [
+    "$candidate = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $env:AIS_SYNC_EXCEL_PID) -ErrorAction SilentlyContinue",
+    "if ($null -eq $candidate -or $candidate.Name -ine 'EXCEL.EXE') { exit 0 }",
+    "if ([string]$candidate.CommandLine -notmatch '(?i)(/automation|-Embedding)') { exit 0 }",
+    "$desktopProcess = Get-Process -Id ([int]$env:AIS_SYNC_EXCEL_PID) -ErrorAction SilentlyContinue",
+    "if ($null -eq $desktopProcess -or $desktopProcess.MainWindowHandle -ne 0) { exit 0 }",
+    "Stop-Process -Id ([int]$env:AIS_SYNC_EXCEL_PID) -Force -ErrorAction SilentlyContinue"
+  ].join("; ");
+  return new Promise((resolve) => {
+    const cleanup = spawn(
+      powershellPath,
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+      {
+        windowsHide: true,
+        env: {
+          ...process.env,
+          AIS_SYNC_EXCEL_PID: String(processId)
+        }
+      }
+    );
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(value);
+    };
+    const timeout = setTimeout(() => {
+      cleanup.kill();
+      finish(false);
+    }, 10000);
+    cleanup.once("error", () => finish(false));
+    cleanup.once("close", (code) => finish(code === 0));
+  });
+}
+
 function runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, onProgress = () => {}) {
   if (process.platform !== "win32") {
     return Promise.reject(new Error("Синхронизация XLSB требует Microsoft Excel на сервере Windows."));
@@ -13414,6 +13507,7 @@ function runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, onProg
     ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
     : "powershell.exe";
   const launcher = [
+    "$ProgressPreference = 'SilentlyContinue'",
     "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
     "$scriptText = [IO.File]::ReadAllText($env:AIS_SYNC_SCRIPT, [Text.UTF8Encoding]::new($false))",
     "& ([ScriptBlock]::Create($scriptText)) -InputPath $env:AIS_SYNC_INPUT -OutputPath $env:AIS_SYNC_OUTPUT -PayloadPath $env:AIS_SYNC_PAYLOAD"
@@ -13427,6 +13521,7 @@ function runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, onProg
     "-EncodedCommand",
     Buffer.from(launcher, "utf16le").toString("base64")
   ];
+  const excelPidFilePath = `${outputPath}.excel.pid`;
   return new Promise((resolve, reject) => {
     const child = spawn(
       powershellPath,
@@ -13438,20 +13533,48 @@ function runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, onProg
           AIS_SYNC_SCRIPT: STUDENT_DATABASE_SYNC_SCRIPT,
           AIS_SYNC_INPUT: inputPath,
           AIS_SYNC_OUTPUT: outputPath,
-          AIS_SYNC_PAYLOAD: payloadPath
+          AIS_SYNC_PAYLOAD: payloadPath,
+          AIS_SYNC_EXCEL_PID_PATH: excelPidFilePath
         }
       }
     );
-    let stdoutBuffer = "";
+    let stdoutLineBuffer = "";
+    let stdoutDiagnostics = "";
     let stderrBuffer = "";
     let result = null;
     let settled = false;
-    const timeout = setTimeout(() => {
+    let idleTimeout = null;
+    let maxTimeout = null;
+    const clearTimers = () => {
+      clearTimeout(idleTimeout);
+      clearTimeout(maxTimeout);
+    };
+    const rejectAfterCleanup = async (error) => {
       if (settled) return;
       settled = true;
-      child.kill();
-      reject(new Error("Microsoft Excel не завершил синхронизацию за 10 минут."));
-    }, 10 * 60 * 1000);
+      clearTimers();
+      try { child.kill(); } catch {}
+      await waitForChildProcessExit(child);
+      await terminateOwnedStudentDatabaseExcel(powershellPath, excelPidFilePath);
+      reject(error);
+    };
+    const resetIdleTimeout = () => {
+      if (settled) return;
+      clearTimeout(idleTimeout);
+      idleTimeout = setTimeout(() => {
+        void rejectAfterCleanup(new Error(
+          "Microsoft Excel не передавал данные о ходе экспорта в течение 20 минут. "
+            + "Операция остановлена, исходный файл не изменён."
+        ));
+      }, STUDENT_DATABASE_SYNC_IDLE_TIMEOUT_MS);
+    };
+    maxTimeout = setTimeout(() => {
+      void rejectAfterCleanup(new Error(
+        "Экспорт в Microsoft Excel не завершился в течение часа. "
+          + "Операция остановлена, исходный файл не изменён."
+      ));
+    }, STUDENT_DATABASE_SYNC_MAX_TIMEOUT_MS);
+    resetIdleTimeout();
     const consumeLine = (line) => {
       const value = String(line || "").replace(/^\uFEFF/, "").trim();
       if (!value) return;
@@ -13466,33 +13589,35 @@ function runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, onProg
           result = message;
         }
       } catch {
-        stdoutBuffer += `${value}\n`;
+        if (stdoutDiagnostics.length < 4 * 1024 * 1024) {
+          stdoutDiagnostics += `${value}\n`;
+        }
       }
     };
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      stdoutBuffer += chunk;
-      const lines = stdoutBuffer.split(/\r?\n/);
-      stdoutBuffer = lines.pop() || "";
+      resetIdleTimeout();
+      stdoutLineBuffer += chunk;
+      const lines = stdoutLineBuffer.split(/\r?\n/);
+      stdoutLineBuffer = lines.pop() || "";
       lines.forEach(consumeLine);
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {
+      resetIdleTimeout();
       if (stderrBuffer.length < 4 * 1024 * 1024) stderrBuffer += chunk;
     });
     child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      reject(error);
+      void rejectAfterCleanup(error);
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
-      consumeLine(stdoutBuffer);
+      clearTimers();
+      consumeLine(stdoutLineBuffer);
+      void fs.unlink(excelPidFilePath).catch(() => {});
       if (code !== 0) {
-        const detail = String(stderrBuffer || stdoutBuffer || "").trim();
+        const detail = sanitizePowerShellErrorOutput(`${stderrBuffer}\n${stdoutDiagnostics}`);
         reject(new Error(detail || `Microsoft Excel завершил синхронизацию с кодом ${code}.`));
         return;
       }
@@ -23897,6 +24022,7 @@ module.exports = {
   sanitizeFrdoExportPayload,
   buildFrdoExportWorkbook,
   inspectStudentDatabaseBinary,
+  sanitizePowerShellErrorOutput,
   collectEmailMessageContent,
   parseStudentApplicationOrderEmail,
   mergeStudentApplicationRows,

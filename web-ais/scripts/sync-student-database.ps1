@@ -3052,6 +3052,7 @@ function Update-AisSyncCommentOnlyWorkbook {
 $excel = $null
 $workbook = $null
 $ownedExcelProcessId = 0
+$ownedExcelProcessPidPath = ([string]$env:AIS_SYNC_EXCEL_PID_PATH).Trim()
 try {
   Write-SyncProgress 1 "Чтение данных веб-базы..."
   $payload = Get-Content -LiteralPath $PayloadPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -3087,6 +3088,13 @@ try {
   }
   if ($excelProcessId -gt 0 -and -not $excelProcessIdsBefore.Contains($excelProcessId)) {
     $ownedExcelProcessId = $excelProcessId
+  }
+  if ($ownedExcelProcessId -gt 0 -and $ownedExcelProcessPidPath) {
+    [IO.File]::WriteAllText(
+      $ownedExcelProcessPidPath,
+      [string]$ownedExcelProcessId,
+      [Text.Encoding]::ASCII
+    )
   }
   $excel.Visible = $false
   $excel.DisplayAlerts = $false
@@ -3213,5 +3221,8 @@ try {
         Wait-Process -Id $ownedExcelProcessId -Timeout 5 -ErrorAction SilentlyContinue
       }
     }
+  }
+  if ($ownedExcelProcessPidPath) {
+    Remove-Item -LiteralPath $ownedExcelProcessPidPath -Force -ErrorAction SilentlyContinue
   }
 }

@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.241",
+    version: "1.7.242",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.242",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Экспорт в АИС Допобразование.xlsb выполняет пакетный пересчёт Excel, отслеживает фактическую активность и больше не обрывается по жёсткому тайм-ауту в 10 минут.",
+        "При зависании завершается только скрытый Excel текущего экспорта, а технические сообщения PowerShell преобразуются в читаемый текст."
+      ]
+    },
     {
       version: "1.7.241",
       releasedAt: "2026-08-23",
