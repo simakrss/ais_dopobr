@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.238",
+    version: "1.7.239",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.239",
+      releasedAt: "2026-08-23",
+      changes: [
+        "В полях результата распознавания доступно стандартное контекстное меню: копирование, вставка, удаление, отмена и возврат изменений вместе с выбором области для повторного OCR.",
+        "При переходе между распознанными полями сохраняются выбранный скан, страница, масштаб, поворот и положение изображения."
+      ]
+    },
     {
       version: "1.7.238",
       releasedAt: "2026-08-23",
@@ -31419,11 +31427,18 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function showFieldCopyPopup(control, x, y) {
+  function showFieldCopyPopup(control, x, y, options = {}) {
     hideFieldCopyPopup();
+    hideStudentDocumentRecognitionFieldMenu();
     initializeFieldControlHistory(control);
     const historyEditable = isFieldEditHistoryControl(control);
     const settingsDictionary = String(control?.dataset?.settingsDictionary || "").trim();
+    const selectRecognitionArea = typeof options.onSelectRecognitionArea === "function"
+      ? options.onSelectRecognitionArea
+      : null;
+    const recognitionActionLabel = String(
+      options.recognitionActionLabel || "Указать область в документе"
+    ).trim();
     const popup = document.createElement("div");
     popup.className = "field-copy-popup";
     popup.dataset.fieldCopyPopup = "";
@@ -31479,6 +31494,19 @@ MAX - https://bizvmax.ru/zifra_plus
             <path d="m16 17 4-4 2 2-4 4-3 1z"></path>
           </svg>
           <span>Редактировать список</span>
+        </button>
+      ` : ""}
+      ${selectRecognitionArea ? `
+        <span class="field-copy-divider" aria-hidden="true"></span>
+        <button data-action="select-student-document-field-area" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 9V5a1 1 0 0 1 1-1h4"></path>
+            <path d="M15 4h4a1 1 0 0 1 1 1v4"></path>
+            <path d="M20 15v4a1 1 0 0 1-1 1h-4"></path>
+            <path d="M9 20H5a1 1 0 0 1-1-1v-4"></path>
+            <rect x="7" y="8" width="10" height="8" rx="1"></rect>
+          </svg>
+          <span>${escapeHtml(recognitionActionLabel)}</span>
         </button>
       ` : ""}
     `;
@@ -31567,6 +31595,18 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     editListButton?.addEventListener("pointerdown", editListNow);
     editListButton?.addEventListener("click", editListNow);
+    const selectRecognitionAreaButton = popup.querySelector("[data-action='select-student-document-field-area']");
+    let selectRecognitionAreaStarted = false;
+    const selectRecognitionAreaNow = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (selectRecognitionAreaStarted || !selectRecognitionArea) return;
+      selectRecognitionAreaStarted = true;
+      hideFieldCopyPopup();
+      selectRecognitionArea();
+    };
+    selectRecognitionAreaButton?.addEventListener("pointerdown", selectRecognitionAreaNow);
+    selectRecognitionAreaButton?.addEventListener("click", selectRecognitionAreaNow);
     window.setTimeout(() => {
       document.addEventListener("pointerdown", handleFieldCopyPopupOutside, { once: true });
     }, 0);
@@ -36234,6 +36274,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const dialog = document.querySelector("[data-student-document-recognition-dialog]");
     if (!dialog) return false;
     hideStudentDocumentRecognitionFieldMenu();
+    hideFieldCopyPopup();
     const regionSelector = document.querySelector("[data-student-document-photo-cropper]");
     regionSelector?.closeStudentDocumentRegionSelector?.();
     if (regionSelector?.isConnected) regionSelector.remove();
@@ -36255,6 +36296,7 @@ MAX - https://bizvmax.ru/zifra_plus
       closed = true;
       if (timerId) window.clearInterval(timerId);
       hideStudentDocumentRecognitionFieldMenu();
+      hideFieldCopyPopup();
       const regionSelector = document.querySelector("[data-student-document-photo-cropper]");
       regionSelector?.closeStudentDocumentRegionSelector?.();
       if (regionSelector?.isConnected) regionSelector.remove();
@@ -37500,6 +37542,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function showStudentDocumentRecognitionFieldMenu(x, y, onSelectRegion, options = {}) {
     hideStudentDocumentRecognitionFieldMenu();
+    hideFieldCopyPopup();
     const actionLabel = String(options.actionLabel || "Указать область в документе").trim();
     const menu = document.createElement("div");
     menu.className = "field-copy-popup student-document-recognition-field-menu";
@@ -38084,7 +38127,7 @@ MAX - https://bizvmax.ru/zifra_plus
       syncPreviewSizeToViewport();
       const preserveCurrentView = Boolean(
         preserveView
-        && activeInput === input
+        && activeInput
         && !popup.hidden
         && image.hasAttribute("src")
         && view.baseWidth > 0
@@ -38109,6 +38152,12 @@ MAX - https://bizvmax.ru/zifra_plus
         view.rotation = activePreviewKind === "image"
           ? normalizePreviewRotation(rotationCache.get(getActivePreviewCacheKey()) || 0)
           : 0;
+      } else {
+        activeBox = showingFullPage
+          && activeFilePosition === activeFieldFilePosition
+          && activePage === fieldPreview.page
+          ? fieldPreview.box || null
+          : null;
       }
       title.textContent = String(field.label || key || "Распознанное поле");
       updatePreviewNavigation();
@@ -38316,9 +38365,9 @@ MAX - https://bizvmax.ru/zifra_plus
       input.addEventListener("contextmenu", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        showStudentDocumentRecognitionFieldMenu(event.clientX, event.clientY, () => (
-          selectFieldDocumentArea(field, input, row)
-        ));
+        showFieldCopyPopup(input, event.clientX, event.clientY, {
+          onSelectRecognitionArea: () => selectFieldDocumentArea(field, input, row)
+        });
       });
       input.addEventListener("blur", () => {
         window.setTimeout(() => {
@@ -38356,9 +38405,9 @@ MAX - https://bizvmax.ru/zifra_plus
       event.preventDefault();
       event.stopPropagation();
       const row = activeInput.closest("[data-ocr-recognition-field]");
-      showStudentDocumentRecognitionFieldMenu(event.clientX, event.clientY, () => (
-        selectFieldDocumentArea(activeField, activeInput, row)
-      ));
+      showFieldCopyPopup(activeInput, event.clientX, event.clientY, {
+        onSelectRecognitionArea: () => selectFieldDocumentArea(activeField, activeInput, row)
+      });
     });
     image.addEventListener("load", () => {
       setPreviewLoading("");

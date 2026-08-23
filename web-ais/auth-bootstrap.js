@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260823-education-ocr-docx-rotation-v1";
+  const AUTH_BUILD = "20260823-ocr-field-context-view-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

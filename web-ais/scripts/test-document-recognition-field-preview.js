@@ -283,6 +283,29 @@ async function main() {
   assert.match(clientSource, /const previewPayload = \{ \.\.\.payload, files: recognitionFiles \};/u);
   assert.match(clientSource, /data-action="select-student-photo-area-any"/u);
   assert.match(clientSource, /data-action="recognize-student-document-field-region"/u);
+  const fieldContextMenuStart = clientSource.indexOf("  function showFieldCopyPopup");
+  const fieldContextMenuEnd = clientSource.indexOf("\n\n  function openSettingsDictionary", fieldContextMenuStart);
+  assert.ok(fieldContextMenuStart >= 0 && fieldContextMenuEnd > fieldContextMenuStart);
+  const fieldContextMenuSource = clientSource.slice(fieldContextMenuStart, fieldContextMenuEnd);
+  assert.match(fieldContextMenuSource, /function showFieldCopyPopup\(control, x, y, options = \{\}\)/u);
+  assert.match(fieldContextMenuSource, /data-action="copy-field-value"/u);
+  assert.match(fieldContextMenuSource, /data-action="paste-field-value"/u);
+  assert.match(fieldContextMenuSource, /data-action="delete-field-value"/u);
+  assert.match(fieldContextMenuSource, /data-action="undo-field-change"/u);
+  assert.match(fieldContextMenuSource, /data-action="redo-field-change"/u);
+  assert.match(fieldContextMenuSource, /data-action="select-student-document-field-area"/u);
+  assert.match(fieldContextMenuSource, /typeof options\.onSelectRecognitionArea === "function"/u);
+  const recognitionPreviewBindingStart = clientSource.indexOf("  function bindStudentDocumentRecognitionFieldPreviews");
+  const recognitionPreviewBindingEnd = clientSource.indexOf("\n\n  function addStudentDocumentPhotoCandidate", recognitionPreviewBindingStart);
+  assert.ok(recognitionPreviewBindingStart >= 0 && recognitionPreviewBindingEnd > recognitionPreviewBindingStart);
+  const recognitionPreviewBindingSource = clientSource.slice(
+    recognitionPreviewBindingStart,
+    recognitionPreviewBindingEnd
+  );
+  assert.match(recognitionPreviewBindingSource, /showFieldCopyPopup\(input,[\s\S]*?onSelectRecognitionArea:/u);
+  assert.match(recognitionPreviewBindingSource, /showFieldCopyPopup\(activeInput,[\s\S]*?onSelectRecognitionArea:/u);
+  assert.match(recognitionPreviewBindingSource, /preserveView[\s\S]*?&& activeInput[\s\S]*?&& !popup\.hidden/u);
+  assert.doesNotMatch(recognitionPreviewBindingSource, /activeInput === input/u);
   assert.match(clientSource, /documentProcessingApiUrl\("\/api\/students\/recognize-documents\/field-region", recognitionOrigin\)/u);
   assert.match(clientSource, /body: JSON\.stringify\(\{ key, mimeType, base64 \}\)/u);
   assert.match(clientSource, /title: "Повторное распознавание"/u);
