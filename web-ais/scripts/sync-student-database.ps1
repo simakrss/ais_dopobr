@@ -1539,7 +1539,7 @@ function Update-StudentSheet {
         8 + [Math]::Floor(($processedColumns / [Math]::Max(1, $columns.Count)) * 62)
       ) "Обновление слушателей: $processedColumns из $($columns.Count) колонок"
     }
-    $syncCommentCount = Update-AisSyncCommentsForRows $sheet $recordByRow $startRow $lastRow 1
+    $syncCommentCount = Update-AisSyncMetadataForRows $sheet $recordByRow $startRow $lastRow 1
     $learningSection = @($finalSections | Where-Object {
       ([string]$_.Title).Trim().ToLowerInvariant() -eq "обучающиеся"
     } | Select-Object -First 1)
@@ -1606,7 +1606,7 @@ function Update-DirectExpenseSheet {
         70 + [Math]::Floor(($processedColumns / [Math]::Max(1, $columns.Count)) * 20)
       ) "Обновление прямых затрат: $processedColumns из $($columns.Count) колонок"
     }
-    [void](Update-AisSyncCommentsForRows $sheet $recordByRow $startRow $lastRow 1)
+    [void](Update-AisSyncMetadataForRows $sheet $recordByRow $startRow $lastRow 1)
     return [pscustomobject]@{
       Count = $expenses.Count
       LastRow = $lastRow
@@ -1816,7 +1816,7 @@ function Update-ContractSheet {
       $processedColumns += 1
       Write-SyncProgress 95 "Обновление договоров: $processedColumns из $($columns.Count) колонок"
     }
-    [void](Update-AisSyncCommentsForRows $sheet $recordByRow ($header.Row + 1) $lastRow 1)
+    [void](Update-AisSyncMetadataForRows $sheet $recordByRow ($header.Row + 1) $lastRow 1)
     $maximumRowHeight = @(
       (Limit-ContractDataRowHeight $sheet $activeStart $records.active.Count),
       (Limit-ContractDataRowHeight $sheet $partnerStart $records.partners.Count),
@@ -1950,7 +1950,7 @@ function Update-GeneralExpenseSheet {
     foreach ($row in $organizationRecordByRow.Keys) {
       $allGeneralExpenseRecords[[int]$row] = $organizationRecordByRow[$row]
     }
-    [void](Update-AisSyncCommentsForRows $sheet $allGeneralExpenseRecords $scanStartRow $lastExistingRow 1)
+    [void](Update-AisSyncMetadataForRows $sheet $allGeneralExpenseRecords $scanStartRow $lastExistingRow 1)
     return [pscustomobject]@{
       Count = $expenses.Count
       Individuals = $individualExpenses.Count
@@ -2015,7 +2015,7 @@ function Update-InventorySheet {
       $processedColumns += 1
       Write-SyncProgress 94 "Обновление запасов: $processedColumns из $($columns.Count) колонок"
     }
-    [void](Update-AisSyncCommentsForRows $sheet $recordByRow $startRow $lastRow 1)
+    [void](Update-AisSyncMetadataForRows $sheet $recordByRow $startRow $lastRow 1)
     return [pscustomobject]@{
       Provided = $true
       Items = $items.Count
@@ -2091,7 +2091,7 @@ function Update-TrainingPlanSheet {
       $processedColumns += 1
       Write-SyncProgress 95 "Обновление учебных планов: $processedColumns из $($columns.Count) колонок"
     }
-    [void](Update-AisSyncCommentsForRows $sheet $recordByRow $startRow $lastRow 1)
+    [void](Update-AisSyncMetadataForRows $sheet $recordByRow $startRow $lastRow 1)
     return [pscustomobject]@{
       Provided = $true
       Count = $records.Count
@@ -2264,19 +2264,22 @@ function Get-AisSyncMetadataObject {
   return $parsed
 }
 
-function Get-AisSyncCommentMetadata {
+function Get-AisSyncMetadataFromText {
   param(
-    [object]$Cell,
-    [string]$ExpectedEntity = ""
+    [object]$Value,
+    [string]$ExpectedEntity = "",
+    [string]$SourceLabel = "свойстве ячейки"
   )
-  $text = (Get-CellCommentText $Cell).Replace("`r`n", "`n").Replace("`r", "`n")
-  if (-not $text.Contains("[[AIS_SYNC_V1]]")) { return $null }
+  $text = ([string]$Value).Replace("`r`n", "`n").Replace("`r", "`n")
+  $hasStart = $text.Contains("[[AIS_SYNC_V1]]")
+  $hasEnd = $text.Contains("[[/AIS_SYNC_V1]]")
+  if (-not $hasStart -and -not $hasEnd) { return $null }
   $matches = [regex]::Matches(
     $text,
     "(?s)\[\[AIS_SYNC_V1\]\](.*?)\[\[/AIS_SYNC_V1\]\]"
   )
   if ($matches.Count -ne 1) {
-    throw "В примечании ячейки должна быть ровно одна служебная метка AIS_SYNC."
+    throw "В $SourceLabel должна быть ровно одна служебная метка AIS_SYNC."
   }
   $parsed = Get-AisSyncMetadataObject $matches[0].Groups[1].Value
   $entity = ([string](Get-ObjectProperty $parsed "entity")).Trim()
@@ -2286,7 +2289,143 @@ function Get-AisSyncCommentMetadata {
   return $parsed
 }
 
-function Update-AisSyncCommentsForRows {
+function Get-AisSyncCommentMetadata {
+  param(
+    [object]$Cell,
+    [string]$ExpectedEntity = ""
+  )
+  return Get-AisSyncMetadataFromText `
+    (Get-CellCommentText $Cell) `
+    $ExpectedEntity `
+    "примечании ячейки"
+}
+
+function Get-CellValidationErrorText {
+  param([object]$Cell)
+  $validation = $null
+  try {
+    $validation = $Cell.Validation
+    [void]$validation.Type
+    return [string]$validation.ErrorMessage
+  } catch {
+    return ""
+  } finally {
+    Release-ComObject $validation
+  }
+}
+
+function Get-AisSyncValidationMetadata {
+  param(
+    [object]$Cell,
+    [string]$ExpectedEntity = ""
+  )
+  return Get-AisSyncMetadataFromText `
+    (Get-CellValidationErrorText $Cell) `
+    $ExpectedEntity `
+    "тексте сообщения об ошибке проверки данных"
+}
+
+function Get-AisSyncCellMetadata {
+  param(
+    [object]$Cell,
+    [string]$ExpectedEntity = ""
+  )
+  $validationMetadata = Get-AisSyncValidationMetadata $Cell $ExpectedEntity
+  $commentMetadata = Get-AisSyncCommentMetadata $Cell $ExpectedEntity
+  if ($null -ne $validationMetadata -and $null -ne $commentMetadata) {
+    $validationRecordId = ([string](Get-ObjectProperty $validationMetadata "recordId")).Trim()
+    $commentRecordId = ([string](Get-ObjectProperty $commentMetadata "recordId")).Trim()
+    $validationParentId = ([string](Get-ObjectProperty $validationMetadata "parentRecordId")).Trim()
+    $commentParentId = ([string](Get-ObjectProperty $commentMetadata "parentRecordId")).Trim()
+    if ($validationRecordId -ne $commentRecordId -or $validationParentId -ne $commentParentId) {
+      throw "Служебные метки AIS_SYNC в проверке данных и примечании ячейки не совпадают."
+    }
+  }
+  if ($null -ne $validationMetadata) { return $validationMetadata }
+  return $commentMetadata
+}
+
+function Set-AisSyncValidationCell {
+  param(
+    [object]$Cell,
+    [object]$MetadataJson
+  )
+  $metadata = ([string]$MetadataJson).Trim()
+  if ($metadata) { [void](Get-AisSyncMetadataObject $metadata) }
+
+  $validation = $null
+  $hasValidation = $false
+  $operation = "чтение проверки данных"
+  try {
+    try {
+      $validation = $Cell.Validation
+      $validationTypeValue = $validation.Type
+      $hasValidation = $null -ne $validationTypeValue -and [string]$validationTypeValue -ne ""
+    } catch {
+      $hasValidation = $false
+    }
+
+    $existing = if ($hasValidation) {
+      ([string]$validation.ErrorMessage).Replace("`r`n", "`n").Replace("`r", "`n")
+    } else {
+      ""
+    }
+    $wasManaged = $existing.Contains("[[AIS_SYNC_V1]]") `
+      -or $existing.Contains("[[/AIS_SYNC_V1]]") `
+      -or ($hasValidation -and [string]$validation.ErrorTitle -eq "AIS_SYNC_V1")
+    if (-not $metadata -and -not $wasManaged) { return $false }
+
+    $preserved = Get-AisSyncHumanCommentText $existing
+    $managed = if ($metadata) { "[[AIS_SYNC_V1]]`n$metadata`n[[/AIS_SYNC_V1]]" } else { "" }
+    $text = if ($preserved -and $managed) {
+      "$preserved`n`n$managed"
+    } elseif ($preserved) {
+      $preserved
+    } else {
+      $managed
+    }
+    if ($text.Length -gt 225) {
+      throw "Служебная метка AIS_SYNC не помещается в сообщение проверки данных Excel (максимум 225 символов)."
+    }
+
+    if (-not $metadata -and -not $preserved -and $hasValidation -and [string]$validation.ErrorTitle -eq "AIS_SYNC_V1") {
+      $operation = "удаление служебной проверки данных"
+      [void]$validation.Delete()
+      return $true
+    }
+    if (-not $hasValidation) {
+      # xlValidateCustom + always-true formula keeps the metadata invisible and never blocks input.
+      $operation = "создание проверки данных"
+      try { [void]$validation.Delete() } catch {}
+      $validation.Add(7, 1, 1, "=1=1")
+      $hasValidation = $true
+      $validation.IgnoreBlank = $true
+      $validation.ShowInput = $false
+      $validation.ShowError = $true
+      $validation.ErrorTitle = "AIS_SYNC_V1"
+    }
+    if ($existing -ceq $text) { return $false }
+    $operation = "запись сообщения проверки данных"
+    $validation.ErrorMessage = $text
+    if ([string]$validation.ErrorTitle -eq "AIS_SYNC_V1") {
+      $validation.ShowError = $false
+    }
+    return $true
+  } catch {
+    $address = try { [string]$Cell.Address($false, $false) } catch { "?" }
+    $sheetName = try { [string]$Cell.Worksheet.Name } catch { "?" }
+    $validationType = try { [string]$validation.Type } catch { "ошибка: $($_.Exception.Message)" }
+    $validationTitle = try { [string]$validation.ErrorTitle } catch { "" }
+    $validationFormula = try { [string]$validation.Formula1 } catch { "ошибка: $($_.Exception.Message)" }
+    $isMerged = try { [bool]$Cell.MergeCells } catch { $false }
+    $isProtected = try { [bool]$Cell.Worksheet.ProtectContents } catch { $false }
+    throw "Ошибка AIS_SYNC ($operation) в ячейке '$sheetName!$address' (тип проверки: $validationType, формула: '$validationFormula', заголовок: '$validationTitle', длина сообщения: $($text.Length), объединение: $isMerged, защита: $isProtected): $($_.Exception.Message)"
+  } finally {
+    Release-ComObject $validation
+  }
+}
+
+function Update-AisSyncMetadataForRows {
   param(
     [object]$Sheet,
     [hashtable]$RecordByRow,
@@ -2297,6 +2436,7 @@ function Update-AisSyncCommentsForRows {
   $updated = 0
   $usedIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
   $recordIdByRow = @{}
+  $expectedEntity = ""
   foreach ($row in @($RecordByRow.Keys | Sort-Object)) {
     $record = $RecordByRow[[int]$row]
     $metadata = Get-ObjectProperty $record "__syncComment"
@@ -2305,6 +2445,11 @@ function Update-AisSyncCommentsForRows {
     }
     $parsed = Get-AisSyncMetadataObject $metadata
     $recordId = ([string](Get-ObjectProperty $parsed "recordId")).Trim()
+    $entity = ([string](Get-ObjectProperty $parsed "entity")).Trim()
+    if (-not $expectedEntity) { $expectedEntity = $entity }
+    if ($expectedEntity -ne $entity) {
+      throw "В одном диапазоне переданы служебные метки AIS_SYNC разных типов."
+    }
     if (-not $usedIds.Add($recordId)) {
       throw "В переданных данных повторяется служебный ID '$recordId'."
     }
@@ -2313,87 +2458,44 @@ function Update-AisSyncCommentsForRows {
 
   $humanTextByRecordId = @{}
   $unmanagedHumanTextByRow = @{}
-  $existingComments = $null
-  try {
-    $existingComments = $Sheet.Comments
-    for ($index = 1; $index -le [int]$existingComments.Count; $index += 1) {
-      $existingComment = $null
-      $existingParent = $null
-      try {
-        $existingComment = $existingComments.Item($index)
-        $existingParent = $existingComment.Parent
-        $existingRow = [int]$existingParent.Row
-        $existingColumn = [int]$existingParent.Column
-        if (
-          $existingColumn -ne $FirstColumn `
-          -or $existingRow -lt $StartRow `
-          -or $existingRow -gt $LastRow
-        ) { continue }
-        $existingText = try { [string]$existingComment.Text() } catch { [string]$existingComment.Text }
-        $humanText = Get-AisSyncHumanCommentText $existingText
-        $existingMetadata = Get-AisSyncCommentMetadata $existingParent
-        if ($null -ne $existingMetadata) {
-          $existingRecordId = ([string](Get-ObjectProperty $existingMetadata "recordId")).Trim()
-          if ($humanTextByRecordId.ContainsKey($existingRecordId)) {
-            throw "В примечаниях листа '$([string]$Sheet.Name)' повторяется служебный ID '$existingRecordId'."
-          }
-          $humanTextByRecordId[$existingRecordId] = $humanText
-        } elseif ($humanText) {
-          $unmanagedHumanTextByRow[$existingRow] = $humanText
+  $seenExistingIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+  for ($row = $StartRow; $row -le $LastRow; $row += 1) {
+    $cell = $null
+    try {
+      $cell = $Sheet.Cells.Item($row, $FirstColumn)
+      $humanText = Get-AisSyncHumanCommentText (Get-CellCommentText $cell)
+      $existingMetadata = Get-AisSyncCellMetadata $cell $expectedEntity
+      if ($null -ne $existingMetadata) {
+        $existingRecordId = ([string](Get-ObjectProperty $existingMetadata "recordId")).Trim()
+        if (-not $seenExistingIds.Add($existingRecordId)) {
+          throw "В служебных свойствах листа '$([string]$Sheet.Name)' повторяется ID '$existingRecordId'."
         }
-      } finally {
-        Release-ComObject $existingParent
-        Release-ComObject $existingComment
+        $humanTextByRecordId[$existingRecordId] = $humanText
+      } elseif ($humanText) {
+        $unmanagedHumanTextByRow[$row] = $humanText
       }
+    } finally {
+      Release-ComObject $cell
     }
-  } finally {
-    Release-ComObject $existingComments
   }
 
-  $comments = $null
-  try {
-    $comments = $Sheet.Comments
-    for ($index = [int]$comments.Count; $index -ge 1; $index -= 1) {
-      $comment = $null
-      $parent = $null
-      try {
-        $comment = $comments.Item($index)
-        $parent = $comment.Parent
-        $row = [int]$parent.Row
-        $column = [int]$parent.Column
-        if (
-          $column -eq $FirstColumn `
-          -and $row -ge $StartRow `
-          -and $row -le $LastRow `
-          -and -not $RecordByRow.ContainsKey($row)
-        ) {
-          $commentText = try { [string]$comment.Text() } catch { [string]$comment.Text }
-          if (
-            $commentText.Contains("[[AIS_SYNC_V1]]") `
-            -or $commentText.Contains("[[/AIS_SYNC_V1]]")
-          ) {
-            $staleMetadata = Get-AisSyncCommentMetadata $parent
-            $staleRecordId = if ($null -ne $staleMetadata) {
-              ([string](Get-ObjectProperty $staleMetadata "recordId")).Trim()
-            } else {
-              ""
-            }
-            if ($staleRecordId -and $usedIds.Contains($staleRecordId)) {
-              if (
-                Set-AisSyncCommentCell $parent "" -HumanText "" -UseProvidedHumanText
-              ) { $updated += 1 }
-            } elseif (Set-AisSyncCommentCell $parent "") {
-              $updated += 1
-            }
-          }
-        }
-      } finally {
-        Release-ComObject $parent
-        Release-ComObject $comment
+  for ($row = $StartRow; $row -le $LastRow; $row += 1) {
+    if ($RecordByRow.ContainsKey($row)) { continue }
+    $cell = $null
+    try {
+      $cell = $Sheet.Cells.Item($row, $FirstColumn)
+      $staleMetadata = Get-AisSyncCellMetadata $cell $expectedEntity
+      if ($null -eq $staleMetadata) { continue }
+      $staleRecordId = ([string](Get-ObjectProperty $staleMetadata "recordId")).Trim()
+      if ($staleRecordId -and $usedIds.Contains($staleRecordId)) {
+        if (Set-AisSyncCommentCell $cell "" -HumanText "" -UseProvidedHumanText) { $updated += 1 }
+      } elseif (Set-AisSyncCommentCell $cell "") {
+        $updated += 1
       }
+      if (Set-AisSyncValidationCell $cell "") { $updated += 1 }
+    } finally {
+      Release-ComObject $cell
     }
-  } finally {
-    Release-ComObject $comments
   }
 
   foreach ($row in @($RecordByRow.Keys | Sort-Object)) {
@@ -2410,7 +2512,10 @@ function Update-AisSyncCommentsForRows {
     $cell = $null
     try {
       $cell = $Sheet.Cells.Item([int]$row, $FirstColumn)
-      if (Set-AisSyncCommentCell $cell $metadata -HumanText $humanText -UseProvidedHumanText) {
+      if (Set-AisSyncCommentCell $cell "" -HumanText $humanText -UseProvidedHumanText) {
+        $updated += 1
+      }
+      if (Set-AisSyncValidationCell $cell $metadata) {
         $updated += 1
       }
     } finally {
@@ -2524,7 +2629,7 @@ function Update-ProgramPromoMessages {
       $firstCell = $null
       try {
         $firstCell = $sheet.Cells.Item($row, 1)
-        $syncMetadata = Get-AisSyncCommentMetadata $firstCell "programs"
+        $syncMetadata = Get-AisSyncCellMetadata $firstCell "programs"
         if ($null -ne $syncMetadata) {
           $recordId = ([string](Get-ObjectProperty $syncMetadata "recordId")).Trim()
           if ($rowByRecordId.ContainsKey($recordId)) {
@@ -2663,7 +2768,7 @@ function Update-ProgramPromoMessages {
       }
       $updatedCount += 1
     }
-    [void](Update-AisSyncCommentsForRows $sheet $programRecordByRow $startRow $lastRow 1)
+    [void](Update-AisSyncMetadataForRows $sheet $programRecordByRow $startRow $lastRow 1)
     return [pscustomobject]@{
       Count = $updatedCount
       Messages = $messageCount
@@ -2920,13 +3025,17 @@ function Update-MacroSettings {
   }
 }
 
-function Update-AisSyncCommentOnlyWorkbook {
+function Update-AisSyncMetadataOnlyWorkbook {
   param(
     [object]$Workbook,
     [object]$Payload
   )
-  $rows = @(Get-ObjectProperty $Payload "syncCommentRows")
-  $sheetDefinitions = @(Get-ObjectProperty $Payload "syncCommentSheets")
+  $rows = @(Get-ObjectProperty $Payload "syncMetadataRows")
+  if ($rows.Count -eq 0) { $rows = @(Get-ObjectProperty $Payload "syncCommentRows") }
+  $sheetDefinitions = @(Get-ObjectProperty $Payload "syncMetadataSheets")
+  if ($sheetDefinitions.Count -eq 0) {
+    $sheetDefinitions = @(Get-ObjectProperty $Payload "syncCommentSheets")
+  }
   if ($sheetDefinitions.Count -eq 0) { throw "Не передан список управляемых листов AIS_SYNC." }
   $usedCells = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
   $usedRecordIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -2955,7 +3064,7 @@ function Update-AisSyncCommentOnlyWorkbook {
     $row = [int](Get-ObjectProperty $entry "row")
     $metadata = ([string](Get-ObjectProperty $entry "metadata")).Trim()
     if (-not $sheetName -or -not $entity -or -not $recordId -or $row -lt 2 -or -not $metadata) {
-      throw "Некорректная строка плана служебных примечаний № $($index + 1)."
+      throw "Некорректная строка плана служебных свойств № $($index + 1)."
     }
     if (-not $entityBySheet.ContainsKey($sheetName) -or $entityBySheet[$sheetName] -ne $entity) {
       throw "Строка $row указывает на неуправляемый лист или тип AIS_SYNC '$sheetName' / '$entity'."
@@ -3004,11 +3113,11 @@ function Update-AisSyncCommentOnlyWorkbook {
               [string]$sourceComment.Text
             }
             $sourceHumanText = Get-AisSyncHumanCommentText $sourceText
-            $sourceMetadata = Get-AisSyncCommentMetadata $sourceParent $entity
+            $sourceMetadata = Get-AisSyncCellMetadata $sourceParent $entity
             if ($null -ne $sourceMetadata) {
               $sourceRecordId = ([string](Get-ObjectProperty $sourceMetadata "recordId")).Trim()
               if ($humanTextByRecordId.ContainsKey($sourceRecordId)) {
-                throw "В примечаниях листа '$sheetName' повторяется служебный ID '$sourceRecordId'."
+              throw "В служебных свойствах листа '$sheetName' повторяется ID '$sourceRecordId'."
               }
               $humanTextByRecordId[$sourceRecordId] = $sourceHumanText
             } elseif ($sourceHumanText) {
@@ -3037,7 +3146,10 @@ function Update-AisSyncCommentOnlyWorkbook {
           } else {
             ""
           }
-          if (Set-AisSyncCommentCell $cell $metadata -HumanText $humanText -UseProvidedHumanText) {
+          if (Set-AisSyncCommentCell $cell "" -HumanText $humanText -UseProvidedHumanText) {
+            $updated += 1
+          }
+          if (Set-AisSyncValidationCell $cell $metadata) {
             $updated += 1
           }
         } finally {
@@ -3063,7 +3175,7 @@ function Update-AisSyncCommentOnlyWorkbook {
               -not $commentText.Contains("[[AIS_SYNC_V1]]") `
               -and -not $commentText.Contains("[[/AIS_SYNC_V1]]")
             ) { continue }
-            $staleMetadata = Get-AisSyncCommentMetadata $parent $entity
+            $staleMetadata = Get-AisSyncCellMetadata $parent $entity
             $staleRecordId = if ($null -ne $staleMetadata) {
               ([string](Get-ObjectProperty $staleMetadata "recordId")).Trim()
             } else {
@@ -3087,11 +3199,146 @@ function Update-AisSyncCommentOnlyWorkbook {
       } finally {
         Release-ComObject $comments
       }
+
+      $usedRange = $null
+      try {
+        $usedRange = $sheet.UsedRange
+        $lastUsedRow = [Math]::Max(2, [int]$usedRange.Row + [int]$usedRange.Rows.Count - 1)
+        foreach ($entry in @($entriesBySheet[$sheetName])) {
+          $lastUsedRow = [Math]::Max($lastUsedRow, [int](Get-ObjectProperty $entry "row"))
+        }
+        for ($row = 2; $row -le $lastUsedRow; $row += 1) {
+          $cellKey = "$sheetName$([char]0)$row"
+          if ($usedCells.Contains($cellKey)) { continue }
+          $cell = $null
+          try {
+            $cell = $sheet.Cells.Item($row, 1)
+            if ($null -eq (Get-AisSyncValidationMetadata $cell $entity)) { continue }
+            if (Set-AisSyncValidationCell $cell "") { $removed += 1 }
+          } finally {
+            Release-ComObject $cell
+          }
+        }
+      } finally {
+        Release-ComObject $usedRange
+      }
     } finally {
       Release-ComObject $sheet
     }
   }
   return [pscustomobject]@{ Count = $updated; Requested = $rows.Count; Removed = $removed }
+}
+
+function Read-AisSyncValidationMetadataWorkbook {
+  param(
+    [object]$Workbook,
+    [object]$Payload
+  )
+  $sheetDefinitions = @(Get-ObjectProperty $Payload "syncMetadataSheets")
+  if ($sheetDefinitions.Count -eq 0) {
+    $sheetDefinitions = @(Get-ObjectProperty $Payload "syncCommentSheets")
+  }
+  if ($sheetDefinitions.Count -eq 0) { throw "Не передан список управляемых листов AIS_SYNC." }
+
+  $rows = [Collections.Generic.List[object]]::new()
+  $usedRecordIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+  foreach ($definition in $sheetDefinitions) {
+    $sheetName = ([string](Get-ObjectProperty $definition "sheetName")).Trim()
+    $entity = ([string](Get-ObjectProperty $definition "entity")).Trim()
+    if (-not $sheetName -or -not $entity) { throw "Некорректный список управляемых листов AIS_SYNC." }
+    $sheet = $null
+    $usedRange = $null
+    $firstColumnRange = $null
+    $validationCells = $null
+    $validationAreas = $null
+    try {
+      $sheet = $Workbook.Worksheets.Item($sheetName)
+      $usedRange = $sheet.UsedRange
+      $lastUsedRow = [Math]::Max(2, [int]$usedRange.Row + [int]$usedRange.Rows.Count - 1)
+      $firstColumnRange = $sheet.Range($sheet.Cells.Item(2, 1), $sheet.Cells.Item($lastUsedRow, 1))
+      try { $validationCells = $firstColumnRange.SpecialCells(-4174) } catch { $validationCells = $null }
+      if ($null -eq $validationCells) { continue }
+      $validationAreas = $validationCells.Areas
+      for ($areaIndex = 1; $areaIndex -le [int]$validationAreas.Count; $areaIndex += 1) {
+        $area = $null
+        $areaCells = $null
+        try {
+          $area = $validationAreas.Item($areaIndex)
+          $areaCells = $area.Cells
+          for ($index = 1; $index -le [int]$areaCells.Count; $index += 1) {
+            $cell = $null
+            try {
+              $cell = $areaCells.Item($index)
+              $row = [int]$cell.Row
+              $metadata = Get-AisSyncValidationMetadata $cell $entity
+              if ($null -eq $metadata) { continue }
+              $recordId = ([string](Get-ObjectProperty $metadata "recordId")).Trim()
+              $recordKey = "$entity$([char]0)$recordId"
+              if (-not $usedRecordIds.Add($recordKey)) {
+                throw "В свойствах проверки данных повторяется служебный ID '$recordId' типа '$entity'."
+              }
+              [void]$rows.Add([pscustomobject]@{
+                sheetName = $sheetName
+                row = $row
+                entity = $entity
+                metadata = ($metadata | ConvertTo-Json -Compress -Depth 6)
+              })
+            } finally {
+              Release-ComObject $cell
+            }
+          }
+        } finally {
+          Release-ComObject $areaCells
+          Release-ComObject $area
+        }
+      }
+    } finally {
+      Release-ComObject $validationAreas
+      Release-ComObject $validationCells
+      Release-ComObject $firstColumnRange
+      Release-ComObject $usedRange
+      Release-ComObject $sheet
+    }
+  }
+  return @($rows)
+}
+
+function Assert-AisSyncValidationMetadataWorkbook {
+  param(
+    [object]$Workbook,
+    [object]$Payload
+  )
+  $expectedRows = @(Get-ObjectProperty $Payload "syncMetadataRows")
+  if ($expectedRows.Count -eq 0) { $expectedRows = @(Get-ObjectProperty $Payload "syncCommentRows") }
+  $actualRows = @(Read-AisSyncValidationMetadataWorkbook $Workbook $Payload)
+  $actualByCell = @{}
+  foreach ($actual in $actualRows) {
+    $key = "$([string](Get-ObjectProperty $actual "sheetName"))$([char]0)$([int](Get-ObjectProperty $actual "row"))"
+    $actualByCell[$key] = Get-AisSyncMetadataObject (Get-ObjectProperty $actual "metadata")
+  }
+  foreach ($expected in $expectedRows) {
+    $sheetName = ([string](Get-ObjectProperty $expected "sheetName")).Trim()
+    $row = [int](Get-ObjectProperty $expected "row")
+    $key = "$sheetName$([char]0)$row"
+    if (-not $actualByCell.ContainsKey($key)) {
+      throw "Служебное свойство AIS_SYNC не записано в ячейку '$sheetName!A$row'."
+    }
+    $expectedMetadata = Get-AisSyncMetadataObject (Get-ObjectProperty $expected "metadata")
+    $actualMetadata = $actualByCell[$key]
+    foreach ($propertyName in @("entity", "recordId", "parentRecordId", "syncedAt")) {
+      if (
+        ([string](Get-ObjectProperty $expectedMetadata $propertyName)).Trim() `
+        -ne ([string](Get-ObjectProperty $actualMetadata $propertyName)).Trim()
+      ) {
+        throw "Служебное свойство AIS_SYNC в ячейке '$sheetName!A$row' записано некорректно."
+      }
+    }
+    [void]$actualByCell.Remove($key)
+  }
+  if ($actualByCell.Count -gt 0) {
+    throw "В книге остались лишние служебные свойства AIS_SYNC: $($actualByCell.Count)."
+  }
+  return $actualRows.Count
 }
 
 $excel = $null
@@ -3101,19 +3348,20 @@ $ownedExcelProcessPidPath = ([string]$env:AIS_SYNC_EXCEL_PID_PATH).Trim()
 try {
   Write-SyncProgress 1 "Чтение данных веб-базы..."
   $payload = Get-Content -LiteralPath $PayloadPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  $readSyncMetadataOnly = [bool](Get-ObjectProperty $payload "readSyncMetadataOnly")
   $dateFields = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-  foreach ($field in @($payload.studentDateFields)) { [void]$dateFields.Add([string]$field) }
-  foreach ($field in @($payload.contractDateFields)) { [void]$dateFields.Add([string]$field) }
-  foreach ($field in @($payload.inventoryDateFields)) { [void]$dateFields.Add([string]$field) }
-  foreach ($field in @($payload.programDateFields)) { [void]$dateFields.Add([string]$field) }
+  foreach ($field in @(Get-ObjectProperty $payload "studentDateFields")) { [void]$dateFields.Add([string]$field) }
+  foreach ($field in @(Get-ObjectProperty $payload "contractDateFields")) { [void]$dateFields.Add([string]$field) }
+  foreach ($field in @(Get-ObjectProperty $payload "inventoryDateFields")) { [void]$dateFields.Add([string]$field) }
+  foreach ($field in @(Get-ObjectProperty $payload "programDateFields")) { [void]$dateFields.Add([string]$field) }
   [void]$dateFields.Add("date")
   [void]$dateFields.Add("paid")
   $numberFields = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-  foreach ($field in @($payload.studentNumberFields)) { [void]$numberFields.Add([string]$field) }
-  foreach ($field in @($payload.contractNumberFields)) { [void]$numberFields.Add([string]$field) }
-  foreach ($field in @($payload.inventoryNumberFields)) { [void]$numberFields.Add([string]$field) }
-  foreach ($field in @($payload.trainingPlanNumberFields)) { [void]$numberFields.Add([string]$field) }
-  foreach ($field in @($payload.programNumberFields)) { [void]$numberFields.Add([string]$field) }
+  foreach ($field in @(Get-ObjectProperty $payload "studentNumberFields")) { [void]$numberFields.Add([string]$field) }
+  foreach ($field in @(Get-ObjectProperty $payload "contractNumberFields")) { [void]$numberFields.Add([string]$field) }
+  foreach ($field in @(Get-ObjectProperty $payload "inventoryNumberFields")) { [void]$numberFields.Add([string]$field) }
+  foreach ($field in @(Get-ObjectProperty $payload "trainingPlanNumberFields")) { [void]$numberFields.Add([string]$field) }
+  foreach ($field in @(Get-ObjectProperty $payload "programNumberFields")) { [void]$numberFields.Add([string]$field) }
   [void]$numberFields.Add("amount")
 
   Write-SyncProgress 3 "Запуск Microsoft Excel..."
@@ -3146,26 +3394,48 @@ try {
   $excel.EnableEvents = $false
   $excel.AskToUpdateLinks = $false
   $excel.AutomationSecurity = 3
-  $workbook = $excel.Workbooks.Open($InputPath, 0, $false)
+  $workbook = $excel.Workbooks.Open($InputPath, 0, $readSyncMetadataOnly)
   # Hundreds of mapped columns are updated in batches. Automatic calculation
   # after every batch makes a full XLSB synchronization take many minutes;
   # calculate once, immediately before SaveAs, instead.
   try { $excel.Calculation = -4135 } catch {} # xlCalculationManual
 
-  if ([bool](Get-ObjectProperty $payload "commentOnly")) {
-    Write-SyncProgress 20 "Запись стабильных ID в примечания первого столбца..."
-    $commentResult = Update-AisSyncCommentOnlyWorkbook $workbook $payload
-    Write-SyncProgress 95 "Сохранение книги только с обновлёнными примечаниями..."
-    $workbook.SaveAs($OutputPath, 50)
-    Write-SyncProgress 100 "Служебные примечания AIS_SYNC сохранены."
+  if ($readSyncMetadataOnly) {
+    Write-SyncProgress 30 "Чтение стабильных ID из свойств проверки данных..."
+    $metadataRows = @(Read-AisSyncValidationMetadataWorkbook $workbook $payload)
+    Write-SyncProgress 100 "Стабильные ID прочитаны."
     [pscustomobject]@{
       type = "result"
-      commentOnly = $true
-      syncComments = $commentResult.Count
-      requestedSyncComments = $commentResult.Requested
-      removedSyncComments = $commentResult.Removed
+      readSyncMetadataOnly = $true
+      syncMetadataRows = $metadataRows
+      syncMetadataCount = $metadataRows.Count
+    } | ConvertTo-Json -Compress -Depth 8 | Write-Output
+    return
+  }
+
+  if (
+    [bool](Get-ObjectProperty $payload "syncMetadataOnly") `
+    -or [bool](Get-ObjectProperty $payload "commentOnly")
+  ) {
+    Write-SyncProgress 20 "Запись стабильных ID в свойства проверки данных первого столбца..."
+    $metadataResult = Update-AisSyncMetadataOnlyWorkbook $workbook $payload
+    $verifiedMetadataCount = Assert-AisSyncValidationMetadataWorkbook $workbook $payload
+    Write-SyncProgress 95 "Сохранение книги со служебными свойствами AIS_SYNC..."
+    $workbook.SaveAs($OutputPath, 50)
+    $verifiedMetadataCount = Assert-AisSyncValidationMetadataWorkbook $workbook $payload
+    Write-SyncProgress 100 "Служебные свойства AIS_SYNC сохранены."
+    [pscustomobject]@{
+      type = "result"
+      syncMetadataOnly = $true
+      syncMetadata = $metadataResult.Count
+      requestedSyncMetadata = $metadataResult.Requested
+      verifiedSyncMetadata = $verifiedMetadataCount
+      removedSyncMetadata = $metadataResult.Removed
+      syncComments = $metadataResult.Count
+      requestedSyncComments = $metadataResult.Requested
+      removedSyncComments = $metadataResult.Removed
       outputPath = $OutputPath
-    } | ConvertTo-Json -Compress | Write-Output
+    } | ConvertTo-Json -Compress -Depth 6 | Write-Output
     return
   }
 

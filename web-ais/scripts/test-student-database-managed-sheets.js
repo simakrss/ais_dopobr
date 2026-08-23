@@ -301,15 +301,16 @@ const powershellSource = fs.readFileSync(
 assert.match(powershellSource, /function Update-InventorySheet/u);
 assert.match(powershellSource, /function Update-TrainingPlanSheet/u);
 assert.match(powershellSource, /function Set-ProgramManagedValueCell/u);
-assert.match(powershellSource, /function Update-AisSyncCommentsForRows/u);
-assert.match(powershellSource, /function Get-AisSyncCommentMetadata/u);
+assert.match(powershellSource, /function Update-AisSyncMetadataForRows/u);
+assert.match(powershellSource, /function Get-AisSyncCellMetadata/u);
+assert.match(powershellSource, /function Set-AisSyncValidationCell/u);
 assert.match(
   powershellSource,
-  /Update-AisSyncCommentsForRows \$sheet \$recordByRow \$startRow \$lastRow 1/u
+  /Update-AisSyncMetadataForRows \$sheet \$recordByRow \$startRow \$lastRow 1/u
 );
 assert.match(
   powershellSource,
-  /Update-AisSyncCommentsForRows \$sheet \$programRecordByRow \$startRow \$lastRow 1/u
+  /Update-AisSyncMetadataForRows \$sheet \$programRecordByRow \$startRow \$lastRow 1/u
 );
 assert.match(
   powershellSource,

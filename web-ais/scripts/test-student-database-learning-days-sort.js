@@ -45,13 +45,13 @@ assert.match(
   /Sort-StudentLearningSectionByDaysUntilEnd\s*`\s*\$sheet \$header\.Row \$header\.LastColumn \(\[int\]\$learningSection\[0\]\.Row \+ 1\) \$learningRecordCount/u
 );
 assert.ok(
-  updateSource.indexOf("Update-AisSyncCommentsForRows")
+  updateSource.indexOf("Update-AisSyncMetadataForRows")
     < updateSource.indexOf("Sort-StudentLearningSectionByDaysUntilEnd"),
   "Сортировка должна переносить уже записанные AIS_SYNC и пользовательские примечания вместе со строками"
 );
 assert.match(updateSource, /Exception\.Message -notmatch "лицензи"/u);
 
-const commentOnlyStart = scriptSource.indexOf('if ([bool](Get-ObjectProperty $payload "commentOnly"))');
+const commentOnlyStart = scriptSource.indexOf('Get-ObjectProperty $payload "syncMetadataOnly"');
 const fullWriteStart = scriptSource.indexOf("$studentResult = Update-StudentSheet", commentOnlyStart);
 assert.ok(commentOnlyStart >= 0 && fullWriteStart > commentOnlyStart);
 const commentOnlySource = scriptSource.slice(commentOnlyStart, fullWriteStart);

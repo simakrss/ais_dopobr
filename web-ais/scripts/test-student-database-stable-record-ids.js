@@ -9,6 +9,7 @@ const {
   assertStudentDatabaseHumanCommentsRelocated,
   reconcileStudentDatabaseImportIdsWithWeb,
   buildStudentDatabaseSyncAnnotationPayload,
+  assertStudentDatabaseMetadataOnlyOutput,
   assertStudentDatabaseCommentOnlyOutput
 } = require("../app-server.js");
 
@@ -157,6 +158,28 @@ function assertStableIds(result) {
 const workbook = buildWorkbook();
 const parsedWorkbook = parseStudentDatabaseWorkbook(toBytes(workbook));
 assertStableIds(parsedWorkbook);
+const validationMetadataPlan = buildStudentDatabaseSyncAnnotationPayload(parsedWorkbook, SYNCED_AT);
+const validationMetadataWorkbook = buildWorkbook();
+validationMetadataPlan.syncMetadataRows.forEach((entry) => {
+  const address = XLSX.utils.encode_cell({ r: entry.row - 1, c: 0 });
+  delete validationMetadataWorkbook.Sheets[entry.sheetName][address].c;
+});
+const validationMetadataBytes = toBytes(validationMetadataWorkbook);
+assertStableIds(parseStudentDatabaseWorkbook(
+  validationMetadataBytes,
+  () => {},
+  { syncMetadataRows: validationMetadataPlan.syncMetadataRows }
+));
+assert.throws(
+  () => parseStudentDatabaseWorkbook(validationMetadataBytes, () => {}, {
+    syncMetadataRows: validationMetadataPlan.syncMetadataRows.map((entry, index) => (
+      index === 0
+        ? { ...entry, metadata: JSON.stringify({ ...JSON.parse(entry.metadata), entity: "contracts" }) }
+        : entry
+    ))
+  }),
+  /находится на листе записей типа/u
+);
 
 const firstSyncWorkbook = buildWorkbook();
 [
@@ -332,6 +355,22 @@ assert.equal(
 );
 assert.equal(annotationOutputWorkbook.Sheets["База"].A4.c[0].t, "Пользовательское примечание");
 
+const metadataOutputWorkbook = applyAnnotationPayload(annotationSourceBytes, annotationPayload);
+annotationPayload.syncMetadataRows.forEach((entry) => {
+  const address = XLSX.utils.encode_cell({ r: entry.row - 1, c: 0 });
+  const cell = metadataOutputWorkbook.Sheets[entry.sheetName][address];
+  const humanText = getStudentDatabaseHumanCommentText(
+    (cell.c || []).map((comment) => comment.t || "").join("\n")
+  );
+  if (humanText) cell.c = [{ a: "User", t: humanText }];
+  else delete cell.c;
+});
+assert.doesNotThrow(() => assertStudentDatabaseMetadataOnlyOutput(
+  annotationSourceBytes,
+  toBytes(metadataOutputWorkbook),
+  annotationPayload
+));
+
 const staleNotCleanedWorkbook = applyAnnotationPayload(
   annotationSourceBytes,
   annotationPayload,
@@ -478,7 +517,12 @@ assert.match(
   /if \(\$humanTextByRecordId\.ContainsKey\(\$recordId\)\)[\s\S]*?elseif \(\$unmanagedHumanTextByRow\.ContainsKey/u
 );
 assert.match(powerShellSource, /-HumanText \$humanText -UseProvidedHumanText/u);
-assert.match(powerShellSource, /if \(\[bool\]\(Get-ObjectProperty \$payload "commentOnly"\)\)/u);
+assert.match(powerShellSource, /Get-ObjectProperty \$payload "syncMetadataOnly"/u);
+assert.match(powerShellSource, /function Set-AisSyncValidationCell/u);
+assert.match(powerShellSource, /\$validation\.Add\(7, 1, 1, "=1=1"\)/u);
+assert.match(powerShellSource, /\$validation\.ErrorMessage = \$text/u);
+assert.match(powerShellSource, /Set-AisSyncCommentCell \$cell "" -HumanText \$humanText/u);
+assert.match(powerShellSource, /function Read-AisSyncValidationMetadataWorkbook/u);
 assert.match(
   powerShellSource,
   /\$targetRecordIdsBySheet\[\$sheetName\]\.Contains\(\$staleRecordId\)[\s\S]*?-HumanText "" -UseProvidedHumanText/u

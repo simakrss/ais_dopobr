@@ -10648,23 +10648,11 @@ function getStudentDatabaseCellCommentText(cell) {
     .join("\n");
 }
 
-function parseStudentDatabaseManagedSyncComment(cell, expectedEntity = "") {
-  const text = getStudentDatabaseCellCommentText(cell);
-  if (!text || !text.includes(STUDENT_DATABASE_SYNC_COMMENT_START)) return null;
-  const matches = [...text.matchAll(/\[\[AIS_SYNC_V1\]\]([\s\S]*?)\[\[\/AIS_SYNC_V1\]\]/gu)];
-  if (matches.length !== 1) {
-    throw new Error("В примечании ячейки должна быть ровно одна служебная метка AIS_SYNC.");
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(String(matches[0][1] || "").trim());
-  } catch {
-    throw new Error("В примечании ячейки повреждена служебная метка AIS_SYNC.");
-  }
+function normalizeStudentDatabaseManagedSyncMetadata(parsed, expectedEntity = "", sourceLabel = "свойстве ячейки") {
   const entity = String(parsed?.entity || "").trim();
   const recordId = String(parsed?.recordId || "").replace(/\u0000/gu, "").trim().slice(0, 191);
   if (Number(parsed?.v) !== STUDENT_DATABASE_SYNC_VERSION || !entity || !recordId) {
-    throw new Error("В примечании ячейки указана некорректная служебная метка AIS_SYNC.");
+    throw new Error(`В ${sourceLabel} указана некорректная служебная метка AIS_SYNC.`);
   }
   if (expectedEntity && entity !== expectedEntity) {
     throw new Error(
@@ -10685,6 +10673,91 @@ function parseStudentDatabaseManagedSyncComment(cell, expectedEntity = "") {
     syncedAt: normalizeStudentDatabaseSyncTimestamp(parsed?.syncedAt),
     workbookId: String(parsed?.workbookId || "").trim().slice(0, 120)
   };
+}
+
+function parseStudentDatabaseManagedSyncText(text, expectedEntity = "", sourceLabel = "свойстве ячейки") {
+  const source = String(text || "").replace(/\r\n?/gu, "\n");
+  const hasStart = source.includes(STUDENT_DATABASE_SYNC_COMMENT_START);
+  const hasEnd = source.includes(STUDENT_DATABASE_SYNC_COMMENT_END);
+  if (!hasStart && !hasEnd) return null;
+  const matches = [...source.matchAll(/\[\[AIS_SYNC_V1\]\]([\s\S]*?)\[\[\/AIS_SYNC_V1\]\]/gu)];
+  if (matches.length !== 1) {
+    throw new Error(`В ${sourceLabel} должна быть ровно одна служебная метка AIS_SYNC.`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(String(matches[0][1] || "").trim());
+  } catch {
+    throw new Error(`В ${sourceLabel} повреждена служебная метка AIS_SYNC.`);
+  }
+  return normalizeStudentDatabaseManagedSyncMetadata(parsed, expectedEntity, sourceLabel);
+}
+
+function parseStudentDatabaseManagedSyncComment(cell, expectedEntity = "") {
+  return parseStudentDatabaseManagedSyncText(
+    getStudentDatabaseCellCommentText(cell),
+    expectedEntity,
+    "примечании ячейки"
+  );
+}
+
+function buildStudentDatabaseSyncMetadataIndex(rows) {
+  const index = new Map();
+  const expectedEntityBySheet = new Map(STUDENT_DATABASE_SYNC_COMMENT_SHEETS.map((item) => [
+    item.sheetName,
+    item.entity
+  ]));
+  (Array.isArray(rows) ? rows : []).forEach((entry, offset) => {
+    const sheetName = String(entry?.sheetName || "").trim();
+    const row = Math.trunc(Number(entry?.row) || 0);
+    const expectedEntity = expectedEntityBySheet.get(sheetName) || "";
+    if (!expectedEntity || row < 2) {
+      throw new Error(`Некорректная служебная метка проверки данных № ${offset + 1}.`);
+    }
+    let parsed;
+    try {
+      parsed = typeof entry?.metadata === "string"
+        ? JSON.parse(entry.metadata)
+        : entry?.metadata;
+    } catch {
+      throw new Error(`Повреждена служебная метка проверки данных ${sheetName}!A${row}.`);
+    }
+    const metadata = normalizeStudentDatabaseManagedSyncMetadata(
+      parsed,
+      expectedEntity,
+      `сообщении проверки данных ${sheetName}!A${row}`
+    );
+    const key = `${sheetName}\u0000${row}`;
+    if (index.has(key)) {
+      throw new Error(`Для ячейки ${sheetName}!A${row} получено несколько служебных меток AIS_SYNC.`);
+    }
+    index.set(key, metadata);
+  });
+  return index;
+}
+
+function getStudentDatabaseManagedSyncMetadata(
+  metadataIndex,
+  sheetName,
+  rowNumber,
+  cell,
+  expectedEntity
+) {
+  const validationMetadata = metadataIndex?.get(`${sheetName}\u0000${rowNumber}`) || null;
+  const legacyCommentMetadata = parseStudentDatabaseManagedSyncComment(cell, expectedEntity);
+  if (
+    validationMetadata
+    && legacyCommentMetadata
+    && (
+      validationMetadata.recordId !== legacyCommentMetadata.recordId
+      || validationMetadata.parentRecordId !== legacyCommentMetadata.parentRecordId
+    )
+  ) {
+    throw new Error(
+      `Служебные метки AIS_SYNC в проверке данных и примечании ${sheetName}!A${rowNumber} не совпадают.`
+    );
+  }
+  return validationMetadata || legacyCommentMetadata;
 }
 
 function buildStudentDatabaseManagedSyncComment(entity, recordId, extra = {}) {
@@ -11924,7 +11997,7 @@ function buildProgramDatabaseRecordId(record, rowNumber) {
   return "program-db-" + hash;
 }
 
-function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}) {
+function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}, syncMetadataIndex = new Map()) {
   const worksheet = workbook.Sheets["Реестр программ"];
   if (!worksheet) throw new Error("В файле не найден лист «Реестр программ».");
   onProgress({ progress: 67, message: "Чтение характеристик и настроек программ..." });
@@ -11956,7 +12029,10 @@ function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}) {
     .map((row, offset) => {
       const xlsbProgramRow = headerRowIndex + offset + 2;
       const name = String(row[programColumn] ?? "").trim();
-      const databaseSync = parseStudentDatabaseManagedSyncComment(
+      const databaseSync = getStudentDatabaseManagedSyncMetadata(
+        syncMetadataIndex,
+        "Реестр программ",
+        xlsbProgramRow,
         worksheet[XLSX.utils.encode_cell({ r: xlsbProgramRow - 1, c: 0 })],
         "programs"
       );
@@ -12019,7 +12095,7 @@ function normalizeTrainingPlanDatabaseValue(fieldName, value) {
   return String(value ?? "").trim();
 }
 
-function parseTrainingPlanDatabaseSheet(workbook, onProgress = () => {}) {
+function parseTrainingPlanDatabaseSheet(workbook, onProgress = () => {}, syncMetadataIndex = new Map()) {
   const worksheet = workbook.Sheets["Учебные планы"];
   if (!worksheet) throw new Error("В файле не найден лист «Учебные планы».");
   onProgress({ progress: 70, message: "Чтение листа «Учебные планы»..." });
@@ -12049,7 +12125,10 @@ function parseTrainingPlanDatabaseSheet(workbook, onProgress = () => {}) {
         record[fieldName] = normalizeTrainingPlanDatabaseValue(fieldName, row[index]);
       });
       const rowNumber = headerRowIndex + offset + 2;
-      const databaseSync = parseStudentDatabaseManagedSyncComment(
+      const databaseSync = getStudentDatabaseManagedSyncMetadata(
+        syncMetadataIndex,
+        "Учебные планы",
+        rowNumber,
         worksheet[XLSX.utils.encode_cell({ r: rowNumber - 1, c: 0 })],
         "trainingPlans"
       );
@@ -12077,7 +12156,7 @@ function parseTrainingPlanDatabaseSheet(workbook, onProgress = () => {}) {
   };
 }
 
-function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}) {
+function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}, syncMetadataIndex = new Map()) {
   const worksheet = workbook.Sheets["Прямые затраты"];
   if (!worksheet) throw new Error("В файле не найден лист «Прямые затраты».");
   onProgress({ progress: 74, message: "Чтение листа «Прямые затраты»..." });
@@ -12122,7 +12201,10 @@ function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}) {
       if (value === "") return;
       expense[column.fieldName] = value;
     });
-    const databaseSync = parseStudentDatabaseManagedSyncComment(
+    const databaseSync = getStudentDatabaseManagedSyncMetadata(
+      syncMetadataIndex,
+      "Прямые затраты",
+      rowIndex + 1,
       worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })],
       "directExpenses"
     );
@@ -12156,7 +12238,7 @@ function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}) {
   };
 }
 
-function parseGeneralExpenseDatabaseSheet(workbook, onProgress = () => {}) {
+function parseGeneralExpenseDatabaseSheet(workbook, onProgress = () => {}, syncMetadataIndex = new Map()) {
   const worksheet = workbook.Sheets["Общие затраты"];
   if (!worksheet) throw new Error("В файле не найден лист «Общие затраты».");
   onProgress({ progress: 96, message: "Чтение листа «Общие затраты»..." });
@@ -12212,7 +12294,10 @@ function parseGeneralExpenseDatabaseSheet(workbook, onProgress = () => {}) {
       if (value === "") return;
       expense[column.fieldName] = value;
     });
-    const databaseSync = parseStudentDatabaseManagedSyncComment(
+    const databaseSync = getStudentDatabaseManagedSyncMetadata(
+      syncMetadataIndex,
+      "Общие затраты",
+      rowIndex + 1,
       worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })],
       "generalExpenses"
     );
@@ -12254,7 +12339,8 @@ function parseContractDatabaseSheet(
   workbook,
   onProgress = () => {},
   eventTemplates = CONTRACT_EVENT_IMPORT_TEMPLATES,
-  eventKeyByLabel = CONTRACT_EVENT_IMPORT_KEY_BY_LABEL
+  eventKeyByLabel = CONTRACT_EVENT_IMPORT_KEY_BY_LABEL,
+  syncMetadataIndex = new Map()
 ) {
   const worksheet = workbook.Sheets["Реестр договоров"];
   if (!worksheet) throw new Error("В файле не найден лист «Реестр договоров».");
@@ -12326,7 +12412,10 @@ function parseContractDatabaseSheet(
       eventTemplates,
       eventKeyByLabel
     ));
-    const databaseSync = parseStudentDatabaseManagedSyncComment(
+    const databaseSync = getStudentDatabaseManagedSyncMetadata(
+      syncMetadataIndex,
+      "Реестр договоров",
+      rowIndex + 1,
       worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })],
       "contracts"
     );
@@ -12419,7 +12508,7 @@ function buildInventoryDatabaseUnitRecordId(inventoryId, sourceId, kind, index) 
   return "inventory-unit-db-" + hash;
 }
 
-function parseInventoryDatabaseSheet(workbook, onProgress = () => {}) {
+function parseInventoryDatabaseSheet(workbook, onProgress = () => {}, syncMetadataIndex = new Map()) {
   const worksheet = workbook.Sheets["Запасы"];
   if (!worksheet) throw new Error("В файле не найден лист «Запасы».");
   onProgress({ progress: 66, message: "Чтение листа «Запасы»..." });
@@ -12463,7 +12552,10 @@ function parseInventoryDatabaseSheet(workbook, onProgress = () => {}) {
     unit.itemType = itemType;
     unit.uid = String(unit.uid || "").trim();
     unit.amount = unit.amount === "" || unit.amount === undefined ? "" : Number(unit.amount);
-    const databaseSync = parseStudentDatabaseManagedSyncComment(
+    const databaseSync = getStudentDatabaseManagedSyncMetadata(
+      syncMetadataIndex,
+      "Запасы",
+      rowIndex + 1,
       worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })],
       "inventoryUnits"
     );
@@ -12755,6 +12847,7 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}, options = {}
   } catch (error) {
     throw new Error(`Не удалось прочитать базу Excel: ${error.message}`);
   }
+  const syncMetadataIndex = buildStudentDatabaseSyncMetadataIndex(options?.syncMetadataRows);
   const macroSettingsResult = parseStudentDatabaseMacroSettings(workbook);
   const communicationTemplateNamedRangeValues = options?.includeCommunicationTemplateNamedRangeValues === false
     ? {}
@@ -12842,7 +12935,13 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}, options = {}
       ));
     }
     const firstCell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })];
-    const databaseSync = parseStudentDatabaseSyncComment(firstCell);
+    const databaseSync = getStudentDatabaseManagedSyncMetadata(
+      syncMetadataIndex,
+      "База",
+      rowIndex + 1,
+      firstCell,
+      "students"
+    );
     if (databaseSync) {
       assertUniqueStudentDatabaseManagedRecordId(
         usedSyncIds,
@@ -12874,17 +12973,18 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}, options = {}
   );
   const paymentSettingsResult = parsePaymentDatabaseSettings(workbook, onProgress);
   const programDictionaryResult = parseProgramDictionaryDatabaseSettings(workbook, onProgress);
-  const programPaymentResult = parseProgramPaymentDatabaseSheet(workbook, onProgress);
-  const trainingPlanResult = parseTrainingPlanDatabaseSheet(workbook, onProgress);
-  const inventoryResult = parseInventoryDatabaseSheet(workbook, onProgress);
-  const directExpenseResult = parseDirectExpenseDatabaseSheet(workbook, onProgress);
+  const programPaymentResult = parseProgramPaymentDatabaseSheet(workbook, onProgress, syncMetadataIndex);
+  const trainingPlanResult = parseTrainingPlanDatabaseSheet(workbook, onProgress, syncMetadataIndex);
+  const inventoryResult = parseInventoryDatabaseSheet(workbook, onProgress, syncMetadataIndex);
+  const directExpenseResult = parseDirectExpenseDatabaseSheet(workbook, onProgress, syncMetadataIndex);
   const contractResult = parseContractDatabaseSheet(
     workbook,
     onProgress,
     contractEventImportTemplates,
-    contractEventImportKeyByLabel
+    contractEventImportKeyByLabel,
+    syncMetadataIndex
   );
-  const generalExpenseResult = parseGeneralExpenseDatabaseSheet(workbook, onProgress);
+  const generalExpenseResult = parseGeneralExpenseDatabaseSheet(workbook, onProgress, syncMetadataIndex);
   onProgress({ progress: 98, message: "Сопоставление запасов с расходами..." });
   const inventoryLinkResult = linkInventoryToDirectExpenses(
     inventoryResult.inventory,
@@ -13625,6 +13725,44 @@ function runStudentDatabaseSyncScript(inputPath, outputPath, payloadPath, onProg
       resolve(result || {});
     });
   });
+}
+
+async function readStudentDatabaseSyncMetadata(bytes, onProgress = () => {}) {
+  if (process.platform !== "win32") {
+    throw new Error(
+      "Чтение стабильных ID XLSB из свойств проверки данных требует Microsoft Excel на сервере Windows."
+    );
+  }
+  let tempDirectory = "";
+  try {
+    tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ais-student-database-metadata-"));
+    const inputPath = path.join(tempDirectory, "source.xlsb");
+    const outputPath = path.join(tempDirectory, "unused.xlsb");
+    const payloadPath = path.join(tempDirectory, "metadata.json");
+    await Promise.all([
+      fs.writeFile(inputPath, bytes),
+      fs.writeFile(payloadPath, JSON.stringify({
+        readSyncMetadataOnly: true,
+        syncMetadataSheets: STUDENT_DATABASE_SYNC_COMMENT_SHEETS
+      }), "utf8")
+    ]);
+    const result = await runStudentDatabaseSyncScript(
+      inputPath,
+      outputPath,
+      payloadPath,
+      (progress) => onProgress({
+        progress: Math.max(0, Math.min(5, (Number(progress?.progress) || 0) * 0.05)),
+        message: progress?.message || "Чтение служебных свойств XLSB..."
+      })
+    );
+    const rows = Array.isArray(result?.syncMetadataRows) ? result.syncMetadataRows : [];
+    if (Number(result?.syncMetadataCount || 0) !== rows.length) {
+      throw new Error("Microsoft Excel вернул несогласованный список служебных свойств AIS_SYNC.");
+    }
+    return rows;
+  } finally {
+    await safelyRemoveStudentDatabaseExportDirectory(tempDirectory);
+  }
 }
 
 async function runStudentApplicationsQuery(filters) {
@@ -17671,14 +17809,20 @@ function formatImportBytes(bytes) {
   return `${(value / (1024 * 1024)).toFixed(1)} МБ`;
 }
 
-function parseStudentDatabaseInWorker(bytes, onProgress = () => {}, options = {}) {
+async function parseStudentDatabaseInWorker(bytes, onProgress = () => {}, options = {}) {
+  const syncMetadataRows = Array.isArray(options?.syncMetadataRows)
+    ? options.syncMetadataRows
+    : options?.includeSyncMetadata === false
+      ? []
+      : await readStudentDatabaseSyncMetadata(bytes, onProgress);
   return new Promise((resolve, reject) => {
     const worker = new Worker(path.join(SERVER_CODE_ROOT, "student-import-worker.js"), {
       workerData: {
         bytes,
         options: {
           includeCommunicationTemplateNamedRangeValues:
-            options?.includeCommunicationTemplateNamedRangeValues !== false
+            options?.includeCommunicationTemplateNamedRangeValues !== false,
+          syncMetadataRows
         }
       }
     });
@@ -18089,7 +18233,7 @@ function normalizeStudentDatabaseComparableCellValue(value) {
 function buildStudentDatabaseSyncAnnotationPayload(result, synchronizedAt = new Date().toISOString()) {
   const normalizedSynchronizedAt = normalizeStudentDatabaseSyncTimestamp(synchronizedAt);
   if (!normalizedSynchronizedAt) {
-    throw new Error("Не удалось определить время создания служебных примечаний AIS_SYNC.");
+    throw new Error("Не удалось определить время создания служебных свойств AIS_SYNC.");
   }
   const rows = [];
   const usedRows = new Set();
@@ -18105,7 +18249,7 @@ function buildStudentDatabaseSyncAnnotationPayload(result, synchronizedAt = new 
       .trim()
       .slice(0, 191);
     if (row < 1 || !recordId) {
-      throw new Error(`Не удалось подготовить служебное примечание ${entity}: строка или ID отсутствуют.`);
+      throw new Error(`Не удалось подготовить служебное свойство ${entity}: строка или ID отсутствуют.`);
     }
     const rowKey = `${sheetName}\u0000${row}`;
     const recordKey = `${entity}\u0000${recordId}`;
@@ -18113,7 +18257,7 @@ function buildStudentDatabaseSyncAnnotationPayload(result, synchronizedAt = new 
       throw new Error(`Для строки ${row} листа «${sheetName}» подготовлено несколько меток AIS_SYNC.`);
     }
     if (usedRecordIds.has(recordKey)) {
-      throw new Error(`В плане примечаний AIS_SYNC повторяется ID «${recordId}» типа «${entity}».`);
+      throw new Error(`В плане служебных свойств AIS_SYNC повторяется ID «${recordId}» типа «${entity}».`);
     }
     usedRows.add(rowKey);
     usedRecordIds.add(recordKey);
@@ -18163,26 +18307,38 @@ function buildStudentDatabaseSyncAnnotationPayload(result, synchronizedAt = new 
     });
   });
   return {
+    syncMetadataOnly: true,
     commentOnly: true,
     synchronizedAt: normalizedSynchronizedAt,
+    syncMetadataSheets: STUDENT_DATABASE_SYNC_COMMENT_SHEETS,
+    syncMetadataRows: rows,
     syncCommentSheets: STUDENT_DATABASE_SYNC_COMMENT_SHEETS,
     syncCommentRows: rows
   };
 }
 
-function assertStudentDatabaseCommentOnlyOutput(sourceBytes, outputBytes, annotationPayload) {
+function assertStudentDatabaseMetadataOnlyOutput(
+  sourceBytes,
+  outputBytes,
+  annotationPayload,
+  { legacyComments = false } = {}
+) {
   const readWorkbook = (bytes) => XLSX.read(bytes, { type: "buffer", cellDates: true });
   const sourceWorkbook = readWorkbook(sourceBytes);
   const outputWorkbook = readWorkbook(outputBytes);
   if (JSON.stringify(sourceWorkbook.SheetNames) !== JSON.stringify(outputWorkbook.SheetNames)) {
-    throw new Error("Проверка служебных примечаний не пройдена: изменился состав листов XLSB.");
+    throw new Error("Проверка служебных свойств не пройдена: изменился состав листов XLSB.");
   }
-  const annotationRows = Array.isArray(annotationPayload?.syncCommentRows)
-    ? annotationPayload.syncCommentRows
-    : [];
-  const annotationSheets = Array.isArray(annotationPayload?.syncCommentSheets)
-    ? annotationPayload.syncCommentSheets
-    : [];
+  const annotationRows = Array.isArray(annotationPayload?.syncMetadataRows)
+    ? annotationPayload.syncMetadataRows
+    : Array.isArray(annotationPayload?.syncCommentRows)
+      ? annotationPayload.syncCommentRows
+      : [];
+  const annotationSheets = Array.isArray(annotationPayload?.syncMetadataSheets)
+    ? annotationPayload.syncMetadataSheets
+    : Array.isArray(annotationPayload?.syncCommentSheets)
+      ? annotationPayload.syncCommentSheets
+      : [];
   const targetByCell = new Map(annotationRows.map((row) => [
     `${row.sheetName}\u0000${XLSX.utils.encode_cell({ r: Number(row.row) - 1, c: 0 })}`,
     row
@@ -18219,13 +18375,17 @@ function assertStudentDatabaseCommentOnlyOutput(sourceBytes, outputBytes, annota
       const outputCell = outputSheet?.[address];
       const sourceValue = JSON.stringify(normalizeStudentDatabaseComparableCellValue(sourceCell?.v));
       const outputValue = JSON.stringify(normalizeStudentDatabaseComparableCellValue(outputCell?.v));
+      const sourceFormula = String(sourceCell?.f || "");
+      const outputFormula = String(outputCell?.f || "");
+      const sourceArrayFormula = String(sourceCell?.F || "");
+      const outputArrayFormula = String(outputCell?.F || "");
       if (
-        String(sourceCell?.f || "") !== String(outputCell?.f || "")
-        || String(sourceCell?.F || "") !== String(outputCell?.F || "")
-        || sourceValue !== outputValue
+        sourceFormula !== outputFormula
+        || sourceArrayFormula !== outputArrayFormula
+        || (!sourceFormula && !sourceArrayFormula && sourceValue !== outputValue)
       ) {
         throw new Error(
-          `Проверка служебных примечаний не пройдена: изменено значение или формула ${sheetName}!${address}.`
+          `Проверка служебных свойств не пройдена: изменено значение или формула ${sheetName}!${address}.`
         );
       }
       const target = targetByCell.get(`${sheetName}\u0000${address}`);
@@ -18259,14 +18419,14 @@ function assertStudentDatabaseCommentOnlyOutput(sourceBytes, outputBytes, annota
             || outputComment.includes(STUDENT_DATABASE_SYNC_COMMENT_END)
           ) {
             throw new Error(
-              `Проверка служебных примечаний не пройдена: устаревшая метка не очищена ${sheetName}!${address}.`
+              `Проверка служебных свойств не пройдена: устаревшая метка не очищена ${sheetName}!${address}.`
             );
           }
           return;
         }
         if (sourceComment.replace(/\r\n?/gu, "\n") !== outputComment.replace(/\r\n?/gu, "\n")) {
           throw new Error(
-            `Проверка служебных примечаний не пройдена: изменено чужое примечание ${sheetName}!${address}.`
+            `Проверка служебных свойств не пройдена: изменено чужое примечание ${sheetName}!${address}.`
           );
         }
         return;
@@ -18279,25 +18439,47 @@ function assertStudentDatabaseCommentOnlyOutput(sourceBytes, outputBytes, annota
         !== getStudentDatabaseHumanCommentText(outputComment)
       ) {
         throw new Error(
-          `Проверка служебных примечаний не пройдена: потерян пользовательский текст ${sheetName}!${address}.`
+          `Проверка служебных свойств не пройдена: потерян пользовательский текст ${sheetName}!${address}.`
         );
       }
-      const parsed = parseStudentDatabaseManagedSyncComment(outputCell, target.entity);
-      if (
-        parsed?.recordId !== target.recordId
-        || String(parsed?.parentRecordId || "") !== String(JSON.parse(target.metadata).parentRecordId || "")
-        || parsed?.syncedAt !== annotationPayload.synchronizedAt
+      if (legacyComments) {
+        const parsed = parseStudentDatabaseManagedSyncComment(outputCell, target.entity);
+        if (
+          parsed?.recordId !== target.recordId
+          || String(parsed?.parentRecordId || "") !== String(JSON.parse(target.metadata).parentRecordId || "")
+          || parsed?.syncedAt !== annotationPayload.synchronizedAt
+        ) {
+          throw new Error(
+            `Проверка служебных примечаний не пройдена: неверная метка ${sheetName}!${address}.`
+          );
+        }
+      } else if (
+        outputComment.includes(STUDENT_DATABASE_SYNC_COMMENT_START)
+        || outputComment.includes(STUDENT_DATABASE_SYNC_COMMENT_END)
       ) {
         throw new Error(
-          `Проверка служебных примечаний не пройдена: неверная метка ${sheetName}!${address}.`
+          `Проверка служебных свойств не пройдена: метка осталась в примечании ${sheetName}!${address}.`
         );
       }
       targetByCell.delete(`${sheetName}\u0000${address}`);
     });
   });
-  if (targetByCell.size) {
-    throw new Error("Проверка служебных примечаний не пройдена: часть меток AIS_SYNC не записана.");
+  if (targetByCell.size && legacyComments) {
+    throw new Error("Проверка служебных свойств не пройдена: часть целевых строк не проверена.");
   }
+}
+
+function assertStudentDatabaseCommentOnlyOutput(sourceBytes, outputBytes, annotationPayload) {
+  return assertStudentDatabaseMetadataOnlyOutput(
+    sourceBytes,
+    outputBytes,
+    {
+      ...annotationPayload,
+      syncMetadataRows: annotationPayload?.syncCommentRows,
+      syncMetadataSheets: annotationPayload?.syncCommentSheets
+    },
+    { legacyComments: true }
+  );
 }
 
 function buildStudentDatabaseImportResult(result, source = "webdav") {
@@ -18835,7 +19017,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           onProgress({
             progress: 78,
             stage: "annotate",
-            message: "Запись стабильных ID в примечания XLSB без изменения данных..."
+            message: "Запись стабильных ID в свойства проверки данных XLSB..."
           });
           tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ais-student-database-annotate-"));
           const inputPath = path.join(tempDirectory, "source.xlsb");
@@ -18854,13 +19036,19 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
               onProgress({
                 progress: 78 + value * 0.16,
                 stage: "annotate",
-                message: scriptProgress.message || "Запись служебных примечаний AIS_SYNC..."
+                message: scriptProgress.message || "Запись служебных свойств AIS_SYNC..."
               });
             }
           );
           const outputBytes = await fs.readFile(outputPath);
-          if (!outputBytes.length) throw new Error("Microsoft Excel создал пустой файл с примечаниями.");
-          assertStudentDatabaseCommentOnlyOutput(sourceBytes, outputBytes, annotationPayload);
+          if (!outputBytes.length) throw new Error("Microsoft Excel создал пустой файл со служебными свойствами.");
+          assertStudentDatabaseMetadataOnlyOutput(sourceBytes, outputBytes, annotationPayload);
+          if (
+            Number(scriptResult.requestedSyncMetadata || 0) !== annotationPayload.syncMetadataRows.length
+            || Number(scriptResult.verifiedSyncMetadata || 0) !== annotationPayload.syncMetadataRows.length
+          ) {
+            throw new Error("Microsoft Excel записал не все служебные свойства AIS_SYNC.");
+          }
           await safelyRemoveStudentDatabaseExportDirectory(tempDirectory);
           tempDirectory = "";
           onProgress({
@@ -18886,7 +19074,8 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
             directExpenseCount: importPayload.totalDirectExpenseCount,
             generalExpenseCount: importPayload.generalExpenseCount,
             communicationTemplateNamedRangeCount: importPayload.communicationTemplateNamedRangeCount,
-            syncCommentCount: Number(scriptResult.syncComments || 0),
+            syncMetadataCount: Number(scriptResult.syncMetadata || 0),
+            syncCommentCount: Number(scriptResult.syncMetadata || scriptResult.syncComments || 0),
             importPayload,
             serverMacroSettingsImport: {
               macroSettings: sourceData.macroSettings,
@@ -24031,6 +24220,7 @@ module.exports = {
   assertStudentDatabaseHumanCommentsRelocated,
   reconcileStudentDatabaseImportIdsWithWeb,
   buildStudentDatabaseSyncAnnotationPayload,
+  assertStudentDatabaseMetadataOnlyOutput,
   assertStudentDatabaseCommentOnlyOutput,
   hashStudentDatabaseSyncRecord,
   mergeStudentDatabaseSyncRecords,
