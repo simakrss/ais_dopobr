@@ -20,6 +20,7 @@ const {
 const root = path.resolve(__dirname, "..");
 const authSource = fs.readFileSync(path.join(root, "auth-bootstrap.js"), "utf8");
 const partnerSource = fs.readFileSync(path.join(root, "partner-app.js"), "utf8");
+const stylesSource = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 const gatewaySource = fs.readFileSync(path.join(root, "gateway.php"), "utf8");
 const deploySource = fs.readFileSync(path.join(root, "scripts", "deploy-lms.ps1"), "utf8");
 
@@ -209,6 +210,9 @@ assert.match(partnerSource, /PROFILE_TAB_STORAGE_KEY/u);
 assert.match(partnerSource, /data-action="switch-account"/u);
 assert.match(partnerSource, /Для кабинета используйте реквизиты СДО партнёра/u);
 assert.match(partnerSource, /sessionUser\?\.role === "partner"[\s\S]{0,100}loadPortal\(false\)/u);
+assert.match(partnerSource, /title="Экспорт выплат в CSV"[\s\S]{0,120}CSV/u);
+assert.match(stylesSource, /\.partner-filters\s*\{[\s\S]{0,180}minmax\(145px, 1\.3fr\)/u);
+assert.match(stylesSource, /\.partner-filter-actions > :is\([\s\S]{0,180}min-height: 32px/u);
 assert.match(deploySource, /"partner-app\.js"/u);
 
 console.log("partner portal tests: OK");

@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.231",
+    version: "1.7.232",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.232",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Фильтры реестра выплат партнёра уплотнены и теперь помещаются в рабочей области без обрезания кнопок."
+      ]
+    },
     {
       version: "1.7.231",
       releasedAt: "2026-08-23",

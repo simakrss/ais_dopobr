@@ -351,12 +351,12 @@
       <section class="partner-panel partner-filter-panel">
         <div class="partner-filter-heading">${icon("filter")}<strong>Фильтры</strong></div>
         <div class="partner-filters">
-          <label class="is-wide"><span>Поиск</span><input data-filter="q" type="search" value="${escapeAttr(state.paymentFilters.q)}" placeholder="Описание, источник, комментарий"></label>
-          <label><span>Статус</span><select data-filter="status"><option value="">Все статусы</option>${paymentStatusOptions()}</select></label>
-          <label><span>Источник</span><select data-filter="source"><option value="">Все источники</option>${sources.map((source) => `<option value="${escapeAttr(source)}" ${state.paymentFilters.source === source ? "selected" : ""}>${escapeHtml(source)}</option>`).join("")}</select></label>
-          <label><span>Дата с</span><input data-filter="from" type="date" value="${escapeAttr(state.paymentFilters.from)}"></label>
-          <label><span>Дата по</span><input data-filter="to" type="date" value="${escapeAttr(state.paymentFilters.to)}"></label>
-          <div class="partner-filter-actions"><button class="partner-secondary-button" data-action="reset-payment-filters" type="button">Сбросить</button><button class="partner-primary-button" data-action="export-payments" type="button">${icon("download")}Экспорт CSV</button></div>
+          <label class="is-wide is-search"><span>Поиск</span><input data-filter="q" type="search" value="${escapeAttr(state.paymentFilters.q)}" placeholder="Описание, источник, комментарий"></label>
+          <label class="is-status"><span>Статус</span><select data-filter="status"><option value="">Все статусы</option>${paymentStatusOptions()}</select></label>
+          <label class="is-source"><span>Источник</span><select data-filter="source"><option value="">Все источники</option>${sources.map((source) => `<option value="${escapeAttr(source)}" ${state.paymentFilters.source === source ? "selected" : ""}>${escapeHtml(source)}</option>`).join("")}</select></label>
+          <label class="is-date"><span>Дата с</span><input data-filter="from" type="date" value="${escapeAttr(state.paymentFilters.from)}"></label>
+          <label class="is-date"><span>Дата по</span><input data-filter="to" type="date" value="${escapeAttr(state.paymentFilters.to)}"></label>
+          <div class="partner-filter-actions"><button class="partner-secondary-button" data-action="reset-payment-filters" type="button">Сбросить</button><button class="partner-primary-button" data-action="export-payments" type="button" title="Экспорт выплат в CSV" aria-label="Экспорт выплат в CSV">${icon("download")}CSV</button></div>
         </div>
       </section>
       <section class="partner-panel">
