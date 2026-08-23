@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.236",
+    version: "1.7.237",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.237",
+      releasedAt: "2026-08-23",
+      changes: [
+        "На финансовом графике единица измерения «тыс. руб.» перенесена в заголовок, а числовые подписи без суффиксов располагаются непосредственно над столбцами."
+      ]
+    },
     {
       version: "1.7.236",
       releasedAt: "2026-08-23",
@@ -8994,7 +9001,7 @@ MAX - https://bizvmax.ru/zifra_plus
       1
     );
     const valueLabel = (value) => options.money
-      ? `${formatStatisticsInteger(Number(value || 0) / 1000)} т.р.`
+      ? formatStatisticsInteger(Number(value || 0) / 1000)
       : formatStatisticsInteger(value);
     return `
       <div class="statistics-chart">
@@ -9007,9 +9014,11 @@ MAX - https://bizvmax.ru/zifra_plus
                     const value = Number(item[metric.key] || 0);
                     const height = value ? Math.max(4, (Math.abs(value) / maxValue) * 100) : 0;
                     return `
-                      <span class="statistics-chart-bar-column" title="${escapeAttr(`${metric.label}: ${options.money ? money(value) : formatStatisticsInteger(value)}`)}">
-                        <small>${escapeHtml(valueLabel(value))}</small>
-                        <span class="statistics-chart-bar-area"><i class="tone-${escapeAttr(metric.tone)}" style="height:${height}%"></i></span>
+                      <span class="statistics-chart-bar-column" style="--statistics-bar-height:${height}%" title="${escapeAttr(`${metric.label}: ${options.money ? money(value) : formatStatisticsInteger(value)}`)}">
+                        <span class="statistics-chart-bar-area">
+                          <small>${escapeHtml(valueLabel(value))}</small>
+                          <i class="tone-${escapeAttr(metric.tone)}" style="height:${height}%"></i>
+                        </span>
                       </span>
                     `;
                   }).join("")}
@@ -9256,7 +9265,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ])}
       <div class="statistics-two-column">
         <section class="panel statistics-visual-panel statistics-wide-panel">
-          <div class="panel-head"><div><p class="eyebrow">Динамика</p><h2>Доходы и затраты по месяцам</h2></div></div>
+          <div class="panel-head"><div><p class="eyebrow">Динамика</p><h2>Доходы и затраты по месяцам, тыс. руб.</h2></div></div>
           ${renderStatisticsSeriesChart(report.monthly, [
             { key: "income", label: "Доходы", tone: "teal" },
             { key: "direct", label: "Прямые затраты", tone: "red" },

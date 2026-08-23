@@ -18,7 +18,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.236"/u);
+assert.match(appSource, /version: "1\.7\.237"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 const navigationBlock = sourceBlock(appSource, "const navItems = [", "const PROGRAM_LIST_FIELD_KEYS");
 const navigationIds = [...navigationBlock.matchAll(/\{ id: "([^"]+)"/gu)].map((match) => match[1]);
@@ -29,7 +29,7 @@ assert.match(appSource, /state\.view === "statistics"\) return renderStatistics\
 assert.match(appSource, /getOrderedTabs\("statistics", statisticsTabs\)/u);
 assert.match(appSource, /data-orderable-tabs="statistics"/u);
 assert.match(appSource, /Интерактивная статистика/u);
-assert.match(appSource, /Доходы и затраты по месяцам/u);
+assert.match(appSource, /Доходы и затраты по месяцам, тыс\. руб\./u);
 assert.match(appSource, /renderStatisticsInstallDownloadChart/u);
 assert.match(appSource, /renderStatisticsLocationChart/u);
 assert.match(appSource, /sortStatisticsMonthSeries/u);
@@ -86,6 +86,30 @@ assert.match(comparisonChart, />4<\/strong>/u);
 assert.match(comparisonChart, /<small>5<\/small>[\s\S]*<i class="tone-teal"/u);
 assert.match(comparisonChart, /<small>3<\/small>[\s\S]*<i class="tone-blue"/u);
 assert.doesNotMatch(comparisonChart, /<em>/u);
+
+const renderStatisticsSeriesChartBlock = sourceBlock(
+  appSource,
+  "function renderStatisticsSeriesChart(",
+  "function renderStatisticsInstallDownloadChart("
+);
+const renderStatisticsSeriesChart = new Function(`
+  const escapeHtml = (value) => String(value ?? "");
+  const escapeAttr = escapeHtml;
+  const formatStatisticsInteger = (value) => String(Math.round(Number(value) || 0));
+  const money = (value) => String(value);
+  const statisticsMonthLabel = (key) => key;
+  ${renderStatisticsSeriesChartBlock}
+  return renderStatisticsSeriesChart;
+`)();
+const financeChart = renderStatisticsSeriesChart([
+  { key: "2026-08", label: "Август", income: 125000 }
+], [
+  { key: "income", label: "Доходы", tone: "teal" }
+], { money: true });
+assert.match(financeChart, /<small>125<\/small>/u);
+assert.doesNotMatch(financeChart, /т\.р\./u);
+assert.match(financeChart, /--statistics-bar-height:100%/u);
+assert.match(financeChart, /statistics-chart-bar-area[\s\S]*<small>125<\/small>[\s\S]*<i/u);
 
 const normalizeAssistantStatisticsBlock = sourceBlock(
   serverSource,
@@ -238,6 +262,7 @@ assert.match(appSource, /\["ID", "Дата", "Город", "Организаци
 
 assert.match(styles, /\.statistics-kpi-grid\s*\{/u);
 assert.match(styles, /\.statistics-chart-columns\s*\{/u);
+assert.match(styles, /\.statistics-chart-bar-area > small[\s\S]*bottom:\s*calc\(var\(--statistics-bar-height\) \+ 3px\)/u);
 assert.match(styles, /\.statistics-comparison-chart\s*\{/u);
 assert.match(styles, /\.statistics-comparison-totals\s*\{/u);
 assert.match(styles, /\.statistics-location-chart\s*\{/u);
