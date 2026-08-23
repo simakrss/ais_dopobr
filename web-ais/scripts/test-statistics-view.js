@@ -18,7 +18,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.237"/u);
+assert.match(appSource, /version: "1\.7\.249"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 const navigationBlock = sourceBlock(appSource, "const navItems = [", "const PROGRAM_LIST_FIELD_KEYS");
 const navigationIds = [...navigationBlock.matchAll(/\{ id: "([^"]+)"/gu)].map((match) => match[1]);
@@ -30,7 +30,9 @@ assert.match(appSource, /getOrderedTabs\("statistics", statisticsTabs\)/u);
 assert.match(appSource, /data-orderable-tabs="statistics"/u);
 assert.match(appSource, /Интерактивная статистика/u);
 assert.match(appSource, /Доходы и затраты по месяцам, тыс\. руб\./u);
-assert.match(appSource, /Средняя рентабельность продаж/u);
+assert.match(appSource, /label: "Рентабельность"/u);
+assert.match(appSource, /руб\. на чел\./u);
+assert.match(appSource, /Общие расходы не учитываются/u);
 assert.match(appSource, /renderStatisticsInstallDownloadChart/u);
 assert.match(appSource, /renderStatisticsLocationChart/u);
 assert.match(appSource, /sortStatisticsMonthSeries/u);
@@ -112,18 +114,33 @@ assert.doesNotMatch(financeChart, /т\.р\./u);
 assert.match(financeChart, /--statistics-bar-height:100%/u);
 assert.match(financeChart, /statistics-chart-bar-area[\s\S]*<small>125<\/small>[\s\S]*<i/u);
 
-const salesProfitabilityBlock = sourceBlock(
+const studentProfitabilityBlock = sourceBlock(
   appSource,
-  "function calculateStatisticsSalesProfitability(",
+  "function getStatisticsStudentRowKey(",
   "function buildStatisticsIncomeReport("
 );
-const calculateStatisticsSalesProfitability = new Function(
-  `${salesProfitabilityBlock}\nreturn calculateStatisticsSalesProfitability;`
+const calculateStatisticsStudentProfitability = new Function(
+  `${studentProfitabilityBlock}\nreturn calculateStatisticsStudentProfitability;`
 )();
-assert.equal(calculateStatisticsSalesProfitability(100000, 40000), 60);
-assert.equal(calculateStatisticsSalesProfitability(100000, 125000), -25);
-assert.equal(calculateStatisticsSalesProfitability(0, 0), null);
-assert.equal(calculateStatisticsSalesProfitability("", 1000), null);
+assert.equal(calculateStatisticsStudentProfitability([
+  { studentId: "1", amount: 100000 },
+  { studentId: "2", amount: 50000 }
+], [
+  { studentId: "1", amount: 40000 },
+  { studentId: "2", amount: 70000 }
+]), 20000);
+assert.equal(calculateStatisticsStudentProfitability([
+  { studentId: "1", amount: 100000 }
+], [
+  { studentId: "", studentUid: "", amount: 90000 }
+]), 100000);
+assert.equal(calculateStatisticsStudentProfitability([], [
+  { studentUid: "student-3", amount: 1200 }
+]), null);
+assert.equal(calculateStatisticsStudentProfitability([], []), null);
+const incomeReportBlock = sourceBlock(appSource, "function buildStatisticsIncomeReport(", "function renderStatisticsIncome(");
+assert.match(incomeReportBlock, /calculateStatisticsStudentProfitability\(income, directExpenses\)/u);
+assert.doesNotMatch(incomeReportBlock, /calculateStatisticsStudentProfitability\([^)]*generalExpenses/u);
 
 const normalizeAssistantStatisticsBlock = sourceBlock(
   serverSource,

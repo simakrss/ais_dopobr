@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.248",
+    version: "1.7.249",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.249",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Показатель рентабельности в статистике теперь показывает среднюю прибыль на одного слушателя в рублях и не учитывает общие затраты."
+      ]
+    },
     {
       version: "1.7.248",
       releasedAt: "2026-08-23",
@@ -8971,13 +8978,16 @@ MAX - https://bizvmax.ru/zifra_plus
     const studentsById = new Map((state.data.collections.students || [])
       .map((student) => [String(student.id || ""), student]));
     const enrichStudentRow = (row) => {
-      const student = studentsById.get(String(row.sourceId || "")) || null;
+      const isStudentRow = row.sourceConfig === "students";
+      const student = isStudentRow
+        ? studentsById.get(String(row.sourceId || "")) || null
+        : null;
       return {
         ...row,
-        program: String(student?.program || row.context || "Не задано").trim() || "Не задано",
+        program: String(student?.program || (isStudentRow ? row.context : "") || "Не задано").trim() || "Не задано",
         source: String(student?.source || "Не задано").trim() || "Не задано",
-        studentId: String(student?.id || row.sourceId || ""),
-        studentUid: String(student?.uid || row.uid || "")
+        studentId: isStudentRow ? String(student?.id || row.sourceId || "") : "",
+        studentUid: isStudentRow ? String(student?.uid || row.uid || "") : ""
       };
     };
     const income = getFinanceReceiptRows().map(enrichStudentRow);
@@ -9024,6 +9034,12 @@ MAX - https://bizvmax.ru/zifra_plus
     return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(Number(value) || 0);
   }
 
+  function formatStatisticsRublesPerStudent(value) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return "—";
+    return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(amount)} руб. на чел.`;
+  }
+
   function statisticsMonthLabel(key) {
     const [year, month] = String(key || "").split("-").map(Number);
     if (!year || !month) return key || "—";
@@ -9068,7 +9084,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <div class="statistics-kpi-grid ${items.length > 4 ? "is-dense" : ""}">
         ${items.map((item) => `
-          <article class="statistics-kpi-card tone-${escapeAttr(item.tone || "teal")}">
+          <article class="statistics-kpi-card tone-${escapeAttr(item.tone || "teal")}"${item.tooltip ? ` title="${escapeAttr(item.tooltip)}"` : ""}>
             <span>${escapeHtml(item.label)}</span>
             <strong>${escapeHtml(item.value)}</strong>
             ${item.note ? `<small>${escapeHtml(item.note)}</small>` : ""}
@@ -9300,19 +9316,46 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function calculateStatisticsSalesProfitability(incomeTotal, expenseTotal) {
-    const income = Number(incomeTotal);
-    const expenses = Number(expenseTotal);
-    if (!Number.isFinite(income) || income <= 0) return null;
-    const normalizedExpenses = Number.isFinite(expenses) ? expenses : 0;
-    return Math.round(((income - normalizedExpenses) / income) * 1000) / 10;
+  function getStatisticsStudentRowKey(row) {
+    const studentId = String(row?.studentId || "").trim();
+    if (studentId) return `id:${studentId}`;
+    const studentUid = String(row?.studentUid || "").trim();
+    return studentUid ? `uid:${studentUid}` : "";
+  }
+
+  function calculateStatisticsStudentProfitability(incomeRows = [], directExpenseRows = []) {
+    const students = new Map();
+    const ensureStudent = (row) => {
+      const key = getStatisticsStudentRowKey(row);
+      if (!key) return null;
+      if (!students.has(key)) students.set(key, { income: 0, expenses: 0 });
+      return students.get(key);
+    };
+    incomeRows.forEach((row) => {
+      const student = ensureStudent(row);
+      const amount = Number(row.amount || 0);
+      if (student && Number.isFinite(amount)) student.income += amount;
+    });
+    directExpenseRows.forEach((row) => {
+      const key = getStatisticsStudentRowKey(row);
+      const student = key ? students.get(key) : null;
+      const amount = Number(row.amount || 0);
+      if (student && Number.isFinite(amount)) student.expenses += Math.abs(amount);
+    });
+    if (!students.size) return null;
+    const totalStudentProfit = [...students.values()]
+      .reduce((sum, student) => sum + student.income - student.expenses, 0);
+    return Math.round((totalStudentProfit / students.size) * 100) / 100;
   }
 
   function buildStatisticsIncomeReport() {
     const finance = getStatisticsFinanceRows();
     const income = finance.income.filter((row) => statisticsRowMatches(row));
-    const expenses = [...finance.direct, ...finance.general]
+    const directExpenses = finance.direct
       .filter((row) => statisticsRowMatches(row, { expense: false }));
+    const generalExpenses = finance.general
+      .filter((row) => statisticsRowMatches(row, { expense: false }));
+    const expenses = [...directExpenses, ...generalExpenses];
     const incomeTotal = income.reduce((sum, row) => sum + Number(row.amount || 0), 0);
     const expenseTotal = expenses.reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0);
     const profit = incomeTotal - expenseTotal;
@@ -9337,7 +9380,7 @@ MAX - https://bizvmax.ru/zifra_plus
       incomeTotal,
       expenseTotal,
       profit,
-      salesProfitability: calculateStatisticsSalesProfitability(incomeTotal, expenseTotal),
+      studentProfitability: calculateStatisticsStudentProfitability(income, directExpenses),
       studentCount: studentIds.size,
       monthly: buildStatisticsMonthlySeries(income, expenses),
       sources: [...sourceStudents.entries()].map(([label, values]) => ({ label, value: values.size })),
@@ -9356,10 +9399,11 @@ MAX - https://bizvmax.ru/zifra_plus
         { label: "Суммарные затраты", value: money(report.expenseTotal), note: "Прямые и общие", tone: "amber" },
         { label: "Финансовый результат", value: money(report.profit), note: "Доходы за вычетом затрат", tone: report.profit < 0 ? "red" : "green" },
         {
-          label: "Средняя рентабельность продаж",
-          value: report.salesProfitability === null ? "—" : percent(report.salesProfitability),
-          note: "Прибыль / фактические поступления",
-          tone: report.salesProfitability === null ? "blue" : (report.salesProfitability < 0 ? "red" : "green")
+          label: "Рентабельность",
+          value: formatStatisticsRublesPerStudent(report.studentProfitability),
+          note: "Без общих расходов",
+          tooltip: "Средняя разница между фактическими поступлениями и прямыми расходами по каждому слушателю с поступлениями в выбранных условиях. Общие расходы не учитываются.",
+          tone: report.studentProfitability === null ? "blue" : (report.studentProfitability < 0 ? "red" : "green")
         }
       ])}
       <div class="statistics-two-column">
