@@ -326,40 +326,48 @@ function Update-CommunicationTemplateNamedRanges {
     }
     $definedName = $null
     $targetRange = $null
+    $operationStage = "поиск диапазона"
     try {
       $definedName = Get-WorkbookDefinedName $Workbook @($requestedName)
       if ($null -eq $definedName) {
         [void]$missingNames.Add($requestedName)
         continue
       }
+      $operationStage = "проверка области видимости"
       $parentName = ""
       try { $parentName = [string]$definedName.Parent.Name } catch {}
       if (-not $parentName -or -not $parentName.Equals([string]$Workbook.Name, [StringComparison]::OrdinalIgnoreCase)) {
         [void]$missingNames.Add($requestedName)
         continue
       }
+      $operationStage = "получение ячейки"
       try { $targetRange = $definedName.RefersToRange } catch {}
+      $operationStage = "проверка размера диапазона"
       if ($null -eq $targetRange -or [double]$targetRange.CountLarge -ne 1) {
         throw "Именованный диапазон '$requestedName' должен указывать ровно на одну ячейку."
       }
+      $operationStage = "подготовка значения"
       $value = Normalize-CommunicationTemplateNamedRangeValue ([string]$property.Value)
       if ($value.Length -gt 32767) {
         throw "Значение именованного диапазона '$requestedName' превышает предел Excel в 32767 символов."
       }
+      $operationStage = "чтение текущего значения"
       $currentFormula = [string]$targetRange.Formula
       if ($currentFormula.TrimStart().StartsWith("=")) {
         if (-not (Test-StaticCommunicationTemplateTextFormula $currentFormula)) {
           throw "Именованный диапазон '$requestedName' содержит динамическую формулу; книга не изменена."
         }
-        $targetRange.Formula = [object](ConvertTo-CommunicationTemplateTextFormula $value)
+        $operationStage = "запись текстовой формулы"
+        $targetRange.Formula = [string](ConvertTo-CommunicationTemplateTextFormula $value)
         $formulaPreserved += 1
       } else {
-        $targetRange.Value2 = [object]$value
+        $operationStage = "запись значения"
+        $targetRange.Value2 = [string]$value
       }
-      try { $targetRange.Calculate() } catch {}
+      try { [void]$targetRange.Calculate() } catch {}
       [void]$updatedNames.Add($requestedName)
     } catch {
-      throw "Ошибка обновления именованного диапазона '$requestedName': $($_.Exception.Message)"
+      throw "Ошибка обновления именованного диапазона '$requestedName' на этапе '$operationStage': $($_.Exception.Message)"
     } finally {
       Release-ComObject $targetRange
       Release-ComObject $definedName

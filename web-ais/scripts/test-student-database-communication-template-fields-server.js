@@ -209,6 +209,8 @@ const psFunction = syncScriptSource.slice(psFunctionStart, psFunctionEnd);
 assert.doesNotMatch(psFunction, /Set-WorkbookDefinedName|\.Names\.Add/u);
 assert.match(psFunction, /CountLarge/u);
 assert.match(psFunction, /Test-StaticCommunicationTemplateTextFormula/u);
+assert.match(psFunction, /\.Value2\s*=\s*\[string\]\$value/u);
+assert.match(psFunction, /\[void\]\$targetRange\.Calculate\(\)/u);
 assert.match(syncScriptSource, /CHAR\(13\)/u);
 assert.match(syncScriptSource, /8192/u);
 assert.match(syncScriptSource, /communicationTemplateNamedRangesSkipped/u);

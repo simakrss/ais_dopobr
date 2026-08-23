@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.244",
+    version: "1.7.245",
     releasedAt: "2026-08-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.245",
+      releasedAt: "2026-08-23",
+      changes: [
+        "Исправлена запись именованных диапазонов шаблонов сообщений при экспорте в АИС Допобразование.xlsb; незаполненные поля больше не затирают существующие ссылки маркерами."
+      ]
+    },
     {
       version: "1.7.244",
       releasedAt: "2026-08-23",
@@ -6362,10 +6369,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const fieldsByName = new Map(
       getCommunicationTemplateFieldDefinitions().map((field) => [field.name, field])
     );
-    return Object.keys(communicationTemplateNamedRangeBindings).map((name) => ({
-      name,
-      formula: String(fieldsByName.get(name)?.formula ?? "")
-    }));
+    return Object.keys(communicationTemplateNamedRangeBindings).flatMap((name) => {
+      const formula = String(fieldsByName.get(name)?.formula ?? "");
+      // A built-in field without an imported/configured value has the marker
+      // {FieldName}. It is not a real XLSB setting and must not overwrite the
+      // existing named range in the source workbook.
+      if (formula === `{${name}}`) return [];
+      return [{ name, formula }];
+    });
   }
 
   function splitStudentCommunicationDocumentsFormula(value) {

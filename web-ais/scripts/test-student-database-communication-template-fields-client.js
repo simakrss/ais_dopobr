@@ -84,6 +84,33 @@ assert.deepStrictEqual(
   { ЧужоеПоле: "x" }
 );
 
+const buildContext = {
+  communicationTemplateNamedRangeBindings: {
+    ПереченьДокументов: ["ПереченьДокументовДПП", "ПереченьДокументовДОП"],
+    СсылкаАнкеты: ["АдресАнкеты"],
+    СсылкаОплаты: ["СсылкаНаОплату"]
+  },
+  getCommunicationTemplateFieldDefinitions: () => [
+    { name: "ПереченьДокументов", formula: defaultDocuments },
+    { name: "СсылкаАнкеты", formula: "{СсылкаАнкеты}" },
+    { name: "СсылкаОплаты", formula: "https://payment.example" }
+  ]
+};
+vm.createContext(buildContext);
+vm.runInContext(
+  `${extractFunction("buildStudentDatabaseExportCommunicationTemplateFields")};`
+    + "this.buildExportFields = buildStudentDatabaseExportCommunicationTemplateFields;",
+  buildContext
+);
+assert.deepStrictEqual(
+  JSON.parse(JSON.stringify(buildContext.buildExportFields())),
+  [
+    { name: "ПереченьДокументов", formula: defaultDocuments },
+    { name: "СсылкаОплаты", formula: "https://payment.example" }
+  ],
+  "Маркер поля без настроенного значения не должен затирать именованный диапазон XLSB"
+);
+
 const payloadMentions = source.match(/communicationTemplateFields,/gu) || [];
 assert.ok(payloadMentions.length >= 2, "Поля должны передаваться при синхронизации и скачивании XLSB");
 assert.match(source, /runStudentDatabaseImport[\s\S]{0,700}communicationTemplateFields:/u);
