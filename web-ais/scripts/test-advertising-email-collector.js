@@ -75,6 +75,6 @@ assert.match(serverCliSource, /closeAdvertisingAbitMySqlStorage\(\)/u);
 assert.match(serverCliSource, /closeAdvertisingMoodleMySqlStorage\(\)/u);
 assert.match(stylesSource, /\.advertising-source-grid/u);
 assert.match(stylesSource, /\.advertising-email-table/u);
-assert.match(indexSource, /20260824-mobile-registry-filters-v1/u);
+assert.match(indexSource, /20260824-browser-history-navigation-v1/u);
 
 console.log("Advertising email collector tests passed.");

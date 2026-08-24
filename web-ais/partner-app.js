@@ -51,6 +51,7 @@
     feedbackSending: false,
     feedbackDraft: { subject: "", message: "" }
   };
+  let partnerHistoryGuardBound = false;
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -204,6 +205,31 @@
     render();
     if (view === "materials" && !state.materials) loadMaterials("/");
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function bindPartnerHistoryGuard() {
+    if (partnerHistoryGuardBound) return;
+    partnerHistoryGuardBound = true;
+    const currentState = window.history.state && typeof window.history.state === "object"
+      ? window.history.state
+      : {};
+    window.history.replaceState({
+      ...currentState,
+      aisPartnerNavigationRoot: true
+    }, "", window.location.href);
+    window.history.pushState({
+      ...currentState,
+      aisPartnerNavigationRoot: false,
+      aisPartnerNavigationGuard: true
+    }, "", window.location.href);
+    window.addEventListener("popstate", (event) => {
+      if (!event.state?.aisPartnerNavigationRoot) return;
+      window.history.pushState({
+        ...event.state,
+        aisPartnerNavigationRoot: false,
+        aisPartnerNavigationGuard: true
+      }, "", window.location.href);
+    });
   }
 
   function renderSidebar() {
@@ -601,6 +627,7 @@
       state.loading = false;
       document.title = "Кабинет партнёра · Цифровизация Плюс";
       render();
+      bindPartnerHistoryGuard();
       if (state.view === "materials") loadMaterials("/");
     } catch (error) {
       if (error.status === 403 && /только партн[её]ру/iu.test(String(error.message || ""))) {

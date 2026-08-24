@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.257",
+    version: "1.7.258",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.258",
+      releasedAt: "2026-08-24",
+      changes: [
+        "Кнопка «Назад» браузера возвращает к предыдущему разделу, карточке или финансовому окну АИС с сохранением фильтров и страниц таблиц.",
+        "Начальный экран системы и кабинета партнёра защищён от случайного возврата на страницу входа; выход выполняется только штатной командой."
+      ]
+    },
     {
       version: "1.7.257",
       releasedAt: "2026-08-24",
@@ -4935,6 +4943,10 @@ MAX - https://bizvmax.ru/zifra_plus
   let shiftDragRequirementBound = false;
   let longPressDragRequirementBound = false;
   let adminBeforeUnloadBound = false;
+  let aisHistoryNavigationBound = false;
+  let aisHistoryNavigationRestoring = false;
+  let aisHistoryNavigationDiscardApproved = false;
+  let aisHistoryNavigationCloseModalRequested = false;
   let lastKnownClipboardText = "";
   let draggedNavItemId = "";
   let draggedDashboardStudentStatus = "";
@@ -8863,58 +8875,257 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function pushStudentStatusHistory(status) {
+    void status;
+    synchronizeAisBrowserHistory();
+  }
+
+  function captureAisNavigationSnapshot() {
+    const modal = state.modal
+      ? {
+        config: String(state.modal.config || ""),
+        id: String(state.modal.id || ""),
+        studentNavigationIds: Array.isArray(state.modal.studentNavigationIds)
+          ? state.modal.studentNavigationIds.map((id) => String(id)).filter(Boolean)
+          : []
+      }
+      : null;
+    return {
+      version: 1,
+      view: canAccessView(state.view) ? state.view : "dashboard",
+      search: String(state.search || ""),
+      statusFilter: String(state.statusFilter || ""),
+      directExpenseNoteFilter: String(state.directExpenseNoteFilter || ""),
+      generalExpenseSectionFilter: [...(state.generalExpenseSectionFilter || [])],
+      generalExpenseWorkTypeFilter: [...(state.generalExpenseWorkTypeFilter || [])],
+      studentProgramTypeFilter: [...(state.studentProgramTypeFilter || [])],
+      studentListFilters: {
+        ...(state.studentListFilters || {}),
+        programs: [...(state.studentListFilters?.programs || [])]
+      },
+      programRegistryTypeFilter: [...(state.programRegistryTypeFilter || [])],
+      contractSectionFilter: [...(state.contractSectionFilter || [])],
+      issuedDocumentFilters: { ...(state.issuedDocumentFilters || {}) },
+      issuedDocumentSort: { ...(state.issuedDocumentSort || {}) },
+      sort: { ...(state.sort || {}) },
+      tablePage: Math.max(1, Number(state.tablePages?.[state.view]) || 1),
+      studentCardTab: String(state.studentCardTab || "main"),
+      programCardTab: String(state.programCardTab || "main"),
+      contractCardTab: String(state.contractCardTab || "main"),
+      selectedDictionary: String(state.selectedDictionary || ""),
+      adminTab: String(state.adminTab || "database"),
+      adminDatabaseTab: String(state.adminDatabaseTab || "ais"),
+      statisticsTab: String(state.statistics?.tab || "income"),
+      overlay: state.profileOpen
+        ? "profile"
+        : (state.releaseHistoryOpen ? "release-history" : ""),
+      financeDetails: state.financeDetails?.open
+        ? {
+          open: true,
+          metric: String(state.financeDetails.metric || "all"),
+          query: String(state.financeDetails.query || ""),
+          dateFrom: String(state.financeDetails.dateFrom || ""),
+          dateTo: String(state.financeDetails.dateTo || ""),
+          sort: { ...(state.financeDetails.sort || {}) },
+          page: Math.max(1, Number(state.tablePages?.financeDetails) || 1)
+        }
+        : { open: false },
+      profitabilityDetailsOpen: Boolean(state.statistics?.profitabilityDetails?.open),
+      modal
+    };
+  }
+
+  function getAisNavigationScreenKey(snapshot = {}) {
+    return JSON.stringify({
+      view: String(snapshot.view || "dashboard"),
+      modal: snapshot.modal
+        ? `${String(snapshot.modal.config || "")}:${String(snapshot.modal.id || "new")}`
+        : "",
+      financeDetails: snapshot.financeDetails?.open
+        ? String(snapshot.financeDetails.metric || "all")
+        : "",
+      profitabilityDetails: Boolean(snapshot.profitabilityDetailsOpen),
+      overlay: String(snapshot.overlay || "")
+    });
+  }
+
+  function createAisHistoryState(snapshot, options = {}) {
     const currentHistoryState = window.history.state && typeof window.history.state === "object"
       ? window.history.state
       : {};
-    window.history.replaceState({
-      ...currentHistoryState,
-      aisStudentStatusNavigation: { view: "dashboard" }
-    }, "");
-    window.history.pushState({
-      ...currentHistoryState,
-      aisStudentStatusNavigation: { view: "students", status }
-    }, "");
+    const { aisStudentStatusNavigation, aisNavigation, aisNavigationRoot, ...baseState } = currentHistoryState;
+    void aisStudentStatusNavigation;
+    void aisNavigation;
+    void aisNavigationRoot;
+    return {
+      ...baseState,
+      aisNavigation: snapshot,
+      aisNavigationRoot: Boolean(options.root)
+    };
+  }
+
+  function writeAisHistoryState(snapshot, options = {}) {
+    const method = options.replace ? "replaceState" : "pushState";
+    window.history[method](createAisHistoryState(snapshot, options), "", window.location.href);
+  }
+
+  function synchronizeAisBrowserHistory() {
+    if (!aisHistoryNavigationBound || aisHistoryNavigationRestoring) return;
+    const snapshot = captureAisNavigationSnapshot();
+    const currentSnapshot = window.history.state?.aisNavigation;
+    if (!currentSnapshot) {
+      writeAisHistoryState(snapshot, { replace: true });
+      return;
+    }
+    const nextKey = getAisNavigationScreenKey(snapshot);
+    const currentKey = getAisNavigationScreenKey(currentSnapshot);
+    writeAisHistoryState(snapshot, { replace: nextKey === currentKey });
+  }
+
+  function restoreCancelledAisHistoryNavigation(snapshot) {
+    writeAisHistoryState(snapshot);
+  }
+
+  function returnToPreviousAisScreen() {
+    if (!aisHistoryNavigationBound || !window.history.state?.aisNavigation) return false;
+    window.history.back();
+    return true;
+  }
+
+  async function restoreAisNavigationSnapshot(snapshot = {}) {
+    const nextView = canAccessView(snapshot.view) ? snapshot.view : "dashboard";
+    let nextModal = snapshot.modal && configs[snapshot.modal.config]
+      ? {
+        config: String(snapshot.modal.config || ""),
+        id: String(snapshot.modal.id || ""),
+        ...(Array.isArray(snapshot.modal.studentNavigationIds) && snapshot.modal.studentNavigationIds.length
+          ? { studentNavigationIds: [...snapshot.modal.studentNavigationIds] }
+          : {})
+      }
+      : null;
+    if (nextModal?.id) {
+      const acquired = await acquireRecordLock(recordLockEntityType(nextModal.config), nextModal.id);
+      if (!acquired) nextModal = null;
+    } else {
+      const lock = activeRecordLock;
+      activeRecordLock = null;
+      stopRecordLockHeartbeat();
+      if (lock) releaseRecordLock(lock).catch(() => {});
+    }
+
+    discardEmployeePaymentTransaction();
+    state.studentExpenseEditor = null;
+    state.modal = null;
+    state.employeeExpenseEditor = null;
+    state.studentApplicationsImport.open = false;
+    state.studentAuditLog.open = false;
+    state.documentTemplateDialogId = "";
+    documentTemplateEditOriginal = null;
+    documentTemplateReturnRecordLock = null;
+    resetCardWindowState();
+    state.discountPickerOpen = false;
+    state.discountPicker = null;
+    state.openPaymentRows = [];
+    state.openExpenseRows = [];
+    state.tableOptions = null;
+
+    state.view = nextView;
+    state.search = String(snapshot.search || "");
+    state.statusFilter = String(snapshot.statusFilter || getDefaultStatusFilter(nextView));
+    state.directExpenseNoteFilter = String(snapshot.directExpenseNoteFilter || "");
+    state.generalExpenseSectionFilter = [...(snapshot.generalExpenseSectionFilter || [])];
+    state.generalExpenseWorkTypeFilter = [...(snapshot.generalExpenseWorkTypeFilter || [])];
+    state.studentProgramTypeFilter = [...(snapshot.studentProgramTypeFilter || [])];
+    state.studentListFilters = {
+      ...(state.studentListFilters || {}),
+      ...(snapshot.studentListFilters || {}),
+      programs: [...(snapshot.studentListFilters?.programs || [])]
+    };
+    state.programRegistryTypeFilter = [...(snapshot.programRegistryTypeFilter || [])];
+    state.contractSectionFilter = [...(snapshot.contractSectionFilter || [])];
+    state.issuedDocumentFilters = {
+      ...(state.issuedDocumentFilters || {}),
+      ...(snapshot.issuedDocumentFilters || {})
+    };
+    state.issuedDocumentSort = { ...(snapshot.issuedDocumentSort || state.issuedDocumentSort) };
+    state.sort = Object.keys(snapshot.sort || {}).length
+      ? { ...snapshot.sort }
+      : (nextView === "students"
+        ? getStudentStatusTableSort(state.statusFilter)
+        : getDefaultTableSort(nextView));
+    state.tablePages[nextView] = Math.max(1, Number(snapshot.tablePage) || 1);
+    state.studentCardTab = String(snapshot.studentCardTab || "main");
+    state.programCardTab = String(snapshot.programCardTab || "main");
+    state.contractCardTab = String(snapshot.contractCardTab || "main");
+    state.selectedDictionary = String(snapshot.selectedDictionary || "");
+    state.adminTab = String(snapshot.adminTab || "database");
+    state.adminDatabaseTab = String(snapshot.adminDatabaseTab || "ais");
+    state.statistics.tab = String(snapshot.statisticsTab || "income");
+    state.statistics.profitabilityDetails.open = Boolean(snapshot.profitabilityDetailsOpen);
+    state.profileOpen = snapshot.overlay === "profile";
+    state.releaseHistoryOpen = snapshot.overlay === "release-history" && isAdminUser();
+    state.financeDetails = snapshot.financeDetails?.open
+      ? {
+        ...state.financeDetails,
+        ...snapshot.financeDetails,
+        open: true,
+        sort: { ...(snapshot.financeDetails.sort || { key: "date", dir: "desc" }) }
+      }
+      : { ...state.financeDetails, open: false };
+    if (snapshot.financeDetails?.open) {
+      state.tablePages.financeDetails = Math.max(1, Number(snapshot.financeDetails.page) || 1);
+    }
+    state.modal = nextModal;
+    render();
+  }
+
+  async function handleAisHistoryNavigation(event) {
+    if (aisHistoryNavigationRestoring) return;
+    const targetSnapshot = event.state?.aisNavigation;
+    const currentSnapshot = captureAisNavigationSnapshot();
+    if (!targetSnapshot) {
+      aisHistoryNavigationCloseModalRequested = false;
+      aisHistoryNavigationDiscardApproved = false;
+      restoreCancelledAisHistoryNavigation(currentSnapshot);
+      return;
+    }
+    if (aisHistoryNavigationCloseModalRequested && targetSnapshot.modal) {
+      window.history.back();
+      return;
+    }
+    const form = document.getElementById("recordForm");
+    if (
+      !aisHistoryNavigationDiscardApproved
+      &&
+      (state.modal?.hasDraftChanges || hasUnsavedFormChanges(form))
+      && !confirm("Есть несохраненные изменения. Перейти к предыдущему экрану без сохранения?")
+    ) {
+      restoreCancelledAisHistoryNavigation(currentSnapshot);
+      return;
+    }
+    aisHistoryNavigationCloseModalRequested = false;
+    aisHistoryNavigationDiscardApproved = false;
+    if (!await saveAdminSettingsBeforeExit(targetSnapshot.view)) {
+      restoreCancelledAisHistoryNavigation(currentSnapshot);
+      return;
+    }
+    aisHistoryNavigationRestoring = true;
+    try {
+      await restoreAisNavigationSnapshot(targetSnapshot);
+      if (event.state?.aisNavigationRoot) {
+        writeAisHistoryState(captureAisNavigationSnapshot());
+      }
+    } finally {
+      aisHistoryNavigationRestoring = false;
+    }
   }
 
   function bindStudentStatusHistoryNavigation() {
-    window.addEventListener("popstate", (event) => {
-      const navigation = event.state?.aisStudentStatusNavigation;
-      if (!navigation) return;
-      const documentTemplateLock = state.documentTemplateDialogId
-        && activeRecordLock?.entityType === recordLockEntityType("documentTemplates")
-        ? activeRecordLock
-        : null;
-      state.studentExpenseEditor = null;
-      state.modal = null;
-      resetCardWindowState();
-      state.studentApplicationsImport.open = false;
-      state.documentTemplateDialogId = "";
-      documentTemplateEditOriginal = null;
-      documentTemplateReturnRecordLock = null;
-      if (documentTemplateLock) releaseRecordLock(documentTemplateLock).catch(() => {});
-      state.search = "";
-      state.studentProgramTypeFilter = [];
-      state.studentImportedViewIds = [];
-      state.tableOptions = null;
-
-      if (navigation.view === "students") {
-        state.view = "students";
-        state.statusFilter = navigation.status || "Все";
-        state.sort = getStudentStatusTableSort(state.statusFilter);
-        state.tablePages.students = 1;
-        render();
-        return;
-      }
-
-      state.view = "dashboard";
-      state.statusFilter = getDefaultStatusFilter("dashboard");
-      state.sort = getDefaultTableSort("dashboard");
-      render();
-      window.requestAnimationFrame(() => {
-        document.querySelector("[data-dashboard-student-statuses]")
-          ?.scrollIntoView({ block: "start" });
-      });
-    });
+    if (aisHistoryNavigationBound) return;
+    aisHistoryNavigationBound = true;
+    const initialSnapshot = captureAisNavigationSnapshot();
+    writeAisHistoryState(initialSnapshot, { replace: true, root: true });
+    writeAisHistoryState(initialSnapshot);
+    window.addEventListener("popstate", handleAisHistoryNavigation);
   }
 
   function restoreMainRegistrySearchFocus(cursorStart, cursorEnd = cursorStart) {
@@ -8964,6 +9175,7 @@ MAX - https://bizvmax.ru/zifra_plus
     closeSystemMailboxEmailMenu();
     document.querySelector("[data-communication-template-field-dialog]")?.remove();
     if (!canAccessView(state.view)) state.view = "dashboard";
+    synchronizeAisBrowserHistory();
     const current = navItems.find((item) => item.id === state.view) || navItems[0];
     const orderedNavItems = getOrderedNavItems();
     const authUser = getCurrentAuthUser();
@@ -9821,6 +10033,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeStatisticsProfitabilityDetails() {
+    if (returnToPreviousAisScreen()) return;
     state.statistics.profitabilityDetails.open = false;
     render();
   }
@@ -11358,6 +11571,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeFinanceDetails() {
+    if (returnToPreviousAisScreen()) return;
     state.financeDetails.open = false;
     render();
   }
@@ -19756,6 +19970,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeProfile() {
+    if (returnToPreviousAisScreen()) return;
     state.profileOpen = false;
     render();
   }
@@ -19776,7 +19991,7 @@ MAX - https://bizvmax.ru/zifra_plus
       authenticatedUser = { ...payload.user };
       window.AIS_AUTH_USER = authenticatedUser;
       state.profileOpen = false;
-      render();
+      if (!returnToPreviousAisScreen()) render();
     } catch (error) {
       alert(`Не удалось сохранить контактные данные: ${error.message}`);
       button.disabled = false;
@@ -29193,6 +29408,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='close-release-history']").forEach((element) => {
       element.addEventListener("click", (event) => {
         if (!element.matches("button") && event.target !== element) return;
+        if (returnToPreviousAisScreen()) return;
         state.releaseHistoryOpen = false;
         render();
         document.querySelector("[data-action='open-release-history']")?.focus({ preventScroll: true });
@@ -32762,6 +32978,11 @@ MAX - https://bizvmax.ru/zifra_plus
     if ((state.modal?.hasDraftChanges || hasUnsavedFormChanges(form)) && !confirm("Есть несохраненные изменения. Закрыть без сохранения?")) {
       return;
     }
+    aisHistoryNavigationDiscardApproved = true;
+    aisHistoryNavigationCloseModalRequested = true;
+    if (returnToPreviousAisScreen()) return;
+    aisHistoryNavigationDiscardApproved = false;
+    aisHistoryNavigationCloseModalRequested = false;
     const lock = activeRecordLock;
     discardEmployeePaymentTransaction();
     activeRecordLock = null;
@@ -34858,7 +35079,13 @@ MAX - https://bizvmax.ru/zifra_plus
     state.discountPicker = null;
     state.openPaymentRows = [];
     state.openExpenseRows = [];
-    render();
+    aisHistoryNavigationDiscardApproved = true;
+    aisHistoryNavigationCloseModalRequested = true;
+    if (!returnToPreviousAisScreen()) {
+      aisHistoryNavigationDiscardApproved = false;
+      aisHistoryNavigationCloseModalRequested = false;
+      render();
+    }
     saveSharedApplicationStateInBackground({ generation, lock });
   }
 
