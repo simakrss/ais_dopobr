@@ -13490,6 +13490,14 @@ body.card-window-moving {
   height: 18px;
 }
 
+.student-card-quick-actions .custom-record-email-button svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .student-card-quick-actions .student-copy-details-button.is-complete {
   border-color: #86c8b6;
   background: #e8f7f2;
@@ -21018,6 +21026,240 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 }
 
+.custom-record-email-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 12500;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(19, 31, 29, .52);
+}
+
+.custom-record-email-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 96vw);
+  max-height: min(92vh, 840px);
+  overflow: hidden;
+}
+
+.custom-record-email-head {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.custom-record-email-head h2,
+.custom-record-email-head p {
+  margin: 0;
+}
+
+.custom-record-email-head p:last-child {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.custom-record-email-form {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.custom-record-email-body {
+  display: grid;
+  gap: 11px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+
+.custom-record-email-body > label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.custom-record-email-body :is(input, textarea) {
+  width: 100%;
+  min-width: 0;
+}
+
+.custom-record-email-body input[readonly] {
+  background: #f5f8f7;
+  color: var(--text);
+}
+
+.custom-record-email-message-field textarea {
+  min-height: 190px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.45;
+}
+
+.custom-record-email-attachments {
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfdfc;
+}
+
+.custom-record-email-attachments-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.custom-record-email-attachments-head > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.custom-record-email-attachments-head small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.custom-record-email-attachments button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.custom-record-email-attachments button svg,
+.custom-record-email-footer button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.custom-record-email-dropzone {
+  display: grid;
+  min-height: 54px;
+  place-items: center;
+  padding: 9px 12px;
+  border: 1px dashed #9bbab3;
+  border-radius: 8px;
+  background: #f5faf8;
+  color: var(--muted);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, color .15s ease;
+}
+
+.custom-record-email-dropzone:hover,
+.custom-record-email-dropzone:focus-visible,
+.custom-record-email-dropzone.is-dragover {
+  border-color: var(--teal);
+  background: #eaf7f3;
+  color: var(--teal);
+  outline: none;
+}
+
+.custom-record-email-dropzone.has-files {
+  min-height: 38px;
+}
+
+.custom-record-email-file-list {
+  display: grid;
+  gap: 5px;
+  max-height: 150px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.custom-record-email-file-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 5px 7px 5px 9px;
+  border: 1px solid #dce8e4;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.custom-record-email-file-list li > span {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.custom-record-email-file-list strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-record-email-file-list small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.custom-record-email-file-list .is-empty {
+  justify-content: center;
+  border-style: dashed;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.custom-record-email-file-list .icon-button {
+  flex: 0 0 auto;
+  width: 27px;
+  height: 27px;
+  min-height: 27px;
+}
+
+.custom-record-email-status {
+  min-height: 18px;
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.custom-record-email-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  background: #fff;
+}
+
+.custom-record-email-footer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.custom-record-email-form[aria-busy="true"] .custom-record-email-body {
+  opacity: .68;
+  pointer-events: none;
+}
+
 .student-mailbox-backdrop {
   position: fixed;
   inset: 0;
@@ -21316,6 +21558,52 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 @media (max-width: 600px) {
+  .custom-record-email-backdrop {
+    padding: 0;
+  }
+
+  .custom-record-email-dialog {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .custom-record-email-head,
+  .custom-record-email-body,
+  .custom-record-email-footer {
+    padding-inline: 11px;
+  }
+
+  .custom-record-email-head {
+    padding-block: 12px 10px;
+  }
+
+  .custom-record-email-body {
+    gap: 9px;
+    padding-block: 11px;
+  }
+
+  .custom-record-email-message-field textarea {
+    min-height: 150px;
+  }
+
+  .custom-record-email-attachments-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .custom-record-email-attachments-head button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .custom-record-email-file-list li > span {
+    display: grid;
+    gap: 1px;
+  }
+
   .student-mailbox-backdrop {
     padding: 0;
   }

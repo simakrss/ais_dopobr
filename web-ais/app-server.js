@@ -321,6 +321,8 @@ const MAX_FRDO_EXPORT_RECORDS = 5000;
 const MAX_PROGRAM_PROMO_MESSAGE_LENGTH = 32767;
 const MAX_PAYMENT_DATABASE_CONSTANTS = 200;
 const MAX_EMAIL_SUBJECT_LENGTH = 200;
+const MAX_EMAIL_ATTACHMENTS = 10;
+const MAX_EMAIL_ATTACHMENTS_BYTES = 24 * 1024 * 1024;
 const SMTP_SESSION_DEADLINE_MS = 120 * 1000;
 const SMTP_COMMAND_TIMEOUT_MS = 30 * 1000;
 const SMTP_MESSAGE_TIMEOUT_MS = 60 * 1000;
@@ -15622,6 +15624,86 @@ function encodeEmailFileName(value) {
     .replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
+const EMAIL_ATTACHMENT_TYPES = new Map([
+  [".pdf", "application/pdf"],
+  [".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  [".doc", "application/msword"],
+  [".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  [".xls", "application/vnd.ms-excel"],
+  [".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+  [".ppt", "application/vnd.ms-powerpoint"],
+  [".odt", "application/vnd.oasis.opendocument.text"],
+  [".ods", "application/vnd.oasis.opendocument.spreadsheet"],
+  [".rtf", "application/rtf"],
+  [".txt", "text/plain"],
+  [".csv", "text/csv"],
+  [".xml", "application/xml"],
+  [".json", "application/json"],
+  [".eml", "message/rfc822"],
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".webp", "image/webp"],
+  [".gif", "image/gif"],
+  [".heic", "image/heic"],
+  [".zip", "application/zip"],
+  [".7z", "application/x-7z-compressed"]
+]);
+const EMAIL_ZIP_ATTACHMENT_EXTENSIONS = new Set([".docx", ".xlsx", ".pptx", ".odt", ".ods", ".zip"]);
+const EMAIL_OLE_ATTACHMENT_EXTENSIONS = new Set([".doc", ".xls", ".ppt"]);
+
+function emailAttachmentHasExpectedSignature(extension, bytes) {
+  if (extension === ".pdf") return bytes.subarray(0, 5).toString("ascii") === "%PDF-";
+  if (EMAIL_ZIP_ATTACHMENT_EXTENSIONS.has(extension)) return bytes.subarray(0, 2).toString("ascii") === "PK";
+  if (EMAIL_OLE_ATTACHMENT_EXTENSIONS.has(extension)) {
+    return bytes.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+  }
+  if (extension === ".png") return bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if ([".jpg", ".jpeg"].includes(extension)) return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (extension === ".gif") return ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"));
+  if (extension === ".webp") {
+    return bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP";
+  }
+  if (extension === ".7z") return bytes.subarray(0, 6).equals(Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]));
+  return true;
+}
+
+function normalizeServerEmailAttachments(body = {}) {
+  const source = Array.isArray(body.attachments)
+    ? body.attachments
+    : (body.attachment === undefined || body.attachment === null ? [] : [body.attachment]);
+  if (source.length > MAX_EMAIL_ATTACHMENTS) {
+    throw new Error(`Можно прикрепить не более ${MAX_EMAIL_ATTACHMENTS} файлов.`);
+  }
+  let totalBytes = 0;
+  return source.map((item) => {
+    if (!item || typeof item !== "object") throw new Error("Некорректные данные вложения.");
+    const fileName = String(item.fileName || "").trim();
+    const extension = path.extname(fileName).toLowerCase();
+    const contentType = EMAIL_ATTACHMENT_TYPES.get(extension);
+    const base64 = String(item.base64 || "").replace(/\s+/g, "");
+    if (!fileName || fileName.length > 180 || /[\r\n\\/:*?"<>|]/u.test(fileName)) {
+      throw new Error("Некорректное имя вложения.");
+    }
+    if (!contentType) throw new Error(`Формат вложения «${extension || fileName}» не поддерживается.`);
+    if (!base64 || !/^[A-Za-z0-9+/]*={0,2}$/u.test(base64)) {
+      throw new Error(`Некорректные данные вложения «${fileName}».`);
+    }
+    const bytes = Buffer.from(base64, "base64");
+    if (!bytes.length || bytes.length > MAX_EMAIL_ATTACHMENTS_BYTES) {
+      throw new Error(`Вложение «${fileName}» пустое или превышает допустимый размер.`);
+    }
+    totalBytes += bytes.length;
+    if (totalBytes > MAX_EMAIL_ATTACHMENTS_BYTES) {
+      throw new Error("Общий размер вложений превышает 24 МБ.");
+    }
+    if (!emailAttachmentHasExpectedSignature(extension, bytes)) {
+      throw new Error(`Содержимое вложения «${fileName}» не соответствует его формату.`);
+    }
+    return { fileName, contentType, bytes };
+  });
+}
+
 function containsHtmlMarkup(value) {
   return /<\s*\/?\s*[a-z][a-z0-9:-]*(?:\s[^<>]*?)?\s*\/?\s*>/iu.test(String(value || ""));
 }
@@ -15632,6 +15714,7 @@ function createEmailMessage({
   subject,
   message,
   attachment,
+  attachments,
   requestDeliveryAndReadReceipts = false
 }) {
   const domain = String(from).split("@")[1] || "localhost";
@@ -15652,7 +15735,10 @@ function createEmailMessage({
   if (requestDeliveryAndReadReceipts) {
     headers.push(`Disposition-Notification-To: <${from}>`);
   }
-  if (!attachment) {
+  const messageAttachments = Array.isArray(attachments)
+    ? attachments.filter(Boolean)
+    : (attachment ? [attachment] : []);
+  if (!messageAttachments.length) {
     return [
       ...headers,
       `Content-Type: ${bodyContentType}; charset=UTF-8`,
@@ -15663,8 +15749,7 @@ function createEmailMessage({
   }
 
   const boundary = `ais-${crypto.randomBytes(18).toString("hex")}`;
-  const fallbackFileName = attachment.fileName.replace(/[^\x20-\x7E]+/g, "_").replace(/["\\]/g, "_");
-  return [
+  const parts = [
     ...headers,
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
     "",
@@ -15672,18 +15757,24 @@ function createEmailMessage({
     `Content-Type: ${bodyContentType}; charset=UTF-8`,
     "Content-Transfer-Encoding: base64",
     "",
-    encodedBody,
-    `--${boundary}`,
-    `Content-Type: ${attachment.contentType}; name="${fallbackFileName}"`,
-    "Content-Transfer-Encoding: base64",
-    `Content-Disposition: attachment; filename="${fallbackFileName}"; filename*=UTF-8''${encodeEmailFileName(attachment.fileName)}`,
-    "",
-    wrapEmailBase64(attachment.bytes.toString("base64")),
-    `--${boundary}--`
-  ].join("\r\n");
+    encodedBody
+  ];
+  messageAttachments.forEach((messageAttachment) => {
+    const fallbackFileName = messageAttachment.fileName.replace(/[^\x20-\x7E]+/g, "_").replace(/["\\]/g, "_");
+    parts.push(
+      `--${boundary}`,
+      `Content-Type: ${messageAttachment.contentType}; name="${fallbackFileName}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename="${fallbackFileName}"; filename*=UTF-8''${encodeEmailFileName(messageAttachment.fileName)}`,
+      "",
+      wrapEmailBase64(messageAttachment.bytes.toString("base64"))
+    );
+  });
+  parts.push(`--${boundary}--`);
+  return parts.join("\r\n");
 }
 
-async function sendEmailThroughConfiguredMailbox({ to, subject, message, attachment }) {
+async function sendEmailThroughConfiguredMailbox({ to, subject, message, attachment, attachments }) {
   return runAuthenticatedSmtpSession(async ({
     settings,
     writeCommand,
@@ -15711,6 +15802,7 @@ async function sendEmailThroughConfiguredMailbox({ to, subject, message, attachm
         subject,
         message,
         attachment,
+        attachments,
         requestDeliveryAndReadReceipts: settings.requestDeliveryAndReadReceipts
       })}\r\n.\r\n`, "Передача письма", SMTP_MESSAGE_TIMEOUT_MS);
       deliveryResponse = await waitForResponse("Отправка письма", SMTP_MESSAGE_TIMEOUT_MS);
@@ -25002,7 +25094,7 @@ async function handleServerEmail(req, res, authUser) {
   let auditContext = {};
   let auditRecipient = "";
   let auditSubject = "";
-  let auditAttachmentName = "";
+  let auditAttachmentNames = [];
   const writeEmailAudit = async (action, details, source = "smtp") => {
     const studentId = auditText(auditContext.studentId, 240);
     const studentName = auditText(auditContext.studentName, 500);
@@ -25066,39 +25158,9 @@ async function handleServerEmail(req, res, authUser) {
     if (!message || Buffer.byteLength(message, "utf8") > 100000) {
       throw new Error("Некорректный текст письма.");
     }
-    let attachment = null;
-    if (body.attachment !== undefined && body.attachment !== null) {
-      const fileName = String(body.attachment.fileName || "").trim();
-      const contentType = String(body.attachment.contentType || "").trim().toLowerCase();
-      const base64 = String(body.attachment.base64 || "").replace(/\s+/g, "");
-      const allowedAttachments = new Map([
-        ["application/pdf", ".pdf"],
-        ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"]
-      ]);
-      const requiredExtension = allowedAttachments.get(contentType);
-      if (!fileName || fileName.length > 180 || /[\r\n\\/:*?"<>|]/u.test(fileName)) {
-        throw new Error("Некорректное имя вложения.");
-      }
-      if (!requiredExtension || path.extname(fileName).toLowerCase() !== requiredExtension) {
-        throw new Error("Недопустимый формат вложения.");
-      }
-      if (!base64 || !/^[A-Za-z0-9+/]*={0,2}$/u.test(base64)) {
-        throw new Error("Некорректные данные вложения.");
-      }
-      const bytes = Buffer.from(base64, "base64");
-      if (!bytes.length || bytes.length > MAX_DOCX_BYTES) {
-        throw new Error("Вложение пустое или превышает допустимый размер.");
-      }
-      if (
-        (requiredExtension === ".pdf" && bytes.subarray(0, 5).toString("ascii") !== "%PDF-")
-        || (requiredExtension === ".docx" && bytes.subarray(0, 2).toString("ascii") !== "PK")
-      ) {
-        throw new Error("Содержимое вложения не соответствует указанному формату.");
-      }
-      attachment = { fileName, contentType, bytes };
-      auditAttachmentName = fileName;
-    }
-    const settings = await sendEmailThroughConfiguredMailbox({ to, subject, message, attachment });
+    const attachments = normalizeServerEmailAttachments(body);
+    auditAttachmentNames = attachments.map((item) => item.fileName);
+    const settings = await sendEmailThroughConfiguredMailbox({ to, subject, message, attachments });
     const messageType = auditText(auditContext.messageType, 240) || "Письмо";
     const recipientMode = auditContext.recipientMode === "system"
       ? "системный ящик"
@@ -25109,7 +25171,7 @@ async function handleServerEmail(req, res, authUser) {
         `Тип: ${messageType}`,
         `Получатель: ${auditRecipient} (${recipientMode})`,
         `Тема: ${auditSubject}`,
-        auditAttachmentName ? `Вложение: ${auditAttachmentName}` : "Без вложения",
+        auditAttachmentNames.length ? `Вложения: ${auditAttachmentNames.join(", ")}` : "Без вложений",
         `Отправитель: ${settings.login}`,
         settings.readReceiptRequested
           ? "Запрошено уведомление о прочтении"
@@ -25133,7 +25195,7 @@ async function handleServerEmail(req, res, authUser) {
         auditContext.messageType ? `Тип: ${auditText(auditContext.messageType, 240)}` : "Тип: письмо",
         auditRecipient ? `Получатель: ${auditRecipient}` : "Получатель не определён",
         auditSubject ? `Тема: ${auditSubject}` : "Тема не определена",
-        auditAttachmentName ? `Вложение: ${auditAttachmentName}` : "Без вложения",
+        auditAttachmentNames.length ? `Вложения: ${auditAttachmentNames.join(", ")}` : "Без вложений",
         `Ошибка: ${auditText(error.message, 1000)}`
       ].join("; ")
     );
@@ -25730,6 +25792,7 @@ module.exports = {
   smtpResponseSupportsExtension,
   createEmailEnvelopeCommands,
   createEmailMessage,
+  normalizeServerEmailAttachments,
   getMoscowCalendarDate,
   getCalendarDateInTimeZone,
   parseTrainingEndNotificationDate,

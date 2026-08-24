@@ -6,6 +6,7 @@ const AIS_MAIL_FROM_NAME = 'Цифровизация Плюс';
 const AIS_MAIL_MAX_MESSAGE_BYTES = 100000;
 const AIS_MAIL_MAX_REQUEST_BYTES = 34 * 1024 * 1024;
 const AIS_MAIL_MAX_ATTACHMENT_BYTES = 24 * 1024 * 1024;
+const AIS_MAIL_MAX_ATTACHMENTS = 10;
 const AIS_MAIL_MAX_SUBJECT_LENGTH = 200;
 const AIS_MAIL_RATE_LIMIT = 20;
 const AIS_MAIL_RATE_WINDOW = 60;
@@ -337,12 +338,134 @@ function smtp_response_supports_extension(string $response, string $extensionNam
     return false;
 }
 
+function email_attachment_types(): array
+{
+    return [
+        '.pdf' => 'application/pdf',
+        '.docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.doc' => 'application/msword',
+        '.xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.xls' => 'application/vnd.ms-excel',
+        '.pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        '.ppt' => 'application/vnd.ms-powerpoint',
+        '.odt' => 'application/vnd.oasis.opendocument.text',
+        '.ods' => 'application/vnd.oasis.opendocument.spreadsheet',
+        '.rtf' => 'application/rtf',
+        '.txt' => 'text/plain',
+        '.csv' => 'text/csv',
+        '.xml' => 'application/xml',
+        '.json' => 'application/json',
+        '.eml' => 'message/rfc822',
+        '.png' => 'image/png',
+        '.jpg' => 'image/jpeg',
+        '.jpeg' => 'image/jpeg',
+        '.webp' => 'image/webp',
+        '.gif' => 'image/gif',
+        '.heic' => 'image/heic',
+        '.zip' => 'application/zip',
+        '.7z' => 'application/x-7z-compressed',
+    ];
+}
+
+function email_attachment_signature_matches(string $extension, string $bytes): bool
+{
+    if ($extension === '.pdf') {
+        return substr($bytes, 0, 5) === '%PDF-';
+    }
+    if (in_array($extension, ['.docx', '.xlsx', '.pptx', '.odt', '.ods', '.zip'], true)) {
+        return substr($bytes, 0, 2) === 'PK';
+    }
+    if (in_array($extension, ['.doc', '.xls', '.ppt'], true)) {
+        return substr($bytes, 0, 8) === "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1";
+    }
+    if ($extension === '.png') {
+        return substr($bytes, 0, 8) === "\x89PNG\x0D\x0A\x1A\x0A";
+    }
+    if (in_array($extension, ['.jpg', '.jpeg'], true)) {
+        return substr($bytes, 0, 3) === "\xFF\xD8\xFF";
+    }
+    if ($extension === '.gif') {
+        return in_array(substr($bytes, 0, 6), ['GIF87a', 'GIF89a'], true);
+    }
+    if ($extension === '.webp') {
+        return substr($bytes, 0, 4) === 'RIFF' && substr($bytes, 8, 4) === 'WEBP';
+    }
+    if ($extension === '.7z') {
+        return substr($bytes, 0, 6) === "\x37\x7A\xBC\xAF\x27\x1C";
+    }
+    return true;
+}
+
+function normalize_email_attachments(array $data): array
+{
+    if (array_key_exists('attachments', $data)) {
+        if (!is_array($data['attachments'])) {
+            send_json(400, ['ok' => false, 'error' => 'Некорректные данные вложений.']);
+        }
+        $source = $data['attachments'];
+    } elseif (array_key_exists('attachment', $data) && $data['attachment'] !== null) {
+        $source = [$data['attachment']];
+    } else {
+        $source = [];
+    }
+    if (count($source) > AIS_MAIL_MAX_ATTACHMENTS) {
+        send_json(400, ['ok' => false, 'error' => 'Можно прикрепить не более 10 файлов.']);
+    }
+    $types = email_attachment_types();
+    $result = [];
+    $totalBytes = 0;
+    foreach ($source as $item) {
+        if (!is_array($item)) {
+            send_json(400, ['ok' => false, 'error' => 'Некорректные данные вложения.']);
+        }
+        $fileName = trim((string) ($item['fileName'] ?? ''));
+        $extensionValue = strtolower((string) pathinfo($fileName, PATHINFO_EXTENSION));
+        $extension = $extensionValue === '' ? '' : '.' . $extensionValue;
+        $contentType = $types[$extension] ?? '';
+        $base64 = preg_replace('/\s+/', '', (string) ($item['base64'] ?? ''));
+        if (
+            $fileName === ''
+            || utf8_length($fileName) > 180
+            || preg_match('/[\r\n\\\/:*?"<>|]/u', $fileName)
+        ) {
+            send_json(400, ['ok' => false, 'error' => 'Некорректное имя вложения.']);
+        }
+        if ($contentType === '') {
+            send_json(400, ['ok' => false, 'error' => 'Формат вложения «' . ($extension ?: $fileName) . '» не поддерживается.']);
+        }
+        if ($base64 === '' || !preg_match('/^[A-Za-z0-9+\/]*={0,2}$/D', $base64)) {
+            send_json(400, ['ok' => false, 'error' => 'Некорректные данные вложения «' . $fileName . '».']);
+        }
+        $attachmentBytes = base64_decode($base64, true);
+        if (
+            $attachmentBytes === false
+            || strlen($attachmentBytes) === 0
+            || strlen($attachmentBytes) > AIS_MAIL_MAX_ATTACHMENT_BYTES
+        ) {
+            send_json(400, ['ok' => false, 'error' => 'Вложение «' . $fileName . '» пустое или превышает допустимый размер.']);
+        }
+        $totalBytes += strlen($attachmentBytes);
+        if ($totalBytes > AIS_MAIL_MAX_ATTACHMENT_BYTES) {
+            send_json(400, ['ok' => false, 'error' => 'Общий размер вложений превышает 24 МБ.']);
+        }
+        if (!email_attachment_signature_matches($extension, $attachmentBytes)) {
+            send_json(400, ['ok' => false, 'error' => 'Содержимое вложения «' . $fileName . '» не соответствует его формату.']);
+        }
+        $result[] = [
+            'fileName' => $fileName,
+            'contentType' => $contentType,
+            'bytes' => $attachmentBytes,
+        ];
+    }
+    return $result;
+}
+
 function send_smtp_mail(
     array $settings,
     string $to,
     string $subject,
     string $message,
-    ?array $attachment = null
+    array $attachments = []
 ): array
 {
     $deadline = microtime(true) + AIS_MAIL_SMTP_DEADLINE_SECONDS;
@@ -420,30 +543,36 @@ function send_smtp_mail(
         if ($requestReceipts) {
             $headers[] = 'Disposition-Notification-To: <' . $settings['login'] . '>';
         }
-        if ($attachment === null) {
+        if (count($attachments) === 0) {
             $headers[] = 'Content-Type: ' . $bodyContentType . '; charset=UTF-8';
             $headers[] = 'Content-Transfer-Encoding: base64';
             $mailBody = $encodedBody;
         } else {
             $boundary = 'ais-' . bin2hex(random_bytes(18));
-            $fallbackFileName = preg_replace('/[^\x20-\x7E]+/', '_', $attachment['fileName']);
-            $fallbackFileName = str_replace(['"', '\\'], '_', (string) $fallbackFileName);
             $headers[] = 'Content-Type: multipart/mixed; boundary="' . $boundary . '"';
-            $mailBody = implode("\r\n", [
+            $mailParts = [
                 '--' . $boundary,
                 'Content-Type: ' . $bodyContentType . '; charset=UTF-8',
                 'Content-Transfer-Encoding: base64',
                 '',
                 $encodedBody,
-                '--' . $boundary,
-                'Content-Type: ' . $attachment['contentType'] . '; name="' . $fallbackFileName . '"',
-                'Content-Transfer-Encoding: base64',
-                'Content-Disposition: attachment; filename="' . $fallbackFileName
-                    . '"; filename*=UTF-8\'\'' . rawurlencode($attachment['fileName']),
-                '',
-                encode_mail_body($attachment['bytes']),
-                '--' . $boundary . '--',
-            ]);
+            ];
+            foreach ($attachments as $attachment) {
+                $fallbackFileName = preg_replace('/[^\x20-\x7E]+/', '_', $attachment['fileName']);
+                $fallbackFileName = str_replace(['"', '\\'], '_', (string) $fallbackFileName);
+                array_push(
+                    $mailParts,
+                    '--' . $boundary,
+                    'Content-Type: ' . $attachment['contentType'] . '; name="' . $fallbackFileName . '"',
+                    'Content-Transfer-Encoding: base64',
+                    'Content-Disposition: attachment; filename="' . $fallbackFileName
+                        . '"; filename*=UTF-8\'\'' . rawurlencode($attachment['fileName']),
+                    '',
+                    encode_mail_body($attachment['bytes'])
+                );
+            }
+            $mailParts[] = '--' . $boundary . '--';
+            $mailBody = implode("\r\n", $mailParts);
         }
         try {
             smtp_write_all(
@@ -554,58 +683,18 @@ if ($message === '' || strlen($message) > AIS_MAIL_MAX_MESSAGE_BYTES) {
     send_json(400, ['ok' => false, 'error' => 'Некорректный текст письма.']);
 }
 
-$attachment = null;
-$attachmentFileName = '';
-if (array_key_exists('attachment', $data) && $data['attachment'] !== null) {
-    if (!is_array($data['attachment'])) {
-        send_json(400, ['ok' => false, 'error' => 'Некорректные данные вложения.']);
-    }
-    $fileName = trim((string) ($data['attachment']['fileName'] ?? ''));
-    $contentType = strtolower(trim((string) ($data['attachment']['contentType'] ?? '')));
-    $base64 = preg_replace('/\s+/', '', (string) ($data['attachment']['base64'] ?? ''));
-    $allowedAttachments = [
-        'application/pdf' => '.pdf',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => '.docx',
-    ];
-    $requiredExtension = $allowedAttachments[$contentType] ?? '';
-    if (
-        $fileName === ''
-        || utf8_length($fileName) > 180
-        || preg_match('/[\r\n\\\\\/:*?"<>|]/u', $fileName)
-    ) {
-        send_json(400, ['ok' => false, 'error' => 'Некорректное имя вложения.']);
-    }
-    if ($requiredExtension === '' || strtolower((string) pathinfo($fileName, PATHINFO_EXTENSION)) !== ltrim($requiredExtension, '.')) {
-        send_json(400, ['ok' => false, 'error' => 'Недопустимый формат вложения.']);
-    }
-    if ($base64 === '' || !preg_match('/^[A-Za-z0-9+\/]*={0,2}$/D', $base64)) {
-        send_json(400, ['ok' => false, 'error' => 'Некорректные данные вложения.']);
-    }
-    $attachmentBytes = base64_decode($base64, true);
-    if (
-        $attachmentBytes === false
-        || strlen($attachmentBytes) === 0
-        || strlen($attachmentBytes) > AIS_MAIL_MAX_ATTACHMENT_BYTES
-    ) {
-        send_json(400, ['ok' => false, 'error' => 'Вложение пустое или превышает допустимый размер.']);
-    }
-    if (
-        ($requiredExtension === '.pdf' && substr($attachmentBytes, 0, 5) !== '%PDF-')
-        || ($requiredExtension === '.docx' && substr($attachmentBytes, 0, 2) !== 'PK')
-    ) {
-        send_json(400, ['ok' => false, 'error' => 'Содержимое вложения не соответствует указанному формату.']);
-    }
-    $attachment = [
-        'fileName' => $fileName,
-        'contentType' => $contentType,
-        'bytes' => $attachmentBytes,
-    ];
-    $attachmentFileName = $fileName;
-}
+$attachments = normalize_email_attachments($data);
+$attachmentFileNames = array_map(
+    static fn(array $attachment): string => (string) $attachment['fileName'],
+    $attachments
+);
+$attachmentAuditText = count($attachmentFileNames) > 0
+    ? 'Вложения: ' . implode(', ', $attachmentFileNames)
+    : 'Без вложений';
 
 try {
     $settings = load_mail_settings();
-    $receiptStatus = send_smtp_mail($settings, $to, $subject, $message, $attachment);
+    $receiptStatus = send_smtp_mail($settings, $to, $subject, $message, $attachments);
     ais_audit_try_append([
         'action' => 'Отправлено письмо',
         'area' => 'Электронная почта',
@@ -618,7 +707,7 @@ try {
             'Тип: ' . $messageType,
             'Получатель: ' . $to . ' (' . $recipientMode . ')',
             'Тема: ' . $subject,
-            $attachmentFileName !== '' ? 'Вложение: ' . $attachmentFileName : 'Без вложения',
+            $attachmentAuditText,
             'Отправитель: ' . $settings['login'],
             !empty($receiptStatus['readReceiptRequested'])
                 ? 'Запрошено уведомление о прочтении'
@@ -647,7 +736,7 @@ try {
             'Тип: ' . $messageType,
             'Получатель: ' . $to . ' (' . $recipientMode . ')',
             'Тема: ' . $subject,
-            $attachmentFileName !== '' ? 'Вложение: ' . $attachmentFileName : 'Без вложения',
+            $attachmentAuditText,
             'Ошибка: ' . ais_audit_text($error->getMessage(), 1000),
         ]),
         'source' => 'smtp',

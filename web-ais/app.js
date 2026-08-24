@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.267",
+    version: "1.7.268",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.268",
+      releasedAt: "2026-08-24",
+      changes: [
+        "Из карточек слушателя и сотрудника можно отправить произвольное письмо через системный почтовый ящик.",
+        "К письму можно приложить до 10 файлов общим объёмом до 24 МБ; результат отправки сохраняется в журнале соответствующей карточки."
+      ]
+    },
     {
       version: "1.7.267",
       releasedAt: "2026-08-24",
@@ -24615,6 +24623,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (action === "mail") {
       return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m4 7 8 6 8-6"></path></svg>`;
     }
+    if (action === "attachment") {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m20.5 11.5-8.8 8.8a5 5 0 0 1-7.1-7.1l9.5-9.5a3.5 3.5 0 0 1 5 5l-9.5 9.5a2 2 0 0 1-2.8-2.8l8.8-8.8"></path></svg>`;
+    }
     if (action === "restore") {
       return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v6h6"></path></svg>`;
     }
@@ -24823,6 +24834,9 @@ MAX - https://bizvmax.ru/zifra_plus
         ${renderStudentDocumentsFolderLink(record, "student-card-header-action", entityType)}
         <button class="icon-button student-copy-details-button student-card-header-action" data-action="copy-student-details" type="button" title="${escapeAttr(copyTooltip)}" aria-label="${escapeAttr(copyTooltip)}">
           ${renderOrdersSdoIcon("copy")}
+        </button>
+        <button class="icon-button custom-record-email-button student-card-header-action" data-action="open-custom-record-email" type="button" title="${escapeAttr(`Написать произвольное письмо ${personLabel}\nПисьмо будет отправлено через системный почтовый ящик и сохранено в журнале действий.`)}" aria-label="${escapeAttr(`Написать письмо ${personLabel}`)}">
+          ${renderCommunicationActionIcon("mail")}
         </button>
         ${renderMessengerButton("max", "Открыть Max", renderMaxIcon(), "student-card-header-action")}
         ${renderMessengerButton("telegram", "Открыть Telegram", renderTelegramIcon(), "student-card-header-action")}
@@ -28560,7 +28574,9 @@ MAX - https://bizvmax.ru/zifra_plus
     button,
     event,
     prepareAttachment,
+    prepareAttachments,
     attachment = null,
+    attachments = [],
     recipientMode = "",
     messageType = "",
     skipConfirmation = false,
@@ -28607,6 +28623,9 @@ MAX - https://bizvmax.ru/zifra_plus
       const resolvedAttachment = typeof prepareAttachment === "function"
         ? await prepareAttachment()
         : attachment;
+      const resolvedAttachments = typeof prepareAttachments === "function"
+        ? await prepareAttachments()
+        : attachments;
       const { response, payload } = await fetchWithTimeout("send-mail.php", {
         method: "POST",
         headers: {
@@ -28618,6 +28637,9 @@ MAX - https://bizvmax.ru/zifra_plus
           subject: normalizedSubject,
           message: String(message).trim(),
           ...(resolvedAttachment ? { attachment: resolvedAttachment } : {}),
+          ...(Array.isArray(resolvedAttachments) && resolvedAttachments.length
+            ? { attachments: resolvedAttachments }
+            : {}),
           auditContext: {
             entityType,
             entityId: String(entityId || state.modal?.id || state.modal?.draft?.id || "").trim(),
@@ -28668,6 +28690,307 @@ MAX - https://bizvmax.ru/zifra_plus
     } finally {
       if (button) button.disabled = originalDisabled;
     }
+  }
+
+  const CUSTOM_RECORD_EMAIL_MAX_FILES = 10;
+  const CUSTOM_RECORD_EMAIL_MAX_BYTES = 24 * 1024 * 1024;
+  const CUSTOM_RECORD_EMAIL_EXTENSIONS = new Set([
+    "pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "odt", "ods", "rtf",
+    "txt", "csv", "xml", "json", "eml", "png", "jpg", "jpeg", "webp", "gif",
+    "heic", "zip", "7z"
+  ]);
+  const CUSTOM_RECORD_EMAIL_ACCEPT = Array.from(CUSTOM_RECORD_EMAIL_EXTENSIONS)
+    .map((extension) => `.${extension}`)
+    .join(",");
+
+  function getCustomRecordEmailContext() {
+    const isContract = state.modal?.config === "contracts";
+    const isStudent = state.modal?.config === "students";
+    if (!isContract && !isStudent) return null;
+    const record = isContract ? collectContractFormDraft() : collectStudentFormDraft();
+    return {
+      record,
+      entityType: isContract ? "contracts" : "students",
+      entityId: String(record.id || state.modal?.id || "").trim(),
+      entityName: String(record.name || "").trim(),
+      email: String(record.email || "").trim(),
+      personLabel: isContract ? "сотруднику" : "слушателю",
+      recipientLabel: isContract ? "сотрудника" : "слушателя"
+    };
+  }
+
+  function getCustomRecordEmailFileExtension(fileName) {
+    const match = String(fileName || "").trim().toLowerCase().match(/\.([^.]+)$/u);
+    return match?.[1] || "";
+  }
+
+  function getCustomRecordEmailFileKey(file) {
+    return `${encodeURIComponent(file.name)}:${file.size}:${file.lastModified}`;
+  }
+
+  function getCustomRecordEmailContentType(file) {
+    if (String(file.type || "").trim()) return String(file.type).trim().toLowerCase();
+    const extension = getCustomRecordEmailFileExtension(file.name);
+    const types = {
+      pdf: "application/pdf",
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      doc: "application/msword",
+      xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      xls: "application/vnd.ms-excel",
+      pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      ppt: "application/vnd.ms-powerpoint",
+      odt: "application/vnd.oasis.opendocument.text",
+      ods: "application/vnd.oasis.opendocument.spreadsheet",
+      rtf: "application/rtf",
+      txt: "text/plain",
+      csv: "text/csv",
+      xml: "application/xml",
+      json: "application/json",
+      eml: "message/rfc822",
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      webp: "image/webp",
+      gif: "image/gif",
+      heic: "image/heic",
+      zip: "application/zip",
+      "7z": "application/x-7z-compressed"
+    };
+    return types[extension] || "application/octet-stream";
+  }
+
+  async function serializeCustomRecordEmailAttachment(file) {
+    const dataUrl = String(await readFileAsDataUrl(file));
+    const base64 = dataUrl.split(",", 2)[1] || "";
+    if (!base64) throw new Error(`Не удалось прочитать файл «${file.name}».`);
+    return {
+      fileName: file.name,
+      contentType: getCustomRecordEmailContentType(file),
+      base64
+    };
+  }
+
+  function openCustomRecordEmailComposer() {
+    const existing = document.querySelector("[data-custom-record-email-composer]");
+    if (existing) {
+      existing.querySelector("[name='subject']")?.focus({ preventScroll: true });
+      return;
+    }
+    const context = getCustomRecordEmailContext();
+    if (!context) return;
+    if (!context.entityId) {
+      alert(`Сначала сохраните карточку ${context.recipientLabel}, чтобы письмо попало в историю действий.`);
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(context.email)) {
+      alert(`Укажите корректный Email ${context.recipientLabel} в карточке.`);
+      document.querySelector("#recordForm [name='email']")?.focus({ preventScroll: true });
+      return;
+    }
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop custom-record-email-backdrop";
+    backdrop.dataset.customRecordEmailComposer = "";
+    backdrop.innerHTML = `
+      <section class="modal custom-record-email-dialog" role="dialog" aria-modal="true" aria-labelledby="customRecordEmailTitle">
+        <header class="modal-head custom-record-email-head">
+          <div>
+            <p class="eyebrow">Электронная почта</p>
+            <h2 id="customRecordEmailTitle">Новое письмо ${escapeHtml(context.personLabel)}</h2>
+            <p>${escapeHtml(context.entityName || context.email)}</p>
+          </div>
+          <button class="icon-button" data-action="close-custom-record-email" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <form class="custom-record-email-form" data-action="send-custom-record-email">
+          <div class="custom-record-email-body">
+            <label>
+              <span>Получатель</span>
+              <input name="recipient" type="email" value="${escapeAttr(context.email)}" readonly>
+            </label>
+            <label>
+              <span>Тема *</span>
+              <input name="subject" maxlength="200" required autocomplete="off">
+            </label>
+            <label class="custom-record-email-message-field">
+              <span>Текст письма *</span>
+              <textarea name="message" maxlength="100000" rows="10" required placeholder="Введите текст письма. HTML-теги поддерживаются."></textarea>
+            </label>
+            <section class="custom-record-email-attachments" aria-labelledby="customRecordEmailAttachmentsTitle">
+              <div class="custom-record-email-attachments-head">
+                <div>
+                  <strong id="customRecordEmailAttachmentsTitle">Вложения</strong>
+                  <small>До ${CUSTOM_RECORD_EMAIL_MAX_FILES} файлов, общий размер до 24 МБ</small>
+                </div>
+                <button class="ghost-button compact-button" data-action="choose-custom-record-email-files" type="button">
+                  ${renderCommunicationActionIcon("attachment")}
+                  <span>Прикрепить файлы</span>
+                </button>
+              </div>
+              <input data-custom-record-email-files type="file" accept="${escapeAttr(CUSTOM_RECORD_EMAIL_ACCEPT)}" multiple hidden>
+              <div class="custom-record-email-dropzone" data-custom-record-email-dropzone tabindex="0">
+                Перетащите файлы сюда или нажмите «Прикрепить файлы»
+              </div>
+              <ul class="custom-record-email-file-list" data-custom-record-email-file-list aria-live="polite"></ul>
+            </section>
+            <p class="custom-record-email-status" data-custom-record-email-status role="status" aria-live="polite"></p>
+          </div>
+          <footer class="custom-record-email-footer">
+            <button class="ghost-button" data-action="close-custom-record-email" type="button">Отмена</button>
+            <button class="primary-button" type="submit">
+              ${renderCommunicationActionIcon("mail")}
+              <span>Отправить</span>
+            </button>
+          </footer>
+        </form>
+      </section>
+    `;
+    const form = backdrop.querySelector("[data-action='send-custom-record-email']");
+    const fileInput = backdrop.querySelector("[data-custom-record-email-files]");
+    const fileList = backdrop.querySelector("[data-custom-record-email-file-list]");
+    const dropzone = backdrop.querySelector("[data-custom-record-email-dropzone]");
+    const status = backdrop.querySelector("[data-custom-record-email-status]");
+    const sendButton = form.querySelector("button[type='submit']");
+    let files = [];
+    let sending = false;
+
+    const close = () => {
+      if (sending) return;
+      backdrop.remove();
+      document.querySelector("[data-action='open-custom-record-email']")?.focus({ preventScroll: true });
+    };
+    const renderFiles = () => {
+      const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+      fileList.innerHTML = files.length
+        ? files.map((file) => `
+            <li data-custom-record-email-file="${escapeAttr(getCustomRecordEmailFileKey(file))}">
+              <span>
+                <strong title="${escapeAttr(file.name)}">${escapeHtml(file.name)}</strong>
+                <small>${escapeHtml(formatBytes(file.size))}</small>
+              </span>
+              <button class="icon-button" data-action="remove-custom-record-email-file" data-file-key="${escapeAttr(getCustomRecordEmailFileKey(file))}" type="button" title="Убрать вложение" aria-label="${escapeAttr(`Убрать вложение ${file.name}`)}">×</button>
+            </li>
+          `).join("")
+        : "<li class=\"is-empty\">Вложения не выбраны</li>";
+      dropzone.classList.toggle("has-files", files.length > 0);
+      dropzone.textContent = files.length
+        ? `${files.length} ${pluralizeRu(files.length, "файл", "файла", "файлов")} · ${formatBytes(totalBytes)}`
+        : "Перетащите файлы сюда или нажмите «Прикрепить файлы»";
+    };
+    const addFiles = (incoming) => {
+      const nextFiles = [...files];
+      const existingKeys = new Set(nextFiles.map(getCustomRecordEmailFileKey));
+      for (const file of Array.from(incoming || [])) {
+        const extension = getCustomRecordEmailFileExtension(file.name);
+        if (!CUSTOM_RECORD_EMAIL_EXTENSIONS.has(extension)) {
+          alert(`Формат файла «${file.name}» не поддерживается.`);
+          continue;
+        }
+        if (!file.size || file.size > CUSTOM_RECORD_EMAIL_MAX_BYTES) {
+          alert(`Файл «${file.name}» пустой или превышает 24 МБ.`);
+          continue;
+        }
+        const key = getCustomRecordEmailFileKey(file);
+        if (existingKeys.has(key)) continue;
+        if (nextFiles.length >= CUSTOM_RECORD_EMAIL_MAX_FILES) {
+          alert(`Можно прикрепить не более ${CUSTOM_RECORD_EMAIL_MAX_FILES} файлов.`);
+          break;
+        }
+        if (nextFiles.reduce((sum, item) => sum + item.size, 0) + file.size > CUSTOM_RECORD_EMAIL_MAX_BYTES) {
+          alert("Общий размер вложений не должен превышать 24 МБ.");
+          break;
+        }
+        nextFiles.push(file);
+        existingKeys.add(key);
+      }
+      files = nextFiles;
+      fileInput.value = "";
+      renderFiles();
+    };
+
+    backdrop.closeCustomRecordEmailComposer = close;
+    backdrop.querySelectorAll("[data-action='close-custom-record-email']").forEach((button) => {
+      button.addEventListener("click", close);
+    });
+    backdrop.querySelector("[data-action='choose-custom-record-email-files']")?.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => addFiles(fileInput.files));
+    fileList.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-action='remove-custom-record-email-file']");
+      if (!button) return;
+      files = files.filter((file) => getCustomRecordEmailFileKey(file) !== button.dataset.fileKey);
+      renderFiles();
+    });
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        if (!sending) dropzone.classList.add("is-dragover");
+      });
+    });
+    ["dragleave", "drop"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropzone.classList.remove("is-dragover");
+      });
+    });
+    dropzone.addEventListener("drop", (event) => {
+      if (!sending) addFiles(event.dataTransfer?.files);
+    });
+    dropzone.addEventListener("click", () => {
+      if (!sending) fileInput.click();
+    });
+    dropzone.addEventListener("keydown", (event) => {
+      if (!["Enter", " "].includes(event.key) || sending) return;
+      event.preventDefault();
+      fileInput.click();
+    });
+    backdrop.addEventListener("pointerdown", (event) => {
+      if (event.target === backdrop) close();
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (sending || !form.reportValidity()) return;
+      sending = true;
+      sendButton.disabled = true;
+      form.setAttribute("aria-busy", "true");
+      status.textContent = files.length ? "Подготовка вложений..." : "Подготовка письма...";
+      try {
+        const attachments = await Promise.all(files.map(serializeCustomRecordEmailAttachment));
+        sendButton.disabled = false;
+        status.textContent = "Отправка через системный почтовый ящик...";
+        const sent = await sendServerEmail({
+          email: context.email,
+          subject: form.elements.subject.value,
+          message: form.elements.message.value,
+          attachments,
+          confirmText: "Отправить произвольное письмо?",
+          button: sendButton,
+          recipientMode: context.entityType === "contracts" ? "employee" : "student",
+          messageType: "Произвольное письмо",
+          recipientLabel: context.recipientLabel,
+          entityType: context.entityType,
+          entityId: context.entityId,
+          entityName: context.entityName
+        });
+        if (sent === true) {
+          sending = false;
+          close();
+          return;
+        }
+        status.textContent = sent === null
+          ? "Результат отправки неизвестен. Проверьте журнал действий."
+          : "Письмо не отправлено.";
+      } catch (error) {
+        alert(`Не удалось подготовить вложения: ${error.message}`);
+        status.textContent = "Письмо не отправлено.";
+      } finally {
+        sending = false;
+        sendButton.disabled = false;
+        form.removeAttribute("aria-busy");
+      }
+    });
+
+    renderFiles();
+    document.body.appendChild(backdrop);
+    form.elements.subject.focus({ preventScroll: true });
   }
 
   async function emailStudentCommunicationMessage(messageKey, button, event, recipientMode = "") {
@@ -29689,6 +30012,11 @@ MAX - https://bizvmax.ru/zifra_plus
       closeProfile();
       return true;
     }
+    const customRecordEmailComposer = document.querySelector("[data-custom-record-email-composer]");
+    if (customRecordEmailComposer) {
+      customRecordEmailComposer.closeCustomRecordEmailComposer?.();
+      return true;
+    }
     const studentPhotoCropEditor = document.querySelector("[data-student-photo-crop-editor]");
     if (studentPhotoCropEditor) {
       studentPhotoCropEditor.closeStudentPhotoCropEditor?.();
@@ -30154,6 +30482,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
     document.querySelectorAll("[data-action='open-student-messenger']").forEach((button) => {
       button.addEventListener("click", () => openStudentMessenger(button.dataset.messenger));
+    });
+    document.querySelectorAll("[data-action='open-custom-record-email']").forEach((button) => {
+      button.addEventListener("click", openCustomRecordEmailComposer);
     });
 
     document.querySelector("[data-action='open-student-messenger-url']")?.addEventListener("click", openStudentMessengerUrl);
