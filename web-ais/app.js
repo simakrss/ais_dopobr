@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.249",
-    releasedAt: "2026-08-23"
+    version: "1.7.250",
+    releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.250",
+      releasedAt: "2026-08-24",
+      changes: [
+        "Рентабельность округляется до целых рублей; по нажатию на показатель открывается сортируемая детализация по образовательным программам."
+      ]
+    },
     {
       version: "1.7.249",
       releasedAt: "2026-08-23",
@@ -4721,6 +4728,10 @@ MAX - https://bizvmax.ru/zifra_plus
         downloadQuery: ""
       },
       downloadDetailSort: { key: "id", dir: "desc" },
+      profitabilityDetails: {
+        open: false,
+        sort: { key: "profitability", dir: "desc" }
+      },
       downloads: {
         loading: false,
         loaded: false,
@@ -8859,6 +8870,7 @@ MAX - https://bizvmax.ru/zifra_plus
       </main>
       ${state.studentApplicationsImport.open ? renderStudentApplicationsImport() : ""}
       ${state.financeDetails.open ? renderFinanceDetailsDialog() : ""}
+      ${state.view === "statistics" && state.statistics.profitabilityDetails.open ? renderStatisticsProfitabilityDetailsDialog() : ""}
       ${state.modal ? renderModal() : ""}
       ${state.studentExpenseEditor ? renderStudentExpenseEditor() : ""}
       ${state.employeeExpenseEditor ? renderEmployeeExpenseEditor() : ""}
@@ -9035,9 +9047,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function formatStatisticsRublesPerStudent(value) {
+    if (value === null || value === undefined || value === "") return "—";
     const amount = Number(value);
     if (!Number.isFinite(amount)) return "—";
-    return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(amount)} руб. на чел.`;
+    return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(amount)} руб. на чел.`;
   }
 
   function statisticsMonthLabel(key) {
@@ -9083,13 +9096,19 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderStatisticsKpis(items = []) {
     return `
       <div class="statistics-kpi-grid ${items.length > 4 ? "is-dense" : ""}">
-        ${items.map((item) => `
-          <article class="statistics-kpi-card tone-${escapeAttr(item.tone || "teal")}"${item.tooltip ? ` title="${escapeAttr(item.tooltip)}"` : ""}>
+        ${items.map((item) => {
+          const tagName = item.action ? "button" : "article";
+          const actionAttributes = item.action
+            ? ` type="button" data-action="${escapeAttr(item.action)}"`
+            : "";
+          return `
+          <${tagName} class="statistics-kpi-card tone-${escapeAttr(item.tone || "teal")} ${item.action ? "is-actionable" : ""}"${actionAttributes}${item.tooltip ? ` title="${escapeAttr(item.tooltip)}"` : ""}>
             <span>${escapeHtml(item.label)}</span>
             <strong>${escapeHtml(item.value)}</strong>
             ${item.note ? `<small>${escapeHtml(item.note)}</small>` : ""}
-          </article>
-        `).join("")}
+          </${tagName}>
+        `;
+        }).join("")}
       </div>
     `;
   }
@@ -9345,7 +9364,42 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!students.size) return null;
     const totalStudentProfit = [...students.values()]
       .reduce((sum, student) => sum + student.income - student.expenses, 0);
-    return Math.round((totalStudentProfit / students.size) * 100) / 100;
+    return Math.round(totalStudentProfit / students.size);
+  }
+
+  function buildStatisticsProgramProfitabilityRows(incomeRows = [], directExpenseRows = []) {
+    const programs = new Map();
+    incomeRows.forEach((row) => {
+      const program = String(row.program || "Не задано").trim() || "Не задано";
+      const studentKey = getStatisticsStudentRowKey(row) || `row:${String(row.id || row.subject || programs.size)}`;
+      if (!programs.has(program)) {
+        programs.set(program, { program, income: 0, expenses: 0, students: new Set() });
+      }
+      const item = programs.get(program);
+      const amount = Number(row.amount || 0);
+      if (Number.isFinite(amount)) item.income += amount;
+      item.students.add(studentKey);
+    });
+    directExpenseRows.forEach((row) => {
+      const program = String(row.program || "Не задано").trim() || "Не задано";
+      const item = programs.get(program);
+      const studentKey = getStatisticsStudentRowKey(row);
+      const amount = Number(row.amount || 0);
+      if (!item || !studentKey || !item.students.has(studentKey) || !Number.isFinite(amount)) return;
+      item.expenses += Math.abs(amount);
+    });
+    return [...programs.values()].map((item) => {
+      const students = item.students.size;
+      const profit = item.income - item.expenses;
+      return {
+        program: item.program,
+        students,
+        income: item.income,
+        expenses: item.expenses,
+        profit,
+        profitability: students ? Math.round(profit / students) : 0
+      };
+    });
   }
 
   function buildStatisticsIncomeReport() {
@@ -9359,21 +9413,15 @@ MAX - https://bizvmax.ru/zifra_plus
     const incomeTotal = income.reduce((sum, row) => sum + Number(row.amount || 0), 0);
     const expenseTotal = expenses.reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0);
     const profit = incomeTotal - expenseTotal;
-    const studentIds = new Set(income.map((row) => row.studentId || row.studentUid || row.subject).filter(Boolean));
+    const studentIds = new Set(income.map(getStatisticsStudentRowKey).filter(Boolean));
     const sourceStudents = new Map();
     income.forEach((row) => {
       const source = row.source || "Не задано";
       if (!sourceStudents.has(source)) sourceStudents.set(source, new Set());
       sourceStudents.get(source).add(row.studentId || row.studentUid || row.subject || row.id);
     });
-    const programs = new Map();
-    income.forEach((row) => {
-      const name = row.program || "Не задано";
-      if (!programs.has(name)) programs.set(name, { program: name, income: 0, students: new Set() });
-      const item = programs.get(name);
-      item.income += Number(row.amount || 0);
-      item.students.add(row.studentId || row.studentUid || row.subject || row.id);
-    });
+    const programs = buildStatisticsProgramProfitabilityRows(income, directExpenses)
+      .sort((left, right) => right.income - left.income);
     return {
       income,
       expenses,
@@ -9384,9 +9432,7 @@ MAX - https://bizvmax.ru/zifra_plus
       studentCount: studentIds.size,
       monthly: buildStatisticsMonthlySeries(income, expenses),
       sources: [...sourceStudents.entries()].map(([label, values]) => ({ label, value: values.size })),
-      programs: [...programs.values()]
-        .map((item) => ({ program: item.program, students: item.students.size, income: item.income }))
-        .sort((left, right) => right.income - left.income)
+      programs
     };
   }
 
@@ -9403,6 +9449,7 @@ MAX - https://bizvmax.ru/zifra_plus
           value: formatStatisticsRublesPerStudent(report.studentProfitability),
           note: "Без общих расходов",
           tooltip: "Средняя разница между фактическими поступлениями и прямыми расходами по каждому слушателю с поступлениями в выбранных условиях. Общие расходы не учитываются.",
+          action: "open-statistics-profitability-details",
           tone: report.studentProfitability === null ? "blue" : (report.studentProfitability < 0 ? "red" : "green")
         }
       ])}
@@ -9434,6 +9481,103 @@ MAX - https://bizvmax.ru/zifra_plus
         ` : `<div class="empty-state compact"><span>Нет поступлений для выбранных условий.</span></div>`}
       </section>
     `;
+  }
+
+  const statisticsProgramProfitabilityColumns = Object.freeze([
+    { key: "program", label: "Образовательная программа" },
+    { key: "students", label: "Слушателей", numeric: true },
+    { key: "income", label: "Суммарные доходы", numeric: true },
+    { key: "expenses", label: "Прямые расходы", numeric: true },
+    { key: "profitability", label: "Рентабельность, руб. на чел.", numeric: true }
+  ]);
+
+  function getSortedStatisticsProgramProfitabilityRows() {
+    const rows = buildStatisticsIncomeReport().programs.slice();
+    const sort = state.statistics.profitabilityDetails.sort || { key: "profitability", dir: "desc" };
+    const column = statisticsProgramProfitabilityColumns.find((item) => item.key === sort.key)
+      || statisticsProgramProfitabilityColumns.at(-1);
+    const direction = sort.dir === "asc" ? 1 : -1;
+    return rows.sort((left, right) => {
+      if (column.numeric) {
+        const difference = Number(left[column.key] || 0) - Number(right[column.key] || 0);
+        if (difference) return difference * direction;
+      } else {
+        const difference = String(left[column.key] || "").localeCompare(String(right[column.key] || ""), "ru");
+        if (difference) return difference * direction;
+      }
+      return String(left.program || "").localeCompare(String(right.program || ""), "ru");
+    });
+  }
+
+  function renderStatisticsProgramProfitabilitySortButton(column) {
+    const sort = state.statistics.profitabilityDetails.sort || {};
+    const active = sort.key === column.key;
+    const indicator = active ? (sort.dir === "asc" ? "↑" : "↓") : "↕";
+    return `
+      <button class="statistics-table-sort-button ${active ? "is-active" : ""}" data-action="sort-statistics-profitability" data-sort-key="${escapeAttr(column.key)}" type="button">
+        <span>${escapeHtml(column.label)}</span><span class="statistics-table-sort-indicator" aria-hidden="true">${indicator}</span>
+      </button>
+    `;
+  }
+
+  function renderStatisticsProfitabilityDetailsDialog() {
+    const report = buildStatisticsIncomeReport();
+    const rows = getSortedStatisticsProgramProfitabilityRows();
+    const pagination = getTablePagination("statisticsProfitabilityDetails", rows.length);
+    const pageRows = rows.slice(pagination.start, pagination.end);
+    return `
+      <div class="modal-backdrop finance-details-backdrop" data-action="close-statistics-profitability-details">
+        <section class="modal finance-details-modal statistics-profitability-details-modal" role="dialog" aria-modal="true" aria-label="Рентабельность по образовательным программам">
+          <header class="modal-head">
+            <div>
+              <p class="eyebrow">Статистика доходов</p>
+              <h2>Рентабельность по образовательным программам</h2>
+              <small>Общие расходы не учитываются</small>
+            </div>
+            <button class="icon-button" data-action="close-statistics-profitability-details" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+          </header>
+          <div class="finance-details-content">
+            <div class="finance-details-summary" role="status">
+              <span>Программ: <strong>${formatStatisticsInteger(rows.length)}</strong></span>
+              <span>Рентабельность по выборке: <strong class="${Number(report.studentProfitability) < 0 ? "is-negative" : ""}">${escapeHtml(formatStatisticsRublesPerStudent(report.studentProfitability))}</strong></span>
+            </div>
+            ${rows.length ? `
+              <div class="table-wrap finance-details-table-wrap">
+                <table class="data-table finance-details-table statistics-profitability-table">
+                  <thead><tr>
+                    ${statisticsProgramProfitabilityColumns.map((column) => `<th class="${column.numeric ? "statistics-number-cell" : ""}">${renderStatisticsProgramProfitabilitySortButton(column)}</th>`).join("")}
+                  </tr></thead>
+                  <tbody>${pageRows.map((row) => `
+                    <tr>
+                      <td>${escapeHtml(row.program)}</td>
+                      <td class="statistics-number-cell">${formatStatisticsInteger(row.students)}</td>
+                      <td class="statistics-number-cell">${money(row.income)}</td>
+                      <td class="statistics-number-cell">${money(row.expenses)}</td>
+                      <td class="statistics-number-cell finance-details-amount ${row.profitability < 0 ? "is-negative" : "is-positive"}">${escapeHtml(formatStatisticsRublesPerStudent(row.profitability))}</td>
+                    </tr>
+                  `).join("")}</tbody>
+                </table>
+              </div>
+              ${renderTablePagination("statisticsProfitabilityDetails", rows.length, pagination)}
+            ` : `<div class="empty-state"><strong>Данных нет</strong><span>Измените фильтры статистики.</span></div>`}
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function openStatisticsProfitabilityDetails() {
+    state.statistics.profitabilityDetails = {
+      open: true,
+      sort: { key: "profitability", dir: "desc" }
+    };
+    state.tablePages.statisticsProfitabilityDetails = 1;
+    render();
+  }
+
+  function closeStatisticsProfitabilityDetails() {
+    state.statistics.profitabilityDetails.open = false;
+    render();
   }
 
   function buildStatisticsExpenseReport() {
@@ -9930,6 +10074,26 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindStatisticsEvents() {
     if (state.view !== "statistics") return;
+    document.querySelector("[data-action='open-statistics-profitability-details']")
+      ?.addEventListener("click", openStatisticsProfitabilityDetails);
+    document.querySelectorAll("[data-action='close-statistics-profitability-details']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (element.matches("button") || event.target === element) closeStatisticsProfitabilityDetails();
+      });
+    });
+    document.querySelectorAll("[data-action='sort-statistics-profitability']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = String(button.dataset.sortKey || "");
+        const column = statisticsProgramProfitabilityColumns.find((item) => item.key === key);
+        if (!column) return;
+        const current = state.statistics.profitabilityDetails.sort || { key: "profitability", dir: "desc" };
+        state.statistics.profitabilityDetails.sort = current.key === key
+          ? { key, dir: current.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: column.numeric ? "desc" : "asc" };
+        state.tablePages.statisticsProfitabilityDetails = 1;
+        render();
+      });
+    });
     document.querySelectorAll("[data-action='switch-statistics-tab']").forEach((button) => {
       button.addEventListener("click", () => {
         const tab = String(button.dataset.statisticsTab || "");
@@ -27985,6 +28149,10 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (state.financeDetails.open) {
       closeFinanceDetails();
+      return true;
+    }
+    if (state.statistics.profitabilityDetails.open) {
+      closeStatisticsProfitabilityDetails();
       return true;
     }
     if (document.body.classList.contains("sidebar-open")) {

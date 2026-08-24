@@ -18,7 +18,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.249"/u);
+assert.match(appSource, /version: "1\.7\.250"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 const navigationBlock = sourceBlock(appSource, "const navItems = [", "const PROGRAM_LIST_FIELD_KEYS");
 const navigationIds = [...navigationBlock.matchAll(/\{ id: "([^"]+)"/gu)].map((match) => match[1]);
@@ -33,6 +33,9 @@ assert.match(appSource, /Доходы и затраты по месяцам, т�
 assert.match(appSource, /label: "Рентабельность"/u);
 assert.match(appSource, /руб\. на чел\./u);
 assert.match(appSource, /Общие расходы не учитываются/u);
+assert.match(appSource, /open-statistics-profitability-details/u);
+assert.match(appSource, /Рентабельность по образовательным программам/u);
+assert.match(appSource, /Суммарные доходы/u);
 assert.match(appSource, /renderStatisticsInstallDownloadChart/u);
 assert.match(appSource, /renderStatisticsLocationChart/u);
 assert.match(appSource, /sortStatisticsMonthSeries/u);
@@ -138,9 +141,38 @@ assert.equal(calculateStatisticsStudentProfitability([], [
   { studentUid: "student-3", amount: 1200 }
 ]), null);
 assert.equal(calculateStatisticsStudentProfitability([], []), null);
+assert.equal(calculateStatisticsStudentProfitability([
+  { studentId: "1", amount: 100 }
+], [
+  { studentId: "1", amount: 66.6 }
+]), 33);
+const programProfitabilityBlock = sourceBlock(
+  appSource,
+  "function buildStatisticsProgramProfitabilityRows(",
+  "function buildStatisticsIncomeReport("
+);
+const buildStatisticsProgramProfitabilityRows = new Function(`
+  ${studentProfitabilityBlock.split("function buildStatisticsProgramProfitabilityRows(")[0]}
+  ${programProfitabilityBlock}
+  return buildStatisticsProgramProfitabilityRows;
+`)();
+assert.deepEqual(buildStatisticsProgramProfitabilityRows([
+  { id: "income-1", studentId: "1", program: "Программа А", amount: 100000 },
+  { id: "income-2", studentId: "2", program: "Программа А", amount: 50000 },
+  { id: "income-3", studentId: "3", program: "Программа Б", amount: 90000 }
+], [
+  { studentId: "1", program: "Программа А", amount: 40000 },
+  { studentId: "2", program: "Программа А", amount: 70000 },
+  { studentId: "3", program: "Программа Б", amount: 10000 },
+  { studentId: "", program: "Программа А", amount: 999999 }
+]), [
+  { program: "Программа А", students: 2, income: 150000, expenses: 110000, profit: 40000, profitability: 20000 },
+  { program: "Программа Б", students: 1, income: 90000, expenses: 10000, profit: 80000, profitability: 80000 }
+]);
 const incomeReportBlock = sourceBlock(appSource, "function buildStatisticsIncomeReport(", "function renderStatisticsIncome(");
 assert.match(incomeReportBlock, /calculateStatisticsStudentProfitability\(income, directExpenses\)/u);
 assert.doesNotMatch(incomeReportBlock, /calculateStatisticsStudentProfitability\([^)]*generalExpenses/u);
+assert.match(incomeReportBlock, /buildStatisticsProgramProfitabilityRows\(income, directExpenses\)/u);
 
 const normalizeAssistantStatisticsBlock = sourceBlock(
   serverSource,

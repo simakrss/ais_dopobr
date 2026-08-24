@@ -21344,6 +21344,25 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   box-shadow: 0 4px 14px rgba(16, 24, 40, 0.035);
 }
 
+.statistics-kpi-card.is-actionable {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.statistics-kpi-card.is-actionable:hover,
+.statistics-kpi-card.is-actionable:focus-visible {
+  border-color: #7fc2b2;
+  box-shadow: 0 7px 20px rgba(15, 118, 110, 0.12);
+}
+
+.statistics-kpi-card.is-actionable:focus-visible {
+  outline: 2px solid rgba(15, 118, 110, 0.28);
+  outline-offset: 2px;
+}
+
 .statistics-kpi-card::before {
   content: "";
   position: absolute;
@@ -21374,6 +21393,20 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   min-height: 15px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.statistics-profitability-table {
+  min-width: 820px;
+}
+
+.statistics-profitability-table th:first-child {
+  width: auto;
+}
+
+.statistics-profitability-table th:not(:first-child),
+.statistics-profitability-table td:not(:first-child) {
+  width: 155px;
+  white-space: nowrap;
 }
 
 .statistics-two-column {
