@@ -147,6 +147,7 @@ const DEFAULT_ADVERTISING_ABIT_MYSQL_DATABASE = "cl11741_abitviit";
 const DEFAULT_ADVERTISING_MOODLE_MYSQL_DATABASE = "cl11741_distep";
 const DEFAULT_ADVERTISING_COLLECTOR_LOCAL_WORKBOOK_PATH = "Y:\\Реклама\\Базы рассылок\\База рассылок.xlsb";
 const DEFAULT_ADVERTISING_COLLECTOR_WEBDAV_PATH = "ООО Цифровизация Плюс/Реклама/Базы рассылок/База рассылок.xlsb";
+const DEFAULT_ADVERTISING_SOURCE_PROXY_URL = "https://edu-plus.ru/lms/api/advertising/email-collector/source-proxy";
 const ADVERTISING_EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gu;
 const ADVERTISING_EMAIL_SOURCE_KINDS = new Set(["sql", "ais", "google", "workbook"]);
 const ADVERTISING_EMAIL_SQL_CONNECTIONS = new Set(["assistant", "applications", "abit", "moodle"]);
@@ -7192,9 +7193,7 @@ async function readAdvertisingGoogleSource(definitions = []) {
   throw new Error(errors.join("; ") || "Опубликованные таблицы недоступны.");
 }
 
-async function queryAdvertisingEmailRecords(pool, sql, mapper = null) {
-  if (!pool) throw new Error("Подключение MySQL не настроено.");
-  const [rows] = await pool.query({ sql, timeout: 30000 });
+function normalizeAdvertisingEmailRecords(rows, mapper = null) {
   return (Array.isArray(rows) ? rows : []).flatMap((row) => {
     const value = mapper ? mapper(row) : row;
     if (!value || typeof value !== "object") return [];
@@ -7209,6 +7208,15 @@ async function queryAdvertisingEmailRecords(pool, sql, mapper = null) {
       origin: cleanAdvertisingContactText(value.origin, 240)
     }));
   });
+}
+
+async function queryAdvertisingEmailRecords(pool, sql, mapper = null) {
+  if (!pool) throw new Error("Подключение MySQL не настроено.");
+  const [rows] = await pool.query({ sql, timeout: 30000 });
+  if (Array.isArray(rows) && rows.length > 100000) {
+    throw new Error("SQL-источник вернул более 100 000 строк. Уточните условия отбора.");
+  }
+  return normalizeAdvertisingEmailRecords(rows, mapper);
 }
 
 async function readAdvertisingAisContacts() {
@@ -7246,6 +7254,56 @@ async function getAdvertisingSourceMySqlPool(connection) {
   throw new Error("Для источника не выбрано подключение MySQL.");
 }
 
+function shouldRetryAdvertisingSqlThroughSite(error) {
+  const gatewaySecret = String(process.env.AIS_GATEWAY_SHARED_SECRET || "").trim();
+  if (process.platform !== "win32" || gatewaySecret.length < 32) return false;
+  return /ETIMEDOUT|connect timeout|timed out|ECONNREFUSED|ENOTFOUND|getaddrinfo|EHOSTUNREACH|ENETUNREACH/iu
+    .test(String(error?.message || ""));
+}
+
+function getAdvertisingSourceProxyUrl() {
+  const configured = String(process.env.AIS_PUBLIC_APP_URL || "").trim();
+  if (!configured) return DEFAULT_ADVERTISING_SOURCE_PROXY_URL;
+  const baseUrl = new URL(`${configured.replace(/\/+$/u, "")}/`);
+  if (baseUrl.protocol !== "https:") {
+    throw new Error("Резервный сервер источников рекламы должен использовать HTTPS.");
+  }
+  return new URL("api/advertising/email-collector/source-proxy", baseUrl).toString();
+}
+
+async function queryAdvertisingEmailRecordsThroughSite(source) {
+  const gatewaySecret = String(process.env.AIS_GATEWAY_SHARED_SECRET || "").trim();
+  if (gatewaySecret.length < 32) throw new Error("Не настроен защищённый доступ к серверу сайта.");
+  const body = Buffer.from(JSON.stringify({
+    source: publicAdvertisingEmailSource(source, true)
+  }), "utf8");
+  const response = await requestBuffer(getAdvertisingSourceProxyUrl(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Length": body.length,
+      "X-AIS-Gateway-Token": gatewaySecret
+    },
+    body,
+    timeoutMs: 60000,
+    maxResponseBytes: 32 * 1024 * 1024,
+    errorPrefix: "Резервный сервер источников рекламы недоступен",
+    timeoutError: "Резервный сервер источников рекламы не ответил вовремя"
+  });
+  let payload;
+  try {
+    payload = JSON.parse(response.toString("utf8"));
+  } catch {
+    throw new Error("Резервный сервер источников рекламы вернул некорректный ответ.");
+  }
+  if (!payload?.ok || !Array.isArray(payload.records)) {
+    throw new Error(cleanAdvertisingContactText(payload?.error, 500) || "Резервный сервер не вернул данные источника.");
+  }
+  const records = normalizeAdvertisingEmailRecords(payload.records);
+  Object.defineProperty(records, "processing", { value: "site-proxy", enumerable: false });
+  return records;
+}
+
 function formatAdvertisingSourceError(error, source) {
   const message = cleanAdvertisingContactText(error?.message || "Источник недоступен.", 600);
   if (/ETIMEDOUT|connect timeout|timed out/iu.test(message)) {
@@ -7263,10 +7321,20 @@ function formatAdvertisingSourceError(error, source) {
 
 async function runAdvertisingEmailSource(source, workbookPromise) {
   if (source.kind === "sql") {
-    return queryAdvertisingEmailRecords(
-      await getAdvertisingSourceMySqlPool(source.connection),
-      source.sql
-    );
+    try {
+      return await queryAdvertisingEmailRecords(
+        await getAdvertisingSourceMySqlPool(source.connection),
+        source.sql
+      );
+    } catch (error) {
+      if (!shouldRetryAdvertisingSqlThroughSite(error)) throw error;
+      try {
+        return await queryAdvertisingEmailRecordsThroughSite(source);
+      } catch (proxyError) {
+        error.message = `${error.message}. Резервный запрос через сайт также не выполнен: ${proxyError.message}`;
+        throw error;
+      }
+    }
   }
   if (source.kind === "ais") return readAdvertisingAisContacts();
   if (source.kind === "google") return readAdvertisingGoogleSource(source.workbooks);
@@ -7414,6 +7482,7 @@ async function collectAdvertisingEmails(sourceIds = [], options = {}) {
         status: "ok",
         records,
         count: new Set(records.flatMap((record) => extractAdvertisingEmails(record.email))).size,
+        processing: String(records.processing || "direct"),
         durationMs: Date.now() - sourceStartedAt,
         error: ""
       };
@@ -7423,6 +7492,7 @@ async function collectAdvertisingEmails(sourceIds = [], options = {}) {
         status: "error",
         records: [],
         count: 0,
+        processing: "direct",
         durationMs: Date.now() - sourceStartedAt,
         error: formatAdvertisingSourceError(error, source)
       };
@@ -7649,6 +7719,36 @@ async function handleAdvertisingDatabaseSync(req, res, authUser) {
     });
   } catch (error) {
     sendError(res, 502, `Не удалось синхронизировать базу рекламы: ${error.message}`);
+  }
+}
+
+async function handleAdvertisingEmailSourceProxy(req, res, authUser) {
+  if (authUser?.role !== "admin") {
+    sendError(res, 403, "Резервный запуск источника доступен только серверу системы.");
+    return;
+  }
+  if (req.method !== "POST") {
+    sendError(res, 405, "Method not allowed");
+    return;
+  }
+  let source = null;
+  try {
+    const body = await readJsonBody(req, 64 * 1024);
+    source = normalizeAdvertisingEmailSource(body.source, 0);
+    if (source.kind !== "sql") throw new Error("Через сервер сайта выполняются только SQL-источники.");
+    const records = await queryAdvertisingEmailRecords(
+      await getAdvertisingSourceMySqlPool(source.connection),
+      source.sql
+    );
+    sendJson(res, 200, {
+      ok: true,
+      source: publicAdvertisingEmailSource(source),
+      records,
+      count: records.length,
+      processing: "site-proxy"
+    });
+  } catch (error) {
+    sendError(res, 503, formatAdvertisingSourceError(error, source));
   }
 }
 
@@ -25244,6 +25344,10 @@ async function route(req, res) {
   }
   if (req.method === "GET" && requestUrl.pathname === "/api/statistics/assistant") {
     await handleAssistantStatistics(res);
+    return;
+  }
+  if (requestUrl.pathname === "/api/advertising/email-collector/source-proxy") {
+    await handleAdvertisingEmailSourceProxy(req, res, authUser);
     return;
   }
   if (requestUrl.pathname === "/api/advertising/email-collector/settings") {

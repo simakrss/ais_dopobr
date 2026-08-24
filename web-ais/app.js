@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.262",
+    version: "1.7.263",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.263",
+      releasedAt: "2026-08-24",
+      changes: [
+        "При тайм-ауте прямого MySQL-подключения локальный сборщик безопасно повторяет SQL-запрос через сервер сайта.",
+        "На карточке источника отображается пометка «через сайт», поэтому способ успешной обработки остаётся понятным пользователю."
+      ]
+    },
     {
       version: "1.7.262",
       releasedAt: "2026-08-24",
@@ -10766,8 +10774,9 @@ MAX - https://bizvmax.ru/zifra_plus
       const statusLabel = status === "error"
         ? "Ошибка"
         : status === "ok" ? `${formatStatisticsInteger(result.count)} адресов` : "Ожидает запуска";
+      const processingLabel = result?.processing === "site-proxy" ? " · через сайт" : "";
       return `
-        <label class="advertising-source-card is-${escapeAttr(status)} ${selected.has(source.id) ? "is-selected" : ""}" title="${escapeMultilineAttr(result?.error || source.label)}">
+        <label class="advertising-source-card is-${escapeAttr(status)} ${selected.has(source.id) ? "is-selected" : ""}" title="${escapeMultilineAttr(result?.error || (result?.processing === "site-proxy" ? `${source.label}\n\nИсточник обработан через сервер сайта, поскольку прямое подключение с компьютера недоступно.` : source.label))}">
           <input
             type="checkbox"
             data-advertising-source="${escapeAttr(source.id)}"
@@ -10776,7 +10785,7 @@ MAX - https://bizvmax.ru/zifra_plus
           >
           <span class="advertising-source-copy">
             <strong>${escapeHtml(source.label)}</strong>
-            <small>${escapeHtml(source.group)} · ${escapeHtml(statusLabel)}</small>
+            <small>${escapeHtml(source.group)} · ${escapeHtml(statusLabel)}${escapeHtml(processingLabel)}</small>
             ${result?.error ? `<em>${escapeHtml(result.error)}</em>` : ""}
           </span>
         </label>

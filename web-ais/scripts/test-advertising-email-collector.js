@@ -14,6 +14,7 @@ const {
 const root = path.resolve(__dirname, "..");
 const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const serverSource = fs.readFileSync(path.join(root, "app-server.js"), "utf8");
+const gatewaySource = fs.readFileSync(path.join(root, "gateway.php"), "utf8");
 const serverCliSource = fs.readFileSync(path.join(root, "server-cli.js"), "utf8");
 const stylesSource = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 const indexSource = fs.readFileSync(path.join(root, "index.html"), "utf8");
@@ -139,7 +140,12 @@ assert.match(stylesSource, /\.advertising-source-grid/u);
 assert.match(stylesSource, /\.advertising-email-table/u);
 assert.match(stylesSource, /\.advertising-source-builder-panel/u);
 assert.match(serverSource, /trySyncAdvertisingEmailExclusionsForDatabaseOperation/u);
+assert.match(serverSource, /queryAdvertisingEmailRecordsThroughSite/u);
+assert.match(serverSource, /source-proxy/u);
+assert.match(gatewaySource, /gateway_handle_advertising_source_proxy/u);
+assert.match(gatewaySource, /hash_equals/u);
 assert.match(appSource, /advertisingExclusionsSync/u);
-assert.match(indexSource, /20260824-advertising-sources-v2/u);
+assert.match(appSource, /через сайт/u);
+assert.match(indexSource, /20260824-advertising-sources-v3/u);
 
 console.log("Advertising email collector tests passed.");

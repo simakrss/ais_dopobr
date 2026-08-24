@@ -706,6 +706,40 @@ function gateway_tunnel_settings(): ?array
     return ['baseUrl' => $baseUrl, 'secret' => $secret];
 }
 
+function gateway_handle_advertising_source_proxy(
+    string $method,
+    string $path,
+    string $body
+): void {
+    if ($path !== '/api/advertising/email-collector/source-proxy') {
+        return;
+    }
+    $settings = gateway_tunnel_settings();
+    $headers = gateway_request_headers();
+    $providedSecret = trim((string) ($headers['x-ais-gateway-token'] ?? ''));
+    if (
+        $settings === null
+        || $providedSecret === ''
+        || !hash_equals((string) $settings['secret'], $providedSecret)
+    ) {
+        gateway_fail(404, 'Not found');
+    }
+    if ($method !== 'POST') {
+        gateway_fail(405, 'Method not allowed');
+    }
+    if (strlen($body) > 64 * 1024) {
+        gateway_fail(413, 'Настройки источника превышают допустимый размер.');
+    }
+    $headers['x-ais-user-id'] = 'advertising-source-proxy';
+    $headers['x-ais-user-login'] = 'advertising-proxy';
+    $headers['x-ais-user-name'] = 'Advertising source proxy';
+    $headers['x-ais-user-role'] = 'admin';
+    $headers['x-ais-session-id'] = hash('sha256', 'advertising-source-proxy');
+    $response = gateway_run_node($path, 'POST', $headers, $body);
+    $response['headers']['X-AIS-Processing'] = 'site-proxy';
+    gateway_send_node_response($response);
+}
+
 function gateway_sanitize_external_service_url(string $value, string $fallback = ''): string
 {
     $source = trim($value !== '' ? $value : $fallback);
@@ -1950,6 +1984,8 @@ try {
         $response = gateway_run_node(gateway_api_url(), $method, gateway_request_headers(), $body);
         gateway_send_node_response($response);
     }
+
+    gateway_handle_advertising_source_proxy($method, $requestPath, $body);
 
     $currentUser = gateway_require_user();
     $authenticatedHeaders = gateway_request_headers();
