@@ -21381,6 +21381,26 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   font-size: 13px;
 }
 
+.statistics-kpi-card > .statistics-kpi-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.statistics-kpi-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-grid;
+  flex: 0 0 20px;
+  place-items: center;
+  border-radius: 6px;
+  background: #e4f4ef;
+  color: #087f6f;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+}
+
 .statistics-kpi-card > strong {
   overflow: hidden;
   font-size: clamp(20px, 2vw, 28px);
@@ -21396,17 +21416,60 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .statistics-profitability-table {
-  min-width: 820px;
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
 }
 
-.statistics-profitability-table th:first-child {
-  width: auto;
+.statistics-profitability-table th,
+.statistics-profitability-table td {
+  min-width: 0;
+  padding: 6px 7px;
+  font-size: 13px;
 }
 
-.statistics-profitability-table th:not(:first-child),
-.statistics-profitability-table td:not(:first-child) {
-  width: 155px;
+.statistics-profitability-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statistics-profitability-table td:not(.statistics-program-name-cell) {
   white-space: nowrap;
+}
+
+.statistics-program-name-cell {
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap !important;
+}
+
+.statistics-profitability-column-head .table-head-cell {
+  gap: 4px;
+  padding-right: 7px;
+}
+
+.statistics-profitability-column-head .statistics-table-sort-button {
+  min-width: 0;
+  gap: 3px;
+}
+
+.statistics-profitability-column-head .statistics-table-sort-button > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  line-height: 1.15;
+}
+
+.statistics-profitability-resize-handle {
+  right: -7px;
+}
+
+.statistics-profitability-column-head:hover .statistics-profitability-resize-handle::after,
+.statistics-profitability-resize-handle:hover::after,
+body.is-resizing-column .statistics-profitability-resize-handle::after {
+  background: #70bbaa;
 }
 
 .statistics-two-column {

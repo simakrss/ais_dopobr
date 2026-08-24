@@ -18,7 +18,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.252"/u);
+assert.match(appSource, /version: "1\.7\.253"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 const navigationBlock = sourceBlock(appSource, "const navItems = [", "const PROGRAM_LIST_FIELD_KEYS");
 const navigationIds = [...navigationBlock.matchAll(/\{ id: "([^"]+)"/gu)].map((match) => match[1]);
@@ -31,7 +31,7 @@ assert.match(appSource, /data-orderable-tabs="statistics"/u);
 assert.match(appSource, /Интерактивная статистика/u);
 assert.match(appSource, /Доходы и затраты по месяцам, тыс\. руб\./u);
 assert.match(appSource, /label: "Рентабельность"/u);
-assert.match(appSource, /руб\. на чел\./u);
+assert.match(appSource, /₽\/чел\./u);
 assert.match(appSource, /Общие расходы не учитываются/u);
 assert.match(appSource, /open-statistics-profitability-details/u);
 assert.match(appSource, /Рентабельность по образовательным программам/u);
@@ -167,8 +167,8 @@ assert.deepEqual(buildStatisticsProgramProfitabilityRows([
   { studentId: "3", program: "Программа Б", amount: 10000 },
   { studentId: "", program: "Программа А", amount: 999999 }
 ]), [
-  { program: "Программа А", students: 2, income: 150000, expenses: 110000, profit: 40000, profitability: 20000 },
-  { program: "Программа Б", students: 1, income: 90000, expenses: 10000, profit: 80000, profitability: 80000 }
+  { program: "Программа А", students: 2, income: 150000, expenses: 110000, profit: 40000, profitability: 20000, profitabilityPercent: 26.7 },
+  { program: "Программа Б", students: 1, income: 90000, expenses: 10000, profit: 80000, profitability: 80000, profitabilityPercent: 88.9 }
 ]);
 const incomeReportBlock = sourceBlock(appSource, "function buildStatisticsIncomeReport(", "function renderStatisticsIncome(");
 assert.match(incomeReportBlock, /calculateStatisticsStudentProfitability\(income, directExpenses\)/u);
@@ -357,6 +357,12 @@ assert.match(styles, /\.statistics-download-table\s*\{/u);
 assert.match(styles, /\.statistics-download-table \.statistics-ellipsis-cell[\s\S]*text-overflow:\s*ellipsis/u);
 assert.match(styles, /\.statistics-download-table\s*\{[\s\S]*min-width:\s*760px/u);
 assert.match(styles, /\.statistics-table-sort-button\s*\{/u);
+assert.match(appSource, /key: "profitabilityPercent", label: "Рентабельность, %"/u);
+assert.match(appSource, /STATISTICS_PROFITABILITY_TABLE_CONFIG_ID/u);
+assert.match(appSource, /statistics-profitability-resize-handle/u);
+assert.match(styles, /\.statistics-profitability-table\s*\{[\s\S]*table-layout:\s*fixed/u);
+assert.match(styles, /\.statistics-program-name-cell\s*\{[\s\S]*text-overflow:\s*ellipsis/u);
+assert.match(styles, /\.statistics-kpi-icon\s*\{/u);
 assert.match(styles, /grid-auto-columns:\s*minmax\(24px, 1fr\)/u);
 assert.match(styles, /grid-auto-columns:\s*minmax\(44px, 1fr\)/u);
 assert.match(styles, /\.statistics-chart-period:last-child\s*\{/u);
