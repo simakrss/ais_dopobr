@@ -28,13 +28,26 @@ function loadImportMergeHelpers() {
 }
 
 function testBaselineNormalizationAndLatestTimestamp() {
-  const context = {};
+  const context = {
+    state: {
+      data: {
+        collections: {
+          audit: [
+            { createdAt: "2026-08-20T09:00:00.000Z", entityType: "database" },
+            { createdAt: "2026-08-20T08:00:00.000Z", entityType: "students" },
+            { createdAt: "2026-08-01T00:00:00.000Z", entityType: "documents" }
+          ]
+        }
+      }
+    }
+  };
   vm.createContext(context);
   vm.runInContext(
     extractBetween("  function normalizeStudentDatabaseSyncBaseline", "  async function readStudentImportResponse")
       + "\nthis.normalizeBaseline = normalizeStudentDatabaseSyncBaseline;"
       + "\nthis.isValidBaseline = isValidStudentDatabaseSyncBaseline;"
-      + "\nthis.latestTimestamp = getLatestStudentDatabaseSynchronizationTimestamp;",
+      + "\nthis.latestTimestamp = getLatestStudentDatabaseSynchronizationTimestamp;"
+      + "\nthis.auditWindow = getStudentDatabaseCriticalAuditWindow;",
     context
   );
   const baseline = context.normalizeBaseline({
@@ -51,6 +64,14 @@ function testBaselineNormalizationAndLatestTimestamp() {
   assert.equal(
     context.latestTimestamp("2026-08-13T10:00:00.000Z", "2026-08-15T12:00:00.000Z"),
     "2026-08-15T12:00:00.000Z"
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.auditWindow())),
+    {
+      latestCriticalAt: "2026-08-20T08:00:00.000Z",
+      oldestAt: "2026-08-01T00:00:00.000Z",
+      complete: true
+    }
   );
 }
 
@@ -582,6 +603,11 @@ function makeExportContext(result, { validBaseline = true } = {}) {
     normalizeStudentDatabaseSyncBaseline: (value) => value || {},
     isValidStudentDatabaseSyncBaseline: () => validBaseline,
     getLatestStudentDatabaseSynchronizationTimestamp: () => "",
+    getStudentDatabaseCriticalAuditWindow: () => ({
+      latestCriticalAt: "2026-08-20T09:00:00.000Z",
+      oldestAt: "2026-08-01T00:00:00.000Z",
+      complete: false
+    }),
     flushSharedApplicationState: async () => true,
     buildStudentDatabaseExportStudents: () => [{ id: "s1" }],
     buildStudentDatabaseExportContracts: () => [{ id: "c1" }],
@@ -623,11 +649,13 @@ function makeExportContext(result, { validBaseline = true } = {}) {
     buildStudentDatabaseSyncBaseline: (...args) => {
       baselineCalls.push(args);
       return {
-        version: 1,
+        version: 2,
         sourceHash: args[0],
         sourceIdentity: args[1],
         webRevision: args[2],
-        synchronizedAt: args[3]
+        synchronizedAt: args[3],
+        criticalHash: args[4],
+        criticalIdentityHash: args[5]
       };
     },
     importStudentsFromDatabase: async () => {
@@ -675,6 +703,8 @@ async function testDirectionalExportFlows() {
   assert.equal(unchanged.exportBody.directionalSync, true);
   assert.equal(unchanged.exportBody.inventory.length, 1);
   assert.equal(unchanged.exportBody.trainingPlans.length, 1);
+  assert.equal(unchanged.exportBody.currentWebCriticalUpdatedAt, "2026-08-20T09:00:00.000Z");
+  assert.equal(unchanged.exportBody.currentWebAuditOldestAt, "2026-08-01T00:00:00.000Z");
 
   const changedDuringPreparation = makeExportContext({
     syncDirection: "web-to-excel",
@@ -710,11 +740,11 @@ async function testDirectionalExportFlows() {
     studentCount: 1
   }, { validBaseline: false });
   await initial.operation({ shiftKey: false });
-  assert.equal(initial.order.includes("persist"), false);
-  assert.equal(initial.order.includes("baseline-flush"), false);
+  assert.equal(initial.order.includes("persist"), true);
+  assert.equal(initial.order.includes("baseline-flush"), true);
   assert.equal(initial.order.includes("audit"), false);
-  assert.equal(initial.baselineCalls.length, 0);
-  assert.match(initial.operationResults.at(-1).summary, /нельзя доказать совпадение/iu);
+  assert.equal(initial.baselineCalls.length, 1);
+  assert.match(initial.operationResults.at(-1).summary, /не изменились/iu);
 
   const excel = makeExportContext({
     syncDirection: "excel-to-web",

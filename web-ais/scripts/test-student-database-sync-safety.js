@@ -11,6 +11,9 @@ const clientPath = path.resolve(__dirname, "..", "app.js");
 const serverSource = fs.readFileSync(serverPath, "utf8").replace(/\r\n?/gu, "\n");
 const clientSource = fs.readFileSync(clientPath, "utf8").replace(/\r\n?/gu, "\n");
 const {
+  hashStudentDatabaseCriticalSnapshot,
+  hashStudentDatabaseCriticalIdentity,
+  getStudentDatabaseEmbeddedSyncTimestamp,
   normalizeStudentDatabaseSyncBaseline,
   resolveStudentDatabaseSyncDirection,
   acquireStudentDatabaseSyncReservation,
@@ -46,7 +49,11 @@ function testCompleteBaselineAndInitialMigrationSafety() {
     webRevision: 17,
     synchronizedAt: "2026-08-20T10:00:00.000Z"
   };
-  assert.deepEqual(normalizeStudentDatabaseSyncBaseline(complete), complete);
+  assert.deepEqual(normalizeStudentDatabaseSyncBaseline(complete), {
+    ...complete,
+    criticalHash: "",
+    criticalIdentityHash: ""
+  });
   for (const [field, replacement] of [
     ["sourceHash", ""],
     ["sourceIdentity", ""],
@@ -97,6 +104,138 @@ function testCompleteBaselineAndInitialMigrationSafety() {
     }),
     statusError(409, /контрольной суммы[^.]*нет|совпадение данных не доказано/iu),
     "Одни timestamps не доказывают равенство Web и XLSB без content baseline"
+  );
+}
+
+function buildCriticalData(status = "На зачисление", extraStudent = {}) {
+  return {
+    students: [{
+      id: "web-only-id",
+      uid: "1169",
+      name: "Колюпанова Ирина Юрьевна",
+      applicationDate: "2026-08-20",
+      program: "Курс (72 ч)",
+      status,
+      additionalStatus: status === "Учится" ? "Обучающиеся" : "На зачисление",
+      ...extraStudent
+    }],
+    contracts: [],
+    directExpenses: [],
+    generalExpenses: [],
+    inventoryRows: [],
+    programs: [],
+    trainingPlans: []
+  };
+}
+
+function testCriticalDataDirectionAndLegacyMigration() {
+  const base = buildCriticalData();
+  const excelChanged = buildCriticalData("Учится");
+  const webChanged = buildCriticalData("Отчислен");
+  const baseHash = hashStudentDatabaseCriticalSnapshot(base);
+  const baseIdentity = hashStudentDatabaseCriticalIdentity(base);
+  assert.equal(
+    getStudentDatabaseEmbeddedSyncTimestamp({
+      students: [
+        { databaseSync: { syncedAt: "2026-08-24T13:49:46.000Z" } },
+        { databaseSync: { syncedAt: "2026-08-24T13:49:46.000Z" } },
+        { databaseSync: { syncedAt: "2026-08-23T10:00:00.000Z" } }
+      ]
+    }),
+    "2026-08-24T13:49:46.000Z"
+  );
+  assert.equal(
+    hashStudentDatabaseCriticalSnapshot(buildCriticalData("На зачисление", {
+      id: "another-web-id",
+      photoData: "data:image/jpeg;base64,ignored",
+      portalAccessMessage: "Вычисляемое сообщение"
+    })),
+    baseHash,
+    "Web-only и вычисляемые поля не должны блокировать синхронизацию XLSB"
+  );
+  assert.equal(hashStudentDatabaseCriticalIdentity(excelChanged), baseIdentity);
+  const baseline = {
+    version: 2,
+    sourceHash: "a".repeat(64),
+    sourceIdentity: "b".repeat(64),
+    webRevision: 17,
+    synchronizedAt: "2026-08-20T10:00:00.000Z",
+    criticalHash: baseHash,
+    criticalIdentityHash: baseIdentity
+  };
+  const common = {
+    baseline,
+    currentWebRevision: 99,
+    sourceHash: "f".repeat(64),
+    sourceIdentity: baseline.sourceIdentity,
+    currentWebCriticalHash: baseHash,
+    currentExcelCriticalHash: hashStudentDatabaseCriticalSnapshot(excelChanged),
+    currentWebCriticalIdentityHash: baseIdentity,
+    currentExcelCriticalIdentityHash: baseIdentity
+  };
+  assert.equal(resolveStudentDatabaseSyncDirection(common).direction, "excel-to-web");
+  assert.equal(
+    resolveStudentDatabaseSyncDirection({
+      ...common,
+      baseline: {
+        version: 1,
+        sourceHash: "a".repeat(64),
+        sourceIdentity: baseline.sourceIdentity,
+        webRevision: 17,
+        synchronizedAt: baseline.synchronizedAt
+      },
+      currentWebCriticalHash: baseHash,
+      currentExcelCriticalHash: baseHash
+    }).direction,
+    "unchanged",
+    "Общая ревизия и двоичный хеш не должны считать некритичные изменения конфликтом"
+  );
+  assert.throws(
+    () => resolveStudentDatabaseSyncDirection({
+      ...common,
+      currentWebCriticalHash: hashStudentDatabaseCriticalSnapshot(webChanged)
+    }),
+    statusError(409, /критичные данные изменились и в Web-базе, и в XLSB/iu)
+  );
+  assert.equal(
+    resolveStudentDatabaseSyncDirection({
+      baseline: null,
+      currentWebRevision: 99,
+      currentWebUpdatedAt: "2026-08-24T14:52:15.000Z",
+      sourceHash: "f".repeat(64),
+      sourceIdentity: baseline.sourceIdentity,
+      sourceModifiedAt: "2026-08-24T14:10:16.000Z",
+      sourceEmbeddedSynchronizedAt: "2026-08-24T13:49:46.000Z",
+      lastDownloadedAt: "2026-08-24T13:55:13.000Z",
+      currentWebCriticalUpdatedAt: "2026-08-24T06:15:53.000Z",
+      currentWebAuditOldestAt: "2026-08-11T14:44:52.000Z",
+      currentWebAuditComplete: false,
+      currentWebCriticalHash: baseHash,
+      currentExcelCriticalHash: hashStudentDatabaseCriticalSnapshot(excelChanged),
+      currentWebCriticalIdentityHash: baseIdentity,
+      currentExcelCriticalIdentityHash: baseIdentity
+    }).direction,
+    "excel-to-web",
+    "Служебное обновление Web после выгрузки не должно скрывать изменение критичных данных Excel"
+  );
+  assert.throws(
+    () => resolveStudentDatabaseSyncDirection({
+      baseline: null,
+      currentWebRevision: 99,
+      currentWebUpdatedAt: "2026-08-24T14:52:15.000Z",
+      sourceHash: "f".repeat(64),
+      sourceIdentity: baseline.sourceIdentity,
+      sourceModifiedAt: "2026-08-24T14:10:16.000Z",
+      sourceEmbeddedSynchronizedAt: "2026-08-24T13:49:46.000Z",
+      currentWebCriticalUpdatedAt: "2026-08-24T14:00:00.000Z",
+      currentWebAuditOldestAt: "2026-08-11T14:44:52.000Z",
+      currentWebAuditComplete: false,
+      currentWebCriticalHash: baseHash,
+      currentExcelCriticalHash: hashStudentDatabaseCriticalSnapshot(excelChanged),
+      currentWebCriticalIdentityHash: baseIdentity,
+      currentExcelCriticalIdentityHash: baseIdentity
+    }),
+    statusError(409, /критичные данные менялись и в Web-базе, и в XLSB/iu)
   );
 }
 
@@ -751,6 +890,7 @@ function testClientGenerationGuardAndSourceProtocols() {
 
 async function main() {
   testCompleteBaselineAndInitialMigrationSafety();
+  testCriticalDataDirectionAndLegacyMigration();
   testReservationRevisionAndTtl();
   await testAuthoritativeRevisionAssertions();
   await testStrictReservationTokenAndBaseRevision();

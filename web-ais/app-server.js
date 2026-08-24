@@ -831,6 +831,22 @@ const STUDENT_DATABASE_SYNC_EXCLUDED_FIELDS = new Set([
   "balance",
   "paidAmount"
 ]);
+const STUDENT_DATABASE_CRITICAL_HASH_VERSION = 1;
+const STUDENT_DATABASE_CRITICAL_STUDENT_EXCLUDED_FIELDS = new Set([
+  ...STUDENT_DATABASE_SYNC_EXCLUDED_FIELDS,
+  "portalAccessMessage"
+]);
+const STUDENT_DATABASE_CRITICAL_BOOLEAN_FIELDS = new Set([
+  "addressByFirstName",
+  "noDeclension",
+  "internship",
+  "reviewPublished"
+]);
+const STUDENT_DATABASE_CRITICAL_PROGRAM_EXCLUDED_FIELDS = new Set([
+  "promoMessage1",
+  "promoMessage2",
+  "emailMessageTemplate"
+]);
 const DIRECT_EXPENSE_DATABASE_COLUMN_MAP = Object.freeze({
   "uid": "uid",
   "Дата": "date",
@@ -12182,6 +12198,309 @@ function hashStudentDatabaseSyncRecord(record, fields) {
   return `sha256:${crypto.createHash("sha256").update(JSON.stringify(entries)).digest("hex")}`;
 }
 
+function normalizeStudentDatabaseCriticalHash(value) {
+  const source = String(value || "").trim().toLowerCase();
+  return /^[a-f0-9]{64}$/u.test(source) ? source : "";
+}
+
+function normalizeStudentDatabaseCriticalBoolean(value) {
+  if (value === true || Number(value) === 1) return "1";
+  const source = String(value ?? "").trim().toLocaleLowerCase("ru-RU");
+  return ["+", "x", "да", "true", "есть", "checked", "dated"].includes(source) ? "1" : "";
+}
+
+function normalizeStudentDatabaseCriticalGender(value) {
+  const source = String(value ?? "").trim().toLocaleLowerCase("ru-RU");
+  if (source.startsWith("ж")) return "ж";
+  if (source.startsWith("м")) return "м";
+  return source;
+}
+
+function normalizeStudentDatabaseCriticalStudentValue(record, fieldName) {
+  if (fieldName === "frdoStatus") {
+    const frdo = splitStudentDatabaseFrdoValue(record?.frdoDate || record?.frdoStatus);
+    return frdo.frdoDate || String(frdo.frdoStatus || "").trim();
+  }
+  if (fieldName === "gender") return normalizeStudentDatabaseCriticalGender(record?.[fieldName]);
+  if (STUDENT_DATABASE_CRITICAL_BOOLEAN_FIELDS.has(fieldName)) {
+    return normalizeStudentDatabaseCriticalBoolean(record?.[fieldName]);
+  }
+  if (/_state$/u.test(fieldName)) {
+    return normalizeStudentDatabaseCriticalBoolean(record?.[fieldName]);
+  }
+  return normalizeStudentDatabaseSyncValue(record?.[fieldName], fieldName);
+}
+
+function projectStudentDatabaseCriticalRecord(record) {
+  const result = {};
+  const fields = [...new Set(Object.values(STUDENT_DATABASE_COLUMN_MAP))]
+    .filter((field) => !STUDENT_DATABASE_CRITICAL_STUDENT_EXCLUDED_FIELDS.has(field));
+  fields.push("additionalStatus");
+  fields.forEach((field) => {
+    result[field] = normalizeStudentDatabaseCriticalStudentValue(record, field);
+  });
+  Object.keys(record || {})
+    .filter((field) => /^event_[A-Za-z0-9_-]+_(?:state|date)$/u.test(field))
+    .sort()
+    .forEach((field) => {
+      const value = normalizeStudentDatabaseCriticalStudentValue(record, field);
+      if (value !== "") result[field] = value;
+    });
+  return result;
+}
+
+function normalizeStudentDatabaseCriticalContractValue(record, fieldName) {
+  if (/_state$/u.test(fieldName)) {
+    return normalizeStudentDatabaseCriticalBoolean(record?.[fieldName]);
+  }
+  return normalizeContractDatabaseValue(record?.[fieldName], fieldName);
+}
+
+function projectStudentDatabaseCriticalContract(record) {
+  const result = {};
+  const fields = [...new Set(Object.values(CONTRACT_DATABASE_COLUMN_MAP)), "section"];
+  fields.forEach((field) => {
+    result[field] = field === "section"
+      ? normalizeContractDatabaseSection(record?.section || record?.status)
+      : normalizeStudentDatabaseCriticalContractValue(record, field);
+  });
+  Object.keys(record || {})
+    .filter((field) => /^event_[A-Za-z0-9_-]+_(?:state|date)$/u.test(field))
+    .sort()
+    .forEach((field) => {
+      const value = normalizeStudentDatabaseCriticalContractValue(record, field);
+      if (value !== "") result[field] = value;
+    });
+  return result;
+}
+
+function projectStudentDatabaseCriticalMappedRecord(record, fieldNames, normalizer) {
+  const result = {};
+  fieldNames.forEach((field) => {
+    result[field] = normalizer(record?.[field], field);
+  });
+  return result;
+}
+
+function projectStudentDatabaseCriticalProgram(record) {
+  const result = {};
+  [...new Set(Object.values(PROGRAM_DATABASE_COLUMN_MAP))]
+    .filter((field) => !STUDENT_DATABASE_CRITICAL_PROGRAM_EXCLUDED_FIELDS.has(field))
+    .forEach((field) => {
+      let value = record?.[field];
+      if (field === "name") value = record?.xlsbProgramName || value;
+      if (
+        field === "landingCode"
+        && Object.prototype.hasOwnProperty.call(record || {}, "xlsbProgramLandingCode")
+      ) value = record.xlsbProgramLandingCode;
+      result[field] = normalizeProgramDatabaseValue(field, value);
+    });
+  return result;
+}
+
+function getStudentDatabaseCriticalCollections(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const students = Array.isArray(source.students) ? source.students : [];
+  const directExpenses = [
+    ...(Array.isArray(source.directExpenses) ? source.directExpenses : []),
+    ...students.flatMap((student) => (
+      Array.isArray(student?.directExpenses) ? student.directExpenses : []
+    ))
+  ];
+  return {
+    students,
+    contracts: Array.isArray(source.contracts) ? source.contracts : [],
+    directExpenses,
+    generalExpenses: Array.isArray(source.generalExpenses) ? source.generalExpenses : [],
+    inventoryRows: Array.isArray(source.inventoryRows)
+      ? source.inventoryRows
+      : Array.isArray(source.databaseSyncInventoryUnits)
+        ? source.databaseSyncInventoryUnits
+        : [],
+    programs: Array.isArray(source.programs)
+      ? source.programs
+      : Array.isArray(source.programPaymentSettings)
+        ? source.programPaymentSettings
+        : [],
+    trainingPlans: Array.isArray(source.trainingPlans) ? source.trainingPlans : []
+  };
+}
+
+function canonicalizeStudentDatabaseCriticalRecords(records, projector) {
+  return (Array.isArray(records) ? records : [])
+    .map((record) => JSON.stringify(projector(record || {})))
+    .sort();
+}
+
+function buildStudentDatabaseCriticalSnapshot(value) {
+  const collections = getStudentDatabaseCriticalCollections(value);
+  const xlsbProgramNameById = new Map(collections.programs
+    .map((program) => [
+      String(program?.id || "").trim(),
+      String(program?.xlsbProgramName || program?.name || "").trim()
+    ])
+    .filter(([id, name]) => id && name));
+  return {
+    version: STUDENT_DATABASE_CRITICAL_HASH_VERSION,
+    students: canonicalizeStudentDatabaseCriticalRecords(
+      collections.students,
+      projectStudentDatabaseCriticalRecord
+    ),
+    contracts: canonicalizeStudentDatabaseCriticalRecords(
+      collections.contracts,
+      projectStudentDatabaseCriticalContract
+    ),
+    directExpenses: canonicalizeStudentDatabaseCriticalRecords(
+      collections.directExpenses,
+      (record) => projectStudentDatabaseCriticalMappedRecord(
+        record,
+        [...new Set(Object.values(DIRECT_EXPENSE_DATABASE_COLUMN_MAP))],
+        normalizeDirectExpenseDatabaseValue
+      )
+    ),
+    generalExpenses: canonicalizeStudentDatabaseCriticalRecords(
+      collections.generalExpenses,
+      (record) => projectStudentDatabaseCriticalMappedRecord(
+        record,
+        [...new Set(Object.values(GENERAL_EXPENSE_DATABASE_COLUMN_MAP))],
+        normalizeGeneralExpenseDatabaseValue
+      )
+    ),
+    inventoryUnits: canonicalizeStudentDatabaseCriticalRecords(
+      collections.inventoryRows,
+      (record) => projectStudentDatabaseCriticalMappedRecord(
+        record,
+        [...new Set(Object.values(INVENTORY_DATABASE_COLUMN_MAP))],
+        normalizeInventoryDatabaseValue
+      )
+    ),
+    programs: canonicalizeStudentDatabaseCriticalRecords(
+      collections.programs,
+      projectStudentDatabaseCriticalProgram
+    ),
+    trainingPlans: canonicalizeStudentDatabaseCriticalRecords(
+      collections.trainingPlans,
+      (record) => {
+        const normalizedRecord = {
+          ...record,
+          programName: xlsbProgramNameById.get(String(record?.programId || "").trim())
+            || record?.programName
+        };
+        return projectStudentDatabaseCriticalMappedRecord(
+          normalizedRecord,
+          [...new Set(Object.values(TRAINING_PLAN_DATABASE_COLUMN_MAP))],
+          (fieldValue, fieldName) => normalizeTrainingPlanDatabaseValue(fieldName, fieldValue)
+        );
+      }
+    )
+  };
+}
+
+function hashStudentDatabaseCriticalSnapshot(value) {
+  return crypto.createHash("sha256")
+    .update(JSON.stringify(buildStudentDatabaseCriticalSnapshot(value)))
+    .digest("hex");
+}
+
+function buildStudentDatabaseCriticalIdentitySnapshot(value) {
+  const collections = getStudentDatabaseCriticalCollections(value);
+  const studentKeys = collections.students.map((record) => [
+    normalizeStudentDatabaseSyncValue(record?.uid, "uid"),
+    String(record?.name || "").trim().toLocaleLowerCase("ru-RU").replace(/\s+/gu, " "),
+    normalizeStudentDatabaseDate(record?.applicationDate),
+    String(record?.program || "").trim().toLocaleLowerCase("ru-RU").replace(/\s+/gu, " ")
+  ].join("\u0000")).sort();
+  const contractKeys = collections.contracts.map((record) => [
+    String(record?.contractNo || "").trim().replace(/\.0+$/u, ""),
+    String(record?.name || "").trim().toLocaleLowerCase("ru-RU").replace(/\s+/gu, " "),
+    normalizeStudentDatabaseDate(record?.contractDate)
+  ].join("\u0000")).sort();
+  const programKeys = collections.programs.map((record) => [
+    String(record?.xlsbProgramLandingCode ?? record?.landingCode ?? "").trim(),
+    String(record?.xlsbProgramName || record?.name || "")
+      .trim()
+      .toLocaleLowerCase("ru-RU")
+      .replace(/\s+/gu, " ")
+  ].join("\u0000")).sort();
+  return {
+    version: STUDENT_DATABASE_CRITICAL_HASH_VERSION,
+    students: studentKeys,
+    contracts: contractKeys,
+    programs: programKeys,
+    counts: {
+      students: collections.students.length,
+      contracts: collections.contracts.length,
+      directExpenses: collections.directExpenses.length,
+      generalExpenses: collections.generalExpenses.length,
+      inventoryUnits: collections.inventoryRows.length,
+      programs: collections.programs.length,
+      trainingPlans: collections.trainingPlans.length
+    }
+  };
+}
+
+function hashStudentDatabaseCriticalIdentity(value) {
+  return crypto.createHash("sha256")
+    .update(JSON.stringify(buildStudentDatabaseCriticalIdentitySnapshot(value)))
+    .digest("hex");
+}
+
+function getStudentDatabaseEmbeddedSyncTimestamp(value) {
+  const collections = getStudentDatabaseCriticalCollections(value);
+  const records = [
+    ...collections.students,
+    ...collections.contracts,
+    ...collections.directExpenses,
+    ...collections.generalExpenses,
+    ...collections.inventoryRows,
+    ...collections.programs,
+    ...collections.trainingPlans
+  ];
+  const frequencies = new Map();
+  records.forEach((record) => {
+    const timestamp = normalizeStudentDatabaseSyncTimestamp(record?.databaseSync?.syncedAt);
+    if (!timestamp) return;
+    frequencies.set(timestamp, (frequencies.get(timestamp) || 0) + 1);
+  });
+  return [...frequencies.entries()]
+    .sort((left, right) => right[1] - left[1] || Date.parse(right[0]) - Date.parse(left[0]))
+    .at(0)?.[0] || "";
+}
+
+function getLatestStudentDatabaseSyncTimestamp(...values) {
+  return values
+    .map(normalizeStudentDatabaseSyncTimestamp)
+    .filter(Boolean)
+    .sort((left, right) => Date.parse(right) - Date.parse(left))[0] || "";
+}
+
+function resolveStudentDatabaseCriticalMigrationDirection({
+  anchorAt,
+  sourceModifiedAt,
+  currentWebCriticalUpdatedAt,
+  currentWebAuditOldestAt,
+  currentWebAuditComplete
+}) {
+  const anchor = normalizeStudentDatabaseSyncTimestamp(anchorAt);
+  const sourceModified = normalizeStudentDatabaseSyncTimestamp(sourceModifiedAt);
+  const webCriticalUpdated = normalizeStudentDatabaseSyncTimestamp(currentWebCriticalUpdatedAt);
+  const webAuditOldest = normalizeStudentDatabaseSyncTimestamp(currentWebAuditOldestAt);
+  if (!anchor || !sourceModified) return "";
+  const anchorMs = Date.parse(anchor);
+  const auditCoversAnchor = currentWebAuditComplete === true
+    || (webAuditOldest && Date.parse(webAuditOldest) <= anchorMs + 1000);
+  if (!auditCoversAnchor) return "";
+  const excelChanged = Date.parse(sourceModified) > anchorMs + 1000;
+  const webChanged = Boolean(
+    webCriticalUpdated
+    && Date.parse(webCriticalUpdated) > anchorMs + 1000
+  );
+  if (excelChanged && webChanged) return "conflict";
+  if (excelChanged) return "excel-to-web";
+  if (webChanged) return "web-to-excel";
+  return "";
+}
+
 function normalizeStudentDatabaseSyncLedger(value) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const records = {};
@@ -14475,12 +14794,16 @@ function normalizeStudentDatabaseSyncBaseline(value) {
   const sourceHash = String(source.sourceHash || "").trim().toLowerCase();
   const synchronizedAt = normalizeStudentDatabaseSyncTimestamp(source.synchronizedAt);
   const sourceIdentity = String(source.sourceIdentity || "").trim().toLowerCase();
+  const criticalHash = normalizeStudentDatabaseCriticalHash(source.criticalHash);
+  const criticalIdentityHash = normalizeStudentDatabaseCriticalHash(source.criticalIdentityHash);
   return {
-    version: 1,
+    version: criticalHash ? 2 : 1,
     sourceHash: /^[a-f0-9]{64}$/u.test(sourceHash) ? sourceHash : "",
     sourceIdentity: /^[a-f0-9]{64}$/u.test(sourceIdentity) ? sourceIdentity : "",
     webRevision: Math.max(0, Math.floor(Number(source.webRevision) || 0)),
-    synchronizedAt
+    synchronizedAt,
+    criticalHash,
+    criticalIdentityHash
   };
 }
 
@@ -14492,25 +14815,65 @@ function resolveStudentDatabaseSyncDirection({
   sourceIdentity,
   sourceModifiedAt,
   lastSynchronizedAt,
-  lastExportedAt
+  lastExportedAt,
+  lastDownloadedAt,
+  sourceEmbeddedSynchronizedAt,
+  currentWebCriticalUpdatedAt,
+  currentWebAuditOldestAt,
+  currentWebAuditComplete,
+  currentWebCriticalHash,
+  currentExcelCriticalHash,
+  currentWebCriticalIdentityHash,
+  currentExcelCriticalIdentityHash
 }) {
   const baseline = normalizeStudentDatabaseSyncBaseline(baselineValue);
   const revision = Math.max(0, Math.floor(Number(currentWebRevision) || 0));
   const normalizedSourceHash = String(sourceHash || "").trim().toLowerCase();
   const normalizedSourceIdentity = String(sourceIdentity || "").trim().toLowerCase();
+  const webCriticalHash = normalizeStudentDatabaseCriticalHash(currentWebCriticalHash);
+  const excelCriticalHash = normalizeStudentDatabaseCriticalHash(currentExcelCriticalHash);
+  const webCriticalIdentityHash = normalizeStudentDatabaseCriticalHash(
+    currentWebCriticalIdentityHash
+  );
+  const excelCriticalIdentityHash = normalizeStudentDatabaseCriticalHash(
+    currentExcelCriticalIdentityHash
+  );
+  const hasCriticalInputs = Boolean(webCriticalHash && excelCriticalHash);
+  const criticalMigrationAnchor = getLatestStudentDatabaseSyncTimestamp(
+    sourceEmbeddedSynchronizedAt,
+    baseline.synchronizedAt,
+    lastSynchronizedAt,
+    lastExportedAt,
+    lastDownloadedAt
+  );
+  const criticalMigrationDirection = hasCriticalInputs
+    ? resolveStudentDatabaseCriticalMigrationDirection({
+      anchorAt: criticalMigrationAnchor,
+      sourceModifiedAt,
+      currentWebCriticalUpdatedAt,
+      currentWebAuditOldestAt,
+      currentWebAuditComplete
+    })
+    : "";
   const hasAnyBaselineValue = Boolean(
     baseline.sourceHash
     || baseline.sourceIdentity
     || baseline.webRevision
     || baseline.synchronizedAt
+    || baseline.criticalHash
+    || baseline.criticalIdentityHash
   );
-  const hasCompleteBaseline = Boolean(
+  const hasCompleteLegacyBaseline = Boolean(
     baseline.sourceHash
     && baseline.sourceIdentity
     && baseline.webRevision
     && baseline.synchronizedAt
   );
-  if (hasAnyBaselineValue && !hasCompleteBaseline) {
+  const hasCompleteCriticalBaseline = Boolean(
+    hasCompleteLegacyBaseline
+    && baseline.criticalHash
+  );
+  if (hasAnyBaselineValue && !hasCompleteLegacyBaseline) {
     const error = new Error(
       "Контрольная точка прошлой синхронизации XLSB неполна. "
       + "Автоматическое направление не выбрано, чтобы не потерять данные."
@@ -14518,7 +14881,7 @@ function resolveStudentDatabaseSyncDirection({
     error.statusCode = 409;
     throw error;
   }
-  if (hasCompleteBaseline) {
+  if (hasCompleteLegacyBaseline) {
     if (
       !normalizedSourceIdentity
       || baseline.sourceIdentity !== normalizedSourceIdentity
@@ -14530,9 +14893,82 @@ function resolveStudentDatabaseSyncDirection({
       error.statusCode = 409;
       throw error;
     }
+    if (hasCompleteCriticalBaseline) {
+      if (!hasCriticalInputs) {
+        const error = new Error(
+          "Не удалось рассчитать контрольные суммы критичных данных Web и XLSB. "
+          + "Синхронизация остановлена без изменения данных."
+        );
+        error.statusCode = 409;
+        throw error;
+      }
+      const excelChanged = excelCriticalHash !== baseline.criticalHash;
+      const webChanged = webCriticalHash !== baseline.criticalHash;
+      if (excelChanged && webChanged && excelCriticalHash !== webCriticalHash) {
+        const error = new Error(
+          "После прошлой синхронизации критичные данные изменились и в Web-базе, и в XLSB. "
+          + "Автоматическая перезапись остановлена, чтобы не потерять сведения о слушателях, "
+          + "договорах, затратах, программах или учебных планах."
+        );
+        error.statusCode = 409;
+        throw error;
+      }
+      if (excelChanged && !webChanged) {
+        return {
+          direction: "excel-to-web",
+          baseline,
+          criticalHash: excelCriticalHash,
+          criticalIdentityHash: excelCriticalIdentityHash
+        };
+      }
+      if (webChanged && !excelChanged) {
+        return {
+          direction: "web-to-excel",
+          baseline,
+          criticalHash: webCriticalHash,
+          criticalIdentityHash: webCriticalIdentityHash
+        };
+      }
+      const synchronizedCriticalHash = excelChanged ? excelCriticalHash : baseline.criticalHash;
+      return {
+        direction: "unchanged",
+        baseline,
+        criticalHash: synchronizedCriticalHash,
+        criticalIdentityHash: webCriticalIdentityHash || excelCriticalIdentityHash
+      };
+    }
     const excelChanged = normalizedSourceHash !== baseline.sourceHash;
     const webChanged = revision !== baseline.webRevision;
+    if (hasCriticalInputs && webCriticalHash === excelCriticalHash) {
+      return {
+        direction: "unchanged",
+        baseline,
+        initialMigration: true,
+        criticalHash: webCriticalHash,
+        criticalIdentityHash: webCriticalIdentityHash || excelCriticalIdentityHash
+      };
+    }
     if (excelChanged && webChanged) {
+      if (["excel-to-web", "web-to-excel"].includes(criticalMigrationDirection)) {
+        const excelIsNewer = criticalMigrationDirection === "excel-to-web";
+        return {
+          direction: criticalMigrationDirection,
+          baseline,
+          initialMigration: true,
+          criticalHash: excelIsNewer ? excelCriticalHash : webCriticalHash,
+          criticalIdentityHash: excelIsNewer
+            ? excelCriticalIdentityHash
+            : webCriticalIdentityHash
+        };
+      }
+      if (criticalMigrationDirection === "conflict") {
+        const error = new Error(
+          "После контрольной выгрузки критичные данные менялись и в Web-базе, и в XLSB. "
+          + "Автоматическая перезапись остановлена, чтобы не потерять изменения."
+        );
+        error.statusCode = 409;
+        throw error;
+      }
       const error = new Error(
         "После прошлой синхронизации изменились и Web-база, и файл XLSB. "
           + "Автоматическая перезапись остановлена, чтобы не потерять данные. "
@@ -14541,13 +14977,73 @@ function resolveStudentDatabaseSyncDirection({
       error.statusCode = 409;
       throw error;
     }
-    if (excelChanged) return { direction: "excel-to-web", baseline };
-    if (webChanged) return { direction: "web-to-excel", baseline };
-    return { direction: "unchanged", baseline };
+    if (excelChanged) {
+      return {
+        direction: "excel-to-web",
+        baseline,
+        criticalHash: excelCriticalHash,
+        criticalIdentityHash: excelCriticalIdentityHash
+      };
+    }
+    if (webChanged) {
+      return {
+        direction: "web-to-excel",
+        baseline,
+        criticalHash: webCriticalHash,
+        criticalIdentityHash: webCriticalIdentityHash
+      };
+    }
+    return {
+      direction: "unchanged",
+      baseline,
+      criticalHash: webCriticalHash || excelCriticalHash,
+      criticalIdentityHash: webCriticalIdentityHash || excelCriticalIdentityHash
+    };
   }
 
-  const lastSync = normalizeStudentDatabaseSyncTimestamp(
-    lastSynchronizedAt || lastExportedAt
+  if (hasCriticalInputs) {
+    if (webCriticalHash === excelCriticalHash) {
+      return {
+        direction: "unchanged",
+        baseline,
+        initialMigration: true,
+        criticalHash: webCriticalHash,
+        criticalIdentityHash: webCriticalIdentityHash || excelCriticalIdentityHash
+      };
+    }
+    if (["excel-to-web", "web-to-excel"].includes(criticalMigrationDirection)) {
+      const excelIsNewer = criticalMigrationDirection === "excel-to-web";
+      return {
+        direction: criticalMigrationDirection,
+        baseline,
+        initialMigration: true,
+        criticalHash: excelIsNewer ? excelCriticalHash : webCriticalHash,
+        criticalIdentityHash: excelIsNewer
+          ? excelCriticalIdentityHash
+          : webCriticalIdentityHash
+      };
+    }
+    if (criticalMigrationDirection === "conflict") {
+      const error = new Error(
+        "После контрольной выгрузки критичные данные менялись и в Web-базе, и в XLSB. "
+        + "Автоматическая перезапись остановлена, чтобы не потерять изменения."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    const error = new Error(
+      "Критичные данные Web-базы и XLSB различаются, но журнал изменений не позволяет "
+      + "достоверно определить актуальную сторону. Выполните «Загрузить из базы» либо "
+      + "«Экспортировать базу» после проверки данных."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const lastSync = getLatestStudentDatabaseSyncTimestamp(
+    lastSynchronizedAt,
+    lastExportedAt,
+    lastDownloadedAt
   );
   const webUpdated = normalizeStudentDatabaseSyncTimestamp(currentWebUpdatedAt);
   const excelUpdated = normalizeStudentDatabaseSyncTimestamp(sourceModifiedAt);
@@ -14572,8 +15068,24 @@ function resolveStudentDatabaseSyncDirection({
       error.statusCode = 409;
       throw error;
     }
-    if (excelChanged) return { direction: "excel-to-web", baseline, initialMigration: true };
-    if (webChanged) return { direction: "web-to-excel", baseline, initialMigration: true };
+    if (excelChanged) {
+      return {
+        direction: "excel-to-web",
+        baseline,
+        initialMigration: true,
+        criticalHash: excelCriticalHash,
+        criticalIdentityHash: excelCriticalIdentityHash
+      };
+    }
+    if (webChanged) {
+      return {
+        direction: "web-to-excel",
+        baseline,
+        initialMigration: true,
+        criticalHash: webCriticalHash,
+        criticalIdentityHash: webCriticalIdentityHash
+      };
+    }
     const error = new Error(
       "Времена изменения Web-базы и XLSB не новее прежней синхронизации, но достоверной "
         + "контрольной суммы прошлого состояния нет. Совпадение данных не доказано; "
@@ -20416,9 +20928,33 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       body.databasePath,
       sourceType
     );
+    let sourceDataForExport = null;
     let directionalSyncResult = null;
     if (directionalSync) {
-      onProgress({ progress: 15, stage: "compare", message: "Сравнение контрольных точек Web и XLSB..." });
+      onProgress({
+        progress: 14,
+        stage: "compare",
+        message: "Чтение критичных данных XLSB и Web-базы..."
+      });
+      sourceDataForExport = await parseStudentDatabaseInWorker(
+        sourceBytes,
+        (parseProgress) => {
+          const value = Math.max(0, Math.min(100, Number(parseProgress.progress) || 0));
+          onProgress({
+            progress: 14 + value * 0.01,
+            stage: "compare",
+            message: parseProgress.message || "Сравнение критичных данных Web и XLSB..."
+          });
+        }
+      );
+      const currentWebCriticalHash = hashStudentDatabaseCriticalSnapshot(payload);
+      const currentExcelCriticalHash = hashStudentDatabaseCriticalSnapshot(sourceDataForExport);
+      const currentWebCriticalIdentityHash = hashStudentDatabaseCriticalIdentity(payload);
+      const currentExcelCriticalIdentityHash = hashStudentDatabaseCriticalIdentity(sourceDataForExport);
+      const sourceEmbeddedSynchronizedAt = getStudentDatabaseEmbeddedSyncTimestamp(
+        sourceDataForExport
+      );
+      onProgress({ progress: 15, stage: "compare", message: "Сравнение критичных данных Web и XLSB..." });
       directionalSyncResult = resolveStudentDatabaseSyncDirection({
         baseline: body.syncBaseline,
         currentWebRevision: sharedStateMetadata?.revision || body.sharedStateRevision,
@@ -20427,10 +20963,19 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         sourceIdentity,
         sourceModifiedAt,
         lastSynchronizedAt: body.lastSynchronizedAt,
-        lastExportedAt: body.lastExportedAt
+        lastExportedAt: body.lastExportedAt,
+        lastDownloadedAt: body.lastDownloadedAt,
+        sourceEmbeddedSynchronizedAt,
+        currentWebCriticalUpdatedAt: body.currentWebCriticalUpdatedAt,
+        currentWebAuditOldestAt: body.currentWebAuditOldestAt,
+        currentWebAuditComplete: body.currentWebAuditComplete === true,
+        currentWebCriticalHash,
+        currentExcelCriticalHash,
+        currentWebCriticalIdentityHash,
+        currentExcelCriticalIdentityHash
       });
       if (directionalSyncResult.direction !== "web-to-excel") {
-        const sourceData = await parseStudentDatabaseInWorker(sourceBytes);
+        const sourceData = sourceDataForExport;
         if (directionalSyncResult.direction === "excel-to-web") {
           prepareImportedStudentDatabaseServerSettings({
             macroSettings: sourceData.macroSettings,
@@ -20521,6 +21066,8 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
             sourceIdentity,
             sourceModifiedAt,
             synchronizedAt: annotationPayload.synchronizedAt,
+            criticalHash: directionalSyncResult.criticalHash,
+            criticalIdentityHash: directionalSyncResult.criticalIdentityHash,
             preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0),
             studentCount: importPayload.count,
             contractCount: importPayload.contractCount,
@@ -20549,6 +21096,8 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           sourceHash,
           sourceIdentity,
           sourceModifiedAt,
+          criticalHash: directionalSyncResult.criticalHash,
+          criticalIdentityHash: directionalSyncResult.criticalIdentityHash,
           preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0),
           studentCount: importPayload.count,
           contractCount: importPayload.contractCount,
@@ -20559,7 +21108,6 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       }
     }
     let studentSyncResult = null;
-    let sourceDataForExport = null;
     if (body.twoWaySync === true) {
       onProgress({ progress: 15, stage: "merge", message: "Сверка изменений Web и Excel..." });
       const [sourceData, webUpdatedAtById] = await Promise.all([
@@ -20829,6 +21377,8 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         requiresCommit: true,
         sourceModifiedAt,
         sourceIdentity,
+        criticalHash: directionalSyncResult?.criticalHash || "",
+        criticalIdentityHash: directionalSyncResult?.criticalIdentityHash || "",
         preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0)
       } : {})
     };
@@ -25854,6 +26404,11 @@ module.exports = {
   assertStudentDatabaseMetadataOnlyOutput,
   assertStudentDatabaseCommentOnlyOutput,
   hashStudentDatabaseSyncRecord,
+  buildStudentDatabaseCriticalSnapshot,
+  hashStudentDatabaseCriticalSnapshot,
+  buildStudentDatabaseCriticalIdentitySnapshot,
+  hashStudentDatabaseCriticalIdentity,
+  getStudentDatabaseEmbeddedSyncTimestamp,
   mergeStudentDatabaseSyncRecords,
   normalizeStudentDatabaseSyncBaseline,
   resolveStudentDatabaseSyncDirection,

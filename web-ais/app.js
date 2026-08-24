@@ -43,12 +43,12 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.271",
+    version: "1.7.272",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
     {
-      version: "1.7.271",
+      version: "1.7.272",
       releasedAt: "2026-08-24",
       changes: [
         "При синхронизации заполненного поля «СообщПочты» текст письма сохраняется в примечании, а в ячейке отображается маркер «Сообщ».",
@@ -48592,14 +48592,20 @@ MAX - https://bizvmax.ru/zifra_plus
     const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
     const sourceHash = String(source.sourceHash || "").trim().toLowerCase();
     const sourceIdentity = String(source.sourceIdentity || "").trim().toLowerCase();
+    const criticalHash = String(source.criticalHash || "").trim().toLowerCase();
+    const criticalIdentityHash = String(source.criticalIdentityHash || "").trim().toLowerCase();
     const synchronizedAt = String(source.synchronizedAt || "").trim();
     return {
-      version: 1,
+      version: /^[a-f0-9]{64}$/u.test(criticalHash) ? 2 : 1,
       sourceHash: /^[a-f0-9]{64}$/u.test(sourceHash) ? sourceHash : "",
       sourceIdentity: /^[a-f0-9]{64}$/u.test(sourceIdentity) ? sourceIdentity : "",
       webRevision: Math.max(0, Math.floor(Number(source.webRevision) || 0)),
       synchronizedAt: Number.isFinite(Date.parse(synchronizedAt))
         ? new Date(synchronizedAt).toISOString()
+        : "",
+      criticalHash: /^[a-f0-9]{64}$/u.test(criticalHash) ? criticalHash : "",
+      criticalIdentityHash: /^[a-f0-9]{64}$/u.test(criticalIdentityHash)
+        ? criticalIdentityHash
         : ""
     };
   }
@@ -48611,6 +48617,7 @@ MAX - https://bizvmax.ru/zifra_plus
       && baseline.sourceIdentity
       && baseline.webRevision
       && baseline.synchronizedAt
+      && (baseline.version < 2 || baseline.criticalHash)
     );
   }
 
@@ -48618,15 +48625,19 @@ MAX - https://bizvmax.ru/zifra_plus
     sourceHash,
     sourceIdentity,
     webRevision,
-    synchronizedAt = ""
+    synchronizedAt = "",
+    criticalHash = "",
+    criticalIdentityHash = ""
   ) {
     const baseline = normalizeStudentDatabaseSyncBaseline({
       sourceHash,
       sourceIdentity,
       webRevision,
-      synchronizedAt: synchronizedAt || new Date().toISOString()
+      synchronizedAt: synchronizedAt || new Date().toISOString(),
+      criticalHash,
+      criticalIdentityHash
     });
-    if (!isValidStudentDatabaseSyncBaseline(baseline)) {
+    if (!isValidStudentDatabaseSyncBaseline(baseline) || baseline.version < 2) {
       throw new Error("Сервер не вернул корректную контрольную точку синхронизации.");
     }
     return baseline;
@@ -48637,6 +48648,37 @@ MAX - https://bizvmax.ru/zifra_plus
       .map((value) => Date.parse(String(value || "").trim()))
       .filter(Number.isFinite);
     return timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : "";
+  }
+
+  function getStudentDatabaseCriticalAuditWindow() {
+    const criticalEntityTypes = new Set([
+      "students",
+      "contracts",
+      "directExpenses",
+      "generalExpenses",
+      "inventory",
+      "programs",
+      "trainingPlans"
+    ]);
+    const audit = Array.isArray(state.data.collections.audit)
+      ? state.data.collections.audit
+      : [];
+    const allTimestamps = audit
+      .map((entry) => Date.parse(String(entry?.createdAt || "").trim()))
+      .filter(Number.isFinite);
+    const criticalTimestamps = audit
+      .filter((entry) => criticalEntityTypes.has(String(entry?.entityType || "").trim()))
+      .map((entry) => Date.parse(String(entry?.createdAt || "").trim()))
+      .filter(Number.isFinite);
+    return {
+      latestCriticalAt: criticalTimestamps.length
+        ? new Date(Math.max(...criticalTimestamps)).toISOString()
+        : "",
+      oldestAt: allTimestamps.length
+        ? new Date(Math.min(...allTimestamps)).toISOString()
+        : "",
+      complete: audit.length < 200
+    };
   }
 
   async function readStudentImportResponse(response) {
@@ -49208,6 +49250,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const paymentConstants = buildStudentDatabaseExportPaymentConstants();
       const agentPaymentRates = buildStudentDatabaseExportAgentPaymentRates();
       const macroSettings = buildStudentDatabaseExportMacroSettings();
+      const criticalAuditWindow = getStudentDatabaseCriticalAuditWindow();
       const result = await runStudentDatabaseExport({
         databasePath: getStudentDatabaseWebDavPath(),
         source: syncSource,
@@ -49218,10 +49261,15 @@ MAX - https://bizvmax.ru/zifra_plus
           || getLatestStudentDatabaseSynchronizationTimestamp(
             state.data.meta.studentDatabaseLastSynchronizedAt,
             state.data.meta.studentDatabaseLastImportedAt,
-            state.data.meta.studentDatabaseLastExportedAt
+            state.data.meta.studentDatabaseLastExportedAt,
+            state.data.meta.studentDatabaseLastDownloadedAt
           )
           || "",
         lastExportedAt: state.data.meta.studentDatabaseLastExportedAt || "",
+        lastDownloadedAt: state.data.meta.studentDatabaseLastDownloadedAt || "",
+        currentWebCriticalUpdatedAt: criticalAuditWindow.latestCriticalAt,
+        currentWebAuditOldestAt: criticalAuditWindow.oldestAt,
+        currentWebAuditComplete: criticalAuditWindow.complete,
         students,
         contracts,
         directExpenses,
@@ -49244,12 +49292,6 @@ MAX - https://bizvmax.ru/zifra_plus
       const direction = String(result.syncDirection || "");
       if (!["excel-to-web", "web-to-excel", "unchanged"].includes(direction)) {
         throw new Error("Сервер не определил безопасное направление синхронизации.");
-      }
-      if (direction === "unchanged" && !hadValidBaseline) {
-        throw new Error(
-          "Без полной контрольной точки нельзя доказать совпадение XLSB и Web-базы. "
-          + "Выберите актуальную сторону через загрузку или экспорт."
-        );
       }
       const advertisingExclusionsSync = result.advertisingExclusionsSync
         && typeof result.advertisingExclusionsSync === "object"
@@ -49296,7 +49338,9 @@ MAX - https://bizvmax.ru/zifra_plus
           committedResult.sourceHash,
           committedResult.sourceIdentity || result.sourceIdentity,
           syncBaseRevision + 1,
-          committedResult.synchronizedAt || new Date().toISOString()
+          committedResult.synchronizedAt || new Date().toISOString(),
+          committedResult.criticalHash || result.criticalHash,
+          committedResult.criticalIdentityHash || result.criticalIdentityHash
         );
         updateDatabaseExportIndicator({
           status: "Применение изменений Excel к общей Web-базе...",
@@ -49354,7 +49398,9 @@ MAX - https://bizvmax.ru/zifra_plus
           committedResult.sourceHash,
           committedResult.sourceIdentity || result.sourceIdentity,
           syncBaseRevision + 1,
-          synchronizedAt
+          synchronizedAt,
+          committedResult.criticalHash || result.criticalHash,
+          committedResult.criticalIdentityHash || result.criticalIdentityHash
         );
         state.data.meta.studentDatabaseLastExportedAt = synchronizedAt;
         const auditEntry = addAudit(
@@ -49387,6 +49433,27 @@ MAX - https://bizvmax.ru/zifra_plus
         });
         activeReservation = { jobId: "", token: "" };
         void postAuditEntry(auditEntry);
+      } else if (!hadValidBaseline) {
+        const synchronizedAt = new Date().toISOString();
+        state.data.meta.studentDatabaseSyncBaseline = buildStudentDatabaseSyncBaseline(
+          result.sourceHash,
+          result.sourceIdentity,
+          syncBaseRevision + 1,
+          synchronizedAt,
+          result.criticalHash,
+          result.criticalIdentityHash
+        );
+        state.data.meta.studentDatabaseLastSynchronizedAt = synchronizedAt;
+        persist();
+        cancelScheduledSharedApplicationStateSave();
+        const baselineGeneration = sharedStateChangeGeneration;
+        const baselineSaved = await flushSharedApplicationStateThroughGeneration(
+          baselineGeneration,
+          { strictRevision: true, baseRevision: syncBaseRevision }
+        );
+        if (!baselineSaved) {
+          throw new Error("Не удалось сохранить контрольную точку критичных данных XLSB.");
+        }
       }
 
       const duration = formatDatabaseOperationDuration(startedAt);

@@ -358,6 +358,11 @@ assert.match(
 );
 assert.match(
   powershellSource,
+  /if \(-not \$usedRecordIds\.Add\(\$recordKey\)\) \{[\s\S]{0,320}?continue/u,
+  "Скопированная строка с повторным AIS_SYNC должна быть восстановлена по бизнес-ключу."
+);
+assert.match(
+  powershellSource,
   /if \(\$currentFormula\.StartsWith\("="\)\)[\s\S]{0,320}?return "formula"/u
 );
 assert.match(powershellSource, /Ensure-ContractFormulaRows \$sheet \$columns/u);

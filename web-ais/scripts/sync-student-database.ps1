@@ -2231,7 +2231,7 @@ function Update-AisSyncMetadataForCurrentRows {
       $metadataObject = Get-AisSyncMetadataObject $metadata
       $recordId = ([string](Get-ObjectProperty $metadataObject "recordId")).Trim()
       if (-not $usedIds.Add($recordId)) {
-        throw "После сортировки реестра программ повторяется служебный ID '$recordId'."
+        $metadata = ""
       }
     }
     $cell = $null
@@ -2626,7 +2626,8 @@ function Update-AisSyncMetadataForRows {
       if ($null -ne $existingMetadata) {
         $existingRecordId = ([string](Get-ObjectProperty $existingMetadata "recordId")).Trim()
         if (-not $seenExistingIds.Add($existingRecordId)) {
-          throw "В служебных свойствах листа '$([string]$Sheet.Name)' повторяется ID '$existingRecordId'."
+          if ($humanText) { $unmanagedHumanTextByRow[$row] = $humanText }
+          continue
         }
         $humanTextByRecordId[$existingRecordId] = $humanText
       } elseif ($humanText) {
@@ -2799,14 +2800,13 @@ function Update-ProgramPromoMessages {
         $syncMetadata = Get-AisSyncCellMetadata $firstCell "programs"
         if ($null -ne $syncMetadata) {
           $recordId = ([string](Get-ObjectProperty $syncMetadata "recordId")).Trim()
-          if ($rowByRecordId.ContainsKey($recordId)) {
-            throw "В реестре программ повторяется служебный ID '$recordId' (строки $($rowByRecordId[$recordId]) и $row)."
-          }
-          $rowByRecordId[$recordId] = $row
-          $recordIdByRow[$row] = $recordId
-          $existingRecordByIdentity[$identity] = [pscustomobject]@{
-            id = $recordId
-            __syncComment = ($syncMetadata | ConvertTo-Json -Compress -Depth 6)
+          if (-not $rowByRecordId.ContainsKey($recordId)) {
+            $rowByRecordId[$recordId] = $row
+            $recordIdByRow[$row] = $recordId
+            $existingRecordByIdentity[$identity] = [pscustomobject]@{
+              id = $recordId
+              __syncComment = ($syncMetadata | ConvertTo-Json -Compress -Depth 6)
+            }
           }
         }
       } finally {
@@ -2856,29 +2856,45 @@ function Update-ProgramPromoMessages {
       $requestedRow = [int](Get-ObjectProperty $program "xlsbProgramRow")
       $requestedRecordId = ([string](Get-ObjectProperty $program "id")).Trim()
       $targetRow = 0
-      if (
+      $recordIdTargetRow = if (
         $requestedRecordId `
         -and $rowByRecordId.ContainsKey($requestedRecordId)
       ) {
-        $targetRow = [int]$rowByRecordId[$requestedRecordId]
+        [int]$rowByRecordId[$requestedRecordId]
+      } else {
+        0
+      }
+      $recordIdTargetIdentity = if (
+        $recordIdTargetRow -gt 0 `
+        -and $identityByRow.ContainsKey($recordIdTargetRow)
+      ) {
+        [string]$identityByRow[$recordIdTargetRow]
+      } else {
+        ""
+      }
+      if (
+        $recordIdTargetRow -gt 0 `
+        -and (
+          ($sourceIdentity -and $recordIdTargetIdentity -eq $sourceIdentity) `
+          -or ($currentIdentity -and $recordIdTargetIdentity -eq $currentIdentity)
+        )
+      ) {
+        $targetRow = $recordIdTargetRow
       } elseif (
         $requestedRow -ge $startRow `
         -and $requestedRow -le $lastRow `
         -and $identityByRow.ContainsKey($requestedRow) `
-        -and $identityByRow[$requestedRow] -eq $sourceIdentity `
-        -and -not $recordIdByRow.ContainsKey($requestedRow)
+        -and $identityByRow[$requestedRow] -eq $sourceIdentity
       ) {
         $targetRow = $requestedRow
       } elseif (
         $sourceIdentity `
-        -and $rowByIdentity.ContainsKey($sourceIdentity) `
-        -and -not $recordIdByRow.ContainsKey([int]$rowByIdentity[$sourceIdentity])
+        -and $rowByIdentity.ContainsKey($sourceIdentity)
       ) {
         $targetRow = [int]$rowByIdentity[$sourceIdentity]
       } elseif (
         $currentIdentity `
-        -and $rowByIdentity.ContainsKey($currentIdentity) `
-        -and -not $recordIdByRow.ContainsKey([int]$rowByIdentity[$currentIdentity])
+        -and $rowByIdentity.ContainsKey($currentIdentity)
       ) {
         $targetRow = [int]$rowByIdentity[$currentIdentity]
       }
@@ -3358,7 +3374,8 @@ function Update-AisSyncMetadataOnlyWorkbook {
             if ($null -ne $sourceMetadata) {
               $sourceRecordId = ([string](Get-ObjectProperty $sourceMetadata "recordId")).Trim()
               if ($humanTextByRecordId.ContainsKey($sourceRecordId)) {
-              throw "В служебных свойствах листа '$sheetName' повторяется ID '$sourceRecordId'."
+                if ($sourceHumanText) { $unmanagedHumanTextByRow[$sourceRow] = $sourceHumanText }
+                continue
               }
               $humanTextByRecordId[$sourceRecordId] = $sourceHumanText
             } elseif ($sourceHumanText) {
@@ -3516,7 +3533,10 @@ function Read-AisSyncValidationMetadataWorkbook {
               $recordId = ([string](Get-ObjectProperty $metadata "recordId")).Trim()
               $recordKey = "$entity$([char]0)$recordId"
               if (-not $usedRecordIds.Add($recordKey)) {
-                throw "В свойствах проверки данных повторяется служебный ID '$recordId' типа '$entity'."
+                # A copied Excel row can inherit the source row's validation metadata.
+                # Keep the first occurrence; the parser will rebuild a stable ID from
+                # the business key and the annotation pass will repair the copied row.
+                continue
               }
               [void]$rows.Add([pscustomobject]@{
                 sheetName = $sheetName
