@@ -2045,6 +2045,7 @@ function Update-TrainingPlanSheet {
       Count = 0
       LastRow = 0
       InsertedRows = 0
+      ClearedRows = 0
     }
   }
 
@@ -2070,13 +2071,25 @@ function Update-TrainingPlanSheet {
     }
     $startRow = [int]$header.Row + 1
     $lastRow = [int]$header.LastRow
+    $dataLastColumn = [int](($columns | Measure-Object -Property Column -Maximum).Maximum)
     if ($lastRow -lt $startRow) {
       throw "На листе нет шаблонной строки для безопасного добавления учебного плана."
     }
     $desiredLastRow = $startRow + $records.Count - 1
     $insertedRows = [Math]::Max(0, $desiredLastRow - $lastRow)
     if ($insertedRows -gt 0) {
-      Insert-StudentTemplateRows $sheet $startRow ($lastRow + 1) $header.LastColumn $insertedRows
+      $insertStartRow = $lastRow + 1
+      Insert-StudentTemplateRows $sheet $startRow $insertStartRow $dataLastColumn $insertedRows
+      $insertedRange = $null
+      try {
+        $insertedRange = $sheet.Range(
+          $sheet.Cells.Item($insertStartRow, 1),
+          $sheet.Cells.Item($desiredLastRow, $dataLastColumn)
+        )
+        try { [void]$insertedRange.ClearComments() } catch {}
+      } finally {
+        Release-ComObject $insertedRange
+      }
       $lastRow = $desiredLastRow
     }
 
@@ -2097,12 +2110,140 @@ function Update-TrainingPlanSheet {
       Count = $records.Count
       LastRow = $lastRow
       InsertedRows = $insertedRows
+      ClearedRows = [Math]::Max(0, $lastRow - $desiredLastRow)
     }
   } catch {
     throw "Ошибка обновления листа 'Учебные планы': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
   } finally {
     Release-ComObject $sheet
   }
+}
+
+function Sort-ProgramRegistryRows {
+  param(
+    [object]$Sheet,
+    [int]$HeaderRow,
+    [int]$StartRow,
+    [int]$LastRow,
+    [int]$DataLastColumn,
+    [int]$NameColumn,
+    [int]$StatusColumn
+  )
+  if ($LastRow -lt $StartRow) {
+    return [pscustomobject]@{ Rows = 0; ArchiveRows = 0 }
+  }
+
+  $helperColumn = $DataLastColumn + 1
+  $helperHeaderCell = $null
+  $helperRange = $null
+  $helperDataRange = $null
+  $nameDataRange = $null
+  $sortRange = $null
+  $sort = $null
+  $sortFields = $null
+  try {
+    $rowCount = $LastRow - $StartRow + 1
+    $helperValues = New-Object "object[,]" $rowCount, 1
+    $archiveRows = 0
+    for ($offset = 0; $offset -lt $rowCount; $offset += 1) {
+      $statusCell = $null
+      try {
+        $statusCell = $Sheet.Cells.Item($StartRow + $offset, $StatusColumn)
+        $status = (Normalize-Header $statusCell.Value2).ToLowerInvariant()
+        $isArchive = $status -match "архив"
+        $helperValues[$offset, 0] = if ($isArchive) { 1 } else { 0 }
+        if ($isArchive) { $archiveRows += 1 }
+      } finally {
+        Release-ComObject $statusCell
+      }
+    }
+
+    $helperRange = $Sheet.Range(
+      $Sheet.Cells.Item($HeaderRow, $helperColumn),
+      $Sheet.Cells.Item($LastRow, $helperColumn)
+    )
+    $helperHeaderCell = $Sheet.Cells.Item($HeaderRow, $helperColumn)
+    $helperHeaderCell.Value2 = "__AIS_ARCHIVE_SORT"
+    $helperDataRange = $Sheet.Range(
+      $Sheet.Cells.Item($StartRow, $helperColumn),
+      $Sheet.Cells.Item($LastRow, $helperColumn)
+    )
+    $helperDataRange.Formula = $helperValues
+    $nameDataRange = $Sheet.Range(
+      $Sheet.Cells.Item($StartRow, $NameColumn),
+      $Sheet.Cells.Item($LastRow, $NameColumn)
+    )
+    $sortRange = $Sheet.Range(
+      $Sheet.Cells.Item($HeaderRow, 1),
+      $Sheet.Cells.Item($LastRow, $helperColumn)
+    )
+    $sort = $Sheet.Sort
+    $sortFields = $sort.SortFields
+    $sortFields.Clear()
+    [void]$sortFields.Add($helperDataRange, 0, 1, $null, 0)
+    [void]$sortFields.Add($nameDataRange, 0, 1, $null, 0)
+    $sort.SetRange($sortRange)
+    $sort.Header = 1
+    $sort.MatchCase = $false
+    $sort.Orientation = 1
+    $sort.Apply()
+    return [pscustomobject]@{
+      Rows = $rowCount
+      ArchiveRows = $archiveRows
+    }
+  } finally {
+    if ($null -ne $helperRange) {
+      try { [void]$helperRange.ClearContents() } catch {}
+    }
+    Release-ComObject $sortFields
+    Release-ComObject $sort
+    Release-ComObject $sortRange
+    Release-ComObject $nameDataRange
+    Release-ComObject $helperDataRange
+    Release-ComObject $helperRange
+    Release-ComObject $helperHeaderCell
+  }
+}
+
+function Update-AisSyncMetadataForCurrentRows {
+  param(
+    [object]$Sheet,
+    [hashtable]$RecordByRow,
+    [int]$StartRow,
+    [int]$LastRow,
+    [int]$FirstColumn
+  )
+  $updated = 0
+  $usedIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+  for ($row = $StartRow; $row -le $LastRow; $row += 1) {
+    $record = if ($RecordByRow.ContainsKey($row)) { $RecordByRow[$row] } else { $null }
+    $metadata = if ($null -ne $record) {
+      ([string](Get-ObjectProperty $record "__syncComment")).Trim()
+    } else {
+      ""
+    }
+    if ($metadata) {
+      $metadataObject = Get-AisSyncMetadataObject $metadata
+      $recordId = ([string](Get-ObjectProperty $metadataObject "recordId")).Trim()
+      if (-not $usedIds.Add($recordId)) {
+        throw "После сортировки реестра программ повторяется служебный ID '$recordId'."
+      }
+    }
+    $cell = $null
+    try {
+      $cell = $Sheet.Cells.Item($row, $FirstColumn)
+      $humanText = Get-CellCommentText $cell
+      if (Set-AisSyncCommentCell $cell "" -HumanText $humanText -UseProvidedHumanText) {
+        $updated += 1
+      }
+      if (Set-AisSyncValidationCell $cell $metadata) {
+        $updated += 1
+      }
+    } finally {
+      Release-ComObject $cell
+    }
+  }
+  return $updated
 }
 
 function Get-ProgramWorkbookIdentity {
@@ -2545,6 +2686,9 @@ function Update-ProgramPromoMessages {
       MissingManagedColumnNames = @()
       Skipped = 0
       SkippedPrograms = @()
+      InsertedRows = 0
+      SortedRows = 0
+      ArchiveRows = 0
       Provided = $false
     }
   }
@@ -2563,6 +2707,7 @@ function Update-ProgramPromoMessages {
     $columnMap = [pscustomobject]$columnMapValues
     $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn $columnMap)
     $nameColumn = Find-MappedColumn $columns "name"
+    $statusColumn = Find-MappedColumn $columns "status"
     $landingCodeColumn = Find-MappedColumn $columns "landingCode"
     $promoMessage1Column = Find-MappedColumn $columns "promoMessage1"
     $promoMessage2Column = Find-MappedColumn $columns "promoMessage2"
@@ -2575,6 +2720,7 @@ function Update-ProgramPromoMessages {
     }
     $startRow = [int]$header.Row + 1
     $lastRow = [int]$header.LastRow
+    $dataLastColumn = [int](($columns | Measure-Object -Property Column -Maximum).Maximum)
     if ($lastRow -lt $startRow) {
       $emptySheetSkippedPrograms = @($programs | Where-Object { $null -ne $_ } | ForEach-Object {
         $program = $_
@@ -2605,6 +2751,9 @@ function Update-ProgramPromoMessages {
         MissingManagedColumnNames = @()
         Skipped = $programs.Count
         SkippedPrograms = $emptySheetSkippedPrograms
+        InsertedRows = 0
+        SortedRows = 0
+        ArchiveRows = 0
         Provided = $true
       }
     }
@@ -2615,6 +2764,7 @@ function Update-ProgramPromoMessages {
     $identityByRow = @{}
     $rowByRecordId = @{}
     $recordIdByRow = @{}
+    $existingRecordByIdentity = @{}
     for ($row = $startRow; $row -le $lastRow; $row += 1) {
       $offset = $row - $startRow + 1
       $name = Get-MatrixValue $values $offset $nameColumn
@@ -2637,6 +2787,10 @@ function Update-ProgramPromoMessages {
           }
           $rowByRecordId[$recordId] = $row
           $recordIdByRow[$row] = $recordId
+          $existingRecordByIdentity[$identity] = [pscustomobject]@{
+            id = $recordId
+            __syncComment = ($syncMetadata | ConvertTo-Json -Compress -Depth 6)
+          }
         }
       } finally {
         Release-ComObject $firstCell
@@ -2654,6 +2808,7 @@ function Update-ProgramPromoMessages {
     $missingManagedColumnNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $skippedCount = 0
     $skippedPrograms = [Collections.Generic.List[object]]::new()
+    $insertedRows = 0
     foreach ($program in $programs) {
       if ($null -eq $program) { continue }
       $providedFields = @(
@@ -2711,17 +2866,28 @@ function Update-ProgramPromoMessages {
         $targetRow = [int]$rowByIdentity[$currentIdentity]
       }
       if ($targetRow -le 0) {
-        $skippedCount += 1
-        [void]$skippedPrograms.Add([pscustomobject]@{
-          id = $requestedRecordId
-          name = ([string](Get-ObjectProperty $program "name")).Trim()
-          landingCode = ([string](Get-ObjectProperty $program "landingCode")).Trim()
-          sourceName = ([string]$sourceName).Trim()
-          sourceLandingCode = ([string]$sourceLandingCode).Trim()
-          requestedRow = $requestedRow
-          reason = "Не найдена строка по служебному ID, исходному или текущему названию и коду лендинга."
-        })
-        continue
+        $targetRow = $lastRow + 1
+        Insert-StudentTemplateRows $sheet $startRow $targetRow $dataLastColumn 1
+        $insertedRange = $null
+        try {
+          $insertedRange = $sheet.Range(
+            $sheet.Cells.Item($targetRow, 1),
+            $sheet.Cells.Item($targetRow, $dataLastColumn)
+          )
+          try { [void]$insertedRange.ClearComments() } catch {}
+        } finally {
+          Release-ComObject $insertedRange
+        }
+        $lastRow = $targetRow
+        $insertedRows += 1
+        if ($currentIdentity) {
+          $rowByIdentity[$currentIdentity] = $targetRow
+          $identityByRow[$targetRow] = $currentIdentity
+        }
+        if ($requestedRecordId) {
+          $rowByRecordId[$requestedRecordId] = $targetRow
+          $recordIdByRow[$targetRow] = $requestedRecordId
+        }
       }
       if (-not $updatedRows.Add($targetRow)) {
         throw "Несколько записей веб-базы сопоставлены с одной строкой $targetRow листа 'Реестр программ'."
@@ -2768,9 +2934,58 @@ function Update-ProgramPromoMessages {
       }
       $updatedCount += 1
     }
-    [void](Update-AisSyncMetadataForRows $sheet $programRecordByRow $startRow $lastRow 1)
+    $sortResult = Sort-ProgramRegistryRows `
+      $sheet `
+      ([int]$header.Row) `
+      $startRow `
+      $lastRow `
+      $dataLastColumn `
+      $nameColumn `
+      $statusColumn
+    $programByIdentity = @{}
+    foreach ($record in @($programRecordByRow.Values)) {
+      $identity = Get-ProgramWorkbookIdentity `
+        (Get-ObjectProperty $record "name") `
+        (Get-ObjectProperty $record "landingCode")
+      if (-not $identity) {
+        throw "После обновления реестра программ найдена запись без названия."
+      }
+      if ($programByIdentity.ContainsKey($identity)) {
+        throw "После обновления реестра программ повторяется название и код лендинга."
+      }
+      $programByIdentity[$identity] = $record
+    }
+    $sortedRecordByRow = @{}
+    $usedProgramIdentities = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $sortedIdentityRange = $null
+    try {
+      $sortedIdentityRange = $sheet.Range(
+        $sheet.Cells.Item($startRow, 1),
+        $sheet.Cells.Item($lastRow, [Math]::Max($nameColumn, $landingCodeColumn))
+      )
+      $sortedValues = $sortedIdentityRange.Value2
+      for ($row = $startRow; $row -le $lastRow; $row += 1) {
+        $offset = $row - $startRow + 1
+        $identity = Get-ProgramWorkbookIdentity `
+          (Get-MatrixValue $sortedValues $offset $nameColumn) `
+          (Get-MatrixValue $sortedValues $offset $landingCodeColumn)
+        if (-not $identity) { continue }
+        if ($programByIdentity.ContainsKey($identity)) {
+          $sortedRecordByRow[$row] = $programByIdentity[$identity]
+          [void]$usedProgramIdentities.Add($identity)
+        } elseif ($existingRecordByIdentity.ContainsKey($identity)) {
+          $sortedRecordByRow[$row] = $existingRecordByIdentity[$identity]
+        }
+      }
+    } finally {
+      Release-ComObject $sortedIdentityRange
+    }
+    if ($usedProgramIdentities.Count -ne $programByIdentity.Count) {
+      throw "После сортировки не удалось повторно сопоставить все программы Web со строками XLSB."
+    }
+    [void](Update-AisSyncMetadataForCurrentRows $sheet $sortedRecordByRow $startRow $lastRow 1)
     return [pscustomobject]@{
-      Count = $updatedCount
+      Count = $programRecordByRow.Count
       Messages = $messageCount
       EmailMessages = $emailMessageCount
       ManagedCells = $managedCellCount
@@ -2779,6 +2994,9 @@ function Update-ProgramPromoMessages {
       MissingManagedColumnNames = @($missingManagedColumnNames | Sort-Object)
       Skipped = $skippedCount
       SkippedPrograms = @($skippedPrograms)
+      InsertedRows = $insertedRows
+      SortedRows = $sortResult.Rows
+      ArchiveRows = $sortResult.ArchiveRows
       Provided = $true
     }
   } catch {
@@ -3495,12 +3713,16 @@ try {
     programEmailMessages = $programPromoResult.EmailMessages
     programPromoSkipped = $programPromoResult.Skipped
     programPromoSkippedDetails = @($programPromoResult.SkippedPrograms)
+    programRowsInserted = $programPromoResult.InsertedRows
+    programRowsSorted = $programPromoResult.SortedRows
+    programArchiveRows = $programPromoResult.ArchiveRows
     programDictionaryValues = $programDictionaryResult.Count
     inventoryItems = $inventoryResult.Items
     inventoryUnits = $inventoryResult.Units
     inventoryRowsInserted = $inventoryResult.InsertedRows
     trainingPlans = $trainingPlanResult.Count
     trainingPlanRowsInserted = $trainingPlanResult.InsertedRows
+    trainingPlanRowsCleared = $trainingPlanResult.ClearedRows
     studentEventTemplates = $macroSettingsResult.StudentEvents
     contractEventTemplates = $macroSettingsResult.ContractEvents
     automaticExpenseRules = $macroSettingsResult.PaymentRules

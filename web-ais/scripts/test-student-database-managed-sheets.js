@@ -184,7 +184,7 @@ assert.throws(
     ],
     [{ name: "Программа 1", landingCode: "one" }]
   ),
-  /Создание и удаление программ.+XLSB не изменён/u
+  /Автоматическое удаление программ.+XLSB не изменён/u
 );
 assert.throws(
   () => validateStudentDatabaseProgramStructure(
@@ -194,7 +194,31 @@ assert.throws(
       { name: "Только Excel", landingCode: "excel-only" }
     ]
   ),
-  /Создание и удаление программ.+XLSB не изменён/u
+  /Автоматическое удаление программ.+XLSB не изменён/u
+);
+assert.deepEqual(
+  validateStudentDatabaseProgramStructure(
+    [
+      { name: "Программа 1", landingCode: "one" },
+      { name: "Новая программа Web", landingCode: "new" }
+    ],
+    [{ name: "Программа 1", landingCode: "one" }],
+    { allowWebOnly: true }
+  ),
+  { matched: 1, webCount: 2, excelCount: 1 },
+  "Отсутствующая в XLSB программа должна быть разрешена для последующего добавления."
+);
+assert.deepEqual(
+  validateStudentDatabaseProgramStructure(
+    [{ name: "Программа 1", landingCode: "one" }],
+    [
+      { name: "Программа 1", landingCode: "one" },
+      { name: "Новая программа Excel", landingCode: "excel-new" }
+    ],
+    { allowWebOnly: true, allowExcelOnly: true }
+  ),
+  { matched: 1, webCount: 1, excelCount: 2 },
+  "Excel → Web должен принимать новые программы исходной книги."
 );
 
 assert.throws(
@@ -301,6 +325,11 @@ const powershellSource = fs.readFileSync(
 assert.match(powershellSource, /function Update-InventorySheet/u);
 assert.match(powershellSource, /function Update-TrainingPlanSheet/u);
 assert.match(powershellSource, /function Set-ProgramManagedValueCell/u);
+assert.match(powershellSource, /function Sort-ProgramRegistryRows/u);
+assert.match(powershellSource, /Insert-StudentTemplateRows \$sheet \$startRow \$targetRow \$dataLastColumn 1/u);
+assert.match(powershellSource, /\$helperValues\[\$offset, 0\] = if \(\$isArchive\) \{ 1 \} else \{ 0 \}/u);
+assert.match(powershellSource, /programRowsInserted = \$programPromoResult\.InsertedRows/u);
+assert.match(powershellSource, /trainingPlanRowsCleared = \$trainingPlanResult\.ClearedRows/u);
 assert.match(powershellSource, /function Update-AisSyncMetadataForRows/u);
 assert.match(powershellSource, /function Get-AisSyncCellMetadata/u);
 assert.match(powershellSource, /function Set-AisSyncValidationCell/u);
@@ -310,7 +339,7 @@ assert.match(
 );
 assert.match(
   powershellSource,
-  /Update-AisSyncMetadataForRows \$sheet \$programRecordByRow \$startRow \$lastRow 1/u
+  /Update-AisSyncMetadataForCurrentRows \$sheet \$sortedRecordByRow \$startRow \$lastRow 1/u
 );
 assert.match(
   powershellSource,

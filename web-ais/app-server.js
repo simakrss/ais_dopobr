@@ -18425,7 +18425,9 @@ function normalizeStudentDatabaseProgramSyncIdentity(name, landingCode) {
   return normalizedName ? `${normalizedName}\u0000${normalizedLandingCode}` : "";
 }
 
-function validateStudentDatabaseProgramStructure(webPrograms, excelPrograms) {
+function validateStudentDatabaseProgramStructure(webPrograms, excelPrograms, options = {}) {
+  const allowWebOnly = options?.allowWebOnly === true;
+  const allowExcelOnly = options?.allowExcelOnly === true;
   const webRows = Array.isArray(webPrograms) ? webPrograms : [];
   const excelRows = Array.isArray(excelPrograms) ? excelPrograms : [];
   const excelByIdentity = new Map();
@@ -18506,16 +18508,18 @@ function validateStudentDatabaseProgramStructure(webPrograms, excelPrograms) {
   const unmatchedExcel = [...excelByIdentity.entries()]
     .filter(([identity]) => !matchedIdentities.has(identity))
     .map(([, program]) => String(program?.name || program?.xlsbProgramName || "Без названия").trim());
-  if (unmatchedWeb.length || unmatchedExcel.length || webRows.length !== excelRows.length) {
+  const blockedWebRows = allowWebOnly ? [] : unmatchedWeb;
+  const blockedExcelRows = allowExcelOnly ? [] : unmatchedExcel;
+  if (blockedWebRows.length || blockedExcelRows.length) {
     const summarize = (rows) => rows.slice(0, 5).join(", ")
       + (rows.length > 5 ? ` и ещё ${rows.length - 5}` : "");
     const details = [
-      unmatchedWeb.length ? `только в Web: ${summarize(unmatchedWeb)}` : "",
-      unmatchedExcel.length ? `только в Excel: ${summarize(unmatchedExcel)}` : ""
+      blockedWebRows.length ? `только в Web: ${summarize(blockedWebRows)}` : "",
+      blockedExcelRows.length ? `только в Excel: ${summarize(blockedExcelRows)}` : ""
     ].filter(Boolean).join("; ");
     const error = new Error(
       "Структура листа «Реестр программ» отличается от Web-базы. "
-      + "Создание и удаление программ этой синхронизацией пока не выполняется; "
+      + "Автоматическое удаление программ при таком расхождении не выполняется; "
       + `XLSB не изменён${details ? ` (${details})` : ""}.`
     );
     error.statusCode = 409;
@@ -20286,7 +20290,8 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           if (payload.programsProvided) {
             validateStudentDatabaseProgramStructure(
               payload.programs,
-              sourceData.programPaymentSettings
+              sourceData.programPaymentSettings,
+              { allowWebOnly: true, allowExcelOnly: true }
             );
           }
         }
@@ -20445,7 +20450,8 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       }
       validateStudentDatabaseProgramStructure(
         payload.programs,
-        sourceDataForExport.programPaymentSettings
+        sourceDataForExport.programPaymentSettings,
+        { allowWebOnly: true }
       );
     }
     onProgress({ progress: 16, stage: "inspect", message: "Проверка структуры исходной книги..." });
@@ -20644,10 +20650,15 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       programEmailMessageCount: Number(scriptResult.programEmailMessages || 0),
       programPromoSkippedCount: Number(scriptResult.programPromoSkipped || 0),
       programPromoSkippedDetails,
+      programInsertedCount: Number(scriptResult.programRowsInserted || 0),
+      programSortedCount: Number(scriptResult.programRowsSorted || 0),
+      programArchiveCount: Number(scriptResult.programArchiveRows || 0),
       programDictionaryValueCount: Number(scriptResult.programDictionaryValues || 0),
       inventoryCount: Number(scriptResult.inventoryItems || 0),
       inventoryUnitCount: Number(scriptResult.inventoryUnits || 0),
       trainingPlanCount: Number(scriptResult.trainingPlans || 0),
+      trainingPlanInsertedRowCount: Number(scriptResult.trainingPlanRowsInserted || 0),
+      trainingPlanClearedRowCount: Number(scriptResult.trainingPlanRowsCleared || 0),
       automaticExpenseRuleCount: Number(scriptResult.automaticExpenseRules || 0),
       communicationTemplateNamedRangeRequestedCount: communicationTemplateVerification.requested,
       communicationTemplateNamedRangeCount: communicationTemplateVerification.verified,

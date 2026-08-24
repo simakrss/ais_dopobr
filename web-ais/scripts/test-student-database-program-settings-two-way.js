@@ -120,6 +120,13 @@ assert.match(syncScriptSource, /Name = "ВидыДеятПК1"/u);
 assert.match(syncScriptSource, /\$currentRange\.ClearContents\(\)/u);
 assert.match(syncScriptSource, /\$definedName\.RefersTo = Get-ExcelRangeReference/u);
 assert.match(syncScriptSource, /Название программы в строке \$Row вычисляется формулой/u);
+assert.match(syncScriptSource, /function Sort-ProgramRegistryRows/u);
+assert.match(syncScriptSource, /programRowsInserted = \$programPromoResult\.InsertedRows/u);
+assert.match(
+  clientSource,
+  /function buildStudentDatabaseExportTrainingPlans\(\)[\s\S]*?programNameById[\s\S]*?programName: currentProgramName/u,
+  "Учебный план должен экспортироваться с актуальным названием связанной программы."
+);
 assert.doesNotMatch(
   syncScriptSource,
   /\$fieldName -in @\("promoMessage1", "promoMessage2", "emailMessageTemplate", "name"\)/u

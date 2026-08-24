@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.263",
+    version: "1.7.264",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.264",
+      releasedAt: "2026-08-24",
+      changes: [
+        "Синхронизация добавляет отсутствующие программы в лист «Реестр программ» и сортирует его по названию, оставляя архивные программы в конце.",
+        "Лист «Учебные планы» полностью заполняется данными Web-базы, а названия программ в его строках обновляются после переименования программы."
+      ]
+    },
     {
       version: "1.7.263",
       releasedAt: "2026-08-24",
@@ -48568,9 +48576,19 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function buildStudentDatabaseExportTrainingPlans() {
+    const programNameById = new Map((state.data.collections.programs || [])
+      .map((program) => [
+        String(program?.id || "").trim(),
+        String(program?.name || "").trim()
+      ])
+      .filter(([id, name]) => id && name));
     return (state.data.collections.trainingPlans || [])
       .filter((item) => item && typeof item === "object")
-      .map((item, index) => normalizeTrainingPlanRecord(item, index));
+      .map((item, index) => {
+        const record = normalizeTrainingPlanRecord(item, index);
+        const currentProgramName = programNameById.get(String(record.programId || "").trim());
+        return currentProgramName ? { ...record, programName: currentProgramName } : record;
+      });
   }
 
   function buildStudentDatabaseExportPrograms() {
@@ -49049,6 +49067,9 @@ MAX - https://bizvmax.ru/zifra_plus
             key: "programs",
             label: "Программы",
             value: operationSummary?.programCount ?? result.programCount ?? programs.length,
+            note: Number(result.programInsertedCount || 0) > 0
+              ? `Добавлено в XLSB: ${Number(result.programInsertedCount || 0)}; архивные строки перенесены в конец`
+              : "Реестр отсортирован по названию; архивные строки находятся в конце",
             columns: databaseOperationDetailColumns(databaseOperationDetailFields.programs),
             rows: buildDatabaseOperationDetailRows(detailPrograms, databaseOperationDetailFields.programs)
           },
@@ -49056,6 +49077,7 @@ MAX - https://bizvmax.ru/zifra_plus
             key: "training-plans",
             label: "Учебные планы",
             value: operationSummary?.trainingPlanCount ?? result.trainingPlanCount ?? trainingPlans.length,
+            note: "Лист полностью заполнен актуальными строками Web-базы",
             columns: databaseOperationDetailColumns(databaseOperationDetailFields.trainingPlans),
             rows: buildDatabaseOperationDetailRows(detailTrainingPlans, databaseOperationDetailFields.trainingPlans)
           },
@@ -49208,7 +49230,7 @@ MAX - https://bizvmax.ru/zifra_plus
       addAudit(
         "Экспорт в базу",
         "Слушатели, договоры, затраты и сообщения программ",
-        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.automaticExpenseRuleCount || 0} правил назначения оплат; ${result.programPromoMessageCount || 0} промосообщений; ${result.programEmailMessageCount || 0} почтовых сообщений программ; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; файл: ${fileName}; источник: ${sourceLabel}; время выполнения: ${duration}`,
+        `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.automaticExpenseRuleCount || 0} правил назначения оплат; ${result.programPromoMessageCount || 0} промосообщений; ${result.programEmailMessageCount || 0} почтовых сообщений программ; добавлено программ: ${result.programInsertedCount || 0}; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; файл: ${fileName}; источник: ${sourceLabel}; время выполнения: ${duration}`,
         { entityType: "database", entityLabel: fileName, source: `xlsb-download-${exportSource}` }
       );
       persist();
@@ -49281,6 +49303,24 @@ MAX - https://bizvmax.ru/zifra_plus
             value: generalExpenses.length,
             columns: databaseOperationDetailColumns(databaseOperationDetailFields.generalExpenses),
             rows: buildDatabaseOperationDetailRows(generalExpenses, databaseOperationDetailFields.generalExpenses)
+          },
+          {
+            key: "programs",
+            label: "Программы",
+            value: result.programCount ?? programs.length,
+            note: Number(result.programInsertedCount || 0) > 0
+              ? `Добавлено в XLSB: ${Number(result.programInsertedCount || 0)}; архивные строки перенесены в конец`
+              : "Реестр отсортирован по названию; архивные строки находятся в конце",
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.programs),
+            rows: buildDatabaseOperationDetailRows(programs, databaseOperationDetailFields.programs)
+          },
+          {
+            key: "training-plans",
+            label: "Учебные планы",
+            value: result.trainingPlanCount ?? trainingPlans.length,
+            note: "Лист полностью заполнен актуальными строками Web-базы",
+            columns: databaseOperationDetailColumns(databaseOperationDetailFields.trainingPlans),
+            rows: buildDatabaseOperationDetailRows(trainingPlans, databaseOperationDetailFields.trainingPlans)
           },
           {
             key: "payment-rules",

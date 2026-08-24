@@ -16,10 +16,22 @@ const sourcePath = path.resolve(
     || "Y:/АИС Допобразование/АИС Допобразование.xlsb"
 );
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ais-managed-sheets-"));
+const keepArtifacts = process.env.AIS_KEEP_TEST_ARTIFACTS === "1";
 const inputPath = path.join(tempRoot, "input.xlsb");
 const outputPath = path.join(tempRoot, "output.xlsb");
 const payloadPath = path.join(tempRoot, "payload.json");
+const metadataPayloadPath = path.join(tempRoot, "metadata-payload.json");
+const metadataOutputPath = path.join(tempRoot, "metadata-unused.xlsb");
 const syncScript = path.resolve(__dirname, "sync-student-database.ps1");
+const syncMetadataSheets = [
+  { sheetName: "База", entity: "students" },
+  { sheetName: "Реестр договоров", entity: "contracts" },
+  { sheetName: "Прямые затраты", entity: "directExpenses" },
+  { sheetName: "Общие затраты", entity: "generalExpenses" },
+  { sheetName: "Запасы", entity: "inventoryUnits" },
+  { sheetName: "Реестр программ", entity: "programs" },
+  { sheetName: "Учебные планы", entity: "trainingPlans" }
+];
 
 function sha256(value) {
   const bytes = Buffer.isBuffer(value) ? value : fs.readFileSync(value);
@@ -77,22 +89,57 @@ try {
   ));
   assert.ok(inventoryTarget && trainingTarget && programTarget, "Не найдены строки для round-trip проверки.");
 
-  const inventoryNote = `Round-trip запас ${Date.now()}`;
-  const trainingTeacher = `Round-trip преподаватель ${Date.now()}`;
-  const programManager = `Round-trip менеджер ${Date.now()}`;
+  const runId = Date.now();
+  const inventoryNote = `Round-trip запас ${runId}`;
+  const trainingTeacher = `Round-trip преподаватель ${runId}`;
+  const programManager = `Round-trip менеджер ${runId}`;
+  const insertedProgram = {
+    id: `roundtrip-program-${runId}`,
+    name: `Автоматически добавленная программа ${runId} (5 ч)`,
+    shortName: `Автоматически добавленная программа ${runId}`,
+    status: "Набор",
+    landingCode: `roundtrip-${runId}`,
+    price: 5000,
+    type: "ДОП",
+    hours: 5,
+    duration: "1 нед.",
+    studyForm: "Дистанционная",
+    authorSource: "Тестовый автор"
+  };
+  const insertedTrainingPlan = {
+    id: `roundtrip-plan-${runId}`,
+    programId: insertedProgram.id,
+    code: imported.trainingPlans.length + 1,
+    programName: insertedProgram.name,
+    discipline: `Тестовая дисциплина ${runId}`,
+    description: "Строка добавлена автоматическим round-trip тестом",
+    theoryHours: 2,
+    practiceHours: 3,
+    totalHours: 999,
+    attestation: "Зачет",
+    teacher: "Тестовый преподаватель",
+    materials: "Тестовые материалы",
+    content: "Тестовое содержание"
+  };
   const inventory = imported.inventory.map((item) => (
     item.id === inventoryTarget.id ? { ...item, note: inventoryNote } : { ...item }
   ));
-  const trainingPlans = imported.trainingPlans.map((item) => (
-    item.xlsbTrainingPlanRow === trainingTarget.xlsbTrainingPlanRow
-      ? { ...item, teacher: trainingTeacher }
-      : { ...item }
-  ));
-  const programs = imported.programPaymentSettings.map((program) => (
-    program.xlsbProgramRow === programTarget.xlsbProgramRow
-      ? { ...program, manager: programManager }
-      : { ...program }
-  ));
+  const trainingPlans = [
+    ...imported.trainingPlans.map((item) => (
+      item.xlsbTrainingPlanRow === trainingTarget.xlsbTrainingPlanRow
+        ? { ...item, teacher: trainingTeacher }
+        : { ...item }
+    )),
+    insertedTrainingPlan
+  ];
+  const programs = [
+    ...imported.programPaymentSettings.map((program) => (
+      program.xlsbProgramRow === programTarget.xlsbProgramRow
+        ? { ...program, manager: programManager }
+        : { ...program }
+    )),
+    insertedProgram
+  ];
   const directExpenses = flattenDirectExpenses(imported);
   const payload = sanitizeStudentDatabaseExportPayload({
     students: imported.students,
@@ -154,6 +201,9 @@ try {
   assert.equal(result.inventoryItems, inventory.length);
   assert.equal(result.inventoryUnits, payload.inventoryRows.length);
   assert.equal(result.trainingPlans, trainingPlans.length);
+  assert.equal(result.programRowsInserted, 1);
+  assert.equal(result.programRowsSorted, programs.length);
+  assert.ok(result.programArchiveRows > 0);
   assert.ok(result.programManagedCells > 0, "Управляемые поля реестра программ не обновлялись.");
   assert.ok(
     result.programFormulaCellsPreserved > 0,
@@ -161,9 +211,9 @@ try {
   );
 
   const after = readRaw(outputPath);
-  assert.match(getCommentText(after, "Запасы", "A2"), /\[\[AIS_SYNC_V1\]\]/u);
-  assert.match(getCommentText(after, "Учебные планы", "A2"), /\[\[AIS_SYNC_V1\]\]/u);
-  assert.match(
+  assert.doesNotMatch(getCommentText(after, "Запасы", "A2"), /\[\[AIS_SYNC_V1\]\]/u);
+  assert.doesNotMatch(getCommentText(after, "Учебные планы", "A2"), /\[\[AIS_SYNC_V1\]\]/u);
+  assert.doesNotMatch(
     getCommentText(after, "Реестр программ", `A${programRow}`),
     /\[\[AIS_SYNC_V1\]\]/u
   );
@@ -184,7 +234,12 @@ try {
   assert.ok(before.vbaraw?.length, "В исходной книге не найден VBA-проект.");
   assert.ok(after.vbaraw?.length, "VBA-проект потерян после сохранения.");
 
-  const roundTrip = parseStudentDatabaseWorkbook(fs.readFileSync(outputPath));
+  const syncMetadataRows = readSyncMetadataRows(outputPath);
+  const roundTrip = parseStudentDatabaseWorkbook(
+    fs.readFileSync(outputPath),
+    () => {},
+    { syncMetadataRows }
+  );
   assert.equal(roundTrip.inventoryUnitCount, imported.inventoryUnitCount);
   assert.ok(roundTrip.inventoryDatabaseSyncFields.includes("balance"));
   assert.equal(
@@ -192,36 +247,99 @@ try {
     inventoryNote
   );
   assert.equal(
-    roundTrip.trainingPlans.find((item) => (
-      item.xlsbTrainingPlanRow === trainingTarget.xlsbTrainingPlanRow
-    ))?.teacher,
+    roundTrip.trainingPlans.find((item) => item.id === trainingTarget.id)?.teacher,
     trainingTeacher
   );
   assert.ok(
     roundTrip.trainingPlans.some((item) => item.id === trainingTarget.id),
     "Служебный ID строки учебного плана не сохранился."
   );
-  assert.equal(
-    roundTrip.programPaymentSettings.find((program) => (
-      program.xlsbProgramRow === programTarget.xlsbProgramRow
-    ))?.manager,
-    programManager
-  );
+  const updatedProgramResult = roundTrip.programPaymentSettings.find((program) => (
+    program.id === programTarget.id
+  ));
+  if (!updatedProgramResult) {
+    console.error(JSON.stringify({
+      expectedProgram: {
+        id: programTarget.id,
+        name: programTarget.name,
+        sourceRow: programTarget.xlsbProgramRow
+      },
+      managerMatches: roundTrip.programPaymentSettings
+        .filter((program) => program.manager === programManager)
+        .map((program) => ({ id: program.id, name: program.name, row: program.xlsbProgramRow })),
+      nearbyPrograms: roundTrip.programPaymentSettings
+        .filter((program) => program.name === programTarget.name)
+        .map((program) => ({ id: program.id, manager: program.manager, row: program.xlsbProgramRow }))
+    }, null, 2));
+  }
+  assert.equal(updatedProgramResult?.manager, programManager);
   assert.ok(
     roundTrip.programPaymentSettings.some((program) => program.id === programTarget.id),
     "Служебный ID программы не сохранился."
   );
+  const insertedProgramResult = roundTrip.programPaymentSettings.find((program) => (
+    program.id === insertedProgram.id
+  ));
+  assert.ok(insertedProgramResult, "Отсутствующая программа не была добавлена в XLSB.");
+  assert.equal(insertedProgramResult.name, insertedProgram.name);
+  assert.equal(insertedProgramResult.status, "Набор");
+  assert.ok(getCell(after, "Реестр программ", `B${insertedProgramResult.xlsbProgramRow}`).f);
+  assert.ok(getCell(after, "Реестр программ", `M${insertedProgramResult.xlsbProgramRow}`).f);
+  const insertedTrainingPlanResult = roundTrip.trainingPlans.find((item) => (
+    item.id === insertedTrainingPlan.id
+  ));
+  assert.ok(insertedTrainingPlanResult, "Новая строка учебного плана не была записана в XLSB.");
+  assert.equal(insertedTrainingPlanResult.programName, insertedProgram.name);
+  assert.equal(insertedTrainingPlanResult.discipline, insertedTrainingPlan.discipline);
+  assert.equal(Number(insertedTrainingPlanResult.totalHours), 5);
+  let archiveStarted = false;
+  roundTrip.programPaymentSettings.forEach((program) => {
+    const isArchive = /архив/iu.test(String(program.status || ""));
+    if (isArchive) archiveStarted = true;
+    else assert.equal(archiveStarted, false, "Активная программа находится после архивной.");
+  });
   assert.equal(sha256(sourcePath), sourceHash, "Исходная XLSB была изменена во время теста.");
 
   console.log(JSON.stringify({
     inventoryItems: result.inventoryItems,
     inventoryUnits: result.inventoryUnits,
     trainingPlans: result.trainingPlans,
+    programRowsInserted: result.programRowsInserted,
+    programRowsSorted: result.programRowsSorted,
     programManagedCells: result.programManagedCells,
     programFormulaCellsPreserved: result.programFormulaCellsPreserved,
     vbaPreserved: true,
     sourceUnchanged: true
   }, null, 2));
 } finally {
-  fs.rmSync(tempRoot, { recursive: true, force: true });
+  if (keepArtifacts) console.error(`Артефакты теста: ${tempRoot}`);
+  else fs.rmSync(tempRoot, { recursive: true, force: true });
+}
+
+function readSyncMetadataRows(filePath) {
+  fs.writeFileSync(metadataPayloadPath, JSON.stringify({
+    readSyncMetadataOnly: true,
+    syncMetadataSheets
+  }), "utf8");
+  const readResult = spawnSync("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", syncScript,
+    "-InputPath", filePath,
+    "-OutputPath", metadataOutputPath,
+    "-PayloadPath", metadataPayloadPath
+  ], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: 2 * 60 * 1000
+  });
+  assert.equal(readResult.status, 0, readResult.stderr || readResult.stdout);
+  const resultLine = String(readResult.stdout || "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .reverse()
+    .find((line) => line.startsWith("{") && line.includes('"readSyncMetadataOnly":true'));
+  assert.ok(resultLine, "Microsoft Excel не вернул служебные свойства AIS_SYNC.");
+  return JSON.parse(resultLine).syncMetadataRows || [];
 }
