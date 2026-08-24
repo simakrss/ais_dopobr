@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.251",
+    version: "1.7.252",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.252",
+      releasedAt: "2026-08-24",
+      changes: [
+        "После успешного формирования приказов, экспорта учётной записи в СДО, распознавания исходных документов и отправки служебных писем соответствующие события слушателя автоматически отмечаются текущей датой.",
+        "Автоматическая отметка событий применяется и к каждой успешно обработанной карточке в групповых операциях."
+      ]
+    },
     {
       version: "1.7.251",
       releasedAt: "2026-08-24",
@@ -24799,6 +24807,7 @@ MAX - https://bizvmax.ru/zifra_plus
     ].join("\r\n");
     download(`ЭкспортПользователей_${formatSdoExportDate(new Date())}.csv`, `\ufeff${content}`, "text/csv;charset=utf-8");
     openExternalUrl(uploadUsersUrl);
+    markStudentEventsCompleted(record, "portalAccountCreated");
   }
 
   function exportEmployeeToSdo() {
@@ -24951,6 +24960,96 @@ MAX - https://bizvmax.ru/zifra_plus
   function todayIso() {
     const date = new Date();
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  function applyStudentEventCompletion(record, eventKey, dateValue = "", label = "") {
+    const key = String(eventKey || "").trim();
+    if (!record || !key) return false;
+    const date = String(dateValue || "").trim() || todayIso();
+    const stateKey = `event_${key}_state`;
+    const dateKey = `event_${key}_date`;
+    const labelKey = `event_${key}_label`;
+    const normalizedLabel = String(label || "").trim();
+    const changed = record[stateKey] !== "dated"
+      || String(record[dateKey] || "") !== date
+      || Boolean(normalizedLabel && String(record[labelKey] || "") !== normalizedLabel);
+    record[stateKey] = "dated";
+    record[dateKey] = date;
+    if (normalizedLabel) record[labelKey] = normalizedLabel;
+    return changed;
+  }
+
+  function updateStudentEventCompletionInCard(eventKey, dateValue, label) {
+    if (state.modal?.config !== "students") return;
+    const key = String(eventKey || "").trim();
+    const row = document.querySelector(`.student-event-row[data-event-key="${CSS.escape(key)}"]`);
+    if (!row) return;
+    const stateInput = row.querySelector(`[data-event-state="${CSS.escape(key)}"]`);
+    const dateInput = row.querySelector(`[data-event-date="${CSS.escape(key)}"]`);
+    const labelInput = row.querySelector(`[data-event-label-value="${CSS.escape(key)}"]`);
+    const dateLabel = row.querySelector(`[data-event-date-label="${CSS.escape(key)}"]`);
+    const labelText = row.querySelector(`[data-event-label-text="${CSS.escape(key)}"]`);
+    const checkbox = row.querySelector("input[type='checkbox']");
+    if (stateInput) stateInput.value = "dated";
+    if (dateInput) dateInput.value = dateValue;
+    if (labelInput && label) labelInput.value = label;
+    if (dateLabel) dateLabel.textContent = dateRu(dateValue);
+    if (labelText && label) {
+      labelText.textContent = label;
+      labelText.title = label;
+    }
+    if (checkbox) checkbox.checked = true;
+    row.classList.add("is-selected", "has-date");
+  }
+
+  function markStudentEventsCompleted(records, eventKey, dateValue = "") {
+    const key = String(eventKey || "").trim();
+    if (!key) return 0;
+    const date = String(dateValue || "").trim() || todayIso();
+    const label = getStudentEventTemplates().find((event) => event.key === key)?.label
+      || studentEventTemplates.find((event) => event.key === key)?.label
+      || key;
+    const sourceRecords = Array.isArray(records) ? records : [records];
+    const recordIds = unique(sourceRecords
+      .map((record) => String(record?.id || "").trim())
+      .filter(Boolean));
+    const currentId = state.modal?.config === "students" ? String(state.modal.id || "").trim() : "";
+    if (!recordIds.length && currentId) recordIds.push(currentId);
+    const updateCurrentCard = state.modal?.config === "students" && (
+      currentId
+        ? recordIds.includes(currentId)
+        : sourceRecords.some((record) => record && !String(record.id || "").trim())
+    );
+    let changedCount = 0;
+    recordIds.forEach((recordId) => {
+      const record = (state.data.collections.students || [])
+        .find((item) => String(item.id || "") === recordId);
+      if (!record) return;
+      const previous = getEventAuditSnapshot(record, key, label);
+      if (!applyStudentEventCompletion(record, key, date, label)) return;
+      changedCount += 1;
+      addAudit("Автоматически отмечено событие", configs.students.title, record.name || record.id, {
+        entityType: "students",
+        entityId: record.id,
+        entityLabel: record.name || record.id,
+        source: "automatic-student-event",
+        changes: [{
+          field: "cardEventDate",
+          label: `Событие: ${label}`,
+          before: previous.value,
+          after: `Выполнено · ${dateRu(date)}`
+        }]
+      });
+    });
+    if (updateCurrentCard) {
+      const draft = { ...(state.modal.draft || {}) };
+      applyStudentEventCompletion(draft, key, date, label);
+      state.modal.draft = draft;
+      if (!currentId) state.modal.hasDraftChanges = true;
+      updateStudentEventCompletionInCard(key, date, label);
+    }
+    if (changedCount) persist();
+    return changedCount;
   }
 
   function isExplicitUncheckedEventState(stateValue) {
@@ -27079,7 +27178,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const subject = getSdoSettingValue("portalAccessEmailSubject").trim()
       || "Доступ к порталу дистанционного обучения Цифровизация Плюс";
-    await sendServerEmail({
+    const { sendToSystemMailbox } = resolveServerEmailRecipient(email, event, recipientMode);
+    const sent = await sendServerEmail({
       email,
       subject,
       message,
@@ -27089,6 +27189,9 @@ MAX - https://bizvmax.ru/zifra_plus
       recipientMode,
       messageType: "Доступ к порталу дистанционного обучения"
     });
+    if (sent === true && !sendToSystemMailbox) {
+      markStudentEventsCompleted(collectStudentFormDraft(), "portalCredentialsSent");
+    }
   }
 
   function getCurrentStudentCardValue(key) {
@@ -40315,6 +40418,9 @@ MAX - https://bizvmax.ru/zifra_plus
         const storedResult = isContract
           ? storeContractDocumentRecognitionResult(resultWithSourceFiles)
           : storeStudentDocumentRecognitionResult(resultWithSourceFiles);
+        if (!isContract) {
+          markStudentEventsCompleted(currentRecord, "sourceDocsReceived");
+        }
         renderStudentDocumentRecognitionResults(dialog, storedResult, currentRecord);
       }
     } catch (error) {
@@ -40845,7 +40951,12 @@ MAX - https://bizvmax.ru/zifra_plus
         entityId: record.id,
         entityName: record.name
       });
-      if (sent) result.success += 1;
+      if (sent) {
+        result.success += 1;
+        if (messageKey === "portalAccessMessage") {
+          markStudentEventsCompleted(record, "portalCredentialsSent");
+        }
+      }
       else if (sent === null) {
         result.failed += 1;
         result.details.push({
@@ -40858,6 +40969,9 @@ MAX - https://bizvmax.ru/zifra_plus
         result.failed += 1;
         result.details.push({ tone: "error", name: record.name, message: "Письмо не отправлено: проверьте Email и текст сообщения." });
       }
+    }
+    if (messageKey === "portalAccessMessage") {
+      result.notice = await persistStudentBulkChanges();
     }
     return result;
   }
@@ -41227,6 +41341,19 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       if (generated?.generated) {
         result.success += count;
+        if (operation === "enrollmentOrder") {
+          const orderRecords = getStudentOrderDocumentRecords(record, "enrollmentOrderNo");
+          markStudentEventsCompleted(orderRecords.length ? orderRecords : record, "enrollmentOrderPrepared");
+        } else if (operation === "expulsionOrder") {
+          const orderRecords = getStudentOrderDocumentRecords(record, "expulsionOrderNo");
+          markStudentEventsCompleted(orderRecords.length ? orderRecords : record, "expulsionOrderPrepared");
+        } else if (
+          operation === "education"
+          && generated.emailed === true
+          && generated.emailRecipientMode !== "system"
+        ) {
+          markStudentEventsCompleted(record, "educationDocMaketSent");
+        }
         if (!firstLocalDocument && generated.storageResult?.localSaveResult?.saved) {
           const savedPath = String(generated.storageResult.localSaveResult.path || "")
             .replace(/\\/g, "/");
@@ -41262,7 +41389,10 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     }
     if (firstLocalDocument && !revealGeneratedFile) result.firstLocalDocument = firstLocalDocument;
-    persist();
+    const persistenceNotice = await persistStudentBulkChanges();
+    if (persistenceNotice) {
+      result.notice = [result.notice, persistenceNotice].filter(Boolean).join(" ");
+    }
     return result;
   }
 
@@ -50768,6 +50898,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return {
         generated: true,
         emailed: emailSent,
+        emailRecipientMode: emailRequest?.recipientMode || "off",
         fileName: responseDetails.fileName,
         storageRequest,
         storageResult,
@@ -50810,12 +50941,16 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     if (!validateStudentEducationDocumentRequiredFields(record, programType, documentTemplate)) return;
-    await downloadStudentDocumentFromTemplate(
+    const result = await downloadStudentDocumentFromTemplate(
       documentTemplate,
       record,
       button,
       "Не удалось сформировать документ об образовании"
     );
+    if (result?.emailed === true && result.emailRecipientMode !== "system") {
+      markStudentEventsCompleted(record, "educationDocMaketSent");
+    }
+    return result;
   }
 
   async function openStudentStudyCertificateDocument(event) {
@@ -50827,7 +50962,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     if (!validateStudentDocumentRequiredFields(record, documentTemplate)) return;
-    await downloadStudentDocumentFromTemplate(
+    return downloadStudentDocumentFromTemplate(
       documentTemplate,
       record,
       button,
@@ -50853,7 +50988,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     if (!validateStudentDocumentRequiredFields(record, documentTemplate)) return;
-    await downloadStudentDocumentFromTemplate(
+    return downloadStudentDocumentFromTemplate(
       documentTemplate,
       record,
       button,
@@ -50889,6 +51024,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function openStudentEnrollmentOrderDocument(event) {
     const record = collectStudentFormDraft();
+    const orderRecords = getStudentOrderDocumentRecords(record, "enrollmentOrderNo");
     const documentTemplate = getStudentCardDocumentTemplate("enrollmentOrder");
     if (documentTemplate && !validateStudentDocumentRequiredFields(record, documentTemplate)) return;
     if (!ensureStudentOrderDocumentDate(
@@ -50906,16 +51042,21 @@ MAX - https://bizvmax.ru/zifra_plus
       "В приказ на зачисление попадает слушатель без даты начала обучения"
     )) return;
     if (!ensureStudentOrderNumber(record, "enrollmentOrderNo", "Укажите номер приказа о зачислении.")) return;
-    await openStudentCardBoundDocument(
+    const result = await openStudentCardBoundDocument(
       event,
       "enrollmentOrder",
       "В конструкторе документов не найден шаблон «Приказ на зачисление».",
       "Не удалось сформировать приказ на зачисление"
     );
+    if (result?.generated) {
+      markStudentEventsCompleted(orderRecords.length ? orderRecords : record, "enrollmentOrderPrepared");
+    }
+    return result;
   }
 
   async function openStudentExpulsionOrderDocument(event) {
     const record = collectStudentFormDraft();
+    const orderRecords = getStudentOrderDocumentRecords(record, "expulsionOrderNo");
     const documentTemplate = getStudentCardDocumentTemplate("expulsionOrder");
     if (documentTemplate && !validateStudentDocumentRequiredFields(record, documentTemplate)) return;
     if (!ensureStudentOrderDocumentDate(
@@ -50926,12 +51067,16 @@ MAX - https://bizvmax.ru/zifra_plus
       "В приказ об отчислении попадает слушатель без даты отчисления"
     )) return;
     if (!ensureStudentOrderNumber(record, "expulsionOrderNo", "Укажите номер приказа об отчислении.")) return;
-    await openStudentCardBoundDocument(
+    const result = await openStudentCardBoundDocument(
       event,
       "expulsionOrder",
       "В конструкторе документов не найден шаблон «Приказ об отчислении».",
       "Не удалось сформировать приказ об отчислении"
     );
+    if (result?.generated) {
+      markStudentEventsCompleted(orderRecords.length ? orderRecords : record, "expulsionOrderPrepared");
+    }
+    return result;
   }
 
   function getEmployeeContractDocumentFields(documentTemplate = {}) {
