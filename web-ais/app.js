@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.255",
+    version: "1.7.256",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.256",
+      releasedAt: "2026-08-24",
+      changes: [
+        "Текстовый фильтр реестра программ больше не перерисовывает интерфейс на каждый символ и обновляет результаты после короткой паузы ввода.",
+        "Убраны повторные поиски по всему реестру и добавлено кэширование поискового текста и сверки часов учебных планов."
+      ]
+    },
     {
       version: "1.7.255",
       releasedAt: "2026-08-24",
@@ -2312,6 +2320,7 @@
   ]);
   const TABLE_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
   const DEFAULT_TABLE_PAGE_SIZE = 50;
+  const MAIN_REGISTRY_SEARCH_DEBOUNCE_MS = 180;
   const STUDENT_PROGRAM_TYPE_FILTER_OPTIONS = ["КПК", "ППП", "ДОП", "ПРО"];
   const app = document.getElementById("app");
   const programHourOptions = [1, 2, 4, 16, 36, 72, 144, 300, 600, 1200];
@@ -4906,6 +4915,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let systemHelpTouchActionSuppression = null;
   let employeePaymentPersistTimer = 0;
   let studentApplicationsSearchTimer = 0;
+  let mainRegistrySearchTimer = 0;
   let employeePaymentPreviewFrame = 0;
   let mainRegistryViewportFitFrame = 0;
   let mainRegistryViewportFitTimer = 0;
@@ -4924,6 +4934,11 @@ MAX - https://bizvmax.ru/zifra_plus
   let lastNavItemDragEndedAt = 0;
   let lastDashboardStatusDragEndedAt = 0;
   let documentTemplateAutoInspectionStarted = false;
+  let registryRowSearchTextCache = new WeakMap();
+  let programTrainingPlanHoursSummaryCache = {
+    rows: null,
+    values: new WeakMap()
+  };
   const sharedStateRecovery = (() => {
     try {
       const pendingPatch = JSON.parse(localStorage.getItem(SHARED_STATE_PENDING_STORAGE_KEY) || "null");
@@ -8474,6 +8489,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function persist() {
+    registryRowSearchTextCache = new WeakMap();
+    programTrainingPlanHoursSummaryCache = { rows: null, values: new WeakMap() };
     persistStateToLocalStorage(state.data);
     sharedStateDirty = true;
     sharedStateChangeGeneration += 1;
@@ -8891,7 +8908,47 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function restoreMainRegistrySearchFocus(cursorStart, cursorEnd = cursorStart) {
+    const input = document.getElementById("searchInput");
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    if (Number.isInteger(cursorStart) && Number.isInteger(cursorEnd)) {
+      input.setSelectionRange(cursorStart, cursorEnd);
+    }
+  }
+
+  function applyMainRegistrySearchInput(input) {
+    const view = state.view;
+    const value = input.value;
+    const cursorStart = input.selectionStart;
+    const cursorEnd = input.selectionEnd;
+    state.search = value;
+    state.tablePages[view] = 1;
+    if (mainRegistrySearchTimer) {
+      window.clearTimeout(mainRegistrySearchTimer);
+      mainRegistrySearchTimer = 0;
+    }
+    const renderSearchResults = () => {
+      mainRegistrySearchTimer = 0;
+      if (state.view !== view || state.search !== value) return;
+      render();
+      restoreMainRegistrySearchFocus(cursorStart, cursorEnd);
+    };
+    if (view !== "programs") {
+      renderSearchResults();
+      return;
+    }
+    mainRegistrySearchTimer = window.setTimeout(
+      renderSearchResults,
+      MAIN_REGISTRY_SEARCH_DEBOUNCE_MS
+    );
+  }
+
   function render() {
+    if (mainRegistrySearchTimer) {
+      window.clearTimeout(mainRegistrySearchTimer);
+      mainRegistrySearchTimer = 0;
+    }
     hideSystemHelpTooltip();
     hideCommunicationTemplateFieldMenu();
     closeNavItemMenu();
@@ -14698,8 +14755,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getProgramRegistryTypeFilterOptions() {
+    const programs = getProgramRows();
     const values = unique(
-      getProgramRows()
+      programs
         .map((program) => String(program.type || "").trim())
         .filter(Boolean)
     );
@@ -14709,7 +14767,7 @@ MAX - https://bizvmax.ru/zifra_plus
         .filter((item) => !STUDENT_PROGRAM_TYPE_FILTER_OPTIONS.includes(item))
         .sort((left, right) => left.localeCompare(right, "ru"))
     ];
-    if (getProgramRows().some((program) => !String(program.type || "").trim())) {
+    if (programs.some((program) => !String(program.type || "").trim())) {
       ordered.push("Не задано");
     }
     return ordered;
@@ -14982,6 +15040,17 @@ MAX - https://bizvmax.ru/zifra_plus
     return Number.isNaN(timestamp) ? null : timestamp;
   }
 
+  function getRegistryRowSearchText(row) {
+    if (!row || typeof row !== "object") return String(row || "").toLowerCase();
+    const cached = registryRowSearchTextCache.get(row);
+    if (cached !== undefined) return cached;
+    const text = Object.values(row)
+      .map((value) => String(value || "").toLowerCase())
+      .join("\u0000");
+    registryRowSearchTextCache.set(row, text);
+    return text;
+  }
+
   function getVisibleRows(config, rowsOverride = null) {
     const isDocumentTemplateTable = config.collection === "documentTemplates";
     const isGeneralExpenseTable = config.collection === "generalExpenses";
@@ -14994,7 +15063,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ? (state.studentListFilters || {})
       : {};
     const selectedStudentPrograms = getStudentListSelectedPrograms(studentListFilters);
-    const selectedRegistryProgramTypes = state.view === "programs"
+    const selectedRegistryProgramTypes = state.view === "programs" && state.programRegistryTypeFilter.length
       ? getProgramRegistryTypeFilterOptions()
         .filter((item) => state.programRegistryTypeFilter.includes(item))
       : [];
@@ -15014,7 +15083,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ? state.generalExpenseWorkTypeFilter.map((item) => String(item || "").trim()).filter(Boolean)
       : [];
     let filtered = rows.filter((row) => {
-      const matchQuery = !query || Object.values(row).some((value) => String(value || "").toLowerCase().includes(query));
+      const matchQuery = !query || getRegistryRowSearchText(row).includes(query);
       const hasUnassignedStatus = state.statusFilter === "Не задано"
         && ![row.status, row.type, row.workType, row.itemType].some((value) => String(value || "").trim());
       const matchStatus = isDocumentTemplateTable
@@ -15024,10 +15093,9 @@ MAX - https://bizvmax.ru/zifra_plus
         || row.type === state.statusFilter
         || row.workType === state.statusFilter
         || row.itemType === state.statusFilter;
-      const programType = normalizeEducationProgramType(
-        row.educationType || findProgramByName(row.program)?.type
+      const matchProgramType = !selectedProgramTypes.length || selectedProgramTypes.includes(
+        normalizeEducationProgramType(row.educationType || findProgramByName(row.program)?.type)
       );
-      const matchProgramType = !selectedProgramTypes.length || selectedProgramTypes.includes(programType);
       const matchStudentProgram = !selectedStudentPrograms.length
         || selectedStudentPrograms.includes(String(row.program || "").trim());
       const studentDateValue = studentListFilters.dateField
@@ -25165,10 +25233,37 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getProgramTrainingPlanHoursSummary(programRecord = {}, rows = null, fallbackName = "") {
-    const planRows = Array.isArray(rows)
-      ? rows
-      : getProgramTrainingPlanRows(programRecord, fallbackName);
-    return calculateProgramTrainingPlanHoursSummary(programRecord?.hours, planRows);
+    if (Array.isArray(rows)) {
+      return calculateProgramTrainingPlanHoursSummary(programRecord?.hours, rows);
+    }
+    const trainingPlanRows = state.data.collections.trainingPlans || [];
+    if (programTrainingPlanHoursSummaryCache.rows !== trainingPlanRows) {
+      programTrainingPlanHoursSummaryCache = {
+        rows: trainingPlanRows,
+        values: new WeakMap()
+      };
+    }
+    if (programRecord && typeof programRecord === "object") {
+      const cached = programTrainingPlanHoursSummaryCache.values.get(programRecord);
+      const hoursKey = String(programRecord.hours ?? "");
+      if (cached?.hoursKey === hoursKey && cached.fallbackName === fallbackName) {
+        return cached.summary;
+      }
+      const summary = calculateProgramTrainingPlanHoursSummary(
+        programRecord.hours,
+        getProgramTrainingPlanRows(programRecord, fallbackName)
+      );
+      programTrainingPlanHoursSummaryCache.values.set(programRecord, {
+        hoursKey,
+        fallbackName,
+        summary
+      });
+      return summary;
+    }
+    return calculateProgramTrainingPlanHoursSummary(
+      programRecord?.hours,
+      getProgramTrainingPlanRows(programRecord, fallbackName)
+    );
   }
 
   function formatTrainingPlanHours(value) {
@@ -29417,15 +29512,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     document.getElementById("searchInput")?.addEventListener("input", (event) => {
-      const cursor = event.target.selectionStart;
-      state.search = event.target.value;
-      state.tablePages[state.view] = 1;
-      render();
-      const input = document.getElementById("searchInput");
-      if (input) {
-        input.focus({ preventScroll: true });
-        input.setSelectionRange(cursor, cursor);
-      }
+      applyMainRegistrySearchInput(event.currentTarget);
     });
 
     document.getElementById("statusFilter")?.addEventListener("change", (event) => {
