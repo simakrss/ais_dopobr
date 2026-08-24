@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260824-training-end-overdue-v1";
+  const AUTH_BUILD = "20260824-training-plan-total-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

@@ -11995,6 +11995,13 @@ body.card-window-moving {
   align-self: end;
 }
 
+.program-training-plan-grid .program-plan-total-cell input[readonly] {
+  background: #f3f6f4;
+  color: #385047;
+  font-weight: 700;
+  cursor: default;
+}
+
 .contract-modal {
   width: min(1248px, 100%);
   max-height: min(804px, 94vh);

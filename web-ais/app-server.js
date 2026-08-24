@@ -12811,6 +12811,17 @@ function normalizeTrainingPlanDatabaseValue(fieldName, value) {
   return String(value ?? "").trim();
 }
 
+function calculateTrainingPlanDatabaseTotalHours(theoryHoursValue, practiceHoursValue) {
+  const theoryHours = normalizeTrainingPlanDatabaseValue("theoryHours", theoryHoursValue);
+  const practiceHours = normalizeTrainingPlanDatabaseValue("practiceHours", practiceHoursValue);
+  if (theoryHours === "" && practiceHours === "") return "";
+  const theoryNumber = Number(theoryHours);
+  const practiceNumber = Number(practiceHours);
+  const total = (Number.isFinite(theoryNumber) ? theoryNumber : 0)
+    + (Number.isFinite(practiceNumber) ? practiceNumber : 0);
+  return Math.round(total * 1000000) / 1000000;
+}
+
 function parseTrainingPlanDatabaseSheet(workbook, onProgress = () => {}, syncMetadataIndex = new Map()) {
   const worksheet = workbook.Sheets["Учебные планы"];
   if (!worksheet) throw new Error("В файле не найден лист «Учебные планы».");
@@ -12840,6 +12851,10 @@ function parseTrainingPlanDatabaseSheet(workbook, onProgress = () => {}, syncMet
       mappedColumns.forEach(({ index, fieldName }) => {
         record[fieldName] = normalizeTrainingPlanDatabaseValue(fieldName, row[index]);
       });
+      record.totalHours = calculateTrainingPlanDatabaseTotalHours(
+        record.theoryHours,
+        record.practiceHours
+      );
       const rowNumber = headerRowIndex + offset + 2;
       const databaseSync = getStudentDatabaseManagedSyncMetadata(
         syncMetadataIndex,
@@ -17679,6 +17694,10 @@ function sanitizeStudentDatabaseExportTrainingPlans(value, synchronizedAt = "") 
       }
       record[fieldName] = normalized;
     });
+    record.totalHours = calculateTrainingPlanDatabaseTotalHours(
+      record.theoryHours,
+      record.practiceHours
+    );
     if (!record.programName) {
       throw new Error(`В строке учебного плана № ${index + 1} не указана программа.`);
     }

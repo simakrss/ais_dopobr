@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.259",
+    version: "1.7.260",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.260",
+      releasedAt: "2026-08-24",
+      changes: [
+        "Колонка «Всего» в учебном плане автоматически рассчитывается как сумма часов теории и практики и больше не редактируется вручную.",
+        "Расчёт применяется при импорте, редактировании и экспорте учебного плана, поэтому итоговые часы остаются согласованными во всех документах и XLSB."
+      ]
+    },
     {
       version: "1.7.259",
       releasedAt: "2026-08-24",
@@ -7375,6 +7383,8 @@ MAX - https://bizvmax.ru/zifra_plus
       const foundKey = keys.find((key) => String(item[key] ?? "").trim());
       return foundKey ? item[foundKey] : "";
     };
+    const theoryHours = normalizeOptionalNumber(value("theoryHours", "Теория", "Лекции"));
+    const practiceHours = normalizeOptionalNumber(value("practiceHours", "Практика", "Практические"));
     return {
       ...item,
       id: String(item.id || "").trim() || makeId("trainingPlans"),
@@ -7383,9 +7393,9 @@ MAX - https://bizvmax.ru/zifra_plus
       programName: String(value("programName", "Название программы", "Программа", "Наименование программы")).trim(),
       discipline: String(value("discipline", "Дисциплина", "Наименование дисциплины", "Раздел")).trim(),
       description: String(value("description", "Описание")).trim(),
-      totalHours: normalizeOptionalNumber(value("totalHours", "Всего часов", "Всего", "Часы")),
-      theoryHours: normalizeOptionalNumber(value("theoryHours", "Теория", "Лекции")),
-      practiceHours: normalizeOptionalNumber(value("practiceHours", "Практика", "Практические")),
+      totalHours: calculateTrainingPlanTotalHours(theoryHours, practiceHours),
+      theoryHours,
+      practiceHours,
       attestation: String(value("attestation", "Аттестация", "Форма контроля")).trim(),
       teacher: String(value("teacher", "Преподаватель", "Педагог")).trim(),
       materials: String(value("materials", "Материалы", "Учебные материалы")).trim(),
@@ -22721,6 +22731,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderProgramTrainingPlanRow(item = {}, index = 0) {
     const rowNumber = index + 1;
+    const totalHours = calculateTrainingPlanTotalHours(item.theoryHours, item.practiceHours);
     return `
       <div class="editable-grid-row program-training-plan-row" data-program-training-plan-row>
         <div class="editable-grid-cell program-training-plan-number">
@@ -22733,7 +22744,7 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         ${renderProgramTrainingPlanInput(index, "discipline", item.discipline || "")}
         ${renderProgramTrainingPlanInput(index, "description", item.description || "")}
-        ${renderProgramTrainingPlanInput(index, "totalHours", item.totalHours || "", "number")}
+        ${renderProgramTrainingPlanInput(index, "totalHours", totalHours, "number", "program-plan-total-cell", true)}
         ${renderProgramTrainingPlanInput(index, "theoryHours", item.theoryHours || "", "number")}
         ${renderProgramTrainingPlanInput(index, "practiceHours", item.practiceHours || "", "number")}
         ${renderProgramTrainingPlanAttestationSelect(index, item.attestation || "")}
@@ -22769,11 +22780,14 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderProgramTrainingPlanInput(index, key, value, type = "text", className = "") {
+  function renderProgramTrainingPlanInput(index, key, value, type = "text", className = "", readOnly = false) {
     const numberAttrs = type === "number" ? ' min="0" step="1" inputmode="numeric"' : "";
+    const readOnlyAttrs = readOnly
+      ? ' readonly aria-readonly="true" tabindex="-1" title="Рассчитывается автоматически как сумма теории и практики"'
+      : "";
     return `
       <div class="editable-grid-cell ${className}">
-        <input data-plan-field="${key}" name="trainingPlan_${index}_${key}" type="${type}" value="${escapeAttr(value)}"${numberAttrs}>
+        <input data-plan-field="${key}" name="trainingPlan_${index}_${key}" type="${type}" value="${escapeAttr(value)}"${numberAttrs}${readOnlyAttrs}>
       </div>
     `;
   }
@@ -25510,6 +25524,13 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function roundTrainingPlanHours(value) {
     return Math.round(Number(value || 0) * 1000000) / 1000000;
+  }
+
+  function calculateTrainingPlanTotalHours(theoryHoursValue, practiceHoursValue) {
+    const theoryHours = parseTrainingPlanHoursValue(theoryHoursValue);
+    const practiceHours = parseTrainingPlanHoursValue(practiceHoursValue);
+    if (theoryHours === null && practiceHours === null) return "";
+    return roundTrainingPlanHours((theoryHours || 0) + (practiceHours || 0));
   }
 
   function calculateProgramTrainingPlanHoursSummary(programHoursValue, rows = []) {
@@ -29752,9 +29773,9 @@ MAX - https://bizvmax.ru/zifra_plus
       refreshProgramTrainingPlanHoursState(programForm);
     });
     programTrainingPlanBody?.addEventListener("input", (event) => {
-      if (event.target.matches('[data-plan-field="totalHours"]')) {
-        refreshProgramTrainingPlanHoursState(programForm);
-      }
+      if (!event.target.matches('[data-plan-field="theoryHours"], [data-plan-field="practiceHours"]')) return;
+      updateProgramTrainingPlanRowTotal(event.target.closest("[data-program-training-plan-row]"));
+      refreshProgramTrainingPlanHoursState(programForm);
     });
     bindProgramTrainingPlanRowDrag(programTrainingPlanBody);
     if (programTrainingPlanBody) {
@@ -33927,10 +33948,21 @@ MAX - https://bizvmax.ru/zifra_plus
     body.querySelector(`[name="trainingPlan_${index}_discipline"]`)?.focus({ preventScroll: true });
   }
 
+  function updateProgramTrainingPlanRowTotal(row) {
+    if (!row) return "";
+    const totalInput = row.querySelector('[data-plan-field="totalHours"]');
+    const totalHours = calculateTrainingPlanTotalHours(
+      row.querySelector('[data-plan-field="theoryHours"]')?.value,
+      row.querySelector('[data-plan-field="practiceHours"]')?.value
+    );
+    if (totalInput) totalInput.value = totalHours === "" ? "" : String(totalHours);
+    return totalHours;
+  }
+
   function getProgramTrainingPlanHoursSummaryFromForm(formElement) {
     const rows = [...(formElement?.querySelectorAll("[data-program-training-plan-row]") || [])]
       .map((row) => ({
-        totalHours: row.querySelector('[data-plan-field="totalHours"]')?.value || ""
+        totalHours: updateProgramTrainingPlanRowTotal(row)
       }));
     return calculateProgramTrainingPlanHoursSummary(
       formElement?.querySelector('[name="hours"]')?.value || "",
@@ -34786,6 +34818,7 @@ MAX - https://bizvmax.ru/zifra_plus
           if (!key) return;
           values[key] = input.type === "number" ? normalizeOptionalNumber(input.value) : String(input.value || "").trim();
         });
+        values.totalHours = calculateTrainingPlanTotalHours(values.theoryHours, values.practiceHours);
         const hasContent = ["discipline", "description", "totalHours", "theoryHours", "practiceHours", "attestation", "teacher", "materials", "content"]
           .some((key) => String(values[key] ?? "").trim());
         if (!hasContent) return null;

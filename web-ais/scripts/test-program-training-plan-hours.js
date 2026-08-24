@@ -7,6 +7,7 @@ const appPath = path.resolve(__dirname, "..", "app.js");
 const stylesPath = path.resolve(__dirname, "..", "styles.css");
 const appSource = fs.readFileSync(appPath, "utf8");
 const stylesSource = fs.readFileSync(stylesPath, "utf8");
+const serverSource = fs.readFileSync(path.resolve(__dirname, "..", "app-server.js"), "utf8");
 
 function extractBetween(startMarker, endMarker) {
   const start = appSource.indexOf(startMarker);
@@ -22,11 +23,17 @@ vm.runInContext(
     "  function parseTrainingPlanHoursValue",
     "  function getStudentGroupNumber"
   )}
+  this.calculateTotal = calculateTrainingPlanTotalHours;
   this.calculateSummary = calculateProgramTrainingPlanHoursSummary;
   this.getStatus = getProgramTrainingPlanHoursStatus;
   this.getMismatchTitle = getProgramTrainingPlanHoursMismatchTitle;`,
   context
 );
+
+assert.equal(context.calculateTotal(20, 12), 32);
+assert.equal(context.calculateTotal("20,5", "11,5"), 32);
+assert.equal(context.calculateTotal("", 8), 8);
+assert.equal(context.calculateTotal("", ""), "");
 
 const balanced = context.calculateSummary(300, [
   { totalHours: 30 },
@@ -98,13 +105,28 @@ assert.match(
 );
 assert.match(
   appSource,
-  /\[name="hours"\][\s\S]*addEventListener\("input"[\s\S]*data-plan-field="totalHours"[\s\S]*refreshProgramTrainingPlanHoursState/u,
-  "Сверка должна обновляться при изменении объёма программы и строк плана"
+  /data-plan-field="theoryHours"[\s\S]*data-plan-field="practiceHours"[\s\S]*updateProgramTrainingPlanRowTotal[\s\S]*refreshProgramTrainingPlanHoursState/u,
+  "Итог и сверка должны обновляться при изменении теории или практики"
+);
+assert.match(
+  appSource,
+  /renderProgramTrainingPlanInput\(index, "totalHours", totalHours, "number", "program-plan-total-cell", true\)/u,
+  "Поле «Всего» должно быть вычисляемым и недоступным для ручного ввода"
+);
+assert.match(
+  serverSource,
+  /record\.totalHours = calculateTrainingPlanDatabaseTotalHours\([\s\S]*record\.theoryHours[\s\S]*record\.practiceHours/u,
+  "Сервер должен пересчитывать итоговые часы при импорте и экспорте"
 );
 assert.match(
   stylesSource,
   /input\[name="hours"\]\.is-hours-mismatch[\s\S]*#dc2626[\s\S]*\.program-training-plan-hours-summary\.is-mismatch/iu,
   "Для расхождения должна быть красная визуальная индикация"
+);
+assert.match(
+  stylesSource,
+  /program-plan-total-cell input\[readonly\][\s\S]*font-weight:\s*700/iu,
+  "Вычисляемое поле «Всего» должно визуально отличаться от редактируемых полей"
 );
 
 console.log("Program training plan hours tests passed.");
