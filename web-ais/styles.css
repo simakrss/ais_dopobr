@@ -2859,9 +2859,11 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
 
 .student-list-advanced-filters {
   display: grid;
-  grid-template-columns: minmax(260px, 1.8fr) minmax(190px, 1.15fr) minmax(160px, 0.9fr) 132px 132px auto;
+  grid-template-columns: minmax(190px, 1.6fr) minmax(150px, 1.05fr) minmax(135px, 0.9fr) minmax(122px, 0.75fr) minmax(122px, 0.75fr) auto;
   align-items: end;
   gap: 7px;
+  width: 100%;
+  min-width: 0;
   margin: -2px 0 8px;
   padding: 7px 8px;
   border: 1px solid var(--line);
@@ -3092,6 +3094,21 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   border-color: #075e58;
   outline: 0;
   box-shadow: 0 0 0 4px rgba(15, 129, 122, 0.24);
+}
+
+@media (min-width: 721px) and (max-width: 1180px) {
+  .student-list-advanced-filters {
+    grid-template-columns: minmax(180px, 1.4fr) minmax(150px, 1fr) minmax(125px, 0.85fr) minmax(125px, 0.85fr);
+  }
+
+  .student-list-advanced-filters > .student-list-program-filter {
+    grid-column: 1 / 3;
+  }
+
+  .student-list-advanced-filters > button {
+    grid-column: 3 / 5;
+    width: 100%;
+  }
 }
 
 .student-program-type-filter {
@@ -19831,6 +19848,15 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     padding: 3px 7px;
     font-size: 11px;
     white-space: nowrap;
+  }
+
+  .bulk-toolbar [data-action="open-student-bulk-operations"] {
+    font-size: 0;
+  }
+
+  .bulk-toolbar [data-action="open-student-bulk-operations"]::after {
+    content: attr(data-mobile-label);
+    font-size: 11px;
   }
 
   .bulk-toolbar .icon-only {

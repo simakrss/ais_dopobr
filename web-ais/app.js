@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.265",
+    version: "1.7.266",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.266",
+      releasedAt: "2026-08-24",
+      changes: [
+        "Панель слушателей стала адаптивнее: в мобильном режиме сокращена кнопка групповых операций, а фильтры дат корректно размещаются при узкой ширине рабочего окна."
+      ]
+    },
     {
       version: "1.7.265",
       releasedAt: "2026-08-24",
@@ -15322,7 +15329,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ` : ""}
         ${configId === "students" ? "" : `<button class="ghost-button" data-action="bulk-clear" data-config="${configId}" type="button" ${selected.length ? "" : "disabled"}>Снять выбор</button>`}
         ${configId === "students" ? `
-          <button class="primary-button" data-action="open-student-bulk-operations" type="button" ${selected.length ? "" : "disabled"}>Групповые операции</button>
+          <button class="primary-button" data-action="open-student-bulk-operations" data-mobile-label="Гр. операции" type="button" title="Групповые операции" ${selected.length ? "" : "disabled"}>Групповые операции</button>
         ` : ""}
         ${configId === "generalExpenses" ? `
           <button class="ghost-button" data-action="bulk-copy-general-expenses" data-config="${configId}" type="button" title="Копировать выбранные общие расходы с текущей датой" ${selectedRows.length ? "" : "disabled"}>

@@ -18,5 +18,8 @@ assert.match(stylesSource, /\.collection-primary-filters\s*\{\s*display: content
 assert.match(stylesSource, /@media \(max-width: 720px\)[\s\S]*\.mobile-registry-filters-toggle\s*\{\s*display: inline-flex;/u);
 assert.match(stylesSource, /:not\(\.mobile-registry-filters-open\)[^\{]*\.collection-primary-filters,[\s\S]{0,180}\.student-list-advanced-filters\s*\{\s*display: none;/u);
 assert.match(stylesSource, /\.mobile-registry-filters-open \.collection-primary-filters\s*\{\s*display: grid;/u);
+assert.match(appSource, /data-action="open-student-bulk-operations" data-mobile-label="Гр\. операции"/u);
+assert.match(stylesSource, /\[data-action="open-student-bulk-operations"\]::after\s*\{[\s\S]*content: attr\(data-mobile-label\);/u);
+assert.match(stylesSource, /@media \(min-width: 721px\) and \(max-width: 1180px\)[\s\S]*\.student-list-advanced-filters > button\s*\{[\s\S]*grid-column: 3 \/ 5;/u);
 
 console.log("mobile registry filters checks: OK");
