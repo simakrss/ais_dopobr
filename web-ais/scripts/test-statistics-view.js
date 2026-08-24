@@ -18,7 +18,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.256"/u);
+assert.match(appSource, /version: "1\.7\.265"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 const navigationBlock = sourceBlock(appSource, "const navItems = [", "const PROGRAM_LIST_FIELD_KEYS");
 const navigationIds = [...navigationBlock.matchAll(/\{ id: "([^"]+)"/gu)].map((match) => match[1]);
@@ -92,6 +92,8 @@ assert.match(comparisonChart, />7<\/strong>/u);
 assert.match(comparisonChart, />4<\/strong>/u);
 assert.match(comparisonChart, /<small>5<\/small>[\s\S]*<i class="tone-teal"/u);
 assert.match(comparisonChart, /<small>3<\/small>[\s\S]*<i class="tone-blue"/u);
+assert.match(comparisonChart, /--statistics-bar-height:100%[\s\S]*<small>5<\/small>/u);
+assert.match(styles, /\.statistics-comparison-bar-area > small[\s\S]*bottom: calc\(var\(--statistics-bar-height, 0%\) \+ 3px\)/u);
 assert.doesNotMatch(comparisonChart, /<em>/u);
 
 const renderStatisticsSeriesChartBlock = sourceBlock(

@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.264",
+    version: "1.7.265",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.265",
+      releasedAt: "2026-08-24",
+      changes: [
+        "На графике скачиваний по месяцам числовые подписи располагаются непосредственно над соответствующими столбцами."
+      ]
+    },
     {
       version: "1.7.264",
       releasedAt: "2026-08-24",
@@ -9635,9 +9642,9 @@ MAX - https://bizvmax.ru/zifra_plus
                       const height = value ? Math.max(4, (value / maxValue) * 100) : 0;
                       const valueText = formatStatisticsInteger(value);
                       return `
-                        <span class="statistics-comparison-bar-column" title="${escapeAttr(`${metric.label}: ${valueText}`)}">
-                          <small>${value ? escapeHtml(valueText) : ""}</small>
+                        <span class="statistics-comparison-bar-column" style="--statistics-bar-height:${height}%" title="${escapeAttr(`${metric.label}: ${valueText}`)}">
                           <span class="statistics-comparison-bar-area">
+                            <small>${value ? escapeHtml(valueText) : ""}</small>
                             <i class="tone-${escapeAttr(metric.tone)}" style="height:${height}%"></i>
                           </span>
                         </span>

@@ -21826,23 +21826,29 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 }
 
 .statistics-comparison-bar-column {
-  display: grid;
-  grid-template-rows: 24px 220px;
-  align-items: end;
+  position: relative;
+  display: block;
   min-width: 0;
+  padding-top: 24px;
 }
 
-.statistics-comparison-bar-column > small {
+.statistics-comparison-bar-area > small {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  bottom: calc(var(--statistics-bar-height, 0%) + 3px);
   overflow: visible;
   color: var(--muted);
   font-size: 8px;
   font-weight: 800;
   line-height: 1;
   text-align: center;
+  transform: translateX(-50%);
   white-space: nowrap;
 }
 
 .statistics-comparison-bar-area {
+  position: relative;
   display: flex;
   align-items: flex-end;
   height: 220px;
