@@ -2817,6 +2817,14 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   flex-wrap: wrap;
 }
 
+.collection-primary-filters {
+  display: contents;
+}
+
+.mobile-registry-filters-toggle {
+  display: none;
+}
+
 .collection-toolbar-actions {
   display: flex;
   align-items: center;
@@ -19671,6 +19679,113 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     min-height: 30px;
     padding: 4px 9px;
     white-space: nowrap;
+  }
+
+  .collection-register .section-head {
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .collection-register .toolbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+  }
+
+  .mobile-registry-filters-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    width: auto !important;
+    min-width: 104px !important;
+    min-height: 30px;
+    padding: 4px 8px;
+    white-space: nowrap;
+  }
+
+  .mobile-registry-filters-toggle.is-active {
+    border-color: #76b9a9;
+    background: #edf8f4;
+    color: var(--teal);
+  }
+
+  .mobile-registry-filters-toggle svg {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.7;
+  }
+
+  .mobile-registry-filters-toggle strong {
+    display: inline-grid;
+    place-items: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 9px;
+    background: var(--teal);
+    color: #fff;
+    font-size: 10px;
+    line-height: 1;
+  }
+
+  .mobile-registry-filter-chevron {
+    width: 10px !important;
+    transition: transform 160ms ease;
+  }
+
+  .mobile-registry-filters-open .mobile-registry-filter-chevron {
+    transform: rotate(180deg);
+  }
+
+  .collection-register .collection-toolbar-actions {
+    grid-column: 2;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    justify-content: flex-end;
+  }
+
+  .collection-register:not(.mobile-registry-filters-open) .collection-primary-filters,
+  .collection-register:not(.mobile-registry-filters-open) > .student-list-advanced-filters {
+    display: none;
+  }
+
+  .collection-register.mobile-registry-filters-open .collection-primary-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-column: 1 / -1;
+    gap: 6px;
+    width: 100%;
+    padding: 7px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-soft);
+  }
+
+  .collection-register.mobile-registry-filters-open .collection-primary-filters > :is(.search-box, .direct-expense-note-filter) {
+    grid-column: 1 / -1;
+  }
+
+  .collection-register.mobile-registry-filters-open .collection-primary-filters :is(
+    .search-box,
+    .select-control,
+    .student-program-type-filter,
+    .direct-expense-note-filter,
+    .student-program-type-filter summary
+  ) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .collection-register.mobile-registry-filters-open > .student-list-advanced-filters {
+    margin-top: 0;
   }
 
   .bulk-toolbar {

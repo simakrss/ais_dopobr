@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.256",
+    version: "1.7.257",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.257",
+      releasedAt: "2026-08-24",
+      changes: [
+        "На мобильных устройствах фильтры реестров слушателей, сотрудников и остальных таблиц по умолчанию собраны в компактный сворачиваемый блок.",
+        "Кнопка фильтров показывает число активных условий, а основные действия и таблица остаются доступны без разворачивания панели."
+      ]
+    },
     {
       version: "1.7.256",
       releasedAt: "2026-08-24",
@@ -4697,6 +4705,7 @@ MAX - https://bizvmax.ru/zifra_plus
     issuedDocumentExportRunning: false,
     programRegistryTypeFilter: [],
     contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
+    mobileRegistryFiltersOpen: {},
     studentImportedViewIds: [],
     sort: initialView === "students"
       ? getStudentStatusTableSort(getDefaultStatusFilter(initialView))
@@ -11649,6 +11658,47 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function getMainRegistryActiveFilterCount(view = state.view) {
+    let count = String(state.search || "").trim() ? 1 : 0;
+    if (String(state.statusFilter || "").trim() && state.statusFilter !== "Все") count += 1;
+    if (view === "students") {
+      const studentFilters = state.studentListFilters || {};
+      if ((state.studentProgramTypeFilter || []).length) count += 1;
+      if (getStudentListSelectedPrograms(studentFilters).length) count += 1;
+      if (studentFilters.dateField || studentFilters.dateFrom || studentFilters.dateTo) count += 1;
+    }
+    if (view === "programs" && (state.programRegistryTypeFilter || []).length) count += 1;
+    if (view === "contracts" && (state.contractSectionFilter || []).length) count += 1;
+    if (view === "directExpenses" && String(state.directExpenseNoteFilter || "").trim()) count += 1;
+    if (view === "generalExpenses") {
+      if ((state.generalExpenseSectionFilter || []).length) count += 1;
+      if ((state.generalExpenseWorkTypeFilter || []).length) count += 1;
+    }
+    return count;
+  }
+
+  function setMobileRegistryFiltersOpen(view, open, registry = null) {
+    const configId = String(view || state.view || "");
+    if (!configId) return;
+    state.mobileRegistryFiltersOpen = {
+      ...(state.mobileRegistryFiltersOpen || {}),
+      [configId]: Boolean(open)
+    };
+    const section = registry || document.querySelector(`[data-main-registry][data-registry-view="${CSS.escape(configId)}"]`);
+    section?.classList.toggle("mobile-registry-filters-open", Boolean(open));
+    const button = section?.querySelector("[data-action='toggle-mobile-registry-filters']");
+    button?.setAttribute("aria-expanded", open ? "true" : "false");
+    button?.setAttribute("title", open ? "Свернуть фильтры" : "Развернуть фильтры");
+    scheduleMainRegistryTableViewportFit();
+  }
+
+  function toggleMobileRegistryFilters(button) {
+    const registry = button?.closest("[data-main-registry]");
+    const view = String(button?.dataset.registryView || registry?.dataset.registryView || state.view);
+    const open = !Boolean(state.mobileRegistryFiltersOpen?.[view]);
+    setMobileRegistryFiltersOpen(view, open, registry);
+  }
+
   function normalizeIssuedDocumentFilterText(value) {
     return String(value || "")
       .trim()
@@ -12147,86 +12197,113 @@ MAX - https://bizvmax.ru/zifra_plus
         (state.data.collections.students || []).some((student) => String(student.id) === String(id))
       )).length
       : 0;
+    const mobileFiltersOpen = Boolean(state.mobileRegistryFiltersOpen?.[state.view]);
+    const activeFilterCount = getMainRegistryActiveFilterCount(state.view);
+    const filterControlsId = `registryFilters-${state.view}`;
     return `
-      <section class="panel collection-register" data-main-registry>
+      <section
+        class="panel collection-register ${mobileFiltersOpen ? "mobile-registry-filters-open" : ""}"
+        data-main-registry
+        data-registry-view="${escapeAttr(state.view)}"
+      >
         <div class="section-head">
           <div class="collection-section-heading ${state.view === "directExpenses" ? "direct-expenses-section-heading" : ""}">
             <p class="eyebrow">${config.subtitle}</p>
             <h2>${config.title}</h2>
           </div>
           <div class="toolbar">
-            <label class="search-box">
-              <span>⌕</span>
-              <input id="searchInput" value="${escapeAttr(state.search)}" placeholder="Поиск" autocomplete="off">
-            </label>
-            ${state.view === "directExpenses" ? `
-              <div class="combo-field direct-expense-note-filter" data-direct-expense-note-filter>
-                <div class="search-box combo-input-wrap">
-                  <span>⌕</span>
-                  <input
-                    id="directExpenseNoteFilter"
-                    value="${escapeAttr(state.directExpenseNoteFilter)}"
-                    placeholder="Примечание"
-                    autocomplete="off"
-                    aria-label="Фильтр по примечанию"
-                    aria-haspopup="listbox"
-                    aria-expanded="false"
-                    aria-controls="directExpenseNoteFilterOptions"
-                  >
-                  <button
-                    class="direct-expense-note-filter-toggle"
-                    data-action="toggle-direct-expense-note-filter"
-                    type="button"
-                    title="Показать список примечаний"
-                    aria-label="Показать список примечаний"
-                    tabindex="-1"
-                  >
-                    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7 5 6 5-6"></path></svg>
-                  </button>
+            <button
+              class="ghost-button mobile-registry-filters-toggle ${activeFilterCount ? "is-active" : ""}"
+              data-action="toggle-mobile-registry-filters"
+              data-registry-view="${escapeAttr(state.view)}"
+              type="button"
+              aria-expanded="${mobileFiltersOpen ? "true" : "false"}"
+              aria-controls="${escapeAttr(filterControlsId)}"
+              title="${mobileFiltersOpen ? "Свернуть фильтры" : "Развернуть фильтры"}"
+            >
+              <svg class="mobile-registry-filter-icon" viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M3 4h14l-5.4 6.1v4.7l-3.2 1.6v-6.3L3 4Z"></path>
+              </svg>
+              <span>Фильтры</span>
+              ${activeFilterCount ? `<strong>${activeFilterCount}</strong>` : ""}
+              <svg class="mobile-registry-filter-chevron" viewBox="0 0 12 8" aria-hidden="true">
+                <path d="m1 1.5 5 5 5-5"></path>
+              </svg>
+            </button>
+            <div class="collection-primary-filters" id="${escapeAttr(filterControlsId)}">
+              <label class="search-box">
+                <span>⌕</span>
+                <input id="searchInput" value="${escapeAttr(state.search)}" placeholder="Поиск" autocomplete="off">
+              </label>
+              ${state.view === "directExpenses" ? `
+                <div class="combo-field direct-expense-note-filter" data-direct-expense-note-filter>
+                  <div class="search-box combo-input-wrap">
+                    <span>⌕</span>
+                    <input
+                      id="directExpenseNoteFilter"
+                      value="${escapeAttr(state.directExpenseNoteFilter)}"
+                      placeholder="Примечание"
+                      autocomplete="off"
+                      aria-label="Фильтр по примечанию"
+                      aria-haspopup="listbox"
+                      aria-expanded="false"
+                      aria-controls="directExpenseNoteFilterOptions"
+                    >
+                    <button
+                      class="direct-expense-note-filter-toggle"
+                      data-action="toggle-direct-expense-note-filter"
+                      type="button"
+                      title="Показать список примечаний"
+                      aria-label="Показать список примечаний"
+                      tabindex="-1"
+                    >
+                      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7 5 6 5-6"></path></svg>
+                    </button>
+                  </div>
+                  <div class="combo-options direct-expense-note-filter-options" id="directExpenseNoteFilterOptions" data-direct-expense-note-filter-options role="listbox">
+                    <button
+                      class="${state.directExpenseNoteFilter ? "" : "is-selected"}"
+                      data-action="select-direct-expense-note-filter"
+                      data-value=""
+                      type="button"
+                      role="option"
+                      aria-selected="${state.directExpenseNoteFilter ? "false" : "true"}"
+                    >Все примечания</button>
+                    ${directExpenseNoteOptions.map((value) => {
+                      const selected = value === state.directExpenseNoteFilter;
+                      return `
+                        <button
+                          class="${selected ? "is-selected" : ""}"
+                          data-action="select-direct-expense-note-filter"
+                          data-value="${escapeAttr(value)}"
+                          type="button"
+                          role="option"
+                          aria-selected="${selected ? "true" : "false"}"
+                        >${escapeHtml(value)}</button>
+                      `;
+                    }).join("")}
+                    <div class="combo-empty" data-direct-expense-note-filter-empty hidden>Совпадений не найдено</div>
+                  </div>
                 </div>
-                <div class="combo-options direct-expense-note-filter-options" id="directExpenseNoteFilterOptions" data-direct-expense-note-filter-options role="listbox">
-                  <button
-                    class="${state.directExpenseNoteFilter ? "" : "is-selected"}"
-                    data-action="select-direct-expense-note-filter"
-                    data-value=""
-                    type="button"
-                    role="option"
-                    aria-selected="${state.directExpenseNoteFilter ? "false" : "true"}"
-                  >Все примечания</button>
-                  ${directExpenseNoteOptions.map((value) => {
-                    const selected = value === state.directExpenseNoteFilter;
-                    return `
-                      <button
-                        class="${selected ? "is-selected" : ""}"
-                        data-action="select-direct-expense-note-filter"
-                        data-value="${escapeAttr(value)}"
-                        type="button"
-                        role="option"
-                        aria-selected="${selected ? "true" : "false"}"
-                      >${escapeHtml(value)}</button>
-                    `;
-                  }).join("")}
-                  <div class="combo-empty" data-direct-expense-note-filter-empty hidden>Совпадений не найдено</div>
-                </div>
-              </div>
-            ` : ""}
-            ${statuses.length ? `
-              <select
-                id="statusFilter"
-                class="select-control ${state.view === "students" ? "student-status-filter" : ""}"
-                ${state.view === "students" ? 'aria-label="Фильтр слушателей по статусу" title="Фильтр слушателей по статусу"' : ""}
-                ${statusDictionary ? `data-settings-dictionary="${escapeAttr(statusDictionary)}"` : ""}
-              >
-                ${["Все", ...statuses].map((item) => `<option ${state.statusFilter === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
-              </select>
-            ` : ""}
-            ${state.view === "generalExpenses" ? `
-              ${renderGeneralExpenseSectionFilter()}
-              ${renderGeneralExpenseWorkTypeFilter()}
-            ` : ""}
-            ${state.view === "students" ? renderStudentProgramTypeFilter() : ""}
-            ${state.view === "programs" ? renderProgramRegistryTypeFilter() : ""}
-            ${state.view === "contracts" ? renderContractSectionFilter() : ""}
+              ` : ""}
+              ${statuses.length ? `
+                <select
+                  id="statusFilter"
+                  class="select-control ${state.view === "students" ? "student-status-filter" : ""}"
+                  ${state.view === "students" ? 'aria-label="Фильтр слушателей по статусу" title="Фильтр слушателей по статусу"' : ""}
+                  ${statusDictionary ? `data-settings-dictionary="${escapeAttr(statusDictionary)}"` : ""}
+                >
+                  ${["Все", ...statuses].map((item) => `<option ${state.statusFilter === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+                </select>
+              ` : ""}
+              ${state.view === "generalExpenses" ? `
+                ${renderGeneralExpenseSectionFilter()}
+                ${renderGeneralExpenseWorkTypeFilter()}
+              ` : ""}
+              ${state.view === "students" ? renderStudentProgramTypeFilter() : ""}
+              ${state.view === "programs" ? renderProgramRegistryTypeFilter() : ""}
+              ${state.view === "contracts" ? renderContractSectionFilter() : ""}
+            </div>
             <div class="collection-toolbar-actions">
               ${state.view === "students" ? `<button class="ghost-button student-applications-import-button" data-action="open-student-applications-import" type="button">Импорт слушателей</button>` : ""}
               <button class="ghost-button" data-action="export-csv" data-config="${state.view}" type="button">CSV</button>
@@ -28998,6 +29075,17 @@ MAX - https://bizvmax.ru/zifra_plus
       closeStatisticsProfitabilityDetails();
       return true;
     }
+    const openMobileRegistryFilters = document.querySelector(
+      "[data-main-registry].mobile-registry-filters-open"
+    );
+    if (openMobileRegistryFilters && window.matchMedia("(max-width: 720px)").matches) {
+      setMobileRegistryFiltersOpen(
+        openMobileRegistryFilters.dataset.registryView || state.view,
+        false,
+        openMobileRegistryFilters
+      );
+      return true;
+    }
     if (document.body.classList.contains("sidebar-open")) {
       closeSidebar();
       return true;
@@ -29514,6 +29602,9 @@ MAX - https://bizvmax.ru/zifra_plus
     document.getElementById("searchInput")?.addEventListener("input", (event) => {
       applyMainRegistrySearchInput(event.currentTarget);
     });
+
+    document.querySelector("[data-action='toggle-mobile-registry-filters']")
+      ?.addEventListener("click", (event) => toggleMobileRegistryFilters(event.currentTarget));
 
     document.getElementById("statusFilter")?.addEventListener("change", (event) => {
       state.statusFilter = event.target.value;
