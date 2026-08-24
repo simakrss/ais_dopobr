@@ -15275,7 +15275,7 @@ function getTrainingEndNotificationCandidates(students, options = {}) {
     const endDay = parseTrainingEndNotificationDate(endDate);
     if (!Number.isFinite(endDay)) return [];
     const daysRemaining = Math.round((endDay - today.utcDay) / 86400000);
-    if (daysRemaining < 0 || daysRemaining > days) return [];
+    if (daysRemaining > days) return [];
     return [{
       id: String(student?.id || "").trim(),
       uid: String(student?.uid || "").trim(),
@@ -15532,19 +15532,24 @@ function escapeEmailHtml(value) {
 
 function buildTrainingEndNotificationMessage(candidates, options = {}) {
   const days = Math.min(60, Math.max(1, Math.floor(Number(options.days) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS)));
+  const overdueCount = candidates.filter((student) => Number(student.daysRemaining) < 0).length;
+  const upcomingCount = candidates.length - overdueCount;
   const rows = candidates.map((student, index) => `
     <tr>
       <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${index + 1}</td>
       <td style="padding:8px;border:1px solid #d9e2df"><strong>${escapeEmailHtml(student.name)}</strong>${student.uid ? `<br><small>UID: ${escapeEmailHtml(student.uid)}</small>` : ""}</td>
       <td style="padding:8px;border:1px solid #d9e2df">${escapeEmailHtml(student.program)}</td>
       <td style="padding:8px;border:1px solid #d9e2df;white-space:nowrap">${escapeEmailHtml(formatTrainingEndNotificationDate(student.endDate))}</td>
-      <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${student.daysRemaining}</td>
+      <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${Number(student.daysRemaining) < 0
+        ? `<strong style="color:#b42318">Просрочено ${Math.abs(Number(student.daysRemaining))} дн.</strong>`
+        : (Number(student.daysRemaining) === 0 ? "Сегодня" : `Осталось ${Number(student.daysRemaining)} дн.`)}</td>
       <td style="padding:8px;border:1px solid #d9e2df">${escapeEmailHtml(student.responsible || "—")}</td>
     </tr>
   `).join("");
   return `
     <p>Здравствуйте!</p>
-    <p>У следующих слушателей со статусом <strong>«Учится»</strong> срок обучения заканчивается в ближайшие ${days} дн.</p>
+    <p>В сводку включены слушатели со статусом <strong>«Учится»</strong>, у которых срок обучения заканчивается в ближайшие ${days} дн. или уже истёк.</p>
+    <p><strong>Ближайшие окончания: ${upcomingCount}. Просроченные: ${overdueCount}.</strong></p>
     <table style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:14px">
       <thead>
         <tr style="background:#edf7f4">
@@ -15552,7 +15557,7 @@ function buildTrainingEndNotificationMessage(candidates, options = {}) {
           <th style="padding:8px;border:1px solid #d9e2df">Слушатель</th>
           <th style="padding:8px;border:1px solid #d9e2df">Программа</th>
           <th style="padding:8px;border:1px solid #d9e2df">Дата окончания</th>
-          <th style="padding:8px;border:1px solid #d9e2df">Осталось дней</th>
+          <th style="padding:8px;border:1px solid #d9e2df">Состояние срока</th>
           <th style="padding:8px;border:1px solid #d9e2df">Ответственный</th>
         </tr>
       </thead>
@@ -15622,12 +15627,12 @@ async function executeTrainingEndNotificationJob(options = {}) {
       return {
         ok: true,
         outcome: "no-candidates",
-        message: `Слушателей с окончанием обучения в ближайшие ${configuration.days} дней не найдено.`,
+        message: `Слушателей с окончанием обучения в ближайшие ${configuration.days} дней или с просроченным сроком не найдено.`,
         status: await readTrainingEndNotificationStatus()
       };
     }
     const subject = normalizeEmailSubject(
-      `Окончание срока обучения в ближайшие ${configuration.days} дней — ${candidates.length}`
+      `Ближайшие и просроченные сроки обучения — ${candidates.length}`
     );
     const message = buildTrainingEndNotificationMessage(candidates, { days: configuration.days });
     const mailSettings = await sendEmailThroughConfiguredMailbox({
@@ -15649,7 +15654,7 @@ async function executeTrainingEndNotificationJob(options = {}) {
       entityLabel: configuration.recipient,
       field: "email",
       after: configuration.recipient,
-      details: `Слушателей: ${candidates.length}; интервал: ${configuration.days} дн.; расписание: ${configuration.frequency}, ${configuration.time}, ${configuration.timeZone}; отправитель: ${mailSettings.login}`,
+      details: `Слушателей: ${candidates.length}; просрочено: ${candidates.filter((student) => student.daysRemaining < 0).length}; интервал: ${configuration.days} дн.; расписание: ${configuration.frequency}, ${configuration.time}, ${configuration.timeZone}; отправитель: ${mailSettings.login}`,
       source: options.source || "scheduler"
     }, {
       id: "system-training-end-notifications",

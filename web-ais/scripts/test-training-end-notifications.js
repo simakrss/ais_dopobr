@@ -127,8 +127,9 @@ const candidates = getTrainingEndNotificationCandidates([
   days: 5
 });
 
-assert.deepEqual(candidates.map((student) => student.id), ["student-1"]);
-assert.equal(candidates[0].daysRemaining, 5);
+assert.deepEqual(candidates.map((student) => student.id), ["student-5", "student-1"]);
+assert.equal(candidates[0].daysRemaining, -1);
+assert.equal(candidates[1].daysRemaining, 5);
 
 const message = buildTrainingEndNotificationMessage([
   ...candidates,
@@ -143,6 +144,8 @@ const message = buildTrainingEndNotificationMessage([
 ], { days: 5 });
 assert.match(message, /ближайшие 5 дн\./u);
 assert.match(message, /Иванова Анна Ивановна/u);
+assert.match(message, /Просрочено 1 дн\./u);
+assert.match(message, /Ближайшие окончания: 2\. Просроченные: 1\./u);
 assert.match(message, /Тест &lt;script&gt;/u);
 assert.doesNotMatch(message, /<script>/u);
 

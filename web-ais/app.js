@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.258",
+    version: "1.7.259",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.259",
+      releasedAt: "2026-08-24",
+      changes: [
+        "В уведомление об окончании обучения включаются все слушатели со статусом «Учится», чей срок уже просрочен, а также слушатели с ближайшим окончанием.",
+        "В письме отдельно показаны количество просроченных сроков и состояние каждого слушателя: сколько дней осталось либо на сколько дней срок просрочен."
+      ]
+    },
     {
       version: "1.7.258",
       releasedAt: "2026-08-24",
@@ -19252,7 +19260,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   <div class="admin-training-end-notification-head">
                     <div>
                       <strong id="training-end-notification-title">Окончание срока обучения</strong>
-                      <small>Система отправляет на основной ящик сводку по слушателям со статусом «Учится» по выбранному расписанию. Повторная сводка за один плановый период не отправляется.</small>
+                      <small>Система отправляет на основной ящик сводку по ближайшим и уже просроченным срокам слушателей со статусом «Учится». Повторная сводка за один плановый период не отправляется.</small>
                     </div>
                     <label class="admin-training-end-notification-switch">
                       <input
