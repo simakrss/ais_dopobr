@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.270",
+    version: "1.7.271",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.271",
+      releasedAt: "2026-08-24",
+      changes: [
+        "При синхронизации заполненного поля «СообщПочты» текст письма сохраняется в примечании, а в ячейке отображается маркер «Сообщ».",
+        "При очистке почтового шаблона созданный системой маркер удаляется без изменения формул и соседних промосообщений."
+      ]
+    },
     {
       version: "1.7.270",
       releasedAt: "2026-08-24",

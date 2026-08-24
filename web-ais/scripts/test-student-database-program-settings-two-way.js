@@ -123,6 +123,16 @@ assert.match(syncScriptSource, /Название программы в стро�
 assert.match(syncScriptSource, /function Sort-ProgramRegistryRows/u);
 assert.match(syncScriptSource, /programRowsInserted = \$programPromoResult\.InsertedRows/u);
 assert.match(
+  syncScriptSource,
+  /emailMessageTemplateColumn[\s\S]{0,180}-IndicatorText "Сообщ"/u,
+  "Заполненное поле СообщПочты должно получать видимый маркер в ячейке Excel."
+);
+assert.match(
+  syncScriptSource,
+  /\$IndicatorText[\s\S]{0,180}\$cell\.ClearContents\(\)/u,
+  "Системный маркер должен удаляться при очистке почтового сообщения."
+);
+assert.match(
   clientSource,
   /function buildStudentDatabaseExportTrainingPlans\(\)[\s\S]*?programNameById[\s\S]*?programName: currentProgramName/u,
   "Учебный план должен экспортироваться с актуальным названием связанной программы."

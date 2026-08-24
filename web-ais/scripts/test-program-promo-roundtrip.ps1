@@ -18,6 +18,15 @@ $syncScriptPath = if ($PSScriptRoot) {
   (Resolve-Path ".\web-ais\scripts\sync-student-database.ps1").Path
 }
 $appServerPath = Join-Path (Split-Path (Split-Path $syncScriptPath -Parent) -Parent) "app-server.js"
+$nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+$nodeExecutable = if ($nodeCommand) {
+  $nodeCommand.Source
+} else {
+  Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
+}
+if (-not (Test-Path -LiteralPath $nodeExecutable -PathType Leaf)) {
+  throw "Для проверки обратного импорта не найден Node.js."
+}
 
 $excel = $null
 $workbooks = $null
@@ -31,6 +40,35 @@ $emailMessageCell = $null
 $firstComment = $null
 $secondComment = $null
 $emailComment = $null
+
+function Find-TestProgramRow {
+  param(
+    [object]$Sheet,
+    [int]$StartRow,
+    [int]$EndRow,
+    [int]$LandingCodeColumn,
+    [string]$ProgramName,
+    [string]$LandingCode
+  )
+  for ($row = $StartRow; $row -le $EndRow; $row += 1) {
+      $nameCell = $null
+      $codeCell = $null
+      try {
+        $nameCell = $Sheet.Cells.Item($row, 1)
+        $codeCell = $Sheet.Cells.Item($row, $LandingCodeColumn)
+        if (
+          (Normalize-Header $nameCell.Value2) -eq (Normalize-Header $ProgramName) `
+          -and (Normalize-Header $codeCell.Value2) -eq (Normalize-Header $LandingCode)
+        ) {
+          return $row
+        }
+      } finally {
+        Release-ComObject $nameCell
+        Release-ComObject $codeCell
+      }
+  }
+  throw "После сортировки не найдена тестовая программа «$ProgramName»."
+}
 
 try {
   [void](New-Item -ItemType Directory -Path $temporaryDirectory)
@@ -59,33 +97,50 @@ try {
   $header = Find-HeaderRow $sheet @("Наименование программы", "Промосообщение1", "Промосообщение2", "СообщПочты")
   $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn ([pscustomobject]@{
     "Код лендинга" = "landingCode"
+    "Промосообщение1" = "promoMessage1"
+    "Промосообщение2" = "promoMessage2"
+    "СообщПочты" = "emailMessageTemplate"
   }))
   $landingCodeColumn = Find-MappedColumn $columns "landingCode"
+  $promoMessage1Column = Find-MappedColumn $columns "promoMessage1"
+  $promoMessage2Column = Find-MappedColumn $columns "promoMessage2"
+  $emailMessageTemplateColumn = Find-MappedColumn $columns "emailMessageTemplate"
   $nameCell = $sheet.Cells.Item($targetRow, 1)
   $codeCell = $sheet.Cells.Item($targetRow, $landingCodeColumn)
-  $firstMessageCell = $sheet.Cells.Item($targetRow, 4)
-  $secondMessageCell = $sheet.Cells.Item($targetRow, 5)
-  $emailMessageCell = $sheet.Cells.Item($targetRow, 6)
+  $firstMessageCell = $sheet.Cells.Item($targetRow, $promoMessage1Column)
+  $secondMessageCell = $sheet.Cells.Item($targetRow, $promoMessage2Column)
+  $emailMessageCell = $sheet.Cells.Item($targetRow, $emailMessageTemplateColumn)
   $originalFirstValue = [string]$firstMessageCell.Value2
   $secondComment = $secondMessageCell.Comment
   $originalSecondValue = [string]$secondMessageCell.Value2
-  $originalEmailValue = [string]$emailMessageCell.Value2
   $originalSecondMessage = if ($null -ne $secondComment) { [string]$secondComment.Text() } else { "" }
   $originalSecondMessage = $originalSecondMessage.Replace("`r`n", "`n").Replace("`r", "`n")
-  if (-not $originalSecondMessage) {
-    throw "В тестовой строке $targetRow отсутствует второе исходное примечание."
-  }
   Release-ComObject $secondComment
   $secondComment = $null
   $programName = [string]$nameCell.Value2
   $landingCode = [string]$codeCell.Value2
+  $programSyncMetadata = Get-AisSyncCellMetadata $nameCell "programs"
+  $programId = if ($null -ne $programSyncMetadata) {
+    ([string](Get-ObjectProperty $programSyncMetadata "recordId")).Trim()
+  } else {
+    ""
+  }
   $message = "Тестовая строка 1`nhttps://example.test/promo?q=1&x=2`nТестовая строка 3"
   $emailMessage = "#ФИО#, здравствуйте!`nДокумент: #Документ#`nhttps://example.test/education"
+  $programColumnMap = [pscustomobject]@{
+    "Статус" = "status"
+    "Код лендинга" = "landingCode"
+    "Промосообщение1" = "promoMessage1"
+    "Промосообщение2" = "promoMessage2"
+    "СообщПочты" = "emailMessageTemplate"
+  }
   $payload = [pscustomobject]@{
     programPromoMessagesProvided = $true
+    programColumnMap = $programColumnMap
     programs = @([pscustomobject]@{
+      id = $programId
       name = $programName
-      landingCode = "WEB-EDITED-CODE"
+      landingCode = $landingCode
       xlsbProgramName = $programName
       xlsbProgramLandingCode = $landingCode
       xlsbProgramRow = $targetRow
@@ -99,6 +154,24 @@ try {
   }
 
   $result = Update-ProgramPromoMessages $workbook $payload
+  foreach ($value in @($nameCell, $codeCell, $firstMessageCell, $secondMessageCell, $emailMessageCell)) {
+    Release-ComObject $value
+  }
+  Release-ComObject $sheet
+  $sheet = $workbook.Worksheets.Item("Реестр программ")
+  $header = Find-HeaderRow $sheet @("Наименование программы", "Промосообщение1", "Промосообщение2", "СообщПочты")
+  $targetRow = Find-TestProgramRow `
+    $sheet `
+    ([int]$header.Row + 1) `
+    ([int]$header.LastRow) `
+    $landingCodeColumn `
+    $programName `
+    $landingCode
+  $nameCell = $sheet.Cells.Item($targetRow, 1)
+  $codeCell = $sheet.Cells.Item($targetRow, $landingCodeColumn)
+  $firstMessageCell = $sheet.Cells.Item($targetRow, $promoMessage1Column)
+  $secondMessageCell = $sheet.Cells.Item($targetRow, $promoMessage2Column)
+  $emailMessageCell = $sheet.Cells.Item($targetRow, $emailMessageTemplateColumn)
   $workbook.Save()
   $firstComment = $firstMessageCell.Comment
   $secondComment = $secondMessageCell.Comment
@@ -126,8 +199,8 @@ try {
   ) {
     throw "Неизменяемое второе промосообщение было затронуто частичной синхронизацией."
   }
-  if ([string]$emailMessageCell.Value2 -ne $originalEmailValue -or $actualEmailMessage -ne $emailMessage) {
-    throw "Почтовое сообщение программы или исходное содержимое ячейки сохранено неверно."
+  if ([string]$emailMessageCell.Value2 -ne "Сообщ" -or $actualEmailMessage -ne $emailMessage) {
+    throw "Почтовое сообщение программы, примечание или маркер «Сообщ» сохранены неверно."
   }
   if ($result.Count -ne 1 -or $result.Messages -ne 1 -or $result.EmailMessages -ne 1 -or $result.Skipped -ne 0) {
     throw "Некорректная статистика обновления промосообщений."
@@ -139,9 +212,11 @@ try {
   $secondComment = $null
   $clearPayload = [pscustomobject]@{
     programPromoMessagesProvided = $true
+    programColumnMap = $programColumnMap
     programs = @([pscustomobject]@{
+      id = $programId
       name = $programName
-      landingCode = "WEB-EDITED-CODE"
+      landingCode = $landingCode
       xlsbProgramName = $programName
       xlsbProgramLandingCode = $landingCode
       xlsbProgramRow = $targetRow
@@ -204,7 +279,7 @@ process.stdout.write(JSON.stringify({
 '@
   $verifyScriptPath = Join-Path $temporaryDirectory "verify-program-promo.js"
   [IO.File]::WriteAllText($verifyScriptPath, $verifyScript, [Text.UTF8Encoding]::new($false))
-  $verificationOutput = @(& node $verifyScriptPath $appServerPath $temporaryWorkbook ([string]$targetRow))
+  $verificationOutput = @(& $nodeExecutable $verifyScriptPath $appServerPath $temporaryWorkbook ([string]$targetRow))
   if ($LASTEXITCODE -ne 0) {
     throw "Не удалось повторно прочитать сохранённую временную XLSB."
   }

@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260824-partner-photo-font-v1";
+  const AUTH_BUILD = "20260824-program-email-marker-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);

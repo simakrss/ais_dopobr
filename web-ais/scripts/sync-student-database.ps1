@@ -2267,7 +2267,8 @@ function Set-ProgramPromoMessageCell {
     [object]$Sheet,
     [int]$Row,
     [int]$Column,
-    [object]$Value
+    [object]$Value,
+    [string]$IndicatorText = ""
   )
   $cell = $null
   $comment = $null
@@ -2284,7 +2285,18 @@ function Set-ProgramPromoMessageCell {
     }
     $text = ([string]$Value).Replace("`r`n", "`n").Replace("`r", "`n")
     if ([string]::IsNullOrWhiteSpace($text)) {
+      $currentFormula = [string]$cell.Formula
+      if (
+        $IndicatorText `
+        -and -not $currentFormula.StartsWith("=") `
+        -and ([string]$cell.Value2).Trim() -eq $IndicatorText
+      ) {
+        [void]$cell.ClearContents()
+      }
       return $false
+    }
+    if ($IndicatorText -and -not ([string]$cell.Formula).StartsWith("=")) {
+      $cell.Value2 = $IndicatorText
     }
     $comment = $cell.AddComment($text)
     try { $comment.Visible = $false } catch {}
@@ -2933,7 +2945,13 @@ function Update-ProgramPromoMessages {
         }
       }
       if ($emailMessageTemplateProvided) {
-        if (Set-ProgramPromoMessageCell $sheet $targetRow $emailMessageTemplateColumn (Get-ObjectProperty $program "emailMessageTemplate")) {
+        if (Set-ProgramPromoMessageCell `
+          $sheet `
+          $targetRow `
+          $emailMessageTemplateColumn `
+          (Get-ObjectProperty $program "emailMessageTemplate") `
+          -IndicatorText "Сообщ"
+        ) {
           $emailMessageCount += 1
         }
       }
