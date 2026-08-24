@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.253",
+    version: "1.7.254",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.254",
+      releasedAt: "2026-08-24",
+      changes: [
+        "После раздела «Статистика» добавлен сборщик email для рекламы по источникам из книги «База рассылок.xlsb», включая SQL-базы, АИС, опубликованные таблицы и исторические контакты.",
+        "Сборщик объединяет и очищает адреса, исключает запрещённые адреса и домены, показывает ошибки отдельных источников и экспортирует готовую выборку в CSV."
+      ]
+    },
     {
       version: "1.7.253",
       releasedAt: "2026-08-24",
@@ -2221,7 +2229,7 @@
   const TAB_ORDER_SETTINGS_KEY = "ais-dopobr-tab-orders-v1";
   const NAV_ITEM_ORDER_KEY = "ais-dopobr-nav-item-order-v1";
   const NAV_ITEM_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-nav-item-order-layout-v1";
-  const NAV_ITEM_ORDER_LAYOUT_VERSION = "statistics-after-dashboard";
+  const NAV_ITEM_ORDER_LAYOUT_VERSION = "advertising-after-statistics";
   const DASHBOARD_STATUS_ORDER_KEY = "ais-dopobr-dashboard-status-order-v1";
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-dashboard-status-layout-v1";
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION = "enrollment-study-first";
@@ -3768,6 +3776,7 @@ MAX - https://bizvmax.ru/zifra_plus
   const navItems = [
     { id: "dashboard", label: "Рабочий стол", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M7 16l4-4 3 3 5-7"></path><path d="M16 8h3v3"></path></svg>' },
     { id: "statistics", label: "Статистика", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20V10"></path><path d="M10 20V4"></path><path d="M16 20v-7"></path><path d="M22 20H2"></path><path d="M3 7l6-4 6 6 6-5"></path></svg>' },
+    { id: "advertising", label: "Реклама", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 11v2"></path><path d="M7 9v6"></path><path d="M7 10l11-5v14L7 14"></path><path d="M9 15l1.5 5H7l-1-5"></path><path d="M20 9v6"></path></svg>' },
     { id: "students", label: "Слушатели", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4"></circle><path d="M5 21a7 7 0 0 1 14 0"></path></svg>' },
     { id: "contracts", label: "Сотрудники", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3h7l5 5v13H7z"></path><path d="M14 3v5h5"></path><path d="M10 12h6"></path><path d="M10 16h6"></path></svg>' },
     { id: "programs", label: "Программы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 9l9-5 9 5-9 5z"></path><path d="M7 11v5c3 2 7 2 10 0v-5"></path><path d="M21 9v6"></path></svg>' },
@@ -3778,6 +3787,27 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "settings", label: "Настройки", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 17h2"></path><path d="M10 17h10"></path><circle cx="8" cy="17" r="2"></circle></svg>' },
     { id: "admin", label: "Админка", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 4.6-2.8 7.9-7 10-4.2-2.1-7-5.4-7-10V6z"></path><circle cx="12" cy="12" r="2.4"></circle><path d="M12 8.2v1.2"></path><path d="M12 14.6v1.2"></path><path d="M15.8 12h-1.2"></path><path d="M9.4 12H8.2"></path><path d="M14.7 9.3l-.9.9"></path><path d="M10.2 13.8l-.9.9"></path><path d="M14.7 14.7l-.9-.9"></path><path d="M10.2 10.2l-.9-.9"></path></svg>' }
   ];
+  const ADVERTISING_EMAIL_SOURCES = Object.freeze([
+    { id: "assistant_installations", label: "Установка Ассистента (edu-plus.ru)", group: "SQL" },
+    { id: "site_downloads", label: "Загрузки с zifra-plus.ru", group: "SQL" },
+    { id: "ais_students_contracts", label: "База слушателей и договоров", group: "АИС" },
+    { id: "webinar_registrations", label: "База регистраций на вебинары", group: "SQL" },
+    { id: "viit_applicants", label: "База абитуриентов ВИИТ", group: "SQL" },
+    { id: "viit_counselors", label: "База профориентаторов ВИИТ", group: "SQL" },
+    { id: "viit_open_days", label: "Регистрации на ДОД ВИИТ", group: "Таблицы" },
+    { id: "testing", label: "База тестирования", group: "SQL" },
+    { id: "partner_program", label: "Партнёрская программа", group: "Таблицы" },
+    { id: "moodle", label: "База Moodle", group: "SQL" },
+    { id: "google_contacts", label: "Контакты Google", group: "XLSB" },
+    { id: "legacy_contacts", label: "Историческая база контактов", group: "XLSB" }
+  ]);
+  const ADVERTISING_EMAIL_TABLE_COLUMNS = Object.freeze([
+    { key: "email", label: "Email" },
+    { key: "name", label: "ФИО / контакт" },
+    { key: "organization", label: "Организация" },
+    { key: "sources", label: "Источники" },
+    { key: "status", label: "Статус" }
+  ]);
 
   const PROGRAM_LIST_FIELD_KEYS = new Set([
     "qualification",
@@ -4769,6 +4799,26 @@ MAX - https://bizvmax.ru/zifra_plus
         error: "",
         data: null
       }
+    },
+    advertising: {
+      loading: false,
+      loaded: false,
+      error: "",
+      result: null,
+      selectedSourceIds: ADVERTISING_EMAIL_SOURCES.map((source) => source.id),
+      filters: {
+        query: "",
+        source: "",
+        status: "ready"
+      },
+      sort: { key: "email", dir: "asc" },
+      settings: null,
+      settingsLoading: false,
+      settingsLoaded: false,
+      settingsSaving: false,
+      settingsError: "",
+      settingsMessage: "",
+      notice: ""
     },
     financeDetails: {
       open: false,
@@ -8611,6 +8661,9 @@ MAX - https://bizvmax.ru/zifra_plus
         const dashboardIndex = order.indexOf("dashboard");
         const insertIndex = dashboardIndex >= 0 ? dashboardIndex + 1 : 0;
         order.splice(insertIndex, 0, "statistics");
+        const advertisingIndex = order.indexOf("advertising");
+        if (advertisingIndex >= 0) order.splice(advertisingIndex, 1);
+        order.splice(order.indexOf("statistics") + 1, 0, "advertising");
         localStorage.setItem(NAV_ITEM_ORDER_KEY, JSON.stringify(order));
         localStorage.setItem(NAV_ITEM_ORDER_LAYOUT_VERSION_KEY, NAV_ITEM_ORDER_LAYOUT_VERSION);
       }
@@ -8936,6 +8989,14 @@ MAX - https://bizvmax.ru/zifra_plus
     ) {
       queueMicrotask(() => loadStatisticsData());
     }
+    if (state.view === "advertising") {
+      if (isAdminUser() && !state.advertising.settingsLoaded && !state.advertising.settingsLoading) {
+        queueMicrotask(() => loadAdvertisingEmailSettings());
+      }
+      if (!state.advertising.loaded && !state.advertising.loading) {
+        queueMicrotask(() => collectAdvertisingEmails());
+      }
+    }
   }
 
   function fitMainRegistryTablesToViewport() {
@@ -8988,6 +9049,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!canAccessView(state.view)) return renderDashboard();
     if (state.view === "dashboard") return renderDashboard();
     if (state.view === "statistics") return renderStatistics();
+    if (state.view === "advertising") return renderAdvertising();
     if (state.view === "issuedDocuments") return renderIssuedDocumentsRegistry();
     if (state.view === "documentConstructor") return renderDocumentConstructor();
     if (state.view === "settings") return renderSettings();
@@ -10274,6 +10336,459 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='refresh-statistics-data']")?.addEventListener("click", () => {
       loadStatisticsData({ force: true });
     });
+  }
+
+  function formatAdvertisingDuration(value) {
+    const totalSeconds = Math.max(0, Math.round((Number(value) || 0) / 1000));
+    if (totalSeconds < 60) return `${totalSeconds} сек.`;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes} мин. ${String(seconds).padStart(2, "0")} сек.`;
+  }
+
+  function getAdvertisingSourceLabel(sourceId) {
+    return ADVERTISING_EMAIL_SOURCES.find((source) => source.id === sourceId)?.label || sourceId || "Источник";
+  }
+
+  function getAdvertisingFilteredRows(options = {}) {
+    const rows = Array.isArray(state.advertising.result?.rows) ? state.advertising.result.rows : [];
+    const filters = state.advertising.filters;
+    const requestedStatus = Object.prototype.hasOwnProperty.call(options, "status")
+      ? options.status
+      : filters.status;
+    const query = String(filters.query || "").trim().toLocaleLowerCase("ru-RU");
+    const sourceId = String(filters.source || "").trim();
+    const filtered = rows.filter((row) => {
+      if (requestedStatus === "ready" && row.excluded) return false;
+      if (requestedStatus === "excluded" && !row.excluded) return false;
+      if (sourceId && !(row.sources || []).some((source) => source.id === sourceId)) return false;
+      if (!query) return true;
+      const haystack = [
+        row.email,
+        row.name,
+        row.phone,
+        row.organization,
+        row.jobTitle,
+        row.category,
+        row.origin,
+        row.exclusionReason,
+        ...(row.sources || []).map((source) => source.label)
+      ].join(" ").toLocaleLowerCase("ru-RU");
+      return haystack.includes(query);
+    });
+    const sort = state.advertising.sort || { key: "email", dir: "asc" };
+    const direction = sort.dir === "desc" ? -1 : 1;
+    return filtered.sort((left, right) => {
+      const value = (row) => {
+        if (sort.key === "sources") return (row.sources || []).map((source) => source.label).join(", ");
+        if (sort.key === "status") return row.excluded ? "Исключён" : "Готов";
+        return row[sort.key] || "";
+      };
+      return String(value(left)).localeCompare(String(value(right)), "ru-RU", {
+        sensitivity: "base",
+        numeric: true
+      }) * direction;
+    });
+  }
+
+  function renderAdvertisingSortHeader(column) {
+    const sort = state.advertising.sort || {};
+    const active = sort.key === column.key;
+    return `
+      <button
+        class="statistics-table-sort-button ${active ? "is-active" : ""}"
+        data-action="sort-advertising-emails"
+        data-sort-key="${escapeAttr(column.key)}"
+        type="button"
+      >
+        <span>${escapeHtml(column.label)}</span>
+        <span class="statistics-table-sort-indicator" aria-hidden="true">${active ? (sort.dir === "asc" ? "↑" : "↓") : "↕"}</span>
+      </button>
+    `;
+  }
+
+  function renderAdvertisingSourceCards() {
+    const selected = new Set(state.advertising.selectedSourceIds || []);
+    const resultSources = new Map((state.advertising.result?.sources || []).map((source) => [source.id, source]));
+    return ADVERTISING_EMAIL_SOURCES.map((source) => {
+      const result = resultSources.get(source.id);
+      const status = result?.status || (state.advertising.loading ? "loading" : "idle");
+      const statusLabel = status === "error"
+        ? "Ошибка"
+        : status === "ok" ? `${formatStatisticsInteger(result.count)} адресов` : "Ожидает запуска";
+      return `
+        <label class="advertising-source-card is-${escapeAttr(status)} ${selected.has(source.id) ? "is-selected" : ""}" title="${escapeMultilineAttr(result?.error || source.label)}">
+          <input
+            type="checkbox"
+            data-advertising-source="${escapeAttr(source.id)}"
+            ${selected.has(source.id) ? "checked" : ""}
+            ${state.advertising.loading ? "disabled" : ""}
+          >
+          <span class="advertising-source-copy">
+            <strong>${escapeHtml(source.label)}</strong>
+            <small>${escapeHtml(source.group)} · ${escapeHtml(statusLabel)}</small>
+            ${result?.error ? `<em>${escapeHtml(result.error)}</em>` : ""}
+          </span>
+        </label>
+      `;
+    }).join("");
+  }
+
+  function renderAdvertisingSettings() {
+    if (!isAdminUser()) return "";
+    const settings = state.advertising.settings || {};
+    const loading = state.advertising.settingsLoading;
+    const saving = state.advertising.settingsSaving;
+    const field = (name, label, value, options = {}) => `
+      <label class="${options.wide ? "advertising-settings-wide" : ""}">
+        <span>${escapeHtml(label)}</span>
+        <input
+          name="${escapeAttr(name)}"
+          type="${options.type || "text"}"
+          value="${options.type === "password" ? "" : escapeAttr(value || "")}"
+          ${options.type === "number" ? 'min="1" max="65535" step="1" inputmode="numeric"' : ""}
+          ${options.disabled ? "disabled" : ""}
+          ${options.autocomplete ? `autocomplete="${escapeAttr(options.autocomplete)}"` : ""}
+          ${options.placeholder ? `placeholder="${escapeAttr(options.placeholder)}"` : ""}
+        >
+      </label>
+    `;
+    return `
+      <details class="panel advertising-settings-panel" ${state.advertising.settingsError ? "open" : ""}>
+        <summary>
+          <span><strong>Настройки источников</strong><small>Пути к книге и отдельные подключения к базам ВИИТ и Moodle</small></span>
+          <span class="advertising-settings-summary-status">${loading ? "Загрузка…" : "Только для администратора"}</span>
+        </summary>
+        ${state.advertising.settingsError ? `<div class="advertising-inline-message is-error" role="alert">${escapeHtml(state.advertising.settingsError)}</div>` : ""}
+        ${state.advertising.settingsMessage ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(state.advertising.settingsMessage)}</div>` : ""}
+        <form class="advertising-settings-form" data-action="save-advertising-settings">
+          <fieldset ${loading || saving ? "disabled" : ""}>
+            <legend>Книга «База рассылок.xlsb»</legend>
+            <div class="advertising-settings-grid">
+              ${field("workbookLocalPath", "Путь на локальном компьютере", settings.workbookLocalPath, { wide: true })}
+              ${field("workbookWebDavPath", "Путь в Яндекс-Диске (WebDAV)", settings.workbookWebDavPath, { wide: true })}
+            </div>
+          </fieldset>
+          <fieldset ${loading || saving || settings.advertisingAbitMysqlManagedByEnvironment ? "disabled" : ""}>
+            <legend>Базы ВИИТ</legend>
+            <div class="advertising-settings-grid is-connection">
+              ${field("advertisingAbitMysqlHost", "Сервер", settings.advertisingAbitMysqlHost)}
+              ${field("advertisingAbitMysqlPort", "Порт", settings.advertisingAbitMysqlPort || 3306, { type: "number" })}
+              ${field("advertisingAbitMysqlDatabase", "База", settings.advertisingAbitMysqlDatabase)}
+              ${field("advertisingAbitMysqlUser", "Пользователь", settings.advertisingAbitMysqlUser, { autocomplete: "username" })}
+              ${field("advertisingAbitMysqlPassword", "Пароль", "", {
+                type: "password",
+                autocomplete: "new-password",
+                placeholder: settings.advertisingAbitMysqlHasPassword ? "Пароль сохранён на сервере" : "Введите пароль"
+              })}
+            </div>
+          </fieldset>
+          <fieldset ${loading || saving || settings.advertisingMoodleMysqlManagedByEnvironment ? "disabled" : ""}>
+            <legend>База Moodle</legend>
+            <div class="advertising-settings-grid is-connection">
+              ${field("advertisingMoodleMysqlHost", "Сервер", settings.advertisingMoodleMysqlHost)}
+              ${field("advertisingMoodleMysqlPort", "Порт", settings.advertisingMoodleMysqlPort || 3306, { type: "number" })}
+              ${field("advertisingMoodleMysqlDatabase", "База", settings.advertisingMoodleMysqlDatabase)}
+              ${field("advertisingMoodleMysqlUser", "Пользователь", settings.advertisingMoodleMysqlUser, { autocomplete: "username" })}
+              ${field("advertisingMoodleMysqlPassword", "Пароль", "", {
+                type: "password",
+                autocomplete: "new-password",
+                placeholder: settings.advertisingMoodleMysqlHasPassword ? "Пароль сохранён на сервере" : "Введите пароль"
+              })}
+            </div>
+          </fieldset>
+          <div class="advertising-settings-actions">
+            <button class="primary-button" type="submit" ${loading || saving ? "disabled" : ""}>${saving ? "Сохранение…" : "Сохранить настройки"}</button>
+          </div>
+        </form>
+      </details>
+    `;
+  }
+
+  function renderAdvertising() {
+    const advertising = state.advertising;
+    const summary = advertising.result?.summary || {};
+    const rows = getAdvertisingFilteredRows();
+    const readyRows = getAdvertisingFilteredRows({ status: "ready" });
+    const pagination = getTablePagination("advertisingEmails", rows.length);
+    const pageRows = rows.slice(pagination.start, pagination.end);
+    const workbook = advertising.result?.workbook;
+    const lastUpdated = advertising.result?.refreshedAt
+      ? formatDateTimeRu(advertising.result.refreshedAt)
+      : "Ещё не запускался";
+    return `
+      <section class="advertising-page">
+        <section class="panel advertising-controls-panel">
+          <div class="advertising-heading">
+            <div>
+              <p class="eyebrow">Подготовка базы для рекламы</p>
+              <h2>Сборщик email</h2>
+              <p>Источники и правила исключений перенесены из книги «База рассылок.xlsb».</p>
+            </div>
+            <div class="advertising-heading-actions">
+              <button class="ghost-button" data-action="copy-advertising-emails" type="button" ${!readyRows.length || advertising.loading ? "disabled" : ""}>Копировать готовые</button>
+              <button class="ghost-button" data-action="export-advertising-emails" type="button" ${!readyRows.length || advertising.loading ? "disabled" : ""}>Экспорт CSV</button>
+              <button class="primary-button" data-action="collect-advertising-emails" type="button" ${advertising.loading ? "disabled" : ""}>
+                ${advertising.loading ? '<span class="auth-spinner" aria-hidden="true"></span> Сбор адресов…' : "Собрать адреса"}
+              </button>
+            </div>
+          </div>
+          ${advertising.error ? `<div class="advertising-inline-message is-error" role="alert">${escapeHtml(advertising.error)}</div>` : ""}
+          ${advertising.notice ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(advertising.notice)}</div>` : ""}
+          <div class="advertising-source-toolbar">
+            <strong>Источники</strong>
+            <span>Выбрано ${advertising.selectedSourceIds.length} из ${ADVERTISING_EMAIL_SOURCES.length}</span>
+            <button class="text-button" data-action="select-all-advertising-sources" type="button" ${advertising.loading ? "disabled" : ""}>Выбрать все</button>
+            <button class="text-button" data-action="clear-advertising-sources" type="button" ${advertising.loading ? "disabled" : ""}>Снять все</button>
+          </div>
+          <div class="advertising-source-grid">${renderAdvertisingSourceCards()}</div>
+          <div class="advertising-workbook-status ${workbook?.status === "error" ? "is-error" : ""}">
+            <span>Правила исключений: <strong>${formatStatisticsInteger(summary.exclusionRules)}</strong></span>
+            <span>Книга: <strong>${escapeHtml(workbook?.source || "ожидает запуска")}</strong></span>
+            ${workbook?.location ? `<span title="${escapeAttr(workbook.location)}">${escapeHtml(workbook.location)}</span>` : ""}
+            ${workbook?.error ? `<span>${escapeHtml(workbook.error)}</span>` : ""}
+          </div>
+        </section>
+
+        <div class="advertising-kpi-grid">
+          <article class="statistics-kpi-card"><span>Уникальные</span><strong>${formatStatisticsInteger(summary.unique)}</strong><small>После объединения источников</small></article>
+          <article class="statistics-kpi-card tone-green"><span>Готовы к рекламе</span><strong>${formatStatisticsInteger(summary.ready)}</strong><small>Без исключённых адресов</small></article>
+          <article class="statistics-kpi-card tone-red"><span>Исключены</span><strong>${formatStatisticsInteger(summary.excluded)}</strong><small>Адреса и домены из XLSB</small></article>
+          <article class="statistics-kpi-card tone-amber"><span>Повторы</span><strong>${formatStatisticsInteger(summary.duplicates)}</strong><small>Удалены при объединении</small></article>
+          <article class="statistics-kpi-card tone-blue"><span>Время сбора</span><strong>${advertising.result ? escapeHtml(formatAdvertisingDuration(advertising.result.durationMs)) : "—"}</strong><small>${escapeHtml(lastUpdated)}</small></article>
+        </div>
+
+        <section class="panel advertising-results-panel">
+          <div class="panel-head advertising-results-head">
+            <div><p class="eyebrow">Результат</p><h2>Email-адреса</h2></div>
+            <span class="statistics-row-count">${formatStatisticsInteger(rows.length)}</span>
+          </div>
+          <div class="advertising-filters">
+            <label class="advertising-filter-query"><span>Поиск</span><input data-advertising-filter="query" value="${escapeAttr(advertising.filters.query)}" placeholder="Email, ФИО, организация, телефон" autocomplete="off"></label>
+            <label><span>Источник</span><select data-advertising-filter="source"><option value="">Все источники</option>${ADVERTISING_EMAIL_SOURCES.map((source) => `<option value="${escapeAttr(source.id)}" ${advertising.filters.source === source.id ? "selected" : ""}>${escapeHtml(source.label)}</option>`).join("")}</select></label>
+            <label><span>Статус</span><select data-advertising-filter="status"><option value="ready" ${advertising.filters.status === "ready" ? "selected" : ""}>Готовы к рекламе</option><option value="excluded" ${advertising.filters.status === "excluded" ? "selected" : ""}>Исключённые</option><option value="all" ${advertising.filters.status === "all" ? "selected" : ""}>Все адреса</option></select></label>
+            <button class="ghost-button" data-action="reset-advertising-filters" type="button">Сбросить</button>
+          </div>
+          ${advertising.loading && !advertising.result
+            ? '<div class="advertising-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Источники опрашиваются, адреса объединяются…</span></div>'
+            : (!pageRows.length
+              ? '<div class="empty-state compact"><strong>Адресов не найдено</strong><span>Запустите сбор или измените фильтры.</span></div>'
+              : `
+                <div class="table-wrap advertising-table-wrap">
+                  <table class="data-table advertising-email-table">
+                    <thead><tr>${ADVERTISING_EMAIL_TABLE_COLUMNS.map((column) => `<th>${renderAdvertisingSortHeader(column)}</th>`).join("")}</tr></thead>
+                    <tbody>${pageRows.map((row) => `
+                      <tr class="${row.excluded ? "is-excluded" : ""}">
+                        <td><a href="mailto:${escapeAttr(row.email)}">${escapeHtml(row.email)}</a></td>
+                        <td title="${escapeAttr([row.name, row.phone, row.jobTitle].filter(Boolean).join(" · "))}"><strong>${escapeHtml(row.name || "—")}</strong>${row.phone ? `<small>${escapeHtml(row.phone)}</small>` : ""}</td>
+                        <td title="${escapeAttr([row.organization, row.jobTitle, row.origin].filter(Boolean).join(" · "))}">${escapeHtml(row.organization || row.origin || "—")}</td>
+                        <td><div class="advertising-source-tags">${(row.sources || []).map((source) => `<span title="${escapeAttr(source.label)}">${escapeHtml(source.label)}</span>`).join("")}</div></td>
+                        <td><span class="advertising-status-badge ${row.excluded ? "is-excluded" : "is-ready"}" title="${escapeAttr(row.exclusionReason || "Адрес готов к использованию")}">${row.excluded ? "Исключён" : "Готов"}</span>${row.exclusionReason ? `<small>${escapeHtml(row.exclusionReason)}</small>` : ""}</td>
+                      </tr>
+                    `).join("")}</tbody>
+                  </table>
+                </div>
+                ${renderTablePagination("advertisingEmails", rows.length, pagination)}
+              `)}
+        </section>
+        ${renderAdvertisingSettings()}
+      </section>
+    `;
+  }
+
+  async function loadAdvertisingEmailSettings(options = {}) {
+    const advertising = state.advertising;
+    if (advertising.settingsLoading || (advertising.settingsLoaded && !options.force)) return;
+    advertising.settingsLoading = true;
+    advertising.settingsError = "";
+    if (state.view === "advertising") render();
+    try {
+      const response = await fetch(photoApiUrl("/api/advertising/email-collector/settings"), {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "X-Requested-With": "AIS-Web" }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      advertising.settings = payload;
+      advertising.settingsLoaded = true;
+    } catch (error) {
+      advertising.settingsError = error.message || "Не удалось загрузить настройки источников.";
+      advertising.settingsLoaded = true;
+    } finally {
+      advertising.settingsLoading = false;
+      if (state.view === "advertising") render();
+    }
+  }
+
+  async function collectAdvertisingEmails() {
+    const advertising = state.advertising;
+    if (advertising.loading) return;
+    if (!advertising.selectedSourceIds.length) {
+      advertising.error = "Выберите хотя бы один источник.";
+      render();
+      return;
+    }
+    advertising.loading = true;
+    advertising.error = "";
+    advertising.notice = "";
+    if (state.view === "advertising") render();
+    try {
+      const response = await fetch(photoApiUrl("/api/advertising/email-collector/collect"), {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({ sourceIds: advertising.selectedSourceIds })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      advertising.result = payload;
+      advertising.loaded = true;
+      state.tablePages.advertisingEmails = 1;
+    } catch (error) {
+      advertising.error = error.message || "Не удалось собрать email-адреса.";
+      advertising.loaded = true;
+    } finally {
+      advertising.loading = false;
+      if (state.view === "advertising") render();
+    }
+  }
+
+  async function saveAdvertisingEmailSettings(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const advertising = state.advertising;
+    if (advertising.settingsSaving) return;
+    const payload = Object.fromEntries(new FormData(form).entries());
+    ["advertisingAbitMysqlPort", "advertisingMoodleMysqlPort"].forEach((key) => {
+      if (payload[key]) payload[key] = Number(payload[key]);
+    });
+    advertising.settingsSaving = true;
+    advertising.settingsError = "";
+    advertising.settingsMessage = "";
+    render();
+    try {
+      const response = await fetch(photoApiUrl("/api/advertising/email-collector/settings"), {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || `Ошибка сервера: ${response.status}`);
+      advertising.settings = result;
+      advertising.settingsLoaded = true;
+      advertising.settingsMessage = "Настройки источников сохранены.";
+    } catch (error) {
+      advertising.settingsError = error.message || "Не удалось сохранить настройки источников.";
+    } finally {
+      advertising.settingsSaving = false;
+      if (state.view === "advertising") render();
+    }
+  }
+
+  function exportAdvertisingEmails() {
+    const rows = getAdvertisingFilteredRows({ status: "ready" });
+    if (!rows.length) return;
+    const content = [
+      ["Email", "ФИО / контакт", "Телефон", "Организация", "Должность", "Категория", "Источник данных", "Источники"].map(csvCell).join(";"),
+      ...rows.map((row) => [
+        row.email,
+        row.name,
+        row.phone,
+        row.organization,
+        row.jobTitle,
+        row.category,
+        row.origin,
+        (row.sources || []).map((source) => source.label).join(", ")
+      ].map(csvCell).join(";"))
+    ].join("\n");
+    download(
+      `email-reklama-${new Date().toISOString().slice(0, 10)}.csv`,
+      `\ufeff${content}`,
+      "text/csv;charset=utf-8"
+    );
+  }
+
+  function bindAdvertisingEvents() {
+    if (state.view !== "advertising") return;
+    document.querySelector("[data-action='collect-advertising-emails']")?.addEventListener("click", collectAdvertisingEmails);
+    document.querySelector("[data-action='select-all-advertising-sources']")?.addEventListener("click", () => {
+      state.advertising.selectedSourceIds = ADVERTISING_EMAIL_SOURCES.map((source) => source.id);
+      state.advertising.error = "";
+      render();
+    });
+    document.querySelector("[data-action='clear-advertising-sources']")?.addEventListener("click", () => {
+      state.advertising.selectedSourceIds = [];
+      render();
+    });
+    document.querySelectorAll("[data-advertising-source]").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        const sourceId = String(checkbox.dataset.advertisingSource || "");
+        const selected = new Set(state.advertising.selectedSourceIds || []);
+        if (checkbox.checked) selected.add(sourceId);
+        else selected.delete(sourceId);
+        state.advertising.selectedSourceIds = ADVERTISING_EMAIL_SOURCES
+          .map((source) => source.id)
+          .filter((id) => selected.has(id));
+        state.advertising.error = "";
+        render();
+      });
+    });
+    document.querySelectorAll("[data-advertising-filter]").forEach((control) => {
+      const apply = () => {
+        const key = String(control.dataset.advertisingFilter || "");
+        if (!Object.prototype.hasOwnProperty.call(state.advertising.filters, key)) return;
+        state.advertising.filters[key] = control.value;
+        state.tablePages.advertisingEmails = 1;
+        render();
+      };
+      control.addEventListener("change", apply);
+      if (control.matches("input")) {
+        control.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          apply();
+        });
+      }
+    });
+    document.querySelector("[data-action='reset-advertising-filters']")?.addEventListener("click", () => {
+      state.advertising.filters = { query: "", source: "", status: "ready" };
+      state.tablePages.advertisingEmails = 1;
+      render();
+    });
+    document.querySelectorAll("[data-action='sort-advertising-emails']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = String(button.dataset.sortKey || "email");
+        if (!ADVERTISING_EMAIL_TABLE_COLUMNS.some((column) => column.key === key)) return;
+        const current = state.advertising.sort || { key: "email", dir: "asc" };
+        state.advertising.sort = current.key === key
+          ? { key, dir: current.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: "asc" };
+        state.tablePages.advertisingEmails = 1;
+        render();
+      });
+    });
+    document.querySelector("[data-action='export-advertising-emails']")?.addEventListener("click", exportAdvertisingEmails);
+    document.querySelector("[data-action='copy-advertising-emails']")?.addEventListener("click", async () => {
+      const rows = getAdvertisingFilteredRows({ status: "ready" });
+      try {
+        await copyTextToClipboard(rows.map((row) => row.email).join("\r\n"));
+        state.advertising.notice = `Скопировано адресов: ${rows.length}.`;
+      } catch (error) {
+        state.advertising.error = error.message || "Не удалось скопировать адреса.";
+      }
+      render();
+    });
+    document.querySelector("form[data-action='save-advertising-settings']")?.addEventListener("submit", saveAdvertisingEmailSettings);
   }
 
   function renderDashboard() {
@@ -28402,6 +28917,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindStudentApplicationsImportEvents();
     bindFinanceDetailsEvents();
     bindStatisticsEvents();
+    bindAdvertisingEvents();
     bindStudentExpenseEditorEvents();
     bindMoneyInputStepControls(document);
     initializeRecordFormSnapshot(document.getElementById("recordForm"));

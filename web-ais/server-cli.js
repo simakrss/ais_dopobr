@@ -5,6 +5,8 @@ const {
   closeSharedRecordLocksStorage,
   closeStudentApplicationsMySqlStorage,
   closeAssistantStatisticsMySqlStorage,
+  closeAdvertisingAbitMySqlStorage,
+  closeAdvertisingMoodleMySqlStorage,
   route
 } = require("./app-server");
 
@@ -65,6 +67,8 @@ main().catch((error) => {
   await Promise.all([
     closeSharedRecordLocksStorage(),
     closeStudentApplicationsMySqlStorage(),
-    closeAssistantStatisticsMySqlStorage()
+    closeAssistantStatisticsMySqlStorage(),
+    closeAdvertisingAbitMySqlStorage(),
+    closeAdvertisingMoodleMySqlStorage()
   ]);
 });
