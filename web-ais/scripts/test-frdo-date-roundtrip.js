@@ -34,7 +34,7 @@ function buildExportPayload(students, imported = {}) {
   });
 }
 
-function getFrdoCells(filePath) {
+function getColumnCells(filePath, headerName) {
   const workbook = XLSX.read(fs.readFileSync(filePath), {
     type: "buffer",
     cellDates: false,
@@ -45,21 +45,21 @@ function getFrdoCells(filePath) {
   assert.ok(sheet, "В книге отсутствует лист «База».");
   const range = XLSX.utils.decode_range(sheet["!ref"]);
   let headerRow = -1;
-  let frdoColumn = -1;
+  let targetColumn = -1;
   for (let row = range.s.r; row <= Math.min(range.e.r, 100) && headerRow < 0; row += 1) {
     for (let column = range.s.c; column <= range.e.c; column += 1) {
       const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
-      if (String(cell?.v || "").trim() === "ФРДО") {
+      if (String(cell?.v || "").trim() === headerName) {
         headerRow = row;
-        frdoColumn = column;
+        targetColumn = column;
         break;
       }
     }
   }
-  assert.ok(headerRow >= 0 && frdoColumn >= 0, "Не найдена колонка ФРДО.");
+  assert.ok(headerRow >= 0 && targetColumn >= 0, `Не найдена колонка ${headerName}.`);
   const cells = [];
   for (let row = headerRow + 1; row <= range.e.r; row += 1) {
-    const address = XLSX.utils.encode_cell({ r: row, c: frdoColumn });
+    const address = XLSX.utils.encode_cell({ r: row, c: targetColumn });
     const cell = sheet[address];
     if (cell && cell.v !== "" && cell.v !== null && cell.v !== undefined) {
       cells.push({ address, ...cell });
@@ -113,7 +113,9 @@ try {
   ));
   assert.ok(personalCaseStudent && emptyPersonalCaseStudent, "Недостаточно слушателей для проверки признака оформления.");
   personalCaseStudent.documentsStatus = "+";
+  personalCaseStudent.discount = 50;
   emptyPersonalCaseStudent.documentsStatus = "";
+  emptyPersonalCaseStudent.discount = 10;
 
   const payload = buildExportPayload(imported.students, {
     ...imported,
@@ -134,7 +136,7 @@ try {
   ], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   assert.equal(sync.status, 0, sync.stderr || sync.stdout || "Синхронизация завершилась с ошибкой.");
 
-  const frdoCells = getFrdoCells(outputPath);
+  const frdoCells = getColumnCells(outputPath, "ФРДО");
   assert.ok(frdoCells.some((cell) => cell.t === "n"), "Даты ФРДО не записаны как числа Excel.");
   assert.ok(
     frdoCells.filter((cell) => cell.t === "n").every((cell) => Number.isInteger(cell.v)),
@@ -142,12 +144,9 @@ try {
   );
   assert.ok(
     frdoCells.filter((cell) => cell.t === "n").every((cell) => (
-      String(cell.z || "")
-        .toLowerCase()
-        .replace(/\\/gu, "")
-        .split(";")[0] === "yyyy-mm-dd"
+      String(cell.z || "").toLowerCase().split(";")[0] === "m/d/yy"
     )),
-    `Для даты ФРДО не установлен формат yyyy-mm-dd: ${[
+    `Для даты ФРДО не установлен встроенный формат короткой даты Excel: ${[
       ...new Set(frdoCells.filter((cell) => cell.t === "n").map((cell) => cell.z || ""))
     ].join(", ")}`
   );
@@ -158,6 +157,19 @@ try {
   assert.ok(
     frdoCells.some((cell) => cell.t === "s" && cell.v === "Не требуется"),
     "Текстовый статус «Не требуется» потерян при синхронизации."
+  );
+  const discountCells = getColumnCells(outputPath, "Скидка").filter((cell) => cell.t === "n");
+  assert.ok(
+    discountCells.some((cell) => Math.abs(Number(cell.v) - 0.5) < 0.0000001),
+    "Скидка 50% не записана в XLSB как 0,5."
+  );
+  assert.ok(
+    discountCells.some((cell) => Math.abs(Number(cell.v) - 0.1) < 0.0000001),
+    "Скидка 10% не записана в XLSB как 0,1."
+  );
+  assert.ok(
+    discountCells.every((cell) => String(cell.z || "").includes("%")),
+    "Для числовых скидок не установлен процентный формат Excel."
   );
 
   const roundTrip = parseStudentDatabaseWorkbook(fs.readFileSync(outputPath));
@@ -171,6 +183,8 @@ try {
   assert.equal(savedTextStudent?.frdoDate, undefined);
   assert.equal(savedPersonalCaseStudent?.documentsStatus, "+", "Признак оформления не записан знаком «+».");
   assert.equal(savedEmptyPersonalCaseStudent?.documentsStatus || "", "", "Снятый признак оформления не очищен.");
+  assert.equal(savedPersonalCaseStudent?.discount, 50, "Скидка 50% не прошла обратный импорт.");
+  assert.equal(savedEmptyPersonalCaseStudent?.discount, 10, "Скидка 10% не прошла обратный импорт.");
   assert.equal(sha256(sourcePath), sourceHash, "Исходная XLSB была изменена во время теста.");
 
   console.log(JSON.stringify({

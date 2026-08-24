@@ -155,16 +155,20 @@ function Convert-CellValue {
     return Convert-DateToExcelSerial $Value
   }
   if ($NumberFields.Contains($FieldName)) {
-    if ($Value -is [double] -or $Value -is [float] -or $Value -is [decimal] -or $Value -is [int] -or $Value -is [long]) {
-      return [double]$Value
-    }
     $number = 0.0
-    $text = ([string]$Value).Replace([string][char]0x00A0, "").Replace(" ", "").Replace(",", ".").Trim()
-    if (-not $text) { return $null }
-    if ([double]::TryParse($text, [Globalization.NumberStyles]::Any, [Globalization.CultureInfo]::InvariantCulture, [ref]$number)) {
-      return $number
+    if ($Value -is [double] -or $Value -is [float] -or $Value -is [decimal] -or $Value -is [int] -or $Value -is [long]) {
+      $number = [double]$Value
+    } else {
+      $text = ([string]$Value).Replace([string][char]0x00A0, "").Replace(" ", "").Replace(",", ".").Trim()
+      if (-not $text) { return $null }
+      if (-not [double]::TryParse($text, [Globalization.NumberStyles]::Any, [Globalization.CultureInfo]::InvariantCulture, [ref]$number)) {
+        return [string]$Value
+      }
     }
-    return [string]$Value
+    # The Web application stores discounts as human-readable percentages
+    # (50 means 50%), while Excel percentage cells store the fraction (0.5).
+    if ($FieldName -eq "discount") { return $number / 100.0 }
+    return $number
   }
   if ($FieldName -eq "gender") {
     $gender = ([string]$Value).Trim().ToLowerInvariant()
@@ -904,11 +908,12 @@ function Update-MappedColumn {
       $nextValues[$offset, 0] = Convert-CellValue $value $FieldName $DateFields $NumberFields
     }
     $range.Formula = $nextValues
-    if ($FieldName -eq "frdoStatus") {
-      # The source workbook already carries the FRDO column format. Some Excel
-      # builds reject reapplying NumberFormat to the mixed date/text range;
-      # that cosmetic refusal must not abort the entire atomic synchronization.
-      try { $range.NumberFormat = "yyyy-mm-dd" } catch {}
+    if ($FieldName -eq "discount") {
+      try { $range.NumberFormat = "0.##%" } catch {}
+    } elseif ($FieldName -eq "frdoStatus") {
+      # Dates remain native Excel serial values. Text statuses in this mixed
+      # column are unaffected by the date display format.
+      try { $range.NumberFormatLocal = "ДД.ММ.ГГГГ" } catch {}
     }
   } finally {
     Release-ComObject $range

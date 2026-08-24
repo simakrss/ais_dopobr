@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.268",
+    version: "1.7.269",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.269",
+      releasedAt: "2026-08-24",
+      changes: [
+        "Скидки синхронизируются с XLSB как проценты без ошибочного увеличения в 100 раз.",
+        "Дата внесения в ФРДО сохраняется как настоящая дата Excel и отображается в формате ДД.ММ.ГГГГ."
+      ]
+    },
     {
       version: "1.7.268",
       releasedAt: "2026-08-24",

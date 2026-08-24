@@ -11742,8 +11742,16 @@ function normalizeStudentDatabaseNumber(value) {
   return Number.isFinite(number) ? number : String(value).trim();
 }
 
+function normalizeStudentDatabaseDiscountPercent(value) {
+  const number = normalizeStudentDatabaseNumber(value);
+  if (typeof number !== "number") return number;
+  const percent = number > 0 && number <= 1 ? number * 100 : number;
+  return Math.round(percent * 10000) / 10000;
+}
+
 function normalizeStudentDatabaseValue(value, fieldName) {
   if (STUDENT_DATABASE_DATE_FIELDS.has(fieldName)) return normalizeStudentDatabaseDate(value);
+  if (fieldName === "discount") return normalizeStudentDatabaseDiscountPercent(value);
   if (STUDENT_DATABASE_NUMBER_FIELDS.has(fieldName)) return normalizeStudentDatabaseNumber(value);
   if (fieldName === "uid") return String(value ?? "").trim().replace(/\.0+$/, "");
   if (typeof value === "string") return value.trim();
@@ -25717,6 +25725,7 @@ module.exports = {
   optimizeStudentApplicationsSqlQuery,
   runStudentApplicationsQuery,
   parseStudentDatabaseWorkbook,
+  normalizeStudentDatabaseDiscountPercent,
   parseCommunicationTemplateNamedRangeValues,
   getCommunicationTemplateNamedRangeMismatches,
   assertCommunicationTemplateNamedRangeWorkbookOutput,
