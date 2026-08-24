@@ -3211,6 +3211,54 @@ function compareDocumentFormulaValues(left, right, operator) {
   return false;
 }
 
+const DOCUMENT_FORMULA_ADDRESS_SOURCE_NAMES = Object.freeze({
+  registrationAddress: Object.freeze([
+    "registrationAddress",
+    "Адрес места регистрации",
+    "Адрес постоянного места жительства (регистрации по паспорту)",
+    "Адрес постоянного места жительства",
+    "Адрес регистрации по паспорту"
+  ]),
+  mailingAddress: Object.freeze([
+    "mailingAddress",
+    "Адрес места жительства",
+    "Адрес для отправки документов",
+    "Адрес с почтовым индексом для отправки документов"
+  ])
+});
+
+function resolveDocumentFormulaAddressSourceKey(name) {
+  const normalized = String(name || "")
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/[^a-zа-я0-9]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized.startsWith("адрес ")) return "";
+  if (normalized === "адрес места жительства") return "mailingAddress";
+  if (
+    /регистрац/.test(normalized)
+    || /по паспорту/.test(normalized)
+    || normalized === "адрес постоянного места жительства"
+  ) return "registrationAddress";
+  if (/для отправк/.test(normalized) || /почтов/.test(normalized)) return "mailingAddress";
+  return "";
+}
+
+function getDocumentFormulaAliasedAddressValue(name, context) {
+  const sourceKey = resolveDocumentFormulaAddressSourceKey(name);
+  if (!sourceKey) return { found: false, value: "" };
+  const candidates = DOCUMENT_FORMULA_ADDRESS_SOURCE_NAMES[sourceKey] || [];
+  for (const values of [context.sourceValues || {}, context.fieldValues || {}]) {
+    for (const candidate of candidates) {
+      if (Object.prototype.hasOwnProperty.call(values, candidate)) {
+        return { found: true, value: values[candidate] };
+      }
+    }
+  }
+  return { found: false, value: "" };
+}
+
 function getFormulaContextValue(name, context) {
   const key = String(name || "").trim();
   const evaluatingName = String(context?.evaluatingName || "").trim();
@@ -3237,6 +3285,8 @@ function getFormulaContextValue(name, context) {
     if (Object.prototype.hasOwnProperty.call(context.fieldValues, baseKey)) return context.fieldValues[baseKey];
     if (Object.prototype.hasOwnProperty.call(context.sourceValues, baseKey)) return context.sourceValues[baseKey];
   }
+  const aliasedAddress = getDocumentFormulaAliasedAddressValue(key, context);
+  if (aliasedAddress.found) return aliasedAddress.value;
   return "";
 }
 

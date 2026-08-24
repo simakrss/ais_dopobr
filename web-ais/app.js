@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.266",
+    version: "1.7.267",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.267",
+      releasedAt: "2026-08-24",
+      changes: [
+        "Поля Ассистента однозначно различают паспортный адрес регистрации и почтовый адрес даже при использовании полной подписи из заявления или договора.",
+        "Для полей №64 и №19 добавлена регрессионная проверка, исключающая перестановку адресов при формировании документов."
+      ]
+    },
     {
       version: "1.7.266",
       releasedAt: "2026-08-24",
@@ -2871,7 +2879,9 @@ MAX - https://bizvmax.ru/zifra_plus
   const contractTemplateSourceFieldNames = [
     "ФИО", "ФИО_несклон", "Email", "Договор", "Дата договора", "Дата подачи заявки", "Дата начала обучения", "Дата окончания обучения",
     "Прогр обуч факт", "Количество часов", "Форма обучения", "Стажировка", "Гражданство", "ДР обуч", "Обуч тел#",
-    "Адрес места жительства", "Адрес места регистрации", "МестоРаботы", "Должность", "СНИЛС", "Осн# скидки",
+    "Адрес места жительства", "Адрес места регистрации",
+    "Адрес постоянного места жительства (регистрации по паспорту)", "Адрес для отправки документов",
+    "МестоРаботы", "Должность", "СНИЛС", "Осн# скидки",
     "Пасп_Обуч_Вид документа", "Пасп_Обуч_Дата", "Пасп_Обуч_Серия_Номер", "Пасп_Обуч_Кем",
     "Обр_Вид образования", "Обр_Серия", "Обр_Номер", "Обр_Дата выдачи", "Обр_Кем выдан",
     "Внесено (руб)", "Сумма  по договору (руб)", "Фото",
@@ -2899,6 +2909,11 @@ MAX - https://bizvmax.ru/zifra_plus
     "Обуч тел#": "phone",
     "Адрес места жительства": "mailingAddress",
     "Адрес места регистрации": "registrationAddress",
+    "Адрес постоянного места жительства (регистрации по паспорту)": "registrationAddress",
+    "Адрес постоянного места жительства": "registrationAddress",
+    "Адрес регистрации по паспорту": "registrationAddress",
+    "Адрес для отправки документов": "mailingAddress",
+    "Адрес с почтовым индексом для отправки документов": "mailingAddress",
     "МестоРаботы": "workPlace",
     "Должность": "position",
     "СНИЛС": "snils",
@@ -2936,6 +2951,24 @@ MAX - https://bizvmax.ru/zifra_plus
     "Номер приказа отчисления": "expulsionOrderNo",
     "Пол": "gender"
   };
+
+  function resolveContractTemplateAddressSourceKey(name) {
+    const normalized = String(name || "")
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е")
+      .replace(/[^a-zа-я0-9]+/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!normalized.startsWith("адрес ")) return "";
+    if (normalized === "адрес места жительства") return "mailingAddress";
+    if (
+      /регистрац/.test(normalized)
+      || /по паспорту/.test(normalized)
+      || normalized === "адрес постоянного места жительства"
+    ) return "registrationAddress";
+    if (/для отправк/.test(normalized) || /почтов/.test(normalized)) return "mailingAddress";
+    return "";
+  }
   const defaultDocumentTemplateId = "document-contract-application";
   const legalEntityApplicationDocumentTemplateId = "document-legal-entity-application";
   const postalEnvelopeDocumentTemplateId = "document-postal-envelope";
@@ -53644,6 +53677,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getContractTemplateRawSourceValue(name, record) {
     const normalized = String(name || "").replace(/\s+/g, " ").trim();
+    const addressKey = resolveContractTemplateAddressSourceKey(normalized);
+    if (addressKey) return record?.[addressKey] ?? "";
     if (normalized === "Количество часов") return getStudentProgramHours(record);
     if (normalized === "Часы") return getStudentProgramHours(record);
     if (normalized === "Вид программы ДПО") return getStudentProgramTypeCode(record);
