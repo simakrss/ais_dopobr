@@ -120,15 +120,15 @@ const PARTNER_REGISTRATION_POLICY_URL = "https://edu-plus.ru/wp-content/uploads/
 const PARTNER_REGISTRATION_TTL_MS = 24 * 60 * 60 * 1000;
 const PARTNER_REGISTRATION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const PARTNER_REGISTRATION_RESEND_DELAY_MS = 60 * 1000;
-const PARTNER_REGISTRATION_MAX_PER_IP_HOUR = 10;
-const PARTNER_REGISTRATION_MAX_EMAILS_PER_DAY = 5;
+const PARTNER_REGISTRATION_MAX_PER_IP_HOUR = 6;
+const PARTNER_REGISTRATION_MAX_EMAILS_PER_DAY = 3;
 const PARTNER_REGISTRATION_CONFIRMATION_STALE_MS = 5 * 60 * 1000;
 const PARTNER_REGISTRATION_STORE_LOCK_TIMEOUT_MS = 10 * 1000;
 const PARTNER_REGISTRATION_STORE_LOCK_STALE_MS = 3 * 60 * 1000;
 const PARTNER_REGISTRATION_CHALLENGE_TTL_MS = 15 * 60 * 1000;
-const PARTNER_REGISTRATION_CHALLENGE_MIN_AGE_MS = 2 * 1000;
+const PARTNER_REGISTRATION_CHALLENGE_MIN_AGE_MS = 4 * 1000;
 const PARTNER_REGISTRATION_CHALLENGE_RATE_WINDOW_MS = 10 * 60 * 1000;
-const PARTNER_REGISTRATION_MAX_CHALLENGES_PER_WINDOW = 30;
+const PARTNER_REGISTRATION_MAX_CHALLENGES_PER_WINDOW = 12;
 const PARTNER_REGISTRATION_MAX_ACTIVE_CHALLENGES = 5000;
 const DEFAULT_TRAINING_END_NOTIFICATION_DAYS = 5;
 const DEFAULT_TRAINING_END_NOTIFICATION_TIME = "09:00";
@@ -22211,7 +22211,7 @@ function sanitizePartnerRegistrationPayload(value = {}) {
     500,
     "Другое направление сотрудничества"
   );
-  if (!directions.length && !otherDirection) {
+  if (!directions.length) {
     throw partnerRegistrationError("Выберите хотя бы одно направление сотрудничества.");
   }
   if (source.personalDataConsent !== true) {
@@ -22227,7 +22227,8 @@ function sanitizePartnerRegistrationPayload(value = {}) {
     additionalInfo: sanitizePartnerRegistrationText(
       source.additionalInfo,
       5000,
-      "Дополнительные сведения о себе"
+      "Дополнительные сведения о себе",
+      true
     ),
     personalDataConsent: true,
     policyUrl: PARTNER_REGISTRATION_POLICY_URL
@@ -22343,17 +22344,27 @@ function partnerRegistrationSpamError(message = "Проверка защиты �
   return partnerRegistrationError(message, statusCode, { publicCode: "PARTNER_SPAM_CHALLENGE_INVALID" });
 }
 
+function partnerRegistrationSpamAnswerHash(challengeId, answer) {
+  return partnerRegistrationTokenHash(`${challengeId}\n${answer}`);
+}
+
 function createPartnerRegistrationSpamChallenge(clientIpHash, now = Date.now()) {
-  const subtract = crypto.randomInt(0, 2) === 1;
-  const first = crypto.randomInt(4, 13);
-  const second = crypto.randomInt(2, 10);
-  const left = subtract ? Math.max(first, second) : first;
-  const right = subtract ? Math.min(first, second) : second;
-  const answer = subtract ? left - right : left + right;
+  const innerSubtract = crypto.randomInt(0, 2) === 1;
+  const first = crypto.randomInt(6, 18);
+  const second = crypto.randomInt(2, 11);
+  const left = innerSubtract ? Math.max(first, second) : first;
+  const right = innerSubtract ? Math.min(first, second) : second;
+  const innerAnswer = innerSubtract ? left - right : left + right;
+  const multiplier = crypto.randomInt(2, 6);
+  const offset = crypto.randomInt(1, 10);
+  const finalSubtract = crypto.randomInt(0, 2) === 1 && innerAnswer * multiplier > offset;
+  const answer = innerAnswer * multiplier + (finalSubtract ? -offset : offset);
+  const id = crypto.randomBytes(18).toString("base64url");
   return {
-    id: crypto.randomBytes(18).toString("base64url"),
-    question: `Сколько будет ${left} ${subtract ? "−" : "+"} ${right}?`,
-    answer: String(answer),
+    id,
+    version: 2,
+    question: `Вычислите: (${left} ${innerSubtract ? "−" : "+"} ${right}) × ${multiplier} ${finalSubtract ? "−" : "+"} ${offset}.`,
+    answerHash: partnerRegistrationSpamAnswerHash(id, String(answer)),
     clientIpHash,
     issuedAt: now,
     expiresAt: now + PARTNER_REGISTRATION_CHALLENGE_TTL_MS
@@ -22406,7 +22417,18 @@ function consumePartnerRegistrationSpamChallengeInStore(store, req, source = {},
   if (Number(challenge.expiresAt || 0) <= now) {
     throw partnerRegistrationSpamError("Проверка защиты от спама устарела. Получите новый пример.");
   }
-  if (answer !== challenge.answer) {
+  const answerMatches = challenge.answerHash
+    ? partnerRegistrationHashesEqual(
+      challenge.answerHash,
+      partnerRegistrationSpamAnswerHash(challengeId, answer)
+    )
+    : answer === String(challenge.answer ?? "");
+  if (!answerMatches) {
+    store.spamChallengeAttempts.push({
+      clientIpHash: getPartnerRegistrationClientIpHash(req),
+      issuedAt: now,
+      outcome: "failed"
+    });
     throw partnerRegistrationSpamError("Ответ неверный. Решите новый пример.");
   }
   return partnerRegistrationTokenHash(challengeId);

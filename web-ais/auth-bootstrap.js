@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260824-advertising-email-collector-v2";
+  const AUTH_BUILD = "20260824-partner-registration-spam-v2";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);
@@ -311,26 +311,27 @@
               </div>
             </section>
             <section class="partner-registration-section">
-              <div class="partner-registration-section-head"><span>2</span><div><h2>Направления сотрудничества</h2><p>Можно выбрать несколько вариантов.</p></div></div>
-              <div class="partner-registration-options" data-partner-directions>
+              <div class="partner-registration-section-head"><span>2</span><div><h2>Направления сотрудничества <b>*</b></h2><p>Выберите хотя бы один вариант.</p></div></div>
+              <div class="partner-registration-options" data-partner-directions role="group" aria-required="true" aria-describedby="partnerDirectionsError">
                 <label><input name="directions" type="checkbox" value="Привлечение слушателей на курсы через социальные сети, знакомых, коллег"><span><strong>Рекомендация программ</strong>Привлечение слушателей через социальные сети, знакомых и коллег.</span></label>
                 <label><input name="directions" type="checkbox" value="Разработка авторских курсов повышения квалификации/профессиональной переподготовки"><span><strong>Авторские курсы</strong>Разработка программ повышения квалификации и профессиональной переподготовки.</span></label>
                 <label><input name="directions" type="checkbox" value="Проведение вебинаров и других мероприятий на актуальные темы"><span><strong>Вебинары и мероприятия</strong>Проведение мероприятий на актуальные профессиональные темы.</span></label>
               </div>
-              <label class="partner-registration-other"><span>Другое направление</span><input name="otherDirection" type="text" maxlength="500" placeholder="Опишите свой вариант"></label>
+              <p class="partner-registration-field-error" id="partnerDirectionsError" data-partner-directions-error hidden>Выберите хотя бы одно направление сотрудничества.</p>
+              <label class="partner-registration-other"><span>Дополнительно: другое направление</span><input name="otherDirection" type="text" maxlength="500" placeholder="Опишите свой вариант"></label>
             </section>
             <section class="partner-registration-section">
-              <div class="partner-registration-section-head"><span>3</span><div><h2>О себе</h2><p>Необязательно, но поможет быстрее подобрать формат сотрудничества.</p></div></div>
-              <label class="partner-registration-textarea"><span>Дополнительные сведения</span><textarea name="additionalInfo" rows="5" maxlength="5000" placeholder="Должность, учёная степень и звание, достижения, научные интересы, преподаваемые дисциплины"></textarea></label>
+              <div class="partner-registration-section-head"><span>3</span><div><h2>О себе <b>*</b></h2><p>Расскажите об опыте и интересующих форматах сотрудничества.</p></div></div>
+              <label class="partner-registration-textarea"><span>Дополнительные сведения <b>*</b></span><textarea name="additionalInfo" rows="5" maxlength="5000" required placeholder="Должность, учёная степень и звание, достижения, научные интересы, преподаваемые дисциплины"></textarea></label>
             </section>
             <div class="partner-registration-antispam" data-partner-spam-challenge>
               <div class="partner-registration-antispam-copy">
                 <strong>Защита от спама</strong>
-                <span>Ответьте на простой вопрос перед отправкой анкеты.</span>
+                <span>Решите одноразовое задание перед отправкой анкеты.</span>
               </div>
               <label>
                 <span data-partner-spam-question aria-live="polite">Получаем новый пример...</span>
-                <input name="antiSpamAnswer" type="text" inputmode="numeric" pattern="-?[0-9]{1,3}" maxlength="4" autocomplete="off" required disabled placeholder="Загрузка проверки...">
+                <input name="antiSpamAnswer" type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" autocomplete="off" required disabled placeholder="Загрузка проверки...">
               </label>
               <input name="antiSpamChallengeId" type="hidden">
               <button class="ghost-button" data-action="refresh-partner-spam-challenge" type="button">Другой пример</button>
@@ -353,17 +354,36 @@
       button.addEventListener("click", showLoginWithoutPublicRoute);
     });
     const form = app.querySelector("[data-partner-registration-form]");
+    const directionGroup = form?.querySelector("[data-partner-directions]");
+    const directionInputs = [...(directionGroup?.querySelectorAll("input[name='directions']") || [])];
+    const directionError = form?.querySelector("[data-partner-directions-error]");
+    const updateDirectionRequirement = (showError = false) => {
+      const isValid = directionInputs.some((input) => input.checked);
+      directionInputs[0]?.setCustomValidity(isValid ? "" : "Выберите хотя бы одно направление сотрудничества.");
+      directionGroup?.classList.toggle("is-invalid", showError && !isValid);
+      directionGroup?.setAttribute("aria-invalid", showError && !isValid ? "true" : "false");
+      if (directionError) directionError.hidden = !showError || isValid;
+      return isValid;
+    };
+    directionInputs.forEach((input) => input.addEventListener("change", () => {
+      updateDirectionRequirement(true);
+    }));
+    updateDirectionRequirement();
     form?.querySelector("[data-action='refresh-partner-spam-challenge']")?.addEventListener("click", () => {
       loadPartnerRegistrationSpamChallenge(form, { focus: true });
     });
     form?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (!form.reportValidity()) return;
+      const directionsValid = updateDirectionRequirement(true);
+      if (!form.reportValidity()) {
+        if (!directionsValid) directionInputs[0]?.focus({ preventScroll: true });
+        return;
+      }
       const selectedDirections = [...form.querySelectorAll("input[name='directions']:checked")]
         .map((input) => input.value);
       const otherDirection = String(form.elements.otherDirection.value || "").trim();
       const errorElement = form.querySelector("[data-partner-registration-error]");
-      if (!selectedDirections.length && !otherDirection) {
+      if (!selectedDirections.length) {
         errorElement.textContent = "Выберите хотя бы одно направление сотрудничества.";
         errorElement.hidden = false;
         form.querySelector("[data-partner-directions] input")?.focus({ preventScroll: true });

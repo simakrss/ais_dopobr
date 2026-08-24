@@ -48,6 +48,19 @@ assert.throws(
   /направление сотрудничества/u
 );
 assert.throws(
+  () => sanitizePartnerRegistrationPayload({
+    ...payload,
+    directions: [],
+    otherDirection: "Иной вариант",
+    personalDataConsent: true
+  }),
+  /направление сотрудничества/u
+);
+assert.throws(
+  () => sanitizePartnerRegistrationPayload({ ...payload, additionalInfo: "" }),
+  /Дополнительные сведения о себе/u
+);
+assert.throws(
   () => sanitizePartnerRegistrationPayload({ ...payload, personalDataConsent: false }),
   /согласие/u
 );
@@ -63,13 +76,16 @@ const challengeRequest = {
 const challengeCreatedAt = Date.parse("2026-08-23T08:00:00.000Z");
 const challengeRecord = createPartnerRegistrationSpamChallenge("client-hash", challengeCreatedAt);
 assert.match(challengeRecord.id, /^[A-Za-z0-9_-]{24}$/u);
-assert.match(challengeRecord.question, /^Сколько будет \d+ [−+] \d+\?$/u);
+assert.match(challengeRecord.question, /^Вычислите: \(\d+ [−+] \d+\) × \d+ [−+] \d+\.$/u);
+assert.match(challengeRecord.answerHash, /^[a-f0-9]{64}$/u);
+assert.equal("answer" in challengeRecord, false);
 assert.equal(challengeRecord.expiresAt - challengeRecord.issuedAt, 15 * 60 * 1000);
 
 function solveSpamChallenge(question) {
-  const match = String(question).match(/(\d+) ([−+]) (\d+)/u);
+  const match = String(question).match(/\((\d+) ([−+]) (\d+)\) × (\d+) ([−+]) (\d+)/u);
   assert.ok(match, `Не удалось разобрать пример: ${question}`);
-  return String(match[2] === "−" ? Number(match[1]) - Number(match[3]) : Number(match[1]) + Number(match[3]));
+  const inner = match[2] === "−" ? Number(match[1]) - Number(match[3]) : Number(match[1]) + Number(match[3]);
+  return String(inner * Number(match[4]) + (match[5] === "−" ? -Number(match[6]) : Number(match[6])));
 }
 
 const challengeStore = {
@@ -99,7 +115,7 @@ assert.match(
   consumePartnerRegistrationSpamChallengeInStore(persistedChallengeStore, challengeRequest, {
     antiSpamChallengeId: issuedChallenge.challengeId,
     antiSpamAnswer: issuedAnswer
-  }, challengeCreatedAt + 2000),
+  }, challengeCreatedAt + 4000),
   /^[a-f0-9]{64}$/u
 );
 assert.equal(persistedChallengeStore.spamChallenges.length, 0);
@@ -107,7 +123,7 @@ assert.throws(
   () => consumePartnerRegistrationSpamChallengeInStore(persistedChallengeStore, challengeRequest, {
     antiSpamChallengeId: issuedChallenge.challengeId,
     antiSpamAnswer: issuedAnswer
-  }, challengeCreatedAt + 3000),
+  }, challengeCreatedAt + 5000),
   /устарела/u
 );
 
@@ -175,7 +191,7 @@ assert.equal(
 
 assert.match(serverSource, /PARTNER_REGISTRATION_TTL_MS = 24 \* 60 \* 60 \* 1000/u);
 assert.match(serverSource, /PARTNER_REGISTRATION_CHALLENGE_TTL_MS = 15 \* 60 \* 1000/u);
-assert.match(serverSource, /PARTNER_REGISTRATION_CHALLENGE_MIN_AGE_MS = 2 \* 1000/u);
+assert.match(serverSource, /PARTNER_REGISTRATION_CHALLENGE_MIN_AGE_MS = 4 \* 1000/u);
 assert.match(serverSource, /"shared-state-backups",\s*"private",\s*"partner-registrations\.json"/u);
 assert.match(serverSource, /tokenHash: partnerRegistrationTokenHash|tokenHash,/u);
 assert.match(serverSource, /\/api\/auth\/partner-registration\/confirm/u);
@@ -187,6 +203,9 @@ assert.match(gatewaySource, /\/api\/auth\/partner-registration\/confirm/u);
 assert.match(authSource, /Партнёрская программа учебного центра/u);
 assert.match(authSource, /data-partner-registration-form/u);
 assert.match(authSource, /data-partner-spam-challenge/u);
+assert.match(authSource, /Направления сотрудничества <b>\*<\/b>/u);
+assert.match(authSource, /О себе <b>\*<\/b>/u);
+assert.match(authSource, /textarea name="additionalInfo"[\s\S]{0,140}required/u);
 assert.match(authSource, /antiSpamChallengeId/u);
 assert.match(authSource, /antiSpamAnswer/u);
 assert.match(authSource, /confirmPartnerRegistration/u);

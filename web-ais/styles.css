@@ -835,6 +835,18 @@ body.is-session-expired {
   box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.08);
 }
 
+.partner-registration-options.is-invalid label > span {
+  border-color: rgba(185, 28, 28, 0.58);
+  background: #fff7f7;
+}
+
+.partner-registration-field-error {
+  margin: 7px 0 0;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .partner-registration-consent {
   display: flex;
   align-items: flex-start;
