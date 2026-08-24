@@ -22759,6 +22759,68 @@ function buildStudentCompactName(value) {
   return safeNamePart(`${surname}${initials.slice(0, 2).join("")}`, "");
 }
 
+function getManagedPersonPhotoTarget(entityType, personName, extension) {
+  const normalizedEntityType = String(entityType || "").trim().toLowerCase() === "contract"
+    ? "contract"
+    : "student";
+  const compactName = buildStudentCompactName(personName);
+  if (!compactName) {
+    throw new Error(normalizedEntityType === "contract"
+      ? "Сначала укажите ФИО сотрудника."
+      : "Сначала укажите ФИО слушателя.");
+  }
+  const extensionValue = String(extension || "").trim().toLowerCase().replace(/^\./u, "");
+  const ext = extensionValue === "jpeg" ? "jpg" : extensionValue;
+  if (!new Set(["png", "jpg", "webp", "gif"]).has(ext)) {
+    throw new Error("Поддерживаются фотографии JPG, PNG, WEBP и GIF.");
+  }
+  const relativeRoot = normalizedEntityType === "contract" ? "Сотрудники" : "Слушатели";
+  const relativeFolder = `${relativeRoot}/${compactName}/Документы`;
+  return {
+    entityType: normalizedEntityType,
+    compactName,
+    relativeFolder,
+    relativePath: `${relativeFolder}/${compactName}.${ext}`
+  };
+}
+
+async function storeManagedPersonPhoto({ dataUrl, entityType, personName }) {
+  const { bytes, ext, mime } = parseDataUrl(dataUrl);
+  if (bytes.length > MAX_STUDENT_PHOTO_BYTES) {
+    throw new Error("Размер фотографии не должен превышать 16 МБ.");
+  }
+  const target = getManagedPersonPhotoTarget(entityType, personName, ext);
+  const localDocuments = serverSettings.openDocumentsLocally !== false
+    ? await getLocalSystemDocumentsAvailability()
+    : { available: false };
+  if (localDocuments.available) {
+    const targetPath = resolveLocalDocumentsPath(
+      target.relativePath,
+      "Не удалось определить путь к фотографии."
+    );
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, bytes);
+  } else {
+    const folderPath = normalizeWebDavPath(
+      `${resolveYandexDiskBasePath(false)}/${target.relativeFolder}`
+    );
+    await ensureYandexDiskFolder(folderPath);
+    const targetPath = normalizeWebDavPath(
+      `${resolveYandexDiskBasePath(false)}/${target.relativePath}`
+    );
+    await requestYandexWebDav("PUT", targetPath, {
+      acceptedStatuses: [200, 201, 204],
+      body: bytes,
+      contentType: mime
+    });
+  }
+  return {
+    ...target,
+    photoPath: target.relativePath,
+    photoUrl: `/api/student-photo?path=${encodeURIComponent(target.relativePath)}`
+  };
+}
+
 function managedStudentPhotoRelativePath(value) {
   if (usesParentSystemDocumentsFolder(value)) return "";
   const relativePath = normalizeSystemDocumentsRelativePath(value);
@@ -22812,7 +22874,6 @@ async function deletePhoto(photoPath) {
 async function handlePhotoUpload(req, res) {
   try {
     const body = await readJsonBody(req);
-    const { bytes, ext, mime } = parseDataUrl(body.dataUrl);
     const entityType = String(body.entityType || "").trim().toLowerCase() === "contract"
       ? "contract"
       : "student";
@@ -22820,36 +22881,9 @@ async function handlePhotoUpload(req, res) {
       body.employeeName || body.contractName || body.studentName || body.studentFio
       || body.fio || body.fullName || body.name || ""
     ).trim();
-    const compactName = buildStudentCompactName(personName);
-    if (!compactName) {
-      throw new Error(entityType === "contract"
-        ? "Сначала укажите ФИО сотрудника."
-        : "Сначала укажите ФИО слушателя.");
-    }
-    const relativeRoot = entityType === "contract" ? "Сотрудники" : "Слушатели";
-    const relativeFolder = `${relativeRoot}/${compactName}/Документы`;
-    const relativePath = `${relativeFolder}/${compactName}.${ext}`;
-    const localDocuments = serverSettings.openDocumentsLocally !== false
-      ? await getLocalSystemDocumentsAvailability()
-      : { available: false };
-    if (localDocuments.available) {
-      const targetPath = resolveLocalDocumentsPath(relativePath, "Не удалось определить путь к фотографии.");
-      await fs.mkdir(path.dirname(targetPath), { recursive: true });
-      await fs.writeFile(targetPath, bytes);
-    } else {
-      const folderPath = normalizeWebDavPath(
-        `${resolveYandexDiskBasePath(false)}/${relativeFolder}`
-      );
-      await ensureYandexDiskFolder(folderPath);
-      const targetPath = normalizeWebDavPath(`${resolveYandexDiskBasePath(false)}/${relativePath}`);
-      await requestYandexWebDav("PUT", targetPath, {
-        acceptedStatuses: [200, 201, 204],
-        body: bytes,
-        contentType: mime
-      });
-    }
+    const uploaded = await storeManagedPersonPhoto({ dataUrl: body.dataUrl, entityType, personName });
     const previousPath = String(body.previousPath || "").trim();
-    if (previousPath && previousPath !== relativePath) {
+    if (previousPath && previousPath !== uploaded.photoPath) {
       try {
         if (!await deleteManagedStudentPhoto(previousPath)) await deletePhoto(previousPath);
       } catch (cleanupError) {
@@ -22857,8 +22891,8 @@ async function handlePhotoUpload(req, res) {
       }
     }
     sendJson(res, 201, {
-      photoPath: relativePath,
-      photoUrl: `/api/student-photo?path=${encodeURIComponent(relativePath)}`
+      photoPath: uploaded.photoPath,
+      photoUrl: uploaded.photoUrl
     });
   } catch (error) {
     sendError(res, 400, error.message);
@@ -24416,6 +24450,84 @@ async function handlePartnerPhoto(req, res, authUser) {
   }
 }
 
+async function updatePartnerPhoto(req, res, authUser) {
+  const body = await readJsonBody(req);
+  const current = await readSharedApplicationStateDocument();
+  const contracts = Array.isArray(current.document?.data?.collections?.contracts)
+    ? current.document.data.collections.contracts : [];
+  const employee = selectPartnerEmployee(contracts, {
+    employeeId: authUser.employeeId,
+    login: authUser.login
+  });
+  if (!employee) throw new Error("Карточка партнёра не найдена.");
+
+  const previousPath = String(employee.photoPath || "").trim();
+  const uploaded = await storeManagedPersonPhoto({
+    dataUrl: body.dataUrl,
+    entityType: "contract",
+    personName: employee.name
+  });
+  const updated = {
+    ...employee,
+    photoPath: uploaded.photoPath,
+    photoUrl: "",
+    photoData: ""
+  };
+
+  let saved = false;
+  try {
+    const result = await saveSharedApplicationState({
+      baseRevision: current.document?.revision || 0,
+      patch: {
+        collections: { contracts: { upserts: [updated] } },
+        recordKeys: [`contracts:${updated.id}`]
+      }
+    }, authUser);
+    if (result.locked) {
+      throw Object.assign(
+        new Error("Карточка сейчас редактируется другим пользователем."),
+        { statusCode: 423 }
+      );
+    }
+    if (result.conflict) {
+      throw Object.assign(
+        new Error("Данные были изменены. Обновите профиль и повторите загрузку фотографии."),
+        { statusCode: 409 }
+      );
+    }
+    saved = true;
+  } finally {
+    if (!saved && uploaded.photoPath !== previousPath) {
+      try {
+        if (!await deleteManagedStudentPhoto(uploaded.photoPath)) await deletePhoto(uploaded.photoPath);
+      } catch (cleanupError) {
+        console.warn(`Не удалось удалить несохранённое фото партнёра: ${cleanupError.message}`);
+      }
+    }
+  }
+
+  if (previousPath && previousPath !== uploaded.photoPath) {
+    try {
+      if (!await deleteManagedStudentPhoto(previousPath)) await deletePhoto(previousPath);
+    } catch (cleanupError) {
+      console.warn(`Не удалось удалить предыдущее фото партнёра: ${cleanupError.message}`);
+    }
+  }
+  await safelyAppendAuditEntry({
+    action: "Обновлена фотография партнёра",
+    area: "Кабинет партнёра",
+    entityType: "employee",
+    entityId: updated.id,
+    entityLabel: updated.name,
+    details: `Файл: ${uploaded.photoPath}`
+  }, authUser, req);
+  sendJson(res, 201, {
+    ok: true,
+    profile: buildPartnerProfile(updated),
+    message: "Фотография загружена и сохранена в карточке сотрудника."
+  });
+}
+
 async function handlePartnerFeedback(req, res, authUser) {
   const context = await resolvePartnerPortalContext(authUser);
   const body = await readJsonBody(req, 32 * 1024);
@@ -24494,6 +24606,10 @@ async function handlePartnerPortalRequest(req, res, authUser, requestUrl) {
     }
     if (req.method === "GET" && requestUrl.pathname === "/api/partner/documents/file") {
       await handlePartnerDocumentFile(req, res, authUser, requestUrl);
+      return;
+    }
+    if (req.method === "POST" && requestUrl.pathname === "/api/partner/photo") {
+      await updatePartnerPhoto(req, res, authUser);
       return;
     }
     if (["GET", "HEAD"].includes(req.method) && requestUrl.pathname === "/api/partner/photo") {
@@ -25827,6 +25943,7 @@ module.exports = {
   buildPartnerProfile,
   getPartnerDocumentsFolder,
   sanitizePartnerProfileUpdate,
+  getManagedPersonPhotoTarget,
   buildPartnerPaymentData,
   normalizePartnerMaterialsUrl,
   requestHasGatewayIdentity,

@@ -40,6 +40,10 @@
     profileSaving: false,
     profileStatus: "",
     profileError: "",
+    profilePhotoUploading: false,
+    profilePhotoStatus: "",
+    profilePhotoError: "",
+    profilePhotoRevision: Date.now(),
     documentsOpen: false,
     documentsPath: "",
     documentsData: null,
@@ -85,7 +89,8 @@
       filter: '<path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z"/>',
       refresh: '<path d="M20 7v5h-5M4 17v-5h5m10-2a8 8 0 0 0-14-3l-1 2m1 5a8 8 0 0 0 14 3l1-2"/>',
       tiles: '<path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/>',
-      table: '<path d="M4 5h16v14H4V5Zm0 5h16M9 5v14"/>'
+      table: '<path d="M4 5h16v14H4V5Zm0 5h16M9 5v14"/>',
+      camera: '<path d="M5 7h3l1.5-2h5L16 7h3a2 2 0 0 1 2 2v9H3V9a2 2 0 0 1 2-2Zm7 9a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/>'
     };
     return `<svg class="partner-icon ${escapeAttr(className)}" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.file}</svg>`;
   }
@@ -476,13 +481,26 @@
     const profile = state.portal.profile || {};
     const tabsById = new Map(PROFILE_TABS.map((tab) => [tab.id, tab]));
     const activeFields = profile.tabs?.[state.profileTab] || [];
+    const photoUrl = authApi.appUrl(`api/partner/photo?v=${state.profilePhotoRevision}`);
     return `
       <section class="partner-page-heading"><div><p>Личные данные</p><h2>${escapeHtml(profile.name || "Профиль")}</h2></div><button class="partner-secondary-button" data-action="open-documents" type="button">${icon("folder")}Документы на Яндекс‑Диске</button></section>
       ${profile.onboardingRequired ? `<section class="partner-onboarding-notice" role="status"><div>${icon("profile")}<span><strong>Завершите первый вход</strong>Проверьте и дополните личные данные. После сохранения откроются рабочий стол, начисления и материалы партнёра.</span></div></section>` : ""}
       <section class="partner-profile-layout">
         <aside class="partner-profile-summary partner-panel">
-          ${profile.photoAvailable ? `<img src="${escapeAttr(authApi.appUrl("api/partner/photo"))}" alt="Фотография ${escapeAttr(profile.name)}">` : `<div class="partner-profile-placeholder">${icon("profile")}</div>`}
+          <div class="partner-profile-photo-frame ${state.profilePhotoUploading ? "is-loading" : ""}">
+            ${profile.photoAvailable ? `<img src="${escapeAttr(photoUrl)}" alt="Фотография ${escapeAttr(profile.name)}">` : `<div class="partner-profile-placeholder">${icon("profile")}</div>`}
+            ${state.profilePhotoUploading ? '<span class="auth-spinner" aria-hidden="true"></span>' : ""}
+          </div>
           <h3>${escapeHtml(profile.name)}</h3><p>Партнёр Цифровизации Плюс</p>
+          <div class="partner-profile-photo-controls">
+            <label class="partner-secondary-button partner-profile-photo-upload ${state.profilePhotoUploading ? "is-disabled" : ""}">
+              ${icon("camera")}<span>${state.profilePhotoUploading ? "Загрузка..." : profile.photoAvailable ? "Заменить фотографию" : "Загрузить фотографию"}</span>
+              <input data-partner-photo-input type="file" accept="image/jpeg,image/png,image/webp,image/gif" ${state.profilePhotoUploading ? "disabled" : ""}>
+            </label>
+            <small>JPG, PNG, WEBP или GIF, до 16 МБ. Файл сохраняется автоматически.</small>
+            ${state.profilePhotoError ? `<p class="partner-form-message is-error" role="alert">${escapeHtml(state.profilePhotoError)}</p>` : ""}
+            ${state.profilePhotoStatus ? `<p class="partner-form-message is-success" role="status">${escapeHtml(state.profilePhotoStatus)}</p>` : ""}
+          </div>
         </aside>
         <section class="partner-panel partner-profile-card">
           <div class="partner-profile-tabs" role="tablist" aria-label="Разделы профиля" title="Вкладки можно менять местами. Щёлкните правой кнопкой, чтобы восстановить исходный порядок.">
@@ -619,6 +637,7 @@
     try {
       state.portal = await authApi.request("api/partner/portal");
       state.profileDraft = {};
+      state.profilePhotoRevision = Date.now();
       if (state.portal.profile?.onboardingRequired) {
         state.view = "profile";
         state.profileTab = "main";
@@ -680,6 +699,51 @@
       state.documentsError = error.message;
     } finally {
       state.documentsLoading = false;
+      render();
+    }
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(String(reader.result || "")), { once: true });
+      reader.addEventListener("error", () => reject(reader.error || new Error("Не удалось прочитать фотографию.")), { once: true });
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function uploadPartnerPhoto(file) {
+    if (state.profilePhotoUploading) return;
+    const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+    if (!allowedTypes.has(String(file?.type || "").toLowerCase())) {
+      state.profilePhotoError = "Выберите фотографию в формате JPG, PNG, WEBP или GIF.";
+      state.profilePhotoStatus = "";
+      render();
+      return;
+    }
+    if (Number(file.size || 0) > 16 * 1024 * 1024) {
+      state.profilePhotoError = "Размер фотографии не должен превышать 16 МБ.";
+      state.profilePhotoStatus = "";
+      render();
+      return;
+    }
+    state.profilePhotoUploading = true;
+    state.profilePhotoError = "";
+    state.profilePhotoStatus = "";
+    render();
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const result = await authApi.request("api/partner/photo", {
+        method: "POST",
+        body: JSON.stringify({ dataUrl })
+      });
+      state.portal.profile = result.profile;
+      state.profilePhotoRevision = Date.now();
+      state.profilePhotoStatus = result.message || "Фотография загружена и сохранена в карточке сотрудника.";
+    } catch (error) {
+      state.profilePhotoError = error.message || "Не удалось загрузить фотографию.";
+    } finally {
+      state.profilePhotoUploading = false;
       render();
     }
   }
@@ -796,6 +860,12 @@
   });
 
   app.addEventListener("change", (event) => {
+    if (event.target.matches("[data-partner-photo-input]")) {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (file) uploadPartnerPhoto(file);
+      return;
+    }
     if (event.target.matches("[data-filter]")) updateFilter(event.target);
     if (event.target.matches("[data-profile-field][type='checkbox']")) {
       state.profileDraft[event.target.dataset.profileField] = event.target.checked;

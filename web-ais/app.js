@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.269",
+    version: "1.7.270",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.270",
+      releasedAt: "2026-08-24",
+      changes: [
+        "Партнёр может загрузить или заменить фотографию в своём профиле; файл автоматически сохраняется в папке документов и карточке сотрудника.",
+        "Увеличен шрифт навигации, форм, таблиц и информационных блоков кабинета партнёра, включая мобильное представление."
+      ]
+    },
     {
       version: "1.7.269",
       releasedAt: "2026-08-24",

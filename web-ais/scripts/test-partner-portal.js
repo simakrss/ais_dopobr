@@ -10,6 +10,7 @@ const {
   selectPartnerEmployee,
   buildPartnerProfile,
   getPartnerDocumentsFolder,
+  getManagedPersonPhotoTarget,
   sanitizePartnerProfileUpdate,
   buildPartnerPaymentData,
   normalizePartnerMaterialsUrl,
@@ -71,6 +72,19 @@ assert.equal(profile.tabs.main.find((field) => field.key === "name").editable, t
 assert.equal(profile.tabs.contract.find((field) => field.key === "contractNo").editable, false);
 assert.equal(getPartnerDocumentsFolder({ name: "Иванов Иван Иванович" }), "Сотрудники/ИвановИИ/Документы");
 assert.equal(getPartnerDocumentsFolder({ photoPath: "Сотрудники/ИвановИИ/Документы/ИвановИИ.jpg" }), "Сотрудники/ИвановИИ/Документы");
+assert.deepEqual(
+  getManagedPersonPhotoTarget("contract", "Иванов Иван Иванович", "jpeg"),
+  {
+    entityType: "contract",
+    compactName: "ИвановИИ",
+    relativeFolder: "Сотрудники/ИвановИИ/Документы",
+    relativePath: "Сотрудники/ИвановИИ/Документы/ИвановИИ.jpg"
+  }
+);
+assert.equal(
+  buildPartnerProfile({ name: "Иванов Иван Иванович", photoPath: "Сотрудники/ИвановИИ/Документы/ИвановИИ.jpg" }).photoAvailable,
+  true
+);
 assert.deepEqual(sanitizePartnerProfileUpdate({ email: " partner@example.test ", contractNo: "hack" }), {
   email: "partner@example.test"
 });
@@ -212,6 +226,9 @@ assert.match(
 assert.match(partnerSource, /data-action="open-payable"/u);
 assert.match(partnerSource, /data-feedback-form/u);
 assert.match(partnerSource, /data-profile-form/u);
+assert.match(partnerSource, /data-partner-photo-input/u);
+assert.match(partnerSource, /authApi\.request\("api\/partner\/photo",\s*\{[\s\S]{0,120}method:\s*"POST"/u);
+assert.match(partnerSource, /Фотография загружена и сохранена в карточке сотрудника/u);
 assert.doesNotMatch(
   partnerSource,
   /partner-profile-actions[\s\S]{0,260}(?:Договор №|Договор не указан)/u
@@ -235,6 +252,8 @@ assert.match(stylesSource, /\.partner-filters\s*\{[\s\S]{0,180}minmax\(145px, 1\
 assert.match(stylesSource, /\.partner-filter-actions > :is\([\s\S]{0,180}min-height: 32px/u);
 assert.match(stylesSource, /\.partner-profile-field\s*\{[^}]*padding:\s*7px 6px/u);
 assert.match(stylesSource, /\.partner-profile-actions\s*\{[^}]*padding:\s*10px 18px 14px/u);
+assert.match(stylesSource, /body\.partner-portal-body\s*\{[^}]*font-size:\s*15px/u);
+assert.match(stylesSource, /\.partner-profile-photo-upload\s*\{[^}]*cursor:\s*pointer/u);
 assert.match(deploySource, /"partner-app\.js"/u);
 
 console.log("partner portal tests: OK");

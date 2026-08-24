@@ -23421,6 +23421,7 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 body.partner-portal-body {
   overflow-x: hidden;
   background: #f3f6f4;
+  font-size: 15px;
 }
 
 .partner-portal-body .app-shell {
@@ -23507,7 +23508,7 @@ body.partner-portal-body {
 
 .partner-brand strong {
   overflow: hidden;
-  font-size: 14px;
+  font-size: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -23515,7 +23516,7 @@ body.partner-portal-body {
 .partner-brand span {
   margin-top: 3px;
   color: rgba(235, 252, 246, 0.62);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .partner-sidebar-close,
@@ -23561,7 +23562,7 @@ body.partner-portal-body {
 }
 
 .partner-nav-item span {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
 }
 
@@ -23596,13 +23597,13 @@ body.partner-portal-body {
 }
 
 .partner-sidebar-user strong {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .partner-sidebar-user small {
   margin-top: 3px;
   color: rgba(235, 252, 246, 0.58);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .partner-sidebar-user > button,
@@ -23655,7 +23656,7 @@ body.partner-portal-body {
 .partner-topbar > div > span {
   display: none;
   color: var(--teal);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -23663,7 +23664,7 @@ body.partner-portal-body {
 
 .partner-topbar h1 {
   margin: 0;
-  font-size: 19px;
+  font-size: 21px;
   line-height: 1.2;
 }
 
@@ -23682,7 +23683,7 @@ body.partner-portal-body {
 
 .partner-topbar-profile span {
   overflow: hidden;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -23711,7 +23712,7 @@ body.partner-portal-body {
 .partner-page-heading p {
   margin-bottom: 4px;
   color: var(--teal);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -23723,7 +23724,7 @@ body.partner-portal-body {
 
 .partner-page-heading > span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   text-align: right;
 }
 
@@ -23762,13 +23763,13 @@ body.partner-portal-body {
 }
 
 .partner-panel-head h3 {
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .partner-panel-head p {
   margin-top: 2px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .partner-panel-head > button,
@@ -23781,7 +23782,7 @@ body.partner-portal-body {
   border: 0;
   color: var(--teal);
   background: transparent;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -23841,7 +23842,7 @@ button.partner-kpi-card:hover {
 
 .partner-kpi-card > span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -23865,7 +23866,7 @@ button.partner-kpi-card:hover {
   margin-top: auto;
   padding-top: 12px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .partner-kpi-card > i {
@@ -23913,7 +23914,7 @@ button.partner-kpi-card:hover {
 
 .partner-month-chart span,
 .partner-month-chart strong {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .partner-month-chart strong {
@@ -23970,7 +23971,7 @@ button.partner-kpi-card:hover {
 
 .partner-compact-list strong {
   overflow: hidden;
-  font-size: 11px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -23978,11 +23979,11 @@ button.partner-kpi-card:hover {
 .partner-compact-list small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .partner-compact-list > button > b {
-  font-size: 12px;
+  font-size: 14px;
   white-space: nowrap;
 }
 
@@ -24010,7 +24011,7 @@ button.partner-kpi-card:hover {
 
 .partner-empty p {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .partner-filter-panel {
@@ -24023,7 +24024,7 @@ button.partner-kpi-card:hover {
   gap: 6px;
   margin-bottom: 7px;
   color: var(--teal);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .partner-filter-heading .partner-icon {
@@ -24048,7 +24049,7 @@ button.partner-kpi-card:hover {
 .partner-filters label > span,
 .partner-feedback-form label > span {
   color: #52615c;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -24064,7 +24065,7 @@ button.partner-kpi-card:hover {
   border-radius: 8px;
   color: var(--text);
   background: #fff;
-  font-size: 12px;
+  font-size: 14px;
   outline: 0;
 }
 
@@ -24087,7 +24088,7 @@ button.partner-kpi-card:hover {
   min-height: 32px;
   padding: 6px 8px;
   gap: 5px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .partner-filter-actions .partner-icon {
@@ -24104,7 +24105,7 @@ button.partner-kpi-card:hover {
   min-height: 37px;
   padding: 8px 12px;
   border-radius: 8px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
@@ -24147,7 +24148,7 @@ button.partner-kpi-card:hover {
   width: 100%;
   min-width: 720px;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .partner-detail-table {
@@ -24168,7 +24169,7 @@ button.partner-kpi-card:hover {
   z-index: 2;
   color: #50605a;
   background: #f7faf8;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -24215,7 +24216,7 @@ button.partner-kpi-card:hover {
   border-radius: 99px;
   color: #52615c;
   background: #edf2ef;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -24283,7 +24284,7 @@ button.partner-kpi-card:hover {
   border: 0;
   color: var(--teal);
   background: transparent;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -24368,13 +24369,13 @@ button.partner-kpi-card:hover {
 }
 
 .partner-file-card strong {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .partner-file-card small {
   margin-top: 5px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .partner-file-card > .partner-icon {
@@ -24392,7 +24393,7 @@ button.partner-kpi-card:hover {
   min-height: 180px;
   padding: 24px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   text-align: center;
 }
 
@@ -24437,12 +24438,12 @@ button.partner-kpi-card:hover {
 .partner-onboarding-notice span {
   display: grid;
   gap: 3px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.4;
 }
 
 .partner-onboarding-notice strong {
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .partner-profile-summary {
@@ -24452,10 +24453,16 @@ button.partner-kpi-card:hover {
   text-align: center;
 }
 
-.partner-profile-summary img,
-.partner-profile-placeholder {
+.partner-profile-photo-frame {
+  position: relative;
   width: 112px;
   height: 112px;
+}
+
+.partner-profile-summary img,
+.partner-profile-placeholder {
+  width: 100%;
+  height: 100%;
   border: 4px solid #eff5f1;
   border-radius: 50%;
   object-fit: cover;
@@ -24474,15 +24481,68 @@ button.partner-kpi-card:hover {
   height: 50px;
 }
 
+.partner-profile-photo-frame > .auth-spinner {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  border-width: 3px;
+  filter: drop-shadow(0 1px 4px rgba(8, 61, 51, 0.28));
+}
+
+.partner-profile-photo-frame.is-loading img,
+.partner-profile-photo-frame.is-loading .partner-profile-placeholder {
+  opacity: 0.42;
+}
+
 .partner-profile-summary h3 {
   margin: 14px 0 0;
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .partner-profile-summary p {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
+}
+
+.partner-profile-photo-controls {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  margin-top: 14px;
+}
+
+.partner-profile-photo-upload {
+  width: 100%;
+  cursor: pointer;
+}
+
+.partner-profile-photo-upload.is-disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.partner-profile-photo-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.partner-profile-photo-controls > small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.partner-profile-photo-controls .partner-form-message {
+  padding: 7px 9px;
+  text-align: left;
 }
 
 .partner-profile-tabs {
@@ -24501,7 +24561,7 @@ button.partner-kpi-card:hover {
   border: 0;
   color: #62716b;
   background: transparent;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
   cursor: default;
@@ -24556,13 +24616,13 @@ button.partner-kpi-card:hover {
 .partner-profile-field > span {
   margin-bottom: 3px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
 }
 
 .partner-profile-field > strong {
   overflow-wrap: anywhere;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1.45;
 }
@@ -24616,7 +24676,7 @@ button.partner-kpi-card:hover {
 .partner-documents-view-switch .partner-icon { width: 16px; height: 16px; }
 .partner-documents-tiles { padding: 0; }
 .partner-documents-table-wrap { width: 100%; overflow: auto; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
-.partner-documents-table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 12px; }
+.partner-documents-table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 13px; }
 .partner-documents-table th { position: sticky; top: 0; z-index: 1; padding: 8px 10px; color: var(--muted); text-align: left; font-weight: 700; background: #f4f8f6; border-bottom: 1px solid var(--line); }
 .partner-documents-table td { padding: 7px 10px; color: var(--muted); border-bottom: 1px solid #edf2f0; }
 .partner-documents-table tbody tr:hover { background: #e7f4f1; }
@@ -24661,7 +24721,7 @@ button.partner-kpi-card:hover {
   border-radius: 6px;
   color: var(--text);
   background: transparent;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .partner-tab-context-menu button:hover {
@@ -24691,13 +24751,13 @@ button.partner-kpi-card:hover {
 
 .partner-feedback-info h3 {
   margin: 14px 0 6px;
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .partner-feedback-info p {
   margin: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.55;
 }
 
@@ -24708,13 +24768,13 @@ button.partner-kpi-card:hover {
 .partner-feedback-info dt {
   margin-top: 10px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .partner-feedback-info dd {
   margin: 3px 0 0;
   overflow-wrap: anywhere;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -24736,7 +24796,7 @@ button.partner-kpi-card:hover {
   margin: 0;
   padding: 9px 11px;
   border-radius: 8px;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .partner-form-message.is-error {
@@ -24753,7 +24813,7 @@ button.partner-kpi-card:hover {
   margin-top: auto;
   padding: 8px 28px 18px;
   color: #8a9691;
-  font-size: 9px;
+  font-size: 11px;
   text-align: center;
 }
 
@@ -24840,7 +24900,7 @@ button.partner-kpi-card:hover {
   }
 
   .partner-topbar h1 {
-    font-size: 15px;
+    font-size: 17px;
   }
 
   .partner-topbar-profile {
@@ -24871,11 +24931,20 @@ button.partner-kpi-card:hover {
     text-align: left;
   }
 
-  .partner-profile-summary img,
-  .partner-profile-placeholder {
-    grid-row: span 2;
+  .partner-profile-photo-frame {
+    grid-row: span 3;
     width: 72px;
     height: 72px;
+  }
+
+  .partner-profile-photo-controls {
+    grid-column: 2;
+    margin-top: 3px;
+  }
+
+  .partner-profile-photo-controls > small,
+  .partner-profile-photo-controls .partner-form-message {
+    grid-column: 1 / -1;
   }
 
   .partner-profile-summary h3 {
@@ -24901,7 +24970,7 @@ button.partner-kpi-card:hover {
   }
 
   .partner-page-heading h2 {
-    font-size: 21px;
+    font-size: 23px;
   }
 
   .partner-page-heading > span {
@@ -24933,7 +25002,7 @@ button.partner-kpi-card:hover {
 
   .partner-month-chart strong {
     grid-column: 2;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .partner-filters {
