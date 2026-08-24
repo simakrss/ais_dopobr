@@ -5,7 +5,10 @@ const path = require("node:path");
 const {
   extractAdvertisingEmails,
   parseAdvertisingCollectorWorkbook,
-  aggregateAdvertisingEmailResults
+  aggregateAdvertisingEmailResults,
+  normalizeAdvertisingEmailSources,
+  normalizeAdvertisingEmailExclusions,
+  mergeAdvertisingEmailExclusions
 } = require("../app-server.js");
 
 const root = path.resolve(__dirname, "..");
@@ -51,6 +54,63 @@ assert.equal(aggregated.summary.ready, 1);
 assert.equal(aggregated.rows.find((row) => row.email === "first@example.ru").sources.length, 2);
 assert.equal(aggregated.rows.find((row) => row.email === "blocked@deny.ru").excluded, true);
 
+const customSources = normalizeAdvertisingEmailSources([
+  {
+    id: "custom-sql",
+    label: "Пользовательский SQL",
+    group: "Новые",
+    kind: "sql",
+    connection: "applications",
+    sql: "SELECT email FROM registrations",
+    enabled: true
+  },
+  {
+    id: "custom-workbook",
+    label: "Раздел XLSB",
+    kind: "workbook",
+    dataset: "legacyContacts",
+    enabled: false
+  }
+]);
+assert.equal(customSources.length, 2);
+assert.equal(customSources[0].sql, "SELECT email FROM registrations");
+assert.equal(customSources[1].enabled, false);
+assert.throws(
+  () => normalizeAdvertisingEmailSources([
+    { id: "duplicate", label: "Первый", kind: "ais" },
+    { id: "duplicate", label: "Второй", kind: "ais" }
+  ]),
+  /повторяется/u
+);
+assert.throws(
+  () => normalizeAdvertisingEmailSources([
+    { id: "unsafe", label: "Опасный SQL", kind: "sql", connection: "applications", sql: "DELETE FROM users" }
+  ]),
+  /только запрос SELECT/u
+);
+
+assert.deepEqual(
+  normalizeAdvertisingEmailExclusions([
+    { key: "USER@EXAMPLE.RU", note: "Первое правило" },
+    { key: "user@example.ru", note: "Обновлённое правило" },
+    { key: "@BLOCKED.RU", note: "Домен" }
+  ]),
+  [
+    { key: "@blocked.ru", note: "Домен" },
+    { key: "user@example.ru", note: "Обновлённое правило" }
+  ]
+);
+assert.deepEqual(
+  mergeAdvertisingEmailExclusions(
+    [{ key: "first@example.ru", note: "Из XLSB" }],
+    [{ key: "first@example.ru", note: "Из интерфейса" }, { key: "@deny.ru" }]
+  ),
+  [
+    { key: "@deny.ru", note: "" },
+    { key: "first@example.ru", note: "Из интерфейса" }
+  ]
+);
+
 if (fs.existsSync(workbookPath)) {
   const parsed = parseAdvertisingCollectorWorkbook(fs.readFileSync(workbookPath));
   assert.ok(parsed.sheets.includes("База контактов"));
@@ -67,14 +127,19 @@ assert.match(appSource, /Экспорт CSV/u);
 assert.match(appSource, /ADVERTISING_EMAIL_SOURCES/u);
 assert.match(serverSource, /\/api\/advertising\/email-collector\/collect/u);
 assert.match(serverSource, /\/api\/advertising\/email-collector\/settings/u);
-assert.match(serverSource, /ADVERTISING_GOOGLE_SHEET_SOURCES/u);
-assert.match(serverSource, /handleAdvertisingEmailSettings[\s\S]*authUser\?\.role !== "admin"/u);
+assert.match(serverSource, /DEFAULT_ADVERTISING_EMAIL_SOURCES/u);
+assert.match(serverSource, /normalizeAdvertisingEmailSources/u);
+assert.match(serverSource, /\/api\/advertising\/email-collector\/exclusions/u);
+assert.match(serverSource, /\/api\/advertising\/email-collector\/sync/u);
 assert.match(serverSource, /Promise\.allSettled\(definitions\.map/u);
 assert.match(serverSource, /attempt <= 3/u);
 assert.match(serverCliSource, /closeAdvertisingAbitMySqlStorage\(\)/u);
 assert.match(serverCliSource, /closeAdvertisingMoodleMySqlStorage\(\)/u);
 assert.match(stylesSource, /\.advertising-source-grid/u);
 assert.match(stylesSource, /\.advertising-email-table/u);
-assert.match(indexSource, /20260824-training-plan-total-v1/u);
+assert.match(stylesSource, /\.advertising-source-builder-panel/u);
+assert.match(serverSource, /trySyncAdvertisingEmailExclusionsForDatabaseOperation/u);
+assert.match(appSource, /advertisingExclusionsSync/u);
+assert.match(indexSource, /20260824-advertising-sources-v2/u);
 
 console.log("Advertising email collector tests passed.");

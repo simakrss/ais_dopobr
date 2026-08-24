@@ -148,41 +148,128 @@ const DEFAULT_ADVERTISING_MOODLE_MYSQL_DATABASE = "cl11741_distep";
 const DEFAULT_ADVERTISING_COLLECTOR_LOCAL_WORKBOOK_PATH = "Y:\\Реклама\\Базы рассылок\\База рассылок.xlsb";
 const DEFAULT_ADVERTISING_COLLECTOR_WEBDAV_PATH = "ООО Цифровизация Плюс/Реклама/Базы рассылок/База рассылок.xlsb";
 const ADVERTISING_EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gu;
-const ADVERTISING_GOOGLE_SHEET_SOURCES = Object.freeze({
-  viit_open_days: [
-    {
-      url: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSsvyG4SJELX4MBc7fu__WLRV5nRvXVvy46_0q8aZjETVaBI1uSXSzAdKrbUo4qkY_YMUXgQdQHqePk/pub?output=xlsx",
-      columns: ["Адрес электронной почты"]
-    },
-    {
-      url: "https://docs.google.com/spreadsheets/d/e/2PACX-1vRndZ67ammMn8mIZ_wiMaCs38QAOVxtivJT-PuE4KsG-z_qfS174FMjB3jNC3wFi4iF7qt3pvuSq4UL/pub?output=xlsx",
-      columns: ["Адрес электронной почты"]
-    },
-    {
-      url: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQK8GNmqji4TUy7MocttiQumHnWEQDrvXu5mdDL0DkBg7eK7kZCmPfFjuhsJBKSVBMDtrmrnfzoqZeK/pub?output=xlsx",
-      columns: ["Email"]
-    }
-  ],
-  partner_program: [
-    {
+const ADVERTISING_EMAIL_SOURCE_KINDS = new Set(["sql", "ais", "google", "workbook"]);
+const ADVERTISING_EMAIL_SQL_CONNECTIONS = new Set(["assistant", "applications", "abit", "moodle"]);
+const ADVERTISING_EMAIL_WORKBOOK_DATASETS = new Set(["googleContacts", "legacyContacts"]);
+const DEFAULT_ADVERTISING_EMAIL_SOURCES = Object.freeze([
+  {
+    id: "assistant_installations",
+    label: "Установка Ассистента (edu-plus.ru)",
+    group: "SQL",
+    kind: "sql",
+    connection: "assistant",
+    sql: "SELECT DISTINCT email, org AS organization, location AS origin FROM wp_ass_reg WHERE email IS NOT NULL AND TRIM(email) <> ''",
+    enabled: true
+  },
+  {
+    id: "site_downloads",
+    label: "Загрузки с zifra-plus.ru",
+    group: "SQL",
+    kind: "sql",
+    connection: "applications",
+    sql: "SELECT DISTINCT meta_value AS value FROM wp_dae_subscribermeta WHERE meta_value IS NOT NULL AND TRIM(meta_value) <> ''",
+    enabled: true
+  },
+  {
+    id: "ais_students_contracts",
+    label: "База слушателей и договоров",
+    group: "АИС",
+    kind: "ais",
+    enabled: true
+  },
+  {
+    id: "webinar_registrations",
+    label: "База регистраций на вебинары",
+    group: "SQL",
+    kind: "sql",
+    connection: "applications",
+    sql: "SELECT DISTINCT email, TRIM(CONCAT(COALESCE(last_name, ''), ' ', COALESCE(first_name, ''))) AS name, city AS origin FROM wp_wc_customer_lookup WHERE email IS NOT NULL AND TRIM(email) <> ''",
+    enabled: true
+  },
+  {
+    id: "viit_applicants",
+    label: "База абитуриентов ВИИТ",
+    group: "SQL",
+    kind: "sql",
+    connection: "abit",
+    sql: "SELECT DISTINCT email FROM wp_abit_reg WHERE email IS NOT NULL AND TRIM(email) <> ''",
+    enabled: true
+  },
+  {
+    id: "viit_counselors",
+    label: "База профориентаторов ВИИТ",
+    group: "SQL",
+    kind: "sql",
+    connection: "abit",
+    sql: "SELECT DISTINCT user_email AS email FROM wp_users WHERE user_email IS NOT NULL AND TRIM(user_email) <> ''",
+    enabled: true
+  },
+  {
+    id: "viit_open_days",
+    label: "Регистрации на ДОД ВИИТ",
+    group: "Таблицы",
+    kind: "google",
+    workbooks: [
+      {
+        url: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSsvyG4SJELX4MBc7fu__WLRV5nRvXVvy46_0q8aZjETVaBI1uSXSzAdKrbUo4qkY_YMUXgQdQHqePk/pub?output=xlsx",
+        columns: ["Адрес электронной почты"]
+      },
+      {
+        url: "https://docs.google.com/spreadsheets/d/e/2PACX-1vRndZ67ammMn8mIZ_wiMaCs38QAOVxtivJT-PuE4KsG-z_qfS174FMjB3jNC3wFi4iF7qt3pvuSq4UL/pub?output=xlsx",
+        columns: ["Адрес электронной почты"]
+      },
+      {
+        url: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQK8GNmqji4TUy7MocttiQumHnWEQDrvXu5mdDL0DkBg7eK7kZCmPfFjuhsJBKSVBMDtrmrnfzoqZeK/pub?output=xlsx",
+        columns: ["Email"]
+      }
+    ],
+    enabled: true
+  },
+  {
+    id: "testing",
+    label: "База тестирования",
+    group: "SQL",
+    kind: "sql",
+    connection: "applications",
+    sql: "SELECT DISTINCT user_email AS email FROM wp_test_reg WHERE user_email IS NOT NULL AND TRIM(user_email) <> ''",
+    enabled: true
+  },
+  {
+    id: "partner_program",
+    label: "Партнёрская программа",
+    group: "Таблицы",
+    kind: "google",
+    workbooks: [{
       url: "https://docs.google.com/spreadsheets/d/e/2PACX-1vRLB-b3oeoJb_7pNJ6hLPqIdeJbHDu4Nb9PY-AR83oy5FaqDvlPljjEFdaPsGLfk01lf2oLiNDzzl0x/pub?output=xlsx",
       columns: ["Адрес электронной почты"]
-    }
-  ]
-});
-const ADVERTISING_EMAIL_SOURCE_DEFINITIONS = Object.freeze([
-  { id: "assistant_installations", label: "Установка Ассистента (edu-plus.ru)" },
-  { id: "site_downloads", label: "Загрузки с zifra-plus.ru" },
-  { id: "ais_students_contracts", label: "База слушателей и договоров" },
-  { id: "webinar_registrations", label: "База регистраций на вебинары" },
-  { id: "viit_applicants", label: "База абитуриентов ВИИТ" },
-  { id: "viit_counselors", label: "База профориентаторов ВИИТ" },
-  { id: "viit_open_days", label: "Регистрации на ДОД ВИИТ" },
-  { id: "testing", label: "База тестирования" },
-  { id: "partner_program", label: "Партнёрская программа" },
-  { id: "moodle", label: "База Moodle" },
-  { id: "google_contacts", label: "Контакты Google" },
-  { id: "legacy_contacts", label: "Историческая база контактов" }
+    }],
+    enabled: true
+  },
+  {
+    id: "moodle",
+    label: "База Moodle",
+    group: "SQL",
+    kind: "sql",
+    connection: "moodle",
+    sql: "SELECT DISTINCT email, TRIM(CONCAT(COALESCE(lastname, ''), ' ', COALESCE(firstname, ''))) AS name FROM mdl_user WHERE email IS NOT NULL AND TRIM(email) <> '' AND email LIKE '%@%'",
+    enabled: true
+  },
+  {
+    id: "google_contacts",
+    label: "Контакты Google",
+    group: "XLSB",
+    kind: "workbook",
+    dataset: "googleContacts",
+    enabled: true
+  },
+  {
+    id: "legacy_contacts",
+    label: "Историческая база контактов",
+    group: "XLSB",
+    kind: "workbook",
+    dataset: "legacyContacts",
+    enabled: true
+  }
 ]);
 let serverSettings = {};
 const partnerFeedbackLastSentAt = new Map();
@@ -957,6 +1044,10 @@ async function ensureStorage() {
     advertisingMoodleMySqlConnectionString: "",
     advertisingCollectorLocalWorkbookPath: DEFAULT_ADVERTISING_COLLECTOR_LOCAL_WORKBOOK_PATH,
     advertisingCollectorWebDavPath: DEFAULT_ADVERTISING_COLLECTOR_WEBDAV_PATH,
+    advertisingEmailSources: [],
+    advertisingEmailExclusions: [],
+    advertisingEmailExclusionsSyncedAt: "",
+    advertisingEmailExclusionsSyncSource: "",
     studentApplicationsOrderAdminUrlTemplate: DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE,
     studentApplicationsEmailHost: DEFAULT_STUDENT_APPLICATIONS_EMAIL_HOST,
     studentApplicationsEmailPort: 993,
@@ -6330,8 +6421,156 @@ function publicAdvertisingMySqlSettings(kind) {
   };
 }
 
-function publicAdvertisingEmailSettings() {
-  return {
+function normalizeAdvertisingSourceId(value, index = 0) {
+  const normalized = String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/gu, "")
+    .toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9_-]+/gu, "_")
+    .replace(/^_+|_+$/gu, "")
+    .slice(0, 64);
+  return normalized || `source_${index + 1}`;
+}
+
+function normalizeAdvertisingSqlQuery(value) {
+  const query = String(value || "").replace(/\u0000/gu, "").trim().replace(/;+\s*$/u, "");
+  if (!query) throw new Error("Для SQL-источника укажите запрос.");
+  if (query.length > 30000) throw new Error("SQL-запрос источника слишком длинный.");
+  if (!/^(?:SELECT|WITH)\b/iu.test(query)) {
+    throw new Error("SQL-источник поддерживает только запрос SELECT.");
+  }
+  if (/\b(?:INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|REPLACE|GRANT|REVOKE|CALL|INTO\s+OUTFILE)\b/iu.test(query)) {
+    throw new Error("SQL-источник не должен изменять данные.");
+  }
+  if (/;/u.test(query)) throw new Error("В SQL-источнике разрешён только один запрос.");
+  return query;
+}
+
+function normalizeAdvertisingGoogleWorkbooks(value) {
+  return (Array.isArray(value) ? value : []).slice(0, 20).map((item, index) => {
+    const url = String(item?.url || "").trim().slice(0, 2000);
+    if (!/^https:\/\//iu.test(url)) {
+      throw new Error(`Укажите корректную HTTPS-ссылку для таблицы ${index + 1}.`);
+    }
+    const columns = (Array.isArray(item?.columns) ? item.columns : String(item?.columns || "").split(/[;,\n]/u))
+      .map((column) => cleanAdvertisingContactText(column, 160))
+      .filter(Boolean)
+      .slice(0, 20);
+    if (!columns.length) throw new Error(`Укажите колонку с email для таблицы ${index + 1}.`);
+    return { url, columns };
+  });
+}
+
+function normalizeAdvertisingEmailSource(value, index = 0) {
+  const kind = String(value?.kind || "sql").trim().toLowerCase();
+  if (!ADVERTISING_EMAIL_SOURCE_KINDS.has(kind)) {
+    throw new Error(`Источник ${index + 1}: выбран неподдерживаемый тип.`);
+  }
+  const source = {
+    id: normalizeAdvertisingSourceId(value?.id || value?.label, index),
+    label: cleanAdvertisingContactText(value?.label || `Источник ${index + 1}`, 180),
+    group: cleanAdvertisingContactText(value?.group || "Другое", 80),
+    kind,
+    enabled: value?.enabled !== false
+  };
+  if (!source.label) throw new Error(`Источник ${index + 1}: укажите название.`);
+  if (kind === "sql") {
+    source.connection = String(value?.connection || "applications").trim().toLowerCase();
+    if (!ADVERTISING_EMAIL_SQL_CONNECTIONS.has(source.connection)) {
+      throw new Error(`Источник «${source.label}»: выберите подключение MySQL.`);
+    }
+    source.sql = normalizeAdvertisingSqlQuery(value?.sql);
+  } else if (kind === "google") {
+    source.workbooks = normalizeAdvertisingGoogleWorkbooks(value?.workbooks);
+    if (!source.workbooks.length) {
+      throw new Error(`Источник «${source.label}»: добавьте хотя бы одну опубликованную таблицу.`);
+    }
+  } else if (kind === "workbook") {
+    source.dataset = String(value?.dataset || "").trim();
+    if (!ADVERTISING_EMAIL_WORKBOOK_DATASETS.has(source.dataset)) {
+      throw new Error(`Источник «${source.label}»: выберите раздел базы рекламы.`);
+    }
+  }
+  return source;
+}
+
+function normalizeAdvertisingEmailSources(value) {
+  const rawSources = Array.isArray(value) && value.length ? value : DEFAULT_ADVERTISING_EMAIL_SOURCES;
+  const sources = rawSources.slice(0, 50).map(normalizeAdvertisingEmailSource);
+  const ids = new Set();
+  for (const source of sources) {
+    if (ids.has(source.id)) throw new Error(`Идентификатор источника «${source.id}» повторяется.`);
+    ids.add(source.id);
+  }
+  return sources;
+}
+
+function getAdvertisingEmailSourceDefinitions() {
+  try {
+    return normalizeAdvertisingEmailSources(serverSettings.advertisingEmailSources);
+  } catch (error) {
+    console.warn(`Настройки источников рекламы повреждены, используются стандартные: ${error.message}`);
+    return normalizeAdvertisingEmailSources(DEFAULT_ADVERTISING_EMAIL_SOURCES);
+  }
+}
+
+function publicAdvertisingEmailSource(source, includeConfiguration = false) {
+  const result = {
+    id: source.id,
+    label: source.label,
+    group: source.group,
+    kind: source.kind,
+    enabled: source.enabled !== false
+  };
+  if (!includeConfiguration) return result;
+  if (source.kind === "sql") Object.assign(result, { connection: source.connection, sql: source.sql });
+  if (source.kind === "google") result.workbooks = source.workbooks.map((item) => ({
+    url: item.url,
+    columns: [...item.columns]
+  }));
+  if (source.kind === "workbook") result.dataset = source.dataset;
+  return result;
+}
+
+function normalizeAdvertisingEmailExclusions(value) {
+  const unique = new Map();
+  (Array.isArray(value) ? value : []).slice(0, 100000).forEach((item) => {
+    const rawKey = cleanAdvertisingContactText(item?.key ?? item?.email ?? item, 320)
+      .toLocaleLowerCase("en-US");
+    const emails = extractAdvertisingEmails(rawKey);
+    const domain = /^@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/u.test(rawKey) ? rawKey : "";
+    [...emails, domain].filter(Boolean).forEach((key) => {
+      unique.set(key, {
+        key,
+        note: cleanAdvertisingContactText(item?.note, 500)
+      });
+    });
+  });
+  return [...unique.values()].sort((left, right) => left.key.localeCompare(right.key, "en"));
+}
+
+function mergeAdvertisingEmailExclusions(...collections) {
+  const merged = new Map();
+  collections.flatMap((items) => normalizeAdvertisingEmailExclusions(items)).forEach((item) => {
+    const current = merged.get(item.key);
+    merged.set(item.key, {
+      key: item.key,
+      note: item.note || current?.note || ""
+    });
+  });
+  return [...merged.values()].sort((left, right) => left.key.localeCompare(right.key, "en"));
+}
+
+function publicAdvertisingEmailSettings(includeAdminSettings = false) {
+  const settings = {
+    sources: getAdvertisingEmailSourceDefinitions().map((source) => (
+      publicAdvertisingEmailSource(source, includeAdminSettings)
+    )),
+    exclusionsCount: normalizeAdvertisingEmailExclusions(serverSettings.advertisingEmailExclusions).length,
+    exclusionsSyncedAt: String(serverSettings.advertisingEmailExclusionsSyncedAt || ""),
+    exclusionsSyncSource: String(serverSettings.advertisingEmailExclusionsSyncSource || "")
+  };
+  if (includeAdminSettings) Object.assign(settings, {
     workbookLocalPath: String(
       serverSettings.advertisingCollectorLocalWorkbookPath
         || DEFAULT_ADVERTISING_COLLECTOR_LOCAL_WORKBOOK_PATH
@@ -6342,6 +6581,32 @@ function publicAdvertisingEmailSettings() {
     ).replace(/^\/+/, ""),
     ...publicAdvertisingMySqlSettings("abit"),
     ...publicAdvertisingMySqlSettings("moodle")
+  });
+  return settings;
+}
+
+function publicAdvertisingSystemSettings() {
+  const settings = publicAdvertisingEmailSettings(true);
+  return {
+    advertisingWorkbookLocalPath: settings.workbookLocalPath,
+    advertisingWorkbookWebDavPath: settings.workbookWebDavPath,
+    advertisingAbitMysqlHost: settings.advertisingAbitMysqlHost,
+    advertisingAbitMysqlPort: settings.advertisingAbitMysqlPort,
+    advertisingAbitMysqlDatabase: settings.advertisingAbitMysqlDatabase,
+    advertisingAbitMysqlUser: settings.advertisingAbitMysqlUser,
+    advertisingAbitMysqlHasPassword: settings.advertisingAbitMysqlHasPassword,
+    advertisingAbitMysqlConfigured: settings.advertisingAbitMysqlConfigured,
+    advertisingAbitMysqlManagedByEnvironment: settings.advertisingAbitMysqlManagedByEnvironment,
+    advertisingMoodleMysqlHost: settings.advertisingMoodleMysqlHost,
+    advertisingMoodleMysqlPort: settings.advertisingMoodleMysqlPort,
+    advertisingMoodleMysqlDatabase: settings.advertisingMoodleMysqlDatabase,
+    advertisingMoodleMysqlUser: settings.advertisingMoodleMysqlUser,
+    advertisingMoodleMysqlHasPassword: settings.advertisingMoodleMysqlHasPassword,
+    advertisingMoodleMysqlConfigured: settings.advertisingMoodleMysqlConfigured,
+    advertisingMoodleMysqlManagedByEnvironment: settings.advertisingMoodleMysqlManagedByEnvironment,
+    advertisingExclusionsCount: settings.exclusionsCount,
+    advertisingExclusionsSyncedAt: settings.exclusionsSyncedAt,
+    advertisingExclusionsSyncSource: settings.exclusionsSyncSource
   };
 }
 
@@ -6781,39 +7046,101 @@ function parseAdvertisingCollectorWorkbook(bytes) {
   };
 }
 
-async function readAdvertisingCollectorWorkbook() {
+function normalizeAdvertisingDatabaseSource(value, allowAuto = true) {
+  const source = String(value || (allowAuto ? "auto" : "webdav")).trim().toLowerCase();
+  const supported = allowAuto ? ["auto", "local", "webdav"] : ["local", "webdav"];
+  if (!supported.includes(source)) throw new Error("Указан неподдерживаемый источник базы рекламы.");
+  return source;
+}
+
+function resolveAdvertisingCollectorLocalPath() {
   const localPath = String(
     serverSettings.advertisingCollectorLocalWorkbookPath
       || DEFAULT_ADVERTISING_COLLECTOR_LOCAL_WORKBOOK_PATH
   ).trim();
-  if (process.platform === "win32" && localPath) {
-    try {
-      const bytes = await fs.readFile(localPath);
-      return {
-        ...parseAdvertisingCollectorWorkbook(bytes),
-        source: "Локальный XLSB",
-        location: localPath
-      };
-    } catch (error) {
-      if (!["ENOENT", "ENOTDIR"].includes(String(error.code || ""))) {
-        throw new Error(`Не удалось прочитать локальную базу рассылок: ${error.message}`);
-      }
-    }
+  if (!localPath) throw new Error("В админке не указан локальный путь к базе рекламы.");
+  if (path.isAbsolute(localPath)) return path.normalize(localPath);
+  return resolveLocalDocumentsPath(
+    localPath,
+    "Не удалось определить локальный путь к базе рекламы."
+  );
+}
+
+async function readAdvertisingCollectorWorkbookFromLocal() {
+  if (process.platform !== "win32") {
+    throw new Error("Локальная база рекламы доступна только на сервере Windows.");
   }
+  const localPath = resolveAdvertisingCollectorLocalPath();
+  let stats;
+  try {
+    stats = await fs.stat(localPath);
+  } catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes(String(error.code || ""))) {
+      throw new Error(`Локальная база рекламы не найдена: ${localPath}`);
+    }
+    throw new Error(`Не удалось открыть локальную базу рекламы: ${error.message}`);
+  }
+  if (!stats.isFile()) throw new Error(`Локальный путь не является файлом: ${localPath}`);
+  const bytes = await fs.readFile(localPath);
+  return {
+    ...parseAdvertisingCollectorWorkbook(bytes),
+    source: "Локальный XLSB",
+    sourceType: "local",
+    location: localPath
+  };
+}
+
+async function readAdvertisingCollectorWorkbookFromWebDav() {
   const webDavPath = normalizeWebDavPath(
     serverSettings.advertisingCollectorWebDavPath
       || DEFAULT_ADVERTISING_COLLECTOR_WEBDAV_PATH
   );
-  const response = await requestYandexWebDav("GET", webDavPath, {
-    acceptedStatuses: [200],
-    maxResponseBytes: 24 * 1024 * 1024,
-    timeoutMs: 120000
-  });
+  if (!webDavPath) throw new Error("В админке не указан WebDAV-путь к базе рекламы.");
+  const remoteUrl = parseHttpResourceUrl(webDavPath);
+  let bytes;
+  if (remoteUrl && isYandexDiskHost(remoteUrl.hostname.toLowerCase())) {
+    bytes = await downloadYandexDiskPublicFile(webDavPath);
+  } else if (remoteUrl && !isYandexWebDavHost(remoteUrl.hostname)) {
+    bytes = await requestBuffer(webDavPath, {
+      maxResponseBytes: 24 * 1024 * 1024,
+      timeoutMs: 120000,
+      errorPrefix: "Не удалось загрузить базу рекламы"
+    });
+  } else {
+    const response = await requestYandexWebDav("GET", webDavPath, {
+      acceptedStatuses: [200],
+      maxResponseBytes: 24 * 1024 * 1024,
+      timeoutMs: 120000
+    });
+    bytes = response.body;
+  }
   return {
-    ...parseAdvertisingCollectorWorkbook(response.body),
+    ...parseAdvertisingCollectorWorkbook(bytes),
     source: "Яндекс-Диск (WebDAV)",
+    sourceType: "webdav",
     location: webDavPath.replace(/^\/+/, "")
   };
+}
+
+async function readAdvertisingCollectorWorkbook(options = {}) {
+  const requestedSource = normalizeAdvertisingDatabaseSource(options.source || "auto");
+  const preferredSource = requestedSource === "auto"
+    ? (serverSettings.openDocumentsLocally !== false ? "local" : "webdav")
+    : requestedSource;
+  const sourceOrder = requestedSource === "auto"
+    ? [preferredSource, preferredSource === "local" ? "webdav" : "local"]
+    : [preferredSource];
+  const errors = [];
+  for (const source of sourceOrder) {
+    try {
+      return source === "local"
+        ? await readAdvertisingCollectorWorkbookFromLocal()
+        : await readAdvertisingCollectorWorkbookFromWebDav();
+    } catch (error) {
+      errors.push(`${source === "local" ? "Локальный файл" : "WebDAV"}: ${error.message}`);
+    }
+  }
+  throw new Error(errors.join("; ") || "База рекламы недоступна.");
 }
 
 function parseAdvertisingGoogleWorkbook(bytes, candidateColumns = []) {
@@ -6836,8 +7163,7 @@ function parseAdvertisingGoogleWorkbook(bytes, candidateColumns = []) {
   ));
 }
 
-async function readAdvertisingGoogleSource(sourceId) {
-  const definitions = ADVERTISING_GOOGLE_SHEET_SOURCES[sourceId] || [];
+async function readAdvertisingGoogleSource(definitions = []) {
   const results = await Promise.allSettled(definitions.map(async (definition) => {
     let lastError = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -6912,72 +7238,43 @@ async function readAdvertisingAisContacts() {
   ];
 }
 
-async function runAdvertisingEmailSource(sourceId, workbookPromise) {
-  switch (sourceId) {
-    case "assistant_installations":
-      return queryAdvertisingEmailRecords(
-        await getAssistantStatisticsMySqlPool(),
-        `SELECT DISTINCT email, org AS organization, location AS origin
-           FROM wp_ass_reg
-          WHERE email IS NOT NULL AND TRIM(email) <> ''`
-      );
-    case "site_downloads":
-      return queryAdvertisingEmailRecords(
-        await getStudentApplicationsMySqlPool(),
-        `SELECT DISTINCT meta_value AS value
-           FROM wp_dae_subscribermeta
-          WHERE meta_value IS NOT NULL AND TRIM(meta_value) <> ''`
-      );
-    case "ais_students_contracts":
-      return readAdvertisingAisContacts();
-    case "webinar_registrations":
-      return queryAdvertisingEmailRecords(
-        await getStudentApplicationsMySqlPool(),
-        `SELECT DISTINCT email,
-                TRIM(CONCAT(COALESCE(last_name, ''), ' ', COALESCE(first_name, ''))) AS name,
-                city AS origin
-           FROM wp_wc_customer_lookup
-          WHERE email IS NOT NULL AND TRIM(email) <> ''`
-      );
-    case "viit_applicants":
-      return queryAdvertisingEmailRecords(
-        await getAdvertisingMySqlPool("abit"),
-        `SELECT DISTINCT email
-           FROM wp_abit_reg
-          WHERE email IS NOT NULL AND TRIM(email) <> ''`
-      );
-    case "viit_counselors":
-      return queryAdvertisingEmailRecords(
-        await getAdvertisingMySqlPool("abit"),
-        `SELECT DISTINCT user_email AS email
-           FROM wp_users
-          WHERE user_email IS NOT NULL AND TRIM(user_email) <> ''`
-      );
-    case "viit_open_days":
-    case "partner_program":
-      return readAdvertisingGoogleSource(sourceId);
-    case "testing":
-      return queryAdvertisingEmailRecords(
-        await getStudentApplicationsMySqlPool(),
-        `SELECT DISTINCT user_email AS email
-           FROM wp_test_reg
-          WHERE user_email IS NOT NULL AND TRIM(user_email) <> ''`
-      );
-    case "moodle":
-      return queryAdvertisingEmailRecords(
-        await getAdvertisingMySqlPool("moodle"),
-        `SELECT DISTINCT email,
-                TRIM(CONCAT(COALESCE(lastname, ''), ' ', COALESCE(firstname, ''))) AS name
-           FROM mdl_user
-          WHERE email IS NOT NULL AND TRIM(email) <> '' AND email LIKE '%@%'`
-      );
-    case "google_contacts":
-      return (await workbookPromise).googleContacts;
-    case "legacy_contacts":
-      return (await workbookPromise).legacyContacts;
-    default:
-      return [];
+async function getAdvertisingSourceMySqlPool(connection) {
+  if (connection === "assistant") return getAssistantStatisticsMySqlPool();
+  if (connection === "applications") return getStudentApplicationsMySqlPool();
+  if (connection === "abit") return getAdvertisingMySqlPool("abit");
+  if (connection === "moodle") return getAdvertisingMySqlPool("moodle");
+  throw new Error("Для источника не выбрано подключение MySQL.");
+}
+
+function formatAdvertisingSourceError(error, source) {
+  const message = cleanAdvertisingContactText(error?.message || "Источник недоступен.", 600);
+  if (/ETIMEDOUT|connect timeout|timed out/iu.test(message)) {
+    const connection = source?.connection ? ` «${source.connection}»` : "";
+    return `Сервер MySQL${connection} не ответил вовремя. Проверьте подключение в админке и повторите сбор.`;
   }
+  if (/ECONNREFUSED/iu.test(message)) {
+    return "Сервер MySQL отклонил подключение. Проверьте адрес, порт и доступ с сервера сайта.";
+  }
+  if (/ENOTFOUND|getaddrinfo/iu.test(message)) {
+    return "Не удалось определить адрес сервера источника. Проверьте имя сервера в админке.";
+  }
+  return message;
+}
+
+async function runAdvertisingEmailSource(source, workbookPromise) {
+  if (source.kind === "sql") {
+    return queryAdvertisingEmailRecords(
+      await getAdvertisingSourceMySqlPool(source.connection),
+      source.sql
+    );
+  }
+  if (source.kind === "ais") return readAdvertisingAisContacts();
+  if (source.kind === "google") return readAdvertisingGoogleSource(source.workbooks);
+  if (source.kind === "workbook") {
+    const workbook = await workbookPromise;
+    return Array.isArray(workbook[source.dataset]) ? workbook[source.dataset] : [];
+  }
+  return [];
 }
 
 function aggregateAdvertisingEmailResults(sourceResults, exclusions = []) {
@@ -7050,22 +7347,70 @@ function aggregateAdvertisingEmailResults(sourceResults, exclusions = []) {
   };
 }
 
-async function collectAdvertisingEmails(sourceIds = []) {
+async function syncAdvertisingEmailExclusionsFromWorkbook(workbook, options = {}) {
+  const current = normalizeAdvertisingEmailExclusions(serverSettings.advertisingEmailExclusions);
+  const merged = mergeAdvertisingEmailExclusions(current, workbook?.exclusions);
+  const changed = JSON.stringify(current) !== JSON.stringify(merged);
+  const syncedAt = new Date().toISOString();
+  const syncSource = String(workbook?.source || "База рекламы");
+  if (options.persist !== false && (changed || options.recordSync !== false)) {
+    await saveServerSettings({
+      advertisingEmailExclusions: merged,
+      advertisingEmailExclusionsSyncedAt: syncedAt,
+      advertisingEmailExclusionsSyncSource: syncSource
+    });
+  }
+  return { rows: merged, changed, syncedAt, syncSource };
+}
+
+async function trySyncAdvertisingEmailExclusionsForDatabaseOperation(source = "auto") {
+  try {
+    const workbook = await readAdvertisingCollectorWorkbook({ source: source || "auto" });
+    const result = await syncAdvertisingEmailExclusionsFromWorkbook(workbook);
+    return {
+      attempted: true,
+      available: true,
+      count: result.rows.length,
+      changed: result.changed,
+      syncedAt: result.syncedAt,
+      source: workbook.source,
+      sourceType: workbook.sourceType,
+      location: workbook.location,
+      error: ""
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      available: false,
+      count: normalizeAdvertisingEmailExclusions(serverSettings.advertisingEmailExclusions).length,
+      changed: false,
+      syncedAt: String(serverSettings.advertisingEmailExclusionsSyncedAt || ""),
+      source: String(serverSettings.advertisingEmailExclusionsSyncSource || ""),
+      sourceType: "",
+      location: "",
+      error: cleanAdvertisingContactText(error?.message || "База рекламы недоступна.", 600)
+    };
+  }
+}
+
+async function collectAdvertisingEmails(sourceIds = [], options = {}) {
   const startedAt = Date.now();
-  const allowedIds = new Set(ADVERTISING_EMAIL_SOURCE_DEFINITIONS.map((source) => source.id));
+  const definitions = getAdvertisingEmailSourceDefinitions();
+  const enabledDefinitions = definitions.filter((source) => source.enabled !== false);
+  const allowedIds = new Set(enabledDefinitions.map((source) => source.id));
   const selectedIds = [...new Set((Array.isArray(sourceIds) ? sourceIds : [])
     .map((id) => String(id || "").trim())
     .filter((id) => allowedIds.has(id)))];
-  const selectedSources = ADVERTISING_EMAIL_SOURCE_DEFINITIONS.filter((source) => (
+  const selectedSources = enabledDefinitions.filter((source) => (
     !selectedIds.length || selectedIds.includes(source.id)
   ));
-  const workbookPromise = readAdvertisingCollectorWorkbook();
+  const workbookPromise = readAdvertisingCollectorWorkbook({ source: options.source || "auto" });
   const sourceResults = await Promise.all(selectedSources.map(async (source) => {
     const sourceStartedAt = Date.now();
     try {
-      const records = await runAdvertisingEmailSource(source.id, workbookPromise);
+      const records = await runAdvertisingEmailSource(source, workbookPromise);
       return {
-        ...source,
+        ...publicAdvertisingEmailSource(source),
         status: "ok",
         records,
         count: new Set(records.flatMap((record) => extractAdvertisingEmails(record.email))).size,
@@ -7074,25 +7419,34 @@ async function collectAdvertisingEmails(sourceIds = []) {
       };
     } catch (error) {
       return {
-        ...source,
+        ...publicAdvertisingEmailSource(source),
         status: "error",
         records: [],
         count: 0,
         durationMs: Date.now() - sourceStartedAt,
-        error: cleanAdvertisingContactText(error.message || "Источник недоступен.", 600)
+        error: formatAdvertisingSourceError(error, source)
       };
     }
   }));
-  const workbook = await workbookPromise.then((value) => ({
-    status: "ok",
-    source: value.source,
-    location: value.location,
-    exclusions: value.exclusions
-  })).catch((error) => ({
+  const workbook = await workbookPromise.then(async (value) => {
+    const exclusionSync = await syncAdvertisingEmailExclusionsFromWorkbook(value);
+    return {
+      status: "ok",
+      source: value.source,
+      sourceType: value.sourceType,
+      location: value.location,
+      exclusions: exclusionSync.rows,
+      exclusionsChanged: exclusionSync.changed,
+      exclusionsSyncedAt: exclusionSync.syncedAt
+    };
+  }).catch((error) => ({
     status: "error",
     source: "XLSB",
+    sourceType: "",
     location: "",
-    exclusions: [],
+    exclusions: normalizeAdvertisingEmailExclusions(serverSettings.advertisingEmailExclusions),
+    exclusionsChanged: false,
+    exclusionsSyncedAt: String(serverSettings.advertisingEmailExclusionsSyncedAt || ""),
     error: cleanAdvertisingContactText(error.message, 600)
   }));
   const aggregated = aggregateAdvertisingEmailResults(sourceResults, workbook.exclusions);
@@ -7106,7 +7460,10 @@ async function collectAdvertisingEmails(sourceIds = []) {
     workbook: {
       status: workbook.status,
       source: workbook.source,
+      sourceType: workbook.sourceType,
       location: workbook.location,
+      exclusionsChanged: workbook.exclusionsChanged,
+      exclusionsSyncedAt: workbook.exclusionsSyncedAt,
       error: workbook.error || ""
     },
     summary: aggregated.summary,
@@ -7163,12 +7520,12 @@ function normalizeAdvertisingConnectionSettings(body, kind) {
 }
 
 async function handleAdvertisingEmailSettings(req, res, authUser) {
-  if (authUser?.role !== "admin") {
-    sendError(res, 403, "Настройки источников доступны только администратору.");
+  if (req.method === "GET") {
+    sendJson(res, 200, publicAdvertisingEmailSettings(authUser?.role === "admin"));
     return;
   }
-  if (req.method === "GET") {
-    sendJson(res, 200, publicAdvertisingEmailSettings());
+  if (authUser?.role !== "admin") {
+    sendError(res, 403, "Настройки источников доступны только администратору.");
     return;
   }
   if (req.method !== "POST") {
@@ -7177,33 +7534,121 @@ async function handleAdvertisingEmailSettings(req, res, authUser) {
   }
   try {
     const body = await readJsonBody(req, 64 * 1024);
-    const localPath = cleanAdvertisingContactText(
-      body.workbookLocalPath || DEFAULT_ADVERTISING_COLLECTOR_LOCAL_WORKBOOK_PATH,
-      1000
-    );
-    const webDavPath = normalizeWebDavPath(
-      body.workbookWebDavPath || DEFAULT_ADVERTISING_COLLECTOR_WEBDAV_PATH
-    ).replace(/^\/+/, "");
-    const abit = normalizeAdvertisingConnectionSettings(body, "abit");
-    const moodle = normalizeAdvertisingConnectionSettings(body, "moodle");
-    const patch = {
-      advertisingCollectorLocalWorkbookPath: localPath,
-      advertisingCollectorWebDavPath: webDavPath
-    };
-    if (!abit.managedByEnvironment) patch.advertisingAbitMySqlConnectionString = abit.connectionString;
-    if (!moodle.managedByEnvironment) patch.advertisingMoodleMySqlConnectionString = moodle.connectionString;
+    const patch = {};
+    if (Array.isArray(body.sources)) {
+      patch.advertisingEmailSources = normalizeAdvertisingEmailSources(body.sources);
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "workbookLocalPath")) {
+      patch.advertisingCollectorLocalWorkbookPath = cleanAdvertisingContactText(
+        body.workbookLocalPath || DEFAULT_ADVERTISING_COLLECTOR_LOCAL_WORKBOOK_PATH,
+        1000
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "workbookWebDavPath")) {
+      patch.advertisingCollectorWebDavPath = normalizeWebDavPath(
+        body.workbookWebDavPath || DEFAULT_ADVERTISING_COLLECTOR_WEBDAV_PATH
+      ).replace(/^\/+/, "");
+    }
+    const hasAbitSettings = Object.keys(body).some((key) => key.startsWith("advertisingAbitMysql"));
+    const hasMoodleSettings = Object.keys(body).some((key) => key.startsWith("advertisingMoodleMysql"));
+    if (hasAbitSettings) {
+      const abit = normalizeAdvertisingConnectionSettings(body, "abit");
+      if (!abit.managedByEnvironment) patch.advertisingAbitMySqlConnectionString = abit.connectionString;
+    }
+    if (hasMoodleSettings) {
+      const moodle = normalizeAdvertisingConnectionSettings(body, "moodle");
+      if (!moodle.managedByEnvironment) patch.advertisingMoodleMySqlConnectionString = moodle.connectionString;
+    }
+    if (!Object.keys(patch).length) throw new Error("Нет настроек для сохранения.");
     await saveServerSettings(patch);
     await safelyAppendAuditEntry({
       action: "Изменены источники сборщика email",
       area: "Реклама",
       entityType: "advertising-settings",
       entityId: "email-collector",
-      details: "Обновлены пути базы рассылок и подключения MySQL. Пароли скрыты.",
+      details: Array.isArray(body.sources)
+        ? `Обновлён конструктор источников: ${patch.advertisingEmailSources.length}.`
+        : "Обновлены пути базы рекламы и подключения MySQL. Пароли скрыты.",
       source: "advertising-email-collector"
     }, authUser, req);
-    sendJson(res, 200, publicAdvertisingEmailSettings());
+    sendJson(res, 200, publicAdvertisingEmailSettings(true));
   } catch (error) {
     sendError(res, 400, error.message);
+  }
+}
+
+async function handleAdvertisingEmailExclusions(req, res, authUser) {
+  if (req.method === "GET") {
+    sendJson(res, 200, {
+      rows: normalizeAdvertisingEmailExclusions(serverSettings.advertisingEmailExclusions),
+      syncedAt: String(serverSettings.advertisingEmailExclusionsSyncedAt || ""),
+      syncSource: String(serverSettings.advertisingEmailExclusionsSyncSource || "")
+    });
+    return;
+  }
+  if (authUser?.role !== "admin") {
+    sendError(res, 403, "Изменять исключения может только администратор.");
+    return;
+  }
+  if (req.method !== "POST") {
+    sendError(res, 405, "Method not allowed");
+    return;
+  }
+  try {
+    const body = await readJsonBody(req, 8 * 1024 * 1024);
+    const rows = normalizeAdvertisingEmailExclusions(body.rows);
+    await saveServerSettings({ advertisingEmailExclusions: rows });
+    await safelyAppendAuditEntry({
+      action: "Изменены исключения рекламы",
+      area: "Реклама",
+      entityType: "advertising-exclusions",
+      entityId: "email",
+      details: `Правил исключения: ${rows.length}.`,
+      source: "advertising-email-collector"
+    }, authUser, req);
+    sendJson(res, 200, {
+      rows,
+      syncedAt: String(serverSettings.advertisingEmailExclusionsSyncedAt || ""),
+      syncSource: String(serverSettings.advertisingEmailExclusionsSyncSource || "")
+    });
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function handleAdvertisingDatabaseSync(req, res, authUser) {
+  if (authUser?.role !== "admin") {
+    sendError(res, 403, "Синхронизация базы рекламы доступна только администратору.");
+    return;
+  }
+  if (req.method !== "POST") {
+    sendError(res, 405, "Method not allowed");
+    return;
+  }
+  try {
+    const body = await readJsonBody(req, 64 * 1024);
+    const workbook = await readAdvertisingCollectorWorkbook({ source: body.source || "auto" });
+    const result = await syncAdvertisingEmailExclusionsFromWorkbook(workbook);
+    await safelyAppendAuditEntry({
+      action: "Синхронизирована база рекламы",
+      area: "Реклама",
+      entityType: "advertising-database",
+      entityId: workbook.location,
+      details: `Источник: ${workbook.source}; правил исключения: ${result.rows.length}; добавлено: ${result.changed ? "да" : "нет"}.`,
+      source: "advertising-email-collector"
+    }, authUser, req);
+    sendJson(res, 200, {
+      ok: true,
+      rows: result.rows,
+      count: result.rows.length,
+      changed: result.changed,
+      syncedAt: result.syncedAt,
+      source: workbook.source,
+      sourceType: workbook.sourceType,
+      location: workbook.location
+    });
+  } catch (error) {
+    sendError(res, 502, `Не удалось синхронизировать базу рекламы: ${error.message}`);
   }
 }
 
@@ -7214,7 +7659,7 @@ async function handleAdvertisingEmailCollector(req, res, authUser) {
   }
   try {
     const body = await readJsonBody(req, 64 * 1024);
-    const result = await collectAdvertisingEmails(body.sourceIds);
+    const result = await collectAdvertisingEmails(body.sourceIds, { source: body.source || "auto" });
     await safelyAppendAuditEntry({
       action: "Собрана база email",
       area: "Реклама",
@@ -19328,7 +19773,16 @@ async function runStudentImportJob(job, databasePath, source = "webdav") {
       });
     });
     await applyImportedStudentDatabaseMacroSettings(result);
-    job.result = buildStudentDatabaseImportResult(result, sourceType);
+    updateStudentImportJob(job, {
+      stage: "advertising",
+      progress: 99,
+      message: "Обновление исключений базы рекламы..."
+    });
+    const advertisingExclusionsSync = await trySyncAdvertisingEmailExclusionsForDatabaseOperation(sourceType);
+    job.result = {
+      ...buildStudentDatabaseImportResult(result, sourceType),
+      advertisingExclusionsSync
+    };
     updateStudentImportJob(job, {
       status: "completed",
       stage: "complete",
@@ -19654,7 +20108,11 @@ async function handleStudentDatabaseImport(req, res) {
     const bytes = await loadStudentDatabaseBytes(body.databasePath, null, { source });
     const result = await parseStudentDatabaseInWorker(bytes);
     await applyImportedStudentDatabaseMacroSettings(result);
-    sendJson(res, 200, buildStudentDatabaseImportResult(result, source));
+    const advertisingExclusionsSync = await trySyncAdvertisingEmailExclusionsForDatabaseOperation(source);
+    sendJson(res, 200, {
+      ...buildStudentDatabaseImportResult(result, source),
+      advertisingExclusionsSync
+    });
   } catch (error) {
     sendError(res, 400, error.message);
   }
@@ -20127,6 +20585,11 @@ async function handleStudentDatabaseExport(req, res) {
       throw new Error("Двусторонняя синхронизация выполняется только через фоновую задачу.");
     }
     const result = await buildStudentDatabaseExport(body);
+    if (body.downloadOnly !== true) {
+      result.advertisingExclusionsSync = await trySyncAdvertisingEmailExclusionsForDatabaseOperation(
+        result.source || body.source || "auto"
+      );
+    }
     if (body.downloadOnly === true && Buffer.isBuffer(result.outputBytes)) {
       sendFile(
         res,
@@ -20198,6 +20661,11 @@ async function runStudentExportJob(job, body) {
         message: normalizeStudentExportJobMessage(progress?.message, job.operation)
       });
     });
+    if (job.operation === "sync") {
+      result.advertisingExclusionsSync = await trySyncAdvertisingEmailExclusionsForDatabaseOperation(
+        result.source || body.source || "auto"
+      );
+    }
     if (result.deferredCommit === true && Buffer.isBuffer(result.outputBytes)) {
       job.pendingServerMacroSettingsImport = result.serverMacroSettingsImport || null;
       job.pendingCommit = {
@@ -23842,7 +24310,8 @@ async function publicSystemDocumentSettings(includeAdminSettings = false) {
     settings,
     publicStudentApplicationsMySqlSettings(),
     publicAssistantStatisticsMySqlSettings(),
-    publicSharedRecordLocksMySqlSettings()
+    publicSharedRecordLocksMySqlSettings(),
+    publicAdvertisingSystemSettings()
   );
   return settings;
 }
@@ -24060,6 +24529,21 @@ async function handleSystemDocumentSettings(req, res, authUser) {
         throw new Error("Введите пароль базы статистики Power BI без фигурных скобок.");
       }
     }
+    const advertisingWorkbookLocalPath = cleanAdvertisingContactText(
+      body.advertisingWorkbookLocalPath
+        || serverSettings.advertisingCollectorLocalWorkbookPath
+        || DEFAULT_ADVERTISING_COLLECTOR_LOCAL_WORKBOOK_PATH,
+      1000
+    );
+    const advertisingWorkbookWebDavPath = normalizeWebDavPath(
+      body.advertisingWorkbookWebDavPath
+        || serverSettings.advertisingCollectorWebDavPath
+        || DEFAULT_ADVERTISING_COLLECTOR_WEBDAV_PATH
+    ).replace(/^\/+/, "");
+    if (!advertisingWorkbookLocalPath) throw new Error("Укажите локальный путь к базе рекламы.");
+    if (!advertisingWorkbookWebDavPath) throw new Error("Укажите WebDAV-путь к базе рекламы.");
+    const advertisingAbit = normalizeAdvertisingConnectionSettings(body, "abit");
+    const advertisingMoodle = normalizeAdvertisingConnectionSettings(body, "moodle");
     const mysqlUseApplicationsConnection = body.mysqlUseApplicationsConnection !== false;
     const mysqlHost = String(body.mysqlHost || "").trim();
     const mysqlPort = Number(body.mysqlPort || 3306);
@@ -24136,8 +24620,16 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       trainingEndNotificationFrequency,
       studentApplicationsSqlQuery: applicationsSqlQuery,
       studentApplicationsOrderAdminUrlTemplate: applicationsOrderAdminUrlTemplate,
+      advertisingCollectorLocalWorkbookPath: advertisingWorkbookLocalPath,
+      advertisingCollectorWebDavPath: advertisingWorkbookWebDavPath,
       sharedRecordLocksMySqlUseApplicationsConnection: mysqlUseApplicationsConnection
     };
+    if (!advertisingAbit.managedByEnvironment) {
+      patch.advertisingAbitMySqlConnectionString = advertisingAbit.connectionString;
+    }
+    if (!advertisingMoodle.managedByEnvironment) {
+      patch.advertisingMoodleMySqlConnectionString = advertisingMoodle.connectionString;
+    }
     if (!applicationsMysqlManagedByEnvironment) {
       patch.studentApplicationsMySqlConnectionString = buildStudentApplicationsMySqlConnectionString({
         driver: applicationsMysqlDriver,
@@ -24762,6 +25254,14 @@ async function route(req, res) {
     await handleAdvertisingEmailCollector(req, res, authUser);
     return;
   }
+  if (requestUrl.pathname === "/api/advertising/email-collector/exclusions") {
+    await handleAdvertisingEmailExclusions(req, res, authUser);
+    return;
+  }
+  if (requestUrl.pathname === "/api/advertising/email-collector/sync") {
+    await handleAdvertisingDatabaseSync(req, res, authUser);
+    return;
+  }
   if (req.method === "POST" && requestUrl.pathname === "/api/local-documents/open-folder") {
     await handleOpenLocalDocumentsFolder(req, res);
     return;
@@ -24983,6 +25483,9 @@ module.exports = {
   extractAdvertisingEmails,
   parseAdvertisingCollectorWorkbook,
   aggregateAdvertisingEmailResults,
+  normalizeAdvertisingEmailSources,
+  normalizeAdvertisingEmailExclusions,
+  mergeAdvertisingEmailExclusions,
   collectAdvertisingEmails,
   optimizeStudentApplicationsSqlQuery,
   runStudentApplicationsQuery,

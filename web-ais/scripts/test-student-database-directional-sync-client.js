@@ -603,6 +603,17 @@ function makeExportContext(result, { validBaseline = true } = {}) {
     updateDatabaseExportIndicator: () => {},
     finishDatabaseExportIndicator: () => {},
     showDatabaseOperationResult: (value) => { operationResults.push(value); },
+    databaseOperationDetailFields: {
+      students: [],
+      contracts: [],
+      directExpenses: [],
+      generalExpenses: [],
+      inventory: [],
+      programs: [],
+      trainingPlans: []
+    },
+    databaseOperationDetailColumns: () => [],
+    buildDatabaseOperationDetailRows: () => [],
     formatDatabaseOperationDuration: () => "1 сек",
     render: () => { order.push("render"); },
     commitStudentDatabaseExport: async () => {

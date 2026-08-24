@@ -43,10 +43,27 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.260",
+    version: "1.7.262",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.262",
+      releasedAt: "2026-08-24",
+      changes: [
+        "Исключения рекламы теперь обновляются как необязательный этап общей загрузки и синхронизации XLSB, если база рекламы доступна.",
+        "Итоговый отчёт общей операции показывает количество правил, источник базы рекламы или причину пропуска синхронизации."
+      ]
+    },
+    {
+      version: "1.7.261",
+      releasedAt: "2026-08-24",
+      changes: [
+        "В разделе «Реклама» добавлены конструктор источников и отдельная вкладка исключений с синхронизацией из базы рекламы.",
+        "Пути базы рекламы и подключения MySQL перенесены в админку; локальный файл и WebDAV выбираются по общему режиму работы системы.",
+        "Источники больше не зашиты в интерфейсе: сохраняются порядок, тип, подключение и запрос, а ошибки подключения выводятся понятным сообщением."
+      ]
+    },
     {
       version: "1.7.260",
       releasedAt: "2026-08-24",
@@ -3837,18 +3854,18 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "admin", label: "Админка", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 4.6-2.8 7.9-7 10-4.2-2.1-7-5.4-7-10V6z"></path><circle cx="12" cy="12" r="2.4"></circle><path d="M12 8.2v1.2"></path><path d="M12 14.6v1.2"></path><path d="M15.8 12h-1.2"></path><path d="M9.4 12H8.2"></path><path d="M14.7 9.3l-.9.9"></path><path d="M10.2 13.8l-.9.9"></path><path d="M14.7 14.7l-.9-.9"></path><path d="M10.2 10.2l-.9-.9"></path></svg>' }
   ];
   const ADVERTISING_EMAIL_SOURCES = Object.freeze([
-    { id: "assistant_installations", label: "Установка Ассистента (edu-plus.ru)", group: "SQL" },
-    { id: "site_downloads", label: "Загрузки с zifra-plus.ru", group: "SQL" },
-    { id: "ais_students_contracts", label: "База слушателей и договоров", group: "АИС" },
-    { id: "webinar_registrations", label: "База регистраций на вебинары", group: "SQL" },
-    { id: "viit_applicants", label: "База абитуриентов ВИИТ", group: "SQL" },
-    { id: "viit_counselors", label: "База профориентаторов ВИИТ", group: "SQL" },
-    { id: "viit_open_days", label: "Регистрации на ДОД ВИИТ", group: "Таблицы" },
-    { id: "testing", label: "База тестирования", group: "SQL" },
-    { id: "partner_program", label: "Партнёрская программа", group: "Таблицы" },
-    { id: "moodle", label: "База Moodle", group: "SQL" },
-    { id: "google_contacts", label: "Контакты Google", group: "XLSB" },
-    { id: "legacy_contacts", label: "Историческая база контактов", group: "XLSB" }
+    { id: "assistant_installations", label: "Установка Ассистента (edu-plus.ru)", group: "SQL", kind: "sql" },
+    { id: "site_downloads", label: "Загрузки с zifra-plus.ru", group: "SQL", kind: "sql" },
+    { id: "ais_students_contracts", label: "База слушателей и договоров", group: "АИС", kind: "ais" },
+    { id: "webinar_registrations", label: "База регистраций на вебинары", group: "SQL", kind: "sql" },
+    { id: "viit_applicants", label: "База абитуриентов ВИИТ", group: "SQL", kind: "sql" },
+    { id: "viit_counselors", label: "База профориентаторов ВИИТ", group: "SQL", kind: "sql" },
+    { id: "viit_open_days", label: "Регистрации на ДОД ВИИТ", group: "Таблицы", kind: "google" },
+    { id: "testing", label: "База тестирования", group: "SQL", kind: "sql" },
+    { id: "partner_program", label: "Партнёрская программа", group: "Таблицы", kind: "google" },
+    { id: "moodle", label: "База Moodle", group: "SQL", kind: "sql" },
+    { id: "google_contacts", label: "Контакты Google", group: "XLSB", kind: "workbook" },
+    { id: "legacy_contacts", label: "Историческая база контактов", group: "XLSB", kind: "workbook" }
   ]);
   const ADVERTISING_EMAIL_TABLE_COLUMNS = Object.freeze([
     { key: "email", label: "Email" },
@@ -4851,6 +4868,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     },
     advertising: {
+      tab: "collector",
       loading: false,
       loaded: false,
       error: "",
@@ -4868,6 +4886,17 @@ MAX - https://bizvmax.ru/zifra_plus
       settingsSaving: false,
       settingsError: "",
       settingsMessage: "",
+      exclusions: {
+        rows: [],
+        loaded: false,
+        loading: false,
+        saving: false,
+        syncing: false,
+        error: "",
+        message: "",
+        syncedAt: "",
+        syncSource: ""
+      },
       notice: ""
     },
     financeDetails: {
@@ -9294,8 +9323,15 @@ MAX - https://bizvmax.ru/zifra_plus
       queueMicrotask(() => loadStatisticsData());
     }
     if (state.view === "advertising") {
-      if (isAdminUser() && !state.advertising.settingsLoaded && !state.advertising.settingsLoading) {
+      if (!state.advertising.settingsLoaded && !state.advertising.settingsLoading) {
         queueMicrotask(() => loadAdvertisingEmailSettings());
+      }
+      if (
+        state.advertising.tab === "exclusions"
+        && !state.advertising.exclusions.loaded
+        && !state.advertising.exclusions.loading
+      ) {
+        queueMicrotask(() => loadAdvertisingEmailExclusions());
       }
       if (!state.advertising.loaded && !state.advertising.loading) {
         queueMicrotask(() => collectAdvertisingEmails());
@@ -10652,7 +10688,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getAdvertisingSourceLabel(sourceId) {
-    return ADVERTISING_EMAIL_SOURCES.find((source) => source.id === sourceId)?.label || sourceId || "Источник";
+    return getAdvertisingEmailSources({ includeDisabled: true })
+      .find((source) => source.id === sourceId)?.label || sourceId || "Источник";
   }
 
   function getAdvertisingFilteredRows(options = {}) {
@@ -10712,10 +10749,18 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function getAdvertisingEmailSources(options = {}) {
+    const configured = Array.isArray(state.advertising.settings?.sources)
+      ? state.advertising.settings.sources
+      : [];
+    const sources = configured.length ? configured : ADVERTISING_EMAIL_SOURCES;
+    return sources.filter((source) => options.includeDisabled || source.enabled !== false);
+  }
+
   function renderAdvertisingSourceCards() {
     const selected = new Set(state.advertising.selectedSourceIds || []);
     const resultSources = new Map((state.advertising.result?.sources || []).map((source) => [source.id, source]));
-    return ADVERTISING_EMAIL_SOURCES.map((source) => {
+    return getAdvertisingEmailSources().map((source) => {
       const result = resultSources.get(source.id);
       const status = result?.status || (state.advertising.loading ? "loading" : "idle");
       const statusLabel = status === "error"
@@ -10739,79 +10784,136 @@ MAX - https://bizvmax.ru/zifra_plus
     }).join("");
   }
 
-  function renderAdvertisingSettings() {
-    if (!isAdminUser()) return "";
-    const settings = state.advertising.settings || {};
-    const loading = state.advertising.settingsLoading;
-    const saving = state.advertising.settingsSaving;
-    const field = (name, label, value, options = {}) => `
-      <label class="${options.wide ? "advertising-settings-wide" : ""}">
-        <span>${escapeHtml(label)}</span>
-        <input
-          name="${escapeAttr(name)}"
-          type="${options.type || "text"}"
-          value="${options.type === "password" ? "" : escapeAttr(value || "")}"
-          ${options.type === "number" ? 'min="1" max="65535" step="1" inputmode="numeric"' : ""}
-          ${options.disabled ? "disabled" : ""}
-          ${options.autocomplete ? `autocomplete="${escapeAttr(options.autocomplete)}"` : ""}
-          ${options.placeholder ? `placeholder="${escapeAttr(options.placeholder)}"` : ""}
-        >
-      </label>
-    `;
+  function renderAdvertisingSourceConfiguration(source, index) {
+    if (source.kind === "sql") {
+      return `
+        <label><span>Подключение</span><select data-advertising-source-field="connection">
+          <option value="applications" ${source.connection === "applications" ? "selected" : ""}>Интернет-магазин</option>
+          <option value="assistant" ${source.connection === "assistant" ? "selected" : ""}>Статистика Ассистента</option>
+          <option value="abit" ${source.connection === "abit" ? "selected" : ""}>База ВИИТ</option>
+          <option value="moodle" ${source.connection === "moodle" ? "selected" : ""}>База Moodle</option>
+        </select></label>
+        <label class="advertising-source-query"><span>SQL-запрос SELECT</span><textarea data-advertising-source-field="sql" rows="4" spellcheck="false">${escapeHtml(source.sql || "")}</textarea></label>
+      `;
+    }
+    if (source.kind === "google") {
+      const workbooks = (source.workbooks || []).map((item) => (
+        `${item.url || ""} | ${(item.columns || []).join(", ")}`
+      )).join("\n");
+      return `
+        <label class="advertising-source-query"><span>Таблицы: ссылка | колонки с email</span><textarea data-advertising-source-field="workbooks" rows="4" spellcheck="false" placeholder="https://…/pub?output=xlsx | Email, Адрес электронной почты">${escapeHtml(workbooks)}</textarea></label>
+      `;
+    }
+    if (source.kind === "workbook") {
+      return `
+        <label><span>Раздел базы рекламы</span><select data-advertising-source-field="dataset">
+          <option value="legacyContacts" ${source.dataset === "legacyContacts" ? "selected" : ""}>База контактов</option>
+          <option value="googleContacts" ${source.dataset === "googleContacts" ? "selected" : ""}>Выгрузка Email / контакты Google</option>
+        </select></label>
+      `;
+    }
+    return '<p class="advertising-source-native-note">Источник читает слушателей и договоры непосредственно из АИС.</p>';
+  }
+
+  function renderAdvertisingSourceBuilder() {
+    if (!isAdminUser()) {
+      return '<section class="panel"><div class="empty-state compact"><strong>Конструктор доступен администратору</strong><span>Менеджер может выбирать и запускать настроенные источники на вкладке «Сборщик».</span></div></section>';
+    }
+    const advertising = state.advertising;
+    const sources = getAdvertisingEmailSources({ includeDisabled: true });
     return `
-      <details class="panel advertising-settings-panel" ${state.advertising.settingsError ? "open" : ""}>
-        <summary>
-          <span><strong>Настройки источников</strong><small>Пути к книге и отдельные подключения к базам ВИИТ и Moodle</small></span>
-          <span class="advertising-settings-summary-status">${loading ? "Загрузка…" : "Только для администратора"}</span>
-        </summary>
-        ${state.advertising.settingsError ? `<div class="advertising-inline-message is-error" role="alert">${escapeHtml(state.advertising.settingsError)}</div>` : ""}
-        ${state.advertising.settingsMessage ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(state.advertising.settingsMessage)}</div>` : ""}
-        <form class="advertising-settings-form" data-action="save-advertising-settings">
-          <fieldset ${loading || saving ? "disabled" : ""}>
-            <legend>Книга «База рассылок.xlsb»</legend>
-            <div class="advertising-settings-grid">
-              ${field("workbookLocalPath", "Путь на локальном компьютере", settings.workbookLocalPath, { wide: true })}
-              ${field("workbookWebDavPath", "Путь в Яндекс-Диске (WebDAV)", settings.workbookWebDavPath, { wide: true })}
-            </div>
-          </fieldset>
-          <fieldset ${loading || saving || settings.advertisingAbitMysqlManagedByEnvironment ? "disabled" : ""}>
-            <legend>Базы ВИИТ</legend>
-            <div class="advertising-settings-grid is-connection">
-              ${field("advertisingAbitMysqlHost", "Сервер", settings.advertisingAbitMysqlHost)}
-              ${field("advertisingAbitMysqlPort", "Порт", settings.advertisingAbitMysqlPort || 3306, { type: "number" })}
-              ${field("advertisingAbitMysqlDatabase", "База", settings.advertisingAbitMysqlDatabase)}
-              ${field("advertisingAbitMysqlUser", "Пользователь", settings.advertisingAbitMysqlUser, { autocomplete: "username" })}
-              ${field("advertisingAbitMysqlPassword", "Пароль", "", {
-                type: "password",
-                autocomplete: "new-password",
-                placeholder: settings.advertisingAbitMysqlHasPassword ? "Пароль сохранён на сервере" : "Введите пароль"
-              })}
-            </div>
-          </fieldset>
-          <fieldset ${loading || saving || settings.advertisingMoodleMysqlManagedByEnvironment ? "disabled" : ""}>
-            <legend>База Moodle</legend>
-            <div class="advertising-settings-grid is-connection">
-              ${field("advertisingMoodleMysqlHost", "Сервер", settings.advertisingMoodleMysqlHost)}
-              ${field("advertisingMoodleMysqlPort", "Порт", settings.advertisingMoodleMysqlPort || 3306, { type: "number" })}
-              ${field("advertisingMoodleMysqlDatabase", "База", settings.advertisingMoodleMysqlDatabase)}
-              ${field("advertisingMoodleMysqlUser", "Пользователь", settings.advertisingMoodleMysqlUser, { autocomplete: "username" })}
-              ${field("advertisingMoodleMysqlPassword", "Пароль", "", {
-                type: "password",
-                autocomplete: "new-password",
-                placeholder: settings.advertisingMoodleMysqlHasPassword ? "Пароль сохранён на сервере" : "Введите пароль"
-              })}
-            </div>
-          </fieldset>
+      <section class="panel advertising-source-builder-panel">
+        <div class="panel-head advertising-results-head">
+          <div><p class="eyebrow">Настройка сбора</p><h2>Конструктор источников</h2></div>
+          <button class="ghost-button" data-action="add-advertising-source" type="button" ${advertising.settingsSaving ? "disabled" : ""}>Добавить источник</button>
+        </div>
+        <p class="advertising-builder-hint">Порядок карточек сохраняется. Подключения и пароли настраиваются в Админке → Подключение к базе → База рекламы.</p>
+        ${advertising.settingsError ? `<div class="advertising-inline-message is-error" role="alert">${escapeHtml(advertising.settingsError)}</div>` : ""}
+        ${advertising.settingsMessage ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(advertising.settingsMessage)}</div>` : ""}
+        <form data-action="save-advertising-settings" class="advertising-source-builder-form">
+          <div class="advertising-source-builder-list">
+            ${sources.map((source, index) => `
+              <article class="advertising-source-editor" data-advertising-source-editor data-source-index="${index}">
+                <header>
+                  <strong>${index + 1}. ${escapeHtml(source.label || "Новый источник")}</strong>
+                  <div class="advertising-source-editor-actions">
+                    <button class="text-button" data-action="move-advertising-source" data-direction="-1" type="button" ${index === 0 ? "disabled" : ""}>Выше</button>
+                    <button class="text-button" data-action="move-advertising-source" data-direction="1" type="button" ${index === sources.length - 1 ? "disabled" : ""}>Ниже</button>
+                    <button class="text-button danger" data-action="delete-advertising-source" type="button">Удалить</button>
+                  </div>
+                </header>
+                <div class="advertising-source-editor-grid">
+                  <label><span>Название</span><input data-advertising-source-field="label" value="${escapeAttr(source.label || "")}" required></label>
+                  <label><span>Группа</span><input data-advertising-source-field="group" value="${escapeAttr(source.group || "")}" placeholder="SQL, Таблицы, XLSB"></label>
+                  <label><span>Тип</span><select data-advertising-source-field="kind" data-action="change-advertising-source-kind">
+                    <option value="sql" ${source.kind === "sql" ? "selected" : ""}>SQL-запрос</option>
+                    <option value="google" ${source.kind === "google" ? "selected" : ""}>Опубликованная таблица</option>
+                    <option value="workbook" ${source.kind === "workbook" ? "selected" : ""}>Раздел базы рекламы</option>
+                    <option value="ais" ${source.kind === "ais" ? "selected" : ""}>Данные АИС</option>
+                  </select></label>
+                  <label><span>Идентификатор</span><input data-advertising-source-field="id" value="${escapeAttr(source.id || `source_${index + 1}`)}" pattern="[a-z0-9_-]+" spellcheck="false"></label>
+                  <label class="advertising-source-enabled"><input data-advertising-source-field="enabled" type="checkbox" ${source.enabled !== false ? "checked" : ""}><span>Использовать источник</span></label>
+                  ${renderAdvertisingSourceConfiguration(source, index)}
+                </div>
+              </article>
+            `).join("")}
+          </div>
           <div class="advertising-settings-actions">
-            <button class="primary-button" type="submit" ${loading || saving ? "disabled" : ""}>${saving ? "Сохранение…" : "Сохранить настройки"}</button>
+            <button class="primary-button" type="submit" ${advertising.settingsSaving ? "disabled" : ""}>${advertising.settingsSaving ? "Сохранение…" : "Сохранить источники"}</button>
           </div>
         </form>
-      </details>
+      </section>
+    `;
+  }
+
+  function renderAdvertisingExclusions() {
+    const exclusions = state.advertising.exclusions;
+    return `
+      <section class="panel advertising-exclusions-panel">
+        <div class="panel-head advertising-results-head">
+          <div><p class="eyebrow">База рекламы</p><h2>Исключения</h2></div>
+          <div class="advertising-heading-actions">
+            ${isAdminUser() ? `<button class="ghost-button" data-action="sync-advertising-exclusions" type="button" ${exclusions.syncing ? "disabled" : ""} title="Синхронизировать с базой рекламы\n\nОбычный щелчок использует выбранный режим хранения, Shift + щелчок — альтернативный источник.">${exclusions.syncing ? "Синхронизация…" : "Синхронизировать с базой"}</button>` : ""}
+            ${isAdminUser() ? '<button class="ghost-button" data-action="add-advertising-exclusion" type="button">Добавить</button>' : ""}
+          </div>
+        </div>
+        <p class="advertising-builder-hint">Адрес исключает один email, запись вида <code>@example.ru</code> исключает весь домен. При общей синхронизации правила из доступной базы рекламы объединяются с правилами АИС.</p>
+        ${exclusions.error ? `<div class="advertising-inline-message is-error" role="alert">${escapeHtml(exclusions.error)}</div>` : ""}
+        ${exclusions.message ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(exclusions.message)}</div>` : ""}
+        <form data-action="save-advertising-exclusions">
+          <div class="table-wrap advertising-exclusions-table-wrap">
+            <table class="data-table advertising-exclusions-table">
+              <thead><tr><th>Email или домен</th><th>Причина / примечание</th>${isAdminUser() ? "<th></th>" : ""}</tr></thead>
+              <tbody>
+                ${exclusions.rows.map((row, index) => `
+                  <tr data-advertising-exclusion-row data-exclusion-index="${index}">
+                    <td>${isAdminUser() ? `<input data-exclusion-field="key" value="${escapeAttr(row.key || "")}" placeholder="name@example.ru или @example.ru">` : escapeHtml(row.key || "")}</td>
+                    <td>${isAdminUser() ? `<input data-exclusion-field="note" value="${escapeAttr(row.note || "")}" placeholder="Причина исключения">` : escapeHtml(row.note || "—")}</td>
+                    ${isAdminUser() ? '<td><button class="icon-button danger" data-action="delete-advertising-exclusion" type="button" title="Удалить исключение" aria-label="Удалить исключение">×</button></td>' : ""}
+                  </tr>
+                `).join("") || '<tr><td colspan="3"><div class="empty-state compact">Исключения ещё не загружены.</div></td></tr>'}
+              </tbody>
+            </table>
+          </div>
+          <div class="advertising-settings-actions">
+            <span>${exclusions.syncedAt ? `Последняя синхронизация: ${escapeHtml(formatDateTimeRu(exclusions.syncedAt))}${exclusions.syncSource ? ` · ${escapeHtml(exclusions.syncSource)}` : ""}` : "Синхронизация ещё не выполнялась"}</span>
+            ${isAdminUser() ? `<button class="primary-button" type="submit" ${exclusions.saving ? "disabled" : ""}>${exclusions.saving ? "Сохранение…" : "Сохранить исключения"}</button>` : ""}
+          </div>
+        </form>
+      </section>
     `;
   }
 
   function renderAdvertising() {
     const advertising = state.advertising;
+    const advertisingTabs = getOrderedTabs("advertising", [
+      { id: "collector", label: "Сборщик" },
+      ...(isAdminUser() ? [{ id: "sources", label: "Источники" }] : []),
+      { id: "exclusions", label: "Исключения" }
+    ]);
+    const advertisingTab = advertisingTabs.some((tab) => tab.id === advertising.tab)
+      ? advertising.tab
+      : "collector";
     const summary = advertising.result?.summary || {};
     const rows = getAdvertisingFilteredRows();
     const readyRows = getAdvertisingFilteredRows({ status: "ready" });
@@ -10823,6 +10925,12 @@ MAX - https://bizvmax.ru/zifra_plus
       : "Ещё не запускался";
     return `
       <section class="advertising-page">
+        <nav class="program-tabs advertising-tabs" data-orderable-tabs="advertising" role="tablist" aria-label="Разделы рекламы">
+          ${advertisingTabs.map((tab) => `
+            <button class="${advertisingTab === tab.id ? "active" : ""}" data-action="switch-advertising-tab" data-advertising-tab="${escapeAttr(tab.id)}" data-orderable-tab="${escapeAttr(tab.id)}" data-orderable-tab-default-index="${tab.defaultTabIndex}" type="button" role="tab" aria-selected="${advertisingTab === tab.id ? "true" : "false"}">${escapeHtml(tab.label)}</button>
+          `).join("")}
+        </nav>
+        ${advertisingTab === "collector" ? `
         <section class="panel advertising-controls-panel">
           <div class="advertising-heading">
             <div>
@@ -10842,7 +10950,7 @@ MAX - https://bizvmax.ru/zifra_plus
           ${advertising.notice ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(advertising.notice)}</div>` : ""}
           <div class="advertising-source-toolbar">
             <strong>Источники</strong>
-            <span>Выбрано ${advertising.selectedSourceIds.length} из ${ADVERTISING_EMAIL_SOURCES.length}</span>
+             <span>Выбрано ${advertising.selectedSourceIds.length} из ${getAdvertisingEmailSources().length}</span>
             <button class="text-button" data-action="select-all-advertising-sources" type="button" ${advertising.loading ? "disabled" : ""}>Выбрать все</button>
             <button class="text-button" data-action="clear-advertising-sources" type="button" ${advertising.loading ? "disabled" : ""}>Снять все</button>
           </div>
@@ -10870,7 +10978,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           <div class="advertising-filters">
             <label class="advertising-filter-query"><span>Поиск</span><input data-advertising-filter="query" value="${escapeAttr(advertising.filters.query)}" placeholder="Email, ФИО, организация, телефон" autocomplete="off"></label>
-            <label><span>Источник</span><select data-advertising-filter="source"><option value="">Все источники</option>${ADVERTISING_EMAIL_SOURCES.map((source) => `<option value="${escapeAttr(source.id)}" ${advertising.filters.source === source.id ? "selected" : ""}>${escapeHtml(source.label)}</option>`).join("")}</select></label>
+             <label><span>Источник</span><select data-advertising-filter="source"><option value="">Все источники</option>${getAdvertisingEmailSources().map((source) => `<option value="${escapeAttr(source.id)}" ${advertising.filters.source === source.id ? "selected" : ""}>${escapeHtml(source.label)}</option>`).join("")}</select></label>
             <label><span>Статус</span><select data-advertising-filter="status"><option value="ready" ${advertising.filters.status === "ready" ? "selected" : ""}>Готовы к рекламе</option><option value="excluded" ${advertising.filters.status === "excluded" ? "selected" : ""}>Исключённые</option><option value="all" ${advertising.filters.status === "all" ? "selected" : ""}>Все адреса</option></select></label>
             <button class="ghost-button" data-action="reset-advertising-filters" type="button">Сбросить</button>
           </div>
@@ -10896,7 +11004,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${renderTablePagination("advertisingEmails", rows.length, pagination)}
               `)}
         </section>
-        ${renderAdvertisingSettings()}
+        ` : advertisingTab === "sources" ? renderAdvertisingSourceBuilder() : renderAdvertisingExclusions()}
       </section>
     `;
   }
@@ -10916,6 +11024,15 @@ MAX - https://bizvmax.ru/zifra_plus
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       advertising.settings = payload;
+      const enabledSourceIds = (payload.sources || [])
+        .filter((source) => source.enabled !== false)
+        .map((source) => source.id);
+      if (!advertising.settingsLoaded && enabledSourceIds.length) {
+        advertising.selectedSourceIds = enabledSourceIds;
+      } else {
+        const allowed = new Set(enabledSourceIds);
+        advertising.selectedSourceIds = advertising.selectedSourceIds.filter((id) => allowed.has(id));
+      }
       advertising.settingsLoaded = true;
     } catch (error) {
       advertising.settingsError = error.message || "Не удалось загрузить настройки источников.";
@@ -10953,6 +11070,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       advertising.result = payload;
       advertising.loaded = true;
+      advertising.exclusions.loaded = false;
       state.tablePages.advertisingEmails = 1;
     } catch (error) {
       advertising.error = error.message || "Не удалось собрать email-адреса.";
@@ -10963,15 +11081,48 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  function parseAdvertisingWorkbookEditorValue(value) {
+    return String(value || "").split(/\r?\n/u).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const [url, columnsText = "Email"] = line.split("|").map((part) => part.trim());
+      return {
+        url,
+        columns: columnsText.split(/[;,]/u).map((column) => column.trim()).filter(Boolean)
+      };
+    });
+  }
+
+  function syncAdvertisingSourceDraftsFromDom(form = document.querySelector("form[data-action='save-advertising-settings']")) {
+    if (!form) return getAdvertisingEmailSources({ includeDisabled: true });
+    const sources = Array.from(form.querySelectorAll("[data-advertising-source-editor]")).map((editor, index) => {
+      const field = (name) => editor.querySelector(`[data-advertising-source-field='${name}']`);
+      const kind = String(field("kind")?.value || "sql");
+      const source = {
+        id: String(field("id")?.value || `source_${index + 1}`).trim(),
+        label: String(field("label")?.value || "").trim(),
+        group: String(field("group")?.value || "Другое").trim(),
+        kind,
+        enabled: Boolean(field("enabled")?.checked)
+      };
+      if (kind === "sql") {
+        source.connection = String(field("connection")?.value || "applications");
+        source.sql = String(field("sql")?.value || "").trim();
+      } else if (kind === "google") {
+        source.workbooks = parseAdvertisingWorkbookEditorValue(field("workbooks")?.value);
+      } else if (kind === "workbook") {
+        source.dataset = String(field("dataset")?.value || "legacyContacts");
+      }
+      return source;
+    });
+    state.advertising.settings = { ...(state.advertising.settings || {}), sources };
+    return sources;
+  }
+
   async function saveAdvertisingEmailSettings(event) {
     event.preventDefault();
     const form = event.currentTarget;
     const advertising = state.advertising;
     if (advertising.settingsSaving) return;
-    const payload = Object.fromEntries(new FormData(form).entries());
-    ["advertisingAbitMysqlPort", "advertisingMoodleMysqlPort"].forEach((key) => {
-      if (payload[key]) payload[key] = Number(payload[key]);
-    });
+    const payload = { sources: syncAdvertisingSourceDraftsFromDom(form) };
     advertising.settingsSaving = true;
     advertising.settingsError = "";
     advertising.settingsMessage = "";
@@ -10991,11 +11142,106 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!response.ok) throw new Error(result.error || `Ошибка сервера: ${response.status}`);
       advertising.settings = result;
       advertising.settingsLoaded = true;
-      advertising.settingsMessage = "Настройки источников сохранены.";
+      const enabledIds = new Set((result.sources || []).filter((source) => source.enabled !== false).map((source) => source.id));
+      advertising.selectedSourceIds = advertising.selectedSourceIds.filter((id) => enabledIds.has(id));
+      if (!advertising.selectedSourceIds.length) advertising.selectedSourceIds = [...enabledIds];
+      advertising.settingsMessage = "Источники сохранены.";
     } catch (error) {
       advertising.settingsError = error.message || "Не удалось сохранить настройки источников.";
     } finally {
       advertising.settingsSaving = false;
+      if (state.view === "advertising") render();
+    }
+  }
+
+  async function loadAdvertisingEmailExclusions(options = {}) {
+    const exclusions = state.advertising.exclusions;
+    if (exclusions.loading || (exclusions.loaded && !options.force)) return;
+    exclusions.loading = true;
+    exclusions.error = "";
+    try {
+      const response = await fetch(photoApiUrl("/api/advertising/email-collector/exclusions"), {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "X-Requested-With": "AIS-Web" }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      exclusions.rows = Array.isArray(payload.rows) ? payload.rows : [];
+      exclusions.syncedAt = String(payload.syncedAt || "");
+      exclusions.syncSource = String(payload.syncSource || "");
+      exclusions.loaded = true;
+    } catch (error) {
+      exclusions.error = error.message || "Не удалось загрузить исключения.";
+      exclusions.loaded = true;
+    } finally {
+      exclusions.loading = false;
+      if (state.view === "advertising" && state.advertising.tab === "exclusions") render();
+    }
+  }
+
+  function collectAdvertisingExclusionsFromDom() {
+    return Array.from(document.querySelectorAll("[data-advertising-exclusion-row]")).map((row) => ({
+      key: String(row.querySelector("[data-exclusion-field='key']")?.value || "").trim(),
+      note: String(row.querySelector("[data-exclusion-field='note']")?.value || "").trim()
+    })).filter((row) => row.key);
+  }
+
+  async function saveAdvertisingEmailExclusions(event) {
+    event.preventDefault();
+    const exclusions = state.advertising.exclusions;
+    if (exclusions.saving) return;
+    exclusions.saving = true;
+    exclusions.error = "";
+    exclusions.message = "";
+    const rows = collectAdvertisingExclusionsFromDom();
+    try {
+      const response = await fetch(photoApiUrl("/api/advertising/email-collector/exclusions"), {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", "X-Requested-With": "AIS-Web" },
+        body: JSON.stringify({ rows })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      exclusions.rows = Array.isArray(payload.rows) ? payload.rows : rows;
+      exclusions.message = `Сохранено правил: ${exclusions.rows.length}.`;
+    } catch (error) {
+      exclusions.error = error.message || "Не удалось сохранить исключения.";
+    } finally {
+      exclusions.saving = false;
+      if (state.view === "advertising") render();
+    }
+  }
+
+  async function syncAdvertisingEmailExclusions(event) {
+    const exclusions = state.advertising.exclusions;
+    if (exclusions.syncing) return;
+    exclusions.syncing = true;
+    exclusions.error = "";
+    exclusions.message = "";
+    const source = getStudentDocumentsSource(Boolean(event?.shiftKey));
+    render();
+    try {
+      const response = await fetch(photoApiUrl("/api/advertising/email-collector/sync"), {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", "X-Requested-With": "AIS-Web" },
+        body: JSON.stringify({ source })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      exclusions.rows = Array.isArray(payload.rows) ? payload.rows : [];
+      exclusions.syncedAt = String(payload.syncedAt || "");
+      exclusions.syncSource = String(payload.source || "");
+      exclusions.loaded = true;
+      exclusions.message = `Синхронизация завершена: ${payload.count || exclusions.rows.length} правил. Источник — ${payload.source || getStudentDatabaseSourceLabel(source)}.`;
+    } catch (error) {
+      exclusions.error = error.message || "Не удалось синхронизировать исключения.";
+    } finally {
+      exclusions.syncing = false;
       if (state.view === "advertising") render();
     }
   }
@@ -11025,9 +11271,18 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindAdvertisingEvents() {
     if (state.view !== "advertising") return;
+    document.querySelectorAll("[data-action='switch-advertising-tab']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const tab = String(button.dataset.advertisingTab || "collector");
+        if (!["collector", "sources", "exclusions"].includes(tab)) return;
+        if (tab === "sources" && !isAdminUser()) return;
+        state.advertising.tab = tab;
+        render();
+      });
+    });
     document.querySelector("[data-action='collect-advertising-emails']")?.addEventListener("click", collectAdvertisingEmails);
     document.querySelector("[data-action='select-all-advertising-sources']")?.addEventListener("click", () => {
-      state.advertising.selectedSourceIds = ADVERTISING_EMAIL_SOURCES.map((source) => source.id);
+      state.advertising.selectedSourceIds = getAdvertisingEmailSources().map((source) => source.id);
       state.advertising.error = "";
       render();
     });
@@ -11041,7 +11296,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const selected = new Set(state.advertising.selectedSourceIds || []);
         if (checkbox.checked) selected.add(sourceId);
         else selected.delete(sourceId);
-        state.advertising.selectedSourceIds = ADVERTISING_EMAIL_SOURCES
+        state.advertising.selectedSourceIds = getAdvertisingEmailSources()
           .map((source) => source.id)
           .filter((id) => selected.has(id));
         state.advertising.error = "";
@@ -11094,6 +11349,92 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
     });
     document.querySelector("form[data-action='save-advertising-settings']")?.addEventListener("submit", saveAdvertisingEmailSettings);
+    document.querySelector("[data-action='add-advertising-source']")?.addEventListener("click", () => {
+      const sources = syncAdvertisingSourceDraftsFromDom();
+      const existingIds = new Set(sources.map((source) => source.id));
+      let suffix = sources.length + 1;
+      while (existingIds.has(`source_${suffix}`)) suffix += 1;
+      sources.push({
+        id: `source_${suffix}`,
+        label: "Новый источник",
+        group: "SQL",
+        kind: "sql",
+        connection: "applications",
+        sql: "SELECT DISTINCT email FROM table_name WHERE email IS NOT NULL",
+        enabled: true
+      });
+      state.advertising.settings = { ...(state.advertising.settings || {}), sources };
+      state.advertising.settingsMessage = "";
+      render();
+    });
+    document.querySelectorAll("[data-action='change-advertising-source-kind']").forEach((select) => {
+      select.addEventListener("change", () => {
+        const editor = select.closest("[data-advertising-source-editor]");
+        const index = Number(editor?.dataset.sourceIndex);
+        const sources = syncAdvertisingSourceDraftsFromDom();
+        if (!Number.isInteger(index) || !sources[index]) return;
+        const kind = String(select.value || "sql");
+        sources[index].kind = kind;
+        if (kind === "sql") Object.assign(sources[index], {
+          connection: sources[index].connection || "applications",
+          sql: sources[index].sql || "SELECT DISTINCT email FROM table_name WHERE email IS NOT NULL"
+        });
+        if (kind === "google" && !sources[index].workbooks?.length) sources[index].workbooks = [];
+        if (kind === "workbook") sources[index].dataset = sources[index].dataset || "legacyContacts";
+        state.advertising.settings = { ...(state.advertising.settings || {}), sources };
+        render();
+      });
+    });
+    document.querySelectorAll("[data-action='move-advertising-source']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const editor = button.closest("[data-advertising-source-editor]");
+        const index = Number(editor?.dataset.sourceIndex);
+        const direction = Number(button.dataset.direction);
+        const sources = syncAdvertisingSourceDraftsFromDom();
+        const target = index + direction;
+        if (!Number.isInteger(index) || !Number.isInteger(target) || !sources[index] || !sources[target]) return;
+        [sources[index], sources[target]] = [sources[target], sources[index]];
+        state.advertising.settings = { ...(state.advertising.settings || {}), sources };
+        render();
+      });
+    });
+    document.querySelectorAll("[data-action='delete-advertising-source']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const editor = button.closest("[data-advertising-source-editor]");
+        const index = Number(editor?.dataset.sourceIndex);
+        const sources = syncAdvertisingSourceDraftsFromDom();
+        if (!Number.isInteger(index) || !sources[index]) return;
+        if (!confirm(`Удалить источник «${sources[index].label || sources[index].id}»?`)) return;
+        sources.splice(index, 1);
+        state.advertising.settings = { ...(state.advertising.settings || {}), sources };
+        render();
+      });
+    });
+    document.querySelector("form[data-action='save-advertising-exclusions']")?.addEventListener("submit", saveAdvertisingEmailExclusions);
+    document.querySelector("[data-action='sync-advertising-exclusions']")?.addEventListener("click", syncAdvertisingEmailExclusions);
+    document.querySelector("[data-action='add-advertising-exclusion']")?.addEventListener("click", () => {
+      state.advertising.exclusions.rows = [
+        ...collectAdvertisingExclusionsFromDom(),
+        { key: "", note: "" }
+      ];
+      state.advertising.exclusions.message = "";
+      render();
+      requestAnimationFrame(() => {
+        const rows = document.querySelectorAll("[data-advertising-exclusion-row]");
+        rows[rows.length - 1]?.querySelector("[data-exclusion-field='key']")?.focus();
+      });
+    });
+    document.querySelectorAll("[data-action='delete-advertising-exclusion']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const row = button.closest("[data-advertising-exclusion-row]");
+        const index = Number(row?.dataset.exclusionIndex);
+        const rows = collectAdvertisingExclusionsFromDom();
+        if (Number.isInteger(index)) rows.splice(index, 1);
+        state.advertising.exclusions.rows = rows;
+        state.advertising.exclusions.message = "";
+        render();
+      });
+    });
   }
 
   function renderDashboard() {
@@ -18809,6 +19150,54 @@ MAX - https://bizvmax.ru/zifra_plus
     const assistantStatisticsMysqlFieldsDisabled = Boolean(
       state.data.meta.assistantStatisticsMysqlManagedByEnvironment
     );
+    const advertisingWorkbookLocalPath = getAdminSettingRenderValue(
+      "advertisingWorkbookLocalPath",
+      state.data.meta.advertisingWorkbookLocalPath || "Y:\\Реклама\\Базы рассылок\\База рассылок.xlsb"
+    );
+    const advertisingWorkbookWebDavPath = getAdminSettingRenderValue(
+      "advertisingWorkbookWebDavPath",
+      state.data.meta.advertisingWorkbookWebDavPath || "ООО Цифровизация Плюс/Реклама/Базы рассылок/База рассылок.xlsb"
+    );
+    const advertisingAbitMysqlHost = getAdminSettingRenderValue(
+      "advertisingAbitMysqlHost",
+      state.data.meta.advertisingAbitMysqlHost || "vh458.timeweb.ru"
+    );
+    const advertisingAbitMysqlPort = getAdminSettingRenderValue(
+      "advertisingAbitMysqlPort",
+      state.data.meta.advertisingAbitMysqlPort || 3306
+    );
+    const advertisingAbitMysqlDatabase = getAdminSettingRenderValue(
+      "advertisingAbitMysqlDatabase",
+      state.data.meta.advertisingAbitMysqlDatabase || "cl11741_abitviit"
+    );
+    const advertisingAbitMysqlUser = getAdminSettingRenderValue(
+      "advertisingAbitMysqlUser",
+      state.data.meta.advertisingAbitMysqlUser || ""
+    );
+    const advertisingAbitMysqlPassword = getAdminSettingRenderValue("advertisingAbitMysqlPassword", "");
+    const advertisingMoodleMysqlHost = getAdminSettingRenderValue(
+      "advertisingMoodleMysqlHost",
+      state.data.meta.advertisingMoodleMysqlHost || "vh458.timeweb.ru"
+    );
+    const advertisingMoodleMysqlPort = getAdminSettingRenderValue(
+      "advertisingMoodleMysqlPort",
+      state.data.meta.advertisingMoodleMysqlPort || 3306
+    );
+    const advertisingMoodleMysqlDatabase = getAdminSettingRenderValue(
+      "advertisingMoodleMysqlDatabase",
+      state.data.meta.advertisingMoodleMysqlDatabase || "cl11741_distep"
+    );
+    const advertisingMoodleMysqlUser = getAdminSettingRenderValue(
+      "advertisingMoodleMysqlUser",
+      state.data.meta.advertisingMoodleMysqlUser || ""
+    );
+    const advertisingMoodleMysqlPassword = getAdminSettingRenderValue("advertisingMoodleMysqlPassword", "");
+    const advertisingAbitMysqlFieldsDisabled = Boolean(
+      state.data.meta.advertisingAbitMysqlManagedByEnvironment
+    );
+    const advertisingMoodleMysqlFieldsDisabled = Boolean(
+      state.data.meta.advertisingMoodleMysqlManagedByEnvironment
+    );
     const documentMailboxes = getAdditionalDocumentMailboxesForAdmin();
     const mysqlUseApplicationsConnection = Boolean(getAdminSettingRenderValue(
       "mysqlUseApplicationsConnection",
@@ -18844,6 +19233,7 @@ MAX - https://bizvmax.ru/zifra_plus
       : "database";
     const adminDatabaseTabs = [
       { id: "ais", label: "База АИС Допобразование" },
+      { id: "advertising", label: "База рекламы" },
       { id: "shop", label: "Интернет магазин" },
       { id: "statistics", label: "Статистика Power BI" },
       { id: "cloud", label: "Облачная база" }
@@ -19065,6 +19455,64 @@ MAX - https://bizvmax.ru/zifra_plus
                       ? escapeHtml(formatDateTimeRu(state.data.meta.studentDatabaseLastDownloadedAt))
                       : "Ещё не выполнялся"}</strong>
                   </p>
+                </div>
+                </section>
+                <section
+                  class="admin-database-subpanel"
+                  id="admin-database-panel-advertising"
+                  data-admin-database-panel="advertising"
+                  role="tabpanel"
+                  aria-labelledby="admin-database-tab-advertising"
+                  ${adminDatabaseTab === "advertising" ? "" : "hidden"}
+                >
+                <div class="admin-system-documents-head">
+                  <div class="admin-connection-heading-copy">
+                    <strong>База рекламы и подключения источников</strong>
+                    <small>Файл исключений использует общий режим локального компьютера/WebDAV. SQL-запросы настраиваются в конструкторе источников раздела «Реклама».</small>
+                  </div>
+                  <button class="ghost-button admin-connection-test-button" data-action="sync-advertising-database" type="button" title="Синхронизировать базу рекламы\n\nОбычный щелчок использует выбранный режим хранения, Shift + щелчок — альтернативный источник.">Синхронизировать базу</button>
+                </div>
+                <div class="admin-advertising-database-paths">
+                  <label>
+                    <span>Расположение базы рекламы на локальном диске</span>
+                    <input name="advertisingWorkbookLocalPath" type="text" value="${escapeAttr(advertisingWorkbookLocalPath)}" required spellcheck="false" placeholder="Y:\\Реклама\\Базы рассылок\\База рассылок.xlsb">
+                  </label>
+                  <label>
+                    <span>WebDAV-путь или ссылка на базу рекламы</span>
+                    <input name="advertisingWorkbookWebDavPath" type="text" value="${escapeAttr(advertisingWorkbookWebDavPath)}" required spellcheck="false" placeholder="ООО .../База рассылок.xlsb">
+                  </label>
+                </div>
+                <div class="admin-advertising-connections-grid">
+                  <fieldset ${advertisingAbitMysqlFieldsDisabled ? "disabled" : ""}>
+                    <legend>Базы ВИИТ</legend>
+                    <div class="admin-mysql-settings-grid ${advertisingAbitMysqlFieldsDisabled ? "is-disabled" : ""}">
+                      <label><span>Сервер MySQL</span><input name="advertisingAbitMysqlHost" type="text" value="${escapeAttr(advertisingAbitMysqlHost)}" spellcheck="false"></label>
+                      <label><span>Порт</span><input name="advertisingAbitMysqlPort" type="number" min="1" max="65535" value="${escapeAttr(advertisingAbitMysqlPort)}"></label>
+                      <label><span>Имя базы</span><input name="advertisingAbitMysqlDatabase" type="text" value="${escapeAttr(advertisingAbitMysqlDatabase)}" spellcheck="false"></label>
+                      <label><span>Пользователь</span><input name="advertisingAbitMysqlUser" type="text" value="${escapeAttr(advertisingAbitMysqlUser)}" autocomplete="username" spellcheck="false"></label>
+                      <label class="admin-mysql-password-field"><span>Пароль</span><input name="advertisingAbitMysqlPassword" type="password" value="${escapeAttr(advertisingAbitMysqlPassword)}" placeholder="${state.data.meta.advertisingAbitMysqlHasPassword ? "Пароль сохранён на сервере" : "Введите пароль MySQL"}" autocomplete="new-password"></label>
+                    </div>
+                  </fieldset>
+                  <fieldset ${advertisingMoodleMysqlFieldsDisabled ? "disabled" : ""}>
+                    <legend>База Moodle</legend>
+                    <div class="admin-mysql-settings-grid ${advertisingMoodleMysqlFieldsDisabled ? "is-disabled" : ""}">
+                      <label><span>Сервер MySQL</span><input name="advertisingMoodleMysqlHost" type="text" value="${escapeAttr(advertisingMoodleMysqlHost)}" spellcheck="false"></label>
+                      <label><span>Порт</span><input name="advertisingMoodleMysqlPort" type="number" min="1" max="65535" value="${escapeAttr(advertisingMoodleMysqlPort)}"></label>
+                      <label><span>Имя базы</span><input name="advertisingMoodleMysqlDatabase" type="text" value="${escapeAttr(advertisingMoodleMysqlDatabase)}" spellcheck="false"></label>
+                      <label><span>Пользователь</span><input name="advertisingMoodleMysqlUser" type="text" value="${escapeAttr(advertisingMoodleMysqlUser)}" autocomplete="username" spellcheck="false"></label>
+                      <label class="admin-mysql-password-field"><span>Пароль</span><input name="advertisingMoodleMysqlPassword" type="password" value="${escapeAttr(advertisingMoodleMysqlPassword)}" placeholder="${state.data.meta.advertisingMoodleMysqlHasPassword ? "Пароль сохранён на сервере" : "Введите пароль MySQL"}" autocomplete="new-password"></label>
+                    </div>
+                  </fieldset>
+                </div>
+                <div class="admin-database-copy system-action-notes">
+                  <section class="system-action-note">
+                    <strong>Синхронизация исключений</strong>
+                    <p>Если база рекламы доступна, правила с листа «База исключений» объединяются с исключениями АИС при общей синхронизации и при каждом сборе адресов. Существующие правила АИС не удаляются.</p>
+                  </section>
+                  <section class="system-action-note">
+                    <strong>Текущий результат</strong>
+                    <p>Правил: ${formatStatisticsInteger(state.data.meta.advertisingExclusionsCount || 0)}. ${state.data.meta.advertisingExclusionsSyncedAt ? `Последняя синхронизация: ${escapeHtml(formatDateTimeRu(state.data.meta.advertisingExclusionsSyncedAt))}.` : "Синхронизация ещё не выполнялась."}</p>
+                  </section>
                 </div>
                 </section>
                 <section
@@ -29393,7 +29841,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='switch-admin-database-tab']").forEach((button) => {
       button.addEventListener("click", () => {
         const tab = String(button.dataset.adminDatabaseTab || "");
-        if (!["ais", "shop", "statistics", "cloud"].includes(tab) || tab === state.adminDatabaseTab) return;
+        if (!["ais", "advertising", "shop", "statistics", "cloud"].includes(tab) || tab === state.adminDatabaseTab) return;
         state.adminDatabaseTab = tab;
         document.querySelectorAll("[data-admin-database-panel]").forEach((panel) => {
           panel.hidden = panel.dataset.adminDatabasePanel !== tab;
@@ -29560,6 +30008,8 @@ MAX - https://bizvmax.ru/zifra_plus
     bindAutomaticDocumentSaveHint(studentDatabaseSettingsForm);
     bindAdminMySqlSettings(studentDatabaseSettingsForm);
     document.querySelector("[data-action='test-yandex-disk']")?.addEventListener("click", testYandexDiskConnection);
+    document.querySelector("[data-action='sync-advertising-database']")
+      ?.addEventListener("click", syncAdvertisingDatabaseFromAdmin);
     document.querySelector("[data-action='test-applications-mysql']")
       ?.addEventListener("click", testStudentApplicationsMySqlConnection);
     document.querySelector("[data-action='test-assistant-statistics-mysql']")
@@ -46954,6 +47404,42 @@ MAX - https://bizvmax.ru/zifra_plus
     const assistantStatisticsMysqlPassword = String(
       form.elements.assistantStatisticsMysqlPassword?.value || ""
     );
+    const advertisingWorkbookLocalPath = String(
+      form.elements.advertisingWorkbookLocalPath?.value
+        || state.data.meta.advertisingWorkbookLocalPath
+        || ""
+    ).trim();
+    const advertisingWorkbookWebDavPath = String(
+      form.elements.advertisingWorkbookWebDavPath?.value
+        || state.data.meta.advertisingWorkbookWebDavPath
+        || ""
+    ).trim();
+    const advertisingAbitMysqlHost = String(
+      form.elements.advertisingAbitMysqlHost?.value || state.data.meta.advertisingAbitMysqlHost || ""
+    ).trim();
+    const advertisingAbitMysqlPort = Number(
+      form.elements.advertisingAbitMysqlPort?.value || state.data.meta.advertisingAbitMysqlPort || 3306
+    );
+    const advertisingAbitMysqlDatabase = String(
+      form.elements.advertisingAbitMysqlDatabase?.value || state.data.meta.advertisingAbitMysqlDatabase || ""
+    ).trim();
+    const advertisingAbitMysqlUser = String(
+      form.elements.advertisingAbitMysqlUser?.value || state.data.meta.advertisingAbitMysqlUser || ""
+    ).trim();
+    const advertisingAbitMysqlPassword = String(form.elements.advertisingAbitMysqlPassword?.value || "");
+    const advertisingMoodleMysqlHost = String(
+      form.elements.advertisingMoodleMysqlHost?.value || state.data.meta.advertisingMoodleMysqlHost || ""
+    ).trim();
+    const advertisingMoodleMysqlPort = Number(
+      form.elements.advertisingMoodleMysqlPort?.value || state.data.meta.advertisingMoodleMysqlPort || 3306
+    );
+    const advertisingMoodleMysqlDatabase = String(
+      form.elements.advertisingMoodleMysqlDatabase?.value || state.data.meta.advertisingMoodleMysqlDatabase || ""
+    ).trim();
+    const advertisingMoodleMysqlUser = String(
+      form.elements.advertisingMoodleMysqlUser?.value || state.data.meta.advertisingMoodleMysqlUser || ""
+    ).trim();
+    const advertisingMoodleMysqlPassword = String(form.elements.advertisingMoodleMysqlPassword?.value || "");
     const mysqlUseApplicationsConnection = Boolean(
       form.elements.mysqlUseApplicationsConnection?.checked
     );
@@ -47004,6 +47490,33 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!applicationsOrderAdminUrlTemplate) {
       throw new Error("Укажите шаблон ссылки на заказ интернет-магазина.");
     }
+    if (!advertisingWorkbookLocalPath) throw new Error("Укажите локальный путь к базе рекламы.");
+    if (!advertisingWorkbookWebDavPath) throw new Error("Укажите WebDAV-путь к базе рекламы.");
+    const validateAdvertisingConnection = (label, values, managed, hasPassword) => {
+      const requested = Boolean(values.user || values.password || hasPassword);
+      if (managed || !requested) return;
+      if (!values.host) throw new Error(`Укажите сервер MySQL ${label}.`);
+      if (!Number.isInteger(values.port) || values.port < 1 || values.port > 65535) {
+        throw new Error(`Укажите корректный порт MySQL ${label}.`);
+      }
+      if (!values.database) throw new Error(`Укажите имя базы ${label}.`);
+      if (!values.user) throw new Error(`Укажите пользователя базы ${label}.`);
+      if (!values.password && !hasPassword) throw new Error(`Введите пароль базы ${label}.`);
+    };
+    validateAdvertisingConnection("ВИИТ", {
+      host: advertisingAbitMysqlHost,
+      port: advertisingAbitMysqlPort,
+      database: advertisingAbitMysqlDatabase,
+      user: advertisingAbitMysqlUser,
+      password: advertisingAbitMysqlPassword
+    }, state.data.meta.advertisingAbitMysqlManagedByEnvironment, state.data.meta.advertisingAbitMysqlHasPassword);
+    validateAdvertisingConnection("Moodle", {
+      host: advertisingMoodleMysqlHost,
+      port: advertisingMoodleMysqlPort,
+      database: advertisingMoodleMysqlDatabase,
+      user: advertisingMoodleMysqlUser,
+      password: advertisingMoodleMysqlPassword
+    }, state.data.meta.advertisingMoodleMysqlManagedByEnvironment, state.data.meta.advertisingMoodleMysqlHasPassword);
     if (!state.data.meta.applicationsMysqlManagedByEnvironment) {
       if (!applicationsMysqlDriver) throw new Error("Укажите драйвер ODBC интернет-магазина.");
       if (!applicationsMysqlHost) throw new Error("Укажите сервер MySQL интернет-магазина.");
@@ -47089,6 +47602,18 @@ MAX - https://bizvmax.ru/zifra_plus
         assistantStatisticsMysqlDatabase,
         assistantStatisticsMysqlUser,
         assistantStatisticsMysqlPassword,
+        advertisingWorkbookLocalPath,
+        advertisingWorkbookWebDavPath,
+        advertisingAbitMysqlHost,
+        advertisingAbitMysqlPort,
+        advertisingAbitMysqlDatabase,
+        advertisingAbitMysqlUser,
+        advertisingAbitMysqlPassword,
+        advertisingMoodleMysqlHost,
+        advertisingMoodleMysqlPort,
+        advertisingMoodleMysqlDatabase,
+        advertisingMoodleMysqlUser,
+        advertisingMoodleMysqlPassword,
         mysqlUseApplicationsConnection,
         mysqlHost,
         mysqlPort,
@@ -47108,6 +47633,8 @@ MAX - https://bizvmax.ru/zifra_plus
     if (form.elements.assistantStatisticsMysqlPassword) {
       form.elements.assistantStatisticsMysqlPassword.value = "";
     }
+    if (form.elements.advertisingAbitMysqlPassword) form.elements.advertisingAbitMysqlPassword.value = "";
+    if (form.elements.advertisingMoodleMysqlPassword) form.elements.advertisingMoodleMysqlPassword.value = "";
     if (form.elements.mysqlPassword) form.elements.mysqlPassword.value = "";
     return payload;
   }
@@ -47212,6 +47739,25 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.meta.assistantStatisticsMysqlManagedByEnvironment = Boolean(
       payload.assistantStatisticsMysqlManagedByEnvironment
     );
+    state.data.meta.advertisingWorkbookLocalPath = String(
+      payload.advertisingWorkbookLocalPath || state.data.meta.advertisingWorkbookLocalPath || ""
+    ).trim();
+    state.data.meta.advertisingWorkbookWebDavPath = String(
+      payload.advertisingWorkbookWebDavPath || state.data.meta.advertisingWorkbookWebDavPath || ""
+    ).trim();
+    ["Abit", "Moodle"].forEach((label) => {
+      const prefix = `advertising${label}Mysql`;
+      state.data.meta[`${prefix}Host`] = String(payload[`${prefix}Host`] || "").trim();
+      state.data.meta[`${prefix}Port`] = Number(payload[`${prefix}Port`] || 3306);
+      state.data.meta[`${prefix}Database`] = String(payload[`${prefix}Database`] || "").trim();
+      state.data.meta[`${prefix}User`] = String(payload[`${prefix}User`] || "").trim();
+      state.data.meta[`${prefix}HasPassword`] = Boolean(payload[`${prefix}HasPassword`]);
+      state.data.meta[`${prefix}Configured`] = Boolean(payload[`${prefix}Configured`]);
+      state.data.meta[`${prefix}ManagedByEnvironment`] = Boolean(payload[`${prefix}ManagedByEnvironment`]);
+    });
+    state.data.meta.advertisingExclusionsCount = Number(payload.advertisingExclusionsCount || 0);
+    state.data.meta.advertisingExclusionsSyncedAt = String(payload.advertisingExclusionsSyncedAt || "");
+    state.data.meta.advertisingExclusionsSyncSource = String(payload.advertisingExclusionsSyncSource || "");
     if (Object.prototype.hasOwnProperty.call(payload, "mysqlUseApplicationsConnection")) {
       state.data.meta.mysqlUseApplicationsConnection = payload.mysqlUseApplicationsConnection !== false;
       state.data.meta.mysqlHost = String(payload.mysqlHost || "").trim();
@@ -47269,6 +47815,41 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
     } catch (error) {
       alert(`Проверка почты не выполнена: ${error.message}`);
+      button.disabled = false;
+    }
+  }
+
+  async function syncAdvertisingDatabaseFromAdmin(event) {
+    const button = event.currentTarget;
+    const form = button.closest("form");
+    if (!form) return;
+    button.disabled = true;
+    try {
+      const settings = await saveYandexDiskSettings(form);
+      applyYandexDiskSettings(settings);
+      clearAdminSettingsDirtyState(form);
+      const source = getStudentDocumentsSource(Boolean(event.shiftKey));
+      const response = await fetch(photoApiUrl("/api/advertising/email-collector/sync"), {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", "X-Requested-With": "AIS-Web" },
+        body: JSON.stringify({ source })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Не удалось синхронизировать базу рекламы.");
+      state.data.meta.advertisingExclusionsCount = Number(payload.count || 0);
+      state.data.meta.advertisingExclusionsSyncedAt = String(payload.syncedAt || "");
+      state.data.meta.advertisingExclusionsSyncSource = String(payload.source || "");
+      state.advertising.exclusions.rows = Array.isArray(payload.rows) ? payload.rows : [];
+      state.advertising.exclusions.loaded = true;
+      state.advertising.exclusions.syncedAt = String(payload.syncedAt || "");
+      state.advertising.exclusions.syncSource = String(payload.source || "");
+      alert(`База рекламы синхронизирована. Правил исключения: ${payload.count || 0}.`);
+      persist();
+      render();
+    } catch (error) {
+      alert(`Синхронизация базы рекламы не выполнена: ${error.message}`);
       button.disabled = false;
     }
   }
@@ -48241,6 +48822,16 @@ MAX - https://bizvmax.ru/zifra_plus
           + "Выберите актуальную сторону через загрузку или экспорт."
         );
       }
+      const advertisingExclusionsSync = result.advertisingExclusionsSync
+        && typeof result.advertisingExclusionsSync === "object"
+        ? result.advertisingExclusionsSync
+        : null;
+      if (advertisingExclusionsSync?.available) {
+        state.data.meta.advertisingExclusionsCount = Number(advertisingExclusionsSync.count || 0);
+        state.data.meta.advertisingExclusionsSyncedAt = String(advertisingExclusionsSync.syncedAt || "");
+        state.data.meta.advertisingExclusionsSyncSource = String(advertisingExclusionsSync.source || "");
+        if (state.advertising?.exclusions) state.advertising.exclusions.loaded = false;
+      }
 
       let operationSummary = null;
       let committedResult = {};
@@ -48482,6 +49073,16 @@ MAX - https://bizvmax.ru/zifra_plus
             problem: true,
             columns: [{ key: "name", label: "Поле" }],
             rows: missingProgramColumns
+          }] : []),
+          ...(advertisingExclusionsSync ? [{
+            key: "advertising-exclusions",
+            label: "Исключения рекламы",
+            value: advertisingExclusionsSync.available
+              ? Number(advertisingExclusionsSync.count || 0)
+              : "Пропущено",
+            note: advertisingExclusionsSync.available
+              ? `Источник: ${advertisingExclusionsSync.source || "база рекламы"}`
+              : advertisingExclusionsSync.error || "База рекламы временно недоступна"
           }] : [])
         ],
         details: [
@@ -49571,7 +50172,16 @@ MAX - https://bizvmax.ru/zifra_plus
           applicationsMysqlConfigured: Boolean(
             importedMacroSettings.applicationsMysqlConfigured
             ?? previousData.meta.applicationsMysqlConfigured
-          )
+          ),
+          advertisingExclusionsCount: payload.advertisingExclusionsSync?.available
+            ? Number(payload.advertisingExclusionsSync.count || 0)
+            : Number(previousData.meta.advertisingExclusionsCount || 0),
+          advertisingExclusionsSyncedAt: payload.advertisingExclusionsSync?.available
+            ? String(payload.advertisingExclusionsSync.syncedAt || "")
+            : String(previousData.meta.advertisingExclusionsSyncedAt || ""),
+          advertisingExclusionsSyncSource: payload.advertisingExclusionsSync?.available
+            ? String(payload.advertisingExclusionsSync.source || "")
+            : String(previousData.meta.advertisingExclusionsSyncSource || "")
         },
         dictionaries: {
           ...previousData.dictionaries,
@@ -49597,6 +50207,9 @@ MAX - https://bizvmax.ru/zifra_plus
           audit: [...(previousData.collections.audit || [])]
         }
       });
+      if (payload.advertisingExclusionsSync?.available) {
+        if (state.advertising?.exclusions) state.advertising.exclusions.loaded = false;
+      }
       if (isSynchronizationImport) {
         state.data.collections.programs = nextPrograms.map((program) => normalizeProgramRecord(program));
         state.data.collections.trainingPlans = linkTrainingPlanRecordsToPrograms(
@@ -49762,7 +50375,17 @@ MAX - https://bizvmax.ru/zifra_plus
           { key: "inventory-issues", label: "Выдачи запасов", value: inventoryLinkedExpenseCount, note: "Связаны с карточками" },
           ...(inventoryGeneratedExpenseCount
             ? [{ key: "restored-inventory-issues", label: "Восстановлено выдач", value: inventoryGeneratedExpenseCount, note: "Из листа «Запасы»" }]
-            : [])
+            : []),
+          ...(payload.advertisingExclusionsSync ? [{
+            key: "advertising-exclusions",
+            label: "Исключения рекламы",
+            value: payload.advertisingExclusionsSync.available
+              ? Number(payload.advertisingExclusionsSync.count || 0)
+              : "Пропущено",
+            note: payload.advertisingExclusionsSync.available
+              ? `Источник: ${payload.advertisingExclusionsSync.source || "база рекламы"}`
+              : payload.advertisingExclusionsSync.error || "База рекламы временно недоступна"
+          }] : [])
         ],
         details: [
           { label: "Источник", value: sourceLabel },
