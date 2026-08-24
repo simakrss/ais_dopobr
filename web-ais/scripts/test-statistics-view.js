@@ -18,7 +18,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /version: "1\.7\.250"/u);
+assert.match(appSource, /version: "1\.7\.251"/u);
 assert.match(appSource, /\{ id: "statistics", label: "Статистика"/u);
 const navigationBlock = sourceBlock(appSource, "const navItems = [", "const PROGRAM_LIST_FIELD_KEYS");
 const navigationIds = [...navigationBlock.matchAll(/\{ id: "([^"]+)"/gu)].map((match) => match[1]);
@@ -36,6 +36,7 @@ assert.match(appSource, /Общие расходы не учитываются/u
 assert.match(appSource, /open-statistics-profitability-details/u);
 assert.match(appSource, /Рентабельность по образовательным программам/u);
 assert.match(appSource, /Суммарные доходы/u);
+assert.match(appSource, /sort-statistics-income-programs/u);
 assert.match(appSource, /renderStatisticsInstallDownloadChart/u);
 assert.match(appSource, /renderStatisticsLocationChart/u);
 assert.match(appSource, /sortStatisticsMonthSeries/u);
@@ -173,6 +174,28 @@ const incomeReportBlock = sourceBlock(appSource, "function buildStatisticsIncome
 assert.match(incomeReportBlock, /calculateStatisticsStudentProfitability\(income, directExpenses\)/u);
 assert.doesNotMatch(incomeReportBlock, /calculateStatisticsStudentProfitability\([^)]*generalExpenses/u);
 assert.match(incomeReportBlock, /buildStatisticsProgramProfitabilityRows\(income, directExpenses\)/u);
+const programSortBlock = sourceBlock(
+  appSource,
+  "function sortStatisticsProgramRows(",
+  "function getSortedStatisticsIncomeProgramRows("
+);
+const sortStatisticsProgramRows = new Function(`${programSortBlock}\nreturn sortStatisticsProgramRows;`)();
+const sortablePrograms = [
+  { program: "Бета", students: 3, income: 90000 },
+  { program: "Альфа", students: 2, income: 120000 },
+  { program: "Гамма", students: 1, income: 120000 }
+];
+assert.deepEqual(
+  sortStatisticsProgramRows(sortablePrograms, { key: "income", dir: "desc" }, [
+    { key: "program" }, { key: "students", numeric: true }, { key: "income", numeric: true }
+  ]).map((row) => row.program),
+  ["Альфа", "Гамма", "Бета"]
+);
+assert.deepEqual(
+  sortStatisticsProgramRows(sortablePrograms, { key: "program", dir: "asc" }, [{ key: "program" }])
+    .map((row) => row.program),
+  ["Альфа", "Бета", "Гамма"]
+);
 
 const normalizeAssistantStatisticsBlock = sourceBlock(
   serverSource,

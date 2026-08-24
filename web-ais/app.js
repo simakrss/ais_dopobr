@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.250",
+    version: "1.7.251",
     releasedAt: "2026-08-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.251",
+      releasedAt: "2026-08-24",
+      changes: [
+        "В таблице доходов по программам добавлена сортировка по названию программы, количеству слушателей и суммарному доходу."
+      ]
+    },
     {
       version: "1.7.250",
       releasedAt: "2026-08-24",
@@ -4728,6 +4735,7 @@ MAX - https://bizvmax.ru/zifra_plus
         downloadQuery: ""
       },
       downloadDetailSort: { key: "id", dir: "desc" },
+      incomeProgramSort: { key: "income", dir: "desc" },
       profitabilityDetails: {
         open: false,
         sort: { key: "profitability", dir: "desc" }
@@ -9420,8 +9428,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!sourceStudents.has(source)) sourceStudents.set(source, new Set());
       sourceStudents.get(source).add(row.studentId || row.studentUid || row.subject || row.id);
     });
-    const programs = buildStatisticsProgramProfitabilityRows(income, directExpenses)
-      .sort((left, right) => right.income - left.income);
+    const programs = buildStatisticsProgramProfitabilityRows(income, directExpenses);
     return {
       income,
       expenses,
@@ -9436,8 +9443,50 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  const statisticsIncomeProgramColumns = Object.freeze([
+    { key: "program", label: "Программа" },
+    { key: "students", label: "Слушателей", numeric: true },
+    { key: "income", label: "Доход", numeric: true }
+  ]);
+
+  function sortStatisticsProgramRows(rows = [], sort = {}, columns = []) {
+    const fallbackColumn = columns[columns.length - 1] || { key: "program" };
+    const column = columns.find((item) => item.key === sort.key) || fallbackColumn;
+    const direction = sort.dir === "asc" ? 1 : -1;
+    return rows.slice().sort((left, right) => {
+      if (column.numeric) {
+        const difference = Number(left[column.key] || 0) - Number(right[column.key] || 0);
+        if (difference) return difference * direction;
+      } else {
+        const difference = String(left[column.key] || "").localeCompare(String(right[column.key] || ""), "ru");
+        if (difference) return difference * direction;
+      }
+      return String(left.program || "").localeCompare(String(right.program || ""), "ru");
+    });
+  }
+
+  function getSortedStatisticsIncomeProgramRows(rows = []) {
+    return sortStatisticsProgramRows(
+      rows,
+      state.statistics.incomeProgramSort || { key: "income", dir: "desc" },
+      statisticsIncomeProgramColumns
+    );
+  }
+
+  function renderStatisticsIncomeProgramSortButton(column) {
+    const sort = state.statistics.incomeProgramSort || {};
+    const active = sort.key === column.key;
+    const indicator = active ? (sort.dir === "asc" ? "↑" : "↓") : "↕";
+    return `
+      <button class="statistics-table-sort-button ${active ? "is-active" : ""}" data-action="sort-statistics-income-programs" data-sort-key="${escapeAttr(column.key)}" type="button">
+        <span>${escapeHtml(column.label)}</span><span class="statistics-table-sort-indicator" aria-hidden="true">${indicator}</span>
+      </button>
+    `;
+  }
+
   function renderStatisticsIncome() {
     const report = buildStatisticsIncomeReport();
+    const programRows = getSortedStatisticsIncomeProgramRows(report.programs);
     return `
       ${renderStatisticsKpis([
         { label: "Суммарные доходы", value: money(report.incomeTotal), note: "Фактические поступления", tone: "teal" },
@@ -9468,12 +9517,12 @@ MAX - https://bizvmax.ru/zifra_plus
         </section>
       </div>
       <section class="panel statistics-table-panel">
-        <div class="panel-head"><div><p class="eyebrow">Программы</p><h2>Доходы по программам</h2></div><span class="statistics-row-count">${report.programs.length}</span></div>
-        ${report.programs.length ? `
+        <div class="panel-head"><div><p class="eyebrow">Программы</p><h2>Доходы по программам</h2></div><span class="statistics-row-count">${programRows.length}</span></div>
+        ${programRows.length ? `
           <div class="table-wrap statistics-table-wrap">
             <table class="data-table statistics-table">
-              <thead><tr><th>Программа</th><th>Слушателей</th><th class="statistics-number-cell">Доход</th></tr></thead>
-              <tbody>${report.programs.map((row) => `
+              <thead><tr>${statisticsIncomeProgramColumns.map((column) => `<th class="${column.numeric ? "statistics-number-cell" : ""}">${renderStatisticsIncomeProgramSortButton(column)}</th>`).join("")}</tr></thead>
+              <tbody>${programRows.map((row) => `
                 <tr><td>${escapeHtml(row.program)}</td><td>${formatStatisticsInteger(row.students)}</td><td class="statistics-number-cell">${money(row.income)}</td></tr>
               `).join("")}</tbody>
             </table>
@@ -9492,21 +9541,9 @@ MAX - https://bizvmax.ru/zifra_plus
   ]);
 
   function getSortedStatisticsProgramProfitabilityRows() {
-    const rows = buildStatisticsIncomeReport().programs.slice();
+    const rows = buildStatisticsIncomeReport().programs;
     const sort = state.statistics.profitabilityDetails.sort || { key: "profitability", dir: "desc" };
-    const column = statisticsProgramProfitabilityColumns.find((item) => item.key === sort.key)
-      || statisticsProgramProfitabilityColumns.at(-1);
-    const direction = sort.dir === "asc" ? 1 : -1;
-    return rows.sort((left, right) => {
-      if (column.numeric) {
-        const difference = Number(left[column.key] || 0) - Number(right[column.key] || 0);
-        if (difference) return difference * direction;
-      } else {
-        const difference = String(left[column.key] || "").localeCompare(String(right[column.key] || ""), "ru");
-        if (difference) return difference * direction;
-      }
-      return String(left.program || "").localeCompare(String(right.program || ""), "ru");
-    });
+    return sortStatisticsProgramRows(rows, sort, statisticsProgramProfitabilityColumns);
   }
 
   function renderStatisticsProgramProfitabilitySortButton(column) {
@@ -10032,7 +10069,7 @@ MAX - https://bizvmax.ru/zifra_plus
     let fileSuffix = tab;
     let content = "";
     if (tab === "income") {
-      const rows = buildStatisticsIncomeReport().programs;
+      const rows = getSortedStatisticsIncomeProgramRows(buildStatisticsIncomeReport().programs);
       content = [
         ["Программа", "Слушателей", "Доход"].map(csvCell).join(";"),
         ...rows.map((row) => [row.program, row.students, row.income].map(csvCell).join(";"))
@@ -10074,6 +10111,18 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindStatisticsEvents() {
     if (state.view !== "statistics") return;
+    document.querySelectorAll("[data-action='sort-statistics-income-programs']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = String(button.dataset.sortKey || "");
+        const column = statisticsIncomeProgramColumns.find((item) => item.key === key);
+        if (!column) return;
+        const current = state.statistics.incomeProgramSort || { key: "income", dir: "desc" };
+        state.statistics.incomeProgramSort = current.key === key
+          ? { key, dir: current.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: column.numeric ? "desc" : "asc" };
+        render();
+      });
+    });
     document.querySelector("[data-action='open-statistics-profitability-details']")
       ?.addEventListener("click", openStatisticsProfitabilityDetails);
     document.querySelectorAll("[data-action='close-statistics-profitability-details']").forEach((element) => {
