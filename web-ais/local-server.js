@@ -43,10 +43,32 @@ function isLoopbackAddress(value) {
     || address === "::ffff:127.0.0.1";
 }
 
+function isLoopbackHostname(value) {
+  const hostname = String(value || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (hostname === "localhost" || hostname === "::1") return true;
+  const parts = hostname.split(".");
+  return parts.length === 4
+    && parts[0] === "127"
+    && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
+function getEffectivePort(url, fallbackProtocol = "http:") {
+  if (url.port) return url.port;
+  const protocol = url.protocol || fallbackProtocol;
+  return protocol === "https:" ? "443" : "80";
+}
+
 function isSameRequestOrigin(req, origin) {
   if (!origin) return true;
   try {
-    return new URL(origin).host.toLowerCase() === String(req.headers.host || "").trim().toLowerCase();
+    const originUrl = new URL(origin);
+    const requestHost = String(req.headers.host || "").trim().toLowerCase();
+    if (originUrl.host.toLowerCase() === requestHost) return true;
+
+    const requestUrl = new URL(`http://${requestHost}`);
+    return isLoopbackHostname(originUrl.hostname)
+      && isLoopbackHostname(requestUrl.hostname)
+      && getEffectivePort(originUrl) === getEffectivePort(requestUrl);
   } catch {
     return false;
   }
@@ -394,6 +416,11 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || `${host}:${port}`}`);
   const accessContext = getRequestAccessContext(req, url);
   if (accessContext.crossOrigin && !accessContext.trustedRemoteService) {
+    console.warn(
+      `Cross-origin request denied: ${req.method || "GET"} ${url.pathname}; `
+      + `origin=${accessContext.origin || "(none)"}; host=${req.headers.host || "(none)"}; `
+      + `remote=${req.socket.remoteAddress || "(unknown)"}`
+    );
     send(res, 403, "Cross-origin request denied.");
     return;
   }
