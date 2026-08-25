@@ -8,6 +8,8 @@ const { spawnSync } = require("node:child_process");
 const appRoot = path.resolve(__dirname, "..");
 const repositoryRoot = path.resolve(appRoot, "..");
 const bootstrapPath = path.join(__dirname, "bootstrap-local-system.ps1");
+const startupUpdatePath = path.join(__dirname, "sync-and-deploy-startup.ps1");
+const deployPath = path.join(__dirname, "deploy-lms.ps1");
 const rootLauncherPath = path.join(repositoryRoot, "ЗАПУСТИТЬ АИС.bat");
 const localLauncherPath = path.join(appRoot, "ЗАПУСТИТЬ АИС В ЛОКАЛЬНОЙ СЕТИ.cmd");
 const rootStopPath = path.join(repositoryRoot, "ОСТАНОВИТЬ АИС.cmd");
@@ -15,6 +17,8 @@ const localStopPath = path.join(appRoot, "ОСТАНОВИТЬ АИС.cmd");
 
 const read = (filePath) => fs.readFileSync(filePath, "utf8");
 const bootstrapSource = read(bootstrapPath);
+const startupUpdateSource = read(startupUpdatePath);
+const deploySource = read(deployPath);
 const rootLauncherSource = read(rootLauncherPath);
 const localLauncherSource = read(localLauncherPath);
 const rootStopSource = read(rootStopPath);
@@ -35,6 +39,21 @@ assert.match(bootstrapSource, /--user[\s\S]*--accept-license[\s\S]*--backend=wsl
 assert.match(bootstrapSource, /Start-DockerEngine/u);
 assert.match(bootstrapSource, /AIS_BOOTSTRAP_SKIP_INSTALL/u);
 assert.match(bootstrapSource, /AIS_BOOTSTRAP_SKIP_DOCKER/u);
+assert.match(bootstrapSource, /sync-and-deploy-startup\.ps1/u);
+assert.match(bootstrapSource, /stop-lan-system\.ps1[\s\S]*?-KeepDocker/u);
+assert.match(startupUpdateSource, /fetch", "--prune", "origin"/u);
+assert.match(startupUpdateSource, /merge", "--ff-only"/u);
+assert.match(startupUpdateSource, /stash", "push"/u);
+assert.match(startupUpdateSource, /deploy-lms\.ps1[\s\S]*?-All/u);
+assert.match(startupUpdateSource, /Автоматическая отправка в GitHub отключена/u);
+assert.match(deploySource, /System\.Link\.TargetParsingPath/u);
+assert.match(deploySource, /privateTemplatePaths/u);
+const generatedSafePaths = deploySource.match(/\$generatedSafePaths = @\(([\s\S]*?)\) \| Where-Object/u);
+assert.ok(generatedSafePaths, "generated safe-path list was not found");
+assert.doesNotMatch(generatedSafePaths[1], /employee-contract-education\.docx/u);
+assert.doesNotMatch(generatedSafePaths[1], /employee-contract-general\.docx/u);
+assert.match(generatedSafePaths[1], /employee-contract-education-no-stamp\.docx/u);
+assert.match(generatedSafePaths[1], /employee-contract-general-no-stamp\.docx/u);
 assert.match(rootLauncherSource, /bootstrap-local-system\.ps1/u);
 assert.match(localLauncherSource, /bootstrap-local-system\.ps1/u);
 assert.doesNotMatch(rootLauncherSource, /Установите Node\.js/u);
@@ -80,6 +99,7 @@ if (process.platform === "win32") {
   ], { cwd: repositoryRoot, env: environment, encoding: "utf8", timeout: 30000 });
   assert.equal(validation.status, 0, `${validation.stdout}\n${validation.stderr}`);
   assert.match(validation.stdout, /Node\.js v\d+/u);
+  assert.match(validation.stdout, /Конфигурация проверена/u);
   assert.match(validation.stdout, /Установка и запуск служб не выполнялись/u);
 
   const launcherValidation = spawnSync("cmd.exe", [

@@ -17,6 +17,8 @@ $runtimeRoot = Join-Path $appRoot ".runtime"
 $downloadRoot = Join-Path $runtimeRoot "downloads"
 $portableNodeRoot = Join-Path $runtimeRoot "node"
 $launcherPath = Join-Path $PSScriptRoot "start-lan-system.js"
+$startupUpdatePath = Join-Path $PSScriptRoot "sync-and-deploy-startup.ps1"
+$stopScriptPath = Join-Path $PSScriptRoot "stop-lan-system.ps1"
 $minimumNodeMajor = 20
 $validateOnly = $Action -eq "Validate" -or $env:AIS_LAUNCHER_VALIDATE_ONLY -eq "1"
 $skipInstall = $env:AIS_BOOTSTRAP_SKIP_INSTALL -eq "1"
@@ -353,6 +355,12 @@ function Ensure-DockerReady {
 if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
   throw "Не найден сценарий запуска АИС: $launcherPath"
 }
+if (-not (Test-Path -LiteralPath $startupUpdatePath -PathType Leaf)) {
+  throw "Не найден сценарий синхронизации и публикации: $startupUpdatePath"
+}
+if (-not (Test-Path -LiteralPath $stopScriptPath -PathType Leaf)) {
+  throw "Не найден сценарий перезапуска АИС: $stopScriptPath"
+}
 
 $nodeRuntime = Find-NodeRuntime
 if (-not $nodeRuntime) { $nodeRuntime = Install-PortableNode }
@@ -364,8 +372,17 @@ Write-Step "Node.js $($nodeRuntime.Version) готов: $($nodeRuntime.Path)"
 if ($validateOnly) {
   & $nodeRuntime.Path --check $launcherPath
   if ($LASTEXITCODE -ne 0) { throw "Сценарий запуска АИС содержит синтаксическую ошибку." }
+  & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+    -File $startupUpdatePath -Action Validate
+  if ($LASTEXITCODE -ne 0) { throw "Проверка синхронизации GitHub и FTP-публикации завершилась ошибкой." }
   Write-Step "Сценарий запуска и окружение проверены. Установка и запуск служб не выполнялись."
   exit 0
+}
+
+Write-Step "Синхронизация с GitHub и обновление edu-plus.ru/lms..."
+& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $startupUpdatePath
+if ($LASTEXITCODE -ne 0) {
+  Write-Warning "Обновить GitHub/FTP сейчас не удалось. Локальная АИС продолжит запуск на последней доступной версии."
 }
 
 $dockerFailure = ""
@@ -375,6 +392,12 @@ try {
   $dockerFailure = $_.Exception.Message
   Write-Warning "$dockerFailure Основная АИС будет запущена без OCR и преобразования документов."
   if (-not $skipDocker) { $forwardedArguments += "--skip-docker" }
+}
+
+Write-Step "Перезапуск локальных серверов на актуальной версии..."
+& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $stopScriptPath -KeepDocker
+if ($LASTEXITCODE -ne 0) {
+  Write-Warning "Штатная остановка предыдущей копии АИС завершилась с ошибкой; запуск продолжен."
 }
 
 Write-Step "Запуск серверов АИС..."

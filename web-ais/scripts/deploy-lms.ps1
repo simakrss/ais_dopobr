@@ -4,6 +4,7 @@ param(
   [string[]]$RelativePath = @(),
   [switch]$All,
   [switch]$ListDeployable,
+  [switch]$ValidateProfile,
   [switch]$TunnelRuntime
 )
 
@@ -18,7 +19,7 @@ $repositoryRoot = Split-Path -Parent $appRoot
 $shortcutPath = Get-ChildItem -LiteralPath $repositoryRoot -Filter "*.lnk" -File |
   Where-Object { $_.Name -like "*vh458.timeweb.ru*" } |
   Select-Object -First 1 -ExpandProperty FullName
-$remoteRoot = "/edu-plus.ru/public_html/lms"
+$expectedRemoteRoot = "/edu-plus.ru/public_html/lms"
 $runtimeAppRoot = "/edu-plus.ru/lms-runtime/app"
 $runtimeMirrorFiles = @(
   "app-server.js",
@@ -44,6 +45,11 @@ function Normalize-RelativePath([string]$PathValue) {
 
 function Test-DeployablePath([string]$PathValue) {
   $path = Normalize-RelativePath $PathValue
+  $privateTemplatePaths = @(
+    "storage/document-templates/employee-contract-education.docx",
+    "storage/document-templates/employee-contract-general.docx"
+  )
+  if ($privateTemplatePaths -contains $path) { return $false }
   $exactFiles = @(
     ".htaccess",
     "app-server.js",
@@ -83,9 +89,7 @@ function Get-TrackedDeployablePaths {
   if ($LASTEXITCODE -ne 0) { throw "Could not read the Git tracked-file list." }
   $generatedSafePaths = @(
     "vendor/mysql2-bundle.cjs",
-    "storage/document-templates/employee-contract-education.docx",
     "storage/document-templates/employee-contract-education-no-stamp.docx",
-    "storage/document-templates/employee-contract-general.docx",
     "storage/document-templates/employee-contract-general-no-stamp.docx"
   ) | Where-Object {
     Test-Path -LiteralPath (Join-Path $appRoot ($_.Replace("/", [IO.Path]::DirectorySeparatorChar))) -PathType Leaf
@@ -103,7 +107,12 @@ if ($ListDeployable) {
   exit 0
 }
 
-if ($TunnelRuntime) {
+if ($ValidateProfile) {
+  if ($TunnelRuntime -or $All -or $RelativePath.Count) {
+    throw "-ValidateProfile cannot be combined with deployment parameters."
+  }
+  $pathsToDeploy = @()
+} elseif ($TunnelRuntime) {
   if ($All -or $RelativePath.Count) {
     throw "-TunnelRuntime нельзя объединять с -All или -RelativePath."
   }
@@ -124,12 +133,51 @@ if ($TunnelRuntime) {
   }
 }
 
-if (-not $pathsToDeploy.Count) { throw "No safe tracked files were selected for deployment." }
+if (-not $ValidateProfile -and -not $pathsToDeploy.Count) {
+  throw "No safe tracked files were selected for deployment."
+}
 if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) {
   throw "FTP shortcut was not found."
 }
 
 function Get-FtpProfile {
+  try {
+    $shell = New-Object -ComObject Shell.Application
+    $shortcutDirectory = Split-Path -Parent $shortcutPath
+    $shortcutName = Split-Path -Leaf $shortcutPath
+    $shortcutItem = $shell.Namespace($shortcutDirectory).ParseName($shortcutName)
+    $target = if ($shortcutItem) {
+      [string]$shortcutItem.ExtendedProperty("System.Link.TargetParsingPath")
+    } else {
+      ""
+    }
+    $uri = $null
+    if ($target -and [Uri]::TryCreate($target, [UriKind]::Absolute, [ref]$uri) -and $uri.Scheme -eq "ftp") {
+      $userInfo = [Uri]::UnescapeDataString($uri.UserInfo)
+      $separator = $userInfo.IndexOf(":")
+      if ($separator -gt 0 -and $separator -lt ($userInfo.Length - 1)) {
+        $remotePath = [Uri]::UnescapeDataString($uri.AbsolutePath).TrimEnd("/")
+        if ($uri.Host -notmatch "^[A-Za-z0-9.-]+\.timeweb\.ru$") {
+          throw "The FTP shortcut points to an unexpected server."
+        }
+        if ($remotePath -ne $expectedRemoteRoot) {
+          throw "The FTP shortcut points outside the expected edu-plus.ru/lms directory."
+        }
+        return [pscustomobject]@{
+          Server = $uri.Host
+          RemoteRoot = $remotePath
+          Credential = New-Object Net.NetworkCredential(
+            $userInfo.Substring(0, $separator),
+            $userInfo.Substring($separator + 1)
+          )
+        }
+      }
+    }
+  } catch {
+    if ($_.Exception.Message -match "unexpected server|outside the expected") { throw }
+  }
+
+  # Compatibility fallback for Windows versions that cannot resolve FTP shell shortcuts.
   $bytes = [IO.File]::ReadAllBytes($shortcutPath)
   $ascii = [Text.Encoding]::GetEncoding(28591).GetString($bytes)
   $strings = @(
@@ -152,11 +200,17 @@ function Get-FtpProfile {
   }
   return [pscustomobject]@{
     Server = $server
+    RemoteRoot = $expectedRemoteRoot
     Credential = New-Object Net.NetworkCredential($strings[$userIndex], $strings[$userIndex + 1])
   }
 }
 
 $ftpProfile = Get-FtpProfile
+$remoteRoot = $ftpProfile.RemoteRoot
+if ($ValidateProfile) {
+  Write-Host "FTP profile is valid; target: $remoteRoot (credentials were not displayed)."
+  exit 0
+}
 
 function New-FtpRequest([string]$RemotePath, [string]$Method) {
   $normalized = "/" + $RemotePath.TrimStart("/")
