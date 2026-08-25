@@ -54997,5 +54997,12 @@ MAX - https://bizvmax.ru/zifra_plus
     }, 250);
   }
 
-  initializeApplication();
+  initializeApplication().catch((error) => {
+    console.error("Не удалось инициализировать АИС", error);
+    if (typeof window.AIS_AUTH_API?.renderStartupFailure === "function") {
+      window.AIS_AUTH_API.renderStartupFailure(error);
+      return;
+    }
+    app.textContent = `Не удалось запустить интерфейс: ${error?.message || error || "неизвестная ошибка"}`;
+  });
 })();

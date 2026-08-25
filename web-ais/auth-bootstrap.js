@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260824-program-email-marker-v1";
+  const AUTH_BUILD = "20260825-startup-recovery-v1";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);
@@ -10,6 +10,7 @@
   let sessionExpiresAt = 0;
   let sessionExpiryTimer = 0;
   let sessionExpiredDialog = null;
+  let startupFailureRendered = false;
 
   function appUrl(pathname) {
     return new URL(String(pathname || "").replace(/^\/+/, ""), baseUrl).toString();
@@ -113,6 +114,30 @@
         </section>
       </main>
     `;
+  }
+
+  function renderStartupFailure(error) {
+    if (startupFailureRendered) return;
+    startupFailureRendered = true;
+    window.clearTimeout(sessionExpiryTimer);
+    const message = String(error?.message || error || "Неизвестная ошибка запуска.").trim();
+    app.innerHTML = `
+      <main class="auth-screen">
+        <section class="auth-card auth-public-result-card is-error" role="alert">
+          <div class="auth-public-result-icon" aria-hidden="true">!</div>
+          <p class="auth-eyebrow">Локальная АИС</p>
+          <h1>Не удалось запустить интерфейс</h1>
+          <p>${escapeHtml(message)}</p>
+          <p class="auth-public-result-hint">Локальный сервер работает, но браузер не завершил загрузку приложения.</p>
+          <button class="primary-button" data-retry-startup type="button">Загрузить заново</button>
+        </section>
+      </main>
+    `;
+    app.querySelector("[data-retry-startup]")?.addEventListener("click", () => {
+      const target = new URL(window.location.href);
+      target.searchParams.set("startup-retry", String(Date.now()));
+      window.location.replace(target.toString());
+    });
   }
 
   function renderLogin(errorMessage = "") {
@@ -627,7 +652,7 @@
 
   async function startApplication(user, expiresAt) {
     setAuthenticatedSession(user, expiresAt);
-    window.AIS_AUTH_API = Object.freeze({ request, appUrl, redirectToLogin });
+    window.AIS_AUTH_API = Object.freeze({ request, appUrl, redirectToLogin, renderStartupFailure });
     installAuthenticatedFetch();
     renderLoading(user?.role === "partner" ? "Загрузка кабинета партнёра..." : "Загрузка системы...");
     try {
@@ -701,5 +726,12 @@
     else renderLogin();
   });
 
-  initialize();
+  window.addEventListener("error", (event) => {
+    if (!applicationStarted) renderStartupFailure(event.error || event.message);
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    if (!applicationStarted) renderStartupFailure(event.reason);
+  });
+
+  initialize().catch(renderStartupFailure);
 })();

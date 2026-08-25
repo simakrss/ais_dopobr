@@ -6,12 +6,18 @@
     <title>АИС Допобразование Web</title>
     <link rel="icon" href="favicon.ico" type="image/png">
     <link rel="shortcut icon" href="favicon.ico" type="image/png">
-  <link rel="stylesheet" href="styles.css?v=20260824-program-email-marker-v1">
+  <link rel="stylesheet" href="styles.css?v=20260825-startup-recovery-v1">
   </head>
   <body>
     <div id="app" class="app-shell">
+      <main class="auth-screen" data-startup-fallback style="min-height:100vh;display:grid;place-items:center;padding:24px;background:#edf4ef;color:#1f2926;font-family:'Segoe UI',Arial,sans-serif">
+        <section class="auth-card auth-loading-card" style="max-width:420px;padding:28px;border:1px solid #d9e0dc;border-radius:16px;background:#fff;text-align:center;box-shadow:0 14px 34px rgba(31,41,38,.08)">
+          <strong style="display:block;margin-bottom:8px;font-size:20px">Запуск АИС…</strong>
+          <span data-startup-message>Проверка локального сервера и доступа.</span>
+        </section>
+      </main>
       <noscript>Для работы системы нужен включенный JavaScript.</noscript>
     </div>
-  <script src="auth-bootstrap.js?v=20260824-program-email-marker-v1"></script>
+  <script src="auth-bootstrap.js?v=20260825-startup-recovery-v1" onerror="document.querySelector('[data-startup-message]').textContent='Не удалось загрузить интерфейс. Обновите страницу сочетанием Ctrl+F5.'"></script>
   </body>
 </html>
