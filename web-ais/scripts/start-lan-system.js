@@ -237,6 +237,20 @@ async function isAisServiceHealthy(port, commonEnvironment = null) {
   }
 }
 
+async function isAisServiceHealthyWithRetry(
+  port,
+  commonEnvironment,
+  attempts = 3,
+  delayMilliseconds = 500,
+) {
+  const totalAttempts = Math.max(1, Math.floor(Number(attempts) || 1));
+  for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
+    if (await isAisServiceHealthy(port, commonEnvironment)) return true;
+    if (attempt + 1 < totalAttempts) await wait(delayMilliseconds);
+  }
+  return false;
+}
+
 function processCommandLine(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return "";
   try {
@@ -314,6 +328,16 @@ async function startServer(definition, commonEnvironment) {
         `Порт ${definition.port} занят другим приложением (PID ${existingPid}). `
         + `Освободите порт и повторите запуск АИС.`,
       );
+    }
+    // A CPU-heavy XLSB parse can delay the authenticated health request beyond its
+    // timeout while the immediately following anonymous probe succeeds.  Confirm the
+    // runtime-secret mismatch before terminating a valid in-flight application server.
+    if (await isAisServiceHealthyWithRetry(definition.port, commonEnvironment)) {
+      console.log(
+        `${definition.name} recovered after a transient health-check timeout `
+        + `(PID ${existingPid}, port ${definition.port}).`,
+      );
+      return existingPid;
     }
     console.log(`${definition.name}: обнаружены несовместимые служебные ключи, выполняется безопасный перезапуск.`);
     await stopExpectedNodeService(existingPid, definition.scriptName);

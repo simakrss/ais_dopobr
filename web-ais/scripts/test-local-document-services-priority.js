@@ -10,7 +10,44 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const localServerPath = path.join(root, "local-server.js");
 const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8").replace(/\r\n/g, "\n");
-const startSource = fs.readFileSync(path.join(root, "scripts", "start-lan-system.js"), "utf8");
+const startSource = fs.readFileSync(
+  path.join(root, "scripts", "start-lan-system.js"),
+  "utf8"
+).replace(/\r\n/gu, "\n");
+
+async function testSupervisorTransientHealthTimeoutRecovery() {
+  const retryStart = startSource.indexOf("async function isAisServiceHealthyWithRetry");
+  const retryEnd = startSource.indexOf("\n\nfunction processCommandLine", retryStart);
+  const serverStart = startSource.indexOf("async function startServer");
+  const serverEnd = startSource.indexOf("\n\nfunction startDocumentServices", serverStart);
+  assert.ok(retryStart >= 0 && retryEnd > retryStart, "Не найден retry health-check супервизора");
+  assert.ok(serverStart >= 0 && serverEnd > serverStart, "Не найден запуск сервера супервизора");
+  const calls = [];
+  const factory = new Function(
+    "isAisServiceHealthy",
+    "listeningPid",
+    "wait",
+    "console",
+    `${startSource.slice(retryStart, retryEnd)}\n`
+      + `${startSource.slice(serverStart, serverEnd)}\n`
+      + "return startServer;"
+  );
+  const startServer = factory(
+    async (_port, environment) => {
+      calls.push(environment ? "authenticated" : "anonymous");
+      return calls.length === 1 ? false : true;
+    },
+    () => 4242,
+    async () => {},
+    { log: () => {} }
+  );
+  const pid = await startServer(
+    { name: "Application server", port: 19081, scriptName: "app-server.js" },
+    { AIS_GATEWAY_SHARED_SECRET: "s".repeat(64) }
+  );
+  assert.equal(pid, 4242);
+  assert.deepEqual(calls, ["authenticated", "anonymous", "authenticated"]);
+}
 
 function createDocumentProcessingResolver(healthPayload, options = {}) {
   const start = appSource.indexOf("  function documentProcessingApiUrl");
@@ -94,6 +131,7 @@ async function waitForServer(url, child, stderr) {
 }
 
 async function main() {
+  await testSupervisorTransientHealthTimeoutRecovery();
   const localResolver = createDocumentProcessingResolver({
     appServerAvailable: true,
     ocrAvailable: true,
