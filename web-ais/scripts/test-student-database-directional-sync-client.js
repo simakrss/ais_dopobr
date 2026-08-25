@@ -358,6 +358,14 @@ async function testRealSynchronizationImportPath() {
             inventoryId: "inventory-web",
             inventoryLink: "Конверт",
             webApproval: { keep: "global" }
+          }, {
+            id: "direct-unlinked",
+            uid: "778",
+            date: "2026-08-02",
+            type: "Конверт",
+            amount: 10,
+            inventoryId: "inventory-web",
+            inventoryLink: ""
           }],
           generalExpenses: [],
           inventory: [{
@@ -469,7 +477,15 @@ async function testRealSynchronizationImportPath() {
       contractNo: "15",
       contractDate: "2026-01-01"
     }],
-    directExpenses: [],
+    directExpenses: [{
+      id: "direct-unlinked",
+      uid: "778",
+      date: "2026-08-02",
+      type: "Конверт",
+      amount: 10,
+      inventoryId: "",
+      inventoryLink: ""
+    }],
     generalExpenses: [],
     inventory: [{
       id: "inventory-excel",
@@ -552,7 +568,12 @@ async function testRealSynchronizationImportPath() {
     { keep: "global" },
     "Web-only metadata глобального расхода должно сохраниться после привязки к слушателю."
   );
-  assert.equal(context.state.data.collections.directExpenses.length, 0);
+  assert.equal(context.state.data.collections.directExpenses.length, 1);
+  assert.equal(
+    context.state.data.collections.directExpenses[0].inventoryId,
+    "",
+    "Совпадение вида затрат с ТМЦ без явной связи не должно восстанавливать inventoryId"
+  );
   assert.equal(
     movedGlobalExpense.inventoryId,
     "inventory-web",

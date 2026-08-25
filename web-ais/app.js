@@ -50589,7 +50589,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const sourceId = String(expense.inventoryId || "").trim();
         const matchedId = importedInventoryIdRemap.get(sourceId)
           || inventoryIdByType.get(normalizeStudentDatabaseImportIdentityValue(
-            expense.inventoryLink || expense.type
+            expense.inventoryLink
           ));
         if (matchedId) expense.inventoryId = matchedId;
       };

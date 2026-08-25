@@ -14905,6 +14905,27 @@ function resolveStudentDatabaseSyncDirection({
       const excelChanged = excelCriticalHash !== baseline.criticalHash;
       const webChanged = webCriticalHash !== baseline.criticalHash;
       if (excelChanged && webChanged && excelCriticalHash !== webCriticalHash) {
+        // Import-time Web normalization can drift from the XLSB hash without a saved Web edit.
+        // Recover only when the authoritative revision stayed fixed and the audit window proves
+        // that Excel is the sole newer source.
+        const excelCriticalIdentityStayedStable = Boolean(
+          baseline.criticalIdentityHash
+          && excelCriticalIdentityHash === baseline.criticalIdentityHash
+        );
+        const webRevisionStayedStable = revision === baseline.webRevision;
+        if (
+          excelCriticalIdentityStayedStable
+          && webRevisionStayedStable
+          && criticalMigrationDirection === "excel-to-web"
+        ) {
+          return {
+            direction: "excel-to-web",
+            baseline,
+            recoveredBaselineDrift: true,
+            criticalHash: excelCriticalHash,
+            criticalIdentityHash: excelCriticalIdentityHash
+          };
+        }
         const error = new Error(
           "После прошлой синхронизации критичные данные изменились и в Web-базе, и в XLSB. "
           + "Автоматическая перезапись остановлена, чтобы не потерять сведения о слушателях, "
@@ -14919,6 +14940,20 @@ function resolveStudentDatabaseSyncDirection({
           baseline,
           criticalHash: excelCriticalHash,
           criticalIdentityHash: excelCriticalIdentityHash
+        };
+      }
+      if (
+        webChanged
+        && !excelChanged
+        && revision === baseline.webRevision
+      ) {
+        // Do not write normalization-only Web drift back into an unchanged XLSB.
+        return {
+          direction: "unchanged",
+          baseline,
+          recoveredBaselineDrift: true,
+          criticalHash: excelCriticalHash,
+          criticalIdentityHash: excelCriticalIdentityHash || baseline.criticalIdentityHash
         };
       }
       if (webChanged && !excelChanged) {
@@ -20145,7 +20180,7 @@ function reconcileStudentDatabaseImportIdsWithWeb(result, payload) {
   excelDirectExpenses.forEach((expense) => {
     const remappedId = inventoryIdRemap.get(String(expense?.inventoryId || "").trim())
       || inventoryIdByType.get(normalizeStudentDatabaseImportIdentityValue(
-        expense?.inventoryLink || expense?.type
+        expense?.inventoryLink
       ));
     if (remappedId) expense.inventoryId = remappedId;
   });

@@ -229,6 +229,43 @@ assert.equal(
   firstSyncParsed.databaseSyncInventoryUnits.every((unit) => unit.inventoryId === "web-inventory-1"),
   true
 );
+const unlinkedInventoryExpenseResult = {
+  students: [],
+  contracts: [],
+  generalExpenses: [],
+  trainingPlans: [],
+  programPaymentSettings: [],
+  databaseSyncInventoryUnits: [],
+  directExpenses: [{
+    id: "excel-expense",
+    uid: "664",
+    date: "2024-10-19",
+    type: "Почтовый конверт",
+    amount: 24
+  }],
+  inventory: [{ id: "excel-inventory", itemType: "Почтовый конверт", balance: 1 }]
+};
+reconcileStudentDatabaseImportIdsWithWeb(unlinkedInventoryExpenseResult, {
+  students: [],
+  contracts: [],
+  generalExpenses: [],
+  trainingPlans: [],
+  programs: [],
+  directExpenses: [{
+    id: "web-expense",
+    uid: "664",
+    date: "2024-10-19",
+    type: "Почтовый конверт",
+    amount: 24
+  }],
+  inventory: [{ id: "web-inventory", itemType: "Почтовый конверт", balance: 1 }]
+});
+assert.equal(unlinkedInventoryExpenseResult.directExpenses[0].id, "web-expense");
+assert.equal(
+  String(unlinkedInventoryExpenseResult.directExpenses[0].inventoryId || ""),
+  "",
+  "Совпадение вида затрат с видом ТМЦ без явной связи не должно создавать выдачу запаса"
+);
 const firstSyncPlan = buildStudentDatabaseSyncAnnotationPayload(firstSyncParsed, SYNCED_AT);
 assert.equal(
   firstSyncPlan.syncCommentRows.some((row) => row.recordId.startsWith("student-db-")),
