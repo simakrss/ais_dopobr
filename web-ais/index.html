@@ -6,7 +6,7 @@
     <title>АИС Допобразование Web</title>
     <link rel="icon" href="favicon.ico" type="image/png">
     <link rel="shortcut icon" href="favicon.ico" type="image/png">
-  <link rel="stylesheet" href="styles.css?v=20260825-startup-recovery-v1">
+  <link rel="stylesheet" href="styles.css?v=20260825-startup-recovery-v2">
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -18,6 +18,39 @@
       </main>
       <noscript>Для работы системы нужен включенный JavaScript.</noscript>
     </div>
-  <script src="auth-bootstrap.js?v=20260825-startup-recovery-v1" onerror="document.querySelector('[data-startup-message]').textContent='Не удалось загрузить интерфейс. Обновите страницу сочетанием Ctrl+F5.'"></script>
+  <script>
+    (() => {
+      const build = "20260825-startup-recovery-v2";
+      const message = document.querySelector("[data-startup-message]");
+      const fail = (error) => {
+        if (!message?.isConnected) return;
+        const details = String(error?.message || error || "неизвестная ошибка").trim();
+        message.textContent = `Не удалось загрузить интерфейс: ${details}`;
+      };
+      const request = new XMLHttpRequest();
+      request.open("GET", `auth-bootstrap.js?v=${encodeURIComponent(build)}&transport=xhr`, true);
+      request.setRequestHeader("Cache-Control", "no-cache");
+      request.onload = () => {
+        if (request.status < 200 || request.status >= 300) {
+          fail(`сервер вернул HTTP ${request.status}`);
+          return;
+        }
+        const script = document.createElement("script");
+        script.textContent = `${request.responseText}\n//# sourceURL=auth-bootstrap.js`;
+        const runtimeError = (event) => fail(event.error || event.message);
+        window.addEventListener("error", runtimeError, { once: true });
+        document.body.appendChild(script);
+        window.setTimeout(() => {
+          if (!document.querySelector("[data-startup-fallback]")) {
+            window.removeEventListener("error", runtimeError);
+          } else {
+            fail("стартовый модуль не выполнился");
+          }
+        }, 0);
+      };
+      request.onerror = () => fail("нет соединения с локальным сервером");
+      request.send();
+    })();
+  </script>
   </body>
 </html>
