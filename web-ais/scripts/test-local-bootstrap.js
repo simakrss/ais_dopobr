@@ -49,8 +49,11 @@ assert.match(startupUpdateSource, /Автоматическая отправка
 assert.match(deploySource, /System\.Link\.TargetParsingPath/u);
 assert.match(deploySource, /privateTemplatePaths/u);
 assert.match(deploySource, /Invoke-FtpTransferWithRetry/u);
-assert.match(deploySource, /WriteAllText\(\$credentialPath, \(Get-CurlCredentialConfig\)/u);
-assert.match(deploySource, /finally \{[\s\S]*?Remove-Item -LiteralPath \$credentialPath/u);
+assert.match(deploySource, /"--variable", "%AIS_FTP_CREDENTIAL"/u);
+assert.match(deploySource, /"--expand-user", "\{\{AIS_FTP_CREDENTIAL\}\}"/u);
+assert.match(deploySource, /EnvironmentVariables\["AIS_FTP_CREDENTIAL"\] = \$credentialText/u);
+assert.doesNotMatch(deploySource, /RedirectStandardInput = \$true/u);
+assert.doesNotMatch(deploySource, /WriteAllText\(\$credentialPath/u);
 assert.match(deploySource, /--speed-time", "30"/u);
 assert.match(deploySource, /Get-FtpFileSize/u);
 assert.match(deploySource, /FTP size verification failed/u);

@@ -236,20 +236,43 @@ function ConvertTo-FtpUri([string]$RemotePath) {
   return "ftp://$($ftpProfile.Server)/$([string]::Join('/', $segments))"
 }
 
-function Get-CurlCredentialConfig {
+function Get-CurlCredentialText {
   $credentialText = "{0}:{1}" -f $ftpProfile.Credential.UserName, $ftpProfile.Credential.Password
   if ($credentialText -match "[\r\n]") { throw "FTP credentials contain unsupported line breaks." }
-  $escaped = $credentialText.Replace("\", "\\").Replace('"', '\"')
-  return "user = `"$escaped`""
+  return $credentialText
+}
+
+function ConvertTo-WindowsCommandLineArgument([string]$Value) {
+  if ([string]::IsNullOrEmpty($Value)) { return '""' }
+  if ($Value -notmatch '[\s"]') { return $Value }
+  $builder = New-Object Text.StringBuilder
+  [void]$builder.Append('"')
+  $backslashes = 0
+  foreach ($character in $Value.ToCharArray()) {
+    if ($character -eq '\') {
+      $backslashes += 1
+      continue
+    }
+    if ($character -eq '"') {
+      [void]$builder.Append([string]::new([char]92, (($backslashes * 2) + 1)))
+      [void]$builder.Append('"')
+    } else {
+      if ($backslashes) { [void]$builder.Append([string]::new([char]92, $backslashes)) }
+      [void]$builder.Append($character)
+    }
+    $backslashes = 0
+  }
+  if ($backslashes) { [void]$builder.Append([string]::new([char]92, ($backslashes * 2))) }
+  [void]$builder.Append('"')
+  return $builder.ToString()
 }
 
 function Invoke-CurlFtp([string[]]$Arguments) {
   if (-not $curlPath) { throw "curl.exe was not found." }
-  $credentialRoot = Join-Path $appRoot ".runtime\ftp-credentials"
-  New-Item -ItemType Directory -Path $credentialRoot -Force | Out-Null
-  $credentialPath = Join-Path $credentialRoot ("curl-" + [Guid]::NewGuid().ToString("N") + ".conf")
+  $credentialText = Get-CurlCredentialText
   $commonArguments = @(
-    "--config", $credentialPath,
+    "--variable", "%AIS_FTP_CREDENTIAL",
+    "--expand-user", "{{AIS_FTP_CREDENTIAL}}",
     "--silent", "--show-error", "--fail",
     "--ftp-pasv",
     "--connect-timeout", "20",
@@ -257,15 +280,30 @@ function Invoke-CurlFtp([string[]]$Arguments) {
     "--speed-limit", "1",
     "--speed-time", "30"
   )
+  $processInfo = New-Object Diagnostics.ProcessStartInfo
+  $processInfo.FileName = $curlPath
+  $processInfo.Arguments = (@($commonArguments + $Arguments) | ForEach-Object {
+    ConvertTo-WindowsCommandLineArgument ([string]$_)
+  }) -join " "
+  $processInfo.UseShellExecute = $false
+  $processInfo.CreateNoWindow = $true
+  $processInfo.RedirectStandardOutput = $true
+  $processInfo.RedirectStandardError = $true
+  $processInfo.EnvironmentVariables["AIS_FTP_CREDENTIAL"] = $credentialText
+  $process = New-Object Diagnostics.Process
+  $process.StartInfo = $processInfo
   try {
-    [IO.File]::WriteAllText($credentialPath, (Get-CurlCredentialConfig), (New-Object Text.UTF8Encoding($false)))
-    $output = @(& $curlPath @commonArguments @Arguments 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-      throw "curl FTP transfer failed with exit code $LASTEXITCODE."
+    if (-not $process.Start()) { throw "curl.exe could not be started." }
+    $standardOutput = $process.StandardOutput.ReadToEnd()
+    $standardError = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) {
+      $details = if ([string]::IsNullOrWhiteSpace($standardError)) { "" } else { " $($standardError.Trim())" }
+      throw "curl FTP transfer failed with exit code $($process.ExitCode).$details"
     }
-    return $output
+    return $standardOutput
   } finally {
-    Remove-Item -LiteralPath $credentialPath -Force -ErrorAction SilentlyContinue
+    $process.Dispose()
   }
 }
 
