@@ -15374,7 +15374,135 @@ function countContractWorksheetRecords(worksheet) {
   return count;
 }
 
-function inspectStudentDatabaseBinary(bytes) {
+function normalizeStudentDatabaseWorkbookFingerprintValue(value) {
+  if (Buffer.isBuffer(value)) return { type: "buffer", value: value.toString("base64") };
+  if (value instanceof Date) return { type: "date", value: value.toISOString() };
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    return { type: "number", value: String(value) };
+  }
+  if (value && typeof value === "object") {
+    try {
+      return { type: "object", value: JSON.stringify(value) };
+    } catch {
+      return { type: "object", value: "" };
+    }
+  }
+  return { type: typeof value, value: value ?? null };
+}
+
+function hashStudentDatabaseWorkbookFormulaMap(workbook) {
+  const formulas = [];
+  (Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : []).forEach((sheetName) => {
+    const worksheet = workbook?.Sheets?.[sheetName];
+    Object.entries(worksheet || {}).forEach(([address, cell]) => {
+      if (address.startsWith("!") || (!cell?.f && !cell?.F)) return;
+      formulas.push([
+        String(sheetName),
+        address,
+        String(cell?.f || ""),
+        String(cell?.F || "")
+      ]);
+    });
+  });
+  formulas.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right), "ru"));
+  return crypto.createHash("sha256").update(JSON.stringify(formulas)).digest("hex");
+}
+
+function getTargetedStudentNoteWorkbookCellKeys(workbook, targetUids) {
+  const normalizedTargetUids = [...new Set((Array.isArray(targetUids) ? targetUids : [])
+    .map((uid) => String(uid ?? "").trim().replace(/\.0+$/u, ""))
+    .filter(Boolean))];
+  if (!normalizedTargetUids.length) return new Set();
+  const sheetName = "База";
+  const worksheet = workbook?.Sheets?.[sheetName];
+  if (!worksheet) throw new Error("В файле не найден лист «База».");
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: "",
+    raw: true,
+    blankrows: true
+  });
+  const headerRowIndex = rows.findIndex((row) => (
+    row.some((value) => String(value || "").trim() === "uid")
+    && row.some((value) => String(value || "").trim() === "ФИО")
+  ));
+  if (headerRowIndex < 0) throw new Error("На листе «База» не найдены колонки uid и ФИО.");
+  const headers = (rows[headerRowIndex] || []).map((value) => String(value || "").trim());
+  const uidColumn = headers.findIndex((header) => STUDENT_DATABASE_COLUMN_MAP[header] === "uid");
+  const noteColumns = headers
+    .map((header, index) => ({ index, field: STUDENT_DATABASE_COLUMN_MAP[header] || "" }))
+    .filter((column) => column.field === "note")
+    .map((column) => column.index);
+  if (uidColumn < 0 || noteColumns.length !== 1) {
+    throw new Error("На листе «База» не удалось однозначно определить колонки uid и примечания.");
+  }
+  const result = new Set();
+  normalizedTargetUids.forEach((targetUid) => {
+    const matchingRowIndexes = [];
+    for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+      const uid = String(rows[rowIndex]?.[uidColumn] ?? "").trim().replace(/\.0+$/u, "");
+      if (uid === targetUid) matchingRowIndexes.push(rowIndex);
+    }
+    if (matchingRowIndexes.length !== 1) {
+      throw new Error(
+        `В книге должна быть ровно одна строка слушателя uid «${targetUid}»; `
+        + `найдено: ${matchingRowIndexes.length}.`
+      );
+    }
+    result.add(`${sheetName}\u0000${XLSX.utils.encode_cell({
+      r: matchingRowIndexes[0],
+      c: noteColumns[0]
+    })}`);
+  });
+  return result;
+}
+
+function hashStudentDatabaseWorkbookCellMap(workbook, excludedCellKeys = new Set()) {
+  const sheetNames = Array.isArray(workbook?.SheetNames) ? [...workbook.SheetNames] : [];
+  const sheets = sheetNames.map((sheetName) => {
+    const worksheet = workbook?.Sheets?.[sheetName] || {};
+    const cells = Object.entries(worksheet)
+      .filter(([address]) => !address.startsWith("!"))
+      .flatMap(([address, cell]) => {
+        if (excludedCellKeys.has(`${sheetName}\u0000${address}`)) return [];
+        if (cell?.f || cell?.F) {
+          return [[address, "formula", String(cell?.f || ""), String(cell?.F || "")]];
+        }
+        return [[
+          address,
+          "value",
+          String(cell?.t || ""),
+          normalizeStudentDatabaseWorkbookFingerprintValue(cell?.v)
+        ]];
+      })
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0]), "en"));
+    const merges = (Array.isArray(worksheet["!merges"]) ? worksheet["!merges"] : [])
+      .map((range) => XLSX.utils.encode_range(range))
+      .sort((left, right) => left.localeCompare(right, "en"));
+    return {
+      name: sheetName,
+      ref: String(worksheet["!ref"] || ""),
+      merges,
+      cells
+    };
+  });
+  const definedNames = (Array.isArray(workbook?.Workbook?.Names) ? workbook.Workbook.Names : [])
+    .map((definedName) => Object.keys(definedName || {})
+      .sort((left, right) => left.localeCompare(right, "en"))
+      .map((key) => [key, normalizeStudentDatabaseWorkbookFingerprintValue(definedName[key])]))
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right), "ru"));
+  const vbaHash = workbook?.vbaraw?.length
+    ? crypto.createHash("sha256").update(workbook.vbaraw).digest("hex")
+    : "";
+  return crypto.createHash("sha256").update(JSON.stringify({
+    sheetNames,
+    sheets,
+    definedNames,
+    vbaHash
+  })).digest("hex");
+}
+
+function inspectStudentDatabaseBinary(bytes, options = {}) {
   const workbook = XLSX.read(bytes, { type: "buffer", bookVBA: true });
   const baseSheet = workbook.Sheets["База"];
   const directExpenseSheet = workbook.Sheets["Прямые затраты"];
@@ -15390,9 +15518,22 @@ function inspectStudentDatabaseBinary(bytes) {
   if (!inventorySheet) throw new Error("В файле не найден лист «Запасы».");
   if (!trainingPlanSheet) throw new Error("В файле не найден лист «Учебные планы».");
   if (!programSheet) throw new Error("В файле не найден лист «Реестр программ».");
+  const excludedTargetNoteCells = getTargetedStudentNoteWorkbookCellKeys(
+    workbook,
+    options.targetedStudentNoteUids
+  );
+  const vbaHash = workbook.vbaraw?.length
+    ? crypto.createHash("sha256").update(workbook.vbaraw).digest("hex")
+    : "";
   return {
     hasVba: Boolean(workbook.vbaraw?.length),
     vbaBytes: Number(workbook.vbaraw?.length || 0),
+    vbaHash,
+    formulaFingerprint: hashStudentDatabaseWorkbookFormulaMap(workbook),
+    workbookCellFingerprint: hashStudentDatabaseWorkbookCellMap(
+      workbook,
+      excludedTargetNoteCells
+    ),
     baseFormulaCount: countWorksheetFormulaCells(baseSheet),
     directExpenseFormulaCount: countWorksheetFormulaCells(directExpenseSheet),
     generalExpenseFormulaCount: countWorksheetFormulaCells(generalExpenseSheet),
@@ -19422,6 +19563,345 @@ function attachStudentDatabaseExportSyncComment(
   };
 }
 
+function normalizeTargetedStudentFieldPatchText(value) {
+  return value.replace(/\r\n?/gu, "\n");
+}
+
+function sanitizeTargetedStudentFieldPatches(patches, students) {
+  if (!Array.isArray(patches) || !patches.length) {
+    throw new Error("Для точечного обновления не передан список изменений слушателей.");
+  }
+  if (patches.length > 20) {
+    throw new Error("Число точечных изменений слушателей превышает допустимый предел 20.");
+  }
+  const webStudents = Array.isArray(students) ? students : [];
+  const usedPatches = new Set();
+  return patches.map((patch, index) => {
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+      throw new Error(`Точечное изменение слушателя № ${index + 1} имеет неверный формат.`);
+    }
+    if (typeof patch.uid !== "string" && typeof patch.uid !== "number") {
+      throw new Error(`В точечном изменении слушателя № ${index + 1} не передан uid.`);
+    }
+    const rawUid = String(patch.uid);
+    if (rawUid.includes("\u0000")) {
+      throw new Error(`uid в точечном изменении слушателя № ${index + 1} содержит недопустимый символ.`);
+    }
+    const uid = rawUid.trim().replace(/\.0+$/u, "");
+    if (!uid || uid.length > 300) {
+      throw new Error(`uid в точечном изменении слушателя № ${index + 1} имеет неверный формат.`);
+    }
+    if (patch.field !== "note") {
+      throw new Error("Точечное обновление разрешено только для поля примечания слушателя.");
+    }
+    const patchKey = `${uid}:note`;
+    if (usedPatches.has(patchKey)) {
+      throw new Error(`Точечное изменение примечания слушателя uid «${uid}» передано повторно.`);
+    }
+    usedPatches.add(patchKey);
+    const values = [
+      ["expectedValue", "ожидаемое значение"],
+      ["value", "новое значение"]
+    ];
+    const sanitizedValues = {};
+    values.forEach(([key, label]) => {
+      if (typeof patch[key] !== "string") {
+        throw new Error(`В точечном изменении uid «${uid}» ${label} примечания должно быть строкой.`);
+      }
+      if (patch[key].includes("\u0000")) {
+        throw new Error(`В точечном изменении uid «${uid}» ${label} примечания содержит недопустимый символ.`);
+      }
+      if (patch[key].length > 32767) {
+        throw new Error(`В точечном изменении uid «${uid}» ${label} примечания превышает предел Excel 32767 символов.`);
+      }
+      const normalizedValue = normalizeTargetedStudentFieldPatchText(patch[key]);
+      if (/^[=+\-@]/u.test(normalizedValue.trimStart())) {
+        throw new Error(
+          `В точечном изменении uid «${uid}» ${label} примечания начинается `
+          + "с недопустимого для Excel формульного символа."
+        );
+      }
+      sanitizedValues[key] = normalizedValue;
+    });
+    const matchingWebStudents = webStudents.filter((student) => (
+      String(student?.uid ?? "").trim().replace(/\.0+$/u, "") === uid
+    ));
+    if (matchingWebStudents.length !== 1) {
+      throw new Error(
+        `В полной Web-базе должен быть ровно один слушатель с uid «${uid}»; найдено: ${matchingWebStudents.length}.`
+      );
+    }
+    const webNote = matchingWebStudents[0].note;
+    if (
+      typeof webNote !== "string"
+      || normalizeTargetedStudentFieldPatchText(webNote) !== sanitizedValues.value
+    ) {
+      throw new Error(
+        `Новое примечание точечного изменения uid «${uid}» не совпадает со значением в полной Web-базе.`
+      );
+    }
+    return {
+      uid,
+      field: "note",
+      expectedValue: sanitizedValues.expectedValue,
+      value: sanitizedValues.value
+    };
+  });
+}
+
+function validateTargetedStudentFieldPatchesAgainstSource(payload, sourceData) {
+  const patches = Array.isArray(payload?.targetedStudentFieldPatches)
+    ? payload.targetedStudentFieldPatches
+    : [];
+  const sourceStudents = Array.isArray(sourceData?.students) ? sourceData.students : [];
+  patches.forEach((patch) => {
+    const matchingSourceStudents = sourceStudents.filter((student) => (
+      String(student?.uid ?? "").trim().replace(/\.0+$/u, "") === patch.uid
+    ));
+    if (matchingSourceStudents.length !== 1) {
+      const error = new Error(
+        `Точечное обновление остановлено: в исходном XLSB должен быть ровно один слушатель `
+        + `с uid «${patch.uid}»; найдено: ${matchingSourceStudents.length}.`
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    const sourceNote = normalizeTargetedStudentFieldPatchText(
+      String(matchingSourceStudents[0].note ?? "")
+    );
+    if (sourceNote !== patch.expectedValue) {
+      const error = new Error(
+        `Точечное обновление остановлено: примечание слушателя uid «${patch.uid}» `
+        + "в исходном XLSB изменилось после подготовки операции."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+  });
+  return true;
+}
+
+function validateTargetedStudentFieldPatchScope(payload, baselineValue) {
+  const patches = Array.isArray(payload?.targetedStudentFieldPatches)
+    ? payload.targetedStudentFieldPatches
+    : [];
+  const baseline = normalizeStudentDatabaseSyncBaseline(baselineValue);
+  if (!baseline.criticalHash) {
+    const error = new Error(
+      "Точечное обновление остановлено: в контрольной точке отсутствует хеш критичных данных."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  const expectedNoteByUid = new Map(patches.map((patch) => [patch.uid, patch.expectedValue]));
+  const baselineCandidate = {
+    ...payload,
+    students: (Array.isArray(payload?.students) ? payload.students : []).map((student) => {
+      const uid = String(student?.uid ?? "").trim().replace(/\.0+$/u, "");
+      return expectedNoteByUid.has(uid)
+        ? { ...student, note: expectedNoteByUid.get(uid) }
+        : student;
+    })
+  };
+  const candidateCriticalHash = hashStudentDatabaseCriticalSnapshot(baselineCandidate);
+  if (candidateCriticalHash !== baseline.criticalHash) {
+    const error = new Error(
+      "Точечное обновление остановлено: после контрольной точки в Web-базе изменены "
+      + "данные вне перечисленных точечных изменений."
+    );
+    error.code = "TARGETED_STUDENT_FIELD_PATCH_SCOPE_HASH_MISMATCH";
+    error.statusCode = 409;
+    throw error;
+  }
+  return true;
+}
+
+function validateTargetedStudentFieldPatchAuditScope(
+  payload,
+  baselineValue,
+  { sourceHash = "", expectedRevision = 0, authoritativeDocument = null } = {}
+) {
+  const reject = (message) => {
+    const error = new Error(`Точечное обновление остановлено: ${message}`);
+    error.statusCode = 409;
+    throw error;
+  };
+  const baseline = normalizeStudentDatabaseSyncBaseline(baselineValue);
+  const normalizedSourceHash = String(sourceHash || "").trim().toLowerCase();
+  if (!baseline.sourceHash || normalizedSourceHash !== baseline.sourceHash) {
+    reject("исходный XLSB не совпадает с файлом контрольной точки.");
+  }
+  const requiredRevision = Math.max(0, Math.floor(Number(expectedRevision) || 0));
+  const authoritativeRevision = Math.max(
+    0,
+    Math.floor(Number(authoritativeDocument?.revision) || 0)
+  );
+  if (!requiredRevision || authoritativeRevision !== requiredRevision) {
+    reject("авторитетная ревизия Web-базы изменилась во время проверки.");
+  }
+  const baselineSynchronizedAt = normalizeStudentDatabaseSyncTimestamp(baseline.synchronizedAt);
+  if (!baselineSynchronizedAt) {
+    reject("в контрольной точке отсутствует время синхронизации.");
+  }
+  const collections = authoritativeDocument?.data?.collections;
+  if (!collections || typeof collections !== "object" || Array.isArray(collections)) {
+    reject("авторитетный документ Web-базы не содержит коллекций данных.");
+  }
+  const authoritativeStudents = Array.isArray(collections.students) ? collections.students : [];
+  const auditRows = Array.isArray(collections.audit) ? collections.audit : [];
+  const patches = Array.isArray(payload?.targetedStudentFieldPatches)
+    ? payload.targetedStudentFieldPatches
+    : [];
+  if (!patches.length) reject("не переданы точечные изменения слушателей.");
+
+  const targets = patches.map((patch) => {
+    const authoritativeMatches = authoritativeStudents.filter((student) => (
+      String(student?.uid ?? "").trim().replace(/\.0+$/u, "") === patch.uid
+    ));
+    if (authoritativeMatches.length !== 1) {
+      reject(
+        `в авторитетной Web-базе должен быть ровно один слушатель с uid «${patch.uid}»; `
+        + `найдено: ${authoritativeMatches.length}.`
+      );
+    }
+    const authoritativeStudent = authoritativeMatches[0];
+    const authoritativeNote = normalizeTargetedStudentFieldPatchText(
+      String(authoritativeStudent.note ?? "")
+    );
+    if (authoritativeNote !== patch.value) {
+      reject(`примечание слушателя uid «${patch.uid}» не совпадает с авторитетной Web-базой.`);
+    }
+    const payloadMatches = (Array.isArray(payload?.students) ? payload.students : []).filter((student) => (
+      String(student?.uid ?? "").trim().replace(/\.0+$/u, "") === patch.uid
+    ));
+    if (payloadMatches.length !== 1) {
+      reject(`полный Web-payload неоднозначно определяет слушателя uid «${patch.uid}».`);
+    }
+    const entityIds = new Set([
+      patch.uid,
+      authoritativeStudent.id,
+      authoritativeStudent.databaseSync?.recordId,
+      payloadMatches[0].id,
+      payloadMatches[0].databaseSync?.recordId
+    ].map((value) => String(value || "").trim()).filter(Boolean));
+    return { patch, entityIds, auditChanges: [] };
+  });
+
+  const timestampedAuditRows = auditRows.map((row, index) => {
+    const createdAt = normalizeStudentDatabaseSyncTimestamp(row?.createdAt);
+    if (!createdAt) reject(`запись аудита № ${index + 1} не содержит корректного времени.`);
+    return { row, index, createdAt, createdAtMs: Date.parse(createdAt) };
+  });
+  const baselineMs = Date.parse(baselineSynchronizedAt);
+  const auditOldestMs = timestampedAuditRows.length
+    ? Math.min(...timestampedAuditRows.map((item) => item.createdAtMs))
+    : Number.POSITIVE_INFINITY;
+  const auditWindowComplete = auditRows.length < 200 || auditOldestMs <= baselineMs + 1000;
+  if (!auditWindowComplete) {
+    reject("окно аудита не покрывает время контрольной точки.");
+  }
+  const criticalEntityTypes = new Set([
+    "students",
+    "contracts",
+    "directExpenses",
+    "generalExpenses",
+    "inventory",
+    "programs",
+    "trainingPlans"
+  ]);
+  timestampedAuditRows
+    .filter((item) => item.createdAtMs > baselineMs + 1000)
+    .sort((left, right) => left.createdAtMs - right.createdAtMs || left.index - right.index)
+    .forEach(({ row, createdAtMs }) => {
+      const entityType = String(row?.entityType || "").trim();
+      const source = String(row?.source || "").trim().toLocaleLowerCase("ru-RU");
+      const action = String(row?.action || "").trim().toLocaleLowerCase("ru-RU");
+      const databaseSyncEntry = entityType === "database"
+        && source.startsWith("xlsb-sync-")
+        && action.includes("синхронизац");
+      if (databaseSyncEntry && createdAtMs <= baselineMs + 10 * 60 * 1000) return;
+      if (entityType === "database") {
+        reject("после контрольной точки выполнено неподтверждённое изменение базы данных.");
+      }
+      if (!criticalEntityTypes.has(entityType)) return;
+      if (entityType !== "students") {
+        reject(`после контрольной точки изменена критичная сущность «${entityType}».`);
+      }
+      const entityId = String(row?.entityId || "").trim();
+      const matchingTargets = targets.filter((target) => target.entityIds.has(entityId));
+      if (matchingTargets.length !== 1) {
+        reject(`аудит содержит изменение постороннего или неоднозначного слушателя «${entityId}».`);
+      }
+      const changes = Array.isArray(row?.changes) && row.changes.length
+        ? row.changes
+        : String(row?.field || "").trim()
+          ? [{ field: row.field, before: row.before, after: row.after }]
+          : [];
+      if (!changes.length) {
+        reject(`аудит слушателя «${entityId}» не содержит проверяемой цепочки изменений.`);
+      }
+      changes.forEach((change) => {
+        if (String(change?.field || "").trim() !== "note") {
+          reject(`после контрольной точки изменено поле «${String(change?.field || "").trim() || "неизвестно"}».`);
+        }
+        matchingTargets[0].auditChanges.push({
+          before: normalizeTargetedStudentFieldPatchText(String(change?.before ?? "")),
+          after: normalizeTargetedStudentFieldPatchText(String(change?.after ?? ""))
+        });
+      });
+    });
+
+  targets.forEach(({ patch, auditChanges }) => {
+    if (!auditChanges.length) {
+      reject(`аудит не подтверждает изменение примечания слушателя uid «${patch.uid}».`);
+    }
+    let expectedBefore = patch.expectedValue;
+    auditChanges.forEach((change) => {
+      if (change.before !== expectedBefore) {
+        reject(`цепочка аудита примечания uid «${patch.uid}» содержит разрыв.`);
+      }
+      expectedBefore = change.after;
+    });
+    if (expectedBefore !== patch.value) {
+      reject(`цепочка аудита примечания uid «${patch.uid}» не заканчивается актуальным значением.`);
+    }
+  });
+  return true;
+}
+
+function validateTargetedStudentFieldPatchesAgainstOutput(payload, sourceData, outputData) {
+  void sourceData;
+  const patches = Array.isArray(payload?.targetedStudentFieldPatches)
+    ? payload.targetedStudentFieldPatches
+    : [];
+  const outputStudents = Array.isArray(outputData?.students) ? outputData.students : [];
+  patches.forEach((patch) => {
+    const matchingOutputStudents = outputStudents.filter((student) => (
+      String(student?.uid ?? "").trim().replace(/\.0+$/u, "") === patch.uid
+    ));
+    if (matchingOutputStudents.length !== 1) {
+      const error = new Error(
+        `Проверка сформированного XLSB не пройдена: должен быть ровно один слушатель `
+        + `с uid «${patch.uid}»; найдено: ${matchingOutputStudents.length}.`
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    const outputNote = normalizeTargetedStudentFieldPatchText(
+      String(matchingOutputStudents[0].note ?? "")
+    );
+    if (outputNote !== patch.value) {
+      const error = new Error(
+        `Проверка сформированного XLSB не пройдена: примечание слушателя uid «${patch.uid}» `
+        + "не совпадает с актуальным значением Web-базы."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+  });
+  return true;
+}
+
 function sanitizeStudentDatabaseExportPayload(body) {
   const synchronizedAt = new Date().toISOString();
   if (!Array.isArray(body.students) || !body.students.length) {
@@ -19549,6 +20029,16 @@ function sanitizeStudentDatabaseExportPayload(body) {
   const communicationTemplateFields = sanitizeStudentDatabaseCommunicationTemplateFields(
     body.communicationTemplateFields
   );
+  const targetedStudentFieldPatchOnly = body.targetedStudentFieldPatchOnly === true;
+  if (
+    Object.prototype.hasOwnProperty.call(body, "targetedStudentFieldPatches")
+    && !targetedStudentFieldPatchOnly
+  ) {
+    throw new Error("Список точечных изменений передан без включённого точечного режима.");
+  }
+  const targetedStudentFieldPatches = targetedStudentFieldPatchOnly
+    ? sanitizeTargetedStudentFieldPatches(body.targetedStudentFieldPatches, students)
+    : [];
   return {
     students,
     contracts,
@@ -19569,6 +20059,8 @@ function sanitizeStudentDatabaseExportPayload(body) {
     agentPaymentRates: sanitizeAgentPaymentRates(body.agentPaymentRates),
     macroSettings,
     ...communicationTemplateFields,
+    targetedStudentFieldPatchOnly,
+    targetedStudentFieldPatches,
     defaultStudentAdditionalStatus: DEFAULT_STUDENT_ADDITIONAL_STATUS,
     studentColumnMap: {
       ...STUDENT_DATABASE_COLUMN_MAP,
@@ -20942,6 +21434,13 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     onProgress({ progress: 1, stage: "prepare", message: "Подготовка данных веб-базы..." });
     const payload = sanitizeStudentDatabaseExportPayload(body);
     const directionalSync = body.directionalSync === true;
+    if (payload.targetedStudentFieldPatchOnly && !directionalSync) {
+      const error = new Error(
+        "Точечное обновление разрешено только при направленной синхронизации Web → Excel."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
     let sharedStateMetadata = null;
     if (directionalSync) {
       sharedStateMetadata = await assertSharedApplicationStateRevision(body.sharedStateRevision);
@@ -21022,6 +21521,46 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         currentWebCriticalIdentityHash,
         currentExcelCriticalIdentityHash
       });
+      if (payload.targetedStudentFieldPatchOnly) {
+        if (directionalSyncResult.direction !== "web-to-excel") {
+          const error = new Error(
+            "Точечное обновление остановлено: сверка не выбрала направление Web → Excel."
+          );
+          error.statusCode = 409;
+          throw error;
+        }
+        validateTargetedStudentFieldPatchesAgainstSource(payload, sourceDataForExport);
+        try {
+          validateTargetedStudentFieldPatchScope(payload, body.syncBaseline);
+        } catch (scopeError) {
+          if (scopeError?.code !== "TARGETED_STUDENT_FIELD_PATCH_SCOPE_HASH_MISMATCH") {
+            throw scopeError;
+          }
+          onProgress({
+            progress: 15.5,
+            stage: "compare",
+            message: "Проверка точечного изменения по авторитетному журналу Web-базы..."
+          });
+          const authoritativeState = await readSharedApplicationStateDocument({ allowCache: false });
+          if (
+            authoritativeState?.offline === true
+            || authoritativeState?.syncPending === true
+            || Math.max(0, Number(authoritativeState?.pendingCount) || 0) > 0
+            || !authoritativeState?.document
+          ) {
+            const error = new Error(
+              "Точечное обновление остановлено: авторитетная Web-база ещё не завершила сохранение изменений."
+            );
+            error.statusCode = 409;
+            throw error;
+          }
+          validateTargetedStudentFieldPatchAuditScope(payload, body.syncBaseline, {
+            sourceHash,
+            expectedRevision: sharedStateMetadata?.revision || body.sharedStateRevision,
+            authoritativeDocument: authoritativeState?.document
+          });
+        }
+      }
       if (directionalSyncResult.direction !== "web-to-excel") {
         const sourceData = sourceDataForExport;
         if (directionalSyncResult.direction === "excel-to-web") {
@@ -21206,7 +21745,12 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       );
     }
     onProgress({ progress: 16, stage: "inspect", message: "Проверка структуры исходной книги..." });
-    const sourceInspection = inspectStudentDatabaseBinary(sourceBytes);
+    const targetedStudentNoteUids = payload.targetedStudentFieldPatchOnly
+      ? payload.targetedStudentFieldPatches.map((patch) => patch.uid)
+      : [];
+    const sourceInspection = inspectStudentDatabaseBinary(sourceBytes, {
+      targetedStudentNoteUids
+    });
     tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ais-student-database-export-"));
     const inputPath = path.join(tempDirectory, "source.xlsb");
     const outputPath = path.join(tempDirectory, "updated.xlsb");
@@ -21224,6 +21768,20 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         message: scriptProgress.message || "Обновление книги в Microsoft Excel..."
       });
     });
+    if (payload.targetedStudentFieldPatchOnly) {
+      const reportedPatchCount = Number(scriptResult.targetedStudentFieldPatches);
+      if (
+        scriptResult.targetedStudentFieldPatchOnly !== true
+        || !Number.isInteger(reportedPatchCount)
+        || reportedPatchCount !== payload.targetedStudentFieldPatches.length
+      ) {
+        const error = new Error(
+          "Microsoft Excel не подтвердил точное выполнение всех точечных изменений слушателей."
+        );
+        error.statusCode = 409;
+        throw error;
+      }
+    }
     if (
       (body.twoWaySync === true || directionalSync)
       && payload.programsProvided
@@ -21244,10 +21802,39 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     onProgress({ progress: 92, stage: "verify", message: "Чтение сформированной книги..." });
     const outputBytes = await fs.readFile(outputPath);
     if (!outputBytes.length) throw new Error("Microsoft Excel создал пустой файл.");
+    if (payload.targetedStudentFieldPatchOnly) {
+      onProgress({
+        progress: 94,
+        stage: "verify",
+        message: "Проверка точечных изменений слушателей в сформированном XLSB..."
+      });
+      const targetedOutputData = await parseStudentDatabaseInWorker(outputBytes);
+      validateTargetedStudentFieldPatchesAgainstOutput(
+        payload,
+        sourceDataForExport,
+        targetedOutputData
+      );
+    }
     onProgress({ progress: 95, stage: "verify", message: "Проверка VBA и формул..." });
-    const outputInspection = inspectStudentDatabaseBinary(outputBytes);
+    const outputInspection = inspectStudentDatabaseBinary(outputBytes, {
+      targetedStudentNoteUids
+    });
     if (sourceInspection.hasVba && !outputInspection.hasVba) {
       throw new Error("Проверка сформированной книги не пройдена: VBA-модули не сохранены.");
+    }
+    if (payload.targetedStudentFieldPatchOnly) {
+      if (
+        sourceInspection.vbaHash !== outputInspection.vbaHash
+        || sourceInspection.formulaFingerprint !== outputInspection.formulaFingerprint
+        || sourceInspection.workbookCellFingerprint !== outputInspection.workbookCellFingerprint
+      ) {
+        const error = new Error(
+          "Проверка сформированного XLSB не пройдена: Microsoft Excel изменил структуру, "
+          + "формулы, VBA или ячейки вне точечного примечания."
+        );
+        error.statusCode = 409;
+        throw error;
+      }
     }
     const communicationTemplateVerification = assertCommunicationTemplateNamedRangeOutput(
       sourceBytes,
@@ -21422,6 +22009,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       communicationTemplateMissingNamedRangeNames,
       communicationTemplateNamedRangeFormulaPreservedCount:
         communicationTemplateVerification.formulaPreserved,
+      targetedStudentFieldPatchCount: payload.targetedStudentFieldPatches.length,
       ...(studentSyncResult ? {
         requiresCommit: true,
         sourceModifiedAt,
@@ -26475,6 +27063,11 @@ module.exports = {
   getActiveStudentDatabaseSyncReservation,
   parseStudentDatabaseMacroSettings,
   sanitizeStudentDatabaseCommunicationTemplateFields,
+  sanitizeTargetedStudentFieldPatches,
+  validateTargetedStudentFieldPatchesAgainstSource,
+  validateTargetedStudentFieldPatchScope,
+  validateTargetedStudentFieldPatchAuditScope,
+  validateTargetedStudentFieldPatchesAgainstOutput,
   sanitizeStudentDatabaseExportPayload,
   validateStudentDatabaseProgramStructure,
   normalizeSharedApplicationData,
@@ -26484,6 +27077,8 @@ module.exports = {
   readSharedApplicationStateCache,
   sanitizeFrdoExportPayload,
   buildFrdoExportWorkbook,
+  hashStudentDatabaseWorkbookFormulaMap,
+  hashStudentDatabaseWorkbookCellMap,
   inspectStudentDatabaseBinary,
   sanitizePowerShellErrorOutput,
   collectEmailMessageContent,

@@ -837,6 +837,155 @@ function Find-MappedColumn {
   return [int]$match.Column
 }
 
+function Normalize-TargetedStudentFieldValue {
+  param([object]$Value)
+  if ($null -eq $Value) { return "" }
+  return ([string]$Value).Replace("`r`n", "`n").Replace("`r", "`n")
+}
+
+function Update-TargetedStudentFieldPatches {
+  param(
+    [object]$Workbook,
+    [object]$Payload
+  )
+  $sheet = $null
+  $uidRange = $null
+  try {
+    $patches = @(Get-ObjectProperty $Payload "targetedStudentFieldPatches")
+    if ($patches.Count -le 0) {
+      throw "Не переданы точечные изменения слушателей."
+    }
+    if ($patches.Count -gt 20) {
+      throw "За один запуск разрешено не более 20 точечных изменений слушателей."
+    }
+
+    $columnMap = Get-ObjectProperty $Payload "studentColumnMap"
+    if ($null -eq $columnMap) {
+      throw "Не передана карта колонок листа 'База'."
+    }
+    $sheet = $Workbook.Worksheets.Item("База")
+    $header = Find-HeaderRow $sheet @("uid", "ФИО")
+    $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn $columnMap)
+    $uidColumn = Find-MappedColumn $columns "uid"
+    $noteColumn = Find-MappedColumn $columns "note"
+    $startRow = $header.Row + 1
+    $lastRow = [int]$header.LastRow
+    if ($lastRow -lt $startRow) {
+      throw "На листе 'База' нет строк слушателей."
+    }
+
+    $validatedPatches = [Collections.Generic.List[object]]::new()
+    $targetUids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($patch in $patches) {
+      if ($null -eq $patch) {
+        throw "Точечное изменение слушателя не может быть пустым."
+      }
+      $uid = Convert-Uid (Get-ObjectProperty $patch "uid")
+      if (-not $uid) {
+        throw "В точечном изменении не указан uid слушателя."
+      }
+      if (-not $targetUids.Add($uid)) {
+        throw "Для слушателя с uid '$uid' передано более одного точечного изменения."
+      }
+
+      $field = [string](Get-ObjectProperty $patch "field")
+      if (-not [string]::Equals($field, "note", [StringComparison]::Ordinal)) {
+        throw "Точечное изменение поля '$field' запрещено; разрешено только поле 'note'."
+      }
+      if (-not (Test-ObjectProperty $patch "expectedValue") -or $null -eq (Get-ObjectProperty $patch "expectedValue")) {
+        throw "Для слушателя с uid '$uid' не передано ожидаемое значение note."
+      }
+      if (-not (Test-ObjectProperty $patch "value") -or $null -eq (Get-ObjectProperty $patch "value")) {
+        throw "Для слушателя с uid '$uid' не передано новое значение note."
+      }
+      $expectedValueObject = Get-ObjectProperty $patch "expectedValue"
+      $valueObject = Get-ObjectProperty $patch "value"
+      if ($expectedValueObject -isnot [string] -or $valueObject -isnot [string]) {
+        throw "Ожидаемое и новое значения note для uid '$uid' должны быть строками."
+      }
+      $expectedValue = Normalize-TargetedStudentFieldValue $expectedValueObject
+      $value = Normalize-TargetedStudentFieldValue $valueObject
+      if ($expectedValue.Length -gt 32767 -or $value.Length -gt 32767) {
+        throw "Значение note для uid '$uid' превышает предел Excel в 32767 символов."
+      }
+      if ($expectedValue.IndexOf([char]0) -ge 0 -or $value.IndexOf([char]0) -ge 0) {
+        throw "Значение note для uid '$uid' содержит недопустимый нулевой символ."
+      }
+      if ($value.TrimStart() -match '^[=+\-@]') {
+        throw "Новое значение note для uid '$uid' похоже на формулу Excel."
+      }
+      $validatedPatches.Add([pscustomobject]@{
+        Uid = $uid
+        Value = $value
+        ExpectedValue = $expectedValue
+      }) | Out-Null
+    }
+
+    $rowsByUid = @{}
+    $uidRange = $sheet.Range(
+      $sheet.Cells.Item($startRow, $uidColumn),
+      $sheet.Cells.Item($lastRow, $uidColumn)
+    )
+    $uidValues = $uidRange.Value2
+    for ($row = $startRow; $row -le $lastRow; $row += 1) {
+      $uid = Convert-Uid (Get-MatrixValue $uidValues ($row - $startRow + 1) 1)
+      if (-not $targetUids.Contains($uid)) { continue }
+      if (-not $rowsByUid.ContainsKey($uid)) {
+        $rowsByUid[$uid] = [Collections.Generic.List[int]]::new()
+      }
+      $rowsByUid[$uid].Add([int]$row) | Out-Null
+    }
+    Release-ComObject $uidRange
+    $uidRange = $null
+
+    foreach ($patch in $validatedPatches) {
+      $matchingRows = if ($rowsByUid.ContainsKey($patch.Uid)) {
+        @($rowsByUid[$patch.Uid])
+      } else {
+        @()
+      }
+      if ($matchingRows.Count -eq 0) {
+        throw "На листе 'База' не найден слушатель с uid '$($patch.Uid)'."
+      }
+      if ($matchingRows.Count -ne 1) {
+        throw "На листе 'База' uid '$($patch.Uid)' встречается $($matchingRows.Count) раза; точечное изменение отменено."
+      }
+
+      $cell = $null
+      try {
+        $cell = $sheet.Cells.Item([int]$matchingRows[0], $noteColumn)
+        if ([bool]$cell.HasFormula) {
+          throw "Ячейка note слушателя с uid '$($patch.Uid)' содержит формулу; изменение отменено."
+        }
+        $currentValue = Normalize-TargetedStudentFieldValue $cell.Value2
+        if (-not [string]::Equals($currentValue, $patch.ExpectedValue, [StringComparison]::Ordinal)) {
+          throw "Ячейка note слушателя с uid '$($patch.Uid)' изменилась после подготовки синхронизации."
+        }
+
+        $cell.Value2 = [string]$patch.Value
+        if ([bool]$cell.HasFormula) {
+          throw "Новое значение note для uid '$($patch.Uid)' интерпретировано Excel как формула; изменение отменено."
+        }
+        $writtenValue = Normalize-TargetedStudentFieldValue $cell.Value2
+        if (-not [string]::Equals($writtenValue, $patch.Value, [StringComparison]::Ordinal)) {
+          throw "Excel не сохранил точное значение note для uid '$($patch.Uid)'."
+        }
+      } finally {
+        Release-ComObject $cell
+      }
+    }
+
+    return [pscustomobject]@{
+      Count = $validatedPatches.Count
+    }
+  } catch {
+    throw "Ошибка точечного обновления листа 'База': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
+  } finally {
+    Release-ComObject $uidRange
+    Release-ComObject $sheet
+  }
+}
+
 function Update-MappedColumn {
   param(
     [object]$Sheet,
@@ -3649,6 +3798,10 @@ try {
   Write-SyncProgress 1 "Чтение данных веб-базы..."
   $payload = Get-Content -LiteralPath $PayloadPath -Raw -Encoding UTF8 | ConvertFrom-Json
   $readSyncMetadataOnly = [bool](Get-ObjectProperty $payload "readSyncMetadataOnly")
+  $targetedStudentFieldPatchOnly = [bool](Get-ObjectProperty $payload "targetedStudentFieldPatchOnly")
+  if ($readSyncMetadataOnly -and $targetedStudentFieldPatchOnly) {
+    throw "Режим чтения служебных ID нельзя совмещать с точечным обновлением слушателей."
+  }
   $dateFields = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
   foreach ($field in @(Get-ObjectProperty $payload "studentDateFields")) { [void]$dateFields.Add([string]$field) }
   foreach ($field in @(Get-ObjectProperty $payload "contractDateFields")) { [void]$dateFields.Add([string]$field) }
@@ -3694,6 +3847,13 @@ try {
   $excel.EnableEvents = $false
   $excel.AskToUpdateLinks = $false
   $excel.AutomationSecurity = 3
+  if ($targetedStudentFieldPatchOnly) {
+    # Prevent volatile formulas from being recalculated merely because a
+    # one-cell text patch opened the workbook. Some Excel builds only allow
+    # changing this setting after Open, so the existing guarded assignment
+    # below remains as a fallback.
+    try { $excel.Calculation = -4135 } catch {} # xlCalculationManual
+  }
   $workbook = $excel.Workbooks.Open($InputPath, 0, $readSyncMetadataOnly)
   # Hundreds of mapped columns are updated in batches. Automatic calculation
   # after every batch makes a full XLSB synchronization take many minutes;
@@ -3710,6 +3870,28 @@ try {
       syncMetadataRows = $metadataRows
       syncMetadataCount = $metadataRows.Count
     } | ConvertTo-Json -Compress -Depth 8 | Write-Output
+    return
+  }
+
+  if ($targetedStudentFieldPatchOnly) {
+    if (
+      [bool](Get-ObjectProperty $payload "syncMetadataOnly") `
+      -or [bool](Get-ObjectProperty $payload "commentOnly")
+    ) {
+      throw "Режим служебных ID нельзя совмещать с точечным обновлением слушателей."
+    }
+    Write-SyncProgress 20 "Проверка точечных изменений слушателей..."
+    $targetedStudentFieldPatchResult = Update-TargetedStudentFieldPatches $workbook $payload
+    Write-SyncProgress 95 "Сохранение книги с точечными изменениями..."
+    try { $excel.CalculateBeforeSave = $false } catch {}
+    $workbook.SaveAs($OutputPath, 50)
+    Write-SyncProgress 100 "Точечные изменения сохранены."
+    [pscustomobject]@{
+      type = "result"
+      targetedStudentFieldPatchOnly = $true
+      targetedStudentFieldPatches = $targetedStudentFieldPatchResult.Count
+      outputPath = $OutputPath
+    } | ConvertTo-Json -Compress -Depth 4 | Write-Output
     return
   }
 

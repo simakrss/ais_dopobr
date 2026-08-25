@@ -13,9 +13,16 @@ const clientSource = fs.readFileSync(clientPath, "utf8").replace(/\r\n?/gu, "\n"
 const {
   hashStudentDatabaseCriticalSnapshot,
   hashStudentDatabaseCriticalIdentity,
+  hashStudentDatabaseWorkbookFormulaMap,
   getStudentDatabaseEmbeddedSyncTimestamp,
   normalizeStudentDatabaseSyncBaseline,
   resolveStudentDatabaseSyncDirection,
+  sanitizeStudentDatabaseExportPayload,
+  sanitizeTargetedStudentFieldPatches,
+  validateTargetedStudentFieldPatchAuditScope,
+  validateTargetedStudentFieldPatchScope,
+  validateTargetedStudentFieldPatchesAgainstSource,
+  validateTargetedStudentFieldPatchesAgainstOutput,
   acquireStudentDatabaseSyncReservation,
   releaseStudentDatabaseSyncReservation,
   getActiveStudentDatabaseSyncReservation
@@ -126,6 +133,510 @@ function buildCriticalData(status = "На зачисление", extraStudent = 
     programs: [],
     trainingPlans: []
   };
+}
+
+function buildTargetedStudentPatchBody(overrides = {}) {
+  const webNote = "09.07.2026 Поменялась фамилия\n23.08.2026 Отправлен скан оригинала";
+  return {
+    students: [{
+      id: "student-1148",
+      uid: "1148",
+      name: "Пащенко Мария",
+      note: webNote
+    }],
+    contracts: [],
+    directExpenses: [],
+    generalExpenses: [],
+    targetedStudentFieldPatchOnly: true,
+    targetedStudentFieldPatches: [{
+      uid: "1148",
+      field: "note",
+      expectedValue: "09.07.2026 Поменялась фамилия",
+      value: webNote
+    }],
+    ...overrides
+  };
+}
+
+function buildTargetedStudentAuditScopeFixture() {
+  const body = buildTargetedStudentPatchBody();
+  const payload = sanitizeStudentDatabaseExportPayload(body);
+  const patch = payload.targetedStudentFieldPatches[0];
+  const baselineAt = "2026-08-25T10:00:00.000Z";
+  const baseline = {
+    version: 2,
+    sourceHash: "a".repeat(64),
+    sourceIdentity: "b".repeat(64),
+    webRevision: 537,
+    synchronizedAt: baselineAt,
+    criticalHash: "c".repeat(64),
+    criticalIdentityHash: "d".repeat(64)
+  };
+  const intermediateNote = `${patch.expectedValue}\nПромежуточное примечание`;
+  const noteAuditRows = [
+    {
+      id: "audit-note-1",
+      createdAt: "2026-08-25T10:05:00.000Z",
+      action: "Изменена запись",
+      entityType: "students",
+      entityId: "student-1148",
+      changes: [{
+        field: "note",
+        label: "Примечание",
+        before: patch.expectedValue,
+        after: intermediateNote
+      }]
+    },
+    {
+      id: "audit-note-2",
+      createdAt: "2026-08-25T10:06:00.000Z",
+      action: "Изменена запись",
+      entityType: "students",
+      entityId: "student-1148",
+      changes: [{
+        field: "note",
+        label: "Примечание",
+        before: intermediateNote,
+        after: patch.value
+      }]
+    }
+  ];
+  const baselineTimestamp = Date.parse(baselineAt);
+  const coverageRows = Array.from({ length: 198 }, (_, index) => ({
+    id: `audit-coverage-${index}`,
+    createdAt: new Date(baselineTimestamp - (index + 1) * 1000).toISOString(),
+    action: "Вход в систему",
+    entityType: "auth",
+    entityId: `session-${index}`,
+    changes: []
+  }));
+  const authoritativeDocument = {
+    revision: 539,
+    data: {
+      collections: {
+        students: [{
+          id: "student-1148",
+          uid: "1148",
+          name: "Пащенко Мария",
+          note: patch.value
+        }],
+        audit: [...noteAuditRows, ...coverageRows]
+      }
+    }
+  };
+  return {
+    payload,
+    patch,
+    baseline,
+    baselineTimestamp,
+    expectedRevision: 539,
+    sourceHash: baseline.sourceHash,
+    noteAuditRows,
+    coverageRows,
+    authoritativeDocument
+  };
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function testTargetedStudentFieldPatchFormulaMapSafety() {
+  assert.equal(typeof hashStudentDatabaseWorkbookFormulaMap, "function");
+  const sourceWorkbook = {
+    SheetNames: ["База", "Расчёты"],
+    Sheets: {
+      "База": {
+        "!ref": "A1:C3",
+        A1: { f: "SUM(A2:A3)", v: 3 },
+        B1: { v: "Обычное значение" }
+      },
+      "Расчёты": {
+        C1: { f: "A1*2", F: "C1:C2", v: 6 }
+      }
+    }
+  };
+  const sameFormulaMapWorkbook = {
+    SheetNames: ["Расчёты", "База"],
+    Sheets: {
+      "Расчёты": {
+        C1: { F: "C1:C2", v: 999, f: "A1*2" }
+      },
+      "База": {
+        B1: { v: "Изменённое неформульное значение" },
+        A1: { v: 777, f: "SUM(A2:A3)" },
+        "!ref": "A1:Z999"
+      }
+    }
+  };
+  const sourceFingerprint = hashStudentDatabaseWorkbookFormulaMap(sourceWorkbook);
+  assert.equal(
+    sourceFingerprint,
+    hashStudentDatabaseWorkbookFormulaMap(sameFormulaMapWorkbook),
+    "Formula fingerprint должен зависеть от точной карты формул, а не от cache values и порядка ключей."
+  );
+
+  const changedFormulaWorkbook = cloneJson(sourceWorkbook);
+  changedFormulaWorkbook.Sheets["База"].A1.f = "SUM(A2:A4)";
+  assert.notEqual(
+    sourceFingerprint,
+    hashStudentDatabaseWorkbookFormulaMap(changedFormulaWorkbook),
+    "Даже одно изменение текста формулы должно менять formula fingerprint."
+  );
+
+  const changedArrayFormulaRangeWorkbook = cloneJson(sourceWorkbook);
+  changedArrayFormulaRangeWorkbook.Sheets["Расчёты"].C1.F = "C1:C3";
+  assert.notEqual(
+    sourceFingerprint,
+    hashStudentDatabaseWorkbookFormulaMap(changedArrayFormulaRangeWorkbook),
+    "Изменение диапазона общей формулы должно менять formula fingerprint."
+  );
+}
+
+function testTargetedStudentFieldPatchAuditFallbackSafety() {
+  assert.equal(typeof validateTargetedStudentFieldPatchAuditScope, "function");
+  const fixture = buildTargetedStudentAuditScopeFixture();
+  const validate = (overrides = {}) => validateTargetedStudentFieldPatchAuditScope(
+    overrides.payload || fixture.payload,
+    overrides.baseline || fixture.baseline,
+    {
+      sourceHash: Object.prototype.hasOwnProperty.call(overrides, "sourceHash")
+        ? overrides.sourceHash
+        : fixture.sourceHash,
+      expectedRevision: Object.prototype.hasOwnProperty.call(overrides, "expectedRevision")
+        ? overrides.expectedRevision
+        : fixture.expectedRevision,
+      authoritativeDocument: overrides.authoritativeDocument || fixture.authoritativeDocument
+    }
+  );
+
+  assert.doesNotThrow(
+    () => validate(),
+    "Непрерывная audit-цепочка note при покрывающем baseline окне должна разрешать fallback."
+  );
+
+  const otherEntityDocument = cloneJson(fixture.authoritativeDocument);
+  otherEntityDocument.data.collections.audit.push({
+    id: "audit-contract-change",
+    createdAt: "2026-08-25T10:07:00.000Z",
+    entityType: "contracts",
+    entityId: "contract-1",
+    changes: [{ field: "note", before: "", after: "Изменено" }]
+  });
+  assert.throws(
+    () => validate({ authoritativeDocument: otherEntityDocument }),
+    statusError(409),
+    "Изменение другой критичной сущности после baseline запрещает audit fallback."
+  );
+
+  const otherFieldDocument = cloneJson(fixture.authoritativeDocument);
+  otherFieldDocument.data.collections.audit.push({
+    id: "audit-student-status-change",
+    createdAt: "2026-08-25T10:07:00.000Z",
+    entityType: "students",
+    entityId: "student-1148",
+    changes: [{ field: "status", before: "Учится", after: "Отчислен" }]
+  });
+  assert.throws(
+    () => validate({ authoritativeDocument: otherFieldDocument }),
+    statusError(409),
+    "Изменение другого критичного поля целевого слушателя запрещает audit fallback."
+  );
+
+  const databaseSyncDocument = cloneJson(fixture.authoritativeDocument);
+  databaseSyncDocument.data.collections.audit.push({
+    id: "audit-database-sync",
+    createdAt: "2026-08-25T10:07:00.000Z",
+    entityType: "database",
+    entityId: "student-database",
+    action: "Синхронизация XLSB",
+    source: "xlsb-sync-local",
+    changes: []
+  });
+  assert.doesNotThrow(
+    () => validate({ authoritativeDocument: databaseSyncDocument }),
+    "Точная служебная запись синхронизации XLSB не является независимой Web-правкой."
+  );
+
+  const lateDatabaseSyncDocument = cloneJson(fixture.authoritativeDocument);
+  lateDatabaseSyncDocument.data.collections.audit.push({
+    id: "audit-database-sync-too-late",
+    createdAt: "2026-08-25T10:11:00.001Z",
+    entityType: "database",
+    entityId: "student-database",
+    action: "Синхронизация XLSB",
+    source: "xlsb-sync-local",
+    changes: []
+  });
+  assert.throws(
+    () => validate({ authoritativeDocument: lateDatabaseSyncDocument }),
+    statusError(409),
+    "Служебную XLSB-запись позже baseline более чем на 10 минут нельзя считать частью исходной операции."
+  );
+
+  const unrelatedDatabaseDocument = cloneJson(fixture.authoritativeDocument);
+  unrelatedDatabaseDocument.data.collections.audit.push({
+    id: "audit-database-manual-change",
+    createdAt: "2026-08-25T10:07:00.000Z",
+    entityType: "database",
+    entityId: "student-database",
+    action: "Изменены настройки базы",
+    source: "web",
+    changes: [{ field: "databasePath", before: "old.xlsb", after: "new.xlsb" }]
+  });
+  assert.throws(
+    () => validate({ authoritativeDocument: unrelatedDatabaseDocument }),
+    statusError(409),
+    "Произвольную запись entityType=database нельзя маскировать под служебную XLSB-синхронизацию."
+  );
+
+  const brokenChainDocument = cloneJson(fixture.authoritativeDocument);
+  brokenChainDocument.data.collections.audit
+    .find((row) => row.id === "audit-note-2").changes[0].before = "Разрыв цепочки";
+  assert.throws(
+    () => validate({ authoritativeDocument: brokenChainDocument }),
+    statusError(409),
+    "Каждое before audit-цепочки должно точно совпадать с предыдущим after."
+  );
+
+  const wrongFinalValueDocument = cloneJson(fixture.authoritativeDocument);
+  wrongFinalValueDocument.data.collections.audit
+    .find((row) => row.id === "audit-note-2").changes[0].after = "Неактуальный финал";
+  assert.throws(
+    () => validate({ authoritativeDocument: wrongFinalValueDocument }),
+    statusError(409),
+    "Последний after audit-цепочки должен совпадать с patch.value."
+  );
+
+  const missingAuditDocument = cloneJson(fixture.authoritativeDocument);
+  missingAuditDocument.data.collections.audit = [];
+  assert.throws(
+    () => validate({ authoritativeDocument: missingAuditDocument }),
+    statusError(409),
+    "Без audit-доказательств точечный fallback должен быть запрещён."
+  );
+
+  const tooNewAuditDocument = cloneJson(fixture.authoritativeDocument);
+  tooNewAuditDocument.data.collections.audit = [
+    ...fixture.noteAuditRows,
+    ...Array.from({ length: 198 }, (_, index) => ({
+      id: `audit-too-new-${index}`,
+      createdAt: new Date(fixture.baselineTimestamp + 2000 + index).toISOString(),
+      action: "Вход в систему",
+      entityType: "auth",
+      entityId: `new-session-${index}`,
+      changes: []
+    }))
+  ];
+  assert.throws(
+    () => validate({ authoritativeDocument: tooNewAuditDocument }),
+    statusError(409),
+    "Обрезанное audit-окно, начинающееся позже baseline, не доказывает полноту изменений."
+  );
+
+  assert.throws(
+    () => validate({ sourceHash: "e".repeat(64) }),
+    statusError(409),
+    "Audit fallback разрешён только при физически неизменном XLSB sourceHash."
+  );
+  assert.throws(
+    () => validate({ expectedRevision: fixture.expectedRevision + 1 }),
+    statusError(409),
+    "Ревизия авторитетного документа должна совпадать с подготовленной ревизией Web."
+  );
+
+  const mismatchedStudentDocument = cloneJson(fixture.authoritativeDocument);
+  mismatchedStudentDocument.data.collections.students[0].note = "Неактуальное примечание";
+  assert.throws(
+    () => validate({ authoritativeDocument: mismatchedStudentDocument }),
+    statusError(409),
+    "Авторитетный слушатель должен содержать точное финальное значение note."
+  );
+
+  const duplicateStudentDocument = cloneJson(fixture.authoritativeDocument);
+  duplicateStudentDocument.data.collections.students.push({
+    ...duplicateStudentDocument.data.collections.students[0],
+    id: "student-1148-duplicate"
+  });
+  assert.throws(
+    () => validate({ authoritativeDocument: duplicateStudentDocument }),
+    statusError(409),
+    "UID точечного patch должен однозначно определять слушателя в авторитетном документе."
+  );
+}
+
+function testTargetedStudentFieldPatchSafety() {
+  assert.equal(typeof sanitizeTargetedStudentFieldPatches, "function");
+  assert.equal(typeof validateTargetedStudentFieldPatchScope, "function");
+  assert.equal(typeof validateTargetedStudentFieldPatchesAgainstSource, "function");
+  assert.equal(typeof validateTargetedStudentFieldPatchesAgainstOutput, "function");
+
+  const body = buildTargetedStudentPatchBody();
+  const payload = sanitizeStudentDatabaseExportPayload(body);
+  assert.equal(payload.targetedStudentFieldPatchOnly, true);
+  assert.deepEqual(payload.targetedStudentFieldPatches, body.targetedStudentFieldPatches);
+  const baselineCandidate = {
+    ...payload,
+    students: payload.students.map((student) => ({
+      ...student,
+      note: student.uid === "1148"
+        ? body.targetedStudentFieldPatches[0].expectedValue
+        : student.note
+    }))
+  };
+  const baseline = {
+    criticalHash: hashStudentDatabaseCriticalSnapshot(baselineCandidate)
+  };
+  const targetedSourceData = {
+    students: [{
+      uid: "1148",
+      note: body.targetedStudentFieldPatches[0].expectedValue
+    }],
+    contracts: [],
+    directExpenses: [],
+    generalExpenses: [],
+    inventoryRows: [],
+    programs: [],
+    trainingPlans: []
+  };
+  const targetedOutputData = {
+    ...targetedSourceData,
+    students: [{
+      uid: "1148",
+      note: body.targetedStudentFieldPatches[0].value
+    }]
+  };
+  assert.doesNotThrow(() => validateTargetedStudentFieldPatchScope(payload, baseline));
+  assert.doesNotThrow(() => validateTargetedStudentFieldPatchesAgainstSource(
+    payload,
+    targetedSourceData
+  ));
+  assert.doesNotThrow(() => validateTargetedStudentFieldPatchesAgainstOutput(
+    payload,
+    targetedSourceData,
+    targetedOutputData
+  ));
+
+  const unrelatedCriticalChangePayload = sanitizeStudentDatabaseExportPayload(
+    buildTargetedStudentPatchBody({
+      students: [{ ...body.students[0], status: "Отчислен" }]
+    })
+  );
+  assert.throws(
+    () => validateTargetedStudentFieldPatchScope(unrelatedCriticalChangePayload, baseline),
+    statusError(409),
+    "Точечная операция не должна скрывать изменение другого критичного поля Web-базы."
+  );
+
+  assert.throws(
+    () => sanitizeStudentDatabaseExportPayload(buildTargetedStudentPatchBody({
+      targetedStudentFieldPatches: [{
+        ...body.targetedStudentFieldPatches[0],
+        field: "additionalStatus"
+      }]
+    })),
+    /пол[ея]|примечан|разрешено/iu,
+    "Точечный режим не должен разрешать произвольное поле слушателя."
+  );
+  for (const trigger of ["=", "+", "-", "@"]) {
+    const dangerousNote = ` \t${trigger}ОПАСНАЯ_ФОРМУЛА()`;
+    assert.throws(
+      () => sanitizeStudentDatabaseExportPayload(buildTargetedStudentPatchBody({
+        students: [{ ...body.students[0], note: dangerousNote }],
+        targetedStudentFieldPatches: [{
+          ...body.targetedStudentFieldPatches[0],
+          value: dangerousNote
+        }]
+      })),
+      /формул|Excel|опасн/iu,
+      `Значение note с ведущими пробелами и «${trigger}» не должно попасть в Excel.`
+    );
+  }
+  assert.throws(
+    () => sanitizeStudentDatabaseExportPayload(buildTargetedStudentPatchBody({
+      targetedStudentFieldPatches: [{
+        ...body.targetedStudentFieldPatches[0],
+        expectedValue: "  =СТАРОЕ_ОПАСНОЕ_ЗНАЧЕНИЕ()"
+      }]
+    })),
+    /формул|Excel|опасн/iu,
+    "Формульный префикс запрещён и в expectedValue точечного patch."
+  );
+  assert.throws(
+    () => sanitizeStudentDatabaseExportPayload(buildTargetedStudentPatchBody({
+      targetedStudentFieldPatches: [{
+        ...body.targetedStudentFieldPatches[0],
+        value: "Значение, которого нет в Web payload"
+      }]
+    })),
+    /Web|значени|совпад/iu,
+    "Новое значение patch должно точно совпадать с авторитетным Web payload."
+  );
+  assert.throws(
+    () => sanitizeStudentDatabaseExportPayload(buildTargetedStudentPatchBody({
+      targetedStudentFieldPatches: [
+        body.targetedStudentFieldPatches[0],
+        { ...body.targetedStudentFieldPatches[0] }
+      ]
+    })),
+    /повтор|дублир|уже/iu,
+    "Один uid+field нельзя передавать в patch дважды."
+  );
+  assert.throws(
+    () => sanitizeStudentDatabaseExportPayload(buildTargetedStudentPatchBody({
+      students: [
+        body.students[0],
+        { ...body.students[0], id: "student-1148-duplicate" }
+      ]
+    })),
+    /повтор|однознач|несколько|ровно один|uid/iu,
+    "UID точечного patch должен однозначно определять одного Web-слушателя."
+  );
+
+  assert.throws(
+    () => validateTargetedStudentFieldPatchesAgainstSource(payload, {
+      students: [{ uid: "1148", note: "Excel изменён после подготовки" }]
+    }),
+    statusError(409),
+    "XLSB нельзя изменять, если текущее значение не совпадает с expectedValue."
+  );
+  assert.throws(
+    () => validateTargetedStudentFieldPatchesAgainstSource(payload, {
+      students: [
+        { uid: "1148", note: body.targetedStudentFieldPatches[0].expectedValue },
+        { uid: "1148", note: body.targetedStudentFieldPatches[0].expectedValue }
+      ]
+    }),
+    statusError(409),
+    "UID точечного patch должен однозначно определять одного XLSB-слушателя."
+  );
+  assert.throws(
+    () => validateTargetedStudentFieldPatchesAgainstOutput(
+      payload,
+      targetedSourceData,
+      {
+        ...targetedOutputData,
+        students: [{ uid: "1148", note: "Excel записал другое значение" }]
+      }
+    ),
+    statusError(409),
+    "Подготовленный XLSB должен быть отклонён, если Excel не записал новое значение note."
+  );
+  assert.throws(
+    () => validateTargetedStudentFieldPatchesAgainstOutput(
+      payload,
+      targetedSourceData,
+      {
+        ...targetedOutputData,
+        students: [
+          { uid: "1148", note: body.targetedStudentFieldPatches[0].value },
+          { uid: "1148", note: body.targetedStudentFieldPatches[0].value }
+        ]
+      }
+    ),
+    statusError(409),
+    "После записи UID точечного patch должен оставаться уникальным в XLSB."
+  );
 }
 
 function testCriticalDataDirectionAndLegacyMigration() {
@@ -1041,6 +1552,9 @@ function testClientGenerationGuardAndSourceProtocols() {
 async function main() {
   testCompleteBaselineAndInitialMigrationSafety();
   testCriticalDataDirectionAndLegacyMigration();
+  testTargetedStudentFieldPatchSafety();
+  testTargetedStudentFieldPatchFormulaMapSafety();
+  testTargetedStudentFieldPatchAuditFallbackSafety();
   testReservationRevisionAndTtl();
   await testAuthoritativeRevisionAssertions();
   await testStrictReservationTokenAndBaseRevision();
