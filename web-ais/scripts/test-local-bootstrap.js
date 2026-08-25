@@ -48,6 +48,8 @@ assert.match(startupUpdateSource, /deploy-lms\.ps1[\s\S]*?-All/u);
 assert.match(startupUpdateSource, /Автоматическая отправка в GitHub отключена/u);
 assert.match(deploySource, /System\.Link\.TargetParsingPath/u);
 assert.match(deploySource, /privateTemplatePaths/u);
+assert.match(deploySource, /Invoke-FtpTransferWithRetry/u);
+assert.match(deploySource, /Remove-FtpFileIfExists \$remotePath[\s\S]*?Rename-FtpFile \$previousPath \$fileName/u);
 const generatedSafePaths = deploySource.match(/\$generatedSafePaths = @\(([\s\S]*?)\) \| Where-Object/u);
 assert.ok(generatedSafePaths, "generated safe-path list was not found");
 assert.doesNotMatch(generatedSafePaths[1], /employee-contract-education\.docx/u);

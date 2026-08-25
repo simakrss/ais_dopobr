@@ -221,13 +221,30 @@ function New-FtpRequest([string]$RemotePath, [string]$Method) {
   $request.UsePassive = $true
   $request.UseBinary = $true
   $request.KeepAlive = $false
-  $request.Timeout = 120000
-  $request.ReadWriteTimeout = 120000
+  $request.Timeout = 300000
+  $request.ReadWriteTimeout = 300000
   return $request
 }
 
 function Close-FtpResponse($Response) {
   if ($null -ne $Response) { $Response.Dispose() }
+}
+
+function Invoke-FtpTransferWithRetry(
+  [scriptblock]$Operation,
+  [string]$Description,
+  [int]$MaximumAttempts = 4
+) {
+  for ($attempt = 1; $attempt -le $MaximumAttempts; $attempt += 1) {
+    try {
+      return & $Operation
+    } catch {
+      if ($attempt -ge $MaximumAttempts) { throw }
+      $delay = [Math]::Min(12, [Math]::Pow(2, $attempt))
+      Write-Warning "${Description}: временная ошибка FTP; повтор $($attempt + 1) из $MaximumAttempts через $delay с."
+      Start-Sleep -Seconds $delay
+    }
+  }
 }
 
 function Test-FtpFile([string]$RemotePath) {
@@ -328,8 +345,9 @@ function Publish-FileTarget(
   $previousPath = "$remoteDirectory/$previousName"
   $hadPrevious = $false
 
+  Write-Host "[FTP] ${Target}: $RelativeFile"
   Ensure-FtpDirectory $remoteDirectory
-  Send-FtpFile $localPath $temporaryPath
+  Invoke-FtpTransferWithRetry { Send-FtpFile $localPath $temporaryPath } "Загрузка $RelativeFile"
   Remove-FtpFileIfExists $previousPath
 
   if (Test-FtpFile $remotePath) {
@@ -347,16 +365,19 @@ function Publish-FileTarget(
     throw
   }
 
-  $localBytes = [IO.File]::ReadAllBytes($localPath)
-  $remoteBytes = Receive-FtpFile $remotePath
-  $localHash = Get-Sha256 $localBytes
-  $remoteHash = Get-Sha256 $remoteBytes
-  if ($localHash -ne $remoteHash) {
-    if ($hadPrevious) {
-      Remove-FtpFileIfExists $remotePath
-      Rename-FtpFile $previousPath $fileName
+  try {
+    $localBytes = [IO.File]::ReadAllBytes($localPath)
+    $remoteBytes = Invoke-FtpTransferWithRetry { Receive-FtpFile $remotePath } "Проверка $RelativeFile"
+    $localHash = Get-Sha256 $localBytes
+    $remoteHash = Get-Sha256 $remoteBytes
+    if ($localHash -ne $remoteHash) {
+      throw "SHA-256 verification failed for $RelativeFile"
     }
-    throw "SHA-256 verification failed for $RelativeFile"
+  } catch {
+    $verificationFailure = $_
+    Remove-FtpFileIfExists $remotePath
+    if ($hadPrevious) { Rename-FtpFile $previousPath $fileName }
+    throw $verificationFailure
   }
 
   Remove-FtpFileIfExists $previousPath
