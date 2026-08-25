@@ -843,6 +843,92 @@ function Normalize-TargetedStudentFieldValue {
   return ([string]$Value).Replace("`r`n", "`n").Replace("`r", "`n")
 }
 
+function Get-ExcelWorkbooksWithRetry {
+  param(
+    [object]$Excel,
+    [int]$MaxAttempts = 20,
+    [int]$DelayMilliseconds = 500
+  )
+  if ($null -eq $Excel) {
+    throw "Приложение Excel недоступно."
+  }
+  $attemptLimit = [Math]::Max(1, $MaxAttempts)
+  $retryDelay = [Math]::Max(50, $DelayMilliseconds)
+  $lastErrorMessage = ""
+  for ($attempt = 1; $attempt -le $attemptLimit; $attempt += 1) {
+    $workbooks = $null
+    try {
+      $workbooks = $Excel.Workbooks
+      if ($null -eq $workbooks) {
+        throw "Excel не вернул коллекцию книг."
+      }
+      [void]([int]$workbooks.Count)
+      return [pscustomobject]@{ Value = $workbooks }
+    } catch {
+      $lastErrorMessage = $_.Exception.Message
+      Release-ComObject $workbooks
+      $workbooks = $null
+    }
+    if ($attempt -lt $attemptLimit) {
+      Start-Sleep -Milliseconds $retryDelay
+    }
+  }
+  throw "Excel не подготовил коллекцию книг за $attemptLimit попыток: $lastErrorMessage"
+}
+
+function Get-ExcelWorksheetWithRetry {
+  param(
+    [object]$Workbook,
+    [string]$Name,
+    [int]$MaxAttempts = 20,
+    [int]$DelayMilliseconds = 500
+  )
+  if ($null -eq $Workbook) {
+    throw "Книга Excel недоступна."
+  }
+  $attemptLimit = [Math]::Max(1, $MaxAttempts)
+  $retryDelay = [Math]::Max(50, $DelayMilliseconds)
+  $lastErrorMessage = ""
+  for ($attempt = 1; $attempt -le $attemptLimit; $attempt += 1) {
+    $worksheets = $null
+    $worksheet = $null
+    $readyRange = $null
+    try {
+      $worksheets = $Workbook.Worksheets
+      if ($null -eq $worksheets) {
+        throw "Excel не вернул коллекцию листов."
+      }
+      $worksheet = $worksheets.Item($Name)
+      if ($null -eq $worksheet) {
+        throw "Excel не вернул лист '$Name'."
+      }
+      if (-not [string]::Equals([string]$worksheet.Name, $Name, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Excel вернул неверный лист вместо '$Name'."
+      }
+      # Workbooks.Open may return before Excel accepts worksheet RPC calls.
+      # Probing UsedRange keeps transient RPC_E_CALL_REJECTED errors inside
+      # this read-only retry loop, before any cell value is changed.
+      $readyRange = $worksheet.UsedRange
+      if ($null -eq $readyRange) {
+        throw "Excel не вернул используемый диапазон листа '$Name'."
+      }
+      [void]([int]$readyRange.Row)
+      return $worksheet
+    } catch {
+      $lastErrorMessage = $_.Exception.Message
+      Release-ComObject $worksheet
+      $worksheet = $null
+    } finally {
+      Release-ComObject $readyRange
+      Release-ComObject $worksheets
+    }
+    if ($attempt -lt $attemptLimit) {
+      Start-Sleep -Milliseconds $retryDelay
+    }
+  }
+  throw "Excel не подготовил лист '$Name' за $attemptLimit попыток: $lastErrorMessage"
+}
+
 function Update-TargetedStudentFieldPatches {
   param(
     [object]$Workbook,
@@ -863,7 +949,7 @@ function Update-TargetedStudentFieldPatches {
     if ($null -eq $columnMap) {
       throw "Не передана карта колонок листа 'База'."
     }
-    $sheet = $Workbook.Worksheets.Item("База")
+    $sheet = Get-ExcelWorksheetWithRetry $Workbook "База"
     $header = Find-HeaderRow $sheet @("uid", "ФИО")
     $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn $columnMap)
     $uidColumn = Find-MappedColumn $columns "uid"
@@ -939,11 +1025,14 @@ function Update-TargetedStudentFieldPatches {
     $uidRange = $null
 
     foreach ($patch in $validatedPatches) {
-      $matchingRows = if ($rowsByUid.ContainsKey($patch.Uid)) {
-        @($rowsByUid[$patch.Uid])
-      } else {
-        @()
-      }
+      # Capture the conditional pipeline as an array. Assigning the `if`
+      # expression directly unwraps a single row to Int32 under PowerShell,
+      # which has no Count property in strict mode.
+      $matchingRows = @(
+        if ($rowsByUid.ContainsKey($patch.Uid)) {
+          $rowsByUid[$patch.Uid]
+        }
+      )
       if ($matchingRows.Count -eq 0) {
         throw "На листе 'База' не найден слушатель с uid '$($patch.Uid)'."
       }
@@ -3854,11 +3943,33 @@ try {
     # below remains as a fallback.
     try { $excel.Calculation = -4135 } catch {} # xlCalculationManual
   }
-  $workbook = $excel.Workbooks.Open($InputPath, 0, $readSyncMetadataOnly)
+  $workbooks = $null
+  try {
+    $workbooksHandle = Get-ExcelWorkbooksWithRetry $excel
+    $workbooks = $workbooksHandle.Value
+    if ($null -eq $workbooks) {
+      throw "Excel не вернул коллекцию книг после проверки готовности."
+    }
+    # Open is intentionally invoked exactly once. Retrying an ambiguous COM
+    # failure here could open a second copy of the same workbook.
+    $workbook = $workbooks.Open($InputPath, 0, $readSyncMetadataOnly)
+  } finally {
+    Release-ComObject $workbooks
+  }
+  if ($null -eq $workbook) {
+    throw "Excel не вернул открытую книгу."
+  }
   # Hundreds of mapped columns are updated in batches. Automatic calculation
   # after every batch makes a full XLSB synchronization take many minutes;
   # calculate once, immediately before SaveAs, instead.
   try { $excel.Calculation = -4135 } catch {} # xlCalculationManual
+
+  $readinessSheet = $null
+  try {
+    $readinessSheet = Get-ExcelWorksheetWithRetry $workbook "База"
+  } finally {
+    Release-ComObject $readinessSheet
+  }
 
   if ($readSyncMetadataOnly) {
     Write-SyncProgress 30 "Чтение стабильных ID из свойств проверки данных..."
@@ -4006,6 +4117,13 @@ try {
     }
     outputPath = $OutputPath
   } | ConvertTo-Json -Compress -Depth 6 | Write-Output
+} catch {
+  $topLevelErrorMessage = $_.Exception.Message
+  $topLevelScriptStackTrace = [string]$_.ScriptStackTrace
+  if ($topLevelScriptStackTrace) {
+    throw "$topLevelErrorMessage`nPowerShell ScriptStackTrace:`n$topLevelScriptStackTrace"
+  }
+  throw
 } finally {
   if ($null -ne $workbook) {
     try { $workbook.Close($false) } catch {}

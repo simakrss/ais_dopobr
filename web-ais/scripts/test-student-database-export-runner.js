@@ -38,6 +38,89 @@ assert.match(clientSource, /Сервер был перезапущен\. Под�
 assert.match(syncScriptSource, /\$excel\.Calculation = -4135/u);
 assert.match(syncScriptSource, /AIS_SYNC_EXCEL_PID_PATH/u);
 
+const workbooksRetryFunctionStart = syncScriptSource.indexOf(
+  "function Get-ExcelWorkbooksWithRetry"
+);
+const workbooksRetryFunctionEnd = syncScriptSource.indexOf(
+  "\nfunction Get-ExcelWorksheetWithRetry",
+  workbooksRetryFunctionStart
+);
+assert.ok(
+  workbooksRetryFunctionStart >= 0 && workbooksRetryFunctionEnd > workbooksRetryFunctionStart,
+  "PowerShell должен ожидать готовности коллекции Excel.Workbooks."
+);
+const workbooksRetryFunction = syncScriptSource.slice(
+  workbooksRetryFunctionStart,
+  workbooksRetryFunctionEnd
+);
+assert.match(workbooksRetryFunction, /\$null -eq \$Excel/u);
+assert.match(workbooksRetryFunction, /\$workbooks = \$Excel\.Workbooks/u);
+assert.match(workbooksRetryFunction, /\$null -eq \$workbooks/u);
+assert.match(workbooksRetryFunction, /\[int\]\$workbooks\.Count/u);
+assert.match(workbooksRetryFunction, /return \[pscustomobject\]@\{ Value = \$workbooks \}/u);
+assert.doesNotMatch(workbooksRetryFunction, /Write-Output -NoEnumerate|return \$workbooks/u);
+assert.match(workbooksRetryFunction, /Release-ComObject \$workbooks/u);
+assert.match(workbooksRetryFunction, /Start-Sleep -Milliseconds \$retryDelay/u);
+assert.doesNotMatch(workbooksRetryFunction, /\.Open\(/u);
+
+const worksheetRetryFunctionStart = syncScriptSource.indexOf(
+  "function Get-ExcelWorksheetWithRetry"
+);
+const worksheetRetryFunctionEnd = syncScriptSource.indexOf(
+  "\nfunction Update-TargetedStudentFieldPatches",
+  worksheetRetryFunctionStart
+);
+assert.ok(
+  worksheetRetryFunctionStart >= 0 && worksheetRetryFunctionEnd > worksheetRetryFunctionStart,
+  "PowerShell должен ожидать готовности COM-листа после Workbooks.Open."
+);
+const worksheetRetryFunction = syncScriptSource.slice(
+  worksheetRetryFunctionStart,
+  worksheetRetryFunctionEnd
+);
+assert.match(worksheetRetryFunction, /\$null -eq \$Workbook/u);
+assert.match(worksheetRetryFunction, /\$null -eq \$worksheets/u);
+assert.match(worksheetRetryFunction, /\$null -eq \$worksheet/u);
+assert.match(worksheetRetryFunction, /\$worksheet\.UsedRange/u);
+assert.match(worksheetRetryFunction, /Start-Sleep -Milliseconds \$retryDelay/u);
+assert.match(worksheetRetryFunction, /for \(\$attempt = 1;/u);
+
+const workbookOpenCall = "$workbook = $workbooks.Open($InputPath, 0, $readSyncMetadataOnly)";
+const workbookOpenIndex = syncScriptSource.indexOf(workbookOpenCall);
+assert.match(syncScriptSource, /\$workbooksHandle = Get-ExcelWorkbooksWithRetry \$excel/u);
+assert.match(syncScriptSource, /\$workbooks = \$workbooksHandle\.Value/u);
+assert.ok(
+  workbookOpenIndex >= 0,
+  "Excel workbook должен открываться одним отдельным COM-вызовом."
+);
+assert.equal(
+  syncScriptSource.split(workbookOpenCall).length - 1,
+  1,
+  "Workbooks.Open нельзя повторять после неоднозначной COM-ошибки."
+);
+assert.doesNotMatch(syncScriptSource, /\$excel\.Workbooks\.Open\(/u);
+assert.match(
+  syncScriptSource.slice(workbooksRetryFunctionEnd, workbookOpenIndex + workbookOpenCall.length + 200),
+  /Release-ComObject \$workbooks/u
+);
+const globalReadinessProbeIndex = syncScriptSource.indexOf(
+  '$readinessSheet = Get-ExcelWorksheetWithRetry $workbook "База"',
+  workbookOpenIndex
+);
+const readMetadataBranchIndex = syncScriptSource.indexOf(
+  "if ($readSyncMetadataOnly)",
+  workbookOpenIndex
+);
+assert.ok(
+  globalReadinessProbeIndex > workbookOpenIndex
+    && readMetadataBranchIndex > globalReadinessProbeIndex,
+  "Read-only worksheet probe должен выполняться сразу после Open во всех режимах."
+);
+assert.match(
+  syncScriptSource.slice(globalReadinessProbeIndex, readMetadataBranchIndex),
+  /Release-ComObject \$readinessSheet/u
+);
+
 const targetedPatchFunctionStart = syncScriptSource.indexOf(
   "function Update-TargetedStudentFieldPatches"
 );
@@ -56,7 +139,16 @@ const targetedPatchFunction = syncScriptSource.slice(
 assert.match(targetedPatchFunction, /StringComparison\]::Ordinal/u);
 assert.match(targetedPatchFunction, /разрешено только поле 'note'/u);
 assert.match(targetedPatchFunction, /-not \$targetUids\.Add\(\$uid\)/u);
+assert.match(
+  targetedPatchFunction,
+  /\$matchingRows = @\(\s*if \(\$rowsByUid\.ContainsKey\(\$patch\.Uid\)\)/u
+);
 assert.match(targetedPatchFunction, /\$matchingRows\.Count -ne 1/u);
+assert.match(
+  targetedPatchFunction,
+  /\$sheet = Get-ExcelWorksheetWithRetry \$Workbook "База"/u
+);
+assert.doesNotMatch(targetedPatchFunction, /\$Workbook\.Worksheets\.Item\("База"\)/u);
 
 const formulaGuardIndex = targetedPatchFunction.indexOf("$cell.HasFormula");
 const expectedValueGuardIndex = targetedPatchFunction.indexOf(
@@ -141,6 +233,11 @@ assert.ok(
   && targetedAuditFallbackIndex > targetedSourceGuardIndex
   && targetedOutputGuardIndex > targetedAuditFallbackIndex,
   "Audit fallback не должен обходить проверки expectedValue исходного и note сформированного XLSB."
+);
+
+assert.match(
+  syncScriptSource,
+  /\} catch \{\s+\$topLevelErrorMessage = \$_\.Exception\.Message[\s\S]*?\$topLevelScriptStackTrace = \[string\]\$_\.ScriptStackTrace[\s\S]*?throw "\$topLevelErrorMessage`nPowerShell ScriptStackTrace:`n\$topLevelScriptStackTrace"[\s\S]*?\} finally \{/u
 );
 
 console.log("Student database Excel runner checks passed.");

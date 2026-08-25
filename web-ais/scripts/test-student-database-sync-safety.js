@@ -8,11 +8,13 @@ const vm = require("node:vm");
 
 const serverPath = path.resolve(__dirname, "..", "app-server.js");
 const clientPath = path.resolve(__dirname, "..", "app.js");
+const XLSX = require(path.resolve(__dirname, "..", "vendor", "sheetjs", "xlsx.full.min.js"));
 const serverSource = fs.readFileSync(serverPath, "utf8").replace(/\r\n?/gu, "\n");
 const clientSource = fs.readFileSync(clientPath, "utf8").replace(/\r\n?/gu, "\n");
 const {
   hashStudentDatabaseCriticalSnapshot,
   hashStudentDatabaseCriticalIdentity,
+  hashStudentDatabaseVbaProject,
   hashStudentDatabaseWorkbookFormulaMap,
   getStudentDatabaseEmbeddedSyncTimestamp,
   normalizeStudentDatabaseSyncBaseline,
@@ -290,6 +292,72 @@ function testTargetedStudentFieldPatchFormulaMapSafety() {
     sourceFingerprint,
     hashStudentDatabaseWorkbookFormulaMap(changedArrayFormulaRangeWorkbook),
     "Изменение диапазона общей формулы должно менять formula fingerprint."
+  );
+}
+
+function buildSyntheticVbaProject(streams) {
+  const cfb = XLSX.CFB.utils.cfb_new();
+  streams.forEach(([streamPath, content]) => {
+    XLSX.CFB.utils.cfb_add(
+      cfb,
+      `Root Entry/VBA/${streamPath}`,
+      Buffer.from(content)
+    );
+  });
+  return Buffer.from(XLSX.CFB.write(cfb, { type: "buffer" }));
+}
+
+function changeSyntheticOleContainerMetadataAndLayout(bytes) {
+  const changed = Buffer.from(bytes);
+  const sectorSize = 1 << changed.readUInt16LE(30);
+  const firstDirectorySector = changed.readUInt32LE(48);
+  const rootDirectoryOffset = (firstDirectorySector + 1) * sectorSize;
+  assert.equal(changed[rootDirectoryOffset + 66], 5, "Первая directory entry должна быть Root Entry");
+  changed.writeBigUInt64LE(132000000000000000n, rootDirectoryOffset + 108);
+  changed[changed.length - 1] ^= 0x5a;
+  return changed;
+}
+
+function testStudentDatabaseVbaProjectCanonicalHash() {
+  assert.equal(typeof hashStudentDatabaseVbaProject, "function");
+  const source = buildSyntheticVbaProject([
+    ["ModuleA", "Sub A()\nEnd Sub\n"],
+    ["ModuleB", "Sub B()\nEnd Sub\n"]
+  ]);
+  const sameStreamsWithDifferentContainer = changeSyntheticOleContainerMetadataAndLayout(source);
+  assert.notEqual(
+    hash(source),
+    hash(sameStreamsWithDifferentContainer),
+    "Тестовые OLE-контейнеры должны различаться на уровне raw bytes."
+  );
+  assert.equal(
+    hashStudentDatabaseVbaProject(source),
+    hashStudentDatabaseVbaProject(sameStreamsWithDifferentContainer),
+    "OLE timestamp и неиспользуемая layout-мета не должны менять канонический VBA hash."
+  );
+
+  const changedStream = buildSyntheticVbaProject([
+    ["ModuleA", "Sub A()\nDebug.Print 1\nEnd Sub\n"],
+    ["ModuleB", "Sub B()\nEnd Sub\n"]
+  ]);
+  assert.notEqual(
+    hashStudentDatabaseVbaProject(source),
+    hashStudentDatabaseVbaProject(changedStream),
+    "Изменение хотя бы одного VBA stream должно менять канонический hash."
+  );
+
+  const deletedStream = buildSyntheticVbaProject([
+    ["ModuleA", "Sub A()\nEnd Sub\n"]
+  ]);
+  assert.notEqual(
+    hashStudentDatabaseVbaProject(source),
+    hashStudentDatabaseVbaProject(deletedStream),
+    "Удаление VBA stream должно менять канонический hash."
+  );
+  assert.throws(
+    () => hashStudentDatabaseVbaProject(Buffer.from("not-an-ole-container")),
+    /CFB|OLE|file size|header/iu,
+    "Непустой повреждённый VBA-контейнер должен блокировать проверку."
   );
 }
 
@@ -1554,6 +1622,7 @@ async function main() {
   testCriticalDataDirectionAndLegacyMigration();
   testTargetedStudentFieldPatchSafety();
   testTargetedStudentFieldPatchFormulaMapSafety();
+  testStudentDatabaseVbaProjectCanonicalHash();
   testTargetedStudentFieldPatchAuditFallbackSafety();
   testReservationRevisionAndTtl();
   await testAuthoritativeRevisionAssertions();

@@ -15457,6 +15457,43 @@ function getTargetedStudentNoteWorkbookCellKeys(workbook, targetUids) {
   return result;
 }
 
+function hashStudentDatabaseVbaProject(vbaraw) {
+  if (!vbaraw?.length) return "";
+  const vbaBytes = Buffer.isBuffer(vbaraw)
+    ? vbaraw
+    : Buffer.from(vbaraw);
+  const cfb = XLSX.CFB.read(vbaBytes, { type: "buffer" });
+  const entries = (Array.isArray(cfb?.FileIndex) ? cfb.FileIndex : [])
+    .map((entry, index) => ({
+      entry,
+      path: String(cfb?.FullPaths?.[index] || entry?.name || "")
+    }))
+    .filter(({ entry }) => Number(entry?.type || 0) !== 0)
+    .map(({ entry, path: entryPath }) => {
+      const content = entry?.content == null
+        ? Buffer.alloc(0)
+        : Buffer.isBuffer(entry.content)
+          ? entry.content
+          : Buffer.from(entry.content);
+      return [
+        entryPath,
+        Number(entry?.type || 0),
+        String(entry?.clsid || "").replace(/[{}-]/gu, "").toLowerCase(),
+        Number(entry?.state || 0) >>> 0,
+        content.length,
+        crypto.createHash("sha256").update(content).digest("hex")
+      ];
+    })
+    .sort((left, right) => {
+      const leftKey = JSON.stringify(left);
+      const rightKey = JSON.stringify(right);
+      if (leftKey < rightKey) return -1;
+      if (leftKey > rightKey) return 1;
+      return 0;
+    });
+  return crypto.createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+}
+
 function hashStudentDatabaseWorkbookCellMap(workbook, excludedCellKeys = new Set()) {
   const sheetNames = Array.isArray(workbook?.SheetNames) ? [...workbook.SheetNames] : [];
   const sheets = sheetNames.map((sheetName) => {
@@ -15491,9 +15528,7 @@ function hashStudentDatabaseWorkbookCellMap(workbook, excludedCellKeys = new Set
       .sort((left, right) => left.localeCompare(right, "en"))
       .map((key) => [key, normalizeStudentDatabaseWorkbookFingerprintValue(definedName[key])]))
     .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right), "ru"));
-  const vbaHash = workbook?.vbaraw?.length
-    ? crypto.createHash("sha256").update(workbook.vbaraw).digest("hex")
-    : "";
+  const vbaHash = hashStudentDatabaseVbaProject(workbook?.vbaraw);
   return crypto.createHash("sha256").update(JSON.stringify({
     sheetNames,
     sheets,
@@ -15522,9 +15557,7 @@ function inspectStudentDatabaseBinary(bytes, options = {}) {
     workbook,
     options.targetedStudentNoteUids
   );
-  const vbaHash = workbook.vbaraw?.length
-    ? crypto.createHash("sha256").update(workbook.vbaraw).digest("hex")
-    : "";
+  const vbaHash = hashStudentDatabaseVbaProject(workbook.vbaraw);
   return {
     hasVba: Boolean(workbook.vbaraw?.length),
     vbaBytes: Number(workbook.vbaraw?.length || 0),
@@ -27077,6 +27110,7 @@ module.exports = {
   readSharedApplicationStateCache,
   sanitizeFrdoExportPayload,
   buildFrdoExportWorkbook,
+  hashStudentDatabaseVbaProject,
   hashStudentDatabaseWorkbookFormulaMap,
   hashStudentDatabaseWorkbookCellMap,
   inspectStudentDatabaseBinary,
