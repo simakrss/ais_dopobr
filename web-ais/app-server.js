@@ -14902,7 +14902,16 @@ function resolveStudentDatabaseSyncDirection({
         error.statusCode = 409;
         throw error;
       }
-      const excelChanged = excelCriticalHash !== baseline.criticalHash;
+      // The XLSB exporter can clear cached results for formula cells while preserving
+      // the workbook itself.  The next parse then produces a different critical hash
+      // even though nobody edited Excel.  An exact binary hash match with the committed
+      // source is stronger evidence than the parsed projection, so do not classify that
+      // deterministic parser/export drift as an Excel-side change.
+      const sourceBinaryStayedStable = normalizedSourceHash === baseline.sourceHash;
+      const excelChanged = (
+        excelCriticalHash !== baseline.criticalHash
+        && !sourceBinaryStayedStable
+      );
       const webChanged = webCriticalHash !== baseline.criticalHash;
       const excelCriticalIdentityStayedStable = Boolean(
         baseline.criticalIdentityHash

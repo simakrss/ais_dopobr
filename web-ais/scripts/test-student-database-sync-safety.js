@@ -197,6 +197,42 @@ function testCriticalDataDirectionAndLegacyMigration() {
     }),
     statusError(409, /критичные данные изменились и в Web-базе, и в XLSB/iu)
   );
+  const webToExcelAfterStableBinaryDrift = resolveStudentDatabaseSyncDirection({
+    ...common,
+    currentWebRevision: baseline.webRevision + 2,
+    sourceHash: baseline.sourceHash,
+    currentWebCriticalHash: hashStudentDatabaseCriticalSnapshot(webChanged)
+  });
+  assert.equal(
+    webToExcelAfterStableBinaryDrift.direction,
+    "web-to-excel",
+    "Точный sourceHash должен доказать, что XLSB не менялся, несмотря на дрейф формульного cache"
+  );
+  assert.equal(
+    webToExcelAfterStableBinaryDrift.criticalHash,
+    hashStudentDatabaseCriticalSnapshot(webChanged),
+    "При доказанно неизменном XLSB новая критичная Web-правка должна стать общей baseline"
+  );
+  assert.equal(
+    resolveStudentDatabaseSyncDirection({
+      ...common,
+      currentWebRevision: baseline.webRevision,
+      sourceHash: baseline.sourceHash,
+      currentWebCriticalHash: baseHash
+    }).direction,
+    "unchanged",
+    "Дрейф формульного cache не должен запускать импорт при неизменных XLSB и Web"
+  );
+  assert.throws(
+    () => resolveStudentDatabaseSyncDirection({
+      ...common,
+      sourceHash: baseline.sourceHash,
+      sourceIdentity: "e".repeat(64),
+      currentWebCriticalHash: hashStudentDatabaseCriticalSnapshot(webChanged)
+    }),
+    statusError(409, /другой файл или источник XLSB/iu),
+    "Совпадение sourceHash не должно обходить проверку идентичности XLSB-источника"
+  );
   const normalizedWebDrift = buildCriticalData("На зачисление", {
     note: "Нормализовано при импорте в Web"
   });
