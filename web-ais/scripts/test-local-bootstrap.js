@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
@@ -94,9 +95,43 @@ assert.match(remoteServicesSource, /Test-OnlyOfficeContainerSecret/u);
 assert.match(remoteServicesSource, /ONLYOFFICE_JWT_SECRET = \$OnlyOfficeSecret/u);
 assert.match(onlyOfficeComposeSource, /JWT_SECRET: "\$\{ONLYOFFICE_JWT_SECRET:\?Set ONLYOFFICE_JWT_SECRET\}"/u);
 assert.match(stopSource, /@\(8081, 19081\)/u);
+assert.match(stopSource, /\$candidates\s*=\s*@\(\s*@\([\s\S]*?Where-Object/u);
 assert.match(localServerSource, /AIS_APP_SERVER_ORIGIN \|\| "http:\/\/127\.0\.0\.1:19081"/u);
 
 if (process.platform === "win32") {
+  const dockerResolverMatch = stopSource.match(/function Find-DockerCli \{[\s\S]*?\r?\n\}/u);
+  assert.ok(dockerResolverMatch, "Find-DockerCli was not found in stop-lan-system.ps1");
+  const dockerFixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ais-docker-path-"));
+  const dockerFixturePath = path.join(dockerFixtureRoot, "docker.exe");
+  fs.writeFileSync(dockerFixturePath, "");
+  try {
+    const resolverProbeScript = `${dockerResolverMatch[0]}
+$resolved = @(Find-DockerCli)
+if ($resolved.Count -ne 1 -or
+    -not (Test-Path -LiteralPath ([string]$resolved[0]) -PathType Leaf) -or
+    [regex]::Matches([string]$resolved[0], 'docker\.exe', 'IgnoreCase').Count -ne 1) {
+  throw "Docker CLI path resolution is invalid: <$($resolved -join '|')>"
+}`;
+    const resolverProbe = spawnSync("powershell.exe", [
+      "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+      "-EncodedCommand", Buffer.from(resolverProbeScript, "utf16le").toString("base64")
+    ], {
+      cwd: repositoryRoot,
+      env: {
+        ...process.env,
+        AIS_DOCKER_PATH: dockerFixturePath,
+        ProgramFiles: dockerFixtureRoot,
+        LOCALAPPDATA: dockerFixtureRoot,
+        Path: `${dockerFixtureRoot};${process.env.Path || ""}`
+      },
+      encoding: "utf8",
+      timeout: 30000
+    });
+    assert.equal(resolverProbe.status, 0, `${resolverProbe.stdout}\n${resolverProbe.stderr}`);
+  } finally {
+    fs.rmSync(dockerFixtureRoot, { recursive: true, force: true });
+  }
+
   const environment = {
     ...process.env,
     AIS_NODE_PATH: process.execPath,

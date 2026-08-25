@@ -66,9 +66,14 @@ function isSameRequestOrigin(req, origin) {
     if (originUrl.host.toLowerCase() === requestHost) return true;
 
     const requestUrl = new URL(`http://${requestHost}`);
-    return isLoopbackHostname(originUrl.hostname)
+    const sameLoopbackMachine = isLoopbackHostname(originUrl.hostname)
       && isLoopbackHostname(requestUrl.hostname)
-      && getEffectivePort(originUrl) === getEffectivePort(requestUrl);
+      && isLoopbackAddress(req.socket.remoteAddress);
+    return sameLoopbackMachine
+      || (
+        originUrl.hostname.toLowerCase() === requestUrl.hostname.toLowerCase()
+        && getEffectivePort(originUrl) === getEffectivePort(requestUrl)
+      );
   } catch {
     return false;
   }

@@ -14,12 +14,14 @@ $composePath = Join-Path $appRoot "docker-compose.onlyoffice.yml"
 
 function Find-DockerCli {
   $candidates = @(
-    $env:AIS_DOCKER_PATH,
-    (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe"),
-    (Join-Path $env:LOCALAPPDATA "Docker\resources\bin\docker.exe"),
-    (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\resources\bin\docker.exe"),
-    (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\resources\bin\docker.exe")
-  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+    @(
+      $env:AIS_DOCKER_PATH,
+      (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe"),
+      (Join-Path $env:LOCALAPPDATA "Docker\resources\bin\docker.exe"),
+      (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\resources\bin\docker.exe"),
+      (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\resources\bin\docker.exe")
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+  )
   $command = Get-Command docker.exe -ErrorAction SilentlyContinue
   if ($command) { $candidates += $command.Source }
   return @($candidates | Select-Object -Unique) | Select-Object -First 1
