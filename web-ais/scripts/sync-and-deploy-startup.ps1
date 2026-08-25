@@ -43,17 +43,48 @@ function Invoke-Git {
     [string[]]$Arguments,
     [switch]$AllowFailure
   )
+  # Windows PowerShell 5.1 turns every native stderr line into an ErrorRecord.
+  # With the script-wide Stop preference even a harmless Git warning would
+  # terminate this function before LASTEXITCODE could be checked.
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $rawLines = @(
+      & $script:gitPath -c core.quotepath=false -c safe.directory=* -C $repositoryRoot @Arguments 2>&1
+    )
+    $code = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
   $lines = @(
-    & $script:gitPath -c core.quotepath=false -c safe.directory=* -C $repositoryRoot @Arguments 2>&1 |
+    $rawLines |
+      Where-Object { $_ -isnot [Management.Automation.ErrorRecord] } |
       ForEach-Object { [string]$_ }
   )
-  $code = $LASTEXITCODE
+  $errorLines = @(
+    $rawLines |
+      Where-Object { $_ -is [Management.Automation.ErrorRecord] } |
+      ForEach-Object {
+        $message = [string]$_.Exception.Message
+        if ([string]::IsNullOrWhiteSpace($message)) { [string]$_ } else { $message }
+      }
+  )
   $text = ($lines -join "`n").Trim()
+  $errorText = ($errorLines -join "`n").Trim()
   if ($code -ne 0 -and -not $AllowFailure) {
-    $details = if ($text) { " $text" } else { "" }
+    $combinedText = @($text, $errorText) |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $detailsText = ($combinedText -join "`n").Trim()
+    $details = if ($detailsText) { " $detailsText" } else { "" }
     throw "Git завершился с кодом $code.$details"
   }
-  return [pscustomobject]@{ Code = $code; Text = $text; Lines = $lines }
+  return [pscustomobject]@{
+    Code = $code
+    Text = $text
+    Lines = $lines
+    ErrorText = $errorText
+    ErrorLines = $errorLines
+  }
 }
 
 function Get-UpstreamBranch {

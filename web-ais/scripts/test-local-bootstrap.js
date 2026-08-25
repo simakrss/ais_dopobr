@@ -47,6 +47,9 @@ assert.match(startupUpdateSource, /merge", "--ff-only"/u);
 assert.match(startupUpdateSource, /stash", "push"/u);
 assert.match(startupUpdateSource, /deploy-lms\.ps1[\s\S]*?-All/u);
 assert.match(startupUpdateSource, /Автоматическая отправка в GitHub отключена/u);
+assert.match(startupUpdateSource, /\$previousErrorActionPreference = \$ErrorActionPreference/u);
+assert.match(startupUpdateSource, /\$_ -is \[Management\.Automation\.ErrorRecord\]/u);
+assert.match(startupUpdateSource, /ErrorText = \$errorText/u);
 assert.match(deploySource, /System\.Link\.TargetParsingPath/u);
 assert.match(deploySource, /privateTemplatePaths/u);
 assert.match(deploySource, /Invoke-FtpTransferWithRetry/u);
@@ -99,6 +102,68 @@ assert.match(stopSource, /\$candidates\s*=\s*@\(\s*@\([\s\S]*?Where-Object/u);
 assert.match(localServerSource, /AIS_APP_SERVER_ORIGIN \|\| "http:\/\/127\.0\.0\.1:19081"/u);
 
 if (process.platform === "win32") {
+  const invokeGitFunctionMatch = startupUpdateSource.match(
+    /function Invoke-Git \{[\s\S]*?\r?\n\}/u
+  );
+  assert.ok(invokeGitFunctionMatch, "Invoke-Git was not found in sync-and-deploy-startup.ps1");
+  const gitFixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ais-startup-git-"));
+  const fakeGitPath = path.join(gitFixtureRoot, "fake-git.cmd");
+  fs.writeFileSync(fakeGitPath, [
+    "@echo off",
+    "setlocal",
+    "set \"mode=\"",
+    "for %%A in (%*) do set \"mode=%%~A\"",
+    "if /I \"%mode%\"==\"fail\" (",
+    "  1>&2 echo fatal: simulated Git failure",
+    "  exit /b 17",
+    ")",
+    "echo stdout-value",
+    "1>&2 echo warning: simulated line-ending warning",
+    "exit /b 0",
+    ""
+  ].join("\r\n"));
+  try {
+    const quotePowerShellLiteral = (value) => String(value).replace(/'/gu, "''");
+    const invokeGitProbeScript = `$ErrorActionPreference = "Stop"
+$script:gitPath = '${quotePowerShellLiteral(fakeGitPath)}'
+$repositoryRoot = '${quotePowerShellLiteral(repositoryRoot)}'
+${invokeGitFunctionMatch[0]}
+$success = Invoke-Git -Arguments @("success")
+if ($success.Code -ne 0 -or $success.Text -ne "stdout-value") {
+  throw "Successful Git stdout was not preserved: <$($success.Text)> code=$($success.Code)"
+}
+if ($success.ErrorText -notmatch "simulated line-ending warning") {
+  throw "Successful Git stderr warning was not captured separately."
+}
+if ($ErrorActionPreference -ne "Stop") {
+  throw "Invoke-Git did not restore ErrorActionPreference."
+}
+$allowedFailure = Invoke-Git -Arguments @("fail") -AllowFailure
+if ($allowedFailure.Code -ne 17 -or $allowedFailure.ErrorText -notmatch "simulated Git failure") {
+  throw "Allowed Git failure was not returned correctly."
+}
+$failureMessage = ""
+try {
+  Invoke-Git -Arguments @("fail") | Out-Null
+} catch {
+  $failureMessage = $_.Exception.Message
+}
+if ($failureMessage -notmatch "кодом 17" -or $failureMessage -notmatch "simulated Git failure") {
+  throw "Real Git failure was not reported with exit code and stderr: <$failureMessage>"
+}`;
+    const invokeGitProbe = spawnSync("powershell.exe", [
+      "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+      "-EncodedCommand", Buffer.from(invokeGitProbeScript, "utf16le").toString("base64")
+    ], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      timeout: 30000
+    });
+    assert.equal(invokeGitProbe.status, 0, `${invokeGitProbe.stdout}\n${invokeGitProbe.stderr}`);
+  } finally {
+    fs.rmSync(gitFixtureRoot, { recursive: true, force: true });
+  }
+
   const dockerResolverMatch = stopSource.match(/function Find-DockerCli \{[\s\S]*?\r?\n\}/u);
   assert.ok(dockerResolverMatch, "Find-DockerCli was not found in stop-lan-system.ps1");
   const dockerFixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ais-docker-path-"));
