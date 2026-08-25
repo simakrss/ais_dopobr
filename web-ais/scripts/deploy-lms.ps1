@@ -237,7 +237,8 @@ function Invoke-FtpTransferWithRetry(
 ) {
   for ($attempt = 1; $attempt -le $MaximumAttempts; $attempt += 1) {
     try {
-      return & $Operation
+      $result = & $Operation
+      return ,$result
     } catch {
       if ($attempt -ge $MaximumAttempts) { throw }
       $delay = [Math]::Min(12, [Math]::Pow(2, $attempt))
@@ -305,15 +306,21 @@ function Send-FtpFile([string]$LocalPath, [string]$RemotePath) {
   Close-FtpResponse $response
 }
 
-function Receive-FtpFile([string]$RemotePath) {
+function Receive-FtpFile([string]$RemotePath, [int]$ExpectedLength) {
   $response = (New-FtpRequest $RemotePath ([Net.WebRequestMethods+Ftp]::DownloadFile)).GetResponse()
   $inputStream = $response.GetResponseStream()
-  $memory = New-Object IO.MemoryStream
   try {
-    $inputStream.CopyTo($memory)
-    return $memory.ToArray()
+    $bytes = [byte[]]::new($ExpectedLength)
+    $offset = 0
+    while ($offset -lt $ExpectedLength) {
+      $read = $inputStream.Read($bytes, $offset, $ExpectedLength - $offset)
+      if ($read -le 0) {
+        throw "FTP returned only $offset of $ExpectedLength expected bytes for $RemotePath"
+      }
+      $offset += $read
+    }
+    return ,$bytes
   } finally {
-    $memory.Dispose()
     $inputStream.Dispose()
     Close-FtpResponse $response
   }
@@ -367,7 +374,9 @@ function Publish-FileTarget(
 
   try {
     $localBytes = [IO.File]::ReadAllBytes($localPath)
-    $remoteBytes = Invoke-FtpTransferWithRetry { Receive-FtpFile $remotePath } "Проверка $RelativeFile"
+    $remoteBytes = Invoke-FtpTransferWithRetry {
+      Receive-FtpFile $remotePath $localBytes.Length
+    } "Проверка $RelativeFile"
     $localHash = Get-Sha256 $localBytes
     $remoteHash = Get-Sha256 $remoteBytes
     if ($localHash -ne $remoteHash) {
