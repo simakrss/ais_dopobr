@@ -178,7 +178,7 @@ if (-not $SkipDeployment) {
   Write-Update "Публикация безопасного набора файлов на edu-plus.ru/lms..."
   & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $deployScriptPath -All
   if ($LASTEXITCODE -ne 0) { throw "FTP-публикация завершилась с кодом $LASTEXITCODE." }
-  Write-Update "FTP-публикация и проверка SHA-256 завершены."
+  Write-Update "FTP-публикация и проверка размеров файлов завершены."
 } else {
   Write-Update "FTP-публикация пропущена параметром -SkipDeployment."
 }

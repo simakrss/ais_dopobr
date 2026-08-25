@@ -49,8 +49,13 @@ assert.match(startupUpdateSource, /Автоматическая отправка
 assert.match(deploySource, /System\.Link\.TargetParsingPath/u);
 assert.match(deploySource, /privateTemplatePaths/u);
 assert.match(deploySource, /Invoke-FtpTransferWithRetry/u);
-assert.match(deploySource, /Receive-FtpFile\(\[string\]\$RemotePath, \[int\]\$ExpectedLength\)/u);
-assert.match(deploySource, /while \(\$offset -lt \$ExpectedLength\)/u);
+assert.match(deploySource, /WriteAllText\(\$credentialPath, \(Get-CurlCredentialConfig\)/u);
+assert.match(deploySource, /finally \{[\s\S]*?Remove-Item -LiteralPath \$credentialPath/u);
+assert.match(deploySource, /--speed-time", "30"/u);
+assert.match(deploySource, /Get-FtpFileSize/u);
+assert.match(deploySource, /FTP size verification failed/u);
+assert.match(deploySource, /ensuredFtpDirectories/u);
+assert.match(deploySource, /Rename-FtpFileIfExists/u);
 assert.match(deploySource, /Remove-FtpFileIfExists \$remotePath[\s\S]*?Rename-FtpFile \$previousPath \$fileName/u);
 const generatedSafePaths = deploySource.match(/\$generatedSafePaths = @\(([\s\S]*?)\) \| Where-Object/u);
 assert.ok(generatedSafePaths, "generated safe-path list was not found");

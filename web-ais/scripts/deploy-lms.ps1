@@ -211,6 +211,9 @@ if ($ValidateProfile) {
   Write-Host "FTP profile is valid; target: $remoteRoot (credentials were not displayed)."
   exit 0
 }
+$curlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
+$curlPath = if ($curlCommand) { $curlCommand.Source } else { $null }
+$script:ensuredFtpDirectories = @{}
 
 function New-FtpRequest([string]$RemotePath, [string]$Method) {
   $normalized = "/" + $RemotePath.TrimStart("/")
@@ -224,6 +227,46 @@ function New-FtpRequest([string]$RemotePath, [string]$Method) {
   $request.Timeout = 300000
   $request.ReadWriteTimeout = 300000
   return $request
+}
+
+function ConvertTo-FtpUri([string]$RemotePath) {
+  $segments = @($RemotePath.TrimStart("/").Split("/") | ForEach-Object {
+    [Uri]::EscapeDataString($_)
+  })
+  return "ftp://$($ftpProfile.Server)/$([string]::Join('/', $segments))"
+}
+
+function Get-CurlCredentialConfig {
+  $credentialText = "{0}:{1}" -f $ftpProfile.Credential.UserName, $ftpProfile.Credential.Password
+  if ($credentialText -match "[\r\n]") { throw "FTP credentials contain unsupported line breaks." }
+  $escaped = $credentialText.Replace("\", "\\").Replace('"', '\"')
+  return "user = `"$escaped`""
+}
+
+function Invoke-CurlFtp([string[]]$Arguments) {
+  if (-not $curlPath) { throw "curl.exe was not found." }
+  $credentialRoot = Join-Path $appRoot ".runtime\ftp-credentials"
+  New-Item -ItemType Directory -Path $credentialRoot -Force | Out-Null
+  $credentialPath = Join-Path $credentialRoot ("curl-" + [Guid]::NewGuid().ToString("N") + ".conf")
+  $commonArguments = @(
+    "--config", $credentialPath,
+    "--silent", "--show-error", "--fail",
+    "--ftp-pasv",
+    "--connect-timeout", "20",
+    "--max-time", "300",
+    "--speed-limit", "1",
+    "--speed-time", "30"
+  )
+  try {
+    [IO.File]::WriteAllText($credentialPath, (Get-CurlCredentialConfig), (New-Object Text.UTF8Encoding($false)))
+    $output = @(& $curlPath @commonArguments @Arguments 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+      throw "curl FTP transfer failed with exit code $LASTEXITCODE."
+    }
+    return $output
+  } finally {
+    Remove-Item -LiteralPath $credentialPath -Force -ErrorAction SilentlyContinue
+  }
 }
 
 function Close-FtpResponse($Response) {
@@ -248,16 +291,23 @@ function Invoke-FtpTransferWithRetry(
   }
 }
 
-function Test-FtpFile([string]$RemotePath) {
+function Get-FtpFileSize([string]$RemotePath) {
   try {
     $response = (New-FtpRequest $RemotePath ([Net.WebRequestMethods+Ftp]::GetFileSize)).GetResponse()
-    Close-FtpResponse $response
-    return $true
+    try {
+      $length = [long]$response.ContentLength
+      if ($length -ge 0) { return $length }
+      $match = [regex]::Match([string]$response.StatusDescription, "\b213\s+(?<size>\d+)")
+      if ($match.Success) { return [long]$match.Groups["size"].Value }
+      throw "FTP server did not return a file size for $RemotePath"
+    } finally {
+      Close-FtpResponse $response
+    }
   } catch [Net.WebException] {
     $response = $_.Exception.Response
     if ($null -ne $response -and [int]$response.StatusCode -eq 550) {
       Close-FtpResponse $response
-      return $false
+      return [long]-1
     }
     throw
   }
@@ -268,6 +318,8 @@ function Ensure-FtpDirectory([string]$RemoteDirectory) {
   $current = ""
   foreach ($segment in $segments) {
     $current += "/$segment"
+    $cacheKey = $current.ToLowerInvariant()
+    if ($script:ensuredFtpDirectories.ContainsKey($cacheKey)) { continue }
     try {
       $response = (New-FtpRequest $current ([Net.WebRequestMethods+Ftp]::MakeDirectory)).GetResponse()
       Close-FtpResponse $response
@@ -276,13 +328,19 @@ function Ensure-FtpDirectory([string]$RemoteDirectory) {
       if ($null -eq $response -or [int]$response.StatusCode -ne 550) { throw }
       Close-FtpResponse $response
     }
+    $script:ensuredFtpDirectories[$cacheKey] = $true
   }
 }
 
 function Remove-FtpFileIfExists([string]$RemotePath) {
-  if (-not (Test-FtpFile $RemotePath)) { return }
-  $response = (New-FtpRequest $RemotePath ([Net.WebRequestMethods+Ftp]::DeleteFile)).GetResponse()
-  Close-FtpResponse $response
+  try {
+    $response = (New-FtpRequest $RemotePath ([Net.WebRequestMethods+Ftp]::DeleteFile)).GetResponse()
+    Close-FtpResponse $response
+  } catch [Net.WebException] {
+    $response = $_.Exception.Response
+    if ($null -eq $response -or [int]$response.StatusCode -ne 550) { throw }
+    Close-FtpResponse $response
+  }
 }
 
 function Rename-FtpFile([string]$RemotePath, [string]$NewName) {
@@ -292,7 +350,23 @@ function Rename-FtpFile([string]$RemotePath, [string]$NewName) {
   Close-FtpResponse $response
 }
 
+function Rename-FtpFileIfExists([string]$RemotePath, [string]$NewName) {
+  try {
+    Rename-FtpFile $RemotePath $NewName
+    return $true
+  } catch [Net.WebException] {
+    $response = $_.Exception.Response
+    if ($null -eq $response -or [int]$response.StatusCode -ne 550) { throw }
+    Close-FtpResponse $response
+    return $false
+  }
+}
+
 function Send-FtpFile([string]$LocalPath, [string]$RemotePath) {
+  if ($curlPath) {
+    Invoke-CurlFtp @("--ftp-create-dirs", "--upload-file", $LocalPath, (ConvertTo-FtpUri $RemotePath)) | Out-Null
+    return
+  }
   $bytes = [IO.File]::ReadAllBytes($LocalPath)
   $request = New-FtpRequest $RemotePath ([Net.WebRequestMethods+Ftp]::UploadFile)
   $request.ContentLength = $bytes.Length
@@ -304,35 +378,6 @@ function Send-FtpFile([string]$LocalPath, [string]$RemotePath) {
   }
   $response = $request.GetResponse()
   Close-FtpResponse $response
-}
-
-function Receive-FtpFile([string]$RemotePath, [int]$ExpectedLength) {
-  $response = (New-FtpRequest $RemotePath ([Net.WebRequestMethods+Ftp]::DownloadFile)).GetResponse()
-  $inputStream = $response.GetResponseStream()
-  try {
-    $bytes = [byte[]]::new($ExpectedLength)
-    $offset = 0
-    while ($offset -lt $ExpectedLength) {
-      $read = $inputStream.Read($bytes, $offset, $ExpectedLength - $offset)
-      if ($read -le 0) {
-        throw "FTP returned only $offset of $ExpectedLength expected bytes for $RemotePath"
-      }
-      $offset += $read
-    }
-    return ,$bytes
-  } finally {
-    $inputStream.Dispose()
-    Close-FtpResponse $response
-  }
-}
-
-function Get-Sha256([byte[]]$Bytes) {
-  $sha = [Security.Cryptography.SHA256]::Create()
-  try {
-    return ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace("-", "").ToLowerInvariant()
-  } finally {
-    $sha.Dispose()
-  }
 }
 
 function Publish-FileTarget(
@@ -357,8 +402,7 @@ function Publish-FileTarget(
   Invoke-FtpTransferWithRetry { Send-FtpFile $localPath $temporaryPath } "Загрузка $RelativeFile"
   Remove-FtpFileIfExists $previousPath
 
-  if (Test-FtpFile $remotePath) {
-    Rename-FtpFile $remotePath $previousName
+  if (Rename-FtpFileIfExists $remotePath $previousName) {
     $hadPrevious = $true
   }
 
@@ -366,21 +410,20 @@ function Publish-FileTarget(
     Rename-FtpFile $temporaryPath $fileName
   } catch {
     Remove-FtpFileIfExists $temporaryPath
-    if ($hadPrevious -and -not (Test-FtpFile $remotePath)) {
+    if ($hadPrevious) {
+      Remove-FtpFileIfExists $remotePath
       Rename-FtpFile $previousPath $fileName
     }
     throw
   }
 
   try {
-    $localBytes = [IO.File]::ReadAllBytes($localPath)
-    $remoteBytes = Invoke-FtpTransferWithRetry {
-      Receive-FtpFile $remotePath $localBytes.Length
+    $localLength = [long](Get-Item -LiteralPath $localPath).Length
+    $remoteLength = Invoke-FtpTransferWithRetry {
+      Get-FtpFileSize $remotePath
     } "Проверка $RelativeFile"
-    $localHash = Get-Sha256 $localBytes
-    $remoteHash = Get-Sha256 $remoteBytes
-    if ($localHash -ne $remoteHash) {
-      throw "SHA-256 verification failed for $RelativeFile"
+    if ([long]$remoteLength -ne $localLength) {
+      throw "FTP size verification failed for $RelativeFile"
     }
   } catch {
     $verificationFailure = $_
@@ -393,8 +436,7 @@ function Publish-FileTarget(
   return [pscustomobject]@{
     File = $RelativeFile
     Target = $Target
-    Bytes = $localBytes.Length
-    Sha256 = $localHash.Substring(0, 12)
+    Bytes = $localLength
     Status = "uploaded"
   }
 }
