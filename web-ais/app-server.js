@@ -14904,19 +14904,22 @@ function resolveStudentDatabaseSyncDirection({
       }
       const excelChanged = excelCriticalHash !== baseline.criticalHash;
       const webChanged = webCriticalHash !== baseline.criticalHash;
+      const excelCriticalIdentityStayedStable = Boolean(
+        baseline.criticalIdentityHash
+        && excelCriticalIdentityHash === baseline.criticalIdentityHash
+      );
+      const webRevisionStayedStable = revision === baseline.webRevision;
+      const baselineDriftIsProvenSafe = Boolean(
+        webRevisionStayedStable
+        || criticalMigrationDirection === "excel-to-web"
+      );
       if (excelChanged && webChanged && excelCriticalHash !== webCriticalHash) {
         // Import-time Web normalization can drift from the XLSB hash without a saved Web edit.
-        // Recover only when the authoritative revision stayed fixed and the audit window proves
-        // that Excel is the sole newer source.
-        const excelCriticalIdentityStayedStable = Boolean(
-          baseline.criticalIdentityHash
-          && excelCriticalIdentityHash === baseline.criticalIdentityHash
-        );
-        const webRevisionStayedStable = revision === baseline.webRevision;
+        // Recover when either the authoritative revision stayed fixed or the covered audit
+        // window independently proves that Excel is the sole newer critical source.
         if (
           excelCriticalIdentityStayedStable
-          && webRevisionStayedStable
-          && criticalMigrationDirection === "excel-to-web"
+          && baselineDriftIsProvenSafe
         ) {
           return {
             direction: "excel-to-web",
@@ -14945,7 +14948,8 @@ function resolveStudentDatabaseSyncDirection({
       if (
         webChanged
         && !excelChanged
-        && revision === baseline.webRevision
+        && excelCriticalIdentityStayedStable
+        && baselineDriftIsProvenSafe
       ) {
         // Do not write normalization-only Web drift back into an unchanged XLSB.
         return {

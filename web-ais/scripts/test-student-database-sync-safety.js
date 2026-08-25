@@ -216,6 +216,16 @@ function testCriticalDataDirectionAndLegacyMigration() {
     "Неизменная ревизия Web и стабильные identity должны разрешать изменение только XLSB"
   );
   assert.equal(recoveredDrift.recoveredBaselineDrift, true);
+  assert.equal(
+    resolveStudentDatabaseSyncDirection({
+      ...common,
+      currentWebRevision: baseline.webRevision,
+      currentWebCriticalHash: hashStudentDatabaseCriticalSnapshot(normalizedWebDrift),
+      currentWebCriticalIdentityHash: "c".repeat(64)
+    }).direction,
+    "excel-to-web",
+    "Неизменная Web-ревизия должна быть достаточным доказательством при неполном audit"
+  );
   const unchangedDrift = resolveStudentDatabaseSyncDirection({
     ...common,
     currentWebRevision: baseline.webRevision,
@@ -239,18 +249,67 @@ function testCriticalDataDirectionAndLegacyMigration() {
     "web-to-excel",
     "Новая ревизия Web должна сохранять обычное направление Web → Excel"
   );
-  assert.throws(
-    () => resolveStudentDatabaseSyncDirection({
+  const recoveredAfterNonCriticalRevision = resolveStudentDatabaseSyncDirection({
+    ...common,
+    currentWebRevision: baseline.webRevision + 1,
+    sourceModifiedAt: "2026-08-20T12:00:00.000Z",
+    currentWebCriticalUpdatedAt: "2026-08-20T09:00:00.000Z",
+    currentWebAuditOldestAt: "2026-08-01T00:00:00.000Z",
+    currentWebAuditComplete: false,
+    currentWebCriticalHash: hashStudentDatabaseCriticalSnapshot(normalizedWebDrift)
+  });
+  assert.equal(
+    recoveredAfterNonCriticalRevision.direction,
+    "excel-to-web",
+    "Покрывающий audit должен разрешать Excel-only после некритичного роста Web-ревизии"
+  );
+  assert.equal(recoveredAfterNonCriticalRevision.recoveredBaselineDrift, true);
+  assert.equal(
+    resolveStudentDatabaseSyncDirection({
       ...common,
       currentWebRevision: baseline.webRevision + 1,
       sourceModifiedAt: "2026-08-20T12:00:00.000Z",
       currentWebCriticalUpdatedAt: "2026-08-20T09:00:00.000Z",
       currentWebAuditOldestAt: "2026-08-01T00:00:00.000Z",
       currentWebAuditComplete: false,
+      currentWebCriticalHash: hashStudentDatabaseCriticalSnapshot(normalizedWebDrift),
+      currentExcelCriticalHash: baseHash
+    }).direction,
+    "unchanged",
+    "Некритичный рост Web-ревизии не должен перезаписывать неизменный XLSB"
+  );
+  assert.throws(
+    () => resolveStudentDatabaseSyncDirection({
+      ...common,
+      currentWebRevision: baseline.webRevision + 1,
+      sourceModifiedAt: "2026-08-20T12:00:00.000Z",
+      currentWebCriticalUpdatedAt: "2026-08-20T11:00:00.000Z",
+      currentWebAuditOldestAt: "2026-08-01T00:00:00.000Z",
+      currentWebAuditComplete: false,
       currentWebCriticalHash: hashStudentDatabaseCriticalSnapshot(normalizedWebDrift)
     }),
     statusError(409, /критичные данные изменились и в Web-базе, и в XLSB/iu),
-    "При новой ревизии Web восстановление baseline drift запрещено"
+    "Критичное Web-изменение после baseline должно сохранить блокировку"
+  );
+  assert.throws(
+    () => resolveStudentDatabaseSyncDirection({
+      ...common,
+      currentWebRevision: baseline.webRevision,
+      currentWebCriticalHash: hashStudentDatabaseCriticalSnapshot(normalizedWebDrift),
+      currentExcelCriticalIdentityHash: "d".repeat(64)
+    }),
+    statusError(409, /критичные данные изменились и в Web-базе, и в XLSB/iu),
+    "Изменение состава критичных записей Excel не должно восстанавливаться автоматически"
+  );
+  assert.throws(
+    () => resolveStudentDatabaseSyncDirection({
+      ...common,
+      currentWebRevision: baseline.webRevision,
+      sourceIdentity: "e".repeat(64),
+      currentWebCriticalHash: hashStudentDatabaseCriticalSnapshot(normalizedWebDrift)
+    }),
+    statusError(409, /другой файл или источник XLSB/iu),
+    "Другой XLSB-источник должен блокироваться до выбора направления"
   );
   assert.equal(
     resolveStudentDatabaseSyncDirection({
