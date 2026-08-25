@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.273",
+    version: "1.7.274",
     releasedAt: "2026-08-25"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.274",
+      releasedAt: "2026-08-25",
+      changes: [
+        "PDF из папок документов загружается авторизованным запросом и открывается через безопасный временный адрес без блокировки предварительного просмотра.",
+        "Временные данные PDF освобождаются при смене файла, папки и закрытии окна, а общий запрет встраивания страниц системы остаётся включённым."
+      ]
+    },
     {
       version: "1.7.273",
       releasedAt: "2026-08-25",
@@ -37418,7 +37426,12 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function openStudentWebDavDocumentsManager(folder, studentName = "", options = {}) {
-    document.querySelector("[data-student-webdav-browser]")?.remove();
+    const existingBrowser = document.querySelector("[data-student-webdav-browser]");
+    if (typeof existingBrowser?.closeStudentWebDavBrowser === "function") {
+      existingBrowser.closeStudentWebDavBrowser();
+    } else {
+      existingBrowser?.remove();
+    }
     const normalizedFolder = String(folder || "").trim().replace(/\\/g, "/").replace(/\/+$/g, "");
     const documentsFolderMatch = /(?:^|\/)Документы$/iu.test(normalizedFolder);
     const browserRootFolder = documentsFolderMatch
@@ -37481,8 +37494,18 @@ MAX - https://bizvmax.ru/zifra_plus
     let previewPanY = 0;
     let previewRotation = 0;
     let previewFitMode = true;
+    let activePreviewObjectUrl = "";
 
-    const close = () => backdrop.remove();
+    const releaseActivePreviewObjectUrl = () => {
+      if (!activePreviewObjectUrl) return;
+      URL.revokeObjectURL(activePreviewObjectUrl);
+      activePreviewObjectUrl = "";
+    };
+    const close = () => {
+      previewRequestToken += 1;
+      releaseActivePreviewObjectUrl();
+      backdrop.remove();
+    };
     backdrop.closeStudentWebDavBrowser = close;
     backdrop.addEventListener("pointerdown", (event) => {
       if (event.target === backdrop) close();
@@ -37551,6 +37574,7 @@ MAX - https://bizvmax.ru/zifra_plus
       selectedEntryPath = entry.path;
       markSelectedEntry();
       const requestToken = ++previewRequestToken;
+      releaseActivePreviewObjectUrl();
       const fileUrl = getStudentWebDavDocumentFileUrl(browserRootFolder, entry.path);
       const previewKind = getPreviewKind(entry);
       const modified = formatStudentWebDavModifiedAt(entry.modifiedAt);
@@ -37562,6 +37586,7 @@ MAX - https://bizvmax.ru/zifra_plus
       previewPanY = 0;
       previewRotation = 0;
       previewFitMode = true;
+      let previewPdfObjectUrl = "";
 
       let content = '<div class="student-webdav-browser-preview-empty">Предпросмотр для этого формата недоступен. Файл можно скачать.</div>';
       if (previewKind === "image") {
@@ -37575,14 +37600,13 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         `;
       } else if (previewKind === "pdf") {
-        const pdfSource = `${fileUrl}#toolbar=1&navpanes=0&view=FitH`;
         content = `
           <div class="student-webdav-browser-pdf-stage is-loading" data-student-webdav-pdf-stage data-student-webdav-media-stage aria-busy="true">
             <div class="student-webdav-browser-media-loading" data-student-webdav-media-loading>
               <span class="loading-spinner" aria-hidden="true"></span>
               <span>Загрузка PDF...</span>
             </div>
-            <iframe data-student-webdav-preview-pdf data-preview-source="${escapeAttr(pdfSource)}" src="${escapeAttr(pdfSource)}" title="${escapeAttr(entry.name)}"></iframe>
+            <iframe data-student-webdav-preview-pdf data-preview-source="" title="${escapeAttr(entry.name)}"></iframe>
           </div>
         `;
       } else if (canPreview) {
@@ -37690,10 +37714,12 @@ MAX - https://bizvmax.ru/zifra_plus
             pdf.style.height = quarterTurn ? `${Math.max(1, pdfStage.clientWidth)}px` : "100%";
           }
           pdf.style.transform = `rotate(${previewRotation}deg)`;
+          if (!previewPdfObjectUrl) return;
           const fragment = fit ? "toolbar=1&navpanes=0&view=FitH" : `toolbar=1&navpanes=0&zoom=${Math.round(previewScale * 100)}`;
-          const nextSource = `${fileUrl}#${fragment}`;
+          const nextSource = `${previewPdfObjectUrl}#${fragment}`;
           if (pdf.dataset.previewSource !== nextSource) {
             pdf.dataset.previewSource = nextSource;
+            pdf.dataset.previewReady = "true";
             setMediaLoading("Загрузка PDF...");
             pdf.src = nextSource;
           }
@@ -37763,8 +37789,32 @@ MAX - https://bizvmax.ru/zifra_plus
       const previewPdf = preview.querySelector("[data-student-webdav-preview-pdf]");
       if (previewPdf) {
         setMediaLoading("Загрузка PDF...");
-        previewPdf.addEventListener("load", markMediaLoaded);
-        previewPdf.addEventListener("error", () => markMediaLoadError("Не удалось загрузить PDF."));
+        previewPdf.addEventListener("load", () => {
+          if (previewPdf.dataset.previewReady === "true") markMediaLoaded();
+        });
+        previewPdf.addEventListener("error", () => {
+          if (previewPdf.dataset.previewReady === "true") markMediaLoadError("Не удалось загрузить PDF.");
+        });
+        try {
+          const response = await fetch(fileUrl);
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.error || `Не удалось загрузить PDF: ошибка ${response.status}.`);
+          }
+          const pdfBlob = await response.blob();
+          if (!pdfBlob.size) throw new Error("PDF-файл пуст.");
+          if (
+            requestToken !== previewRequestToken
+            || selectedEntryPath !== entry.path
+            || !backdrop.isConnected
+          ) return;
+          activePreviewObjectUrl = URL.createObjectURL(new Blob([pdfBlob], { type: "application/pdf" }));
+          previewPdfObjectUrl = activePreviewObjectUrl;
+          applyPreviewScale({ fit: previewFitMode });
+        } catch (error) {
+          if (requestToken !== previewRequestToken || selectedEntryPath !== entry.path) return;
+          markMediaLoadError(error.message || "Не удалось загрузить PDF.");
+        }
       }
       if (imageStage) {
         let dragState = null;
@@ -37902,6 +37952,7 @@ MAX - https://bizvmax.ru/zifra_plus
         selectedEntryPath = initialSelection?.path || "";
         initialSelectedFileName = "";
         previewRequestToken += 1;
+        releaseActivePreviewObjectUrl();
         renderPath();
         renderEntries();
         preview.innerHTML = '<div class="student-webdav-browser-preview-empty">Выберите файл для просмотра</div>';
