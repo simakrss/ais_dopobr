@@ -2692,6 +2692,7 @@ function Update-ProgramPromoMessages {
     [Collections.Generic.HashSet[string]]$NumberFields
   )
   $provided = Get-ObjectProperty $Payload "programPromoMessagesProvided"
+  $replaceAll = [bool](Get-ObjectProperty $Payload "programsReplaceAll")
   $programs = @(Get-ObjectProperty $Payload "programs")
   if (-not $provided) {
     return [pscustomobject]@{
@@ -2705,6 +2706,8 @@ function Update-ProgramPromoMessages {
       Skipped = 0
       SkippedPrograms = @()
       InsertedRows = 0
+      DeletedRows = 0
+      FormulaCellsDeleted = 0
       SortedRows = 0
       ArchiveRows = 0
       Provided = $false
@@ -2770,6 +2773,8 @@ function Update-ProgramPromoMessages {
         Skipped = $programs.Count
         SkippedPrograms = $emptySheetSkippedPrograms
         InsertedRows = 0
+        DeletedRows = 0
+        FormulaCellsDeleted = 0
         SortedRows = 0
         ArchiveRows = 0
         Provided = $true
@@ -2826,6 +2831,8 @@ function Update-ProgramPromoMessages {
     $skippedCount = 0
     $skippedPrograms = [Collections.Generic.List[object]]::new()
     $insertedRows = 0
+    $deletedRows = 0
+    $deletedFormulaCells = 0
     foreach ($program in $programs) {
       if ($null -eq $program) { continue }
       $providedFields = @(
@@ -2973,6 +2980,34 @@ function Update-ProgramPromoMessages {
       }
       $updatedCount += 1
     }
+    if ($replaceAll) {
+      $rowsToDelete = @(
+        $identityByRow.Keys |
+          ForEach-Object { [int]$_ } |
+          Where-Object { -not $updatedRows.Contains($_) } |
+          Sort-Object -Descending
+      )
+      foreach ($rowToDelete in $rowsToDelete) {
+        $rowRange = $null
+        $formulaRange = $null
+        try {
+          $rowRange = $sheet.Range(
+            $sheet.Cells.Item($rowToDelete, 1),
+            $sheet.Cells.Item($rowToDelete, $dataLastColumn)
+          )
+          try {
+            $formulaRange = $rowRange.SpecialCells(-4123)
+            $deletedFormulaCells += [int]$formulaRange.Count
+          } catch {}
+        } finally {
+          Release-ComObject $formulaRange
+          Release-ComObject $rowRange
+        }
+        Remove-StudentRows $sheet $rowToDelete 1
+        $lastRow -= 1
+        $deletedRows += 1
+      }
+    }
     $sortResult = Sort-ProgramRegistryRows `
       $sheet `
       ([int]$header.Row) `
@@ -2997,27 +3032,29 @@ function Update-ProgramPromoMessages {
     $sortedRecordByRow = @{}
     $usedProgramIdentities = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $sortedIdentityRange = $null
-    try {
-      $sortedIdentityRange = $sheet.Range(
-        $sheet.Cells.Item($startRow, 1),
-        $sheet.Cells.Item($lastRow, [Math]::Max($nameColumn, $landingCodeColumn))
-      )
-      $sortedValues = $sortedIdentityRange.Value2
-      for ($row = $startRow; $row -le $lastRow; $row += 1) {
-        $offset = $row - $startRow + 1
-        $identity = Get-ProgramWorkbookIdentity `
-          (Get-MatrixValue $sortedValues $offset $nameColumn) `
-          (Get-MatrixValue $sortedValues $offset $landingCodeColumn)
-        if (-not $identity) { continue }
-        if ($programByIdentity.ContainsKey($identity)) {
-          $sortedRecordByRow[$row] = $programByIdentity[$identity]
-          [void]$usedProgramIdentities.Add($identity)
-        } elseif ($existingRecordByIdentity.ContainsKey($identity)) {
-          $sortedRecordByRow[$row] = $existingRecordByIdentity[$identity]
+    if ($lastRow -ge $startRow) {
+      try {
+        $sortedIdentityRange = $sheet.Range(
+          $sheet.Cells.Item($startRow, 1),
+          $sheet.Cells.Item($lastRow, [Math]::Max($nameColumn, $landingCodeColumn))
+        )
+        $sortedValues = $sortedIdentityRange.Value2
+        for ($row = $startRow; $row -le $lastRow; $row += 1) {
+          $offset = $row - $startRow + 1
+          $identity = Get-ProgramWorkbookIdentity `
+            (Get-MatrixValue $sortedValues $offset $nameColumn) `
+            (Get-MatrixValue $sortedValues $offset $landingCodeColumn)
+          if (-not $identity) { continue }
+          if ($programByIdentity.ContainsKey($identity)) {
+            $sortedRecordByRow[$row] = $programByIdentity[$identity]
+            [void]$usedProgramIdentities.Add($identity)
+          } elseif ($existingRecordByIdentity.ContainsKey($identity)) {
+            $sortedRecordByRow[$row] = $existingRecordByIdentity[$identity]
+          }
         }
+      } finally {
+        Release-ComObject $sortedIdentityRange
       }
-    } finally {
-      Release-ComObject $sortedIdentityRange
     }
     if ($usedProgramIdentities.Count -ne $programByIdentity.Count) {
       throw "После сортировки не удалось повторно сопоставить все программы Web со строками XLSB."
@@ -3034,6 +3071,8 @@ function Update-ProgramPromoMessages {
       Skipped = $skippedCount
       SkippedPrograms = @($skippedPrograms)
       InsertedRows = $insertedRows
+      DeletedRows = $deletedRows
+      FormulaCellsDeleted = $deletedFormulaCells
       SortedRows = $sortResult.Rows
       ArchiveRows = $sortResult.ArchiveRows
       Provided = $true
@@ -3757,6 +3796,8 @@ try {
     programPromoSkipped = $programPromoResult.Skipped
     programPromoSkippedDetails = @($programPromoResult.SkippedPrograms)
     programRowsInserted = $programPromoResult.InsertedRows
+    programRowsDeleted = $programPromoResult.DeletedRows
+    programFormulaCellsDeleted = $programPromoResult.FormulaCellsDeleted
     programRowsSorted = $programPromoResult.SortedRows
     programArchiveRows = $programPromoResult.ArchiveRows
     programDictionaryValues = $programDictionaryResult.Count

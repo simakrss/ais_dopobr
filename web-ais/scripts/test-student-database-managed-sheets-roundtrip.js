@@ -87,7 +87,15 @@ try {
   const programTarget = imported.programPaymentSettings.find((program) => (
     Number(program.xlsbProgramRow) > 1
   ));
-  assert.ok(inventoryTarget && trainingTarget && programTarget, "Не найдены строки для round-trip проверки.");
+  const deletedProgram = imported.programPaymentSettings.find((program) => (
+    program.id !== programTarget?.id
+    && String(program.id || "").trim() !== String(trainingTarget?.programId || "").trim()
+    && String(program.name || "").trim() !== String(trainingTarget?.programName || "").trim()
+  ));
+  assert.ok(
+    inventoryTarget && trainingTarget && programTarget && deletedProgram,
+    "Не найдены строки для round-trip проверки."
+  );
 
   const runId = Date.now();
   const inventoryNote = `Round-trip запас ${runId}`;
@@ -129,15 +137,20 @@ try {
       item.xlsbTrainingPlanRow === trainingTarget.xlsbTrainingPlanRow
         ? { ...item, teacher: trainingTeacher }
         : { ...item }
+    )).filter((item) => (
+      String(item.programId || "").trim() !== String(deletedProgram.id || "").trim()
+      && String(item.programName || "").trim() !== String(deletedProgram.name || "").trim()
     )),
     insertedTrainingPlan
   ];
   const programs = [
-    ...imported.programPaymentSettings.map((program) => (
-      program.xlsbProgramRow === programTarget.xlsbProgramRow
-        ? { ...program, manager: programManager }
-        : { ...program }
-    )),
+    ...imported.programPaymentSettings
+      .filter((program) => program.id !== deletedProgram.id)
+      .map((program) => (
+        program.xlsbProgramRow === programTarget.xlsbProgramRow
+          ? { ...program, manager: programManager }
+          : { ...program }
+      )),
     insertedProgram
   ];
   const directExpenses = flattenDirectExpenses(imported);
@@ -151,6 +164,7 @@ try {
     programs,
     agentPaymentRates: imported.agentPaymentRates || {}
   });
+  payload.programsReplaceAll = true;
   assert.equal(payload.inventoryRows.length, imported.inventoryUnitCount);
   fs.writeFileSync(payloadPath, JSON.stringify(payload), "utf8");
 
@@ -202,6 +216,7 @@ try {
   assert.equal(result.inventoryUnits, payload.inventoryRows.length);
   assert.equal(result.trainingPlans, trainingPlans.length);
   assert.equal(result.programRowsInserted, 1);
+  assert.equal(result.programRowsDeleted, 1);
   assert.equal(result.programRowsSorted, programs.length);
   assert.ok(result.programArchiveRows > 0);
   assert.ok(result.programManagedCells > 0, "Управляемые поля реестра программ не обновлялись.");
@@ -285,6 +300,11 @@ try {
   assert.equal(insertedProgramResult.status, "Набор");
   assert.ok(getCell(after, "Реестр программ", `B${insertedProgramResult.xlsbProgramRow}`).f);
   assert.ok(getCell(after, "Реестр программ", `M${insertedProgramResult.xlsbProgramRow}`).f);
+  assert.equal(
+    roundTrip.programPaymentSettings.some((program) => program.id === deletedProgram.id),
+    false,
+    "Удалённая в Web программа осталась в XLSB."
+  );
   const insertedTrainingPlanResult = roundTrip.trainingPlans.find((item) => (
     item.id === insertedTrainingPlan.id
   ));
@@ -305,6 +325,7 @@ try {
     inventoryUnits: result.inventoryUnits,
     trainingPlans: result.trainingPlans,
     programRowsInserted: result.programRowsInserted,
+    programRowsDeleted: result.programRowsDeleted,
     programRowsSorted: result.programRowsSorted,
     programManagedCells: result.programManagedCells,
     programFormulaCellsPreserved: result.programFormulaCellsPreserved,

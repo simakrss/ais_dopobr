@@ -21137,6 +21137,11 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       }
       payload.students = studentSyncResult.students;
     }
+    const replaceProgramsFromWeb = Boolean(
+      body.twoWaySync === true
+      || (directionalSync && directionalSyncResult?.direction === "web-to-excel")
+    );
+    if (replaceProgramsFromWeb) payload.programsReplaceAll = true;
     if ((body.twoWaySync === true || directionalSync) && payload.programsProvided) {
       onProgress({
         progress: 16,
@@ -21149,7 +21154,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       validateStudentDatabaseProgramStructure(
         payload.programs,
         sourceDataForExport.programPaymentSettings,
-        { allowWebOnly: true }
+        { allowWebOnly: true, allowExcelOnly: replaceProgramsFromWeb }
       );
     }
     onProgress({ progress: 16, stage: "inspect", message: "Проверка структуры исходной книги..." });
@@ -21233,6 +21238,10 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       sourceInspection.trainingPlanFormulaCount - outputInspection.trainingPlanFormulaCount
     );
     const programFormulaLoss = sourceInspection.programFormulaCount - outputInspection.programFormulaCount;
+    const expectedProgramFormulaLoss = Math.max(
+      0,
+      Number(scriptResult.programFormulaCellsDeleted || 0)
+    );
     const removedGeneralExpenseRows = Math.max(
       0,
       sourceInspection.generalExpenseRecordCount - outputInspection.generalExpenseRecordCount
@@ -21250,7 +21259,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       || contractFormulaLoss > contractFormulaLossLimit
       || inventoryFormulaLoss > 0
       || trainingPlanFormulaLoss > 0
-      || programFormulaLoss > 0
+      || programFormulaLoss > expectedProgramFormulaLoss
     ) {
       throw new Error(
         "Проверка сформированной книги не пройдена: потеряно слишком много формул "
@@ -21349,6 +21358,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       programPromoSkippedCount: Number(scriptResult.programPromoSkipped || 0),
       programPromoSkippedDetails,
       programInsertedCount: Number(scriptResult.programRowsInserted || 0),
+      programDeletedCount: Number(scriptResult.programRowsDeleted || 0),
       programSortedCount: Number(scriptResult.programRowsSorted || 0),
       programArchiveCount: Number(scriptResult.programArchiveRows || 0),
       programDictionaryValueCount: Number(scriptResult.programDictionaryValues || 0),

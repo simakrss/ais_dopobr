@@ -48,6 +48,8 @@ assert.match(
 );
 assert.match(syncConfirmation, /изменились и Web-база, и XLSB[\s\S]*остановится без перезаписи/iu);
 assert.match(syncConfirmation, /запасы, программы, учебные планы, ставки, справочники и параметры/iu);
+assert.match(syncConfirmation, /Состав образовательных программ синхронизируется полностью[\s\S]*создаются[\s\S]*удаляются/iu);
+assert.doesNotMatch(syncConfirmation, /требует отдельной загрузки либо экспорта/iu);
 
 const downloadConfirmation = helperContext.downloadConfirmation("локальный компьютер");
 assert.match(downloadConfirmation, /отдельная экспортная копия АИС Допобразование\.xlsb/iu);

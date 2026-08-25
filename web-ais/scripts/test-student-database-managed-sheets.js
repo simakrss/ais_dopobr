@@ -398,6 +398,20 @@ assert.ok(
     && excelToWebProgramValidation < excelToWebImportBuild,
   "Excel → Web должен проверить добавление и удаление программ до подготовки импорта."
 );
+const webToExcelProgramValidation = serverSource.indexOf(
+  "validateStudentDatabaseProgramStructure(",
+  excelToWebImportBuild
+);
+assert.match(
+  serverSource.slice(excelToWebImportBuild, webToExcelProgramValidation + 500),
+  /payload\.programsReplaceAll\s*=\s*true[\s\S]*?allowExcelOnly:\s*replaceProgramsFromWeb/u,
+  "Web → Excel должен разрешать удаление отсутствующих в Web программ и передавать режим полной замены."
+);
+assert.match(
+  powershellSource,
+  /if \(\$replaceAll\)[\s\S]*?Where-Object \{ -not \$updatedRows\.Contains\(\$_\) \}[\s\S]*?Remove-StudentRows \$sheet \$rowToDelete 1/u,
+  "Скрипт синхронизации должен удалять из XLSB программы, отсутствующие в актуальной Web-базе."
+);
 
 console.log(JSON.stringify({
   inventoryRows: payload.inventoryRows.length,

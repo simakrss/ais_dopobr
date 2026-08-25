@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.272",
-    releasedAt: "2026-08-24"
+    version: "1.7.273",
+    releasedAt: "2026-08-25"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.273",
+      releasedAt: "2026-08-25",
+      changes: [
+        "Создание и удаление образовательных программ выполняется обычной двусторонней синхронизацией без отдельной загрузки или экспорта.",
+        "При переносе Web → Excel реестр программ полностью приводится к составу Web-базы, а итог операции показывает число добавленных и удалённых строк."
+      ]
+    },
     {
       version: "1.7.272",
       releasedAt: "2026-08-24",
@@ -47377,7 +47385,7 @@ MAX - https://bizvmax.ru/zifra_plus
       "Если после прошлой синхронизации изменились и Web-база, и XLSB, операция остановится без перезаписи данных.",
       "",
       "Синхронизируются слушатели, договоры, прямые и общие затраты, запасы, программы, учебные планы, ставки, справочники и параметры.",
-      "Создание или удаление образовательных программ требует отдельной загрузки либо экспорта и при обычной синхронизации будет остановлено без перезаписи.",
+      "Состав образовательных программ синхронизируется полностью: новые программы создаются, а отсутствующие на актуальной стороне удаляются.",
       `При переносе Web → Excel перед сохранением будет создана резервная копия, затем база ${sourceLabel} будет заменена.`,
       "",
       "Продолжить синхронизацию?"
@@ -49410,6 +49418,8 @@ MAX - https://bizvmax.ru/zifra_plus
             + " договоров; " + directExpenses.length + " прямых и "
             + generalExpenses.length + " общих затрат; " + inventory.length
             + " позиций запасов; " + programs.length + " программ; "
+            + "добавлено программ: " + Number(result.programInsertedCount || 0) + "; "
+            + "удалено программ: " + Number(result.programDeletedCount || 0) + "; "
             + trainingPlans.length + " строк учебных планов; " + sourceLabel
             + "; резервная копия: " + (committedResult.backupPath || "создана"),
           {
@@ -49536,9 +49546,11 @@ MAX - https://bizvmax.ru/zifra_plus
             key: "programs",
             label: "Программы",
             value: operationSummary?.programCount ?? result.programCount ?? programs.length,
-            note: Number(result.programInsertedCount || 0) > 0
-              ? `Добавлено в XLSB: ${Number(result.programInsertedCount || 0)}; архивные строки перенесены в конец`
-              : "Реестр отсортирован по названию; архивные строки находятся в конце",
+            note: direction === "web-to-excel"
+              ? `Добавлено в XLSB: ${Number(result.programInsertedCount || 0)}; удалено из XLSB: ${Number(result.programDeletedCount || 0)}; архивные строки перенесены в конец`
+              : direction === "excel-to-web"
+                ? "Состав программ перенесён из XLSB; отсутствующие в XLSB программы удалены из Web-базы"
+                : "Состав программ не изменился",
             columns: databaseOperationDetailColumns(databaseOperationDetailFields.programs),
             rows: buildDatabaseOperationDetailRows(detailPrograms, databaseOperationDetailFields.programs)
           },
