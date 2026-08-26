@@ -12,6 +12,8 @@
   const DEFAULT_TRAINING_END_NOTIFICATION_TIME = "09:00";
   const DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE = "Europe/Moscow";
   const DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY = "daily";
+  const DEFAULT_TRAINING_EXTENSION_DAYS = 14;
+  const DEFAULT_COMPRESSED_TRAINING_HOURS_PER_WEEK = 54;
   const TRAINING_END_NOTIFICATION_FREQUENCY_OPTIONS = Object.freeze([
     { value: "daily", label: "Ежедневно" },
     { value: "weekdays", label: "По рабочим дням" },
@@ -86,10 +88,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.283",
+    version: "1.7.284",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.284",
+      releasedAt: "2026-08-26",
+      changes: [
+        "У изменённой даты окончания обучения добавлена волшебная палочка: обычный щелчок продлевает срок на две недели, а Shift рассчитывает максимально уплотнённый срок от даты начала обучения.",
+        "Максимальная недельная нагрузка для сокращения срока вынесена в «Настройки СДО» и по умолчанию составляет 54 часа."
+      ]
+    },
     {
       version: "1.7.283",
       releasedAt: "2026-08-26",
@@ -3773,6 +3783,15 @@ MAX - https://bizvmax.ru/zifra_plus
       label: "Тема письма о доступе к порталу",
       type: "text",
       value: "Доступ к порталу дистанционного обучения Цифровизация Плюс"
+    },
+    {
+      key: "compressedTrainingHoursPerWeek",
+      label: "Максимальная недельная нагрузка при сокращении срока, ч",
+      type: "number",
+      min: 1,
+      max: 168,
+      step: 1,
+      value: String(DEFAULT_COMPRESSED_TRAINING_HOURS_PER_WEEK)
     }
   ];
   const paymentSettingDefaults = [
@@ -5994,6 +6013,13 @@ MAX - https://bizvmax.ru/zifra_plus
   function getSdoSettingValue(key) {
     return normalizeSdoSettings(state.data.dictionaries.sdoSettings)
       .find((setting) => setting.key === key)?.value || "";
+  }
+
+  function getCompressedTrainingHoursPerWeek() {
+    const value = Number(String(getSdoSettingValue("compressedTrainingHoursPerWeek")).replace(",", "."));
+    return Number.isFinite(value) && value > 0
+      ? value
+      : DEFAULT_COMPRESSED_TRAINING_HOURS_PER_WEEK;
   }
 
   function normalizeDocumentPathSettings(values) {
@@ -17111,16 +17137,17 @@ MAX - https://bizvmax.ru/zifra_plus
               <span>${escapeHtml(setting.label)}</span>
               <input
                 name="${escapeAttr(setting.key)}"
-                type="${setting.type === "text" ? "text" : "url"}"
+                type="${setting.type === "number" ? "number" : setting.type === "text" ? "text" : "url"}"
                 value="${escapeAttr(setting.value)}"
-                placeholder="${setting.type === "text" ? "" : "https://"}"
+                placeholder="${setting.type === "number" || setting.type === "text" ? "" : "https://"}"
+                ${setting.type === "number" ? `min="${escapeAttr(setting.min ?? 1)}" max="${escapeAttr(setting.max ?? 168)}" step="${escapeAttr(setting.step ?? 1)}" inputmode="numeric"` : ""}
                 autocomplete="off"
                 required
               >
             </label>
           `).join("")}
         </div>
-        <p class="sdo-settings-hint">Здесь настраиваются адреса СДО и тема письма с данными доступа.</p>
+        <p class="sdo-settings-hint">Здесь настраиваются адреса СДО, тема письма с данными доступа и максимальная недельная нагрузка для сокращения срока обучения.</p>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-sdo-settings" type="button">Восстановить исходные</button>
           <button class="primary-button" type="submit">Сохранить настройки</button>
@@ -24791,7 +24818,7 @@ MAX - https://bizvmax.ru/zifra_plus
           ${renderOrdersSdoControl("startDate", "Дата нач. обуч.", record, "date", { tools: ["dateStep"] })}
           ${renderOrdersSdoControl("endDate", "Дата окон. обуч.", record, "date", { tools: ["generateEndDate", "dateStep"] })}
           <div class="orders-sdo-shift-row">
-            ${renderOrdersSdoControl("extendedEndDate", "Дата окон. изм.", record, "date", { tools: ["dateStep", "copyExtendedEndUp"] })}
+            ${renderOrdersSdoControl("extendedEndDate", "Дата окон. изм.", record, "date", { tools: ["generateExtendedEndDate", "dateStep", "copyExtendedEndUp"] })}
           </div>
         </div>
         <div class="orders-sdo-orders-grid">
@@ -24887,13 +24914,14 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderOrdersSdoToolButton(tool, fieldName) {
-    if (["generateContractNo", "generateEnrollmentOrderNo", "generateExpulsionOrderNo", "generateGroupNo", "generateEndDate"].includes(tool)) {
+    if (["generateContractNo", "generateEnrollmentOrderNo", "generateExpulsionOrderNo", "generateGroupNo", "generateEndDate", "generateExtendedEndDate"].includes(tool)) {
       const actionMap = {
         generateContractNo: ["generate-contract-number", "Сформировать номер договора"],
         generateEnrollmentOrderNo: ["generate-enrollment-order-number", "Сформировать номер приказа о зачислении"],
         generateExpulsionOrderNo: ["generate-expulsion-order-number", "Сформировать номер приказа об отчислении"],
         generateGroupNo: ["generate-group-number", "Сформировать номер группы"],
-        generateEndDate: ["generate-training-end-date", "Рассчитать по сроку программы; если срок не указан — по 40 часам в неделю"]
+        generateEndDate: ["generate-training-end-date", "Рассчитать по сроку программы; если срок не указан — по 40 часам в неделю"],
+        generateExtendedEndDate: ["generate-extended-training-end-date", "Продлить на две недели; с Shift — максимально сократить срок по недельной нагрузке из настроек"]
       };
       const [action, title] = actionMap[tool];
       return `
@@ -25163,6 +25191,25 @@ MAX - https://bizvmax.ru/zifra_plus
     return result;
   }
 
+  function getExtendedTrainingEndDate(values = {}, options = {}) {
+    if (options.compressed) {
+      return getTrainingEndDate(values.startDate, {
+        hours: values.hours,
+        hoursPerWeek: options.hoursPerWeek
+      });
+    }
+    const baseDate = parseOrdersSdoDate(values.extendedEndDate)
+      || parseOrdersSdoDate(values.endDate);
+    if (!baseDate) return null;
+    const extensionDays = Number(options.extensionDays ?? DEFAULT_TRAINING_EXTENSION_DAYS);
+    if (!Number.isFinite(extensionDays)) return null;
+    return new Date(
+      baseDate.getFullYear(),
+      baseDate.getMonth(),
+      baseDate.getDate() + extensionDays
+    );
+  }
+
   function setOrdersSdoFieldValue(form, fieldName, value) {
     const input = form?.elements[fieldName];
     if (!(input instanceof HTMLInputElement) && !(input instanceof HTMLTextAreaElement) && !(input instanceof HTMLSelectElement)) return false;
@@ -25362,6 +25409,48 @@ MAX - https://bizvmax.ru/zifra_plus
     state.modal.draft = collectStudentFormDraft();
     state.modal.hasDraftChanges = true;
     context.form.elements.endDate?.focus({ preventScroll: true });
+  }
+
+  function generateExtendedTrainingEndDate(event) {
+    const form = document.getElementById("recordForm");
+    if (!form || form.dataset.config !== "students") return;
+    const record = collectStudentFormDraft();
+    const compressed = Boolean(event?.shiftKey);
+    let endDate = null;
+
+    if (compressed) {
+      const startDate = String(form.elements.startDate?.value || record.startDate || "").trim();
+      if (!parseOrdersSdoDate(startDate)) {
+        alert("Заполните дату начала обучения для расчёта сокращённого срока.");
+        form.elements.startDate?.focus({ preventScroll: true });
+        return;
+      }
+      const hours = Number(String(getStudentProgramHours(record)).replace(",", "."));
+      if (!Number.isFinite(hours) || hours <= 0) {
+        alert("Укажите программу обучения и количество часов для расчёта сокращённого срока.");
+        form.querySelector("[name='program']")?.focus({ preventScroll: true });
+        return;
+      }
+      endDate = getExtendedTrainingEndDate({ startDate, hours }, {
+        compressed: true,
+        hoursPerWeek: getCompressedTrainingHoursPerWeek()
+      });
+    } else {
+      const extendedEndDate = String(form.elements.extendedEndDate?.value || record.extendedEndDate || "").trim();
+      const trainingEndDate = String(form.elements.endDate?.value || record.endDate || "").trim();
+      endDate = getExtendedTrainingEndDate({ extendedEndDate, endDate: trainingEndDate });
+      if (!endDate) {
+        alert("Заполните дату окончания обучения или изменённую дату окончания.");
+        form.elements.endDate?.focus({ preventScroll: true });
+        return;
+      }
+    }
+
+    if (!endDate) return;
+    setOrdersSdoFieldValue(form, "extendedEndDate", formatOrdersSdoDate(endDate));
+    state.modal.draft = collectStudentFormDraft();
+    state.modal.hasDraftChanges = true;
+    form.elements.extendedEndDate?.focus({ preventScroll: true });
   }
 
   function autoFillOrdersSdo() {
@@ -31519,6 +31608,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='generate-expulsion-order-number']")?.addEventListener("click", generateExpulsionOrderNumber);
     document.querySelector("[data-action='generate-group-number']")?.addEventListener("click", generateStudentGroupNumber);
     document.querySelector("[data-action='generate-training-end-date']")?.addEventListener("click", generateTrainingEndDate);
+    document.querySelector("[data-action='generate-extended-training-end-date']")?.addEventListener("click", generateExtendedTrainingEndDate);
     document.querySelector("[data-action='auto-fill-orders-sdo']")?.addEventListener("click", autoFillOrdersSdo);
     document.querySelector("[data-action='auto-fill-education-document']")?.addEventListener("click", autoFillEducationDocument);
     document.querySelector("[data-action='generate-portal-password']")?.addEventListener("click", generatePortalPassword);
@@ -46934,10 +47024,22 @@ MAX - https://bizvmax.ru/zifra_plus
       ...setting,
       value: String(form.elements[setting.key]?.value || "").trim()
     }));
-    const invalidSetting = settings.find((setting) => setting.type !== "text" && !normalizeExternalUrl(setting.value));
+    const invalidSetting = settings.find((setting) => !["text", "number"].includes(setting.type) && !normalizeExternalUrl(setting.value));
     if (invalidSetting) {
       alert(`Укажите корректный адрес: ${invalidSetting.label}.`);
       form.elements[invalidSetting.key]?.focus();
+      return;
+    }
+    const invalidNumberSetting = settings.find((setting) => {
+      if (setting.type !== "number") return false;
+      const value = Number(String(setting.value).replace(",", "."));
+      return !Number.isFinite(value)
+        || value < Number(setting.min ?? Number.NEGATIVE_INFINITY)
+        || value > Number(setting.max ?? Number.POSITIVE_INFINITY);
+    });
+    if (invalidNumberSetting) {
+      alert(`Укажите корректное значение: ${invalidNumberSetting.label}.`);
+      form.elements[invalidNumberSetting.key]?.focus();
       return;
     }
     const emptyTextSetting = settings.find((setting) => setting.type === "text" && !setting.value);

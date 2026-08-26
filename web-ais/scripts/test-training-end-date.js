@@ -44,6 +44,7 @@ const programs = {
 };
 
 const context = {
+  DEFAULT_TRAINING_EXTENSION_DAYS: 14,
   parseOrdersSdoDate: parseIsoDate,
   formatOrdersSdoDate: formatIsoDate,
   normalizeEducationProgramType(value) {
@@ -70,11 +71,13 @@ vm.runInContext(
   `${extractBetween("  function parseTrainingProgramDuration", "  function setOrdersSdoFieldValue")}
    ${extractBetween("  function getStudentBulkBaseDate", "  async function persistStudentBulkChanges")}
    this.getTrainingEndDate = getTrainingEndDate;
+   this.getExtendedTrainingEndDate = getExtendedTrainingEndDate;
    this.prepareStudentRecordForBulkDocument = prepareStudentRecordForBulkDocument;`,
   context
 );
 
 const endDate = (startDate, options) => formatIsoDate(context.getTrainingEndDate(startDate, options));
+const extendedEndDate = (values, options) => formatIsoDate(context.getExtendedTrainingEndDate(values, options));
 
 assert.equal(endDate("2026-08-03", { duration: "2 нед.", hours: 300 }), "2026-08-17");
 assert.equal(endDate("2026-08-03", { duration: "2 недели" }), "2026-08-17");
@@ -92,6 +95,26 @@ assert.equal(endDate("2026-08-09", { hours: 1 }), "2026-08-17");
 assert.equal(endDate("2026-08-03", { duration: "неизвестно", hours: 300 }), "");
 assert.equal(endDate("2026-08-03", { duration: "", hours: 0 }), "");
 assert.equal(endDate("не дата", { duration: "2 нед." }), "");
+
+assert.equal(
+  extendedEndDate({ extendedEndDate: "2026-08-10", endDate: "2026-07-01" }),
+  "2026-08-24",
+  "Повторное продление должно отсчитываться от уже изменённой даты"
+);
+assert.equal(
+  extendedEndDate({ extendedEndDate: "", endDate: "2026-08-10" }),
+  "2026-08-24",
+  "Первое продление должно отсчитываться от даты окончания обучения"
+);
+assert.equal(
+  extendedEndDate(
+    { startDate: "2026-08-03", hours: 108 },
+    { compressed: true, hoursPerWeek: 54 }
+  ),
+  "2026-08-17",
+  "Shift-режим должен рассчитывать срок по максимальной недельной нагрузке"
+);
+assert.equal(extendedEndDate({ extendedEndDate: "", endDate: "" }), "");
 
 assert.equal(
   endDate("2026-08-03", { hours: 1, programType: "ПРО", sameDayForPro: true }),
@@ -188,7 +211,9 @@ assert.equal(proEducationBulk.endDate, "2026-08-03");
 assert.equal(proEducationBulk.diplomaIssueDate, "2026-08-20");
 assert.equal(proEducationBulk.expulsionDate, "2026-08-20");
 
-assert.doesNotMatch(appSource, /с Shift — по 54 часам/iu);
+assert.match(appSource, /compressedTrainingHoursPerWeek[\s\S]*DEFAULT_COMPRESSED_TRAINING_HOURS_PER_WEEK/u);
+assert.match(appSource, /generateExtendedEndDate[\s\S]*generate-extended-training-end-date/u);
+assert.match(appSource, /generate-extended-training-end-date'\]"\)\?\.addEventListener\("click", generateExtendedTrainingEndDate\)/u);
 const contextSource = extractBetween(
   "  function getOrdersSdoAutofillContext",
   "  function generateTrainingEndDate"
@@ -205,6 +230,13 @@ const fullAutofillSource = extractBetween(
   "  function evaluateDataFormula"
 );
 assert.match(fullAutofillSource, /getTrainingEndDate\(baseDateValue,\s*\{\s*duration:\s*context\.duration,\s*hours:\s*context\.hours\s*\}\)/u);
+const extendedGenerateSource = extractBetween(
+  "  function generateExtendedTrainingEndDate",
+  "  function autoFillOrdersSdo"
+);
+assert.match(extendedGenerateSource, /event\?\.shiftKey/u);
+assert.match(extendedGenerateSource, /hoursPerWeek:\s*getCompressedTrainingHoursPerWeek\(\)/u);
+assert.match(extendedGenerateSource, /setOrdersSdoFieldValue\(form,\s*"extendedEndDate"/u);
 assert.match(appSource, /duration:\s*program\?\.duration,[\s\S]*sameDayForPro:\s*true/u);
 
 const bulkSource = extractBetween(
