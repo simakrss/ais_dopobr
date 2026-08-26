@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.298",
+    version: "1.7.299",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.299",
+      releasedAt: "2026-08-26",
+      changes: [
+        "В «Настройки системы» добавлен раздел «События по видам программ» с матрицей применимости для КПК, ППП, ДОП и ПРО.",
+        "Порядок событий и правила их показа сохраняются в Web-базе и синхронизируются с параметром «События» книги XLSB."
+      ]
+    },
     {
       version: "1.7.298",
       releasedAt: "2026-08-26",
@@ -5005,6 +5013,13 @@ MAX - https://bizvmax.ru/zifra_plus
     { key: "certificateSent", label: "Отправлена справка об обучении" }
   ];
 
+  const studentEventProgramTypeOptions = Object.freeze([
+    { value: "КПК", label: "Повышение квалификации" },
+    { value: "ППП", label: "Профессиональная переподготовка" },
+    { value: "ДОП", label: "Дополнительные общеобразовательные программы" },
+    { value: "ПРО", label: "Прочие образовательные программы" }
+  ]);
+
   const STUDENT_APPLICATION_REUSABLE_DOCUMENT_FIELDS = Object.freeze(
     studentCardTabs.find((tab) => tab.id === "documents")?.sections
       .flatMap((section) => section.fields.map((item) => item.key)) || []
@@ -5056,7 +5071,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function normalizeEventTemplateProgramTypes(value) {
     return unique((Array.isArray(value) ? value : [])
       .map(normalizeEducationProgramType)
-      .filter((type) => ["КПК", "ППП", "ДОП", "ПРО"].includes(type)));
+      .filter((type) => studentEventProgramTypeOptions.some((option) => option.value === type)));
   }
 
   function normalizeConfiguredEventTemplates(values, options = {}) {
@@ -5092,6 +5107,32 @@ MAX - https://bizvmax.ru/zifra_plus
       { contract: true }
     );
     return configured.length ? configured : contractEventTemplates;
+  }
+
+  function getStudentEventEnabledProgramTypes(event = {}) {
+    const includeTypes = normalizeEventTemplateProgramTypes(event.includeTypes);
+    const excludeTypes = normalizeEventTemplateProgramTypes(event.excludeTypes);
+    return studentEventProgramTypeOptions
+      .map((option) => option.value)
+      .filter((programType) => (
+        !excludeTypes.includes(programType)
+        && (!includeTypes.length || includeTypes.includes(programType))
+      ));
+  }
+
+  function buildStudentEventProgramConditions(enabledTypes, previousEvent = {}) {
+    const enabled = normalizeEventTemplateProgramTypes(enabledTypes);
+    const allTypes = studentEventProgramTypeOptions.map((option) => option.value);
+    const excluded = allTypes.filter((programType) => !enabled.includes(programType));
+    if (enabled.length === allTypes.length) return { includeTypes: [], excludeTypes: [] };
+    if (!enabled.length) return { includeTypes: [], excludeTypes: allTypes };
+    const previousInclude = normalizeEventTemplateProgramTypes(previousEvent.includeTypes);
+    const previousExclude = normalizeEventTemplateProgramTypes(previousEvent.excludeTypes);
+    if (previousInclude.length) return { includeTypes: enabled, excludeTypes: [] };
+    if (previousExclude.length) return { includeTypes: [], excludeTypes: excluded };
+    return enabled.length < excluded.length
+      ? { includeTypes: enabled, excludeTypes: [] }
+      : { includeTypes: [], excludeTypes: excluded };
   }
 
   function studentEventTemplateMatchesProgram(event, record = {}) {
@@ -17124,6 +17165,18 @@ MAX - https://bizvmax.ru/zifra_plus
     educationRegistrationTypeCodes: ["Тип программы", "Сокращение в регистрационном номере"],
     finalAttestationSettings: ["Категории оценок", "Шкала перевода процентов", "Оценка ИА"],
     issuedDocumentSettings: ["Норматив выгрузки", "Папка выгрузки", "ФРДО"],
+    studentEventSettings: [
+      "События слушателей",
+      "Виды образовательных программ",
+      "Повышение квалификации",
+      "Профессиональная переподготовка",
+      "Дополнительные общеобразовательные программы",
+      "Прочие образовательные программы",
+      "КПК",
+      "ППП",
+      "ДОП",
+      "ПРО"
+    ],
     communicationTemplates: [
       "Слушатели",
       "Сотрудники",
@@ -17204,7 +17257,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderSettings() {
     const dictionaries = state.data.dictionaries;
-    const dictionaryItems = Object.keys(dictionaries)
+    const dictionaryItems = [
+      ...Object.keys(dictionaries)
       .filter((key) => ![
         "communicationTemplateDescriptions",
         "employeeCommunicationTemplates",
@@ -17213,9 +17267,16 @@ MAX - https://bizvmax.ru/zifra_plus
         "communicationTemplateCustomFields",
         "contractTemplateFields",
         "contractTemplateSettings",
-        "documentTemplates"
+        "documentTemplates",
+        "studentEventSettings"
       ].includes(key))
-      .map((key) => ({ key, title: dictionaryTitle(key), values: dictionaries[key] || [] }))
+      .map((key) => ({ key, title: dictionaryTitle(key), values: dictionaries[key] || [] })),
+      {
+        key: "studentEventSettings",
+        title: dictionaryTitle("studentEventSettings"),
+        values: getStudentEventTemplates()
+      }
+    ]
       .sort((a, b) => a.title.localeCompare(b.title, "ru"));
     const searchTerms = getDictionarySearchTerms(state.dictionarySearch);
     const visibleItems = dictionaryItems.filter((item) => dictionaryMatchesSearch(item, searchTerms));
@@ -17233,7 +17294,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const isEducationRegistrationTypeCodes = selectedKey === "educationRegistrationTypeCodes";
     const isFinalAttestationSettings = selectedKey === "finalAttestationSettings";
     const isIssuedDocumentSettings = selectedKey === "issuedDocumentSettings";
-    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings;
+    const isStudentEventSettings = selectedKey === "studentEventSettings";
+    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isStudentEventSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     return `
       <section class="panel settings-page-panel">
@@ -17279,7 +17341,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${isCommunicationTemplates ? `
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "asc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="asc" type="button" title="Сортировать поля по алфавиту" aria-label="Сортировать поля по алфавиту" aria-pressed="${communicationTemplateFieldSortOrder === "asc" ? "true" : "false"}">А→Я</button>
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "desc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="desc" type="button" title="Сортировать поля против алфавита" aria-label="Сортировать поля против алфавита" aria-pressed="${communicationTemplateFieldSortOrder === "desc" ? "true" : "false"}">Я→А</button>
-                  ` : isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings ? "" : `
+                  ` : isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isStudentEventSettings ? "" : `
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
                   `}
@@ -17315,6 +17377,8 @@ MAX - https://bizvmax.ru/zifra_plus
                         ? renderFinalAttestationSettingsDictionary(selectedValues)
                         : isIssuedDocumentSettings
                           ? renderIssuedDocumentSettingsDictionary(selectedValues)
+                        : isStudentEventSettings
+                          ? renderStudentEventSettingsDictionary(selectedValues)
                         : renderSimpleDictionaryEditor(selectedKey, selectedValues)}
             ` : `<div class="empty-state"><span>Выберите справочник</span></div>`}
           </section>
@@ -17515,6 +17579,60 @@ MAX - https://bizvmax.ru/zifra_plus
       || (event.key === "ArrowUp" ? buttons.at(-1) : buttons[0]);
     keepDictionaryListItemVisible(list, target);
     target.focus({ preventScroll: true });
+  }
+
+  function renderStudentEventSettingRow(event, index) {
+    const enabledTypes = new Set(getStudentEventEnabledProgramTypes(event));
+    return `
+      <div class="student-event-setting-row" data-student-event-setting-row data-student-event-setting-key="${escapeAttr(event.key)}">
+        <div class="student-event-setting-order">
+          ${renderFinanceRowDragHandle(`Перетащить событие ${index + 1}`)}
+          <span data-student-event-setting-number>${index + 1}</span>
+        </div>
+        <div class="student-event-setting-name" title="${escapeAttr(event.label)}">
+          ${escapeHtml(event.label)}
+        </div>
+        <div class="student-event-setting-programs">
+          ${studentEventProgramTypeOptions.map((option) => `
+            <label class="student-event-setting-program" title="${escapeAttr(option.label)}">
+              <input
+                type="checkbox"
+                data-student-event-program-type="${escapeAttr(option.value)}"
+                ${enabledTypes.has(option.value) ? "checked" : ""}
+              >
+              <span>${escapeHtml(option.value)}</span>
+            </label>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderStudentEventSettingsDictionary(values) {
+    const events = normalizeConfiguredEventTemplates(values);
+    return `
+      <form class="student-event-settings-form" data-action="save-student-event-settings">
+        <div class="student-event-settings-intro">
+          <h4>События в карточке слушателя</h4>
+          <p>Отметьте виды программ, для которых событие должно формироваться. Существующие даты событий в карточках при изменении настройки не удаляются.</p>
+        </div>
+        <div class="student-event-settings-table" data-student-event-settings-list>
+          <div class="student-event-settings-header" aria-hidden="true">
+            <span>№</span>
+            <span>Событие</span>
+            <span class="student-event-setting-program-headings">
+              ${studentEventProgramTypeOptions.map((option) => `<span title="${escapeAttr(option.label)}">${escapeHtml(option.value)}</span>`).join("")}
+            </span>
+          </div>
+          ${events.map(renderStudentEventSettingRow).join("")}
+        </div>
+        <p class="student-event-settings-hint">Порядок и применимость событий синхронизируются с параметром «События» книги АИС Допобразование.xlsb.</p>
+        <div class="student-event-settings-actions">
+          <button class="ghost-button" data-action="enable-all-student-event-programs" type="button">Включить для всех</button>
+          <button class="primary-button" type="submit">Сохранить настройки</button>
+        </div>
+      </form>
+    `;
   }
 
   function renderSdoSettingsDictionary(values) {
@@ -17931,6 +18049,55 @@ MAX - https://bizvmax.ru/zifra_plus
     list.addEventListener("dragend", () => {
       list.querySelectorAll("[data-payment-constant-row]").forEach((row) => row.classList.remove("is-dragging"));
       updatePaymentConstantRowNumbers(list);
+    });
+  }
+
+  function updateStudentEventSettingRowNumbers(list) {
+    list?.querySelectorAll("[data-student-event-setting-row]").forEach((row, index) => {
+      const number = row.querySelector("[data-student-event-setting-number]");
+      if (number) number.textContent = String(index + 1);
+      const handle = row.querySelector("[data-finance-row-drag]");
+      if (handle) handle.setAttribute("aria-label", `Перетащить событие ${index + 1}`);
+    });
+  }
+
+  function getStudentEventSettingDragAfterRow(list, y) {
+    return [...list.querySelectorAll("[data-student-event-setting-row]:not(.is-dragging)")].reduce((closest, row) => {
+      const box = row.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      return offset < 0 && offset > closest.offset ? { offset, row } : closest;
+    }, { offset: Number.NEGATIVE_INFINITY, row: null }).row;
+  }
+
+  function bindStudentEventSettingRowDrag(list) {
+    if (!list || list.dataset.studentEventSettingsDragBound === "true") return;
+    list.dataset.studentEventSettingsDragBound = "true";
+    list.addEventListener("dragstart", (event) => {
+      const handle = event.target.closest("[data-finance-row-drag]");
+      const row = handle?.closest("[data-student-event-setting-row]");
+      if (!row) {
+        event.preventDefault();
+        return;
+      }
+      row.classList.add("is-dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", "");
+      }
+    });
+    list.addEventListener("dragover", (event) => {
+      const dragging = list.querySelector("[data-student-event-setting-row].is-dragging");
+      if (!dragging) return;
+      event.preventDefault();
+      const afterRow = getStudentEventSettingDragAfterRow(list, event.clientY);
+      if (afterRow) list.insertBefore(dragging, afterRow);
+      else list.appendChild(dragging);
+      updateStudentEventSettingRowNumbers(list);
+    });
+    list.addEventListener("drop", (event) => event.preventDefault());
+    list.addEventListener("dragend", () => {
+      list.querySelectorAll("[data-student-event-setting-row]").forEach((row) => row.classList.remove("is-dragging"));
+      updateStudentEventSettingRowNumbers(list);
     });
   }
 
@@ -26726,14 +26893,20 @@ MAX - https://bizvmax.ru/zifra_plus
       ...eventTemplates
     ];
     const configuredByKey = new Map(configuredEvents.map((event) => [event.key, event]));
+    const activeTemplateKeys = new Set(eventTemplates.map((event) => event.key));
+    const filledTemplateKeys = new Set(configuredEvents
+      .filter((event) => (
+        normalizeEventState(record[`event_${event.key}_state`], record[`event_${event.key}_date`])
+        || String(record[`event_${event.key}_date`] || "").trim()
+      ))
+      .map((event) => event.key));
     const preservedKeys = new Set([
-      ...csvList(record.eventOrder),
-      ...configuredEvents
-        .filter((event) => (
-          normalizeEventState(record[`event_${event.key}_state`], record[`event_${event.key}_date`])
-          || String(record[`event_${event.key}_date`] || "").trim()
-        ))
-        .map((event) => event.key)
+      ...csvList(record.eventOrder).filter((key) => (
+        !configuredByKey.has(key)
+        || activeTemplateKeys.has(key)
+        || filledTemplateKeys.has(key)
+      )),
+      ...filledTemplateKeys
     ]);
     const baseEvents = unique([
       ...eventTemplates.map((event) => event.key),
@@ -33171,6 +33344,9 @@ MAX - https://bizvmax.ru/zifra_plus
     bindDocumentEmailTemplateEditors();
     document.querySelector("form[data-action='save-sdo-settings']")?.addEventListener("submit", saveSdoSettings);
     document.querySelector("[data-action='reset-sdo-settings']")?.addEventListener("click", resetSdoSettings);
+    document.querySelector("form[data-action='save-student-event-settings']")?.addEventListener("submit", saveStudentEventSettings);
+    document.querySelector("[data-action='enable-all-student-event-programs']")?.addEventListener("click", enableAllStudentEventPrograms);
+    bindStudentEventSettingRowDrag(document.querySelector("[data-student-event-settings-list]"));
     document.querySelector("form[data-action='save-payment-settings']")?.addEventListener("submit", savePaymentSettings);
     document.querySelector("[data-action='reset-payment-settings']")?.addEventListener("click", resetPaymentSettings);
     document.querySelector("[data-action='add-payment-constant']")?.addEventListener("click", addPaymentConstantRow);
@@ -47553,6 +47729,52 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
+  function collectStudentEventSettings(form) {
+    const previousEvents = new Map(getStudentEventTemplates().map((item) => [item.key, item]));
+    return [...(form?.querySelectorAll("[data-student-event-setting-row]") || [])].map((row) => {
+      const key = String(row.dataset.studentEventSettingKey || "").trim();
+      const previousEvent = previousEvents.get(key) || {};
+      const enabledTypes = [...row.querySelectorAll("[data-student-event-program-type]:checked")]
+        .map((input) => input.dataset.studentEventProgramType);
+      return {
+        key,
+        label: previousEvent.label || key,
+        ...buildStudentEventProgramConditions(enabledTypes, previousEvent)
+      };
+    });
+  }
+
+  function saveStudentEventSettings(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const settings = normalizeConfiguredEventTemplates(collectStudentEventSettings(form));
+    if (!settings.length) {
+      alert("Список событий пуст. Обновите страницу и повторите сохранение.");
+      return;
+    }
+    state.data.meta = state.data.meta || {};
+    state.data.meta.studentEventTemplates = settings;
+    const restrictedCount = settings.filter((item) => (
+      getStudentEventEnabledProgramTypes(item).length < studentEventProgramTypeOptions.length
+    )).length;
+    addAudit(
+      "Изменены настройки событий",
+      dictionaryTitle("studentEventSettings"),
+      `Событий: ${settings.length}; с ограничением по виду программы: ${restrictedCount}`
+    );
+    persist();
+    render();
+  }
+
+  function enableAllStudentEventPrograms(event) {
+    const form = event.currentTarget?.closest("form[data-action='save-student-event-settings']");
+    if (!form) return;
+    form.querySelectorAll("[data-student-event-program-type]").forEach((input) => {
+      input.checked = true;
+    });
+    form.querySelector("button[type='submit']")?.focus({ preventScroll: true });
+  }
+
   function saveSdoSettings(event) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -57104,6 +57326,7 @@ MAX - https://bizvmax.ru/zifra_plus
       educationRegistrationTypeCodes: "Сокращения типов программ в рег. номере",
       finalAttestationSettings: "Итоговая аттестация: оценки и шкала",
       issuedDocumentSettings: "ФРДО",
+      studentEventSettings: "События по видам программ",
       discountRules: "Скидки",
       dataFormulas: "Конструктор формул данных",
       contractTemplateFields: "Конструктор полей договора",
