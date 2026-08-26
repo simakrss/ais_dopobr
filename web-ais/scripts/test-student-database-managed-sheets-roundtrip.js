@@ -74,6 +74,23 @@ try {
   fs.copyFileSync(sourcePath, inputPath);
 
   const imported = parseStudentDatabaseWorkbook(fs.readFileSync(inputPath));
+  const before = readRaw(inputPath);
+  const baseRows = XLSX.utils.sheet_to_json(before.Sheets["База"], {
+    header: 1,
+    defval: "",
+    raw: true
+  });
+  const baseHeaderRowIndex = baseRows.findIndex((row) => row.includes("uid") && row.includes("ФИО"));
+  const baseHeaders = baseRows[baseHeaderRowIndex].map((value) => String(value || "").trim());
+  const contractAmountColumnIndex = baseHeaders.findIndex((header) => (
+    header === "Сумма по договору (руб)" || header === "Сумма  по договору (руб)"
+  ));
+  const fixedValueTarget = imported.students.find((student) => {
+    const rowIndex = Number(student.databaseSyncSourceRow) - 1;
+    if (rowIndex < 0 || contractAmountColumnIndex < 0) return false;
+    const address = XLSX.utils.encode_cell({ r: rowIndex, c: contractAmountColumnIndex });
+    return Boolean(getCell(before, "База", address).f);
+  });
   assert.ok(imported.inventory.length, "В исходной книге нет запасов.");
   assert.ok(imported.trainingPlans.length, "В исходной книге нет учебных планов.");
   assert.ok(imported.programPaymentSettings.length, "В исходной книге нет реестра программ.");
@@ -93,7 +110,7 @@ try {
     && String(program.name || "").trim() !== String(trainingTarget?.programName || "").trim()
   ));
   assert.ok(
-    inventoryTarget && trainingTarget && programTarget && deletedProgram,
+    inventoryTarget && trainingTarget && programTarget && deletedProgram && fixedValueTarget,
     "Не найдены строки для round-trip проверки."
   );
 
@@ -154,8 +171,18 @@ try {
     insertedProgram
   ];
   const directExpenses = flattenDirectExpenses(imported);
+  const fixedContractAmount = Number(fixedValueTarget.contractAmount || 0) + 1;
+  const students = imported.students.map((student) => (
+    student.id === fixedValueTarget.id
+      ? {
+          ...student,
+          contractAmount: fixedContractAmount,
+          databaseFixedValueOverrides: ["contractAmount"]
+        }
+      : student
+  ));
   const payload = sanitizeStudentDatabaseExportPayload({
-    students: imported.students,
+    students,
     contracts: imported.contracts,
     directExpenses,
     generalExpenses: imported.generalExpenses,
@@ -168,8 +195,11 @@ try {
   assert.equal(payload.inventoryRows.length, imported.inventoryUnitCount);
   fs.writeFileSync(payloadPath, JSON.stringify(payload), "utf8");
 
-  const before = readRaw(inputPath);
   const programRow = Number(programTarget.xlsbProgramRow);
+  const fixedValueAddress = XLSX.utils.encode_cell({
+    r: Number(fixedValueTarget.databaseSyncSourceRow) - 1,
+    c: contractAmountColumnIndex
+  });
   const formulaSnapshot = {
     trainingCode: getCell(before, "Учебные планы", "A2").f,
     trainingTotal: getCell(before, "Учебные планы", "E2").f,
@@ -224,8 +254,12 @@ try {
     result.programFormulaCellsPreserved > 0,
     "Не зафиксировано сохранение формульных ячеек реестра программ."
   );
+  assert.equal(result.studentFixedValueOverridesApplied, 1);
+  assert.equal(result.studentFormulaCellsReplaced, 1);
 
   const after = readRaw(outputPath);
+  assert.equal(getCell(after, "База", fixedValueAddress).f, undefined);
+  assert.equal(Number(getCell(after, "База", fixedValueAddress).v), fixedContractAmount);
   assert.doesNotMatch(getCommentText(after, "Запасы", "A2"), /\[\[AIS_SYNC_V1\]\]/u);
   assert.doesNotMatch(getCommentText(after, "Учебные планы", "A2"), /\[\[AIS_SYNC_V1\]\]/u);
   assert.doesNotMatch(

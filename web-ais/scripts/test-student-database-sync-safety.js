@@ -8,9 +8,11 @@ const vm = require("node:vm");
 
 const serverPath = path.resolve(__dirname, "..", "app-server.js");
 const clientPath = path.resolve(__dirname, "..", "app.js");
+const syncScriptPath = path.resolve(__dirname, "sync-student-database.ps1");
 const XLSX = require(path.resolve(__dirname, "..", "vendor", "sheetjs", "xlsx.full.min.js"));
 const serverSource = fs.readFileSync(serverPath, "utf8").replace(/\r\n?/gu, "\n");
 const clientSource = fs.readFileSync(clientPath, "utf8").replace(/\r\n?/gu, "\n");
+const syncScriptSource = fs.readFileSync(syncScriptPath, "utf8").replace(/\r\n?/gu, "\n");
 const {
   hashStudentDatabaseCriticalSnapshot,
   hashStudentDatabaseCriticalIdentity,
@@ -25,6 +27,10 @@ const {
   validateTargetedStudentFieldPatchScope,
   validateTargetedStudentFieldPatchesAgainstSource,
   validateTargetedStudentFieldPatchesAgainstOutput,
+  sanitizeStudentDatabaseFixedValueOverrides,
+  getStudentDatabaseFixedValueOverrideTargets,
+  validateStudentDatabaseFixedValueOverridesAgainstOutput,
+  recoverStudentDatabaseFixedValueOverrideDirection,
   acquireStudentDatabaseSyncReservation,
   releaseStudentDatabaseSyncReservation,
   getActiveStudentDatabaseSyncReservation
@@ -237,6 +243,82 @@ function buildTargetedStudentAuditScopeFixture() {
     coverageRows,
     authoritativeDocument
   };
+}
+
+function testStudentContractAmountFixedValueOverride() {
+  const body = {
+    students: [{
+      id: "student-db-1166",
+      uid: "1166",
+      name: "Добрышкина Екатерина Сергеевна",
+      contractAmount: 2500,
+      databaseFixedValueOverrides: ["contractAmount", "balance", "contractAmount"]
+    }],
+    contracts: [],
+    directExpenses: [],
+    generalExpenses: []
+  };
+  assert.deepEqual(sanitizeStudentDatabaseFixedValueOverrides(body.students[0].databaseFixedValueOverrides), [
+    "contractAmount"
+  ]);
+  assert.throws(
+    () => sanitizeStudentDatabaseFixedValueOverrides("contractAmount"),
+    /неверный формат/iu
+  );
+  const payload = sanitizeStudentDatabaseExportPayload(body);
+  assert.deepEqual(payload.students[0].databaseFixedValueOverrides, ["contractAmount"]);
+  const sourceData = {
+    students: [{
+      id: "student-db-1166",
+      uid: "1166",
+      name: "Добрышкина Екатерина Сергеевна",
+      contractAmount: 4000
+    }]
+  };
+  const targets = getStudentDatabaseFixedValueOverrideTargets(payload, sourceData);
+  assert.equal(targets.length, 1);
+  assert.equal(targets[0].field, "contractAmount");
+  assert.equal(targets[0].webValue, 2500);
+  assert.equal(targets[0].excelValue, 4000);
+  assert.equal(targets[0].differs, true);
+
+  const sourceHash = "a".repeat(64);
+  const criticalHash = "b".repeat(64);
+  const criticalIdentityHash = "c".repeat(64);
+  const recovered = recoverStudentDatabaseFixedValueOverrideDirection({
+    directionResult: { direction: "unchanged" },
+    targets,
+    baseline: {
+      version: 2,
+      sourceHash,
+      sourceIdentity: "d".repeat(64),
+      webRevision: 10,
+      synchronizedAt: "2026-08-26T06:25:43.120Z",
+      criticalHash,
+      criticalIdentityHash
+    },
+    sourceHash,
+    currentWebCriticalHash: criticalHash,
+    currentWebCriticalIdentityHash: criticalIdentityHash
+  });
+  assert.equal(recovered.direction, "web-to-excel");
+  assert.equal(recovered.recoveredFixedValueOverride, true);
+  assert.equal(recoverStudentDatabaseFixedValueOverrideDirection({
+    directionResult: { direction: "unchanged" },
+    targets,
+    baseline: { sourceHash },
+    sourceHash: "e".repeat(64)
+  }).direction, "unchanged", "Изменённый XLSB нельзя перезаписывать через recovery");
+
+  assert.equal(validateStudentDatabaseFixedValueOverridesAgainstOutput(payload, {
+    students: [{ id: "student-db-1166", uid: "1166", contractAmount: 2500 }]
+  }), 1);
+  assert.throws(
+    () => validateStudentDatabaseFixedValueOverridesAgainstOutput(payload, sourceData),
+    /фиксированные значения/iu
+  );
+  assert.match(syncScriptSource, /\$hasFormula\s+-and\s+-not\s+\$isFixedValueOverride/u);
+  assert.match(syncScriptSource, /if\s*\(\[bool\]\$cell\.HasFormula\)[\s\S]{0,180}не заменена фиксированным значением/u);
 }
 
 function cloneJson(value) {
@@ -1624,6 +1706,7 @@ async function main() {
   testTargetedStudentFieldPatchFormulaMapSafety();
   testStudentDatabaseVbaProjectCanonicalHash();
   testTargetedStudentFieldPatchAuditFallbackSafety();
+  testStudentContractAmountFixedValueOverride();
   testReservationRevisionAndTtl();
   await testAuthoritativeRevisionAssertions();
   await testStrictReservationTokenAndBaseRevision();

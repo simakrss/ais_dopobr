@@ -814,6 +814,7 @@ const STUDENT_DATABASE_NUMBER_FIELDS = new Set([
   "payment7Amount",
   "payment8Amount"
 ]);
+const STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS = new Set(["contractAmount"]);
 const STUDENT_DATABASE_SYNC_COMMENT_START = "[[AIS_SYNC_V1]]";
 const STUDENT_DATABASE_SYNC_COMMENT_END = "[[/AIS_SYNC_V1]]";
 const STUDENT_DATABASE_SYNC_VERSION = 1;
@@ -19935,6 +19936,119 @@ function validateTargetedStudentFieldPatchesAgainstOutput(payload, sourceData, o
   return true;
 }
 
+function sanitizeStudentDatabaseFixedValueOverrides(value) {
+  if (value === undefined || value === null || value === "") return [];
+  if (!Array.isArray(value)) {
+    throw new Error("Список фиксированных значений слушателя имеет неверный формат.");
+  }
+  return [...new Set(value
+    .map((field) => String(field || "").trim())
+    .filter((field) => STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS.has(field)))];
+}
+
+function getStudentDatabaseFixedValueOverrideTargets(payload, sourceData) {
+  const webStudents = Array.isArray(payload?.students) ? payload.students : [];
+  const excelStudents = Array.isArray(sourceData?.students) ? sourceData.students : [];
+  const excelById = new Map();
+  const excelByUid = new Map();
+  excelStudents.forEach((student) => {
+    const ids = [student?.id, student?.databaseSync?.recordId]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    ids.forEach((id) => {
+      if (!excelById.has(id)) excelById.set(id, []);
+      excelById.get(id).push(student);
+    });
+    const uid = normalizeStudentDatabaseSyncValue(student?.uid, "uid");
+    if (!uid) return;
+    if (!excelByUid.has(uid)) excelByUid.set(uid, []);
+    excelByUid.get(uid).push(student);
+  });
+  const targets = [];
+  webStudents.forEach((student) => {
+    const fields = sanitizeStudentDatabaseFixedValueOverrides(
+      student?.databaseFixedValueOverrides
+    );
+    if (!fields.length) return;
+    const id = String(student?.id || "").trim();
+    const uid = normalizeStudentDatabaseSyncValue(student?.uid, "uid");
+    const idMatches = id ? excelById.get(id) || [] : [];
+    const uidMatches = uid ? excelByUid.get(uid) || [] : [];
+    const matches = idMatches.length ? idMatches : uidMatches;
+    if (matches.length > 1) {
+      const error = new Error(
+        `Не удалось однозначно найти в XLSB слушателя «${String(student?.name || uid || id)}» `
+        + `для фиксации суммы договора; найдено строк: ${matches.length}.`
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    fields.forEach((field) => {
+      const webValue = normalizeStudentDatabaseSyncValue(student?.[field], field);
+      const excelValue = matches.length
+        ? normalizeStudentDatabaseSyncValue(matches[0]?.[field], field)
+        : "";
+      targets.push({
+        id,
+        uid,
+        name: String(student?.name || "").trim(),
+        field,
+        webValue,
+        excelValue,
+        missingInExcel: matches.length === 0,
+        differs: webValue !== excelValue
+      });
+    });
+  });
+  return targets;
+}
+
+function validateStudentDatabaseFixedValueOverridesAgainstOutput(payload, outputData) {
+  const targets = getStudentDatabaseFixedValueOverrideTargets(payload, outputData);
+  const mismatches = targets.filter((target) => target.differs);
+  if (mismatches.length) {
+    const preview = mismatches.slice(0, 5).map((target) => (
+      `${target.name || target.uid}: ${target.field} = ${String(target.excelValue)}`
+    )).join("; ");
+    const error = new Error(
+      "Проверка сформированного XLSB не пройдена: фиксированные значения Web-базы "
+      + `не записаны (${preview}).`
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  return targets.length;
+}
+
+function recoverStudentDatabaseFixedValueOverrideDirection({
+  directionResult,
+  targets,
+  baseline,
+  sourceHash,
+  currentWebCriticalHash,
+  currentWebCriticalIdentityHash
+}) {
+  const currentDirection = directionResult && typeof directionResult === "object"
+    ? directionResult
+    : {};
+  const pending = (Array.isArray(targets) ? targets : []).filter((target) => target?.differs);
+  const normalizedBaseline = normalizeStudentDatabaseSyncBaseline(baseline);
+  if (
+    currentDirection.direction !== "unchanged"
+    || !pending.length
+    || normalizedBaseline.sourceHash !== String(sourceHash || "").trim().toLowerCase()
+  ) return currentDirection;
+  return {
+    ...currentDirection,
+    direction: "web-to-excel",
+    recoveredFixedValueOverride: true,
+    criticalHash: normalizeStudentDatabaseCriticalHash(currentWebCriticalHash),
+    criticalIdentityHash: normalizeStudentDatabaseCriticalHash(
+      currentWebCriticalIdentityHash
+    )
+  };
+}
+
 function sanitizeStudentDatabaseExportPayload(body) {
   const synchronizedAt = new Date().toISOString();
   if (!Array.isArray(body.students) || !body.students.length) {
@@ -19977,6 +20091,14 @@ function sanitizeStudentDatabaseExportPayload(body) {
       );
       databaseFields.frdoStatus = frdo.frdoDate || frdo.frdoStatus;
       databaseFields.citizenship = normalizeCitizenshipValue(databaseFields.citizenship);
+      const databaseFixedValueOverrides = sanitizeStudentDatabaseFixedValueOverrides(
+        databaseFields.databaseFixedValueOverrides
+      );
+      if (databaseFixedValueOverrides.length) {
+        databaseFields.databaseFixedValueOverrides = databaseFixedValueOverrides;
+      } else {
+        delete databaseFields.databaseFixedValueOverrides;
+      }
       if (explicitFrdoDate) databaseFields.frdoDate = explicitFrdoDate;
       return attachStudentDatabaseExportSyncComment(databaseFields, {
         entity: "students",
@@ -21510,6 +21632,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     );
     let sourceDataForExport = null;
     let directionalSyncResult = null;
+    let fixedValueOverrideTargets = [];
     if (directionalSync) {
       onProgress({
         progress: 14,
@@ -21554,6 +21677,25 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         currentWebCriticalIdentityHash,
         currentExcelCriticalIdentityHash
       });
+      fixedValueOverrideTargets = getStudentDatabaseFixedValueOverrideTargets(
+        payload,
+        sourceDataForExport
+      );
+      directionalSyncResult = recoverStudentDatabaseFixedValueOverrideDirection({
+        directionResult: directionalSyncResult,
+        targets: fixedValueOverrideTargets,
+        baseline: body.syncBaseline,
+        sourceHash,
+        currentWebCriticalHash,
+        currentWebCriticalIdentityHash
+      });
+      if (directionalSyncResult.recoveredFixedValueOverride === true) {
+        onProgress({
+          progress: 15.5,
+          stage: "compare",
+          message: "Найдены ручные корректировки сумм договоров Web; подготовка записи в XLSB..."
+        });
+      }
       if (payload.targetedStudentFieldPatchOnly) {
         if (directionalSyncResult.direction !== "web-to-excel") {
           const error = new Error(
@@ -21801,6 +21943,30 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         message: scriptProgress.message || "Обновление книги в Microsoft Excel..."
       });
     });
+    const expectedFixedValueOverrideCount = payload.students.reduce((count, student) => (
+      count + sanitizeStudentDatabaseFixedValueOverrides(
+        student?.databaseFixedValueOverrides
+      ).length
+    ), 0);
+    const reportedFixedValueOverrideCount = Number(
+      scriptResult.studentFixedValueOverridesApplied || 0
+    );
+    const reportedFormulaReplacementCount = Number(
+      scriptResult.studentFormulaCellsReplaced || 0
+    );
+    if (
+      !Number.isInteger(reportedFixedValueOverrideCount)
+      || reportedFixedValueOverrideCount !== expectedFixedValueOverrideCount
+      || !Number.isInteger(reportedFormulaReplacementCount)
+      || reportedFormulaReplacementCount < 0
+      || reportedFormulaReplacementCount > reportedFixedValueOverrideCount
+    ) {
+      const error = new Error(
+        "Microsoft Excel не подтвердил запись всех ручных фиксированных значений слушателей."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
     if (payload.targetedStudentFieldPatchOnly) {
       const reportedPatchCount = Number(scriptResult.targetedStudentFieldPatches);
       if (
@@ -21835,18 +22001,38 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     onProgress({ progress: 92, stage: "verify", message: "Чтение сформированной книги..." });
     const outputBytes = await fs.readFile(outputPath);
     if (!outputBytes.length) throw new Error("Microsoft Excel создал пустой файл.");
+    let parsedOutputData = null;
     if (payload.targetedStudentFieldPatchOnly) {
       onProgress({
         progress: 94,
         stage: "verify",
         message: "Проверка точечных изменений слушателей в сформированном XLSB..."
       });
-      const targetedOutputData = await parseStudentDatabaseInWorker(outputBytes);
+      parsedOutputData = await parseStudentDatabaseInWorker(outputBytes);
       validateTargetedStudentFieldPatchesAgainstOutput(
         payload,
         sourceDataForExport,
-        targetedOutputData
+        parsedOutputData
       );
+    }
+    if (expectedFixedValueOverrideCount) {
+      onProgress({
+        progress: 94,
+        stage: "verify",
+        message: "Проверка ручных фиксированных сумм договоров в XLSB..."
+      });
+      parsedOutputData ||= await parseStudentDatabaseInWorker(outputBytes);
+      const verifiedFixedValueOverrideCount = validateStudentDatabaseFixedValueOverridesAgainstOutput(
+        payload,
+        parsedOutputData
+      );
+      if (verifiedFixedValueOverrideCount !== expectedFixedValueOverrideCount) {
+        const error = new Error(
+          "Проверка сформированного XLSB не подтвердила все фиксированные значения слушателей."
+        );
+        error.statusCode = 409;
+        throw error;
+      }
     }
     onProgress({ progress: 95, stage: "verify", message: "Проверка VBA и формул..." });
     const outputInspection = inspectStudentDatabaseBinary(outputBytes, {
@@ -21921,7 +22107,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     );
     const contractFormulaLossLimit = 5 + removedContractRows * 15;
     if (
-      baseFormulaLoss > 5
+      baseFormulaLoss > 5 + reportedFormulaReplacementCount
       || directExpenseFormulaLoss > 5
       || generalExpenseFormulaLoss > generalExpenseFormulaLossLimit
       || contractFormulaLoss > contractFormulaLossLimit
@@ -22019,6 +22205,8 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       programCount: Number(scriptResult.programs || 0),
       programManagedCellCount: Number(scriptResult.programManagedCells || 0),
       programFormulaPreservedCount: Number(scriptResult.programFormulaCellsPreserved || 0),
+      studentFixedValueOverrideCount: reportedFixedValueOverrideCount,
+      studentFormulaReplacementCount: reportedFormulaReplacementCount,
       programMissingManagedColumnCount: Number(scriptResult.programMissingManagedColumns || 0),
       programMissingManagedColumnNames,
       programPromoMessageCount: Number(scriptResult.programPromoMessages || 0),
@@ -27101,6 +27289,10 @@ module.exports = {
   validateTargetedStudentFieldPatchScope,
   validateTargetedStudentFieldPatchAuditScope,
   validateTargetedStudentFieldPatchesAgainstOutput,
+  sanitizeStudentDatabaseFixedValueOverrides,
+  getStudentDatabaseFixedValueOverrideTargets,
+  validateStudentDatabaseFixedValueOverridesAgainstOutput,
+  recoverStudentDatabaseFixedValueOverrideDirection,
   sanitizeStudentDatabaseExportPayload,
   validateStudentDatabaseProgramStructure,
   normalizeSharedApplicationData,

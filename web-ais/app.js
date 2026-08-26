@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.274",
-    releasedAt: "2026-08-25"
+    version: "1.7.275",
+    releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.275",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Ручная корректировка суммы договора в карточке слушателя заменяет формулу этой ячейки XLSB фиксированным значением при синхронизации Web → Excel.",
+        "Формулы сумм договора у остальных слушателей сохраняются без изменений; ранее выполненная корректировка определяется по журналу действий."
+      ]
+    },
     {
       version: "1.7.274",
       releasedAt: "2026-08-25",
@@ -2391,6 +2399,7 @@
   const DEFAULT_PARTNER_MATERIALS_URL = "https://disk.yandex.ru/d/9BBGBNBIum252w";
   const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
   const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
+  const STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS = Object.freeze(["contractAmount"]);
   const STUDENT_LEARNING_ADDITIONAL_STATUS = "Обучающиеся";
   const PRO_STUDENT_ADDITIONAL_STATUS = "Вебинары";
   const PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS = "Вебинары. Архив";
@@ -35834,6 +35843,20 @@ MAX - https://bizvmax.ru/zifra_plus
       values.discountUnit = "percent";
       values.directExpenses = collectStudentDirectExpenses(formElement, values);
       clearUnchangedGeneratedCommunicationMessages(values, formElement);
+      if (
+        formElement.dataset.id
+        && formData.has("contractAmount")
+        && !studentDatabaseFixedValuesEqual(currentRecord.contractAmount, values.contractAmount)
+      ) {
+        values.databaseFixedValueOverrides = [
+          ...new Set([
+            ...normalizeStudentDatabaseFixedValueOverrides(
+              currentRecord.databaseFixedValueOverrides
+            ),
+            "contractAmount"
+          ])
+        ];
+      }
     }
     if (isContractCard) {
       clearUnchangedGeneratedEmployeeCommunicationMessages(values, formElement);
@@ -48994,6 +49017,59 @@ MAX - https://bizvmax.ru/zifra_plus
     throw new Error("Не удалось завершить строгое сохранение синхронизации.");
   }
 
+  function normalizeStudentDatabaseFixedValueOverrides(value) {
+    const source = Array.isArray(value)
+      ? value
+      : String(value || "").split(/[;,\n]/u);
+    const allowed = new Set(STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS);
+    return [...new Set(source
+      .map((field) => String(field || "").trim())
+      .filter((field) => allowed.has(field)))];
+  }
+
+  function normalizeStudentDatabaseFixedValue(value) {
+    if (value === null || value === undefined || String(value).trim() === "") return "";
+    const number = Number(String(value).replace(/\s+/gu, "").replace(",", "."));
+    return Number.isFinite(number) ? number : String(value).trim();
+  }
+
+  function studentDatabaseFixedValuesEqual(left, right) {
+    return normalizeStudentDatabaseFixedValue(left) === normalizeStudentDatabaseFixedValue(right);
+  }
+
+  function hasStudentDatabaseManualFieldAudit(student, fieldName) {
+    const ids = new Set([
+      student?.id,
+      student?.uid,
+      student?.databaseSync?.recordId
+    ].map((value) => String(value || "").trim()).filter(Boolean));
+    if (!ids.size) return false;
+    const currentValue = student?.[fieldName];
+    return [...(state.data.collections.audit || [])].reverse().some((entry) => {
+      if (String(entry?.entityType || "").trim() !== "students") return false;
+      if (!ids.has(String(entry?.entityId || "").trim())) return false;
+      if (String(entry?.source || "web").trim().toLocaleLowerCase("ru-RU") !== "web") return false;
+      if (String(entry?.action || "").trim().toLocaleLowerCase("ru-RU") !== "изменена запись") return false;
+      const changes = Array.isArray(entry?.changes) && entry.changes.length
+        ? entry.changes
+        : [{ field: entry?.field, after: entry?.after }];
+      return changes.some((change) => (
+        String(change?.field || "").trim() === fieldName
+        && studentDatabaseFixedValuesEqual(change?.after, currentValue)
+      ));
+    });
+  }
+
+  function getStudentDatabaseFixedValueOverrides(student) {
+    const fields = new Set(normalizeStudentDatabaseFixedValueOverrides(
+      student?.databaseFixedValueOverrides
+    ));
+    STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS.forEach((fieldName) => {
+      if (hasStudentDatabaseManualFieldAudit(student, fieldName)) fields.add(fieldName);
+    });
+    return [...fields];
+  }
+
   function buildStudentDatabaseExportStudents() {
     return (state.data.collections.students || []).map((student) => {
       const agentCalculation = getStudentAgentCommissionCalculation(
@@ -49008,7 +49084,9 @@ MAX - https://bizvmax.ru/zifra_plus
         databaseSync,
         ...databaseFields
       } = student;
-      return {
+      delete databaseFields.databaseFixedValueOverrides;
+      const databaseFixedValueOverrides = getStudentDatabaseFixedValueOverrides(student);
+      const exportStudent = {
         ...databaseFields,
         agentAmount: agentCalculation.payableAmount,
         agentPayment1Amount: agentCalculation.payment1Amount,
@@ -49016,6 +49094,10 @@ MAX - https://bizvmax.ru/zifra_plus
         agentPayment2Amount: agentCalculation.payment2Amount,
         agentPayment2Date: agentCalculation.payment2Date
       };
+      if (databaseFixedValueOverrides.length) {
+        exportStudent.databaseFixedValueOverrides = databaseFixedValueOverrides;
+      }
+      return exportStudent;
     });
   }
 
@@ -51287,7 +51369,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function buildAuditChanges(before = {}, after = {}, fields = []) {
     const labels = new Map((fields || []).map((item) => [item.key, item.label || item.key]));
-    const ignored = new Set(["id", "photoData"]);
+    const ignored = new Set(["id", "photoData", "databaseFixedValueOverrides"]);
     const keys = unique([...Object.keys(before || {}), ...Object.keys(after || {})]);
     return keys.flatMap((key) => {
       if (ignored.has(key)) return [];

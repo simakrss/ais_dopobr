@@ -75,6 +75,53 @@ function testBaselineNormalizationAndLatestTimestamp() {
   );
 }
 
+function testManualContractAmountOverrideFromAudit() {
+  const student = {
+    id: "student-db-1166",
+    uid: "1166",
+    name: "Добрышкина Екатерина Сергеевна",
+    contractAmount: 2500
+  };
+  const context = {
+    STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS: Object.freeze(["contractAmount"]),
+    state: {
+      data: {
+        collections: {
+          audit: [{
+            entityType: "students",
+            entityId: "student-db-1166",
+            action: "Изменена запись",
+            source: "web",
+            changes: [{ field: "contractAmount", before: "4000", after: "2500" }]
+          }]
+        }
+      }
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    extractBetween(
+      "  function normalizeStudentDatabaseFixedValueOverrides",
+      "  function buildStudentDatabaseExportStudents"
+    ) + "\nthis.getOverrides = getStudentDatabaseFixedValueOverrides;",
+    context
+  );
+  assert.deepEqual(Array.from(context.getOverrides(student)), ["contractAmount"]);
+  assert.deepEqual(Array.from(context.getOverrides({
+    ...student,
+    contractAmount: 4000,
+    databaseFixedValueOverrides: ["contractAmount", "balance"]
+  })), ["contractAmount"]);
+  assert.match(
+    appSource,
+    /formData\.has\("contractAmount"\)[\s\S]{0,280}databaseFixedValueOverrides/u
+  );
+  assert.match(
+    appSource,
+    /new Set\(\["id", "photoData", "databaseFixedValueOverrides"\]\)/u
+  );
+}
+
 function buildPreviousStudent() {
   return {
     id: "student-db-42",
@@ -1041,6 +1088,7 @@ assert.match(
 (async () => {
   testManagedFieldClearingAndWebOnlyPreservation();
   testBaselineNormalizationAndLatestTimestamp();
+  testManualContractAmountOverrideFromAudit();
   testExplicitImportDeletionSemantics();
   await testRealSynchronizationImportPath();
   await testDirectionalExportFlows();

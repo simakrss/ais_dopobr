@@ -71,6 +71,25 @@ function Get-ObjectProperty {
   return $property.Value
 }
 
+function Get-RecordFixedValueOverrideFields {
+  param([object]$Record)
+  $value = Get-ObjectProperty $Record "databaseFixedValueOverrides"
+  if ($null -eq $value) { return @() }
+  return @($value | ForEach-Object {
+    ([string]$_).Trim()
+  } | Where-Object { $_ })
+}
+
+function Test-RecordFixedValueOverride {
+  param(
+    [object]$Record,
+    [string]$FieldName
+  )
+  if ($null -eq $Record -or [string]::IsNullOrWhiteSpace($FieldName)) { return $false }
+  if ($FieldName -ne "contractAmount") { return $false }
+  return [bool](@(Get-RecordFixedValueOverrideFields $Record) -contains $FieldName)
+}
+
 function Get-ExcelApplicationProcessId {
   param([object]$Application)
   if ($null -eq $Application) { return 0 }
@@ -1086,7 +1105,8 @@ function Update-MappedColumn {
     [Collections.Generic.HashSet[string]]$DateFields,
     [Collections.Generic.HashSet[string]]$NumberFields,
     [object[]]$EventTemplates,
-    [Collections.Generic.HashSet[int]]$PreserveRows
+    [Collections.Generic.HashSet[int]]$PreserveRows,
+    [hashtable]$FixedValueOverrideStats
   )
   if ($EndRow -lt $StartRow) { return }
   $range = $null
@@ -1095,14 +1115,17 @@ function Update-MappedColumn {
     $formulas = $range.Formula
     $rowCount = $EndRow - $StartRow + 1
     $nextValues = New-Object "object[,]" $rowCount, 1
+    $fixedValueOverrides = [Collections.Generic.List[object]]::new()
     for ($offset = 0; $offset -lt $rowCount; $offset += 1) {
       $currentValue = Get-MatrixValue $formulas ($offset + 1) 1
-      if ($currentValue -is [string] -and $currentValue.StartsWith("=")) {
+      $row = $StartRow + $offset
+      $record = $RecordByRow[$row]
+      $isFixedValueOverride = Test-RecordFixedValueOverride $record $FieldName
+      $hasFormula = $currentValue -is [string] -and $currentValue.StartsWith("=")
+      if ($hasFormula -and -not $isFixedValueOverride) {
         $nextValues[$offset, 0] = $currentValue
         continue
       }
-      $row = $StartRow + $offset
-      $record = $RecordByRow[$row]
       if ($null -eq $record -and $null -ne $PreserveRows -and $PreserveRows.Contains($row)) {
         $nextValues[$offset, 0] = $currentValue
         continue
@@ -1143,9 +1166,50 @@ function Update-MappedColumn {
       } else {
         Get-ObjectProperty $record $FieldName
       }
-      $nextValues[$offset, 0] = Convert-CellValue $value $FieldName $DateFields $NumberFields
+      $convertedValue = Convert-CellValue $value $FieldName $DateFields $NumberFields
+      $nextValues[$offset, 0] = $convertedValue
+      if ($isFixedValueOverride) {
+        $fixedValueOverrides.Add([pscustomobject]@{
+          Row = $row
+          Column = $Column
+          FieldName = $FieldName
+          ExpectedValue = $convertedValue
+          HadFormula = $hasFormula
+        })
+      }
     }
     $range.Formula = $nextValues
+    foreach ($override in $fixedValueOverrides) {
+      $cell = $null
+      try {
+        $cell = $Sheet.Cells.Item([int]$override.Row, [int]$override.Column)
+        if ([bool]$cell.HasFormula) {
+          throw "Формула поля '$($override.FieldName)' в строке $($override.Row) не заменена фиксированным значением."
+        }
+        $actualValue = $cell.Value2
+        $expectedValue = $override.ExpectedValue
+        $matches = if ($null -eq $expectedValue -or [string]::IsNullOrWhiteSpace([string]$expectedValue)) {
+          $null -eq $actualValue -or [string]::IsNullOrWhiteSpace([string]$actualValue)
+        } else {
+          try {
+            [Math]::Abs(([double]$actualValue) - ([double]$expectedValue)) -lt 0.000001
+          } catch {
+            [string]::Equals([string]$actualValue, [string]$expectedValue, [StringComparison]::Ordinal)
+          }
+        }
+        if (-not $matches) {
+          throw "Excel не сохранил фиксированное значение поля '$($override.FieldName)' в строке $($override.Row)."
+        }
+        if ($null -ne $FixedValueOverrideStats) {
+          $FixedValueOverrideStats.Applied = [int]$FixedValueOverrideStats.Applied + 1
+          if ([bool]$override.HadFormula) {
+            $FixedValueOverrideStats.FormulaCellsReplaced = [int]$FixedValueOverrideStats.FormulaCellsReplaced + 1
+          }
+        }
+      } finally {
+        Release-ComObject $cell
+      }
+    }
     if ($FieldName -eq "discount") {
       try { $range.NumberFormat = "0.##%" } catch {}
     } elseif ($FieldName -eq "frdoStatus") {
@@ -1766,6 +1830,17 @@ function Update-StudentSheet {
       Release-ComObject $uidRange
     }
 
+    $fixedValueOverrideStats = @{
+      Requested = 0
+      Applied = 0
+      FormulaCellsReplaced = 0
+    }
+    foreach ($record in $recordByRow.Values) {
+      if (@(Get-RecordFixedValueOverrideFields $record) -contains "contractAmount") {
+        $fixedValueOverrideStats.Requested = [int]$fixedValueOverrideStats.Requested + 1
+      }
+    }
+
     $agentFormulaResult = Update-StudentAgentAmountFormulas `
       $sheet $columns $startRow $lastRow $recordByRow (Get-ObjectProperty $Payload "agentPaymentRates")
     if ($agentFormulaResult.SkippedUnknownFormulaCount -gt 0) {
@@ -1776,11 +1851,17 @@ function Update-StudentSheet {
     }
     $processedColumns = 0
     foreach ($column in $columns) {
-      Update-MappedColumn $sheet $startRow $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.studentEventTemplates) $preserveRows
+      Update-MappedColumn $sheet $startRow $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.studentEventTemplates) $preserveRows $fixedValueOverrideStats
       $processedColumns += 1
       Write-SyncProgress (
         8 + [Math]::Floor(($processedColumns / [Math]::Max(1, $columns.Count)) * 62)
       ) "Обновление слушателей: $processedColumns из $($columns.Count) колонок"
+    }
+    if ([int]$fixedValueOverrideStats.Applied -ne [int]$fixedValueOverrideStats.Requested) {
+      throw (
+        "Записано фиксированных значений слушателей: $($fixedValueOverrideStats.Applied) " +
+        "из $($fixedValueOverrideStats.Requested). Проверьте колонку суммы договора."
+      )
     }
     $syncCommentCount = Update-AisSyncMetadataForRows $sheet $recordByRow $startRow $lastRow 1
     $learningSection = @($finalSections | Where-Object {
@@ -1814,6 +1895,8 @@ function Update-StudentSheet {
       AgentFormulaCount = $agentFormulaResult.UpdatedCount
       AgentFormulaSkippedUnknownCount = $agentFormulaResult.SkippedUnknownFormulaCount
       AgentFormulaPreservedConstantCount = $agentFormulaResult.PreservedConstantCount
+      FixedValueOverridesApplied = [int]$fixedValueOverrideStats.Applied
+      FormulaCellsReplaced = [int]$fixedValueOverrideStats.FormulaCellsReplaced
     }
   } catch {
     throw "Ошибка обновления листа 'База': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
@@ -4075,6 +4158,8 @@ try {
     agentFormulaCount = $studentResult.AgentFormulaCount
     agentFormulaSkippedUnknownCount = $studentResult.AgentFormulaSkippedUnknownCount
     agentFormulaPreservedConstantCount = $studentResult.AgentFormulaPreservedConstantCount
+    studentFixedValueOverridesApplied = $studentResult.FixedValueOverridesApplied
+    studentFormulaCellsReplaced = $studentResult.FormulaCellsReplaced
     contracts = $contractResult.Count
     contractMaxRowHeightPoints = $contractResult.MaxRowHeightPoints
     directExpenses = $expenseResult.Count
