@@ -81,6 +81,7 @@ function isSameRequestOrigin(req, origin) {
 
 function isRemoteDocumentServicePath(pathname) {
   return pathname === localDocumentServicesHealthPath
+    || pathname === "/api/documents/template-reveal-local"
     || pathname === "/api/contracts/student-document"
     || pathname.startsWith("/api/contracts/student-document-preview/")
     || pathname.startsWith("/api/students/recognize-documents/");

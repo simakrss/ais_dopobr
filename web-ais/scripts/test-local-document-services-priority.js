@@ -263,6 +263,18 @@ async function main() {
     assert.equal(forwardedRequests[0].headers["x-ais-gateway-token"], gatewaySecret);
     assert.equal(forwardedRequests[0].headers["x-ais-user-role"], "manager");
 
+    const templateResponse = await fetch(`${baseUrl}/api/documents/template-reveal-local`, {
+      method: "POST",
+      headers: { ...remoteHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ templateUrl: "Документы/Шаблон.docx", templatePath: "" })
+    });
+    const templateResponseText = await templateResponse.text();
+    assert.equal(templateResponse.status, 200, templateResponseText);
+    assert.equal(templateResponse.headers.get("x-ais-processing"), "local-docker");
+    assert.equal(forwardedRequests.length, 2);
+    assert.equal(forwardedRequests[1].url, "/api/documents/template-reveal-local");
+    assert.equal(forwardedRequests[1].headers["x-ais-gateway-token"], gatewaySecret);
+
     const disallowedPath = await fetch(`${baseUrl}/api/admin/users`, { headers: remoteHeaders });
     assert.equal(disallowedPath.status, 403);
     const disallowedOrigin = await fetch(`${baseUrl}/api/local-document-services/health`, {

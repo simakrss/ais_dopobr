@@ -88,10 +88,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.284",
+    version: "1.7.285",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.285",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Кнопка «Открыть» у источника шаблона следует выбранному режиму документов: локальная папка или WebDAV; Shift временно переключает источник на противоположный.",
+        "Если локальный файл шаблона недоступен, система автоматически открывает его облачный источник."
+      ]
+    },
     {
       version: "1.7.284",
       releasedAt: "2026-08-26",
@@ -17949,6 +17957,27 @@ MAX - https://bizvmax.ru/zifra_plus
     return templatePath ? photoApiUrl(`/${templatePath}`) : "";
   }
 
+  function getDocumentTemplateSourceOpenTooltip() {
+    if (!isLocalDocumentsAvailable()) {
+      return [
+        "Открыть источник шаблона",
+        "",
+        "Локальная папка системы недоступна. Будет открыт облачный источник."
+      ].join("\n");
+    }
+    const primarySource = getStudentDocumentsSource();
+    return [
+      "Открыть источник шаблона",
+      "",
+      primarySource === "local"
+        ? "Обычный щелчок: показать локальный файл в Проводнике."
+        : "Обычный щелчок: открыть шаблон в облаке.",
+      primarySource === "local"
+        ? "Shift + щелчок: открыть шаблон в облаке."
+        : "Shift + щелчок: показать локальный файл в Проводнике."
+    ].join("\n");
+  }
+
   function getDocumentTemplateRows(documents = getDocumentTemplates()) {
     return documents.map((item) => ({
       ...item,
@@ -18163,7 +18192,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   <span class="contract-template-source-meta" title="${escapeAttr(activeDocument.fileName || getDocumentTemplateSourceLabel(activeDocument))}">${escapeHtml(activeDocument.fileName || getDocumentTemplateSourceLabel(activeDocument))}</span>
                 </div>
                 <div class="document-template-source-actions">
-                  <button class="ghost-button document-template-source-button" data-action="open-document-template-source" type="button" title="${escapeAttr(getOpenDocumentsLocally() ? "Открыть шаблон. Shift + щелчок: показать локальный файл в Проводнике." : "Открыть шаблон.")}" ${activeDocument.templateUrl || activeDocument.templatePath ? "" : "disabled"}>
+                  <button class="ghost-button document-template-source-button" data-action="open-document-template-source" type="button" title="${escapeMultilineAttr(getDocumentTemplateSourceOpenTooltip())}" ${activeDocument.templateUrl || activeDocument.templatePath ? "" : "disabled"}>
                     ${renderExternalLinkIcon()}
                     <span>Открыть</span>
                   </button>
@@ -45868,37 +45897,54 @@ MAX - https://bizvmax.ru/zifra_plus
   async function openActiveDocumentTemplateSource(event = null) {
     event?.preventDefault?.();
     const { document } = collectContractTemplateForm();
-    if (event?.shiftKey && getEffectiveLocalDocumentsMode()) {
-      const button = event.currentTarget;
-      button?.setAttribute("aria-busy", "true");
-      if (button) button.disabled = true;
-      try {
-        const response = await fetch(photoApiUrl("/api/documents/template-reveal-local"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            templateUrl: document.templateUrl,
-            templatePath: document.templatePath
-          })
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(payload.error || "Не удалось показать шаблон в Проводнике.");
-        }
-      } catch (error) {
-        alert(`Не удалось показать шаблон в Проводнике: ${error.message}`);
-      } finally {
-        button?.removeAttribute("aria-busy");
-        if (button) button.disabled = false;
+    const source = getStudentDocumentsSource(Boolean(event?.shiftKey));
+    const cloudUrl = getDocumentTemplateOpenUrl(document);
+    if (source !== "local") {
+      if (!cloudUrl) {
+        alert("У документа не задана ссылка и не загружен файл.");
+        return;
       }
+      openExternalUrl(cloudUrl);
       return;
     }
-    const url = getDocumentTemplateOpenUrl(document);
-    if (!url) {
-      alert("У документа не задана ссылка и не загружен файл.");
-      return;
+
+    const button = event?.currentTarget;
+    button?.setAttribute("aria-busy", "true");
+    if (button) button.disabled = true;
+    try {
+      const capabilities = await probeLocalDocumentServices();
+      const origin = capabilities.appServerAvailable
+        ? localDocumentServicesOrigin
+        : photoServerOrigin();
+      const response = await fetch(documentProcessingApiUrl(
+        "/api/documents/template-reveal-local",
+        origin
+      ), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({
+          templateUrl: document.templateUrl,
+          templatePath: document.templatePath
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Не удалось показать шаблон в Проводнике.");
+      }
+    } catch (error) {
+      if (cloudUrl) {
+        console.warn("Локальный источник шаблона недоступен, используется облачный.", error);
+        openExternalUrl(cloudUrl);
+      } else {
+        alert(`Не удалось показать шаблон в Проводнике: ${error.message}`);
+      }
+    } finally {
+      button?.removeAttribute("aria-busy");
+      if (button) button.disabled = false;
     }
-    openExternalUrl(url);
   }
 
   function updateActiveDocumentTemplateSource(documents, document, sourcePatch, inspection, auditDetails) {

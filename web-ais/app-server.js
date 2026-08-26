@@ -4969,9 +4969,6 @@ async function handleRevealLocalDocumentFile(req, res) {
 async function handleRevealLocalDocumentTemplate(req, res) {
   try {
     const body = await readJsonBody(req);
-    if (!serverSettings.openDocumentsLocally) {
-      throw new Error("Включите режим открытия документов на локальном компьютере.");
-    }
     const filePath = await resolveLocalDocumentTemplateFile(body.templateUrl, body.templatePath);
     await revealFileInExplorer(filePath);
     sendJson(res, 200, { ok: true, path: filePath });
