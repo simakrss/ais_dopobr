@@ -366,9 +366,14 @@ assert.match(appSource, /previewBeforeGenerationVersion:\s*documentPreviewDefaul
 assert.match(appSource, /data-document-preview-toggle/u);
 assert.match(appSource, />Предварительный просмотр</u);
 assert.match(appSource, /function getDefaultDocumentOpenAfterGeneration/u);
-assert.match(appSource, /\["contract", "employeeContract", "education"\]\.includes\(documentKind\)/u);
+assert.match(appSource, /\["contract", "employeeContract", "education", "postalEnvelope"\]\.includes\(documentKind\)/u);
+assert.match(appSource, /const documentOpenAfterGenerationDefaultVersion = "postal-envelope-open-v1"/u);
+assert.match(appSource, /isPostalEnvelopeTemplate && !hasCurrentOpenAfterGenerationDefault[\s\S]+\? true/u);
 assert.match(appSource, /data-document-open-after-generation-toggle/u);
 assert.match(appSource, />Открывать после генерации</u);
+assert.match(appSource, /name="openAfterGeneration" type="checkbox"/u);
+assert.match(appSource, /const openAfterGenerationInput = form\?\.elements\.openAfterGeneration/u);
+assert.match(appSource, /openAfterGeneration,\s*emailDeliveryMode/u);
 assert.match(appSource, /openGeneratedDocumentAfterGeneration/u);
 assert.match(appSource, /selectedFileName:\s*savedFileName/u);
 assert.match(appSource, /skipPreview:\s*true/u, "Групповые операции не должны открывать окно для каждого слушателя");

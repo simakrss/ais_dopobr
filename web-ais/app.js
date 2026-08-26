@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.304",
+    version: "1.7.305",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.305",
+      releasedAt: "2026-08-26",
+      changes: [
+        "В конструкторе документов на вкладке «Основное» добавлена общая настройка «Открывать после генерации», действующая во всех карточках.",
+        "Для документа «Почтовый конверт» открытие после генерации теперь включено по умолчанию."
+      ]
+    },
     {
       version: "1.7.304",
       releasedAt: "2026-08-26",
@@ -3299,6 +3307,7 @@ MAX - https://bizvmax.ru/zifra_plus
   const postalEnvelopeDocumentTemplateId = "document-postal-envelope";
   const postalEnvelopeGenerationFormatVersion = "postal-envelope-docx-v1";
   const documentPreviewDefaultVersion = "all-documents-preview-v1";
+  const documentOpenAfterGenerationDefaultVersion = "postal-envelope-open-v1";
   const studentDocumentsFolderTemplateMarker = "#Папка документов слушателя#";
   const downloadsFolderTemplateMarker = "#Папка Загрузки#";
   const documentTemplateInspectionVersion = "2026-07-29-email-v8";
@@ -3891,7 +3900,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const templateId = String(documentTemplate?.id || "").trim();
     const documentKind = String(documentTemplate?.documentKind || "").trim();
     return templateId === legalEntityApplicationDocumentTemplateId
-      || ["contract", "employeeContract", "education"].includes(documentKind);
+      || ["contract", "employeeContract", "education", "postalEnvelope"].includes(documentKind);
   }
 
   function getDefaultDocumentEmailDeliveryMode(documentTemplate = {}) {
@@ -6842,6 +6851,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const hasEmailSubjectTemplate = Object.prototype.hasOwnProperty.call(item || {}, "emailSubjectTemplate");
     const hasEmailMessageTemplate = Object.prototype.hasOwnProperty.call(item || {}, "emailMessageTemplate");
     const hasOpenAfterGeneration = Object.prototype.hasOwnProperty.call(item || {}, "openAfterGeneration");
+    const openAfterGenerationDefaultsSource = { ...fallback, ...(item || {}) };
+    const isPostalEnvelopeTemplate = String(openAfterGenerationDefaultsSource.id || "").trim() === postalEnvelopeDocumentTemplateId
+      || String(openAfterGenerationDefaultsSource.documentKind || "").trim() === "postalEnvelope";
+    const hasCurrentOpenAfterGenerationDefault = String(item?.openAfterGenerationDefaultVersion || "")
+      === documentOpenAfterGenerationDefaultVersion;
     const hasCurrentPreviewDefault = String(item?.previewBeforeGenerationVersion || "")
       === documentPreviewDefaultVersion;
     return {
@@ -6860,9 +6874,12 @@ MAX - https://bizvmax.ru/zifra_plus
       generationFormatVersion: String(
         item?.generationFormatVersion || fallback.generationFormatVersion || ""
       ),
-      openAfterGeneration: hasOpenAfterGeneration
-        ? isChecked(item.openAfterGeneration)
-        : getDefaultDocumentOpenAfterGeneration({ ...fallback, ...(item || {}) }),
+      openAfterGeneration: isPostalEnvelopeTemplate && !hasCurrentOpenAfterGenerationDefault
+        ? true
+        : (hasOpenAfterGeneration
+          ? isChecked(item.openAfterGeneration)
+          : getDefaultDocumentOpenAfterGeneration(openAfterGenerationDefaultsSource)),
+      openAfterGenerationDefaultVersion: documentOpenAfterGenerationDefaultVersion,
       emailDeliveryMode: normalizeDocumentEmailDeliveryMode(
         item?.emailDeliveryMode,
         emailDefaultsSource
@@ -18828,6 +18845,13 @@ MAX - https://bizvmax.ru/zifra_plus
                   <input name="saveFolderTemplate" type="hidden" value="${escapeAttr(activeDocument.saveFolderTemplate)}">
                 </div>
               </div>
+              <label class="document-template-main-checkbox">
+                <input name="openAfterGeneration" type="checkbox" value="1" ${activeDocument.openAfterGeneration ? "checked" : ""}>
+                <span>
+                  <strong>Открывать после генерации</strong>
+                  <small>После формирования открыть сохранённый документ или его папку. Настройка этого документа действует во всех карточках.</small>
+                </span>
+              </label>
             </section>
           </div>
           <input name="useCustomDocumentProperties" type="hidden" value="1">
@@ -46061,6 +46085,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const useCustomDocumentProperties = customPropertiesInput
       ? (customPropertiesInput.type === "checkbox" ? customPropertiesInput.checked : isChecked(customPropertiesInput.value))
       : isChecked(currentDocument.useCustomDocumentProperties ?? "1");
+    const openAfterGenerationInput = form?.elements.openAfterGeneration;
+    const openAfterGeneration = openAfterGenerationInput
+      ? Boolean(openAfterGenerationInput.checked)
+      : Boolean(currentDocument.openAfterGeneration);
     const documentTemplate = normalizeDocumentTemplate({
       ...currentDocument,
       title: String(form?.elements.documentTitle?.value || currentDocument.title || "").trim(),
@@ -46071,6 +46099,7 @@ MAX - https://bizvmax.ru/zifra_plus
       generationFormat: normalizeDocumentGenerationFormat(
         form?.elements.generationFormat?.value || currentDocument.generationFormat
       ),
+      openAfterGeneration,
       emailDeliveryMode: normalizeDocumentEmailDeliveryMode(
         form?.elements.emailDeliveryMode?.value || currentDocument.emailDeliveryMode,
         currentDocument

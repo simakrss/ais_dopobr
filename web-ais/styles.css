@@ -5677,6 +5677,44 @@ body.long-press-dragging * {
   grid-template-columns: minmax(0, 1fr) minmax(190px, 250px);
 }
 
+.document-template-main-card label.document-template-main-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-soft);
+  cursor: pointer;
+}
+
+.document-template-main-card label.document-template-main-checkbox > input[type="checkbox"] {
+  width: 17px;
+  min-width: 17px;
+  height: 17px;
+  min-height: 17px;
+  margin: 1px 0 0;
+  padding: 0;
+  accent-color: var(--teal);
+}
+
+.document-template-main-card label.document-template-main-checkbox > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.document-template-main-card label.document-template-main-checkbox > span > strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.document-template-main-card label.document-template-main-checkbox > span > small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .document-template-fields-toolbar {
   min-width: 0;
   display: flex;
