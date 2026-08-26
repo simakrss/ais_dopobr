@@ -18850,6 +18850,7 @@ async function queryStudentMailboxMessages(body) {
         excerpt: message.text.slice(0, 500),
         attachmentCount: message.attachments.length,
         attachments: message.attachments.map((attachment, index) => ({
+          index,
           name: safeStudentMailboxAttachmentName(attachment.fileName, `Вложение-${index + 1}`),
           size: Math.max(0, Number(attachment.size) || attachment.bytes.length),
           contentType: attachment.contentType
@@ -19228,13 +19229,53 @@ async function saveStudentMailboxDocument(folderSource, fileName, bytes, content
   throw new Error("Не удалось подобрать свободное имя файла вложения.");
 }
 
+function parseStudentMailboxImportSelections(body = {}) {
+  const hasDetailedSelections = Array.isArray(body.selections);
+  const selections = [];
+  const selectionsByUid = new Map();
+  const addSelection = (uidSource, includeText, attachmentIndexes) => {
+    const uid = String(uidSource || "").trim();
+    if (!/^\d+$/.test(uid)) return;
+    const normalizedIndexes = attachmentIndexes === null
+      ? null
+      : [...new Set((Array.isArray(attachmentIndexes) ? attachmentIndexes : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= 0 && value < 100))]
+        .sort((left, right) => left - right);
+    if (!includeText && normalizedIndexes !== null && !normalizedIndexes.length) return;
+    const existing = selectionsByUid.get(uid);
+    if (existing) {
+      existing.includeText = existing.includeText || includeText;
+      existing.attachmentIndexes = existing.attachmentIndexes === null || normalizedIndexes === null
+        ? null
+        : [...new Set([...existing.attachmentIndexes, ...normalizedIndexes])].sort((left, right) => left - right);
+      return;
+    }
+    if (selections.length >= 20) return;
+    const selection = { uid, includeText: Boolean(includeText), attachmentIndexes: normalizedIndexes };
+    selections.push(selection);
+    selectionsByUid.set(uid, selection);
+  };
+  if (hasDetailedSelections) {
+    body.selections.forEach((selection) => {
+      const includeText = selection?.includeText === true
+        || String(selection?.includeText || "").trim().toLowerCase() === "true"
+        || String(selection?.includeText || "").trim() === "1";
+      addSelection(selection?.uid, includeText, selection?.attachmentIndexes);
+    });
+  } else {
+    (Array.isArray(body.uids) ? body.uids : []).forEach((uid) => addSelection(uid, true, null));
+  }
+  return selections;
+}
+
 async function importStudentMailboxMessages(body, authUser, req) {
   const mailboxId = normalizeMailboxId(body.mailboxId, "applications");
   const settings = getStudentDocumentMailboxSettings(mailboxId);
-  const uids = [...new Set((Array.isArray(body.uids) ? body.uids : [])
-    .map((value) => String(value || "").trim())
-    .filter((value) => /^\d+$/.test(value)))].slice(0, 20);
-  if (!uids.length) throw new Error("Выберите хотя бы одно письмо.");
+  const selections = parseStudentMailboxImportSelections(body);
+  if (!selections.length) throw new Error("Отметьте текст письма или хотя бы одно вложение.");
+  const selectionsByUid = new Map(selections.map((selection) => [selection.uid, selection]));
+  const uids = selections.map((selection) => selection.uid);
   const folder = String(body.folder || "").trim();
   const isContract = String(body.entityType || "").trim().toLowerCase() === "contract";
   if (!folder) throw new Error(`Не указана папка документов ${isContract ? "сотрудника" : "слушателя"}.`);
@@ -19249,6 +19290,8 @@ async function importStudentMailboxMessages(body, authUser, req) {
   const files = [];
   let convertedImages = 0;
   let extractedArchiveFiles = 0;
+  let importedTextFiles = 0;
+  let importedAttachments = 0;
   let totalBytes = 0;
   const saveAttachment = async (attachment, options = {}) => {
     if (!attachment.bytes.length) return false;
@@ -19294,16 +19337,29 @@ async function importStudentMailboxMessages(body, authUser, req) {
   };
   for (const source of messages) {
     const message = parseStudentMailboxMessage(source.uid, source.bytes);
+    const selection = selectionsByUid.get(message.uid);
+    if (!selection) continue;
     const prefix = buildStudentMailboxFilePrefix(message);
-    const textBytes = Buffer.from(buildStudentMailboxTextFile(message), "utf8");
-    totalBytes += textBytes.length;
-    if (totalBytes > 100 * 1024 * 1024) throw new Error("Общий размер выбранных писем превышает 100 МБ.");
-    const textName = `${prefix}.txt`;
-    const textTarget = await saveStudentMailboxDocument(folder, textName, textBytes, "text/plain; charset=utf-8");
-    files.push({ name: textTarget.name || textName, size: textBytes.length, type: "text", ...textTarget });
-    for (let index = 0; index < message.attachments.length; index += 1) {
+    if (selection.includeText) {
+      const textBytes = Buffer.from(buildStudentMailboxTextFile(message), "utf8");
+      totalBytes += textBytes.length;
+      if (totalBytes > 100 * 1024 * 1024) throw new Error("Общий размер выбранных писем превышает 100 МБ.");
+      const textName = `${prefix}.txt`;
+      const textTarget = await saveStudentMailboxDocument(folder, textName, textBytes, "text/plain; charset=utf-8");
+      files.push({ name: textTarget.name || textName, size: textBytes.length, type: "text", ...textTarget });
+      importedTextFiles += 1;
+    }
+    const attachmentIndexes = selection.attachmentIndexes === null
+      ? message.attachments.map((attachment, index) => index)
+      : selection.attachmentIndexes;
+    for (const index of attachmentIndexes) {
       const attachment = message.attachments[index];
+      if (!attachment) {
+        warnings.push(`Вложение №${index + 1} письма UID ${message.uid} не найдено и пропущено.`);
+        continue;
+      }
       if (!await saveAttachment(attachment)) continue;
+      importedAttachments += 1;
       const archiveKind = getStudentMailboxArchiveKind(attachment);
       if (archiveKind === "zip") {
         try {
@@ -19332,13 +19388,15 @@ async function importStudentMailboxMessages(body, authUser, req) {
     entityLabel: auditText(body.studentName, 500),
     field: "documents",
     after: `${messages.length} писем, ${files.length} файлов`,
-    details: `Ящик: ${settings.login}; папка: ${folder}; распаковано из архивов: ${extractedArchiveFiles}`,
+    details: `Ящик: ${settings.login}; папка: ${folder}; текстов писем: ${importedTextFiles}; вложений: ${importedAttachments}; распаковано из архивов: ${extractedArchiveFiles}`,
     source: "imap"
   }, authUser, req);
   return {
     mailbox: { id: settings.id, label: settings.label },
     messages: messages.length,
     files,
+    importedTextFiles,
+    importedAttachments,
     convertedImages,
     extractedArchiveFiles,
     warnings
@@ -28971,6 +29029,7 @@ module.exports = {
   getStudentMailboxArchiveKind,
   extractStudentMailboxZipAttachments,
   getStudentMailboxFileNameCandidate,
+  parseStudentMailboxImportSelections,
   publicStudentDocumentMailboxes,
   queryStudentMailboxMessages,
   applyCustomDocumentPropertyFormulas,

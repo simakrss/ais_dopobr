@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.293",
+    version: "1.7.294",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.294",
+      releasedAt: "2026-08-26",
+      changes: [
+        "При загрузке документов из почты можно отдельно выбрать текст письма и каждое вложение.",
+        "Общие галочки письма и всего списка позволяют быстро отметить или снять всё содержимое, а итоговый счётчик показывает выбранные письма, вложения и тексты."
+      ]
+    },
     {
       version: "1.7.293",
       releasedAt: "2026-08-26",
@@ -38350,7 +38358,7 @@ MAX - https://bizvmax.ru/zifra_plus
     backdrop.innerHTML = `
       <section class="student-mailbox-dialog" role="dialog" aria-modal="true" aria-labelledby="studentMailboxTitle">
         <header class="student-mailbox-head">
-          <div><h2 id="studentMailboxTitle">Письма: ${escapeHtml(studentName || personLabel)}</h2><p>Выберите письма — их текст и вложения будут сохранены в папку «Документы».</p></div>
+          <div><h2 id="studentMailboxTitle">Письма: ${escapeHtml(studentName || personLabel)}</h2><p>Отметьте текст письма и только те вложения, которые нужно сохранить в папку «Документы».</p></div>
           <button class="icon-button" data-action="close-student-mailbox" type="button" title="Закрыть" aria-label="Закрыть">×</button>
         </header>
         <form class="student-mailbox-filters" data-student-mailbox-filters>
@@ -38362,7 +38370,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="primary-button" type="submit">Найти письма</button>
         </form>
         <div class="student-mailbox-toolbar">
-          <label><input type="checkbox" data-student-mailbox-select-all> <span>Выбрать все</span></label>
+          <label><input type="checkbox" data-student-mailbox-select-all> <span>Выбрать всё содержимое</span></label>
           <output data-student-mailbox-count>Письма ещё не загружены</output>
         </div>
         <div class="student-mailbox-status" data-student-mailbox-status aria-live="polite"></div>
@@ -38370,7 +38378,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <span class="student-mailbox-progress-spinner" aria-hidden="true"></span>
           <div class="student-mailbox-progress-copy">
             <strong data-student-mailbox-progress-title>Загрузка выбранных писем…</strong>
-            <span>Текст писем и вложения сохраняются в папку документов. Не закрывайте окно.</span>
+            <span>Выбранный текст писем и вложения сохраняются в папку документов. Не закрывайте окно.</span>
             <progress max="100" aria-label="Загрузка выбранных писем"></progress>
           </div>
         </div>
@@ -38411,34 +38419,61 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       filters.querySelectorAll("input, select, button").forEach((control) => { control.disabled = importing; });
       selectAll.disabled = importing;
-      list.querySelectorAll("input[data-message-uid]").forEach((control) => { control.disabled = importing; });
+      list.querySelectorAll("input[data-message-select], input[data-message-part]").forEach((control) => { control.disabled = importing; });
       backdrop.querySelectorAll("[data-action='close-student-mailbox']").forEach((control) => { control.disabled = importing; });
     };
     const close = () => { if (!busy) backdrop.remove(); };
     backdrop.querySelectorAll("[data-action='close-student-mailbox']").forEach((control) => control.addEventListener("click", close));
     backdrop.addEventListener("pointerdown", (pointerEvent) => { if (pointerEvent.target === backdrop) close(); });
     const updateSelection = () => {
-      const boxes = Array.from(list.querySelectorAll("input[data-message-uid]"));
-      const selected = boxes.filter((input) => input.checked).length;
-      count.textContent = `Выбрано ${selected} из ${boxes.length}`;
-      importButton.disabled = busy || selected === 0;
-      selectAll.checked = Boolean(boxes.length && selected === boxes.length);
-      selectAll.indeterminate = selected > 0 && selected < boxes.length;
+      const rows = Array.from(list.querySelectorAll("[data-student-mailbox-message]"));
+      rows.forEach((row) => {
+        const group = row.querySelector("input[data-message-select]");
+        const parts = Array.from(row.querySelectorAll("input[data-message-part]"));
+        const selectedParts = parts.filter((input) => input.checked).length;
+        if (group) {
+          group.checked = selectedParts > 0;
+          group.indeterminate = selectedParts > 0 && selectedParts < parts.length;
+        }
+        row.classList.toggle("is-selected", selectedParts > 0);
+      });
+      const parts = Array.from(list.querySelectorAll("input[data-message-part]"));
+      const selectedParts = parts.filter((input) => input.checked);
+      const selectedMessages = rows.filter((row) => row.querySelector("input[data-message-part]:checked")).length;
+      const selectedAttachments = selectedParts.filter((input) => input.dataset.messagePart === "attachment").length;
+      const selectedTexts = selectedParts.filter((input) => input.dataset.messagePart === "text").length;
+      count.textContent = `Писем: ${selectedMessages} · вложений: ${selectedAttachments} · текстов: ${selectedTexts}`;
+      importButton.disabled = busy || selectedParts.length === 0;
+      selectAll.checked = Boolean(parts.length && selectedParts.length === parts.length);
+      selectAll.indeterminate = selectedParts.length > 0 && selectedParts.length < parts.length;
     };
     const renderMessages = () => {
       list.innerHTML = messages.length ? messages.map((message) => `
-        <article class="student-mailbox-message">
-          <label class="student-mailbox-message-select"><input type="checkbox" data-message-uid="${escapeAttr(message.uid)}"><span></span></label>
+        <article class="student-mailbox-message" data-student-mailbox-message data-message-uid="${escapeAttr(message.uid)}">
+          <label class="student-mailbox-message-select" title="Выбрать текст и все вложения письма"><input type="checkbox" data-message-select aria-label="Выбрать текст и все вложения письма"><span></span></label>
           <div class="student-mailbox-message-content">
             <div class="student-mailbox-message-title"><strong>${escapeHtml(message.subject || "Без темы")}</strong><time>${escapeHtml(formatDateTimeRu(message.date))}</time></div>
             <p><b>От:</b> ${escapeHtml(message.from || "—")}</p>
             <p><b>Кому:</b> ${escapeHtml(message.to || "—")}</p>
             ${message.excerpt ? `<details><summary>Текст письма</summary><pre>${escapeHtml(message.excerpt)}</pre></details>` : ""}
-            <div class="student-mailbox-attachments">${message.attachments?.length ? message.attachments.map((attachment) => `<span title="${escapeAttr(attachment.size ? `${attachment.name}, ${formatBytes(attachment.size)}` : attachment.name)}">📎 ${escapeHtml(attachment.name)}</span>`).join("") : "<span>Без вложений</span>"}</div>
+            <div class="student-mailbox-import-items" aria-label="Содержимое для загрузки">
+              <span class="student-mailbox-import-items-label">Загрузить:</span>
+              <label class="student-mailbox-import-item is-message-text"><input type="checkbox" data-message-part="text"><span>Текст письма (.txt)</span></label>
+              ${message.attachments?.length ? message.attachments.map((attachment, index) => {
+                const attachmentIndex = Number.isInteger(Number(attachment.index)) ? Number(attachment.index) : index;
+                const title = attachment.size ? `${attachment.name}, ${formatBytes(attachment.size)}` : attachment.name;
+                return `<label class="student-mailbox-import-item" title="${escapeAttr(title)}"><input type="checkbox" data-message-part="attachment" data-attachment-index="${escapeAttr(attachmentIndex)}"><span>${escapeHtml(attachment.name)}</span>${attachment.size ? `<small>${escapeHtml(formatBytes(attachment.size))}</small>` : ""}</label>`;
+              }).join("") : '<span class="student-mailbox-no-attachments">Вложений нет</span>'}
+            </div>
           </div>
         </article>
       `).join("") : '<p class="empty-state">Письма по заданным условиям не найдены.</p>';
-      list.querySelectorAll("input[data-message-uid]").forEach((input) => input.addEventListener("change", updateSelection));
+      list.querySelectorAll("input[data-message-select]").forEach((input) => input.addEventListener("change", () => {
+        const row = input.closest("[data-student-mailbox-message]");
+        row?.querySelectorAll("input[data-message-part]").forEach((part) => { part.checked = input.checked; });
+        updateSelection();
+      }));
+      list.querySelectorAll("input[data-message-part]").forEach((input) => input.addEventListener("change", updateSelection));
       updateSelection();
     };
     const loadMessages = async () => {
@@ -38472,16 +38507,23 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     filters.addEventListener("submit", (submitEvent) => { submitEvent.preventDefault(); loadMessages(); });
     selectAll.addEventListener("change", () => {
-      list.querySelectorAll("input[data-message-uid]").forEach((input) => { input.checked = selectAll.checked; });
+      list.querySelectorAll("input[data-message-part]").forEach((input) => { input.checked = selectAll.checked; });
       updateSelection();
     });
     importButton.addEventListener("click", async () => {
-      const uids = Array.from(list.querySelectorAll("input[data-message-uid]:checked")).map((input) => input.dataset.messageUid);
-      if (!uids.length || busy) return;
+      const selections = Array.from(list.querySelectorAll("[data-student-mailbox-message]")).map((row) => ({
+        uid: row.dataset.messageUid,
+        includeText: Boolean(row.querySelector("input[data-message-part='text']:checked")),
+        attachmentIndexes: Array.from(row.querySelectorAll("input[data-message-part='attachment']:checked"))
+          .map((input) => Number(input.dataset.attachmentIndex))
+          .filter((index) => Number.isInteger(index) && index >= 0)
+      })).filter((selection) => selection.includeText || selection.attachmentIndexes.length);
+      const uids = selections.map((selection) => selection.uid);
+      if (!selections.length || busy) return;
       busy = true;
       importButton.disabled = true;
-      setImportProgress(true, uids.length);
-      status.textContent = "Сохранение писем, распаковка архивов, преобразование изображений и загрузка вложений…";
+      setImportProgress(true, selections.length);
+      status.textContent = "Сохранение выбранного текста, распаковка архивов, преобразование изображений и загрузка вложений…";
       try {
         const response = await fetch(photoApiUrl("/api/students/mailbox-documents/import"), {
           method: "POST",
@@ -38489,6 +38531,7 @@ MAX - https://bizvmax.ru/zifra_plus
           body: JSON.stringify({
             mailboxId: filters.elements.mailboxId.value,
             uids,
+            selections,
             folder,
             studentId,
             studentName,
@@ -38504,7 +38547,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const extracted = Number(payload.extractedArchiveFiles) > 0
           ? ` Из архивов распаковано файлов: ${Number(payload.extractedArchiveFiles)}.`
           : "";
-        alert(`Загружено писем: ${payload.messages || 0}. Сохранено файлов: ${payload.files?.length || 0}.${extracted}${converted}${warning}`);
+        alert(`Обработано писем: ${payload.messages || 0}. Текстов писем: ${payload.importedTextFiles || 0}. Вложений: ${payload.importedAttachments || 0}. Сохранено файлов: ${payload.files?.length || 0}.${extracted}${converted}${warning}`);
         backdrop.remove();
       } catch (error) {
         status.textContent = `Ошибка: ${error.message}`;

@@ -21902,10 +21902,18 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   gap: 8px;
   padding: 11px 8px;
   border-top: 1px solid var(--line);
+  transition: background-color 140ms ease;
+}
+
+.student-mailbox-message.is-selected {
+  background: #f4faf8;
 }
 
 .student-mailbox-message-select {
+  display: flex;
+  justify-content: center;
   padding-top: 2px;
+  cursor: pointer;
 }
 
 .student-mailbox-message-content {
@@ -21947,24 +21955,77 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   font: inherit;
 }
 
-.student-mailbox-attachments {
+.student-mailbox-import-items {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 5px;
   margin-top: 7px;
 }
 
-.student-mailbox-attachments span {
-  max-width: 330px;
+.student-mailbox-import-items-label {
+  margin-right: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.student-mailbox-import-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(100%, 390px);
+  min-width: 0;
   overflow: hidden;
-  padding: 3px 7px;
+  padding: 4px 8px;
   border: 1px solid #d8e6e2;
   border-radius: 999px;
   background: #eff8f5;
   color: #315e57;
   font-size: 11px;
+  cursor: pointer;
+}
+
+.student-mailbox-import-item:has(input:checked) {
+  border-color: rgba(15, 118, 110, .55);
+  background: #dff4ee;
+  color: #0b5f57;
+}
+
+.student-mailbox-import-item input {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--teal);
+}
+
+.student-mailbox-import-item span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.student-mailbox-import-item small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.student-mailbox-import-item.is-message-text {
+  background: #f4f6fb;
+  border-color: #d9dfed;
+  color: #40506f;
+}
+
+.student-mailbox-import-item.is-message-text:has(input:checked) {
+  background: #e8eefb;
+  border-color: #99acd4;
+  color: #294679;
+}
+
+.student-mailbox-no-attachments {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .student-mailbox-loading {
@@ -22087,6 +22148,15 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     align-items: flex-start;
     flex-direction: column;
     gap: 3px;
+  }
+  .student-mailbox-import-items {
+    align-items: stretch;
+  }
+  .student-mailbox-import-items-label {
+    flex: 0 0 100%;
+  }
+  .student-mailbox-import-item {
+    max-width: 100%;
   }
 }
 

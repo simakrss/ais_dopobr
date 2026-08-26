@@ -8,7 +8,8 @@ const {
   collectEmailMessageContent,
   parseImapBodyStructureAttachments,
   prepareStudentMailboxAttachmentForSave,
-  getStudentMailboxFileNameCandidate
+  getStudentMailboxFileNameCandidate,
+  parseStudentMailboxImportSelections
 } = require("../app-server.js");
 
 const subject = "Документы слушателя";
@@ -52,6 +53,27 @@ assert.equal(message.messageId, "mail-test@example.ru");
 assert.equal(getStudentMailboxFileNameCandidate("Паспорт.pdf", 0), "Паспорт.pdf");
 assert.equal(getStudentMailboxFileNameCandidate("Паспорт.pdf", 1), "Паспорт (2).pdf");
 assert.equal(getStudentMailboxFileNameCandidate("Паспорт.pdf", 2), "Паспорт (3).pdf");
+
+assert.deepEqual(parseStudentMailboxImportSelections({
+  selections: [
+    { uid: "42", includeText: true, attachmentIndexes: [2, 0, 2, -1, 100] },
+    { uid: "42", includeText: false, attachmentIndexes: [1] },
+    { uid: "43", includeText: false, attachmentIndexes: [3] },
+    { uid: "bad", includeText: true, attachmentIndexes: [] },
+    { uid: "44", includeText: false, attachmentIndexes: [] }
+  ]
+}), [
+  { uid: "42", includeText: true, attachmentIndexes: [0, 1, 2] },
+  { uid: "43", includeText: false, attachmentIndexes: [3] }
+]);
+assert.deepEqual(parseStudentMailboxImportSelections({
+  selections: [{ uid: "45", includeText: true, attachmentIndexes: [] }]
+}), [{ uid: "45", includeText: true, attachmentIndexes: [] }]);
+assert.deepEqual(parseStudentMailboxImportSelections({ uids: ["42", "42", "43"] }), [
+  { uid: "42", includeText: true, attachmentIndexes: null },
+  { uid: "43", includeText: true, attachmentIndexes: null }
+]);
+assert.deepEqual(parseStudentMailboxImportSelections({ selections: [], uids: ["42"] }), []);
 
 const unpaidInSalesBody = [
   "Поступил заказ № 5555 от 12.08.2026 10:30",
