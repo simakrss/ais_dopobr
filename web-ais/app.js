@@ -42,11 +42,62 @@
     "SELECT", "SET", "SHOW", "TABLE", "THEN", "TRUE", "UNION", "UNIQUE", "UNLOCK",
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
+  const ADMIN_SQL_FORBIDDEN_KEYWORDS = new Set([
+    "ALTER", "CALL", "CREATE", "DELETE", "DROP", "GRANT", "INSERT", "LOAD", "LOCK",
+    "REPLACE", "REVOKE", "TRUNCATE", "UNLOCK", "UPDATE"
+  ]);
+  const ADMIN_SQL_SUGGESTIONS = Object.freeze([
+    { label: "SELECT", insert: "SELECT ", detail: "Выбрать данные", group: "command" },
+    { label: "SELECT DISTINCT", insert: "SELECT DISTINCT ", detail: "Выбрать уникальные строки", group: "command" },
+    { label: "FROM", insert: "FROM ", detail: "Указать таблицу или подзапрос", group: "clause" },
+    { label: "WHERE", insert: "WHERE ", detail: "Добавить условие отбора", group: "clause" },
+    { label: "INNER JOIN", insert: "INNER JOIN ", detail: "Внутреннее соединение", group: "join" },
+    { label: "LEFT JOIN", insert: "LEFT JOIN ", detail: "Левое соединение", group: "join" },
+    { label: "RIGHT JOIN", insert: "RIGHT JOIN ", detail: "Правое соединение", group: "join" },
+    { label: "CROSS JOIN", insert: "CROSS JOIN ", detail: "Декартово соединение", group: "join" },
+    { label: "ON", insert: "ON ", detail: "Условие соединения", group: "condition" },
+    { label: "AND", insert: "AND ", detail: "Оба условия истинны", group: "condition" },
+    { label: "OR", insert: "OR ", detail: "Одно из условий истинно", group: "condition" },
+    { label: "IN", insert: "IN ()", cursorOffset: -1, detail: "Входит в список значений", group: "condition" },
+    { label: "NOT IN", insert: "NOT IN ()", cursorOffset: -1, detail: "Не входит в список значений", group: "condition" },
+    { label: "IS NULL", insert: "IS NULL ", detail: "Пустое значение", group: "condition" },
+    { label: "IS NOT NULL", insert: "IS NOT NULL ", detail: "Непустое значение", group: "condition" },
+    { label: "LIKE", insert: "LIKE ", detail: "Сравнить со строковым шаблоном", group: "condition" },
+    { label: "BETWEEN", insert: "BETWEEN  AND ", cursorOffset: -5, detail: "Значение в диапазоне", group: "condition" },
+    { label: "GROUP BY", insert: "GROUP BY ", detail: "Сгруппировать строки", group: "clause" },
+    { label: "HAVING", insert: "HAVING ", detail: "Отфильтровать группы", group: "clause" },
+    { label: "ORDER BY", insert: "ORDER BY ", detail: "Отсортировать результат", group: "clause" },
+    { label: "ASC", insert: "ASC ", detail: "По возрастанию", group: "clause" },
+    { label: "DESC", insert: "DESC ", detail: "По убыванию", group: "clause" },
+    { label: "LIMIT", insert: "LIMIT ", detail: "Ограничить число строк", group: "clause" },
+    { label: "OFFSET", insert: "OFFSET ", detail: "Пропустить строки", group: "clause" },
+    { label: "UNION ALL", insert: "UNION ALL\nSELECT ", detail: "Объединить результаты", group: "command" },
+    { label: "CASE", insert: "CASE\n  WHEN  THEN \n  ELSE \nEND", cursorOffset: -22, detail: "Условное значение", group: "expression" },
+    { label: "AS", insert: "AS ", detail: "Задать псевдоним", group: "expression" },
+    { label: "COUNT()", insert: "COUNT()", cursorOffset: -1, detail: "Количество строк", group: "function" },
+    { label: "SUM()", insert: "SUM()", cursorOffset: -1, detail: "Сумма значений", group: "function" },
+    { label: "AVG()", insert: "AVG()", cursorOffset: -1, detail: "Среднее значение", group: "function" },
+    { label: "MIN()", insert: "MIN()", cursorOffset: -1, detail: "Минимальное значение", group: "function" },
+    { label: "MAX()", insert: "MAX()", cursorOffset: -1, detail: "Максимальное значение", group: "function" },
+    { label: "IFNULL()", insert: "IFNULL(, )", cursorOffset: -3, detail: "Заменить NULL", group: "function" },
+    { label: "COALESCE()", insert: "COALESCE()", cursorOffset: -1, detail: "Первое непустое значение", group: "function" },
+    { label: "CONCAT()", insert: "CONCAT()", cursorOffset: -1, detail: "Объединить строки", group: "function" },
+    { label: "DATE_FORMAT()", insert: "DATE_FORMAT(, '%d.%m.%Y')", cursorOffset: -16, detail: "Форматировать дату MySQL", group: "function" },
+    { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
+  ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.279",
+    version: "1.7.280",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.280",
+      releasedAt: "2026-08-26",
+      changes: [
+        "SQL-запросы в настройках и конструкторе источников рекламы получили единый мини-редактор с подсветкой синтаксиса, проверкой ошибок, позицией курсора и контекстными подсказками команд.",
+        "Автодополнение SQL поддерживает клавиши Ctrl+Пробел, стрелки, Enter и Tab; проверка предупреждает о незакрытых конструкциях, нескольких командах и операциях изменения данных."
+      ]
+    },
     {
       version: "1.7.279",
       releasedAt: "2026-08-26",
@@ -10968,7 +11019,14 @@ MAX - https://bizvmax.ru/zifra_plus
           <option value="abit" ${source.connection === "abit" ? "selected" : ""}>База ВИИТ</option>
           <option value="moodle" ${source.connection === "moodle" ? "selected" : ""}>База Moodle</option>
         </select></label>
-        <label class="advertising-source-query"><span>SQL-запрос SELECT</span><textarea data-advertising-source-field="sql" rows="4" spellcheck="false">${escapeHtml(source.sql || "")}</textarea></label>
+        <label class="advertising-source-query">
+          <span>SQL-запрос SELECT</span>
+          ${renderSqlMiniIde(source.sql || "", {
+            compact: true,
+            inputAttributes: 'data-advertising-source-field="sql"',
+            ariaLabel: `SQL-запрос источника ${source.label || index + 1}`
+          })}
+        </label>
       `;
     }
     if (source.kind === "google") {
@@ -19041,6 +19099,260 @@ MAX - https://bizvmax.ru/zifra_plus
     return `${result}${escapeHtml(source.slice(offset))}`;
   }
 
+  function renderSqlMiniIde(value, options = {}) {
+    const compact = Boolean(options.compact);
+    const allowWith = options.allowWith !== false;
+    const allowComments = options.allowComments !== false;
+    const allowTrailingSemicolon = options.allowTrailingSemicolon !== false;
+    const requiredParameters = Math.max(0, Number(options.requiredParameters) || 0);
+    const inputAttributes = String(options.inputAttributes || "").trim();
+    const editorAttributes = String(options.editorAttributes || "").trim();
+    const ariaLabel = String(options.ariaLabel || "SQL-запрос");
+    return `
+      <div
+        class="sql-mini-ide ${compact ? "is-compact" : ""}"
+        data-sql-mini-ide
+        data-sql-allow-with="${allowWith ? "true" : "false"}"
+        data-sql-allow-comments="${allowComments ? "true" : "false"}"
+        data-sql-allow-trailing-semicolon="${allowTrailingSemicolon ? "true" : "false"}"
+        data-sql-required-parameters="${requiredParameters}"
+      >
+        <input type="hidden" value="${escapeAttr(value)}" data-sql-query-input ${inputAttributes}>
+        <div class="sql-mini-ide-toolbar">
+          <span class="sql-mini-ide-language" aria-hidden="true">SQL</span>
+          <span class="sql-mini-ide-validation" data-sql-validation-status>Проверка запроса…</span>
+          <button class="sql-mini-ide-suggest-button" type="button" data-sql-open-suggestions title="Показать подсказки SQL-команд">Команды</button>
+          <span class="sql-mini-ide-position" data-sql-caret-status>Строка 1, столбец 1</span>
+        </div>
+        <div class="sql-mini-ide-editor-shell">
+          <div
+            class="admin-sql-query-editor sql-mini-ide-editor"
+            contenteditable="true"
+            data-sql-query-editor
+            role="textbox"
+            aria-label="${escapeAttr(ariaLabel)}"
+            aria-multiline="true"
+            spellcheck="false"
+            autocapitalize="off"
+            autocomplete="off"
+            ${editorAttributes}
+          >${renderAdminSqlQuerySyntax(value)}</div>
+          <div class="sql-mini-ide-suggestions" data-sql-suggestions role="listbox" aria-label="Подсказки SQL" hidden></div>
+        </div>
+        <div class="sql-mini-ide-footer">
+          <span class="sql-mini-ide-diagnostic" data-sql-diagnostic role="status" aria-live="polite"></span>
+          <span class="sql-mini-ide-shortcut"><kbd>Ctrl</kbd>+<kbd>Пробел</kbd> — подсказки</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function getSqlLineAndColumn(value, offset) {
+    const safeOffset = Math.max(0, Math.min(String(value || "").length, Number(offset) || 0));
+    const lines = String(value || "").slice(0, safeOffset).split("\n");
+    return { line: lines.length, column: (lines[lines.length - 1] || "").length + 1 };
+  }
+
+  function inspectSqlLexicalStructure(value) {
+    const source = String(value || "");
+    const scrubbed = Array.from(source);
+    const issues = [];
+    const comments = [];
+    const blankRange = (start, end) => {
+      for (let index = start; index < end; index += 1) {
+        if (scrubbed[index] !== "\n" && scrubbed[index] !== "\r") scrubbed[index] = " ";
+      }
+    };
+    let index = 0;
+    while (index < source.length) {
+      const char = source[index];
+      const next = source[index + 1];
+      if ((char === "-" && next === "-") || char === "#") {
+        const start = index;
+        index += char === "#" ? 1 : 2;
+        while (index < source.length && source[index] !== "\n") index += 1;
+        comments.push({ index: start, type: "line" });
+        blankRange(start, index);
+        continue;
+      }
+      if (char === "/" && next === "*") {
+        const start = index;
+        const closing = source.indexOf("*/", index + 2);
+        comments.push({ index: start, type: "block" });
+        if (closing < 0) {
+          blankRange(start, source.length);
+          issues.push({ index: start, message: "Не закрыт комментарий /* … */." });
+          break;
+        }
+        index = closing + 2;
+        blankRange(start, index);
+        continue;
+      }
+      if (char === "'" || char === '"' || char === "`") {
+        const start = index;
+        const quote = char;
+        index += 1;
+        let closed = false;
+        while (index < source.length) {
+          if (source[index] === "\\" && quote !== "`") {
+            index += 2;
+            continue;
+          }
+          if (source[index] === quote) {
+            if (source[index + 1] === quote) {
+              index += 2;
+              continue;
+            }
+            index += 1;
+            closed = true;
+            break;
+          }
+          index += 1;
+        }
+        blankRange(start, Math.min(index, source.length));
+        if (!closed) {
+          issues.push({
+            index: start,
+            message: quote === "`" ? "Не закрыт идентификатор." : "Не закрыта строка."
+          });
+          break;
+        }
+        continue;
+      }
+      index += 1;
+    }
+    return { source, scrubbed: scrubbed.join(""), issues, comments };
+  }
+
+  function validateSqlMiniIdeQuery(value, options = {}) {
+    const source = String(value || "");
+    const trimmed = source.trim();
+    if (!trimmed) return { tone: "empty", message: "Введите SQL-запрос.", issues: [] };
+    const lexical = inspectSqlLexicalStructure(source);
+    const issues = [...lexical.issues];
+    const addIssue = (message, index = 0) => {
+      if (!issues.some((item) => item.message === message && item.index === index)) issues.push({ message, index });
+    };
+    const normalized = lexical.scrubbed.trim();
+    const allowWith = options.allowWith !== false;
+    const startPattern = allowWith ? /^(?:SELECT|WITH)\b/iu : /^SELECT\b/iu;
+    if (!startPattern.test(normalized)) {
+      addIssue(allowWith
+        ? "Запрос должен начинаться с SELECT или WITH."
+        : "Запрос должен начинаться с SELECT.", lexical.scrubbed.search(/\S/u));
+    }
+    if (!options.allowComments && lexical.comments.length) {
+      addIssue("Комментарии в этом запросе не разрешены.", lexical.comments[0].index);
+    }
+    const parenthesisStack = [];
+    for (let cursor = 0; cursor < lexical.scrubbed.length; cursor += 1) {
+      if (lexical.scrubbed[cursor] === "(") parenthesisStack.push(cursor);
+      else if (lexical.scrubbed[cursor] === ")") {
+        if (!parenthesisStack.length) addIssue("Лишняя закрывающая скобка.", cursor);
+        else parenthesisStack.pop();
+      }
+    }
+    if (parenthesisStack.length) addIssue("Не закрыта круглая скобка.", parenthesisStack[parenthesisStack.length - 1]);
+
+    const semicolons = [];
+    for (let cursor = 0; cursor < lexical.scrubbed.length; cursor += 1) {
+      if (lexical.scrubbed[cursor] === ";") semicolons.push(cursor);
+    }
+    const lastContentIndex = lexical.scrubbed.search(/\S\s*$/u);
+    const hasAllowedTrailingSemicolon = options.allowTrailingSemicolon !== false
+      && semicolons.length === 1
+      && semicolons[0] === lastContentIndex;
+    if (semicolons.length && !hasAllowedTrailingSemicolon) {
+      addIssue("Разрешён только один SQL-запрос без внутренних точек с запятой.", semicolons[0]);
+    }
+
+    for (const match of lexical.scrubbed.matchAll(/\b[A-Za-z_][A-Za-z0-9_$]*\b/gu)) {
+      const keyword = match[0].toUpperCase();
+      if (ADMIN_SQL_FORBIDDEN_KEYWORDS.has(keyword)) {
+        addIssue(`Команда ${keyword} изменяет данные и здесь не разрешена.`, Number(match.index));
+        break;
+      }
+    }
+    const outfileMatch = /\bINTO\s+(?:OUTFILE|DUMPFILE)\b/iu.exec(lexical.scrubbed);
+    if (outfileMatch) addIssue("Выгрузка SQL-результата в файл не разрешена.", Number(outfileMatch.index));
+
+    const withoutTrailingSemicolon = normalized.replace(/;\s*$/u, "").trim();
+    const danglingClause = /(?:\b(?:SELECT|FROM|WHERE|JOIN|ON|AND|OR|HAVING|LIMIT|OFFSET|AS|WHEN|THEN|ELSE|UNION)\b|\b(?:GROUP|ORDER)\s+BY|[,=<>+\/])\s*$/iu.exec(withoutTrailingSemicolon);
+    if (danglingClause) addIssue(`Конструкция «${danglingClause[0].trim()}» не завершена.`, Math.max(0, lexical.scrubbed.lastIndexOf(danglingClause[0].trim())));
+    const emptySelect = /\bSELECT\s+(?:FROM|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT)\b/iu.exec(withoutTrailingSemicolon);
+    if (emptySelect) addIssue("После SELECT должен быть указан список полей или выражений.", Number(emptySelect.index));
+    const emptyFrom = /\bFROM\s+(?:WHERE|JOIN|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|UNION)\b/iu.exec(withoutTrailingSemicolon);
+    if (emptyFrom) addIssue("После FROM должна быть указана таблица или подзапрос.", Number(emptyFrom.index));
+
+    const requiredParameters = Math.max(0, Number(options.requiredParameters) || 0);
+    if (requiredParameters) {
+      const parameterCount = (lexical.scrubbed.match(/\?/gu) || []).length;
+      if (parameterCount !== requiredParameters) {
+        addIssue(`Требуется параметров ?: ${requiredParameters}; сейчас: ${parameterCount}.`, 0);
+      }
+    }
+    if (issues.length) {
+      const position = getSqlLineAndColumn(source, Math.max(0, issues[0].index));
+      return {
+        tone: "error",
+        message: `${issues[0].message} Строка ${position.line}, столбец ${position.column}.`,
+        issues
+      };
+    }
+    return {
+      tone: "valid",
+      message: "Синтаксис запроса выглядит корректно. Выполнение проверяется кнопкой подключения.",
+      issues: []
+    };
+  }
+
+  function getSqlMiniIdeOptions(editor) {
+    const wrapper = editor?.closest?.("[data-sql-mini-ide]");
+    return {
+      allowWith: wrapper?.dataset.sqlAllowWith !== "false",
+      allowComments: wrapper?.dataset.sqlAllowComments !== "false",
+      allowTrailingSemicolon: wrapper?.dataset.sqlAllowTrailingSemicolon !== "false",
+      requiredParameters: Math.max(0, Number(wrapper?.dataset.sqlRequiredParameters) || 0)
+    };
+  }
+
+  function getSqlSuggestionContext(editor) {
+    const query = serializeCommunicationTemplateEditor(editor);
+    const caret = getCommunicationTemplateEditorCaretOffset(editor);
+    const beforeCaret = query.slice(0, caret);
+    const fragmentMatch = /[A-Za-z_][A-Za-z0-9_$]*$/u.exec(beforeCaret);
+    const prefix = fragmentMatch?.[0] || "";
+    return {
+      query,
+      caret,
+      prefix,
+      replaceFrom: caret - prefix.length,
+      beforeFragment: beforeCaret.slice(0, Math.max(0, caret - prefix.length))
+    };
+  }
+
+  function getSqlMiniIdeSuggestions(editor, force = false) {
+    const context = getSqlSuggestionContext(editor);
+    const prefix = context.prefix.toUpperCase();
+    if (!force && prefix.length < 2) return [];
+    const before = context.beforeFragment.trimEnd().toUpperCase();
+    let preferredGroups = [];
+    if (/\b(?:WHERE|ON|HAVING|AND|OR)\s*$/u.test(before)) preferredGroups = ["condition", "function", "expression"];
+    else if (/\bSELECT\s*$/u.test(before) || /,\s*$/u.test(context.beforeFragment)) preferredGroups = ["function", "expression", "clause"];
+    else if (/\b(?:FROM|JOIN)\s*$/u.test(before)) preferredGroups = ["join", "clause"];
+    const candidates = ADMIN_SQL_SUGGESTIONS
+      .filter((item) => !prefix || item.label.startsWith(prefix) || item.label.includes(` ${prefix}`))
+      .map((item, order) => ({
+        ...item,
+        order,
+        score: (item.label.startsWith(prefix) ? 0 : 20)
+          + (preferredGroups.includes(item.group) ? preferredGroups.indexOf(item.group) : 10)
+      }))
+      .sort((left, right) => left.score - right.score || left.order - right.order)
+      .slice(0, 10);
+    return candidates.map((item) => ({ ...item, context }));
+  }
+
   function getAdditionalDocumentMailboxesForAdmin() {
     const draft = state.adminSettingsDirty ? state.adminSettingsDraft?.documentMailboxes : null;
     const source = Array.isArray(draft) ? draft : state.data.meta.documentMailboxes;
@@ -19745,17 +20057,15 @@ MAX - https://bizvmax.ru/zifra_plus
                 </label>
                 <label class="admin-applications-sql-field">
                   <span>SQL-запрос получения заявок</span>
-                  <input name="applicationsSqlQuery" type="hidden" value="${escapeAttr(applicationsSqlQuery)}" data-admin-sql-query-input>
-                  <div
-                    class="admin-sql-query-editor"
-                    contenteditable="true"
-                    data-admin-sql-query-editor
-                    role="textbox"
-                    aria-label="SQL-запрос получения заявок"
-                    aria-multiline="true"
-                    aria-required="true"
-                    spellcheck="false"
-                  >${renderAdminSqlQuerySyntax(applicationsSqlQuery)}</div>
+                  ${renderSqlMiniIde(applicationsSqlQuery, {
+                    allowWith: false,
+                    allowComments: false,
+                    allowTrailingSemicolon: false,
+                    requiredParameters: 2,
+                    inputAttributes: 'name="applicationsSqlQuery" data-admin-sql-query-input',
+                    editorAttributes: "data-admin-sql-query-editor aria-required=\"true\"",
+                    ariaLabel: "SQL-запрос получения заявок"
+                  })}
                   <small class="sdo-settings-hint">Разрешён один запрос SELECT. Два знака <code>?</code> соответствуют началу и концу периода. Запрос должен возвращать перечисленные в стандартном запросе служебные поля и колонки заявки.</small>
                 </label>
                 ${applicationsMysqlFieldsDisabled ? '<small class="sdo-settings-hint">Параметры подключения заданы переменной окружения сервера; в админке можно изменять SQL-запрос.</small>' : ""}
@@ -30730,6 +31040,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindFinanceDetailsEvents();
     bindStatisticsEvents();
     bindAdvertisingEvents();
+    bindSqlMiniIdeEditors(document);
     bindStudentExpenseEditorEvents();
     bindMoneyInputStepControls(document);
     initializeRecordFormSnapshot(document.getElementById("recordForm"));
@@ -48191,8 +48502,114 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function syncAdminSqlQueryEditor(editor) {
     if (!editor) return;
-    const input = editor.closest("form")?.elements.applicationsSqlQuery;
+    const input = editor.closest("[data-sql-mini-ide]")?.querySelector("[data-sql-query-input]")
+      || editor.closest("form")?.elements.applicationsSqlQuery;
     if (input) input.value = serializeCommunicationTemplateEditor(editor);
+  }
+
+  function updateSqlMiniIdeCaretStatus(editor) {
+    const wrapper = editor?.closest?.("[data-sql-mini-ide]");
+    const status = wrapper?.querySelector("[data-sql-caret-status]");
+    if (!status) return;
+    const query = serializeCommunicationTemplateEditor(editor);
+    const position = getSqlLineAndColumn(query, getCommunicationTemplateEditorCaretOffset(editor));
+    status.textContent = `Строка ${position.line}, столбец ${position.column}`;
+  }
+
+  function updateSqlMiniIdeValidation(editor) {
+    const wrapper = editor?.closest?.("[data-sql-mini-ide]");
+    if (!wrapper) return;
+    const query = serializeCommunicationTemplateEditor(editor);
+    const result = validateSqlMiniIdeQuery(query, getSqlMiniIdeOptions(editor));
+    wrapper.classList.remove("is-valid", "is-error", "is-empty");
+    wrapper.classList.add(`is-${result.tone}`);
+    const validation = wrapper.querySelector("[data-sql-validation-status]");
+    const diagnostic = wrapper.querySelector("[data-sql-diagnostic]");
+    if (validation) {
+      validation.textContent = result.tone === "valid"
+        ? "Синтаксис: корректно"
+        : result.tone === "error" ? "Синтаксис: есть ошибка" : "Запрос не введён";
+    }
+    if (diagnostic) {
+      diagnostic.textContent = result.message;
+      diagnostic.title = result.issues.map((issue) => {
+        const position = getSqlLineAndColumn(query, issue.index);
+        return `${issue.message} Строка ${position.line}, столбец ${position.column}.`;
+      }).join("\n");
+    }
+    updateSqlMiniIdeCaretStatus(editor);
+  }
+
+  function closeSqlMiniIdeSuggestions(editor) {
+    const wrapper = editor?.closest?.("[data-sql-mini-ide]");
+    const panel = wrapper?.querySelector("[data-sql-suggestions]");
+    if (!panel) return;
+    panel.hidden = true;
+    panel.innerHTML = "";
+    wrapper.classList.remove("has-suggestions");
+    editor.dataset.sqlSuggestionIndex = "";
+  }
+
+  function setSqlMiniIdeSuggestionIndex(editor, requestedIndex) {
+    const panel = editor?.closest?.("[data-sql-mini-ide]")?.querySelector("[data-sql-suggestions]");
+    const buttons = Array.from(panel?.querySelectorAll("[data-sql-suggestion]") || []);
+    if (!buttons.length) return;
+    const index = (Number(requestedIndex) + buttons.length) % buttons.length;
+    editor.dataset.sqlSuggestionIndex = String(index);
+    buttons.forEach((button, buttonIndex) => {
+      const active = buttonIndex === index;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+      if (active) button.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function acceptSqlMiniIdeSuggestion(editor, suggestion) {
+    if (!editor || !suggestion) return;
+    const context = getSqlSuggestionContext(editor);
+    const insertion = String(suggestion.insert || suggestion.label || "");
+    const nextValue = `${context.query.slice(0, context.replaceFrom)}${insertion}${context.query.slice(context.caret)}`;
+    const nextCaret = context.replaceFrom + insertion.length + Number(suggestion.cursorOffset || 0);
+    editor.textContent = nextValue;
+    refreshAdminSqlQueryEditor(editor);
+    editor.focus({ preventScroll: true });
+    setCommunicationTemplateEditorCaretOffset(editor, nextCaret);
+    closeSqlMiniIdeSuggestions(editor);
+    editor.dataset.sqlSuppressSuggestions = "true";
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function showSqlMiniIdeSuggestions(editor, force = false) {
+    const wrapper = editor?.closest?.("[data-sql-mini-ide]");
+    const panel = wrapper?.querySelector("[data-sql-suggestions]");
+    if (!panel) return;
+    const suggestions = getSqlMiniIdeSuggestions(editor, force);
+    if (!suggestions.length) {
+      closeSqlMiniIdeSuggestions(editor);
+      return;
+    }
+    panel.innerHTML = suggestions.map((suggestion, index) => `
+      <button
+        class="sql-mini-ide-suggestion ${index === 0 ? "is-active" : ""}"
+        type="button"
+        role="option"
+        aria-selected="${index === 0 ? "true" : "false"}"
+        data-sql-suggestion="${index}"
+      >
+        <span>${escapeHtml(suggestion.label)}</span>
+        <small>${escapeHtml(suggestion.detail)}</small>
+      </button>
+    `).join("");
+    panel.hidden = false;
+    wrapper.classList.add("has-suggestions");
+    editor.dataset.sqlSuggestionIndex = "0";
+    panel.querySelectorAll("[data-sql-suggestion]").forEach((button) => {
+      button.addEventListener("mousedown", (event) => event.preventDefault());
+      button.addEventListener("click", () => acceptSqlMiniIdeSuggestion(
+        editor,
+        suggestions[Number(button.dataset.sqlSuggestion)]
+      ));
+    });
   }
 
   function refreshAdminSqlQueryEditor(editor, preserveCaret = false) {
@@ -48202,12 +48619,12 @@ MAX - https://bizvmax.ru/zifra_plus
     editor.innerHTML = renderAdminSqlQuerySyntax(query);
     syncAdminSqlQueryEditor(editor);
     if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
+    updateSqlMiniIdeValidation(editor);
   }
 
-  function bindAdminSqlQueryEditor(form) {
-    const editor = form?.querySelector("[data-admin-sql-query-editor]");
-    if (!editor || editor.dataset.adminSqlQueryBound === "true") return;
-    editor.dataset.adminSqlQueryBound = "true";
+  function bindSqlMiniIdeEditor(editor) {
+    if (!editor || editor.dataset.sqlMiniIdeBound === "true") return;
+    editor.dataset.sqlMiniIdeBound = "true";
     initializeCommunicationTemplateEditorHistory(editor);
     let highlightTimer = 0;
     const refresh = (preserveCaret = false) => {
@@ -48234,17 +48651,70 @@ MAX - https://bizvmax.ru/zifra_plus
       if (editor.dataset.composing === "true") return;
       window.clearTimeout(highlightTimer);
       highlightTimer = window.setTimeout(() => {
-        if (editor.isConnected && editor.dataset.composing !== "true") refresh(true);
-      }, 120);
+        if (!editor.isConnected || editor.dataset.composing === "true") return;
+        refresh(true);
+        if (editor.dataset.sqlSuppressSuggestions === "true") {
+          editor.dataset.sqlSuppressSuggestions = "";
+          return;
+        }
+        showSqlMiniIdeSuggestions(editor);
+      }, 140);
     });
     editor.addEventListener("keydown", (event) => {
+      const suggestionPanel = editor.closest("[data-sql-mini-ide]")?.querySelector("[data-sql-suggestions]");
+      const suggestionsOpen = Boolean(suggestionPanel && !suggestionPanel.hidden);
+      if ((event.ctrlKey || event.metaKey) && event.code === "Space") {
+        event.preventDefault();
+        showSqlMiniIdeSuggestions(editor, true);
+        return;
+      }
+      if (suggestionsOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+        event.preventDefault();
+        const current = Number(editor.dataset.sqlSuggestionIndex || 0);
+        setSqlMiniIdeSuggestionIndex(editor, current + (event.key === "ArrowDown" ? 1 : -1));
+        return;
+      }
+      if (suggestionsOpen && (event.key === "Enter" || event.key === "Tab")) {
+        const index = Number(editor.dataset.sqlSuggestionIndex || 0);
+        const suggestion = getSqlMiniIdeSuggestions(editor, true)[index];
+        if (suggestion) {
+          event.preventDefault();
+          acceptSqlMiniIdeSuggestion(editor, suggestion);
+          return;
+        }
+      }
+      if (event.key === "Escape" && suggestionsOpen) {
+        event.preventDefault();
+        closeSqlMiniIdeSuggestions(editor);
+        return;
+      }
       if (event.key !== "Tab" || event.ctrlKey || event.metaKey || event.altKey) return;
       event.preventDefault();
       insertPlainTextIntoContentEditable(editor, "  ");
       editor.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    editor.addEventListener("blur", () => refresh());
-    syncAdminSqlQueryEditor(editor);
+    editor.addEventListener("keyup", () => updateSqlMiniIdeCaretStatus(editor));
+    editor.addEventListener("click", () => updateSqlMiniIdeCaretStatus(editor));
+    editor.addEventListener("focus", () => updateSqlMiniIdeCaretStatus(editor));
+    editor.addEventListener("blur", () => {
+      refresh();
+      window.setTimeout(() => closeSqlMiniIdeSuggestions(editor), 120);
+    });
+    const suggestionsButton = editor.closest("[data-sql-mini-ide]")?.querySelector("[data-sql-open-suggestions]");
+    suggestionsButton?.addEventListener("mousedown", (event) => event.preventDefault());
+    suggestionsButton?.addEventListener("click", () => {
+      editor.focus({ preventScroll: true });
+      showSqlMiniIdeSuggestions(editor, true);
+    });
+    refresh();
+  }
+
+  function bindSqlMiniIdeEditors(root = document) {
+    root?.querySelectorAll?.("[data-sql-query-editor]").forEach(bindSqlMiniIdeEditor);
+  }
+
+  function bindAdminSqlQueryEditor(form) {
+    bindSqlMiniIdeEditors(form);
   }
 
   function collectAdminSettingsDraft(form) {

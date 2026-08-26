@@ -7389,6 +7389,223 @@ body.long-press-dragging * {
   box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12);
 }
 
+.sql-mini-ide {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  overflow: visible;
+  border: 1px solid #cbd7d2;
+  border-radius: 9px;
+  background: #fbfcfd;
+  box-shadow: 0 1px 2px rgba(31, 41, 38, 0.04);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.sql-mini-ide:focus-within {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.sql-mini-ide.is-error {
+  border-color: #dc6a63;
+}
+
+.sql-mini-ide.is-error:focus-within {
+  box-shadow: 0 0 0 3px rgba(194, 52, 45, 0.12);
+}
+
+.sql-mini-ide-toolbar,
+.sql-mini-ide-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 9px;
+  color: #53645e;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.sql-mini-ide-toolbar {
+  border-bottom: 1px solid #dce4e0;
+  background: #f2f7f5;
+  border-radius: 8px 8px 0 0;
+}
+
+.sql-mini-ide-language {
+  flex: 0 0 auto;
+  border-radius: 4px;
+  background: #dcefeb;
+  padding: 2px 6px;
+  color: #075f58;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.sql-mini-ide-validation {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sql-mini-ide.is-valid .sql-mini-ide-validation,
+.sql-mini-ide.is-valid .sql-mini-ide-diagnostic {
+  color: #08776d;
+}
+
+.sql-mini-ide.is-error .sql-mini-ide-validation,
+.sql-mini-ide.is-error .sql-mini-ide-diagnostic {
+  color: #b42318;
+}
+
+.sql-mini-ide-position {
+  flex: 0 0 auto;
+  color: #718078;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sql-mini-ide-suggest-button {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 1px solid #b9cec6;
+  border-radius: 5px;
+  background: #fff;
+  padding: 2px 7px;
+  color: #075f58;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sql-mini-ide-suggest-button:hover,
+.sql-mini-ide-suggest-button:focus-visible {
+  border-color: var(--teal);
+  background: #e4f3ef;
+  outline: none;
+}
+
+.sql-mini-ide-editor-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.sql-mini-ide .admin-sql-query-editor {
+  display: block;
+  height: 300px;
+  min-height: 220px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  padding: 10px 12px;
+  box-shadow: none;
+  font-size: 12px;
+  line-height: 1.5;
+  caret-color: #172522;
+}
+
+.sql-mini-ide .admin-sql-query-editor:focus {
+  border: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.sql-mini-ide.is-compact .admin-sql-query-editor {
+  height: 170px;
+  min-height: 130px;
+}
+
+.sql-mini-ide-footer {
+  justify-content: space-between;
+  border-top: 1px solid #dce4e0;
+  border-radius: 0 0 8px 8px;
+  background: #f8faf9;
+}
+
+.sql-mini-ide-diagnostic {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sql-mini-ide-shortcut {
+  flex: 0 0 auto;
+  color: #718078;
+  white-space: nowrap;
+}
+
+.sql-mini-ide-shortcut kbd {
+  border: 1px solid #cbd7d2;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #fff;
+  padding: 0 4px;
+  color: #45544f;
+  font: inherit;
+}
+
+.sql-mini-ide-suggestions {
+  position: absolute;
+  z-index: 120;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  display: grid;
+  max-height: min(210px, calc(100% - 16px));
+  overflow: auto;
+  border: 1px solid #bfcfc8;
+  border-radius: 8px;
+  background: #fff;
+  padding: 4px;
+  box-shadow: 0 12px 30px rgba(31, 41, 38, 0.2);
+}
+
+.sql-mini-ide-suggestions[hidden] {
+  display: none;
+}
+
+.sql-mini-ide-suggestion {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 30px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  padding: 5px 8px;
+  color: #24322f;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sql-mini-ide-suggestion:hover,
+.sql-mini-ide-suggestion.is-active {
+  background: #e4f3ef;
+  color: #075f58;
+}
+
+.sql-mini-ide-suggestion > span {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sql-mini-ide-suggestion > small {
+  overflow: hidden;
+  color: #66766f;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .admin-sql-token.is-keyword {
   color: #0f5fb3;
   font-weight: 700;
@@ -7437,6 +7654,39 @@ body.long-press-dragging * {
   .admin-email-credential-field,
   .admin-mysql-password-field {
     grid-column: auto;
+  }
+
+  .sql-mini-ide-toolbar,
+  .sql-mini-ide-footer {
+    flex-wrap: wrap;
+  }
+
+  .sql-mini-ide-position {
+    margin-left: 0;
+  }
+
+  .sql-mini-ide-suggest-button {
+    margin-left: auto;
+  }
+
+  .sql-mini-ide-shortcut {
+    display: none;
+  }
+
+  .sql-mini-ide .admin-sql-query-editor {
+    height: 230px;
+    min-height: 170px;
+    font-size: 11px;
+  }
+
+  .sql-mini-ide.is-compact .admin-sql-query-editor {
+    height: 180px;
+    min-height: 140px;
+  }
+
+  .sql-mini-ide-suggestion {
+    grid-template-columns: 1fr;
+    gap: 1px;
   }
 }
 
