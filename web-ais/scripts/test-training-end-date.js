@@ -217,7 +217,7 @@ assert.equal(proEducationBulk.expulsionDate, "2026-08-20");
 assert.match(appSource, /compressedTrainingHoursPerWeek[\s\S]*DEFAULT_COMPRESSED_TRAINING_HOURS_PER_WEEK/u);
 assert.match(appSource, /baseTrainingHoursPerWeek[\s\S]*DEFAULT_BASE_TRAINING_HOURS_PER_WEEK/u);
 assert.match(appSource, /Базовая трудоемкость программ, часов в неделю/u);
-assert.match(appSource, /Максимальная трудоемкость программ/u);
+assert.match(appSource, /Максимальная трудоемкость программ, часов в неделю/u);
 assert.match(appSource, /generateExtendedEndDate[\s\S]*generate-extended-training-end-date/u);
 assert.match(appSource, /generate-extended-training-end-date'\]"\)\?\.addEventListener\("click", generateExtendedTrainingEndDate\)/u);
 const contextSource = extractBetween(

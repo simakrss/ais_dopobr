@@ -89,10 +89,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.290",
+    version: "1.7.291",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.291",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Для максимальной трудоемкости программ явно указана размерность «часов в неделю»."
+      ]
+    },
     {
       version: "1.7.290",
       releasedAt: "2026-08-26",
@@ -3855,7 +3862,7 @@ MAX - https://bizvmax.ru/zifra_plus
     },
     {
       key: "compressedTrainingHoursPerWeek",
-      label: "Максимальная трудоемкость программ",
+      label: "Максимальная трудоемкость программ, часов в неделю",
       type: "number",
       min: 1,
       max: 168,
