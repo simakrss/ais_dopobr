@@ -89,10 +89,19 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.308",
+    version: "1.7.309",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.309",
+      releasedAt: "2026-08-27",
+      changes: [
+        "В правом верхнем углу раздела «Настройки» появились общие кнопки «Сохранить» и «Отменить».",
+        "Изменения справочников и связанных расчётов сохраняются единым черновиком; отмена возвращает исходное состояние целиком.",
+        "При выходе с несохранёнными настройками система предлагает сохранить или отменить изменения."
+      ]
+    },
     {
       version: "1.7.308",
       releasedAt: "2026-08-27",
@@ -5501,6 +5510,11 @@ MAX - https://bizvmax.ru/zifra_plus
     adminSettingsDraft: null,
     adminSettingsBaseline: "",
     adminSettingsSaving: false,
+    settingsDraftBaseline: null,
+    settingsDraftDirty: false,
+    settingsEditorDirty: false,
+    settingsDraftSaving: false,
+    settingsDraftAuditEntries: [],
     externalServices: {
       data: null,
       localCapabilities: null,
@@ -5567,6 +5581,8 @@ MAX - https://bizvmax.ru/zifra_plus
   let shiftDragRequirementBound = false;
   let longPressDragRequirementBound = false;
   let adminBeforeUnloadBound = false;
+  let settingsDraftApplyInProgress = false;
+  let settingsDraftMutationGeneration = 0;
   let aisHistoryNavigationBound = false;
   let aisHistoryNavigationRestoring = false;
   let aisHistoryNavigationDiscardApproved = false;
@@ -8658,6 +8674,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function applySharedApplicationState(payload, { renderAfter = false } = {}) {
     if (!payload?.exists || !payload.data) return false;
+    const resetCleanSettingsBaseline = isSettingsDraftSessionActive() && !hasUnsavedSettingsChanges();
     const serverData = ensureDataShape(payload.data);
     sharedStateBaseData = clone(serverData);
     state.data = sharedStatePendingPatch
@@ -8675,6 +8692,7 @@ MAX - https://bizvmax.ru/zifra_plus
     sharedStateDirty = Boolean(sharedStatePendingPatch);
     sharedStateConflict = false;
     sharedStateConflictShown = false;
+    if (resetCleanSettingsBaseline) state.settingsDraftBaseline = JSON.stringify(state.data);
     persistSharedStateRecovery();
     if (renderAfter) {
       Object.keys(state.selected || {}).forEach((key) => { state.selected[key] = []; });
@@ -8757,6 +8775,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function flushSharedApplicationState(options = {}) {
     const saveOptions = options && typeof options === "object" ? options : {};
+    if (isSettingsDraftSessionActive() && !state.settingsDraftSaving) {
+      return Promise.resolve(true);
+    }
     if (sharedStateSavePromise) {
       if (saveOptions.strictRevision === true) {
         return Promise.reject(new Error(
@@ -8827,7 +8848,8 @@ MAX - https://bizvmax.ru/zifra_plus
       sharedStatePendingCount = Math.max(0, Number(payload.pendingCount) || 0);
       sharedStateSyncBlockedReason = String(payload.syncBlockedReason || "");
       sharedStateOffline = Boolean(payload.offline);
-      if (payload.data) {
+      const preserveSettingsDraftData = isSettingsDraftSessionActive() && !state.settingsDraftSaving;
+      if (payload.data && !preserveSettingsDraftData) {
         if (generation === sharedStateChangeGeneration) {
           state.data = ensureDataShape(payload.data);
         } else {
@@ -8896,6 +8918,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function flushSharedApplicationStateThroughGeneration(targetGeneration, options = {}) {
+    if (isSettingsDraftSessionActive() && !state.settingsDraftSaving) return true;
     const target = Math.max(0, Number(targetGeneration) || 0);
     while (
       sharedStateReady
@@ -8957,6 +8980,7 @@ MAX - https://bizvmax.ru/zifra_plus
       || sharedStateSaveRunning
       || sharedStateConflict
       || state.adminSettingsDirty
+      || isSettingsDraftSessionActive()
       || document.visibilityState !== "visible"
     ) return;
     sharedStatePollRunning = true;
@@ -9446,9 +9470,269 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
-  function persist() {
+  function isSettingsDraftSessionActive() {
+    return state.settingsDraftBaseline !== null;
+  }
+
+  function hasUnsavedSettingsChanges() {
+    return Boolean(state.settingsDraftDirty || state.settingsEditorDirty);
+  }
+
+  function updateSettingsDraftActions(root = document) {
+    const dirty = hasUnsavedSettingsChanges();
+    const saving = Boolean(state.settingsDraftSaving);
+    root.querySelectorAll?.("[data-action='save-settings-changes']").forEach((button) => {
+      button.disabled = !dirty || saving;
+      button.classList.toggle("is-unsaved", dirty && !saving);
+      button.textContent = saving ? "Сохранение..." : "Сохранить";
+      button.title = dirty
+        ? "Сохранить все изменения настроек"
+        : "Все изменения настроек сохранены";
+    });
+    root.querySelectorAll?.("[data-action='cancel-settings-changes']").forEach((button) => {
+      button.disabled = !dirty || saving;
+      button.title = dirty
+        ? "Отменить все изменения, внесённые после последнего сохранения"
+        : "Нет изменений для отмены";
+    });
+    root.querySelectorAll?.("[data-settings-draft-status]").forEach((element) => {
+      element.textContent = saving
+        ? "Сохраняем изменения..."
+        : dirty
+          ? "Есть несохранённые изменения"
+          : "Все изменения сохранены";
+      element.classList.toggle("is-unsaved", dirty && !saving);
+    });
+    window.__AIS_HAS_UNSAVED_SETTINGS__ = dirty;
+  }
+
+  function beginSettingsDraftSession() {
+    if (isSettingsDraftSessionActive()) return;
+    window.clearTimeout(sharedStateSaveTimer);
+    sharedStateSaveTimer = 0;
+    state.settingsDraftBaseline = JSON.stringify(state.data);
+    state.settingsDraftDirty = false;
+    state.settingsEditorDirty = false;
+    state.settingsDraftSaving = false;
+    state.settingsDraftAuditEntries = [];
+    window.__AIS_HAS_UNSAVED_SETTINGS__ = false;
+  }
+
+  function endSettingsDraftSession() {
+    state.settingsDraftBaseline = null;
+    state.settingsDraftDirty = false;
+    state.settingsEditorDirty = false;
+    state.settingsDraftSaving = false;
+    state.settingsDraftAuditEntries = [];
+    window.__AIS_HAS_UNSAVED_SETTINGS__ = false;
+    if (sharedStateDirty) scheduleSharedApplicationStateSave(0);
+  }
+
+  function markSettingsDraftDirty() {
+    if (!isSettingsDraftSessionActive() && state.view === "settings") beginSettingsDraftSession();
+    if (!isSettingsDraftSessionActive()) return;
+    state.settingsDraftDirty = true;
+    settingsDraftMutationGeneration += 1;
+    updateSettingsDraftActions();
+  }
+
+  function captureSettingsFormSnapshot(form) {
+    const controls = Array.from(form?.querySelectorAll?.("input, textarea, select, [contenteditable='true']") || [])
+      .filter((control) => !["button", "submit", "reset", "file"].includes(String(control.type || "").toLowerCase()))
+      .map((control, index) => ({
+        index,
+        name: String(control.name || control.getAttribute?.("aria-label") || ""),
+        type: String(control.type || control.tagName || "").toLowerCase(),
+        checked: "checked" in control ? Boolean(control.checked) : undefined,
+        value: control.isContentEditable
+          ? serializeCommunicationTemplateEditor(control)
+          : String(control.value ?? "")
+      }));
+    const studentEventOrder = Array.from(form?.querySelectorAll?.("[data-student-event-setting-row]") || [])
+      .map((row) => String(row.dataset.studentEventSettingKey || ""));
+    const contractEventOrder = Array.from(form?.querySelectorAll?.("[data-contract-event-setting-row]") || [])
+      .map((row) => String(row.dataset.contractEventSettingKey || ""));
+    return JSON.stringify({ controls, studentEventOrder, contractEventOrder });
+  }
+
+  function refreshSettingsEditorDirty(root = document.querySelector(".settings-page-panel")) {
+    if (!root || !isSettingsDraftSessionActive()) return false;
+    state.settingsEditorDirty = Array.from(root.querySelectorAll("form")).some((form) => (
+      form.dataset.settingsDraftBaseline !== captureSettingsFormSnapshot(form)
+    ));
+    updateSettingsDraftActions(root);
+    return state.settingsEditorDirty;
+  }
+
+  function bindSettingsDraftControls() {
+    const root = document.querySelector(".settings-page-panel");
+    if (!root) return;
+    root.querySelectorAll("form").forEach((form) => {
+      form.dataset.settingsDraftBaseline = captureSettingsFormSnapshot(form);
+    });
+    state.settingsEditorDirty = false;
+    const refresh = () => refreshSettingsEditorDirty(root);
+    root.addEventListener("input", refresh);
+    root.addEventListener("change", refresh);
+    root.addEventListener("click", () => window.requestAnimationFrame(refresh));
+    root.addEventListener("dragend", () => window.requestAnimationFrame(refresh));
+    updateSettingsDraftActions(root);
+  }
+
+  function applySettingsEditorDrafts() {
+    const root = document.querySelector(".settings-page-panel");
+    if (!root) return true;
+    const changedForms = Array.from(root.querySelectorAll("form")).filter((form) => (
+      form.dataset.settingsDraftBaseline !== captureSettingsFormSnapshot(form)
+    ));
+    if (!changedForms.length) {
+      state.settingsEditorDirty = false;
+      updateSettingsDraftActions(root);
+      return true;
+    }
+    settingsDraftApplyInProgress = true;
+    let applied = true;
+    try {
+      for (const form of changedForms) {
+        const isDictionaryAdd = form.matches("form[data-action='dict-add']");
+        const dictionaryInput = isDictionaryAdd ? form.querySelector("[data-dictionary-add-input]") : null;
+        if (isDictionaryAdd && !String(dictionaryInput?.value || "").trim()) {
+          form.dataset.settingsDraftBaseline = captureSettingsFormSnapshot(form);
+          continue;
+        }
+        if (!form.checkValidity()) {
+          form.reportValidity();
+          applied = false;
+          break;
+        }
+        const previousGeneration = settingsDraftMutationGeneration;
+        form.requestSubmit();
+        if (settingsDraftMutationGeneration === previousGeneration) {
+          applied = false;
+          break;
+        }
+        form.dataset.settingsDraftBaseline = captureSettingsFormSnapshot(form);
+      }
+    } finally {
+      settingsDraftApplyInProgress = false;
+    }
+    refreshSettingsEditorDirty(root);
+    return applied;
+  }
+
+  async function saveSettingsDraftChanges({ renderAfterSave = true } = {}) {
+    if (state.settingsDraftSaving) return false;
+    beginSettingsDraftSession();
+    if (!applySettingsEditorDrafts()) return false;
+    if (!hasUnsavedSettingsChanges()) {
+      if (renderAfterSave) render();
+      return true;
+    }
+    state.settingsDraftSaving = true;
+    updateSettingsDraftActions();
+    try {
+      persist({ forceSettingsDraft: true });
+      const targetGeneration = sharedStateChangeGeneration;
+      const saved = !sharedStateReady
+        || await flushSharedApplicationStateThroughGeneration(targetGeneration);
+      if (!saved) throw new Error("общая база отклонила изменения");
+      const auditEntries = [...state.settingsDraftAuditEntries];
+      state.settingsDraftBaseline = JSON.stringify(state.data);
+      state.settingsDraftDirty = false;
+      state.settingsEditorDirty = false;
+      state.settingsDraftAuditEntries = [];
+      window.__AIS_HAS_UNSAVED_SETTINGS__ = false;
+      auditEntries.forEach((entry) => { void postAuditEntry(entry); });
+      if (renderAfterSave) render();
+      return true;
+    } catch (error) {
+      state.settingsDraftDirty = true;
+      alert(`Не удалось сохранить настройки: ${error.message}`);
+      return false;
+    } finally {
+      state.settingsDraftSaving = false;
+      updateSettingsDraftActions();
+    }
+  }
+
+  function cancelSettingsDraftChanges({ confirmDiscard = true, keepSession = true, renderAfterCancel = true } = {}) {
+    if (!isSettingsDraftSessionActive()) return true;
+    if (
+      hasUnsavedSettingsChanges()
+      && confirmDiscard
+      && !confirm("Отменить все изменения настроек, внесённые после последнего сохранения?")
+    ) return false;
+    try {
+      state.data = ensureDataShape(JSON.parse(state.settingsDraftBaseline));
+    } catch (error) {
+      alert(`Не удалось отменить изменения настроек: ${error.message}`);
+      return false;
+    }
     registryRowSearchTextCache = new WeakMap();
     programTrainingPlanHoursSummaryCache = { rows: null, values: new WeakMap() };
+    persistStateToLocalStorage(state.data);
+    state.settingsDraftDirty = false;
+    state.settingsEditorDirty = false;
+    state.settingsDraftAuditEntries = [];
+    window.__AIS_HAS_UNSAVED_SETTINGS__ = false;
+    if (keepSession) state.settingsDraftBaseline = JSON.stringify(state.data);
+    else endSettingsDraftSession();
+    if (renderAfterCancel) render();
+    return true;
+  }
+
+  async function saveSettingsBeforeExit(targetView) {
+    if (
+      state.view !== "settings"
+      || !isSettingsDraftSessionActive()
+    ) return true;
+    if (targetView === "settings") return applySettingsEditorDrafts();
+    if (!applySettingsEditorDrafts()) return false;
+    if (!hasUnsavedSettingsChanges()) {
+      endSettingsDraftSession();
+      return true;
+    }
+    if (state.settingsDraftSaving) {
+      alert("Дождитесь завершения сохранения настроек.");
+      return false;
+    }
+    if (confirm(
+      "В настройках есть несохранённые изменения.\n\n"
+      + "Нажмите «ОК», чтобы сохранить их перед выходом.\n"
+      + "Нажмите «Отмена», чтобы выбрать выход без сохранения."
+    )) {
+      const saved = await saveSettingsDraftChanges({ renderAfterSave: false });
+      if (saved) endSettingsDraftSession();
+      return saved;
+    }
+    if (!confirm(
+      "Выйти без сохранения изменений настроек?\n\n"
+      + "Нажмите «ОК», чтобы отменить все изменения и выйти.\n"
+      + "Нажмите «Отмена», чтобы остаться в настройках."
+    )) return false;
+    return cancelSettingsDraftChanges({
+      confirmDiscard: false,
+      keepSession: false,
+      renderAfterCancel: false
+    });
+  }
+
+  async function savePendingSettingsBeforeExit(targetView) {
+    if (!await saveSettingsBeforeExit(targetView)) return false;
+    return saveAdminSettingsBeforeExit(targetView);
+  }
+
+  function persist(options = {}) {
+    registryRowSearchTextCache = new WeakMap();
+    programTrainingPlanHoursSummaryCache = { rows: null, values: new WeakMap() };
+    if (
+      isSettingsDraftSessionActive()
+      && !state.settingsDraftSaving
+      && options.forceSettingsDraft !== true
+    ) {
+      markSettingsDraftDirty();
+      return;
+    }
     persistStateToLocalStorage(state.data);
     sharedStateDirty = true;
     sharedStateChangeGeneration += 1;
@@ -10050,7 +10334,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     aisHistoryNavigationCloseModalRequested = false;
     aisHistoryNavigationDiscardApproved = false;
-    if (!await saveAdminSettingsBeforeExit(targetSnapshot.view)) {
+    if (!await savePendingSettingsBeforeExit(targetSnapshot.view)) {
       restoreCancelledAisHistoryNavigation(currentSnapshot);
       return;
     }
@@ -10111,6 +10395,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function render() {
+    if (settingsDraftApplyInProgress) {
+      return;
+    }
     if (mainRegistrySearchTimer) {
       window.clearTimeout(mainRegistrySearchTimer);
       mainRegistrySearchTimer = 0;
@@ -17609,6 +17896,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderSettings() {
+    beginSettingsDraftSession();
     const dictionaries = state.data.dictionaries;
     const dictionaryItems = [
       ...Object.keys(dictionaries)
@@ -17650,12 +17938,36 @@ MAX - https://bizvmax.ru/zifra_plus
     const isStudentEventSettings = selectedKey === "studentEventSettings";
     const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isStudentEventSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
+    const hasDraftChanges = hasUnsavedSettingsChanges();
     return `
       <section class="panel settings-page-panel">
-        <div class="section-head">
+        <div class="section-head settings-page-head">
           <div>
             <p class="eyebrow">Настройки</p>
             <h2>Настройки системы</h2>
+          </div>
+          <div class="settings-page-actions">
+            <span class="settings-draft-status ${hasDraftChanges ? "is-unsaved" : ""}" data-settings-draft-status role="status" aria-live="polite">
+              ${state.settingsDraftSaving
+                ? "Сохраняем изменения..."
+                : hasDraftChanges
+                  ? "Есть несохранённые изменения"
+                  : "Все изменения сохранены"}
+            </span>
+            <button
+              class="ghost-button settings-cancel-all-button"
+              data-action="cancel-settings-changes"
+              type="button"
+              title="${hasDraftChanges ? "Отменить все изменения, внесённые после последнего сохранения" : "Нет изменений для отмены"}"
+              ${hasDraftChanges && !state.settingsDraftSaving ? "" : "disabled"}
+            >Отменить</button>
+            <button
+              class="primary-button settings-save-all-button ${hasDraftChanges && !state.settingsDraftSaving ? "is-unsaved" : ""}"
+              data-action="save-settings-changes"
+              type="button"
+              title="${hasDraftChanges ? "Сохранить все изменения настроек" : "Все изменения настроек сохранены"}"
+              ${hasDraftChanges && !state.settingsDraftSaving ? "" : "disabled"}
+            >${state.settingsDraftSaving ? "Сохранение..." : "Сохранить"}</button>
           </div>
         </div>
         <div class="dictionary-browser">
@@ -17890,6 +18202,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function selectDictionary(dict, { focus = true, reveal = false } = {}) {
     if (!dict) return;
+    if (!applySettingsEditorDrafts()) return;
     const currentList = document.querySelector(".dictionary-list");
     const listScrollTop = currentList?.scrollTop || 0;
     const scrollingElement = document.scrollingElement;
@@ -18038,7 +18351,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <p class="student-event-settings-hint">Порядок и применимость событий синхронизируются с ключом <code>События</code> диапазона <code>НастройкиМакросов</code> книги АИС Допобразование.xlsb.</p>
             <div class="student-event-settings-actions">
               <button class="ghost-button" data-action="enable-all-student-event-programs" type="button">Включить для всех</button>
-              <button class="primary-button" type="submit">Сохранить настройки</button>
+              <button class="ghost-button settings-apply-button" type="submit" title="Применить изменения к черновику настроек">Применить</button>
             </div>
           </form>
         </section>
@@ -18057,7 +18370,7 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
             <p class="student-event-settings-hint">Порядок событий синхронизируется с ключом <code>СобытияКонтрагент</code> диапазона <code>НастройкиМакросов</code> книги АИС Допобразование.xlsb.</p>
             <div class="student-event-settings-actions">
-              <button class="primary-button" type="submit">Сохранить настройки</button>
+              <button class="ghost-button settings-apply-button" type="submit" title="Применить изменения к черновику настроек">Применить</button>
             </div>
           </form>
         </section>
@@ -18113,7 +18426,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <p class="sdo-settings-hint">Здесь настраиваются адреса СДО, тема письма с данными доступа, а также базовая и максимальная трудоемкость программ в часах в неделю.</p>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-sdo-settings" type="button">Восстановить исходные</button>
-          <button class="primary-button" type="submit">Сохранить настройки</button>
+          <button class="ghost-button settings-apply-button" type="submit" title="Применить изменения к черновику настроек">Применить</button>
         </div>
       </form>
     `;
@@ -18227,7 +18540,7 @@ MAX - https://bizvmax.ru/zifra_plus
         </section>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-payment-settings" type="button">Восстановить исходные</button>
-          <button class="primary-button" type="submit">Сохранить настройки</button>
+          <button class="ghost-button settings-apply-button" type="submit" title="Применить изменения к черновику настроек">Применить</button>
         </div>
       </form>
     `;
@@ -18677,7 +18990,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <p class="sdo-settings-hint">Путь задается относительно папки системы на Яндекс-Диске. Индивидуальный путь из карточки слушателя имеет приоритет.</p>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-document-path-settings" type="button">Восстановить исходные</button>
-          <button class="primary-button" type="submit">Сохранить настройки</button>
+          <button class="ghost-button settings-apply-button" type="submit" title="Применить изменения к черновику настроек">Применить</button>
         </div>
       </form>
     `;
@@ -18702,7 +19015,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <p class="sdo-settings-hint">Сокращение используется в регистрационном номере документа об образовании, например <code>5/26-ПК</code>.</p>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-education-registration-type-codes" type="button">Восстановить исходные</button>
-          <button class="primary-button" type="submit">Сохранить настройки</button>
+          <button class="ghost-button settings-apply-button" type="submit" title="Применить изменения к черновику настроек">Применить</button>
         </div>
       </form>
     `;
@@ -18767,7 +19080,7 @@ MAX - https://bizvmax.ru/zifra_plus
         </section>
         <div class="attestation-settings-actions">
           <button class="ghost-button" data-action="reset-final-attestation-settings" type="button">Восстановить исходные</button>
-          <button class="primary-button" type="submit">Сохранить настройки</button>
+          <button class="ghost-button settings-apply-button" type="submit" title="Применить изменения к черновику настроек">Применить</button>
         </div>
       </form>
     `;
@@ -18814,7 +19127,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           <div class="communication-template-actions">
             <button class="ghost-button" data-action="reset-communication-templates" data-template-audience="${escapeAttr(audience)}" type="button">Восстановить исходные</button>
-            <button class="primary-button" type="submit">Сохранить шаблоны ${audienceLabel}</button>
+            <button class="ghost-button settings-apply-button" type="submit" title="Применить шаблоны к черновику настроек">Применить шаблоны ${audienceLabel}</button>
           </div>
         </form>
       </section>
@@ -18841,7 +19154,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <p class="sdo-settings-hint">Для документов со статусом «Не выгружено» строка выделяется жёлтым, когда до окончания норматива остаётся менее 20 дней, и красным — менее 10 дней.</p>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-issued-document-settings" type="button">Восстановить исходные</button>
-          <button class="primary-button" type="submit">Сохранить настройки</button>
+          <button class="ghost-button settings-apply-button" type="submit" title="Применить изменения к черновику настроек">Применить</button>
         </div>
       </form>
     `;
@@ -18935,7 +19248,7 @@ MAX - https://bizvmax.ru/zifra_plus
           `).join("")}
           <div class="data-formula-actions">
             <button class="ghost-button" data-action="reset-data-formulas" type="button">Восстановить исходные</button>
-            <button class="primary-button" type="submit">Сохранить формулы</button>
+            <button class="ghost-button settings-apply-button" type="submit" title="Применить формулы к черновику настроек">Применить формулы</button>
           </div>
         </div>
       </form>
@@ -22611,7 +22924,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function logoutCurrentUser() {
     if (!confirm("Выйти из системы?")) return;
-    if (!await saveAdminSettingsBeforeExit("logout")) return;
+    if (!await savePendingSettingsBeforeExit("logout")) return;
     try {
       await authRequest("api/auth/logout", { method: "POST", body: "{}" });
     } catch (error) {
@@ -32568,6 +32881,7 @@ MAX - https://bizvmax.ru/zifra_plus
     initializeRecordFormSnapshot(document.getElementById("employeeExpenseEditorForm"));
 
     document.querySelector("[data-action='open-profile']")?.addEventListener("click", () => {
+      if (state.view === "settings" && !applySettingsEditorDrafts()) return;
       state.profileOpen = true;
       render();
     });
@@ -32741,7 +33055,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", async () => {
         if (button.dataset.wasDragged === "true" || Date.now() - lastNavItemDragEndedAt < 150) return;
         if (!canAccessView(button.dataset.view)) return;
-        if (!await saveAdminSettingsBeforeExit(button.dataset.view)) return;
+        if (!await savePendingSettingsBeforeExit(button.dataset.view)) return;
         state.view = button.dataset.view;
         state.search = "";
         state.statusFilter = state.view === "students"
@@ -32772,7 +33086,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-view-shortcut]").forEach((button) => {
       button.addEventListener("click", async () => {
         if (!canAccessView(button.dataset.viewShortcut)) return;
-        if (!await saveAdminSettingsBeforeExit(button.dataset.viewShortcut)) return;
+        if (!await savePendingSettingsBeforeExit(button.dataset.viewShortcut)) return;
         state.view = button.dataset.viewShortcut;
         state.search = "";
         state.statusFilter = state.view === "students"
@@ -33369,6 +33683,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     document.getElementById("dictionarySearch")?.addEventListener("input", (event) => {
+      if (!applySettingsEditorDrafts()) return;
       const cursor = event.target.selectionStart;
       state.dictionarySearch = event.target.value;
       render();
@@ -33380,6 +33695,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.getElementById("dictionarySearch")?.addEventListener("keydown", focusDictionaryListFromSearch);
     document.querySelector("[data-action='clear-dictionary-search']")?.addEventListener("click", () => {
+      if (!applySettingsEditorDrafts()) return;
       state.dictionarySearch = "";
       render();
       document.getElementById("dictionarySearch")?.focus({ preventScroll: true });
@@ -33389,6 +33705,12 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", () => {
         selectDictionary(button.dataset.dict, { focus: true });
       });
+    });
+    document.querySelector("[data-action='save-settings-changes']")?.addEventListener("click", () => {
+      void saveSettingsDraftChanges();
+    });
+    document.querySelector("[data-action='cancel-settings-changes']")?.addEventListener("click", () => {
+      cancelSettingsDraftChanges();
     });
     document.querySelector(".dictionary-list")?.addEventListener("keydown", handleDictionaryListKeydown);
 
@@ -34116,6 +34438,7 @@ MAX - https://bizvmax.ru/zifra_plus
     enhanceDatePlaceholders();
     enhanceCopyableFields();
     enhanceSettingsLinkedDropdowns();
+    bindSettingsDraftControls();
   }
 
   function enhanceDatePlaceholders() {
@@ -48897,6 +49220,7 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     }
     state.data.dictionaries.finalAttestationSettings = settings;
+    markSettingsDraftDirty();
     render();
   }
 
@@ -48905,12 +49229,14 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.dictionaries.finalAttestationSettings = settings.filter((item) => (
       item.kind !== kind || item.id !== id
     ));
+    markSettingsDraftDirty();
     render();
   }
 
   function sortCommunicationTemplateFields(order = "asc") {
     collectCommunicationTemplateFormDraft();
     state.communicationTemplateFieldSort = order === "desc" ? "desc" : "asc";
+    markSettingsDraftDirty();
     render();
   }
 
@@ -50529,7 +50855,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function bindAdminSettingsBeforeUnload() {
     if (adminBeforeUnloadBound) return;
     window.addEventListener("beforeunload", (event) => {
-      if (!state.adminSettingsDirty) return;
+      if (!state.adminSettingsDirty && !hasUnsavedSettingsChanges()) return;
       event.preventDefault();
       event.returnValue = "";
     });
@@ -54336,7 +54662,13 @@ MAX - https://bizvmax.ru/zifra_plus
       ...entry
     });
     state.data.collections.audit = audit.slice(-200);
-    if (context.deferPost !== true) void postAuditEntry(entry);
+    if (context.deferPost !== true) {
+      if (isSettingsDraftSessionActive() && !state.settingsDraftSaving) {
+        state.settingsDraftAuditEntries.push(entry);
+      } else {
+        void postAuditEntry(entry);
+      }
+    }
     return entry;
   }
 

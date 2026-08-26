@@ -4866,6 +4866,76 @@ body.long-press-dragging * {
   height: max(420px, calc(100vh - 230px));
 }
 
+.settings-page-head {
+  align-items: flex-start;
+}
+
+.settings-page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.settings-draft-status {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.settings-draft-status.is-unsaved {
+  color: #a65300;
+  font-weight: 700;
+}
+
+.settings-save-all-button,
+.settings-cancel-all-button {
+  min-width: 94px;
+}
+
+.settings-save-all-button.is-unsaved {
+  background: #d97706;
+  border-color: #b45309;
+  color: #fff;
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.2), 0 7px 16px rgba(180, 83, 9, 0.18);
+  animation: admin-save-reminder 1.6s ease-in-out infinite;
+}
+
+.settings-save-all-button.is-unsaved:hover {
+  background: #b45309;
+  border-color: #92400e;
+}
+
+.settings-apply-button {
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .settings-page-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-page-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .settings-draft-status {
+    margin-right: auto;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .settings-save-all-button,
+  .settings-cancel-all-button {
+    min-width: 84px;
+  }
+}
+
 @media (min-width: 1121px) {
   .settings-page-panel {
     height: calc(100dvh - 86px);
@@ -11660,7 +11730,8 @@ body.card-window-moving {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .admin-save-connection-button.is-unsaved {
+  .admin-save-connection-button.is-unsaved,
+  .settings-save-all-button.is-unsaved {
     animation: none;
   }
 }
