@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.277",
+    version: "1.7.278",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.278",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Кнопка истории операций с базой заменена компактной иконкой без текстовой подписи; полное назначение сохранено во всплывающей подсказке."
+      ]
+    },
     {
       version: "1.7.277",
       releasedAt: "2026-08-26",
@@ -19496,9 +19503,12 @@ MAX - https://bizvmax.ru/zifra_plus
                     <small>Импорт, синхронизация и экспорт файла XLSB, а также размещение документов системы.</small>
                   </div>
                   <div class="sdo-settings-actions admin-database-actions">
-                    <button class="ghost-button" data-action="open-student-database-operation-history" type="button" title="${escapeMultilineAttr("История операций с базой\n\nПоказывает загрузки, экспорты и синхронизации с результатами, пользователями и подробностями.")}">
-                      <span aria-hidden="true">↺</span>
-                      <span>История операций</span>
+                    <button class="icon-button" data-action="open-student-database-operation-history" type="button" aria-label="История операций с базой" title="${escapeMultilineAttr("История операций с базой\n\nПоказывает загрузки, экспорты и синхронизации с результатами, пользователями и подробностями.")}">
+                      <svg class="student-database-history-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M3 3v6h6"></path>
+                        <path d="M4.4 9a8.5 8.5 0 1 1-.4 5"></path>
+                        <path d="M12 7v5l3 2"></path>
+                      </svg>
                     </button>
                     <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" aria-describedby="admin-database-replace-warning" title="${escapeMultilineAttr(getStudentDatabaseImportTooltip())}" ${state.databaseImport.running ? "disabled" : ""}>
                       <span data-import-button-label>${state.databaseImport.running ? "Импорт..." : "Загрузить из базы"}</span>

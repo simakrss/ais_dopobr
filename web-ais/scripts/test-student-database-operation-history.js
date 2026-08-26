@@ -92,6 +92,8 @@ assert.equal(limitedHistory[0].id, "operation-119");
 assert.match(appSource, /studentDatabaseOperationHistory\s*=\s*normalizeStudentDatabaseOperationHistory/u);
 assert.match(appSource, /appendStudentDatabaseOperationHistory\(normalizedResult\)/u);
 assert.match(appSource, /data-action="open-student-database-operation-history"/u);
+assert.match(appSource, /class="icon-button" data-action="open-student-database-operation-history"/u);
+assert.match(appSource, /class="student-database-history-icon"/u);
 assert.match(appSource, /История операций/u);
 assert.match(appSource, /filter-student-database-operation-history/u);
 assert.match(appSource, /exportStudentDatabaseOperationHistory/u);

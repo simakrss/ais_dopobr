@@ -3709,7 +3709,8 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
 
 .csv-icon,
 .trash-icon,
-.student-folder-icon {
+.student-folder-icon,
+.student-database-history-icon {
   width: 18px;
   height: 18px;
   display: block;
