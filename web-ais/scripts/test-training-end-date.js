@@ -45,6 +45,8 @@ const programs = {
 
 const context = {
   DEFAULT_TRAINING_EXTENSION_DAYS: 14,
+  DEFAULT_BASE_TRAINING_HOURS_PER_WEEK: 40,
+  getBaseTrainingHoursPerWeek: () => 40,
   parseOrdersSdoDate: parseIsoDate,
   formatOrdersSdoDate: formatIsoDate,
   normalizeEducationProgramType(value) {
@@ -89,6 +91,7 @@ assert.equal(endDate("2026-08-03", { duration: "", hours: 1 }), "2026-08-10");
 assert.equal(endDate("2026-08-03", { hours: 40 }), "2026-08-10");
 assert.equal(endDate("2026-08-03", { hours: 40.1 }), "2026-08-17");
 assert.equal(endDate("2026-08-03", { hours: 80 }), "2026-08-17");
+assert.equal(endDate("2026-08-03", { hours: 60, hoursPerWeek: 30 }), "2026-08-17");
 assert.equal(endDate("2026-08-09", { duration: "2 нед." }), "2026-08-24");
 assert.equal(endDate("2026-08-08", { duration: "2 нед." }), "2026-08-22");
 assert.equal(endDate("2026-08-09", { hours: 1 }), "2026-08-17");
@@ -212,6 +215,9 @@ assert.equal(proEducationBulk.diplomaIssueDate, "2026-08-20");
 assert.equal(proEducationBulk.expulsionDate, "2026-08-20");
 
 assert.match(appSource, /compressedTrainingHoursPerWeek[\s\S]*DEFAULT_COMPRESSED_TRAINING_HOURS_PER_WEEK/u);
+assert.match(appSource, /baseTrainingHoursPerWeek[\s\S]*DEFAULT_BASE_TRAINING_HOURS_PER_WEEK/u);
+assert.match(appSource, /Базовая трудоемкость программ, часов в неделю/u);
+assert.match(appSource, /Максимальная трудоемкость программ/u);
 assert.match(appSource, /generateExtendedEndDate[\s\S]*generate-extended-training-end-date/u);
 assert.match(appSource, /generate-extended-training-end-date'\]"\)\?\.addEventListener\("click", generateExtendedTrainingEndDate\)/u);
 const contextSource = extractBetween(
@@ -224,12 +230,12 @@ const manualGenerateSource = extractBetween(
   "  function generateTrainingEndDate",
   "  function autoFillOrdersSdo"
 );
-assert.match(manualGenerateSource, /getTrainingEndDate\(startDate,\s*\{\s*duration:\s*context\.duration,\s*hours:\s*context\.hours\s*\}\)/u);
+assert.match(manualGenerateSource, /getTrainingEndDate\(startDate,\s*\{\s*duration:\s*context\.duration,\s*hours:\s*context\.hours,\s*hoursPerWeek:\s*getBaseTrainingHoursPerWeek\(\)\s*\}\)/u);
 const fullAutofillSource = extractBetween(
   "  function autoFillOrdersSdo",
   "  function evaluateDataFormula"
 );
-assert.match(fullAutofillSource, /getTrainingEndDate\(baseDateValue,\s*\{\s*duration:\s*context\.duration,\s*hours:\s*context\.hours\s*\}\)/u);
+assert.match(fullAutofillSource, /getTrainingEndDate\(baseDateValue,\s*\{\s*duration:\s*context\.duration,\s*hours:\s*context\.hours,\s*hoursPerWeek:\s*getBaseTrainingHoursPerWeek\(\)\s*\}\)/u);
 const extendedGenerateSource = extractBetween(
   "  function generateExtendedTrainingEndDate",
   "  function autoFillOrdersSdo"
@@ -244,5 +250,6 @@ const bulkSource = extractBetween(
   "  async function persistStudentBulkChanges"
 );
 assert.doesNotMatch(bulkSource, /record\.endDate\s*=\s*(?:baseDate|issueDate)/u);
+assert.match(bulkSource, /hoursPerWeek:\s*getBaseTrainingHoursPerWeek\(\)/u);
 
 console.log("Training end date tests passed.");

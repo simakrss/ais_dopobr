@@ -13,6 +13,7 @@
   const DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE = "Europe/Moscow";
   const DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY = "daily";
   const DEFAULT_TRAINING_EXTENSION_DAYS = 14;
+  const DEFAULT_BASE_TRAINING_HOURS_PER_WEEK = 40;
   const DEFAULT_COMPRESSED_TRAINING_HOURS_PER_WEEK = 54;
   const TRAINING_END_NOTIFICATION_FREQUENCY_OPTIONS = Object.freeze([
     { value: "daily", label: "Ежедневно" },
@@ -88,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.285",
+    version: "1.7.286",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.286",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Базовая трудоёмкость программ 40 часов в неделю вынесена в «Настройки СДО» рядом с максимальной трудоёмкостью.",
+        "Ручные, автоматические и групповые расчёты даты окончания используют сохранённую базовую трудоёмкость."
+      ]
+    },
     {
       version: "1.7.285",
       releasedAt: "2026-08-26",
@@ -3793,8 +3802,17 @@ MAX - https://bizvmax.ru/zifra_plus
       value: "Доступ к порталу дистанционного обучения Цифровизация Плюс"
     },
     {
+      key: "baseTrainingHoursPerWeek",
+      label: "Базовая трудоемкость программ, часов в неделю",
+      type: "number",
+      min: 1,
+      max: 168,
+      step: 1,
+      value: String(DEFAULT_BASE_TRAINING_HOURS_PER_WEEK)
+    },
+    {
       key: "compressedTrainingHoursPerWeek",
-      label: "Максимальная недельная нагрузка при сокращении срока, ч",
+      label: "Максимальная трудоемкость программ",
       type: "number",
       min: 1,
       max: 168,
@@ -6028,6 +6046,13 @@ MAX - https://bizvmax.ru/zifra_plus
     return Number.isFinite(value) && value > 0
       ? value
       : DEFAULT_COMPRESSED_TRAINING_HOURS_PER_WEEK;
+  }
+
+  function getBaseTrainingHoursPerWeek() {
+    const value = Number(String(getSdoSettingValue("baseTrainingHoursPerWeek")).replace(",", "."));
+    return Number.isFinite(value) && value > 0
+      ? value
+      : DEFAULT_BASE_TRAINING_HOURS_PER_WEEK;
   }
 
   function normalizeDocumentPathSettings(values) {
@@ -17155,7 +17180,7 @@ MAX - https://bizvmax.ru/zifra_plus
             </label>
           `).join("")}
         </div>
-        <p class="sdo-settings-hint">Здесь настраиваются адреса СДО, тема письма с данными доступа и максимальная недельная нагрузка для сокращения срока обучения.</p>
+        <p class="sdo-settings-hint">Здесь настраиваются адреса СДО, тема письма с данными доступа, а также базовая и максимальная трудоемкость программ в часах в неделю.</p>
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-sdo-settings" type="button">Восстановить исходные</button>
           <button class="primary-button" type="submit">Сохранить настройки</button>
@@ -24949,7 +24974,7 @@ MAX - https://bizvmax.ru/zifra_plus
         generateEnrollmentOrderNo: ["generate-enrollment-order-number", "Сформировать номер приказа о зачислении"],
         generateExpulsionOrderNo: ["generate-expulsion-order-number", "Сформировать номер приказа об отчислении"],
         generateGroupNo: ["generate-group-number", "Сформировать номер группы"],
-        generateEndDate: ["generate-training-end-date", "Рассчитать по сроку программы; если срок не указан — по 40 часам в неделю"],
+        generateEndDate: ["generate-training-end-date", "Рассчитать по сроку программы; если срок не указан — по базовой трудоемкости из настроек"],
         generateExtendedEndDate: ["generate-extended-training-end-date", "Продлить на две недели; с Shift — максимально сократить срок по недельной нагрузке из настроек"]
       };
       const [action, title] = actionMap[tool];
@@ -25209,7 +25234,7 @@ MAX - https://bizvmax.ru/zifra_plus
       result = addTrainingProgramDuration(date, parseTrainingProgramDuration(durationText));
     } else {
       const numericHours = Number(String(options.hours ?? "").replace(",", "."));
-      const weeklyLimit = Number(options.hoursPerWeek ?? 40);
+      const weeklyLimit = Number(options.hoursPerWeek ?? DEFAULT_BASE_TRAINING_HOURS_PER_WEEK);
       if (!Number.isFinite(numericHours) || numericHours <= 0
         || !Number.isFinite(weeklyLimit) || weeklyLimit <= 0) return null;
       const fullWeeks = Math.ceil(numericHours / weeklyLimit);
@@ -25431,7 +25456,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const endDate = getTrainingEndDate(startDate, {
       duration: context.duration,
-      hours: context.hours
+      hours: context.hours,
+      hoursPerWeek: getBaseTrainingHoursPerWeek()
     });
     if (!endDate) return;
     setOrdersSdoFieldValue(context.form, "endDate", formatOrdersSdoDate(endDate));
@@ -25506,7 +25532,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
     const endDate = getTrainingEndDate(baseDateValue, {
       duration: context.duration,
-      hours: context.hours
+      hours: context.hours,
+      hoursPerWeek: getBaseTrainingHoursPerWeek()
     });
     const contract = getGeneratedNumberFromDataFormula("contractNumber", baseDate, context.form.dataset.id);
     const enrollmentOrder = getGeneratedNumberFromDataFormula("enrollmentOrderNumber", baseDate, context.form.dataset.id);
@@ -43913,6 +43940,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const endDate = getTrainingEndDate(record.startDate, {
         duration: program?.duration,
         hours: getStudentProgramHours(record),
+        hoursPerWeek: getBaseTrainingHoursPerWeek(),
         programType,
         sameDayForPro: true
       });
