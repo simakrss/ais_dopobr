@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.289",
+    version: "1.7.290",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.290",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Регистрационные номера документов об образовании ведутся отдельно для каждого вида документа и года.",
+        "Первая часть номера равна количеству ранее выданных документов этого вида за год плюс один."
+      ]
+    },
     {
       version: "1.7.289",
       releasedAt: "2026-08-26",
@@ -25644,16 +25652,15 @@ MAX - https://bizvmax.ru/zifra_plus
       formula.template,
       date,
       "ПорядковыйНомерЗаГод",
-      context,
-      new Set(["СокращениеТипаПрограммы"])
+      context
     );
     if (!pattern) return 1;
-    const sequences = getDataFormulaTargetRecords(formula, currentId)
+    const issuedDocumentNumbers = getDataFormulaTargetRecords(formula, currentId)
       .map((record) => pattern.exec(String(record[formula.targetField] || "").trim()))
       .filter(Boolean)
       .map((match) => Number(match[1]))
       .filter((number) => Number.isFinite(number) && number > 0);
-    return (sequences.length ? Math.max(...sequences) : 0) + 1;
+    return issuedDocumentNumbers.length + 1;
   }
 
   function buildDataFormulaSequencePattern(template, date, sequenceTokenName, context = {}, wildcardTokenNames = new Set()) {
