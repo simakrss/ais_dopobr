@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.297",
+    version: "1.7.298",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.298",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Поиск в настройках охватывает названия, значения и содержимое всех внутренних вкладок, включая связанные шаблоны сообщений.",
+        "Совпадения выделяются жёлтым, а внутренняя вкладка с найденным значением открывается автоматически."
+      ]
+    },
     {
       version: "1.7.297",
       releasedAt: "2026-08-26",
@@ -9793,6 +9801,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ${renderDatabaseExportIndicator()}
     `;
     bindEvents();
+    applyDictionarySearchHighlights();
     scheduleMainRegistryTableViewportFit();
     window.clearTimeout(mainRegistryViewportFitTimer);
     mainRegistryViewportFitTimer = window.setTimeout(scheduleMainRegistryTableViewportFit, 180);
@@ -17096,6 +17105,103 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  const dictionarySearchStaticContent = Object.freeze({
+    sdoSettings: [
+      "Адреса СДО",
+      "Тема письма с данными доступа",
+      "Базовая трудоемкость программ",
+      "Максимальная трудоемкость программ"
+    ],
+    paymentSettings: [
+      "Ставки",
+      "Назначение",
+      "Агенты",
+      "Константы оплаты",
+      "Правила автоматического назначения оплат",
+      "Расчёт агентского вознаграждения"
+    ],
+    documentPathSettings: ["Папки документов", "Доступные маркеры", "Путь сохранения документов"],
+    educationRegistrationTypeCodes: ["Тип программы", "Сокращение в регистрационном номере"],
+    finalAttestationSettings: ["Категории оценок", "Шкала перевода процентов", "Оценка ИА"],
+    issuedDocumentSettings: ["Норматив выгрузки", "Папка выгрузки", "ФРДО"],
+    communicationTemplates: [
+      "Слушатели",
+      "Сотрудники",
+      "Доступные поля",
+      "Шаблоны сообщений",
+      "Краткое описание"
+    ],
+    dataFormulas: ["Блоки формулы", "Конструктор формул", "Дата", "Пример результата"]
+  });
+
+  function collectDictionarySearchValues(value, output = [], visited = new WeakSet()) {
+    if (value === null || value === undefined) return output;
+    if (["string", "number", "boolean", "bigint"].includes(typeof value)) {
+      output.push(String(value));
+      return output;
+    }
+    if (typeof value !== "object" || visited.has(value)) return output;
+    visited.add(value);
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectDictionarySearchValues(item, output, visited));
+      return output;
+    }
+    Object.values(value).forEach((item) => collectDictionarySearchValues(item, output, visited));
+    return output;
+  }
+
+  function normalizeDictionarySearchText(value) {
+    return String(value ?? "")
+      .toLocaleLowerCase("ru-RU")
+      .replace(/\s+/gu, " ")
+      .trim();
+  }
+
+  function getDictionarySearchTerms(value) {
+    return Array.from(new Set(
+      normalizeDictionarySearchText(value)
+        .split(" ")
+        .map((term) => term.trim())
+        .filter(Boolean)
+    ));
+  }
+
+  function getDictionarySearchSupplementValues(key) {
+    const dictionaries = state.data?.dictionaries || {};
+    const supplements = [dictionarySearchStaticContent[key] || []];
+    if (key === "communicationTemplates") {
+      supplements.push(
+        dictionaries.communicationTemplateDescriptions,
+        dictionaries.employeeCommunicationTemplates,
+        dictionaries.employeeCommunicationTemplateDescriptions,
+        dictionaries.communicationTemplateFieldOverrides,
+        dictionaries.communicationTemplateCustomFields,
+        studentCommunicationMessages,
+        employeeCommunicationMessages,
+        getCommunicationTemplateFieldDefinitions()
+      );
+    } else if (key === "dataFormulas") {
+      supplements.push(dataFormulaTokenDefinitions);
+    } else if (key === "documentPathSettings") {
+      supplements.push(documentPathMarkerDefinitions);
+    }
+    return supplements;
+  }
+
+  function getDictionarySearchText(item) {
+    return normalizeDictionarySearchText(collectDictionarySearchValues([
+      item?.title,
+      item?.values,
+      getDictionarySearchSupplementValues(item?.key)
+    ]).join("\n"));
+  }
+
+  function dictionaryMatchesSearch(item, terms) {
+    if (!terms.length) return true;
+    const content = getDictionarySearchText(item);
+    return terms.every((term) => content.includes(term));
+  }
+
   function renderSettings() {
     const dictionaries = state.data.dictionaries;
     const dictionaryItems = Object.keys(dictionaries)
@@ -17111,16 +17217,8 @@ MAX - https://bizvmax.ru/zifra_plus
       ].includes(key))
       .map((key) => ({ key, title: dictionaryTitle(key), values: dictionaries[key] || [] }))
       .sort((a, b) => a.title.localeCompare(b.title, "ru"));
-    const query = state.dictionarySearch.trim().toLowerCase();
-    const visibleItems = dictionaryItems.filter((item) => (
-      !query ||
-      item.title.toLowerCase().includes(query) ||
-      item.values.some((value) => (
-        typeof value === "object"
-          ? `${value?.label || ""} ${value?.name || ""} ${value?.formula || ""} ${value?.template || ""} ${value?.value || ""} ${value?.programType || ""} ${value?.grade || ""} ${value?.code || ""}`.toLowerCase().includes(query)
-          : String(value || "").toLowerCase().includes(query)
-      ))
-    ));
+    const searchTerms = getDictionarySearchTerms(state.dictionarySearch);
+    const visibleItems = dictionaryItems.filter((item) => dictionaryMatchesSearch(item, searchTerms));
     const selectedKey = visibleItems.some((item) => item.key === state.selectedDictionary)
       ? state.selectedDictionary
       : visibleItems[0]?.key || dictionaryItems[0]?.key || "";
@@ -17149,13 +17247,13 @@ MAX - https://bizvmax.ru/zifra_plus
           <aside class="dictionary-list-panel">
             <div class="search-box dictionary-search" role="search">
               <span aria-hidden="true">⌕</span>
-              <input id="dictionarySearch" type="search" value="${escapeAttr(state.dictionarySearch)}" placeholder="Поиск справочника" autocomplete="off" aria-label="Поиск справочника">
+              <input id="dictionarySearch" type="search" value="${escapeAttr(state.dictionarySearch)}" placeholder="Поиск по настройкам" autocomplete="off" aria-label="Поиск по названиям и содержимому настроек">
               <button
                 class="dictionary-search-clear"
                 data-action="clear-dictionary-search"
                 type="button"
                 title="Сбросить поиск"
-                aria-label="Сбросить поиск справочника"
+                aria-label="Сбросить поиск по настройкам"
                 ${state.dictionarySearch ? "" : "hidden"}
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"></path></svg>
@@ -17167,7 +17265,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   <span>${escapeHtml(item.title)}</span>
                   <small>${item.key === "communicationTemplates" ? item.values.length + employeeCommunicationMessages.length : item.values.length}</small>
                 </button>
-              `).join("") : `<div class="empty-state compact"><span>Справочники не найдены</span></div>`}
+              `).join("") : `<div class="empty-state compact"><span>Настройки не найдены</span></div>`}
             </div>
           </aside>
           <section class="dictionary-detail ${isSpecialDictionary ? "is-communication-templates" : ""} ${selectedKey === "discountRules" ? "has-format-hint" : ""}">
@@ -17223,6 +17321,128 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
       </section>
     `;
+  }
+
+  function escapeDictionarySearchRegExp(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  }
+
+  function getDictionarySearchElementText(elements) {
+    const parts = [];
+    (Array.isArray(elements) ? elements : [elements]).filter(Boolean).forEach((element) => {
+      parts.push(element.textContent || "");
+      ["title", "aria-label", "placeholder"].forEach((attribute) => {
+        if (element.hasAttribute?.(attribute)) parts.push(element.getAttribute(attribute));
+      });
+      element.querySelectorAll?.("input:not([type='hidden']), textarea, select, [contenteditable]:not([contenteditable='false'])")
+        .forEach((control) => {
+          parts.push(control.value || control.textContent || "");
+          ["title", "aria-label", "placeholder"].forEach((attribute) => {
+            if (control.hasAttribute(attribute)) parts.push(control.getAttribute(attribute));
+          });
+        });
+    });
+    return normalizeDictionarySearchText(parts.join("\n"));
+  }
+
+  function dictionarySearchElementsMatch(elements, terms) {
+    const content = getDictionarySearchElementText(elements);
+    return terms.every((term) => content.includes(term));
+  }
+
+  function revealDictionarySearchTabMatches(root, terms) {
+    const groups = [
+      {
+        buttons: "[data-payment-settings-tab]",
+        panels: "[data-payment-settings-panel]",
+        buttonAttribute: "data-payment-settings-tab",
+        panelAttribute: "data-payment-settings-panel",
+        activate: (id) => switchPaymentSettingsTab(id)
+      },
+      {
+        buttons: "[data-action='switch-communication-template-audience']",
+        panels: "[data-communication-template-panel]",
+        buttonAttribute: "data-template-audience",
+        panelAttribute: "data-communication-template-panel",
+        activate: (id) => switchCommunicationTemplateAudience(id)
+      }
+    ];
+    groups.forEach((group) => {
+      const buttons = Array.from(root.querySelectorAll(group.buttons));
+      const panels = new Map(Array.from(root.querySelectorAll(group.panels)).map((panel) => [
+        panel.getAttribute(group.panelAttribute),
+        panel
+      ]));
+      const matchingButtons = buttons.filter((button) => {
+        const panel = panels.get(button.getAttribute(group.buttonAttribute));
+        const matches = dictionarySearchElementsMatch([button, panel], terms);
+        button.classList.toggle("settings-search-tab-match", matches);
+        return matches;
+      });
+      if (!matchingButtons.length) return;
+      const activeMatches = matchingButtons.some((button) => button.getAttribute("aria-selected") === "true");
+      if (!activeMatches) group.activate(matchingButtons[0].getAttribute(group.buttonAttribute));
+    });
+  }
+
+  function highlightDictionarySearchText(root, terms) {
+    const pattern = new RegExp(`(${terms
+      .slice()
+      .sort((left, right) => right.length - left.length)
+      .map(escapeDictionarySearchRegExp)
+      .join("|")})`, "giu");
+    const nodes = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent || !node.nodeValue?.trim()) return NodeFilter.FILTER_REJECT;
+        if (parent.closest("mark.settings-search-highlight, input, textarea, select, option, script, style, svg, [contenteditable]:not([contenteditable='false'])")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return terms.some((term) => normalizeDictionarySearchText(node.nodeValue).includes(term))
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      }
+    });
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach((node) => {
+      const fragment = document.createDocumentFragment();
+      node.nodeValue.split(pattern).forEach((part, index) => {
+        if (index % 2 === 0) {
+          fragment.append(document.createTextNode(part));
+          return;
+        }
+        const mark = document.createElement("mark");
+        mark.className = "settings-search-highlight";
+        mark.textContent = part;
+        fragment.append(mark);
+      });
+      node.replaceWith(fragment);
+    });
+  }
+
+  function highlightDictionarySearchControls(root, terms) {
+    root.querySelectorAll("input:not([type='hidden']), textarea, select, [contenteditable]:not([contenteditable='false'])")
+      .forEach((control) => {
+        const inputType = String(control.getAttribute("type") || "").toLowerCase();
+        if (["checkbox", "radio", "button", "submit", "reset"].includes(inputType)) return;
+        const matches = dictionarySearchElementsMatch(control, terms);
+        control.classList.toggle("settings-search-control-match", matches);
+        if (matches) control.setAttribute("data-settings-search-match", "true");
+        else control.removeAttribute("data-settings-search-match");
+      });
+  }
+
+  function applyDictionarySearchHighlights() {
+    if (state.view !== "settings") return;
+    const terms = getDictionarySearchTerms(state.dictionarySearch);
+    if (!terms.length) return;
+    const root = document.querySelector(".settings-page-panel");
+    if (!root) return;
+    const detail = root.querySelector(".dictionary-detail");
+    if (detail) revealDictionarySearchTabMatches(detail, terms);
+    highlightDictionarySearchControls(detail || root, terms);
+    highlightDictionarySearchText(root, terms);
   }
 
   function keepDictionaryListItemVisible(list, item) {

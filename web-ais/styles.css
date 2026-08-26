@@ -4829,6 +4829,35 @@ body.long-press-dragging * {
   stroke-linecap: round;
 }
 
+.settings-search-highlight {
+  border-radius: 2px;
+  background: #ffe66f;
+  color: inherit;
+  padding: 0 1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.dictionary-detail .settings-search-control-match {
+  border-color: #d6aa00 !important;
+  background-color: #fff6b8 !important;
+  box-shadow: 0 0 0 2px rgba(214, 170, 0, 0.16) !important;
+}
+
+.payment-settings-tabs button.settings-search-tab-match,
+.communication-template-audience-tabs button.settings-search-tab-match {
+  background: #fff6b8;
+  color: var(--text);
+}
+
+.payment-settings-tabs button.settings-search-tab-match:not(.active) {
+  border-bottom-color: #d6aa00;
+}
+
+.communication-template-audience-tabs button.settings-search-tab-match:not(.active) {
+  border-color: #e4c346;
+}
+
 .dictionary-list {
   min-height: 0;
   overflow-y: auto;
