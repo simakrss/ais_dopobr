@@ -15356,6 +15356,148 @@ body.event-reorder-dragging .student-event-row.is-dragging {
   padding: 0;
 }
 
+.student-event-insert-backdrop {
+  z-index: 12140;
+  padding: 16px;
+}
+
+.student-event-insert-dialog {
+  width: min(580px, 100%);
+  max-height: min(720px, calc(100dvh - 32px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.student-event-insert-form {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 14px 16px 0;
+}
+
+.student-event-insert-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f3f7f5;
+}
+
+.student-event-insert-tabs button {
+  min-width: 0;
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.student-event-insert-tabs button:hover:not(:disabled) {
+  color: var(--text);
+  background: #e8f3ef;
+}
+
+.student-event-insert-tabs button.active {
+  background: #fff;
+  color: var(--teal);
+  box-shadow: 0 1px 4px rgba(25, 55, 47, 0.12);
+}
+
+.student-event-insert-tabs button:disabled {
+  opacity: 0.45;
+}
+
+.student-event-insert-panel,
+.student-event-insert-date {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.student-event-insert-panel[hidden] {
+  display: none;
+}
+
+.student-event-insert-panel label,
+.student-event-insert-date {
+  color: #33413d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.student-event-insert-panel label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.student-event-insert-panel :is(select, input),
+.student-event-insert-date input {
+  width: 100%;
+  min-width: 0;
+}
+
+.student-event-insert-panel > small,
+.student-event-insert-date small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.student-event-insert-date {
+  max-width: 220px;
+}
+
+.student-event-insert-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0 -16px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  background: #fff;
+}
+
+@media (max-width: 600px) {
+  .student-event-insert-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .student-event-insert-dialog {
+    width: 100%;
+    max-height: min(88dvh, 720px);
+    border-radius: 14px 14px 0 0;
+  }
+
+  .student-event-insert-form {
+    padding-inline: 12px;
+  }
+
+  .student-event-insert-date {
+    max-width: none;
+  }
+
+  .student-event-insert-actions {
+    margin-inline: -12px;
+    padding-inline: 12px;
+  }
+
+  .student-event-insert-actions button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+
 .student-tabs {
   display: flex;
   gap: 2px;

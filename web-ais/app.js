@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.300",
+    version: "1.7.301",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.301",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Кнопка добавления события в карточках слушателя и сотрудника открывает единое всплывающее окно вместо системного запроса.",
+        "В окне можно выбрать отсутствующее типовое событие, создать собственное событие и при необходимости сразу указать дату."
+      ]
+    },
     {
       version: "1.7.300",
       releasedAt: "2026-08-26",
@@ -26808,7 +26816,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <section class="student-events-block">
         <div class="student-side-head">
           <h3>Перечень событий</h3>
-          <button class="icon-button event-add-button" data-action="add-student-event" type="button" title="Добавить событие" aria-label="Добавить событие">
+          <button class="icon-button event-add-button" data-action="add-student-event" data-event-entity="${escapeAttr(entityType)}" type="button" title="Добавить событие" aria-label="Добавить событие">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="M12 5v14"></path>
               <path d="M5 12h14"></path>
@@ -27054,20 +27062,233 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function addStudentEvent() {
-    const name = window.prompt("Название события");
-    const label = String(name || "").trim();
-    if (!label) return;
+  function getStudentEventInsertContext(entityType = "") {
+    const isContract = entityType === "contract" || state.modal?.config === "contracts";
+    const record = isContract ? collectContractFormDraft() : collectStudentFormDraft();
+    return {
+      entityType: isContract ? "contract" : "student",
+      entityLabel: isContract ? "сотрудника" : "слушателя",
+      record,
+      templates: isContract
+        ? getContractEventTemplates()
+        : getStudentEventTemplatesForRecord(record)
+    };
+  }
+
+  function createCustomStudentEventKey() {
+    return `customEvent_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  function insertStudentEventFromDialog(context, values = {}) {
     const list = document.querySelector("[data-student-events-list]");
-    if (!list) return;
-    const key = `customEvent_${Date.now().toString(36)}`;
-    const customKeys = csvList(document.querySelector("[data-event-custom-keys]")?.value);
-    setCsvHidden("[data-event-custom-keys]", [...customKeys, key]);
-    list.insertAdjacentHTML("beforeend", renderStudentEventRow({ key, label, custom: true }, { [`event_${key}_label`]: label }));
+    if (!list) return null;
+    const custom = values.mode === "custom";
+    const template = custom
+      ? null
+      : context.templates.find((item) => item.key === values.templateKey);
+    const key = custom ? createCustomStudentEventKey() : String(template?.key || "").trim();
+    const label = String(custom ? values.customLabel : template?.label || "").trim();
+    if (!key || !label) return null;
+    const existingRow = list.querySelector(`.student-event-row[data-event-key="${CSS.escape(key)}"]`);
+    if (existingRow) return existingRow;
+
+    const record = context.entityType === "contract"
+      ? collectContractFormDraft()
+      : collectStudentFormDraft();
+    const requestedDate = String(values.date || "").trim();
+    const storedDate = custom ? "" : String(record[`event_${key}_date`] || "").trim();
+    const date = requestedDate || storedDate;
+    const storedState = custom ? "" : String(record[`event_${key}_state`] || "").trim();
+    const eventRecord = {
+      ...record,
+      [`event_${key}_label`]: label,
+      [`event_${key}_date`]: date,
+      [`event_${key}_state`]: date ? "dated" : storedState
+    };
+    if (custom) {
+      const customKeys = csvList(document.querySelector("[data-event-custom-keys]")?.value);
+      setCsvHidden("[data-event-custom-keys]", [...customKeys, key]);
+    } else {
+      setCsvHidden(
+        "[data-event-deleted]",
+        csvList(document.querySelector("[data-event-deleted]")?.value).filter((item) => item !== key)
+      );
+    }
+    list.insertAdjacentHTML(
+      "beforeend",
+      renderStudentEventRow({ key, label, custom }, eventRecord)
+    );
     const row = list.querySelector(`.student-event-row[data-event-key="${CSS.escape(key)}"]`);
     if (row) bindStudentEventRow(row);
     syncStudentEventOrder();
     syncCardEventDraftFromDom();
+    row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    return row;
+  }
+
+  function showStudentEventInsertDialog(context, trigger = null) {
+    document.querySelector("[data-student-event-insert-dialog]")
+      ?.closeStudentEventInsertDialog?.();
+    closeStudentEventEditor();
+    const existingKeys = new Set(
+      [...document.querySelectorAll("[data-student-events-list] .student-event-row")]
+        .map((row) => String(row.dataset.eventKey || "").trim())
+        .filter(Boolean)
+    );
+    const existingLabels = new Set(
+      [...document.querySelectorAll("[data-student-events-list] [data-event-label-text]")]
+        .map((item) => normalizeEventTemplateLabel(item.textContent))
+        .filter(Boolean)
+    );
+    const availableTemplates = context.templates.filter((item) => (
+      !existingKeys.has(item.key)
+      && !existingLabels.has(normalizeEventTemplateLabel(item.label))
+    ));
+    const initialMode = availableTemplates.length ? "typical" : "custom";
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop student-event-insert-backdrop";
+    backdrop.dataset.studentEventInsertDialog = "";
+    backdrop.innerHTML = `
+      <section class="modal student-event-insert-dialog" role="dialog" aria-modal="true" aria-labelledby="student-event-insert-title">
+        <header class="modal-head">
+          <div>
+            <p class="eyebrow">Перечень событий</p>
+            <h2 id="student-event-insert-title">Добавить событие ${escapeHtml(context.entityLabel)}</h2>
+          </div>
+          <button class="icon-button" data-action="close-student-event-insert" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <form class="student-event-insert-form" data-student-event-insert-form>
+          <div class="student-event-insert-tabs" role="tablist" aria-label="Способ добавления события">
+            <button
+              class="${initialMode === "typical" ? "active" : ""}"
+              data-action="switch-student-event-insert-mode"
+              data-event-insert-mode="typical"
+              type="button"
+              role="tab"
+              aria-selected="${initialMode === "typical" ? "true" : "false"}"
+              ${availableTemplates.length ? "" : "disabled"}
+            >Типовое событие</button>
+            <button
+              class="${initialMode === "custom" ? "active" : ""}"
+              data-action="switch-student-event-insert-mode"
+              data-event-insert-mode="custom"
+              type="button"
+              role="tab"
+              aria-selected="${initialMode === "custom" ? "true" : "false"}"
+            >Своё событие</button>
+          </div>
+          <input name="mode" type="hidden" value="${initialMode}">
+          <section class="student-event-insert-panel" data-event-insert-panel="typical" ${initialMode === "typical" ? "" : "hidden"}>
+            ${availableTemplates.length ? `
+              <label>
+                <span>Событие</span>
+                <select name="templateKey" ${initialMode === "typical" ? "required" : ""}>
+                  ${availableTemplates.map((item) => `<option value="${escapeAttr(item.key)}">${escapeHtml(item.label)}</option>`).join("")}
+                </select>
+              </label>
+              <small>${context.entityType === "contract"
+                ? "Показаны типовые события для карточки сотрудника."
+                : "Показаны типовые события, доступные для текущей образовательной программы."}</small>
+            ` : `<div class="empty-state compact"><span>Все типовые события уже добавлены</span></div>`}
+          </section>
+          <section class="student-event-insert-panel" data-event-insert-panel="custom" ${initialMode === "custom" ? "" : "hidden"}>
+            <label>
+              <span>Название события</span>
+              <input name="customLabel" type="text" maxlength="240" autocomplete="off" placeholder="Введите название" ${initialMode === "custom" ? "required" : ""}>
+            </label>
+            <small>Собственное событие будет сохранено только в этой карточке.</small>
+          </section>
+          <label class="student-event-insert-date">
+            <span>Дата события <small>необязательно</small></span>
+            <input name="date" type="date">
+          </label>
+          <footer class="modal-actions student-event-insert-actions">
+            <button class="ghost-button" data-action="close-student-event-insert" type="button">Отмена</button>
+            <button class="primary-button" type="submit">Добавить</button>
+          </footer>
+        </form>
+      </section>
+    `;
+    let closed = false;
+    const form = backdrop.querySelector("[data-student-event-insert-form]");
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      backdrop.remove();
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    };
+    const switchMode = (mode) => {
+      if (!form || !["typical", "custom"].includes(mode)) return;
+      if (mode === "typical" && !availableTemplates.length) return;
+      form.elements.mode.value = mode;
+      backdrop.querySelectorAll("[data-event-insert-mode]").forEach((button) => {
+        const active = button.dataset.eventInsertMode === mode;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      backdrop.querySelectorAll("[data-event-insert-panel]").forEach((panel) => {
+        const active = panel.dataset.eventInsertPanel === mode;
+        panel.hidden = !active;
+        panel.querySelectorAll("input, select").forEach((control) => {
+          control.required = active;
+        });
+      });
+      const target = mode === "custom" ? form.elements.customLabel : form.elements.templateKey;
+      target?.focus({ preventScroll: true });
+    };
+    backdrop.closeStudentEventInsertDialog = close;
+    backdrop.addEventListener("pointerdown", (event) => {
+      if (event.target === backdrop) close();
+    });
+    backdrop.querySelectorAll("[data-action='close-student-event-insert']").forEach((button) => {
+      button.addEventListener("click", close);
+    });
+    backdrop.querySelectorAll("[data-action='switch-student-event-insert-mode']").forEach((button) => {
+      button.addEventListener("click", () => switchMode(button.dataset.eventInsertMode));
+    });
+    form?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const mode = String(form.elements.mode.value || "typical");
+      const customLabel = String(form.elements.customLabel?.value || "").trim();
+      if (mode === "custom") {
+        if (!customLabel) {
+          form.elements.customLabel?.focus({ preventScroll: true });
+          return;
+        }
+        const duplicate = existingLabels.has(normalizeEventTemplateLabel(customLabel));
+        if (duplicate) {
+          alert("Событие с таким названием уже есть в списке.");
+          form.elements.customLabel?.focus({ preventScroll: true });
+          form.elements.customLabel?.select();
+          return;
+        }
+      }
+      const row = insertStudentEventFromDialog(context, {
+        mode,
+        templateKey: String(form.elements.templateKey?.value || ""),
+        customLabel,
+        date: String(form.elements.date?.value || "")
+      });
+      if (!row) {
+        alert("Не удалось добавить событие. Выберите другое значение.");
+        return;
+      }
+      close();
+      row.focus({ preventScroll: true });
+    });
+    document.body.appendChild(backdrop);
+    requestAnimationFrame(() => {
+      const target = initialMode === "custom" ? form?.elements.customLabel : form?.elements.templateKey;
+      target?.focus({ preventScroll: true });
+    });
+  }
+
+  function addStudentEvent(event) {
+    const trigger = event?.currentTarget || null;
+    showStudentEventInsertDialog(
+      getStudentEventInsertContext(trigger?.dataset.eventEntity || ""),
+      trigger
+    );
   }
 
   function deleteStudentEvent(event) {
@@ -31757,6 +31978,11 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (document.querySelector(".lookup-panel.is-open")) {
       document.querySelectorAll(".lookup-panel.is-open").forEach((panel) => panel.classList.remove("is-open"));
+      return true;
+    }
+    const studentEventInsertDialog = document.querySelector("[data-student-event-insert-dialog]");
+    if (studentEventInsertDialog) {
+      studentEventInsertDialog.closeStudentEventInsertDialog?.();
       return true;
     }
     const eventEditor = document.querySelector("[data-event-editor]");
