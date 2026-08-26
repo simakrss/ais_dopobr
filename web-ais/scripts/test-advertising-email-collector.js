@@ -123,6 +123,8 @@ if (fs.existsSync(workbookPath)) {
 assert.match(appSource, /id: "statistics"[\s\S]*id: "advertising"[\s\S]*id: "students"/u);
 assert.match(appSource, /function renderAdvertising\(\)/u);
 assert.match(appSource, /function collectAdvertisingEmails\(\)/u);
+assert.doesNotMatch(appSource, /queueMicrotask\(\(\) => collectAdvertisingEmails\(\)\)/u);
+assert.match(appSource, /\[data-action='collect-advertising-emails'\][\s\S]*?addEventListener\("click", collectAdvertisingEmails\)/u);
 assert.match(appSource, /Копировать готовые/u);
 assert.match(appSource, /Экспорт CSV/u);
 assert.match(appSource, /ADVERTISING_EMAIL_SOURCES/u);
@@ -146,6 +148,6 @@ assert.match(gatewaySource, /gateway_handle_advertising_source_proxy/u);
 assert.match(gatewaySource, /hash_equals/u);
 assert.match(appSource, /advertisingExclusionsSync/u);
 assert.match(appSource, /через сайт/u);
-assert.match(indexSource, /20260824-advertising-sources-v3/u);
+assert.match(indexSource, /20260826-advertising-manual-collect-v1/u);
 
 console.log("Advertising email collector tests passed.");

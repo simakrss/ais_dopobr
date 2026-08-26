@@ -43,10 +43,17 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.278",
+    version: "1.7.279",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.279",
+      releasedAt: "2026-08-26",
+      changes: [
+        "При открытии раздела «Реклама» сбор email-адресов больше не запускается автоматически; обращения к источникам начинаются только после нажатия кнопки «Собрать адреса»."
+      ]
+    },
     {
       version: "1.7.278",
       releasedAt: "2026-08-26",
@@ -9502,9 +9509,6 @@ MAX - https://bizvmax.ru/zifra_plus
         && !state.advertising.exclusions.loading
       ) {
         queueMicrotask(() => loadAdvertisingEmailExclusions());
-      }
-      if (!state.advertising.loaded && !state.advertising.loading) {
-        queueMicrotask(() => collectAdvertisingEmails());
       }
     }
   }
