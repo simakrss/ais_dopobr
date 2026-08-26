@@ -20669,18 +20669,23 @@ function getStudentDatabaseFixedValueOverrideTargets(payload, sourceData) {
   const excelStudents = Array.isArray(sourceData?.students) ? sourceData.students : [];
   const excelById = new Map();
   const excelByUid = new Map();
+  const appendUniqueMatch = (index, key, student) => {
+    if (!key) return;
+    if (!index.has(key)) index.set(key, []);
+    const matches = index.get(key);
+    if (!matches.includes(student)) matches.push(student);
+  };
+  const getUniqueMatches = (values) => [...new Set(values)];
   excelStudents.forEach((student) => {
-    const ids = [student?.id, student?.databaseSync?.recordId]
+    const ids = [...new Set([student?.id, student?.databaseSync?.recordId]
       .map((value) => String(value || "").trim())
-      .filter(Boolean);
+      .filter(Boolean))];
     ids.forEach((id) => {
-      if (!excelById.has(id)) excelById.set(id, []);
-      excelById.get(id).push(student);
+      appendUniqueMatch(excelById, id, student);
     });
     const uid = normalizeStudentDatabaseSyncValue(student?.uid, "uid");
     if (!uid) return;
-    if (!excelByUid.has(uid)) excelByUid.set(uid, []);
-    excelByUid.get(uid).push(student);
+    appendUniqueMatch(excelByUid, uid, student);
   });
   const targets = [];
   webStudents.forEach((student) => {
@@ -20688,10 +20693,15 @@ function getStudentDatabaseFixedValueOverrideTargets(payload, sourceData) {
       student?.databaseFixedValueOverrides
     );
     if (!fields.length) return;
-    const id = String(student?.id || "").trim();
+    const ids = [...new Set([student?.id, student?.databaseSync?.recordId]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean))];
+    const id = ids[0] || "";
     const uid = normalizeStudentDatabaseSyncValue(student?.uid, "uid");
-    const idMatches = id ? excelById.get(id) || [] : [];
-    const uidMatches = uid ? excelByUid.get(uid) || [] : [];
+    const idMatches = getUniqueMatches(ids.flatMap((candidateId) => (
+      excelById.get(candidateId) || []
+    )));
+    const uidMatches = getUniqueMatches(uid ? excelByUid.get(uid) || [] : []);
     const matches = idMatches.length ? idMatches : uidMatches;
     if (matches.length > 1) {
       const error = new Error(

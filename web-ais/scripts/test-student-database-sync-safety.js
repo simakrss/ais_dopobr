@@ -268,12 +268,22 @@ function testStudentContractAmountFixedValueOverride() {
   const payload = sanitizeStudentDatabaseExportPayload(body);
   assert.deepEqual(payload.students[0].databaseFixedValueOverrides, ["contractAmount"]);
   const sourceData = {
-    students: [{
-      id: "student-db-1166",
-      uid: "1166",
-      name: "Добрышкина Екатерина Сергеевна",
-      contractAmount: 4000
-    }]
+    students: [
+      {
+        id: "student-db-1166",
+        uid: "1166",
+        name: "Добрышкина Екатерина Сергеевна",
+        contractAmount: 4000,
+        databaseSync: { recordId: "student-db-1166" }
+      },
+      {
+        id: "student-db-1166-repeat",
+        uid: "1166",
+        name: "Добрышкина Екатерина Сергеевна",
+        contractAmount: 3000,
+        databaseSync: { recordId: "student-db-1166-repeat" }
+      }
+    ]
   };
   const targets = getStudentDatabaseFixedValueOverrideTargets(payload, sourceData);
   assert.equal(targets.length, 1);
@@ -281,6 +291,16 @@ function testStudentContractAmountFixedValueOverride() {
   assert.equal(targets[0].webValue, 2500);
   assert.equal(targets[0].excelValue, 4000);
   assert.equal(targets[0].differs, true);
+  assert.throws(
+    () => getStudentDatabaseFixedValueOverrideTargets({
+      students: [{
+        ...payload.students[0],
+        id: "student-db-without-stable-match"
+      }]
+    }, sourceData),
+    /найдено строк: 2/iu,
+    "Повторные обучения нельзя выбирать только по общему UID"
+  );
 
   const sourceHash = "a".repeat(64);
   const criticalHash = "b".repeat(64);
@@ -314,7 +334,9 @@ function testStudentContractAmountFixedValueOverride() {
     students: [{ id: "student-db-1166", uid: "1166", contractAmount: 2500 }]
   }), 1);
   assert.throws(
-    () => validateStudentDatabaseFixedValueOverridesAgainstOutput(payload, sourceData),
+    () => validateStudentDatabaseFixedValueOverridesAgainstOutput(payload, {
+      students: [sourceData.students[0]]
+    }),
     /фиксированные значения/iu
   );
   assert.match(syncScriptSource, /\$hasFormula\s+-and\s+-not\s+\$isFixedValueOverride/u);

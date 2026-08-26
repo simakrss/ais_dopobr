@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.301",
+    version: "1.7.302",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.302",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Исправлено ложное обнаружение двух строк XLSB у слушателя, когда служебные id и recordId указывают на одну запись.",
+        "Повторные обучения с разными служебными ID по-прежнему различаются, а неоднозначное сопоставление только по UID безопасно блокируется."
+      ]
+    },
     {
       version: "1.7.301",
       releasedAt: "2026-08-26",
