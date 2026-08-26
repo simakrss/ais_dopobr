@@ -60,7 +60,12 @@ assert.match(previewDialogBlock, /Предварительный просмот�
 assert.match(previewDialogBlock, /Получатель/u);
 assert.match(previewDialogBlock, /Тема/u);
 assert.match(previewDialogBlock, /Вложение/u);
-assert.match(previewDialogBlock, /frame\.srcdoc = buildGeneratedDocumentEmailPreviewHtml\(message\)/u);
+assert.match(previewDialogBlock, /data-generated-document-email-subject-input/u);
+assert.match(previewDialogBlock, /data-generated-document-email-message-input/u);
+assert.match(previewDialogBlock, /data-action="edit-generated-document-email"/u);
+assert.match(previewDialogBlock, /data-action="apply-generated-document-email"/u);
+assert.match(previewDialogBlock, /frame\.srcdoc = buildGeneratedDocumentEmailPreviewHtml\(nextMessage\)/u);
+assert.match(previewDialogBlock, /return \{ \.\.\.emailRequest, subject, message \}/u);
 assert.match(previewDialogBlock, /sandbox="allow-popups allow-popups-to-escape-sandbox"/u);
 assert.doesNotMatch(previewDialogBlock, /allow-scripts/u);
 
@@ -76,6 +81,8 @@ assert.ok(documentPreviewIndex >= 0, "Не найден предваритель
 assert.ok(emailPreviewIndex > documentPreviewIndex, "Письмо должно показываться после документа.");
 assert.ok(storageIndex > emailPreviewIndex, "Отправка и сохранение не должны начинаться до подтверждения письма.");
 assert.match(generationBlock, /cancelGeneratedDocumentPreview\(pendingPreviewToken, documentProcessingOrigin\)/u);
+assert.match(generationBlock, /let emailRequest = prepareStudentDocumentEmailRequest/u);
+assert.match(generationBlock, /emailRequest = reviewedEmailRequest/u);
 
 const escapeBlock = sourceBlock(appSource, "function closeTopmostWindowByEscape()", "function bindEvents(");
 assert.match(escapeBlock, /data-generated-document-email-preview/u);
@@ -83,6 +90,12 @@ assert.match(escapeBlock, /closeGeneratedDocumentEmailPreview/u);
 
 assert.match(stylesSource, /\.generated-document-email-preview-dialog/u);
 assert.match(stylesSource, /\.generated-document-email-frame/u);
+assert.match(stylesSource, /\.generated-document-email-workspace\.is-editing/u);
+assert.match(stylesSource, /\.generated-document-email-editor/u);
+assert.match(
+  stylesSource,
+  /\[data-action="confirm-generated-document-preview"\][\s\S]{0,220}grid-row:\s*2;[\s\S]{0,220}width:\s*max-content;/u
+);
 assert.match(stylesSource, /@media \(max-width: 720px\)[\s\S]*\.generated-document-email-summary/u);
 
 console.log("generated document email preview checks: OK");

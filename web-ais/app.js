@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.302",
+    version: "1.7.303",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.303",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Кнопка «Продолжить» в предварительном просмотре документа перенесена вправо и занимает ширину только по надписи.",
+        "Перед отправкой документа можно отредактировать тему и текст текущего письма с одновременным безопасным предпросмотром HTML."
+      ]
+    },
     {
       version: "1.7.302",
       releasedAt: "2026-08-26",
@@ -55551,10 +55559,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.closeGeneratedDocumentEmailPreview?.(false);
     const title = String(options.title || "Документ").trim() || "Документ";
     const fileName = String(options.fileName || "документ").trim() || "документ";
-    const subject = String(emailRequest?.subject || "").trim();
-    const message = String(emailRequest?.message || "").trim();
+    let subject = String(emailRequest?.subject || "").trim();
+    let message = String(emailRequest?.message || "").trim();
     const recipientDescription = String(emailRequest?.recipientDescription || "").trim();
-    const isHtml = documentEmailMessageContainsHtml(message);
     const previouslyFocused = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
@@ -55578,33 +55585,99 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
             <div>
               <span>Тема</span>
-              <strong>${escapeHtml(subject)}</strong>
+              <strong data-generated-document-email-subject>${escapeHtml(subject)}</strong>
             </div>
             <div>
               <span>Вложение</span>
               <strong>${escapeHtml(fileName)}</strong>
             </div>
-            <span class="generated-document-email-format">${isHtml ? "HTML" : "Текст"}</span>
+            <span class="generated-document-email-format" data-generated-document-email-format>${documentEmailMessageContainsHtml(message) ? "HTML" : "Текст"}</span>
           </div>
-          <div class="generated-document-email-frame-shell">
-            <iframe
-              class="generated-document-email-frame"
-              data-generated-document-email-frame
-              sandbox="allow-popups allow-popups-to-escape-sandbox"
-              referrerpolicy="no-referrer"
-              title="Предварительный просмотр сопроводительного письма"
-            ></iframe>
+          <div class="generated-document-email-workspace" data-generated-document-email-workspace>
+            <div class="generated-document-email-editor" data-generated-document-email-editor hidden>
+              <label>
+                <span>Тема письма</span>
+                <input data-generated-document-email-subject-input type="text" maxlength="200" value="${escapeAttr(subject)}" autocomplete="off">
+              </label>
+              <label class="generated-document-email-message-field">
+                <span>Текст сообщения</span>
+                <textarea data-generated-document-email-message-input spellcheck="true">${escapeHtml(message)}</textarea>
+              </label>
+              <small>Изменения применяются только к текущему письму и не меняют шаблон документа.</small>
+            </div>
+            <div class="generated-document-email-frame-shell">
+              <iframe
+                class="generated-document-email-frame"
+                data-generated-document-email-frame
+                sandbox="allow-popups allow-popups-to-escape-sandbox"
+                referrerpolicy="no-referrer"
+                title="Предварительный просмотр сопроводительного письма"
+              ></iframe>
+            </div>
           </div>
           <footer class="modal-actions generated-document-email-actions">
             <small>Письмо будет отправлено вместе со сформированным документом только после подтверждения.</small>
+            <button class="ghost-button" data-action="edit-generated-document-email" type="button">Редактировать</button>
+            <button class="primary-button" data-action="apply-generated-document-email" type="button" hidden>Применить изменения</button>
             <button class="ghost-button" data-action="cancel-generated-document-email-preview" type="button">Отмена</button>
             <button class="primary-button" data-action="confirm-generated-document-email-preview" type="button">Продолжить</button>
           </footer>
         </section>
       `;
       let settled = false;
+      let previewRefreshTimer = 0;
       const frame = backdrop.querySelector("[data-generated-document-email-frame]");
-      if (frame) frame.srcdoc = buildGeneratedDocumentEmailPreviewHtml(message);
+      const workspace = backdrop.querySelector("[data-generated-document-email-workspace]");
+      const editor = backdrop.querySelector("[data-generated-document-email-editor]");
+      const subjectInput = backdrop.querySelector("[data-generated-document-email-subject-input]");
+      const messageInput = backdrop.querySelector("[data-generated-document-email-message-input]");
+      const subjectDisplay = backdrop.querySelector("[data-generated-document-email-subject]");
+      const formatDisplay = backdrop.querySelector("[data-generated-document-email-format]");
+      const editButton = backdrop.querySelector("[data-action='edit-generated-document-email']");
+      const applyButton = backdrop.querySelector("[data-action='apply-generated-document-email']");
+      const refreshPreview = () => {
+        const nextSubject = String(subjectInput?.value || "").trim();
+        const nextMessage = String(messageInput?.value || "").trim();
+        if (subjectDisplay) subjectDisplay.textContent = nextSubject || "Без темы";
+        if (formatDisplay) formatDisplay.textContent = documentEmailMessageContainsHtml(nextMessage)
+          ? "HTML"
+          : "Текст";
+        if (frame) frame.srcdoc = buildGeneratedDocumentEmailPreviewHtml(nextMessage);
+      };
+      const schedulePreviewRefresh = () => {
+        window.clearTimeout(previewRefreshTimer);
+        previewRefreshTimer = window.setTimeout(refreshPreview, 180);
+      };
+      const readEditedEmailRequest = () => {
+        const nextSubject = normalizeServerEmailSubject(subjectInput ? subjectInput.value : subject);
+        const nextMessage = String(messageInput ? messageInput.value : message).trim();
+        if (!nextSubject) {
+          alert("Укажите тему письма.");
+          subjectInput?.focus({ preventScroll: true });
+          return null;
+        }
+        if (!nextMessage) {
+          alert("Введите текст сообщения.");
+          messageInput?.focus({ preventScroll: true });
+          return null;
+        }
+        subject = nextSubject;
+        message = nextMessage;
+        if (subjectInput) subjectInput.value = subject;
+        if (messageInput) messageInput.value = message;
+        refreshPreview();
+        return { ...emailRequest, subject, message };
+      };
+      const setEditing = (editing) => {
+        workspace?.classList.toggle("is-editing", editing);
+        if (editor) editor.hidden = !editing;
+        if (editButton) editButton.hidden = editing;
+        if (applyButton) applyButton.hidden = !editing;
+        if (editing) {
+          window.setTimeout(() => messageInput?.focus({ preventScroll: true }), 0);
+        }
+      };
+      refreshPreview();
       const trapFocus = (event) => {
         if (event.key !== "Tab") return;
         const focusable = [...backdrop.querySelectorAll(
@@ -55621,13 +55694,14 @@ MAX - https://bizvmax.ru/zifra_plus
           first.focus({ preventScroll: true });
         }
       };
-      const finish = (confirmed) => {
+      const finish = (result) => {
         if (settled) return;
         settled = true;
+        window.clearTimeout(previewRefreshTimer);
         backdrop.removeEventListener("keydown", trapFocus);
         backdrop.remove();
         if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
-        resolve(Boolean(confirmed));
+        resolve(result && typeof result === "object" ? result : null);
       };
       backdrop.closeGeneratedDocumentEmailPreview = finish;
       backdrop.addEventListener("keydown", trapFocus);
@@ -55637,8 +55711,19 @@ MAX - https://bizvmax.ru/zifra_plus
       backdrop.querySelectorAll("[data-action='cancel-generated-document-email-preview']").forEach((button) => {
         button.addEventListener("click", () => finish(false));
       });
+      editButton?.addEventListener("click", () => setEditing(true));
+      applyButton?.addEventListener("click", () => {
+        if (!readEditedEmailRequest()) return;
+        setEditing(false);
+        editButton?.focus({ preventScroll: true });
+      });
+      subjectInput?.addEventListener("input", schedulePreviewRefresh);
+      messageInput?.addEventListener("input", schedulePreviewRefresh);
       backdrop.querySelector("[data-action='confirm-generated-document-email-preview']")
-        ?.addEventListener("click", () => finish(true));
+        ?.addEventListener("click", () => {
+          const reviewedEmailRequest = readEditedEmailRequest();
+          if (reviewedEmailRequest) finish(reviewedEmailRequest);
+        });
       document.body.appendChild(backdrop);
       requestAnimationFrame(() => {
         backdrop.querySelector("[data-action='confirm-generated-document-email-preview']")?.focus({ preventScroll: true });
@@ -55783,7 +55868,7 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       const previewEnabled = Boolean(documentTemplate.previewBeforeGeneration)
         && options.skipPreview !== true;
-      const emailRequest = prepareStudentDocumentEmailRequest(
+      let emailRequest = prepareStudentDocumentEmailRequest(
         documentTemplate,
         record,
         fieldValues,
@@ -55824,11 +55909,11 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         if (emailRequest) {
           setDocumentGenerationStatus(generationTaskId, `Ожидается подтверждение письма: ${documentTemplate.title}`);
-          const emailConfirmed = await showGeneratedDocumentEmailPreview(emailRequest, {
+          const reviewedEmailRequest = await showGeneratedDocumentEmailPreview(emailRequest, {
             title: documentTemplate.title,
             fileName
           });
-          if (!emailConfirmed) {
+          if (!reviewedEmailRequest) {
             await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
             pendingPreviewToken = "";
             return {
@@ -55838,6 +55923,7 @@ MAX - https://bizvmax.ru/zifra_plus
               emailPreviewed: true
             };
           }
+          emailRequest = reviewedEmailRequest;
         }
       }
       const requestedStorage = options.storageRequest || await prepareStudentDocumentStorageRequest(
