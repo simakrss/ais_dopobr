@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.303",
+    version: "1.7.304",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.304",
+      releasedAt: "2026-08-26",
+      changes: [
+        "В детализации поступлений и затрат убрана лишняя горизонтальная прокрутка: колонки вписываются в ширину окна и переносят длинный текст.",
+        "На мобильных экранах финансовые операции отображаются компактными карточками со всеми подписями полей."
+      ]
+    },
     {
       version: "1.7.303",
       releasedAt: "2026-08-26",
@@ -12482,13 +12490,13 @@ MAX - https://bizvmax.ru/zifra_plus
                   <tbody>
                     ${pageRows.map((row) => `
                       <tr>
-                        <td>${escapeHtml(dateRu(row.date) || "—")}</td>
-                        <td>${escapeHtml(row.category || "—")}</td>
-                        <td>${escapeHtml(row.uid || "—")}</td>
-                        <td>${row.sourceId ? `<button class="table-edit-link" data-action="open-finance-detail-source" data-row-id="${escapeAttr(row.id)}" type="button">${escapeHtml(row.subject || "Открыть запись")}</button>` : escapeHtml(row.subject || "—")}</td>
-                        <td>${escapeHtml(row.context || "—")}</td>
-                        <td>${escapeHtml(row.description || "—")}</td>
-                        <td class="finance-details-amount ${Number(row.amount) < 0 ? "is-negative" : "is-positive"}">${money(row.amount)}</td>
+                        <td data-label="Дата">${escapeHtml(dateRu(row.date) || "—")}</td>
+                        <td data-label="Категория">${escapeHtml(row.category || "—")}</td>
+                        <td data-label="UID">${escapeHtml(row.uid || "—")}</td>
+                        <td data-label="Слушатель / контрагент">${row.sourceId ? `<button class="table-edit-link" data-action="open-finance-detail-source" data-row-id="${escapeAttr(row.id)}" type="button">${escapeHtml(row.subject || "Открыть запись")}</button>` : escapeHtml(row.subject || "—")}</td>
+                        <td data-label="Программа / вид затрат">${escapeHtml(row.context || "—")}</td>
+                        <td data-label="Описание">${escapeHtml(row.description || "—")}</td>
+                        <td data-label="Сумма" class="finance-details-amount ${Number(row.amount) < 0 ? "is-negative" : "is-positive"}">${money(row.amount)}</td>
                       </tr>
                     `).join("")}
                   </tbody>

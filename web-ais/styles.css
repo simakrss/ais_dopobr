@@ -9078,26 +9078,55 @@ body.card-window-moving {
 
 .finance-details-table-wrap {
   max-height: calc(100vh - 355px);
+  overflow-x: hidden;
 }
 
 .finance-details-table {
-  min-width: 1120px;
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.finance-details-table :is(th, td) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .finance-details-table th:nth-child(1),
 .finance-details-table td:nth-child(1) {
-  width: 105px;
+  width: 96px;
   white-space: nowrap;
+}
+
+.finance-details-table th:nth-child(2),
+.finance-details-table td:nth-child(2) {
+  width: 16%;
 }
 
 .finance-details-table th:nth-child(3),
 .finance-details-table td:nth-child(3) {
-  width: 80px;
+  width: 68px;
+}
+
+.finance-details-table th:nth-child(4),
+.finance-details-table td:nth-child(4) {
+  width: 17%;
+}
+
+.finance-details-table th:nth-child(5),
+.finance-details-table td:nth-child(5) {
+  width: 17%;
+}
+
+.finance-details-table th:nth-child(6),
+.finance-details-table td:nth-child(6) {
+  width: auto;
 }
 
 .finance-details-amount-head,
 .finance-details-amount {
-  width: 130px;
+  width: 108px;
   text-align: right !important;
   white-space: nowrap;
   font-weight: 700;
@@ -9138,6 +9167,53 @@ body.card-window-moving {
 
   .finance-details-table-wrap {
     max-height: calc(100dvh - 330px);
+  }
+
+  .finance-details-table,
+  .finance-details-table tbody,
+  .finance-details-table tr,
+  .finance-details-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .finance-details-table thead {
+    display: none;
+  }
+
+  .finance-details-table tbody {
+    padding: 6px;
+  }
+
+  .finance-details-table tr {
+    padding: 5px 0;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: #fff;
+  }
+
+  .finance-details-table tr + tr {
+    margin-top: 7px;
+  }
+
+  .finance-details-table td,
+  .finance-details-table td:nth-child(n) {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(96px, 34%) minmax(0, 1fr);
+    gap: 8px;
+    padding: 5px 8px;
+    border: 0;
+    text-align: left !important;
+    white-space: normal;
+  }
+
+  .finance-details-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.35;
   }
 }
 

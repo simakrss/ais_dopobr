@@ -4,7 +4,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const appSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
+const appSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8").replace(/\r\n?/gu, "\n");
+const stylesSource = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8").replace(/\r\n?/gu, "\n");
 const helperStart = appSource.indexOf("  function isStudentEligibleForReceivable");
 const helperEnd = appSource.indexOf("\n\n  function calculateDashboardStudentProfit", helperStart);
 
@@ -67,5 +68,14 @@ assert.equal(isStudentEligibleForReceivable({ status: " учится " }), true,
 
 assert.match(appSource, /students\.reduce\(\(sum, student\) => sum \+ calculateDashboardStudentReceivable\(student\)/u);
 assert.match(appSource, /getFinanceReceivableRows\(\)[\s\S]*calculateDashboardStudentReceivable\(student\)/u);
+
+assert.match(appSource, /<td data-label="Слушатель \/ контрагент">/u);
+assert.match(stylesSource, /\.finance-details-table-wrap\s*\{[\s\S]{0,120}overflow-x:\s*hidden;/u);
+assert.match(stylesSource, /\.finance-details-table\s*\{[\s\S]{0,160}table-layout:\s*fixed;/u);
+assert.doesNotMatch(stylesSource, /\.finance-details-table\s*\{[^}]*min-width:\s*1120px;/u);
+assert.match(
+  stylesSource,
+  /@media \(max-width: 720px\)[\s\S]*\.finance-details-table td::before\s*\{[\s\S]{0,100}content:\s*attr\(data-label\);/u
+);
 
 console.log("finance receivable eligibility tests: OK");
