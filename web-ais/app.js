@@ -89,12 +89,12 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.306",
+    version: "1.7.307",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
     {
-      version: "1.7.306",
+      version: "1.7.307",
       releasedAt: "2026-08-26",
       changes: [
         "В верхней панели появился процентный индикатор обмена с общей MySQL-базой с текущим этапом операции.",
@@ -52011,7 +52011,9 @@ MAX - https://bizvmax.ru/zifra_plus
           throw new Error("Сервер не подготовил запись стабильных ID в XLSB перед импортом.");
         }
         updateDatabaseExportIndicator({
-          status: "Создание резервной копии и запись стабильных ID в XLSB...",
+          status: result.mergedBidirectional
+            ? "Создание резервной копии и объединение изменений Web и XLSB..."
+            : "Создание резервной копии и запись стабильных ID в XLSB...",
           progress: 94
         });
         xlsbCommitState = "unknown";
@@ -52050,7 +52052,8 @@ MAX - https://bizvmax.ru/zifra_plus
           synchronizationPayload: committedResult.importPayload || result.importPayload,
           syncSource,
           sourceLabel,
-          syncBaseline: baseline
+          syncBaseline: baseline,
+          mergedBidirectional: result.mergedBidirectional === true
         });
         cancelScheduledSharedApplicationStateSave();
         const syncGeneration = sharedStateChangeGeneration;
@@ -52161,8 +52164,10 @@ MAX - https://bizvmax.ru/zifra_plus
       const duration = formatDatabaseOperationDuration(startedAt);
       state.databaseExport.running = false;
       render();
-      const directionLabel = direction === "excel-to-web"
-        ? "Excel → Web"
+      const directionLabel = result.mergedBidirectional
+        ? "Web ↔ Excel"
+        : direction === "excel-to-web"
+          ? "Excel → Web"
         : direction === "web-to-excel"
           ? "Web → Excel"
           : "Изменений нет";
@@ -52199,8 +52204,10 @@ MAX - https://bizvmax.ru/zifra_plus
       showDatabaseOperationResult({
         eyebrow: "Синхронизация с XLSB",
         title: direction === "unchanged" ? "Изменений не найдено" : "Синхронизация завершена",
-        summary: direction === "excel-to-web"
-          ? "Стабильные ID записаны в XLSB, затем изменения перенесены в общую Web-базу; Web-поля совпавших записей сохранены."
+        summary: result.mergedBidirectional
+          ? "Независимые изменения разных слушателей объединены: данные Web записаны в XLSB, а данные XLSB перенесены в общую Web-базу."
+          : direction === "excel-to-web"
+            ? "Стабильные ID записаны в XLSB, затем изменения перенесены в общую Web-базу; Web-поля совпавших записей сохранены."
           : direction === "web-to-excel"
             ? "Изменения Web перенесены в XLSB " + sourceLabel + "; резервная копия создана."
             : "XLSB и Web-база не изменились после прошлой синхронизации.",
@@ -53058,6 +53065,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ? event.synchronizationPayload
       : null;
     const isSynchronizationImport = Boolean(synchronizationPayload);
+    const isBidirectionalSynchronization = Boolean(
+      isSynchronizationImport && event?.mergedBidirectional
+    );
     if (!isSynchronizationImport && state.databaseExport.running) {
       alert(state.databaseExport.operation === "download"
         ? "Дождитесь завершения экспорта базы."
@@ -53505,7 +53515,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const importAuditEntry = addAudit(
         isSynchronizationImport ? "Синхронизация" : "Загрузка",
         "Слушатели, договоры, затраты и запасы",
-        `${isSynchronizationImport ? "Excel → Web; " : ""}${sourceLabel}; ${payload.count || nextStudents.length} слушателей; ${nextContracts.length} договоров; ${linkedDirectExpenseCount} расходов привязано; `
+        `${isBidirectionalSynchronization ? "Web ↔ Excel; " : isSynchronizationImport ? "Excel → Web; " : ""}${sourceLabel}; ${payload.count || nextStudents.length} слушателей; ${nextContracts.length} договоров; ${linkedDirectExpenseCount} расходов привязано; `
         + `разделы договоров по расположению строк: ${contractSectionSummary}; `
         + `${nextDirectExpenses.length} не привязано; ${nextGeneralExpenses.length} общих затрат; ${nextInventory.length} позиций запасов; `
         + `${payload.programPaymentSettings.length} программ с характеристиками и ставками; ${nextTrainingPlans.length} строк учебных планов; `

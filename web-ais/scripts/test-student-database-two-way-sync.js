@@ -2,6 +2,9 @@ const assert = require("assert");
 const {
   mergeStudentDatabaseSyncRecords,
   parseStudentDatabaseSyncComment,
+  hashStudentDatabaseCriticalSnapshot,
+  hashStudentDatabaseCriticalIdentity,
+  resolveLegacyStudentDatabaseIndependentNoteMerge,
   resolveStudentDatabaseSyncDirection,
   acquireStudentDatabaseSyncReservation,
   releaseStudentDatabaseSyncReservation,
@@ -193,6 +196,103 @@ const legacyConflict = mergeStudentDatabaseSyncRecords({
 });
 assert.strictEqual(legacyConflict.conflicts.length, 1);
 assert.match(legacyConflict.conflicts[0].reason, /После прошлой синхронизации/u);
+
+const directionalBaselineData = {
+  students: [
+    {
+      id: "student-web-note",
+      uid: "301",
+      name: "Добрышкина Екатерина Сергеевна",
+      applicationDate: "2026-08-01",
+      program: "Программа 1",
+      note: ""
+    },
+    {
+      id: "student-excel-note",
+      uid: "302",
+      name: "Прозаровская Любовь Александровна",
+      applicationDate: "2026-08-02",
+      program: "Программа 2",
+      note: ""
+    }
+  ],
+  contracts: [],
+  directExpenses: [],
+  generalExpenses: [],
+  inventory: [],
+  trainingPlans: [],
+  programs: []
+};
+const directionalWebData = clone(directionalBaselineData);
+directionalWebData.students[0].note = "Новое сообщение";
+const directionalExcelData = clone(directionalBaselineData);
+directionalExcelData.students[1].note = "Новое сообщение";
+const directionalBaseline = {
+  version: 2,
+  sourceHash: "d".repeat(64),
+  sourceIdentity: "e".repeat(64),
+  webRevision: 15,
+  synchronizedAt: "2026-08-20T10:00:00.000Z",
+  criticalHash: hashStudentDatabaseCriticalSnapshot(directionalBaselineData),
+  criticalIdentityHash: hashStudentDatabaseCriticalIdentity(directionalBaselineData)
+};
+const directionalAuditRows = [{
+  createdAt: "2026-08-20T11:00:00.000Z",
+  action: "Изменена запись",
+  entityType: "students",
+  entityId: "student-web-note",
+  entityLabel: "Добрышкина Екатерина Сергеевна",
+  source: "web",
+  changes: [{
+    field: "note",
+    label: "Примечание",
+    before: "",
+    after: "Новое сообщение"
+  }]
+}];
+const independentNotes = resolveLegacyStudentDatabaseIndependentNoteMerge({
+  webData: directionalWebData,
+  excelData: directionalExcelData,
+  baseline: directionalBaseline,
+  auditRows: directionalAuditRows
+});
+assert.ok(independentNotes);
+assert.deepStrictEqual(independentNotes.stats, {
+  webToExcel: 1,
+  excelToWeb: 1,
+  unchanged: 0
+});
+assert.strictEqual(independentNotes.students[0].note, "Новое сообщение");
+assert.strictEqual(independentNotes.students[1].note, "Новое сообщение");
+assert.deepStrictEqual(
+  independentNotes.changes.map((change) => change.action).sort(),
+  ["Excel → Web", "Web → Excel"]
+);
+
+const sameStudentExcelChange = clone(directionalBaselineData);
+sameStudentExcelChange.students[0].note = "Другое сообщение";
+assert.throws(
+  () => resolveLegacyStudentDatabaseIndependentNoteMerge({
+    webData: directionalWebData,
+    excelData: sameStudentExcelChange,
+    baseline: directionalBaseline,
+    auditRows: directionalAuditRows
+  }),
+  /изменено и в Web, и в XLSB/u
+);
+
+const unrelatedWebAudit = clone(directionalAuditRows);
+unrelatedWebAudit.push({
+  ...directionalAuditRows[0],
+  createdAt: "2026-08-20T11:05:00.000Z",
+  changes: [{ field: "phone", before: "111", after: "222" }]
+});
+assert.strictEqual(resolveLegacyStudentDatabaseIndependentNoteMerge({
+  webData: directionalWebData,
+  excelData: directionalExcelData,
+  baseline: directionalBaseline,
+  auditRows: unrelatedWebAudit
+}), null);
 
 const baseline = {
   version: 1,

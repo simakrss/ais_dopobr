@@ -834,6 +834,7 @@ const STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS = new Set(["contractAmount"])
 const STUDENT_DATABASE_SYNC_COMMENT_START = "[[AIS_SYNC_V1]]";
 const STUDENT_DATABASE_SYNC_COMMENT_END = "[[/AIS_SYNC_V1]]";
 const STUDENT_DATABASE_SYNC_VERSION = 1;
+const STUDENT_DATABASE_DUAL_CRITICAL_CHANGE_CODE = "STUDENT_DATABASE_DUAL_CRITICAL_CHANGE";
 const STUDENT_DATABASE_SYNC_COMMENT_SHEETS = Object.freeze([
   { sheetName: "База", entity: "students" },
   { sheetName: "Реестр договоров", entity: "contracts" },
@@ -13106,6 +13107,180 @@ function hashStudentDatabaseCriticalIdentity(value) {
     .digest("hex");
 }
 
+function getStudentDatabaseDirectionalStudentIdentity(record) {
+  return [
+    normalizeStudentDatabaseSyncValue(record?.uid, "uid"),
+    String(record?.name || "").trim().toLocaleLowerCase("ru-RU").replace(/\s+/gu, " "),
+    normalizeStudentDatabaseDate(record?.applicationDate),
+    String(record?.program || "").trim().toLocaleLowerCase("ru-RU").replace(/\s+/gu, " ")
+  ].join("\u0000");
+}
+
+function pairStudentDatabaseDirectionalStudents(webStudents, excelStudents) {
+  const webRows = Array.isArray(webStudents) ? webStudents : [];
+  const excelRows = Array.isArray(excelStudents) ? excelStudents : [];
+  const usedExcel = new Set();
+  const excelById = new Map();
+  const excelByIdentity = new Map();
+  excelRows.forEach((row, index) => {
+    const id = String(row?.databaseSync?.recordId || row?.id || "").trim();
+    if (id) {
+      if (!excelById.has(id)) excelById.set(id, []);
+      excelById.get(id).push(index);
+    }
+    const identity = getStudentDatabaseDirectionalStudentIdentity(row);
+    if (identity.replaceAll("\u0000", "")) {
+      if (!excelByIdentity.has(identity)) excelByIdentity.set(identity, []);
+      excelByIdentity.get(identity).push(index);
+    }
+  });
+  const pairs = [];
+  for (const web of webRows) {
+    const id = String(web?.databaseSync?.recordId || web?.id || "").trim();
+    const identity = getStudentDatabaseDirectionalStudentIdentity(web);
+    const exactCandidates = (excelById.get(id) || []).filter((index) => !usedExcel.has(index));
+    let candidates = exactCandidates.filter((index) => (
+      getStudentDatabaseDirectionalStudentIdentity(excelRows[index]) === identity
+    ));
+    if (!candidates.length) {
+      candidates = (excelByIdentity.get(identity) || []).filter((index) => !usedExcel.has(index));
+    }
+    if (candidates.length !== 1) return null;
+    const excelIndex = candidates[0];
+    usedExcel.add(excelIndex);
+    pairs.push({
+      recordId: String(web?.id || id).trim(),
+      web,
+      excel: excelRows[excelIndex]
+    });
+  }
+  return usedExcel.size === excelRows.length ? pairs : null;
+}
+
+function resolveLegacyStudentDatabaseIndependentNoteMerge({
+  webData,
+  excelData,
+  baseline: baselineValue,
+  auditRows = []
+} = {}) {
+  const baseline = normalizeStudentDatabaseSyncBaseline(baselineValue);
+  if (!baseline.criticalHash || !baseline.synchronizedAt) return null;
+  if (
+    baseline.criticalIdentityHash
+    && (
+      hashStudentDatabaseCriticalIdentity(webData) !== baseline.criticalIdentityHash
+      || hashStudentDatabaseCriticalIdentity(excelData) !== baseline.criticalIdentityHash
+    )
+  ) return null;
+  const baselineAt = Date.parse(baseline.synchronizedAt);
+  if (!Number.isFinite(baselineAt)) return null;
+  const webBaseline = JSON.parse(JSON.stringify(webData || {}));
+  const baselineStudents = Array.isArray(webBaseline.students) ? webBaseline.students : [];
+  const studentById = new Map(baselineStudents
+    .map((student) => [String(student?.id || "").trim(), student])
+    .filter(([id]) => id));
+  const studentsByName = new Map();
+  baselineStudents.forEach((student) => {
+    const name = String(student?.name || "").trim().toLocaleLowerCase("ru-RU");
+    if (!name) return;
+    if (!studentsByName.has(name)) studentsByName.set(name, []);
+    studentsByName.get(name).push(student);
+  });
+  const relevantEntries = (Array.isArray(auditRows) ? auditRows : [])
+    .filter((entry) => (
+      String(entry?.entityType || "").trim() === "students"
+      && String(entry?.action || "").trim().toLocaleLowerCase("ru-RU") === "изменена запись"
+      && Date.parse(String(entry?.createdAt || "")) > baselineAt
+      && Array.isArray(entry?.changes)
+      && entry.changes.length
+    ))
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+  if (!relevantEntries.length) return null;
+  if (relevantEntries.some((entry) => (
+    entry.changes.some((change) => String(change?.field || "").trim() !== "note")
+  ))) return null;
+  const changedWebIds = new Set();
+  for (const entry of relevantEntries) {
+    const id = String(entry?.entityId || "").trim();
+    let student = studentById.get(id) || null;
+    if (!student) {
+      const matches = studentsByName.get(
+        String(entry?.entityLabel || "").trim().toLocaleLowerCase("ru-RU")
+      ) || [];
+      if (matches.length !== 1) return null;
+      student = matches[0];
+    }
+    changedWebIds.add(String(student.id || id).trim());
+    for (const change of [...entry.changes].reverse()) {
+      student.note = String(change?.before ?? "");
+    }
+  }
+  if (hashStudentDatabaseCriticalSnapshot(webBaseline) !== baseline.criticalHash) return null;
+  const pairs = pairStudentDatabaseDirectionalStudents(webData?.students, excelData?.students);
+  const baselinePairs = pairStudentDatabaseDirectionalStudents(
+    webBaseline.students,
+    excelData?.students
+  );
+  if (!pairs || !baselinePairs || pairs.length !== baselinePairs.length) return null;
+  const baselineById = new Map(baselinePairs.map((pair) => [pair.recordId, pair.web]));
+  const mergedStudents = [];
+  const changes = [];
+  const stats = { webToExcel: 0, excelToWeb: 0, unchanged: 0 };
+  for (const pair of pairs) {
+    const baselineStudent = baselineById.get(pair.recordId);
+    if (!baselineStudent) return null;
+    const baselineNote = String(baselineStudent.note || "");
+    const webNote = String(pair.web?.note || "");
+    const excelNote = String(pair.excel?.note || "");
+    const webChanged = webNote !== baselineNote;
+    const excelChanged = excelNote !== baselineNote;
+    if (webChanged && excelChanged && webNote !== excelNote) {
+      const error = new Error(
+        `Примечание слушателя «${String(pair.web?.name || pair.recordId)}» `
+        + "изменено и в Web, и в XLSB."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    if (excelChanged && !webChanged) {
+      mergedStudents.push({ ...pair.web, note: excelNote });
+      stats.excelToWeb += 1;
+      changes.push({
+        entity: "Слушатели",
+        record: String(pair.web?.name || pair.recordId),
+        action: "Excel → Web",
+        field: "Примечание",
+        before: webNote || "—",
+        after: excelNote || "—",
+        recordId: pair.recordId
+      });
+    } else {
+      mergedStudents.push({ ...pair.web });
+      if (webChanged) {
+        stats.webToExcel += 1;
+        changes.push({
+          entity: "Слушатели",
+          record: String(pair.web?.name || pair.recordId),
+          action: "Web → Excel",
+          field: "Примечание",
+          before: baselineNote || "—",
+          after: webNote || "—",
+          recordId: pair.recordId
+        });
+      } else {
+        stats.unchanged += 1;
+      }
+    }
+  }
+  if (!stats.webToExcel || !stats.excelToWeb) return null;
+  return {
+    students: mergedStudents,
+    changes,
+    stats,
+    changedWebIds: [...changedWebIds]
+  };
+}
+
 function getStudentDatabaseEmbeddedSyncTimestamp(value) {
   const collections = getStudentDatabaseCriticalCollections(value);
   const records = [
@@ -15604,6 +15779,7 @@ function resolveStudentDatabaseSyncDirection({
           + "Автоматическая перезапись остановлена, чтобы не потерять сведения о слушателях, "
           + "договорах, затратах, программах или учебных планах."
         );
+        error.code = STUDENT_DATABASE_DUAL_CRITICAL_CHANGE_CODE;
         error.statusCode = 409;
         throw error;
       }
@@ -22360,6 +22536,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     );
     let sourceDataForExport = null;
     let directionalSyncResult = null;
+    let directionalMergeResult = null;
     let fixedValueOverrideTargets = [];
     if (directionalSync) {
       onProgress({
@@ -22386,25 +22563,49 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         sourceDataForExport
       );
       onProgress({ progress: 15, stage: "compare", message: "Сравнение критичных данных Web и XLSB..." });
-      directionalSyncResult = resolveStudentDatabaseSyncDirection({
-        baseline: body.syncBaseline,
-        currentWebRevision: sharedStateMetadata?.revision || body.sharedStateRevision,
-        currentWebUpdatedAt: sharedStateMetadata?.updatedAt,
-        sourceHash,
-        sourceIdentity,
-        sourceModifiedAt,
-        lastSynchronizedAt: body.lastSynchronizedAt,
-        lastExportedAt: body.lastExportedAt,
-        lastDownloadedAt: body.lastDownloadedAt,
-        sourceEmbeddedSynchronizedAt,
-        currentWebCriticalUpdatedAt: body.currentWebCriticalUpdatedAt,
-        currentWebAuditOldestAt: body.currentWebAuditOldestAt,
-        currentWebAuditComplete: body.currentWebAuditComplete === true,
-        currentWebCriticalHash,
-        currentExcelCriticalHash,
-        currentWebCriticalIdentityHash,
-        currentExcelCriticalIdentityHash
-      });
+      try {
+        directionalSyncResult = resolveStudentDatabaseSyncDirection({
+          baseline: body.syncBaseline,
+          currentWebRevision: sharedStateMetadata?.revision || body.sharedStateRevision,
+          currentWebUpdatedAt: sharedStateMetadata?.updatedAt,
+          sourceHash,
+          sourceIdentity,
+          sourceModifiedAt,
+          lastSynchronizedAt: body.lastSynchronizedAt,
+          lastExportedAt: body.lastExportedAt,
+          lastDownloadedAt: body.lastDownloadedAt,
+          sourceEmbeddedSynchronizedAt,
+          currentWebCriticalUpdatedAt: body.currentWebCriticalUpdatedAt,
+          currentWebAuditOldestAt: body.currentWebAuditOldestAt,
+          currentWebAuditComplete: body.currentWebAuditComplete === true,
+          currentWebCriticalHash,
+          currentExcelCriticalHash,
+          currentWebCriticalIdentityHash,
+          currentExcelCriticalIdentityHash
+        });
+      } catch (error) {
+        if (error?.code !== STUDENT_DATABASE_DUAL_CRITICAL_CHANGE_CODE) throw error;
+        directionalMergeResult = resolveLegacyStudentDatabaseIndependentNoteMerge({
+          webData: payload,
+          excelData: sourceDataForExport,
+          baseline: body.syncBaseline,
+          auditRows: await readAuditRows()
+        });
+        if (!directionalMergeResult) throw error;
+        payload.students = directionalMergeResult.students;
+        directionalSyncResult = {
+          direction: "web-to-excel",
+          baseline: normalizeStudentDatabaseSyncBaseline(body.syncBaseline),
+          mergedBidirectional: true,
+          criticalHash: hashStudentDatabaseCriticalSnapshot(payload),
+          criticalIdentityHash: hashStudentDatabaseCriticalIdentity(payload)
+        };
+        onProgress({
+          progress: 15.5,
+          stage: "merge",
+          message: "Независимые изменения слушателей объединены; подготовка Web и XLSB..."
+        });
+      }
       fixedValueOverrideTargets = getStudentDatabaseFixedValueOverrideTargets(
         payload,
         sourceDataForExport
@@ -22946,6 +23147,18 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     const synchronizedChangeReport = directionalSync
       ? buildStudentDatabaseSynchronizedChanges(sourceDataForExport, parsedOutputData)
       : buildStudentDatabaseSynchronizedChanges(payload, payload);
+    const mergedDirectionalChanges = directionalMergeResult?.changes || [];
+    const synchronizedChanges = directionalMergeResult
+      ? [
+          ...mergedDirectionalChanges,
+          ...synchronizedChangeReport.rows.filter((row) => !mergedDirectionalChanges.some((merged) => (
+            merged.recordId === row.recordId && merged.field === row.field
+          )))
+        ].slice(0, STUDENT_DATABASE_SYNCHRONIZED_CHANGE_LIMIT)
+      : synchronizedChangeReport.rows;
+    const directionalImportPayload = directionalMergeResult
+      ? buildStudentDatabaseImportResult(parsedOutputData, sourceType)
+      : null;
     return {
       ...savedResult,
       studentCount: payload.students.length,
@@ -22980,9 +23193,12 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       communicationTemplateMissingNamedRangeNames,
       communicationTemplateNamedRangeFormulaPreservedCount:
         communicationTemplateVerification.formulaPreserved,
-      synchronizedChangeCount: synchronizedChangeReport.totalCount,
-      synchronizedChanges: synchronizedChangeReport.rows,
-      synchronizedChangesTruncated: synchronizedChangeReport.truncated,
+      synchronizedChangeCount: directionalMergeResult
+        ? Math.max(synchronizedChanges.length, synchronizedChangeReport.totalCount)
+        : synchronizedChangeReport.totalCount,
+      synchronizedChanges,
+      synchronizedChangesTruncated: synchronizedChangeReport.truncated
+        || synchronizedChanges.length < mergedDirectionalChanges.length + synchronizedChangeReport.rows.length,
       synchronizedChangeEntityCounts: synchronizedChangeReport.entityCounts,
       targetedStudentFieldPatchCount: payload.targetedStudentFieldPatches.length,
       ...(studentSyncResult ? {
@@ -22994,13 +23210,26 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         studentSyncStats: studentSyncResult.stats
       } : {}),
       ...(directionalSync ? {
-        syncDirection: "web-to-excel",
+        syncDirection: directionalMergeResult ? "excel-to-web" : "web-to-excel",
+        mergedBidirectional: Boolean(directionalMergeResult),
+        mergeStats: directionalMergeResult?.stats || null,
         requiresCommit: true,
         sourceModifiedAt,
         sourceIdentity,
-        criticalHash: directionalSyncResult?.criticalHash || "",
-        criticalIdentityHash: directionalSyncResult?.criticalIdentityHash || "",
-        preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0)
+        criticalHash: directionalMergeResult
+          ? hashStudentDatabaseCriticalSnapshot(parsedOutputData)
+          : directionalSyncResult?.criticalHash || "",
+        criticalIdentityHash: directionalMergeResult
+          ? hashStudentDatabaseCriticalIdentity(parsedOutputData)
+          : directionalSyncResult?.criticalIdentityHash || "",
+        preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0),
+        ...(directionalImportPayload ? {
+          importPayload: directionalImportPayload,
+          serverMacroSettingsImport: {
+            macroSettings: parsedOutputData.macroSettings,
+            macroSettingsSecret: parsedOutputData.macroSettingsSecret
+          }
+        } : {})
       } : {})
     };
   } finally {
@@ -29001,6 +29230,7 @@ module.exports = {
   hashStudentDatabaseCriticalSnapshot,
   buildStudentDatabaseCriticalIdentitySnapshot,
   hashStudentDatabaseCriticalIdentity,
+  resolveLegacyStudentDatabaseIndependentNoteMerge,
   buildStudentDatabaseSynchronizedChanges,
   getStudentDatabaseEmbeddedSyncTimestamp,
   mergeStudentDatabaseSyncRecords,
