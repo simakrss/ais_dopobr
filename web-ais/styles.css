@@ -1987,6 +1987,167 @@ body.is-session-expired {
   font-weight: 650;
 }
 
+.student-database-operation-history-backdrop {
+  z-index: 73;
+}
+
+.student-database-operation-history-modal {
+  width: min(1180px, 100%);
+  max-height: min(900px, calc(100vh - 24px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.student-database-operation-history-modal .modal-head p:not(.eyebrow) {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.student-database-operation-history-content {
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  background: #f7faf9;
+}
+
+.student-database-operation-history-filters {
+  display: grid;
+  grid-template-columns: minmax(210px, 1.8fr) repeat(3, minmax(125px, 0.8fr)) auto auto;
+  align-items: end;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.student-database-operation-history-filters label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.student-database-operation-history-filters label > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.student-database-operation-history-filters input,
+.student-database-operation-history-filters select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+}
+
+.student-database-operation-history-table-wrap {
+  max-height: min(300px, 35vh);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.student-database-operation-history-table {
+  min-width: 940px;
+  font-size: 11px;
+}
+
+.student-database-operation-history-table thead th {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  background: #edf4f2;
+}
+
+.student-database-operation-history-table tbody tr {
+  cursor: pointer;
+}
+
+.student-database-operation-history-table tbody tr:hover,
+.student-database-operation-history-table tbody tr:focus-visible,
+.student-database-operation-history-table tbody tr.is-selected {
+  background: #e7f5f1;
+  outline: none;
+}
+
+.student-database-operation-history-table tbody tr.is-selected {
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.student-database-operation-history-table tbody tr.is-error {
+  background: #fff2f2;
+}
+
+.student-database-operation-history-table tbody tr.is-error.is-selected {
+  background: #ffe5e5;
+  box-shadow: inset 3px 0 0 #b42318;
+}
+
+.student-database-operation-history-table td {
+  max-width: 220px;
+  vertical-align: top;
+}
+
+.student-database-operation-history-table td span,
+.student-database-operation-history-table td small {
+  display: block;
+}
+
+.student-database-operation-history-table td small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.student-database-operation-history-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.student-database-operation-history-status {
+  width: fit-content;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #e6f6f1;
+  color: #087664;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.student-database-operation-history-status.is-error {
+  background: #ffe2e2;
+  color: #a91c1c;
+}
+
+.student-database-operation-history-detail {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.student-database-operation-history-detail.tone-error .database-operation-result-summary {
+  border-color: #efb5b5;
+  background: #fff2f2;
+}
+
+.student-database-operation-history-detail.tone-error .database-operation-result-icon {
+  background: #b42318;
+}
+
+.student-database-operation-history-stats {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.student-database-operation-history-meta {
+  margin-bottom: 0;
+}
+
 .release-history-modal {
   width: min(820px, 100%);
   max-height: min(820px, calc(100vh - 32px));
@@ -19388,8 +19549,28 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     padding: 8px;
   }
 
+  .student-database-operation-history-backdrop {
+    padding: 8px;
+  }
+
   .database-operation-result-modal {
     max-height: calc(100dvh - 16px);
+  }
+
+  .student-database-operation-history-modal {
+    max-height: calc(100dvh - 16px);
+  }
+
+  .student-database-operation-history-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .student-database-operation-history-query {
+    grid-column: 1 / -1;
+  }
+
+  .student-database-operation-history-table-wrap {
+    max-height: 30dvh;
   }
 
   .database-operation-result-stats {

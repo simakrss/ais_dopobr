@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.276",
+    version: "1.7.277",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.277",
+      releasedAt: "2026-08-26",
+      changes: [
+        "В админке на вкладке «База АИС Допобразование» добавлена отдельная история загрузок, экспортов и синхронизаций.",
+        "Для каждой операции сохраняются результат, пользователь, источник, направление, длительность, показатели, предупреждения, ошибки и доступная детализация изменений; журнал можно фильтровать и выгружать в CSV."
+      ]
+    },
     {
       version: "1.7.276",
       releasedAt: "2026-08-26",
@@ -2403,6 +2411,14 @@
   const START_VIEW_KEY = "ais-dopobr-start-view-v1";
   const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH =
     "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
+  const STUDENT_DATABASE_OPERATION_HISTORY_LIMIT = 100;
+  const STUDENT_DATABASE_OPERATION_HISTORY_ROW_LIMIT = 500;
+  const STUDENT_DATABASE_OPERATION_HISTORY_FILTER_DEFAULTS = Object.freeze({
+    query: "",
+    operation: "",
+    status: "",
+    source: ""
+  });
   const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
   const DEFAULT_PARTNER_MATERIALS_URL = "https://disk.yandex.ru/d/9BBGBNBIum252w";
   const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
@@ -5039,6 +5055,12 @@ MAX - https://bizvmax.ru/zifra_plus
     userManagementOpen: false,
     releaseHistoryOpen: false,
     databaseOperationResult: null,
+    databaseOperationHistory: {
+      open: false,
+      selectedId: "",
+      selectedItemKey: "",
+      filters: { ...STUDENT_DATABASE_OPERATION_HISTORY_FILTER_DEFAULTS }
+    },
     adminTab: "database",
     adminDatabaseTab: "ais",
     authUsers: [],
@@ -5498,6 +5520,9 @@ MAX - https://bizvmax.ru/zifra_plus
     data.meta.studentDatabaseLastSynchronizedAt = String(
       data.meta.studentDatabaseLastSynchronizedAt || ""
     ).trim();
+    data.meta.studentDatabaseOperationHistory = normalizeStudentDatabaseOperationHistory(
+      data.meta.studentDatabaseOperationHistory
+    );
     delete data.meta.studentDatabaseSyncLedger;
     delete data.meta.studentDatabaseUrl;
     delete data.meta.studentPhotoBasePath;
@@ -9092,7 +9117,11 @@ MAX - https://bizvmax.ru/zifra_plus
       statisticsTab: String(state.statistics?.tab || "income"),
       overlay: state.profileOpen
         ? "profile"
-        : (state.releaseHistoryOpen ? "release-history" : ""),
+        : state.releaseHistoryOpen
+          ? "release-history"
+          : state.databaseOperationHistory.open
+            ? "database-operation-history"
+            : "",
       financeDetails: state.financeDetails?.open
         ? {
           open: true,
@@ -9238,6 +9267,11 @@ MAX - https://bizvmax.ru/zifra_plus
     state.statistics.profitabilityDetails.open = Boolean(snapshot.profitabilityDetailsOpen);
     state.profileOpen = snapshot.overlay === "profile";
     state.releaseHistoryOpen = snapshot.overlay === "release-history" && isAdminUser();
+    state.databaseOperationHistory.open = snapshot.overlay === "database-operation-history" && isAdminUser();
+    if (!state.databaseOperationHistory.open) {
+      state.databaseOperationHistory.selectedId = "";
+      state.databaseOperationHistory.selectedItemKey = "";
+    }
     state.financeDetails = snapshot.financeDetails?.open
       ? {
         ...state.financeDetails,
@@ -9416,6 +9450,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ${state.documentTemplateDialogId ? renderDocumentTemplateDialog() : ""}
       ${state.profileOpen ? renderProfileDialog() : ""}
       ${state.releaseHistoryOpen && isAdminUser() ? renderReleaseHistoryDialog() : ""}
+      ${state.databaseOperationHistory.open && isAdminUser() ? renderStudentDatabaseOperationHistoryDialog() : ""}
       ${state.databaseOperationResult ? renderDatabaseOperationResultDialog() : ""}
       ${renderDatabaseImportIndicator()}
       ${renderDatabaseExportIndicator()}
@@ -19461,6 +19496,10 @@ MAX - https://bizvmax.ru/zifra_plus
                     <small>Импорт, синхронизация и экспорт файла XLSB, а также размещение документов системы.</small>
                   </div>
                   <div class="sdo-settings-actions admin-database-actions">
+                    <button class="ghost-button" data-action="open-student-database-operation-history" type="button" title="${escapeMultilineAttr("История операций с базой\n\nПоказывает загрузки, экспорты и синхронизации с результатами, пользователями и подробностями.")}">
+                      <span aria-hidden="true">↺</span>
+                      <span>История операций</span>
+                    </button>
                     <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" aria-describedby="admin-database-replace-warning" title="${escapeMultilineAttr(getStudentDatabaseImportTooltip())}" ${state.databaseImport.running ? "disabled" : ""}>
                       <span data-import-button-label>${state.databaseImport.running ? "Импорт..." : "Загрузить из базы"}</span>
                     </button>
@@ -20219,6 +20258,133 @@ MAX - https://bizvmax.ru/zifra_plus
 
   const DATABASE_OPERATION_RESULT_PREVIEW_LIMIT = 250;
 
+  function getStudentDatabaseOperationType(eyebrow = "") {
+    const value = String(eyebrow || "").toLocaleLowerCase("ru-RU");
+    if (value.includes("импорт")) return "import";
+    if (value.includes("экспорт")) return "export";
+    return "sync";
+  }
+
+  function getStudentDatabaseOperationLabel(operation = "") {
+    return {
+      import: "Загрузка из базы",
+      export: "Экспорт в базу",
+      sync: "Синхронизация с базой"
+    }[operation] || "Операция с базой";
+  }
+
+  function getStudentDatabaseOperationSourceKey(value = "") {
+    const source = String(value || "").toLocaleLowerCase("ru-RU");
+    if (source.includes("локаль")) return "local";
+    if (source.includes("webdav") || source.includes("яндекс")) return "webdav";
+    return "";
+  }
+
+  function normalizeStudentDatabaseOperationHistoryItems(items = []) {
+    const normalized = (Array.isArray(items) ? items : [])
+      .map((item, index) => normalizeDatabaseOperationResultItem(item, index));
+    const limitedRowsByKey = new Map();
+    let remainingRows = STUDENT_DATABASE_OPERATION_HISTORY_ROW_LIMIT;
+    [...normalized]
+      .sort((left, right) => {
+        const rank = (item) => item.key === "synchronized-changes" ? 0 : item.problem ? 1 : 2;
+        return rank(left) - rank(right);
+      })
+      .forEach((item) => {
+        const rowCount = Math.max(item.rows.length, Number(item.rowCount || 0));
+        const itemLimit = item.key === "synchronized-changes"
+          ? STUDENT_DATABASE_OPERATION_HISTORY_ROW_LIMIT
+          : item.problem
+            ? 200
+            : 40;
+        const take = Math.max(0, Math.min(item.rows.length, itemLimit, remainingRows));
+        limitedRowsByKey.set(item.key, {
+          ...item,
+          rowCount,
+          rows: item.rows.slice(0, take),
+          rowsTruncated: item.rowsTruncated === true || take < rowCount
+        });
+        remainingRows -= take;
+      });
+    return normalized.map((item) => limitedRowsByKey.get(item.key));
+  }
+
+  function normalizeStudentDatabaseOperationHistoryEntry(entry = {}, index = 0) {
+    const source = entry && typeof entry === "object" ? entry : {};
+    const operation = ["import", "export", "sync"].includes(source.operation)
+      ? source.operation
+      : getStudentDatabaseOperationType(source.eyebrow);
+    const status = source.status === "error" || source.tone === "error" ? "error" : "success";
+    const details = (Array.isArray(source.details) ? source.details : [])
+      .map((item) => ({
+        label: String(item?.label || "").trim(),
+        value: String(item?.value ?? "").trim()
+      }))
+      .filter((item) => item.label || item.value);
+    const detailValue = (labels) => details.find((item) => labels.includes(item.label))?.value || "";
+    const items = normalizeStudentDatabaseOperationHistoryItems(source.items);
+    const direction = String(
+      source.direction
+      || items.find((item) => item.key === "direction")?.value
+      || ""
+    ).trim();
+    const sourceLabel = String(
+      source.sourceLabel
+      || detailValue(["Источник", "Шаблон"])
+      || ""
+    ).trim();
+    const generatedAt = String(source.generatedAt || source.completedAt || new Date().toISOString());
+    return {
+      id: String(source.id || `database-operation-${generatedAt}-${index}`).trim(),
+      operation,
+      operationLabel: String(source.operationLabel || getStudentDatabaseOperationLabel(operation)),
+      status,
+      eyebrow: String(source.eyebrow || getStudentDatabaseOperationLabel(operation)),
+      title: String(source.title || (status === "error" ? "Операция не выполнена" : "Операция завершена")),
+      summary: String(source.summary || ""),
+      generatedAt,
+      userLogin: String(source.userLogin || "system").trim() || "system",
+      userName: String(source.userName || "").trim(),
+      sourceLabel,
+      sourceKey: String(source.sourceKey || getStudentDatabaseOperationSourceKey(sourceLabel)),
+      direction,
+      duration: String(source.duration || detailValue(["Время выполнения"]) || "").trim(),
+      fileName: String(source.fileName || detailValue(["Файл"]) || "").trim(),
+      backupPath: String(source.backupPath || detailValue(["Резервная копия"]) || "").trim(),
+      details,
+      items
+    };
+  }
+
+  function normalizeStudentDatabaseOperationHistory(history = []) {
+    return (Array.isArray(history) ? history : [])
+      .map((entry, index) => normalizeStudentDatabaseOperationHistoryEntry(entry, index))
+      .filter((entry) => entry.generatedAt)
+      .sort((left, right) => String(right.generatedAt).localeCompare(String(left.generatedAt)))
+      .slice(0, STUDENT_DATABASE_OPERATION_HISTORY_LIMIT);
+  }
+
+  function appendStudentDatabaseOperationHistory(result = {}) {
+    const authUser = getCurrentAuthUser();
+    const entry = normalizeStudentDatabaseOperationHistoryEntry({
+      ...result,
+      id: makeId("database-operation"),
+      userLogin: getCurrentUserLogin() || "system",
+      userName: String(authUser.name || "").trim(),
+      generatedAt: String(result.generatedAt || new Date().toISOString())
+    });
+    state.data.meta.studentDatabaseOperationHistory = [
+      entry,
+      ...normalizeStudentDatabaseOperationHistory(state.data.meta.studentDatabaseOperationHistory)
+    ].slice(0, STUDENT_DATABASE_OPERATION_HISTORY_LIMIT);
+    try {
+      persist();
+    } catch (error) {
+      console.warn("Не удалось сохранить историю операции с базой", error);
+    }
+    return entry;
+  }
+
   function normalizeDatabaseOperationResultItem(item, index) {
     const source = item && typeof item === "object" ? item : {};
     const rows = Array.isArray(source.rows)
@@ -20247,7 +20413,9 @@ MAX - https://bizvmax.ru/zifra_plus
       problem: source.problem === true || source.tone === "error",
       hiddenStat: source.hiddenStat === true,
       columns,
-      rows
+      rows,
+      rowCount: Math.max(rows.length, Number(source.rowCount || 0)),
+      rowsTruncated: source.rowsTruncated === true
     };
   }
 
@@ -20260,6 +20428,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const rows = Array.isArray(item?.rows) ? item.rows : [];
     const columns = Array.isArray(item?.columns) ? item.columns : [];
     const previewRows = rows.slice(0, DATABASE_OPERATION_RESULT_PREVIEW_LIMIT);
+    const rowCount = Math.max(rows.length, Number(item?.rowCount || 0));
     return `
       <section class="database-operation-result-item-details ${item.problem ? "is-problem" : ""}" aria-live="polite">
         <header>
@@ -20281,14 +20450,20 @@ MAX - https://bizvmax.ru/zifra_plus
               </tbody>
             </table>
           </div>
-          ${rows.length > previewRows.length ? `
+          ${item?.rowsTruncated ? `
+            <p class="database-operation-result-limit-note">
+              В истории сохранены первые ${rows.length} из ${rowCount} записей этого показателя.
+            </p>
+          ` : rows.length > previewRows.length ? `
             <p class="database-operation-result-limit-note">
               Показаны первые ${previewRows.length} из ${rows.length} записей. В CSV-отчёт войдут все записи.
             </p>
           ` : ""}
         ` : `
           <div class="database-operation-result-empty-detail">
-            Для этого показателя доступно итоговое значение${item.note ? " и пояснение выше" : ""}.
+            ${item?.rowsTruncated && rowCount
+              ? `Для этого показателя сохранено итоговое значение; ${rowCount} ${pluralizeRu(rowCount, "строка", "строки", "строк")} детализации не вошли в журнал из-за ограничения объёма.`
+              : `Для этого показателя доступно итоговое значение${item.note ? " и пояснение выше" : ""}.`}
           </div>
         `}
       </section>
@@ -20419,7 +20594,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function showDatabaseOperationResult(result = {}) {
     const items = (Array.isArray(result.items) ? result.items : [])
       .map((item, index) => normalizeDatabaseOperationResultItem(item, index));
-    state.databaseOperationResult = {
+    const normalizedResult = {
       tone: result.tone === "error" ? "error" : "success",
       eyebrow: String(result.eyebrow || "Операция с базой"),
       title: String(result.title || "Результат операции"),
@@ -20429,6 +20604,8 @@ MAX - https://bizvmax.ru/zifra_plus
       selectedItemKey: "",
       generatedAt: String(result.generatedAt || new Date().toISOString())
     };
+    state.databaseOperationResult = normalizedResult;
+    if (result.recordHistory !== false) appendStudentDatabaseOperationHistory(normalizedResult);
     render();
     requestAnimationFrame(() => {
       document.querySelector(".database-operation-result-modal [data-action='close-database-operation-result']")
@@ -20440,6 +20617,278 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!state.databaseOperationResult) return;
     state.databaseOperationResult = null;
     render();
+  }
+
+  function getStudentDatabaseOperationHistoryEntries() {
+    const entries = normalizeStudentDatabaseOperationHistory(
+      state.data.meta.studentDatabaseOperationHistory
+    );
+    state.data.meta.studentDatabaseOperationHistory = entries;
+    return entries;
+  }
+
+  function getFilteredStudentDatabaseOperationHistoryEntries() {
+    const filters = {
+      ...STUDENT_DATABASE_OPERATION_HISTORY_FILTER_DEFAULTS,
+      ...(state.databaseOperationHistory.filters || {})
+    };
+    const query = String(filters.query || "").trim().toLocaleLowerCase("ru-RU");
+    return getStudentDatabaseOperationHistoryEntries().filter((entry) => {
+      if (filters.operation && entry.operation !== filters.operation) return false;
+      if (filters.status && entry.status !== filters.status) return false;
+      if (filters.source && entry.sourceKey !== filters.source) return false;
+      if (!query) return true;
+      const searchable = [
+        entry.operationLabel,
+        entry.title,
+        entry.summary,
+        entry.userLogin,
+        entry.userName,
+        entry.sourceLabel,
+        entry.direction,
+        entry.fileName,
+        entry.backupPath,
+        ...entry.details.flatMap((item) => [item.label, item.value]),
+        ...entry.items.flatMap((item) => [item.label, item.value, item.note])
+      ].join(" ").toLocaleLowerCase("ru-RU");
+      return searchable.includes(query);
+    });
+  }
+
+  function openStudentDatabaseOperationHistory() {
+    const entries = getStudentDatabaseOperationHistoryEntries();
+    state.databaseOperationHistory.open = true;
+    state.databaseOperationHistory.selectedId = entries[0]?.id || "";
+    state.databaseOperationHistory.selectedItemKey = "";
+    render();
+    requestAnimationFrame(() => {
+      document.querySelector(".student-database-operation-history-modal [data-action='close-student-database-operation-history']")
+        ?.focus({ preventScroll: true });
+    });
+  }
+
+  function closeStudentDatabaseOperationHistory({ navigateBack = true } = {}) {
+    if (!state.databaseOperationHistory.open) return;
+    if (navigateBack && returnToPreviousAisScreen()) return;
+    state.databaseOperationHistory.open = false;
+    state.databaseOperationHistory.selectedId = "";
+    state.databaseOperationHistory.selectedItemKey = "";
+    render();
+    document.querySelector("[data-action='open-student-database-operation-history']")
+      ?.focus({ preventScroll: true });
+  }
+
+  function exportStudentDatabaseOperationHistory() {
+    const entries = getFilteredStudentDatabaseOperationHistoryEntries();
+    if (!entries.length) return;
+    const lines = [[
+      "Дата и время",
+      "Операция",
+      "Результат",
+      "Пользователь",
+      "Источник",
+      "Направление",
+      "Длительность",
+      "Файл",
+      "Резервная копия",
+      "Описание"
+    ].map(csvCell).join(";")];
+    entries.forEach((entry) => {
+      lines.push([
+        formatDateTimeRu(entry.generatedAt),
+        entry.operationLabel,
+        entry.status === "error" ? "Ошибка" : "Успешно",
+        entry.userName ? `${entry.userName} (${entry.userLogin})` : entry.userLogin,
+        entry.sourceLabel,
+        entry.direction,
+        entry.duration,
+        entry.fileName,
+        entry.backupPath,
+        entry.summary
+      ].map(csvCell).join(";"));
+      lines.push(
+        "",
+        ["Параметры операции"].map(csvCell).join(";"),
+        ["Параметр", "Значение"].map(csvCell).join(";"),
+        ...entry.details.map((item) => [item.label, item.value].map(csvCell).join(";")),
+        "",
+        ["Показатели операции"].map(csvCell).join(";"),
+        ["Показатель", "Значение", "Состояние", "Комментарий", "Строк сохранено", "Строк всего"]
+          .map(csvCell).join(";"),
+        ...entry.items.map((item) => [
+          item.label,
+          item.value,
+          item.problem ? "Требует внимания" : "Без замечаний",
+          item.note,
+          item.rows.length,
+          item.rowCount
+        ].map(csvCell).join(";"))
+      );
+      entry.items.forEach((item) => {
+        if (!item.rows.length || !item.columns.length) return;
+        lines.push(
+          "",
+          [`Детализация: ${item.label}${item.rowsTruncated ? ` (сохранено ${item.rows.length} из ${item.rowCount})` : ""}`]
+            .map(csvCell).join(";"),
+          item.columns.map((column) => csvCell(column.label)).join(";"),
+          ...item.rows.map((row) => item.columns
+            .map((column) => csvCell(getDatabaseOperationResultRowValue(row, column.key)))
+            .join(";"))
+        );
+      });
+      lines.push("", "");
+    });
+    const stamp = new Date().toISOString().replace(/[:T]/gu, "-").slice(0, 19);
+    download(
+      `История-операций-АИС-${stamp}.csv`,
+      `\ufeff${lines.join("\n")}`,
+      "text/csv;charset=utf-8"
+    );
+  }
+
+  function renderStudentDatabaseOperationHistoryDetails(entry) {
+    if (!entry) {
+      return '<div class="empty-state compact"><span>Выберите операцию для просмотра подробностей.</span></div>';
+    }
+    const items = Array.isArray(entry.items) ? entry.items : [];
+    const selectedItem = items.find((item) => item.key === state.databaseOperationHistory.selectedItemKey)
+      || items.find((item) => item.key === "synchronized-changes" && Number(item.value || 0) > 0)
+      || items.find((item) => item.problem)
+      || null;
+    if (selectedItem && selectedItem.key !== state.databaseOperationHistory.selectedItemKey) {
+      state.databaseOperationHistory.selectedItemKey = selectedItem.key;
+    }
+    const userLabel = entry.userName
+      ? `${entry.userName} (${entry.userLogin})`
+      : entry.userLogin;
+    return `
+      <section class="student-database-operation-history-detail tone-${escapeAttr(entry.status)}">
+        <div class="database-operation-result-summary">
+          <span class="database-operation-result-icon" aria-hidden="true">${entry.status === "error" ? "!" : "✓"}</span>
+          <div>
+            <strong>${escapeHtml(entry.title)}</strong>
+            <p>${escapeHtml(entry.summary || "Подробности операции сохранены в журнале.")}</p>
+          </div>
+        </div>
+        ${items.length ? `
+          <div class="database-operation-result-stats student-database-operation-history-stats">
+            ${items.map((item) => `
+              <button
+                class="database-operation-result-stat ${item.problem ? "is-problem" : ""} ${selectedItem?.key === item.key ? "is-selected" : ""}"
+                data-action="select-student-database-operation-history-item"
+                data-item-key="${escapeAttr(item.key)}"
+                type="button"
+                aria-expanded="${selectedItem?.key === item.key ? "true" : "false"}"
+              >
+                <span class="database-operation-result-stat-label">${escapeHtml(item.label)}</span>
+                <strong>${escapeHtml(String(item.value ?? ""))}</strong>
+                ${item.note ? `<small>${escapeHtml(item.note)}</small>` : ""}
+                <span class="database-operation-result-stat-hint">Подробнее</span>
+              </button>
+            `).join("")}
+          </div>
+        ` : ""}
+        ${selectedItem ? renderDatabaseOperationResultItemDetails(selectedItem) : ""}
+        <dl class="database-operation-result-details student-database-operation-history-meta">
+          <div><dt>Дата и время</dt><dd>${escapeHtml(formatDateTimeRu(entry.generatedAt))}</dd></div>
+          <div><dt>Пользователь</dt><dd>${escapeHtml(userLabel)}</dd></div>
+          <div><dt>Источник</dt><dd>${escapeHtml(entry.sourceLabel || "Не указан")}</dd></div>
+          ${entry.direction ? `<div><dt>Направление</dt><dd>${escapeHtml(entry.direction)}</dd></div>` : ""}
+          ${entry.duration ? `<div><dt>Время выполнения</dt><dd>${escapeHtml(entry.duration)}</dd></div>` : ""}
+          ${entry.fileName ? `<div><dt>Файл</dt><dd>${escapeHtml(entry.fileName)}</dd></div>` : ""}
+          ${entry.backupPath ? `<div><dt>Резервная копия</dt><dd>${escapeHtml(entry.backupPath)}</dd></div>` : ""}
+          ${entry.details
+            .filter((item) => !["Источник", "Шаблон", "Время выполнения", "Файл", "Резервная копия"].includes(item.label))
+            .map((item) => `<div><dt>${escapeHtml(item.label)}</dt><dd>${escapeHtml(item.value)}</dd></div>`)
+            .join("")}
+        </dl>
+      </section>
+    `;
+  }
+
+  function renderStudentDatabaseOperationHistoryDialog() {
+    const allEntries = getStudentDatabaseOperationHistoryEntries();
+    const entries = getFilteredStudentDatabaseOperationHistoryEntries();
+    const filters = {
+      ...STUDENT_DATABASE_OPERATION_HISTORY_FILTER_DEFAULTS,
+      ...(state.databaseOperationHistory.filters || {})
+    };
+    let selectedEntry = entries.find((entry) => entry.id === state.databaseOperationHistory.selectedId)
+      || entries[0]
+      || null;
+    if (selectedEntry && selectedEntry.id !== state.databaseOperationHistory.selectedId) {
+      state.databaseOperationHistory.selectedId = selectedEntry.id;
+      state.databaseOperationHistory.selectedItemKey = "";
+    }
+    return `
+      <div class="modal-backdrop student-database-operation-history-backdrop" data-action="close-student-database-operation-history">
+        <section class="modal student-database-operation-history-modal" role="dialog" aria-modal="true" aria-labelledby="student-database-operation-history-title">
+          <header class="modal-head">
+            <div>
+              <p class="eyebrow">База АИС Допобразование</p>
+              <h2 id="student-database-operation-history-title">История операций</h2>
+              <p>${entries.length} из ${allEntries.length} ${pluralizeRu(allEntries.length, "операция", "операции", "операций")}</p>
+            </div>
+            <button class="icon-button" data-action="close-student-database-operation-history" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+          </header>
+          <div class="student-database-operation-history-content">
+            <form class="student-database-operation-history-filters" data-action="filter-student-database-operation-history">
+              <label class="student-database-operation-history-query"><span>Поиск</span><input name="query" type="search" value="${escapeAttr(filters.query)}" placeholder="Операция, файл, пользователь, ошибка..."></label>
+              <label><span>Операция</span><select name="operation">
+                <option value="">Все операции</option>
+                <option value="import" ${filters.operation === "import" ? "selected" : ""}>Загрузка</option>
+                <option value="export" ${filters.operation === "export" ? "selected" : ""}>Экспорт</option>
+                <option value="sync" ${filters.operation === "sync" ? "selected" : ""}>Синхронизация</option>
+              </select></label>
+              <label><span>Результат</span><select name="status">
+                <option value="">Все результаты</option>
+                <option value="success" ${filters.status === "success" ? "selected" : ""}>Успешно</option>
+                <option value="error" ${filters.status === "error" ? "selected" : ""}>Ошибка</option>
+              </select></label>
+              <label><span>Источник</span><select name="source">
+                <option value="">Все источники</option>
+                <option value="local" ${filters.source === "local" ? "selected" : ""}>Локальный компьютер</option>
+                <option value="webdav" ${filters.source === "webdav" ? "selected" : ""}>WebDAV</option>
+              </select></label>
+              <button class="primary-button compact-button" type="submit">Применить</button>
+              <button class="ghost-button compact-button" data-action="reset-student-database-operation-history-filters" type="button">Сбросить</button>
+            </form>
+            ${entries.length ? `
+              <div class="table-wrap student-database-operation-history-table-wrap">
+                <table class="data-table student-database-operation-history-table">
+                  <thead><tr><th>Дата и время</th><th>Операция</th><th>Результат</th><th>Источник / направление</th><th>Пользователь</th><th>Время</th><th>Описание</th></tr></thead>
+                  <tbody>
+                    ${entries.map((entry) => `
+                      <tr
+                        class="${entry.status === "error" ? "is-error" : ""} ${selectedEntry?.id === entry.id ? "is-selected" : ""}"
+                        data-action="select-student-database-operation-history"
+                        data-history-id="${escapeAttr(entry.id)}"
+                        role="button"
+                        tabindex="0"
+                        title="Открыть подробности операции"
+                      >
+                        <td>${escapeHtml(formatDateTimeRu(entry.generatedAt))}</td>
+                        <td><strong>${escapeHtml(entry.operationLabel)}</strong></td>
+                        <td><span class="student-database-operation-history-status is-${escapeAttr(entry.status)}">${entry.status === "error" ? "Ошибка" : "Успешно"}</span></td>
+                        <td><span>${escapeHtml(entry.sourceLabel || "—")}</span>${entry.direction ? `<small>${escapeHtml(entry.direction)}</small>` : ""}</td>
+                        <td><span>${escapeHtml(entry.userName || entry.userLogin)}</span>${entry.userName && entry.userLogin ? `<small>${escapeHtml(entry.userLogin)}</small>` : ""}</td>
+                        <td>${escapeHtml(entry.duration || "—")}</td>
+                        <td class="student-database-operation-history-summary" title="${escapeAttr(entry.summary)}">${escapeHtml(entry.summary || "—")}</td>
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>
+              </div>
+              ${renderStudentDatabaseOperationHistoryDetails(selectedEntry)}
+            ` : '<div class="empty-state compact"><span>По выбранным условиям операций не найдено.</span></div>'}
+          </div>
+          <footer class="modal-actions">
+            <button class="ghost-button" data-action="export-student-database-operation-history" type="button" ${entries.length ? "" : "disabled"}>Экспорт истории CSV</button>
+            <button class="primary-button" data-action="close-student-database-operation-history" type="button">Закрыть</button>
+          </footer>
+        </section>
+      </div>
+    `;
   }
 
   function getAuthUserEditorRecord() {
@@ -30065,6 +30514,10 @@ MAX - https://bizvmax.ru/zifra_plus
       closeDatabaseOperationResult();
       return true;
     }
+    if (state.databaseOperationHistory.open) {
+      closeStudentDatabaseOperationHistory();
+      return true;
+    }
     if (state.releaseHistoryOpen) {
       state.releaseHistoryOpen = false;
       render();
@@ -30378,6 +30831,66 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.querySelector("[data-action='export-database-operation-result']")
       ?.addEventListener("click", exportDatabaseOperationResultReport);
+    document.querySelector("[data-action='open-student-database-operation-history']")
+      ?.addEventListener("click", openStudentDatabaseOperationHistory);
+    document.querySelectorAll("[data-action='close-student-database-operation-history']").forEach((element) => {
+      element.addEventListener("click", (event) => {
+        if (!element.matches("button") && event.target !== element) return;
+        closeStudentDatabaseOperationHistory();
+      });
+    });
+    document.querySelector("form[data-action='filter-student-database-operation-history']")
+      ?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        state.databaseOperationHistory.filters = {
+          query: String(formData.get("query") || "").trim(),
+          operation: String(formData.get("operation") || ""),
+          status: String(formData.get("status") || ""),
+          source: String(formData.get("source") || "")
+        };
+        state.databaseOperationHistory.selectedId = "";
+        state.databaseOperationHistory.selectedItemKey = "";
+        render();
+      });
+    document.querySelector("[data-action='reset-student-database-operation-history-filters']")
+      ?.addEventListener("click", () => {
+        state.databaseOperationHistory.filters = {
+          ...STUDENT_DATABASE_OPERATION_HISTORY_FILTER_DEFAULTS
+        };
+        state.databaseOperationHistory.selectedId = "";
+        state.databaseOperationHistory.selectedItemKey = "";
+        render();
+      });
+    document.querySelectorAll("[data-action='select-student-database-operation-history']").forEach((row) => {
+      const select = () => {
+        state.databaseOperationHistory.selectedId = String(row.dataset.historyId || "");
+        state.databaseOperationHistory.selectedItemKey = "";
+        render();
+        requestAnimationFrame(() => {
+          document.querySelector(".student-database-operation-history-detail")
+            ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+      };
+      row.addEventListener("click", select);
+      row.addEventListener("keydown", (event) => {
+        if (!["Enter", " "].includes(event.key)) return;
+        event.preventDefault();
+        select();
+      });
+    });
+    document.querySelectorAll("[data-action='select-student-database-operation-history-item']").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.databaseOperationHistory.selectedItemKey = String(button.dataset.itemKey || "");
+        render();
+        requestAnimationFrame(() => {
+          document.querySelector(".student-database-operation-history-detail .database-operation-result-item-details")
+            ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+      });
+    });
+    document.querySelector("[data-action='export-student-database-operation-history']")
+      ?.addEventListener("click", exportStudentDatabaseOperationHistory);
 
     document.querySelectorAll("[data-view]").forEach((button) => {
       button.addEventListener("click", async () => {
@@ -49802,13 +50315,25 @@ MAX - https://bizvmax.ru/zifra_plus
           ? "Состояние XLSB неизвестно: сервер не подтвердил, был ли файл сохранён. "
             + "Не заменяйте данные вручную; повторите синхронизацию — сервер безопасно сверит результат."
           : error.message;
+      const duration = formatDatabaseOperationDuration(startedAt);
       finishDatabaseExportIndicator("error", "Ошибка: " + failureMessage, 6500);
       showDatabaseOperationResult({
         tone: "error",
         eyebrow: "Синхронизация с XLSB",
         title: "Синхронизация не выполнена полностью",
         summary: failureMessage,
-        details: [{ label: "Источник", value: sourceLabel }]
+        details: [
+          { label: "Источник", value: sourceLabel },
+          {
+            label: "Состояние XLSB",
+            value: xlsbCommitted
+              ? "Файл сохранён"
+              : commitStateUnknown
+                ? "Не подтверждено сервером"
+                : "Файл не изменён"
+          },
+          { label: "Время выполнения", value: duration }
+        ]
       });
     }
   }
@@ -50056,13 +50581,17 @@ MAX - https://bizvmax.ru/zifra_plus
         ]
       });
     } catch (error) {
+      const duration = formatDatabaseOperationDuration(startedAt);
       finishDatabaseExportIndicator("error", `Ошибка: ${error.message}`, 6500);
       showDatabaseOperationResult({
         tone: "error",
         eyebrow: "Экспорт XLSB",
         title: "Экспорт не выполнен",
         summary: error.message,
-        details: [{ label: "Шаблон", value: sourceLabel }]
+        details: [
+          { label: "Шаблон", value: sourceLabel },
+          { label: "Время выполнения", value: duration }
+        ]
       });
     }
   }
@@ -51107,13 +51636,17 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     } catch (error) {
       if (isSynchronizationImport) throw error;
+      const duration = formatDatabaseOperationDuration(startedAt);
       finishDatabaseImportIndicator("error", `Ошибка: ${error.message}`, 6500);
       showDatabaseOperationResult({
         tone: "error",
         eyebrow: "Импорт XLSB",
         title: "Импорт не выполнен",
         summary: error.message,
-        details: [{ label: "Источник", value: sourceLabel }]
+        details: [
+          { label: "Источник", value: sourceLabel },
+          { label: "Время выполнения", value: duration }
+        ]
       });
     }
   }
