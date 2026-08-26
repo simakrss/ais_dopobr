@@ -43,10 +43,18 @@
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.275",
+    version: "1.7.276",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.276",
+      releasedAt: "2026-08-26",
+      changes: [
+        "В итоговом протоколе синхронизации появилась кнопка просмотра конкретных изменений по разделам, записям и полям.",
+        "Для каждого изменения показываются прежнее и новое значения; при переносе Web → Excel отчёт строится по фактически сформированному XLSB."
+      ]
+    },
     {
       version: "1.7.275",
       releasedAt: "2026-08-26",
@@ -20237,6 +20245,7 @@ MAX - https://bizvmax.ru/zifra_plus
       value: source.value ?? "",
       note: String(source.note || ""),
       problem: source.problem === true || source.tone === "error",
+      hiddenStat: source.hiddenStat === true,
       columns,
       rows
     };
@@ -20335,8 +20344,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const result = state.databaseOperationResult || {};
     const tone = result.tone === "error" ? "error" : "success";
     const items = Array.isArray(result.items) ? result.items : [];
+    const visibleItems = items.filter((item) => !item.hiddenStat);
     const details = Array.isArray(result.details) ? result.details : [];
     const selectedItem = items.find((item) => item.key === result.selectedItemKey) || null;
+    const synchronizedChangesItem = items.find((item) => item.key === "synchronized-changes") || null;
     return `
       <div class="modal-backdrop database-operation-result-backdrop" data-action="close-database-operation-result">
         <section class="modal database-operation-result-modal tone-${tone}" role="dialog" aria-modal="true" aria-labelledby="database-operation-result-title">
@@ -20355,9 +20366,9 @@ MAX - https://bizvmax.ru/zifra_plus
                 <p>${escapeHtml(result.summary || "")}</p>
               </div>
             </div>
-            ${items.length ? `
+            ${visibleItems.length ? `
               <div class="database-operation-result-stats">
-                ${items.map((item) => `
+                ${visibleItems.map((item) => `
                   <button
                     class="database-operation-result-stat ${item.problem ? "is-problem" : ""} ${selectedItem?.key === item.key ? "is-selected" : ""}"
                     data-action="show-database-operation-result-item"
@@ -20387,6 +20398,16 @@ MAX - https://bizvmax.ru/zifra_plus
             ` : ""}
           </div>
           <footer class="modal-actions">
+            ${synchronizedChangesItem ? `
+              <button
+                class="ghost-button"
+                data-action="show-database-operation-result-item"
+                data-item-key="synchronized-changes"
+                type="button"
+                aria-expanded="${selectedItem?.key === "synchronized-changes" ? "true" : "false"}"
+                title="Показать конкретные значения до и после синхронизации"
+              >Синхронизированные изменения (${escapeHtml(String(synchronizedChangesItem.value ?? 0))})</button>
+            ` : ""}
             <button class="ghost-button" data-action="export-database-operation-result" type="button">Экспорт отчёта CSV</button>
             <button class="primary-button" data-action="close-database-operation-result" type="button">Закрыть</button>
           </footer>
@@ -49630,6 +49651,13 @@ MAX - https://bizvmax.ru/zifra_plus
       const missingProgramColumns = Array.isArray(result.programMissingManagedColumnNames)
         ? result.programMissingManagedColumnNames.map((name) => ({ name }))
         : [];
+      const synchronizedChanges = Array.isArray(result.synchronizedChanges)
+        ? result.synchronizedChanges
+        : [];
+      const synchronizedChangeCount = Math.max(
+        synchronizedChanges.length,
+        Number(result.synchronizedChangeCount || 0)
+      );
       showDatabaseOperationResult({
         eyebrow: "Синхронизация с XLSB",
         title: direction === "unchanged" ? "Изменений не найдено" : "Синхронизация завершена",
@@ -49639,6 +49667,27 @@ MAX - https://bizvmax.ru/zifra_plus
             ? "Изменения Web перенесены в XLSB " + sourceLabel + "; резервная копия создана."
             : "XLSB и Web-база не изменились после прошлой синхронизации.",
         items: [
+          {
+            key: "synchronized-changes",
+            label: "Синхронизированные изменения",
+            value: synchronizedChangeCount,
+            note: result.synchronizedChangesTruncated
+              ? `Сервер вернул первые ${synchronizedChanges.length} из ${synchronizedChangeCount} изменений`
+              : synchronizedChangeCount
+                ? "Конкретные значения до и после синхронизации"
+                : "Значения Web-базы и XLSB не изменялись",
+            hiddenStat: true,
+            columns: [
+              { key: "number", label: "№" },
+              { key: "entity", label: "Раздел" },
+              { key: "record", label: "Запись" },
+              { key: "action", label: "Действие" },
+              { key: "field", label: "Поле" },
+              { key: "before", label: "Было" },
+              { key: "after", label: "Стало" }
+            ],
+            rows: synchronizedChanges
+          },
           { key: "direction", label: "Направление", value: directionLabel, note: "Направление переноса изменений" },
           {
             key: "students",

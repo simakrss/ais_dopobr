@@ -1715,6 +1715,10 @@ body.is-session-expired {
   overflow: hidden;
 }
 
+.database-operation-result-modal .modal-actions {
+  flex-wrap: wrap;
+}
+
 .database-operation-result-content {
   min-height: 0;
   overflow: auto;

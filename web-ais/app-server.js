@@ -12327,6 +12327,469 @@ function getStudentDatabaseCriticalCollections(value) {
   };
 }
 
+const STUDENT_DATABASE_SYNCHRONIZED_CHANGE_LIMIT = 20000;
+
+function buildStudentDatabaseChangeFieldLabels(columnMap, overrides = {}) {
+  const labels = {};
+  Object.entries(columnMap || {}).forEach(([label, fieldName]) => {
+    if (fieldName && !labels[fieldName]) labels[fieldName] = label;
+  });
+  return { ...labels, ...overrides };
+}
+
+function getStudentDatabaseChangeRecordId(record) {
+  const metadataId = String(record?.databaseSync?.recordId || "").trim();
+  if (metadataId) return metadataId;
+  const syncComment = String(record?.__syncComment || "").trim();
+  if (syncComment) {
+    try {
+      const parsed = JSON.parse(syncComment);
+      const commentId = String(parsed?.recordId || "").trim();
+      if (commentId) return commentId;
+    } catch {}
+  }
+  return String(record?.id || "").trim();
+}
+
+function normalizeStudentDatabaseChangeComparableValue(value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(normalizeStudentDatabaseChangeComparableValue);
+  if (typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [
+      key,
+      normalizeStudentDatabaseChangeComparableValue(value[key])
+    ]));
+  }
+  if (typeof value === "string") return value.replace(/\r\n?/gu, "\n").trim();
+  return value;
+}
+
+function serializeStudentDatabaseChangeValue(value) {
+  return JSON.stringify(normalizeStudentDatabaseChangeComparableValue(value));
+}
+
+function normalizeStudentDatabaseChangeBoolean(value) {
+  return normalizeStudentDatabaseCriticalBoolean(value);
+}
+
+function getStudentDatabaseDynamicChangeFields(records) {
+  return [...new Set((Array.isArray(records) ? records : [])
+    .flatMap((record) => Object.keys(record || {}))
+    .filter((field) => (
+      /^event_[A-Za-z0-9_-]+_(?:state|date|label)$/u.test(field)
+      || ["eventOrder", "eventCustomKeys", "eventDeleted"].includes(field)
+    )))].sort((left, right) => left.localeCompare(right, "ru"));
+}
+
+function getStudentDatabaseChangeEventLabel(fieldName, records, templates) {
+  if (fieldName === "eventOrder") return "Порядок событий";
+  if (fieldName === "eventCustomKeys") return "Пользовательские события";
+  if (fieldName === "eventDeleted") return "Удалённые события";
+  const match = /^event_([A-Za-z0-9_-]+)_(state|date|label)$/u.exec(fieldName);
+  if (!match) return "";
+  const [, key, suffix] = match;
+  const customLabel = (Array.isArray(records) ? records : [])
+    .map((record) => String(record?.[`event_${key}_label`] || "").trim())
+    .find(Boolean);
+  const templateLabel = (Array.isArray(templates) ? templates : [])
+    .find((template) => template.key === key)?.label;
+  const label = customLabel || templateLabel || key;
+  if (suffix === "state") return `${label} — выполнено`;
+  if (suffix === "date") return `${label} — дата`;
+  return `${label} — название`;
+}
+
+function buildStudentDatabaseChangeIdentity(record, fields, normalizer) {
+  const values = (Array.isArray(fields) ? fields : [])
+    .map((field) => normalizeStudentDatabaseChangeComparableValue(normalizer(record, field)));
+  const hasValue = values.some((value) => value !== "" && value !== null && value !== undefined);
+  return hasValue ? JSON.stringify(values) : "";
+}
+
+function pairStudentDatabaseChangeRecords(beforeRows, afterRows, definition) {
+  const before = Array.isArray(beforeRows) ? beforeRows : [];
+  const after = Array.isArray(afterRows) ? afterRows : [];
+  const usedBefore = new Set();
+  const usedAfter = new Set();
+  const pairs = [];
+  const pairByKey = (keyBuilder) => {
+    const beforeByKey = new Map();
+    const afterByKey = new Map();
+    before.forEach((record, index) => {
+      if (usedBefore.has(index)) return;
+      const key = String(keyBuilder(record) || "");
+      if (!key) return;
+      if (!beforeByKey.has(key)) beforeByKey.set(key, []);
+      beforeByKey.get(key).push(index);
+    });
+    after.forEach((record, index) => {
+      if (usedAfter.has(index)) return;
+      const key = String(keyBuilder(record) || "");
+      if (!key) return;
+      if (!afterByKey.has(key)) afterByKey.set(key, []);
+      afterByKey.get(key).push(index);
+    });
+    beforeByKey.forEach((beforeIndexes, key) => {
+      const afterIndexes = afterByKey.get(key) || [];
+      if (beforeIndexes.length !== 1 || afterIndexes.length !== 1) return;
+      const beforeIndex = beforeIndexes[0];
+      const afterIndex = afterIndexes[0];
+      usedBefore.add(beforeIndex);
+      usedAfter.add(afterIndex);
+      pairs.push({ beforeIndex, afterIndex, before: before[beforeIndex], after: after[afterIndex] });
+    });
+  };
+
+  pairByKey(getStudentDatabaseChangeRecordId);
+  (definition.identityFields || []).forEach((fields) => {
+    pairByKey((record) => buildStudentDatabaseChangeIdentity(
+      record,
+      fields,
+      definition.normalize
+    ));
+  });
+  pairByKey((record) => buildStudentDatabaseChangeIdentity(
+    record,
+    definition.fields,
+    definition.normalize
+  ));
+
+  return {
+    pairs: pairs.sort((left, right) => left.afterIndex - right.afterIndex),
+    removed: before
+      .map((record, index) => ({ record, index }))
+      .filter((item) => !usedBefore.has(item.index)),
+    added: after
+      .map((record, index) => ({ record, index }))
+      .filter((item) => !usedAfter.has(item.index))
+  };
+}
+
+function formatStudentDatabaseChangeValue(value, fieldName, definition) {
+  const normalized = normalizeStudentDatabaseChangeComparableValue(value);
+  if (definition.booleanFields?.has(fieldName)) return normalized === "1" ? "Да" : "Нет";
+  if (normalized === "" || normalized === null || normalized === undefined) return "—";
+  if (typeof normalized === "string") {
+    const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(normalized);
+    const text = dateMatch
+      ? `${dateMatch[3]}.${dateMatch[2]}.${dateMatch[1]}`
+      : normalized;
+    return text.length > 5000 ? `${text.slice(0, 4999)}…` : text;
+  }
+  if (typeof normalized === "object") {
+    const text = JSON.stringify(normalized);
+    return text.length > 5000 ? `${text.slice(0, 4999)}…` : text;
+  }
+  return String(normalized);
+}
+
+function getStudentDatabaseChangeFieldLabel(fieldName, definition) {
+  return definition.fieldLabels[fieldName]
+    || getStudentDatabaseChangeEventLabel(fieldName, definition.records, definition.eventTemplates)
+    || fieldName;
+}
+
+function formatStudentDatabaseChangeRecordLabel(record, definition) {
+  const label = String(definition.recordLabel(record) || "").trim();
+  return label || getStudentDatabaseChangeRecordId(record) || "Запись без названия";
+}
+
+function summarizeStudentDatabaseChangeRecord(record, definition) {
+  const fragments = [];
+  (definition.summaryFields || []).forEach((fieldName) => {
+    const normalized = definition.normalize(record, fieldName);
+    if (normalized === "" || normalized === null || normalized === undefined) return;
+    fragments.push(
+      `${getStudentDatabaseChangeFieldLabel(fieldName, definition)}: `
+      + formatStudentDatabaseChangeValue(normalized, fieldName, definition)
+    );
+  });
+  const summary = fragments.join("; ");
+  return summary || formatStudentDatabaseChangeRecordLabel(record, definition);
+}
+
+function getStudentDatabaseSynchronizedChangeDefinitions(beforeValue, afterValue) {
+  const before = getStudentDatabaseCriticalCollections(beforeValue);
+  const after = getStudentDatabaseCriticalCollections(afterValue);
+  const allStudents = [...before.students, ...after.students];
+  const allContracts = [...before.contracts, ...after.contracts];
+  const studentFields = getStudentDatabaseSyncFieldNames(allStudents);
+  const contractDynamicFields = getStudentDatabaseDynamicChangeFields(allContracts);
+  const contractFields = [...new Set([
+    "section",
+    ...Object.values(CONTRACT_DATABASE_COLUMN_MAP),
+    ...contractDynamicFields
+  ])];
+  const studentBooleanFields = new Set([
+    ...STUDENT_DATABASE_CRITICAL_BOOLEAN_FIELDS,
+    ...studentFields.filter((field) => /_state$/u.test(field))
+  ]);
+  const contractBooleanFields = new Set([
+    "accountingRecorded",
+    ...contractFields.filter((field) => /_state$/u.test(field))
+  ]);
+  const generalExpenseBooleanFields = new Set(["accountingClosed"]);
+  const studentFieldLabels = buildStudentDatabaseChangeFieldLabels(
+    STUDENT_DATABASE_COLUMN_MAP,
+    { additionalStatus: "Доп. статус" }
+  );
+  const contractFieldLabels = buildStudentDatabaseChangeFieldLabels(
+    CONTRACT_DATABASE_COLUMN_MAP,
+    { section: "Раздел" }
+  );
+  const directExpenseFieldLabels = buildStudentDatabaseChangeFieldLabels(
+    DIRECT_EXPENSE_DATABASE_COLUMN_MAP,
+    { uid: "UID слушателя" }
+  );
+  const generalExpenseFieldLabels = buildStudentDatabaseChangeFieldLabels(
+    GENERAL_EXPENSE_DATABASE_COLUMN_MAP,
+    { section: "Раздел" }
+  );
+  const inventoryFieldLabels = buildStudentDatabaseChangeFieldLabels(
+    INVENTORY_DATABASE_COLUMN_MAP,
+    { uid: "UID слушателя" }
+  );
+  const programFieldLabels = buildStudentDatabaseChangeFieldLabels(PROGRAM_DATABASE_COLUMN_MAP);
+  const trainingPlanFieldLabels = buildStudentDatabaseChangeFieldLabels(
+    TRAINING_PLAN_DATABASE_COLUMN_MAP
+  );
+  const nameWithId = (nameValue, idValue) => {
+    const name = String(nameValue || "").trim();
+    const id = String(idValue || "").trim();
+    return name && id ? `${name} [${id}]` : name || id;
+  };
+
+  return [
+    {
+      key: "students",
+      label: "Слушатели",
+      before: before.students,
+      after: after.students,
+      records: allStudents,
+      fields: studentFields,
+      fieldLabels: studentFieldLabels,
+      booleanFields: studentBooleanFields,
+      eventTemplates: STUDENT_EVENT_IMPORT_TEMPLATES,
+      identityFields: [["uid"], ["uid", "name", "applicationDate", "program"]],
+      summaryFields: ["uid", "name", "status", "program"],
+      normalize: normalizeStudentDatabaseCriticalStudentValue,
+      recordLabel: (record) => nameWithId(record?.name, record?.uid)
+    },
+    {
+      key: "contracts",
+      label: "Договоры",
+      before: before.contracts,
+      after: after.contracts,
+      records: allContracts,
+      fields: contractFields,
+      fieldLabels: contractFieldLabels,
+      booleanFields: contractBooleanFields,
+      eventTemplates: CONTRACT_EVENT_IMPORT_TEMPLATES,
+      identityFields: [["section", "name", "contractNo", "contractDate"]],
+      summaryFields: ["name", "contractNo", "contractDate", "section"],
+      normalize: (record, fieldName) => {
+        if (fieldName === "section") {
+          return normalizeContractDatabaseSection(record?.section || record?.status);
+        }
+        if (contractBooleanFields.has(fieldName)) {
+          return normalizeStudentDatabaseChangeBoolean(record?.[fieldName]);
+        }
+        return normalizeContractDatabaseValue(record?.[fieldName], fieldName);
+      },
+      recordLabel: (record) => {
+        const name = String(record?.name || "").trim();
+        const number = String(record?.contractNo || "").trim();
+        return number ? `${name || "Договор"} · ${number}` : name;
+      }
+    },
+    {
+      key: "directExpenses",
+      label: "Прямые затраты",
+      before: before.directExpenses,
+      after: after.directExpenses,
+      records: [...before.directExpenses, ...after.directExpenses],
+      fields: [...new Set(Object.values(DIRECT_EXPENSE_DATABASE_COLUMN_MAP))],
+      fieldLabels: directExpenseFieldLabels,
+      booleanFields: new Set(),
+      identityFields: [["uid", "date", "type"]],
+      summaryFields: ["uid", "date", "type", "amount", "note"],
+      normalize: (record, fieldName) => normalizeDirectExpenseDatabaseValue(
+        record?.[fieldName],
+        fieldName
+      ),
+      recordLabel: (record) => [record?.type, record?.uid, record?.date]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join(" · ")
+    },
+    {
+      key: "generalExpenses",
+      label: "Общие затраты",
+      before: before.generalExpenses,
+      after: after.generalExpenses,
+      records: [...before.generalExpenses, ...after.generalExpenses],
+      fields: ["section", ...new Set(Object.values(GENERAL_EXPENSE_DATABASE_COLUMN_MAP))],
+      fieldLabels: generalExpenseFieldLabels,
+      booleanFields: generalExpenseBooleanFields,
+      identityFields: [["section", "counterparty", "date", "workType"]],
+      summaryFields: ["section", "counterparty", "date", "workType", "amount"],
+      normalize: (record, fieldName) => {
+        if (fieldName === "section") return normalizeGeneralExpenseDatabaseSection(record?.section);
+        if (generalExpenseBooleanFields.has(fieldName)) {
+          return normalizeStudentDatabaseChangeBoolean(record?.[fieldName]);
+        }
+        return normalizeGeneralExpenseDatabaseValue(record?.[fieldName], fieldName);
+      },
+      recordLabel: (record) => [record?.counterparty, record?.workType, record?.date]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join(" · ")
+    },
+    {
+      key: "inventory",
+      label: "Запасы",
+      before: before.inventoryRows,
+      after: after.inventoryRows,
+      records: [...before.inventoryRows, ...after.inventoryRows],
+      fields: [...new Set(Object.values(INVENTORY_DATABASE_COLUMN_MAP))],
+      fieldLabels: inventoryFieldLabels,
+      booleanFields: new Set(),
+      identityFields: [["itemType", "uid", "date", "amount", "note"]],
+      summaryFields: ["itemType", "uid", "date", "amount", "note"],
+      normalize: (record, fieldName) => normalizeInventoryDatabaseValue(
+        record?.[fieldName],
+        fieldName
+      ),
+      recordLabel: (record) => [record?.itemType, record?.uid, record?.date]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join(" · ")
+    },
+    {
+      key: "programs",
+      label: "Программы",
+      before: before.programs,
+      after: after.programs,
+      records: [...before.programs, ...after.programs],
+      fields: [...new Set(Object.values(PROGRAM_DATABASE_COLUMN_MAP))],
+      fieldLabels: programFieldLabels,
+      booleanFields: new Set(),
+      identityFields: [["name", "landingCode"], ["name"]],
+      summaryFields: ["name", "landingCode", "type", "status"],
+      normalize: (record, fieldName) => normalizeProgramDatabaseValue(
+        fieldName,
+        record?.[fieldName]
+      ),
+      recordLabel: (record) => String(record?.name || record?.xlsbProgramName || "").trim()
+    },
+    {
+      key: "trainingPlans",
+      label: "Учебные планы",
+      before: before.trainingPlans,
+      after: after.trainingPlans,
+      records: [...before.trainingPlans, ...after.trainingPlans],
+      fields: [...new Set(Object.values(TRAINING_PLAN_DATABASE_COLUMN_MAP))],
+      fieldLabels: trainingPlanFieldLabels,
+      booleanFields: new Set(),
+      identityFields: [["code", "programName", "discipline"]],
+      summaryFields: ["programName", "code", "discipline", "totalHours", "attestation"],
+      normalize: (record, fieldName) => normalizeTrainingPlanDatabaseValue(
+        fieldName,
+        record?.[fieldName]
+      ),
+      recordLabel: (record) => [record?.programName, record?.discipline]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join(" · ")
+    }
+  ];
+}
+
+function buildStudentDatabaseSynchronizedChanges(beforeValue, afterValue, options = {}) {
+  const limit = Math.max(
+    1,
+    Math.min(
+      STUDENT_DATABASE_SYNCHRONIZED_CHANGE_LIMIT,
+      Math.floor(Number(options.limit) || STUDENT_DATABASE_SYNCHRONIZED_CHANGE_LIMIT)
+    )
+  );
+  const rows = [];
+  const entityCounts = {};
+  let totalCount = 0;
+  const append = (definition, change) => {
+    totalCount += 1;
+    entityCounts[definition.key] = (entityCounts[definition.key] || 0) + 1;
+    if (rows.length >= limit) return;
+    rows.push({
+      number: totalCount,
+      entity: definition.label,
+      ...change
+    });
+  };
+
+  getStudentDatabaseSynchronizedChangeDefinitions(beforeValue, afterValue)
+    .forEach((definition) => {
+      const matched = pairStudentDatabaseChangeRecords(
+        definition.before,
+        definition.after,
+        definition
+      );
+      matched.pairs.forEach((pair) => {
+        definition.fields.forEach((fieldName) => {
+          const beforeValueNormalized = definition.normalize(pair.before, fieldName);
+          const afterValueNormalized = definition.normalize(pair.after, fieldName);
+          if (
+            serializeStudentDatabaseChangeValue(beforeValueNormalized)
+            === serializeStudentDatabaseChangeValue(afterValueNormalized)
+          ) return;
+          append(definition, {
+            record: formatStudentDatabaseChangeRecordLabel(
+              pair.after || pair.before,
+              definition
+            ),
+            action: "Изменено",
+            field: getStudentDatabaseChangeFieldLabel(fieldName, definition),
+            before: formatStudentDatabaseChangeValue(
+              beforeValueNormalized,
+              fieldName,
+              definition
+            ),
+            after: formatStudentDatabaseChangeValue(
+              afterValueNormalized,
+              fieldName,
+              definition
+            ),
+            recordId: getStudentDatabaseChangeRecordId(pair.after || pair.before)
+          });
+        });
+      });
+      matched.removed.forEach(({ record }) => append(definition, {
+        record: formatStudentDatabaseChangeRecordLabel(record, definition),
+        action: "Удалено",
+        field: "Запись",
+        before: summarizeStudentDatabaseChangeRecord(record, definition),
+        after: "—",
+        recordId: getStudentDatabaseChangeRecordId(record)
+      }));
+      matched.added.forEach(({ record }) => append(definition, {
+        record: formatStudentDatabaseChangeRecordLabel(record, definition),
+        action: "Добавлено",
+        field: "Запись",
+        before: "—",
+        after: summarizeStudentDatabaseChangeRecord(record, definition),
+        recordId: getStudentDatabaseChangeRecordId(record)
+      }));
+    });
+
+  return {
+    totalCount,
+    rows,
+    entityCounts,
+    truncated: totalCount > rows.length
+  };
+}
+
 function canonicalizeStudentDatabaseCriticalRecords(records, projector) {
   return (Array.isArray(records) ? records : [])
     .map((record) => JSON.stringify(projector(record || {})))
@@ -21752,6 +22215,9 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
             );
           }
         }
+        const synchronizedChangeReport = directionalSyncResult.direction === "excel-to-web"
+          ? buildStudentDatabaseSynchronizedChanges(payload, sourceData)
+          : buildStudentDatabaseSynchronizedChanges(payload, payload);
         const importPayload = buildStudentDatabaseImportResult(sourceData, sourceType);
         if (
           directionalSyncResult.direction === "unchanged"
@@ -21838,6 +22304,10 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
             communicationTemplateNamedRangeCount: importPayload.communicationTemplateNamedRangeCount,
             syncMetadataCount: Number(scriptResult.syncMetadata || 0),
             syncCommentCount: Number(scriptResult.syncMetadata || scriptResult.syncComments || 0),
+            synchronizedChangeCount: synchronizedChangeReport.totalCount,
+            synchronizedChanges: synchronizedChangeReport.rows,
+            synchronizedChangesTruncated: synchronizedChangeReport.truncated,
+            synchronizedChangeEntityCounts: synchronizedChangeReport.entityCounts,
             importPayload,
             serverMacroSettingsImport: {
               macroSettings: sourceData.macroSettings,
@@ -21865,7 +22335,11 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           contractCount: importPayload.contractCount,
           directExpenseCount: importPayload.totalDirectExpenseCount,
           generalExpenseCount: importPayload.generalExpenseCount,
-          communicationTemplateNamedRangeCount: importPayload.communicationTemplateNamedRangeCount
+          communicationTemplateNamedRangeCount: importPayload.communicationTemplateNamedRangeCount,
+          synchronizedChangeCount: synchronizedChangeReport.totalCount,
+          synchronizedChanges: synchronizedChangeReport.rows,
+          synchronizedChangesTruncated: synchronizedChangeReport.truncated,
+          synchronizedChangeEntityCounts: synchronizedChangeReport.entityCounts
         };
       }
     }
@@ -22034,6 +22508,14 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         throw error;
       }
     }
+    if (directionalSync && !parsedOutputData) {
+      onProgress({
+        progress: 94,
+        stage: "verify",
+        message: "Составление протокола фактически записанных изменений XLSB..."
+      });
+      parsedOutputData = await parseStudentDatabaseInWorker(outputBytes);
+    }
     onProgress({ progress: 95, stage: "verify", message: "Проверка VBA и формул..." });
     const outputInspection = inspectStudentDatabaseBinary(outputBytes, {
       targetedStudentNoteUids
@@ -22196,6 +22678,9 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     )
       .map((name) => String(name || "").trim())
       .filter(Boolean);
+    const synchronizedChangeReport = directionalSync
+      ? buildStudentDatabaseSynchronizedChanges(sourceDataForExport, parsedOutputData)
+      : buildStudentDatabaseSynchronizedChanges(payload, payload);
     return {
       ...savedResult,
       studentCount: payload.students.length,
@@ -22230,6 +22715,10 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       communicationTemplateMissingNamedRangeNames,
       communicationTemplateNamedRangeFormulaPreservedCount:
         communicationTemplateVerification.formulaPreserved,
+      synchronizedChangeCount: synchronizedChangeReport.totalCount,
+      synchronizedChanges: synchronizedChangeReport.rows,
+      synchronizedChangesTruncated: synchronizedChangeReport.truncated,
+      synchronizedChangeEntityCounts: synchronizedChangeReport.entityCounts,
       targetedStudentFieldPatchCount: payload.targetedStudentFieldPatches.length,
       ...(studentSyncResult ? {
         requiresCommit: true,
@@ -27275,6 +27764,7 @@ module.exports = {
   hashStudentDatabaseCriticalSnapshot,
   buildStudentDatabaseCriticalIdentitySnapshot,
   hashStudentDatabaseCriticalIdentity,
+  buildStudentDatabaseSynchronizedChanges,
   getStudentDatabaseEmbeddedSyncTimestamp,
   mergeStudentDatabaseSyncRecords,
   normalizeStudentDatabaseSyncBaseline,

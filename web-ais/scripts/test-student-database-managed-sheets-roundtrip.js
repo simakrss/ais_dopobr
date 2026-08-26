@@ -8,7 +8,8 @@ const { spawnSync } = require("node:child_process");
 const XLSX = require("../vendor/sheetjs/xlsx.full.min.js");
 const {
   parseStudentDatabaseWorkbook,
-  sanitizeStudentDatabaseExportPayload
+  sanitizeStudentDatabaseExportPayload,
+  buildStudentDatabaseSynchronizedChanges
 } = require("../app-server.js");
 
 const sourcePath = path.resolve(
@@ -288,6 +289,33 @@ try {
     fs.readFileSync(outputPath),
     () => {},
     { syncMetadataRows }
+  );
+  const synchronizedChanges = buildStudentDatabaseSynchronizedChanges(imported, roundTrip);
+  assert.ok(synchronizedChanges.totalCount > 0, "Протокол не нашёл изменения в сформированном XLSB.");
+  assert.ok(
+    synchronizedChanges.rows.some((change) => (
+      change.entity === "Слушатели"
+      && change.record.includes(String(fixedValueTarget.uid))
+      && change.field === "Сумма по договору (руб)"
+      && change.after === String(fixedContractAmount)
+    )),
+    "Протокол не показал фактическую замену формулы суммы договора."
+  );
+  assert.ok(
+    synchronizedChanges.rows.some((change) => (
+      change.entity === "Программы"
+      && change.record === insertedProgram.name
+      && change.action === "Добавлено"
+    )),
+    "Протокол не показал добавленную программу."
+  );
+  assert.ok(
+    synchronizedChanges.rows.some((change) => (
+      change.entity === "Программы"
+      && change.record === deletedProgram.name
+      && change.action === "Удалено"
+    )),
+    "Протокол не показал удалённую программу."
   );
   assert.equal(roundTrip.inventoryUnitCount, imported.inventoryUnitCount);
   assert.ok(roundTrip.inventoryDatabaseSyncFields.includes("balance"));
