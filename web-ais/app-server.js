@@ -13064,6 +13064,40 @@ function hashStudentDatabaseCriticalSnapshot(value) {
     .digest("hex");
 }
 
+function buildStudentDatabaseEventSettingsSnapshot(value) {
+  const root = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const settings = root.macroSettings && typeof root.macroSettings === "object"
+    ? root.macroSettings
+    : root;
+  const normalizeTemplates = (templates, withConditions = false) => (
+    (Array.isArray(templates) ? templates : []).map((item) => {
+      const result = {
+        label: String(item?.label || "").replace(/[;\r\n\u000b]+/gu, " ").trim()
+      };
+      if (withConditions) {
+        result.includeTypes = [...new Set((item?.includeTypes || [])
+          .map(normalizeMacroSettingEventType)
+          .filter(Boolean))].sort();
+        result.excludeTypes = [...new Set((item?.excludeTypes || [])
+          .map(normalizeMacroSettingEventType)
+          .filter(Boolean))].sort();
+      }
+      return result;
+    }).filter((item) => item.label)
+  );
+  return {
+    version: 1,
+    students: normalizeTemplates(settings.studentEventTemplates, true),
+    employees: normalizeTemplates(settings.contractEventTemplates)
+  };
+}
+
+function hashStudentDatabaseEventSettings(value) {
+  return crypto.createHash("sha256")
+    .update(JSON.stringify(buildStudentDatabaseEventSettingsSnapshot(value)))
+    .digest("hex");
+}
+
 function buildStudentDatabaseCriticalIdentitySnapshot(value) {
   const collections = getStudentDatabaseCriticalCollections(value);
   const studentKeys = collections.students.map((record) => [
@@ -15632,8 +15666,9 @@ function normalizeStudentDatabaseSyncBaseline(value) {
   const sourceIdentity = String(source.sourceIdentity || "").trim().toLowerCase();
   const criticalHash = normalizeStudentDatabaseCriticalHash(source.criticalHash);
   const criticalIdentityHash = normalizeStudentDatabaseCriticalHash(source.criticalIdentityHash);
-  return {
-    version: criticalHash ? 2 : 1,
+  const eventSettingsHash = normalizeStudentDatabaseCriticalHash(source.eventSettingsHash);
+  const baseline = {
+    version: eventSettingsHash ? 3 : criticalHash ? 2 : 1,
     sourceHash: /^[a-f0-9]{64}$/u.test(sourceHash) ? sourceHash : "",
     sourceIdentity: /^[a-f0-9]{64}$/u.test(sourceIdentity) ? sourceIdentity : "",
     webRevision: Math.max(0, Math.floor(Number(source.webRevision) || 0)),
@@ -15641,6 +15676,8 @@ function normalizeStudentDatabaseSyncBaseline(value) {
     criticalHash,
     criticalIdentityHash
   };
+  if (eventSettingsHash) baseline.eventSettingsHash = eventSettingsHash;
+  return baseline;
 }
 
 function resolveStudentDatabaseSyncDirection({
@@ -15698,6 +15735,7 @@ function resolveStudentDatabaseSyncDirection({
     || baseline.synchronizedAt
     || baseline.criticalHash
     || baseline.criticalIdentityHash
+    || baseline.eventSettingsHash
   );
   const hasCompleteLegacyBaseline = Boolean(
     baseline.sourceHash
@@ -15985,6 +16023,82 @@ function resolveStudentDatabaseSyncDirection({
   );
   error.statusCode = 409;
   throw error;
+}
+
+function resolveStudentDatabaseEventSettingsSyncDirection({
+  directionResult,
+  baseline: baselineValue,
+  webData,
+  excelData,
+  sourceHash
+}) {
+  const result = directionResult && typeof directionResult === "object"
+    ? { ...directionResult }
+    : { direction: "unchanged" };
+  const baseline = normalizeStudentDatabaseSyncBaseline(baselineValue);
+  const webHash = hashStudentDatabaseEventSettings(webData);
+  const excelHash = hashStudentDatabaseEventSettings(excelData);
+  if (webHash === excelHash) {
+    return { ...result, eventSettingsHash: webHash };
+  }
+
+  let eventDirection = "";
+  if (baseline.eventSettingsHash) {
+    const webChanged = webHash !== baseline.eventSettingsHash;
+    const excelChanged = excelHash !== baseline.eventSettingsHash;
+    if (webChanged && !excelChanged) eventDirection = "web-to-excel";
+    if (excelChanged && !webChanged) eventDirection = "excel-to-web";
+    if (webChanged && excelChanged) {
+      const error = new Error(
+        "После прошлой синхронизации настройки событий изменились и в Web-базе, и в XLSB. "
+        + "Автоматическая перезапись остановлена; выберите актуальную сторону кнопкой «Загрузить» или «Экспорт»."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+  } else if (["web-to-excel", "excel-to-web"].includes(result.direction)) {
+    eventDirection = result.direction;
+  } else {
+    const webUpdatedAt = normalizeStudentDatabaseSyncTimestamp(
+      webData?.macroSettings?.eventSettingsUpdatedAt
+    );
+    const synchronizedAt = normalizeStudentDatabaseSyncTimestamp(baseline.synchronizedAt);
+    const webChanged = Boolean(
+      webUpdatedAt
+      && synchronizedAt
+      && Date.parse(webUpdatedAt) > Date.parse(synchronizedAt)
+    );
+    const excelChanged = Boolean(
+      baseline.sourceHash
+      && String(sourceHash || "").trim().toLowerCase() !== baseline.sourceHash
+    );
+    if (webChanged && !excelChanged) eventDirection = "web-to-excel";
+    if (excelChanged && !webChanged) eventDirection = "excel-to-web";
+    if (!webChanged && !excelChanged) eventDirection = "excel-to-web";
+  }
+
+  if (!eventDirection) {
+    const error = new Error(
+      "Настройки событий в Web-базе и XLSB различаются, но для них ещё нет общей контрольной точки. "
+      + "Выберите актуальную сторону кнопкой «Загрузить» или «Экспорт»; последующие изменения будут синхронизироваться автоматически."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  if (result.direction !== "unchanged" && result.direction !== eventDirection) {
+    const error = new Error(
+      "Основные данные и настройки событий изменились на разных сторонах. "
+      + "Чтобы не потерять изменения, выполните отдельную загрузку или экспорт после проверки актуальных данных."
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  return {
+    ...result,
+    direction: eventDirection,
+    eventSettingsDirection: eventDirection,
+    eventSettingsHash: eventDirection === "web-to-excel" ? webHash : excelHash
+  };
 }
 
 async function getStudentDatabaseResourceModifiedAt(databasePath, sourceType) {
@@ -20373,6 +20487,7 @@ function sanitizeStudentDatabaseMacroSettingsExport(value) {
     provided: true,
     studentEventTemplates: sanitizeMacroSettingsEventTemplates(value.studentEventTemplates, true),
     contractEventTemplates: sanitizeMacroSettingsEventTemplates(value.contractEventTemplates),
+    eventSettingsUpdatedAt: normalizeStudentDatabaseSyncTimestamp(value.eventSettingsUpdatedAt),
     applicationsSqlQuery: compactSqlQueryForMacroSettings(applicationsSqlQuery),
     applicationsMysqlHost: String(connection.server || connection.host || "").trim(),
     applicationsMysqlDatabase: String(connection.database || connection.initialcatalog || "").trim(),
@@ -22618,6 +22733,13 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         currentWebCriticalHash,
         currentWebCriticalIdentityHash
       });
+      directionalSyncResult = resolveStudentDatabaseEventSettingsSyncDirection({
+        directionResult: directionalSyncResult,
+        baseline: body.syncBaseline,
+        webData: payload,
+        excelData: sourceDataForExport,
+        sourceHash
+      });
       if (directionalSyncResult.recoveredFixedValueOverride === true) {
         onProgress({
           progress: 15.5,
@@ -22762,6 +22884,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
             synchronizedAt: annotationPayload.synchronizedAt,
             criticalHash: directionalSyncResult.criticalHash,
             criticalIdentityHash: directionalSyncResult.criticalIdentityHash,
+            eventSettingsHash: directionalSyncResult.eventSettingsHash,
             preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0),
             studentCount: importPayload.count,
             contractCount: importPayload.contractCount,
@@ -22796,6 +22919,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           sourceModifiedAt,
           criticalHash: directionalSyncResult.criticalHash,
           criticalIdentityHash: directionalSyncResult.criticalIdentityHash,
+          eventSettingsHash: directionalSyncResult.eventSettingsHash,
           preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0),
           studentCount: importPayload.count,
           contractCount: importPayload.contractCount,
@@ -23222,6 +23346,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         criticalIdentityHash: directionalMergeResult
           ? hashStudentDatabaseCriticalIdentity(parsedOutputData)
           : directionalSyncResult?.criticalIdentityHash || "",
+        eventSettingsHash: hashStudentDatabaseEventSettings(parsedOutputData),
         preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0),
         ...(directionalImportPayload ? {
           importPayload: directionalImportPayload,
@@ -29228,6 +29353,8 @@ module.exports = {
   hashStudentDatabaseSyncRecord,
   buildStudentDatabaseCriticalSnapshot,
   hashStudentDatabaseCriticalSnapshot,
+  buildStudentDatabaseEventSettingsSnapshot,
+  hashStudentDatabaseEventSettings,
   buildStudentDatabaseCriticalIdentitySnapshot,
   hashStudentDatabaseCriticalIdentity,
   resolveLegacyStudentDatabaseIndependentNoteMerge,
@@ -29236,6 +29363,7 @@ module.exports = {
   mergeStudentDatabaseSyncRecords,
   normalizeStudentDatabaseSyncBaseline,
   resolveStudentDatabaseSyncDirection,
+  resolveStudentDatabaseEventSettingsSyncDirection,
   acquireStudentDatabaseSyncReservation,
   releaseStudentDatabaseSyncReservation,
   getActiveStudentDatabaseSyncReservation,

@@ -70,6 +70,11 @@ try {
     ...(imported.directExpenses || []),
     ...(imported.students || []).flatMap((student) => student.directExpenses || [])
   ];
+  const expectedStudentEvents = imported.macroSettings.studentEventTemplates.map((event, index) => ({
+    ...event,
+    ...(index === 0 ? { includeTypes: ["КПК", "ППП"], excludeTypes: [] } : {})
+  }));
+  const expectedContractEvents = [...imported.macroSettings.contractEventTemplates].reverse();
   const payload = sanitizeStudentDatabaseExportPayload({
     students: imported.students,
     contracts: imported.contracts,
@@ -79,6 +84,8 @@ try {
     agentPaymentRates: imported.agentPaymentRates,
     macroSettings: {
       ...imported.macroSettings,
+      studentEventTemplates: expectedStudentEvents,
+      contractEventTemplates: expectedContractEvents,
       automaticExpenseRules: expectedRules
     }
   });
@@ -114,8 +121,30 @@ try {
   if (Number(syncResult.automaticExpenseRules) !== 3) {
     throw new Error(`Некорректная статистика правил: ${syncResult.automaticExpenseRules}.`);
   }
-  if (roundTrip.macroSettings.studentEventTemplates.length !== imported.macroSettings.studentEventTemplates.length) {
-    throw new Error("При записи правил изменился перечень событий слушателя.");
+  if (
+    JSON.stringify(roundTrip.macroSettings.studentEventTemplates.map((event) => ({
+      label: event.label,
+      includeTypes: event.includeTypes,
+      excludeTypes: event.excludeTypes
+    }))) !== JSON.stringify(expectedStudentEvents.map((event) => ({
+      label: event.label,
+      includeTypes: event.includeTypes,
+      excludeTypes: event.excludeTypes
+    })))
+  ) {
+    throw new Error("Настройки событий слушателей изменились после повторного импорта.");
+  }
+  if (
+    JSON.stringify(roundTrip.macroSettings.contractEventTemplates.map((event) => event.label))
+      !== JSON.stringify(expectedContractEvents.map((event) => event.label))
+  ) {
+    throw new Error("Настройки событий сотрудников изменились после повторного импорта.");
+  }
+  if (Number(syncResult.studentEventTemplates) !== expectedStudentEvents.length) {
+    throw new Error(`Некорректная статистика событий слушателей: ${syncResult.studentEventTemplates}.`);
+  }
+  if (Number(syncResult.contractEventTemplates) !== expectedContractEvents.length) {
+    throw new Error(`Некорректная статистика событий сотрудников: ${syncResult.contractEventTemplates}.`);
   }
   if (getMacroSetting(outputPath, "UpdateServer") !== preservedSetting) {
     throw new Error("При записи правил изменена соседняя настройка диапазона.");
@@ -127,6 +156,7 @@ try {
   console.log(JSON.stringify({
     paymentRules: syncResult.automaticExpenseRules,
     studentEvents: roundTrip.macroSettings.studentEventTemplates.length,
+    employeeEvents: roundTrip.macroSettings.contractEventTemplates.length,
     preservedNeighbor: true,
     sourceUnchanged: true
   }, null, 2));

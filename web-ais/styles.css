@@ -6838,6 +6838,21 @@ body.long-press-dragging * {
   background: #fff;
 }
 
+.student-event-settings-shell {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.student-event-settings-shell > [data-event-settings-panel] {
+  min-height: 0;
+}
+
+.student-event-settings-shell > [data-event-settings-panel][hidden] {
+  display: none;
+}
+
 .student-event-settings-form {
   min-height: 0;
   display: grid;
@@ -6882,6 +6897,12 @@ body.long-press-dragging * {
   display: grid;
   grid-template-columns: 52px minmax(270px, 1fr) minmax(250px, 0.72fr);
   align-items: center;
+}
+
+.contract-event-settings-table .student-event-settings-header,
+.contract-event-settings-table .contract-event-setting-row {
+  min-width: 0;
+  grid-template-columns: 52px minmax(0, 1fr);
 }
 
 .student-event-settings-header {
@@ -7003,6 +7024,10 @@ body.long-press-dragging * {
     grid-template-columns: 42px minmax(0, 1fr);
     align-items: start;
     padding: 5px 4px 7px;
+  }
+
+  .contract-event-settings-table .contract-event-setting-row {
+    grid-template-columns: 42px minmax(0, 1fr);
   }
 
   .student-event-setting-row > div {

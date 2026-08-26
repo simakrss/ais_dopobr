@@ -4,8 +4,15 @@ const path = require("node:path");
 
 const appPath = path.join(__dirname, "..", "app.js");
 const stylesPath = path.join(__dirname, "..", "styles.css");
+const syncScriptPath = path.join(__dirname, "sync-student-database.ps1");
 const appSource = fs.readFileSync(appPath, "utf8");
 const stylesSource = fs.readFileSync(stylesPath, "utf8");
+const syncScriptSource = fs.readFileSync(syncScriptPath, "utf8");
+const {
+  hashStudentDatabaseEventSettings,
+  parseStudentDatabaseMacroSettings,
+  resolveStudentDatabaseEventSettingsSyncDirection
+} = require("../app-server.js");
 
 function sourceBlock(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -73,10 +80,83 @@ assert.deepEqual(
 const settingsBlock = sourceBlock(appSource, "function renderSettings()", "function escapeDictionarySearchRegExp(");
 assert.match(settingsBlock, /key: "studentEventSettings"/u);
 assert.match(settingsBlock, /renderStudentEventSettingsDictionary\(selectedValues\)/u);
+assert.match(settingsBlock, /getContractEventTemplates\(\)/u);
 
 const saveBlock = sourceBlock(appSource, "function collectStudentEventSettings(", "function saveSdoSettings(");
 assert.match(saveBlock, /state\.data\.meta\.studentEventTemplates = settings/u);
+assert.match(saveBlock, /state\.data\.meta\.contractEventTemplates = settings/u);
 assert.match(saveBlock, /buildStudentEventProgramConditions/u);
+
+const renderBlock = sourceBlock(
+  appSource,
+  "function renderStudentEventSettingsDictionary(",
+  "function renderSdoSettingsDictionary("
+);
+assert.match(renderBlock, /data-orderable-tabs="event-settings"/u);
+assert.match(renderBlock, /id: "students", label: "Слушатели"/u);
+assert.match(renderBlock, /id: "employees", label: "Сотрудники"/u);
+assert.match(renderBlock, /data-action="save-contract-event-settings"/u);
+assert.match(renderBlock, /СобытияКонтрагент/u);
+
+const macroWorkbook = {
+  Workbook: { Names: [{ Name: "НастройкиМакросов", Ref: "'Настройки'!$AA$2" }] },
+  Sheets: {
+    Настройки: {
+      AA2: {
+        t: "s",
+        v: [
+          "События=Первое событие;-ПРО\u000b\u000bВторое событие;КПК;ППП",
+          "СобытияКонтрагент=Событие сотрудника 1\u000b\u000bСобытие сотрудника 2"
+        ].join("\r\n")
+      }
+    }
+  }
+};
+const parsedMacroSettings = parseStudentDatabaseMacroSettings(macroWorkbook).macroSettings;
+assert.deepEqual(parsedMacroSettings.studentEventTemplates.map((item) => item.label), [
+  "Первое событие",
+  "Второе событие"
+]);
+assert.deepEqual(parsedMacroSettings.studentEventTemplates[0].excludeTypes, ["ПРО"]);
+assert.deepEqual(parsedMacroSettings.studentEventTemplates[1].includeTypes, ["КПК", "ППП"]);
+assert.deepEqual(parsedMacroSettings.contractEventTemplates.map((item) => item.label), [
+  "Событие сотрудника 1",
+  "Событие сотрудника 2"
+]);
+
+const baselineSettings = {
+  macroSettings: {
+    studentEventTemplates: [{ label: "Исходное событие", includeTypes: [], excludeTypes: ["ПРО"] }],
+    contractEventTemplates: [{ label: "Исходное событие сотрудника" }]
+  }
+};
+const baselineEventSettingsHash = hashStudentDatabaseEventSettings(baselineSettings);
+const changedWebSettings = {
+  macroSettings: {
+    studentEventTemplates: [{ label: "Изменённое событие", includeTypes: [], excludeTypes: ["ПРО"] }],
+    contractEventTemplates: [{ label: "Исходное событие сотрудника" }]
+  }
+};
+assert.equal(
+  resolveStudentDatabaseEventSettingsSyncDirection({
+    directionResult: { direction: "unchanged" },
+    baseline: { eventSettingsHash: baselineEventSettingsHash },
+    webData: changedWebSettings,
+    excelData: baselineSettings
+  }).direction,
+  "web-to-excel"
+);
+assert.equal(
+  resolveStudentDatabaseEventSettingsSyncDirection({
+    directionResult: { direction: "unchanged" },
+    baseline: { eventSettingsHash: baselineEventSettingsHash },
+    webData: baselineSettings,
+    excelData: changedWebSettings
+  }).direction,
+  "excel-to-web"
+);
+assert.match(syncScriptSource, /Set-MacroSettingTextValue \$text "События"/u);
+assert.match(syncScriptSource, /Set-MacroSettingTextValue \$text "СобытияКонтрагент"/u);
 
 const catalogBlock = sourceBlock(appSource, "function getStudentEventCatalog(", "function csvList(");
 assert.match(catalogBlock, /activeTemplateKeys/u);
@@ -108,6 +188,7 @@ assert.deepEqual(
 );
 
 assert.match(stylesSource, /\.student-event-settings-table/u);
+assert.match(stylesSource, /\.contract-event-settings-table/u);
 assert.match(stylesSource, /\.student-event-setting-programs/u);
 assert.match(stylesSource, /@media \(max-width: 760px\)[\s\S]*\.student-event-setting-row/u);
 

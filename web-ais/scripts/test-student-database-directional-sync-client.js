@@ -61,6 +61,13 @@ function testBaselineNormalizationAndLatestTimestamp() {
   assert.equal(baseline.sourceHash, "a".repeat(64));
   assert.equal(baseline.sourceIdentity, "b".repeat(64));
   assert.equal(context.isValidBaseline(baseline), true);
+  const eventBaseline = context.normalizeBaseline({
+    ...baseline,
+    criticalHash: "C".repeat(64),
+    eventSettingsHash: "D".repeat(64)
+  });
+  assert.equal(eventBaseline.version, 3);
+  assert.equal(eventBaseline.eventSettingsHash, "d".repeat(64));
   assert.equal(
     context.latestTimestamp("2026-08-13T10:00:00.000Z", "2026-08-15T12:00:00.000Z"),
     "2026-08-15T12:00:00.000Z"
@@ -723,7 +730,8 @@ function makeExportContext(result, { validBaseline = true } = {}) {
         webRevision: args[2],
         synchronizedAt: args[3],
         criticalHash: args[4],
-        criticalIdentityHash: args[5]
+        criticalIdentityHash: args[5],
+        eventSettingsHash: args[6]
       };
     },
     importStudentsFromDatabase: async () => {
@@ -773,6 +781,19 @@ async function testDirectionalExportFlows() {
   assert.equal(unchanged.exportBody.trainingPlans.length, 1);
   assert.equal(unchanged.exportBody.currentWebCriticalUpdatedAt, "2026-08-20T09:00:00.000Z");
   assert.equal(unchanged.exportBody.currentWebAuditOldestAt, "2026-08-01T00:00:00.000Z");
+
+  const eventBaselineMigration = makeExportContext({
+    syncDirection: "unchanged",
+    sourceHash: "a".repeat(64),
+    sourceIdentity: "b".repeat(64),
+    criticalHash: "c".repeat(64),
+    eventSettingsHash: "d".repeat(64),
+    studentCount: 1
+  });
+  await eventBaselineMigration.operation({ shiftKey: false });
+  assert.equal(eventBaselineMigration.order.includes("persist"), true);
+  assert.equal(eventBaselineMigration.order.includes("baseline-flush"), true);
+  assert.equal(eventBaselineMigration.baselineCalls[0][6], "d".repeat(64));
 
   const changedDuringPreparation = makeExportContext({
     syncDirection: "web-to-excel",

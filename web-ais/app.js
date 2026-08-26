@@ -89,10 +89,19 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.307",
-    releasedAt: "2026-08-26"
+    version: "1.7.308",
+    releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.308",
+      releasedAt: "2026-08-27",
+      changes: [
+        "В настройках событий появились отдельные переставляемые вкладки «Слушатели» и «Сотрудники».",
+        "Списки событий и ограничения по видам программ синхронизируются с ключами «События» и «СобытияКонтрагент» диапазона «НастройкиМакросов» в XLSB.",
+        "Изменение только настроек событий теперь корректно выбирает направление общей синхронизации Web ↔ Excel."
+      ]
+    },
     {
       version: "1.7.307",
       releasedAt: "2026-08-26",
@@ -5389,6 +5398,7 @@ MAX - https://bizvmax.ru/zifra_plus
     selectedDictionary: "",
     dictionaryAddFocus: "",
     paymentSettingsTab: "rates",
+    eventSettingsTab: "students",
     communicationTemplateFieldSort: "asc",
     communicationTemplateAudience: "students",
     documentTemplateSearch: "",
@@ -6065,6 +6075,7 @@ MAX - https://bizvmax.ru/zifra_plus
       data.meta.contractEventTemplates,
       { contract: true }
     );
+    data.meta.eventSettingsUpdatedAt = String(data.meta.eventSettingsUpdatedAt || "").trim();
     data.meta.applicationsOrderAdminUrlTemplate = String(
       data.meta.applicationsOrderAdminUrlTemplate || DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE
     ).trim();
@@ -17505,6 +17516,8 @@ MAX - https://bizvmax.ru/zifra_plus
     issuedDocumentSettings: ["Норматив выгрузки", "Папка выгрузки", "ФРДО"],
     studentEventSettings: [
       "События слушателей",
+      "События сотрудников",
+      "События контрагентов",
       "Виды образовательных программ",
       "Повышение квалификации",
       "Профессиональная переподготовка",
@@ -17575,6 +17588,8 @@ MAX - https://bizvmax.ru/zifra_plus
       supplements.push(dataFormulaTokenDefinitions);
     } else if (key === "documentPathSettings") {
       supplements.push(documentPathMarkerDefinitions);
+    } else if (key === "studentEventSettings") {
+      supplements.push(getStudentEventTemplates(), getContractEventTemplates());
     }
     return supplements;
   }
@@ -17663,7 +17678,11 @@ MAX - https://bizvmax.ru/zifra_plus
               ${visibleItems.length ? visibleItems.map((item) => `
                 <button class="dictionary-list-item ${item.key === selectedKey ? "active" : ""}" data-action="select-dictionary" data-dict="${item.key}" type="button" role="option" aria-selected="${item.key === selectedKey ? "true" : "false"}" tabindex="${item.key === selectedKey ? "0" : "-1"}">
                   <span>${escapeHtml(item.title)}</span>
-                  <small>${item.key === "communicationTemplates" ? item.values.length + employeeCommunicationMessages.length : item.values.length}</small>
+                  <small>${item.key === "communicationTemplates"
+                    ? item.values.length + employeeCommunicationMessages.length
+                    : item.key === "studentEventSettings"
+                      ? getStudentEventTemplates().length + getContractEventTemplates().length
+                      : item.values.length}</small>
                 </button>
               `).join("") : `<div class="empty-state compact"><span>Настройки не найдены</span></div>`}
             </div>
@@ -17696,7 +17715,11 @@ MAX - https://bizvmax.ru/zifra_plus
                       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v6h6"></path><path d="M12 8v5l3 2"></path></svg>
                     </button>
                   ` : ""}
-                  <span>${isCommunicationTemplates ? selectedValues.length + employeeCommunicationMessages.length : selectedValues.length}</span>
+                  <span>${isCommunicationTemplates
+                    ? selectedValues.length + employeeCommunicationMessages.length
+                    : isStudentEventSettings
+                      ? getStudentEventTemplates().length + getContractEventTemplates().length
+                      : selectedValues.length}</span>
                 </div>
               </div>
               ${isCommunicationTemplates
@@ -17767,6 +17790,13 @@ MAX - https://bizvmax.ru/zifra_plus
         buttonAttribute: "data-template-audience",
         panelAttribute: "data-communication-template-panel",
         activate: (id) => switchCommunicationTemplateAudience(id)
+      },
+      {
+        buttons: "[data-event-settings-tab]",
+        panels: "[data-event-settings-panel]",
+        buttonAttribute: "data-event-settings-tab",
+        panelAttribute: "data-event-settings-panel",
+        activate: (id) => switchEventSettingsTab(id)
       }
     ];
     groups.forEach((group) => {
@@ -17946,31 +17976,118 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderContractEventSettingRow(event, index) {
+    return `
+      <div class="student-event-setting-row contract-event-setting-row" data-contract-event-setting-row data-contract-event-setting-key="${escapeAttr(event.key)}">
+        <div class="student-event-setting-order">
+          ${renderFinanceRowDragHandle(`Перетащить событие ${index + 1}`)}
+          <span data-contract-event-setting-number>${index + 1}</span>
+        </div>
+        <div class="student-event-setting-name" title="${escapeAttr(event.label)}">
+          ${escapeHtml(event.label)}
+        </div>
+      </div>
+    `;
+  }
+
   function renderStudentEventSettingsDictionary(values) {
     const events = normalizeConfiguredEventTemplates(values);
+    const contractEvents = getContractEventTemplates();
+    const tabs = getOrderedTabs("event-settings", [
+      { id: "students", label: "Слушатели" },
+      { id: "employees", label: "Сотрудники" }
+    ]);
+    const activeTab = tabs.some((tab) => tab.id === state.eventSettingsTab)
+      ? state.eventSettingsTab
+      : tabs[0].id;
+    state.eventSettingsTab = activeTab;
     return `
-      <form class="student-event-settings-form" data-action="save-student-event-settings">
-        <div class="student-event-settings-intro">
-          <h4>События в карточке слушателя</h4>
-          <p>Отметьте виды программ, для которых событие должно формироваться. Существующие даты событий в карточках при изменении настройки не удаляются.</p>
+      <div class="student-event-settings-shell" data-event-settings-root>
+        <div class="payment-settings-tabs student-event-settings-tabs" data-orderable-tabs="event-settings" role="tablist" aria-label="Разделы настройки событий">
+          ${tabs.map((tab) => `
+            <button
+              class="${activeTab === tab.id ? "active" : ""}"
+              data-event-settings-tab="${escapeAttr(tab.id)}"
+              data-orderable-tab="${escapeAttr(tab.id)}"
+              data-orderable-tab-default-index="${tab.defaultTabIndex}"
+              draggable="true"
+              type="button"
+              role="tab"
+              aria-controls="event-settings-panel-${escapeAttr(tab.id)}"
+              aria-selected="${activeTab === tab.id ? "true" : "false"}"
+              tabindex="${activeTab === tab.id ? "0" : "-1"}"
+            >${escapeHtml(tab.label)}</button>
+          `).join("")}
         </div>
-        <div class="student-event-settings-table" data-student-event-settings-list>
-          <div class="student-event-settings-header" aria-hidden="true">
-            <span>№</span>
-            <span>Событие</span>
-            <span class="student-event-setting-program-headings">
-              ${studentEventProgramTypeOptions.map((option) => `<span title="${escapeAttr(option.label)}">${escapeHtml(option.value)}</span>`).join("")}
-            </span>
-          </div>
-          ${events.map(renderStudentEventSettingRow).join("")}
-        </div>
-        <p class="student-event-settings-hint">Порядок и применимость событий синхронизируются с параметром «События» книги АИС Допобразование.xlsb.</p>
-        <div class="student-event-settings-actions">
-          <button class="ghost-button" data-action="enable-all-student-event-programs" type="button">Включить для всех</button>
-          <button class="primary-button" type="submit">Сохранить настройки</button>
-        </div>
-      </form>
+        <section id="event-settings-panel-students" data-event-settings-panel="students" role="tabpanel" ${activeTab === "students" ? "" : "hidden"}>
+          <form class="student-event-settings-form" data-action="save-student-event-settings">
+            <div class="student-event-settings-intro">
+              <h4>События в карточке слушателя</h4>
+              <p>Отметьте виды программ, для которых событие должно формироваться. Существующие даты событий в карточках при изменении настройки не удаляются.</p>
+            </div>
+            <div class="student-event-settings-table" data-student-event-settings-list>
+              <div class="student-event-settings-header" aria-hidden="true">
+                <span>№</span>
+                <span>Событие</span>
+                <span class="student-event-setting-program-headings">
+                  ${studentEventProgramTypeOptions.map((option) => `<span title="${escapeAttr(option.label)}">${escapeHtml(option.value)}</span>`).join("")}
+                </span>
+              </div>
+              ${events.map(renderStudentEventSettingRow).join("")}
+            </div>
+            <p class="student-event-settings-hint">Порядок и применимость событий синхронизируются с ключом <code>События</code> диапазона <code>НастройкиМакросов</code> книги АИС Допобразование.xlsb.</p>
+            <div class="student-event-settings-actions">
+              <button class="ghost-button" data-action="enable-all-student-event-programs" type="button">Включить для всех</button>
+              <button class="primary-button" type="submit">Сохранить настройки</button>
+            </div>
+          </form>
+        </section>
+        <section id="event-settings-panel-employees" data-event-settings-panel="employees" role="tabpanel" ${activeTab === "employees" ? "" : "hidden"}>
+          <form class="student-event-settings-form" data-action="save-contract-event-settings">
+            <div class="student-event-settings-intro">
+              <h4>События в карточке сотрудника</h4>
+              <p>Измените порядок событий перетаскиванием строк. Существующие даты событий в карточках сотрудников при изменении настройки не удаляются.</p>
+            </div>
+            <div class="student-event-settings-table contract-event-settings-table" data-contract-event-settings-list>
+              <div class="student-event-settings-header" aria-hidden="true">
+                <span>№</span>
+                <span>Событие</span>
+              </div>
+              ${contractEvents.map(renderContractEventSettingRow).join("")}
+            </div>
+            <p class="student-event-settings-hint">Порядок событий синхронизируется с ключом <code>СобытияКонтрагент</code> диапазона <code>НастройкиМакросов</code> книги АИС Допобразование.xlsb.</p>
+            <div class="student-event-settings-actions">
+              <button class="primary-button" type="submit">Сохранить настройки</button>
+            </div>
+          </form>
+        </section>
+      </div>
     `;
+  }
+
+  function switchEventSettingsTab(tabId, options = {}) {
+    const target = ["students", "employees"].includes(String(tabId || ""))
+      ? String(tabId)
+      : "students";
+    state.eventSettingsTab = target;
+    const root = document.querySelector("[data-event-settings-root]");
+    if (!root) return;
+    root.querySelectorAll("[data-event-settings-tab]").forEach((button) => {
+      const isActive = button.dataset.eventSettingsTab === target;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-selected", isActive ? "true" : "false");
+      button.tabIndex = isActive ? 0 : -1;
+      if (isActive && options.focus) button.focus({ preventScroll: true });
+    });
+    root.querySelectorAll("[data-event-settings-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.eventSettingsPanel !== target;
+    });
+  }
+
+  function bindEventSettingsTabs() {
+    document.querySelectorAll("[data-event-settings-tab]").forEach((button) => {
+      button.addEventListener("click", () => switchEventSettingsTab(button.dataset.eventSettingsTab));
+    });
   }
 
   function renderSdoSettingsDictionary(values) {
@@ -18399,8 +18516,8 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function getStudentEventSettingDragAfterRow(list, y) {
-    return [...list.querySelectorAll("[data-student-event-setting-row]:not(.is-dragging)")].reduce((closest, row) => {
+  function getStudentEventSettingDragAfterRow(list, y, rowSelector = "[data-student-event-setting-row]") {
+    return [...list.querySelectorAll(`${rowSelector}:not(.is-dragging)`)].reduce((closest, row) => {
       const box = row.getBoundingClientRect();
       const offset = y - box.top - box.height / 2;
       return offset < 0 && offset > closest.offset ? { offset, row } : closest;
@@ -18436,6 +18553,51 @@ MAX - https://bizvmax.ru/zifra_plus
     list.addEventListener("dragend", () => {
       list.querySelectorAll("[data-student-event-setting-row]").forEach((row) => row.classList.remove("is-dragging"));
       updateStudentEventSettingRowNumbers(list);
+    });
+  }
+
+  function updateContractEventSettingRowNumbers(list) {
+    list?.querySelectorAll("[data-contract-event-setting-row]").forEach((row, index) => {
+      const number = row.querySelector("[data-contract-event-setting-number]");
+      if (number) number.textContent = String(index + 1);
+      const handle = row.querySelector("[data-finance-row-drag]");
+      if (handle) handle.setAttribute("aria-label", `Перетащить событие ${index + 1}`);
+    });
+  }
+
+  function bindContractEventSettingRowDrag(list) {
+    if (!list || list.dataset.contractEventSettingsDragBound === "true") return;
+    list.dataset.contractEventSettingsDragBound = "true";
+    list.addEventListener("dragstart", (event) => {
+      const handle = event.target.closest("[data-finance-row-drag]");
+      const row = handle?.closest("[data-contract-event-setting-row]");
+      if (!row) {
+        event.preventDefault();
+        return;
+      }
+      row.classList.add("is-dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", "");
+      }
+    });
+    list.addEventListener("dragover", (event) => {
+      const dragging = list.querySelector("[data-contract-event-setting-row].is-dragging");
+      if (!dragging) return;
+      event.preventDefault();
+      const afterRow = getStudentEventSettingDragAfterRow(
+        list,
+        event.clientY,
+        "[data-contract-event-setting-row]"
+      );
+      if (afterRow) list.insertBefore(dragging, afterRow);
+      else list.appendChild(dragging);
+      updateContractEventSettingRowNumbers(list);
+    });
+    list.addEventListener("drop", (event) => event.preventDefault());
+    list.addEventListener("dragend", () => {
+      list.querySelectorAll("[data-contract-event-setting-row]").forEach((row) => row.classList.remove("is-dragging"));
+      updateContractEventSettingRowNumbers(list);
     });
   }
 
@@ -33913,8 +34075,11 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("form[data-action='save-sdo-settings']")?.addEventListener("submit", saveSdoSettings);
     document.querySelector("[data-action='reset-sdo-settings']")?.addEventListener("click", resetSdoSettings);
     document.querySelector("form[data-action='save-student-event-settings']")?.addEventListener("submit", saveStudentEventSettings);
+    document.querySelector("form[data-action='save-contract-event-settings']")?.addEventListener("submit", saveContractEventSettings);
     document.querySelector("[data-action='enable-all-student-event-programs']")?.addEventListener("click", enableAllStudentEventPrograms);
     bindStudentEventSettingRowDrag(document.querySelector("[data-student-event-settings-list]"));
+    bindContractEventSettingRowDrag(document.querySelector("[data-contract-event-settings-list]"));
+    bindEventSettingsTabs();
     document.querySelector("form[data-action='save-payment-settings']")?.addEventListener("submit", savePaymentSettings);
     document.querySelector("[data-action='reset-payment-settings']")?.addEventListener("click", resetPaymentSettings);
     document.querySelector("[data-action='add-payment-constant']")?.addEventListener("click", addPaymentConstantRow);
@@ -48327,6 +48492,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     state.data.meta = state.data.meta || {};
     state.data.meta.studentEventTemplates = settings;
+    state.data.meta.eventSettingsUpdatedAt = new Date().toISOString();
     const restrictedCount = settings.filter((item) => (
       getStudentEventEnabledProgramTypes(item).length < studentEventProgramTypeOptions.length
     )).length;
@@ -48346,6 +48512,41 @@ MAX - https://bizvmax.ru/zifra_plus
       input.checked = true;
     });
     form.querySelector("button[type='submit']")?.focus({ preventScroll: true });
+  }
+
+  function collectContractEventSettings(form) {
+    const previousEvents = new Map(getContractEventTemplates().map((item) => [item.key, item]));
+    return [...(form?.querySelectorAll("[data-contract-event-setting-row]") || [])].map((row) => {
+      const key = String(row.dataset.contractEventSettingKey || "").trim();
+      const previousEvent = previousEvents.get(key) || {};
+      return {
+        key,
+        label: previousEvent.label || key
+      };
+    });
+  }
+
+  function saveContractEventSettings(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const settings = normalizeConfiguredEventTemplates(
+      collectContractEventSettings(form),
+      { contract: true }
+    );
+    if (!settings.length) {
+      alert("Список событий сотрудников пуст. Обновите страницу и повторите сохранение.");
+      return;
+    }
+    state.data.meta = state.data.meta || {};
+    state.data.meta.contractEventTemplates = settings;
+    state.data.meta.eventSettingsUpdatedAt = new Date().toISOString();
+    addAudit(
+      "Изменены настройки событий сотрудников",
+      dictionaryTitle("studentEventSettings"),
+      `Событий: ${settings.length}`
+    );
+    persist();
+    render();
   }
 
   function saveSdoSettings(event) {
@@ -51235,9 +51436,12 @@ MAX - https://bizvmax.ru/zifra_plus
     const sourceIdentity = String(source.sourceIdentity || "").trim().toLowerCase();
     const criticalHash = String(source.criticalHash || "").trim().toLowerCase();
     const criticalIdentityHash = String(source.criticalIdentityHash || "").trim().toLowerCase();
+    const eventSettingsHash = String(source.eventSettingsHash || "").trim().toLowerCase();
     const synchronizedAt = String(source.synchronizedAt || "").trim();
     return {
-      version: /^[a-f0-9]{64}$/u.test(criticalHash) ? 2 : 1,
+      version: /^[a-f0-9]{64}$/u.test(eventSettingsHash)
+        ? 3
+        : /^[a-f0-9]{64}$/u.test(criticalHash) ? 2 : 1,
       sourceHash: /^[a-f0-9]{64}$/u.test(sourceHash) ? sourceHash : "",
       sourceIdentity: /^[a-f0-9]{64}$/u.test(sourceIdentity) ? sourceIdentity : "",
       webRevision: Math.max(0, Math.floor(Number(source.webRevision) || 0)),
@@ -51247,7 +51451,8 @@ MAX - https://bizvmax.ru/zifra_plus
       criticalHash: /^[a-f0-9]{64}$/u.test(criticalHash) ? criticalHash : "",
       criticalIdentityHash: /^[a-f0-9]{64}$/u.test(criticalIdentityHash)
         ? criticalIdentityHash
-        : ""
+        : "",
+      eventSettingsHash: /^[a-f0-9]{64}$/u.test(eventSettingsHash) ? eventSettingsHash : ""
     };
   }
 
@@ -51268,7 +51473,8 @@ MAX - https://bizvmax.ru/zifra_plus
     webRevision,
     synchronizedAt = "",
     criticalHash = "",
-    criticalIdentityHash = ""
+    criticalIdentityHash = "",
+    eventSettingsHash = ""
   ) {
     const baseline = normalizeStudentDatabaseSyncBaseline({
       sourceHash,
@@ -51276,7 +51482,8 @@ MAX - https://bizvmax.ru/zifra_plus
       webRevision,
       synchronizedAt: synchronizedAt || new Date().toISOString(),
       criticalHash,
-      criticalIdentityHash
+      criticalIdentityHash,
+      eventSettingsHash
     });
     if (!isValidStudentDatabaseSyncBaseline(baseline) || baseline.version < 2) {
       throw new Error("Сервер не вернул корректную контрольную точку синхронизации.");
@@ -51810,6 +52017,7 @@ MAX - https://bizvmax.ru/zifra_plus
         key: event.key,
         label: event.label
       })),
+      eventSettingsUpdatedAt: String(state.data.meta.eventSettingsUpdatedAt || ""),
       applicationsSqlQuery: String(state.data.meta.applicationsSqlQuery || "")
     };
   }
@@ -52042,7 +52250,8 @@ MAX - https://bizvmax.ru/zifra_plus
           syncBaseRevision + 1,
           committedResult.synchronizedAt || new Date().toISOString(),
           committedResult.criticalHash || result.criticalHash,
-          committedResult.criticalIdentityHash || result.criticalIdentityHash
+          committedResult.criticalIdentityHash || result.criticalIdentityHash,
+          committedResult.eventSettingsHash || result.eventSettingsHash
         );
         updateDatabaseExportIndicator({
           status: "Применение изменений Excel к общей Web-базе...",
@@ -52103,7 +52312,8 @@ MAX - https://bizvmax.ru/zifra_plus
           syncBaseRevision + 1,
           synchronizedAt,
           committedResult.criticalHash || result.criticalHash,
-          committedResult.criticalIdentityHash || result.criticalIdentityHash
+          committedResult.criticalIdentityHash || result.criticalIdentityHash,
+          committedResult.eventSettingsHash || result.eventSettingsHash
         );
         state.data.meta.studentDatabaseLastExportedAt = synchronizedAt;
         const auditEntry = addAudit(
@@ -52138,7 +52348,13 @@ MAX - https://bizvmax.ru/zifra_plus
         });
         activeReservation = { jobId: "", token: "" };
         void postAuditEntry(auditEntry);
-      } else if (!hadValidBaseline) {
+      } else if (
+        !hadValidBaseline
+        || (
+          result.eventSettingsHash
+          && syncBaseline.eventSettingsHash !== result.eventSettingsHash
+        )
+      ) {
         const synchronizedAt = new Date().toISOString();
         state.data.meta.studentDatabaseSyncBaseline = buildStudentDatabaseSyncBaseline(
           result.sourceHash,
@@ -52146,7 +52362,8 @@ MAX - https://bizvmax.ru/zifra_plus
           syncBaseRevision + 1,
           synchronizedAt,
           result.criticalHash,
-          result.criticalIdentityHash
+          result.criticalIdentityHash,
+          result.eventSettingsHash
         );
         state.data.meta.studentDatabaseLastSynchronizedAt = synchronizedAt;
         persist();
@@ -58145,7 +58362,7 @@ MAX - https://bizvmax.ru/zifra_plus
       educationRegistrationTypeCodes: "Сокращения типов программ в рег. номере",
       finalAttestationSettings: "Итоговая аттестация: оценки и шкала",
       issuedDocumentSettings: "ФРДО",
-      studentEventSettings: "События по видам программ",
+      studentEventSettings: "События",
       discountRules: "Скидки",
       dataFormulas: "Конструктор формул данных",
       contractTemplateFields: "Конструктор полей договора",
