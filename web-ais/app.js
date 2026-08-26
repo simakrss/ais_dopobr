@@ -89,10 +89,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.292",
+    version: "1.7.293",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.293",
+      releasedAt: "2026-08-26",
+      changes: [
+        "После успешной отправки слушателю документов на продление или сокращение обучения автоматически отмечается соответствующее событие с текущей датой."
+      ]
+    },
     {
       version: "1.7.292",
       releasedAt: "2026-08-26",
@@ -54946,21 +54953,31 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function openStudentTrainingExtensionDocument(event) {
-    return openStudentCardBoundDocument(
+    const record = collectStudentFormDraft();
+    const result = await openStudentCardBoundDocument(
       event,
       "trainingExtension",
       "В конструкторе документов не найден шаблон продления обучения.",
       "Не удалось сформировать документы для продления обучения"
     );
+    if (result?.emailed === true && result.emailRecipientMode !== "system") {
+      markStudentEventsCompleted(record, "extensionDocsSent");
+    }
+    return result;
   }
 
   async function openStudentTrainingReductionDocument(event) {
-    return openStudentCardBoundDocument(
+    const record = collectStudentFormDraft();
+    const result = await openStudentCardBoundDocument(
       event,
       "trainingReduction",
       "В конструкторе документов не найден шаблон сокращения обучения.",
       "Не удалось сформировать документы для сокращения обучения"
     );
+    if (result?.emailed === true && result.emailRecipientMode !== "system") {
+      markStudentEventsCompleted(record, "reductionDocsSent");
+    }
+    return result;
   }
 
   async function openStudentCardBoundDocument(event, documentKind, missingMessage, errorTitle) {

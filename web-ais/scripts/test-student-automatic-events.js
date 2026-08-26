@@ -62,6 +62,24 @@ assert.match(educationBlock, /result\?\.emailed === true/u);
 assert.match(educationBlock, /result\.emailRecipientMode !== "system"/u);
 assert.match(educationBlock, /"educationDocMaketSent"/u);
 
+const extensionBlock = sourceBlock(
+  appSource,
+  "async function openStudentTrainingExtensionDocument(",
+  "async function openStudentTrainingReductionDocument("
+);
+assert.match(extensionBlock, /result\?\.emailed === true/u);
+assert.match(extensionBlock, /result\.emailRecipientMode !== "system"/u);
+assert.match(extensionBlock, /markStudentEventsCompleted\(record, "extensionDocsSent"\)/u);
+
+const reductionBlock = sourceBlock(
+  appSource,
+  "async function openStudentTrainingReductionDocument(",
+  "async function openStudentCardBoundDocument("
+);
+assert.match(reductionBlock, /result\?\.emailed === true/u);
+assert.match(reductionBlock, /result\.emailRecipientMode !== "system"/u);
+assert.match(reductionBlock, /markStudentEventsCompleted\(record, "reductionDocsSent"\)/u);
+
 const enrollmentBlock = sourceBlock(
   appSource,
   "async function openStudentEnrollmentOrderDocument(",
