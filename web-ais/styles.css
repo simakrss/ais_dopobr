@@ -21745,16 +21745,19 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .generated-document-preview-actions {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
   }
 
   .generated-document-preview-actions small {
     grid-column: 1 / -1;
   }
 
-  .generated-document-preview-actions [data-action="edit-generated-document-preview"],
-  .generated-document-preview-actions [data-action="save-generated-document-editor"] {
-    grid-column: 1 / -1;
+  .generated-document-preview-actions button {
+    width: 100%;
+    padding-inline: 7px;
+    font-size: 12px;
+    white-space: normal;
   }
 }
 

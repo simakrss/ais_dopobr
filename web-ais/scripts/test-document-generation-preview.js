@@ -415,6 +415,8 @@ assert.match(gatewaySource, /stream_get_contents\(\$inputStream,\s*\$requestBody
 assert.match(stylesSource, /\.generated-document-preview-dialog/u);
 assert.match(stylesSource, /\.generated-document-preview-frame/u);
 assert.match(stylesSource, /\.generated-document-preview-frame\.is-editor/u);
+assert.match(stylesSource, /\.generated-document-preview-actions\s*\{\s*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/u);
+assert.doesNotMatch(stylesSource, /generated-document-preview-actions \[data-action="edit-generated-document-preview"\][\s\S]*?grid-column:\s*1\s*\/\s*-1/u);
 
 console.log("Document generation preview tests passed.");
 }

@@ -89,10 +89,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.295",
+    version: "1.7.296",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.296",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Кнопка «Продолжить» в предварительном просмотре документа располагается в одном ряду с кнопками редактирования и отмены, в том числе на мобильных экранах."
+      ]
+    },
     {
       version: "1.7.295",
       releasedAt: "2026-08-26",
