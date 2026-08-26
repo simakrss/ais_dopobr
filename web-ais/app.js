@@ -89,10 +89,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.291",
+    version: "1.7.292",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.292",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Для программ ПРО кнопка «Авто» устанавливает дату окончания и дату отчисления равными дате начала обучения."
+      ]
+    },
     {
       version: "1.7.291",
       releasedAt: "2026-08-26",
@@ -25490,6 +25497,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const duration = String(program.duration || "").trim();
     const hours = Number(String(getStudentProgramHours(record)).replace(",", "."));
+    const programType = normalizeEducationProgramType(program.type || record.educationType);
     if (duration && !parseTrainingProgramDuration(duration)) {
       alert(`Не удалось распознать срок программы «${duration}». Укажите его в днях, неделях или месяцах.`);
       return null;
@@ -25499,7 +25507,7 @@ MAX - https://bizvmax.ru/zifra_plus
       form.querySelector("[name='hours']")?.focus();
       return null;
     }
-    return { form, record, program, programName, duration, hours };
+    return { form, record, program, programName, programType, duration, hours };
   }
 
   function generateTrainingEndDate() {
@@ -25580,19 +25588,25 @@ MAX - https://bizvmax.ru/zifra_plus
     const baseDate = parsedContractDate || new Date();
     const baseDateValue = formatOrdersSdoDate(baseDate);
     const baseDateLabel = baseDate.toLocaleDateString("ru-RU");
+    const proDateNotice = context.programType === "ПРО"
+      ? " Для ПРО дата окончания и дата отчисления будут равны дате начала обучения."
+      : "";
     const confirmed = confirm(
       `Использовать ${parsedContractDate ? "дату договора" : "текущую дату"} ${baseDateLabel} `
       + "для даты договора, начала обучения и зачисления, "
       + "автоматически сформировать дату окончания, номер договора, номер приказа, номер группы, "
-      + "а также данные СДО: логин, пароль и сообщение о доступе?"
+      + `а также данные СДО: логин, пароль и сообщение о доступе?${proDateNotice}`
     );
     if (!confirmed) return;
 
     const endDate = getTrainingEndDate(baseDateValue, {
       duration: context.duration,
       hours: context.hours,
-      hoursPerWeek: getBaseTrainingHoursPerWeek()
+      hoursPerWeek: getBaseTrainingHoursPerWeek(),
+      programType: context.programType,
+      sameDayForPro: true
     });
+    const endDateValue = formatOrdersSdoDate(endDate);
     const contract = getGeneratedNumberFromDataFormula("contractNumber", baseDate, context.form.dataset.id);
     const enrollmentOrder = getGeneratedNumberFromDataFormula("enrollmentOrderNumber", baseDate, context.form.dataset.id);
     const group = getStudentGroupNumber(context.programName, baseDateValue);
@@ -25602,7 +25616,10 @@ MAX - https://bizvmax.ru/zifra_plus
     setOrdersSdoFieldValue(context.form, "contractDate", baseDateValue);
     setOrdersSdoFieldValue(context.form, "startDate", baseDateValue);
     setOrdersSdoFieldValue(context.form, "enrollmentDate", baseDateValue);
-    setOrdersSdoFieldValue(context.form, "endDate", formatOrdersSdoDate(endDate));
+    setOrdersSdoFieldValue(context.form, "endDate", endDateValue);
+    if (context.programType === "ПРО") {
+      setOrdersSdoFieldValue(context.form, "expulsionDate", endDateValue);
+    }
     setOrdersSdoFieldValue(context.form, "contractNo", contract.value);
     setOrdersSdoFieldValue(context.form, "enrollmentOrderNo", enrollmentOrder.value);
     setOrdersSdoFieldValue(context.form, "group", group);

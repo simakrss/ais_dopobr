@@ -225,6 +225,7 @@ const contextSource = extractBetween(
   "  function generateTrainingEndDate"
 );
 assert.match(contextSource, /const duration\s*=\s*String\(program\.duration\s*\|\|\s*""\)/u);
+assert.match(contextSource, /const programType\s*=\s*normalizeEducationProgramType\(program\.type\s*\|\|\s*record\.educationType\)/u);
 assert.match(contextSource, /if\s*\(!duration\s*&&\s*\(!Number\.isFinite\(hours\)\s*\|\|\s*hours\s*<=\s*0\)\)/u);
 const manualGenerateSource = extractBetween(
   "  function generateTrainingEndDate",
@@ -235,7 +236,8 @@ const fullAutofillSource = extractBetween(
   "  function autoFillOrdersSdo",
   "  function evaluateDataFormula"
 );
-assert.match(fullAutofillSource, /getTrainingEndDate\(baseDateValue,\s*\{\s*duration:\s*context\.duration,\s*hours:\s*context\.hours,\s*hoursPerWeek:\s*getBaseTrainingHoursPerWeek\(\)\s*\}\)/u);
+assert.match(fullAutofillSource, /getTrainingEndDate\(baseDateValue,\s*\{[\s\S]*?programType:\s*context\.programType,[\s\S]*?sameDayForPro:\s*true/u);
+assert.match(fullAutofillSource, /context\.programType\s*===\s*"ПРО"[\s\S]*?setOrdersSdoFieldValue\(context\.form,\s*"expulsionDate",\s*endDateValue\)/u);
 const extendedGenerateSource = extractBetween(
   "  function generateExtendedTrainingEndDate",
   "  function autoFillOrdersSdo"
@@ -251,5 +253,74 @@ const bulkSource = extractBetween(
 );
 assert.doesNotMatch(bulkSource, /record\.endDate\s*=\s*(?:baseDate|issueDate)/u);
 assert.match(bulkSource, /hoursPerWeek:\s*getBaseTrainingHoursPerWeek\(\)/u);
+
+const proAutofillFields = Object.fromEntries([
+  "contractDate",
+  "startDate",
+  "enrollmentDate",
+  "endDate",
+  "expulsionDate",
+  "contractNo",
+  "enrollmentOrderNo",
+  "group",
+  "login",
+  "password",
+  "portalAccessMessage"
+].map((name) => [name, { value: name === "contractDate" ? "2026-08-26" : "", focus() {} }]));
+const proAutofillForm = {
+  dataset: { id: "pro-student" },
+  elements: proAutofillFields
+};
+let proTrainingOptions = null;
+let confirmationText = "";
+const proAutofillContext = {
+  getOrdersSdoAutofillContext: () => ({
+    form: proAutofillForm,
+    record: { contractDate: "2026-08-26" },
+    program: { groupIndex: "ПРО" },
+    programName: "Прочая образовательная программа",
+    programType: "ПРО",
+    duration: "",
+    hours: 1
+  }),
+  parseOrdersSdoDate: parseIsoDate,
+  formatOrdersSdoDate: formatIsoDate,
+  confirm(message) {
+    confirmationText = message;
+    return true;
+  },
+  alert() {
+    throw new Error("Автозаполнение ПРО не должно показывать ошибку");
+  },
+  getTrainingEndDate(startDate, options) {
+    proTrainingOptions = options;
+    return parseIsoDate(startDate);
+  },
+  getBaseTrainingHoursPerWeek: () => 40,
+  getGeneratedNumberFromDataFormula: (key) => ({ value: key }),
+  getStudentGroupNumber: () => "ПРО-26",
+  getPortalCredentialsForAutofill: () => ({ login: "student", password: "secret" }),
+  getGeneratedPortalAccessMessage: () => "Доступ",
+  setOrdersSdoFieldValue(form, fieldName, value) {
+    form.elements[fieldName].value = value;
+  },
+  collectStudentFormDraft: () => Object.fromEntries(
+    Object.entries(proAutofillFields).map(([name, input]) => [name, input.value])
+  ),
+  state: { modal: { draft: null, hasDraftChanges: false } }
+};
+vm.createContext(proAutofillContext);
+vm.runInContext(
+  `${fullAutofillSource}
+   this.autoFillOrdersSdo = autoFillOrdersSdo;`,
+  proAutofillContext
+);
+proAutofillContext.autoFillOrdersSdo();
+assert.equal(proAutofillFields.startDate.value, "2026-08-26");
+assert.equal(proAutofillFields.endDate.value, "2026-08-26");
+assert.equal(proAutofillFields.expulsionDate.value, "2026-08-26");
+assert.equal(proTrainingOptions.programType, "ПРО");
+assert.equal(proTrainingOptions.sameDayForPro, true);
+assert.match(confirmationText, /дата окончания и дата отчисления будут равны дате начала обучения/u);
 
 console.log("Training end date tests passed.");
