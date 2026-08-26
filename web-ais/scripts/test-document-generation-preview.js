@@ -303,7 +303,10 @@ try {
   fs.rmSync(cleanupWorkerStorageRoot, { recursive: true, force: true });
 }
 
-assert.match(appSource, /previewBeforeGeneration:\s*isChecked/u);
+assert.match(appSource, /const documentPreviewDefaultVersion = "all-documents-preview-v1"/u);
+assert.match(appSource, /previewBeforeGeneration:\s*true,[\s\S]+previewBeforeGenerationVersion:\s*documentPreviewDefaultVersion/u);
+assert.match(appSource, /hasCurrentPreviewDefault[\s\S]+\? isChecked\(item\?\.previewBeforeGeneration \?\? fallback\.previewBeforeGeneration \?\? true\)[\s\S]+:\s*true/u);
+assert.match(appSource, /previewBeforeGenerationVersion:\s*documentPreviewDefaultVersion/u);
 assert.match(appSource, /data-document-preview-toggle/u);
 assert.match(appSource, />Предварительный просмотр</u);
 assert.match(appSource, /skipPreview:\s*true/u, "Групповые операции не должны открывать окно для каждого слушателя");

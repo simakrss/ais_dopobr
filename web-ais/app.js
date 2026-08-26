@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.287",
+    version: "1.7.288",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.288",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Предварительный просмотр включён по умолчанию для всех документов, включая ранее сохранённые шаблоны.",
+        "После обновления предварительный просмотр по-прежнему можно отключить отдельно для выбранного документа."
+      ]
+    },
     {
       version: "1.7.287",
       releasedAt: "2026-08-26",
@@ -3167,6 +3175,7 @@ MAX - https://bizvmax.ru/zifra_plus
   const trainingReductionDocumentTemplateId = "document-training-reduction";
   const postalEnvelopeDocumentTemplateId = "document-postal-envelope";
   const postalEnvelopeGenerationFormatVersion = "postal-envelope-docx-v1";
+  const documentPreviewDefaultVersion = "all-documents-preview-v1";
   const studentDocumentsFolderTemplateMarker = "#Папка документов слушателя#";
   const downloadsFolderTemplateMarker = "#Папка Загрузки#";
   const documentTemplateInspectionVersion = "2026-07-29-email-v8";
@@ -3297,6 +3306,8 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: "Заявление+договор_#ФИО_обуч#_#N Договора#",
       saveFolderTemplate: studentDocumentsFolderTemplateMarker,
       generationFormat: "pdf",
+      previewBeforeGeneration: true,
+      previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       useCustomDocumentProperties: "1",
       documentKind: "contract",
       fields: contractTemplateFieldDefaults.map((field) => ({ ...field })),
@@ -3316,6 +3327,8 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: "Заявление_#ФИО_обуч#",
       saveFolderTemplate: studentDocumentsFolderTemplateMarker,
       generationFormat: "pdf",
+      previewBeforeGeneration: true,
+      previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       useCustomDocumentProperties: "1",
       documentKind: "application",
       fields: contractTemplateFieldDefaults.map((field) => ({ ...field })),
@@ -3597,6 +3610,8 @@ MAX - https://bizvmax.ru/zifra_plus
       saveFolderTemplate: definition.saveFolderTemplate || studentDocumentsFolderTemplateMarker,
       generationFormat: normalizeDocumentGenerationFormat(definition.generationFormat),
       generationFormatVersion: String(definition.generationFormatVersion || ""),
+      previewBeforeGeneration: true,
+      previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       useCustomDocumentProperties: String(definition.useCustomDocumentProperties ?? "1"),
       fields,
       originalFields: fields.map((field) => ({ ...field })),
@@ -3621,6 +3636,8 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: definition.fileNameTemplate,
       saveFolderTemplate: "Сотрудники/#ФИО#/Документы",
       generationFormat: "docx",
+      previewBeforeGeneration: true,
+      previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       useCustomDocumentProperties: "0",
       fields,
       originalFields: fields.map((field) => ({ ...field })),
@@ -3648,6 +3665,8 @@ MAX - https://bizvmax.ru/zifra_plus
       originalFields: fields.map((field) => ({ ...field })),
       fieldsMode: "document-markers",
       source: "link",
+      previewBeforeGeneration: true,
+      previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       programTypes: [],
       createdAt: "2026-08-05T00:00:00.000Z",
       lastInspectedSignature: "",
@@ -6628,6 +6647,8 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: contractTemplateSettingDefaults.find((setting) => setting.key === "fileNameTemplate")?.value || "документ_#ФИО_обуч#",
       saveFolderTemplate: studentDocumentsFolderTemplateMarker,
       generationFormat: "pdf",
+      previewBeforeGeneration: true,
+      previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       useCustomDocumentProperties: "1",
       fields: [],
       originalFields: [],
@@ -6648,6 +6669,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const emailDefaultsSource = { ...fallback, ...(item || {}) };
     const hasEmailSubjectTemplate = Object.prototype.hasOwnProperty.call(item || {}, "emailSubjectTemplate");
     const hasEmailMessageTemplate = Object.prototype.hasOwnProperty.call(item || {}, "emailMessageTemplate");
+    const hasCurrentPreviewDefault = String(item?.previewBeforeGenerationVersion || "")
+      === documentPreviewDefaultVersion;
     return {
       id: String(item?.id || fallback.id),
       title: String(item?.title || item?.name || item?.label || fallback.title).trim(),
@@ -6681,9 +6704,10 @@ MAX - https://bizvmax.ru/zifra_plus
       emailTemplateValues: normalizeDocumentEmailTemplateValues(
         item?.emailTemplateValues || fallback.emailTemplateValues
       ),
-      previewBeforeGeneration: isChecked(
-        item?.previewBeforeGeneration ?? fallback.previewBeforeGeneration
-      ),
+      previewBeforeGeneration: hasCurrentPreviewDefault
+        ? isChecked(item?.previewBeforeGeneration ?? fallback.previewBeforeGeneration ?? true)
+        : true,
+      previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       useCustomDocumentProperties: isChecked(item?.useCustomDocumentProperties ?? fallback.useCustomDocumentProperties) ? "1" : "0",
       fields: normalizedFields,
       originalFields: normalizeDocumentTemplateFieldList({ fieldsMode }, originalFields),
