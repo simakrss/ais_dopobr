@@ -11536,10 +11536,18 @@ body.card-window-moving {
   background: #e7ecea;
 }
 
+.generated-document-preview-frame.is-editor {
+  background: #eef3f1;
+}
+
 .generated-document-preview-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
   align-items: center;
+}
+
+.generated-document-preview-actions button {
+  min-width: 0;
 }
 
 .student-document-choice-body {
@@ -21741,6 +21749,11 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .generated-document-preview-actions small {
+    grid-column: 1 / -1;
+  }
+
+  .generated-document-preview-actions [data-action="edit-generated-document-preview"],
+  .generated-document-preview-actions [data-action="save-generated-document-editor"] {
     grid-column: 1 / -1;
   }
 }

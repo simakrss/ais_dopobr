@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.288",
+    version: "1.7.289",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.289",
+      releasedAt: "2026-08-26",
+      changes: [
+        "В предварительный просмотр добавлено онлайн-редактирование документа в ONLYOFFICE.",
+        "После сохранения правок система повторно формирует PDF для проверки и использует отредактированную версию при скачивании или отправке."
+      ]
+    },
     {
       version: "1.7.288",
       releasedAt: "2026-08-26",
@@ -54272,6 +54280,69 @@ MAX - https://bizvmax.ru/zifra_plus
     }, 5000, "").catch(() => null);
   }
 
+  async function requestGeneratedDocumentEditor(previewToken, processingOrigin) {
+    return fetchWithTimeout(documentProcessingApiUrl(
+      "/api/contracts/student-document-preview/editor-start",
+      processingOrigin
+    ), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ previewToken })
+    }, 30000, "Сервер не открыл онлайн-редактор за 30 секунд.", async (response) => {
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      const editorUrl = String(payload.editorUrl || "").trim();
+      const editorToken = String(payload.editorToken || "").trim();
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(editorUrl);
+      } catch {
+        parsedUrl = null;
+      }
+      if (!parsedUrl || !["http:", "https:"].includes(parsedUrl.protocol) || !editorToken) {
+        throw new Error("Сервер вернул некорректную ссылку онлайн-редактора.");
+      }
+      return {
+        editorUrl: parsedUrl.toString(),
+        editorOrigin: parsedUrl.origin,
+        editorToken,
+        editRevision: Math.max(0, Number(payload.editRevision || 0))
+      };
+    });
+  }
+
+  async function saveGeneratedDocumentEditor(previewToken, editorSession, processingOrigin, hasChanges) {
+    return fetchWithTimeout(documentProcessingApiUrl(
+      "/api/contracts/student-document-preview/editor-save",
+      processingOrigin
+    ), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        previewToken,
+        editorToken: editorSession.editorToken,
+        editRevision: editorSession.editRevision,
+        hasChanges: Boolean(hasChanges)
+      })
+    }, 2 * 60 * 1000, "ONLYOFFICE не завершил сохранение документа за 2 минуты.", async (response) => {
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      }
+      const contentType = String(response.headers.get("Content-Type") || "").toLowerCase();
+      if (!contentType.includes("application/pdf")) {
+        throw new Error("Сервер не подготовил обновлённый PDF для проверки.");
+      }
+      return {
+        blob: await response.blob(),
+        editRevision: Math.max(
+          editorSession.editRevision,
+          Number(response.headers.get("X-Document-Preview-Revision") || 0)
+        )
+      };
+    });
+  }
+
   function showGeneratedDocumentPreview(previewBlob, options = {}) {
     document.querySelector("[data-generated-document-preview]")
       ?.closeGeneratedDocumentPreview?.(false);
@@ -54279,7 +54350,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const fileName = String(options.fileName || "документ").trim() || "документ";
     const outputFormat = normalizeDocumentGenerationFormat(options.outputFormat);
     const emailDescription = String(options.emailDescription || "").trim();
-    const previewUrl = URL.createObjectURL(new Blob([previewBlob], { type: "application/pdf" }));
+    const previewToken = String(options.previewToken || "").trim();
+    const processingOrigin = String(options.processingOrigin || "").trim();
+    let previewUrl = URL.createObjectURL(new Blob([previewBlob], { type: "application/pdf" }));
     const previouslyFocused = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
@@ -54292,27 +54365,99 @@ MAX - https://bizvmax.ru/zifra_plus
           <header class="modal-head">
             <div>
               <p class="eyebrow">${escapeHtml(title)}</p>
-              <h2 id="generated-document-preview-title">Предварительный просмотр</h2>
+              <h2 id="generated-document-preview-title" data-generated-document-preview-heading>Предварительный просмотр</h2>
             </div>
             <button class="icon-button" data-action="cancel-generated-document-preview" type="button" title="Закрыть" aria-label="Закрыть">×</button>
           </header>
           <div class="generated-document-preview-summary">
             <strong>${escapeHtml(fileName)}</strong>
-            <span>${outputFormat === "docx"
+            <span data-generated-document-preview-description>${outputFormat === "docx"
               ? "Предпросмотр показан в PDF. После подтверждения будет использован исходный файл DOCX."
               : "После подтверждения будет использован просмотренный файл PDF."}${emailDescription
                 ? `<br>Отправка по email: ${escapeHtml(emailDescription)}.`
                 : ""}</span>
           </div>
-          <iframe class="generated-document-preview-frame" src="${escapeAttr(`${previewUrl}#toolbar=1&navpanes=0`)}" title="Предварительный просмотр документа ${escapeAttr(title)}"></iframe>
+          <iframe class="generated-document-preview-frame" data-generated-document-preview-frame src="${escapeAttr(`${previewUrl}#toolbar=1&navpanes=0`)}" title="Предварительный просмотр документа ${escapeAttr(title)}"></iframe>
           <footer class="modal-actions generated-document-preview-actions">
-            <small>Сохранение, скачивание и отправка начнутся только после подтверждения.</small>
+            <small data-generated-document-preview-hint>Сохранение, скачивание и отправка начнутся только после подтверждения.</small>
+            <button class="ghost-button" data-action="edit-generated-document-preview" type="button">Редактировать</button>
+            <button class="primary-button" data-action="save-generated-document-editor" type="button" hidden disabled>Сохранить изменения</button>
             <button class="ghost-button" data-action="cancel-generated-document-preview" type="button">Отмена</button>
             <button class="primary-button" data-action="confirm-generated-document-preview" type="button">Продолжить</button>
           </footer>
         </section>
       `;
       let settled = false;
+      let editorSession = null;
+      let editorReady = false;
+      let editorModified = false;
+      const frame = backdrop.querySelector("[data-generated-document-preview-frame]")
+        || backdrop.querySelector(".generated-document-preview-frame");
+      const heading = backdrop.querySelector("[data-generated-document-preview-heading]");
+      const description = backdrop.querySelector("[data-generated-document-preview-description]");
+      const hint = backdrop.querySelector("[data-generated-document-preview-hint]");
+      const editButton = backdrop.querySelector("[data-action='edit-generated-document-preview']");
+      const saveButton = backdrop.querySelector("[data-action='save-generated-document-editor']");
+      const continueButton = backdrop.querySelector("[data-action='confirm-generated-document-preview']");
+      const defaultDescription = description?.textContent || "";
+      const setPreviewMode = (message = "") => {
+        editorReady = false;
+        editorModified = false;
+        if (frame) {
+          frame.classList.remove("is-editor");
+          frame.src = `${previewUrl}#toolbar=1&navpanes=0`;
+          frame.title = `Предварительный просмотр документа ${title}`;
+        }
+        if (heading) heading.textContent = "Предварительный просмотр";
+        if (description) description.textContent = message || defaultDescription;
+        if (hint) hint.textContent = "Сохранение, скачивание и отправка начнутся только после подтверждения.";
+        if (editButton) editButton.hidden = false;
+        if (saveButton) {
+          saveButton.hidden = true;
+          saveButton.disabled = true;
+          saveButton.removeAttribute("aria-busy");
+        }
+        if (continueButton) continueButton.disabled = false;
+        editorSession = null;
+      };
+      const setEditorMode = (session) => {
+        editorSession = session;
+        editorReady = false;
+        editorModified = false;
+        if (frame) {
+          frame.classList.add("is-editor");
+          frame.src = session.editorUrl;
+          frame.title = `Редактирование документа ${title}`;
+        }
+        if (heading) heading.textContent = "Редактирование документа";
+        if (description) description.textContent = "Документ открыт в ONLYOFFICE. После правки нажмите «Сохранить изменения».";
+        if (hint) hint.textContent = "После сохранения система снова покажет PDF для окончательной проверки.";
+        if (editButton) editButton.hidden = true;
+        if (saveButton) {
+          saveButton.hidden = false;
+          saveButton.disabled = true;
+        }
+        if (continueButton) continueButton.disabled = true;
+      };
+      const handleEditorMessage = (event) => {
+        if (
+          !editorSession
+          || event.origin !== editorSession.editorOrigin
+          || event.data?.source !== "ais-generated-document-editor"
+          || event.data?.editorSession !== editorSession.editorToken
+        ) return;
+        if (event.data.type === "ready") {
+          editorReady = true;
+          if (saveButton && !saveButton.hasAttribute("aria-busy")) saveButton.disabled = false;
+          if (description) description.textContent = "Внесите изменения в документ и нажмите «Сохранить изменения».";
+        } else if (event.data.type === "state") {
+          editorModified = Boolean(event.data.modified);
+        } else if (event.data.type === "error") {
+          const message = String(event.data.message || "Ошибка онлайн-редактора.");
+          if (description) description.textContent = message;
+          if (saveButton) saveButton.disabled = !editorReady;
+        }
+      };
       const trapFocus = (event) => {
         if (event.key !== "Tab") return;
         const focusable = [...backdrop.querySelectorAll(
@@ -54333,6 +54478,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (settled) return;
         settled = true;
         backdrop.removeEventListener("keydown", trapFocus);
+        window.removeEventListener("message", handleEditorMessage);
         URL.revokeObjectURL(previewUrl);
         backdrop.remove();
         if (previouslyFocused?.isConnected) {
@@ -54342,11 +54488,55 @@ MAX - https://bizvmax.ru/zifra_plus
       };
       backdrop.closeGeneratedDocumentPreview = finish;
       backdrop.addEventListener("keydown", trapFocus);
+      window.addEventListener("message", handleEditorMessage);
       backdrop.addEventListener("pointerdown", (event) => {
         if (event.target === backdrop) finish(false);
       });
       backdrop.querySelectorAll("[data-action='cancel-generated-document-preview']").forEach((button) => {
         button.addEventListener("click", () => finish(false));
+      });
+      editButton?.addEventListener("click", async () => {
+        if (!previewToken || !processingOrigin || editButton.disabled) return;
+        editButton.disabled = true;
+        editButton.setAttribute("aria-busy", "true");
+        if (description) description.textContent = "Подготавливаем защищённую сессию ONLYOFFICE…";
+        try {
+          setEditorMode(await requestGeneratedDocumentEditor(previewToken, processingOrigin));
+        } catch (error) {
+          if (description) description.textContent = defaultDescription;
+          alert(`Не удалось открыть редактор: ${error.message}`);
+        } finally {
+          editButton.disabled = false;
+          editButton.removeAttribute("aria-busy");
+        }
+      });
+      saveButton?.addEventListener("click", async () => {
+        if (!editorSession || !editorReady || saveButton.disabled) return;
+        saveButton.disabled = true;
+        saveButton.setAttribute("aria-busy", "true");
+        if (description) description.textContent = "Сохраняем изменения и готовим новый PDF…";
+        try {
+          const saved = await saveGeneratedDocumentEditor(
+            previewToken,
+            editorSession,
+            processingOrigin,
+            editorModified
+          );
+          const previousPreviewUrl = previewUrl;
+          previewUrl = URL.createObjectURL(new Blob([saved.blob], { type: "application/pdf" }));
+          editorSession.editRevision = saved.editRevision;
+          setPreviewMode(
+            `Изменения сохранены. Проверьте обновлённый документ перед продолжением.${emailDescription
+              ? ` Отправка по email: ${emailDescription}.`
+              : ""}`
+          );
+          URL.revokeObjectURL(previousPreviewUrl);
+        } catch (error) {
+          if (description) description.textContent = `Изменения пока не сохранены: ${error.message}`;
+          alert(`Не удалось сохранить изменения: ${error.message}`);
+          saveButton.disabled = false;
+          saveButton.removeAttribute("aria-busy");
+        }
       });
       backdrop.querySelector("[data-action='confirm-generated-document-preview']")?.addEventListener("click", () => {
         finish(true);
@@ -54525,7 +54715,9 @@ MAX - https://bizvmax.ru/zifra_plus
           title: documentTemplate.title,
           fileName,
           outputFormat,
-          emailDescription: emailRequest?.recipientDescription || ""
+          emailDescription: emailRequest?.recipientDescription || "",
+          previewToken: pendingPreviewToken,
+          processingOrigin: documentProcessingOrigin
         });
         if (!confirmed) {
           await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);

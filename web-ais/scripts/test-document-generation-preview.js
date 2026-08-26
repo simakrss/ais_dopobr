@@ -11,10 +11,14 @@ const stylesSource = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 const gatewaySource = fs.readFileSync(path.join(root, "gateway.php"), "utf8");
 const {
   registerGeneratedDocumentPreview,
+  beginGeneratedDocumentPreviewEditor,
+  storeGeneratedDocumentPreviewEditedDocx,
   takeGeneratedDocumentPreview,
   cancelGeneratedDocumentPreview,
   completeGeneratedDocumentPreview,
-  pruneGeneratedDocumentPreviews
+  pruneGeneratedDocumentPreviews,
+  signOnlyOfficeJwt,
+  verifyOnlyOfficeJwt
 } = require(path.join(root, "app-server.js"));
 
 const owner = { id: "preview-test-owner", login: "owner", authSessionKey: "session-owner" };
@@ -27,6 +31,16 @@ const generated = {
   fileName: "Документ.docx",
   extraHeaders: { "X-Generated-Document-Format": "docx" }
 };
+
+const jwtSecret = "document-preview-editor-test-secret";
+const jwtPayload = { key: "preview-editor-key", status: 6 };
+const signedJwt = signOnlyOfficeJwt(jwtPayload, jwtSecret);
+assert.deepEqual(verifyOnlyOfficeJwt(signedJwt, jwtSecret), jwtPayload);
+const tamperedJwt = `${signedJwt.slice(0, -1)}${signedJwt.endsWith("A") ? "B" : "A"}`;
+assert.throws(
+  () => verifyOnlyOfficeJwt(tamperedJwt, jwtSecret),
+  /недействительный JWT-токен/u
+);
 
 async function main() {
 const waitFor = async (predicate, timeoutMs = 5000) => {
@@ -52,6 +66,48 @@ assert.equal(await cancelGeneratedDocumentPreview(cancelToken, stranger), false)
 assert.equal(await cancelGeneratedDocumentPreview(cancelToken, owner), true);
 assert.equal(await takeGeneratedDocumentPreview(cancelToken, owner), null);
 assert.equal(await takeGeneratedDocumentPreview("x".repeat(1000), owner), null, "Некорректный токен должен сразу отклоняться");
+
+const editorSourceBytes = fs.readFileSync(path.join(
+  root,
+  "storage",
+  "document-templates",
+  "employee-contract-general-no-stamp.docx"
+));
+const editorChangedBytes = fs.readFileSync(path.join(
+  root,
+  "storage",
+  "document-templates",
+  "employee-contract-education-no-stamp.docx"
+));
+const editorPreviewToken = await registerGeneratedDocumentPreview({
+  bytes: editorSourceBytes,
+  editableBytes: editorSourceBytes,
+  outputFormat: "docx",
+  fileName: "Редактирование.docx",
+  extraHeaders: {}
+}, owner);
+await assert.rejects(
+  beginGeneratedDocumentPreviewEditor(editorPreviewToken, stranger),
+  (error) => error?.statusCode === 403,
+  "Другой пользователь не должен открыть редактор"
+);
+const editorSession = await beginGeneratedDocumentPreviewEditor(editorPreviewToken, owner);
+await assert.rejects(
+  storeGeneratedDocumentPreviewEditedDocx(editorPreviewToken, "wrong-token", editorChangedBytes),
+  (error) => error?.statusCode === 403,
+  "Изменённый файл должен приниматься только из активной сессии редактора"
+);
+assert.equal(
+  await storeGeneratedDocumentPreviewEditedDocx(
+    editorPreviewToken,
+    editorSession.editorToken,
+    editorChangedBytes
+  ),
+  1
+);
+const editedPreview = await takeGeneratedDocumentPreview(editorPreviewToken, owner);
+assert.deepEqual(editedPreview.bytes, editorChangedBytes);
+await completeGeneratedDocumentPreview(editedPreview);
 
 const expiryToken = await registerGeneratedDocumentPreview(generated, owner);
 pruneGeneratedDocumentPreviews(Date.now() + 11 * 60 * 1000);
@@ -312,6 +368,11 @@ assert.match(appSource, />Предварительный просмотр</u);
 assert.match(appSource, /skipPreview:\s*true/u, "Групповые операции не должны открывать окно для каждого слушателя");
 assert.match(appSource, /student-document-preview\/finalize/u);
 assert.match(appSource, /student-document-preview\/cancel/u);
+assert.match(appSource, /student-document-preview\/editor-start/u);
+assert.match(appSource, /student-document-preview\/editor-save/u);
+assert.match(appSource, /data-action="edit-generated-document-preview"/u);
+assert.match(appSource, /data-action="save-generated-document-editor"/u);
+assert.match(appSource, /ais-generated-document-editor/u);
 assert.match(appSource, /closeGeneratedDocumentPreview/u);
 assert.match(appSource, /Отправка по email:/u);
 assert.match(appSource, /button\?\.isConnected\s*&&\s*!button\.disabled/u);
@@ -339,11 +400,21 @@ assert.match(serverSource, /Generated document preview cleanup failed after fina
 assert.match(serverSource, /documentConversionSourceMetadataPath/u);
 assert.match(serverSource, /await registerDocumentConversionSource\(docxBytes\)/u);
 assert.match(serverSource, /await readDocumentConversionSource\(token\)/u);
+assert.match(serverSource, /editableBytes:\s*docxResult/u);
+assert.match(serverSource, /handleGeneratedDocumentPreviewEditorStart/u);
+assert.match(serverSource, /handleGeneratedDocumentPreviewEditorCallback/u);
+assert.match(serverSource, /handleGeneratedDocumentPreviewEditorSave/u);
+assert.match(serverSource, /requestOnlyOfficeForceSave/u);
+assert.match(serverSource, /verifyOnlyOfficeJwt/u);
+assert.match(serverSource, /proxyOnlyOfficeHttpRequest/u);
+assert.match(serverSource, /proxyOnlyOfficeWebSocket/u);
+assert.match(serverSource, /server\.on\("upgrade"/u);
 assert.match(gatewaySource, /x-ais-session-id/u);
 assert.match(gatewaySource, /\$requestBodyLimit\s*=\s*\$isPreviewControlRequest\s*\?\s*4096/u);
 assert.match(gatewaySource, /stream_get_contents\(\$inputStream,\s*\$requestBodyLimit\s*\+\s*1\)/u);
 assert.match(stylesSource, /\.generated-document-preview-dialog/u);
 assert.match(stylesSource, /\.generated-document-preview-frame/u);
+assert.match(stylesSource, /\.generated-document-preview-frame\.is-editor/u);
 
 console.log("Document generation preview tests passed.");
 }

@@ -380,6 +380,22 @@ const GENERATED_DOCUMENT_PREVIEW_RATE_MAX = 8;
 const GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES = 4 * 1024;
 const GENERATED_DOCUMENT_PREVIEW_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32}$/u;
 const GENERATED_DOCUMENT_PREVIEW_FINALIZE_TTL_MS = 30 * 60 * 1000;
+const GENERATED_DOCUMENT_EDITOR_TTL_MS = 2 * 60 * 60 * 1000;
+const GENERATED_DOCUMENT_EDITOR_SAVE_WAIT_MS = 60 * 1000;
+const GENERATED_DOCUMENT_EDITOR_COOKIE_NAME = "AIS_DOCUMENT_EDITOR";
+const ONLYOFFICE_PROXY_PREFIX = "/onlyoffice";
+const ONLYOFFICE_PROXY_ROOT_PATHS = Object.freeze([
+  "/web-apps/",
+  "/sdkjs/",
+  "/sdkjs-plugins/",
+  "/doc/",
+  "/cache/",
+  "/spellchecker/",
+  "/coauthoring/",
+  "/hosting/",
+  "/fonts/",
+  "/dictionaries/"
+]);
 const GENERATED_DOCUMENT_PREVIEW_FILE_LOCK_TTL_MS = 5 * 60 * 1000;
 const GENERATED_DOCUMENT_PREVIEW_FILE_LOCK_HEARTBEAT_MS = 5 * 1000;
 const GENERATED_DOCUMENT_PREVIEW_CLEANUP_INTERVAL_MS = 60 * 1000;
@@ -1257,6 +1273,17 @@ async function writeJsonAtomic(filePath, value, compact = false) {
   const temporaryPath = `${filePath}.tmp-${crypto.randomBytes(6).toString("hex")}`;
   await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, compact ? 0 : 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await fs.rename(temporaryPath, filePath);
+}
+
+async function writeBufferAtomic(filePath, value) {
+  const temporaryPath = `${filePath}.tmp-${crypto.randomBytes(6).toString("hex")}`;
+  await fs.writeFile(temporaryPath, value, { mode: 0o600 });
+  try {
+    await fs.rename(temporaryPath, filePath);
+  } catch (error) {
+    await fs.unlink(temporaryPath).catch(() => null);
+    throw error;
+  }
 }
 
 async function ensureAuthUsers() {
@@ -23544,6 +23571,40 @@ function signOnlyOfficeJwt(payload, secret) {
   return `${encodedHeader}.${encodedPayload}.${signature}`;
 }
 
+function verifyOnlyOfficeJwt(token, secret) {
+  const parts = String(token || "").split(".");
+  if (parts.length !== 3 || parts.some((part) => !/^[A-Za-z0-9_-]+$/u.test(part))) {
+    throw new Error("ONLYOFFICE передал некорректный JWT-токен.");
+  }
+  let header;
+  let payload;
+  try {
+    header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
+    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  } catch {
+    throw new Error("ONLYOFFICE передал некорректный JWT-токен.");
+  }
+  if (String(header?.alg || "").toUpperCase() !== "HS256") {
+    throw new Error("ONLYOFFICE использовал неподдерживаемый алгоритм JWT.");
+  }
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(`${parts[0]}.${parts[1]}`)
+    .digest();
+  const supplied = Buffer.from(parts[2], "base64url");
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
+    throw new Error("ONLYOFFICE передал недействительный JWT-токен.");
+  }
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (Number(payload?.exp || 0) > 0 && Number(payload.exp) + 60 < nowSeconds) {
+    throw new Error("Срок действия JWT-токена ONLYOFFICE истёк.");
+  }
+  if (Number(payload?.nbf || 0) > nowSeconds + 60) {
+    throw new Error("JWT-токен ONLYOFFICE ещё не вступил в действие.");
+  }
+  return payload;
+}
+
 function pruneDocumentConversionSources(now = Date.now()) {
   for (const [token, source] of documentConversionSources) {
     if (source.expiresAt <= now) documentConversionSources.delete(token);
@@ -23866,6 +23927,10 @@ function generatedDocumentPreviewFilePath(token) {
   return path.join(generatedDocumentPreviewStorageRoot(), `${token}.bin`);
 }
 
+function generatedDocumentPreviewEditableFilePath(token) {
+  return path.join(generatedDocumentPreviewStorageRoot(), `${token}.edit.bin`);
+}
+
 function generatedDocumentPreviewMetadataPath(token) {
   return path.join(generatedDocumentPreviewStorageRoot(), `${token}.json`);
 }
@@ -23875,6 +23940,18 @@ function useGeneratedDocumentPreviewFileStore() {
 }
 
 function encodeGeneratedDocumentPreviewMetadata(preview) {
+  const editorSession = preview?.editorSession && typeof preview.editorSession === "object"
+    ? {
+        tokenHash: String(preview.editorSession.tokenHash || ""),
+        key: String(preview.editorSession.key || ""),
+        createdAt: Number(preview.editorSession.createdAt || 0),
+        expiresAt: Number(preview.editorSession.expiresAt || 0),
+        userId: String(preview.editorSession.userId || "").slice(0, 160),
+        userName: String(preview.editorSession.userName || "").slice(0, 240),
+        lastSavedAt: Number(preview.editorSession.lastSavedAt || 0),
+        lastError: String(preview.editorSession.lastError || "").slice(0, 1000)
+      }
+    : null;
   return {
     owner: preview.owner,
     createdAt: preview.createdAt,
@@ -23883,6 +23960,12 @@ function encodeGeneratedDocumentPreviewMetadata(preview) {
     fileName: preview.fileName,
     extraHeaders: preview.extraHeaders || {},
     size: Number(preview.bytes?.length || preview.size || 0),
+    editableSize: Number(preview.editableBytes?.length || preview.editableSize || 0),
+    editableUsesPrimary: preview.editableUsesPrimary === true,
+    editRevision: Math.max(0, Number(preview.editRevision || 0)),
+    renderedRevision: Math.max(0, Number(preview.renderedRevision || 0)),
+    removeBlankInteriorPages: preview.removeBlankInteriorPages === true,
+    editorSession,
     state: String(preview.state || "pending"),
     finalizingAt: Number(preview.finalizingAt || 0)
   };
@@ -23896,6 +23979,14 @@ function decodeGeneratedDocumentPreviewMetadata(metadata, bytes) {
     extraHeaders: metadata?.extraHeaders && typeof metadata.extraHeaders === "object"
       ? metadata.extraHeaders
       : {},
+    editableSize: Number(metadata?.editableSize || 0),
+    editableUsesPrimary: metadata?.editableUsesPrimary === true,
+    editRevision: Math.max(0, Number(metadata?.editRevision || 0)),
+    renderedRevision: Math.max(0, Number(metadata?.renderedRevision || 0)),
+    removeBlankInteriorPages: metadata?.removeBlankInteriorPages === true,
+    editorSession: metadata?.editorSession && typeof metadata.editorSession === "object"
+      ? { ...metadata.editorSession }
+      : null,
     owner: String(metadata?.owner || ""),
     createdAt: Number(metadata?.createdAt || 0),
     expiresAt: Number(metadata?.expiresAt || 0),
@@ -24038,6 +24129,11 @@ async function listGeneratedDocumentPreviewFiles() {
       const bytesStat = await fs.stat(generatedDocumentPreviewFilePath(token));
       if (!bytesStat.isFile() || bytesStat.size <= 0) throw new Error("Preview bytes are missing.");
       metadata.size = bytesStat.size;
+      if (Number(metadata.editableSize || 0) > 0 && metadata.editableUsesPrimary !== true) {
+        const editableStat = await fs.stat(generatedDocumentPreviewEditableFilePath(token));
+        if (!editableStat.isFile() || editableStat.size <= 0) throw new Error("Editable preview bytes are missing.");
+        metadata.editableSize = editableStat.size;
+      }
       entries.push({ token, metadata });
     } catch {
       await removeGeneratedDocumentPreviewFiles(token);
@@ -24049,6 +24145,9 @@ async function listGeneratedDocumentPreviewFiles() {
 async function removeGeneratedDocumentPreviewFiles(token) {
   await Promise.all([
     fs.unlink(generatedDocumentPreviewFilePath(token)).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    }),
+    fs.unlink(generatedDocumentPreviewEditableFilePath(token)).catch((error) => {
       if (error.code !== "ENOENT") throw error;
     }),
     fs.unlink(generatedDocumentPreviewMetadataPath(token)).catch((error) => {
@@ -24073,7 +24172,9 @@ async function pruneGeneratedDocumentPreviewFiles(now = Date.now()) {
     .filter((name) => {
       const orphanBytes = /^([A-Za-z0-9_-]{32})\.bin$/u.exec(name);
       if (orphanBytes) return !liveTokens.has(orphanBytes[1]);
-      if (/^[A-Za-z0-9_-]{32}\.(?:bin|json)\..+\.tmp$/u.test(name)) return true;
+      const orphanEditableBytes = /^([A-Za-z0-9_-]{32})\.edit\.bin$/u.exec(name);
+      if (orphanEditableBytes) return !liveTokens.has(orphanEditableBytes[1]);
+      if (/^[A-Za-z0-9_-]{32}\.(?:bin|edit\.bin|json)\..+\.tmp$/u.test(name)) return true;
       if (/^[A-Za-z0-9_-]{32}\.json\.tmp-[A-Za-z0-9]+$/u.test(name)) return true;
       if (/^\.rate-[A-Za-z0-9_-]+\.json\.tmp-[A-Za-z0-9]+$/u.test(name)) return true;
       if (/^\.(?:store\.lock|cleanup-worker\.lock)\.stale-.+$/u.test(name)) return true;
@@ -24275,6 +24376,9 @@ async function startGeneratedDocumentPreviewCleanupWorker() {
 
 function releaseGeneratedDocumentPreview(preview) {
   if (Buffer.isBuffer(preview?.bytes)) preview.bytes.fill(0);
+  if (Buffer.isBuffer(preview?.editableBytes) && preview.editableBytes !== preview.bytes) {
+    preview.editableBytes.fill(0);
+  }
 }
 
 function removeGeneratedDocumentPreview(token, preview = generatedDocumentPreviews.get(token)) {
@@ -24357,6 +24461,14 @@ async function assertGeneratedDocumentPreviewRequestAllowed(authUser, now = Date
   return owner;
 }
 
+function generatedDocumentPreviewStoredSize(preview = {}) {
+  const primarySize = Number(preview?.bytes?.length || preview?.size || 0);
+  const editableSize = preview?.editableUsesPrimary === true
+    ? 0
+    : Number(preview?.editableBytes?.length || preview?.editableSize || 0);
+  return Math.max(0, primarySize) + Math.max(0, editableSize);
+}
+
 async function registerGeneratedDocumentPreview(preview, authUser) {
   const owner = generatedDocumentPreviewOwner(authUser);
   if (!owner) {
@@ -24368,6 +24480,17 @@ async function registerGeneratedDocumentPreview(preview, authUser) {
   const bytes = Buffer.from(preview?.bytes || []);
   if (!bytes.length) throw new Error("Сформированный документ пуст.");
   if (bytes.length > MAX_DOCX_BYTES) throw new Error("Сформированный документ слишком большой для предварительного просмотра.");
+  const editableBytes = Buffer.from(
+    preview?.editableBytes
+      || (normalizeGeneratedDocumentFormat(preview?.outputFormat) === "docx" ? bytes : [])
+  );
+  if (editableBytes.length > MAX_DOCX_BYTES) {
+    bytes.fill(0);
+    editableBytes.fill(0);
+    throw new Error("Редактируемая версия документа слишком большая.");
+  }
+  const editableUsesPrimary = Boolean(editableBytes.length && editableBytes.equals(bytes));
+  const incomingSize = bytes.length + (editableUsesPrimary ? 0 : editableBytes.length);
   let currentPreviews;
   if (useGeneratedDocumentPreviewFileStore()) {
     await ensureGeneratedDocumentPreviewCleanupWorker();
@@ -24376,24 +24499,26 @@ async function registerGeneratedDocumentPreview(preview, authUser) {
       currentPreviews = (await listGeneratedDocumentPreviewFiles()).map(({ metadata }) => metadata);
       const ownedPreviews = currentPreviews.filter((item) => item?.owner === owner);
       const ownedBytes = ownedPreviews
-        .reduce((sum, item) => sum + Number(item?.bytes?.length || item?.size || 0), 0);
+        .reduce((sum, item) => sum + generatedDocumentPreviewStoredSize(item), 0);
       if (
         ownedPreviews.length >= GENERATED_DOCUMENT_PREVIEW_MAX_COUNT_PER_OWNER
-        || ownedBytes + bytes.length > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES_PER_OWNER
+        || ownedBytes + incomingSize > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES_PER_OWNER
       ) {
         bytes.fill(0);
+        editableBytes.fill(0);
         throw generatedDocumentPreviewError(
           "Закройте ранее открытые окна предварительного просмотра и повторите попытку.",
           429
         );
       }
       const totalBytes = currentPreviews
-        .reduce((sum, item) => sum + Number(item?.bytes?.length || item?.size || 0), 0);
+        .reduce((sum, item) => sum + generatedDocumentPreviewStoredSize(item), 0);
       if (
         currentPreviews.length >= GENERATED_DOCUMENT_PREVIEW_MAX_COUNT
-        || totalBytes + bytes.length > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES
+        || totalBytes + incomingSize > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES
       ) {
         bytes.fill(0);
+        editableBytes.fill(0);
         throw generatedDocumentPreviewError(
           "Сервер временно занят предварительными просмотрами. Повторите попытку позже.",
           503
@@ -24404,6 +24529,12 @@ async function registerGeneratedDocumentPreview(preview, authUser) {
       const storedPreview = {
         ...preview,
         bytes,
+        editableBytes: editableUsesPrimary ? bytes : editableBytes,
+        editableUsesPrimary,
+        editableSize: editableBytes.length,
+        editRevision: 0,
+        renderedRevision: 0,
+        editorSession: null,
         owner,
         createdAt: now,
         expiresAt: now + GENERATED_DOCUMENT_PREVIEW_TTL_MS,
@@ -24412,23 +24543,32 @@ async function registerGeneratedDocumentPreview(preview, authUser) {
       };
       const temporarySuffix = `${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
       const temporaryBytesPath = `${generatedDocumentPreviewFilePath(token)}.${temporarySuffix}.tmp`;
+      const temporaryEditablePath = `${generatedDocumentPreviewEditableFilePath(token)}.${temporarySuffix}.tmp`;
       const temporaryMetadataPath = `${generatedDocumentPreviewMetadataPath(token)}.${temporarySuffix}.tmp`;
       await fs.writeFile(temporaryBytesPath, bytes, { flag: "wx", mode: 0o600 });
       try {
+        if (editableBytes.length && !editableUsesPrimary) {
+          await fs.writeFile(temporaryEditablePath, editableBytes, { flag: "wx", mode: 0o600 });
+        }
         await fs.writeFile(
           temporaryMetadataPath,
           JSON.stringify(encodeGeneratedDocumentPreviewMetadata(storedPreview)),
           { flag: "wx", mode: 0o600 }
         );
         await fs.rename(temporaryBytesPath, generatedDocumentPreviewFilePath(token));
+        if (editableBytes.length && !editableUsesPrimary) {
+          await fs.rename(temporaryEditablePath, generatedDocumentPreviewEditableFilePath(token));
+        }
         await fs.rename(temporaryMetadataPath, generatedDocumentPreviewMetadataPath(token));
       } catch (error) {
         await Promise.all([
           fs.unlink(temporaryBytesPath).catch(() => null),
+          fs.unlink(temporaryEditablePath).catch(() => null),
           fs.unlink(temporaryMetadataPath).catch(() => null),
           removeGeneratedDocumentPreviewFiles(token).catch(() => null)
         ]);
         bytes.fill(0);
+        editableBytes.fill(0);
         throw error;
       }
       return token;
@@ -24439,24 +24579,26 @@ async function registerGeneratedDocumentPreview(preview, authUser) {
   }
   const ownedPreviews = currentPreviews.filter((item) => item?.owner === owner);
   const ownedBytes = ownedPreviews
-    .reduce((sum, item) => sum + Number(item?.bytes?.length || item?.size || 0), 0);
+    .reduce((sum, item) => sum + generatedDocumentPreviewStoredSize(item), 0);
   if (
     ownedPreviews.length >= GENERATED_DOCUMENT_PREVIEW_MAX_COUNT_PER_OWNER
-    || ownedBytes + bytes.length > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES_PER_OWNER
+    || ownedBytes + incomingSize > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES_PER_OWNER
   ) {
     bytes.fill(0);
+    editableBytes.fill(0);
     throw generatedDocumentPreviewError(
       "Закройте ранее открытые окна предварительного просмотра и повторите попытку.",
       429
     );
   }
   const totalBytes = currentPreviews
-    .reduce((sum, item) => sum + Number(item?.bytes?.length || item?.size || 0), 0);
+    .reduce((sum, item) => sum + generatedDocumentPreviewStoredSize(item), 0);
   if (
     currentPreviews.length >= GENERATED_DOCUMENT_PREVIEW_MAX_COUNT
-    || totalBytes + bytes.length > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES
+    || totalBytes + incomingSize > GENERATED_DOCUMENT_PREVIEW_MAX_BYTES
   ) {
     bytes.fill(0);
+    editableBytes.fill(0);
     throw generatedDocumentPreviewError(
       "Сервер временно занят предварительными просмотрами. Повторите попытку позже.",
       503
@@ -24467,6 +24609,12 @@ async function registerGeneratedDocumentPreview(preview, authUser) {
   const storedPreview = {
     ...preview,
     bytes,
+    editableBytes: editableUsesPrimary ? bytes : editableBytes,
+    editableUsesPrimary,
+    editableSize: editableBytes.length,
+    editRevision: 0,
+    renderedRevision: 0,
+    editorSession: null,
     owner,
     createdAt: now,
     expiresAt: now + GENERATED_DOCUMENT_PREVIEW_TTL_MS,
@@ -24570,6 +24718,809 @@ async function cancelGeneratedDocumentPreview(token, authUser) {
     || preview.state !== "pending"
   ) return false;
   return removeGeneratedDocumentPreview(normalizedToken, preview);
+}
+
+function generatedDocumentEditorTokenHash(value) {
+  return crypto.createHash("sha256").update(String(value || ""), "utf8").digest("hex");
+}
+
+function generatedDocumentEditorSessionMatches(session, editorToken, now = Date.now()) {
+  const storedHash = String(session?.tokenHash || "");
+  const suppliedHash = generatedDocumentEditorTokenHash(editorToken);
+  const stored = Buffer.from(storedHash, "hex");
+  const supplied = Buffer.from(suppliedHash, "hex");
+  return stored.length === supplied.length
+    && stored.length === 32
+    && crypto.timingSafeEqual(stored, supplied)
+    && Number(session?.expiresAt || 0) > now;
+}
+
+function assertGeneratedDocumentEditorDocx(bytes) {
+  const source = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+  if (!source.length || source.length > MAX_DOCX_BYTES) {
+    throw generatedDocumentPreviewError("Редактируемая версия документа недоступна.", 400);
+  }
+  let entries;
+  try {
+    entries = readDocxZipEntries(source);
+  } catch {
+    throw generatedDocumentPreviewError("Редактируемая версия документа не является корректным DOCX-файлом.", 400);
+  }
+  if (!entryByName(entries, "word/document.xml")) {
+    throw generatedDocumentPreviewError("В редактируемом DOCX отсутствует основной текст документа.", 400);
+  }
+  return source;
+}
+
+function assertGeneratedDocumentPreviewEditorMetadata(metadata, editorToken = "") {
+  if (
+    !metadata
+    || Number(metadata.expiresAt || 0) <= Date.now()
+    || String(metadata.state || "pending") !== "pending"
+  ) {
+    throw generatedDocumentPreviewError(
+      "Предварительный просмотр не найден или срок его действия истёк. Сформируйте документ заново.",
+      404
+    );
+  }
+  if (editorToken && !generatedDocumentEditorSessionMatches(metadata.editorSession, editorToken)) {
+    throw generatedDocumentPreviewError("Сессия редактирования недействительна или завершена.", 403);
+  }
+}
+
+async function readGeneratedDocumentPreviewEditableBytes(token, metadata) {
+  const editablePath = metadata?.editableUsesPrimary === true
+    ? generatedDocumentPreviewFilePath(token)
+    : generatedDocumentPreviewEditableFilePath(token);
+  return assertGeneratedDocumentEditorDocx(await fs.readFile(editablePath));
+}
+
+async function beginGeneratedDocumentPreviewEditor(token, authUser) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  if (!normalizedToken) {
+    throw generatedDocumentPreviewError("Некорректный идентификатор предварительного просмотра.", 400);
+  }
+  const owner = generatedDocumentPreviewOwner(authUser);
+  if (!owner) throw generatedDocumentPreviewError("Требуется вход в систему.", 401);
+  const createSession = (metadata, editableBytes) => {
+    assertGeneratedDocumentPreviewEditorMetadata(metadata);
+    if (String(metadata.owner || "") !== owner) {
+      throw generatedDocumentPreviewError("Предварительный просмотр принадлежит другой сессии.", 403);
+    }
+    assertGeneratedDocumentEditorDocx(editableBytes);
+    const editorToken = crypto.randomBytes(32).toString("base64url");
+    const now = Date.now();
+    const editorSession = {
+      tokenHash: generatedDocumentEditorTokenHash(editorToken),
+      key: crypto
+        .createHash("sha256")
+        .update(`${normalizedToken}\0${editorToken}\0${Number(metadata.editRevision || 0)}`)
+        .digest("hex")
+        .slice(0, 40),
+      createdAt: now,
+      expiresAt: now + GENERATED_DOCUMENT_EDITOR_TTL_MS,
+      userId: String(authUser?.id || authUser?.login || "user").slice(0, 160),
+      userName: String(authUser?.name || authUser?.login || "Пользователь").slice(0, 240),
+      lastSavedAt: 0,
+      lastError: ""
+    };
+    metadata.editorSession = editorSession;
+    metadata.expiresAt = Math.max(Number(metadata.expiresAt || 0), editorSession.expiresAt);
+    return {
+      editorToken,
+      editorKey: editorSession.key,
+      editRevision: Math.max(0, Number(metadata.editRevision || 0)),
+      fileName: String(metadata.fileName || "документ.docx"),
+      outputFormat: normalizeGeneratedDocumentFormat(metadata.outputFormat)
+    };
+  };
+  if (useGeneratedDocumentPreviewFileStore()) {
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      await pruneGeneratedDocumentPreviewFiles();
+      let metadata;
+      try {
+        metadata = JSON.parse(await fs.readFile(generatedDocumentPreviewMetadataPath(normalizedToken), "utf8"));
+      } catch (error) {
+        if (error.code === "ENOENT") {
+          throw generatedDocumentPreviewError("Предварительный просмотр не найден.", 404);
+        }
+        throw error;
+      }
+      const editableBytes = await readGeneratedDocumentPreviewEditableBytes(normalizedToken, metadata);
+      const result = createSession(metadata, editableBytes);
+      await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+      return result;
+    });
+  }
+  pruneGeneratedDocumentPreviews();
+  const preview = generatedDocumentPreviews.get(normalizedToken);
+  const editableBytes = preview?.editableBytes?.length ? preview.editableBytes : preview?.bytes;
+  return createSession(preview, editableBytes);
+}
+
+async function readGeneratedDocumentPreviewEditorContext(token, editorToken, options = {}) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  if (!normalizedToken || !String(editorToken || "").trim()) {
+    throw generatedDocumentPreviewError("Сессия редактирования не найдена.", 404);
+  }
+  if (useGeneratedDocumentPreviewFileStore()) {
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      let metadata;
+      try {
+        metadata = JSON.parse(await fs.readFile(generatedDocumentPreviewMetadataPath(normalizedToken), "utf8"));
+      } catch (error) {
+        if (error.code === "ENOENT") throw generatedDocumentPreviewError("Сессия редактирования не найдена.", 404);
+        throw error;
+      }
+      assertGeneratedDocumentPreviewEditorMetadata(metadata, editorToken);
+      const editableBytes = options.includeEditableBytes === false
+        ? null
+        : await readGeneratedDocumentPreviewEditableBytes(normalizedToken, metadata);
+      return { previewToken: normalizedToken, metadata, editableBytes };
+    });
+  }
+  pruneGeneratedDocumentPreviews();
+  const preview = generatedDocumentPreviews.get(normalizedToken);
+  assertGeneratedDocumentPreviewEditorMetadata(preview, editorToken);
+  const editableBytes = options.includeEditableBytes === false
+    ? null
+    : assertGeneratedDocumentEditorDocx(preview.editableBytes?.length ? preview.editableBytes : preview.bytes);
+  return { previewToken: normalizedToken, metadata: preview, editableBytes };
+}
+
+async function storeGeneratedDocumentPreviewEditorError(token, editorToken, message) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  const errorMessage = String(message || "Ошибка сохранения документа.").slice(0, 1000);
+  if (!normalizedToken) return;
+  if (useGeneratedDocumentPreviewFileStore()) {
+    await withGeneratedDocumentPreviewFileLock(async () => {
+      const metadata = JSON.parse(await fs.readFile(generatedDocumentPreviewMetadataPath(normalizedToken), "utf8"));
+      assertGeneratedDocumentPreviewEditorMetadata(metadata, editorToken);
+      metadata.editorSession.lastError = errorMessage;
+      await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+    }).catch(() => null);
+    return;
+  }
+  const preview = generatedDocumentPreviews.get(normalizedToken);
+  if (preview && generatedDocumentEditorSessionMatches(preview.editorSession, editorToken)) {
+    preview.editorSession.lastError = errorMessage;
+  }
+}
+
+async function storeGeneratedDocumentPreviewEditedDocx(token, editorToken, docxBytes) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  const editedBytes = assertGeneratedDocumentEditorDocx(Buffer.from(docxBytes || []));
+  const applyEdit = async (metadata, writeBytes) => {
+    assertGeneratedDocumentPreviewEditorMetadata(metadata, editorToken);
+    const outputFormat = normalizeGeneratedDocumentFormat(metadata.outputFormat);
+    await writeBytes(outputFormat === "docx");
+    metadata.editableSize = editedBytes.length;
+    metadata.editableUsesPrimary = outputFormat === "docx";
+    metadata.editRevision = Math.max(0, Number(metadata.editRevision || 0)) + 1;
+    if (outputFormat === "docx") {
+      metadata.size = editedBytes.length;
+      metadata.renderedRevision = metadata.editRevision;
+    }
+    metadata.editorSession.lastSavedAt = Date.now();
+    metadata.editorSession.lastError = "";
+    metadata.expiresAt = Math.max(Number(metadata.expiresAt || 0), Date.now() + GENERATED_DOCUMENT_EDITOR_TTL_MS);
+    return metadata.editRevision;
+  };
+  if (useGeneratedDocumentPreviewFileStore()) {
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      const metadata = JSON.parse(await fs.readFile(generatedDocumentPreviewMetadataPath(normalizedToken), "utf8"));
+      const revision = await applyEdit(metadata, async (usePrimary) => {
+        await writeBufferAtomic(
+          usePrimary
+            ? generatedDocumentPreviewFilePath(normalizedToken)
+            : generatedDocumentPreviewEditableFilePath(normalizedToken),
+          editedBytes
+        );
+      });
+      await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+      return revision;
+    });
+  }
+  const preview = generatedDocumentPreviews.get(normalizedToken);
+  return applyEdit(preview, async (usePrimary) => {
+    if (usePrimary) {
+      const previousBytes = preview.bytes;
+      const previousEditableBytes = preview.editableBytes;
+      if (Buffer.isBuffer(previousBytes)) previousBytes.fill(0);
+      if (
+        Buffer.isBuffer(previousEditableBytes)
+        && previousEditableBytes !== previousBytes
+      ) {
+        previousEditableBytes.fill(0);
+      }
+      preview.bytes = editedBytes;
+      preview.editableBytes = preview.bytes;
+    } else {
+      if (Buffer.isBuffer(preview.editableBytes) && preview.editableBytes !== preview.bytes) {
+        preview.editableBytes.fill(0);
+      }
+      preview.editableBytes = editedBytes;
+    }
+  });
+}
+
+async function updateGeneratedDocumentPreviewRenderedPdf(token, editorToken, editRevision, pdfBytes) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  if (useGeneratedDocumentPreviewFileStore()) {
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      const metadata = JSON.parse(await fs.readFile(generatedDocumentPreviewMetadataPath(normalizedToken), "utf8"));
+      assertGeneratedDocumentPreviewEditorMetadata(metadata, editorToken);
+      if (Number(metadata.editRevision || 0) !== Number(editRevision || 0)) return false;
+      if (normalizeGeneratedDocumentFormat(metadata.outputFormat) === "pdf") {
+        await writeBufferAtomic(generatedDocumentPreviewFilePath(normalizedToken), pdfBytes);
+        metadata.size = pdfBytes.length;
+      }
+      metadata.renderedRevision = Number(editRevision || 0);
+      await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+      return true;
+    });
+  }
+  const preview = generatedDocumentPreviews.get(normalizedToken);
+  assertGeneratedDocumentPreviewEditorMetadata(preview, editorToken);
+  if (Number(preview.editRevision || 0) !== Number(editRevision || 0)) return false;
+  if (normalizeGeneratedDocumentFormat(preview.outputFormat) === "pdf") {
+    releaseGeneratedDocumentPreview({ bytes: preview.bytes });
+    preview.bytes = Buffer.from(pdfBytes);
+  }
+  preview.renderedRevision = Number(editRevision || 0);
+  return true;
+}
+
+async function renderGeneratedDocumentPreviewEditorPdf(token, editorToken) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const context = await readGeneratedDocumentPreviewEditorContext(token, editorToken);
+    let previewPdf = await convertDocxBytesToPdf(context.editableBytes);
+    if (context.metadata.removeBlankInteriorPages === true) {
+      previewPdf = await removeBlankInteriorPdfPages(previewPdf);
+    }
+    if (await updateGeneratedDocumentPreviewRenderedPdf(
+      token,
+      editorToken,
+      context.metadata.editRevision,
+      previewPdf
+    )) {
+      return {
+        previewPdf,
+        editRevision: Number(context.metadata.editRevision || 0),
+        fileName: safeDocumentFileName(
+          String(context.metadata.fileName || "документ").replace(/\.(?:pdf|docx)$/iu, ""),
+          "pdf"
+        )
+      };
+    }
+  }
+  throw generatedDocumentPreviewError("Документ изменился во время подготовки просмотра. Повторите сохранение.", 409);
+}
+
+function generatedDocumentEditorServiceUrl(baseUrl, route, searchParams = {}) {
+  const result = new URL(baseUrl);
+  result.pathname = `${result.pathname.replace(/\/+$/u, "")}/${String(route || "").replace(/^\/+/, "")}`;
+  result.search = "";
+  result.hash = "";
+  Object.entries(searchParams).forEach(([name, value]) => result.searchParams.set(name, String(value ?? "")));
+  return result.toString();
+}
+
+function requestPublicOrigin(req) {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase();
+  const protocol = forwardedProto === "https" || req.socket?.encrypted ? "https:" : "http:";
+  const host = String(req.headers.host || "").trim();
+  try {
+    return new URL(`${protocol}//${host}`).origin;
+  } catch {
+    return "";
+  }
+}
+
+function isLoopbackEditorHostname(value) {
+  const hostname = String(value || "").trim().toLowerCase().replace(/^\[|\]$/gu, "");
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+async function resolveGeneratedDocumentEditorBrowserBaseUrl(req) {
+  const requestOrigin = requestPublicOrigin(req);
+  const pageOrigin = String(req.headers.origin || "").trim();
+  let pageUsesHttps = false;
+  try {
+    pageUsesHttps = new URL(pageOrigin).protocol === "https:";
+  } catch {
+    pageUsesHttps = false;
+  }
+  const tunnel = await readTunnelRuntimeAdminSummary();
+  if (pageUsesHttps && tunnel.configured) return tunnel.baseUrl;
+  if (requestOrigin) {
+    const parsed = new URL(requestOrigin);
+    if (!isLoopbackEditorHostname(parsed.hostname)) return requestOrigin;
+    return `${parsed.protocol}//${parsed.hostname.includes(":") ? `[${parsed.hostname}]` : parsed.hostname}:${PORT}`;
+  }
+  if (tunnel.configured) return tunnel.baseUrl;
+  return `http://127.0.0.1:${PORT}`;
+}
+
+function signGeneratedDocumentEditorProxyCookie(editorToken, expiresAt, secret) {
+  const payload = Buffer.from(JSON.stringify({
+    editor: generatedDocumentEditorTokenHash(editorToken).slice(0, 32),
+    expiresAt: Number(expiresAt || 0)
+  }), "utf8").toString("base64url");
+  const signature = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function verifyGeneratedDocumentEditorProxyCookie(value, secret, now = Date.now()) {
+  const [payload, suppliedSignature, extra] = String(value || "").split(".");
+  if (!payload || !suppliedSignature || extra !== undefined) return false;
+  const expectedSignature = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
+  const supplied = Buffer.from(suppliedSignature);
+  const expected = Buffer.from(expectedSignature);
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return false;
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return Number(decoded?.expiresAt || 0) > now && /^[a-f0-9]{32}$/u.test(String(decoded?.editor || ""));
+  } catch {
+    return false;
+  }
+}
+
+function generatedDocumentEditorProxyCookieHeader(req, value) {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").toLowerCase();
+  const secure = forwardedProto === "https" || Boolean(req.socket?.encrypted);
+  return [
+    `${GENERATED_DOCUMENT_EDITOR_COOKIE_NAME}=${encodeURIComponent(value)}`,
+    "Path=/",
+    "HttpOnly",
+    secure ? "SameSite=None" : "SameSite=Lax",
+    `Max-Age=${Math.ceil(GENERATED_DOCUMENT_EDITOR_TTL_MS / 1000)}`,
+    ...(secure ? ["Secure", "Partitioned"] : [])
+  ].join("; ");
+}
+
+async function hasValidGeneratedDocumentEditorProxyCookie(req) {
+  const cookie = parseRequestCookies(req)[GENERATED_DOCUMENT_EDITOR_COOKIE_NAME] || "";
+  const secret = await resolveOnlyOfficeJwtSecret();
+  return Boolean(secret) && verifyGeneratedDocumentEditorProxyCookie(cookie, secret);
+}
+
+function generatedDocumentEditorConfig(context, settings, previewToken, editorToken, editorType = "desktop") {
+  const session = context.metadata.editorSession;
+  const sourceUrl = settings.sourceUrl;
+  const documentUrl = generatedDocumentEditorServiceUrl(
+    sourceUrl,
+    "/api/contracts/student-document-preview/editor-file",
+    { previewToken, editorToken }
+  );
+  const callbackUrl = generatedDocumentEditorServiceUrl(
+    sourceUrl,
+    "/api/contracts/student-document-preview/editor-callback",
+    { previewToken, editorToken }
+  );
+  const title = safeDocumentFileName(
+    String(context.metadata.fileName || "документ").replace(/\.(?:pdf|docx)$/iu, ""),
+    "docx"
+  );
+  const config = {
+    document: {
+      fileType: "docx",
+      key: String(session.key || ""),
+      title,
+      url: documentUrl,
+      permissions: {
+        chat: false,
+        comment: true,
+        copy: true,
+        download: false,
+        edit: true,
+        print: true,
+        review: true
+      }
+    },
+    documentType: "word",
+    editorConfig: {
+      callbackUrl,
+      lang: "ru",
+      mode: "edit",
+      user: {
+        id: String(session.userId || "user"),
+        name: String(session.userName || "Пользователь")
+      },
+      customization: {
+        autosave: true,
+        compactHeader: false,
+        compactToolbar: false,
+        forcesave: true,
+        help: true
+      }
+    },
+    height: "100%",
+    type: editorType === "mobile" ? "mobile" : "desktop",
+    width: "100%"
+  };
+  return { ...config, token: signOnlyOfficeJwt(config, settings.jwtSecret) };
+}
+
+async function handleGeneratedDocumentPreviewEditorStart(req, res, authUser) {
+  try {
+    const body = await readJsonBody(req, GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES);
+    const session = await beginGeneratedDocumentPreviewEditor(body.previewToken, authUser);
+    const editorBaseUrl = await resolveGeneratedDocumentEditorBrowserBaseUrl(req);
+    const editorUrl = generatedDocumentEditorServiceUrl(
+      editorBaseUrl,
+      "/api/contracts/student-document-preview/editor-page",
+      { previewToken: body.previewToken, editorToken: session.editorToken }
+    );
+    sendJson(res, 200, {
+      ok: true,
+      editorUrl,
+      editorToken: session.editorToken,
+      editRevision: session.editRevision
+    });
+  } catch (error) {
+    sendError(res, Number(error?.statusCode) || 400, error.message);
+  }
+}
+
+async function handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl) {
+  try {
+    const previewToken = String(requestUrl.searchParams.get("previewToken") || "");
+    const editorToken = String(requestUrl.searchParams.get("editorToken") || "");
+    const context = await readGeneratedDocumentPreviewEditorContext(
+      previewToken,
+      editorToken,
+      { includeEditableBytes: false }
+    );
+    const settings = await getOnlyOfficeConverterSettings();
+    const editorType = /Android|iPhone|iPad|iPod|Mobile/iu.test(String(req.headers["user-agent"] || ""))
+      ? "mobile"
+      : "desktop";
+    const config = generatedDocumentEditorConfig(
+      context,
+      settings,
+      previewToken,
+      editorToken,
+      editorType
+    );
+    const safeConfig = JSON.stringify(config).replace(/</gu, "\\u003c");
+    const safeSession = JSON.stringify(editorToken).replace(/</gu, "\\u003c");
+    const proxyCookie = signGeneratedDocumentEditorProxyCookie(
+      editorToken,
+      context.metadata.editorSession.expiresAt,
+      settings.jwtSecret
+    );
+    const html = `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Редактирование документа</title>
+  <style>
+    html,body,#editor{width:100%;height:100%;margin:0;overflow:hidden;background:#eef3f1}
+    #status{position:fixed;inset:0;display:grid;place-items:center;font:600 15px/1.4 "Segoe UI",Arial,sans-serif;color:#38504a;background:#eef3f1;z-index:2}
+    body.is-ready #status{display:none}
+  </style>
+</head>
+<body>
+  <div id="status">Открываем онлайн-редактор…</div>
+  <div id="editor"></div>
+  <script src="/onlyoffice/web-apps/apps/api/documents/api.js"></script>
+  <script>
+    (() => {
+      const editorSession = ${safeSession};
+      const notify = (type, details = {}) => parent.postMessage({
+        source: "ais-generated-document-editor",
+        editorSession,
+        type,
+        ...details
+      }, "*");
+      const config = ${safeConfig};
+      config.events = {
+        onDocumentReady() {
+          document.body.classList.add("is-ready");
+          notify("ready");
+        },
+        onDocumentStateChange(event) {
+          notify("state", { modified: Boolean(event?.data) });
+        },
+        onError(event) {
+          notify("error", { message: String(event?.data?.errorDescription || event?.data?.errorCode || "Ошибка ONLYOFFICE") });
+        }
+      };
+      try {
+        if (!window.DocsAPI?.DocEditor) throw new Error("Компонент ONLYOFFICE не загрузился.");
+        window.aisDocumentEditor = new DocsAPI.DocEditor("editor", config);
+      } catch (error) {
+        document.getElementById("status").textContent = error.message;
+        notify("error", { message: error.message });
+      }
+    })();
+  </script>
+</body>
+</html>`;
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": Buffer.byteLength(html),
+      "Cache-Control": "no-store, private",
+      "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; frame-src 'self'; frame-ancestors *",
+      "Referrer-Policy": "no-referrer",
+      "Set-Cookie": generatedDocumentEditorProxyCookieHeader(req, proxyCookie),
+      "X-Content-Type-Options": "nosniff"
+    });
+    res.end(html);
+  } catch (error) {
+    sendError(res, Number(error?.statusCode) || 400, error.message);
+  }
+}
+
+async function handleGeneratedDocumentPreviewEditorFile(req, res, requestUrl) {
+  try {
+    const context = await readGeneratedDocumentPreviewEditorContext(
+      requestUrl.searchParams.get("previewToken"),
+      requestUrl.searchParams.get("editorToken")
+    );
+    const fileName = safeDocumentFileName(
+      String(context.metadata.fileName || "документ").replace(/\.(?:pdf|docx)$/iu, ""),
+      "docx"
+    );
+    sendFile(
+      res,
+      200,
+      context.editableBytes,
+      fileName,
+      generatedDocumentContentType("docx"),
+      { "Cache-Control": "no-store, private" }
+    );
+  } catch (error) {
+    sendError(res, Number(error?.statusCode) || 400, error.message);
+  }
+}
+
+async function handleGeneratedDocumentPreviewEditorCallback(req, res, requestUrl) {
+  const previewToken = String(requestUrl.searchParams.get("previewToken") || "");
+  const editorToken = String(requestUrl.searchParams.get("editorToken") || "");
+  try {
+    const context = await readGeneratedDocumentPreviewEditorContext(
+      previewToken,
+      editorToken,
+      { includeEditableBytes: false }
+    );
+    const body = await readJsonBody(req, 256 * 1024);
+    const settings = await getOnlyOfficeConverterSettings();
+    const authorizationToken = /^Bearer\s+(\S+)$/iu.exec(String(req.headers.authorization || ""))?.[1] || "";
+    const signed = verifyOnlyOfficeJwt(String(body.token || authorizationToken), settings.jwtSecret);
+    const callback = signed?.payload && typeof signed.payload === "object" && !Array.isArray(signed.payload)
+      ? signed.payload
+      : signed;
+    const status = Number(callback?.status || 0);
+    if (String(callback?.key || "") !== String(context.metadata.editorSession?.key || "")) {
+      throw new Error("ONLYOFFICE передал данные другой сессии редактирования.");
+    }
+    if ([2, 6].includes(status) && String(callback?.url || "").trim()) {
+      const suppliedUrl = new URL(String(callback.url));
+      if (!["http:", "https:"].includes(suppliedUrl.protocol)) {
+        throw new Error("ONLYOFFICE передал неподдерживаемую ссылку на документ.");
+      }
+      const editedDocumentUrl = new URL(settings.converterUrl);
+      editedDocumentUrl.pathname = suppliedUrl.pathname;
+      editedDocumentUrl.search = suppliedUrl.search;
+      editedDocumentUrl.hash = "";
+      const editedBytes = await requestBuffer(editedDocumentUrl, {
+        maxResponseBytes: MAX_DOCX_BYTES,
+        timeoutMs: 60000,
+        errorPrefix: "ONLYOFFICE не передал отредактированный документ",
+        timeoutError: "Истекло время получения документа из ONLYOFFICE."
+      });
+      await storeGeneratedDocumentPreviewEditedDocx(previewToken, editorToken, editedBytes);
+    } else if ([3, 7].includes(status)) {
+      await storeGeneratedDocumentPreviewEditorError(
+        previewToken,
+        editorToken,
+        "ONLYOFFICE сообщил об ошибке сохранения изменений."
+      );
+    }
+    sendJson(res, 200, { error: 0 });
+  } catch (error) {
+    await storeGeneratedDocumentPreviewEditorError(previewToken, editorToken, error.message);
+    sendJson(res, 200, { error: 1 });
+  }
+}
+
+async function requestOnlyOfficeForceSave(editorKey) {
+  const { converterUrl, jwtSecret } = await getOnlyOfficeConverterSettings();
+  const endpoint = new URL(converterUrl);
+  endpoint.pathname = `${endpoint.pathname.replace(/\/+$/u, "")}/command`;
+  const payload = { c: "forcesave", key: String(editorKey || "") };
+  endpoint.searchParams.set("shardkey", payload.key);
+  const bodyToken = signOnlyOfficeJwt(payload, jwtSecret);
+  const headerToken = signOnlyOfficeJwt({ payload }, jwtSecret);
+  const requestBody = Buffer.from(JSON.stringify({ ...payload, token: bodyToken }), "utf8");
+  const responseBytes = await requestBuffer(endpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${headerToken}`,
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Length": requestBody.length
+    },
+    body: requestBody,
+    maxResponseBytes: 1024 * 1024,
+    timeoutMs: 30000,
+    errorPrefix: "ONLYOFFICE отклонил сохранение документа",
+    timeoutError: "ONLYOFFICE не ответил на запрос сохранения."
+  });
+  let response;
+  try {
+    response = JSON.parse(responseBytes.toString("utf8"));
+  } catch {
+    throw new Error("ONLYOFFICE вернул некорректный ответ при сохранении.");
+  }
+  return response;
+}
+
+async function waitForGeneratedDocumentEditorSave(previewToken, editorToken, previousRevision) {
+  const deadline = Date.now() + GENERATED_DOCUMENT_EDITOR_SAVE_WAIT_MS;
+  do {
+    const context = await readGeneratedDocumentPreviewEditorContext(
+      previewToken,
+      editorToken,
+      { includeEditableBytes: false }
+    );
+    if (String(context.metadata.editorSession?.lastError || "").trim()) {
+      throw new Error(context.metadata.editorSession.lastError);
+    }
+    if (Number(context.metadata.editRevision || 0) > Number(previousRevision || 0)) return context;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  } while (Date.now() < deadline);
+  throw new Error("ONLYOFFICE не передал сохранённые изменения за 60 секунд.");
+}
+
+async function handleGeneratedDocumentPreviewEditorSave(req, res, authUser) {
+  try {
+    const body = await readJsonBody(req, GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES);
+    const previewToken = String(body.previewToken || "");
+    const editorToken = String(body.editorToken || "");
+    const context = await readGeneratedDocumentPreviewEditorContext(
+      previewToken,
+      editorToken,
+      { includeEditableBytes: false }
+    );
+    if (String(context.metadata.owner || "") !== generatedDocumentPreviewOwner(authUser)) {
+      throw generatedDocumentPreviewError("Предварительный просмотр принадлежит другой сессии.", 403);
+    }
+    const previousRevision = Number(context.metadata.editRevision || 0);
+    const clientRevision = Math.max(0, Number(body.editRevision || 0));
+    if (body.hasChanges === true || previousRevision <= clientRevision) {
+      const forceSave = await requestOnlyOfficeForceSave(context.metadata.editorSession.key);
+      const forceSaveError = Number(forceSave?.error || 0);
+      if (forceSaveError === 0) {
+        await waitForGeneratedDocumentEditorSave(previewToken, editorToken, previousRevision);
+      } else if (forceSaveError !== 4) {
+        throw new Error(`ONLYOFFICE не сохранил изменения (код ${forceSaveError}).`);
+      }
+    }
+    const rendered = await renderGeneratedDocumentPreviewEditorPdf(previewToken, editorToken);
+    sendFile(
+      res,
+      200,
+      rendered.previewPdf,
+      rendered.fileName,
+      generatedDocumentContentType("pdf"),
+      { "X-Document-Preview-Revision": String(rendered.editRevision) }
+    );
+  } catch (error) {
+    sendError(res, Number(error?.statusCode) || 400, error.message);
+  }
+}
+
+function isOnlyOfficeProxyPath(pathname) {
+  const normalized = String(pathname || "");
+  return normalized === ONLYOFFICE_PROXY_PREFIX
+    || normalized.startsWith(`${ONLYOFFICE_PROXY_PREFIX}/`)
+    || ONLYOFFICE_PROXY_ROOT_PATHS.some((prefix) => normalized.startsWith(prefix));
+}
+
+function onlyOfficeProxyUpstreamPath(requestUrl) {
+  const upstreamPathname = requestUrl.pathname === ONLYOFFICE_PROXY_PREFIX
+    ? "/"
+    : (requestUrl.pathname.startsWith(`${ONLYOFFICE_PROXY_PREFIX}/`)
+      ? requestUrl.pathname.slice(ONLYOFFICE_PROXY_PREFIX.length)
+      : requestUrl.pathname);
+  return `${upstreamPathname || "/"}${requestUrl.search || ""}`;
+}
+
+function onlyOfficeProxyRequestHeaders(req, target) {
+  const headers = { ...req.headers };
+  headers.host = target.host;
+  headers["x-forwarded-host"] = String(req.headers.host || "");
+  headers["x-forwarded-proto"] = String(req.headers["x-forwarded-proto"] || (req.socket?.encrypted ? "https" : "http"));
+  headers["x-forwarded-prefix"] = ONLYOFFICE_PROXY_PREFIX;
+  const cookies = parseRequestCookies(req);
+  const forwardedCookies = Object.entries(cookies)
+    .filter(([name]) => !/^AIS_/iu.test(name))
+    .map(([name, value]) => `${name}=${encodeURIComponent(value)}`)
+    .join("; ");
+  if (forwardedCookies) headers.cookie = forwardedCookies;
+  else delete headers.cookie;
+  return headers;
+}
+
+function rewriteOnlyOfficeProxyLocation(value) {
+  const location = String(value || "");
+  if (!location.startsWith("/") || location.startsWith(`${ONLYOFFICE_PROXY_PREFIX}/`)) return location;
+  return `${ONLYOFFICE_PROXY_PREFIX}${location}`;
+}
+
+async function proxyOnlyOfficeHttpRequest(req, res, requestUrl) {
+  if (!await hasValidGeneratedDocumentEditorProxyCookie(req)) {
+    sendError(res, 403, "Сессия онлайн-редактора завершена.");
+    return;
+  }
+  const { converterUrl } = await getOnlyOfficeConverterSettings();
+  const target = new URL(converterUrl);
+  const transport = target.protocol === "https:" ? https : http;
+  await new Promise((resolve) => {
+    const proxyRequest = transport.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port,
+      method: req.method,
+      path: onlyOfficeProxyUpstreamPath(requestUrl),
+      headers: onlyOfficeProxyRequestHeaders(req, target)
+    }, (proxyResponse) => {
+      const headers = { ...proxyResponse.headers };
+      if (headers.location) headers.location = rewriteOnlyOfficeProxyLocation(headers.location);
+      delete headers["content-security-policy"];
+      headers["cache-control"] = headers["cache-control"] || "private, max-age=300";
+      res.writeHead(proxyResponse.statusCode || 502, headers);
+      proxyResponse.pipe(res);
+      proxyResponse.once("end", resolve);
+      proxyResponse.once("close", resolve);
+    });
+    proxyRequest.once("error", (error) => {
+      if (!res.headersSent) sendError(res, 502, `Онлайн-редактор недоступен: ${error.message}`);
+      else res.destroy(error);
+      resolve();
+    });
+    req.pipe(proxyRequest);
+  });
+}
+
+async function proxyOnlyOfficeWebSocket(req, socket, head) {
+  const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  if (!isOnlyOfficeProxyPath(requestUrl.pathname) || !await hasValidGeneratedDocumentEditorProxyCookie(req)) {
+    socket.destroy();
+    return;
+  }
+  const { converterUrl } = await getOnlyOfficeConverterSettings();
+  const target = new URL(converterUrl);
+  const transport = target.protocol === "https:" ? https : http;
+  const proxyRequest = transport.request({
+    protocol: target.protocol,
+    hostname: target.hostname,
+    port: target.port,
+    method: req.method || "GET",
+    path: onlyOfficeProxyUpstreamPath(requestUrl),
+    headers: onlyOfficeProxyRequestHeaders(req, target)
+  });
+  proxyRequest.once("upgrade", (proxyResponse, proxySocket, proxyHead) => {
+    const headerLines = Object.entries(proxyResponse.headers)
+      .flatMap(([name, value]) => (Array.isArray(value) ? value : [value])
+      .filter((item) => item !== undefined)
+      .map((item) => `${name}: ${item}`));
+    socket.write(`HTTP/1.1 ${proxyResponse.statusCode || 101} ${proxyResponse.statusMessage || "Switching Protocols"}\r\n${headerLines.join("\r\n")}\r\n\r\n`);
+    if (proxyHead?.length) socket.write(proxyHead);
+    if (head?.length) proxySocket.write(head);
+    proxySocket.pipe(socket);
+    socket.pipe(proxySocket);
+  });
+  proxyRequest.once("response", (proxyResponse) => {
+    socket.write(`HTTP/1.1 ${proxyResponse.statusCode || 502} ${proxyResponse.statusMessage || "Bad Gateway"}\r\nConnection: close\r\n\r\n`);
+    socket.destroy();
+  });
+  proxyRequest.once("error", () => socket.destroy());
+  proxyRequest.end();
 }
 
 async function sendGeneratedDocumentResponse(res, generated, body = {}) {
@@ -24739,9 +25690,11 @@ async function handleContractDocument(req, res, authUser) {
     extraHeaders["X-Generated-Document-File-Name"] = encodeURIComponent(outputFileName);
     const generated = {
       bytes: result,
+      editableBytes: docxResult,
       outputFormat,
       fileName: outputFileName,
-      extraHeaders
+      extraHeaders,
+      removeBlankInteriorPages: documentIdentity.includes("диплом о переподготовке")
     };
     if (body.previewOnly) {
       let previewPdf = result;
@@ -27467,6 +28420,31 @@ async function serveStatic(req, res) {
 
 async function route(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  if (isOnlyOfficeProxyPath(requestUrl.pathname)) {
+    await proxyOnlyOfficeHttpRequest(req, res, requestUrl);
+    return;
+  }
+  if (
+    req.method === "GET"
+    && requestUrl.pathname === "/api/contracts/student-document-preview/editor-page"
+  ) {
+    await handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl);
+    return;
+  }
+  if (
+    ["GET", "HEAD"].includes(req.method)
+    && requestUrl.pathname === "/api/contracts/student-document-preview/editor-file"
+  ) {
+    await handleGeneratedDocumentPreviewEditorFile(req, res, requestUrl);
+    return;
+  }
+  if (
+    req.method === "POST"
+    && requestUrl.pathname === "/api/contracts/student-document-preview/editor-callback"
+  ) {
+    await handleGeneratedDocumentPreviewEditorCallback(req, res, requestUrl);
+    return;
+  }
   const tunnelRequestExempt = requestUrl.pathname === "/api/health"
     || requestUrl.pathname.startsWith("/api/document-conversion/source/");
   if (
@@ -27862,6 +28840,14 @@ async function route(req, res) {
     await handleGeneratedDocumentPreviewFinalize(req, res, authUser);
     return;
   }
+  if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/editor-start") {
+    await handleGeneratedDocumentPreviewEditorStart(req, res, authUser);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/editor-save") {
+    await handleGeneratedDocumentPreviewEditorSave(req, res, authUser);
+    return;
+  }
   if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/cancel") {
     await handleGeneratedDocumentPreviewCancel(req, res, authUser);
     return;
@@ -27889,9 +28875,13 @@ if (isMainThread && require.main === module) {
       .then(() => {
         startSharedApplicationStateMirror();
         startTrainingEndNotificationScheduler();
-        http.createServer((req, res) => {
+        const server = http.createServer((req, res) => {
           route(req, res).catch((error) => sendError(res, 500, error.message));
-        }).listen(PORT, HOST, () => {
+        });
+        server.on("upgrade", (req, socket, head) => {
+          proxyOnlyOfficeWebSocket(req, socket, head).catch(() => socket.destroy());
+        });
+        server.listen(PORT, HOST, () => {
           console.log(`АИС Допобразование Web: http://${HOST}:${PORT}`);
           console.log(`Фото: ${PHOTO_ROOT}`);
         });
@@ -27988,7 +28978,11 @@ module.exports = {
   registerDocumentConversionSource,
   readDocumentConversionSource,
   removeDocumentConversionSource,
+  signOnlyOfficeJwt,
+  verifyOnlyOfficeJwt,
   registerGeneratedDocumentPreview,
+  beginGeneratedDocumentPreviewEditor,
+  storeGeneratedDocumentPreviewEditedDocx,
   takeGeneratedDocumentPreview,
   cancelGeneratedDocumentPreview,
   completeGeneratedDocumentPreview,
