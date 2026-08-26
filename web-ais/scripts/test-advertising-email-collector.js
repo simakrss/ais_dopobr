@@ -128,6 +128,9 @@ assert.match(appSource, /\[data-action='collect-advertising-emails'\][\s\S]*?add
 assert.match(appSource, /Копировать готовые/u);
 assert.match(appSource, /Экспорт CSV/u);
 assert.match(appSource, /ADVERTISING_EMAIL_SOURCES/u);
+assert.match(appSource, /class="ghost-button compact-button" data-action="select-all-advertising-sources"/u);
+assert.match(appSource, /class="danger-button compact-button" data-action="delete-advertising-source"/u);
+assert.doesNotMatch(appSource, /class="text-button" data-action="(?:select-all|clear|move|delete)-advertising/u);
 assert.match(serverSource, /\/api\/advertising\/email-collector\/collect/u);
 assert.match(serverSource, /\/api\/advertising\/email-collector\/settings/u);
 assert.match(serverSource, /DEFAULT_ADVERTISING_EMAIL_SOURCES/u);
@@ -148,6 +151,6 @@ assert.match(gatewaySource, /gateway_handle_advertising_source_proxy/u);
 assert.match(gatewaySource, /hash_equals/u);
 assert.match(appSource, /advertisingExclusionsSync/u);
 assert.match(appSource, /через сайт/u);
-assert.match(indexSource, /20260826-sql-mini-ide-v1/u);
+assert.match(indexSource, /20260826-advertising-buttons-v1/u);
 
 console.log("Advertising email collector tests passed.");

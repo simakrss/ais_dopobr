@@ -86,10 +86,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.280",
+    version: "1.7.281",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.281",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Кнопки выбора источников и управления карточками в разделе «Реклама» приведены к общим стилям АИС: вторичные действия используют компактные контурные кнопки, удаление — штатную опасную кнопку."
+      ]
+    },
     {
       version: "1.7.280",
       releasedAt: "2026-08-26",
@@ -11070,9 +11077,9 @@ MAX - https://bizvmax.ru/zifra_plus
                 <header>
                   <strong>${index + 1}. ${escapeHtml(source.label || "Новый источник")}</strong>
                   <div class="advertising-source-editor-actions">
-                    <button class="text-button" data-action="move-advertising-source" data-direction="-1" type="button" ${index === 0 ? "disabled" : ""}>Выше</button>
-                    <button class="text-button" data-action="move-advertising-source" data-direction="1" type="button" ${index === sources.length - 1 ? "disabled" : ""}>Ниже</button>
-                    <button class="text-button danger" data-action="delete-advertising-source" type="button">Удалить</button>
+                    <button class="ghost-button compact-button" data-action="move-advertising-source" data-direction="-1" type="button" ${index === 0 ? "disabled" : ""}>Выше</button>
+                    <button class="ghost-button compact-button" data-action="move-advertising-source" data-direction="1" type="button" ${index === sources.length - 1 ? "disabled" : ""}>Ниже</button>
+                    <button class="danger-button compact-button" data-action="delete-advertising-source" type="button">Удалить</button>
                   </div>
                 </header>
                 <div class="advertising-source-editor-grid">
@@ -11184,8 +11191,8 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="advertising-source-toolbar">
             <strong>Источники</strong>
              <span>Выбрано ${advertising.selectedSourceIds.length} из ${getAdvertisingEmailSources().length}</span>
-            <button class="text-button" data-action="select-all-advertising-sources" type="button" ${advertising.loading ? "disabled" : ""}>Выбрать все</button>
-            <button class="text-button" data-action="clear-advertising-sources" type="button" ${advertising.loading ? "disabled" : ""}>Снять все</button>
+            <button class="ghost-button compact-button" data-action="select-all-advertising-sources" type="button" ${advertising.loading ? "disabled" : ""}>Выбрать все</button>
+            <button class="ghost-button compact-button" data-action="clear-advertising-sources" type="button" ${advertising.loading ? "disabled" : ""}>Снять все</button>
           </div>
           <div class="advertising-source-grid">${renderAdvertisingSourceCards()}</div>
           <div class="advertising-workbook-status ${workbook?.status === "error" ? "is-error" : ""}">

@@ -23218,11 +23218,6 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   font-size: 13px;
 }
 
-.advertising-source-toolbar .text-button {
-  min-height: 26px;
-  padding: 2px 5px;
-}
-
 .advertising-source-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -23604,15 +23599,6 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 4px;
-}
-
-.advertising-source-editor-actions .text-button {
-  min-height: 26px;
-  padding: 2px 6px;
-}
-
-.advertising-source-editor-actions .danger {
-  color: #a6322b;
 }
 
 .advertising-source-editor-grid {
