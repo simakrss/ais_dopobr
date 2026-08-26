@@ -86,15 +86,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.281",
+    version: "1.7.282",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
     {
-      version: "1.7.281",
+      version: "1.7.282",
       releasedAt: "2026-08-26",
       changes: [
-        "Кнопки выбора источников и управления карточками в разделе «Реклама» приведены к общим стилям АИС: вторичные действия используют компактные контурные кнопки, удаление — штатную опасную кнопку."
+        "В карточку слушателя добавлены документы для продления и сокращения обучения с системными шаблонами, проверкой данных и стандартным контекстным меню."
       ]
     },
     {
@@ -2959,6 +2959,8 @@ MAX - https://bizvmax.ru/zifra_plus
   const defaultDocumentTemplateWebDavSources = Object.freeze({
     contract: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/_3SnxIXyPuVaZQ"],
     legalApplication: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/FR1VbW_1EtRHAQ"],
+    trainingExtension: "Документы/Заявление+доп. согл_продление обучения.docx",
+    trainingReduction: "Документы/Заявление+доп. согл_сокращение обучения.docx",
     diploma: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/eyxERaRJXPCC4A"],
     qualificationCertificate: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/lAQO0kGbtWTjSA"],
     proCertificate: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/VSPdwaaaFKUK9g"],
@@ -3031,6 +3033,7 @@ MAX - https://bizvmax.ru/zifra_plus
   ];
   const contractTemplateSourceFieldNames = [
     "ФИО", "ФИО_несклон", "Email", "Договор", "Дата договора", "Дата подачи заявки", "Дата начала обучения", "Дата окончания обучения",
+    "Продленная дата окончания обучения",
     "Прогр обуч факт", "Количество часов", "Форма обучения", "Стажировка", "Гражданство", "ДР обуч", "Обуч тел#",
     "Адрес места жительства", "Адрес места регистрации",
     "Адрес постоянного места жительства (регистрации по паспорту)", "Адрес для отправки документов",
@@ -3053,6 +3056,7 @@ MAX - https://bizvmax.ru/zifra_plus
     "Дата подачи заявки": "applicationDate",
     "Дата начала обучения": "startDate",
     "Дата окончания обучения": "endDate",
+    "Продленная дата окончания обучения": "extendedEndDate",
     "Прогр обуч факт": "program",
     "Количество часов": "hours",
     "Форма обучения": "studyForm",
@@ -3124,6 +3128,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
   const defaultDocumentTemplateId = "document-contract-application";
   const legalEntityApplicationDocumentTemplateId = "document-legal-entity-application";
+  const trainingExtensionDocumentTemplateId = "document-training-extension";
+  const trainingReductionDocumentTemplateId = "document-training-reduction";
   const postalEnvelopeDocumentTemplateId = "document-postal-envelope";
   const postalEnvelopeGenerationFormatVersion = "postal-envelope-docx-v1";
   const studentDocumentsFolderTemplateMarker = "#Папка документов слушателя#";
@@ -3236,6 +3242,8 @@ MAX - https://bizvmax.ru/zifra_plus
     { value: "", label: "Без привязки" },
     { value: "contract", label: "Карточка слушателя. Договор" },
     { value: "application", label: "Карточка слушателя. Заявление" },
+    { value: "trainingExtension", label: "Карточка слушателя. Продление обучения" },
+    { value: "trainingReduction", label: "Карточка слушателя. Сокращение обучения" },
     { value: "education", label: "Карточка слушателя. Документ об образовании" },
     { value: "postalEnvelope", label: "Карточка слушателя. Почтовый конверт" },
     { value: "studyCertificate", label: "Карточка слушателя. Справка об обучении" },
@@ -3281,6 +3289,81 @@ MAX - https://bizvmax.ru/zifra_plus
       createdAt: "2026-07-23T00:00:00.000Z"
     };
   }
+  const trainingTermDocumentTemplateDefinitions = [
+    {
+      id: trainingExtensionDocumentTemplateId,
+      title: "Заявление и дополнительное соглашение о продлении обучения",
+      templateUrl: defaultDocumentTemplateWebDavSources.trainingExtension,
+      templatePath: "",
+      fileName: "Заявление+доп. согл_продление обучения.docx",
+      fileNameTemplate: "Продление_обучения_#ФИО_обуч#_#N Договора#",
+      saveFolderTemplate: studentDocumentsFolderTemplateMarker,
+      generationFormat: "pdf",
+      useCustomDocumentProperties: "0",
+      documentKind: "trainingExtension",
+      markers: [
+        "Email", "N Договора", "Адрес места регистрации", "Вид курсов",
+        "Дата рождения_обуч", "ДатаДоговора", "ИО", "Пасп_Обуч_Дата",
+        "Пасп_Обуч_Кем", "Паспорт_обуч", "Продленная дата окончания обучения",
+        "ПутьСохр", "СрокПо", "Тел_обуч", "ФИО_обуч", "ФИО_обуч_род"
+      ],
+      formulas: {
+        "Email": "=[Email]",
+        "N Договора": `=ЕСЛИ([Договор]="";"__________";[Договор])`,
+        "Адрес места регистрации": "=[Адрес места регистрации]",
+        "Вид курсов": `=ЕСЛИ(ЕСЛИОШИБКА(ПОИСК([Количество часов];[Прогр обуч факт])<>0;ЛОЖЬ);[Прогр обуч факт];[Прогр обуч факт] & " (" & [Количество часов] & " ч.)")`,
+        "Дата рождения_обуч": "=([ДР обуч])",
+        "ДатаДоговора": `=ЕСЛИ([Дата договора]="";[Дата подачи заявки];[Дата договора])`,
+        "ИО": `=СКЛОНЕНИЕ_ФИО([ФИО];"И";"ИО")`,
+        "Пасп_Обуч_Дата": "=[Пасп_Обуч_Дата]",
+        "Пасп_Обуч_Кем": "=[Пасп_Обуч_Кем]",
+        "Паспорт_обуч": "=[Пасп_Обуч_Серия_Номер]",
+        "Продленная дата окончания обучения": `=ТЕКСТ(ПСТР([Продленная дата окончания обучения];1;10);"ДД.ММ.ГГГГ")`,
+        "ПутьСохр": `=ПутьДокумента(1) & [Фото]`,
+        "СрокПо": `=ТЕКСТ(ТДАТА();"ДД.ММ.ГГГГ")`,
+        "Тел_обуч": "=[Обуч тел#]",
+        "ФИО_обуч": "=[ФИО]",
+        "ФИО_обуч_род": `=ЕСЛИ([ФИО_несклон]="+";СКЛОНЕНИЕ_ФИО([ФИО];;"И";;"Ф") & " " & СКЛОНЕНИЕ_ФИО([ФИО];;"Р";;"ИО");СКЛОНЕНИЕ_ФИО([ФИО];;"Р";;"ФИО"))`
+      }
+    },
+    {
+      id: trainingReductionDocumentTemplateId,
+      title: "Заявление и дополнительное соглашение о сокращении обучения",
+      templateUrl: defaultDocumentTemplateWebDavSources.trainingReduction,
+      templatePath: "",
+      fileName: "Заявление+доп. согл_сокращение обучения.docx",
+      fileNameTemplate: "Сокращение_обучения_#ФИО_обуч#_#N Договора#",
+      saveFolderTemplate: studentDocumentsFolderTemplateMarker,
+      generationFormat: "pdf",
+      useCustomDocumentProperties: "0",
+      documentKind: "trainingReduction",
+      markers: [
+        "Email", "N Договора", "Адрес места регистрации", "Вид курсов",
+        "Дата рождения_обуч", "ДатаДоговора", "ДатаПодачи", "ИО",
+        "Пасп_Обуч_Дата", "Пасп_Обуч_Кем", "Паспорт_обуч",
+        "Продленная дата окончания обучения", "ПутьСохр", "Тел_обуч",
+        "ФИО_обуч", "ФИО_обуч_род"
+      ],
+      formulas: {
+        "Email": "=[Email]",
+        "N Договора": `=ЕСЛИ([Договор]="";"__________";[Договор])`,
+        "Адрес места регистрации": "=[Адрес места регистрации]",
+        "Вид курсов": `=ЕСЛИ(ЕСЛИОШИБКА(ПОИСК([Количество часов];[Прогр обуч факт])<>0;ЛОЖЬ);[Прогр обуч факт];[Прогр обуч факт] & " (" & [Количество часов] & " ч.)")`,
+        "Дата рождения_обуч": "=([ДР обуч])",
+        "ДатаДоговора": `=ЕСЛИ([Дата договора]="";[Дата подачи заявки];[Дата договора])`,
+        "ДатаПодачи": `=ТЕКСТ(ТДАТА();"ДД.ММ.ГГГГ")`,
+        "ИО": `=СКЛОНЕНИЕ_ФИО([ФИО];"И";"ИО")`,
+        "Пасп_Обуч_Дата": "=[Пасп_Обуч_Дата]",
+        "Пасп_Обуч_Кем": "=[Пасп_Обуч_Кем]",
+        "Паспорт_обуч": "=[Пасп_Обуч_Серия_Номер]",
+        "Продленная дата окончания обучения": `=ТЕКСТ(ПСТР([Продленная дата окончания обучения];1;10);"ДД.ММ.ГГГГ")`,
+        "ПутьСохр": `=ПутьДокумента(1) & [Фото]`,
+        "Тел_обуч": "=[Обуч тел#]",
+        "ФИО_обуч": "=[ФИО]",
+        "ФИО_обуч_род": `=ЕСЛИ([ФИО_несклон]="+";СКЛОНЕНИЕ_ФИО([ФИО];;"И";;"Ф") & " " & СКЛОНЕНИЕ_ФИО([ФИО];;"Р";;"ИО");СКЛОНЕНИЕ_ФИО([ФИО];;"Р";;"ФИО"))`
+      }
+    }
+  ];
   const educationDocumentTemplateDefinitions = [
     {
       id: "education-document-diploma-ppp",
@@ -3479,7 +3562,7 @@ MAX - https://bizvmax.ru/zifra_plus
       saveFolderTemplate: definition.saveFolderTemplate || studentDocumentsFolderTemplateMarker,
       generationFormat: normalizeDocumentGenerationFormat(definition.generationFormat),
       generationFormatVersion: String(definition.generationFormatVersion || ""),
-      useCustomDocumentProperties: "1",
+      useCustomDocumentProperties: String(definition.useCustomDocumentProperties ?? "1"),
       fields,
       originalFields: fields.map((field) => ({ ...field })),
       fieldsMode: "document-markers",
@@ -3541,6 +3624,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return [
       createDefaultDocumentTemplate(),
       createLegalEntityApplicationDocumentTemplate(),
+      ...trainingTermDocumentTemplateDefinitions.map(createEducationDocumentTemplate),
       ...employeeContractDocumentTemplates.map(createEmployeeContractDocumentTemplate),
       createEmployeeActDocumentTemplate(),
       ...educationDocumentTemplateDefinitions.map(createEducationDocumentTemplate),
@@ -24604,6 +24688,19 @@ MAX - https://bizvmax.ru/zifra_plus
       </button>
     `;
   }
+
+  function renderStudentTrainingTermDocumentButton(documentKind, label, description) {
+    const action = documentKind === "trainingExtension"
+      ? "open-student-training-extension-document"
+      : "open-student-training-reduction-document";
+    const title = buildStudentDocumentGenerationTooltip(label, description);
+    return `
+      <button class="ghost-button student-document-generate-button student-contract-button orders-sdo-contract-button orders-sdo-training-term-button" data-action="${escapeAttr(action)}" data-document-context-kind="${escapeAttr(documentKind)}" type="button" title="${escapeMultilineAttr(title)}" aria-label="${escapeAttr(label)}">
+        ${renderOrdersSdoIcon("document")}
+        <span>${escapeHtml(label)}</span>
+      </button>
+    `;
+  }
   function renderStudentReviewPanel(record) {
     const program = findProgramByName(record.program);
     const courseUrl = getProgramPromoUrl(program);
@@ -24704,6 +24801,8 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="orders-sdo-expulsion-order-stack">
             ${renderOrdersSdoControl("expulsionOrderNo", "Номер приказа", record, "text", { tools: ["generateExpulsionOrderNo", "document"] })}
             <div class="orders-sdo-contract-document-row">
+              ${renderStudentTrainingTermDocumentButton("trainingExtension", "Продление", "Сформировать заявление и дополнительное соглашение о продлении обучения.")}
+              ${renderStudentTrainingTermDocumentButton("trainingReduction", "Сокращение", "Сформировать заявление и дополнительное соглашение о сокращении обучения.")}
               ${renderStudentContractButton()}
             </div>
           </div>
@@ -32415,6 +32514,8 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='add-employee-general-payment']")
       ?.addEventListener("click", () => addEmployeePaymentAccountingRow("general"));
     document.querySelector("[data-action='open-student-contract-document']")?.addEventListener("click", openStudentContractDocument);
+    document.querySelector("[data-action='open-student-training-extension-document']")?.addEventListener("click", openStudentTrainingExtensionDocument);
+    document.querySelector("[data-action='open-student-training-reduction-document']")?.addEventListener("click", openStudentTrainingReductionDocument);
     const employeeContractDocumentButton = document.querySelector("[data-action='open-employee-contract-document']");
     employeeContractDocumentButton?.addEventListener("click", openEmployeeContractDocument);
     employeeContractDocumentButton?.addEventListener("contextmenu", (event) => {
@@ -53219,6 +53320,34 @@ MAX - https://bizvmax.ru/zifra_plus
         { key: "startDate", label: "Дата начала обучения" },
         { key: "endDate", label: "Дата окончания обучения" }
       ],
+      trainingExtension: [
+        ...common,
+        { key: "hours", label: "Количество часов", value: getStudentProgramHours(record) },
+        { key: "registrationAddress", label: "Адрес места регистрации" },
+        { key: "phone", label: "Телефон" },
+        { key: "email", label: "Email" },
+        { key: "birthDate", label: "Дата рождения" },
+        { key: "passportDate", label: "Дата выдачи паспорта" },
+        { key: "passportNumber", label: "Серия и номер паспорта" },
+        { key: "passportIssuer", label: "Кем выдан паспорт" },
+        { key: "contractNo", label: "Номер договора" },
+        { key: "contractDate", label: "Дата договора" },
+        { key: "extendedEndDate", label: "Изменённая дата окончания обучения" }
+      ],
+      trainingReduction: [
+        ...common,
+        { key: "hours", label: "Количество часов", value: getStudentProgramHours(record) },
+        { key: "registrationAddress", label: "Адрес места регистрации" },
+        { key: "phone", label: "Телефон" },
+        { key: "email", label: "Email" },
+        { key: "birthDate", label: "Дата рождения" },
+        { key: "passportDate", label: "Дата выдачи паспорта" },
+        { key: "passportNumber", label: "Серия и номер паспорта" },
+        { key: "passportIssuer", label: "Кем выдан паспорт" },
+        { key: "contractNo", label: "Номер договора" },
+        { key: "contractDate", label: "Дата договора" },
+        { key: "extendedEndDate", label: "Изменённая дата окончания обучения" }
+      ],
       application: [
         ...common,
         { key: "studyForm", label: "Форма обучения" },
@@ -53310,6 +53439,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const preferredTabs = {
       contractNo: "ordersSdo",
       contractDate: "ordersSdo",
+      extendedEndDate: "ordersSdo",
       enrollmentDate: "ordersSdo",
       enrollmentOrderNo: "ordersSdo",
       expulsionDate: "ordersSdo",
@@ -54378,6 +54508,24 @@ MAX - https://bizvmax.ru/zifra_plus
       "postalEnvelope",
       "В конструкторе документов не найден шаблон «Почтовый конверт».",
       "Не удалось сформировать почтовый конверт"
+    );
+  }
+
+  async function openStudentTrainingExtensionDocument(event) {
+    return openStudentCardBoundDocument(
+      event,
+      "trainingExtension",
+      "В конструкторе документов не найден шаблон продления обучения.",
+      "Не удалось сформировать документы для продления обучения"
+    );
+  }
+
+  async function openStudentTrainingReductionDocument(event) {
+    return openStudentCardBoundDocument(
+      event,
+      "trainingReduction",
+      "В конструкторе документов не найден шаблон сокращения обучения.",
+      "Не удалось сформировать документы для сокращения обучения"
     );
   }
 

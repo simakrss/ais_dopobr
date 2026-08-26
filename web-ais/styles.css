@@ -18042,10 +18042,11 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .orders-sdo-contract-document-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
   gap: 6px;
-  padding-left: 124px;
+  padding-left: 0;
 }
 
 .employee-contract-document-row {
