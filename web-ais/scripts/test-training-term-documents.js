@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const {
+  applyCustomDocumentPropertyFormulas,
   evaluateDocumentFormula,
   fillDocxMarkers,
   readDocxZipEntries
@@ -15,8 +16,9 @@ assert.match(appSource, /trainingExtension:\s*"Документы\/Заявле�
 assert.match(appSource, /trainingReduction:\s*"Документы\/Заявление\+доп\. согл_сокращение обучения\.docx"/u);
 assert.match(appSource, /documentKind:\s*"trainingExtension"/u);
 assert.match(appSource, /documentKind:\s*"trainingReduction"/u);
-assert.match(appSource, /id:\s*trainingExtensionDocumentTemplateId[\s\S]*?useCustomDocumentProperties:\s*"0"[\s\S]*?documentKind:\s*"trainingExtension"/u);
-assert.match(appSource, /id:\s*trainingReductionDocumentTemplateId[\s\S]*?useCustomDocumentProperties:\s*"0"[\s\S]*?documentKind:\s*"trainingReduction"/u);
+assert.match(appSource, /id:\s*trainingExtensionDocumentTemplateId[\s\S]*?useCustomDocumentProperties:\s*"1"[\s\S]*?documentKind:\s*"trainingExtension"/u);
+assert.match(appSource, /id:\s*trainingReductionDocumentTemplateId[\s\S]*?useCustomDocumentProperties:\s*"1"[\s\S]*?documentKind:\s*"trainingReduction"/u);
+assert.match(appSource, /\[trainingExtensionDocumentTemplateId,\s*trainingReductionDocumentTemplateId\][\s\S]*?existing\.useCustomDocumentProperties\s*=\s*"1"/u);
 assert.match(appSource, /"Продленная дата окончания обучения":\s*"extendedEndDate"/u);
 assert.match(appSource, /data-document-context-kind="\$\{escapeAttr\(documentKind\)\}"/u);
 
@@ -65,6 +67,22 @@ const sampleFieldValues = {
   ФИО_обуч_род: "Иванова Ивана Ивановича"
 };
 sourceFiles.filter((filePath) => fs.existsSync(filePath)).forEach((filePath) => {
+  const assistantValues = applyCustomDocumentPropertyFormulas(
+    fs.readFileSync(filePath),
+    sampleFieldValues,
+    {
+      ...sampleFieldValues,
+      "Дата окончания обучения": "15.09.2026"
+    }
+  );
+  assert.equal(assistantValues["Продленная дата окончания обучения"], "30.09.2026");
+  if (filePath.includes("продление")) {
+    assert.match(assistantValues.СрокПо, /^\d{2}\.\d{2}\.\d{4}$/u);
+    assert.doesNotMatch(assistantValues.СрокПо, /ТЕКСТ|\/\//u);
+  }
+  if (filePath.includes("сокращение")) {
+    assert.match(assistantValues.ДатаПодачи, /^\d{2}\.\d{2}\.\d{4}$/u);
+  }
   const generated = fillDocxMarkers(fs.readFileSync(filePath), sampleFieldValues);
   assert.equal(generated.subarray(0, 2).toString("ascii"), "PK");
   const entries = readDocxZipEntries(generated);

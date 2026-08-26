@@ -3312,7 +3312,11 @@ function getFormulaContextValue(name, context) {
 function replaceDocumentFormulaReferences(text, context) {
   return String(text ?? "")
     .replace(/#([^#]+)#/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)))
-    .replace(/\[([^\]]+)\]/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)));
+    .replace(/\[([^\]]+)\]/g, (match, fieldName) => (
+      /^\$-/u.test(String(fieldName || "").trim())
+        ? match
+        : formulaValueToString(getFormulaContextValue(fieldName, context))
+    ));
 }
 
 function parseDocumentFormulaQuotedLiteral(value) {
@@ -3335,12 +3339,38 @@ function parseDocumentFormulaQuotedLiteral(value) {
   return null;
 }
 
+function stripDocumentFormulaComments(value) {
+  const source = String(value || "");
+  let result = "";
+  let quoted = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === '"') {
+      if (quoted && source[index + 1] === '"') {
+        result += '""';
+        index += 1;
+        continue;
+      }
+      quoted = !quoted;
+      result += character;
+      continue;
+    }
+    if (!quoted && character === "/" && source[index + 1] === "/") {
+      while (index < source.length && !/[\r\n]/u.test(source[index])) index += 1;
+      if (index < source.length) result += "\n";
+      continue;
+    }
+    result += character;
+  }
+  return result.trim();
+}
+
 function evaluateDocumentFormula(formula, context) {
+  const expression = stripDocumentFormulaComments(String(formula || "").replace(/^=\s*/, ""));
   try {
-    return formulaValueToString(evaluateDocumentFormulaExpression(String(formula || "").replace(/^=\s*/, ""), context)).trim();
+    return formulaValueToString(evaluateDocumentFormulaExpression(expression, context)).trim();
   } catch {
-    return String(formula || "")
-      .replace(/^=\s*/, "")
+    return expression
       .replace(/#([^#]+)#/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)))
       .replace(/\[([^\]]+)\]/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)))
       .trim();
@@ -3389,7 +3419,7 @@ function evaluateDocumentFormulaExpression(expression, context) {
   if (hashRef) return getFormulaContextValue(hashRef[1], context);
   const sourceRef = /^\[([^\]]+)\]$/.exec(text);
   if (sourceRef) return getFormulaContextValue(sourceRef[1], context);
-  const functionMatch = /^([\p{L}_][\p{L}\p{N}_*]*)\(([\s\S]*)\)$/u.exec(text);
+  const functionMatch = /^([\p{L}_][\p{L}\p{N}_*]*)\s*\(([\s\S]*)\)$/u.exec(text);
   if (functionMatch) {
     return evaluateDocumentFormulaFunction(functionMatch[1], splitTopLevel(functionMatch[2], ";"), context);
   }
@@ -3418,6 +3448,152 @@ function transliterateDocumentFormulaText(value) {
     .trim();
 }
 
+function createDocumentFormulaDate(year, month, day) {
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+    ? date
+    : null;
+}
+
+function parseDocumentFormulaDateValue(value) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const excelEpoch = new Date(1899, 11, 30);
+    excelEpoch.setDate(excelEpoch.getDate() + Math.trunc(value));
+    return excelEpoch;
+  }
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  let match = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T\s].*)?$/u.exec(text);
+  if (match) return createDocumentFormulaDate(Number(match[1]), Number(match[2]), Number(match[3]));
+  match = /^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})(?:[T\s].*)?$/u.exec(text);
+  if (match) {
+    let year = Number(match[3]);
+    if (year < 100) year += year < 70 ? 2000 : 1900;
+    return createDocumentFormulaDate(year, Number(match[2]), Number(match[1]));
+  }
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getDocumentFormulaPrimaryFormat(value) {
+  const source = String(value || "");
+  let escaped = false;
+  let quoted = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (!quoted && character === ";") return source.slice(0, index);
+  }
+  return source;
+}
+
+function isDocumentFormulaDateFormat(value) {
+  const format = String(value || "").replace(/\[\$-[^\]]+\]/giu, "");
+  return /[ДГ]/iu.test(format) || /(?:D{1,4}|Y{2,4}|M{3,4})/iu.test(format);
+}
+
+function formatDocumentFormulaDateByMask(value, formatValue) {
+  const date = parseDocumentFormulaDateValue(value);
+  if (!date) return formulaValueToString(value);
+  const originalFormat = getDocumentFormulaPrimaryFormat(formatValue);
+  const useGenitiveMonth = /genlower/iu.test(originalFormat);
+  const format = originalFormat.replace(/\[\$-[^\]]+\]/giu, "");
+  const monthNames = useGenitiveMonth
+    ? ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+    : ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+  const shortMonthNames = ["янв.", "февр.", "мар.", "апр.", "мая", "июн.", "июл.", "авг.", "сент.", "окт.", "нояб.", "дек."];
+  const replacements = [
+    ["ГГГГ", String(date.getFullYear())], ["YYYY", String(date.getFullYear())],
+    ["ГГГ", String(date.getFullYear())], ["YYY", String(date.getFullYear())],
+    ["ГГ", String(date.getFullYear()).slice(-2)], ["YY", String(date.getFullYear()).slice(-2)],
+    ["ММММ", monthNames[date.getMonth()]], ["MMMM", monthNames[date.getMonth()]],
+    ["МММ", shortMonthNames[date.getMonth()]], ["MMM", shortMonthNames[date.getMonth()]],
+    ["ММ", String(date.getMonth() + 1).padStart(2, "0")], ["MM", String(date.getMonth() + 1).padStart(2, "0")],
+    ["ДД", String(date.getDate()).padStart(2, "0")], ["DD", String(date.getDate()).padStart(2, "0")],
+    ["Г", String(date.getFullYear())], ["Y", String(date.getFullYear())],
+    ["М", String(date.getMonth() + 1)], ["M", String(date.getMonth() + 1)],
+    ["Д", String(date.getDate())], ["D", String(date.getDate())]
+  ];
+  let result = "";
+  for (let index = 0; index < format.length;) {
+    if (format[index] === "\\" && index + 1 < format.length) {
+      result += format[index + 1];
+      index += 2;
+      continue;
+    }
+    if (format[index] === '"') {
+      const closingQuote = format.indexOf('"', index + 1);
+      if (closingQuote >= 0) {
+        result += format.slice(index + 1, closingQuote);
+        index = closingQuote + 1;
+        continue;
+      }
+    }
+    const replacement = replacements.find(([token]) => (
+      format.slice(index, index + token.length).toLocaleUpperCase("ru-RU") === token
+    ));
+    if (replacement) {
+      result += replacement[1];
+      index += replacement[0].length;
+      continue;
+    }
+    if (format[index] !== "@") result += format[index];
+    index += 1;
+  }
+  return result;
+}
+
+function formatDocumentFormulaNumberByMask(value, formatValue) {
+  const text = formulaValueToString(value).trim();
+  if (!text) return "";
+  const number = typeof value === "number"
+    ? value
+    : Number(text.replace(/[\s\u00a0]+/gu, "").replace(",", "."));
+  if (!Number.isFinite(number)) return text;
+  const format = getDocumentFormulaPrimaryFormat(formatValue).trim();
+  if (/^0+$/u.test(format)) {
+    const sign = number < 0 ? "-" : "";
+    return `${sign}${String(Math.round(Math.abs(number))).padStart(format.length, "0")}`;
+  }
+  const decimalMatch = /([.,])(0+)$/u.exec(format);
+  if (decimalMatch) {
+    const formatted = number.toFixed(decimalMatch[2].length);
+    return decimalMatch[1] === "," ? formatted.replace(".", ",") : formatted;
+  }
+  return text;
+}
+
+function formatDocumentFormulaValue(value, formatValue) {
+  const format = formulaValueToString(formatValue).trim();
+  if (!format) return formulaValueToString(value);
+  return isDocumentFormulaDateFormat(format)
+    ? formatDocumentFormulaDateByMask(value, format)
+    : formatDocumentFormulaNumberByMask(value, format);
+}
+
+function getAssistantCompatibleFormulaTextSlice(sourceValue, start, length) {
+  const source = formulaValueToString(sourceValue);
+  if (start === 0 && length === 8) {
+    const fullRussianDate = /^(\d{2}\.\d{2}\.)\d{2}(\d{2})$/u.exec(source.trim());
+    if (fullRussianDate) return `${fullRussianDate[1]}${fullRussianDate[2]}`;
+  }
+  return source.slice(start, start + length);
+}
+
 function evaluateDocumentFormulaFunction(name, args, context) {
   const upperName = String(name || "").toUpperCase();
   const compactName = upperName.replace(/[\s_*]+/g, "");
@@ -3442,15 +3618,25 @@ function evaluateDocumentFormulaFunction(name, args, context) {
   }
   if (upperName === "ПОДСТАВИТЬ") return text(0).split(text(1)).join(text(2));
   if (upperName === "СИМВОЛ") return String.fromCharCode(Number(value(0)) || 0);
-  if (upperName === "ЛЕВСИМВ") return text(0).slice(0, Number(value(1)) || 0);
+  if (upperName === "ЛЕВСИМВ") {
+    const length = Math.max(0, Number(value(1)) || 0);
+    return getAssistantCompatibleFormulaTextSlice(value(0), 0, length);
+  }
   if (upperName === "ДЛСТР") return text(0).length;
   if (upperName === "ПСТР") {
     const start = Math.max(1, Number(value(1)) || 1) - 1;
     const length = Math.max(0, Number(value(2)) || 0);
-    return text(0).slice(start, start + length);
+    return getAssistantCompatibleFormulaTextSlice(value(0), start, length);
   }
   if (upperName === "СЖПРОБЕЛЫ") return text(0).replace(/\s+/g, " ").trim();
-  if (upperName === "ТЕКСТ") return formatDocumentFormulaDate(text(0));
+  if (upperName === "ТЕКСТ" || upperName === "TEXT") return formatDocumentFormulaValue(value(0), value(1));
+  if (["ДЕНЬ", "DAY", "МЕСЯЦ", "MONTH", "ГОД", "YEAR"].includes(upperName)) {
+    const date = parseDocumentFormulaDateValue(value(0));
+    if (!date) throw new Error(`${upperName}: некорректная дата`);
+    if (upperName === "ДЕНЬ" || upperName === "DAY") return date.getDate();
+    if (upperName === "МЕСЯЦ" || upperName === "MONTH") return date.getMonth() + 1;
+    return date.getFullYear();
+  }
   if (compactName === "ТРАНСЛИТЕРАЦИЯ") return transliterateDocumentFormulaText(text(0));
   if (compactName === "QRКОД") return text(0).trim();
   if (compactName === "ОКРУГЛВНИЗ") {
@@ -3493,15 +3679,7 @@ function evaluateDocumentFormulaFunction(name, args, context) {
 }
 
 function formatDocumentFormulaDate(value) {
-  const text = String(value || "").trim();
-  if (!text) return "";
-  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
-  if (iso) return `${iso[3]}.${iso[2]}.${iso[1]}`;
-  const ru = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(text);
-  if (ru) return text;
-  const date = new Date(text);
-  if (Number.isNaN(date.getTime())) return text;
-  return `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}.${date.getFullYear()}`;
+  return formatDocumentFormulaDateByMask(value, "ДД.ММ.ГГГГ");
 }
 
 function numberToRussianWords(value) {

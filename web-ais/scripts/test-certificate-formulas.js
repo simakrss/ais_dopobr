@@ -20,6 +20,40 @@ assert.equal(
   '23.06.2026'
 );
 assert.equal(
+  server.evaluateDocumentFormula('=ТЕКСТ([Дата выдачи];"ГГГГ.ММ.ДД")', context),
+  '2026.06.23'
+);
+assert.equal(
+  server.evaluateDocumentFormula('=ТЕКСТ ([Дата выдачи];"ДД.ММ.ГГГГ")', context),
+  '23.06.2026'
+);
+assert.equal(
+  server.evaluateDocumentFormula('=ТЕКСТ([Дата выдачи];"[$-ru-RU-x-genlower]ДД ММММ ГГГГ \\г\\.;@")', context),
+  '23 июня 2026 г.'
+);
+assert.equal(
+  server.evaluateDocumentFormula('=ТЕКСТ(ПСТР([Дата выдачи];1;8);"ДД.ММ.ГГГГ")', {
+    fieldValues: { 'Дата выдачи': '23.06.2026' },
+    sourceValues: {}
+  }),
+  '23.06.2026'
+);
+assert.equal(
+  server.evaluateDocumentFormula('=ТЕКСТ([Id];"0000000000")', {
+    fieldValues: { Id: '123' },
+    sourceValues: {}
+  }),
+  '0000000123'
+);
+assert.equal(
+  server.evaluateDocumentFormula('=ТЕКСТ(ДЕНЬ([Дата выдачи]);"00") & "." & ТЕКСТ(МЕСЯЦ([Дата выдачи]);"00")', context),
+  '23.06'
+);
+assert.equal(
+  server.evaluateDocumentFormula('=ТЕКСТ([Дата выдачи];"ДД.ММ.ГГГГ")\n//=ТЕКСТ([Дата выдачи];"ГГГГ.ММ.ДД")', context),
+  '23.06.2026'
+);
+assert.equal(
   server.evaluateDocumentFormula('=ТРАНСЛИТЕРАЦИЯ([РегНомер])', context),
   '12/34-PRO'
 );

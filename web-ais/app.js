@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.286",
+    version: "1.7.287",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.287",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Функция «ТЕКСТ» в формулах новых DOCX обрабатывает маски дат, названия месяцев и числовые форматы Ассистента.",
+        "Служебные комментарии формул Ассистента больше не попадают в сформированные документы."
+      ]
+    },
     {
       version: "1.7.286",
       releasedAt: "2026-08-26",
@@ -3326,7 +3334,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: "Продление_обучения_#ФИО_обуч#_#N Договора#",
       saveFolderTemplate: studentDocumentsFolderTemplateMarker,
       generationFormat: "pdf",
-      useCustomDocumentProperties: "0",
+      useCustomDocumentProperties: "1",
       documentKind: "trainingExtension",
       markers: [
         "Email", "N Договора", "Адрес места регистрации", "Вид курсов",
@@ -3362,7 +3370,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: "Сокращение_обучения_#ФИО_обуч#_#N Договора#",
       saveFolderTemplate: studentDocumentsFolderTemplateMarker,
       generationFormat: "pdf",
-      useCustomDocumentProperties: "0",
+      useCustomDocumentProperties: "1",
       documentKind: "trainingReduction",
       markers: [
         "Email", "N Договора", "Адрес места регистрации", "Вид курсов",
@@ -6562,6 +6570,9 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!existing.saveFolderTemplate && defaultTemplate.saveFolderTemplate) existing.saveFolderTemplate = defaultTemplate.saveFolderTemplate;
         if (!existing.fields?.length && defaultTemplate.fields?.length) existing.fields = defaultTemplate.fields.map((field) => ({ ...field }));
         if (!existing.originalFields?.length && defaultTemplate.originalFields?.length) existing.originalFields = defaultTemplate.originalFields.map((field) => ({ ...field }));
+        if ([trainingExtensionDocumentTemplateId, trainingReductionDocumentTemplateId].includes(defaultTemplate.id)) {
+          existing.useCustomDocumentProperties = "1";
+        }
         if (defaultTemplate.documentKind === "employeeAct") {
           existing.fields = (existing.fields || []).filter((field) => String(field?.name || "").trim() !== "Фото");
           existing.originalFields = (existing.originalFields || []).filter((field) => String(field?.name || "").trim() !== "Фото");
