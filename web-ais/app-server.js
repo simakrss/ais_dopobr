@@ -1019,7 +1019,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled"
+  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-Local-Document-Revealed, X-Local-Document-Reveal-Error"
 };
 
 const MIME_TYPES = {
@@ -5310,11 +5310,6 @@ async function promptAndSaveStudentDocumentLocally(bytes, fileName, body, output
   if (!selectedPath) return { saved: false, cancelled: true, path: initialPath };
   await fs.mkdir(path.dirname(selectedPath), { recursive: true });
   await fs.writeFile(selectedPath, bytes);
-  try {
-    await revealFileInExplorer(selectedPath);
-  } catch (error) {
-    console.warn(`Не удалось показать сохранённый документ в Проводнике: ${error.message}`);
-  }
   return { saved: true, cancelled: false, path: selectedPath };
 }
 
@@ -25603,6 +25598,15 @@ async function sendGeneratedDocumentResponse(res, generated, body = {}) {
       } else {
         extraHeaders["X-Local-Document-Saved"] = "true";
         extraHeaders["X-Local-Document-Path"] = encodeURIComponent(localSaveResult.path);
+        if (body.openAfterGeneration === true) {
+          try {
+            await revealFileInExplorer(localSaveResult.path);
+            extraHeaders["X-Local-Document-Revealed"] = "true";
+          } catch (revealError) {
+            extraHeaders["X-Local-Document-Revealed"] = "false";
+            extraHeaders["X-Local-Document-Reveal-Error"] = encodeURIComponent(revealError.message);
+          }
+        }
       }
     } catch (saveError) {
       extraHeaders["X-Local-Document-Saved"] = "false";

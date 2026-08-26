@@ -109,7 +109,7 @@ function getRemoteServiceCorsHeaders(origin) {
     "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-Requested-With",
     "Access-Control-Allow-Private-Network": "true",
-    "Access-Control-Expose-Headers": "Content-Disposition, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-AIS-Processing",
+    "Access-Control-Expose-Headers": "Content-Disposition, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-Local-Document-Revealed, X-Local-Document-Reveal-Error, X-AIS-Processing",
     "Access-Control-Max-Age": "600",
     "Vary": "Origin, Access-Control-Request-Private-Network"
   };

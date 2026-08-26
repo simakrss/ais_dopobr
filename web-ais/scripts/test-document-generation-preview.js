@@ -365,7 +365,14 @@ assert.match(appSource, /hasCurrentPreviewDefault[\s\S]+\? isChecked\(item\?\.pr
 assert.match(appSource, /previewBeforeGenerationVersion:\s*documentPreviewDefaultVersion/u);
 assert.match(appSource, /data-document-preview-toggle/u);
 assert.match(appSource, />Предварительный просмотр</u);
+assert.match(appSource, /function getDefaultDocumentOpenAfterGeneration/u);
+assert.match(appSource, /\["contract", "employeeContract", "education"\]\.includes\(documentKind\)/u);
+assert.match(appSource, /data-document-open-after-generation-toggle/u);
+assert.match(appSource, />Открывать после генерации</u);
+assert.match(appSource, /openGeneratedDocumentAfterGeneration/u);
+assert.match(appSource, /selectedFileName:\s*savedFileName/u);
 assert.match(appSource, /skipPreview:\s*true/u, "Групповые операции не должны открывать окно для каждого слушателя");
+assert.match(appSource, /skipOpenAfterGeneration:\s*true/u, "Групповые операции должны открывать только первый сформированный документ");
 assert.match(appSource, /student-document-preview\/finalize/u);
 assert.match(appSource, /student-document-preview\/cancel/u);
 assert.match(appSource, /student-document-preview\/editor-start/u);
@@ -386,6 +393,15 @@ assert.ok(pipeline.indexOf("finishStudentDocumentGeneration") < pipeline.indexOf
 
 assert.match(serverSource, /if \(body\.previewOnly\)[\s\S]+registerGeneratedDocumentPreview/u);
 assert.match(serverSource, /handleGeneratedDocumentPreviewFinalize/u);
+assert.match(serverSource, /if \(body\.openAfterGeneration === true\)[\s\S]+await revealFileInExplorer\(localSaveResult\.path\)/u);
+const localPromptSaveStart = serverSource.indexOf("async function promptAndSaveStudentDocumentLocally");
+const localPromptSaveEnd = serverSource.indexOf("async function saveStudentDocumentLocally", localPromptSaveStart);
+assert.ok(localPromptSaveStart >= 0 && localPromptSaveEnd > localPromptSaveStart);
+assert.doesNotMatch(
+  serverSource.slice(localPromptSaveStart, localPromptSaveEnd),
+  /revealFileInExplorer/u,
+  "Открытие локального документа должно зависеть от настройки шаблона"
+);
 assert.match(serverSource, /X-Document-Preview-Token/u);
 assert.match(serverSource, /GENERATED_DOCUMENT_PREVIEW_TOKEN_PATTERN/u);
 assert.match(serverSource, /generatedDocumentPreviewCleanupTimer\?\.unref/u);

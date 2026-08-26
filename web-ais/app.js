@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.296",
+    version: "1.7.297",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.297",
+      releasedAt: "2026-08-26",
+      changes: [
+        "В контекстное меню кнопок формирования документов добавлена сохраняемая опция «Открывать после генерации»: локальный файл выделяется в Проводнике, а облачный — в окне WebDAV.",
+        "По умолчанию автоматическое открытие включено для договоров и документов об образовании."
+      ]
+    },
     {
       version: "1.7.296",
       releasedAt: "2026-08-26",
@@ -3365,6 +3373,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: "Заявление+договор_#ФИО_обуч#_#N Договора#",
       saveFolderTemplate: studentDocumentsFolderTemplateMarker,
       generationFormat: "pdf",
+      openAfterGeneration: true,
       previewBeforeGeneration: true,
       previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       useCustomDocumentProperties: "1",
@@ -3386,6 +3395,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: "Заявление_#ФИО_обуч#",
       saveFolderTemplate: studentDocumentsFolderTemplateMarker,
       generationFormat: "pdf",
+      openAfterGeneration: true,
       previewBeforeGeneration: true,
       previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       useCustomDocumentProperties: "1",
@@ -3669,6 +3679,10 @@ MAX - https://bizvmax.ru/zifra_plus
       saveFolderTemplate: definition.saveFolderTemplate || studentDocumentsFolderTemplateMarker,
       generationFormat: normalizeDocumentGenerationFormat(definition.generationFormat),
       generationFormatVersion: String(definition.generationFormatVersion || ""),
+      openAfterGeneration: getDefaultDocumentOpenAfterGeneration({
+        id: definition.id,
+        documentKind: definition.documentKind || "education"
+      }),
       previewBeforeGeneration: true,
       previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       useCustomDocumentProperties: String(definition.useCustomDocumentProperties ?? "1"),
@@ -3695,6 +3709,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: definition.fileNameTemplate,
       saveFolderTemplate: "Сотрудники/#ФИО#/Документы",
       generationFormat: "docx",
+      openAfterGeneration: getDefaultDocumentOpenAfterGeneration(definition),
       previewBeforeGeneration: true,
       previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       useCustomDocumentProperties: "0",
@@ -3724,6 +3739,7 @@ MAX - https://bizvmax.ru/zifra_plus
       originalFields: fields.map((field) => ({ ...field })),
       fieldsMode: "document-markers",
       source: "link",
+      openAfterGeneration: getDefaultDocumentOpenAfterGeneration(definition),
       previewBeforeGeneration: true,
       previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       programTypes: [],
@@ -3813,6 +3829,13 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function normalizeDocumentGenerationFormat(value) {
     return String(value || "").trim().toLowerCase() === "docx" ? "docx" : "pdf";
+  }
+
+  function getDefaultDocumentOpenAfterGeneration(documentTemplate = {}) {
+    const templateId = String(documentTemplate?.id || "").trim();
+    const documentKind = String(documentTemplate?.documentKind || "").trim();
+    return templateId === legalEntityApplicationDocumentTemplateId
+      || ["contract", "employeeContract", "education"].includes(documentKind);
   }
 
   function getDefaultDocumentEmailDeliveryMode(documentTemplate = {}) {
@@ -6706,6 +6729,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: contractTemplateSettingDefaults.find((setting) => setting.key === "fileNameTemplate")?.value || "документ_#ФИО_обуч#",
       saveFolderTemplate: studentDocumentsFolderTemplateMarker,
       generationFormat: "pdf",
+      openAfterGeneration: false,
       previewBeforeGeneration: true,
       previewBeforeGenerationVersion: documentPreviewDefaultVersion,
       useCustomDocumentProperties: "1",
@@ -6728,6 +6752,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const emailDefaultsSource = { ...fallback, ...(item || {}) };
     const hasEmailSubjectTemplate = Object.prototype.hasOwnProperty.call(item || {}, "emailSubjectTemplate");
     const hasEmailMessageTemplate = Object.prototype.hasOwnProperty.call(item || {}, "emailMessageTemplate");
+    const hasOpenAfterGeneration = Object.prototype.hasOwnProperty.call(item || {}, "openAfterGeneration");
     const hasCurrentPreviewDefault = String(item?.previewBeforeGenerationVersion || "")
       === documentPreviewDefaultVersion;
     return {
@@ -6746,6 +6771,9 @@ MAX - https://bizvmax.ru/zifra_plus
       generationFormatVersion: String(
         item?.generationFormatVersion || fallback.generationFormatVersion || ""
       ),
+      openAfterGeneration: hasOpenAfterGeneration
+        ? isChecked(item.openAfterGeneration)
+        : getDefaultDocumentOpenAfterGeneration({ ...fallback, ...(item || {}) }),
       emailDeliveryMode: normalizeDocumentEmailDeliveryMode(
         item?.emailDeliveryMode,
         emailDefaultsSource
@@ -44496,6 +44524,7 @@ MAX - https://bizvmax.ru/zifra_plus
   ) {
     const result = { success: 0, skipped: 0, failed: 0, details: [] };
     let firstLocalDocument = null;
+    let firstCloudDocument = null;
     const isGroupOrder = ["enrollmentOrder", "expulsionOrder"].includes(operation);
     let sharedOrderNo = "";
     if (isGroupOrder && autoFill && records.length) {
@@ -44592,7 +44621,8 @@ MAX - https://bizvmax.ru/zifra_plus
             storageRequest,
             skipEmailConfirmation: true,
             quietEmail: true,
-            skipPreview: true
+            skipPreview: true,
+            skipOpenAfterGeneration: true
           }
         );
       } catch (error) {
@@ -44615,11 +44645,28 @@ MAX - https://bizvmax.ru/zifra_plus
         ) {
           markStudentEventsCompleted(record, "educationDocMaketSent");
         }
-        if (!firstLocalDocument && generated.storageResult?.localSaveResult?.saved) {
+        if (
+          effectiveTemplate.openAfterGeneration
+          && !firstLocalDocument
+          && generated.storageResult?.localSaveResult?.saved
+        ) {
           const savedPath = String(generated.storageResult.localSaveResult.path || "")
             .replace(/\\/g, "/");
           firstLocalDocument = {
             folder: storageRequest.studentFolder,
+            fileName: savedPath.split("/").filter(Boolean).at(-1) || generated.fileName
+          };
+        }
+        if (
+          effectiveTemplate.openAfterGeneration
+          && !firstCloudDocument
+          && generated.storageResult?.yandexSaveResult?.saved
+        ) {
+          const savedPath = String(generated.storageResult.yandexSaveResult.path || "")
+            .replace(/\\/g, "/");
+          firstCloudDocument = {
+            folder: storageRequest.studentFolder,
+            studentName: storageRequest.studentName || record.name || "",
             fileName: savedPath.split("/").filter(Boolean).at(-1) || generated.fileName
           };
         }
@@ -44649,7 +44696,26 @@ MAX - https://bizvmax.ru/zifra_plus
         });
       }
     }
+    if (!firstLocalDocument && firstCloudDocument && revealGeneratedFile) {
+      try {
+        await openStudentWebDavDocumentsManager(
+          firstCloudDocument.folder,
+          firstCloudDocument.studentName,
+          {
+            selectedFileName: firstCloudDocument.fileName,
+            notice: `Документ «${firstCloudDocument.fileName}» сформирован и сохранён на Яндекс-Диск.`
+          }
+        );
+      } catch (error) {
+        result.details.push({
+          tone: "warning",
+          name: firstCloudDocument.fileName,
+          message: `Документы сохранены, но открыть облачную папку не удалось: ${error.message}`
+        });
+      }
+    }
     if (firstLocalDocument && !revealGeneratedFile) result.firstLocalDocument = firstLocalDocument;
+    if (firstCloudDocument && !revealGeneratedFile) result.firstCloudDocument = firstCloudDocument;
     const persistenceNotice = await persistStudentBulkChanges();
     if (persistenceNotice) {
       result.notice = [result.notice, persistenceNotice].filter(Boolean).join(" ");
@@ -44865,6 +44931,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const result = { success: 0, skipped: 0, failed: 0, details: [], notices: [] };
     let completedSteps = 0;
     let firstLocalDocument = null;
+    let firstCloudDocument = null;
     for (let index = 0; index < operations.length; index += 1) {
       const operation = operations[index];
       const currentRecords = getRecords(recordIds);
@@ -44888,6 +44955,9 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!firstLocalDocument && operationResult.firstLocalDocument) {
           firstLocalDocument = operationResult.firstLocalDocument;
         }
+        if (!firstCloudDocument && operationResult.firstCloudDocument) {
+          firstCloudDocument = operationResult.firstCloudDocument;
+        }
         mergeStudentBulkOperationResult(result, operation, operationResult);
       } catch (error) {
         result.failed += currentRecords.length;
@@ -44909,7 +44979,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     result.notice = result.notices.join(" ");
     delete result.notices;
-    return { result, firstLocalDocument };
+    return { result, firstLocalDocument, firstCloudDocument };
   }
 
   function openStudentBulkOperationsDialog() {
@@ -45151,7 +45221,7 @@ MAX - https://bizvmax.ru/zifra_plus
               : `Операция ${operationIndex + 1} из ${operationCount} · ${label}`;
           }
         });
-        const { result, firstLocalDocument } = execution;
+        const { result, firstLocalDocument, firstCloudDocument } = execution;
         if (firstLocalDocument) {
           try {
             await revealStudentBulkDocument(firstLocalDocument.folder, firstLocalDocument.fileName);
@@ -45160,6 +45230,24 @@ MAX - https://bizvmax.ru/zifra_plus
               tone: "warning",
               name: firstLocalDocument.fileName,
               message: `Документы сохранены, но не удалось выделить первый файл в Проводнике: ${error.message}`
+            });
+          }
+        }
+        if (!firstLocalDocument && firstCloudDocument) {
+          try {
+            await openStudentWebDavDocumentsManager(
+              firstCloudDocument.folder,
+              firstCloudDocument.studentName,
+              {
+                selectedFileName: firstCloudDocument.fileName,
+                notice: `Документ «${firstCloudDocument.fileName}» сформирован и сохранён на Яндекс-Диск.`
+              }
+            );
+          } catch (error) {
+            result.details.push({
+              tone: "warning",
+              name: firstCloudDocument.fileName,
+              message: `Документы сохранены, но открыть облачную папку не удалось: ${error.message}`
             });
           }
         }
@@ -45447,6 +45535,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fileNameTemplate: normalized.fileNameTemplate,
       saveFolderTemplate: normalized.saveFolderTemplate,
       generationFormat: normalized.generationFormat,
+      openAfterGeneration: normalized.openAfterGeneration,
       previewBeforeGeneration: normalized.previewBeforeGeneration,
       emailDeliveryMode: normalized.emailDeliveryMode,
       emailSubjectTemplate: normalized.emailSubjectTemplate,
@@ -53480,6 +53569,7 @@ MAX - https://bizvmax.ru/zifra_plus
       documentTemplate
     );
     const previewBeforeGeneration = Boolean(documentTemplate.previewBeforeGeneration);
+    const openAfterGeneration = Boolean(documentTemplate.openAfterGeneration);
     const menuTitle = String(options.title || documentTemplate.title || "Документ").trim();
     const recipientLabel = String(options.recipientLabel || "слушателю").trim();
     const menu = document.createElement("div");
@@ -53513,6 +53603,11 @@ MAX - https://bizvmax.ru/zifra_plus
       <button data-document-preview-toggle type="button" aria-pressed="${previewBeforeGeneration}">
         <span class="student-document-action-menu-check" aria-hidden="true">${previewBeforeGeneration ? "✓" : ""}</span>
         <span>Предварительный просмотр</span>
+      </button>
+      <div class="student-document-action-menu-label">После выполнения</div>
+      <button data-document-open-after-generation-toggle type="button" aria-pressed="${openAfterGeneration}">
+        <span class="student-document-action-menu-check" aria-hidden="true">${openAfterGeneration ? "✓" : ""}</span>
+        <span>Открывать после генерации</span>
       </button>
       <div class="student-document-action-menu-separator"></div>
       <button data-action="check-student-document-data" type="button">
@@ -53562,6 +53657,15 @@ MAX - https://bizvmax.ru/zifra_plus
         documentTemplate.id,
         { previewBeforeGeneration: enabled },
         `Предварительный просмотр: ${enabled ? "включён" : "выключен"}`,
+        options.relatedDocumentTemplateIds
+      );
+    });
+    menu.querySelector("[data-document-open-after-generation-toggle]")?.addEventListener("click", () => {
+      const enabled = !openAfterGeneration;
+      updateDocumentTemplateActionSetting(
+        documentTemplate.id,
+        { openAfterGeneration: enabled },
+        `Открытие после генерации: ${enabled ? "включено" : "выключено"}`,
         options.relatedDocumentTemplateIds
       );
     });
@@ -54038,6 +54142,7 @@ MAX - https://bizvmax.ru/zifra_plus
         saveToYandexDisk: false,
         promptLocalSave: false,
         useBrowserDownloads: true,
+        openAfterGeneration: Boolean(documentTemplate.openAfterGeneration),
         studentFolder: "",
         studentName: String(record?.name || "")
       };
@@ -54048,6 +54153,7 @@ MAX - https://bizvmax.ru/zifra_plus
       saveToYandexDisk: recommendedSaveEnabled && !useLocalDocuments,
       promptLocalSave: useLocalDocuments,
       useBrowserDownloads: false,
+      openAfterGeneration: Boolean(documentTemplate.openAfterGeneration),
       studentFolder: getStudentDocumentStorageFolder(record, documentTemplate),
       studentName: String(record?.name || "")
     };
@@ -54063,13 +54169,14 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
-  function getEmployeeDocumentStorageRequest(record) {
+  function getEmployeeDocumentStorageRequest(record, documentTemplate = {}) {
     const recommendedSaveEnabled = Boolean(state.data.meta.yandexDiskAutoSave);
     const useLocalDocuments = getEffectiveLocalDocumentsMode();
     return {
       saveToYandexDisk: recommendedSaveEnabled && !useLocalDocuments,
       promptLocalSave: useLocalDocuments,
       useBrowserDownloads: false,
+      openAfterGeneration: Boolean(documentTemplate.openAfterGeneration),
       studentFolder: getContractDocumentsFolder(record),
       studentName: String(record?.name || "")
     };
@@ -54091,7 +54198,13 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     };
     if (saved === "true") {
-      return { saved: true, path: decodeHeader("X-Local-Document-Path") };
+      const revealHeader = response.headers.get("X-Local-Document-Revealed");
+      return {
+        saved: true,
+        path: decodeHeader("X-Local-Document-Path"),
+        revealed: revealHeader === null ? null : revealHeader === "true",
+        revealError: decodeHeader("X-Local-Document-Reveal-Error")
+      };
     }
     if (response.headers.get("X-Local-Document-Cancelled") === "true") {
       return { saved: false, cancelled: true };
@@ -54256,6 +54369,16 @@ MAX - https://bizvmax.ru/zifra_plus
     );
     const blob = generatedBlob || await response.blob();
     if (localSaveResult?.saved || localSaveResult?.cancelled) {
+      if (
+        localSaveResult.saved
+        && storageRequest.openAfterGeneration
+        && localSaveResult.revealed === false
+      ) {
+        showDocumentGenerationNotice(
+          `Документ сохранён, но выделить его в Проводнике не удалось${localSaveResult.revealError ? `: ${localSaveResult.revealError}` : "."}`,
+          "warning"
+        );
+      }
       return { localSaveResult, yandexSaveResult, downloaded: false };
     }
     if (yandexSaveResult?.saved) {
@@ -54300,6 +54423,41 @@ MAX - https://bizvmax.ru/zifra_plus
       throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
     }
     return true;
+  }
+
+  async function openGeneratedDocumentAfterGeneration(
+    documentTemplate,
+    record,
+    storageRequest,
+    storageResult,
+    fallbackFileName
+  ) {
+    if (!documentTemplate.openAfterGeneration || !storageRequest.openAfterGeneration) return false;
+    if (storageResult?.localSaveResult?.saved) return true;
+    const yandexSaveResult = storageResult?.yandexSaveResult;
+    if (!yandexSaveResult?.saved || !storageRequest.studentFolder) return false;
+    const savedFileName = String(yandexSaveResult.path || "")
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter(Boolean)
+      .at(-1) || fallbackFileName;
+    try {
+      await openStudentWebDavDocumentsManager(
+        storageRequest.studentFolder,
+        String(storageRequest.studentName || record?.name || "").trim(),
+        {
+          selectedFileName: savedFileName,
+          notice: `Документ «${savedFileName}» сформирован и сохранён на Яндекс-Диск.`
+        }
+      );
+      return true;
+    } catch (error) {
+      showDocumentGenerationNotice(
+        `Документ сохранён, но открыть его в облачной папке не удалось: ${error.message}`,
+        "warning"
+      );
+      return false;
+    }
   }
 
   function getGeneratedDocumentResponseDetails(response, requestedFileName, requestedFormat) {
@@ -54840,12 +54998,17 @@ MAX - https://bizvmax.ru/zifra_plus
         documentTemplate,
         fileName
       );
-      const storageRequest = prepareDocumentStorageRequestForEmail(requestedStorage, emailRequest);
-      if (!storageRequest) {
+      const preparedStorage = prepareDocumentStorageRequestForEmail(requestedStorage, emailRequest);
+      if (!preparedStorage) {
         await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
         pendingPreviewToken = "";
         return;
       }
+      const storageRequest = {
+        ...preparedStorage,
+        openAfterGeneration: Boolean(documentTemplate.openAfterGeneration)
+          && options.skipOpenAfterGeneration !== true
+      };
       const finalizingPreview = Boolean(pendingPreviewToken);
       setDocumentGenerationStatus(
         generationTaskId,
@@ -54933,6 +55096,16 @@ MAX - https://bizvmax.ru/zifra_plus
           skipConfirmation: true,
           quiet: options.quietEmail === true
         });
+      }
+      if (storageRequest.openAfterGeneration) {
+        setDocumentGenerationStatus(generationTaskId, `Открытие документа: ${responseDetails.fileName}`);
+        await openGeneratedDocumentAfterGeneration(
+          documentTemplate,
+          record,
+          storageRequest,
+          storageResult,
+          responseDetails.fileName
+        );
       }
       if (responseDetails.conversionFallback) {
         showDocumentGenerationNotice(
@@ -55573,7 +55746,7 @@ MAX - https://bizvmax.ru/zifra_plus
         entityType: "contracts",
         auditArea: "Документы сотрудника",
         messageType: "Договор сотрудника",
-        storageRequest: getEmployeeDocumentStorageRequest(record)
+        storageRequest: getEmployeeDocumentStorageRequest(record, documentTemplate)
       }
     );
   }
@@ -55637,7 +55810,7 @@ MAX - https://bizvmax.ru/zifra_plus
         entityType: "contracts",
         auditArea: "Документы сотрудника",
         messageType: "Акт оказанных услуг",
-        storageRequest: getEmployeeDocumentStorageRequest(record)
+        storageRequest: getEmployeeDocumentStorageRequest(record, documentTemplate)
       }
     );
     if (result?.emailed) markEmployeeActPaymentRowsAsSent(record);
