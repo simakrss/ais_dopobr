@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.305",
+    version: "1.7.306",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.306",
+      releasedAt: "2026-08-26",
+      changes: [
+        "В верхней панели появился процентный индикатор обмена с общей MySQL-базой с текущим этапом операции.",
+        "Индикатор учитывает получение данных и продолжает показывать ход серверной обработки, чтобы длительная синхронизация не выглядела зависшей."
+      ]
+    },
     {
       version: "1.7.305",
       releasedAt: "2026-08-26",
@@ -2573,6 +2581,9 @@
   const BROWSER_OFFLINE_RECOVERY_KEY = "shared-state-recovery";
   const BROWSER_OFFLINE_MODE_STORAGE_KEY = "ais-dopobr-web-offline-storage-v1";
   const SHARED_STATE_SAVE_DELAY_MS = 700;
+  const SHARED_STATE_PROGRESS_TICK_MS = 700;
+  const SHARED_STATE_PROGRESS_COMPLETE_VISIBLE_MS = 1400;
+  const SHARED_STATE_PROGRESS_ERROR_VISIBLE_MS = 4000;
   const EMPLOYEE_PAYMENT_PERSIST_DELAY_MS = 120;
   const SHARED_STATE_POLL_INTERVAL_MS = 1000;
   const RECORD_LOCK_POLL_INTERVAL_MS = 1000;
@@ -5593,6 +5604,19 @@ MAX - https://bizvmax.ru/zifra_plus
   let sharedStateChangeGeneration = 0;
   let sharedStatePersistedGeneration = 0;
   let sharedStatePollRunning = false;
+  let sharedStateProgressTimer = 0;
+  let sharedStateProgressHideTimer = 0;
+  let sharedStateProgressSequence = 0;
+  let sharedStateLastResponseBytes = 0;
+  let sharedStateTransferProgress = {
+    id: 0,
+    active: false,
+    failed: false,
+    percent: 0,
+    operation: "",
+    message: "",
+    startedAt: 0
+  };
   let sharedStateBaseData = null;
   let sharedStatePendingPatch = sharedStateRecovery.pendingPatch;
   let recordLocks = new Map();
@@ -8291,26 +8315,194 @@ MAX - https://bizvmax.ru/zifra_plus
     return ensureDataShape(next);
   }
 
+  function estimateSharedApplicationStateTransferBytes() {
+    if (sharedStateLastResponseBytes > 0) return sharedStateLastResponseBytes;
+    try {
+      return Math.max(256 * 1024, new Blob([JSON.stringify(state.data)]).size + 64 * 1024);
+    } catch {
+      return 4 * 1024 * 1024;
+    }
+  }
+
+  function updateSharedStateTransferProgress(progressId, percent, message = "") {
+    if (!progressId || sharedStateTransferProgress.id !== progressId) return;
+    const normalizedPercent = Math.max(
+      sharedStateTransferProgress.percent,
+      Math.min(100, Math.round(Number(percent) || 0))
+    );
+    sharedStateTransferProgress = {
+      ...sharedStateTransferProgress,
+      percent: normalizedPercent,
+      message: String(message || sharedStateTransferProgress.message || "").trim()
+    };
+    updateSharedStateStatusUi();
+  }
+
+  function beginSharedStateTransferProgress(operation, message = "") {
+    window.clearInterval(sharedStateProgressTimer);
+    window.clearTimeout(sharedStateProgressHideTimer);
+    const progressId = ++sharedStateProgressSequence;
+    sharedStateTransferProgress = {
+      id: progressId,
+      active: true,
+      failed: false,
+      percent: 3,
+      operation: String(operation || "Синхронизация общей MySQL-базы").trim(),
+      message: String(message || "Подключение к общей MySQL-базе").trim(),
+      startedAt: Date.now()
+    };
+    updateSharedStateStatusUi();
+    sharedStateProgressTimer = window.setInterval(() => {
+      if (!sharedStateTransferProgress.active || sharedStateTransferProgress.id !== progressId) return;
+      const current = sharedStateTransferProgress.percent;
+      const next = current < 89
+        ? Math.min(89, current + Math.max(1, Math.ceil((89 - current) * 0.08)))
+        : current;
+      const elapsedSeconds = Math.max(1, Math.floor((Date.now() - sharedStateTransferProgress.startedAt) / 1000));
+      updateSharedStateTransferProgress(
+        progressId,
+        next,
+        `Обработка запроса MySQL · ${elapsedSeconds} с`
+      );
+    }, SHARED_STATE_PROGRESS_TICK_MS);
+    return progressId;
+  }
+
+  function finishSharedStateTransferProgress(progressId, message = "Синхронизация завершена") {
+    if (!progressId || sharedStateTransferProgress.id !== progressId) return;
+    window.clearInterval(sharedStateProgressTimer);
+    sharedStateProgressTimer = 0;
+    sharedStateTransferProgress = {
+      ...sharedStateTransferProgress,
+      active: true,
+      failed: false,
+      percent: 100,
+      message: String(message || "Синхронизация завершена").trim()
+    };
+    updateSharedStateStatusUi();
+    sharedStateProgressHideTimer = window.setTimeout(() => {
+      if (sharedStateTransferProgress.id !== progressId) return;
+      sharedStateTransferProgress = { ...sharedStateTransferProgress, active: false };
+      sharedStateProgressHideTimer = 0;
+      updateSharedStateStatusUi();
+    }, SHARED_STATE_PROGRESS_COMPLETE_VISIBLE_MS);
+  }
+
+  function failSharedStateTransferProgress(progressId, message = "Синхронизация прервана") {
+    if (!progressId || sharedStateTransferProgress.id !== progressId) return;
+    window.clearInterval(sharedStateProgressTimer);
+    sharedStateProgressTimer = 0;
+    sharedStateTransferProgress = {
+      ...sharedStateTransferProgress,
+      active: true,
+      failed: true,
+      message: String(message || "Синхронизация прервана").trim()
+    };
+    updateSharedStateStatusUi();
+    sharedStateProgressHideTimer = window.setTimeout(() => {
+      if (sharedStateTransferProgress.id !== progressId) return;
+      sharedStateTransferProgress = { ...sharedStateTransferProgress, active: false };
+      sharedStateProgressHideTimer = 0;
+      updateSharedStateStatusUi();
+    }, SHARED_STATE_PROGRESS_ERROR_VISIBLE_MS);
+  }
+
+  async function readSharedApplicationStateResponse(response, progressId, progressOptions = {}) {
+    if (!progressId || !response.body?.getReader) {
+      const payload = await response.json().catch(() => ({}));
+      if (progressId) updateSharedStateTransferProgress(progressId, 98, "Проверка ответа общей базы");
+      return payload;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const chunks = [];
+    let loadedBytes = 0;
+    const contentLength = Math.max(0, Number(response.headers.get("Content-Length")) || 0);
+    const expectedBytes = contentLength || Math.max(
+      256 * 1024,
+      Number(progressOptions.expectedBytes) || estimateSharedApplicationStateTransferBytes()
+    );
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      loadedBytes += value.byteLength;
+      chunks.push(decoder.decode(value, { stream: true }));
+      const ratio = Math.min(1, loadedBytes / expectedBytes);
+      updateSharedStateTransferProgress(
+        progressId,
+        90 + Math.round(ratio * 8),
+        progressOptions.responseMessage || "Получение данных общей MySQL-базы"
+      );
+    }
+    chunks.push(decoder.decode());
+    if (loadedBytes > 0) sharedStateLastResponseBytes = loadedBytes;
+    updateSharedStateTransferProgress(progressId, 98, "Проверка ответа общей базы");
+    try {
+      return JSON.parse(chunks.join(""));
+    } catch {
+      return {};
+    }
+  }
+
   async function requestSharedApplicationState(pathname = "", options = {}) {
     const suffix = String(pathname || "").replace(/^\?/, "");
-    const response = await fetch(photoApiUrl(`/api/shared-state${suffix ? `?${suffix}` : ""}`), {
-      credentials: "same-origin",
-      cache: "no-store",
-      ...options,
-      headers: {
-        ...(options.body ? { "Content-Type": "application/json" } : {}),
-        "X-Requested-With": "AIS-Web",
-        ...(options.headers || {})
+    const { sharedStateProgress: requestedProgress, ...requestOptions } = options || {};
+    const progressOptions = requestedProgress && typeof requestedProgress === "object"
+      ? requestedProgress
+      : null;
+    const method = String(requestOptions.method || "GET").trim().toUpperCase();
+    const progressId = progressOptions
+      ? beginSharedStateTransferProgress(
+        progressOptions.operation,
+        progressOptions.message || (method === "POST"
+          ? "Передача изменений общей MySQL-базе"
+          : "Запрос данных общей MySQL-базы")
+      )
+      : 0;
+    if (progressId) updateSharedStateTransferProgress(progressId, method === "POST" ? 8 : 6);
+    try {
+      const response = await fetch(photoApiUrl(`/api/shared-state${suffix ? `?${suffix}` : ""}`), {
+        credentials: "same-origin",
+        cache: "no-store",
+        ...requestOptions,
+        headers: {
+          ...(requestOptions.body ? { "Content-Type": "application/json" } : {}),
+          "X-Requested-With": "AIS-Web",
+          ...(requestOptions.headers || {})
+        }
+      });
+      if (progressId) {
+        updateSharedStateTransferProgress(
+          progressId,
+          90,
+          progressOptions.responseMessage || "Получение ответа общей MySQL-базы"
+        );
       }
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(payload.error || `Ошибка общей базы: ${response.status}`);
-      error.status = response.status;
-      error.payload = payload;
+      const payload = progressId
+        ? await readSharedApplicationStateResponse(response, progressId, progressOptions)
+        : await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(payload.error || `Ошибка общей базы: ${response.status}`);
+        error.status = response.status;
+        error.payload = payload;
+        throw error;
+      }
+      if (progressId) {
+        finishSharedStateTransferProgress(
+          progressId,
+          progressOptions.completeMessage || "Синхронизация общей MySQL-базы завершена"
+        );
+      }
+      return payload;
+    } catch (error) {
+      if (progressId) {
+        failSharedStateTransferProgress(
+          progressId,
+          progressOptions.errorMessage || "Обмен с общей MySQL-базой прерван"
+        );
+      }
       throw error;
     }
-    return payload;
   }
 
   function persistSharedStateRecovery() {
@@ -8351,6 +8543,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getSharedStateStatusTone() {
+    if (sharedStateTransferProgress.active && !sharedStateTransferProgress.failed) return "saving";
     if (sharedStateConflict) return "conflict";
     if (sharedStateOffline || !sharedStateReady) return "offline";
     if (sharedStateDirty || sharedStateSaveRunning) return "saving";
@@ -8370,17 +8563,12 @@ MAX - https://bizvmax.ru/zifra_plus
     return "Общая MySQL-база подключена";
   }
 
-  function updateSharedStateStatusUi() {
-    const pill = document.querySelector(".shared-state-pill");
-    if (!pill) return;
-    const tone = getSharedStateStatusTone();
-    const label = getSharedStateStatusLabel(tone);
-    const dot = document.createElement("span");
-    dot.className = "shared-state-dot";
-    dot.setAttribute("aria-hidden", "true");
-    pill.className = `source-pill shared-state-pill tone-${tone}`;
-    pill.title = [
-      label,
+  function getSharedStateStatusTitle(label = getSharedStateStatusLabel()) {
+    return [
+      sharedStateTransferProgress.active ? sharedStateTransferProgress.operation : "",
+      sharedStateTransferProgress.active
+        ? `${sharedStateTransferProgress.message}: ${sharedStateTransferProgress.percent}%`
+        : label,
       sharedStateRevision ? `Ревизия: ${sharedStateRevision}` : "",
       sharedStateSource ? `Источник: ${sharedStateSource}` : "",
       sharedStatePendingCount ? `Ожидают выгрузки: ${sharedStatePendingCount}` : "",
@@ -8389,7 +8577,72 @@ MAX - https://bizvmax.ru/zifra_plus
       sharedStateUpdatedBy ? `Последнее изменение: ${sharedStateUpdatedBy}` : "",
       sharedStateUpdatedAt ? formatDateTimeRu(sharedStateUpdatedAt) : ""
     ].filter(Boolean).join("\n");
-    pill.replaceChildren(dot, document.createTextNode(label));
+  }
+
+  function renderSharedStateStatusContents(label = getSharedStateStatusLabel()) {
+    if (!sharedStateTransferProgress.active) {
+      return `
+        <span class="shared-state-dot" aria-hidden="true"></span>
+        <span class="shared-state-label">${escapeHtml(label)}</span>
+      `;
+    }
+    const percent = Math.max(0, Math.min(100, Math.round(sharedStateTransferProgress.percent || 0)));
+    return `
+      <span class="shared-state-dot" aria-hidden="true"></span>
+      <span class="shared-state-progress-copy">
+        <span class="shared-state-label">${escapeHtml(sharedStateTransferProgress.message || label)}</span>
+        <span class="shared-state-progress-track" aria-hidden="true">
+          <span class="shared-state-progress-fill" style="width:${percent}%"></span>
+        </span>
+      </span>
+      <strong class="shared-state-progress-value">${percent}%</strong>
+    `;
+  }
+
+  function updateSharedStateStartupProgressUi() {
+    const loadingCard = document.querySelector(".auth-loading-card");
+    if (!loadingCard) return;
+    let progress = loadingCard.querySelector("[data-shared-state-startup-progress]");
+    if (!sharedStateTransferProgress.active) {
+      progress?.remove();
+      loadingCard.classList.remove("has-shared-state-progress");
+      return;
+    }
+    loadingCard.classList.add("has-shared-state-progress");
+    if (!progress) {
+      progress = document.createElement("div");
+      progress.className = "shared-state-startup-progress";
+      progress.dataset.sharedStateStartupProgress = "";
+      loadingCard.appendChild(progress);
+    }
+    const percent = Math.max(0, Math.min(100, Math.round(sharedStateTransferProgress.percent || 0)));
+    progress.innerHTML = `
+      <span>${escapeHtml(sharedStateTransferProgress.message || "Загрузка общей MySQL-базы")}</span>
+      <span class="shared-state-progress-track" aria-hidden="true">
+        <span class="shared-state-progress-fill" style="width:${percent}%"></span>
+      </span>
+      <strong>${percent}%</strong>
+    `;
+  }
+
+  function updateSharedStateStatusUi() {
+    updateSharedStateStartupProgressUi();
+    const pill = document.querySelector(".shared-state-pill");
+    if (!pill) return;
+    const tone = getSharedStateStatusTone();
+    const label = getSharedStateStatusLabel(tone);
+    pill.className = [
+      "source-pill",
+      "shared-state-pill",
+      `tone-${tone}`,
+      sharedStateTransferProgress.active ? "has-progress" : "",
+      sharedStateTransferProgress.failed ? "is-failed" : ""
+    ].filter(Boolean).join(" ");
+    pill.title = getSharedStateStatusTitle(label);
+    pill.innerHTML = renderSharedStateStatusContents(label);
+    pill.setAttribute("aria-label", sharedStateTransferProgress.active
+      ? `${sharedStateTransferProgress.message}, ${sharedStateTransferProgress.percent}%`
+      : label);
   }
 
   function applySharedApplicationState(payload, { renderAfter = false } = {}) {
@@ -8424,7 +8677,13 @@ MAX - https://bizvmax.ru/zifra_plus
     try {
       const payload = await requestSharedApplicationState("", {
         method: "POST",
-        body: JSON.stringify({ baseRevision: 0, data: state.data })
+        body: JSON.stringify({ baseRevision: 0, data: state.data }),
+        sharedStateProgress: {
+          operation: "Создание общей MySQL-базы",
+          message: "Передача исходных данных в MySQL",
+          responseMessage: "Получение созданной общей базы",
+          completeMessage: "Общая MySQL-база создана"
+        }
       });
       sharedStateRevision = Math.max(0, Number(payload.revision) || 0);
       sharedStateVersionTag = String(payload.versionTag || "");
@@ -8441,14 +8700,26 @@ MAX - https://bizvmax.ru/zifra_plus
       return true;
     } catch (error) {
       if (error.status !== 409) throw error;
-      const current = await requestSharedApplicationState();
+      const current = await requestSharedApplicationState("", {
+        sharedStateProgress: {
+          operation: "Загрузка общей MySQL-базы",
+          message: "Получение существующей общей базы",
+          completeMessage: "Общая MySQL-база загружена"
+        }
+      });
       applySharedApplicationState(current);
       return false;
     }
   }
 
   async function initializeSharedApplicationState() {
-    const payload = await requestSharedApplicationState();
+    const payload = await requestSharedApplicationState("", {
+      sharedStateProgress: {
+        operation: "Загрузка общей MySQL-базы",
+        message: "Подключение к общей MySQL-базе",
+        completeMessage: "Общая MySQL-база загружена"
+      }
+    });
     if (payload.exists) {
       applySharedApplicationState(payload);
       sharedStateReady = payload.writable !== false;
@@ -8529,7 +8800,13 @@ MAX - https://bizvmax.ru/zifra_plus
           clientId: recordLockClientId,
           ...(strictRevision ? { strictRevision: true } : {}),
           ...(syncCommitToken ? { syncCommitToken } : {})
-        })
+        }),
+        sharedStateProgress: {
+          operation: "Синхронизация общей MySQL-базы",
+          message: "Передача изменений в MySQL",
+          responseMessage: "Получение подтверждённых данных",
+          completeMessage: "Изменения сохранены в общей MySQL-базе"
+        }
       });
       sharedStateRevision = Math.max(0, Number(payload.revision) || sharedStateRevision);
       sharedStateVersionTag = String(payload.versionTag || sharedStateVersionTag);
@@ -8648,7 +8925,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function reloadSharedApplicationState({ renderAfter = true } = {}) {
-    const payload = await requestSharedApplicationState();
+    const payload = await requestSharedApplicationState("", {
+      sharedStateProgress: {
+        operation: "Обновление общей MySQL-базы",
+        message: "Получение изменений из MySQL",
+        completeMessage: "Изменения общей MySQL-базы загружены"
+      }
+    });
     if (!payload.exists) throw new Error("Общая база не найдена.");
     applySharedApplicationState(payload, { renderAfter });
     sharedStateReady = payload.writable !== false;
@@ -9833,14 +10116,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const authUser = getCurrentAuthUser();
     const sharedStateTone = getSharedStateStatusTone();
     const sharedStateLabel = getSharedStateStatusLabel(sharedStateTone);
-    const sharedStateTitle = [
-      sharedStateLabel,
-      sharedStateRevision ? `Ревизия: ${sharedStateRevision}` : "",
-      sharedStateSource ? `Источник: ${sharedStateSource}` : "",
-      sharedStatePendingCount ? `Ожидают выгрузки: ${sharedStatePendingCount}` : "",
-      sharedStateUpdatedBy ? `Последнее изменение: ${sharedStateUpdatedBy}` : "",
-      sharedStateUpdatedAt ? formatDateTimeRu(sharedStateUpdatedAt) : ""
-    ].filter(Boolean).join("\n");
+    const sharedStateTitle = getSharedStateStatusTitle(sharedStateLabel);
     app.innerHTML = `
       <aside class="sidebar">
         <div class="brand">
@@ -9867,9 +10143,14 @@ MAX - https://bizvmax.ru/zifra_plus
             <h1>${current.label}</h1>
           </div>
           <div class="top-actions">
-            <span class="source-pill shared-state-pill tone-${sharedStateTone}" title="${escapeMultilineAttr(sharedStateTitle)}">
-              <span class="shared-state-dot" aria-hidden="true"></span>
-              ${escapeHtml(sharedStateLabel)}
+            <span
+              class="source-pill shared-state-pill tone-${sharedStateTone} ${sharedStateTransferProgress.active ? "has-progress" : ""} ${sharedStateTransferProgress.failed ? "is-failed" : ""}"
+              title="${escapeMultilineAttr(sharedStateTitle)}"
+              role="status"
+              aria-live="polite"
+              aria-label="${escapeAttr(sharedStateTransferProgress.active ? `${sharedStateTransferProgress.message}, ${sharedStateTransferProgress.percent}%` : sharedStateLabel)}"
+            >
+              ${renderSharedStateStatusContents(sharedStateLabel)}
             </span>
             <button class="account-button" data-action="open-profile" type="button" title="Открыть личный кабинет">
               <span class="account-avatar">${escapeHtml(initials(authUser.name || authUser.login || "П"))}</span>
