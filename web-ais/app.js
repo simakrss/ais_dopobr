@@ -89,10 +89,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.294",
+    version: "1.7.295",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.295",
+      releasedAt: "2026-08-26",
+      changes: [
+        "Кнопка «Сбросить» в реестре выданных документов очищает фильтр ФРДО и показывает записи со всеми состояниями выгрузки."
+      ]
+    },
     {
       version: "1.7.294",
       releasedAt: "2026-08-26",
@@ -12875,6 +12882,21 @@ MAX - https://bizvmax.ru/zifra_plus
     state.issuedDocumentViewInitialized = true;
     state.tablePages.issuedDocuments = 1;
     return openingView;
+  }
+
+  function resetIssuedDocumentRegistryFilters() {
+    state.issuedDocumentFilters = {
+      documentNumber: "",
+      issueDateFrom: "",
+      issueDateTo: "",
+      frdo: "",
+      student: "",
+      program: "",
+      programType: ""
+    };
+    state.issuedDocumentAutoFallback = false;
+    state.issuedDocumentViewInitialized = true;
+    state.tablePages.issuedDocuments = 1;
   }
 
   function buildIssuedDocumentFrdoExportRecords() {
@@ -32301,7 +32323,7 @@ MAX - https://bizvmax.ru/zifra_plus
         });
       });
       issuedDocumentsRegister.querySelector("[data-action='reset-issued-document-filters']")?.addEventListener("click", () => {
-        prepareIssuedDocumentsRegistryOnOpen();
+        resetIssuedDocumentRegistryFilters();
         render();
       });
       issuedDocumentsRegister.querySelector("[data-action='export-issued-documents-frdo']")?.addEventListener("click", (event) => {

@@ -4,8 +4,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const appSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
-const stylesSource = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+const appSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8").replace(/\r\n/g, "\n");
+const stylesSource = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8").replace(/\r\n/g, "\n");
 
 const helperStart = appSource.indexOf("  function getIssuedDocumentsOpeningView");
 const helperEnd = appSource.indexOf("\n\n  function prepareIssuedDocumentsRegistryOnOpen", helperStart);
@@ -57,12 +57,45 @@ assert.equal(
   "Не подходящие для выгрузки записи не должны блокировать резервный режим"
 );
 
+const resetHelperStart = appSource.indexOf("  function resetIssuedDocumentRegistryFilters");
+const resetHelperEnd = appSource.indexOf("\n\n  function buildIssuedDocumentFrdoExportRecords", resetHelperStart);
+assert.ok(resetHelperStart >= 0 && resetHelperEnd > resetHelperStart, "Не найден сброс фильтров реестра ФРДО");
+const resetState = {
+  issuedDocumentFilters: { frdo: "pending", student: "Иванов" },
+  issuedDocumentAutoFallback: true,
+  issuedDocumentViewInitialized: false,
+  tablePages: { issuedDocuments: 4 }
+};
+const runReset = new Function(
+  "state",
+  `${appSource.slice(resetHelperStart, resetHelperEnd)}\nresetIssuedDocumentRegistryFilters();\nreturn state;`
+);
+runReset(resetState);
+assert.deepEqual(resetState.issuedDocumentFilters, {
+  documentNumber: "",
+  issueDateFrom: "",
+  issueDateTo: "",
+  frdo: "",
+  student: "",
+  program: "",
+  programType: ""
+});
+assert.equal(resetState.issuedDocumentAutoFallback, false);
+assert.equal(resetState.issuedDocumentViewInitialized, true);
+assert.equal(resetState.tablePages.issuedDocuments, 1);
+
 assert.match(appSource, /if \(!state\.issuedDocumentViewInitialized\) prepareIssuedDocumentsRegistryOnOpen\(allRows\)/u);
 assert.match(appSource, /state\.issuedDocumentFilters = \{[\s\S]*frdo: openingView\.frdo/u);
 assert.match(appSource, /state\.issuedDocumentSort = \{ \.\.\.openingView\.sort \}/u);
 assert.match(appSource, /state\.issuedDocumentAutoFallback = openingView\.autoFallback/u);
 assert.match(appSource, /if \(state\.view === "issuedDocuments"\) prepareIssuedDocumentsRegistryOnOpen\(\)/u);
-assert.match(appSource, /data-action='reset-issued-document-filters'[\s\S]*prepareIssuedDocumentsRegistryOnOpen\(\)/u);
+assert.match(appSource, /function resetIssuedDocumentRegistryFilters\(\)[\s\S]*frdo: ""[\s\S]*state\.issuedDocumentAutoFallback = false/u);
+assert.match(appSource, /data-action='reset-issued-document-filters'[\s\S]*resetIssuedDocumentRegistryFilters\(\)/u);
+assert.doesNotMatch(
+  appSource.match(/data-action='reset-issued-document-filters'[\s\S]*?\n\s*\}\);/u)?.[0] || "",
+  /prepareIssuedDocumentsRegistryOnOpen/u,
+  "Сброс фильтров не должен повторно включать автоматический фильтр ФРДО"
+);
 assert.match(appSource, /Документов для выгрузки в ФРДО нет\. Показаны ранее выгруженные документы/u);
 assert.match(stylesSource, /\.issued-documents-auto-fallback\s*\{[\s\S]*background:\s*#edf9f5/u);
 
