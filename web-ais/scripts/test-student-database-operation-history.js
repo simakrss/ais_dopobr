@@ -69,7 +69,7 @@ const entry = historyApi.normalizeStudentDatabaseOperationHistoryEntry({
 });
 
 assert.equal(entry.operation, "sync");
-assert.equal(entry.operationLabel, "Синхронизация с базой");
+assert.equal(entry.operationLabel, "Синхронизация");
 assert.equal(entry.status, "success");
 assert.equal(entry.sourceKey, "local");
 assert.equal(entry.direction, "Web → Excel");
@@ -95,6 +95,9 @@ assert.match(appSource, /data-action="open-student-database-operation-history"/u
 assert.match(appSource, /class="icon-button" data-action="open-student-database-operation-history"/u);
 assert.match(appSource, /class="student-database-history-icon"/u);
 assert.match(appSource, /История операций/u);
+assert.match(appSource, /data-import-button-label>\$\{state\.databaseImport\.running \? "Загрузка\.\.\." : "Загрузить"\}<\/span>/u);
+assert.match(appSource, /data-database-download-button-label>\$\{state\.databaseExport\.running[\s\S]*?"Формирование\.\.\." : "Экспорт"\}<\/span>/u);
+assert.match(appSource, /data-database-export-button-label>\$\{state\.databaseExport\.running[\s\S]*?"Синхронизация\.\.\." : "Синхронизация"\}<\/span>/u);
 assert.match(appSource, /filter-student-database-operation-history/u);
 assert.match(appSource, /exportStudentDatabaseOperationHistory/u);
 assert.match(appSource, /Состояние XLSB/u);

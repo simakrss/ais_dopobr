@@ -86,15 +86,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.282",
+    version: "1.7.283",
     releasedAt: "2026-08-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
     {
-      version: "1.7.282",
+      version: "1.7.283",
       releasedAt: "2026-08-26",
       changes: [
-        "В карточку слушателя добавлены документы для продления и сокращения обучения с системными шаблонами, проверкой данных и стандартным контекстным меню."
+        "Действия обмена с XLSB получили короткие единообразные названия: «Загрузить», «Экспорт» и «Синхронизация»."
       ]
     },
     {
@@ -15903,7 +15903,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button.disabled = Boolean(state.databaseImport.running);
       button.classList.toggle("is-loading", Boolean(state.databaseImport.running));
       const label = button.querySelector("[data-import-button-label]");
-      if (label) label.textContent = state.databaseImport.running ? "Импорт..." : "Загрузить из базы";
+      if (label) label.textContent = state.databaseImport.running ? "Загрузка..." : "Загрузить";
     });
   }
 
@@ -15953,7 +15953,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (label) {
         label.textContent = state.databaseExport.running && state.databaseExport.operation !== "download"
           ? "Синхронизация..."
-          : "Синхронизировать с базой";
+          : "Синхронизация";
       }
     }
     const downloadButton = document.querySelector("[data-action='download-students-database']");
@@ -15967,7 +15967,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (label) {
         label.textContent = state.databaseExport.running && state.databaseExport.operation === "download"
           ? "Формирование..."
-          : "Экспорт в базу";
+          : "Экспорт";
       }
     }
   }
@@ -19918,13 +19918,13 @@ MAX - https://bizvmax.ru/zifra_plus
                       </svg>
                     </button>
                     <button class="ghost-button student-database-import-button ${state.databaseImport.running ? "is-loading" : ""}" data-action="import-students-database" type="button" aria-describedby="admin-database-replace-warning" title="${escapeMultilineAttr(getStudentDatabaseImportTooltip())}" ${state.databaseImport.running ? "disabled" : ""}>
-                      <span data-import-button-label>${state.databaseImport.running ? "Импорт..." : "Загрузить из базы"}</span>
+                      <span data-import-button-label>${state.databaseImport.running ? "Загрузка..." : "Загрузить"}</span>
                     </button>
                     <button class="ghost-button ${state.databaseExport.running && state.databaseExport.operation === "download" ? "is-loading" : ""}" data-action="download-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseDownloadTooltip())}" ${state.databaseExport.running ? "disabled" : ""}>
-                      <span data-database-download-button-label>${state.databaseExport.running && state.databaseExport.operation === "download" ? "Формирование..." : "Экспорт в базу"}</span>
+                      <span data-database-download-button-label>${state.databaseExport.running && state.databaseExport.operation === "download" ? "Формирование..." : "Экспорт"}</span>
                     </button>
                     <button class="ghost-button ${state.databaseExport.running && state.databaseExport.operation !== "download" ? "is-loading" : ""}" data-action="sync-students-database" type="button" title="${escapeMultilineAttr(getStudentDatabaseSyncTooltip())}" ${state.databaseExport.running ? "disabled" : ""}>
-                      <span data-database-export-button-label>${state.databaseExport.running && state.databaseExport.operation !== "download" ? "Синхронизация..." : "Синхронизировать с базой"}</span>
+                      <span data-database-export-button-label>${state.databaseExport.running && state.databaseExport.operation !== "download" ? "Синхронизация..." : "Синхронизация"}</span>
                     </button>
                   </div>
                 </div>
@@ -20009,15 +20009,15 @@ MAX - https://bizvmax.ru/zifra_plus
                 </label>
                 <div class="admin-database-copy system-action-notes">
                   <section class="system-action-note">
-                    <strong>Загрузить из базы</strong>
+                    <strong>Загрузить</strong>
                     <p>Заменяет все текущие данные загружаемых разделов: слушателей, договоры, прямые и общие затраты и запасы; программы и учебные планы обновляются по XLSB. Обычный щелчок использует выбранный режим хранения, Shift + щелчок — альтернативный источник.</p>
                   </section>
                   <section class="system-action-note">
-                    <strong>Синхронизировать с базой</strong>
+                    <strong>Синхронизация</strong>
                     <p>Переносит данные веб-системы в XLSB по выбранному пути. Перед заменой исходного файла создаётся резервная копия в папке «_Резерв».</p>
                   </section>
                   <section class="system-action-note">
-                    <strong>Экспорт в базу</strong>
+                    <strong>Экспорт</strong>
                     <p>Формирует отдельную копию АИС Допобразование.xlsb с текущими данными и скачивает её в «Загрузки» с датой и временем в имени. Рабочая база не изменяется.</p>
                   </section>
                 </div>
@@ -20682,9 +20682,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getStudentDatabaseOperationLabel(operation = "") {
     return {
-      import: "Загрузка из базы",
-      export: "Экспорт в базу",
-      sync: "Синхронизация с базой"
+      import: "Загрузка",
+      export: "Экспорт",
+      sync: "Синхронизация"
     }[operation] || "Операция с базой";
   }
 
@@ -48389,7 +48389,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const replacementWarning = "ВНИМАНИЕ: данные загружаемых разделов веб-базы будут заменены данными из XLSB.";
     if (!isLocalDocumentsAvailable()) {
       return [
-        "Загрузить из базы",
+        "Загрузить",
         "",
         "Локальная папка системы недоступна.",
         "Данные будут загружены через WebDAV независимо от Shift.",
@@ -48397,7 +48397,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ].join("\n");
     }
     return [
-      "Загрузить из базы",
+      "Загрузить",
       "",
       `Обычный щелчок: источник — ${getStudentDatabaseSourceLabel(getStudentDocumentsSource())}.`,
       `Shift + щелчок: источник — ${getStudentDatabaseSourceLabel(getStudentDocumentsSource(true))}.`,
@@ -48448,14 +48448,14 @@ MAX - https://bizvmax.ru/zifra_plus
   function getStudentDatabaseSyncTooltip() {
     if (!isLocalDocumentsAvailable()) {
       return [
-        "Синхронизировать с базой",
+        "Синхронизация",
         "",
         "Локальная папка системы недоступна.",
         "Синхронизация будет выполнена через WebDAV независимо от Shift."
       ].join("\n");
     }
     return [
-      "Синхронизировать с базой",
+      "Синхронизация",
       "",
       `Обычный щелчок: источник — ${getStudentDatabaseSourceLabel(getStudentDocumentsSource())}.`,
       `Shift + щелчок: источник — ${getStudentDatabaseSourceLabel(getStudentDocumentsSource(true))}.`,
@@ -48468,14 +48468,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const alternateSource = getStudentDatabaseSourceLabel(getStudentDocumentsSource(true));
     if (!isLocalDocumentsAvailable()) {
       return [
-        "Экспорт в базу",
+        "Экспорт",
         "",
         "Формирует отдельный XLSB с текущими данными и скачивает его в «Загрузки».",
         "Исходная база на Яндекс-Диске не изменяется."
       ].join("\n");
     }
     return [
-      "Экспорт в базу",
+      "Экспорт",
       "",
       `Обычный щелчок: шаблон — ${source}.`,
       `Shift + щелчок: шаблон — ${alternateSource}.`,
@@ -50671,7 +50671,7 @@ MAX - https://bizvmax.ru/zifra_plus
         );
         state.data.meta.studentDatabaseLastExportedAt = synchronizedAt;
         const auditEntry = addAudit(
-          "Двусторонняя синхронизация с базой",
+          "Синхронизация",
           "Слушатели, договоры, затраты, запасы, программы и учебные планы",
           "Web → Excel; " + students.length + " слушателей; " + contracts.length
             + " договоров; " + directExpenses.length + " прямых и "
@@ -51008,7 +51008,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const duration = formatDatabaseOperationDuration(startedAt);
       state.data.meta.studentDatabaseLastDownloadedAt = new Date().toISOString();
       addAudit(
-        "Экспорт в базу",
+        "Экспорт",
         "Слушатели, договоры, затраты и сообщения программ",
         `${students.length} слушателей; ${contracts.length} договоров; ${directExpenses.length} прямых затрат; ${generalExpenses.length} общих затрат; ${result.automaticExpenseRuleCount || 0} правил назначения оплат; ${result.programPromoMessageCount || 0} промосообщений; ${result.programEmailMessageCount || 0} почтовых сообщений программ; добавлено программ: ${result.programInsertedCount || 0}; не сопоставлено программ: ${result.programPromoSkippedCount || 0}; файл: ${fileName}; источник: ${sourceLabel}; время выполнения: ${duration}`,
         { entityType: "database", entityLabel: fileName, source: `xlsb-download-${exportSource}` }
@@ -52070,7 +52070,7 @@ MAX - https://bizvmax.ru/zifra_plus
       state.search = "";
       const duration = formatDatabaseOperationDuration(startedAt);
       const importAuditEntry = addAudit(
-        isSynchronizationImport ? "Двусторонняя синхронизация с базой" : "Загрузка из базы",
+        isSynchronizationImport ? "Синхронизация" : "Загрузка",
         "Слушатели, договоры, затраты и запасы",
         `${isSynchronizationImport ? "Excel → Web; " : ""}${sourceLabel}; ${payload.count || nextStudents.length} слушателей; ${nextContracts.length} договоров; ${linkedDirectExpenseCount} расходов привязано; `
         + `разделы договоров по расположению строк: ${contractSectionSummary}; `
