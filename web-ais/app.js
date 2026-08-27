@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.314",
+    version: "1.7.315",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.315",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Перерасчёт формульного поля «СообщЛогин» больше не отображается в журнале как изменение данных слушателя.",
+        "Подробный протокол синхронизации исключает вычисляемые поля по тем же правилам, что и контроль критичных данных."
+      ]
+    },
     {
       version: "1.7.314",
       releasedAt: "2026-08-27",

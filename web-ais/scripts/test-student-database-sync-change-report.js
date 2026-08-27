@@ -27,7 +27,8 @@ const before = emptyDatabase({
     contractAmount: 4000,
     paidAmount: 1000,
     balance: 3000,
-    agentAmount: 250
+    agentAmount: 250,
+    portalAccessMessage: "Старый вычисленный результат формулы"
   }],
   directExpenses: [{
     id: "expense-1",
@@ -49,7 +50,8 @@ const after = emptyDatabase({
     contractAmount: 2500,
     paidAmount: 2500,
     balance: 0,
-    agentAmount: 625
+    agentAmount: 625,
+    portalAccessMessage: "Новый вычисленный результат той же формулы"
   }],
   programs: [{
     id: "program-1",
@@ -80,10 +82,15 @@ assert.equal(contractAmountChange.before, "4000");
 assert.equal(contractAmountChange.after, "2500");
 
 assert.equal(
-  report.rows.some((row) => ["Внесено (руб)", "Остаток по договору (руб)", "АгентСумма"]
+  report.rows.some((row) => [
+    "Внесено (руб)",
+    "Остаток по договору (руб)",
+    "АгентСумма",
+    "СообщЛогин"
+  ]
     .includes(row.field)),
   false,
-  "Вычисляемые поля не должны засорять протокол"
+  "Вычисляемые поля и результаты формул не должны засорять протокол"
 );
 assert.equal(
   report.rows.find((row) => row.entity === "Прямые затраты")?.action,

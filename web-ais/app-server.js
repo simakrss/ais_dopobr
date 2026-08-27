@@ -12712,7 +12712,8 @@ function getStudentDatabaseSynchronizedChangeDefinitions(beforeValue, afterValue
   const after = getStudentDatabaseCriticalCollections(afterValue);
   const allStudents = [...before.students, ...after.students];
   const allContracts = [...before.contracts, ...after.contracts];
-  const studentFields = getStudentDatabaseSyncFieldNames(allStudents);
+  const studentFields = getStudentDatabaseSyncFieldNames(allStudents)
+    .filter((field) => !STUDENT_DATABASE_CRITICAL_STUDENT_EXCLUDED_FIELDS.has(field));
   const contractDynamicFields = getStudentDatabaseDynamicChangeFields(allContracts);
   const contractFields = [...new Set([
     "section",
