@@ -86,6 +86,9 @@ const saveBlock = sourceBlock(appSource, "function collectStudentEventSettings("
 assert.match(saveBlock, /state\.data\.meta\.studentEventTemplates = settings/u);
 assert.match(saveBlock, /state\.data\.meta\.contractEventTemplates = settings/u);
 assert.match(saveBlock, /buildStudentEventProgramConditions/u);
+assert.match(saveBlock, /appendPendingConfiguredEventSetting\(form, "student"\)/u);
+assert.match(saveBlock, /appendPendingConfiguredEventSetting\(form, "contract"\)/u);
+assert.match(saveBlock, /row\.dataset\.eventSettingLabel/u);
 
 const renderBlock = sourceBlock(
   appSource,
@@ -96,7 +99,22 @@ assert.match(renderBlock, /data-orderable-tabs="event-settings"/u);
 assert.match(renderBlock, /id: "students", label: "Слушатели"/u);
 assert.match(renderBlock, /id: "employees", label: "Сотрудники"/u);
 assert.match(renderBlock, /data-action="save-contract-event-settings"/u);
+assert.match(renderBlock, /data-action="add-student-event-setting"/u);
+assert.match(renderBlock, /data-action="add-contract-event-setting"/u);
+assert.match(appSource, /data-action="remove-student-event-setting"/u);
+assert.match(appSource, /data-action="remove-contract-event-setting"/u);
 assert.match(renderBlock, /СобытияКонтрагент/u);
+
+const editorActionsBlock = sourceBlock(
+  appSource,
+  "function getConfiguredEventSettingEditor(",
+  "function collectPaymentConstantSettings("
+);
+assert.match(editorActionsBlock, /Событие «\$\{label\}» уже есть в списке/u);
+assert.match(editorActionsBlock, /Название события не должно содержать точку с запятой/u);
+assert.match(editorActionsBlock, /Существующие даты в карточках сохранятся/u);
+assert.match(editorActionsBlock, /rows\.length <= 1/u);
+assert.match(editorActionsBlock, /refreshSettingsEditorDirty\(\)/u);
 
 const macroWorkbook = {
   Workbook: { Names: [{ Name: "НастройкиМакросов", Ref: "'Настройки'!$AA$2" }] },
@@ -190,6 +208,8 @@ assert.deepEqual(
 assert.match(stylesSource, /\.student-event-settings-table/u);
 assert.match(stylesSource, /\.contract-event-settings-table/u);
 assert.match(stylesSource, /\.student-event-setting-programs/u);
+assert.match(stylesSource, /\.student-event-settings-add/u);
+assert.match(stylesSource, /\.student-event-setting-remove/u);
 assert.match(stylesSource, /@media \(max-width: 760px\)[\s\S]*\.student-event-setting-row/u);
 
 console.log("student event settings checks: OK");

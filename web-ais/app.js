@@ -89,10 +89,19 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.310",
+    version: "1.7.311",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.311",
+      releasedAt: "2026-08-27",
+      changes: [
+        "В настройках событий слушателей и сотрудников появились добавление и удаление событий.",
+        "Новые и удалённые строки участвуют в общем черновике настроек и синхронизации с АИС Допобразование.xlsb.",
+        "Добавлена проверка повторяющихся названий и защита от удаления последнего события."
+      ]
+    },
     {
       version: "1.7.310",
       releasedAt: "2026-08-27",
@@ -18272,7 +18281,12 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderStudentEventSettingRow(event, index) {
     const enabledTypes = new Set(getStudentEventEnabledProgramTypes(event));
     return `
-      <div class="student-event-setting-row" data-student-event-setting-row data-student-event-setting-key="${escapeAttr(event.key)}">
+      <div
+        class="student-event-setting-row"
+        data-student-event-setting-row
+        data-student-event-setting-key="${escapeAttr(event.key)}"
+        data-event-setting-label="${escapeAttr(event.label)}"
+      >
         <div class="student-event-setting-order">
           ${renderFinanceRowDragHandle(`Перетащить событие ${index + 1}`)}
           <span data-student-event-setting-number>${index + 1}</span>
@@ -18292,19 +18306,34 @@ MAX - https://bizvmax.ru/zifra_plus
             </label>
           `).join("")}
         </div>
+        <div class="student-event-setting-remove">
+          <button class="attestation-delete-button" data-action="remove-student-event-setting" type="button" title="Удалить событие" aria-label="Удалить событие ${escapeAttr(event.label)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+          </button>
+        </div>
       </div>
     `;
   }
 
   function renderContractEventSettingRow(event, index) {
     return `
-      <div class="student-event-setting-row contract-event-setting-row" data-contract-event-setting-row data-contract-event-setting-key="${escapeAttr(event.key)}">
+      <div
+        class="student-event-setting-row contract-event-setting-row"
+        data-contract-event-setting-row
+        data-contract-event-setting-key="${escapeAttr(event.key)}"
+        data-event-setting-label="${escapeAttr(event.label)}"
+      >
         <div class="student-event-setting-order">
           ${renderFinanceRowDragHandle(`Перетащить событие ${index + 1}`)}
           <span data-contract-event-setting-number>${index + 1}</span>
         </div>
         <div class="student-event-setting-name" title="${escapeAttr(event.label)}">
           ${escapeHtml(event.label)}
+        </div>
+        <div class="student-event-setting-remove">
+          <button class="attestation-delete-button" data-action="remove-contract-event-setting" type="button" title="Удалить событие" aria-label="Удалить событие ${escapeAttr(event.label)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+          </button>
         </div>
       </div>
     `;
@@ -18343,7 +18372,14 @@ MAX - https://bizvmax.ru/zifra_plus
           <form class="student-event-settings-form" data-action="save-student-event-settings">
             <div class="student-event-settings-intro">
               <h4>События в карточке слушателя</h4>
-              <p>Отметьте виды программ, для которых событие должно формироваться. Существующие даты событий в карточках при изменении настройки не удаляются.</p>
+              <p>Добавляйте, удаляйте и меняйте порядок событий. Отметьте виды программ, для которых событие должно формироваться. Существующие даты событий в карточках при изменении настройки не удаляются.</p>
+            </div>
+            <div class="student-event-settings-add">
+              <label>
+                <span>Новое событие</span>
+                <input data-new-student-event-label maxlength="250" autocomplete="off" placeholder="Введите название события">
+              </label>
+              <button class="ghost-button compact-button" data-action="add-student-event-setting" type="button">Добавить</button>
             </div>
             <div class="student-event-settings-table" data-student-event-settings-list>
               <div class="student-event-settings-header" aria-hidden="true">
@@ -18352,6 +18388,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 <span class="student-event-setting-program-headings">
                   ${studentEventProgramTypeOptions.map((option) => `<span title="${escapeAttr(option.label)}">${escapeHtml(option.value)}</span>`).join("")}
                 </span>
+                <span aria-hidden="true"></span>
               </div>
               ${events.map(renderStudentEventSettingRow).join("")}
             </div>
@@ -18366,12 +18403,20 @@ MAX - https://bizvmax.ru/zifra_plus
           <form class="student-event-settings-form" data-action="save-contract-event-settings">
             <div class="student-event-settings-intro">
               <h4>События в карточке сотрудника</h4>
-              <p>Измените порядок событий перетаскиванием строк. Существующие даты событий в карточках сотрудников при изменении настройки не удаляются.</p>
+              <p>Добавляйте, удаляйте и меняйте порядок событий. Существующие даты событий в карточках сотрудников при изменении настройки не удаляются.</p>
+            </div>
+            <div class="student-event-settings-add">
+              <label>
+                <span>Новое событие</span>
+                <input data-new-contract-event-label maxlength="250" autocomplete="off" placeholder="Введите название события">
+              </label>
+              <button class="ghost-button compact-button" data-action="add-contract-event-setting" type="button">Добавить</button>
             </div>
             <div class="student-event-settings-table contract-event-settings-table" data-contract-event-settings-list>
               <div class="student-event-settings-header" aria-hidden="true">
                 <span>№</span>
                 <span>Событие</span>
+                <span aria-hidden="true"></span>
               </div>
               ${contractEvents.map(renderContractEventSettingRow).join("")}
             </div>
@@ -18918,6 +18963,119 @@ MAX - https://bizvmax.ru/zifra_plus
     list.addEventListener("dragend", () => {
       list.querySelectorAll("[data-contract-event-setting-row]").forEach((row) => row.classList.remove("is-dragging"));
       updateContractEventSettingRowNumbers(list);
+    });
+  }
+
+  function getConfiguredEventSettingEditor(kind = "student") {
+    const isContract = kind === "contract";
+    return {
+      kind: isContract ? "contract" : "student",
+      formSelector: isContract
+        ? "form[data-action='save-contract-event-settings']"
+        : "form[data-action='save-student-event-settings']",
+      inputSelector: isContract
+        ? "[data-new-contract-event-label]"
+        : "[data-new-student-event-label]",
+      listSelector: isContract
+        ? "[data-contract-event-settings-list]"
+        : "[data-student-event-settings-list]",
+      rowSelector: isContract
+        ? "[data-contract-event-setting-row]"
+        : "[data-student-event-setting-row]",
+      keyDataset: isContract ? "contractEventSettingKey" : "studentEventSettingKey",
+      addAction: isContract ? "add-contract-event-setting" : "add-student-event-setting",
+      removeAction: isContract ? "remove-contract-event-setting" : "remove-student-event-setting",
+      knownTemplates: isContract ? contractEventTemplates : studentEventTemplates,
+      renderRow: isContract ? renderContractEventSettingRow : renderStudentEventSettingRow,
+      updateNumbers: isContract ? updateContractEventSettingRowNumbers : updateStudentEventSettingRowNumbers,
+      entityLabel: isContract ? "сотрудника" : "слушателя"
+    };
+  }
+
+  function appendPendingConfiguredEventSetting(form, kind = "student", options = {}) {
+    const config = getConfiguredEventSettingEditor(kind);
+    const input = form?.querySelector(config.inputSelector);
+    const label = String(input?.value || "").replace(/\s+/g, " ").trim();
+    if (!label) {
+      if (options.requireValue) {
+        alert("Введите название нового события.");
+        input?.focus({ preventScroll: true });
+        return false;
+      }
+      return true;
+    }
+    if (label.includes(";")) {
+      alert("Название события не должно содержать точку с запятой.");
+      input.focus({ preventScroll: true });
+      return false;
+    }
+    const list = form.querySelector(config.listSelector);
+    const rows = [...(list?.querySelectorAll(config.rowSelector) || [])];
+    const normalizedLabel = normalizeEventTemplateLabel(label);
+    if (rows.some((row) => normalizeEventTemplateLabel(row.dataset.eventSettingLabel) === normalizedLabel)) {
+      alert(`Событие «${label}» уже есть в списке.`);
+      input.focus({ preventScroll: true });
+      input.select();
+      return false;
+    }
+    const usedKeys = new Set(rows.map((row) => String(row.dataset[config.keyDataset] || "")));
+    const baseKey = buildMacroEventKey(label, config.knownTemplates);
+    let key = baseKey;
+    let suffix = 2;
+    while (usedKeys.has(key)) {
+      key = `${baseKey}_${suffix}`;
+      suffix += 1;
+    }
+    const setting = config.kind === "contract"
+      ? { key, label }
+      : { key, label, includeTypes: [], excludeTypes: [] };
+    list.insertAdjacentHTML("beforeend", config.renderRow(setting, rows.length));
+    input.value = "";
+    config.updateNumbers(list);
+    refreshSettingsEditorDirty();
+    list.lastElementChild?.scrollIntoView({ block: "nearest" });
+    input.focus({ preventScroll: true });
+    return true;
+  }
+
+  function removeConfiguredEventSetting(button, kind = "student") {
+    const config = getConfiguredEventSettingEditor(kind);
+    const list = button?.closest(config.listSelector);
+    const row = button?.closest(config.rowSelector);
+    if (!list || !row) return;
+    const rows = [...list.querySelectorAll(config.rowSelector)];
+    if (rows.length <= 1) {
+      alert(`В настройках должно остаться хотя бы одно событие ${config.entityLabel}.`);
+      return;
+    }
+    const label = String(row.dataset.eventSettingLabel || "Событие").trim();
+    if (!confirm(`Удалить событие «${label}» из настроек? Существующие даты в карточках сохранятся.`)) return;
+    const focusTarget = row.nextElementSibling?.querySelector?.(`[data-action='${config.removeAction}']`)
+      || row.previousElementSibling?.querySelector?.(`[data-action='${config.removeAction}']`)
+      || document.querySelector(`[data-action='${config.addAction}']`);
+    row.remove();
+    config.updateNumbers(list);
+    refreshSettingsEditorDirty();
+    focusTarget?.focus({ preventScroll: true });
+  }
+
+  function bindConfiguredEventSettingActions(kind = "student") {
+    const config = getConfiguredEventSettingEditor(kind);
+    const form = document.querySelector(config.formSelector);
+    const input = form?.querySelector(config.inputSelector);
+    const addButton = form?.querySelector(`[data-action='${config.addAction}']`);
+    const list = form?.querySelector(config.listSelector);
+    addButton?.addEventListener("click", () => {
+      appendPendingConfiguredEventSetting(form, config.kind, { requireValue: true });
+    });
+    input?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      event.preventDefault();
+      appendPendingConfiguredEventSetting(form, config.kind, { requireValue: true });
+    });
+    list?.addEventListener("click", (event) => {
+      const button = event.target.closest(`[data-action='${config.removeAction}']`);
+      if (button) removeConfiguredEventSetting(button, config.kind);
     });
   }
 
@@ -34408,6 +34566,8 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='enable-all-student-event-programs']")?.addEventListener("click", enableAllStudentEventPrograms);
     bindStudentEventSettingRowDrag(document.querySelector("[data-student-event-settings-list]"));
     bindContractEventSettingRowDrag(document.querySelector("[data-contract-event-settings-list]"));
+    bindConfiguredEventSettingActions("student");
+    bindConfiguredEventSettingActions("contract");
     bindEventSettingsTabs();
     document.querySelector("form[data-action='save-payment-settings']")?.addEventListener("submit", savePaymentSettings);
     document.querySelector("[data-action='reset-payment-settings']")?.addEventListener("click", resetPaymentSettings);
@@ -48802,11 +48962,12 @@ MAX - https://bizvmax.ru/zifra_plus
     return [...(form?.querySelectorAll("[data-student-event-setting-row]") || [])].map((row) => {
       const key = String(row.dataset.studentEventSettingKey || "").trim();
       const previousEvent = previousEvents.get(key) || {};
+      const label = String(row.dataset.eventSettingLabel || previousEvent.label || key).trim();
       const enabledTypes = [...row.querySelectorAll("[data-student-event-program-type]:checked")]
         .map((input) => input.dataset.studentEventProgramType);
       return {
         key,
-        label: previousEvent.label || key,
+        label,
         ...buildStudentEventProgramConditions(enabledTypes, previousEvent)
       };
     });
@@ -48815,6 +48976,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function saveStudentEventSettings(event) {
     event.preventDefault();
     const form = event.currentTarget;
+    if (!appendPendingConfiguredEventSetting(form, "student")) return;
     const settings = normalizeConfiguredEventTemplates(collectStudentEventSettings(form));
     if (!settings.length) {
       alert("Список событий пуст. Обновите страницу и повторите сохранение.");
@@ -48851,7 +49013,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const previousEvent = previousEvents.get(key) || {};
       return {
         key,
-        label: previousEvent.label || key
+        label: String(row.dataset.eventSettingLabel || previousEvent.label || key).trim()
       };
     });
   }
@@ -48859,6 +49021,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function saveContractEventSettings(event) {
     event.preventDefault();
     const form = event.currentTarget;
+    if (!appendPendingConfiguredEventSetting(form, "contract")) return;
     const settings = normalizeConfiguredEventTemplates(
       collectContractEventSettings(form),
       { contract: true }
