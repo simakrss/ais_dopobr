@@ -24151,8 +24151,8 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 
 .statistics-donut-layout {
   display: grid;
-  grid-template-columns: minmax(150px, 0.75fr) minmax(190px, 1.25fr);
-  gap: 14px;
+  grid-template-columns: minmax(140px, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px;
   align-items: center;
   min-height: 220px;
 }
@@ -24212,7 +24212,19 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   min-width: 0;
 }
 
+.statistics-donut-legend > span.is-percentage {
+  grid-template-columns: 10px minmax(0, 1fr);
+}
+
+.statistics-donut-legend-label {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
 .statistics-donut-legend b {
+  min-width: 0;
   overflow: hidden;
   font-size: 11px;
   font-weight: 600;
@@ -24225,6 +24237,10 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   font-size: 11px;
   font-style: normal;
   font-weight: 700;
+}
+
+.statistics-donut-legend-label em {
+  flex: 0 0 auto;
 }
 
 .statistics-ranking {

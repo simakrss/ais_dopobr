@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.327",
+    version: "1.7.328",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.328",
+      releasedAt: "2026-08-27",
+      changes: [
+        "В диаграмме «Источники заявок» вместо абсолютных значений теперь показывается процент каждой категории.",
+        "Процент расположен сразу после названия источника и остаётся видимым в узких карточках."
+      ]
+    },
     {
       version: "1.7.327",
       releasedAt: "2026-08-27",
@@ -11172,9 +11180,18 @@ MAX - https://bizvmax.ru/zifra_plus
           <span><strong>${escapeHtml(formatValue(total))}</strong><small>всего</small></span>
         </div>
         <div class="statistics-donut-legend">
-          ${compact.map((item, index) => `
-            <span title="${escapeAttr(item.label)}"><i style="background:${colors[index % colors.length]}"></i><b>${escapeHtml(item.label)}</b><em>${escapeHtml(formatValue(item.value))}</em></span>
-          `).join("")}
+          ${compact.map((item, index) => {
+            if (!options.legendPercent) {
+              return `<span title="${escapeAttr(item.label)}"><i style="background:${colors[index % colors.length]}"></i><b>${escapeHtml(item.label)}</b><em>${escapeHtml(formatValue(item.value))}</em></span>`;
+            }
+            const legendValue = `${Math.round((Number(item.value) / total) * 100)}%`;
+            return `
+              <span class="is-percentage" title="${escapeAttr(`${item.label} — ${legendValue}`)}">
+                <i style="background:${colors[index % colors.length]}"></i>
+                <span class="statistics-donut-legend-label"><b>${escapeHtml(item.label)}</b><em>— ${escapeHtml(legendValue)}</em></span>
+              </span>
+            `;
+          }).join("")}
         </div>
       </div>
     `;
@@ -11375,7 +11392,7 @@ MAX - https://bizvmax.ru/zifra_plus
         </section>
         <section class="panel statistics-visual-panel">
           <div class="panel-head"><div><p class="eyebrow">Клиенты</p><h2>Источники заявок</h2></div></div>
-          ${renderStatisticsDonut("Источники заявок", report.sources)}
+          ${renderStatisticsDonut("Источники заявок", report.sources, { legendPercent: true })}
         </section>
       </div>
       <section class="panel statistics-table-panel">
