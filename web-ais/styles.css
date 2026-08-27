@@ -7882,7 +7882,8 @@ body.long-press-dragging * {
   min-width: 0;
   min-height: 280px;
   height: 300px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   resize: vertical;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -7978,29 +7979,10 @@ body.long-press-dragging * {
 
 .sql-mini-ide-position {
   flex: 0 0 auto;
+  margin-left: auto;
   color: #718078;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.sql-mini-ide-suggest-button {
-  flex: 0 0 auto;
-  margin-left: auto;
-  border: 1px solid #b9cec6;
-  border-radius: 5px;
-  background: #fff;
-  padding: 2px 7px;
-  color: #075f58;
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.sql-mini-ide-suggest-button:hover,
-.sql-mini-ide-suggest-button:focus-visible {
-  border-color: var(--teal);
-  background: #e4f3ef;
-  outline: none;
 }
 
 .sql-mini-ide-editor-shell {
@@ -8084,6 +8066,39 @@ body.long-press-dragging * {
   display: none;
 }
 
+.sql-mini-ide-keyword-tooltip {
+  position: absolute;
+  z-index: 140;
+  width: max-content;
+  transform: translate(-50%, -100%);
+  border: 1px solid #23463f;
+  border-radius: 6px;
+  background: #173d36;
+  padding: 6px 8px;
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(23, 61, 54, 0.24);
+  font-family: var(--font-family, inherit);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: normal;
+  pointer-events: none;
+}
+
+.sql-mini-ide-keyword-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #173d36;
+}
+
+.sql-mini-ide-keyword-tooltip[hidden] {
+  display: none;
+}
+
 .sql-mini-ide-suggestion {
   display: grid;
   grid-template-columns: minmax(110px, auto) minmax(0, 1fr);
@@ -8125,6 +8140,24 @@ body.long-press-dragging * {
 .admin-sql-token.is-keyword {
   color: #0f5fb3;
   font-weight: 700;
+}
+
+.admin-sql-token.is-keyword[data-sql-keyword-help] {
+  text-decoration: underline dotted rgba(15, 95, 179, 0.48);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+.admin-sql-bracket {
+  border-radius: 3px;
+}
+
+.admin-sql-bracket.is-matching,
+::highlight(ais-sql-matching-brackets) {
+  background: #ffe66f;
+  color: #2d2400;
+  box-shadow: inset 0 0 0 1px rgba(180, 133, 0, 0.35);
 }
 
 .admin-sql-token.is-function {
@@ -8179,10 +8212,6 @@ body.long-press-dragging * {
 
   .sql-mini-ide-position {
     margin-left: 0;
-  }
-
-  .sql-mini-ide-suggest-button {
-    margin-left: auto;
   }
 
   .sql-mini-ide-shortcut {

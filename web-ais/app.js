@@ -45,6 +45,81 @@
     "SELECT", "SET", "SHOW", "TABLE", "THEN", "TRUE", "UNION", "UNIQUE", "UNLOCK",
     "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WITH"
   ]);
+  const ADMIN_SQL_KEYWORD_HELP = Object.freeze({
+    ADD: "Добавляет столбец, индекс или другое свойство объекта базы данных.",
+    ALL: "Учитывает все строки или сохраняет дубликаты результата.",
+    ALTER: "Изменяет структуру существующего объекта базы данных.",
+    AND: "Объединяет условия: каждое из них должно быть истинным.",
+    AS: "Задаёт псевдоним поля, выражения или таблицы.",
+    ASC: "Сортирует значения по возрастанию.",
+    BETWEEN: "Проверяет, находится ли значение в заданном диапазоне.",
+    BY: "Указывает поля для группировки или сортировки.",
+    CASE: "Возвращает значение в зависимости от последовательности условий.",
+    CAST: "Преобразует выражение к указанному типу данных.",
+    COLLATE: "Задаёт правила сравнения и сортировки текста.",
+    CREATE: "Создаёт объект базы данных.",
+    CROSS: "Формирует декартово соединение наборов строк.",
+    CURRENT_DATE: "Возвращает текущую дату сервера базы данных.",
+    CURRENT_TIMESTAMP: "Возвращает текущие дату и время сервера базы данных.",
+    DATABASE: "Обозначает базу данных или возвращает имя текущей базы.",
+    DATE: "Обозначает тип даты или извлекает дату из значения.",
+    DECIMAL: "Обозначает точное десятичное числовое значение.",
+    DELETE: "Удаляет строки из таблицы.",
+    DESC: "Сортирует значения по убыванию.",
+    DISTINCT: "Исключает повторяющиеся строки из результата.",
+    DROP: "Удаляет объект базы данных.",
+    ELSE: "Задаёт результат CASE или IF, когда предыдущие условия не выполнены.",
+    END: "Завершает конструкцию CASE или другую составную конструкцию.",
+    ESCAPE: "Задаёт символ экранирования для строкового шаблона.",
+    EXISTS: "Проверяет, вернул ли подзапрос хотя бы одну строку.",
+    FALSE: "Логическое значение «ложь».",
+    FROM: "Указывает таблицы или подзапросы, из которых выбираются данные.",
+    FULL: "Задаёт полное внешнее соединение наборов данных.",
+    GROUP: "Группирует строки для выполнения агрегатных вычислений.",
+    HAVING: "Фильтрует строки после группировки и вычисления агрегатов.",
+    IF: "Возвращает одно из значений в зависимости от условия.",
+    IN: "Проверяет наличие значения в списке или результате подзапроса.",
+    INDEX: "Обозначает индекс таблицы.",
+    INNER: "Оставляет только совпавшие строки соединяемых наборов.",
+    INSERT: "Добавляет новые строки в таблицу.",
+    INTERVAL: "Задаёт временной интервал для вычислений с датами.",
+    INTO: "Указывает объект, в который помещается результат операции.",
+    IS: "Сравнивает значение с NULL или логическим состоянием.",
+    JOIN: "Соединяет строки нескольких таблиц или подзапросов.",
+    LEFT: "Сохраняет все строки левого набора при соединении.",
+    LIKE: "Сравнивает текст со строковым шаблоном.",
+    LIMIT: "Ограничивает количество строк в результате.",
+    LOCK: "Устанавливает блокировку объекта базы данных.",
+    NOT: "Инвертирует логическое условие.",
+    NULL: "Обозначает отсутствующее или неопределённое значение.",
+    OFFSET: "Пропускает указанное количество строк результата.",
+    ON: "Задаёт условие соединения таблиц.",
+    OR: "Объединяет условия: достаточно истинности одного из них.",
+    ORDER: "Задаёт порядок сортировки результата.",
+    OUTER: "Указывает внешнее соединение наборов данных.",
+    PARTITION: "Разделяет набор строк на независимые группы обработки.",
+    PROCEDURE: "Обозначает хранимую процедуру базы данных.",
+    REGEXP: "Сравнивает текст с регулярным выражением.",
+    RIGHT: "Сохраняет все строки правого набора при соединении.",
+    SELECT: "Выбирает поля и выражения, которые попадут в результат запроса.",
+    SET: "Задаёт значения параметров или полей.",
+    SHOW: "Возвращает служебные сведения об объектах базы данных.",
+    TABLE: "Обозначает таблицу базы данных.",
+    THEN: "Задаёт результат для выполненного условия WHEN.",
+    TRUE: "Логическое значение «истина».",
+    UNION: "Объединяет результаты нескольких запросов SELECT.",
+    UNIQUE: "Требует уникальности значений.",
+    UNLOCK: "Снимает ранее установленную блокировку.",
+    UPDATE: "Изменяет значения существующих строк таблицы.",
+    USE: "Выбирает активную базу данных.",
+    USING: "Указывает общие поля соединяемых таблиц.",
+    VALUES: "Задаёт набор добавляемых или возвращаемых значений.",
+    VIEW: "Обозначает представление базы данных.",
+    WHEN: "Задаёт условие внутри конструкции CASE.",
+    WHERE: "Фильтрует строки до группировки и сортировки.",
+    WITH: "Объявляет общие табличные выражения перед основным запросом."
+  });
+  const ADMIN_SQL_BRACKET_HIGHLIGHT_NAME = "ais-sql-matching-brackets";
   const ADMIN_SQL_FORBIDDEN_KEYWORDS = new Set([
     "ALTER", "CALL", "CREATE", "DELETE", "DROP", "GRANT", "INSERT", "LOAD", "LOCK",
     "REPLACE", "REVOKE", "TRUNCATE", "UNLOCK", "UPDATE"
@@ -89,10 +164,19 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.313",
+    version: "1.7.314",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.314",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Подсказки SQL-команд открываются только сочетанием Ctrl+Пробел и закрываются щелчком в редакторе.",
+        "При наведении на ключевое слово SQL над ним показывается краткая справка на русском языке.",
+        "Парные круглые скобки возле курсора выделяются жёлтым фоном без изменения позиции курсора."
+      ]
+    },
     {
       version: "1.7.313",
       releasedAt: "2026-08-27",
@@ -20773,6 +20857,18 @@ MAX - https://bizvmax.ru/zifra_plus
       : fallback;
   }
 
+  function renderAdminSqlQueryPlainSyntax(value, sourceOffset = 0) {
+    const source = String(value || "");
+    let result = "";
+    let offset = 0;
+    for (const match of source.matchAll(/[()]/gu)) {
+      result += escapeHtml(source.slice(offset, match.index));
+      result += `<span class="admin-sql-bracket" data-sql-bracket-offset="${sourceOffset + Number(match.index)}">${match[0]}</span>`;
+      offset = Number(match.index) + 1;
+    }
+    return `${result}${escapeHtml(source.slice(offset))}`;
+  }
+
   function renderAdminSqlQuerySyntax(value) {
     const source = String(value || "");
     const tokenPattern = /(\/\*[\s\S]*?\*\/|--[^\r\n]*|#[^\r\n]*|'(?:''|\\.|[^'\\])*'|"(?:""|\\.|[^"\\])*"|`(?:``|[^`])*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_$]*\b|\?)/g;
@@ -20780,21 +20876,23 @@ MAX - https://bizvmax.ru/zifra_plus
     let offset = 0;
     for (const match of source.matchAll(tokenPattern)) {
       const token = match[0];
-      result += escapeHtml(source.slice(offset, match.index));
+      result += renderAdminSqlQueryPlainSyntax(source.slice(offset, match.index), offset);
       let tone = "";
+      const normalizedToken = token.toUpperCase();
       if (/^(?:\/\*|--|#)/.test(token)) tone = "comment";
       else if (/^['"]/.test(token)) tone = "string";
       else if (token.startsWith("`")) tone = "identifier";
       else if (/^\d/.test(token)) tone = "number";
       else if (token === "?") tone = "parameter";
-      else if (ADMIN_SQL_KEYWORDS.has(token.toUpperCase())) tone = "keyword";
+      else if (ADMIN_SQL_KEYWORDS.has(normalizedToken)) tone = "keyword";
       else if (/^\s*\(/.test(source.slice(Number(match.index) + token.length))) tone = "function";
+      const keywordHelp = tone === "keyword" ? ADMIN_SQL_KEYWORD_HELP[normalizedToken] : "";
       result += tone
-        ? `<span class="admin-sql-token is-${tone}">${escapeHtml(token)}</span>`
+        ? `<span class="admin-sql-token is-${tone}"${keywordHelp ? ` data-sql-keyword-help="${escapeAttr(keywordHelp)}"` : ""}>${escapeHtml(token)}</span>`
         : escapeHtml(token);
       offset = Number(match.index) + token.length;
     }
-    return `${result}${escapeHtml(source.slice(offset))}`;
+    return `${result}${renderAdminSqlQueryPlainSyntax(source.slice(offset), offset)}`;
   }
 
   function renderSqlMiniIde(value, options = {}) {
@@ -20819,7 +20917,6 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="sql-mini-ide-toolbar">
           <span class="sql-mini-ide-language" aria-hidden="true">SQL</span>
           <span class="sql-mini-ide-validation" data-sql-validation-status>Проверка запроса…</span>
-          <button class="sql-mini-ide-suggest-button" type="button" data-sql-open-suggestions aria-expanded="false" title="Показать подсказки SQL-команд">Команды</button>
           <span class="sql-mini-ide-position" data-sql-caret-status>Строка 1, столбец 1</span>
         </div>
         <div class="sql-mini-ide-editor-shell">
@@ -20839,6 +20936,7 @@ MAX - https://bizvmax.ru/zifra_plus
             ${editorAttributes}
           >${renderAdminSqlQuerySyntax(value)}</div>
           <div class="sql-mini-ide-suggestions" data-sql-suggestions role="listbox" aria-label="Подсказки SQL" hidden></div>
+          <div class="sql-mini-ide-keyword-tooltip" data-sql-keyword-tooltip role="tooltip" hidden></div>
         </div>
         <div class="sql-mini-ide-footer">
           <span class="sql-mini-ide-diagnostic" data-sql-diagnostic role="status" aria-live="polite"></span>
@@ -20923,6 +21021,32 @@ MAX - https://bizvmax.ru/zifra_plus
       index += 1;
     }
     return { source, scrubbed: scrubbed.join(""), issues, comments };
+  }
+
+  function getSqlMatchingParenthesisOffsets(value, caretOffset) {
+    const source = inspectSqlLexicalStructure(value).scrubbed;
+    const caret = Math.max(0, Math.min(source.length, Number(caretOffset) || 0));
+    const candidates = [];
+    if (source[caret] === "(" || source[caret] === ")") candidates.push(caret);
+    if (caret > 0 && (source[caret - 1] === "(" || source[caret - 1] === ")")) candidates.push(caret - 1);
+    for (const current of candidates) {
+      const bracket = source[current];
+      let depth = 0;
+      if (bracket === "(") {
+        for (let index = current; index < source.length; index += 1) {
+          if (source[index] === "(") depth += 1;
+          else if (source[index] === ")") depth -= 1;
+          if (depth === 0) return [current, index];
+        }
+      } else {
+        for (let index = current; index >= 0; index -= 1) {
+          if (source[index] === ")") depth += 1;
+          else if (source[index] === "(") depth -= 1;
+          if (depth === 0) return [index, current];
+        }
+      }
+    }
+    return [];
   }
 
   function validateSqlMiniIdeQuery(value, options = {}) {
@@ -50774,6 +50898,117 @@ MAX - https://bizvmax.ru/zifra_plus
     status.textContent = `Строка ${position.line}, столбец ${position.column}`;
   }
 
+  function hideSqlMiniIdeKeywordTooltip(editor) {
+    const tooltip = editor?.closest?.("[data-sql-mini-ide]")?.querySelector("[data-sql-keyword-tooltip]");
+    if (!tooltip) return;
+    tooltip.hidden = true;
+    tooltip.textContent = "";
+    tooltip.style.left = "";
+    tooltip.style.top = "";
+    tooltip.style.maxWidth = "";
+  }
+
+  function showSqlMiniIdeKeywordTooltip(editor, token) {
+    const keyword = String(token?.textContent || "").trim().toUpperCase();
+    const help = String(ADMIN_SQL_KEYWORD_HELP[keyword] || "").trim();
+    const shell = editor?.closest?.(".sql-mini-ide-editor-shell");
+    const tooltip = shell?.querySelector("[data-sql-keyword-tooltip]");
+    if (!help || !shell || !tooltip) {
+      hideSqlMiniIdeKeywordTooltip(editor);
+      return;
+    }
+    tooltip.textContent = help;
+    tooltip.hidden = false;
+    const shellRect = shell.getBoundingClientRect();
+    const tokenRect = token.getBoundingClientRect();
+    const maxWidth = Math.max(180, Math.min(360, shellRect.width - 16));
+    tooltip.style.maxWidth = `${maxWidth}px`;
+    const tooltipWidth = Math.min(maxWidth, tooltip.offsetWidth || maxWidth);
+    const preferredLeft = tokenRect.left - shellRect.left + tokenRect.width / 2;
+    const left = Math.max(8 + tooltipWidth / 2, Math.min(shellRect.width - 8 - tooltipWidth / 2, preferredLeft));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${tokenRect.top - shellRect.top - 7}px`;
+  }
+
+  function createSqlMiniIdeTextRange(editor, startOffset, endOffset) {
+    if (!editor) return null;
+    const start = Math.max(0, Number(startOffset) || 0);
+    const end = Math.max(start, Number(endOffset) || 0);
+    let cursor = 0;
+    let startPoint = null;
+    let endPoint = null;
+    const visit = (node) => {
+      if (startPoint && endPoint) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const length = node.nodeValue?.length || 0;
+        const nodeStart = cursor;
+        const nodeEnd = cursor + length;
+        if (!startPoint && start >= nodeStart && start < nodeEnd) {
+          startPoint = { node, offset: start - nodeStart };
+        }
+        if (!endPoint && end > nodeStart && end <= nodeEnd) {
+          endPoint = { node, offset: end - nodeStart };
+        }
+        cursor = nodeEnd;
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.tagName === "BR") {
+        cursor += 1;
+        return;
+      }
+      Array.from(node.childNodes).forEach(visit);
+      if (/^(DIV|P)$/.test(node.tagName)) cursor += 1;
+    };
+    Array.from(editor.childNodes).forEach(visit);
+    if (!startPoint || !endPoint) return null;
+    const range = document.createRange();
+    range.setStart(startPoint.node, startPoint.offset);
+    range.setEnd(endPoint.node, endPoint.offset);
+    return range;
+  }
+
+  function clearSqlMiniIdeBracketHighlight(editor) {
+    if (globalThis.CSS?.highlights?.delete) {
+      globalThis.CSS.highlights.delete(ADMIN_SQL_BRACKET_HIGHLIGHT_NAME);
+    }
+    editor?.querySelectorAll?.(".admin-sql-bracket.is-matching")?.forEach((bracket) => {
+      bracket.classList.remove("is-matching");
+    });
+  }
+
+  function updateSqlMiniIdeBracketHighlight(editor) {
+    clearSqlMiniIdeBracketHighlight(editor);
+    const selection = window.getSelection?.();
+    if (
+      !editor
+      || document.activeElement !== editor
+      || !selection?.rangeCount
+      || !selection.isCollapsed
+      || !editor.contains(selection.anchorNode)
+    ) return;
+    const query = serializeCommunicationTemplateEditor(editor);
+    const offsets = getSqlMatchingParenthesisOffsets(
+      query,
+      getCommunicationTemplateEditorCaretOffset(editor)
+    );
+    if (offsets.length !== 2) return;
+    offsets.forEach((offset) => {
+      editor.querySelector(`[data-sql-bracket-offset="${offset}"]`)?.classList.add("is-matching");
+    });
+    if (globalThis.CSS?.highlights?.set && typeof globalThis.Highlight === "function") {
+      const ranges = offsets
+        .map((offset) => createSqlMiniIdeTextRange(editor, offset, offset + 1))
+        .filter(Boolean);
+      if (ranges.length === 2) {
+        globalThis.CSS.highlights.set(
+          ADMIN_SQL_BRACKET_HIGHLIGHT_NAME,
+          new globalThis.Highlight(...ranges)
+        );
+      }
+    }
+  }
+
   function updateSqlMiniIdeValidation(editor) {
     const wrapper = editor?.closest?.("[data-sql-mini-ide]");
     if (!wrapper) return;
@@ -50807,7 +51042,6 @@ MAX - https://bizvmax.ru/zifra_plus
     wrapper.classList.remove("has-suggestions");
     editor.dataset.sqlSuggestionIndex = "";
     editor.setAttribute("aria-expanded", "false");
-    wrapper.querySelector("[data-sql-open-suggestions]")?.setAttribute("aria-expanded", "false");
   }
 
   function setSqlMiniIdeSuggestionIndex(editor, requestedIndex) {
@@ -50864,7 +51098,6 @@ MAX - https://bizvmax.ru/zifra_plus
     wrapper.classList.add("has-suggestions");
     editor.dataset.sqlSuggestionIndex = "0";
     editor.setAttribute("aria-expanded", "true");
-    wrapper.querySelector("[data-sql-open-suggestions]")?.setAttribute("aria-expanded", "true");
     panel.querySelectorAll("[data-sql-suggestion]").forEach((button) => {
       button.addEventListener("mousedown", (event) => event.preventDefault());
       button.addEventListener("click", () => acceptSqlMiniIdeSuggestion(
@@ -50886,6 +51119,7 @@ MAX - https://bizvmax.ru/zifra_plus
     editor.scrollTop = scrollTop;
     editor.scrollLeft = scrollLeft;
     updateSqlMiniIdeValidation(editor);
+    updateSqlMiniIdeBracketHighlight(editor);
   }
 
   function bindSqlMiniIdeEditor(editor) {
@@ -50915,6 +51149,8 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     editor.addEventListener("input", () => {
       syncAdminSqlQueryEditor(editor);
+      hideSqlMiniIdeKeywordTooltip(editor);
+      window.requestAnimationFrame(() => updateSqlMiniIdeBracketHighlight(editor));
       if (editor.dataset.composing === "true") return;
       window.clearTimeout(highlightTimer);
       highlightTimer = window.setTimeout(() => {
@@ -50961,22 +51197,39 @@ MAX - https://bizvmax.ru/zifra_plus
       insertPlainTextIntoContentEditable(editor, "  ");
       editor.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    editor.addEventListener("keyup", () => updateSqlMiniIdeCaretStatus(editor));
+    editor.addEventListener("keyup", () => {
+      updateSqlMiniIdeCaretStatus(editor);
+      updateSqlMiniIdeBracketHighlight(editor);
+    });
+    editor.addEventListener("pointerdown", () => closeSqlMiniIdeSuggestions(editor));
     editor.addEventListener("click", () => {
       closeSqlMiniIdeSuggestions(editor);
+      hideSqlMiniIdeKeywordTooltip(editor);
       updateSqlMiniIdeCaretStatus(editor);
+      updateSqlMiniIdeBracketHighlight(editor);
     });
-    editor.addEventListener("focus", () => updateSqlMiniIdeCaretStatus(editor));
+    editor.addEventListener("mouseup", () => updateSqlMiniIdeBracketHighlight(editor));
+    editor.addEventListener("mouseover", (event) => {
+      const token = event.target.closest?.("[data-sql-keyword-help]");
+      if (token && editor.contains(token)) showSqlMiniIdeKeywordTooltip(editor, token);
+    });
+    editor.addEventListener("mouseout", (event) => {
+      const token = event.target.closest?.("[data-sql-keyword-help]");
+      if (!token) return;
+      if (event.relatedTarget instanceof Node && token.contains(event.relatedTarget)) return;
+      hideSqlMiniIdeKeywordTooltip(editor);
+    });
+    editor.addEventListener("scroll", () => hideSqlMiniIdeKeywordTooltip(editor), { passive: true });
+    editor.addEventListener("focus", () => {
+      updateSqlMiniIdeCaretStatus(editor);
+      updateSqlMiniIdeBracketHighlight(editor);
+    });
     editor.addEventListener("blur", () => {
       window.clearTimeout(highlightTimer);
+      hideSqlMiniIdeKeywordTooltip(editor);
+      clearSqlMiniIdeBracketHighlight(editor);
       refresh();
       window.setTimeout(() => closeSqlMiniIdeSuggestions(editor), 120);
-    });
-    const suggestionsButton = editor.closest("[data-sql-mini-ide]")?.querySelector("[data-sql-open-suggestions]");
-    suggestionsButton?.addEventListener("mousedown", (event) => event.preventDefault());
-    suggestionsButton?.addEventListener("click", () => {
-      editor.focus({ preventScroll: true });
-      showSqlMiniIdeSuggestions(editor, true);
     });
     refresh();
   }

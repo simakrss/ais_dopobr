@@ -34,7 +34,7 @@ assert.match(stylesSource, /\.shared-state-pill\.has-progress/u);
 assert.match(stylesSource, /\.shared-state-progress-track/u);
 assert.match(stylesSource, /@keyframes shared-state-progress-stripes/u);
 assert.match(stylesSource, /\.shared-state-startup-progress/u);
-assert.match(indexSource, /20260827-event-settings-fit-v1/u);
-assert.match(authBootstrapSource, /const AUTH_BUILD = "20260827-event-settings-fit-v1"/u);
+assert.match(indexSource, /20260827-sql-context-help-v1/u);
+assert.match(authBootstrapSource, /const AUTH_BUILD = "20260827-sql-context-help-v1"/u);
 
 console.log("Shared MySQL state progress tests passed.");
