@@ -152,6 +152,212 @@ const ADVERTISING_EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{
 const ADVERTISING_EMAIL_SOURCE_KINDS = new Set(["sql", "ais", "google", "workbook"]);
 const ADVERTISING_EMAIL_SQL_CONNECTIONS = new Set(["assistant", "applications", "abit", "moodle"]);
 const ADVERTISING_EMAIL_WORKBOOK_DATASETS = new Set(["googleContacts", "legacyContacts"]);
+const DEFAULT_STATISTICS_SQL_QUERIES = Object.freeze({
+  "assistant.monthly": `
+    SELECT
+      YEAR(date) AS event_year,
+      MONTH(date) AS event_month,
+      SUM(CASE WHEN action = 1 THEN 1 ELSE 0 END) AS install_count,
+      SUM(CASE WHEN action IN (0, -1) THEN 1 ELSE 0 END) AS removal_count,
+      MIN(date) AS first_at,
+      MAX(date) AS last_at
+    FROM wp_ass_reg
+    WHERE date IS NOT NULL AND YEAR(date) BETWEEN 2000 AND 2100
+    GROUP BY YEAR(date), MONTH(date)
+    ORDER BY event_year, event_month
+  `.trim(),
+  "assistant.versions": `
+    SELECT
+      YEAR(date) AS event_year,
+      MONTH(date) AS event_month,
+      COALESCE(NULLIF(TRIM(version), ''), 'Без версии') AS version_name,
+      COUNT(version) AS event_count
+    FROM wp_ass_reg
+    WHERE date IS NOT NULL
+      AND YEAR(date) BETWEEN 2000 AND 2100
+      AND action = 1
+    GROUP BY YEAR(date), MONTH(date), COALESCE(NULLIF(TRIM(version), ''), 'Без версии')
+    HAVING COUNT(version) > 0
+    ORDER BY event_year, event_month, event_count DESC
+  `.trim(),
+  "assistant.actions": `
+    SELECT
+      logs.action AS action_id,
+      COALESCE(NULLIF(TRIM(structure.description), ''), CONCAT('Действие ', logs.action)) AS action_name,
+      COUNT(logs.action) AS action_count
+    FROM wp_ass_logs AS logs
+    INNER JOIN wp_ass_logs_structure AS structure ON logs.action = structure.action
+    GROUP BY logs.action, structure.description
+    ORDER BY action_count DESC
+  `.trim(),
+  "assistant.locations": `
+    SELECT
+      YEAR(date) AS event_year,
+      MONTH(date) AS event_month,
+      COALESCE(NULLIF(TRIM(location), ''), 'Не указано') AS location_name,
+      SUM(CASE WHEN action = 1 THEN 1 ELSE 0 END) AS install_count,
+      SUM(CASE WHEN action IN (0, -1) THEN 1 ELSE 0 END) AS removal_count
+    FROM wp_ass_reg
+    WHERE date IS NOT NULL AND YEAR(date) BETWEEN 2000 AND 2100
+    GROUP BY YEAR(date), MONTH(date), COALESCE(NULLIF(TRIM(location), ''), 'Не указано')
+    HAVING install_count > 0 OR removal_count > 0
+    ORDER BY event_year, event_month, install_count DESC, removal_count DESC
+  `.trim(),
+  "assistant.downloadDetails": `
+    SELECT
+      id AS id,
+      YEAR(date) AS event_year,
+      MONTH(date) AS event_month,
+      DAY(date) AS event_day,
+      date AS event_at,
+      COALESCE(NULLIF(TRIM(location), ''), 'Не указано') AS location_name,
+      COALESCE(NULLIF(TRIM(org), ''), '') AS organization_name,
+      COALESCE(NULLIF(TRIM(email), ''), '') AS email_address,
+      COALESCE(NULLIF(TRIM(version), ''), '') AS version_name,
+      action AS action_id
+    FROM wp_ass_reg
+    WHERE date IS NOT NULL
+      AND YEAR(date) BETWEEN 2000 AND 2100
+      AND action = 1
+    ORDER BY id DESC
+  `.trim(),
+  "site.downloads": `
+    SELECT
+      'generated' AS event_type,
+      YEAR(time) AS event_year,
+      MONTH(time) AS event_month,
+      COALESCE(NULLIF(TRIM(file), ''), 'Без имени') AS file_name,
+      COUNT(*) AS event_count,
+      MIN(time) AS first_at,
+      MAX(time) AS last_at
+    FROM wp_dae_links
+    WHERE time IS NOT NULL AND YEAR(time) BETWEEN 2000 AND 2100
+    GROUP BY YEAR(time), MONTH(time), COALESCE(NULLIF(TRIM(file), ''), 'Без имени')
+    UNION ALL
+    SELECT
+      'downloaded' AS event_type,
+      YEAR(time_used) AS event_year,
+      MONTH(time_used) AS event_month,
+      COALESCE(NULLIF(TRIM(file), ''), 'Без имени') AS file_name,
+      COUNT(*) AS event_count,
+      MIN(time_used) AS first_at,
+      MAX(time_used) AS last_at
+    FROM wp_dae_links
+    WHERE time_used IS NOT NULL AND YEAR(time_used) BETWEEN 2000 AND 2100
+    GROUP BY YEAR(time_used), MONTH(time_used), COALESCE(NULLIF(TRIM(file), ''), 'Без имени')
+    ORDER BY event_year, event_month, event_type, file_name
+  `.trim()
+});
+const STATISTICS_SOURCE_DEFINITIONS = Object.freeze([
+  {
+    id: "finance.receipts",
+    label: "Поступления слушателей",
+    group: "Доходы и расходы",
+    kind: "ais",
+    connection: "shared-state",
+    requiredColumns: [],
+    consumers: [
+      "income.total", "income.studentCount", "income.financialResult", "income.profitability",
+      "income.monthly", "income.applicationSources", "income.byProgram", "income.profitabilityDetails"
+    ],
+    readOnly: true
+  },
+  {
+    id: "finance.directExpenses",
+    label: "Прямые затраты",
+    group: "Доходы и расходы",
+    kind: "ais",
+    connection: "shared-state",
+    requiredColumns: [],
+    consumers: [
+      "income.totalExpenses", "income.financialResult", "income.profitability", "income.monthly",
+      "income.profitabilityDetails", "expenses.total", "expenses.direct", "expenses.average",
+      "expenses.types", "expenses.counterparties", "expenses.operations"
+    ],
+    readOnly: true
+  },
+  {
+    id: "finance.generalExpenses",
+    label: "Общие затраты",
+    group: "Доходы и расходы",
+    kind: "ais",
+    connection: "shared-state",
+    requiredColumns: [],
+    consumers: [
+      "income.totalExpenses", "income.financialResult", "income.monthly", "expenses.total",
+      "expenses.general", "expenses.average", "expenses.types", "expenses.counterparties",
+      "expenses.operations"
+    ],
+    readOnly: true
+  },
+  {
+    id: "assistant.monthly",
+    label: "Установки и удаления Ассистента",
+    group: "Ассистент",
+    kind: "sql",
+    connection: "assistant",
+    requiredColumns: ["event_year", "event_month", "install_count", "removal_count", "first_at", "last_at"],
+    consumers: ["assistant.installs", "assistant.removals"],
+    readOnly: false
+  },
+  {
+    id: "assistant.versions",
+    label: "Версии Ассистента",
+    group: "Ассистент",
+    kind: "sql",
+    connection: "assistant",
+    requiredColumns: ["event_year", "event_month", "version_name", "event_count"],
+    consumers: ["assistant.versions"],
+    readOnly: false
+  },
+  {
+    id: "assistant.actions",
+    label: "Действия Ассистента",
+    group: "Ассистент",
+    kind: "sql",
+    connection: "assistant",
+    requiredColumns: ["action_id", "action_name", "action_count"],
+    consumers: ["assistant.actionsTotal", "assistant.actions"],
+    readOnly: false
+  },
+  {
+    id: "assistant.locations",
+    label: "География Ассистента",
+    group: "Ассистент",
+    kind: "sql",
+    connection: "assistant",
+    requiredColumns: ["event_year", "event_month", "location_name", "install_count", "removal_count"],
+    consumers: ["assistant.locations"],
+    readOnly: false
+  },
+  {
+    id: "assistant.downloadDetails",
+    label: "Детализация установок Ассистента",
+    group: "Ассистент",
+    kind: "sql",
+    connection: "assistant",
+    requiredColumns: [
+      "id", "event_year", "event_month", "event_day", "event_at", "location_name",
+      "organization_name", "email_address", "version_name", "action_id"
+    ],
+    consumers: ["assistant.downloadDetails"],
+    readOnly: false
+  },
+  {
+    id: "site.downloads",
+    label: "Скачивания файлов сайта",
+    group: "Скачивания сайта",
+    kind: "sql",
+    connection: "applications",
+    requiredColumns: ["event_type", "event_year", "event_month", "file_name", "event_count", "first_at", "last_at"],
+    consumers: ["assistant.generatedLinks", "assistant.downloadedFiles", "assistant.downloadsMonthly", "assistant.files"],
+    readOnly: false
+  }
+].map((source) => Object.freeze({
+  ...source,
+  requiredColumns: Object.freeze([...source.requiredColumns]),
+  consumers: Object.freeze([...source.consumers])
+})));
 const ADVERTISING_EMAIL_HISTORY_STATE_KEY = "global";
 const ADVERTISING_EMAIL_HISTORY_RETAINED_RUNS = 2;
 const ADVERTISING_EMAIL_HISTORY_MAX_CONTACTS_PER_RUN = 200000;
@@ -278,6 +484,7 @@ const DEFAULT_ADVERTISING_EMAIL_SOURCES = Object.freeze([
   }
 ]);
 let serverSettings = {};
+let serverSettingsSaveQueue = Promise.resolve();
 const partnerFeedbackLastSentAt = new Map();
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
@@ -1094,6 +1301,7 @@ async function ensureStorage() {
     sharedRecordLocksMySqlUser: "",
     sharedRecordLocksMySqlPassword: "",
     assistantStatisticsMySqlConnectionString: "",
+    statisticsSources: [],
     studentApplicationsMySqlConnectionString: "",
     advertisingAbitMySqlConnectionString: "",
     advertisingMoodleMySqlConnectionString: "",
@@ -2020,40 +2228,42 @@ async function handleAdminUsers(req, res, user) {
 }
 
 async function saveServerSettings(patch) {
-  const resetsStudentApplicationsMySql = Object.prototype.hasOwnProperty.call(
-    patch || {},
-    "studentApplicationsMySqlConnectionString"
-  ) && serverSettings.studentApplicationsMySqlConnectionString !== patch.studentApplicationsMySqlConnectionString;
-  const resetsSharedRecordLocksMySql = Object.keys(patch || {}).some((key) => {
-    const isMySqlSetting = key.startsWith("sharedRecordLocksMySql")
-      || key === "studentApplicationsMySqlConnectionString";
-    return isMySqlSetting && serverSettings[key] !== patch[key];
+  const requestedPatch = { ...(patch || {}) };
+  const operation = serverSettingsSaveQueue.then(async () => {
+    const resetsStudentApplicationsMySql = Object.prototype.hasOwnProperty.call(
+      requestedPatch,
+      "studentApplicationsMySqlConnectionString"
+    ) && serverSettings.studentApplicationsMySqlConnectionString !== requestedPatch.studentApplicationsMySqlConnectionString;
+    const resetsSharedRecordLocksMySql = Object.keys(requestedPatch).some((key) => {
+      const isMySqlSetting = key.startsWith("sharedRecordLocksMySql")
+        || key === "studentApplicationsMySqlConnectionString";
+      return isMySqlSetting && serverSettings[key] !== requestedPatch[key];
+    });
+    const resetsAdvertisingAbitMySql = Object.prototype.hasOwnProperty.call(
+      requestedPatch,
+      "advertisingAbitMySqlConnectionString"
+    ) && serverSettings.advertisingAbitMySqlConnectionString !== requestedPatch.advertisingAbitMySqlConnectionString;
+    const resetsAdvertisingMoodleMySql = Object.prototype.hasOwnProperty.call(
+      requestedPatch,
+      "advertisingMoodleMySqlConnectionString"
+    ) && serverSettings.advertisingMoodleMySqlConnectionString !== requestedPatch.advertisingMoodleMySqlConnectionString;
+    const nextServerSettings = {
+      ...serverSettings,
+      ...requestedPatch
+    };
+    await writeJsonAtomic(SERVER_SETTINGS_PATH, nextServerSettings);
+    serverSettings = nextServerSettings;
+    if (resetsSharedRecordLocksMySql) {
+      sharedStateMySqlUnavailableUntil = 0;
+      await closeSharedRecordLocksStorage();
+    }
+    if (resetsStudentApplicationsMySql) await closeStudentApplicationsMySqlStorage();
+    if (resetsAdvertisingAbitMySql) await closeAdvertisingAbitMySqlStorage();
+    if (resetsAdvertisingMoodleMySql) await closeAdvertisingMoodleMySqlStorage();
+    return serverSettings;
   });
-  const resetsAdvertisingAbitMySql = Object.prototype.hasOwnProperty.call(
-    patch || {},
-    "advertisingAbitMySqlConnectionString"
-  ) && serverSettings.advertisingAbitMySqlConnectionString !== patch.advertisingAbitMySqlConnectionString;
-  const resetsAdvertisingMoodleMySql = Object.prototype.hasOwnProperty.call(
-    patch || {},
-    "advertisingMoodleMySqlConnectionString"
-  ) && serverSettings.advertisingMoodleMySqlConnectionString !== patch.advertisingMoodleMySqlConnectionString;
-  serverSettings = {
-    ...serverSettings,
-    ...patch
-  };
-  await fs.writeFile(
-    SERVER_SETTINGS_PATH,
-    `${JSON.stringify(serverSettings, null, 2)}\n`,
-    "utf8"
-  );
-  if (resetsSharedRecordLocksMySql) {
-    sharedStateMySqlUnavailableUntil = 0;
-    await closeSharedRecordLocksStorage();
-  }
-  if (resetsStudentApplicationsMySql) await closeStudentApplicationsMySqlStorage();
-  if (resetsAdvertisingAbitMySql) await closeAdvertisingAbitMySqlStorage();
-  if (resetsAdvertisingMoodleMySql) await closeAdvertisingMoodleMySqlStorage();
-  return serverSettings;
+  serverSettingsSaveQueue = operation.catch(() => {});
+  return operation;
 }
 
 function sendJson(res, status, payload, extraHeaders = {}) {
@@ -6819,6 +7029,299 @@ async function closeAssistantStatisticsMySqlStorage() {
   if (pool) await pool.end().catch(() => {});
 }
 
+function getStatisticsSourceDefinition(value) {
+  const id = String(typeof value === "string" ? value : value?.id || "").trim();
+  return STATISTICS_SOURCE_DEFINITIONS.find((source) => source.id === id) || null;
+}
+
+function cloneStatisticsSourceDefinition(definition, sql = "") {
+  return {
+    id: definition.id,
+    label: definition.label,
+    group: definition.group,
+    kind: definition.kind,
+    connection: definition.connection,
+    sql: definition.kind === "sql" ? String(sql || "").trim() : "",
+    requiredColumns: [...definition.requiredColumns],
+    consumers: [...definition.consumers],
+    readOnly: definition.readOnly === true
+  };
+}
+
+function inspectStatisticsSourceSql(value) {
+  const source = String(value || "");
+  const scrubbed = Array.from(source);
+  const comments = [];
+  const semicolons = [];
+  let issue = "";
+  const blankRange = (start, end) => {
+    for (let index = start; index < end; index += 1) {
+      if (scrubbed[index] !== "\r" && scrubbed[index] !== "\n") scrubbed[index] = " ";
+    }
+  };
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    const next = source[index + 1];
+    if ((char === "-" && next === "-") || char === "#") {
+      const start = index;
+      index += char === "#" ? 1 : 2;
+      while (index < source.length && source[index] !== "\n") index += 1;
+      comments.push(start);
+      blankRange(start, index);
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      const start = index;
+      const closing = source.indexOf("*/", index + 2);
+      comments.push(start);
+      if (closing < 0) {
+        blankRange(start, source.length);
+        issue = "Не закрыт комментарий SQL.";
+        break;
+      }
+      index = closing + 2;
+      blankRange(start, index);
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      const start = index;
+      const quote = char;
+      index += 1;
+      let closed = false;
+      while (index < source.length) {
+        if (source[index] === "\\") {
+          index += 2;
+          continue;
+        }
+        if (source[index] === quote) {
+          if (source[index + 1] === quote) {
+            index += 2;
+            continue;
+          }
+          index += 1;
+          closed = true;
+          break;
+        }
+        index += 1;
+      }
+      blankRange(start, Math.min(index, source.length));
+      if (!closed) {
+        issue = "Не закрыта строка SQL.";
+        break;
+      }
+      continue;
+    }
+    if (char === "`") {
+      index += 1;
+      let closed = false;
+      while (index < source.length) {
+        if (source[index] === "`") {
+          if (source[index + 1] === "`") {
+            index += 2;
+            continue;
+          }
+          index += 1;
+          closed = true;
+          break;
+        }
+        index += 1;
+      }
+      if (!closed) {
+        issue = "Не закрыт идентификатор SQL.";
+        break;
+      }
+      continue;
+    }
+    if (char === ";") semicolons.push(index);
+    index += 1;
+  }
+  return { source, scrubbed: scrubbed.join(""), comments, semicolons, issue };
+}
+
+function getStatisticsSourceTopLevelSelectProjection(code) {
+  const source = String(code || "").trim();
+  const selectMatch = /^SELECT\b/iu.exec(source);
+  if (!selectMatch) return "";
+  let depth = 0;
+  for (let index = selectMatch[0].length; index < source.length; index += 1) {
+    if (source[index] === "(") {
+      depth += 1;
+      continue;
+    }
+    if (source[index] === ")") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (
+      depth === 0
+      && /^FROM\b/iu.test(source.slice(index))
+      && (index === 0 || !/[A-Za-z0-9_$]/u.test(source[index - 1]))
+    ) {
+      return source.slice(selectMatch[0].length, index);
+    }
+  }
+  return source.slice(selectMatch[0].length);
+}
+
+function normalizeStatisticsSourceSqlQuery(value, sourceDefinition) {
+  const definition = getStatisticsSourceDefinition(sourceDefinition);
+  if (!definition || definition.kind !== "sql" || definition.readOnly) {
+    throw new Error("Выбран неизвестный или нередактируемый SQL-источник статистики.");
+  }
+  let query = String(value || "").replace(/\u0000/gu, "").trim();
+  if (!query) throw new Error(`Источник «${definition.label}»: укажите SQL-запрос.`);
+  if (query.length > 50000) {
+    throw new Error(`Источник «${definition.label}»: SQL-запрос превышает 50 000 символов.`);
+  }
+  let inspected = inspectStatisticsSourceSql(query);
+  if (inspected.issue) throw new Error(`Источник «${definition.label}»: ${inspected.issue}`);
+  if (inspected.comments.length) {
+    throw new Error(`Источник «${definition.label}»: комментарии SQL не разрешены.`);
+  }
+  if (inspected.semicolons.length) {
+    const lastCodeIndex = inspected.scrubbed.search(/\S\s*$/u);
+    if (inspected.semicolons.length !== 1 || inspected.semicolons[0] !== lastCodeIndex) {
+      throw new Error(`Источник «${definition.label}»: разрешён только один SQL-запрос.`);
+    }
+    query = `${query.slice(0, inspected.semicolons[0])}${query.slice(inspected.semicolons[0] + 1)}`.trim();
+    inspected = inspectStatisticsSourceSql(query);
+  }
+  const code = inspected.scrubbed.trim();
+  if (!/^SELECT\b/iu.test(code)) {
+    throw new Error(`Источник «${definition.label}»: запрос должен начинаться с SELECT.`);
+  }
+  if (/\?/u.test(code)) {
+    throw new Error(`Источник «${definition.label}»: параметры ? в запросе не поддерживаются.`);
+  }
+  const forbiddenKeyword = /\b(?:INSERT|UPDATE|DELETE|REPLACE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|CALL|LOAD|HANDLER|DO|EXECUTE|PREPARE|DEALLOCATE|SET|USE|LOCK|UNLOCK|START|COMMIT|ROLLBACK|XA|KILL|SHUTDOWN|ANALYZE|OPTIMIZE|REPAIR|FLUSH|RESET|PURGE|INSTALL|UNINSTALL)\b/iu.exec(code);
+  if (forbiddenKeyword) {
+    throw new Error(`Источник «${definition.label}»: команда ${forbiddenKeyword[0].toUpperCase()} не разрешена.`);
+  }
+  if (/\bINTO\s+(?:OUTFILE|DUMPFILE|@)/iu.test(code)) {
+    throw new Error(`Источник «${definition.label}»: выгрузка SQL-результата запрещена.`);
+  }
+  if (/\bFOR\s+UPDATE\b|\bLOCK\s+IN\s+SHARE\s+MODE\b/iu.test(code)) {
+    throw new Error(`Источник «${definition.label}»: блокировка строк запрещена.`);
+  }
+  if (/\b(?:SLEEP|BENCHMARK|GET_LOCK|RELEASE_LOCK|LOAD_FILE)\s*\(/iu.test(code)) {
+    throw new Error(`Источник «${definition.label}»: небезопасная SQL-функция не разрешена.`);
+  }
+  const projection = getStatisticsSourceTopLevelSelectProjection(code);
+  const missingColumns = definition.requiredColumns.filter((column) => {
+    const escaped = column.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    return !new RegExp(`\\bAS\\s+(?:\`${escaped}\`|${escaped}\\b)`, "iu").test(projection);
+  });
+  if (missingColumns.length) {
+    throw new Error(
+      `Источник «${definition.label}» должен возвращать обязательные поля с AS: ${missingColumns.join(", ")}.`
+    );
+  }
+  return query;
+}
+
+function getDefaultStatisticsSources() {
+  return STATISTICS_SOURCE_DEFINITIONS.map((definition) => cloneStatisticsSourceDefinition(
+    definition,
+    DEFAULT_STATISTICS_SQL_QUERIES[definition.id] || ""
+  ));
+}
+
+function getStatisticsSourceDefinitions() {
+  const sources = getDefaultStatisticsSources();
+  const byId = new Map(sources.map((source) => [source.id, source]));
+  const stored = serverSettings.statisticsSources;
+  if (stored === undefined || stored === null || (Array.isArray(stored) && !stored.length)) return sources;
+  if (!Array.isArray(stored)) {
+    console.warn("Настройки источников статистики повреждены: ожидается массив; используются стандартные запросы.");
+    return sources;
+  }
+  try {
+    const seen = new Set();
+    for (const item of stored) {
+      const definition = getStatisticsSourceDefinition(item);
+      if (!definition || definition.kind !== "sql" || definition.readOnly) {
+        throw new Error(`неизвестный источник «${String(item?.id || "").trim()}»`);
+      }
+      if (seen.has(definition.id)) throw new Error(`источник «${definition.id}» повторяется`);
+      seen.add(definition.id);
+      byId.get(definition.id).sql = normalizeStatisticsSourceSqlQuery(item?.sql, definition);
+    }
+    return sources;
+  } catch (error) {
+    console.warn(`Настройки источников статистики повреждены, используются стандартные запросы: ${error.message}`);
+    return getDefaultStatisticsSources();
+  }
+}
+
+function normalizeStatisticsSources(value, currentSources = null) {
+  if (!Array.isArray(value)) throw new Error("Передайте массив sources с источниками статистики.");
+  if (!value.length) throw new Error("Добавьте хотя бы один SQL-источник статистики.");
+  if (value.length > STATISTICS_SOURCE_DEFINITIONS.length) {
+    throw new Error("Количество источников статистики превышает допустимое.");
+  }
+  const baseline = Array.isArray(currentSources) && currentSources.length
+    ? currentSources
+    : getStatisticsSourceDefinitions();
+  const result = getDefaultStatisticsSources();
+  const baselineById = new Map(baseline.map((source) => [source.id, source]));
+  result.forEach((source) => {
+    const current = baselineById.get(source.id);
+    if (source.kind === "sql" && current?.sql) source.sql = current.sql;
+  });
+  const resultById = new Map(result.map((source) => [source.id, source]));
+  const seen = new Set();
+  for (const item of value) {
+    const definition = getStatisticsSourceDefinition(item);
+    if (!definition) throw new Error(`Неизвестный источник статистики «${String(item?.id || "").trim()}».`);
+    if (seen.has(definition.id)) throw new Error(`Источник статистики «${definition.id}» повторяется.`);
+    seen.add(definition.id);
+    if (definition.readOnly) {
+      throw new Error(`Источник «${definition.label}» формируется АИС и не изменяется.`);
+    }
+    if (!Object.prototype.hasOwnProperty.call(item || {}, "sql")) {
+      throw new Error(`Источник «${definition.label}»: отсутствует поле sql.`);
+    }
+    resultById.get(definition.id).sql = normalizeStatisticsSourceSqlQuery(item.sql, definition);
+  }
+  return result;
+}
+
+function serializeStatisticsSourceSettings(sources = getStatisticsSourceDefinitions()) {
+  return sources.filter((source) => source.kind === "sql" && !source.readOnly).map((source) => ({
+    id: source.id,
+    sql: normalizeStatisticsSourceSqlQuery(source.sql, source.id)
+  }));
+}
+
+function getStatisticsSourceSql(id) {
+  const source = getStatisticsSourceDefinitions().find((item) => item.id === id);
+  if (!source || source.kind !== "sql") throw new Error(`SQL-источник статистики «${id}» не найден.`);
+  return source.sql;
+}
+
+function publicStatisticsSources(includeSql = false) {
+  return getStatisticsSourceDefinitions().map((source) => ({
+    ...source,
+    sql: includeSql ? source.sql : ""
+  }));
+}
+
+async function queryConfiguredStatisticsSource(pool, id, sql, timeout) {
+  const source = getStatisticsSourceDefinitions().find((item) => item.id === id);
+  if (!source || source.kind !== "sql") throw new Error(`SQL-источник статистики «${id}» не найден.`);
+  try {
+    const result = await pool.query({ sql, timeout });
+    validateStatisticsSourceResultColumns(
+      source,
+      (Array.isArray(result?.[1]) ? result[1] : []).map((field) => field?.name)
+    );
+    return result;
+  } catch (error) {
+    throw new Error(`Источник «${source.label}» не выполнил запрос: ${error.message}`);
+  }
+}
+
 function getAdvertisingMySqlConnectionString(kind) {
   const isAbit = kind === "abit";
   return String(
@@ -7228,90 +7731,27 @@ function normalizeAssistantStatisticsRows(
 }
 
 async function readAssistantStatistics() {
+  // The editable defaults preserve the original Power BI model:
+  // FROM wp_ass_reg; TRIM(email); TRIM(org); TRIM(location); AND action = 1.
+  // Actions use FROM wp_ass_logs AS logs and INNER JOIN wp_ass_logs_structure.
   const pool = await getAssistantStatisticsMySqlPool();
   if (!pool) throw new Error("Подключение к статистике Power BI не настроено.");
   const [monthlyResult, versionResult, actionResult, locationResult, downloadDetailResult] = await Promise.all([
-    pool.query({
-      sql: `
-        SELECT
-          YEAR(date) AS event_year,
-          MONTH(date) AS event_month,
-          SUM(CASE WHEN action = 1 THEN 1 ELSE 0 END) AS install_count,
-          SUM(CASE WHEN action IN (0, -1) THEN 1 ELSE 0 END) AS removal_count,
-          MIN(date) AS first_at,
-          MAX(date) AS last_at
-        FROM wp_ass_reg
-        WHERE date IS NOT NULL AND YEAR(date) BETWEEN 2000 AND 2100
-        GROUP BY YEAR(date), MONTH(date)
-        ORDER BY event_year, event_month
-      `,
-      timeout: 12000
-    }),
-    pool.query({
-      sql: `
-        SELECT
-          YEAR(date) AS event_year,
-          MONTH(date) AS event_month,
-          COALESCE(NULLIF(TRIM(version), ''), 'Без версии') AS version_name,
-          COUNT(version) AS event_count
-        FROM wp_ass_reg
-        WHERE date IS NOT NULL AND YEAR(date) BETWEEN 2000 AND 2100
-        GROUP BY YEAR(date), MONTH(date), COALESCE(NULLIF(TRIM(version), ''), 'Без версии')
-        HAVING COUNT(version) > 0
-        ORDER BY event_year, event_month, event_count DESC
-      `,
-      timeout: 12000
-    }),
-    pool.query({
-      sql: `
-        SELECT
-          logs.action AS action_id,
-          COALESCE(NULLIF(TRIM(structure.description), ''), CONCAT('Действие ', logs.action)) AS action_name,
-          COUNT(logs.action) AS action_count
-        FROM wp_ass_logs AS logs
-        INNER JOIN wp_ass_logs_structure AS structure ON logs.action = structure.action
-        GROUP BY logs.action, structure.description
-        ORDER BY action_count DESC
-      `,
-      timeout: 12000
-    }),
-    pool.query({
-      sql: `
-        SELECT
-          YEAR(date) AS event_year,
-          MONTH(date) AS event_month,
-          COALESCE(NULLIF(TRIM(location), ''), 'Не указано') AS location_name,
-          SUM(CASE WHEN action = 1 THEN 1 ELSE 0 END) AS install_count,
-          SUM(CASE WHEN action IN (0, -1) THEN 1 ELSE 0 END) AS removal_count
-        FROM wp_ass_reg
-        WHERE date IS NOT NULL AND YEAR(date) BETWEEN 2000 AND 2100
-        GROUP BY YEAR(date), MONTH(date), COALESCE(NULLIF(TRIM(location), ''), 'Не указано')
-        HAVING install_count > 0 OR removal_count > 0
-        ORDER BY event_year, event_month, install_count DESC, removal_count DESC
-      `,
-      timeout: 12000
-    }),
-    pool.query({
-      sql: `
-        SELECT
-          id,
-          YEAR(date) AS event_year,
-          MONTH(date) AS event_month,
-          DAY(date) AS event_day,
-          date AS event_at,
-          COALESCE(NULLIF(TRIM(location), ''), 'Не указано') AS location_name,
-          COALESCE(NULLIF(TRIM(org), ''), '') AS organization_name,
-          COALESCE(NULLIF(TRIM(email), ''), '') AS email_address,
-          COALESCE(NULLIF(TRIM(version), ''), '') AS version_name,
-          action AS action_id
-        FROM wp_ass_reg
-        WHERE date IS NOT NULL
-          AND YEAR(date) BETWEEN 2000 AND 2100
-          AND action = 1
-        ORDER BY id DESC
-      `,
-      timeout: 12000
-    })
+    queryConfiguredStatisticsSource(
+      pool, "assistant.monthly", getStatisticsSourceSql("assistant.monthly"), 12000
+    ),
+    queryConfiguredStatisticsSource(
+      pool, "assistant.versions", getStatisticsSourceSql("assistant.versions"), 12000
+    ),
+    queryConfiguredStatisticsSource(
+      pool, "assistant.actions", getStatisticsSourceSql("assistant.actions"), 12000
+    ),
+    queryConfiguredStatisticsSource(
+      pool, "assistant.locations", getStatisticsSourceSql("assistant.locations"), 12000
+    ),
+    queryConfiguredStatisticsSource(
+      pool, "assistant.downloadDetails", getStatisticsSourceSql("assistant.downloadDetails"), 12000
+    )
   ]);
   return normalizeAssistantStatisticsRows(
     monthlyResult[0],
@@ -7331,37 +7771,13 @@ async function handleAssistantStatistics(res) {
 }
 
 async function readPublicDownloadStatistics() {
+  // The editable site.downloads default reads FROM wp_dae_links and returns
+  // both 'generated' AS event_type and 'downloaded' AS event_type rows.
   const pool = await getStudentApplicationsMySqlPool();
   if (!pool) throw new Error("Подключение к базе сайта не настроено.");
-  const [rows] = await pool.query({
-    sql: `
-      SELECT
-        'generated' AS event_type,
-        YEAR(time) AS event_year,
-        MONTH(time) AS event_month,
-        COALESCE(NULLIF(TRIM(file), ''), 'Без имени') AS file_name,
-        COUNT(*) AS event_count,
-        MIN(time) AS first_at,
-        MAX(time) AS last_at
-      FROM wp_dae_links
-      WHERE time IS NOT NULL AND YEAR(time) BETWEEN 2000 AND 2100
-      GROUP BY YEAR(time), MONTH(time), COALESCE(NULLIF(TRIM(file), ''), 'Без имени')
-      UNION ALL
-      SELECT
-        'downloaded' AS event_type,
-        YEAR(time_used) AS event_year,
-        MONTH(time_used) AS event_month,
-        COALESCE(NULLIF(TRIM(file), ''), 'Без имени') AS file_name,
-        COUNT(*) AS event_count,
-        MIN(time_used) AS first_at,
-        MAX(time_used) AS last_at
-      FROM wp_dae_links
-      WHERE time_used IS NOT NULL AND YEAR(time_used) BETWEEN 2000 AND 2100
-      GROUP BY YEAR(time_used), MONTH(time_used), COALESCE(NULLIF(TRIM(file), ''), 'Без имени')
-      ORDER BY event_year, event_month, event_type, file_name
-    `,
-    timeout: 10000
-  });
+  const [rows] = await queryConfiguredStatisticsSource(
+    pool, "site.downloads", getStatisticsSourceSql("site.downloads"), 10000
+  );
   const events = (Array.isArray(rows) ? rows : []).flatMap((row) => {
     const year = Math.floor(Number(row.event_year));
     const month = Math.floor(Number(row.event_month));
@@ -7404,6 +7820,100 @@ async function handlePublicDownloadStatistics(res) {
     sendJson(res, 200, await readPublicDownloadStatistics());
   } catch (error) {
     sendError(res, 503, `Не удалось получить статистику скачиваний: ${error.message}`);
+  }
+}
+
+function validateStatisticsSourceResultColumns(source, columns = []) {
+  const normalizedColumns = new Set((Array.isArray(columns) ? columns : [])
+    .map((column) => String(column || "").trim().toLocaleLowerCase("en-US"))
+    .filter(Boolean));
+  const missing = source.requiredColumns.filter((column) => (
+    !normalizedColumns.has(column.toLocaleLowerCase("en-US"))
+  ));
+  if (missing.length) {
+    throw new Error(`Запрос источника «${source.label}» не вернул обязательные поля: ${missing.join(", ")}.`);
+  }
+  return [...normalizedColumns];
+}
+
+async function getStatisticsSourceMySqlPool(source) {
+  if (source.connection === "assistant") return getAssistantStatisticsMySqlPool();
+  if (source.connection === "applications") return getStudentApplicationsMySqlPool();
+  throw new Error(`Для источника «${source.label}» задано неизвестное подключение.`);
+}
+
+async function testStatisticsSource(source) {
+  if (!source || source.kind !== "sql" || source.readOnly) {
+    throw new Error("Проверять SQL можно только у редактируемого источника статистики.");
+  }
+  const pool = await getStatisticsSourceMySqlPool(source);
+  if (!pool) throw new Error(`Подключение «${source.connection}» не настроено.`);
+  const startedAt = Date.now();
+  let rows;
+  let fields;
+  try {
+    [rows, fields] = await pool.query({
+      sql: `SELECT * FROM (\n${source.sql}\n) AS ais_statistics_source_test LIMIT 200`,
+      timeout: 12000
+    });
+  } catch (error) {
+    throw new Error(`Источник «${source.label}» не прошёл проверку: ${error.message}`);
+  }
+  const columns = (Array.isArray(fields) ? fields : []).map((field) => String(field?.name || "").trim())
+    .filter(Boolean);
+  if (!columns.length && Array.isArray(rows) && rows.length) columns.push(...Object.keys(rows[0] || {}));
+  validateStatisticsSourceResultColumns(source, columns);
+  const durationMs = Math.max(0, Date.now() - startedAt);
+  const rowCount = Array.isArray(rows) ? rows.length : 0;
+  return {
+    message: `Источник «${source.label}» работает. Получено строк для проверки: ${rowCount}.`,
+    columns,
+    rowCount,
+    durationMs
+  };
+}
+
+async function handleStatisticsSources(req, res, authUser, options = {}) {
+  if (req.method === "GET" && !options.test) {
+    sendJson(res, 200, { sources: publicStatisticsSources(authUser?.role === "admin") });
+    return;
+  }
+  if (authUser?.role !== "admin") {
+    sendError(res, 403, "Настройки источников статистики доступны только администратору.");
+    return;
+  }
+  if (req.method !== "POST") {
+    sendError(res, 405, "Method not allowed");
+    return;
+  }
+  try {
+    const body = await readJsonBody(req, 512 * 1024);
+    if (options.test) {
+      if (!body.source || typeof body.source !== "object" || Array.isArray(body.source)) {
+        throw new Error("Передайте объект source для проверки.");
+      }
+      const sources = normalizeStatisticsSources([body.source], getStatisticsSourceDefinitions());
+      const source = sources.find((item) => item.id === String(body.source.id || "").trim());
+      sendJson(res, 200, await testStatisticsSource(source));
+      return;
+    }
+    const sources = normalizeStatisticsSources(body.sources, getStatisticsSourceDefinitions());
+    const submittedIds = new Set(body.sources.map((source) => String(source?.id || "").trim()));
+    await Promise.all(sources
+      .filter((source) => submittedIds.has(source.id))
+      .map((source) => testStatisticsSource(source)));
+    await saveServerSettings({ statisticsSources: serializeStatisticsSourceSettings(sources) });
+    await safelyAppendAuditEntry({
+      action: "Изменены источники статистики",
+      area: "Статистика",
+      entityType: "statistics-settings",
+      entityId: "sources",
+      details: `Сохранено SQL-источников: ${sources.filter((source) => source.kind === "sql").length}.`,
+      source: "statistics-sources"
+    }, authUser, req);
+    sendJson(res, 200, { sources: publicStatisticsSources(true) });
+  } catch (error) {
+    sendError(res, 400, error.message);
   }
 }
 
@@ -33097,7 +33607,14 @@ async function route(req, res) {
     return;
   }
   const adminOnlyRequest = (
-    (req.method === "POST" && requestUrl.pathname === "/api/settings/system-documents")
+    (
+      req.method === "POST"
+      && [
+        "/api/settings/system-documents",
+        "/api/statistics/sources",
+        "/api/statistics/sources/test"
+      ].includes(requestUrl.pathname)
+    )
     || [
       "/api/yandex-disk/test",
       "/api/student-applications-email/test",
@@ -33149,6 +33666,14 @@ async function route(req, res) {
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/admin/training-end-notifications/run") {
     await handleTrainingEndNotificationCheck(req, res, { force: true, source: "admin" });
+    return;
+  }
+  if (requestUrl.pathname === "/api/statistics/sources/test") {
+    await handleStatisticsSources(req, res, authUser, { test: true });
+    return;
+  }
+  if (requestUrl.pathname === "/api/statistics/sources") {
+    await handleStatisticsSources(req, res, authUser);
     return;
   }
   if (req.method === "GET" && requestUrl.pathname === "/api/statistics/downloads") {
@@ -33411,6 +33936,10 @@ module.exports = {
   closeAssistantStatisticsMySqlStorage,
   closeAdvertisingAbitMySqlStorage,
   closeAdvertisingMoodleMySqlStorage,
+  normalizeStatisticsSourceSqlQuery,
+  normalizeStatisticsSources,
+  validateStatisticsSourceResultColumns,
+  getStatisticsSourceDefinitions,
   normalizeAssistantStatisticsRows,
   readAssistantStatistics,
   extractAdvertisingEmails,

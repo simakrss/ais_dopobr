@@ -164,10 +164,19 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.331",
+    version: "1.7.332",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.332",
+      releasedAt: "2026-08-27",
+      changes: [
+        "В интерактивной статистике добавлена вкладка «Источники» с конструктором трёх встроенных наборов АИС и шести SQL-наборов.",
+        "Для каждого источника показаны все связанные показатели, диаграммы и таблицы; полная карта построения охватывает элементы вкладок доходов, расходов и Ассистента.",
+        "Администратор может проверить SQL-запрос и его обязательные поля до сохранения; изменяющие данные команды и несовместимые результаты блокируются."
+      ]
+    },
     {
       version: "1.7.331",
       releasedAt: "2026-08-27",
@@ -4522,8 +4531,68 @@ MAX - https://bizvmax.ru/zifra_plus
   const statisticsTabs = Object.freeze([
     { id: "income", label: "Доходы" },
     { id: "expenses", label: "Расходы" },
-    { id: "assistant", label: "Ассистент и скачивания" }
+    { id: "assistant", label: "Ассистент и скачивания" },
+    { id: "sources", label: "Источники" }
   ]);
+  const STATISTICS_SOURCE_CONSUMERS = Object.freeze({
+    "finance.receipts": [
+      ["Доходы", "Суммарные доходы"],
+      ["Доходы", "Количество слушателей"],
+      ["Доходы", "Финансовый результат"],
+      ["Доходы", "Рентабельность"],
+      ["Доходы", "Доходы и затраты по месяцам"],
+      ["Доходы", "Источники заявок"],
+      ["Доходы", "Доходы по программам"],
+      ["Доходы", "Рентабельность по программам"]
+    ],
+    "finance.directExpenses": [
+      ["Доходы", "Суммарные затраты"],
+      ["Доходы", "Финансовый результат"],
+      ["Доходы", "Рентабельность"],
+      ["Доходы", "Доходы и затраты по месяцам"],
+      ["Доходы", "Рентабельность по программам"],
+      ["Расходы", "Всего затрат"],
+      ["Расходы", "Прямые затраты"],
+      ["Расходы", "Средняя операция"],
+      ["Расходы", "Виды затрат"],
+      ["Расходы", "Крупнейшие получатели"],
+      ["Расходы", "Операции затрат"]
+    ],
+    "finance.generalExpenses": [
+      ["Доходы", "Суммарные затраты"],
+      ["Доходы", "Финансовый результат"],
+      ["Доходы", "Доходы и затраты по месяцам"],
+      ["Расходы", "Всего затрат"],
+      ["Расходы", "Общие затраты"],
+      ["Расходы", "Средняя операция"],
+      ["Расходы", "Виды затрат"],
+      ["Расходы", "Крупнейшие получатели"],
+      ["Расходы", "Операции затрат"]
+    ],
+    "assistant.monthly": [
+      ["Ассистент и скачивания", "Установки Ассистента"],
+      ["Ассистент и скачивания", "Удаления Ассистента"]
+    ],
+    "assistant.versions": [
+      ["Ассистент и скачивания", "Установки версий Ассистента"]
+    ],
+    "assistant.actions": [
+      ["Ассистент и скачивания", "Действия в Ассистенте"],
+      ["Ассистент и скачивания", "Популярные действия"]
+    ],
+    "assistant.locations": [
+      ["Ассистент и скачивания", "Установки и удаления по городам"]
+    ],
+    "assistant.downloadDetails": [
+      ["Ассистент и скачивания", "Детальная информация о скачиваниях"]
+    ],
+    "site.downloads": [
+      ["Ассистент и скачивания", "Скачано файлов"],
+      ["Ассистент и скачивания", "Сформировано ссылок"],
+      ["Ассистент и скачивания", "Скачивания по месяцам"],
+      ["Ассистент и скачивания", "Структура скачиваний"]
+    ]
+  });
   const statisticsDownloadDetailColumns = Object.freeze([
     { key: "id", label: "ID", numeric: true },
     { key: "date", label: "Дата", date: true },
@@ -5722,6 +5791,17 @@ MAX - https://bizvmax.ru/zifra_plus
         loaded: false,
         error: "",
         data: null
+      },
+      sources: {
+        loading: false,
+        loaded: false,
+        saving: false,
+        testingId: "",
+        error: "",
+        message: "",
+        data: null,
+        savedSqlById: {},
+        testResults: {}
       }
     },
     advertising: {
@@ -10799,6 +10879,14 @@ MAX - https://bizvmax.ru/zifra_plus
     ) {
       queueMicrotask(() => loadStatisticsData());
     }
+    if (
+      state.view === "statistics"
+      && state.statistics.tab === "sources"
+      && !state.statistics.sources.loaded
+      && !state.statistics.sources.loading
+    ) {
+      queueMicrotask(() => loadStatisticsSources());
+    }
     if (state.view === "advertising") {
       if (!state.advertising.resultLoaded && !state.advertising.resultLoading) {
         queueMicrotask(() => loadAdvertisingEmailResult());
@@ -11895,6 +11983,206 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function getStatisticsSourceDefinitions() {
+    const sources = state.statistics.sources.data?.sources;
+    return Array.isArray(sources) ? sources : [];
+  }
+
+  function getStatisticsSourceConsumers(source = {}) {
+    const supplied = Array.isArray(source.consumers) ? source.consumers : [];
+    const fallback = STATISTICS_SOURCE_CONSUMERS[String(source.id || "")] || [];
+    const selected = fallback.length ? fallback : supplied;
+    const result = new Map();
+    selected.forEach((consumer) => {
+      const section = Array.isArray(consumer)
+        ? String(consumer[0] || "Статистика")
+        : String(consumer?.section || consumer?.tab || "Статистика");
+      const label = Array.isArray(consumer)
+        ? String(consumer[1] || "")
+        : String(consumer?.label || consumer?.title || consumer || "");
+      if (!label) return;
+      result.set(`${section}\u0000${label}`, { section, label });
+    });
+    return [...result.values()];
+  }
+
+  function getStatisticsSourceKindLabel(source = {}) {
+    const kind = String(source.kind || "").toLowerCase();
+    if (kind === "ais" || kind === "builtin") return "Данные АИС";
+    if (kind === "mysql" || kind === "sql") return "SQL · MySQL";
+    return String(source.kindLabel || source.kind || "Источник");
+  }
+
+  function getStatisticsSourceConnectionLabel(value) {
+    const labels = {
+      assistant: "Статистика Ассистента",
+      applications: "База сайта / интернет-магазина",
+      abit: "База ВИИТ",
+      moodle: "База Moodle",
+      ais: "Общая база АИС",
+      "shared-state": "Общая база АИС"
+    };
+    return labels[String(value || "")] || String(value || "Не задано");
+  }
+
+  function isStatisticsSourceReadOnly(source = {}) {
+    const kind = String(source.kind || "").toLowerCase();
+    return source.readOnly === true || source.editable === false || kind === "ais" || kind === "builtin";
+  }
+
+  function renderStatisticsSourceConsumers(source = {}) {
+    const consumers = getStatisticsSourceConsumers(source);
+    if (!consumers.length) return '<span class="statistics-source-consumer is-empty">Назначение не задано</span>';
+    return consumers.map((consumer) => `
+      <span class="statistics-source-consumer"><b>${escapeHtml(consumer.section)}</b>${escapeHtml(consumer.label)}</span>
+    `).join("");
+  }
+
+  function renderStatisticsSourceEditor(source, index) {
+    const sourcesState = state.statistics.sources;
+    const readOnly = isStatisticsSourceReadOnly(source);
+    const canEdit = isAdminUser() && !readOnly;
+    const requiredColumns = Array.isArray(source.requiredColumns) ? source.requiredColumns : [];
+    const sourceId = String(source.id || `statistics-source-${index + 1}`);
+    const testResult = sourcesState.testResults?.[sourceId];
+    const testing = sourcesState.testingId === sourceId;
+    const connection = String(source.connection || (readOnly ? "ais" : "assistant"));
+    return `
+      <article class="statistics-source-editor ${readOnly ? "is-readonly" : "is-editable"}" data-statistics-source-editor data-source-id="${escapeAttr(sourceId)}" data-source-index="${index}">
+        <header class="statistics-source-editor-head">
+          <div>
+            <span class="statistics-source-sequence">${index + 1}</span>
+            <div>
+              <strong>${escapeHtml(source.label || sourceId)}</strong>
+              <small>${escapeHtml(sourceId)}</small>
+            </div>
+          </div>
+          <div class="statistics-source-editor-badges">
+            <span>${escapeHtml(getStatisticsSourceKindLabel(source))}</span>
+            <span class="${readOnly ? "is-native" : "is-sql"}">${escapeHtml(getStatisticsSourceConnectionLabel(connection))}</span>
+          </div>
+        </header>
+        <div class="statistics-source-editor-body">
+          <div class="statistics-source-meta">
+            <div class="statistics-source-readonly-note">
+              <strong>${readOnly ? "Встроенный источник" : (canEdit ? "Системный контракт SQL" : "Настроенный SQL-источник")}</strong>
+              <span>${escapeHtml(source.description || (readOnly
+                ? "Данные читаются из общей Web-базы АИС и связаны со слушателями и финансовыми операциями."
+                : `Подключение закреплено за набором: ${getStatisticsSourceConnectionLabel(connection)}.`))}</span>
+            </div>
+            <div class="statistics-source-contract">
+              <span>Поля результата</span>
+              <div>${requiredColumns.length
+                ? requiredColumns.map((column) => `<code>${escapeHtml(column)}</code>`).join("")
+                : '<small>Структура задаётся общей базой АИС</small>'}</div>
+            </div>
+          </div>
+          <div class="statistics-source-consumers">
+            <span>Строит элементы</span>
+            <div>${renderStatisticsSourceConsumers(source)}</div>
+          </div>
+          ${canEdit ? `
+            <label class="statistics-source-query">
+              <span>SQL-запрос SELECT</span>
+              ${renderSqlMiniIde(source.sql || "", {
+                inputAttributes: 'data-statistics-source-field="sql"',
+                ariaLabel: `SQL-запрос источника ${source.label || sourceId}`,
+                allowWith: false,
+                allowComments: false,
+                allowTrailingSemicolon: false,
+                requiredParameters: 0
+              })}
+            </label>
+            <div class="statistics-source-test-row">
+              <button class="ghost-button" data-action="test-statistics-source" data-source-id="${escapeAttr(sourceId)}" type="button" ${testing || sourcesState.saving ? "disabled" : ""}>${testing ? "Проверка…" : "Проверить источник"}</button>
+              ${testResult ? `<span class="statistics-source-test-result ${testResult.ok ? "is-success" : "is-error"}" role="status">${escapeHtml(testResult.message || (testResult.ok ? "Источник работает." : "Проверка не выполнена."))}</span>` : ""}
+            </div>
+          ` : ""}
+        </div>
+      </article>
+    `;
+  }
+
+  function renderStatisticsSourceMap(sources = []) {
+    const rows = sources.flatMap((source) => getStatisticsSourceConsumers(source).map((consumer) => ({
+      section: consumer.section,
+      element: consumer.label,
+      source: source.label || source.id,
+      sourceId: source.id,
+      kind: getStatisticsSourceKindLabel(source)
+    }))).sort((left, right) => (
+      left.section.localeCompare(right.section, "ru")
+      || left.element.localeCompare(right.element, "ru")
+      || String(left.source).localeCompare(String(right.source), "ru")
+    ));
+    return `
+      <section class="panel statistics-source-map-panel">
+        <div class="panel-head">
+          <div><p class="eyebrow">Связи</p><h2>Карта построения статистики</h2></div>
+          <span class="statistics-row-count">${formatStatisticsInteger(rows.length)}</span>
+        </div>
+        ${rows.length ? `
+          <div class="table-wrap statistics-source-map-wrap">
+            <table class="data-table statistics-source-map-table">
+              <thead><tr><th>Вкладка</th><th>Элемент статистики</th><th>Набор данных</th><th>Тип</th></tr></thead>
+              <tbody>${rows.map((row) => `
+                <tr><td>${escapeHtml(row.section)}</td><td>${escapeHtml(row.element)}</td><td><strong>${escapeHtml(row.source)}</strong><small>${escapeHtml(row.sourceId)}</small></td><td>${escapeHtml(row.kind)}</td></tr>
+              `).join("")}</tbody>
+            </table>
+          </div>
+        ` : '<div class="empty-state compact"><span>Карта источников пока не загружена.</span></div>'}
+      </section>
+    `;
+  }
+
+  function renderStatisticsSources() {
+    const sourcesState = state.statistics.sources;
+    const sources = getStatisticsSourceDefinitions();
+    const consumerCount = new Set(sources.flatMap((source) => (
+      getStatisticsSourceConsumers(source).map((consumer) => `${consumer.section}\u0000${consumer.label}`)
+    ))).size;
+    const sqlCount = sources.filter((source) => !isStatisticsSourceReadOnly(source)).length;
+    if (sourcesState.loading && !sources.length) {
+      return '<section class="panel statistics-source-builder-panel"><div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Загрузка конструктора источников…</span></div></section>';
+    }
+    if (!sources.length) {
+      return `
+        <section class="panel statistics-source-builder-panel">
+          <div class="empty-state compact">
+            <strong>Источники не загружены</strong>
+            <span>${escapeHtml(sourcesState.error || "Повторите загрузку конструктора.")}</span>
+            <button class="ghost-button" data-action="reload-statistics-sources" type="button">Повторить</button>
+          </div>
+        </section>
+      `;
+    }
+    return `
+      <section class="panel statistics-source-builder-panel">
+        <div class="panel-head statistics-source-builder-head">
+          <div><p class="eyebrow">Наборы данных</p><h2>Конструктор источников</h2></div>
+          <div class="statistics-source-summary">
+            <span><strong>${formatStatisticsInteger(sources.length)}</strong> источников</span>
+            <span><strong>${formatStatisticsInteger(sqlCount)}</strong> SQL-запросов</span>
+            <span><strong>${formatStatisticsInteger(consumerCount)}</strong> элементов</span>
+          </div>
+        </div>
+        <p class="statistics-source-builder-hint">Каждый набор данных связан с конкретными карточками, диаграммами и таблицами. Встроенные данные АИС защищены от изменения; администратор может настроить и проверить SQL-запросы внешних источников.</p>
+        ${sourcesState.error ? `<div class="statistics-inline-error" role="alert">${escapeHtml(sourcesState.error)}</div>` : ""}
+        ${sourcesState.message ? `<div class="statistics-source-message" role="status">${escapeHtml(sourcesState.message)}</div>` : ""}
+        <form data-action="save-statistics-sources" class="statistics-source-builder-form">
+          <div class="statistics-source-builder-list">
+            ${sources.map(renderStatisticsSourceEditor).join("")}
+          </div>
+          <div class="statistics-source-builder-actions">
+            <button class="ghost-button" data-action="reload-statistics-sources" type="button" ${sourcesState.loading || sourcesState.saving || sourcesState.testingId ? "disabled" : ""}>Загрузить заново</button>
+            ${isAdminUser() ? `<button class="primary-button" type="submit" ${sourcesState.saving || sourcesState.testingId ? "disabled" : ""}>${sourcesState.saving ? "Сохранение…" : "Сохранить источники"}</button>` : ""}
+          </div>
+        </form>
+      </section>
+      ${renderStatisticsSourceMap(sources)}
+    `;
+  }
+
   function getStatisticsFilterOptions() {
     const finance = getStatisticsFinanceRows();
     const years = new Set(
@@ -11938,7 +12226,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <div><p class="eyebrow">Аналитика учебного центра</p><h2>Интерактивная статистика</h2></div>
             <div class="statistics-heading-actions">
               ${activeTab === "assistant" ? `<button class="ghost-button" data-action="refresh-statistics-data" type="button" ${state.statistics.downloads.loading || state.statistics.assistant.loading ? "disabled" : ""}>Обновить данные</button>` : ""}
-              <button class="ghost-button" data-action="export-statistics" type="button">Экспорт CSV</button>
+              ${activeTab !== "sources" ? '<button class="ghost-button" data-action="export-statistics" type="button">Экспорт CSV</button>' : ""}
             </div>
           </div>
           <nav class="statistics-tabs" data-orderable-tabs="statistics" role="tablist" aria-label="Разделы статистики">
@@ -11946,7 +12234,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <button class="${activeTab === tab.id ? "active" : ""}" data-action="switch-statistics-tab" data-statistics-tab="${escapeAttr(tab.id)}" data-orderable-tab="${escapeAttr(tab.id)}" data-orderable-tab-default-index="${tab.defaultTabIndex}" type="button" role="tab" aria-selected="${activeTab === tab.id ? "true" : "false"}">${escapeHtml(tab.label)}</button>
             `).join("")}
           </nav>
-          <div class="statistics-filters">
+          ${activeTab !== "sources" ? `<div class="statistics-filters">
             <label><span>Год</span><select data-statistics-filter="year"><option value="">Все годы</option>${options.years.map((year) => `<option value="${escapeAttr(year)}" ${filters.year === year ? "selected" : ""}>${escapeHtml(year)}</option>`).join("")}</select></label>
             <label><span>Месяц</span><select data-statistics-filter="month"><option value="">Все месяцы</option>${monthNames.map((month) => `<option value="${month.value}" ${filters.month === month.value ? "selected" : ""}>${escapeHtml(month.label)}</option>`).join("")}</select></label>
             ${activeTab !== "assistant" ? `
@@ -11961,12 +12249,14 @@ MAX - https://bizvmax.ru/zifra_plus
               <label class="statistics-filter-wide"><span>Поиск в скачиваниях</span><input data-statistics-filter="downloadQuery" value="${escapeAttr(filters.downloadQuery)}" placeholder="ID, город, организация, email, версия" autocomplete="off"></label>
             ` : ""}
             <button class="ghost-button statistics-reset-button" data-action="reset-statistics-filters" type="button">Сбросить</button>
-          </div>
+          </div>` : ""}
         </section>
         <div class="statistics-report">
-          ${activeTab === "expenses"
-            ? renderStatisticsExpenses()
-            : (activeTab === "assistant" ? renderStatisticsAssistant() : renderStatisticsIncome())}
+          ${activeTab === "sources"
+            ? renderStatisticsSources()
+            : (activeTab === "expenses"
+              ? renderStatisticsExpenses()
+              : (activeTab === "assistant" ? renderStatisticsAssistant() : renderStatisticsIncome()))}
         </div>
       </section>
     `;
@@ -12029,6 +12319,155 @@ MAX - https://bizvmax.ru/zifra_plus
     ]);
   }
 
+  async function loadStatisticsSources(options = {}) {
+    const sourcesState = state.statistics.sources;
+    if (sourcesState.loading || (sourcesState.loaded && !options.force)) return;
+    sourcesState.loading = true;
+    sourcesState.error = "";
+    if (options.force) sourcesState.message = "";
+    if (state.view === "statistics" && state.statistics.tab === "sources") render();
+    try {
+      const response = await fetch(photoApiUrl("/api/statistics/sources"), {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "X-Requested-With": "AIS-Web" }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      sourcesState.data = payload;
+      sourcesState.loaded = true;
+      sourcesState.savedSqlById = Object.fromEntries((payload.sources || [])
+        .filter((source) => !isStatisticsSourceReadOnly(source))
+        .map((source) => [String(source.id || ""), String(source.sql || "").trim()]));
+      sourcesState.testResults = {};
+    } catch (error) {
+      sourcesState.error = error.message || "Не удалось загрузить конструктор источников.";
+      sourcesState.loaded = true;
+    } finally {
+      sourcesState.loading = false;
+      if (state.view === "statistics" && state.statistics.tab === "sources") render();
+    }
+  }
+
+  function syncStatisticsSourceDraftsFromDom(form = document.querySelector("form[data-action='save-statistics-sources']")) {
+    const current = getStatisticsSourceDefinitions().map((source) => ({ ...source }));
+    if (!form) return current;
+    form.querySelectorAll("[data-sql-query-editor]").forEach(syncAdminSqlQueryEditor);
+    form.querySelectorAll("[data-statistics-source-editor]").forEach((editor) => {
+      const sourceId = String(editor.dataset.sourceId || "");
+      const source = current.find((item) => String(item.id || "") === sourceId);
+      if (!source || isStatisticsSourceReadOnly(source)) return;
+      const field = (name) => editor.querySelector(`[data-statistics-source-field='${name}']`);
+      source.sql = String(field("sql")?.value || "").trim();
+    });
+    state.statistics.sources.data = {
+      ...(state.statistics.sources.data || {}),
+      sources: current
+    };
+    return current;
+  }
+
+  function getEditableStatisticsSourcePayload(sources = []) {
+    return sources.filter((source) => !isStatisticsSourceReadOnly(source)).map((source) => ({
+      id: String(source.id || ""),
+      sql: String(source.sql || "")
+    }));
+  }
+
+  async function saveStatisticsSources(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const sourcesState = state.statistics.sources;
+    if (sourcesState.saving || sourcesState.testingId || !isAdminUser()) return;
+    const sources = syncStatisticsSourceDraftsFromDom(form);
+    const changedSources = getEditableStatisticsSourcePayload(sources).filter((source) => (
+      String(sourcesState.savedSqlById?.[source.id] || "").trim() !== source.sql
+    ));
+    if (!changedSources.length) {
+      sourcesState.error = "";
+      sourcesState.message = "Изменений для сохранения нет.";
+      render();
+      return;
+    }
+    sourcesState.saving = true;
+    sourcesState.error = "";
+    sourcesState.message = "";
+    render();
+    try {
+      const response = await fetch(photoApiUrl("/api/statistics/sources"), {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({ sources: changedSources })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      sourcesState.data = payload;
+      sourcesState.loaded = true;
+      sourcesState.savedSqlById = Object.fromEntries((payload.sources || [])
+        .filter((source) => !isStatisticsSourceReadOnly(source))
+        .map((source) => [String(source.id || ""), String(source.sql || "").trim()]));
+      sourcesState.testResults = {};
+      sourcesState.message = "Источники сохранены. Статистика обновляется по новым запросам.";
+      state.statistics.assistant.loaded = false;
+      state.statistics.downloads.loaded = false;
+      queueMicrotask(() => loadStatisticsData({ force: true }));
+    } catch (error) {
+      sourcesState.error = error.message || "Не удалось сохранить источники статистики.";
+    } finally {
+      sourcesState.saving = false;
+      if (state.view === "statistics" && state.statistics.tab === "sources") render();
+    }
+  }
+
+  async function testStatisticsSource(event) {
+    const button = event.currentTarget;
+    const sourcesState = state.statistics.sources;
+    if (sourcesState.saving || sourcesState.testingId || !isAdminUser()) return;
+    const sources = syncStatisticsSourceDraftsFromDom();
+    const sourceId = String(button.dataset.sourceId || "");
+    const source = sources.find((item) => String(item.id || "") === sourceId);
+    if (!source || isStatisticsSourceReadOnly(source)) return;
+    sourcesState.testingId = sourceId;
+    sourcesState.error = "";
+    sourcesState.message = "";
+    delete sourcesState.testResults[sourceId];
+    render();
+    try {
+      const response = await fetch(photoApiUrl("/api/statistics/sources/test"), {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({ source: getEditableStatisticsSourcePayload([source])[0] })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      const columns = Array.isArray(payload.columns) ? payload.columns.length : 0;
+      const rowCount = Math.max(0, Number(payload.rowCount ?? payload.rows) || 0);
+      const durationMs = Math.max(0, Number(payload.durationMs) || 0);
+      sourcesState.testResults[sourceId] = {
+        ok: true,
+        message: payload.message || `Источник работает: ${rowCount} строк, ${columns} полей${durationMs ? `, ${durationMs} мс` : ""}.`
+      };
+    } catch (error) {
+      sourcesState.testResults[sourceId] = {
+        ok: false,
+        message: error.message || "Источник не прошёл проверку."
+      };
+    } finally {
+      sourcesState.testingId = "";
+      if (state.view === "statistics" && state.statistics.tab === "sources") render();
+    }
+  }
+
   function exportStatisticsReport() {
     const tab = state.statistics.tab;
     let fileSuffix = tab;
@@ -12044,6 +12483,21 @@ MAX - https://bizvmax.ru/zifra_plus
       content = [
         ["Дата", "Раздел", "Вид затрат", "Слушатель / контрагент", "Описание", "Сумма"].map(csvCell).join(";"),
         ...rows.map((row) => [row.date, row.expenseGroup, row.expenseType, row.subject, row.description, Math.abs(Number(row.amount || 0))].map(csvCell).join(";"))
+      ].join("\n");
+    } else if (tab === "sources") {
+      const rows = getStatisticsSourceDefinitions().flatMap((source) => (
+        getStatisticsSourceConsumers(source).map((consumer) => [
+          consumer.section,
+          consumer.label,
+          source.label || source.id,
+          source.id,
+          getStatisticsSourceKindLabel(source),
+          getStatisticsSourceConnectionLabel(source.connection || (isStatisticsSourceReadOnly(source) ? "ais" : ""))
+        ])
+      ));
+      content = [
+        ["Вкладка", "Элемент статистики", "Набор данных", "Идентификатор", "Тип", "Подключение"].map(csvCell).join(";"),
+        ...rows.map((row) => row.map(csvCell).join(";"))
       ].join("\n");
     } else {
       const report = buildStatisticsAssistantReport();
@@ -12112,6 +12566,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", () => {
         const tab = String(button.dataset.statisticsTab || "");
         if (!statisticsTabs.some((item) => item.id === tab) || tab === state.statistics.tab) return;
+        if (state.statistics.tab === "sources") syncStatisticsSourceDraftsFromDom();
         state.statistics.tab = tab;
         state.tablePages.statisticsExpenses = 1;
         state.tablePages.statisticsDownloads = 1;
@@ -12166,6 +12621,23 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='export-statistics']")?.addEventListener("click", exportStatisticsReport);
     document.querySelector("[data-action='refresh-statistics-data']")?.addEventListener("click", () => {
       loadStatisticsData({ force: true });
+    });
+    document.querySelector("form[data-action='save-statistics-sources']")
+      ?.addEventListener("submit", saveStatisticsSources);
+    document.querySelectorAll("[data-statistics-source-editor] [data-sql-query-editor]").forEach((editor) => {
+      editor.addEventListener("input", () => {
+        syncAdminSqlQueryEditor(editor);
+        syncStatisticsSourceDraftsFromDom(editor.closest("form[data-action='save-statistics-sources']"));
+      });
+    });
+    document.querySelectorAll("[data-action='test-statistics-source']").forEach((button) => {
+      button.addEventListener("click", testStatisticsSource);
+    });
+    document.querySelectorAll("[data-action='reload-statistics-sources']").forEach((button) => {
+      button.addEventListener("click", () => {
+        syncStatisticsSourceDraftsFromDom();
+        loadStatisticsSources({ force: true });
+      });
     });
   }
 

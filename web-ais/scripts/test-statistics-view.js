@@ -29,6 +29,66 @@ assert.match(appSource, /state\.view === "statistics"\) return renderStatistics\
 assert.match(appSource, /getOrderedTabs\("statistics", statisticsTabs\)/u);
 assert.match(appSource, /data-orderable-tabs="statistics"/u);
 assert.match(appSource, /Интерактивная статистика/u);
+const statisticsTabsBlock = sourceBlock(appSource, "const statisticsTabs =", "const STATISTICS_SOURCE_CONSUMERS");
+assert.match(statisticsTabsBlock, /\{ id: "sources", label: "Источники" \}/u);
+assert.ok(statisticsTabsBlock.indexOf('id: "sources"') > statisticsTabsBlock.indexOf('id: "assistant"'));
+const statisticsSourceConsumersBlock = sourceBlock(
+  appSource,
+  "const STATISTICS_SOURCE_CONSUMERS =",
+  "const statisticsDownloadDetailColumns"
+);
+const statisticsSourceConsumers = new Function(`${statisticsSourceConsumersBlock}\nreturn STATISTICS_SOURCE_CONSUMERS;`)();
+assert.equal(Object.keys(statisticsSourceConsumers).length, 9);
+assert.ok(Object.values(statisticsSourceConsumers).every((consumers) => Array.isArray(consumers) && consumers.length));
+assert.equal(new Set(Object.values(statisticsSourceConsumers).flat().map((consumer) => consumer.join("\u0000"))).size, 27);
+assert.match(appSource, /activeTab === "sources"[\s\S]*renderStatisticsSources\(\)/u);
+assert.match(appSource, /activeTab !== "sources" \? `<div class="statistics-filters">/u);
+assert.match(appSource, /fetch\(photoApiUrl\("\/api\/statistics\/sources"\)/u);
+assert.match(appSource, /fetch\(photoApiUrl\("\/api\/statistics\/sources\/test"\)/u);
+assert.match(appSource, /data-action="save-statistics-sources"/u);
+assert.match(appSource, /data-action="test-statistics-source"/u);
+assert.match(
+  appSource,
+  /\[data-statistics-source-editor\] \[data-sql-query-editor\][\s\S]*addEventListener\("input"[\s\S]*syncStatisticsSourceDraftsFromDom/u
+);
+assert.match(appSource, /state\.statistics\.tab === "sources"\) syncStatisticsSourceDraftsFromDom\(\)/u);
+assert.match(appSource, /Карта построения статистики/u);
+assert.match(appSource, /const selected = fallback\.length \? fallback : supplied/u);
+const statisticsSourceRendererBlock = sourceBlock(
+  appSource,
+  "function getStatisticsSourceDefinitions()",
+  "function getStatisticsFilterOptions()"
+);
+const renderStatisticsSources = new Function(`
+  const STATISTICS_SOURCE_CONSUMERS = ${JSON.stringify(statisticsSourceConsumers)};
+  const state = { statistics: { sources: {
+    loading: false,
+    loaded: true,
+    saving: false,
+    testingId: "",
+    error: "",
+    message: "",
+    testResults: {},
+    data: { sources: [
+      { id: "finance.receipts", label: "Поступления слушателей", kind: "ais", connection: "shared-state", readOnly: true, requiredColumns: [], consumers: ["income.total"] },
+      { id: "assistant.monthly", label: "Установки и удаления Ассистента", kind: "sql", connection: "assistant", readOnly: false, requiredColumns: ["event_year"], consumers: ["assistant.installs"], sql: "SELECT 2026 AS event_year" }
+    ] }
+  } } };
+  const escapeHtml = (value) => String(value ?? "");
+  const escapeAttr = escapeHtml;
+  const isAdminUser = () => true;
+  const formatStatisticsInteger = (value) => String(Number(value) || 0);
+  const renderSqlMiniIde = (value, options = {}) => '<input ' + (options.inputAttributes || '') + ' value="' + value + '">';
+  ${statisticsSourceRendererBlock}
+  return renderStatisticsSources;
+`)();
+const statisticsSourcesHtml = renderStatisticsSources();
+assert.match(statisticsSourcesHtml, /Конструктор источников/u);
+assert.match(statisticsSourcesHtml, /Поступления слушателей/u);
+assert.match(statisticsSourcesHtml, /Установки и удаления Ассистента/u);
+assert.match(statisticsSourcesHtml, /data-statistics-source-field="sql"/u);
+assert.match(statisticsSourcesHtml, /Суммарные доходы/u);
+assert.doesNotMatch(statisticsSourcesHtml, />income\.total</u);
 assert.match(appSource, /Доходы и затраты по месяцам, тыс\. руб\./u);
 assert.match(appSource, /label: "Рентабельность"/u);
 assert.match(appSource, /₽\/чел\./u);
@@ -326,15 +386,42 @@ assert.match(locationChart, /statistics-location-positive[\s\S]*<small>15<\/smal
 assert.match(locationChart, /statistics-location-negative[\s\S]*<i[\s\S]*<small>1<\/small>/u);
 assert.doesNotMatch(locationChart, /<em>/u);
 
+const statisticsSqlDefaultsBlock = sourceBlock(
+  serverSource,
+  "const DEFAULT_STATISTICS_SQL_QUERIES",
+  "const STATISTICS_SOURCE_DEFINITIONS"
+);
+const statisticsSourceDefinitionsBlock = sourceBlock(
+  serverSource,
+  "const STATISTICS_SOURCE_DEFINITIONS",
+  "const ADVERTISING_EMAIL_HISTORY_STATE_KEY"
+);
+const statisticsSourceIds = [...statisticsSourceDefinitionsBlock.matchAll(/\bid: "([^"]+)"/gu)]
+  .map((match) => match[1]);
+assert.equal(statisticsSourceIds.length, 9);
+assert.equal(new Set(statisticsSourceIds).size, 9);
+assert.equal(statisticsSourceIds.filter((id) => id.startsWith("finance.")).length, 3);
+assert.equal(statisticsSourceIds.filter((id) => !id.startsWith("finance.")).length, 6);
+assert.match(statisticsSourceDefinitionsBlock, /id: "finance\.receipts"[\s\S]*kind: "ais"/u);
+assert.match(statisticsSourceDefinitionsBlock, /id: "assistant\.monthly"[\s\S]*kind: "sql"/u);
+assert.match(statisticsSourceDefinitionsBlock, /id: "site\.downloads"[\s\S]*connection: "applications"/u);
+assert.match(statisticsSqlDefaultsBlock, /FROM wp_dae_links/u);
+assert.match(statisticsSqlDefaultsBlock, /'generated' AS event_type/u);
+assert.match(statisticsSqlDefaultsBlock, /'downloaded' AS event_type/u);
+assert.doesNotMatch(statisticsSqlDefaultsBlock, /\b(?:fio|ip_used|form_content)\b/iu);
+const assistantVersionsSqlBlock = sourceBlock(
+  statisticsSqlDefaultsBlock,
+  '"assistant.versions":',
+  '"assistant.actions":'
+);
+assert.match(assistantVersionsSqlBlock, /\baction\s*=\s*1\b/u);
+
 const serverStatisticsBlock = sourceBlock(
   serverSource,
   "async function readPublicDownloadStatistics()",
   "async function handlePublicDownloadStatistics(res)"
 );
-assert.match(serverStatisticsBlock, /FROM wp_dae_links/u);
-assert.match(serverStatisticsBlock, /'generated' AS event_type/u);
-assert.match(serverStatisticsBlock, /'downloaded' AS event_type/u);
-assert.doesNotMatch(serverStatisticsBlock, /\b(?:email|fio|ip_used|form_content)\b/iu);
+assert.match(serverStatisticsBlock, /getStatisticsSourceSql\("site\.downloads"\)/u);
 assert.match(serverSource, /requestUrl\.pathname === "\/api\/statistics\/downloads"/u);
 
 const assistantStatisticsBlock = sourceBlock(
@@ -342,22 +429,28 @@ const assistantStatisticsBlock = sourceBlock(
   "async function readAssistantStatistics()",
   "async function handleAssistantStatistics(res)"
 );
-assert.match(assistantStatisticsBlock, /FROM wp_ass_reg/u);
-assert.match(assistantStatisticsBlock, /FROM wp_ass_logs AS logs/u);
-assert.match(assistantStatisticsBlock, /INNER JOIN wp_ass_logs_structure/u);
-assert.match(assistantStatisticsBlock, /TRIM\(email\)/u);
-assert.match(assistantStatisticsBlock, /TRIM\(org\)/u);
-assert.match(assistantStatisticsBlock, /AND action = 1/u);
-assert.doesNotMatch(assistantStatisticsBlock, /\b(?:fio|ip|notes)\b/iu);
-assert.match(assistantStatisticsBlock, /TRIM\(location\)/u);
+for (const id of ["assistant.monthly", "assistant.versions", "assistant.actions", "assistant.locations", "assistant.downloadDetails"]) {
+  assert.match(assistantStatisticsBlock, new RegExp(`getStatisticsSourceSql\\("${id.replace(".", "\\.")}\"\\)`, "u"));
+}
+assert.match(statisticsSqlDefaultsBlock, /FROM wp_ass_reg/u);
+assert.match(statisticsSqlDefaultsBlock, /FROM wp_ass_logs AS logs/u);
+assert.match(statisticsSqlDefaultsBlock, /INNER JOIN wp_ass_logs_structure/u);
+assert.match(statisticsSqlDefaultsBlock, /TRIM\(email\)/u);
+assert.match(statisticsSqlDefaultsBlock, /TRIM\(org\)/u);
+assert.match(statisticsSqlDefaultsBlock, /TRIM\(location\)/u);
 assert.match(serverSource, /requestUrl\.pathname === "\/api\/statistics\/assistant"/u);
+assert.match(serverSource, /requestUrl\.pathname === "\/api\/statistics\/sources"/u);
+assert.match(serverSource, /requestUrl\.pathname === "\/api\/statistics\/sources\/test"/u);
+assert.match(serverSource, /normalizeStatisticsSourceSqlQuery/u);
+assert.match(serverSource, /validateStatisticsSourceResultColumns/u);
+assert.match(serverSource, /Настройки источников статистики доступны только администратору/u);
 assert.match(serverSource, /ASSISTANT_STATISTICS_MYSQL_CONNECTION_STRING/u);
 assert.match(appSource, /data-admin-database-panel="statistics"/u);
 assert.match(appSource, /data-action="test-assistant-statistics-mysql"/u);
 const renderStatisticsAssistantBlock = sourceBlock(
   appSource,
   "function renderStatisticsAssistant()",
-  "function getStatisticsFilterOptions()"
+  "function getStatisticsSourceDefinitions()"
 );
 assert.match(renderStatisticsAssistantBlock, /Скачивания по месяцам/u);
 assert.match(renderStatisticsAssistantBlock, /Детальная информация о скачиваниях/u);
@@ -410,6 +503,11 @@ assert.match(styles, /\.statistics-donut-layout\s*\{[\s\S]*grid-template-columns
 assert.match(styles, /\.statistics-donut-legend-label\s*\{[\s\S]*display:\s*flex/u);
 assert.match(styles, /\.statistics-donut-legend\s*>\s*span\.is-inline-value\s*\{[\s\S]*grid-template-columns:\s*10px minmax\(0, 1fr\)/u);
 assert.match(styles, /\.statistics-donut-legend-label em\s*\{[\s\S]*flex:\s*0 0 auto/u);
+assert.match(styles, /\.statistics-source-builder-panel\s*,/u);
+assert.match(styles, /\.statistics-source-builder-list\s*\{/u);
+assert.match(styles, /\.statistics-source-editor\s*\{/u);
+assert.match(styles, /\.statistics-source-query \.sql-mini-ide-editor\s*\{/u);
+assert.match(styles, /\.statistics-source-map-table\s*\{/u);
 assert.match(styles, /@media \(max-width: 640px\)[\s\S]*\.statistics-filters/su);
 const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authSource)?.[1] || "";
 assert.ok(authBuild, "Не найден идентификатор сборки загрузчика");
