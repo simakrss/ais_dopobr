@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.320",
+    version: "1.7.321",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.321",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Результат сборщика рекламных контактов сохраняется в общей базе и восстанавливается после перезагрузки программы.",
+        "После каждого поиска показывается количество новых контактов относительно предыдущего сохранённого запуска; новые готовые адреса можно скопировать отдельно."
+      ]
+    },
     {
       version: "1.7.320",
       releasedAt: "2026-08-27",
@@ -5619,6 +5627,8 @@ MAX - https://bizvmax.ru/zifra_plus
       tab: "collector",
       loading: false,
       loaded: false,
+      resultLoading: false,
+      resultLoaded: false,
       error: "",
       result: null,
       selectedSourceIds: ADVERTISING_EMAIL_SOURCES.map((source) => source.id),
@@ -10689,6 +10699,9 @@ MAX - https://bizvmax.ru/zifra_plus
       queueMicrotask(() => loadStatisticsData());
     }
     if (state.view === "advertising") {
+      if (!state.advertising.resultLoaded && !state.advertising.resultLoading) {
+        queueMicrotask(() => loadAdvertisingEmailResult());
+      }
       if (!state.advertising.settingsLoaded && !state.advertising.settingsLoading) {
         queueMicrotask(() => loadAdvertisingEmailSettings());
       }
@@ -12057,7 +12070,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getAdvertisingFilteredRows(options = {}) {
-    const rows = Array.isArray(state.advertising.result?.rows) ? state.advertising.result.rows : [];
+    const suppliedRows = Array.isArray(options.rows) ? options.rows : null;
+    const rows = suppliedRows || (Array.isArray(state.advertising.result?.rows) ? state.advertising.result.rows : []);
+    const applyScopeFilters = suppliedRows === null;
     const filters = state.advertising.filters;
     const requestedStatus = Object.prototype.hasOwnProperty.call(options, "status")
       ? options.status
@@ -12067,8 +12082,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const filtered = rows.filter((row) => {
       if (requestedStatus === "ready" && row.excluded) return false;
       if (requestedStatus === "excluded" && !row.excluded) return false;
-      if (sourceId && !(row.sources || []).some((source) => source.id === sourceId)) return false;
-      if (!query) return true;
+      if (requestedStatus === "new" && (!row.isNew || row.excluded)) return false;
+      if (applyScopeFilters && sourceId && !(row.sources || []).some((source) => source.id === sourceId)) return false;
+      if (!applyScopeFilters || !query) return true;
       const haystack = [
         row.email,
         row.name,
@@ -12082,12 +12098,13 @@ MAX - https://bizvmax.ru/zifra_plus
       ].join(" ").toLocaleLowerCase("ru-RU");
       return haystack.includes(query);
     });
+    if (options.sort === false) return filtered;
     const sort = state.advertising.sort || { key: "email", dir: "asc" };
     const direction = sort.dir === "desc" ? -1 : 1;
     return filtered.sort((left, right) => {
       const value = (row) => {
         if (sort.key === "sources") return (row.sources || []).map((source) => source.label).join(", ");
-        if (sort.key === "status") return row.excluded ? "Исключён" : "Готов";
+        if (sort.key === "status") return `${row.isNew ? "0" : "1"}-${row.excluded ? "Исключён" : "Готов"}`;
         return row[sort.key] || "";
       };
       return String(value(left)).localeCompare(String(value(right)), "ru-RU", {
@@ -12095,6 +12112,12 @@ MAX - https://bizvmax.ru/zifra_plus
         numeric: true
       }) * direction;
     });
+  }
+
+  function getAdvertisingClipboardEmails(rows = []) {
+    return [...new Set((Array.isArray(rows) ? rows : [])
+      .map((row) => String(row?.email || "").trim().toLocaleLowerCase("en-US"))
+      .filter(Boolean))];
   }
 
   function renderAdvertisingSortHeader(column) {
@@ -12278,6 +12301,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderAdvertising() {
     const advertising = state.advertising;
+    const busy = advertising.loading || advertising.resultLoading;
     const advertisingTabs = getOrderedTabs("advertising", [
       { id: "collector", label: "Сборщик" },
       ...(isAdminUser() ? [{ id: "sources", label: "Источники" }] : []),
@@ -12287,14 +12311,24 @@ MAX - https://bizvmax.ru/zifra_plus
       ? advertising.tab
       : "collector";
     const summary = advertising.result?.summary || {};
-    const rows = getAdvertisingFilteredRows();
-    const readyRows = getAdvertisingFilteredRows({ status: "ready" });
+    const scopedRows = getAdvertisingFilteredRows({ status: "all", sort: false });
+    const rows = getAdvertisingFilteredRows({ rows: scopedRows });
+    const readyRows = scopedRows.filter((row) => !row.excluded);
+    const readyEmails = getAdvertisingClipboardEmails(readyRows);
+    const newReadyRows = scopedRows.filter((row) => row.isNew && !row.excluded);
+    const newReadyEmails = getAdvertisingClipboardEmails(newReadyRows);
     const pagination = getTablePagination("advertisingEmails", rows.length);
     const pageRows = rows.slice(pagination.start, pagination.end);
     const workbook = advertising.result?.workbook;
     const lastUpdated = advertising.result?.refreshedAt
       ? formatDateTimeRu(advertising.result.refreshedAt)
       : "Ещё не запускался";
+    const comparedTo = advertising.result?.comparedTo || {};
+    const comparisonLabel = advertising.result
+      ? (comparedTo.hasPrevious
+        ? `С прошлого поиска${comparedTo.refreshedAt ? ` от ${formatDateTimeRu(comparedTo.refreshedAt)}` : ""}`
+        : "Первый сохранённый поиск")
+      : "Нет сохранённых поисков";
     return `
       <section class="advertising-page">
         <nav class="program-tabs advertising-tabs" data-orderable-tabs="advertising" role="tablist" aria-label="Разделы рекламы">
@@ -12308,13 +12342,18 @@ MAX - https://bizvmax.ru/zifra_plus
             <div>
               <p class="eyebrow">Подготовка базы для рекламы</p>
               <h2>Сборщик email</h2>
-              <p>Источники и правила исключений перенесены из книги «База рассылок.xlsb».</p>
+              <p>Контакты сохраняются в программе, а новые адреса определяются относительно предыдущего поиска.</p>
             </div>
             <div class="advertising-heading-actions">
-              <button class="ghost-button" data-action="copy-advertising-emails" type="button" ${!readyRows.length || advertising.loading ? "disabled" : ""}>Копировать готовые</button>
-              <button class="ghost-button" data-action="export-advertising-emails" type="button" ${!readyRows.length || advertising.loading ? "disabled" : ""}>Экспорт CSV</button>
-              <button class="primary-button" data-action="collect-advertising-emails" type="button" ${advertising.loading ? "disabled" : ""}>
-                ${advertising.loading ? '<span class="auth-spinner" aria-hidden="true"></span> Сбор адресов…' : "Собрать адреса"}
+              <button class="ghost-button advertising-copy-new" data-action="copy-new-advertising-emails" type="button" ${!newReadyEmails.length || advertising.loading || advertising.resultLoading ? "disabled" : ""}>Копировать новые (${formatStatisticsInteger(newReadyEmails.length)})</button>
+              <button class="ghost-button" data-action="copy-advertising-emails" type="button" ${!readyEmails.length || busy ? "disabled" : ""}>Копировать готовые</button>
+              <button class="ghost-button" data-action="export-advertising-emails" type="button" ${!readyRows.length || busy ? "disabled" : ""}>Экспорт CSV</button>
+              <button class="primary-button" data-action="collect-advertising-emails" type="button" ${busy ? "disabled" : ""}>
+                ${advertising.loading
+                  ? '<span class="auth-spinner" aria-hidden="true"></span> Сбор адресов…'
+                  : (advertising.resultLoading
+                    ? '<span class="auth-spinner" aria-hidden="true"></span> Загрузка…'
+                    : "Собрать адреса")}
               </button>
             </div>
           </div>
@@ -12323,8 +12362,8 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="advertising-source-toolbar">
             <strong>Источники</strong>
              <span>Выбрано ${advertising.selectedSourceIds.length} из ${getAdvertisingEmailSources().length}</span>
-            <button class="ghost-button compact-button" data-action="select-all-advertising-sources" type="button" ${advertising.loading ? "disabled" : ""}>Выбрать все</button>
-            <button class="ghost-button compact-button" data-action="clear-advertising-sources" type="button" ${advertising.loading ? "disabled" : ""}>Снять все</button>
+            <button class="ghost-button compact-button" data-action="select-all-advertising-sources" type="button" ${busy ? "disabled" : ""}>Выбрать все</button>
+            <button class="ghost-button compact-button" data-action="clear-advertising-sources" type="button" ${busy ? "disabled" : ""}>Снять все</button>
           </div>
           <div class="advertising-source-grid">${renderAdvertisingSourceCards()}</div>
           <div class="advertising-workbook-status ${workbook?.status === "error" ? "is-error" : ""}">
@@ -12336,26 +12375,27 @@ MAX - https://bizvmax.ru/zifra_plus
         </section>
 
         <div class="advertising-kpi-grid">
-          <article class="statistics-kpi-card"><span>Уникальные</span><strong>${formatStatisticsInteger(summary.unique)}</strong><small>После объединения источников</small></article>
+          <article class="statistics-kpi-card"><span>Уникальные</span><strong>${formatStatisticsInteger(summary.unique)}</strong><small>В последнем поиске</small></article>
           <article class="statistics-kpi-card tone-green"><span>Готовы к рекламе</span><strong>${formatStatisticsInteger(summary.ready)}</strong><small>Без исключённых адресов</small></article>
+          <article class="statistics-kpi-card tone-blue"><span>Новые</span><strong>${formatStatisticsInteger(summary.newUnique)}</strong><small>${formatStatisticsInteger(summary.newReady)} готовы · ${escapeHtml(comparisonLabel)}</small></article>
           <article class="statistics-kpi-card tone-red"><span>Исключены</span><strong>${formatStatisticsInteger(summary.excluded)}</strong><small>Адреса и домены из XLSB</small></article>
           <article class="statistics-kpi-card tone-amber"><span>Повторы</span><strong>${formatStatisticsInteger(summary.duplicates)}</strong><small>Удалены при объединении</small></article>
-          <article class="statistics-kpi-card tone-blue"><span>Время сбора</span><strong>${advertising.result ? escapeHtml(formatAdvertisingDuration(advertising.result.durationMs)) : "—"}</strong><small>${escapeHtml(lastUpdated)}</small></article>
+          <article class="statistics-kpi-card"><span>Время сбора</span><strong>${advertising.result ? escapeHtml(formatAdvertisingDuration(advertising.result.durationMs)) : "—"}</strong><small>${escapeHtml(lastUpdated)}</small></article>
         </div>
 
         <section class="panel advertising-results-panel">
           <div class="panel-head advertising-results-head">
-            <div><p class="eyebrow">Результат</p><h2>Email-адреса</h2></div>
+            <div><p class="eyebrow">Сохранённый результат</p><h2>Email-адреса последнего поиска</h2></div>
             <span class="statistics-row-count">${formatStatisticsInteger(rows.length)}</span>
           </div>
           <div class="advertising-filters">
             <label class="advertising-filter-query"><span>Поиск</span><input data-advertising-filter="query" value="${escapeAttr(advertising.filters.query)}" placeholder="Email, ФИО, организация, телефон" autocomplete="off"></label>
              <label><span>Источник</span><select data-advertising-filter="source"><option value="">Все источники</option>${getAdvertisingEmailSources().map((source) => `<option value="${escapeAttr(source.id)}" ${advertising.filters.source === source.id ? "selected" : ""}>${escapeHtml(source.label)}</option>`).join("")}</select></label>
-            <label><span>Статус</span><select data-advertising-filter="status"><option value="ready" ${advertising.filters.status === "ready" ? "selected" : ""}>Готовы к рекламе</option><option value="excluded" ${advertising.filters.status === "excluded" ? "selected" : ""}>Исключённые</option><option value="all" ${advertising.filters.status === "all" ? "selected" : ""}>Все адреса</option></select></label>
+            <label><span>Статус</span><select data-advertising-filter="status"><option value="ready" ${advertising.filters.status === "ready" ? "selected" : ""}>Готовы к рекламе</option><option value="new" ${advertising.filters.status === "new" ? "selected" : ""}>Новые готовые</option><option value="excluded" ${advertising.filters.status === "excluded" ? "selected" : ""}>Исключённые</option><option value="all" ${advertising.filters.status === "all" ? "selected" : ""}>Все адреса</option></select></label>
             <button class="ghost-button" data-action="reset-advertising-filters" type="button">Сбросить</button>
           </div>
-          ${advertising.loading && !advertising.result
-            ? '<div class="advertising-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Источники опрашиваются, адреса объединяются…</span></div>'
+          ${busy && !advertising.result
+            ? `<div class="advertising-loading"><span class="auth-spinner" aria-hidden="true"></span><span>${advertising.resultLoading ? "Загружается сохранённый поиск…" : "Источники опрашиваются, адреса объединяются…"}</span></div>`
             : (!pageRows.length
               ? '<div class="empty-state compact"><strong>Адресов не найдено</strong><span>Запустите сбор или измените фильтры.</span></div>'
               : `
@@ -12363,12 +12403,12 @@ MAX - https://bizvmax.ru/zifra_plus
                   <table class="data-table advertising-email-table">
                     <thead><tr>${ADVERTISING_EMAIL_TABLE_COLUMNS.map((column) => `<th>${renderAdvertisingSortHeader(column)}</th>`).join("")}</tr></thead>
                     <tbody>${pageRows.map((row) => `
-                      <tr class="${row.excluded ? "is-excluded" : ""}">
+                      <tr class="${[row.excluded ? "is-excluded" : "", row.isNew ? "is-new" : ""].filter(Boolean).join(" ")}">
                         <td><a href="mailto:${escapeAttr(row.email)}">${escapeHtml(row.email)}</a></td>
                         <td title="${escapeAttr([row.name, row.phone, row.jobTitle].filter(Boolean).join(" · "))}"><strong>${escapeHtml(row.name || "—")}</strong>${row.phone ? `<small>${escapeHtml(row.phone)}</small>` : ""}</td>
                         <td title="${escapeAttr([row.organization, row.jobTitle, row.origin].filter(Boolean).join(" · "))}">${escapeHtml(row.organization || row.origin || "—")}</td>
                         <td><div class="advertising-source-tags">${(row.sources || []).map((source) => `<span title="${escapeAttr(source.label)}">${escapeHtml(source.label)}</span>`).join("")}</div></td>
-                        <td><span class="advertising-status-badge ${row.excluded ? "is-excluded" : "is-ready"}" title="${escapeAttr(row.exclusionReason || "Адрес готов к использованию")}">${row.excluded ? "Исключён" : "Готов"}</span>${row.exclusionReason ? `<small>${escapeHtml(row.exclusionReason)}</small>` : ""}</td>
+                        <td><div class="advertising-status-badges">${row.isNew ? '<span class="advertising-status-badge is-new">Новый</span>' : ""}<span class="advertising-status-badge ${row.excluded ? "is-excluded" : "is-ready"}" title="${escapeAttr(row.exclusionReason || "Адрес готов к использованию")}">${row.excluded ? "Исключён" : "Готов"}</span></div>${row.exclusionReason ? `<small>${escapeHtml(row.exclusionReason)}</small>` : ""}</td>
                       </tr>
                     `).join("")}</tbody>
                   </table>
@@ -12415,9 +12455,38 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  async function loadAdvertisingEmailResult(options = {}) {
+    const advertising = state.advertising;
+    if (advertising.resultLoading || (advertising.resultLoaded && !options.force)) return;
+    advertising.resultLoading = true;
+    advertising.error = "";
+    if (state.view === "advertising") render();
+    try {
+      const response = await fetch(photoApiUrl("/api/advertising/email-collector/collect"), {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "X-Requested-With": "AIS-Web" }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      advertising.result = payload;
+      if (payload?.exists === false) advertising.result = null;
+      advertising.loaded = Boolean(advertising.result);
+      advertising.resultLoaded = true;
+      state.tablePages.advertisingEmails = 1;
+    } catch (error) {
+      advertising.error = `Не удалось загрузить сохранённые контакты: ${error.message || "ошибка сервера"}`;
+      advertising.resultLoaded = true;
+    } finally {
+      advertising.resultLoading = false;
+      if (state.view === "advertising") render();
+    }
+  }
+
   async function collectAdvertisingEmails() {
     const advertising = state.advertising;
-    if (advertising.loading) return;
+    if (advertising.loading || advertising.resultLoading) return;
     if (!advertising.selectedSourceIds.length) {
       advertising.error = "Выберите хотя бы один источник.";
       render();
@@ -12442,10 +12511,16 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       advertising.result = payload;
       advertising.loaded = true;
+      advertising.resultLoaded = true;
       advertising.exclusions.loaded = false;
       state.tablePages.advertisingEmails = 1;
+      const newUnique = Number(payload.summary?.newUnique) || 0;
+      const newReady = Number(payload.summary?.newReady) || 0;
+      const failedSources = (Array.isArray(payload.sources) ? payload.sources : [])
+        .filter((source) => source.status === "error").length;
+      advertising.notice = `${payload.comparedTo?.hasPrevious ? "Поиск сохранён" : "Первый поиск сохранён"}. Новых контактов: ${formatStatisticsInteger(newUnique)}; готовы к копированию: ${formatStatisticsInteger(newReady)}.${failedSources ? ` Не ответили источники: ${failedSources}.` : ""}`;
     } catch (error) {
-      advertising.error = error.message || "Не удалось собрать email-адреса.";
+      advertising.error = error.message || "Не удалось собрать и сохранить email-адреса.";
       advertising.loaded = true;
     } finally {
       advertising.loading = false;
@@ -12712,11 +12787,25 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='export-advertising-emails']")?.addEventListener("click", exportAdvertisingEmails);
     document.querySelector("[data-action='copy-advertising-emails']")?.addEventListener("click", async () => {
       const rows = getAdvertisingFilteredRows({ status: "ready" });
+      const emails = getAdvertisingClipboardEmails(rows);
       try {
-        await copyTextToClipboard(rows.map((row) => row.email).join("\r\n"));
-        state.advertising.notice = `Скопировано адресов: ${rows.length}.`;
+        await copyTextToClipboard(emails.join("\r\n"));
+        state.advertising.notice = `Скопировано готовых адресов: ${emails.length}.`;
       } catch (error) {
         state.advertising.error = error.message || "Не удалось скопировать адреса.";
+      }
+      render();
+    });
+    document.querySelector("[data-action='copy-new-advertising-emails']")?.addEventListener("click", async () => {
+      const rows = getAdvertisingFilteredRows({ status: "new" });
+      const emails = getAdvertisingClipboardEmails(rows);
+      if (!emails.length) return;
+      try {
+        await copyTextToClipboard(emails.join("\r\n"));
+        state.advertising.notice = `Скопировано новых адресов: ${emails.length}.`;
+        state.advertising.error = "";
+      } catch (error) {
+        state.advertising.error = error.message || "Не удалось скопировать новые адреса.";
       }
       render();
     });

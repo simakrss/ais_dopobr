@@ -24658,7 +24658,7 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 
 .advertising-kpi-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -24773,6 +24773,10 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   background: #fff8f7;
 }
 
+.advertising-email-table tr.is-new:not(.is-excluded) td {
+  background: #f1faf8;
+}
+
 .advertising-source-tags {
   display: flex;
   flex-wrap: wrap;
@@ -24801,6 +24805,11 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   padding: 3px 8px;
   font-size: 10px;
   font-weight: 800;
+  vertical-align: middle;
+}
+
+.advertising-status-badge + .advertising-status-badge {
+  margin-left: 4px;
 }
 
 .advertising-status-badge.is-ready {
@@ -24811,6 +24820,11 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 .advertising-status-badge.is-excluded {
   background: #fde4e1;
   color: #a6322b;
+}
+
+.advertising-status-badge.is-new {
+  background: #dff3f2;
+  color: #126961;
 }
 
 .advertising-inline-message {
