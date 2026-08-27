@@ -68,7 +68,7 @@ const emailDateFormulaHelpers = new Function(`
   };
   ${sourceBlock(
     appSource,
-    "function resolveContractTemplateDateFormulaValue(",
+    "function unwrapContractTemplateFormulaParentheses(",
     "function evaluateContractTemplateField("
   )}
   return { resolveContractTemplateDateFormulaValue };
@@ -91,6 +91,14 @@ assert.deepEqual(
 assert.deepEqual(
   emailDateFormulaHelpers.resolveContractTemplateDateFormulaValue(
     `=ТЕКСТ(ТДАТА();"ДД.ММ.ГГГГ")  //=ТЕКСТ(ПСТР([Дата окончания обучения];1;10);"ДД.ММ.ГГГГ")`,
+    {},
+    new Date(2026, 7, 27)
+  ),
+  { matched: true, value: "27.08.2026" }
+);
+assert.deepEqual(
+  emailDateFormulaHelpers.resolveContractTemplateDateFormulaValue(
+    `=(ТЕКСТ(ТДАТА();"ДД.ММ.ГГГГ"))`,
     {},
     new Date(2026, 7, 27)
   ),

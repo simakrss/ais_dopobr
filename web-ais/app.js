@@ -59612,11 +59612,38 @@ MAX - https://bizvmax.ru/zifra_plus
     );
   }
 
+  function unwrapContractTemplateFormulaParentheses(value) {
+    let text = String(value || "").trim();
+    while (text.startsWith("(") && text.endsWith(")")) {
+      let depth = 0;
+      let quoted = false;
+      let wraps = true;
+      for (let index = 0; index < text.length; index += 1) {
+        const character = text[index];
+        if (character === '"') {
+          if (quoted && text[index + 1] === '"') index += 1;
+          else quoted = !quoted;
+          continue;
+        }
+        if (quoted) continue;
+        if (character === "(") depth += 1;
+        else if (character === ")") depth -= 1;
+        if (depth === 0 && index < text.length - 1) {
+          wraps = false;
+          break;
+        }
+      }
+      if (!wraps || depth !== 0) break;
+      text = text.slice(1, -1).trim();
+    }
+    return text;
+  }
+
   function resolveContractTemplateDateFormulaValue(formula, record, currentDate = new Date()) {
-    const expression = String(formula || "")
+    const expression = unwrapContractTemplateFormulaParentheses(String(formula || "")
       .replace(/^\s*=\s*/u, "")
       .split(/\s+\/\//u, 1)[0]
-      .trim();
+      .trim());
     const textFunction = /^ТЕКСТ\s*\(([\s\S]+);\s*"([^"]+)"\s*\)$/iu.exec(expression);
     if (!textFunction) return null;
     const format = String(textFunction[2] || "")
