@@ -2307,6 +2307,9 @@ if (!in_array($method, ['GET', 'HEAD', 'POST', 'DELETE', 'OPTIONS'], true)) {
 $requestPath = gateway_request_path();
 $isPreviewControlRequest = in_array($requestPath, [
     '/api/contracts/student-document-preview/finalize',
+    '/api/contracts/student-document-preview/editor-start',
+    '/api/contracts/student-document-preview/editor-save',
+    '/api/contracts/student-document-preview/editor-discard',
     '/api/contracts/student-document-preview/cancel',
 ], true);
 $requestBodyLimit = $isPreviewControlRequest ? 4096 : AIS_GATEWAY_MAX_REQUEST_BYTES;

@@ -13,6 +13,8 @@ const {
   registerGeneratedDocumentPreview,
   beginGeneratedDocumentPreviewEditor,
   storeGeneratedDocumentPreviewEditedDocx,
+  discardGeneratedDocumentPreviewEditor,
+  completeGeneratedDocumentPreviewEditor,
   takeGeneratedDocumentPreview,
   cancelGeneratedDocumentPreview,
   completeGeneratedDocumentPreview,
@@ -97,17 +99,90 @@ await assert.rejects(
   (error) => error?.statusCode === 403,
   "Изменённый файл должен приниматься только из активной сессии редактора"
 );
-assert.equal(
-  await storeGeneratedDocumentPreviewEditedDocx(
+const storedEditorRevision = await storeGeneratedDocumentPreviewEditedDocx(
+  editorPreviewToken,
+  editorSession.editorToken,
+  editorChangedBytes
+);
+assert.equal(storedEditorRevision, 1);
+const completedEditor = await completeGeneratedDocumentPreviewEditor(
+  editorPreviewToken,
+  editorSession.editorToken,
+  storedEditorRevision
+);
+assert.deepEqual(completedEditor, { completed: true, editRevision: storedEditorRevision });
+await assert.rejects(
+  storeGeneratedDocumentPreviewEditedDocx(
     editorPreviewToken,
     editorSession.editorToken,
+    editorSourceBytes
+  ),
+  (error) => error?.statusCode === 403,
+  "Успешно сохранённая сессия редактора должна быть завершена"
+);
+const reopenedEditorSession = await beginGeneratedDocumentPreviewEditor(editorPreviewToken, owner);
+const reopenedEditorDiscard = await discardGeneratedDocumentPreviewEditor(
+  editorPreviewToken,
+  reopenedEditorSession.editorToken,
+  owner
+);
+assert.equal(reopenedEditorDiscard.discarded, true);
+const editedPreview = await takeGeneratedDocumentPreview(editorPreviewToken, owner);
+assert.deepEqual(
+  editedPreview.bytes,
+  editorChangedBytes,
+  "Отмена новой сессии не должна откатывать уже сохранённые ранее изменения"
+);
+await completeGeneratedDocumentPreview(editedPreview);
+
+const editorDiscardPreviewToken = await registerGeneratedDocumentPreview({
+  bytes: editorSourceBytes,
+  editableBytes: editorSourceBytes,
+  outputFormat: "docx",
+  fileName: "Отмена редактирования.docx",
+  extraHeaders: {}
+}, owner);
+const editorDiscardSession = await beginGeneratedDocumentPreviewEditor(editorDiscardPreviewToken, owner);
+assert.equal(
+  await storeGeneratedDocumentPreviewEditedDocx(
+    editorDiscardPreviewToken,
+    editorDiscardSession.editorToken,
     editorChangedBytes
   ),
-  1
+  editorDiscardSession.editRevision + 1
 );
-const editedPreview = await takeGeneratedDocumentPreview(editorPreviewToken, owner);
-assert.deepEqual(editedPreview.bytes, editorChangedBytes);
-await completeGeneratedDocumentPreview(editedPreview);
+await assert.rejects(
+  discardGeneratedDocumentPreviewEditor(
+    editorDiscardPreviewToken,
+    editorDiscardSession.editorToken,
+    stranger
+  ),
+  (error) => error?.statusCode === 403,
+  "Другой пользователь не должен отменять изменения в редакторе"
+);
+const discardedEditor = await discardGeneratedDocumentPreviewEditor(
+  editorDiscardPreviewToken,
+  editorDiscardSession.editorToken,
+  owner
+);
+assert.equal(discardedEditor?.discarded, true);
+assert.equal(discardedEditor?.editRevision, editorDiscardSession.editRevision);
+await assert.rejects(
+  storeGeneratedDocumentPreviewEditedDocx(
+    editorDiscardPreviewToken,
+    editorDiscardSession.editorToken,
+    editorChangedBytes
+  ),
+  (error) => error?.statusCode === 403,
+  "Завершённая отменой сессия не должна принимать запоздалое сохранение ONLYOFFICE"
+);
+const discardedEditorPreview = await takeGeneratedDocumentPreview(editorDiscardPreviewToken, owner);
+assert.deepEqual(
+  discardedEditorPreview.bytes,
+  editorSourceBytes,
+  "Отмена редактирования должна вернуть документ к состоянию перед входом в редактор"
+);
+await completeGeneratedDocumentPreview(discardedEditorPreview);
 
 const expiryToken = await registerGeneratedDocumentPreview(generated, owner);
 pruneGeneratedDocumentPreviews(Date.now() + 11 * 60 * 1000);
@@ -149,16 +224,39 @@ await Promise.all(capacityTokens.slice(1).map((item) => cancelGeneratedDocumentP
 
 const crossProcessStorageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ais-preview-store-"));
 const childScript = `
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 process.env.AIS_TRUST_GATEWAY = "1";
 process.env.AIS_DISABLE_PREVIEW_CLEANUP_WORKER = "1";
 const api = require(${JSON.stringify(path.join(root, "app-server.js"))});
 const action = process.argv[1];
 const token = process.argv[2] || "";
+const editorToken = process.argv[3] || "";
 const owner = { id: "cross-process-owner", authSessionKey: "gateway:cross-process-session" };
 const generated = {
   bytes: Buffer.from("cross-process-preview"),
   outputFormat: "pdf",
   fileName: "preview.pdf",
+  extraHeaders: {}
+};
+const editorSourceBytes = fs.readFileSync(path.join(
+  ${JSON.stringify(root)},
+  "storage",
+  "document-templates",
+  "employee-contract-general-no-stamp.docx"
+));
+const editorChangedBytes = fs.readFileSync(path.join(
+  ${JSON.stringify(root)},
+  "storage",
+  "document-templates",
+  "employee-contract-education-no-stamp.docx"
+));
+const editorGenerated = {
+  bytes: editorSourceBytes,
+  editableBytes: editorSourceBytes,
+  outputFormat: "docx",
+  fileName: "cross-process-editor.docx",
   extraHeaders: {}
 };
 (async () => {
@@ -169,6 +267,60 @@ const generated = {
   if (action === "prune") {
     await api.pruneGeneratedDocumentPreviewFileStore(Date.now() + 11 * 60 * 1000);
     process.stdout.write("pruned");
+    return;
+  }
+  if (action === "register-editor") {
+    process.stdout.write(await api.registerGeneratedDocumentPreview(editorGenerated, owner));
+    return;
+  }
+  if (action === "begin-editor") {
+    process.stdout.write(JSON.stringify(await api.beginGeneratedDocumentPreviewEditor(token, owner)));
+    return;
+  }
+  if (action === "store-editor") {
+    process.stdout.write(String(await api.storeGeneratedDocumentPreviewEditedDocx(
+      token,
+      editorToken,
+      editorChangedBytes
+    )));
+    return;
+  }
+  if (action === "discard-editor-foreign") {
+    try {
+      await api.discardGeneratedDocumentPreviewEditor(
+        token,
+        editorToken,
+        { id: "cross-process-stranger", authSessionKey: "gateway:cross-process-stranger" }
+      );
+      process.stdout.write("unexpected");
+    } catch (error) {
+      process.stdout.write(String(error?.statusCode || 0));
+    }
+    return;
+  }
+  if (action === "discard-editor") {
+    process.stdout.write(JSON.stringify(
+      await api.discardGeneratedDocumentPreviewEditor(token, editorToken, owner)
+    ));
+    return;
+  }
+  if (action === "store-editor-late") {
+    try {
+      await api.storeGeneratedDocumentPreviewEditedDocx(token, editorToken, editorChangedBytes);
+      process.stdout.write("unexpected");
+    } catch (error) {
+      process.stdout.write(String(error?.statusCode || 0));
+    }
+    return;
+  }
+  if (action === "take-editor") {
+    const preview = await api.takeGeneratedDocumentPreview(token, owner);
+    if (!preview) {
+      process.stdout.write("missing");
+      return;
+    }
+    process.stdout.write(crypto.createHash("sha256").update(preview.bytes).digest("hex"));
+    await api.completeGeneratedDocumentPreview(preview);
     return;
   }
   if (action === "register-conversion") {
@@ -192,8 +344,8 @@ const generated = {
   process.exitCode = 1;
 });
 `;
-const runPreviewChild = (action, token = "") => {
-  const result = spawnSync(process.execPath, ["-e", childScript, action, token], {
+const runPreviewChild = (action, token = "", editorToken = "") => {
+  const result = spawnSync(process.execPath, ["-e", childScript, action, token, editorToken], {
     cwd: root,
     env: {
       ...process.env,
@@ -209,6 +361,34 @@ const runPreviewChild = (action, token = "") => {
 };
 const crossProcessToken = runPreviewChild("register");
 assert.match(crossProcessToken, /^[A-Za-z0-9_-]{32}$/u);
+const crossProcessEditorToken = runPreviewChild("register-editor");
+assert.match(crossProcessEditorToken, /^[A-Za-z0-9_-]{32}$/u);
+const crossProcessEditorSession = JSON.parse(runPreviewChild("begin-editor", crossProcessEditorToken));
+assert.match(crossProcessEditorSession.editorToken, /^[A-Za-z0-9_-]{43}$/u);
+assert.equal(
+  runPreviewChild("store-editor", crossProcessEditorToken, crossProcessEditorSession.editorToken),
+  String(crossProcessEditorSession.editRevision + 1)
+);
+assert.equal(
+  runPreviewChild("discard-editor-foreign", crossProcessEditorToken, crossProcessEditorSession.editorToken),
+  "403"
+);
+const crossProcessDiscarded = JSON.parse(runPreviewChild(
+  "discard-editor",
+  crossProcessEditorToken,
+  crossProcessEditorSession.editorToken
+));
+assert.equal(crossProcessDiscarded.discarded, true);
+assert.equal(crossProcessDiscarded.editRevision, crossProcessEditorSession.editRevision);
+assert.equal(
+  runPreviewChild("store-editor-late", crossProcessEditorToken, crossProcessEditorSession.editorToken),
+  "403"
+);
+assert.equal(
+  runPreviewChild("take-editor", crossProcessEditorToken),
+  require("node:crypto").createHash("sha256").update(editorSourceBytes).digest("hex"),
+  "Файловое хранилище должно восстановить версию до входа в редактор"
+);
 const runFinalizeWorker = (previewToken) => {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ais-preview-route-"));
   const requestPath = path.join(temporaryRoot, "request.json");
@@ -382,12 +562,39 @@ assert.match(appSource, /student-document-preview\/finalize/u);
 assert.match(appSource, /student-document-preview\/cancel/u);
 assert.match(appSource, /student-document-preview\/editor-start/u);
 assert.match(appSource, /student-document-preview\/editor-save/u);
+assert.match(appSource, /student-document-preview\/editor-discard/u);
 assert.match(appSource, /data-action="edit-generated-document-preview"/u);
 assert.match(appSource, /data-action="save-generated-document-editor"/u);
+assert.match(appSource, /data-action="cancel-generated-document-editor-or-preview"/u);
 assert.match(appSource, /ais-generated-document-editor/u);
 assert.match(appSource, /closeGeneratedDocumentPreview/u);
 assert.match(appSource, /Отправка по email:/u);
 assert.match(appSource, /button\?\.isConnected\s*&&\s*!button\.disabled/u);
+
+const previewModalStart = appSource.indexOf("function showGeneratedDocumentPreview");
+const previewModalEnd = appSource.indexOf("function documentEmailMessageContainsHtml", previewModalStart);
+assert.ok(previewModalStart >= 0 && previewModalEnd > previewModalStart);
+const previewModalSource = appSource.slice(previewModalStart, previewModalEnd);
+assert.match(
+  previewModalSource,
+  /\.modal-head \[data-action='cancel-generated-document-preview'\]/u,
+  "Крестик должен по-прежнему закрывать весь процесс формирования"
+);
+const editorCancelHandlerStart = previewModalSource.indexOf('cancelButton?.addEventListener("click"');
+const editorCancelHandlerEnd = previewModalSource.indexOf('editButton?.addEventListener("click"', editorCancelHandlerStart);
+assert.ok(editorCancelHandlerStart >= 0 && editorCancelHandlerEnd > editorCancelHandlerStart);
+const editorCancelHandlerSource = previewModalSource.slice(editorCancelHandlerStart, editorCancelHandlerEnd);
+assert.match(editorCancelHandlerSource, /if \(!editorSession\)[\s\S]+finish\(false\)/u);
+assert.ok(
+  editorCancelHandlerSource.indexOf("finish(false)")
+    < editorCancelHandlerSource.indexOf("discardGeneratedDocumentEditor"),
+  "В режиме просмотра нижняя кнопка должна отменять весь процесс, а в редакторе — только изменения"
+);
+assert.ok(
+  editorCancelHandlerSource.indexOf("discardGeneratedDocumentEditor")
+    < editorCancelHandlerSource.indexOf("setPreviewMode"),
+  "После серверной отмены изменений интерфейс должен вернуться к исходному PDF"
+);
 
 const pipelineStart = appSource.indexOf("async function downloadStudentDocumentFromTemplate");
 const pipelineEnd = appSource.indexOf("async function openStudentEducationDocument", pipelineStart);
@@ -425,12 +632,29 @@ assert.match(serverSource, /editableBytes:\s*docxResult/u);
 assert.match(serverSource, /handleGeneratedDocumentPreviewEditorStart/u);
 assert.match(serverSource, /handleGeneratedDocumentPreviewEditorCallback/u);
 assert.match(serverSource, /handleGeneratedDocumentPreviewEditorSave/u);
+assert.match(serverSource, /handleGeneratedDocumentPreviewEditorDiscard/u);
+assert.match(serverSource, /discardGeneratedDocumentPreviewEditor/u);
+assert.match(
+  serverSource,
+  /async function commitGeneratedDocumentPreviewRenderedPdf[\s\S]+metadata\.editorSession\s*=\s*null/u,
+  "Запись PDF и закрытие сессии редактора должны выполняться одной операцией"
+);
+assert.match(
+  serverSource,
+  /async function renderGeneratedDocumentPreviewEditorPdf[\s\S]+await commitGeneratedDocumentPreviewRenderedPdf\(/u,
+  "Подготовка сохранённого PDF должна атомарно завершать сессию редактора"
+);
+assert.match(serverSource, /student-document-preview\/editor-discard/u);
 assert.match(serverSource, /requestOnlyOfficeForceSave/u);
 assert.match(serverSource, /verifyOnlyOfficeJwt/u);
 assert.match(serverSource, /proxyOnlyOfficeHttpRequest/u);
 assert.match(serverSource, /proxyOnlyOfficeWebSocket/u);
 assert.match(serverSource, /server\.on\("upgrade"/u);
 assert.match(gatewaySource, /x-ais-session-id/u);
+assert.match(
+  gatewaySource,
+  /\$isPreviewControlRequest\s*=\s*in_array\([\s\S]+student-document-preview\/editor-discard[\s\S]+true\);/u
+);
 assert.match(gatewaySource, /\$requestBodyLimit\s*=\s*\$isPreviewControlRequest\s*\?\s*4096/u);
 assert.match(gatewaySource, /stream_get_contents\(\$inputStream,\s*\$requestBodyLimit\s*\+\s*1\)/u);
 assert.match(stylesSource, /\.generated-document-preview-dialog/u);

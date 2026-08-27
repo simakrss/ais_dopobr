@@ -25806,6 +25806,10 @@ function generatedDocumentPreviewEditableFilePath(token) {
   return path.join(generatedDocumentPreviewStorageRoot(), `${token}.edit.bin`);
 }
 
+function generatedDocumentPreviewEditorBaselineFilePath(token) {
+  return path.join(generatedDocumentPreviewStorageRoot(), `${token}.edit-baseline.bin`);
+}
+
 function generatedDocumentPreviewMetadataPath(token) {
   return path.join(generatedDocumentPreviewStorageRoot(), `${token}.json`);
 }
@@ -25824,7 +25828,16 @@ function encodeGeneratedDocumentPreviewMetadata(preview) {
         userId: String(preview.editorSession.userId || "").slice(0, 160),
         userName: String(preview.editorSession.userName || "").slice(0, 240),
         lastSavedAt: Number(preview.editorSession.lastSavedAt || 0),
-        lastError: String(preview.editorSession.lastError || "").slice(0, 1000)
+        lastError: String(preview.editorSession.lastError || "").slice(0, 1000),
+        baseline: preview.editorSession.baseline && typeof preview.editorSession.baseline === "object"
+          ? {
+              editRevision: Math.max(0, Number(preview.editorSession.baseline.editRevision || 0)),
+              renderedRevision: Math.max(0, Number(preview.editorSession.baseline.renderedRevision || 0)),
+              size: Math.max(0, Number(preview.editorSession.baseline.size || 0)),
+              editableSize: Math.max(0, Number(preview.editorSession.baseline.editableSize || 0)),
+              editableUsesPrimary: preview.editorSession.baseline.editableUsesPrimary === true
+            }
+          : null
       }
     : null;
   return {
@@ -26025,6 +26038,9 @@ async function removeGeneratedDocumentPreviewFiles(token) {
     fs.unlink(generatedDocumentPreviewEditableFilePath(token)).catch((error) => {
       if (error.code !== "ENOENT") throw error;
     }),
+    fs.unlink(generatedDocumentPreviewEditorBaselineFilePath(token)).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    }),
     fs.unlink(generatedDocumentPreviewMetadataPath(token)).catch((error) => {
       if (error.code !== "ENOENT") throw error;
     })
@@ -26035,6 +26051,9 @@ async function pruneGeneratedDocumentPreviewFiles(now = Date.now()) {
   const root = generatedDocumentPreviewStorageRoot();
   const entries = await listGeneratedDocumentPreviewFiles();
   const liveTokens = new Set(entries.map(({ token }) => token));
+  const liveEditorBaselineTokens = new Set(entries
+    .filter(({ metadata }) => Boolean(metadata?.editorSession?.baseline))
+    .map(({ token }) => token));
   await Promise.all(entries
     .filter(({ metadata }) => (
       String(metadata?.state || "pending") === "finalizing"
@@ -26049,7 +26068,10 @@ async function pruneGeneratedDocumentPreviewFiles(now = Date.now()) {
       if (orphanBytes) return !liveTokens.has(orphanBytes[1]);
       const orphanEditableBytes = /^([A-Za-z0-9_-]{32})\.edit\.bin$/u.exec(name);
       if (orphanEditableBytes) return !liveTokens.has(orphanEditableBytes[1]);
-      if (/^[A-Za-z0-9_-]{32}\.(?:bin|edit\.bin|json)\..+\.tmp$/u.test(name)) return true;
+      const orphanEditorBaselineBytes = /^([A-Za-z0-9_-]{32})\.edit-baseline\.bin$/u.exec(name);
+      if (orphanEditorBaselineBytes) return !liveEditorBaselineTokens.has(orphanEditorBaselineBytes[1]);
+      if (/^[A-Za-z0-9_-]{32}\.(?:bin|edit\.bin|edit-baseline\.bin|json)\..+\.tmp$/u.test(name)) return true;
+      if (/^[A-Za-z0-9_-]{32}\.edit-baseline\.bin\.tmp-[A-Za-z0-9]+$/u.test(name)) return true;
       if (/^[A-Za-z0-9_-]{32}\.json\.tmp-[A-Za-z0-9]+$/u.test(name)) return true;
       if (/^\.rate-[A-Za-z0-9_-]+\.json\.tmp-[A-Za-z0-9]+$/u.test(name)) return true;
       if (/^\.(?:store\.lock|cleanup-worker\.lock)\.stale-.+$/u.test(name)) return true;
@@ -26253,6 +26275,13 @@ function releaseGeneratedDocumentPreview(preview) {
   if (Buffer.isBuffer(preview?.bytes)) preview.bytes.fill(0);
   if (Buffer.isBuffer(preview?.editableBytes) && preview.editableBytes !== preview.bytes) {
     preview.editableBytes.fill(0);
+  }
+  if (
+    Buffer.isBuffer(preview?.editorBaselineBytes)
+    && preview.editorBaselineBytes !== preview.bytes
+    && preview.editorBaselineBytes !== preview.editableBytes
+  ) {
+    preview.editorBaselineBytes.fill(0);
   }
 }
 
@@ -26650,6 +26679,41 @@ async function readGeneratedDocumentPreviewEditableBytes(token, metadata) {
   return assertGeneratedDocumentEditorDocx(await fs.readFile(editablePath));
 }
 
+function generatedDocumentEditorBaselineMetadata(metadata, editableBytes) {
+  return {
+    editRevision: Math.max(0, Number(metadata?.editRevision || 0)),
+    renderedRevision: Math.max(0, Number(metadata?.renderedRevision || 0)),
+    size: Math.max(0, Number(metadata?.bytes?.length || metadata?.size || 0)),
+    editableSize: Math.max(0, Number(editableBytes?.length || metadata?.editableSize || 0)),
+    editableUsesPrimary: metadata?.editableUsesPrimary === true
+  };
+}
+
+function assertGeneratedDocumentEditorBaseline(metadata) {
+  const baseline = metadata?.editorSession?.baseline;
+  if (
+    !baseline
+    || typeof baseline !== "object"
+    || !Number.isFinite(Number(baseline.editRevision))
+    || !Number.isFinite(Number(baseline.renderedRevision))
+    || !Number.isFinite(Number(baseline.size))
+    || !Number.isFinite(Number(baseline.editableSize))
+    || Number(baseline.editableSize) <= 0
+  ) {
+    throw generatedDocumentPreviewError(
+      "Исходная версия документа для отмены изменений недоступна. Закройте предпросмотр и сформируйте документ заново.",
+      409
+    );
+  }
+  return {
+    editRevision: Math.max(0, Number(baseline.editRevision || 0)),
+    renderedRevision: Math.max(0, Number(baseline.renderedRevision || 0)),
+    size: Math.max(0, Number(baseline.size || 0)),
+    editableSize: Math.max(0, Number(baseline.editableSize || 0)),
+    editableUsesPrimary: baseline.editableUsesPrimary === true
+  };
+}
+
 async function beginGeneratedDocumentPreviewEditor(token, authUser) {
   const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
   if (!normalizedToken) {
@@ -26663,6 +26727,9 @@ async function beginGeneratedDocumentPreviewEditor(token, authUser) {
       throw generatedDocumentPreviewError("Предварительный просмотр принадлежит другой сессии.", 403);
     }
     assertGeneratedDocumentEditorDocx(editableBytes);
+    if (metadata.editorSession && Number(metadata.editorSession.expiresAt || 0) > Date.now()) {
+      throw generatedDocumentPreviewError("Сессия редактирования уже открыта.", 409);
+    }
     const editorToken = crypto.randomBytes(32).toString("base64url");
     const now = Date.now();
     const editorSession = {
@@ -26677,7 +26744,8 @@ async function beginGeneratedDocumentPreviewEditor(token, authUser) {
       userId: String(authUser?.id || authUser?.login || "user").slice(0, 160),
       userName: String(authUser?.name || authUser?.login || "Пользователь").slice(0, 240),
       lastSavedAt: 0,
-      lastError: ""
+      lastError: "",
+      baseline: generatedDocumentEditorBaselineMetadata(metadata, editableBytes)
     };
     metadata.editorSession = editorSession;
     metadata.expiresAt = Math.max(Number(metadata.expiresAt || 0), editorSession.expiresAt);
@@ -26703,14 +26771,32 @@ async function beginGeneratedDocumentPreviewEditor(token, authUser) {
       }
       const editableBytes = await readGeneratedDocumentPreviewEditableBytes(normalizedToken, metadata);
       const result = createSession(metadata, editableBytes);
-      await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+      await writeBufferAtomic(
+        generatedDocumentPreviewEditorBaselineFilePath(normalizedToken),
+        Buffer.from(editableBytes)
+      );
+      try {
+        await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+      } catch (error) {
+        await fs.unlink(generatedDocumentPreviewEditorBaselineFilePath(normalizedToken)).catch(() => null);
+        throw error;
+      }
       return result;
     });
   }
   pruneGeneratedDocumentPreviews();
   const preview = generatedDocumentPreviews.get(normalizedToken);
   const editableBytes = preview?.editableBytes?.length ? preview.editableBytes : preview?.bytes;
-  return createSession(preview, editableBytes);
+  const result = createSession(preview, editableBytes);
+  if (
+    Buffer.isBuffer(preview.editorBaselineBytes)
+    && preview.editorBaselineBytes !== preview.bytes
+    && preview.editorBaselineBytes !== preview.editableBytes
+  ) {
+    preview.editorBaselineBytes.fill(0);
+  }
+  preview.editorBaselineBytes = Buffer.from(editableBytes);
+  return result;
 }
 
 async function readGeneratedDocumentPreviewEditorContext(token, editorToken, options = {}) {
@@ -26819,7 +26905,147 @@ async function storeGeneratedDocumentPreviewEditedDocx(token, editorToken, docxB
   });
 }
 
-async function updateGeneratedDocumentPreviewRenderedPdf(token, editorToken, editRevision, pdfBytes) {
+async function discardGeneratedDocumentPreviewEditor(token, editorToken, authUser) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  if (!normalizedToken || !String(editorToken || "").trim()) {
+    throw generatedDocumentPreviewError("Сессия редактирования не найдена.", 404);
+  }
+  const owner = generatedDocumentPreviewOwner(authUser);
+  if (!owner) throw generatedDocumentPreviewError("Требуется вход в систему.", 401);
+  const restoreMetadata = (metadata) => {
+    assertGeneratedDocumentPreviewEditorMetadata(metadata, editorToken);
+    if (String(metadata.owner || "") !== owner) {
+      throw generatedDocumentPreviewError("Предварительный просмотр принадлежит другой сессии.", 403);
+    }
+    const baseline = assertGeneratedDocumentEditorBaseline(metadata);
+    metadata.editRevision = baseline.editRevision;
+    metadata.renderedRevision = baseline.renderedRevision;
+    metadata.size = baseline.size;
+    metadata.editableSize = baseline.editableSize;
+    metadata.editableUsesPrimary = baseline.editableUsesPrimary;
+    metadata.editorSession = null;
+    metadata.expiresAt = Date.now() + GENERATED_DOCUMENT_PREVIEW_TTL_MS;
+    return baseline;
+  };
+  if (useGeneratedDocumentPreviewFileStore()) {
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      await pruneGeneratedDocumentPreviewFiles();
+      let metadata;
+      try {
+        metadata = JSON.parse(await fs.readFile(generatedDocumentPreviewMetadataPath(normalizedToken), "utf8"));
+      } catch (error) {
+        if (error.code === "ENOENT") {
+          throw generatedDocumentPreviewError("Сессия редактирования не найдена.", 404);
+        }
+        throw error;
+      }
+      assertGeneratedDocumentPreviewEditorMetadata(metadata, editorToken);
+      if (String(metadata.owner || "") !== owner) {
+        throw generatedDocumentPreviewError("Предварительный просмотр принадлежит другой сессии.", 403);
+      }
+      const baseline = assertGeneratedDocumentEditorBaseline(metadata);
+      const baselineBytes = assertGeneratedDocumentEditorDocx(
+        await fs.readFile(generatedDocumentPreviewEditorBaselineFilePath(normalizedToken))
+      );
+      await writeBufferAtomic(
+        baseline.editableUsesPrimary
+          ? generatedDocumentPreviewFilePath(normalizedToken)
+          : generatedDocumentPreviewEditableFilePath(normalizedToken),
+        baselineBytes
+      );
+      restoreMetadata(metadata);
+      await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+      await fs.unlink(generatedDocumentPreviewEditorBaselineFilePath(normalizedToken)).catch(() => null);
+      return { discarded: true, editRevision: baseline.editRevision };
+    });
+  }
+  pruneGeneratedDocumentPreviews();
+  const preview = generatedDocumentPreviews.get(normalizedToken);
+  assertGeneratedDocumentPreviewEditorMetadata(preview, editorToken);
+  if (String(preview.owner || "") !== owner) {
+    throw generatedDocumentPreviewError("Предварительный просмотр принадлежит другой сессии.", 403);
+  }
+  const baseline = assertGeneratedDocumentEditorBaseline(preview);
+  const baselineBytes = assertGeneratedDocumentEditorDocx(preview.editorBaselineBytes);
+  preview.editorBaselineBytes = null;
+  if (baseline.editableUsesPrimary) {
+    const previousBytes = preview.bytes;
+    const previousEditableBytes = preview.editableBytes;
+    if (Buffer.isBuffer(previousBytes) && previousBytes !== baselineBytes) previousBytes.fill(0);
+    if (
+      Buffer.isBuffer(previousEditableBytes)
+      && previousEditableBytes !== previousBytes
+      && previousEditableBytes !== baselineBytes
+    ) {
+      previousEditableBytes.fill(0);
+    }
+    preview.bytes = baselineBytes;
+    preview.editableBytes = preview.bytes;
+  } else {
+    if (
+      Buffer.isBuffer(preview.editableBytes)
+      && preview.editableBytes !== preview.bytes
+      && preview.editableBytes !== baselineBytes
+    ) {
+      preview.editableBytes.fill(0);
+    }
+    preview.editableBytes = baselineBytes;
+  }
+  restoreMetadata(preview);
+  return { discarded: true, editRevision: baseline.editRevision };
+}
+
+async function completeGeneratedDocumentPreviewEditor(token, editorToken, expectedRevision) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  const revision = Number(expectedRevision);
+  if (!normalizedToken || !String(editorToken || "").trim()) {
+    throw generatedDocumentPreviewError("Сессия редактирования не найдена.", 404);
+  }
+  if (!Number.isSafeInteger(revision) || revision < 0) {
+    throw generatedDocumentPreviewError("Некорректная ревизия редактируемого документа.", 400);
+  }
+  const completeMetadata = (metadata) => {
+    assertGeneratedDocumentPreviewEditorMetadata(metadata, editorToken);
+    assertGeneratedDocumentEditorBaseline(metadata);
+    if (
+      Number(metadata.editRevision || 0) !== revision
+      || Number(metadata.renderedRevision || 0) !== revision
+    ) {
+      throw generatedDocumentPreviewError(
+        "Документ изменился во время сохранения. Повторите сохранение.",
+        409
+      );
+    }
+    metadata.editorSession = null;
+    metadata.expiresAt = Date.now() + GENERATED_DOCUMENT_PREVIEW_TTL_MS;
+  };
+  if (useGeneratedDocumentPreviewFileStore()) {
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      const metadata = JSON.parse(await fs.readFile(
+        generatedDocumentPreviewMetadataPath(normalizedToken),
+        "utf8"
+      ));
+      completeMetadata(metadata);
+      await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+      await fs.unlink(generatedDocumentPreviewEditorBaselineFilePath(normalizedToken)).catch(() => null);
+      return { completed: true, editRevision: revision };
+    });
+  }
+  pruneGeneratedDocumentPreviews();
+  const preview = generatedDocumentPreviews.get(normalizedToken);
+  completeMetadata(preview);
+  if (
+    Buffer.isBuffer(preview.editorBaselineBytes)
+    && preview.editorBaselineBytes !== preview.bytes
+    && preview.editorBaselineBytes !== preview.editableBytes
+  ) {
+    preview.editorBaselineBytes.fill(0);
+  }
+  preview.editorBaselineBytes = null;
+  return { completed: true, editRevision: revision };
+}
+
+async function commitGeneratedDocumentPreviewRenderedPdf(token, editorToken, editRevision, pdfBytes) {
   const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
   if (useGeneratedDocumentPreviewFileStore()) {
     return withGeneratedDocumentPreviewFileLock(async () => {
@@ -26831,7 +27057,10 @@ async function updateGeneratedDocumentPreviewRenderedPdf(token, editorToken, edi
         metadata.size = pdfBytes.length;
       }
       metadata.renderedRevision = Number(editRevision || 0);
+      metadata.editorSession = null;
+      metadata.expiresAt = Date.now() + GENERATED_DOCUMENT_PREVIEW_TTL_MS;
       await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+      await fs.unlink(generatedDocumentPreviewEditorBaselineFilePath(normalizedToken)).catch(() => null);
       return true;
     });
   }
@@ -26843,6 +27072,16 @@ async function updateGeneratedDocumentPreviewRenderedPdf(token, editorToken, edi
     preview.bytes = Buffer.from(pdfBytes);
   }
   preview.renderedRevision = Number(editRevision || 0);
+  preview.editorSession = null;
+  preview.expiresAt = Date.now() + GENERATED_DOCUMENT_PREVIEW_TTL_MS;
+  if (
+    Buffer.isBuffer(preview.editorBaselineBytes)
+    && preview.editorBaselineBytes !== preview.bytes
+    && preview.editorBaselineBytes !== preview.editableBytes
+  ) {
+    preview.editorBaselineBytes.fill(0);
+  }
+  preview.editorBaselineBytes = null;
   return true;
 }
 
@@ -26853,7 +27092,7 @@ async function renderGeneratedDocumentPreviewEditorPdf(token, editorToken) {
     if (context.metadata.removeBlankInteriorPages === true) {
       previewPdf = await removeBlankInteriorPdfPages(previewPdf);
     }
-    if (await updateGeneratedDocumentPreviewRenderedPdf(
+    if (await commitGeneratedDocumentPreviewRenderedPdf(
       token,
       editorToken,
       context.metadata.editRevision,
@@ -27284,6 +27523,20 @@ async function handleGeneratedDocumentPreviewEditorSave(req, res, authUser) {
       generatedDocumentContentType("pdf"),
       { "X-Document-Preview-Revision": String(rendered.editRevision) }
     );
+  } catch (error) {
+    sendError(res, Number(error?.statusCode) || 400, error.message);
+  }
+}
+
+async function handleGeneratedDocumentPreviewEditorDiscard(req, res, authUser) {
+  try {
+    const body = await readJsonBody(req, GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES);
+    const discarded = await discardGeneratedDocumentPreviewEditor(
+      body.previewToken,
+      body.editorToken,
+      authUser
+    );
+    sendJson(res, 200, discarded);
   } catch (error) {
     sendError(res, Number(error?.statusCode) || 400, error.message);
   }
@@ -30739,6 +30992,10 @@ async function route(req, res) {
     await handleGeneratedDocumentPreviewEditorSave(req, res, authUser);
     return;
   }
+  if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/editor-discard") {
+    await handleGeneratedDocumentPreviewEditorDiscard(req, res, authUser);
+    return;
+  }
   if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/cancel") {
     await handleGeneratedDocumentPreviewCancel(req, res, authUser);
     return;
@@ -30886,6 +31143,8 @@ module.exports = {
   registerGeneratedDocumentPreview,
   beginGeneratedDocumentPreviewEditor,
   storeGeneratedDocumentPreviewEditedDocx,
+  discardGeneratedDocumentPreviewEditor,
+  completeGeneratedDocumentPreviewEditor,
   takeGeneratedDocumentPreview,
   cancelGeneratedDocumentPreview,
   completeGeneratedDocumentPreview,

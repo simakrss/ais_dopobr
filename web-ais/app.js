@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.322",
+    version: "1.7.323",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.323",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Нижняя кнопка «Отменить изменения» в редакторе документа теперь возвращает к PDF-предпросмотру, не отменяя весь процесс формирования.",
+        "Автосохранённые ONLYOFFICE правки при отмене откатываются к последней подтверждённой версии; завершённая сессия больше не принимает запоздалые сохранения."
+      ]
+    },
     {
       version: "1.7.322",
       releasedAt: "2026-08-27",
@@ -57270,6 +57278,42 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  async function discardGeneratedDocumentEditor(previewToken, editorToken, processingOrigin) {
+    const normalizedPreviewToken = String(previewToken || "").trim();
+    const normalizedEditorToken = String(editorToken || "").trim();
+    if (!normalizedPreviewToken || !normalizedEditorToken) {
+      throw new Error("Сессия онлайн-редактора не найдена. Обновите предварительный просмотр.");
+    }
+    return fetchWithTimeout(documentProcessingApiUrl(
+      "/api/contracts/student-document-preview/editor-discard",
+      processingOrigin
+    ), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        previewToken: normalizedPreviewToken,
+        editorToken: normalizedEditorToken
+      })
+    }, 30000, "Сервер не отменил изменения в редакторе за 30 секунд.", async (response) => {
+      const responseText = await response.text();
+      let payload = {};
+      if (responseText) {
+        try {
+          payload = JSON.parse(responseText);
+        } catch {
+          payload = {};
+        }
+      }
+      if (!response.ok) {
+        throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      }
+      if (payload.ok === false) {
+        throw new Error(payload.error || "Сервер не отменил изменения в редакторе.");
+      }
+      return payload;
+    });
+  }
+
   async function saveGeneratedDocumentEditor(previewToken, editorSession, processingOrigin, hasChanges) {
     return fetchWithTimeout(documentProcessingApiUrl(
       "/api/contracts/student-document-preview/editor-save",
@@ -57341,7 +57385,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <small data-generated-document-preview-hint>Сохранение, скачивание и отправка начнутся только после подтверждения.</small>
             <button class="ghost-button" data-action="edit-generated-document-preview" type="button">Редактировать</button>
             <button class="primary-button" data-action="save-generated-document-editor" type="button" hidden disabled>Сохранить изменения</button>
-            <button class="ghost-button" data-action="cancel-generated-document-preview" type="button">Отмена</button>
+            <button class="ghost-button" data-action="cancel-generated-document-editor-or-preview" type="button" title="Отменить формирование документа">Отмена</button>
             <button class="primary-button" data-action="confirm-generated-document-preview" type="button">Продолжить</button>
           </footer>
         </section>
@@ -57357,6 +57401,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const hint = backdrop.querySelector("[data-generated-document-preview-hint]");
       const editButton = backdrop.querySelector("[data-action='edit-generated-document-preview']");
       const saveButton = backdrop.querySelector("[data-action='save-generated-document-editor']");
+      const cancelButton = backdrop.querySelector("[data-action='cancel-generated-document-editor-or-preview']");
       const continueButton = backdrop.querySelector("[data-action='confirm-generated-document-preview']");
       const defaultDescription = description?.textContent || "";
       const setPreviewMode = (message = "") => {
@@ -57375,6 +57420,12 @@ MAX - https://bizvmax.ru/zifra_plus
           saveButton.hidden = true;
           saveButton.disabled = true;
           saveButton.removeAttribute("aria-busy");
+        }
+        if (cancelButton) {
+          cancelButton.textContent = "Отмена";
+          cancelButton.title = "Отменить формирование документа";
+          cancelButton.disabled = false;
+          cancelButton.removeAttribute("aria-busy");
         }
         if (continueButton) continueButton.disabled = false;
         editorSession = null;
@@ -57395,6 +57446,12 @@ MAX - https://bizvmax.ru/zifra_plus
         if (saveButton) {
           saveButton.hidden = false;
           saveButton.disabled = true;
+        }
+        if (cancelButton) {
+          cancelButton.textContent = "Отменить изменения";
+          cancelButton.title = "Отменить изменения и вернуться к предварительному просмотру";
+          cancelButton.disabled = false;
+          cancelButton.removeAttribute("aria-busy");
         }
         if (continueButton) continueButton.disabled = true;
       };
@@ -57451,8 +57508,39 @@ MAX - https://bizvmax.ru/zifra_plus
       backdrop.addEventListener("pointerdown", (event) => {
         if (event.target === backdrop) finish(false);
       });
-      backdrop.querySelectorAll("[data-action='cancel-generated-document-preview']").forEach((button) => {
-        button.addEventListener("click", () => finish(false));
+      backdrop.querySelector(".modal-head [data-action='cancel-generated-document-preview']")
+        ?.addEventListener("click", () => finish(false));
+      cancelButton?.addEventListener("click", async () => {
+        if (cancelButton.disabled) return;
+        if (!editorSession) {
+          finish(false);
+          return;
+        }
+        const sessionToDiscard = editorSession;
+        cancelButton.disabled = true;
+        cancelButton.setAttribute("aria-busy", "true");
+        if (saveButton) saveButton.disabled = true;
+        if (description) description.textContent = "Отменяем изменения и возвращаем исходный PDF…";
+        try {
+          await discardGeneratedDocumentEditor(
+            previewToken,
+            sessionToDiscard.editorToken,
+            processingOrigin
+          );
+          if (settled || editorSession !== sessionToDiscard) return;
+          setPreviewMode(
+            `Изменения отменены. Проверьте предыдущую версию документа перед продолжением.${emailDescription
+              ? ` Отправка по email: ${emailDescription}.`
+              : ""}`
+          );
+        } catch (error) {
+          if (settled || editorSession !== sessionToDiscard) return;
+          if (description) description.textContent = `Изменения не отменены: ${error.message}`;
+          if (saveButton) saveButton.disabled = !editorReady;
+          cancelButton.disabled = false;
+          cancelButton.removeAttribute("aria-busy");
+          alert(`Не удалось отменить изменения: ${error.message}`);
+        }
       });
       editButton?.addEventListener("click", async () => {
         if (!previewToken || !processingOrigin || editButton.disabled) return;
@@ -57473,6 +57561,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!editorSession || !editorReady || saveButton.disabled) return;
         saveButton.disabled = true;
         saveButton.setAttribute("aria-busy", "true");
+        if (cancelButton) cancelButton.disabled = true;
         if (description) description.textContent = "Сохраняем изменения и готовим новый PDF…";
         try {
           const saved = await saveGeneratedDocumentEditor(
@@ -57495,6 +57584,7 @@ MAX - https://bizvmax.ru/zifra_plus
           alert(`Не удалось сохранить изменения: ${error.message}`);
           saveButton.disabled = false;
           saveButton.removeAttribute("aria-busy");
+          if (cancelButton) cancelButton.disabled = false;
         }
       });
       backdrop.querySelector("[data-action='confirm-generated-document-preview']")?.addEventListener("click", () => {
