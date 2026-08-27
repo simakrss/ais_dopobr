@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.329",
+    version: "1.7.330",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.330",
+      releasedAt: "2026-08-27",
+      changes: [
+        "В сопроводительных письмах документов теперь вычисляется форматирование дат через ТЕКСТ с вложенными ПСТР и ЛЕВСИМВ.",
+        "Дата продления обучения подставляется в письмо готовым значением ДД.ММ.ГГГГ, а не текстом формулы."
+      ]
+    },
     {
       version: "1.7.329",
       releasedAt: "2026-08-27",
@@ -59604,6 +59612,40 @@ MAX - https://bizvmax.ru/zifra_plus
     );
   }
 
+  function resolveContractTemplateDateFormulaValue(formula, record, currentDate = new Date()) {
+    const expression = String(formula || "")
+      .replace(/^\s*=\s*/u, "")
+      .split(/\s+\/\//u, 1)[0]
+      .trim();
+    const textFunction = /^ТЕКСТ\s*\(([\s\S]+);\s*"([^"]+)"\s*\)$/iu.exec(expression);
+    if (!textFunction) return null;
+    const format = String(textFunction[2] || "")
+      .replace(/\[\$-[^\]]+\]/giu, "")
+      .trim()
+      .toLocaleUpperCase("ru-RU");
+    if (!["ДД.ММ.ГГГГ", "ГГГГ.ММ.ДД"].includes(format)) return null;
+    const valueExpression = String(textFunction[1] || "").trim();
+    let sourceValue;
+    if (/^ТДАТА\s*\(\s*\)$/iu.test(valueExpression)) {
+      sourceValue = currentDate;
+    } else {
+      const sourceReference = /^ПСТР\s*\(\s*\[([^\]]+)\]\s*;\s*1\s*;\s*(?:8|10)\s*\)$/iu.exec(valueExpression)
+        || /^ЛЕВСИМВ\s*\(\s*\[([^\]]+)\]\s*;\s*(?:8|10)\s*\)$/iu.exec(valueExpression)
+        || /^\[([^\]]+)\]$/u.exec(valueExpression);
+      if (!sourceReference) return null;
+      sourceValue = getContractTemplateRawSourceValue(sourceReference[1], record);
+    }
+    const russianDate = formatContractDate(sourceValue);
+    const dateParts = /^(\d{2})\.(\d{2})\.(\d{4})$/u.exec(russianDate);
+    if (!dateParts) return { matched: true, value: russianDate };
+    return {
+      matched: true,
+      value: format === "ГГГГ.ММ.ДД"
+        ? `${dateParts[3]}.${dateParts[2]}.${dateParts[1]}`
+        : russianDate
+    };
+  }
+
   function evaluateContractTemplateField(field, record, values, evaluateByName = null) {
     const fieldName = String(field.name || "").trim();
     if (
@@ -59665,6 +59707,8 @@ MAX - https://bizvmax.ru/zifra_plus
       const fullName = String(getContractTemplateSourceValue("ФИО", record) || record?.name || "").trim();
       return `${program}${program && fullName ? " " : ""}${fullName}https://edu-plus.ru`;
     }
+    const formattedDateFormula = resolveContractTemplateDateFormulaValue(formula, record);
+    if (formattedDateFormula?.matched) return formattedDateFormula.value;
     const isDefaultFormula = defaultField && formula === String(defaultField.formula || "").trim();
     if (!isDefaultFormula) return evaluateContractFormulaFallback(formula, record, values, evaluateByName);
     const source = (name) => getContractTemplateSourceValue(name, record);
