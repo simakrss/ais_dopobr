@@ -89,10 +89,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.309",
+    version: "1.7.310",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.310",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Раздел «Электронная почта» в админке переименован в «Почта»."
+      ]
+    },
     {
       version: "1.7.309",
       releasedAt: "2026-08-27",
@@ -21226,7 +21233,7 @@ MAX - https://bizvmax.ru/zifra_plus
       : APPLICATION_RELEASE.releasedAt;
     const adminTabs = getOrderedTabs("admin", [
       { id: "database", label: "Подключение к базе" },
-      { id: "email", label: "Электронная почта" },
+      { id: "email", label: "Почта" },
       { id: "external-services", label: "Внешние сервисы" },
       { id: "audit", label: "Журнал действий" },
       { id: "users", label: "Пользователи и роли" }

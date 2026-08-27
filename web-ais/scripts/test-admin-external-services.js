@@ -18,6 +18,8 @@ function sourceBlock(source, startMarker, endMarker) {
 }
 
 assert.match(appSource, /\{ id: "external-services", label: "Внешние сервисы" \}/u);
+assert.match(appSource, /\{ id: "email", label: "Почта" \}/u);
+assert.doesNotMatch(appSource, /\{ id: "email", label: "Электронная почта" \}/u);
 assert.match(appSource, /getOrderedTabs\("admin", \[/u);
 assert.match(appSource, /data-orderable-tabs="admin"/u);
 assert.match(appSource, /<h3>\$\{escapeHtml\(title\)\}<\/h3>/u);
