@@ -54,6 +54,9 @@ assert.match(appSource, /recycle-bin-operation-blocker/u);
 
 assert.match(appSource, /isAdminUser\(\) \? `[\s\S]*permanently-delete-recycle-bin-item/u);
 assert.match(stylesSource, /\.recycle-bin-panel/u);
+assert.match(appSource, /recycle-bin-panel\$\{rows\.length \? "" : " is-empty"\}/u);
+assert.match(stylesSource, /\.recycle-bin-panel\.is-empty\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;/u);
+assert.match(stylesSource, /\.recycle-bin-panel\.is-empty \.recycle-bin-empty\s*\{\s*flex:\s*1 1 auto;/u);
 assert.match(stylesSource, /\.recycle-bin-actions/u);
 
 console.log("Recycle bin UI tests passed.");

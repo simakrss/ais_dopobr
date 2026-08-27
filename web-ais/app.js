@@ -164,10 +164,19 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.332",
+    version: "1.7.333",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.333",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Поиск в реестрах слушателей, сотрудников, программ, общих затрат и запасов теперь расположен слева и занимает всю доступную ширину.",
+        "Поиск в конструкторе документов расширяется до кнопок управления, а на узких экранах остаётся полноширинным.",
+        "У пустой корзины выровнены нижний и боковые отступы."
+      ]
+    },
     {
       version: "1.7.332",
       releasedAt: "2026-08-27",
@@ -14855,7 +14864,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const rows = [...(state.data.collections.recycleBin || [])]
       .sort((left, right) => String(right.deletedAt || "").localeCompare(String(left.deletedAt || "")));
     return `
-      <section class="panel recycle-bin-panel" data-recycle-bin>
+      <section class="panel recycle-bin-panel${rows.length ? "" : " is-empty"}" data-recycle-bin>
         <div class="section-head recycle-bin-head">
           <div>
             <p class="recycle-bin-description">Восстановление возвращает запись со всеми сохранёнными полями. Безвозвратное удаление доступно только администратору.</p>
