@@ -164,10 +164,19 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.324",
+    version: "1.7.325",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.325",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Исправлено сохранение документов после изменения размеров фотографий и других правок в ONLYOFFICE: сервер корректно загружает результат через внутренний адрес редактора.",
+        "Кнопка сохранения теперь ждёт, пока ONLYOFFICE передаст последнюю правку, а повторная попытка не блокируется предыдущей ошибкой.",
+        "При ошибке сохранения окно больше не показывает техническую HTML-страницу сервера."
+      ]
+    },
     {
       version: "1.7.324",
       releasedAt: "2026-08-27",
@@ -57467,7 +57476,7 @@ MAX - https://bizvmax.ru/zifra_plus
         editRevision: editorSession.editRevision,
         hasChanges: Boolean(hasChanges)
       })
-    }, 2 * 60 * 1000, "ONLYOFFICE не завершил сохранение документа за 2 минуты.", async (response) => {
+    }, 4 * 60 * 1000, "ONLYOFFICE не завершил сохранение документа за 4 минуты.", async (response) => {
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
@@ -57533,7 +57542,7 @@ MAX - https://bizvmax.ru/zifra_plus
       let settled = false;
       let editorSession = null;
       let editorReady = false;
-      let editorModified = false;
+      let editorChangesPending = false;
       const frame = backdrop.querySelector("[data-generated-document-preview-frame]")
         || backdrop.querySelector(".generated-document-preview-frame");
       const heading = backdrop.querySelector("[data-generated-document-preview-heading]");
@@ -57546,7 +57555,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const defaultDescription = description?.textContent || "";
       const setPreviewMode = (message = "") => {
         editorReady = false;
-        editorModified = false;
+        editorChangesPending = false;
         if (frame) {
           frame.classList.remove("is-editor");
           frame.src = `${previewUrl}#toolbar=1&navpanes=0`;
@@ -57573,7 +57582,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const setEditorMode = (session) => {
         editorSession = session;
         editorReady = false;
-        editorModified = false;
+        editorChangesPending = false;
         if (frame) {
           frame.classList.add("is-editor");
           frame.src = session.editorUrl;
@@ -57604,14 +57613,28 @@ MAX - https://bizvmax.ru/zifra_plus
         ) return;
         if (event.data.type === "ready") {
           editorReady = true;
-          if (saveButton && !saveButton.hasAttribute("aria-busy")) saveButton.disabled = false;
-          if (description) description.textContent = "Внесите изменения в документ и нажмите «Сохранить изменения».";
+          if (saveButton && !saveButton.hasAttribute("aria-busy")) {
+            saveButton.disabled = editorChangesPending;
+          }
+          if (description) {
+            description.textContent = editorChangesPending
+              ? "ONLYOFFICE передаёт последнюю правку… Кнопка сохранения станет доступна автоматически."
+              : "Внесите изменения в документ и нажмите «Сохранить изменения».";
+          }
         } else if (event.data.type === "state") {
-          editorModified = Boolean(event.data.modified);
+          editorChangesPending = Boolean(event.data.modified);
+          if (saveButton && !saveButton.hasAttribute("aria-busy")) {
+            saveButton.disabled = !editorReady || editorChangesPending;
+          }
+          if (description && editorReady) {
+            description.textContent = editorChangesPending
+              ? "ONLYOFFICE передаёт последнюю правку… Кнопка сохранения станет доступна автоматически."
+              : "Все правки переданы. Можно сохранить изменения.";
+          }
         } else if (event.data.type === "error") {
           const message = String(event.data.message || "Ошибка онлайн-редактора.");
           if (description) description.textContent = message;
-          if (saveButton) saveButton.disabled = !editorReady;
+          if (saveButton) saveButton.disabled = !editorReady || editorChangesPending;
         }
       };
       const trapFocus = (event) => {
@@ -57708,7 +57731,7 @@ MAX - https://bizvmax.ru/zifra_plus
             previewToken,
             editorSession,
             processingOrigin,
-            editorModified
+            editorChangesPending
           );
           const previousPreviewUrl = previewUrl;
           previewUrl = URL.createObjectURL(new Blob([saved.blob], { type: "application/pdf" }));
@@ -57722,7 +57745,7 @@ MAX - https://bizvmax.ru/zifra_plus
         } catch (error) {
           if (description) description.textContent = `Изменения пока не сохранены: ${error.message}`;
           alert(`Не удалось сохранить изменения: ${error.message}`);
-          saveButton.disabled = false;
+          saveButton.disabled = editorChangesPending;
           saveButton.removeAttribute("aria-busy");
           if (cancelButton) cancelButton.disabled = false;
         }

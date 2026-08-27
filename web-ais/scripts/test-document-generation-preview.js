@@ -20,7 +20,9 @@ const {
   completeGeneratedDocumentPreview,
   pruneGeneratedDocumentPreviews,
   signOnlyOfficeJwt,
-  verifyOnlyOfficeJwt
+  verifyOnlyOfficeJwt,
+  resolveOnlyOfficeEditedDocumentUrl,
+  sanitizeOnlyOfficeEditorSaveError
 } = require(path.join(root, "app-server.js"));
 
 const owner = { id: "preview-test-owner", login: "owner", authSessionKey: "session-owner" };
@@ -42,6 +44,58 @@ const tamperedJwt = `${signedJwt.slice(0, -1)}${signedJwt.endsWith("A") ? "B" : 
 assert.throws(
   () => verifyOnlyOfficeJwt(tamperedJwt, jwtSecret),
   /недействительный JWT-токен/u
+);
+
+assert.equal(
+  resolveOnlyOfficeEditedDocumentUrl(
+    "https://edu-plus.ru/onlyoffice/cache/files/data/editor/output.docx?md5=abc",
+    "http://127.0.0.1:8082"
+  ).toString(),
+  "http://127.0.0.1:8082/cache/files/data/editor/output.docx?md5=abc",
+  "При прямом скачивании результата публичный префикс прокси ONLYOFFICE должен удаляться"
+);
+assert.equal(
+  resolveOnlyOfficeEditedDocumentUrl(
+    "http://documentserver/cache/files/data/editor/output.docx?md5=abc",
+    "http://127.0.0.1:8082"
+  ).toString(),
+  "http://127.0.0.1:8082/cache/files/data/editor/output.docx?md5=abc",
+  "Прямая ссылка ONLYOFFICE должна сохранять путь и параметры"
+);
+assert.equal(
+  resolveOnlyOfficeEditedDocumentUrl(
+    "https://edu-plus.ru/onlyofficeevil/cache/files/data/editor/output.docx",
+    "http://127.0.0.1:8082"
+  ).toString(),
+  "http://127.0.0.1:8082/onlyofficeevil/cache/files/data/editor/output.docx",
+  "Похожий, но посторонний сегмент пути не должен приниматься за префикс прокси"
+);
+assert.equal(
+  resolveOnlyOfficeEditedDocumentUrl(
+    "https://edu-plus.ru/onlyoffice/cache/files/data/editor/output.docx",
+    "https://converter.example/documentserver/"
+  ).toString(),
+  "https://converter.example/documentserver/cache/files/data/editor/output.docx",
+  "Настроенный базовый путь внутреннего ONLYOFFICE не должен теряться"
+);
+assert.equal(
+  resolveOnlyOfficeEditedDocumentUrl(
+    "https://documentserver/documentserver/cache/files/data/editor/output.docx",
+    "https://converter.example/documentserver/"
+  ).toString(),
+  "https://converter.example/documentserver/cache/files/data/editor/output.docx",
+  "Базовый путь внутреннего ONLYOFFICE не должен дублироваться"
+);
+assert.throws(
+  () => resolveOnlyOfficeEditedDocumentUrl("file:///tmp/output.docx", "http://127.0.0.1:8082"),
+  /неподдерживаемую ссылку/u
+);
+assert.equal(
+  sanitizeOnlyOfficeEditorSaveError(new Error(
+    "ONLYOFFICE не передал отредактированный документ: HTTP 404 <!DOCTYPE html><html>Error</html>"
+  )),
+  "ONLYOFFICE не передал отредактированный документ: HTTP 404",
+  "HTML-страница внутреннего сервера не должна попадать в пользовательское окно"
 );
 
 async function main() {
@@ -570,6 +624,16 @@ assert.match(appSource, /ais-generated-document-editor/u);
 assert.match(appSource, /closeGeneratedDocumentPreview/u);
 assert.match(appSource, /Отправка по email:/u);
 assert.match(appSource, /button\?\.isConnected\s*&&\s*!button\.disabled/u);
+assert.match(
+  appSource,
+  /event\.data\.type === "state"[\s\S]+editorChangesPending = Boolean\(event\.data\.modified\)[\s\S]+saveButton\.disabled = !editorReady \|\| editorChangesPending/u,
+  "Сохранение должно ждать передачи последней правки из редактора в ONLYOFFICE"
+);
+assert.match(
+  appSource,
+  /4 \* 60 \* 1000, "ONLYOFFICE не завершил сохранение документа за 4 минуты/u,
+  "Клиент должен ждать дольше максимального серверного цикла сохранения и конвертации"
+);
 
 const previewModalStart = appSource.indexOf("function showGeneratedDocumentPreview");
 const previewModalEnd = appSource.indexOf("function documentEmailMessageContainsHtml", previewModalStart);
@@ -632,6 +696,11 @@ assert.match(serverSource, /editableBytes:\s*docxResult/u);
 assert.match(serverSource, /handleGeneratedDocumentPreviewEditorStart/u);
 assert.match(serverSource, /handleGeneratedDocumentPreviewEditorCallback/u);
 assert.match(serverSource, /handleGeneratedDocumentPreviewEditorSave/u);
+assert.match(
+  serverSource,
+  /await clearGeneratedDocumentPreviewEditorError\(previewToken, editorToken\);\s+const forceSave/u,
+  "Повторная попытка сохранения не должна завершаться из-за ошибки предыдущей попытки"
+);
 assert.match(serverSource, /handleGeneratedDocumentPreviewEditorDiscard/u);
 assert.match(serverSource, /discardGeneratedDocumentPreviewEditor/u);
 assert.match(

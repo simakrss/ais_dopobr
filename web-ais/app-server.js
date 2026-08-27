@@ -27073,6 +27073,23 @@ async function storeGeneratedDocumentPreviewEditorError(token, editorToken, mess
   }
 }
 
+async function clearGeneratedDocumentPreviewEditorError(token, editorToken) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  if (!normalizedToken) return;
+  if (useGeneratedDocumentPreviewFileStore()) {
+    await withGeneratedDocumentPreviewFileLock(async () => {
+      const metadata = JSON.parse(await fs.readFile(generatedDocumentPreviewMetadataPath(normalizedToken), "utf8"));
+      assertGeneratedDocumentPreviewEditorMetadata(metadata, editorToken);
+      metadata.editorSession.lastError = "";
+      await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+    });
+    return;
+  }
+  const preview = generatedDocumentPreviews.get(normalizedToken);
+  assertGeneratedDocumentPreviewEditorMetadata(preview, editorToken);
+  preview.editorSession.lastError = "";
+}
+
 async function storeGeneratedDocumentPreviewEditedDocx(token, editorToken, docxBytes) {
   const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
   const editedBytes = assertGeneratedDocumentEditorDocx(Buffer.from(docxBytes || []));
@@ -27616,6 +27633,44 @@ async function handleGeneratedDocumentPreviewEditorFile(req, res, requestUrl) {
   }
 }
 
+function resolveOnlyOfficeEditedDocumentUrl(callbackUrl, converterUrl) {
+  let suppliedUrl;
+  try {
+    suppliedUrl = new URL(String(callbackUrl || ""));
+  } catch {
+    throw new Error("ONLYOFFICE передал некорректную ссылку на документ.");
+  }
+  if (!["http:", "https:"].includes(suppliedUrl.protocol)) {
+    throw new Error("ONLYOFFICE передал неподдерживаемую ссылку на документ.");
+  }
+
+  const editedDocumentUrl = new URL(converterUrl);
+  let suppliedPathname = onlyOfficeProxyUpstreamPathname(suppliedUrl.pathname);
+
+  const converterBasePathname = editedDocumentUrl.pathname.replace(/\/+$/u, "");
+  if (
+    converterBasePathname
+    && converterBasePathname !== "/"
+    && suppliedPathname !== converterBasePathname
+    && !suppliedPathname.startsWith(`${converterBasePathname}/`)
+  ) {
+    suppliedPathname = `${converterBasePathname}/${suppliedPathname.replace(/^\/+/u, "")}`;
+  }
+  editedDocumentUrl.pathname = suppliedPathname;
+  editedDocumentUrl.search = suppliedUrl.search;
+  editedDocumentUrl.hash = "";
+  return editedDocumentUrl;
+}
+
+function sanitizeOnlyOfficeEditorSaveError(error) {
+  const fallback = "Не удалось получить сохранённый документ из ONLYOFFICE.";
+  let message = String(error?.message || error || fallback).trim();
+  const htmlStart = message.search(/<(?:!doctype\s+html|html|head|body|pre)\b/iu);
+  if (htmlStart >= 0) message = message.slice(0, htmlStart);
+  message = message.replace(/\s+/gu, " ").trim();
+  return message.slice(0, 500) || fallback;
+}
+
 async function handleGeneratedDocumentPreviewEditorCallback(req, res, requestUrl) {
   const previewToken = String(requestUrl.searchParams.get("previewToken") || "");
   const editorToken = String(requestUrl.searchParams.get("editorToken") || "");
@@ -27637,14 +27692,10 @@ async function handleGeneratedDocumentPreviewEditorCallback(req, res, requestUrl
       throw new Error("ONLYOFFICE передал данные другой сессии редактирования.");
     }
     if ([2, 6].includes(status) && String(callback?.url || "").trim()) {
-      const suppliedUrl = new URL(String(callback.url));
-      if (!["http:", "https:"].includes(suppliedUrl.protocol)) {
-        throw new Error("ONLYOFFICE передал неподдерживаемую ссылку на документ.");
-      }
-      const editedDocumentUrl = new URL(settings.converterUrl);
-      editedDocumentUrl.pathname = suppliedUrl.pathname;
-      editedDocumentUrl.search = suppliedUrl.search;
-      editedDocumentUrl.hash = "";
+      const editedDocumentUrl = resolveOnlyOfficeEditedDocumentUrl(
+        callback.url,
+        settings.converterUrl
+      );
       const editedBytes = await requestBuffer(editedDocumentUrl, {
         maxResponseBytes: MAX_DOCX_BYTES,
         timeoutMs: 60000,
@@ -27661,7 +27712,11 @@ async function handleGeneratedDocumentPreviewEditorCallback(req, res, requestUrl
     }
     sendJson(res, 200, { error: 0 });
   } catch (error) {
-    await storeGeneratedDocumentPreviewEditorError(previewToken, editorToken, error.message);
+    await storeGeneratedDocumentPreviewEditorError(
+      previewToken,
+      editorToken,
+      sanitizeOnlyOfficeEditorSaveError(error)
+    );
     sendJson(res, 200, { error: 1 });
   }
 }
@@ -27731,6 +27786,7 @@ async function handleGeneratedDocumentPreviewEditorSave(req, res, authUser) {
     const previousRevision = Number(context.metadata.editRevision || 0);
     const clientRevision = Math.max(0, Number(body.editRevision || 0));
     if (body.hasChanges === true || previousRevision <= clientRevision) {
+      await clearGeneratedDocumentPreviewEditorError(previewToken, editorToken);
       const forceSave = await requestOnlyOfficeForceSave(context.metadata.editorSession.key);
       const forceSaveError = Number(forceSave?.error || 0);
       if (forceSaveError === 0) {
@@ -27774,13 +27830,17 @@ function isOnlyOfficeProxyPath(pathname) {
     || ONLYOFFICE_PROXY_ROOT_PATHS.some((prefix) => normalized.startsWith(prefix));
 }
 
+function onlyOfficeProxyUpstreamPathname(pathname) {
+  const normalized = String(pathname || "");
+  if (normalized === ONLYOFFICE_PROXY_PREFIX) return "/";
+  if (normalized.startsWith(`${ONLYOFFICE_PROXY_PREFIX}/`)) {
+    return normalized.slice(ONLYOFFICE_PROXY_PREFIX.length) || "/";
+  }
+  return normalized || "/";
+}
+
 function onlyOfficeProxyUpstreamPath(requestUrl) {
-  const upstreamPathname = requestUrl.pathname === ONLYOFFICE_PROXY_PREFIX
-    ? "/"
-    : (requestUrl.pathname.startsWith(`${ONLYOFFICE_PROXY_PREFIX}/`)
-      ? requestUrl.pathname.slice(ONLYOFFICE_PROXY_PREFIX.length)
-      : requestUrl.pathname);
-  return `${upstreamPathname || "/"}${requestUrl.search || ""}`;
+  return `${onlyOfficeProxyUpstreamPathname(requestUrl.pathname)}${requestUrl.search || ""}`;
 }
 
 function onlyOfficeProxyRequestHeaders(req, target) {
@@ -31368,6 +31428,8 @@ module.exports = {
   removeDocumentConversionSource,
   signOnlyOfficeJwt,
   verifyOnlyOfficeJwt,
+  resolveOnlyOfficeEditedDocumentUrl,
+  sanitizeOnlyOfficeEditorSaveError,
   registerGeneratedDocumentPreview,
   beginGeneratedDocumentPreviewEditor,
   storeGeneratedDocumentPreviewEditedDocx,
