@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.325",
+    version: "1.7.326",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.326",
+      releasedAt: "2026-08-27",
+      changes: [
+        "В заявлении о снижении стоимости образовательных услуг теперь указывается процент скидки из карточки слушателя.",
+        "Учтены старые записи со значением 1 для скидки 100%: при совпадающем основании документ показывает 100%, а не 1%."
+      ]
+    },
     {
       version: "1.7.325",
       releasedAt: "2026-08-27",
@@ -3446,7 +3454,7 @@ MAX - https://bizvmax.ru/zifra_plus
     "Прогр обуч факт", "Количество часов", "Форма обучения", "Стажировка", "Гражданство", "ДР обуч", "Обуч тел#",
     "Адрес места жительства", "Адрес места регистрации",
     "Адрес постоянного места жительства (регистрации по паспорту)", "Адрес для отправки документов",
-    "МестоРаботы", "Должность", "СНИЛС", "Осн# скидки",
+    "МестоРаботы", "Должность", "СНИЛС", "Скидка", "Осн# скидки",
     "Пасп_Обуч_Вид документа", "Пасп_Обуч_Дата", "Пасп_Обуч_Серия_Номер", "Пасп_Обуч_Кем",
     "Обр_Вид образования", "Обр_Серия", "Обр_Номер", "Обр_Дата выдачи", "Обр_Кем выдан",
     "Внесено (руб)", "Сумма  по договору (руб)", "Фото",
@@ -3483,6 +3491,7 @@ MAX - https://bizvmax.ru/zifra_plus
     "МестоРаботы": "workPlace",
     "Должность": "position",
     "СНИЛС": "snils",
+    "Скидка": "discount",
     "Осн# скидки": "discountDescription",
     "Пасп_Обуч_Вид документа": "passportType",
     "Пасп_Обуч_Дата": "passportDate",
@@ -59343,6 +59352,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const normalized = String(name || "").replace(/\s+/g, " ").trim();
     const addressKey = resolveContractTemplateAddressSourceKey(normalized);
     if (addressKey) return record?.[addressKey] ?? "";
+    if (normalized === "Скидка") return getContractDocumentDiscountPercent(record);
     if (normalized === "Количество часов") return getStudentProgramHours(record);
     if (normalized === "Часы") return getStudentProgramHours(record);
     if (normalized === "Вид программы ДПО") return getStudentProgramTypeCode(record);
@@ -59384,6 +59394,17 @@ MAX - https://bizvmax.ru/zifra_plus
     if (normalized === "QRкод") return String(record.qrCode || getProgramPromoUrl(findProgramByName(record.program)) || "").trim();
     const key = contractTemplateSourceFieldMap[normalized] || contractTemplateSourceFieldMap[name] || normalized;
     return record[key] ?? "";
+  }
+
+  function getContractDocumentDiscountPercent(record) {
+    const storedPercent = normalizeDiscountPercent(record?.discount, record?.discountUnit);
+    const describedMatch = /Итого\s+(\d+(?:[.,]\d+)?)\s*%/iu.exec(String(record?.discountDescription || ""));
+    if (!describedMatch) return storedPercent;
+    const describedPercent = normalizeDiscountPercent(describedMatch[1], "percent");
+    if (!storedPercent) return describedPercent;
+    if (Math.abs(describedPercent - storedPercent) < 0.001) return storedPercent;
+    if (Math.abs(describedPercent - storedPercent * 100) < 0.001) return describedPercent;
+    return storedPercent;
   }
 
   function getIssuedEducationDocumentName(record) {

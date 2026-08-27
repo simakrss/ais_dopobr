@@ -4762,6 +4762,108 @@ function normalizeUnavailableDocumentFonts(entries) {
   });
 }
 
+function formatEducationCostDiscountPercent(value) {
+  const normalized = String(value ?? "")
+    .replace(/\u00a0/g, " ")
+    .trim()
+    .replace(/\s*%\s*$/u, "")
+    .replace(/\s+/g, "")
+    .replace(",", ".");
+  if (!normalized) return "";
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric) || numeric <= 0 || numeric > 100) return "";
+  return String(Math.round(numeric * 100) / 100).replace(".", ",");
+}
+
+function resolveEducationCostDiscountPercent(value, description = "") {
+  const storedPercent = formatEducationCostDiscountPercent(value);
+  const describedMatch = /Итого\s+(\d+(?:[.,]\d+)?)\s*%/iu.exec(String(description || ""));
+  if (!describedMatch) return storedPercent;
+  const describedPercent = formatEducationCostDiscountPercent(describedMatch[1]);
+  if (!storedPercent) return describedPercent;
+  const storedNumeric = Number(storedPercent.replace(",", "."));
+  const describedNumeric = Number(describedPercent.replace(",", "."));
+  if (Math.abs(describedNumeric - storedNumeric) < 0.001) return storedPercent;
+  if (Math.abs(describedNumeric - storedNumeric * 100) < 0.001) return describedPercent;
+  return storedPercent;
+}
+
+function getWordParagraphPlainText(paragraphXml) {
+  return [...String(paragraphXml || "").matchAll(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g)]
+    .map((match) => decodeXmlText(match[1]))
+    .join("");
+}
+
+function replaceWordParagraphTextRange(paragraphXml, startOffset, endOffset, replacement) {
+  const source = String(paragraphXml || "");
+  const nodes = [];
+  let textOffset = 0;
+  for (const match of source.matchAll(/(<w:t\b[^>]*>)([\s\S]*?)(<\/w:t>)/g)) {
+    const text = decodeXmlText(match[2]);
+    nodes.push({
+      index: match.index,
+      length: match[0].length,
+      openTag: match[1],
+      closeTag: match[3],
+      text,
+      start: textOffset,
+      end: textOffset + text.length
+    });
+    textOffset += text.length;
+  }
+  if (!nodes.length || startOffset < 0 || endOffset <= startOffset || endOffset > textOffset) return source;
+  let inserted = false;
+  const changes = [];
+  nodes.forEach((node) => {
+    if (node.end <= startOffset || node.start >= endOffset) return;
+    const before = startOffset > node.start ? node.text.slice(0, startOffset - node.start) : "";
+    const after = endOffset < node.end ? node.text.slice(endOffset - node.start) : "";
+    const text = inserted ? after : `${before}${replacement}${after}`;
+    inserted = true;
+    const openTag = text && /^\s|\s$/u.test(text) && !/\bxml:space=/u.test(node.openTag)
+      ? node.openTag.replace(/>$/u, ' xml:space="preserve">')
+      : node.openTag;
+    changes.push({ ...node, xml: `${openTag}${escapeXmlText(text)}${node.closeTag}` });
+  });
+  if (!inserted) return source;
+  return changes
+    .sort((left, right) => right.index - left.index)
+    .reduce((xml, change) => (
+      `${xml.slice(0, change.index)}${change.xml}${xml.slice(change.index + change.length)}`
+    ), source);
+}
+
+function applyEducationCostDiscountStatement(xml, value) {
+  const source = String(xml || "");
+  const percent = formatEducationCostDiscountPercent(value);
+  if (!percent) return source;
+  const title = "Заявление о снижении стоимости образовательных услуг";
+  if (!extractWordTextBlocks(source).some((block) => block.includes(title))) return source;
+  const originalSentence = "Прошу предоставить скидку на обучение";
+  const replacementSentence = `Прошу предоставить скидку в размере ${percent} % на обучение`;
+  return source.replace(/<w:p\b[\s\S]*?<\/w:p>/g, (paragraphXml) => {
+    const paragraphText = getWordParagraphPlainText(paragraphXml);
+    if (!paragraphText.includes("Прошу предоставить скидку")) return paragraphXml;
+    const markerIndex = paragraphText.indexOf("#Скидка#");
+    if (markerIndex >= 0) {
+      return replaceWordParagraphTextRange(
+        paragraphXml,
+        markerIndex,
+        markerIndex + "#Скидка#".length,
+        percent
+      );
+    }
+    const sentenceIndex = paragraphText.indexOf(originalSentence);
+    if (sentenceIndex < 0) return paragraphXml;
+    return replaceWordParagraphTextRange(
+      paragraphXml,
+      sentenceIndex,
+      sentenceIndex + originalSentence.length,
+      replacementSentence
+    );
+  });
+}
+
 function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyUpdateNames = null) {
   const replacements = Object.entries(fieldValues || {})
     .filter(([name]) => String(name || "").trim())
@@ -4787,6 +4889,7 @@ function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyU
   entries.forEach((entry) => {
     if (!/^word\/.+\.xml$/i.test(entry.name)) return;
     let xml = entry.content.toString("utf8");
+    xml = applyEducationCostDiscountStatement(xml, fieldValues?.["Скидка"]);
     xml = applyExpulsionOrderConditionalBlocks(xml, fieldValues, indexedFieldPositionMap);
     xml = applyEducationTrainingPlanTableRows(xml, fieldValues, indexedFieldPositionMap);
     xml = applyEmployeeActPaymentTableRows(xml, fieldValues, indexedFieldPositionMap);
@@ -28078,6 +28181,15 @@ async function handleContractDocument(req, res, authUser) {
       ? createDocumentQrCodeImage(fieldValues["QRкод"] || sourceValues["QRкод"] || "")
       : null;
     const outputFieldValues = { ...fieldValues, "Фото": "" };
+    if (
+      Object.prototype.hasOwnProperty.call(sourceValues, "Скидка")
+      || Object.prototype.hasOwnProperty.call(fieldValues, "Скидка")
+    ) {
+      outputFieldValues["Скидка"] = resolveEducationCostDiscountPercent(
+        sourceValues["Скидка"] ?? fieldValues["Скидка"],
+        sourceValues["Осн# скидки"] ?? fieldValues["Основание скидки"]
+      );
+    }
     if (hasQrCodeField) outputFieldValues["QRкод"] = "";
     if (!photo) outputFieldValues["ПутьСохр"] = "";
     const imageValues = { "Фото": photo };
@@ -31443,6 +31555,9 @@ module.exports = {
   createDocumentQrCodeImage,
   removeBlankInteriorPdfPages,
   evaluateDocumentFormula,
+  formatEducationCostDiscountPercent,
+  resolveEducationCostDiscountPercent,
+  applyEducationCostDiscountStatement,
   extractWebDavBrowserPreviewText,
   buildDocxZip,
   isVisualOcrDocument,
