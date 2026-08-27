@@ -2746,6 +2746,14 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   min-width: 0;
 }
 
+.section-head--headingless {
+  justify-content: flex-end;
+}
+
+.section-head--headingless > .toolbar {
+  width: 100%;
+}
+
 .section-head > .collection-section-heading {
   flex: 0 0 auto;
 }
@@ -5612,6 +5620,11 @@ body.long-press-dragging * {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: start;
+}
+
+.document-constructor-panel .section-head.section-head--headingless {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .document-constructor-title {

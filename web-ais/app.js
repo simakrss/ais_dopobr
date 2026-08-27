@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.326",
+    version: "1.7.327",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.327",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Убраны повторяющиеся служебные заголовки в корзине, конструкторе документов, настройках, запасах, общих затратах, программах, сотрудниках и слушателях.",
+        "Пункты меню, фильтры, кнопки действий и содержимое разделов сохранены без изменений."
+      ]
+    },
     {
       version: "1.7.326",
       releasedAt: "2026-08-27",
@@ -4685,6 +4693,7 @@ MAX - https://bizvmax.ru/zifra_plus
     students: {
       title: "Слушатели и заявки",
       subtitle: "Лист Excel: База",
+      hideSectionHeading: true,
       collection: "students",
       accent: "teal",
       fields: [
@@ -4716,6 +4725,7 @@ MAX - https://bizvmax.ru/zifra_plus
     contracts: {
       title: "Сотрудники",
       subtitle: "Лист Excel: Реестр договоров",
+      hideSectionHeading: true,
       collection: "contracts",
       accent: "blue",
       fields: [
@@ -4770,6 +4780,7 @@ MAX - https://bizvmax.ru/zifra_plus
     programs: {
       title: "Реестр программ",
       subtitle: "Лист Excel: Реестр программ",
+      hideSectionHeading: true,
       collection: "programs",
       accent: "green",
       defaultSort: { key: "name", dir: "asc" },
@@ -4878,6 +4889,7 @@ MAX - https://bizvmax.ru/zifra_plus
     generalExpenses: {
       title: "Общие затраты",
       subtitle: "Лист Excel: Общие затраты",
+      hideSectionHeading: true,
       collection: "generalExpenses",
       accent: "orange",
       defaultSort: { key: "date", dir: "desc" },
@@ -4897,6 +4909,7 @@ MAX - https://bizvmax.ru/zifra_plus
     inventory: {
       title: "Запасы",
       subtitle: "Лист Excel: Запасы",
+      hideSectionHeading: true,
       collection: "inventory",
       accent: "gray",
       fields: [
@@ -14315,8 +14328,6 @@ MAX - https://bizvmax.ru/zifra_plus
       <section class="panel recycle-bin-panel" data-recycle-bin>
         <div class="section-head recycle-bin-head">
           <div>
-            <p class="eyebrow">Защита от случайного удаления</p>
-            <h2>Корзина</h2>
             <p class="recycle-bin-description">Восстановление возвращает запись со всеми сохранёнными полями. Безвозвратное удаление доступно только администратору.</p>
           </div>
           <span class="recycle-bin-count">${rows.length}</span>
@@ -14400,11 +14411,13 @@ MAX - https://bizvmax.ru/zifra_plus
         data-main-registry
         data-registry-view="${escapeAttr(state.view)}"
       >
-        <div class="section-head">
-          <div class="collection-section-heading ${state.view === "directExpenses" ? "direct-expenses-section-heading" : ""}">
-            <p class="eyebrow">${config.subtitle}</p>
-            <h2>${config.title}</h2>
-          </div>
+        <div class="section-head ${config.hideSectionHeading ? "section-head--headingless" : ""}">
+          ${config.hideSectionHeading ? "" : `
+            <div class="collection-section-heading ${state.view === "directExpenses" ? "direct-expenses-section-heading" : ""}">
+              <p class="eyebrow">${config.subtitle}</p>
+              <h2>${config.title}</h2>
+            </div>
+          `}
           <div class="toolbar">
             <button
               class="ghost-button mobile-registry-filters-toggle ${activeFilterCount ? "is-active" : ""}"
@@ -18231,14 +18244,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const customCount = fields.filter((field) => field.custom).length;
     return `
       <section class="panel document-constructor-panel" data-main-registry>
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Шаблоны и формулы</p>
-            <h2 class="document-constructor-title">
-              <span>Конструктор документов</span>
-              <span class="document-constructor-active-title" title="${escapeAttr(activeDocument.title)}">- ${escapeHtml(activeDocument.title)}</span>
-            </h2>
-          </div>
+        <div class="section-head section-head--headingless">
           <div class="contract-template-summary">
             <span>${documents.length} документов</span>
             <span>${fields.length} полей</span>
@@ -18433,11 +18439,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const hasDraftChanges = hasUnsavedSettingsChanges();
     return `
       <section class="panel settings-page-panel">
-        <div class="section-head settings-page-head">
-          <div>
-            <p class="eyebrow">Настройки</p>
-            <h2>Настройки системы</h2>
-          </div>
+        <div class="section-head section-head--headingless settings-page-head">
           <div class="settings-page-actions">
             <span class="settings-draft-status ${hasDraftChanges ? "is-unsaved" : ""}" data-settings-draft-status role="status" aria-live="polite">
               ${state.settingsDraftSaving
