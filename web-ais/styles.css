@@ -4539,7 +4539,8 @@ body.shift-drag-ready .dashboard-status-list .bar-row-link:active {
 
 [data-nav-item].is-long-press-pending,
 [data-dashboard-student-status-item].is-long-press-pending,
-[data-orderable-tab].is-long-press-pending {
+[data-orderable-tab].is-long-press-pending,
+[data-orderable-event].is-long-press-pending {
   cursor: default;
   box-shadow: inset 0 0 0 1px rgba(21, 128, 112, 0.18);
 }
@@ -4547,9 +4548,11 @@ body.shift-drag-ready .dashboard-status-list .bar-row-link:active {
 [data-nav-item].is-long-press-ready,
 [data-dashboard-student-status-item].is-long-press-ready,
 [data-orderable-tab].is-long-press-ready,
+[data-orderable-event].is-long-press-ready,
 body.long-press-drag-ready [data-nav-item].is-long-press-ready,
 body.long-press-drag-ready [data-dashboard-student-status-item].is-long-press-ready,
-body.long-press-drag-ready [data-orderable-tab].is-long-press-ready {
+body.long-press-drag-ready [data-orderable-tab].is-long-press-ready,
+body.long-press-drag-ready [data-orderable-event].is-long-press-ready {
   cursor: grab !important;
   box-shadow: inset 0 0 0 2px rgba(21, 128, 112, 0.42);
 }
@@ -15880,10 +15883,6 @@ body.card-window-moving {
   user-select: none;
 }
 
-body.event-reorder-mode .student-event-row {
-  cursor: grab;
-}
-
 .student-event-row:hover {
   background: #f3f8f5;
 }
@@ -15934,7 +15933,6 @@ body.event-reorder-mode .student-event-row {
   border-color: #fda4af;
 }
 
-body.event-reorder-mode .student-event-row:active,
 body.event-reorder-dragging .student-event-row.is-dragging {
   cursor: grabbing;
 }

@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.316",
+    version: "1.7.317",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.317",
+      releasedAt: "2026-08-27",
+      changes: [
+        "События в карточках слушателей и сотрудников можно переупорядочивать удержанием левой кнопки мыши в течение одной секунды.",
+        "Перетаскивание событий использует тот же механизм, что и вкладки, и сохраняет новый порядок в карточке."
+      ]
+    },
     {
       version: "1.7.316",
       releasedAt: "2026-08-27",
@@ -28000,7 +28008,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const dateValue = record[dateKey] || "";
     const labelValue = record[labelKey] || event.label;
     return `
-      <div class="student-event-row ${stateValue ? "is-selected" : ""} ${stateValue === "dated" ? "has-date" : ""}" data-action="toggle-student-event" data-event-key="${escapeAttr(event.key)}" data-event-custom="${event.custom ? "true" : ""}" role="button" tabindex="0" draggable="false">
+      <div class="student-event-row ${stateValue ? "is-selected" : ""} ${stateValue === "dated" ? "has-date" : ""}" data-action="toggle-student-event" data-event-key="${escapeAttr(event.key)}" data-event-custom="${event.custom ? "true" : ""}" data-orderable-event role="button" tabindex="0" draggable="false" aria-grabbed="false">
         <input
           type="checkbox"
           tabindex="-1"
@@ -28112,16 +28120,6 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindStudentEventRow(row) {
     row.draggable = false;
-    row.addEventListener("pointerdown", (event) => {
-      const canReorder = event.button === 0 && (event.shiftKey || document.body.classList.contains("event-reorder-mode"));
-      row.draggable = canReorder;
-      row.dataset.reorderDragReady = canReorder ? "true" : "";
-    });
-    row.addEventListener("pointerup", () => {
-      if (row.classList.contains("is-dragging")) return;
-      row.draggable = false;
-      row.dataset.reorderDragReady = "";
-    });
     row.addEventListener("click", (event) => {
       event.preventDefault();
       if (row.dataset.wasDragged === "true") {
@@ -28129,31 +28127,6 @@ MAX - https://bizvmax.ru/zifra_plus
         return;
       }
       updateStudentEventRow(row);
-    });
-    row.addEventListener("dragstart", (event) => {
-      const canReorder = row.dataset.reorderDragReady === "true" || event.shiftKey || document.body.classList.contains("event-reorder-mode");
-      if (!canReorder) {
-        event.preventDefault();
-        row.draggable = false;
-        return;
-      }
-      closeStudentEventEditor();
-      row.classList.add("is-dragging");
-      document.body.classList.add("event-reorder-dragging");
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("text/plain", row.dataset.eventKey || "");
-    });
-    row.addEventListener("dragend", () => {
-      row.classList.remove("is-dragging");
-      document.body.classList.remove("event-reorder-dragging");
-      row.draggable = false;
-      row.dataset.reorderDragReady = "";
-      row.dataset.wasDragged = "true";
-      window.setTimeout(() => {
-        row.dataset.wasDragged = "";
-      }, 150);
-      syncStudentEventOrder();
-      syncCardEventDraftFromDom();
     });
     row.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -28163,31 +28136,6 @@ MAX - https://bizvmax.ru/zifra_plus
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       updateStudentEventRow(row);
-    });
-  }
-
-  function setEventReorderMode(active) {
-    document.body.classList.toggle("event-reorder-mode", active);
-    if (!active) {
-      document.querySelectorAll(".student-event-row:not(.is-dragging)").forEach((row) => {
-        row.draggable = false;
-        row.dataset.reorderDragReady = "";
-      });
-    }
-  }
-
-  function bindStudentEventReorderKeys() {
-    if (window.studentEventReorderKeysBound) return;
-    window.studentEventReorderKeysBound = true;
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Shift") setEventReorderMode(true);
-    });
-    document.addEventListener("keyup", (event) => {
-      if (event.key === "Shift") setEventReorderMode(false);
-    });
-    window.addEventListener("blur", () => {
-      setEventReorderMode(false);
-      document.body.classList.remove("event-reorder-dragging");
     });
   }
 
@@ -32658,7 +32606,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getLongPressDragContext(node) {
     if (!(node instanceof Element)) return null;
-    const element = node.closest("[data-nav-item], [data-dashboard-student-status-item], [data-orderable-tab]");
+    const element = node.closest("[data-nav-item], [data-dashboard-student-status-item], [data-orderable-tab], [data-orderable-event]");
     if (!element) return null;
     if (element.matches("[data-nav-item]")) {
       const container = element.closest(".nav-list");
@@ -32667,6 +32615,10 @@ MAX - https://bizvmax.ru/zifra_plus
     if (element.matches("[data-dashboard-student-status-item]")) {
       const container = element.closest("[data-dashboard-status-list]");
       return container ? { type: "status", element, container } : null;
+    }
+    if (element.matches("[data-orderable-event]")) {
+      const container = element.closest("[data-student-events-list]");
+      return container ? { type: "events", element, container } : null;
     }
     const container = element.closest("[data-orderable-tabs]");
     return container ? { type: "tabs", element, container } : null;
@@ -32678,7 +32630,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ? getNavItemDragAfterElement(container, clientY)
       : type === "status"
         ? getDashboardStatusDragAfterElement(container, clientY)
-        : getOrderableTabDragAfterElement(container, clientX);
+        : type === "events"
+          ? getEventDragAfterElement(container, clientY)
+          : getOrderableTabDragAfterElement(container, clientX);
     if (afterElement) {
       if (element.nextElementSibling === afterElement) return false;
       container.insertBefore(element, afterElement);
@@ -32696,6 +32650,9 @@ MAX - https://bizvmax.ru/zifra_plus
     } else if (context.type === "status") {
       syncDashboardStudentStatusOrderFromDom(context.container);
       lastDashboardStatusDragEndedAt = Date.now();
+    } else if (context.type === "events") {
+      syncStudentEventOrder();
+      syncCardEventDraftFromDom();
     } else {
       syncOrderableTabOrderFromDom(context.container);
     }
@@ -32723,7 +32680,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (current.element.dataset.shiftDragEnabled === "true") {
         current.element.draggable = document.body.classList.contains("shift-drag-ready");
       }
-      document.body.classList.remove("long-press-drag-ready", "long-press-dragging", "nav-item-dragging", "dashboard-status-dragging", "orderable-tab-dragging");
+      document.body.classList.remove("long-press-drag-ready", "long-press-dragging", "nav-item-dragging", "dashboard-status-dragging", "orderable-tab-dragging", "event-reorder-dragging");
       if (commit && current.dragging) {
         current.element.dataset.wasDragged = "true";
         commitLongPressDragOrder(current);
@@ -32802,6 +32759,10 @@ MAX - https://bizvmax.ru/zifra_plus
         if (pending.type === "nav") document.body.classList.add("nav-item-dragging");
         if (pending.type === "status") document.body.classList.add("dashboard-status-dragging");
         if (pending.type === "tabs") document.body.classList.add("orderable-tab-dragging");
+        if (pending.type === "events") {
+          closeStudentEventEditor();
+          document.body.classList.add("event-reorder-dragging");
+        }
       }
       if (!pending.dragging) {
         return;
@@ -34312,24 +34273,9 @@ MAX - https://bizvmax.ru/zifra_plus
       studentSourceInput.addEventListener("change", syncAgent);
     }
 
-    bindStudentEventReorderKeys();
     document.querySelectorAll("[data-action='toggle-student-event']").forEach(bindStudentEventRow);
 
     document.querySelector("[data-action='add-student-event']")?.addEventListener("click", addStudentEvent);
-
-    document.querySelector("[data-student-events-list]")?.addEventListener("dragover", (event) => {
-      event.preventDefault();
-      const list = event.currentTarget;
-      const dragging = list.querySelector(".student-event-row.is-dragging");
-      if (!dragging) return;
-      const afterElement = getEventDragAfterElement(list, event.clientY);
-      if (afterElement) {
-        list.insertBefore(dragging, afterElement);
-      } else {
-        list.appendChild(dragging);
-      }
-      syncStudentEventOrder();
-    });
 
     document.querySelector("[data-action='close-event-editor']")?.addEventListener("click", closeStudentEventEditor);
     document.querySelector("[data-action='apply-event-editor']")?.addEventListener("click", applyStudentEventEditor);
