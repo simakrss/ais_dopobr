@@ -2989,7 +2989,7 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   display: contents;
 }
 
-.mobile-registry-filters-toggle {
+button.mobile-registry-filters-toggle {
   display: none;
 }
 
@@ -21291,7 +21291,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     gap: 6px;
   }
 
-  .mobile-registry-filters-toggle {
+  button.mobile-registry-filters-toggle {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -21323,6 +21323,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   .mobile-registry-filters-toggle strong {
     display: inline-grid;
     place-items: center;
+    margin-left: 2px;
     min-width: 18px;
     height: 18px;
     padding: 0 4px;

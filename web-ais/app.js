@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.321",
+    version: "1.7.322",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.322",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Кнопка сворачивания фильтров реестра теперь отображается только в мобильной версии.",
+        "Счётчик активных мобильных фильтров отделён от подписи кнопки дополнительным отступом."
+      ]
+    },
     {
       version: "1.7.321",
       releasedAt: "2026-08-27",
