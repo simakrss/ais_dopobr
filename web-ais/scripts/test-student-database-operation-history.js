@@ -79,6 +79,71 @@ assert.equal(entry.items[0].rows.length, 500);
 assert.equal(entry.items[0].rowCount, 700);
 assert.equal(entry.items[0].rowsTruncated, true);
 
+const conflictEntry = historyApi.normalizeStudentDatabaseOperationHistoryEntry({
+  id: "operation-conflict",
+  tone: "error",
+  eyebrow: "Синхронизация с XLSB",
+  title: "Синхронизация не выполнена полностью",
+  generatedAt: "2026-08-27T12:48:48.000Z",
+  items: [{
+    key: "sync-conflicts",
+    label: "Конкретные расхождения Web и XLSB",
+    value: 1,
+    problem: true,
+    columns: [
+      { key: "record", label: "Запись" },
+      { key: "web", label: "Web" },
+      { key: "excel", label: "XLSB" }
+    ],
+    rows: [{ record: "Пащенко", web: "Примечание", excel: "Доп. статус" }]
+  }]
+});
+assert.equal(conflictEntry.status, "error");
+assert.equal(conflictEntry.items[0].key, "sync-conflicts");
+assert.equal(conflictEntry.items[0].problem, true);
+assert.equal(conflictEntry.items[0].rows[0].record, "Пащенко");
+assert.equal(conflictEntry.items[0].rows[0].excel, "Доп. статус");
+
+const historyDetailBlock = sourceBlock(
+  appSource,
+  "function renderStudentDatabaseOperationHistoryDetails(",
+  "function renderStudentDatabaseOperationHistoryDialog("
+);
+const historyState = { databaseOperationHistory: { selectedItemKey: "" } };
+const renderStudentDatabaseOperationHistoryDetails = new Function(
+  "state",
+  "escapeAttr",
+  "escapeHtml",
+  "renderDatabaseOperationResultItemDetails",
+  "formatDateTimeRu",
+  `${historyDetailBlock}\nreturn renderStudentDatabaseOperationHistoryDetails;`
+)(
+  historyState,
+  String,
+  String,
+  (item) => `<div>${item.key}</div>`,
+  String
+);
+renderStudentDatabaseOperationHistoryDetails({
+  status: "error",
+  title: "Ошибка синхронизации",
+  summary: "Обнаружены конфликты",
+  generatedAt: "2026-08-27T12:48:48.000Z",
+  userLogin: "admin",
+  userName: "Администратор",
+  sourceLabel: "локально",
+  details: [],
+  items: [
+    { key: "synchronized-changes", label: "Изменения", value: 4, problem: false },
+    { key: "sync-conflicts", label: "Конфликты", value: 1, problem: true }
+  ]
+});
+assert.equal(
+  historyState.databaseOperationHistory.selectedItemKey,
+  "sync-conflicts",
+  "История ошибочной операции должна сразу раскрывать проблемный показатель"
+);
+
 const limitedHistory = historyApi.normalizeStudentDatabaseOperationHistory(
   Array.from({ length: 120 }, (_, index) => ({
     id: `operation-${index}`,

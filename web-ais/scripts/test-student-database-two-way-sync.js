@@ -6,6 +6,7 @@ const {
   hashStudentDatabaseCriticalIdentity,
   resolveLegacyStudentDatabaseIndependentNoteMerge,
   resolveStudentDatabaseFieldLevelMerge,
+  buildStudentDatabaseSyncConflictDiagnosticReport,
   resolveStudentDatabaseSyncDirection,
   acquireStudentDatabaseSyncReservation,
   releaseStudentDatabaseSyncReservation,
@@ -407,6 +408,65 @@ assert.equal(resolveStudentDatabaseFieldLevelMerge({
   baseline: driftedBaseline,
   auditRows: coveredAuditRows
 }), null, "При изменении состава записей восстановление общего хеша запрещено");
+
+const webDataWithIndependentAddition = clone(sameStudentWebData);
+webDataWithIndependentAddition.students.push({
+  id: "student-zagodarchuk-new",
+  uid: "1171",
+  name: "Загодарчук Инна Владимировна",
+  applicationDate: "2026-08-27",
+  program: "Программа 4",
+  note: "Новая заявка"
+});
+assert.equal(resolveStudentDatabaseFieldLevelMerge({
+  webData: webDataWithIndependentAddition,
+  excelData: sameFieldExcelData,
+  baseline: sameStudentBaseline,
+  auditRows: coveredAuditRows
+}), null, "Новый Web-объект должен сохранить предохранитель автоматического слияния");
+const diagnosticConflict = buildStudentDatabaseSyncConflictDiagnosticReport({
+  webData: webDataWithIndependentAddition,
+  excelData: sameFieldExcelData,
+  baseline: sameStudentBaseline,
+  auditRows: coveredAuditRows
+});
+assert.equal(diagnosticConflict.kind, "student-database-sync-difference-diagnostics");
+assert.equal(diagnosticConflict.diagnosticOnly, true);
+assert.equal(diagnosticConflict.count, 1);
+assert.equal(diagnosticConflict.truncated, false);
+assert.equal(diagnosticConflict.rows[0].record, "Пащенко Мария Александровна [1148]");
+assert.equal(diagnosticConflict.rows[0].field, "Примечание");
+assert.equal(diagnosticConflict.rows[0].baseline, "—");
+assert.equal(diagnosticConflict.rows[0].web, "Добавлено в Web");
+assert.equal(diagnosticConflict.rows[0].excel, "Добавлено в Excel");
+assert.equal(
+  diagnosticConflict.rows.some((row) => /Загодарчук/u.test(row.record)),
+  false,
+  "Одностороннее добавление нельзя выдавать за конкретное расхождение поля"
+);
+assert.equal(
+  Object.prototype.hasOwnProperty.call(diagnosticConflict, "syncConflicts"),
+  false,
+  "Диагностический fallback не должен разрешать выбор источника"
+);
+const oneSidedDifference = buildStudentDatabaseSyncConflictDiagnosticReport({
+  webData: webDataWithIndependentAddition,
+  excelData: sameStudentBaselineData,
+  baseline: sameStudentBaseline,
+  auditRows: coveredAuditRows
+});
+assert.equal(oneSidedDifference.count, 1);
+assert.equal(oneSidedDifference.rows[0].web, "Добавлено в Web");
+assert.equal(oneSidedDifference.rows[0].excel, "—");
+assert.match(oneSidedDifference.rows[0].reason, /в XLSB осталось значение/iu);
+const uncoveredDiagnostic = buildStudentDatabaseSyncConflictDiagnosticReport({
+  webData: sameStudentWebData,
+  excelData: sameFieldExcelData,
+  baseline: sameStudentBaseline,
+  auditRows: sameStudentAuditRows
+});
+assert.equal(uncoveredDiagnostic.count, 0);
+assert.match(uncoveredDiagnostic.note, /не покрывает контрольную точку/iu);
 
 const conflictId = unresolvedSameField.conflicts[0].id;
 const resolvedFromExcel = resolveStudentDatabaseFieldLevelMerge({

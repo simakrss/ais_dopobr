@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.323",
+    version: "1.7.324",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.324",
+      releasedAt: "2026-08-27",
+      changes: [
+        "При остановке двусторонней синхронизации окно результата теперь сразу показывает конкретные зафиксированные расхождения со значениями до изменения Web, в Web и в XLSB.",
+        "Диагностический отчёт передаётся через фоновую задачу и сохраняется в истории операций; состояние записи XLSB отображается точнее."
+      ]
+    },
     {
       version: "1.7.323",
       releasedAt: "2026-08-27",
@@ -22950,7 +22958,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           ${item?.rowsTruncated ? `
             <p class="database-operation-result-limit-note">
-              В истории сохранены первые ${rows.length} из ${rowCount} записей этого показателя.
+              Сохранены первые ${rows.length} из ${rowCount} записей этого показателя.
             </p>
           ` : rows.length > previewRows.length ? `
             <p class="database-operation-result-limit-note">
@@ -23092,14 +23100,18 @@ MAX - https://bizvmax.ru/zifra_plus
   function showDatabaseOperationResult(result = {}) {
     const items = (Array.isArray(result.items) ? result.items : [])
       .map((item, index) => normalizeDatabaseOperationResultItem(item, index));
+    const tone = result.tone === "error" ? "error" : "success";
+    const requestedItemKey = String(result.selectedItemKey || "").trim();
+    const initialSelectedItem = items.find((item) => item.key === requestedItemKey)
+      || (tone === "error" ? items.find((item) => item.problem) : null);
     const normalizedResult = {
-      tone: result.tone === "error" ? "error" : "success",
+      tone,
       eyebrow: String(result.eyebrow || "Операция с базой"),
       title: String(result.title || "Результат операции"),
       summary: String(result.summary || ""),
       items,
       details: Array.isArray(result.details) ? result.details : [],
-      selectedItemKey: "",
+      selectedItemKey: initialSelectedItem?.key || "",
       generatedAt: String(result.generatedAt || new Date().toISOString())
     };
     state.databaseOperationResult = normalizedResult;
@@ -23250,6 +23262,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const items = Array.isArray(entry.items) ? entry.items : [];
     const selectedItem = items.find((item) => item.key === state.databaseOperationHistory.selectedItemKey)
+      || (entry.status === "error" ? items.find((item) => item.problem) : null)
       || items.find((item) => item.key === "synchronized-changes" && Number(item.value || 0) > 0)
       || items.find((item) => item.problem)
       || null;
@@ -52882,11 +52895,20 @@ MAX - https://bizvmax.ru/zifra_plus
         indeterminate: false
       });
       if (status.status === "failed") {
-        throw new Error(
+        const jobError = new Error(
           status.error
           || status.message
           || (isFileExport ? "Экспорт завершился с ошибкой." : "Синхронизация завершилась с ошибкой.")
         );
+        jobError.status = Math.max(
+          0,
+          Number(status.statusCode || status.httpStatus || status.errorStatus) || 0
+        );
+        jobError.payload = status;
+        if (status.failureDetails && typeof status.failureDetails === "object") {
+          jobError.failureDetails = status.failureDetails;
+        }
+        throw jobError;
       }
       if (status.status === "completed") break;
       await waitForStudentImportPoll();
@@ -53524,6 +53546,120 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function getStudentDatabaseSyncFailureDetails(error) {
+    const payload = error?.payload && typeof error.payload === "object"
+      ? error.payload
+      : null;
+    const candidates = [
+      error?.failureDetails,
+      payload?.failureDetails,
+      payload?.result?.failureDetails
+    ];
+    return candidates.find((value) => value && typeof value === "object" && !Array.isArray(value))
+      || null;
+  }
+
+  function buildStudentDatabaseSyncFailureItem(error) {
+    const payload = error?.payload && typeof error.payload === "object"
+      ? error.payload
+      : {};
+    const failureDetails = getStudentDatabaseSyncFailureDetails(error) || {};
+    const rowCandidates = [
+      failureDetails.rows,
+      failureDetails.syncConflicts,
+      payload.syncConflicts,
+      payload.rows
+    ];
+    const rawRows = rowCandidates.find((value) => Array.isArray(value) && value.length)
+      || rowCandidates.find(Array.isArray)
+      || [];
+    const pickValue = (...values) => {
+      for (const value of values) {
+        if (value !== undefined && value !== null) return value;
+      }
+      return "";
+    };
+    const rows = rawRows
+      .filter((row) => row && typeof row === "object" && !Array.isArray(row))
+      .map((row, index) => ({
+        number: index + 1,
+        entity: String(pickValue(
+          row.entity,
+          row.entityLabel,
+          row.section,
+          row.collection,
+          row.entityType
+        )),
+        record: String(pickValue(
+          row.record,
+          row.recordLabel,
+          row.name,
+          row.uid,
+          row.recordId
+        )),
+        field: String(pickValue(row.field, row.fieldLabel, row.fieldName)),
+        baseline: String(pickValue(
+          row.baseline,
+          row.base,
+          row.previous,
+          row.previousValue
+        )),
+        web: String(pickValue(row.web, row.webValue, row.before)),
+        excel: String(pickValue(
+          row.excel,
+          row.xlsb,
+          row.excelValue,
+          row.xlsbValue,
+          row.after
+        )),
+        reason: String(pickValue(row.reason, row.message, row.description))
+      }));
+    const reportedCount = Math.max(
+      0,
+      Number(
+        failureDetails.count
+        || failureDetails.syncConflictCount
+        || payload.syncConflictCount
+        || payload.conflictCount
+      ) || 0
+    );
+    const count = Math.max(rows.length, Math.floor(reportedCount));
+    const isDiagnosticReport = [
+      "student-database-sync-conflict-diagnostics",
+      "student-database-sync-difference-diagnostics"
+    ].includes(failureDetails.kind)
+      || failureDetails.diagnosticOnly === true;
+    if (!count && !rows.length && !isDiagnosticReport) return null;
+    const rowsTruncated = failureDetails.truncated === true
+      || failureDetails.rowsTruncated === true
+      || failureDetails.syncConflictsTruncated === true
+      || payload.syncConflictsTruncated === true
+      || count > rows.length;
+    const defaultNote = rowsTruncated
+      ? `Сервер вернул первые ${rows.length} из ${count} конфликтов. XLSB не перезаписан.`
+      : "Показаны значения общей Web-базы и XLSB, из-за которых синхронизация остановлена.";
+    return {
+      key: "sync-conflicts",
+      label: count ? "Конкретные расхождения Web и XLSB" : "Диагностика расхождений Web и XLSB",
+      value: count || "Не определены",
+      note: String(failureDetails.note || defaultNote),
+      problem: true,
+      columns: [
+        { key: "number", label: "№" },
+        { key: "entity", label: "Раздел" },
+        { key: "record", label: "Запись" },
+        { key: "field", label: "Поле" },
+        { key: "baseline", label: "До первого зафиксированного изменения Web" },
+        { key: "web", label: "Web" },
+        { key: "excel", label: "XLSB" },
+        { key: "reason", label: "Причина" }
+      ],
+      rows,
+      rowCount: count,
+      rowsTruncated
+    };
+  }
+
   async function exportStudentsToDatabase(event) {
     if (state.databaseExport.running) return;
     if (state.databaseImport.running) {
@@ -54015,6 +54151,7 @@ MAX - https://bizvmax.ru/zifra_plus
           ? "Состояние XLSB неизвестно: сервер не подтвердил, был ли файл сохранён. "
             + "Не заменяйте данные вручную; повторите синхронизацию — сервер безопасно сверит результат."
           : error.message;
+      const syncFailureItem = buildStudentDatabaseSyncFailureItem(error);
       const duration = formatDatabaseOperationDuration(startedAt);
       finishDatabaseExportIndicator("error", "Ошибка: " + failureMessage, 6500);
       showDatabaseOperationResult({
@@ -54022,6 +54159,7 @@ MAX - https://bizvmax.ru/zifra_plus
         eyebrow: "Синхронизация с XLSB",
         title: "Синхронизация не выполнена полностью",
         summary: failureMessage,
+        items: syncFailureItem ? [syncFailureItem] : [],
         details: [
           { label: "Источник", value: sourceLabel },
           {
@@ -54030,7 +54168,9 @@ MAX - https://bizvmax.ru/zifra_plus
               ? "Файл сохранён"
               : commitStateUnknown
                 ? "Не подтверждено сервером"
-                : "Файл не изменён"
+                : xlsbCommitState === "not-started"
+                  ? "Запись в файл не начиналась"
+                  : "Запись в файл не выполнена"
           },
           { label: "Время выполнения", value: duration }
         ]

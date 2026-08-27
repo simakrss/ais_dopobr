@@ -53,6 +53,42 @@ assert.match(detailHtml, /is-problem/u);
 assert.match(detailHtml, /Программа/u);
 assert.match(detailHtml, /5003/u);
 
+const showBlock = sourceBlock(
+  appSource,
+  "function showDatabaseOperationResult(",
+  "function closeDatabaseOperationResult("
+);
+const operationState = { databaseOperationResult: null };
+const showDatabaseOperationResult = new Function(
+  "normalizeDatabaseOperationResultItem",
+  "state",
+  "appendStudentDatabaseOperationHistory",
+  "render",
+  "requestAnimationFrame",
+  "document",
+  `${showBlock}\nreturn showDatabaseOperationResult;`
+)(
+  normalizeDatabaseOperationResultItem,
+  operationState,
+  () => {},
+  () => {},
+  (callback) => callback(),
+  { querySelector: () => null }
+);
+showDatabaseOperationResult({
+  tone: "error",
+  recordHistory: false,
+  items: [
+    { key: "ordinary", label: "Обычный показатель", value: 1 },
+    { key: "sync-conflicts", label: "Конфликты", value: 1, problem: true }
+  ]
+});
+assert.equal(
+  operationState.databaseOperationResult.selectedItemKey,
+  "sync-conflicts",
+  "В ошибочном отчёте первый проблемный показатель должен быть раскрыт сразу"
+);
+
 assert.match(appSource, /Экспорт отчёта CSV/u);
 assert.match(appSource, /show-database-operation-result-item/u);
 assert.match(appSource, /exportDatabaseOperationResultReport/u);

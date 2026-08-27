@@ -765,8 +765,9 @@ function makeExportContext(result, { validBaseline = true } = {}) {
   context.operationResults = operationResults;
   vm.createContext(context);
   vm.runInContext(
-    extractBetween("  async function exportStudentsToDatabase", "  async function downloadStudentsDatabase")
-      + "\nthis.operation = exportStudentsToDatabase;",
+    extractBetween("  function getStudentDatabaseSyncFailureDetails", "  async function downloadStudentsDatabase")
+      + "\nthis.operation = exportStudentsToDatabase;"
+      + "\nthis.buildSyncFailureItem = buildStudentDatabaseSyncFailureItem;",
     context
   );
   return context;
@@ -958,6 +959,151 @@ async function testDirectionalExportFlows() {
   await unknown.operation({ shiftKey: false });
   assert.match(unknown.operationResults.at(-1).summary, /Состояние XLSB неизвестно/iu);
   assert.match(unknown.operationResults.at(-1).summary, /повторите синхронизацию/iu);
+
+  const detailedFailure = makeExportContext({
+    syncDirection: "unchanged",
+    sourceHash: "4".repeat(64),
+    sourceIdentity: "5".repeat(64),
+    studentCount: 1
+  });
+  detailedFailure.runStudentDatabaseExport = async () => {
+    const error = new Error("Web и XLSB содержат одновременные изменения.");
+    error.payload = {
+      status: "failed",
+      failureDetails: {
+        kind: "student-database-sync-difference-diagnostics",
+        diagnosticOnly: true,
+        count: 1,
+        rows: [{
+          id: "conflict-1",
+          entity: "Слушатели",
+          record: "Пащенко Анна",
+          field: "Примечание",
+          baseline: "",
+          web: "Новое примечание Web",
+          excel: "Дополнительный статус XLSB"
+        }],
+        truncated: false,
+        note: "Сравнение выполнено без изменения файла."
+      }
+    };
+    throw error;
+  };
+  await detailedFailure.operation({ shiftKey: false });
+  const detailedFailureResult = detailedFailure.operationResults.at(-1);
+  assert.equal(detailedFailureResult.items.length, 1);
+  assert.equal(detailedFailureResult.items[0].key, "sync-conflicts");
+  assert.equal(detailedFailureResult.items[0].problem, true);
+  assert.equal(detailedFailureResult.items[0].value, 1);
+  assert.equal(detailedFailureResult.items[0].rows[0].record, "Пащенко Анна");
+  assert.equal(detailedFailureResult.items[0].rows[0].web, "Новое примечание Web");
+  assert.equal(detailedFailureResult.items[0].rows[0].excel, "Дополнительный статус XLSB");
+  assert.equal(
+    detailedFailureResult.details.find((item) => item.label === "Состояние XLSB")?.value,
+    "Запись в файл не начиналась"
+  );
+
+  const alternativeFailureItem = detailedFailure.buildSyncFailureItem({
+    payload: {
+      failureDetails: {
+        syncConflictCount: 1,
+        syncConflicts: [{
+          section: "Договоры",
+          name: "Договор 42",
+          fieldName: "amount",
+          before: "3 600",
+          after: "4 100"
+        }]
+      }
+    }
+  });
+  assert.equal(alternativeFailureItem.rows[0].entity, "Договоры");
+  assert.equal(alternativeFailureItem.rows[0].record, "Договор 42");
+  assert.equal(alternativeFailureItem.rows[0].web, "3 600");
+  assert.equal(alternativeFailureItem.rows[0].excel, "4 100");
+
+  const compatibleFailureItem = detailedFailure.buildSyncFailureItem({
+    payload: {
+      syncConflicts: [{
+        entity: "Слушатели",
+        record: "Пащенко Мария",
+        field: "Примечание",
+        web: "Web",
+        excel: "XLSB"
+      }],
+      syncConflictsTruncated: true,
+      failureDetails: {
+        kind: "student-database-sync-conflict-diagnostics",
+        rows: []
+      }
+    }
+  });
+  assert.equal(compatibleFailureItem.rows.length, 1);
+  assert.equal(compatibleFailureItem.rows[0].record, "Пащенко Мария");
+  assert.equal(compatibleFailureItem.rowsTruncated, true);
+
+  const emptyDiagnosticItem = detailedFailure.buildSyncFailureItem({
+    payload: {
+      failureDetails: {
+        kind: "student-database-sync-difference-diagnostics",
+        diagnosticOnly: true,
+        count: 0,
+        rows: [],
+        note: "Серверный журнал не покрывает контрольную точку."
+      }
+    }
+  });
+  assert.equal(emptyDiagnosticItem.key, "sync-conflicts");
+  assert.equal(emptyDiagnosticItem.problem, true);
+  assert.equal(emptyDiagnosticItem.value, "Не определены");
+  assert.equal(emptyDiagnosticItem.rows.length, 0);
+  assert.match(emptyDiagnosticItem.note, /не покрывает контрольную точку/iu);
+}
+
+async function testFailedBackgroundJobPayloadPreserved() {
+  const failureDetails = {
+    kind: "student-database-sync-difference-diagnostics",
+    count: 1,
+    rows: [{ record: "Пащенко", field: "Примечание", web: "Web", excel: "XLSB" }]
+  };
+  const responses = [
+    { payload: { id: "failed-job" } },
+    {
+      payload: {
+        id: "failed-job",
+        status: "failed",
+        statusCode: 409,
+        error: "Обнаружены одновременные изменения.",
+        failureDetails
+      }
+    }
+  ];
+  const context = {
+    photoApiUrl: (value) => value,
+    fetch: async () => responses.shift(),
+    readStudentImportResponse: async (response) => response.payload,
+    updateDatabaseExportIndicator: () => {},
+    waitForStudentImportPoll: async () => {},
+    getDownloadFileNameFromResponse: () => "АИС Допобразование.xlsb"
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    extractBetween(
+      "  async function runStudentDatabaseExportAttempt",
+      "  async function runStudentDatabaseExport(body)"
+    ) + "\nthis.runAttempt = runStudentDatabaseExportAttempt;",
+    context
+  );
+  await assert.rejects(
+    () => context.runAttempt({ downloadOnly: false }),
+    (error) => {
+      assert.equal(error.status, 409);
+      assert.equal(error.payload.status, "failed");
+      assert.equal(error.payload.failureDetails, failureDetails);
+      assert.equal(error.failureDetails, failureDetails);
+      return true;
+    }
+  );
 }
 
 async function testExpiredTokenRetry() {
@@ -1166,6 +1312,7 @@ assert.match(appSource, /syncConflictResolutions:\s*resolutions/u);
   testExplicitImportDeletionSemantics();
   await testRealSynchronizationImportPath();
   await testDirectionalExportFlows();
+  await testFailedBackgroundJobPayloadPreserved();
   await testExpiredTokenRetry();
   await testCommitResponseLossRetry();
   await testCommitAndCancellationDeadlines();

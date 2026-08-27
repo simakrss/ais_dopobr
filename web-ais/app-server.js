@@ -13595,6 +13595,7 @@ function getStudentDatabaseCriticalCollections(value) {
 }
 
 const STUDENT_DATABASE_SYNCHRONIZED_CHANGE_LIMIT = 20000;
+const STUDENT_DATABASE_SYNC_DIAGNOSTIC_LIMIT = 200;
 
 function buildStudentDatabaseChangeFieldLabels(columnMap, overrides = {}) {
   const labels = {};
@@ -14469,6 +14470,216 @@ function buildStudentDatabaseSyncConflictId(recordId, fieldName, baselineValue, 
     normalizeStudentDatabaseChangeComparableValue(webValue),
     normalizeStudentDatabaseChangeComparableValue(excelValue)
   ])).digest("hex");
+}
+
+function buildStudentDatabaseSyncConflictDiagnosticReport({
+  webData,
+  excelData,
+  baseline: baselineValue,
+  auditRows = [],
+  limit: limitValue = STUDENT_DATABASE_SYNC_DIAGNOSTIC_LIMIT
+} = {}) {
+  const baseline = normalizeStudentDatabaseSyncBaseline(baselineValue);
+  const baselineAt = Date.parse(baseline.synchronizedAt);
+  const limit = Math.max(
+    1,
+    Math.min(
+      STUDENT_DATABASE_SYNC_DIAGNOSTIC_LIMIT,
+      Math.floor(Number(limitValue) || STUDENT_DATABASE_SYNC_DIAGNOSTIC_LIMIT)
+    )
+  );
+  const emptyReport = (note) => ({
+    kind: "student-database-sync-difference-diagnostics",
+    diagnosticOnly: true,
+    count: 0,
+    rows: [],
+    truncated: false,
+    note
+  });
+  if (!baseline.criticalHash || !Number.isFinite(baselineAt)) {
+    return emptyReport(
+      "Контрольная точка критичных данных отсутствует; конкретные расхождения нельзя связать с прошлой синхронизацией безопасно."
+    );
+  }
+
+  const sourceAuditRows = Array.isArray(auditRows) ? auditRows : [];
+  const oldestAuditTimestamp = sourceAuditRows
+    .map((entry) => Date.parse(String(entry?.createdAt || "")))
+    .filter(Number.isFinite)
+    .reduce((oldest, timestamp) => Math.min(oldest, timestamp), Number.POSITIVE_INFINITY);
+  if (!Number.isFinite(oldestAuditTimestamp) || oldestAuditTimestamp > baselineAt + 1000) {
+    return emptyReport(
+      "Серверный журнал не покрывает контрольную точку; текущие технические различия не выданы за подтверждённые расхождения."
+    );
+  }
+
+  const definitions = getStudentDatabaseSynchronizedChangeDefinitions(webData, excelData);
+  const definitionByKey = new Map(definitions.map((definition) => [definition.key, definition]));
+  const currentRowsByDefinition = new Map();
+  definitions.forEach((definition) => {
+    const matches = pairStudentDatabaseChangeRecords(
+      definition.before,
+      definition.after,
+      definition
+    );
+    const pairByWebIndex = new Map(matches.pairs.map((pair) => [pair.beforeIndex, pair]));
+    const webIndexesById = new Map();
+    definition.before.forEach((record, index) => {
+      const ids = [...new Set([
+        getStudentDatabaseChangeRecordId(record),
+        String(record?.id || "").trim()
+      ].filter(Boolean))];
+      ids.forEach((id) => {
+        if (!webIndexesById.has(id)) webIndexesById.set(id, []);
+        webIndexesById.get(id).push(index);
+      });
+    });
+    currentRowsByDefinition.set(definition.key, { pairByWebIndex, webIndexesById });
+  });
+
+  const auditChains = new Map();
+  sourceAuditRows.forEach((entry) => {
+    const createdAt = Date.parse(String(entry?.createdAt || ""));
+    const entityKey = String(entry?.entityType || "").trim();
+    const action = String(entry?.action || "").trim().toLocaleLowerCase("ru-RU");
+    const source = String(entry?.source || "web").trim().toLocaleLowerCase("ru-RU");
+    const definition = definitionByKey.get(entityKey);
+    if (
+      !definition
+      || action !== "изменена запись"
+      || source !== "web"
+      || !Number.isFinite(createdAt)
+      || createdAt <= baselineAt
+      || !Array.isArray(entry?.changes)
+      || !entry.changes.length
+    ) return;
+
+    const currentRows = currentRowsByDefinition.get(entityKey);
+    const requestedId = String(entry?.entityId || "").trim();
+    let webIndexes = requestedId ? (currentRows.webIndexesById.get(requestedId) || []) : [];
+    if (webIndexes.length !== 1) {
+      const requestedLabel = String(entry?.entityLabel || "").trim().toLocaleLowerCase("ru-RU");
+      webIndexes = requestedLabel
+        ? definition.before
+          .map((record, index) => ({ record, index }))
+          .filter(({ record }) => (
+            formatStudentDatabaseChangeRecordLabel(record, definition)
+              .trim()
+              .toLocaleLowerCase("ru-RU") === requestedLabel
+            || String(record?.name || "").trim().toLocaleLowerCase("ru-RU") === requestedLabel
+          ))
+          .map(({ index }) => index)
+        : [];
+    }
+    if (webIndexes.length !== 1) return;
+    const webIndex = webIndexes[0];
+    const pair = currentRows.pairByWebIndex.get(webIndex);
+    if (!pair?.after) return;
+
+    entry.changes.forEach((change) => {
+      const fieldName = String(change?.field || "").trim();
+      if (
+        !fieldName
+        || !definition.fields.includes(fieldName)
+        || String(change?.before ?? "") === "[скрыто]"
+        || String(change?.after ?? "") === "[скрыто]"
+      ) return;
+      const key = `${entityKey}\u0000${webIndex}\u0000${fieldName}`;
+      if (!auditChains.has(key)) {
+        auditChains.set(key, { definition, pair, fieldName, changes: [] });
+      }
+      auditChains.get(key).changes.push({
+        createdAt,
+        before: change?.before ?? "",
+        after: change?.after ?? ""
+      });
+    });
+  });
+
+  const differences = [];
+  const normalizeAuditValue = (definition, record, fieldName, value) => definition.normalize(
+    { ...(record || {}), [fieldName]: value },
+    fieldName
+  );
+  auditChains.forEach(({ definition, pair, fieldName, changes }) => {
+    const ordered = [...changes].sort((left, right) => left.createdAt - right.createdAt);
+    if (!ordered.length) return;
+    let previousAfter = normalizeAuditValue(
+      definition,
+      pair.before,
+      fieldName,
+      ordered[0].before
+    );
+    const baselineFieldValue = previousAfter;
+    let chainIsContinuous = true;
+    for (const change of ordered) {
+      const beforeValue = normalizeAuditValue(definition, pair.before, fieldName, change.before);
+      if (
+        serializeStudentDatabaseChangeValue(beforeValue)
+        !== serializeStudentDatabaseChangeValue(previousAfter)
+      ) {
+        chainIsContinuous = false;
+        break;
+      }
+      previousAfter = normalizeAuditValue(definition, pair.before, fieldName, change.after);
+    }
+    if (!chainIsContinuous) return;
+
+    const webFieldValue = definition.normalize(pair.before, fieldName);
+    const excelFieldValue = definition.normalize(pair.after, fieldName);
+    const baselineSerialized = serializeStudentDatabaseChangeValue(baselineFieldValue);
+    const webSerialized = serializeStudentDatabaseChangeValue(webFieldValue);
+    const excelSerialized = serializeStudentDatabaseChangeValue(excelFieldValue);
+    if (
+      webSerialized !== serializeStudentDatabaseChangeValue(previousAfter)
+      || webSerialized === baselineSerialized
+      || webSerialized === excelSerialized
+    ) return;
+
+    const recordId = getStudentDatabaseChangeRecordId(pair.before)
+      || getStudentDatabaseChangeRecordId(pair.after)
+      || String(pair.before?.id || pair.after?.id || "").trim();
+    differences.push({
+      id: buildStudentDatabaseSyncConflictId(
+        `${definition.key}\u0000${recordId}`,
+        fieldName,
+        baselineFieldValue,
+        webFieldValue,
+        excelFieldValue
+      ),
+      entity: definition.label,
+      recordId,
+      record: formatStudentDatabaseChangeRecordLabel(pair.before, definition),
+      fieldName,
+      field: getStudentDatabaseChangeFieldLabel(fieldName, definition),
+      baseline: formatStudentDatabaseChangeValue(
+        baselineFieldValue,
+        fieldName,
+        definition
+      ),
+      web: formatStudentDatabaseChangeValue(webFieldValue, fieldName, definition),
+      excel: formatStudentDatabaseChangeValue(excelFieldValue, fieldName, definition),
+      reason: excelSerialized === baselineSerialized
+        ? "Web изменён после контрольной точки; в XLSB осталось значение до первого зафиксированного изменения Web."
+        : "Текущие значения Web и XLSB различаются и оба отличаются от значения до первого зафиксированного изменения Web."
+    });
+  });
+
+  differences.sort((left, right) => (
+    left.entity.localeCompare(right.entity, "ru")
+    || left.record.localeCompare(right.record, "ru")
+    || left.field.localeCompare(right.field, "ru")
+  ));
+  return {
+    kind: "student-database-sync-difference-diagnostics",
+    diagnosticOnly: true,
+    count: differences.length,
+    rows: differences.slice(0, limit),
+    truncated: differences.length > limit,
+    note: differences.length
+      ? "Показаны поля с непрерывно зафиксированными изменениями Web после контрольной точки, текущие значения которых отличаются от XLSB. Отчёт диагностический: выбор источника и сохранение XLSB заблокированы."
+      : "Журнал не позволил безопасно привязать текущие различия полей к изменениям Web после контрольной точки."
+  };
 }
 
 function resolveStudentDatabaseFieldLevelMerge({
@@ -24131,14 +24342,23 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         });
       } catch (error) {
         if (error?.code !== STUDENT_DATABASE_DUAL_CRITICAL_CHANGE_CODE) throw error;
+        const auditRows = await readAuditRows();
         directionalMergeResult = resolveStudentDatabaseFieldLevelMerge({
           webData: payload,
           excelData: sourceDataForExport,
           baseline: body.syncBaseline,
-          auditRows: await readAuditRows(),
+          auditRows,
           conflictResolutions: body.syncConflictResolutions
         });
-        if (!directionalMergeResult) throw error;
+        if (!directionalMergeResult) {
+          error.failureDetails = buildStudentDatabaseSyncConflictDiagnosticReport({
+            webData: payload,
+            excelData: sourceDataForExport,
+            baseline: body.syncBaseline,
+            auditRows
+          });
+          throw error;
+        }
         if (directionalMergeResult.conflicts.length) {
           onProgress({
             progress: 100,
@@ -24868,6 +25088,9 @@ function updateStudentExportJob(job, patch) {
   if (patch.stage) job.stage = patch.stage;
   if (patch.message) job.message = patch.message;
   if (Object.prototype.hasOwnProperty.call(patch, "error")) job.error = patch.error;
+  if (Object.prototype.hasOwnProperty.call(patch, "failureDetails")) {
+    job.failureDetails = patch.failureDetails;
+  }
   job.updatedAt = Date.now();
 }
 
@@ -24891,6 +25114,7 @@ function publicStudentExportJob(job) {
     message: job.message,
     progress: job.progress,
     error: job.error || "",
+    failureDetails: job.failureDetails || null,
     operation: job.operation,
     createdAt: new Date(job.createdAt).toISOString(),
     updatedAt: new Date(job.updatedAt).toISOString()
@@ -24979,6 +25203,7 @@ async function runStudentExportJob(job, body) {
       status: "failed",
       stage: "error",
       error: errorMessage,
+      failureDetails: error?.failureDetails || null,
       message: errorMessage
     });
   }
@@ -24997,6 +25222,7 @@ async function handleStudentDatabaseExportStart(req, res) {
       message: body.downloadOnly === true ? "Подготовка экспорта..." : "Подготовка синхронизации...",
       progress: 0,
       error: "",
+      failureDetails: null,
       result: null,
       pendingCommit: null,
       pendingSourceVerification: null,
@@ -25266,13 +25492,12 @@ function handleStudentDatabaseExportResult(res, requestUrl) {
     return;
   }
   if (job.status === "failed") {
-    sendError(
-      res,
-      400,
-      job.error || (job.operation === "export"
+    sendJson(res, 400, {
+      error: job.error || (job.operation === "export"
         ? "Экспорт завершился с ошибкой."
-        : "Синхронизация завершилась с ошибкой.")
-    );
+        : "Синхронизация завершилась с ошибкой."),
+      failureDetails: job.failureDetails || null
+    });
     return;
   }
   if (job.status !== "completed" || !job.result) {
@@ -31087,6 +31312,7 @@ module.exports = {
   hashStudentDatabaseCriticalIdentity,
   resolveLegacyStudentDatabaseIndependentNoteMerge,
   resolveStudentDatabaseFieldLevelMerge,
+  buildStudentDatabaseSyncConflictDiagnosticReport,
   buildStudentDatabaseSynchronizedChanges,
   getStudentDatabaseEmbeddedSyncTimestamp,
   mergeStudentDatabaseSyncRecords,
@@ -31108,6 +31334,8 @@ module.exports = {
   validateStudentDatabaseFixedValueOverridesAgainstOutput,
   recoverStudentDatabaseFixedValueOverrideDirection,
   sanitizeStudentDatabaseExportPayload,
+  updateStudentExportJob,
+  publicStudentExportJob,
   validateStudentDatabaseProgramStructure,
   normalizeSharedApplicationData,
   normalizeSharedApplicationStatePatch,

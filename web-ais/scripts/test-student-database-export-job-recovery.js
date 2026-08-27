@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { updateStudentExportJob, publicStudentExportJob } = require("../app-server");
 
 const appSource = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
 const serverSource = fs.readFileSync(path.resolve(__dirname, "..", "app-server.js"), "utf8");
@@ -108,7 +109,60 @@ function testServerCleanup() {
   assert.equal(jobs.has("recent"), true);
 }
 
+function testServerFailureDetailsTransport() {
+  const failureDetails = {
+    kind: "student-database-sync-difference-diagnostics",
+    diagnosticOnly: true,
+    count: 1,
+    rows: [{
+      id: "conflict-1",
+      entity: "Слушатели",
+      recordId: "student-pashchenko",
+      record: "Пащенко Мария Александровна [1148]",
+      fieldName: "note",
+      field: "Примечание",
+      baseline: "27.08.26",
+      web: "Конфликт",
+      excel: "—"
+    }],
+    truncated: false,
+    note: "Диагностический отчёт"
+  };
+  const job = {
+    id: "failed-job",
+    status: "running",
+    stage: "compare",
+    message: "Сравнение",
+    progress: 15,
+    error: "",
+    failureDetails: null,
+    operation: "sync",
+    createdAt: 1000,
+    updatedAt: 2000
+  };
+  updateStudentExportJob(job, {
+    status: "failed",
+    stage: "error",
+    progress: 100,
+    error: "Синхронизация остановлена",
+    message: "Синхронизация остановлена",
+    failureDetails
+  });
+  const publicJob = publicStudentExportJob(job);
+  assert.equal(publicJob.status, "failed");
+  assert.deepEqual(publicJob.failureDetails, failureDetails);
+  assert.equal(publicJob.failureDetails.diagnosticOnly, true);
+  assert.match(serverSource, /failureDetails:\s*error\?\.failureDetails\s*\|\|\s*null/u);
+  const resultHandler = sourceBetween(
+    serverSource,
+    "function handleStudentDatabaseExportResult(res, requestUrl)",
+    "function handleStudentDatabaseExportDownload(res, requestUrl)"
+  );
+  assert.match(resultHandler, /failureDetails:\s*job\.failureDetails\s*\|\|\s*null/u);
+}
+
 testServerCleanup();
+testServerFailureDetailsTransport();
 testClientRecovery()
   .then(() => console.log("Student database export job recovery checks passed."))
   .catch((error) => {
