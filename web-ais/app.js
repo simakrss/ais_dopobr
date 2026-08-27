@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.317",
+    version: "1.7.318",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.318",
+      releasedAt: "2026-08-27",
+      changes: [
+        "При одновременном изменении одного поля в Web и XLSB синхронизация показывает таблицу конфликта даже при безопасном служебном расхождении старого общего хеша.",
+        "Восстановление базовых значений разрешено только при неизменном составе критичных записей и полном покрытии контрольной точки журналом действий."
+      ]
+    },
     {
       version: "1.7.317",
       releasedAt: "2026-08-27",

@@ -13474,7 +13474,25 @@ function resolveStudentDatabaseFieldLevelMerge({
     }
   }
   if (!revertedFieldCount) return null;
-  if (hashStudentDatabaseCriticalSnapshot(webBaseline) !== baseline.criticalHash) return null;
+  const reconstructedBaselineHash = hashStudentDatabaseCriticalSnapshot(webBaseline);
+  let recoveredBaselineHashDrift = false;
+  if (reconstructedBaselineHash !== baseline.criticalHash) {
+    const oldestAuditTimestamp = (Array.isArray(auditRows) ? auditRows : [])
+      .map((entry) => Date.parse(String(entry?.createdAt || "")))
+      .filter(Number.isFinite)
+      .reduce((oldest, timestamp) => Math.min(oldest, timestamp), Number.POSITIVE_INFINITY);
+    const auditCoversBaseline = Number.isFinite(oldestAuditTimestamp)
+      && oldestAuditTimestamp <= baselineAt + 1000;
+    const expectedIdentityHash = baseline.criticalIdentityHash;
+    const criticalIdentityStayedStable = Boolean(
+      expectedIdentityHash
+      && hashStudentDatabaseCriticalIdentity(webBaseline) === expectedIdentityHash
+      && hashStudentDatabaseCriticalIdentity(webData) === expectedIdentityHash
+      && hashStudentDatabaseCriticalIdentity(excelData) === expectedIdentityHash
+    );
+    if (!auditCoversBaseline || !criticalIdentityStayedStable) return null;
+    recoveredBaselineHashDrift = true;
+  }
 
   const webDefinitions = new Map(
     getStudentDatabaseSynchronizedChangeDefinitions(webBaseline, webData)
@@ -13654,7 +13672,8 @@ function resolveStudentDatabaseFieldLevelMerge({
     conflicts,
     changes,
     stats,
-    changedWebIds: [...changedWebIds]
+    changedWebIds: [...changedWebIds],
+    recoveredBaselineHashDrift
   };
 }
 

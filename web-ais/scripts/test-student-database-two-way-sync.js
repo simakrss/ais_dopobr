@@ -368,6 +368,46 @@ assert.equal(unresolvedSameField.conflicts[0].web, "Добавлено в Web");
 assert.equal(unresolvedSameField.conflicts[0].excel, "Добавлено в Excel");
 assert.equal(unresolvedSameField.students, null);
 
+const driftedBaselineData = clone(sameStudentBaselineData);
+driftedBaselineData.students[0].phone = "+7 000 000-00-00";
+const driftedBaseline = {
+  ...sameStudentBaseline,
+  criticalHash: hashStudentDatabaseCriticalSnapshot(driftedBaselineData)
+};
+const coveredAuditRows = [
+  {
+    createdAt: "2026-08-20T09:59:00.000Z",
+    action: "Синхронизация",
+    entityType: "database",
+    changes: []
+  },
+  ...sameStudentAuditRows
+];
+const recoveredDriftConflict = resolveStudentDatabaseFieldLevelMerge({
+  webData: sameStudentWebData,
+  excelData: sameFieldExcelData,
+  baseline: driftedBaseline,
+  auditRows: coveredAuditRows
+});
+assert.ok(recoveredDriftConflict, "Полный журнал должен разрешать восстановление базовых полей");
+assert.equal(recoveredDriftConflict.recoveredBaselineHashDrift, true);
+assert.equal(recoveredDriftConflict.conflicts.length, 1);
+assert.equal(recoveredDriftConflict.conflicts[0].field, "Примечание");
+assert.equal(resolveStudentDatabaseFieldLevelMerge({
+  webData: sameStudentWebData,
+  excelData: sameFieldExcelData,
+  baseline: driftedBaseline,
+  auditRows: sameStudentAuditRows
+}), null, "Без покрытия контрольной точки общий предохранитель должен сохраниться");
+const changedIdentityExcelData = clone(sameFieldExcelData);
+changedIdentityExcelData.students[0].uid = "9999";
+assert.equal(resolveStudentDatabaseFieldLevelMerge({
+  webData: sameStudentWebData,
+  excelData: changedIdentityExcelData,
+  baseline: driftedBaseline,
+  auditRows: coveredAuditRows
+}), null, "При изменении состава записей восстановление общего хеша запрещено");
+
 const conflictId = unresolvedSameField.conflicts[0].id;
 const resolvedFromExcel = resolveStudentDatabaseFieldLevelMerge({
   webData: sameStudentWebData,
