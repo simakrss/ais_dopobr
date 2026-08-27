@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.315",
+    version: "1.7.316",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.316",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Двусторонняя синхронизация объединяет независимые изменения разных полей одной записи без конфликта.",
+        "Для одного поля, изменённого и в Web, и в Excel, показывается таблица выбора с решениями по строкам, отмеченным конфликтам или сразу по всему списку."
+      ]
+    },
     {
       version: "1.7.315",
       releasedAt: "2026-08-27",
@@ -52900,6 +52908,145 @@ MAX - https://bizvmax.ru/zifra_plus
     return quotedMatch?.[1] || fallback;
   }
 
+  function chooseStudentDatabaseSyncConflictResolutions(conflictsValue) {
+    const conflicts = (Array.isArray(conflictsValue) ? conflictsValue : [])
+      .filter((item) => item && typeof item === "object" && String(item.id || "").trim());
+    if (!conflicts.length) return Promise.resolve({});
+    return new Promise((resolve) => {
+      const choices = new Map();
+      const backdrop = document.createElement("div");
+      backdrop.className = "modal-backdrop student-database-conflicts-backdrop";
+      const clipped = (value) => {
+        const text = String(value ?? "");
+        return text.length > 700 ? `${text.slice(0, 699)}…` : text;
+      };
+      backdrop.innerHTML = `
+        <section class="modal student-database-conflicts-modal" role="dialog" aria-modal="true" aria-labelledby="studentDatabaseConflictsTitle">
+          <header class="modal-head">
+            <div>
+              <span class="eyebrow">Синхронизация с XLSB</span>
+              <h2 id="studentDatabaseConflictsTitle">Выберите значения конфликтующих полей</h2>
+              <p>Разные поля уже объединены автоматически. Для одинаковых полей укажите, какое значение сохранить.</p>
+            </div>
+            <button class="icon-button" type="button" data-action="cancel-sync-conflicts" aria-label="Закрыть">×</button>
+          </header>
+          <div class="student-database-conflicts-tools">
+            <button class="ghost-button" type="button" data-conflict-bulk="web-selected">Web для отмеченных</button>
+            <button class="ghost-button" type="button" data-conflict-bulk="excel-selected">Excel для отмеченных</button>
+            <span class="student-database-conflicts-tools-spacer"></span>
+            <button class="ghost-button" type="button" data-conflict-bulk="web-all">Web для всех</button>
+            <button class="ghost-button" type="button" data-conflict-bulk="excel-all">Excel для всех</button>
+          </div>
+          <div class="student-database-conflicts-table-wrap">
+            <table class="student-database-conflicts-table">
+              <thead>
+                <tr>
+                  <th class="student-database-conflict-check"><input type="checkbox" data-conflict-select-all aria-label="Отметить все конфликты"></th>
+                  <th>Раздел</th>
+                  <th>Запись</th>
+                  <th>Поле</th>
+                  <th>Web</th>
+                  <th>Excel</th>
+                  <th>Сохранить</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${conflicts.map((conflict, index) => `
+                  <tr data-conflict-row="${escapeAttr(conflict.id)}">
+                    <td class="student-database-conflict-check"><input type="checkbox" data-conflict-select aria-label="Отметить конфликт ${index + 1}"></td>
+                    <td title="${escapeAttr(conflict.entity || "")}">${escapeHtml(clipped(conflict.entity || "Слушатели"))}</td>
+                    <td title="${escapeAttr(conflict.record || "")}">${escapeHtml(clipped(conflict.record || "Запись"))}</td>
+                    <td title="${escapeAttr(conflict.field || "")}">${escapeHtml(clipped(conflict.field || conflict.fieldName || "Поле"))}</td>
+                    <td class="student-database-conflict-value" title="${escapeAttr(conflict.web || "")}">${escapeHtml(clipped(conflict.web || "—"))}</td>
+                    <td class="student-database-conflict-value" title="${escapeAttr(conflict.excel || "")}">${escapeHtml(clipped(conflict.excel || "—"))}</td>
+                    <td>
+                      <div class="student-database-conflict-choice" role="radiogroup" aria-label="Источник значения">
+                        <label><input type="radio" name="sync-conflict-${index}" value="web" data-conflict-choice="${escapeAttr(conflict.id)}"> Web</label>
+                        <label><input type="radio" name="sync-conflict-${index}" value="excel" data-conflict-choice="${escapeAttr(conflict.id)}"> Excel</label>
+                      </div>
+                    </td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+          <footer class="modal-actions student-database-conflicts-actions">
+            <span data-conflict-summary>Не выбрано: ${conflicts.length}</span>
+            <button class="ghost-button" type="button" data-action="cancel-sync-conflicts">Отмена</button>
+            <button class="primary-button" type="button" data-action="continue-sync-conflicts" disabled>Продолжить синхронизацию</button>
+          </footer>
+        </section>
+      `;
+      document.body.appendChild(backdrop);
+      const continueButton = backdrop.querySelector("[data-action='continue-sync-conflicts']");
+      const summary = backdrop.querySelector("[data-conflict-summary]");
+      const selectAll = backdrop.querySelector("[data-conflict-select-all]");
+      const updateState = () => {
+        const unresolved = conflicts.length - choices.size;
+        if (summary) summary.textContent = unresolved
+          ? `Не выбрано: ${unresolved}`
+          : `Выбраны все поля: ${conflicts.length}`;
+        if (continueButton) continueButton.disabled = unresolved > 0;
+        backdrop.querySelectorAll("[data-conflict-row]").forEach((row) => {
+          row.classList.toggle("is-resolved", choices.has(String(row.dataset.conflictRow || "")));
+        });
+      };
+      const applyChoice = (choice, selectedOnly) => {
+        backdrop.querySelectorAll("[data-conflict-row]").forEach((row) => {
+          const isSelected = row.querySelector("[data-conflict-select]")?.checked;
+          if (selectedOnly && !isSelected) return;
+          const id = String(row.dataset.conflictRow || "");
+          const input = row.querySelector(`[data-conflict-choice][value="${choice}"]`);
+          if (input) input.checked = true;
+          choices.set(id, choice);
+        });
+        updateState();
+      };
+      const close = (value) => {
+        document.removeEventListener("keydown", onKeyDown, true);
+        backdrop.remove();
+        resolve(value);
+      };
+      const onKeyDown = (event) => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        close(null);
+      };
+      backdrop.addEventListener("change", (event) => {
+        const choiceInput = event.target.closest("[data-conflict-choice]");
+        if (choiceInput) {
+          choices.set(String(choiceInput.dataset.conflictChoice || ""), choiceInput.value);
+          updateState();
+          return;
+        }
+        if (event.target === selectAll) {
+          backdrop.querySelectorAll("[data-conflict-select]").forEach((input) => {
+            input.checked = selectAll.checked;
+          });
+        }
+      });
+      backdrop.addEventListener("click", (event) => {
+        if (event.target === backdrop || event.target.closest("[data-action='cancel-sync-conflicts']")) {
+          close(null);
+          return;
+        }
+        const bulkButton = event.target.closest("[data-conflict-bulk]");
+        if (bulkButton) {
+          const operation = String(bulkButton.dataset.conflictBulk || "");
+          applyChoice(operation.startsWith("excel") ? "excel" : "web", operation.endsWith("selected"));
+          return;
+        }
+        if (event.target.closest("[data-action='continue-sync-conflicts']")) {
+          if (choices.size !== conflicts.length) return;
+          close(Object.fromEntries(choices));
+        }
+      });
+      document.addEventListener("keydown", onKeyDown, true);
+      queueMicrotask(() => backdrop.querySelector("[data-conflict-select-all]")?.focus());
+      updateState();
+    });
+  }
+
   async function exportStudentsToDatabase(event) {
     if (state.databaseExport.running) return;
     if (state.databaseImport.running) {
@@ -52950,7 +53097,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const agentPaymentRates = buildStudentDatabaseExportAgentPaymentRates();
       const macroSettings = buildStudentDatabaseExportMacroSettings();
       const criticalAuditWindow = getStudentDatabaseCriticalAuditWindow();
-      const result = await runStudentDatabaseExport({
+      const exportRequest = {
         databasePath: getStudentDatabaseWebDavPath(),
         source: syncSource,
         directionalSync: true,
@@ -52981,7 +53128,43 @@ MAX - https://bizvmax.ru/zifra_plus
         paymentConstants,
         agentPaymentRates,
         macroSettings
-      });
+      };
+      let result = await runStudentDatabaseExport(exportRequest);
+      for (let conflictRound = 0; result?.syncDirection === "conflicts"; conflictRound += 1) {
+        if (conflictRound >= 5) {
+          throw new Error(
+            "Состав конфликтов несколько раз изменился во время выбора. Повторите синхронизацию."
+          );
+        }
+        updateDatabaseExportIndicator({
+          status: `Ожидание выбора значений: ${Number(result.syncConflictCount || result.syncConflicts?.length || 0)}`,
+          progress: 28,
+          tone: "active"
+        });
+        const resolutions = await chooseStudentDatabaseSyncConflictResolutions(
+          result.syncConflicts
+        );
+        if (!resolutions) {
+          updateDatabaseExportIndicator({ running: false, visible: false });
+          render();
+          return;
+        }
+        if (sharedStateChangeGeneration !== syncPreparedGeneration) {
+          throw new Error(
+            "Web-данные изменились во время выбора конфликтов. "
+            + "XLSB не перезаписан; запустите синхронизацию повторно."
+          );
+        }
+        updateDatabaseExportIndicator({
+          status: "Повторная проверка и объединение выбранных значений...",
+          progress: 30,
+          tone: "active"
+        });
+        result = await runStudentDatabaseExport({
+          ...exportRequest,
+          syncConflictResolutions: resolutions
+        });
+      }
       if (sharedStateChangeGeneration !== syncPreparedGeneration) {
         throw new Error(
           "Web-данные были изменены во время подготовки синхронизации. "
@@ -53213,7 +53396,7 @@ MAX - https://bizvmax.ru/zifra_plus
         eyebrow: "Синхронизация с XLSB",
         title: direction === "unchanged" ? "Изменений не найдено" : "Синхронизация завершена",
         summary: result.mergedBidirectional
-          ? "Независимые изменения разных слушателей объединены: данные Web записаны в XLSB, а данные XLSB перенесены в общую Web-базу."
+          ? "Изменения объединены по отдельным полям: значения Web записаны в XLSB, а значения Excel перенесены в общую Web-базу."
           : direction === "excel-to-web"
             ? "Стабильные ID записаны в XLSB, затем изменения перенесены в общую Web-базу; Web-поля совпавших записей сохранены."
           : direction === "web-to-excel"

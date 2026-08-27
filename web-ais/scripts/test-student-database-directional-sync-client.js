@@ -701,6 +701,11 @@ function makeExportContext(result, { validBaseline = true } = {}) {
       context.exportBody = body;
       return { ...result, jobId: result.jobId || "job-1" };
     },
+    chooseStudentDatabaseSyncConflictResolutions: async (conflicts) => {
+      order.push("resolve-conflicts");
+      context.receivedConflicts = conflicts;
+      return context.conflictResolutions || null;
+    },
     updateDatabaseExportIndicator: () => {},
     finishDatabaseExportIndicator: () => {},
     showDatabaseOperationResult: (value) => { operationResults.push(value); },
@@ -794,6 +799,48 @@ async function testDirectionalExportFlows() {
   assert.equal(eventBaselineMigration.order.includes("persist"), true);
   assert.equal(eventBaselineMigration.order.includes("baseline-flush"), true);
   assert.equal(eventBaselineMigration.baselineCalls[0][6], "d".repeat(64));
+
+  const conflictId = "c".repeat(64);
+  const conflictMerge = makeExportContext({ syncDirection: "conflicts" });
+  conflictMerge.conflictResolutions = { [conflictId]: "excel" };
+  const conflictBodies = [];
+  conflictMerge.runStudentDatabaseExport = async (body) => {
+    conflictBodies.push(body);
+    conflictMerge.order.push("run");
+    if (conflictBodies.length === 1) {
+      return {
+        syncDirection: "conflicts",
+        syncConflictCount: 1,
+        syncConflicts: [{ id: conflictId, record: "Пащенко", field: "Примечание" }],
+        jobId: "conflict-check"
+      };
+    }
+    return {
+      syncDirection: "web-to-excel",
+      requiresCommit: true,
+      sourceHash: "1".repeat(64),
+      sourceIdentity: "2".repeat(64),
+      studentCount: 1,
+      mergedBidirectional: true,
+      jobId: "resolved-job"
+    };
+  };
+  conflictMerge.commitResult = {
+    committed: true,
+    syncCommitToken: "resolved-token",
+    sourceHash: "3".repeat(64),
+    sourceIdentity: "2".repeat(64)
+  };
+  await conflictMerge.operation({ shiftKey: false });
+  assert.equal(conflictBodies.length, 2);
+  assert.deepEqual(conflictBodies[1].syncConflictResolutions, { [conflictId]: "excel" });
+  assert.deepEqual(conflictMerge.receivedConflicts, [
+    { id: conflictId, record: "Пащенко", field: "Примечание" }
+  ]);
+  assert.ok(
+    conflictMerge.order.indexOf("resolve-conflicts") < conflictMerge.order.indexOf("commit"),
+    "XLSB можно сохранять только после выбора пользователя"
+  );
 
   const changedDuringPreparation = makeExportContext({
     syncDirection: "web-to-excel",
@@ -1105,6 +1152,12 @@ assert.match(
   /synchronizationPayload:\s*committedResult\.importPayload\s*\|\|\s*result\.importPayload/u,
   "Excel → Web должен применять payload после серверного commit настроек."
 );
+assert.match(appSource, /function chooseStudentDatabaseSyncConflictResolutions/u);
+assert.match(appSource, /data-conflict-bulk="web-selected"/u);
+assert.match(appSource, /data-conflict-bulk="excel-selected"/u);
+assert.match(appSource, /data-conflict-bulk="web-all"/u);
+assert.match(appSource, /data-conflict-bulk="excel-all"/u);
+assert.match(appSource, /syncConflictResolutions:\s*resolutions/u);
 
 (async () => {
   testManagedFieldClearingAndWebOnlyPreservation();

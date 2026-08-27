@@ -5,6 +5,7 @@ const {
   hashStudentDatabaseCriticalSnapshot,
   hashStudentDatabaseCriticalIdentity,
   resolveLegacyStudentDatabaseIndependentNoteMerge,
+  resolveStudentDatabaseFieldLevelMerge,
   resolveStudentDatabaseSyncDirection,
   acquireStudentDatabaseSyncReservation,
   releaseStudentDatabaseSyncReservation,
@@ -293,6 +294,147 @@ assert.strictEqual(resolveLegacyStudentDatabaseIndependentNoteMerge({
   baseline: directionalBaseline,
   auditRows: unrelatedWebAudit
 }), null);
+
+const sameStudentBaselineData = {
+  students: [{
+    id: "student-pashchenko",
+    uid: "1148",
+    name: "Пащенко Мария Александровна",
+    applicationDate: "2026-05-08",
+    program: "Программа 3",
+    note: "",
+    reviewPublished: false
+  }],
+  contracts: [],
+  directExpenses: [],
+  generalExpenses: [],
+  inventory: [],
+  trainingPlans: [],
+  programs: []
+};
+const sameStudentWebData = clone(sameStudentBaselineData);
+sameStudentWebData.students[0].note = "Добавлено в Web";
+const sameStudentExcelData = clone(sameStudentBaselineData);
+sameStudentExcelData.students[0].reviewPublished = true;
+const sameStudentBaseline = {
+  version: 2,
+  sourceHash: "8".repeat(64),
+  sourceIdentity: "9".repeat(64),
+  webRevision: 16,
+  synchronizedAt: "2026-08-20T10:00:00.000Z",
+  criticalHash: hashStudentDatabaseCriticalSnapshot(sameStudentBaselineData),
+  criticalIdentityHash: hashStudentDatabaseCriticalIdentity(sameStudentBaselineData)
+};
+const sameStudentAuditRows = [{
+  createdAt: "2026-08-20T11:00:00.000Z",
+  action: "Изменена запись",
+  entityType: "students",
+  entityId: "student-pashchenko",
+  entityLabel: "Пащенко Мария Александровна",
+  source: "web",
+  changes: [{
+    field: "note",
+    label: "Примечание",
+    before: "",
+    after: "Добавлено в Web"
+  }]
+}];
+const sameStudentDifferentFields = resolveStudentDatabaseFieldLevelMerge({
+  webData: sameStudentWebData,
+  excelData: sameStudentExcelData,
+  baseline: sameStudentBaseline,
+  auditRows: sameStudentAuditRows
+});
+assert.ok(sameStudentDifferentFields, "По-полевое слияние должно быть доступно");
+assert.deepStrictEqual(sameStudentDifferentFields.conflicts, []);
+assert.strictEqual(sameStudentDifferentFields.students[0].note, "Добавлено в Web");
+assert.strictEqual(sameStudentDifferentFields.students[0].reviewPublished, true);
+assert.deepStrictEqual(
+  sameStudentDifferentFields.changes.map((change) => [change.field, change.action]).sort(),
+  [["Отзыв на сайте", "Excel → Web"], ["Примечание", "Web → Excel"]].sort()
+);
+
+const sameFieldExcelData = clone(sameStudentBaselineData);
+sameFieldExcelData.students[0].note = "Добавлено в Excel";
+const unresolvedSameField = resolveStudentDatabaseFieldLevelMerge({
+  webData: sameStudentWebData,
+  excelData: sameFieldExcelData,
+  baseline: sameStudentBaseline,
+  auditRows: sameStudentAuditRows
+});
+assert.equal(unresolvedSameField.conflicts.length, 1);
+assert.equal(unresolvedSameField.conflicts[0].field, "Примечание");
+assert.equal(unresolvedSameField.conflicts[0].web, "Добавлено в Web");
+assert.equal(unresolvedSameField.conflicts[0].excel, "Добавлено в Excel");
+assert.equal(unresolvedSameField.students, null);
+
+const conflictId = unresolvedSameField.conflicts[0].id;
+const resolvedFromExcel = resolveStudentDatabaseFieldLevelMerge({
+  webData: sameStudentWebData,
+  excelData: sameFieldExcelData,
+  baseline: sameStudentBaseline,
+  auditRows: sameStudentAuditRows,
+  conflictResolutions: { [conflictId]: "excel" }
+});
+assert.deepStrictEqual(resolvedFromExcel.conflicts, []);
+assert.equal(resolvedFromExcel.students[0].note, "Добавлено в Excel");
+assert.match(resolvedFromExcel.changes[0].action, /Конфликт: Excel → Web/u);
+
+const resolvedFromWeb = resolveStudentDatabaseFieldLevelMerge({
+  webData: sameStudentWebData,
+  excelData: sameFieldExcelData,
+  baseline: sameStudentBaseline,
+  auditRows: sameStudentAuditRows,
+  conflictResolutions: { [conflictId]: "web" }
+});
+assert.deepStrictEqual(resolvedFromWeb.conflicts, []);
+assert.equal(resolvedFromWeb.students[0].note, "Добавлено в Web");
+assert.match(resolvedFromWeb.changes[0].action, /Конфликт: Web → Excel/u);
+
+const multiTableBaselineData = clone(sameStudentBaselineData);
+multiTableBaselineData.directExpenses = [{
+  id: "web-expense-1",
+  uid: "1148",
+  date: "2026-08-20",
+  type: "Почтовое отправление",
+  amount: 100,
+  note: "Почта"
+}, {
+  id: "web-expense-2",
+  uid: "1148",
+  date: "2026-08-20",
+  type: "Почтовое отправление",
+  amount: 100,
+  note: "Почта"
+}];
+const multiTableWebData = clone(multiTableBaselineData);
+multiTableWebData.students[0].note = "Добавлено в Web";
+const multiTableExcelData = clone(multiTableBaselineData);
+multiTableExcelData.directExpenses = multiTableExcelData.directExpenses.map((expense, index) => ({
+  ...expense,
+  id: `excel-expense-${index + 1}`,
+  amount: index === 0 ? 130 : expense.amount
+}));
+const multiTableMerge = resolveStudentDatabaseFieldLevelMerge({
+  webData: multiTableWebData,
+  excelData: multiTableExcelData,
+  baseline: {
+    ...sameStudentBaseline,
+    criticalHash: hashStudentDatabaseCriticalSnapshot(multiTableBaselineData),
+    criticalIdentityHash: hashStudentDatabaseCriticalIdentity(multiTableBaselineData)
+  },
+  auditRows: sameStudentAuditRows
+});
+assert.ok(multiTableMerge, "Изменения Excel в другой таблице должны войти в общее слияние");
+assert.deepStrictEqual(multiTableMerge.conflicts, []);
+assert.equal(multiTableMerge.collections.students[0].note, "Добавлено в Web");
+assert.equal(multiTableMerge.collections.directExpenses[0].amount, 130);
+assert.equal(multiTableMerge.collections.directExpenses[1].amount, 100);
+assert.ok(multiTableMerge.changes.some((change) => (
+  change.entity === "Прямые затраты"
+  && change.field === "Сумма"
+  && change.action === "Excel → Web"
+)));
 
 const baseline = {
   version: 1,

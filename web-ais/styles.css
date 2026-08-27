@@ -8866,6 +8866,190 @@ body.long-press-dragging * {
   box-shadow: 0 24px 70px rgba(17, 24, 39, 0.28);
 }
 
+.student-database-conflicts-backdrop {
+  z-index: 1300;
+}
+
+.student-database-conflicts-modal {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: min(1180px, 100%);
+  height: min(760px, 92vh);
+  overflow: hidden;
+}
+
+.student-database-conflicts-modal .modal-head {
+  align-items: flex-start;
+}
+
+.student-database-conflicts-modal .modal-head p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.student-database-conflicts-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-soft);
+}
+
+.student-database-conflicts-tools-spacer {
+  flex: 1 1 20px;
+}
+
+.student-database-conflicts-table-wrap {
+  min-height: 0;
+  overflow: auto;
+}
+
+.student-database-conflicts-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+.student-database-conflicts-table th,
+.student-database-conflicts-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.student-database-conflicts-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-soft);
+}
+
+.student-database-conflicts-table th:nth-child(2) { width: 10%; }
+.student-database-conflicts-table th:nth-child(3) { width: 16%; }
+.student-database-conflicts-table th:nth-child(4) { width: 14%; }
+.student-database-conflicts-table th:nth-child(5),
+.student-database-conflicts-table th:nth-child(6) { width: 23%; }
+.student-database-conflicts-table th:nth-child(7) { width: 120px; }
+
+.student-database-conflict-check {
+  width: 34px;
+  text-align: center !important;
+}
+
+.student-database-conflicts-table tr.is-resolved td {
+  background: rgba(15, 118, 110, 0.055);
+}
+
+.student-database-conflict-value {
+  white-space: pre-wrap;
+}
+
+.student-database-conflict-choice {
+  display: grid;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.student-database-conflict-choice label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.student-database-conflicts-actions [data-conflict-summary] {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (max-width: 700px) {
+  .student-database-conflicts-backdrop {
+    padding: 0;
+  }
+
+  .student-database-conflicts-modal {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .student-database-conflicts-tools-spacer {
+    display: none;
+  }
+
+  .student-database-conflicts-tools .ghost-button {
+    flex: 1 1 calc(50% - 7px);
+  }
+
+  .student-database-conflicts-table,
+  .student-database-conflicts-table tbody,
+  .student-database-conflicts-table tr,
+  .student-database-conflicts-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .student-database-conflicts-table thead {
+    display: none;
+  }
+
+  .student-database-conflicts-table tr {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .student-database-conflicts-table td {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1fr);
+    gap: 7px;
+    padding: 4px 0;
+    border: 0;
+  }
+
+  .student-database-conflicts-table td::before {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .student-database-conflicts-table td:nth-child(2)::before { content: "Раздел"; }
+  .student-database-conflicts-table td:nth-child(3)::before { content: "Запись"; }
+  .student-database-conflicts-table td:nth-child(4)::before { content: "Поле"; }
+  .student-database-conflicts-table td:nth-child(5)::before { content: "Web"; }
+  .student-database-conflicts-table td:nth-child(6)::before { content: "Excel"; }
+  .student-database-conflicts-table td:nth-child(7)::before { content: "Сохранить"; }
+
+  .student-database-conflicts-table .student-database-conflict-check {
+    display: block;
+    width: auto;
+    text-align: left !important;
+  }
+
+  .student-database-conflicts-table .student-database-conflict-check::before {
+    content: none;
+  }
+
+  .student-database-conflict-choice {
+    display: flex;
+    gap: 14px;
+  }
+
+  .student-database-conflicts-actions {
+    flex-wrap: wrap;
+  }
+
+  .student-database-conflicts-actions [data-conflict-summary] {
+    flex: 1 0 100%;
+  }
+}
+
 .student-bulk-operations-backdrop,
 .student-bulk-result-backdrop {
   z-index: 1250;
