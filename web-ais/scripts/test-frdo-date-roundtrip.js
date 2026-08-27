@@ -11,8 +11,15 @@ const {
   sanitizeStudentDatabaseExportPayload
 } = require("../app-server.js");
 
+const defaultSourceCandidates = [
+  "Y:/АИС Допобразование/АИС Допобразование — копия.xlsb",
+  "Y:/АИС Допобразование/_Резерв/АИС Допобразование — копия.xlsb",
+  "Y:/АИС Допобразование/АИС Допобразование.xlsb"
+];
 const sourcePath = path.resolve(
-  process.argv[2] || "Y:/АИС Допобразование/АИС Допобразование — копия.xlsb"
+  process.argv[2]
+    || defaultSourceCandidates.find((candidate) => fs.existsSync(candidate))
+    || defaultSourceCandidates[0]
 );
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ais-frdo-date-"));
 const inputPath = path.join(tempRoot, "input.xlsb");

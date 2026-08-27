@@ -4,8 +4,8 @@ const path = require("path");
 const vm = require("vm");
 
 const root = path.resolve(__dirname, "..");
-const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
-const stylesSource = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8").replace(/\r\n?/gu, "\n");
+const stylesSource = fs.readFileSync(path.join(root, "styles.css"), "utf8").replace(/\r\n?/gu, "\n");
 
 function extractFunction(name) {
   const start = appSource.indexOf(`  function ${name}(`);
@@ -148,7 +148,7 @@ assert.match(editorRenderSource, /name: "studentExpenseEditorNote"/u);
 
 assert.match(appSource, /\$\{state\.studentExpenseEditor \? renderStudentExpenseEditor\(\) : ""\}/u);
 assert.match(appSource, /if \(state\.studentExpenseEditor\) \{\s*closeStudentExpenseEditor\(\);\s*return true;/u);
-assert.match(appSource, /function bindStudentStatusHistoryNavigation\(\)[\s\S]*?state\.studentExpenseEditor = null;\s*state\.modal = null;/u);
+assert.match(appSource, /async function restoreAisNavigationSnapshot\([^)]*\)[\s\S]*?state\.studentExpenseEditor = null;\s*state\.modal = null;/u);
 assert.match(appSource, /Есть несохранённые изменения расхода\. Закрыть без сохранения\?/u);
 assert.match(appSource, /setStudentExpenseEditorBackgroundInert\(true\)/u);
 assert.match(appSource, /closest\("\.student-modal-backdrop"\)/u);

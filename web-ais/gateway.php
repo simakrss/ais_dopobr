@@ -1476,6 +1476,67 @@ SQL);
     return $data;
 }
 
+function gateway_shared_state_protected_recycle_bin_ids(
+    array $currentData,
+    ?array $patch,
+    ?array $replacementData
+): array {
+    $currentRows = is_array($currentData['collections']['recycleBin'] ?? null)
+        ? $currentData['collections']['recycleBin']
+        : [];
+    $currentById = [];
+    foreach ($currentRows as $row) {
+        $id = is_array($row) ? trim((string) ($row['id'] ?? '')) : '';
+        if ($id !== '') {
+            $currentById[$id] = $row;
+        }
+    }
+    if ($currentById === []) {
+        return [];
+    }
+    if ($replacementData !== null) {
+        $nextRows = is_array($replacementData['collections']['recycleBin'] ?? null)
+            ? $replacementData['collections']['recycleBin']
+            : [];
+    } else {
+        $change = is_array($patch['collections']['recycleBin'] ?? null)
+        ? $patch['collections']['recycleBin']
+        : null;
+        if ($change === null) {
+            return [];
+        }
+        if (is_array($change['replace'] ?? null)) {
+            $nextRows = $change['replace'];
+        } else {
+            $nextById = $currentById;
+            foreach (is_array($change['deletes'] ?? null) ? $change['deletes'] : [] as $id) {
+                unset($nextById[trim((string) $id)]);
+            }
+            foreach (is_array($change['upserts'] ?? null) ? $change['upserts'] : [] as $row) {
+                $id = is_array($row) ? trim((string) ($row['id'] ?? '')) : '';
+                if ($id !== '') {
+                    $nextById[$id] = $row;
+                }
+            }
+            $nextRows = array_values($nextById);
+        }
+    }
+    $nextById = [];
+    foreach ($nextRows as $row) {
+        $id = is_array($row) ? trim((string) ($row['id'] ?? '')) : '';
+        if ($id !== '') {
+            $nextById[$id] = $row;
+        }
+    }
+    $protected = [];
+    foreach ($currentById as $id => $row) {
+        if (!isset($nextById[$id]) || json_encode($nextById[$id]) !== json_encode($row)) {
+            $protected[] = $id;
+        }
+    }
+    return $protected;
+}
+
 function gateway_shared_state_version(int $revision): string
 {
     return 'mysql-' . max(0, $revision);
@@ -1746,6 +1807,34 @@ function gateway_handle_shared_state(string $method, string $body, array $curren
         if ($meta === null && $data === null) {
             throw new RuntimeException('Общая база ещё не создана.');
         }
+        $recycleBinChange = is_array($patch['collections']['recycleBin'] ?? null)
+            ? $patch['collections']['recycleBin']
+            : null;
+        $canChangeRecycleBin = $data !== null || (
+            $recycleBinChange !== null
+            && (
+                is_array($recycleBinChange['replace'] ?? null)
+                || (is_array($recycleBinChange['deletes'] ?? null)
+                    && $recycleBinChange['deletes'] !== [])
+                || (is_array($recycleBinChange['upserts'] ?? null)
+                    && $recycleBinChange['upserts'] !== [])
+            )
+        );
+        if ($meta !== null && $canChangeRecycleBin) {
+            $protectedRecycleBinIds = gateway_shared_state_protected_recycle_bin_ids(
+                gateway_shared_state_read_data($pdo),
+                $patch,
+                $data
+            );
+            if ($protectedRecycleBinIds !== []) {
+                $pdo->rollBack();
+                gateway_fail(
+                    403,
+                    'Удалять или изменять элементы корзины через общую синхронизацию запрещено. '
+                    . 'Используйте восстановление или административное безвозвратное удаление.'
+                );
+            }
+        }
         if ($data !== null) {
             gateway_shared_state_replace_data($pdo, $data);
         } else {
@@ -1780,6 +1869,284 @@ SQL);
             $pdo->rollBack();
         }
         throw $error;
+    }
+}
+
+function gateway_trash_error(string $message, int $status = 400): RuntimeException
+{
+    return new RuntimeException($message, $status);
+}
+
+function gateway_trash_request(array $payload, bool $permanentDelete): array
+{
+    $id = trim(str_replace("\0", '', (string) ($payload['id'] ?? '')));
+    if ($id === '' || mb_strlen($id, 'UTF-8') > 191 || preg_match('/[\r\n]/u', $id)) {
+        throw gateway_trash_error('Не указан элемент корзины.');
+    }
+    $baseRevision = filter_var(
+        $payload['baseRevision'] ?? null,
+        FILTER_VALIDATE_INT,
+        ['options' => ['min_range' => 0]]
+    );
+    if ($baseRevision === false) {
+        throw gateway_trash_error('Не указана ревизия общей базы.');
+    }
+    if ($permanentDelete) {
+        $confirmationPhrase = (string) (
+            $payload['confirmationPhrase'] ?? $payload['phrase'] ?? ''
+        );
+        if (($payload['confirmed'] ?? null) !== true || $confirmationPhrase !== 'Удалить') {
+            throw gateway_trash_error(
+                'Безвозвратное удаление не подтверждено фразой «Удалить».'
+            );
+        }
+    }
+    return ['id' => $id, 'baseRevision' => (int) $baseRevision];
+}
+
+function gateway_trash_find_item(array $data, string $id): array
+{
+    $rows = is_array($data['collections']['recycleBin'] ?? null)
+        ? array_values($data['collections']['recycleBin'])
+        : [];
+    $indexes = [];
+    foreach ($rows as $index => $item) {
+        if (is_array($item) && trim((string) ($item['id'] ?? '')) === $id) {
+            $indexes[] = (int) $index;
+        }
+    }
+    if ($indexes === []) {
+        throw gateway_trash_error('Элемент корзины не найден.', 404);
+    }
+    if (count($indexes) !== 1) {
+        throw gateway_trash_error(
+            'В корзине найдены дубли элемента. Операция остановлена.',
+            409
+        );
+    }
+    $index = $indexes[0];
+    return ['rows' => $rows, 'index' => $index, 'item' => $rows[$index]];
+}
+
+function gateway_trash_restore_mutation(array $data, string $id): array
+{
+    $found = gateway_trash_find_item($data, $id);
+    $item = $found['item'];
+    $collection = trim((string) ($item['collection'] ?? ''));
+    if (!preg_match('/^[A-Za-z0-9_-]{1,120}$/', $collection) || $collection === 'recycleBin') {
+        throw gateway_trash_error(
+            'Элемент корзины повреждён: не указан раздел восстановления.',
+            409
+        );
+    }
+    $record = $item['record'] ?? null;
+    if (!is_array($record)) {
+        throw gateway_trash_error(
+            'Элемент корзины повреждён: нет снимка записи.',
+            409
+        );
+    }
+    $recordId = trim((string) ($record['id'] ?? ''));
+    if ($recordId === '' || mb_strlen($recordId, 'UTF-8') > 191) {
+        throw gateway_trash_error(
+            'Элемент корзины повреждён: нет идентификатора записи.',
+            409
+        );
+    }
+    if (trim((string) ($item['recordId'] ?? $recordId)) !== $recordId) {
+        throw gateway_trash_error(
+            'Элемент корзины повреждён: идентификаторы записи не совпадают.',
+            409
+        );
+    }
+    $targetRows = is_array($data['collections'][$collection] ?? null)
+        ? array_values($data['collections'][$collection])
+        : [];
+    foreach ($targetRows as $activeRecord) {
+        if (is_array($activeRecord) && trim((string) ($activeRecord['id'] ?? '')) === $recordId) {
+            throw gateway_trash_error(
+                'В активном разделе уже есть запись с таким идентификатором.',
+                409
+            );
+        }
+    }
+    $related = $item['related']['globalDirectExpenses'] ?? [];
+    if (!is_array($related)) {
+        throw gateway_trash_error(
+            'Элемент корзины повреждён: некорректны связанные затраты.',
+            409
+        );
+    }
+    $expenseIds = [];
+    foreach ($related as $expense) {
+        $expenseId = is_array($expense) ? trim((string) ($expense['id'] ?? '')) : '';
+        if ($expenseId === '') {
+            throw gateway_trash_error(
+                'Элемент корзины повреждён: связанные затраты не имеют идентификатора.',
+                409
+            );
+        }
+        if (isset($expenseIds[$expenseId]) || ($collection === 'directExpenses' && $expenseId === $recordId)) {
+            throw gateway_trash_error(
+                'В снимке корзины найдены дубли связанных затрат.',
+                409
+            );
+        }
+        $expenseIds[$expenseId] = true;
+    }
+    $activeExpenses = is_array($data['collections']['directExpenses'] ?? null)
+        ? array_values($data['collections']['directExpenses'])
+        : [];
+    $activeExpensesById = [];
+    foreach ($activeExpenses as $expense) {
+        $expenseId = is_array($expense) ? trim((string) ($expense['id'] ?? '')) : '';
+        if ($expenseId !== '') {
+            $activeExpensesById[$expenseId] = $expense;
+        }
+    }
+    $expensesToRestore = [];
+    foreach ($related as $expense) {
+        $expenseId = trim((string) ($expense['id'] ?? ''));
+        if (!isset($activeExpensesById[$expenseId])) {
+            $expensesToRestore[] = $expense;
+            continue;
+        }
+        if (json_encode($activeExpensesById[$expenseId]) !== json_encode($expense)) {
+            throw gateway_trash_error(
+                'Одна из связанных затрат уже есть в активной базе с другими данными.',
+                409
+            );
+        }
+    }
+
+    $originalIndex = filter_var(
+        $item['originalIndex'] ?? count($targetRows),
+        FILTER_VALIDATE_INT,
+        ['options' => ['min_range' => 0]]
+    );
+    if ($originalIndex === false) {
+        $originalIndex = count($targetRows);
+    }
+    $originalIndex = min((int) $originalIndex, count($targetRows));
+    array_splice($targetRows, $originalIndex, 0, [$record]);
+    $data['collections'][$collection] = $targetRows;
+    if ($expensesToRestore !== []) {
+        $restoredExpenses = $collection === 'directExpenses'
+            ? $data['collections']['directExpenses']
+            : $activeExpenses;
+        array_push($restoredExpenses, ...$expensesToRestore);
+        $data['collections']['directExpenses'] = $restoredExpenses;
+    }
+    array_splice($found['rows'], (int) $found['index'], 1);
+    $data['collections']['recycleBin'] = $found['rows'];
+    return [$data, [
+        'id' => $id,
+        'collection' => $collection,
+        'recordId' => $recordId,
+        'label' => mb_substr((string) (
+            $item['label'] ?? $record['fullName'] ?? $record['name'] ?? $recordId
+        ), 0, 500, 'UTF-8'),
+        'restoredExpenses' => count($expensesToRestore),
+    ]];
+}
+
+function gateway_trash_permanent_delete_mutation(array $data, string $id): array
+{
+    $found = gateway_trash_find_item($data, $id);
+    $item = $found['item'];
+    array_splice($found['rows'], (int) $found['index'], 1);
+    $data['collections']['recycleBin'] = $found['rows'];
+    return [$data, [
+        'id' => $id,
+        'collection' => trim((string) ($item['collection'] ?? '')),
+        'recordId' => trim((string) ($item['record']['id'] ?? $item['recordId'] ?? '')),
+        'label' => mb_substr((string) (
+            $item['label'] ?? $item['record']['fullName'] ?? $item['record']['name'] ?? $id
+        ), 0, 500, 'UTF-8'),
+    ]];
+}
+
+function gateway_handle_trash_route(
+    string $method,
+    string $path,
+    string $body,
+    array $currentUser
+): void {
+    if ($method !== 'POST') {
+        gateway_fail(405, 'Method not allowed');
+    }
+    $permanentDelete = $path === '/api/admin/trash/permanent-delete';
+    if ($permanentDelete) {
+        gateway_require_admin($currentUser);
+    }
+    $request = gateway_trash_request(gateway_read_json_body($body), $permanentDelete);
+    try {
+        $pdo = gateway_record_locks_pdo();
+    } catch (Throwable $error) {
+        gateway_fail(503, 'Общая MySQL-база недоступна: ' . $error->getMessage());
+    }
+    try {
+        $pdo->beginTransaction();
+        $meta = gateway_shared_state_meta($pdo, true);
+        $currentRevision = max(0, (int) ($meta['revision'] ?? 0));
+        if ($request['baseRevision'] !== $currentRevision) {
+            throw gateway_trash_error(
+                'Общая база уже изменена другим пользователем.',
+                409
+            );
+        }
+        if ($meta === null) {
+            throw gateway_trash_error('Общая база ещё не создана.', 409);
+        }
+        $data = gateway_shared_state_read_data($pdo);
+        [$nextData, $summary] = $permanentDelete
+            ? gateway_trash_permanent_delete_mutation($data, $request['id'])
+            : gateway_trash_restore_mutation($data, $request['id']);
+        gateway_shared_state_replace_data($pdo, $nextData);
+        $nextRevision = $currentRevision + 1;
+        $updatedBy = substr(
+            (string) ($currentUser['login'] ?? $currentUser['name'] ?? 'system'),
+            0,
+            160
+        );
+        $upsertMeta = $pdo->prepare(<<<'SQL'
+INSERT INTO ais_shared_state_meta (state_key, revision, updated_at, updated_by)
+VALUES (?, ?, UTC_TIMESTAMP(3), ?)
+ON DUPLICATE KEY UPDATE
+  revision = VALUES(revision), updated_at = VALUES(updated_at), updated_by = VALUES(updated_by)
+SQL);
+        $upsertMeta->execute([gateway_shared_state_key(), $nextRevision, $updatedBy]);
+        $pdo->commit();
+        ais_audit_try_append([
+            'action' => $permanentDelete
+                ? 'Безвозвратно удалён элемент корзины'
+                : 'Восстановлена запись из корзины',
+            'area' => 'Корзина',
+            'entityType' => $permanentDelete ? 'recycleBin' : $summary['collection'],
+            'entityId' => $permanentDelete ? $summary['id'] : $summary['recordId'],
+            'entityLabel' => $summary['label'],
+            'details' => $permanentDelete
+                ? trim(
+                    'Элемент корзины: ' . $summary['id'] . '; раздел: ' . $summary['collection']
+                    . '.'
+                )
+                : 'Элемент корзины: ' . $summary['id']
+                    . '; восстановлено связанных затрат: '
+                    . $summary['restoredExpenses'],
+            'source' => 'recycle-bin',
+        ], $currentUser);
+        $savedMeta = gateway_shared_state_meta($pdo);
+        gateway_json(200, [
+            'ok' => true,
+            ($permanentDelete ? 'deleted' : 'restored') => $summary,
+            ...gateway_shared_state_public_meta($savedMeta),
+        ]);
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        $status = $error instanceof PDOException ? 503 : (int) $error->getCode();
+        gateway_fail($status >= 400 && $status <= 599 ? $status : 500, $error->getMessage());
     }
 }
 
@@ -1998,6 +2365,12 @@ try {
     if ((string) ($currentUser['role'] ?? '') === 'partner'
         && !str_starts_with($requestPath, '/api/partner/')) {
         gateway_fail(403, 'Раздел недоступен в кабинете партнёра.');
+    }
+    if (in_array($requestPath, [
+        '/api/trash/restore',
+        '/api/admin/trash/permanent-delete',
+    ], true)) {
+        gateway_handle_trash_route($method, $requestPath, $body, $currentUser);
     }
     gateway_handle_audit_routes($method, $requestPath, $body, $currentUser);
     gateway_handle_admin_users($method, $requestPath, $body, $currentUser);

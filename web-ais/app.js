@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.319",
+    version: "1.7.320",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.320",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Удалённые записи перемещаются в корзину вместе со всеми данными и могут быть восстановлены.",
+        "Безвозвратно удалить запись из корзины может только администратор после подтверждения и точного ввода фразы «Удалить»."
+      ]
+    },
     {
       version: "1.7.319",
       releasedAt: "2026-08-27",
@@ -4555,6 +4563,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "generalExpenses", label: "Общие затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8c0-2 3.6-3.5 8-3.5S20 6 20 8s-3.6 3.5-8 3.5S4 10 4 8z"></path><path d="M4 8v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V8"></path><path d="M4 12v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5v-4"></path></svg>' },
     { id: "inventory", label: "Запасы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8l8-4 8 4-8 4z"></path><path d="M4 8v8l8 4 8-4V8"></path><path d="M12 12v8"></path><path d="M8 6l8 4"></path></svg>' },
     { id: "documentConstructor", label: "Конструктор документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><path d="M4 7h2"></path><path d="M4 11h2"></path><path d="M4 15h2"></path></svg>' },
+    { id: "recycleBin", label: "Корзина", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M7 7l1 14h8l1-14"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>' },
     { id: "settings", label: "Настройки", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 17h2"></path><path d="M10 17h10"></path><circle cx="8" cy="17" r="2"></circle></svg>' },
     { id: "admin", label: "Админка", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 4.6-2.8 7.9-7 10-4.2-2.1-7-5.4-7-10V6z"></path><circle cx="12" cy="12" r="2.4"></circle><path d="M12 8.2v1.2"></path><path d="M12 14.6v1.2"></path><path d="M15.8 12h-1.2"></path><path d="M9.4 12H8.2"></path><path d="M14.7 9.3l-.9.9"></path><path d="M10.2 13.8l-.9.9"></path><path d="M14.7 14.7l-.9-.9"></path><path d="M10.2 10.2l-.9-.9"></path></svg>' }
   ];
@@ -6358,6 +6367,20 @@ MAX - https://bizvmax.ru/zifra_plus
     data.meta.frdoUploadDeadlinePolicyVersion = FRDO_UPLOAD_DEADLINE_POLICY_VERSION;
     delete data.dictionaries.moodlePortalUrls;
     data.collections = data.collections || {};
+    data.collections.recycleBin = (Array.isArray(data.collections.recycleBin)
+      ? data.collections.recycleBin
+      : [])
+      .filter((item) => (
+        item
+        && typeof item === "object"
+        && !Array.isArray(item)
+        && String(item.id || "").trim()
+        && String(item.collection || "").trim()
+        && item.record
+        && typeof item.record === "object"
+        && !Array.isArray(item.record)
+        && String(item.record.id || item.recordId || "").trim()
+      ));
     data.collections.programs = mergeProgramPaymentRegistry(data, mergeProgramRegistry(data))
       .map((program) => normalizeProgramRecord(program));
     Object.entries(PROGRAM_DICTIONARY_FIELDS).forEach(([fieldKey, dictionaryKey]) => {
@@ -10732,6 +10755,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (state.view === "advertising") return renderAdvertising();
     if (state.view === "issuedDocuments") return renderIssuedDocumentsRegistry();
     if (state.view === "documentConstructor") return renderDocumentConstructor();
+    if (state.view === "recycleBin") return renderRecycleBin();
     if (state.view === "settings") return renderSettings();
     if (state.view === "admin") return renderAdmin();
     const config = configs[state.view];
@@ -14114,6 +14138,109 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           ${renderTablePagination("issuedDocuments", rows.length, pagination)}
         ` : `<div class="empty-state"><strong>${allRows.length ? "По заданным фильтрам документов нет" : "Выданных документов пока нет"}</strong><span>${allRows.length ? "Измените или сбросьте фильтры." : "Записи появятся после заполнения номера документа или даты выдачи в карточке слушателя."}</span></div>`}
+      </section>
+    `;
+  }
+
+  function getRecycleBinItemLabel(item = {}) {
+    const record = item.record && typeof item.record === "object" ? item.record : {};
+    return String(
+      item.label
+      || record.name
+      || record.contractNo
+      || record.code
+      || record.itemType
+      || item.recordId
+      || record.id
+      || "Запись"
+    ).trim() || "Запись";
+  }
+
+  function getRecycleBinItemTypeLabel(item = {}) {
+    const config = configs[String(item.configId || "")];
+    if (config?.title) return config.title;
+    const collectionLabels = {
+      students: "Слушатели",
+      contracts: "Сотрудники",
+      programs: "Программы",
+      generalExpenses: "Общие затраты",
+      directExpenses: "Прямые затраты",
+      inventory: "Запасы"
+    };
+    return collectionLabels[String(item.collection || "")] || String(item.collection || "Запись");
+  }
+
+  function getRecycleBinDeletedByLabel(item = {}) {
+    const deletedBy = item.deletedBy && typeof item.deletedBy === "object"
+      ? item.deletedBy
+      : {};
+    return String(deletedBy.name || deletedBy.login || item.deletedBy || "Неизвестно").trim() || "Неизвестно";
+  }
+
+  function renderRecycleBin() {
+    const rows = [...(state.data.collections.recycleBin || [])]
+      .sort((left, right) => String(right.deletedAt || "").localeCompare(String(left.deletedAt || "")));
+    return `
+      <section class="panel recycle-bin-panel" data-recycle-bin>
+        <div class="section-head recycle-bin-head">
+          <div>
+            <p class="eyebrow">Защита от случайного удаления</p>
+            <h2>Корзина</h2>
+            <p class="recycle-bin-description">Восстановление возвращает запись со всеми сохранёнными полями. Безвозвратное удаление доступно только администратору.</p>
+          </div>
+          <span class="recycle-bin-count">${rows.length}</span>
+        </div>
+        ${rows.length ? `
+          <div class="table-wrap recycle-bin-table-wrap">
+            <table class="data-table recycle-bin-table">
+              <thead>
+                <tr>
+                  <th>Раздел</th>
+                  <th>Запись</th>
+                  <th>Удалена</th>
+                  <th>Кем удалена</th>
+                  <th class="recycle-bin-actions-column">Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map((item) => `
+                  <tr>
+                    <td><span class="recycle-bin-type">${escapeHtml(getRecycleBinItemTypeLabel(item))}</span></td>
+                    <td>
+                      <strong class="recycle-bin-item-label">${escapeHtml(getRecycleBinItemLabel(item))}</strong>
+                      <small class="recycle-bin-item-id">${escapeHtml(String(item.recordId || item.record?.id || ""))}</small>
+                    </td>
+                    <td>${escapeHtml(formatDateTimeRu(item.deletedAt) || "—")}</td>
+                    <td>${escapeHtml(getRecycleBinDeletedByLabel(item))}</td>
+                    <td>
+                      <div class="recycle-bin-actions">
+                        <button
+                          class="ghost-button compact-button"
+                          data-action="restore-recycle-bin-item"
+                          data-recycle-bin-id="${escapeAttr(item.id)}"
+                          type="button"
+                        >Восстановить</button>
+                        ${isAdminUser() ? `
+                          <button
+                            class="danger-button compact-button"
+                            data-action="permanently-delete-recycle-bin-item"
+                            data-recycle-bin-id="${escapeAttr(item.id)}"
+                            type="button"
+                          >Удалить навсегда</button>
+                        ` : ""}
+                      </div>
+                    </td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        ` : `
+          <div class="empty-state recycle-bin-empty">
+            <strong>Корзина пуста</strong>
+            <span>Удалённые записи появятся здесь и останутся доступными для восстановления.</span>
+          </div>
+        `}
       </section>
     `;
   }
@@ -34290,6 +34417,20 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", () => deleteRecord(button.dataset.config, button.dataset.id));
     });
 
+    document.querySelectorAll("[data-action='restore-recycle-bin-item']").forEach((button) => {
+      button.addEventListener("click", () => restoreRecycleBinItem(
+        button.dataset.recycleBinId,
+        button
+      ));
+    });
+
+    document.querySelectorAll("[data-action='permanently-delete-recycle-bin-item']").forEach((button) => {
+      button.addEventListener("click", () => permanentlyDeleteRecycleBinItem(
+        button.dataset.recycleBinId,
+        button
+      ));
+    });
+
     document.querySelectorAll("[data-action='toggle-table-options']").forEach((button) => {
       button.addEventListener("click", () => {
         state.tableOptions = state.tableOptions === button.dataset.config ? null : button.dataset.config;
@@ -45592,6 +45733,193 @@ MAX - https://bizvmax.ru/zifra_plus
     return "";
   }
 
+  function getRecycleBinRelatedExpensesByRecord(records = []) {
+    const sourceRecords = (Array.isArray(records) ? records : [])
+      .filter((record) => record && typeof record === "object");
+    const selectedIds = new Set(sourceRecords
+      .map((record) => String(record.id || "").trim())
+      .filter(Boolean));
+    const retainedUids = new Set((state.data.collections.students || [])
+      .filter((record) => !selectedIds.has(String(record?.id || "").trim()))
+      .map((record) => String(record?.uid || "").trim())
+      .filter(Boolean));
+    const globalDirectExpenses = state.data.collections.directExpenses || [];
+    return new Map(sourceRecords.map((record) => {
+      const uid = String(record.uid || "").trim();
+      const related = uid && !retainedUids.has(uid)
+        ? globalDirectExpenses.filter((expense) => String(expense?.uid || "").trim() === uid)
+        : [];
+      return [String(record.id || "").trim(), clone(related)];
+    }));
+  }
+
+  function createRecycleBinItem(configId, record, originalIndex, relatedGlobalDirectExpenses = []) {
+    const config = configs[configId];
+    const authUser = getCurrentAuthUser();
+    const recordId = String(record?.id || "").trim();
+    return {
+      id: makeId("trash"),
+      configId,
+      collection: config.collection,
+      recordId,
+      originalIndex: Math.max(0, Number(originalIndex) || 0),
+      label: String(record?.name || record?.contractNo || record?.code || record?.itemType || recordId).trim(),
+      record: clone(record),
+      related: {
+        globalDirectExpenses: clone(relatedGlobalDirectExpenses)
+      },
+      deletedAt: new Date().toISOString(),
+      deletedBy: {
+        id: String(authUser.id || "").trim(),
+        login: String(authUser.login || "").trim(),
+        name: String(authUser.name || "").trim(),
+        role: String(authUser.role || "").trim()
+      }
+    };
+  }
+
+  function setRecycleBinMutationRunning(running, message = "Обновление корзины…") {
+    document.querySelector("[data-recycle-bin-operation-blocker]")?.remove();
+    document.body.classList.toggle("recycle-bin-operation-running", Boolean(running));
+    if ("inert" in app) app.inert = Boolean(running);
+    if (!running) return;
+    document.activeElement?.blur?.();
+    const blocker = document.createElement("div");
+    blocker.className = "recycle-bin-operation-blocker";
+    blocker.dataset.recycleBinOperationBlocker = "";
+    blocker.setAttribute("role", "status");
+    blocker.setAttribute("aria-live", "assertive");
+    blocker.innerHTML = `<span class="recycle-bin-operation-spinner" aria-hidden="true"></span><strong>${escapeHtml(message)}</strong>`;
+    document.body.appendChild(blocker);
+  }
+
+  async function flushChangesCreatedDuringRecycleBinMutation(initialGeneration) {
+    let observedGeneration = Math.max(0, Number(initialGeneration) || 0);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const targetGeneration = sharedStateChangeGeneration;
+      if (!sharedStateDirty && targetGeneration === observedGeneration) return true;
+      if (!await flushSharedApplicationStateThroughGeneration(targetGeneration)) return false;
+      observedGeneration = targetGeneration;
+      if (!sharedStateDirty && sharedStateChangeGeneration === targetGeneration) return true;
+    }
+    return false;
+  }
+
+  async function restoreRecycleBinItem(id, trigger = null) {
+    const trashId = String(id || "").trim();
+    const item = (state.data.collections.recycleBin || [])
+      .find((entry) => String(entry?.id || "").trim() === trashId);
+    if (!item) {
+      alert("Запись уже отсутствует в корзине. Данные будут обновлены с сервера.");
+      await reloadSharedApplicationState({ renderAfter: true }).catch(() => {});
+      return;
+    }
+    if (!confirm(`Восстановить запись «${getRecycleBinItemLabel(item)}»?`)) return;
+    if (trigger) {
+      trigger.disabled = true;
+      trigger.setAttribute("aria-busy", "true");
+    }
+    setRecycleBinMutationRunning(true, "Восстановление записи…");
+    let serverMutationCompleted = false;
+    try {
+      if (!await flushSharedApplicationState()) {
+        throw new Error("не удалось передать ожидающие изменения в общую базу");
+      }
+      const operationGeneration = sharedStateChangeGeneration;
+      await authRequest("/api/trash/restore", {
+        method: "POST",
+        body: JSON.stringify({ id: trashId, baseRevision: sharedStateRevision })
+      });
+      serverMutationCompleted = true;
+      if (!await flushChangesCreatedDuringRecycleBinMutation(operationGeneration)) {
+        throw new Error("не удалось сохранить изменения, выполненные одновременно с восстановлением");
+      }
+      await reloadSharedApplicationState({ renderAfter: false });
+      render();
+    } catch (error) {
+      const savedConcurrentChanges = await flushSharedApplicationState().catch(() => false);
+      if (savedConcurrentChanges && !sharedStateDirty) {
+        await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
+      }
+      render();
+      alert(serverMutationCompleted
+        ? `Запись восстановлена на сервере, но интерфейс пока не обновлён: ${error.message}`
+        : `Запись не восстановлена: ${error.message}`);
+    } finally {
+      setRecycleBinMutationRunning(false);
+      if (trigger?.isConnected) {
+        trigger.disabled = false;
+        trigger.removeAttribute("aria-busy");
+      }
+    }
+  }
+
+  async function permanentlyDeleteRecycleBinItem(id, trigger = null) {
+    if (!isAdminUser()) {
+      alert("Безвозвратное удаление из корзины доступно только администратору.");
+      return;
+    }
+    const trashId = String(id || "").trim();
+    const item = (state.data.collections.recycleBin || [])
+      .find((entry) => String(entry?.id || "").trim() === trashId);
+    if (!item) {
+      alert("Запись уже отсутствует в корзине. Данные будут обновлены с сервера.");
+      await reloadSharedApplicationState({ renderAfter: true }).catch(() => {});
+      return;
+    }
+    if (!confirm(
+      `Безвозвратно удалить запись «${getRecycleBinItemLabel(item)}»?\n\n`
+      + "После этого восстановление будет невозможно."
+    )) return;
+    const phrase = prompt("Для второго подтверждения введите точную фразу: Удалить");
+    if (phrase !== "Удалить") {
+      if (phrase !== null) alert("Фраза не совпала. Запись осталась в корзине.");
+      return;
+    }
+    if (trigger) {
+      trigger.disabled = true;
+      trigger.setAttribute("aria-busy", "true");
+    }
+    setRecycleBinMutationRunning(true, "Безвозвратное удаление…");
+    let serverMutationCompleted = false;
+    try {
+      if (!await flushSharedApplicationState()) {
+        throw new Error("не удалось передать ожидающие изменения в общую базу");
+      }
+      const operationGeneration = sharedStateChangeGeneration;
+      await authRequest("/api/admin/trash/permanent-delete", {
+        method: "POST",
+        body: JSON.stringify({
+          id: trashId,
+          baseRevision: sharedStateRevision,
+          confirmed: true,
+          confirmationPhrase: phrase
+        })
+      });
+      serverMutationCompleted = true;
+      if (!await flushChangesCreatedDuringRecycleBinMutation(operationGeneration)) {
+        throw new Error("не удалось сохранить изменения, выполненные одновременно с удалением");
+      }
+      await reloadSharedApplicationState({ renderAfter: false });
+      render();
+    } catch (error) {
+      const savedConcurrentChanges = await flushSharedApplicationState().catch(() => false);
+      if (savedConcurrentChanges && !sharedStateDirty) {
+        await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
+      }
+      render();
+      alert(serverMutationCompleted
+        ? `Запись удалена на сервере, но интерфейс пока не обновлён: ${error.message}`
+        : `Запись не удалена из корзины: ${error.message}`);
+    } finally {
+      setRecycleBinMutationRunning(false);
+      if (trigger?.isConnected) {
+        trigger.disabled = false;
+        trigger.removeAttribute("aria-busy");
+      }
+    }
+  }
+
   async function deleteRecord(configId, id) {
     if (configId === "documentTemplates") {
       await removeDocumentTemplate(id);
@@ -45609,27 +45937,27 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!await acquireRecordLock(recordLockEntityType(configId), id)) return;
     const deleteLock = activeRecordLock;
     const deleteQuestion = configId === "students"
-      ? "Удалить слушателя? Связанные с ним затраты и поступления денег также будут удалены."
-      : "Удалить запись?";
+      ? "Переместить слушателя в корзину? Запись и связанные данные можно будет восстановить."
+      : "Переместить запись в корзину?";
     if (!confirm(deleteQuestion)) {
       await releaseRecordLock(deleteLock);
       return;
     }
-    if (["students", "contracts"].includes(configId) && record.photoPath) {
-      try {
-        await deleteStoredPhoto(record.photoPath);
-      } catch (error) {
-        alert("Запись не удалена: не удалось удалить фото из хранилища. " + error.message);
-        await releaseRecordLock(deleteLock);
-        return;
-      }
-    }
+    const originalIndex = rows.indexOf(record);
+    const relatedExpenses = configId === "students"
+      ? getRecycleBinRelatedExpensesByRecord([record]).get(normalizedId) || []
+      : [];
+    const trashItem = createRecycleBinItem(configId, record, originalIndex, relatedExpenses);
     const financialCascade = configId === "students"
       ? removeStudentFinancialRecords([record])
       : null;
     state.data.collections[config.collection] = rows.filter((row) => (
       String(row?.id || "").trim() !== normalizedId
     ));
+    state.data.collections.recycleBin = [
+      ...(state.data.collections.recycleBin || []),
+      trashItem
+    ];
     if (configId === "students") {
       refreshContractPaymentAccountingForCollections(state.data.collections);
     }
@@ -45637,7 +45965,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const auditDetails = financialCascade
       ? `${entityLabel}; ${getStudentFinancialCascadeDetails(financialCascade)}`
       : entityLabel;
-    addAudit("Удалена запись", config.title, auditDetails, {
+    addAudit("Перемещена в корзину", config.title, auditDetails, {
       entityType: config.collection,
       entityId: normalizedId,
       entityLabel,
@@ -45688,8 +46016,8 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     }
     const bulkDeleteQuestion = configId === "students"
-      ? `Удалить выбранных слушателей: ${selected.length}? Связанные с ними затраты и поступления денег также будут удалены.`
-      : `Удалить выбранные записи: ${selected.length}?`;
+      ? `Переместить выбранных слушателей в корзину: ${selected.length}? Записи и связанные данные можно будет восстановить.`
+      : `Переместить выбранные записи в корзину: ${selected.length}?`;
     if (!confirm(bulkDeleteQuestion)) return;
     const selectedSet = new Set(selected);
     if (configId === "documentTemplates") {
@@ -45720,20 +46048,25 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
       return;
     }
-    let financialCascade = null;
-    if (["students", "contracts"].includes(configId)) {
-      try {
-        for (const record of selectedRecords) {
-          if (record.photoPath) await deleteStoredPhoto(record.photoPath);
-        }
-      } catch (error) {
-        alert("Записи не удалены: не удалось удалить фото из хранилища. " + error.message);
-        return;
-      }
-      if (configId === "students") financialCascade = removeStudentFinancialRecords(selectedRecords);
-    }
+    const sourceRows = state.data.collections[config.collection] || [];
+    const relatedExpensesByRecord = configId === "students"
+      ? getRecycleBinRelatedExpensesByRecord(selectedRecords)
+      : new Map();
+    const trashItems = selectedRecords.map((record) => createRecycleBinItem(
+      configId,
+      record,
+      sourceRows.indexOf(record),
+      relatedExpensesByRecord.get(String(record?.id || "").trim()) || []
+    ));
+    const financialCascade = configId === "students"
+      ? removeStudentFinancialRecords(selectedRecords)
+      : null;
     state.data.collections[config.collection] = (state.data.collections[config.collection] || [])
       .filter((row) => !selectedSet.has(String(row?.id || "").trim()));
+    state.data.collections.recycleBin = [
+      ...(state.data.collections.recycleBin || []),
+      ...trashItems
+    ];
     if (configId === "students") {
       refreshContractPaymentAccountingForCollections(state.data.collections);
     }
@@ -45741,7 +46074,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const bulkAuditDetails = financialCascade
       ? `${selected.length} записей; ${getStudentFinancialCascadeDetails(financialCascade)}`
       : `${selected.length} записей`;
-    addAudit("Массовое удаление", config.title, bulkAuditDetails, {
+    addAudit("Массовое перемещение в корзину", config.title, bulkAuditDetails, {
       entityType: config.collection,
       entityId: selected.join(", "),
       changes: getStudentFinancialCascadeAuditChanges(financialCascade)

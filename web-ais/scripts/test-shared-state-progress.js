@@ -34,7 +34,8 @@ assert.match(stylesSource, /\.shared-state-pill\.has-progress/u);
 assert.match(stylesSource, /\.shared-state-progress-track/u);
 assert.match(stylesSource, /@keyframes shared-state-progress-stripes/u);
 assert.match(stylesSource, /\.shared-state-startup-progress/u);
-assert.match(indexSource, /20260827-latest-credentials-v1/u);
-assert.match(authBootstrapSource, /const AUTH_BUILD = "20260827-latest-credentials-v1"/u);
+const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authBootstrapSource)?.[1] || "";
+assert.ok(authBuild, "Не найден идентификатор сборки загрузчика");
+assert.match(indexSource, new RegExp(`(?:styles\\.css|auth-bootstrap\\.js)\\?v=${authBuild}`, "u"));
 
 console.log("Shared MySQL state progress tests passed.");

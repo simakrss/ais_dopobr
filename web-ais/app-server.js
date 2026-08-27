@@ -5987,6 +5987,52 @@ function applySharedApplicationStatePatch(currentData, patch) {
   return normalizeSharedApplicationData(next);
 }
 
+const RECYCLE_BIN_COLLECTION = "recycleBin";
+
+function sharedApplicationCollectionRows(data, collectionName) {
+  const rows = data?.collections?.[collectionName];
+  return Array.isArray(rows) ? rows : [];
+}
+
+function sharedApplicationStateOperationCanChangeRecycleBin(operation) {
+  if (operation?.data) return true;
+  const change = operation?.patch?.collections?.[RECYCLE_BIN_COLLECTION];
+  return Boolean(change && (
+    Array.isArray(change.replace)
+    || (change.deletes || []).length
+    || (change.upserts || []).length
+  ));
+}
+
+function assertSharedApplicationStateKeepsRecycleBin(currentData, nextData) {
+  const rowsById = (data) => new Map(sharedApplicationCollectionRows(data, RECYCLE_BIN_COLLECTION)
+    .map((record) => [String(record?.id || "").trim(), record])
+    .filter(([id]) => id));
+  const currentById = rowsById(currentData);
+  if (!currentById.size) return;
+  const nextById = rowsById(nextData);
+  const protectedIds = [...currentById].filter(([id, record]) => (
+    !nextById.has(id)
+    || JSON.stringify(nextById.get(id)) !== JSON.stringify(record)
+  )).map(([id]) => id);
+  if (!protectedIds.length) return;
+  const error = new Error(
+    "Удалять или изменять элементы корзины через общую синхронизацию запрещено. "
+      + "Используйте восстановление или административное безвозвратное удаление."
+  );
+  error.statusCode = 403;
+  error.code = "RECYCLE_BIN_PROTECTED";
+  throw error;
+}
+
+function assertSharedApplicationStateOperationKeepsRecycleBin(currentData, operation) {
+  if (!sharedApplicationStateOperationCanChangeRecycleBin(operation)) return;
+  const nextData = operation.data
+    ? normalizeSharedApplicationData(operation.data)
+    : applySharedApplicationStatePatch(currentData, operation.patch);
+  assertSharedApplicationStateKeepsRecycleBin(currentData, nextData);
+}
+
 function getSharedApplicationStatePatchRecordKeys(patch) {
   const keys = Array.isArray(patch?.recordKeys) ? patch.recordKeys.map(String) : [];
   for (const [collectionName, change] of Object.entries(patch?.collections || {})) {
@@ -8595,6 +8641,16 @@ async function saveSharedApplicationStateMySqlOperation(pool, operation, authUse
     if (!metaRows.length && !suppliedData) {
       throw new Error("Общая база ещё не создана.");
     }
+    if (metaRows.length && sharedApplicationStateOperationCanChangeRecycleBin({
+      patch,
+      data: suppliedData
+    })) {
+      const current = await readSharedApplicationStateMySqlDocument(pool, connection);
+      assertSharedApplicationStateOperationKeepsRecycleBin(current.document.data, {
+        patch,
+        data: suppliedData
+      });
+    }
     if (suppliedData) await replaceSharedApplicationStateMySqlEntries(connection, suppliedData);
     else await applySharedApplicationStateMySqlPatch(connection, patch);
     const nextRevision = currentRevision + 1;
@@ -8668,6 +8724,7 @@ async function queueSharedApplicationStateOfflineOperation(operation, authUser, 
   const baseData = current?.data || suppliedData;
   if (!baseData) throw new Error("Нет локальной копии общей базы для автономной работы.");
   const data = patch ? applySharedApplicationStatePatch(baseData, patch) : suppliedData;
+  if (current?.data) assertSharedApplicationStateKeepsRecycleBin(current.data, data);
   const revision = Math.max(0, Number(current?.revision) || Number(operation.baseRevision) || 0) + 1;
   const updatedAt = new Date().toISOString();
   const updatedBy = String(authUser?.login || authUser?.name || operation.updatedBy || "offline").slice(0, 160);
@@ -9368,6 +9425,9 @@ async function saveLegacySharedApplicationState(body, authUser, options = {}) {
       const data = patch
         ? applySharedApplicationStatePatch(baseData, patch)
         : suppliedData;
+      if (current.document?.data) {
+        assertSharedApplicationStateKeepsRecycleBin(current.document.data, data);
+      }
       const merged = Boolean(patch && requestedRevision !== currentRevision);
       const document = {
         schemaVersion: 1,
@@ -9604,10 +9664,434 @@ async function saveSharedApplicationState(body, authUser) {
     }
     return result;
   } catch (error) {
-    if (operation.strictRevision || Number(error?.statusCode) === 423 || requestedSyncToken) throw error;
+    if (
+      operation.strictRevision
+      || Number(error?.statusCode) === 423
+      || error?.code === "RECYCLE_BIN_PROTECTED"
+      || requestedSyncToken
+    ) throw error;
     sharedStateMySqlUnavailableUntil = Date.now() + SHARED_STATE_MYSQL_OFFLINE_RETRY_MS;
     console.warn(`Общая MySQL-база недоступна, изменение поставлено в очередь: ${error.message}`);
     return queueSharedApplicationStateOfflineOperation(operation, authUser);
+  }
+}
+
+function recycleBinHttpError(message, statusCode = 400, code = "") {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  if (code) error.publicCode = code;
+  return error;
+}
+
+function normalizeRecycleBinRequest(body, permanentDelete = false) {
+  const id = String(body?.id || "").replaceAll("\0", "").trim();
+  if (!id || id.length > 191 || /[\r\n]/u.test(id)) {
+    throw recycleBinHttpError("Не указан элемент корзины.");
+  }
+  const revisionValue = body?.baseRevision;
+  const rawRevision = Number(revisionValue);
+  if (
+    revisionValue === null
+    || revisionValue === ""
+    || typeof revisionValue === "boolean"
+    || !Number.isInteger(rawRevision)
+    || rawRevision < 0
+  ) {
+    throw recycleBinHttpError("Не указана ревизия общей базы.");
+  }
+  if (permanentDelete) {
+    const confirmationPhrase = String(body?.confirmationPhrase ?? body?.phrase ?? "");
+    if (body?.confirmed !== true || confirmationPhrase !== "Удалить") {
+      throw recycleBinHttpError(
+        "Безвозвратное удаление не подтверждено фразой «Удалить».",
+        400,
+        "TRASH_CONFIRMATION_REQUIRED"
+      );
+    }
+  }
+  return { id, baseRevision: rawRevision };
+}
+
+function findRecycleBinItem(data, id) {
+  const rows = sharedApplicationCollectionRows(data, RECYCLE_BIN_COLLECTION);
+  const indexes = rows.flatMap((item, index) => (
+    String(item?.id || "").trim() === id ? [index] : []
+  ));
+  if (!indexes.length) {
+    throw recycleBinHttpError("Элемент корзины не найден.", 404, "TRASH_ITEM_NOT_FOUND");
+  }
+  if (indexes.length !== 1) {
+    throw recycleBinHttpError(
+      "В корзине найдены дубли элемента. Операция остановлена.",
+      409,
+      "TRASH_ITEM_DUPLICATE"
+    );
+  }
+  return { rows, index: indexes[0], item: rows[indexes[0]] };
+}
+
+function buildRecycleBinRestoreMutation(sourceData, id) {
+  const data = normalizeSharedApplicationData(sourceData);
+  const found = findRecycleBinItem(data, id);
+  const item = found.item;
+  const collection = String(item?.collection || "").trim();
+  if (
+    !/^[A-Za-z0-9_-]{1,120}$/u.test(collection)
+    || collection === RECYCLE_BIN_COLLECTION
+  ) {
+    throw recycleBinHttpError(
+      "Элемент корзины повреждён: не указан раздел восстановления.",
+      409,
+      "TRASH_ITEM_INVALID"
+    );
+  }
+  if (!item?.record || typeof item.record !== "object" || Array.isArray(item.record)) {
+    throw recycleBinHttpError(
+      "Элемент корзины повреждён: нет снимка записи.",
+      409,
+      "TRASH_ITEM_INVALID"
+    );
+  }
+  const recordId = String(item.record.id || "").trim();
+  if (!recordId || recordId.length > 191) {
+    throw recycleBinHttpError(
+      "Элемент корзины повреждён: нет идентификатора записи.",
+      409,
+      "TRASH_ITEM_INVALID"
+    );
+  }
+  if (item.recordId && String(item.recordId).trim() !== recordId) {
+    throw recycleBinHttpError(
+      "Элемент корзины повреждён: идентификаторы записи не совпадают.",
+      409,
+      "TRASH_ITEM_INVALID"
+    );
+  }
+  const targetRows = sharedApplicationCollectionRows(data, collection);
+  if (targetRows.some((record) => String(record?.id || "").trim() === recordId)) {
+    throw recycleBinHttpError(
+      "В активном разделе уже есть запись с таким идентификатором.",
+      409,
+      "TRASH_RECORD_COLLISION"
+    );
+  }
+  const relatedExpenses = item?.related?.globalDirectExpenses === undefined
+    ? []
+    : item.related.globalDirectExpenses;
+  if (!Array.isArray(relatedExpenses)) {
+    throw recycleBinHttpError(
+      "Элемент корзины повреждён: некорректны связанные затраты.",
+      409,
+      "TRASH_ITEM_INVALID"
+    );
+  }
+  const expenseIds = new Set();
+  for (const expense of relatedExpenses) {
+    const expenseId = String(expense?.id || "").trim();
+    if (!expense || typeof expense !== "object" || Array.isArray(expense) || !expenseId) {
+      throw recycleBinHttpError(
+        "Элемент корзины повреждён: связанные затраты не имеют идентификатора.",
+        409,
+        "TRASH_ITEM_INVALID"
+      );
+    }
+    if (expenseIds.has(expenseId) || (collection === "directExpenses" && expenseId === recordId)) {
+      throw recycleBinHttpError(
+        "В снимке корзины найдены дубли связанных затрат.",
+        409,
+        "TRASH_EXPENSE_COLLISION"
+      );
+    }
+    expenseIds.add(expenseId);
+  }
+  const activeExpenses = sharedApplicationCollectionRows(data, "directExpenses");
+  const activeExpensesById = new Map(activeExpenses
+    .map((expense) => [String(expense?.id || "").trim(), expense])
+    .filter(([expenseId]) => expenseId));
+  const expensesToRestore = [];
+  for (const expense of relatedExpenses) {
+    const expenseId = String(expense.id || "").trim();
+    const activeExpense = activeExpensesById.get(expenseId);
+    if (!activeExpense) {
+      expensesToRestore.push(expense);
+      continue;
+    }
+    if (JSON.stringify(activeExpense) !== JSON.stringify(expense)) {
+      throw recycleBinHttpError(
+        "Одна из связанных затрат уже есть в активной базе с другими данными.",
+        409,
+        "TRASH_EXPENSE_COLLISION"
+      );
+    }
+  }
+
+  const restoredTargetRows = [...targetRows];
+  const originalIndex = Number.isInteger(Number(item.originalIndex))
+    ? Math.max(0, Math.min(restoredTargetRows.length, Number(item.originalIndex)))
+    : restoredTargetRows.length;
+  restoredTargetRows.splice(originalIndex, 0, JSON.parse(JSON.stringify(item.record)));
+  data.collections[collection] = restoredTargetRows;
+  if (expensesToRestore.length) {
+    const restoredExpenses = collection === "directExpenses"
+      ? data.collections.directExpenses
+      : [...activeExpenses];
+    restoredExpenses.push(...JSON.parse(JSON.stringify(expensesToRestore)));
+    data.collections.directExpenses = restoredExpenses;
+  }
+  data.collections[RECYCLE_BIN_COLLECTION] = found.rows.filter((unused, index) => index !== found.index);
+  return {
+    data,
+    summary: {
+      id,
+      collection,
+      recordId,
+      label: String(item.label || item.record.fullName || item.record.name || recordId).slice(0, 500),
+      restoredExpenses: expensesToRestore.length
+    }
+  };
+}
+
+function buildRecycleBinPermanentDeleteMutation(sourceData, id) {
+  const data = normalizeSharedApplicationData(sourceData);
+  const found = findRecycleBinItem(data, id);
+  const item = found.item;
+  data.collections[RECYCLE_BIN_COLLECTION] = found.rows.filter((unused, index) => index !== found.index);
+  return {
+    data,
+    summary: {
+      id,
+      collection: String(item?.collection || "").trim(),
+      recordId: String(item?.record?.id || item?.recordId || "").trim(),
+      label: String(item?.label || item?.record?.fullName || item?.record?.name || id).slice(0, 500)
+    }
+  };
+}
+
+async function mutateRecycleBinLegacy(request, authUser, mutator) {
+  return enqueueSharedApplicationStateWrite(async () => {
+    if (getActiveStudentDatabaseSyncReservation()) {
+      throw recycleBinHttpError(
+        "Общая база временно заблокирована на время завершения синхронизации XLSB.",
+        423,
+        "SHARED_STATE_LOCKED"
+      );
+    }
+    const current = await readLegacySharedApplicationStateDocument({ allowCache: false });
+    const currentRevision = current.document?.revision || 0;
+    if (request.baseRevision !== currentRevision) {
+      throw recycleBinHttpError(
+        "Общая база уже изменена другим пользователем.",
+        409,
+        "SHARED_STATE_CONFLICT"
+      );
+    }
+    if (!current.document?.data) {
+      throw recycleBinHttpError("Общая база ещё не создана.", 409);
+    }
+    const mutation = mutator(current.document.data, request.id);
+    const updatedAt = new Date().toISOString();
+    const updatedBy = String(authUser?.login || authUser?.name || "system").slice(0, 160);
+    const document = {
+      schemaVersion: 2,
+      revision: currentRevision + 1,
+      updatedAt,
+      updatedBy,
+      data: mutation.data
+    };
+    const writeResult = await writeLegacySharedApplicationStateDocument(current, document);
+    if (!writeResult.saved) {
+      throw recycleBinHttpError(
+        "Общая база уже изменена другим пользователем.",
+        409,
+        "SHARED_STATE_CONFLICT"
+      );
+    }
+    return {
+      revision: document.revision,
+      versionTag: writeResult.versionTag,
+      updatedAt,
+      updatedBy,
+      source: "local",
+      summary: mutation.summary
+    };
+  });
+}
+
+async function mutateRecycleBinMySql(request, authUser, mutator) {
+  let pool;
+  try {
+    const syncResult = await flushSharedApplicationStateOfflineQueue({ force: true });
+    if (Number(syncResult?.pendingCount) > 0) {
+      throw recycleBinHttpError(
+        "Операция недоступна, пока в общей базе есть ожидающие синхронизации изменения.",
+        409,
+        "SHARED_STATE_PENDING"
+      );
+    }
+    pool = await getSharedRecordLocksMySqlPool();
+    if (!pool) throw new Error("MySQL для общей базы не настроен.");
+    await ensureSharedApplicationStateMySqlDocument(pool);
+  } catch (error) {
+    if (error?.statusCode) throw error;
+    throw recycleBinHttpError(
+      `Общая MySQL-база недоступна: ${error.message}`,
+      503,
+      "SHARED_STATE_UNAVAILABLE"
+    );
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+  } catch (error) {
+    throw recycleBinHttpError(
+      `Общая MySQL-база недоступна: ${error.message}`,
+      503,
+      "SHARED_STATE_UNAVAILABLE"
+    );
+  }
+  try {
+    await connection.beginTransaction();
+    const [metaRows] = await connection.query(
+      `SELECT revision, updated_at, updated_by
+         FROM ais_shared_state_meta
+        WHERE state_key = ?
+        FOR UPDATE`,
+      [SHARED_STATE_MYSQL_KEY]
+    );
+    if (getActiveStudentDatabaseSyncReservation()) {
+      throw recycleBinHttpError(
+        "Общая база временно заблокирована на время завершения синхронизации XLSB.",
+        423,
+        "SHARED_STATE_LOCKED"
+      );
+    }
+    const currentRevision = Math.max(0, Math.floor(Number(metaRows[0]?.revision) || 0));
+    if (request.baseRevision !== currentRevision) {
+      throw recycleBinHttpError(
+        "Общая база уже изменена другим пользователем.",
+        409,
+        "SHARED_STATE_CONFLICT"
+      );
+    }
+    if (!metaRows.length) {
+      throw recycleBinHttpError("Общая база ещё не создана.", 409);
+    }
+    const current = await readSharedApplicationStateMySqlDocument(pool, connection);
+    const mutation = mutator(current.document.data, request.id);
+    await replaceSharedApplicationStateMySqlEntries(connection, mutation.data);
+    const nextRevision = currentRevision + 1;
+    const updatedAt = new Date().toISOString();
+    const updatedBy = String(authUser?.login || authUser?.name || "system").slice(0, 160);
+    await connection.query(
+      `INSERT INTO ais_shared_state_meta
+        (state_key, revision, updated_at, updated_by)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         revision = VALUES(revision),
+         updated_at = VALUES(updated_at),
+         updated_by = VALUES(updated_by)`,
+      [SHARED_STATE_MYSQL_KEY, nextRevision, new Date(updatedAt), updatedBy]
+    );
+    await connection.commit();
+    await writeSharedApplicationStateCache({
+      schemaVersion: 2,
+      revision: nextRevision,
+      updatedAt,
+      updatedBy,
+      data: mutation.data
+    }).catch(() => {});
+    sharedStateMySqlUnavailableUntil = 0;
+    return {
+      revision: nextRevision,
+      versionTag: sharedApplicationStateMySqlVersionTag(nextRevision),
+      updatedAt,
+      updatedBy,
+      source: "mysql",
+      summary: mutation.summary
+    };
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    if (!error?.statusCode && isMySqlConnectivityError(error)) {
+      throw recycleBinHttpError(
+        `Общая MySQL-база недоступна: ${error.message}`,
+        503,
+        "SHARED_STATE_UNAVAILABLE"
+      );
+    }
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function mutateRecycleBin(request, authUser, mutator) {
+  if (getActiveStudentDatabaseSyncReservation()) {
+    throw recycleBinHttpError(
+      "Общая база временно заблокирована на время завершения синхронизации XLSB.",
+      423,
+      "SHARED_STATE_LOCKED"
+    );
+  }
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+    return mutateRecycleBinLegacy(request, authUser, mutator);
+  }
+  return mutateRecycleBinMySql(request, authUser, mutator);
+}
+
+async function handleRecycleBinRequest(req, res, authUser, requestUrl) {
+  const permanentDelete = requestUrl.pathname === "/api/admin/trash/permanent-delete";
+  try {
+    if (req.method !== "POST") {
+      sendError(res, 405, "Method not allowed");
+      return;
+    }
+    if (authUser?.role === "partner") {
+      sendError(res, 403, "Раздел недоступен в кабинете партнёра.");
+      return;
+    }
+    if (permanentDelete && authUser?.role !== "admin") {
+      sendError(res, 403, "Удалять из корзины может только администратор.");
+      return;
+    }
+    const request = normalizeRecycleBinRequest(await readJsonBody(req), permanentDelete);
+    const result = await mutateRecycleBin(
+      request,
+      authUser,
+      permanentDelete
+        ? buildRecycleBinPermanentDeleteMutation
+        : buildRecycleBinRestoreMutation
+    );
+    const summary = result.summary;
+    await safelyAppendAuditEntry({
+      action: permanentDelete
+        ? "Безвозвратно удалён элемент корзины"
+        : "Восстановлена запись из корзины",
+      area: "Корзина",
+      entityType: permanentDelete ? RECYCLE_BIN_COLLECTION : summary.collection,
+      entityId: permanentDelete ? summary.id : summary.recordId,
+      entityLabel: summary.label,
+      details: permanentDelete
+        ? `Элемент корзины: ${summary.id}; раздел: ${summary.collection}.`
+        : `Элемент корзины: ${summary.id}; восстановлено связанных затрат: ${summary.restoredExpenses}`,
+      source: "recycle-bin"
+    }, authUser, req);
+    sendJson(res, 200, {
+      ok: true,
+      ...(permanentDelete ? { deleted: summary } : { restored: summary }),
+      revision: result.revision,
+      versionTag: result.versionTag,
+      updatedAt: result.updatedAt,
+      updatedBy: result.updatedBy,
+      source: result.source,
+      offline: false,
+      pendingCount: 0
+    });
+  } catch (error) {
+    sendJson(res, Number(error?.statusCode) || 400, {
+      error: error.message,
+      ...(error?.publicCode ? { code: String(error.publicCode) } : {})
+    });
   }
 }
 
@@ -29368,6 +29852,13 @@ async function route(req, res) {
     || requestUrl.pathname === "/send-mail.php";
   if (protectedRequest && !authUser) {
     sendError(res, 401, "Требуется вход в систему.");
+    return;
+  }
+  if (new Set([
+    "/api/trash/restore",
+    "/api/admin/trash/permanent-delete"
+  ]).has(requestUrl.pathname)) {
+    await handleRecycleBinRequest(req, res, authUser, requestUrl);
     return;
   }
   if (requestUrl.pathname.startsWith("/api/partner/")) {

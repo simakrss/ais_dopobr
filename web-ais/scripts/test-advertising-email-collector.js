@@ -151,6 +151,10 @@ assert.match(gatewaySource, /gateway_handle_advertising_source_proxy/u);
 assert.match(gatewaySource, /hash_equals/u);
 assert.match(appSource, /advertisingExclusionsSync/u);
 assert.match(appSource, /через сайт/u);
-assert.match(indexSource, /20260827-latest-credentials-v1/u);
+const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(
+  fs.readFileSync(path.join(root, "auth-bootstrap.js"), "utf8")
+)?.[1] || "";
+assert.ok(authBuild, "Не найден идентификатор сборки загрузчика");
+assert.match(indexSource, new RegExp(`(?:styles\\.css|auth-bootstrap\\.js)\\?v=${authBuild}`, "u"));
 
 console.log("Advertising email collector tests passed.");
