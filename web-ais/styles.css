@@ -24212,7 +24212,7 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   min-width: 0;
 }
 
-.statistics-donut-legend > span.is-percentage {
+.statistics-donut-legend > span.is-inline-value {
   grid-template-columns: 10px minmax(0, 1fr);
 }
 

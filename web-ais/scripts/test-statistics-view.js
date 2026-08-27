@@ -145,10 +145,16 @@ const sourceDonut = renderStatisticsDonut("Источники заявок", [
 assert.match(sourceDonut, /statistics-donut-legend-label/u);
 assert.match(sourceDonut, /Почтовая рассылка<\/b><em>— 26%<\/em>/u);
 assert.doesNotMatch(sourceDonut, /<em>16<\/em>/u);
-const versionDonut = renderStatisticsDonut("Версии", [{ label: "2.91", value: 3 }]);
-assert.match(versionDonut, /2\.91<\/b><em>3<\/em>/u);
+const versionDonut = renderStatisticsDonut(
+  "Версии",
+  [{ label: "2.91 (12.06.2026)", value: 3 }],
+  { legendInlineValue: true }
+);
+assert.match(versionDonut, /class="is-inline-value"/u);
+assert.match(versionDonut, /2\.91 \(12\.06\.2026\)<\/b><em>— 3<\/em>/u);
 assert.doesNotMatch(versionDonut, /300%/u);
 assert.match(appSource, /renderStatisticsDonut\("Источники заявок", report\.sources, \{ legendPercent: true \}\)/u);
+assert.match(appSource, /renderStatisticsDonut\("Версии Ассистента", report\.versions, \{ limit: 7, legendInlineValue: true \}\)/u);
 
 const studentProfitabilityBlock = sourceBlock(
   appSource,
@@ -402,7 +408,7 @@ assert.match(styles, /\.finance-month:last-child\s*\{/u);
 assert.match(styles, /\.statistics-donut\s*\{/u);
 assert.match(styles, /\.statistics-donut-layout\s*\{[\s\S]*grid-template-columns:\s*minmax\(140px, 0\.7fr\) minmax\(0, 1\.3fr\)/u);
 assert.match(styles, /\.statistics-donut-legend-label\s*\{[\s\S]*display:\s*flex/u);
-assert.match(styles, /\.statistics-donut-legend\s*>\s*span\.is-percentage\s*\{[\s\S]*grid-template-columns:\s*10px minmax\(0, 1fr\)/u);
+assert.match(styles, /\.statistics-donut-legend\s*>\s*span\.is-inline-value\s*\{[\s\S]*grid-template-columns:\s*10px minmax\(0, 1fr\)/u);
 assert.match(styles, /\.statistics-donut-legend-label em\s*\{[\s\S]*flex:\s*0 0 auto/u);
 assert.match(styles, /@media \(max-width: 640px\)[\s\S]*\.statistics-filters/su);
 const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authSource)?.[1] || "";

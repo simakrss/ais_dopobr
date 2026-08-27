@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.330",
+    version: "1.7.331",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.331",
+      releasedAt: "2026-08-27",
+      changes: [
+        "В диаграмме «Установки версий Ассистента» количество установок теперь показывается после тире рядом с названием каждой версии.",
+        "Числа больше не вынесены в отдельную правую колонку и остаются видимыми в узкой карточке."
+      ]
+    },
     {
       version: "1.7.330",
       releasedAt: "2026-08-27",
@@ -11211,12 +11219,15 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         <div class="statistics-donut-legend">
           ${compact.map((item, index) => {
-            if (!options.legendPercent) {
+            const inlineLegendValue = options.legendPercent || options.legendInlineValue;
+            if (!inlineLegendValue) {
               return `<span title="${escapeAttr(item.label)}"><i style="background:${colors[index % colors.length]}"></i><b>${escapeHtml(item.label)}</b><em>${escapeHtml(formatValue(item.value))}</em></span>`;
             }
-            const legendValue = `${Math.round((Number(item.value) / total) * 100)}%`;
+            const legendValue = options.legendPercent
+              ? `${Math.round((Number(item.value) / total) * 100)}%`
+              : formatValue(item.value);
             return `
-              <span class="is-percentage" title="${escapeAttr(`${item.label} — ${legendValue}`)}">
+              <span class="is-inline-value${options.legendPercent ? " is-percentage" : ""}" title="${escapeAttr(`${item.label} — ${legendValue}`)}">
                 <i style="background:${colors[index % colors.length]}"></i>
                 <span class="statistics-donut-legend-label"><b>${escapeHtml(item.label)}</b><em>— ${escapeHtml(legendValue)}</em></span>
               </span>
@@ -11831,7 +11842,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="panel-head"><div><p class="eyebrow">Версии</p><h2>Установки версий Ассистента</h2></div></div>
           ${assistant.loading
             ? `<div class="statistics-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Обновление версий…</span></div>`
-            : renderStatisticsDonut("Версии Ассистента", report.versions, { limit: 7 })}
+            : renderStatisticsDonut("Версии Ассистента", report.versions, { limit: 7, legendInlineValue: true })}
         </section>
       </div>
       <section class="panel statistics-table-panel statistics-download-detail-panel">
