@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.318",
+    version: "1.7.319",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.319",
+      releasedAt: "2026-08-27",
+      changes: [
+        "При импорте повторной заявки логин и пароль переносятся вместе из самой свежей предыдущей заявки, где заполнены оба реквизита.",
+        "При выборе реквизитов учитываются совпадающие телефон и email, чтобы не использовать данные однофамильца."
+      ]
+    },
     {
       version: "1.7.318",
       releasedAt: "2026-08-27",
@@ -14993,6 +15001,76 @@ MAX - https://bizvmax.ru/zifra_plus
       .sort((left, right) => scoreName(right) - scoreName(left))[0] || "";
   }
 
+  function getStudentApplicationCredentialIdentity(person) {
+    const phoneDigits = String(person?.phone || "").replace(/\D/g, "").slice(-10);
+    return {
+      name: normalizeStudentApplicationPersonName(person?.name),
+      email: String(person?.email || "").trim().toLocaleLowerCase("ru-RU"),
+      phone: phoneDigits.length === 10 ? phoneDigits : ""
+    };
+  }
+
+  function getCompatibleStudentApplicationCredentialRecords(records, person) {
+    const target = getStudentApplicationCredentialIdentity(person);
+    const candidates = (Array.isArray(records) ? records : []).filter((record) => (
+      Boolean(String(record?.login || "").trim())
+      && Boolean(String(record?.password || "").trim())
+    ));
+    if (target.email || target.phone) {
+      return candidates.filter((record) => {
+        const identity = getStudentApplicationCredentialIdentity(record);
+        const emailConflict = target.email && identity.email && target.email !== identity.email;
+        const phoneConflict = target.phone && identity.phone && target.phone !== identity.phone;
+        if (emailConflict || phoneConflict) return false;
+        return Boolean(
+          (target.email && target.email === identity.email)
+          || (target.phone && target.phone === identity.phone)
+        );
+      });
+    }
+    if (!target.name) return [];
+    const namedCandidates = candidates.filter((record) => (
+      getStudentApplicationCredentialIdentity(record).name === target.name
+    ));
+    if (namedCandidates.length <= 1) return namedCandidates;
+    const identities = namedCandidates.map(getStudentApplicationCredentialIdentity);
+    const emails = new Set(identities.map((identity) => identity.email).filter(Boolean));
+    const phones = new Set(identities.map((identity) => identity.phone).filter(Boolean));
+    if (emails.size > 1 || phones.size > 1) return [];
+    const sharedEmail = identities[0].email && identities.every((identity) => identity.email === identities[0].email);
+    const sharedPhone = identities[0].phone && identities.every((identity) => identity.phone === identities[0].phone);
+    return sharedEmail || sharedPhone ? namedCandidates : [];
+  }
+
+  function getLatestStudentApplicationCredentialSource(records, person) {
+    const candidates = getCompatibleStudentApplicationCredentialRecords(records, person)
+      .map((record, index) => ({
+        record,
+        index,
+        timestamp: [
+          record?.sourceApplicationCreatedAt,
+          record?.applicationDate,
+          record?.createdAt
+        ].map(parseStudentApplicationSortDate).find((value) => value !== null) ?? null,
+        orderId: String(record?.sourceOrderId || record?.orderNo || "").trim()
+      }));
+    candidates.sort((left, right) => {
+      if (left.timestamp === null && right.timestamp !== null) return 1;
+      if (left.timestamp !== null && right.timestamp === null) return -1;
+      if (left.timestamp !== null && right.timestamp !== null && left.timestamp !== right.timestamp) {
+        return right.timestamp - left.timestamp;
+      }
+      if (left.orderId && right.orderId && left.orderId !== right.orderId) {
+        return right.orderId.localeCompare(left.orderId, "ru", {
+          numeric: true,
+          sensitivity: "base"
+        });
+      }
+      return left.index - right.index;
+    });
+    return candidates[0]?.record || null;
+  }
+
   function reuseExistingStudentPersonalData(record, row, lookup, selectedProgramId = "") {
     const sources = getStudentApplicationExistingPersonalRecords(row, lookup, selectedProgramId);
     if (!sources.length) return record;
@@ -15005,9 +15083,15 @@ MAX - https://bizvmax.ru/zifra_plus
       ...STUDENT_APPLICATION_REUSABLE_SDO_FIELDS,
       ...STUDENT_APPLICATION_REUSABLE_PERSONAL_FIELDS
     ].forEach((key) => {
+      if (key === "login" || key === "password") return;
       const value = sourceValue(key);
       if (hasReusableStudentPersonalValue(value)) nextRecord[key] = value;
     });
+    const credentialSource = getLatestStudentApplicationCredentialSource(sources, row);
+    if (credentialSource) {
+      nextRecord.login = credentialSource.login;
+      nextRecord.password = credentialSource.password;
+    }
     ["phone", "email", "workPlace", "position", "employmentCategory"].forEach((key) => {
       if (hasReusableStudentPersonalValue(nextRecord[key])) return;
       const value = sourceValue(key);
@@ -16296,6 +16380,7 @@ MAX - https://bizvmax.ru/zifra_plus
       coupon: financialTerms.coupon,
       note: noteParts.join("\n"),
       applicationDate,
+      sourceApplicationCreatedAt: String(row.dateCreated || "").trim(),
       orderNo: String(row.orderId || "").trim(),
       sourceApplicationKey: getStudentApplicationSourceKey(row),
       sourceOrderId: String(row.orderId || "").trim(),

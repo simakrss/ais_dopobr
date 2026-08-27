@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 
-const appSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
+const appSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8").replace(/\r\n/gu, "\n");
 const stylesSource = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
 
 const renderStart = appSource.indexOf("  function renderStudentApplicationDetail");
