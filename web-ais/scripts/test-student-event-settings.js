@@ -210,6 +210,17 @@ assert.match(stylesSource, /\.contract-event-settings-table/u);
 assert.match(stylesSource, /\.student-event-setting-programs/u);
 assert.match(stylesSource, /\.student-event-settings-add/u);
 assert.match(stylesSource, /\.student-event-setting-remove/u);
+assert.match(
+  stylesSource,
+  /\.student-event-settings-shell\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0, 1fr\);[\s\S]*?overflow:\s*hidden;/u,
+  "event settings should stay inside the available settings panel height"
+);
+assert.match(
+  stylesSource,
+  /\.student-event-settings-table\s*\{[\s\S]*?max-width:\s*100%;[\s\S]*?overflow-x:\s*hidden;[\s\S]*?overflow-y:\s*auto;/u,
+  "event settings list should scroll vertically without overflowing horizontally"
+);
+assert.doesNotMatch(stylesSource, /\.student-event-settings-header,[\s\S]*?min-width:\s*728px;/u);
 assert.match(stylesSource, /@media \(max-width: 760px\)[\s\S]*\.student-event-setting-row/u);
 
 console.log("student event settings checks: OK");

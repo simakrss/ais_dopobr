@@ -6912,12 +6912,15 @@ body.long-press-dragging * {
 .student-event-settings-shell {
   min-height: 0;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   align-content: start;
   gap: 10px;
+  overflow: hidden;
 }
 
 .student-event-settings-shell > [data-event-settings-panel] {
   min-height: 0;
+  overflow: hidden;
 }
 
 .student-event-settings-shell > [data-event-settings-panel][hidden] {
@@ -6930,6 +6933,7 @@ body.long-press-dragging * {
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   align-content: start;
   gap: 10px;
+  overflow: hidden;
 }
 
 .student-event-settings-intro {
@@ -6976,8 +6980,13 @@ body.long-press-dragging * {
 }
 
 .student-event-settings-table {
+  width: 100%;
+  max-width: 100%;
+  max-height: min(54dvh, 560px);
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
@@ -6985,16 +6994,17 @@ body.long-press-dragging * {
 
 .student-event-settings-header,
 .student-event-setting-row {
-  min-width: 728px;
+  width: 100%;
+  min-width: 0;
   display: grid;
-  grid-template-columns: 52px minmax(270px, 1fr) minmax(250px, 0.72fr) 38px;
+  grid-template-columns: 46px minmax(0, 1fr) minmax(176px, 0.62fr) 34px;
   align-items: center;
 }
 
 .contract-event-settings-table .student-event-settings-header,
 .contract-event-settings-table .contract-event-setting-row {
   min-width: 0;
-  grid-template-columns: 52px minmax(0, 1fr) 38px;
+  grid-template-columns: 46px minmax(0, 1fr) 34px;
 }
 
 .student-event-settings-header {
@@ -7012,7 +7022,7 @@ body.long-press-dragging * {
 .student-event-settings-header > span,
 .student-event-setting-row > div {
   min-width: 0;
-  padding: 6px 8px;
+  padding: 5px 6px;
 }
 
 .student-event-setting-row {
@@ -7051,8 +7061,9 @@ body.long-press-dragging * {
   color: #26332f;
   font-size: 12px;
   font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .student-event-setting-remove {
@@ -7070,9 +7081,21 @@ body.long-press-dragging * {
 .student-event-setting-program-headings,
 .student-event-setting-programs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(48px, 1fr));
+  grid-template-columns: repeat(4, minmax(38px, 1fr));
   align-items: center;
   text-align: center;
+}
+
+@media (min-width: 1121px) {
+  .student-event-settings-shell,
+  .student-event-settings-shell > [data-event-settings-panel],
+  .student-event-settings-form {
+    height: 100%;
+  }
+
+  .student-event-settings-table {
+    max-height: none;
+  }
 }
 
 .student-event-setting-program-headings > span {

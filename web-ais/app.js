@@ -89,10 +89,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.312",
+    version: "1.7.313",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.313",
+      releasedAt: "2026-08-27",
+      changes: [
+        "Список событий в настройках помещается в доступную область формы и прокручивается внутри неё.",
+        "Колонки событий адаптируются к ширине окна без обязательной горизонтальной прокрутки."
+      ]
+    },
     {
       version: "1.7.312",
       releasedAt: "2026-08-27",

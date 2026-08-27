@@ -151,6 +151,6 @@ assert.match(gatewaySource, /gateway_handle_advertising_source_proxy/u);
 assert.match(gatewaySource, /hash_equals/u);
 assert.match(appSource, /advertisingExclusionsSync/u);
 assert.match(appSource, /через сайт/u);
-assert.match(indexSource, /20260827-admin-sql-editor-v1/u);
+assert.match(indexSource, /20260827-event-settings-fit-v1/u);
 
 console.log("Advertising email collector tests passed.");
