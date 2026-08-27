@@ -363,7 +363,21 @@ assert.match(
 );
 assert.match(
   powershellSource,
-  /if \(\$currentFormula\.StartsWith\("="\)\)[\s\S]{0,320}?return "formula"/u
+  /\$hadFormula = \$currentFormula\.StartsWith\("="\)[\s\S]{0,180}?if \(\$hadFormula -and -not \(Test-RecordFixedValueOverride \$Record \$FieldName\)\)[\s\S]{0,420}?return "formula"/u
+);
+assert.match(
+  powershellSource,
+  /\$hasFormula = \$currentValue -is \[string\] -and \$currentValue\.StartsWith\("="\)[\s\S]{0,160}?if \(\$hasFormula -and -not \$isFixedValueOverride\)/u
+);
+assert.match(
+  powershellSource,
+  /\$initialFormulaMatrix = \$dataRange\.FormulaR1C1/u,
+  "Формулы шаблона программы должны сниматься до обновления строк."
+);
+assert.match(
+  powershellSource,
+  /\$insertedRange\.FormulaR1C1 = \$programTemplateFormulas/u,
+  "Новая программа должна получать исходные формулы, даже если строка-шаблон уже изменена."
 );
 assert.match(powershellSource, /Ensure-ContractFormulaRows \$sheet \$columns/u);
 

@@ -835,7 +835,12 @@ const STUDENT_DATABASE_NUMBER_FIELDS = new Set([
   "payment7Amount",
   "payment8Amount"
 ]);
-const STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS = new Set(["contractAmount"]);
+const STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS = new Set(
+  Object.values(STUDENT_DATABASE_COLUMN_MAP).filter((fieldName) => (
+    fieldName
+    && !["agentAmount", "balance", "paidAmount"].includes(fieldName)
+  ))
+);
 const STUDENT_DATABASE_SYNC_COMMENT_START = "[[AIS_SYNC_V1]]";
 const STUDENT_DATABASE_SYNC_COMMENT_END = "[[/AIS_SYNC_V1]]";
 const STUDENT_DATABASE_SYNC_VERSION = 1;
@@ -865,10 +870,18 @@ const STUDENT_DATABASE_CRITICAL_BOOLEAN_FIELDS = new Set([
   "internship",
   "reviewPublished"
 ]);
+const STUDENT_DATABASE_CRITICAL_CONTRACT_BOOLEAN_FIELDS = new Set([
+  "accountingRecorded",
+  "notificationEmail"
+]);
 const STUDENT_DATABASE_CRITICAL_PROGRAM_EXCLUDED_FIELDS = new Set([
   "promoMessage1",
   "promoMessage2",
   "emailMessageTemplate"
+]);
+const STUDENT_DATABASE_CRITICAL_TRAINING_PLAN_EXCLUDED_FIELDS = new Set([
+  "code",
+  "totalHours"
 ]);
 const DIRECT_EXPENSE_DATABASE_COLUMN_MAP = Object.freeze({
   "uid": "uid",
@@ -13587,12 +13600,123 @@ function normalizeStudentDatabaseCriticalGender(value) {
   return source;
 }
 
+function isStudentDatabaseRecordEventField(fieldName) {
+  return /^event_[A-Za-z0-9_-]+_(?:state|date|label)$/u.test(String(fieldName || ""))
+    || ["eventOrder", "eventCustomKeys", "eventDeleted"].includes(String(fieldName || ""));
+}
+
+function getStudentDatabaseCriticalRecordEvents(record, normalizer, templates = []) {
+  const source = record && typeof record === "object" && !Array.isArray(record) ? record : {};
+  const templateLabelByKey = new Map((Array.isArray(templates) ? templates : [])
+    .map((template) => [
+      String(template?.key || "").trim(),
+      String(template?.label || "").replace(/\s+/gu, " ").trim()
+    ])
+    .filter(([key, label]) => key && label));
+  const customKeys = new Set(String(source.eventCustomKeys || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean));
+  const customKeyOrder = [...customKeys];
+  const deletedKeys = new Set(String(source.eventDeleted || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean));
+  const orderedKeys = String(source.eventOrder || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const keys = [
+    ...new Set([
+      ...orderedKeys,
+      ...customKeyOrder,
+      ...(Array.isArray(templates) ? templates : [])
+        .map((template) => String(template?.key || "").trim())
+        .filter(Boolean)
+    ].filter((key) => !deletedKeys.has(key)))
+  ];
+  const events = [];
+  keys.forEach((key) => {
+    const state = normalizer(source, `event_${key}_state`);
+    const date = normalizer(source, `event_${key}_date`);
+    const label = String(source[`event_${key}_label`] || "").replace(/\s+/gu, " ").trim();
+    const isCustom = customKeys.has(key) || /^(?:customEvent_|imported_)/u.test(key);
+    const effectiveLabel = label || templateLabelByKey.get(key) || "";
+    if (!effectiveLabel && state === "" && date === "" && !orderedKeys.includes(key)) return;
+    events.push({
+      label: normalizeImportedStudentEventLabel(effectiveLabel)
+        || (isCustom ? label : key),
+      state,
+      date
+    });
+  });
+  return events;
+}
+
+function replaceStudentDatabaseRecordEvents(targetRecord, sourceRecord) {
+  Object.keys(targetRecord || {}).forEach((fieldName) => {
+    if (isStudentDatabaseRecordEventField(fieldName)) delete targetRecord[fieldName];
+  });
+  Object.entries(sourceRecord || {}).forEach(([fieldName, value]) => {
+    if (!isStudentDatabaseRecordEventField(fieldName)) return;
+    targetRecord[fieldName] = JSON.parse(JSON.stringify(value ?? ""));
+  });
+}
+
+function stripStudentDatabaseRecordEventSections(value, rootSection) {
+  const escapedRoot = String(rootSection || "").replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const eventSectionPattern = new RegExp(
+    `^\\[${escapedRoot}\\\\События(?:\\\\\\d+)?\\]$`,
+    "u"
+  );
+  const rootSectionPattern = new RegExp(`^\\[${escapedRoot}\\]$`, "u");
+  let skipSection = false;
+  const withoutEventSections = String(value || "")
+    .replace(/\r\n?/gu, "\n")
+    .split("\n")
+    .filter((line) => {
+      if (/^\s*\[/u.test(line)) skipSection = eventSectionPattern.test(line.trim());
+      return !skipSection;
+    });
+  const result = [];
+  for (let index = 0; index < withoutEventSections.length;) {
+    const line = withoutEventSections[index];
+    if (!rootSectionPattern.test(line.trim())) {
+      result.push(line);
+      index += 1;
+      continue;
+    }
+    const body = [];
+    index += 1;
+    while (
+      index < withoutEventSections.length
+      && !/^\s*\[/u.test(withoutEventSections[index])
+    ) {
+      if (!/^\s*События\s*=/u.test(withoutEventSections[index])) {
+        body.push(withoutEventSections[index]);
+      }
+      index += 1;
+    }
+    if (body.some((bodyLine) => bodyLine.trim())) {
+      result.push(line, ...body);
+    }
+  }
+  return result.join("\n").trim();
+}
+
 function normalizeStudentDatabaseCriticalStudentValue(record, fieldName) {
   if (fieldName === "frdoStatus") {
     const frdo = splitStudentDatabaseFrdoValue(record?.frdoDate || record?.frdoStatus);
     return frdo.frdoDate || String(frdo.frdoStatus || "").trim();
   }
   if (fieldName === "gender") return normalizeStudentDatabaseCriticalGender(record?.[fieldName]);
+  if (fieldName === "additionalStatus") {
+    return String(record?.additionalStatus || "")
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/gu, "е")
+      .replace(/\s+/gu, " ")
+      .trim();
+  }
   if (STUDENT_DATABASE_CRITICAL_BOOLEAN_FIELDS.has(fieldName)) {
     return normalizeStudentDatabaseCriticalBoolean(record?.[fieldName]);
   }
@@ -13602,7 +13726,10 @@ function normalizeStudentDatabaseCriticalStudentValue(record, fieldName) {
   return normalizeStudentDatabaseSyncValue(record?.[fieldName], fieldName);
 }
 
-function projectStudentDatabaseCriticalRecord(record) {
+function projectStudentDatabaseCriticalRecord(
+  record,
+  eventTemplates = STUDENT_EVENT_IMPORT_TEMPLATES
+) {
   const result = {};
   const fields = [...new Set(Object.values(STUDENT_DATABASE_COLUMN_MAP))]
     .filter((field) => !STUDENT_DATABASE_CRITICAL_STUDENT_EXCLUDED_FIELDS.has(field));
@@ -13610,24 +13737,35 @@ function projectStudentDatabaseCriticalRecord(record) {
   fields.forEach((field) => {
     result[field] = normalizeStudentDatabaseCriticalStudentValue(record, field);
   });
-  Object.keys(record || {})
-    .filter((field) => /^event_[A-Za-z0-9_-]+_(?:state|date)$/u.test(field))
-    .sort()
-    .forEach((field) => {
-      const value = normalizeStudentDatabaseCriticalStudentValue(record, field);
-      if (value !== "") result[field] = value;
-    });
+  const events = getStudentDatabaseCriticalRecordEvents(
+    record,
+    normalizeStudentDatabaseCriticalStudentValue,
+    eventTemplates
+  );
+  if (events.length) result.__events = events;
   return result;
 }
 
 function normalizeStudentDatabaseCriticalContractValue(record, fieldName) {
-  if (/_state$/u.test(fieldName)) {
+  if (fieldName === "additionalSettings") {
+    return stripStudentDatabaseRecordEventSections(
+      record?.additionalSettings,
+      "КарточкаКонтрагента"
+    );
+  }
+  if (
+    /_state$/u.test(fieldName)
+    || STUDENT_DATABASE_CRITICAL_CONTRACT_BOOLEAN_FIELDS.has(fieldName)
+  ) {
     return normalizeStudentDatabaseCriticalBoolean(record?.[fieldName]);
   }
   return normalizeContractDatabaseValue(record?.[fieldName], fieldName);
 }
 
-function projectStudentDatabaseCriticalContract(record) {
+function projectStudentDatabaseCriticalContract(
+  record,
+  eventTemplates = CONTRACT_EVENT_IMPORT_TEMPLATES
+) {
   const result = {};
   const fields = [...new Set(Object.values(CONTRACT_DATABASE_COLUMN_MAP)), "section"];
   fields.forEach((field) => {
@@ -13635,13 +13773,12 @@ function projectStudentDatabaseCriticalContract(record) {
       ? normalizeContractDatabaseSection(record?.section || record?.status)
       : normalizeStudentDatabaseCriticalContractValue(record, field);
   });
-  Object.keys(record || {})
-    .filter((field) => /^event_[A-Za-z0-9_-]+_(?:state|date)$/u.test(field))
-    .sort()
-    .forEach((field) => {
-      const value = normalizeStudentDatabaseCriticalContractValue(record, field);
-      if (value !== "") result[field] = value;
-    });
+  const events = getStudentDatabaseCriticalRecordEvents(
+    record,
+    normalizeStudentDatabaseCriticalContractValue,
+    eventTemplates
+  );
+  if (events.length) result.__events = events;
   return result;
 }
 
@@ -13655,16 +13792,18 @@ function projectStudentDatabaseCriticalMappedRecord(record, fieldNames, normaliz
 
 function projectStudentDatabaseCriticalProgram(record) {
   const result = {};
+  const formulaFields = new Set(
+    (Array.isArray(record?.databaseSyncFormulaFields) ? record.databaseSyncFormulaFields : [])
+      .map((fieldName) => String(fieldName || "").trim())
+      .filter(Boolean)
+  );
   [...new Set(Object.values(PROGRAM_DATABASE_COLUMN_MAP))]
-    .filter((field) => !STUDENT_DATABASE_CRITICAL_PROGRAM_EXCLUDED_FIELDS.has(field))
+    .filter((field) => (
+      !STUDENT_DATABASE_CRITICAL_PROGRAM_EXCLUDED_FIELDS.has(field)
+      && !formulaFields.has(field)
+    ))
     .forEach((field) => {
-      let value = record?.[field];
-      if (field === "name") value = record?.xlsbProgramName || value;
-      if (
-        field === "landingCode"
-        && Object.prototype.hasOwnProperty.call(record || {}, "xlsbProgramLandingCode")
-      ) value = record.xlsbProgramLandingCode;
-      result[field] = normalizeProgramDatabaseValue(field, value);
+      result[field] = normalizeProgramDatabaseValue(field, record?.[field]);
     });
   return result;
 }
@@ -13956,7 +14095,7 @@ function getStudentDatabaseSynchronizedChangeDefinitions(beforeValue, afterValue
     ...studentFields.filter((field) => /_state$/u.test(field))
   ]);
   const contractBooleanFields = new Set([
-    "accountingRecorded",
+    ...STUDENT_DATABASE_CRITICAL_CONTRACT_BOOLEAN_FIELDS,
     ...contractFields.filter((field) => /_state$/u.test(field))
   ]);
   const generalExpenseBooleanFields = new Set(["accountingClosed"]);
@@ -14026,10 +14165,7 @@ function getStudentDatabaseSynchronizedChangeDefinitions(beforeValue, afterValue
         if (fieldName === "section") {
           return normalizeContractDatabaseSection(record?.section || record?.status);
         }
-        if (contractBooleanFields.has(fieldName)) {
-          return normalizeStudentDatabaseChangeBoolean(record?.[fieldName]);
-        }
-        return normalizeContractDatabaseValue(record?.[fieldName], fieldName);
+        return normalizeStudentDatabaseCriticalContractValue(record, fieldName);
       },
       recordLabel: (record) => {
         const name = String(record?.name || "").trim();
@@ -14232,21 +14368,33 @@ function canonicalizeStudentDatabaseCriticalRecords(records, projector) {
 
 function buildStudentDatabaseCriticalSnapshot(value) {
   const collections = getStudentDatabaseCriticalCollections(value);
+  const root = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const macroSettings = root.macroSettings && typeof root.macroSettings === "object"
+    ? root.macroSettings
+    : {};
+  const studentEventTemplates = Array.isArray(macroSettings.studentEventTemplates)
+    && macroSettings.studentEventTemplates.length
+    ? macroSettings.studentEventTemplates
+    : STUDENT_EVENT_IMPORT_TEMPLATES;
+  const contractEventTemplates = Array.isArray(macroSettings.contractEventTemplates)
+    && macroSettings.contractEventTemplates.length
+    ? macroSettings.contractEventTemplates
+    : CONTRACT_EVENT_IMPORT_TEMPLATES;
   const xlsbProgramNameById = new Map(collections.programs
     .map((program) => [
       String(program?.id || "").trim(),
-      String(program?.xlsbProgramName || program?.name || "").trim()
+      String(program?.name || program?.xlsbProgramName || "").trim()
     ])
     .filter(([id, name]) => id && name));
   return {
     version: STUDENT_DATABASE_CRITICAL_HASH_VERSION,
     students: canonicalizeStudentDatabaseCriticalRecords(
       collections.students,
-      projectStudentDatabaseCriticalRecord
+      (record) => projectStudentDatabaseCriticalRecord(record, studentEventTemplates)
     ),
     contracts: canonicalizeStudentDatabaseCriticalRecords(
       collections.contracts,
-      projectStudentDatabaseCriticalContract
+      (record) => projectStudentDatabaseCriticalContract(record, contractEventTemplates)
     ),
     directExpenses: canonicalizeStudentDatabaseCriticalRecords(
       collections.directExpenses,
@@ -14260,8 +14408,10 @@ function buildStudentDatabaseCriticalSnapshot(value) {
       collections.generalExpenses,
       (record) => projectStudentDatabaseCriticalMappedRecord(
         record,
-        [...new Set(Object.values(GENERAL_EXPENSE_DATABASE_COLUMN_MAP))],
-        normalizeGeneralExpenseDatabaseValue
+        ["section", ...new Set(Object.values(GENERAL_EXPENSE_DATABASE_COLUMN_MAP))],
+        (fieldValue, fieldName) => fieldName === "section"
+          ? normalizeGeneralExpenseDatabaseSection(fieldValue)
+          : normalizeGeneralExpenseDatabaseValue(fieldValue, fieldName)
       )
     ),
     inventoryUnits: canonicalizeStudentDatabaseCriticalRecords(
@@ -14286,7 +14436,10 @@ function buildStudentDatabaseCriticalSnapshot(value) {
         };
         return projectStudentDatabaseCriticalMappedRecord(
           normalizedRecord,
-          [...new Set(Object.values(TRAINING_PLAN_DATABASE_COLUMN_MAP))],
+          [...new Set(Object.values(TRAINING_PLAN_DATABASE_COLUMN_MAP))]
+            .filter((fieldName) => (
+              !STUDENT_DATABASE_CRITICAL_TRAINING_PLAN_EXCLUDED_FIELDS.has(fieldName)
+            )),
           (fieldValue, fieldName) => normalizeTrainingPlanDatabaseValue(fieldName, fieldValue)
         );
       }
@@ -14573,6 +14726,167 @@ function buildStudentDatabaseSyncConflictId(recordId, fieldName, baselineValue, 
     normalizeStudentDatabaseChangeComparableValue(webValue),
     normalizeStudentDatabaseChangeComparableValue(excelValue)
   ])).digest("hex");
+}
+
+function applyStudentDatabaseSelectedFieldValue(
+  targetRecord,
+  selectedRecord,
+  definitionKey,
+  fieldName
+) {
+  const clone = (value) => JSON.parse(JSON.stringify(value ?? ""));
+  targetRecord[fieldName] = clone(selectedRecord?.[fieldName]);
+  if (definitionKey === "students" && fieldName === "frdoStatus") {
+    if (Object.prototype.hasOwnProperty.call(selectedRecord || {}, "frdoDate")) {
+      targetRecord.frdoDate = clone(selectedRecord.frdoDate);
+    } else {
+      delete targetRecord.frdoDate;
+    }
+  }
+  if (definitionKey === "programs" && fieldName === "name") {
+    targetRecord.xlsbProgramName = clone(
+      selectedRecord?.xlsbProgramName ?? selectedRecord?.name
+    );
+  }
+  if (definitionKey === "programs" && fieldName === "landingCode") {
+    targetRecord.xlsbProgramLandingCode = clone(
+      selectedRecord?.xlsbProgramLandingCode ?? selectedRecord?.landingCode
+    );
+  }
+  return targetRecord;
+}
+
+function getStudentDatabaseRecordFixedValueOverrides(value) {
+  return [...new Set((Array.isArray(value) ? value : [])
+    .map((field) => String(field || "").trim())
+    .filter((field) => (
+      field
+      && !["agentAmount", "balance", "paidAmount", "__eventSettings"].includes(field)
+    )))];
+}
+
+function setStudentDatabaseFixedValueOverride(record, fieldName, enabled) {
+  if (
+    !record
+    || !fieldName
+    || ["agentAmount", "balance", "paidAmount", "__eventSettings"].includes(fieldName)
+  ) return;
+  const fields = new Set(getStudentDatabaseRecordFixedValueOverrides(
+    record.databaseFixedValueOverrides
+  ));
+  if (enabled) fields.add(fieldName);
+  else fields.delete(fieldName);
+  if (fields.size) record.databaseFixedValueOverrides = [...fields].sort();
+  else delete record.databaseFixedValueOverrides;
+}
+
+const STUDENT_DATABASE_POTENTIAL_FORMULA_FIELDS = Object.freeze({
+  students: new Set([
+    "hours",
+    "contractAmount",
+    "payment1Date",
+    "payment1Amount",
+    "enrollmentOrderNo",
+    "group",
+    "startDate",
+    "endDate",
+    "expulsionOrderNo",
+    "diplomaIssueDate",
+    "login",
+    "password"
+  ]),
+  directExpenses: new Set(["amount", "recommendation"]),
+  generalExpenses: new Set(["paid"]),
+  contracts: new Set([
+      "amount",
+      "paid",
+      "agencyAmount",
+      "balance",
+      "whatsapp",
+      "message1",
+      "message2",
+      "message3",
+      "message4",
+      "message5",
+      "message6",
+      "message7",
+      "message8",
+      "message9",
+      "portalCredentials"
+  ]),
+  programs: new Set(["shortName", "price", "oldPrice", "hours"]),
+  trainingPlans: new Set(["code", "totalHours", "theoryHours", "practiceHours"])
+});
+
+const STUDENT_DATABASE_DERIVED_FIXED_VALUE_FIELDS = Object.freeze({
+  directExpenses: new Set(["recommendation"]),
+  generalExpenses: new Set(["paid"]),
+  contracts: STUDENT_DATABASE_POTENTIAL_FORMULA_FIELDS.contracts
+});
+
+function isStudentDatabasePotentialFormulaValueField(definitionKey, fieldName) {
+  return Boolean(STUDENT_DATABASE_POTENTIAL_FORMULA_FIELDS[definitionKey]?.has(fieldName));
+}
+
+function isStudentDatabaseRecordFormulaBacked(record, fieldName) {
+  return (Array.isArray(record?.databaseSyncFormulaFields)
+    ? record.databaseSyncFormulaFields
+    : [])
+    .some((value) => String(value || "").trim() === fieldName);
+}
+
+function isStudentDatabaseFixedValueOverrideField(definitionKey, fieldName) {
+  if (
+    !fieldName
+    || isStudentDatabaseRecordEventField(fieldName)
+    || ["agentAmount", "balance", "paidAmount", "__eventSettings"].includes(fieldName)
+    || STUDENT_DATABASE_DERIVED_FIXED_VALUE_FIELDS[definitionKey]?.has(fieldName)
+  ) return false;
+  if (
+    definitionKey === "programs"
+    && STUDENT_DATABASE_CRITICAL_PROGRAM_EXCLUDED_FIELDS.has(fieldName)
+  ) return false;
+  if (
+    definitionKey === "trainingPlans"
+    && STUDENT_DATABASE_CRITICAL_TRAINING_PLAN_EXCLUDED_FIELDS.has(fieldName)
+  ) return false;
+  return true;
+}
+
+function materializeStudentDatabaseSelectedFormulaValue(
+  targetRecord,
+  selectedRecord,
+  definitionKey,
+  fieldName
+) {
+  if (
+    !isStudentDatabasePotentialFormulaValueField(definitionKey, fieldName)
+    || !isStudentDatabaseFixedValueOverrideField(definitionKey, fieldName)
+    || !isStudentDatabaseRecordFormulaBacked(selectedRecord, fieldName)
+  ) return false;
+  setStudentDatabaseFixedValueOverride(targetRecord, fieldName, true);
+  const formulaFields = (Array.isArray(targetRecord?.databaseSyncFormulaFields)
+    ? targetRecord.databaseSyncFormulaFields
+    : [])
+    .map((value) => String(value || "").trim())
+    .filter((value) => value && value !== fieldName);
+  if (formulaFields.length) targetRecord.databaseSyncFormulaFields = [...new Set(formulaFields)];
+  else delete targetRecord.databaseSyncFormulaFields;
+  return true;
+}
+
+function markStudentDatabaseRecordFixedValueOverrides(record, definition) {
+  if (!record || !definition) return;
+  (definition.fields || []).forEach((fieldName) => {
+    if (!isStudentDatabaseFixedValueOverrideField(definition.key, fieldName)) return;
+    const value = definition.normalize(record, fieldName);
+    const normalized = normalizeStudentDatabaseChangeComparableValue(value);
+    const hasExplicitValue = normalized !== ""
+      && normalized !== null
+      && normalized !== undefined
+      && (!Array.isArray(normalized) || normalized.length > 0);
+    if (hasExplicitValue) setStudentDatabaseFixedValueOverride(record, fieldName, true);
+  });
 }
 
 function buildStudentDatabaseSyncConflictDiagnosticReport({
@@ -14906,7 +15220,11 @@ function resolveStudentDatabaseFieldLevelMerge({
         ...baselineDefinition.fields,
         ...webDefinition.fields,
         ...excelDefinition.fields
-      ])],
+      ])].filter((fieldName) => (
+        !(baselineDefinition.key === "trainingPlans" && fieldName === "totalHours")
+        && !(baselineDefinition.key === "programs"
+          && STUDENT_DATABASE_CRITICAL_PROGRAM_EXCLUDED_FIELDS.has(fieldName))
+      )),
       records: [
         ...baselineDefinition.before,
         ...webDefinition.after,
@@ -14996,7 +15314,12 @@ function resolveStudentDatabaseFieldLevelMerge({
             continue;
           }
           const selectedRecord = resolution === "excel" ? excelRecord : webRecord;
-          mergedRecord[fieldName] = JSON.parse(JSON.stringify(selectedRecord?.[fieldName] ?? ""));
+          applyStudentDatabaseSelectedFieldValue(
+            mergedRecord,
+            selectedRecord,
+            definition.key,
+            fieldName
+          );
           stats.conflictsResolved += 1;
           if (resolution === "excel") stats.excelToWeb += 1;
           else stats.webToExcel += 1;
@@ -15017,7 +15340,12 @@ function resolveStudentDatabaseFieldLevelMerge({
         }
 
         if (excelChanged && !webChanged) {
-          mergedRecord[fieldName] = JSON.parse(JSON.stringify(excelRecord?.[fieldName] ?? ""));
+          applyStudentDatabaseSelectedFieldValue(
+            mergedRecord,
+            excelRecord,
+            definition.key,
+            fieldName
+          );
           stats.excelToWeb += 1;
           changes.push({
             entity: definition.label,
@@ -15057,6 +15385,1161 @@ function resolveStudentDatabaseFieldLevelMerge({
     stats,
     changedWebIds: [...changedWebIds],
     recoveredBaselineHashDrift
+  };
+}
+
+function studentDatabaseLinkedOrDerivedCollectionsDiffer(webData, excelData) {
+  const webCriticalSnapshot = buildStudentDatabaseCriticalSnapshot(webData);
+  const excelCriticalSnapshot = buildStudentDatabaseCriticalSnapshot(excelData);
+  return [
+    "directExpenses",
+    "inventoryUnits",
+    "programs",
+    "trainingPlans"
+  ].some((key) => (
+    JSON.stringify(webCriticalSnapshot[key]) !== JSON.stringify(excelCriticalSnapshot[key])
+  ));
+}
+
+function resolveStudentDatabaseCompleteReconciliation({
+  webData,
+  excelData,
+  conflictResolutions = {},
+  forceSnapshotChoice = false
+} = {}) {
+  const resolutions = sanitizeStudentDatabaseSyncConflictResolutions(conflictResolutions);
+  const webCriticalHash = hashStudentDatabaseCriticalSnapshot(webData);
+  const excelCriticalHash = hashStudentDatabaseCriticalSnapshot(excelData);
+  const webEventSettingsHash = hashStudentDatabaseEventSettings(webData);
+  const excelEventSettingsHash = hashStudentDatabaseEventSettings(excelData);
+  const snapshotConflictId = buildStudentDatabaseSyncConflictId(
+    "complete-reconciliation",
+    "critical-snapshot",
+    "",
+    `${webCriticalHash}:${webEventSettingsHash}`,
+    `${excelCriticalHash}:${excelEventSettingsHash}`
+  );
+  const clone = (value) => JSON.parse(JSON.stringify(value ?? null));
+  const getCollections = (value) => {
+    const collections = getStudentDatabaseCriticalCollections(value);
+    return {
+      students: (clone(collections.students) || []).map((student) => {
+        const { directExpenses, ...record } = student || {};
+        return record;
+      }),
+      contracts: clone(collections.contracts) || [],
+      directExpenses: clone(collections.directExpenses) || [],
+      generalExpenses: clone(collections.generalExpenses) || [],
+      inventory: clone(collections.inventoryRows) || [],
+      programs: clone(collections.programs) || [],
+      trainingPlans: clone(collections.trainingPlans) || []
+    };
+  };
+  const getRecordVerificationIdentities = (definition, ...records) => ([
+    ...new Set(records.flatMap((record) => (
+      (definition.identityFields || []).map((fields) => (
+        buildStudentDatabaseChangeIdentity(record, fields, definition.normalize)
+      ))
+    )).filter(Boolean))
+  ]);
+  const buildVerificationSelection = ({
+    definition,
+    selectedRecord,
+    alternateRecord,
+    fieldName,
+    choice,
+    eventTemplates = null,
+    exact = choice === "web"
+      || !isStudentDatabasePotentialFormulaValueField(definition?.key, fieldName)
+  }) => {
+    const recordId = getStudentDatabaseChangeRecordId(selectedRecord)
+      || getStudentDatabaseChangeRecordId(alternateRecord)
+      || String(selectedRecord?.id || alternateRecord?.id || "").trim();
+    const isEvents = fieldName === "recordEvents";
+    const normalizeValue = (record) => (isEvents
+      ? getStudentDatabaseCriticalRecordEvents(
+        record,
+        definition.normalize,
+        eventTemplates || definition.eventTemplates
+      )
+      : definition.normalize(record, fieldName));
+    return {
+      kind: isEvents ? "record-events" : "field",
+      definitionKey: definition.key,
+      recordId,
+      recordIdentities: getRecordVerificationIdentities(
+        definition,
+        selectedRecord,
+        alternateRecord
+      ),
+      fieldName,
+      expectedValue: clone(normalizeValue(selectedRecord)),
+      rejectedValue: clone(normalizeValue(alternateRecord)),
+      exact: Boolean(exact),
+      ...(isEvents ? { eventTemplates: clone(eventTemplates || definition.eventTemplates) || [] } : {})
+    };
+  };
+  const appendSelectedRecordVerifications = (
+    target,
+    definition,
+    selectedRecord,
+    alternateRecord = null,
+    choice = "web",
+    eventTemplates = definition?.eventTemplates
+  ) => {
+    if (choice === "web") markStudentDatabaseRecordFixedValueOverrides(selectedRecord, definition);
+    (definition.fields || []).forEach((fieldName) => {
+      if (!isStudentDatabaseFixedValueOverrideField(definition.key, fieldName)) return;
+      const normalized = normalizeStudentDatabaseChangeComparableValue(
+        definition.normalize(selectedRecord, fieldName)
+      );
+      const hasExplicitValue = normalized !== ""
+        && normalized !== null
+        && normalized !== undefined
+        && (!Array.isArray(normalized) || normalized.length > 0);
+      if (!hasExplicitValue) return;
+      target.push(buildVerificationSelection({
+        definition,
+        selectedRecord,
+        alternateRecord,
+        fieldName,
+        choice
+      }));
+    });
+    if (["students", "contracts"].includes(definition.key)) {
+      const selectedEvents = getStudentDatabaseCriticalRecordEvents(
+        selectedRecord,
+        definition.normalize,
+        eventTemplates
+      );
+      if (selectedEvents.length) {
+        target.push(buildVerificationSelection({
+          definition,
+          selectedRecord,
+          alternateRecord,
+          fieldName: "recordEvents",
+          choice,
+          eventTemplates,
+          exact: true
+        }));
+      }
+    }
+  };
+  const buildSnapshotVerificationSelections = (
+    choice,
+    collections,
+    definitionKeys = null
+  ) => {
+    const selections = [];
+    const definitions = getStudentDatabaseSynchronizedChangeDefinitions(webData, excelData)
+      .filter((definition) => (
+        !definitionKeys || definitionKeys.has(definition.key)
+      ));
+    const selectedSource = choice === "excel" ? excelData : webData;
+    const selectedMacroSettings = selectedSource?.macroSettings
+      && typeof selectedSource.macroSettings === "object"
+      ? selectedSource.macroSettings
+      : {};
+    const studentEventTemplates = Array.isArray(selectedMacroSettings.studentEventTemplates)
+      && selectedMacroSettings.studentEventTemplates.length
+      ? selectedMacroSettings.studentEventTemplates
+      : STUDENT_EVENT_IMPORT_TEMPLATES;
+    const contractEventTemplates = Array.isArray(selectedMacroSettings.contractEventTemplates)
+      && selectedMacroSettings.contractEventTemplates.length
+      ? selectedMacroSettings.contractEventTemplates
+      : CONTRACT_EVENT_IMPORT_TEMPLATES;
+    definitions.forEach((definition) => {
+      const matches = pairStudentDatabaseFieldMergeRecords(
+        definition.before,
+        definition.after,
+        definition
+      );
+      matches.pairs.forEach((pair) => {
+        const collectionKey = definition.key === "inventory" ? "inventory" : definition.key;
+        const targetRows = collections[collectionKey] || [];
+        const selectedIndex = choice === "excel" ? pair.afterIndex : pair.beforeIndex;
+        const selectedRecord = targetRows[selectedIndex]
+          || (choice === "excel" ? pair.after : pair.before);
+        const alternateRecord = choice === "excel" ? pair.before : pair.after;
+        definition.fields.forEach((fieldName) => {
+          if (!isStudentDatabaseFixedValueOverrideField(definition.key, fieldName)) return;
+          if (isStudentDatabaseRecordFormulaBacked(selectedRecord, fieldName)) return;
+          const selectedValue = definition.normalize(selectedRecord, fieldName);
+          const alternateValue = definition.normalize(alternateRecord, fieldName);
+          if (
+            serializeStudentDatabaseChangeValue(selectedValue)
+            === serializeStudentDatabaseChangeValue(alternateValue)
+          ) return;
+          if (choice === "web") {
+            setStudentDatabaseFixedValueOverride(selectedRecord, fieldName, true);
+          }
+          selections.push(buildVerificationSelection({
+            definition,
+            selectedRecord,
+            alternateRecord,
+            fieldName,
+            choice
+          }));
+        });
+        if (["students", "contracts"].includes(definition.key)) {
+          const eventTemplates = definition.key === "students"
+            ? studentEventTemplates
+            : contractEventTemplates;
+          const selectedEvents = getStudentDatabaseCriticalRecordEvents(
+            selectedRecord,
+            definition.normalize,
+            eventTemplates
+          );
+          const alternateEvents = getStudentDatabaseCriticalRecordEvents(
+            alternateRecord,
+            definition.normalize,
+            eventTemplates
+          );
+          if (
+            serializeStudentDatabaseChangeValue(selectedEvents)
+            !== serializeStudentDatabaseChangeValue(alternateEvents)
+          ) {
+            selections.push(buildVerificationSelection({
+              definition,
+              selectedRecord,
+              alternateRecord,
+              fieldName: "recordEvents",
+              choice,
+              eventTemplates,
+              exact: true
+            }));
+          }
+        }
+      });
+      const collectionKey = definition.key === "inventory" ? "inventory" : definition.key;
+      const targetRows = collections[collectionKey] || [];
+      const selectedPresenceRows = choice === "web" ? matches.removed : matches.added;
+      selectedPresenceRows.forEach(({ index, record }) => {
+        appendSelectedRecordVerifications(
+          selections,
+          definition,
+          targetRows[index] || record,
+          null,
+          choice,
+          definition.key === "students" ? studentEventTemplates
+            : definition.key === "contracts" ? contractEventTemplates
+              : definition.eventTemplates
+        );
+      });
+    });
+    return selections;
+  };
+  const buildSnapshotResult = (choice = "") => {
+    if (!choice) {
+      return {
+        students: null,
+        collections: null,
+        conflicts: [{
+          id: snapshotConflictId,
+          kind: "snapshot",
+          completeReconciliation: true,
+          entity: "Все критичные данные и настройки событий",
+          record: "Слушатели, договоры, затраты, запасы, программы, учебные планы и настройки событий",
+          fieldName: "criticalSnapshot",
+          field: "Общий источник для перечисленных данных",
+          web: "Использовать Web для всех перечисленных данных",
+          excel: "Использовать XLSB для всех перечисленных данных",
+          reason: "Связанные данные, настройки либо слишком большой список нельзя безопасно разделить по отдельным строкам. Выбор одной стороны покрывает весь состав записей, все управляемые поля и настройки событий.",
+          destructive: true
+        }],
+        changes: [],
+        stats: {
+          webToExcel: 0,
+          excelToWeb: 0,
+          conflictsResolved: 0,
+          unchanged: 0
+        },
+        changedWebIds: [],
+        completeReconciliation: true,
+        snapshotFallback: true,
+        eventSettingsChoice: "",
+        verificationSelections: []
+      };
+    }
+    const source = choice === "excel" ? excelData : webData;
+    const collections = getCollections(source);
+    const programNameById = new Map(collections.programs
+      .map((program) => [
+        String(program?.id || "").trim(),
+        String(program?.name || program?.xlsbProgramName || "").trim()
+      ])
+      .filter(([id, name]) => id && name));
+    collections.trainingPlans = collections.trainingPlans.map((plan) => ({
+      ...(plan || {}),
+      programName: programNameById.get(String(plan?.programId || "").trim())
+        || plan?.programName
+    }));
+    const materializedCollections = materializeStudentDatabaseReconciledCollections(
+      collections,
+      ""
+    );
+    const verificationSelections = buildSnapshotVerificationSelections(
+      choice,
+      materializedCollections
+    );
+    const definitions = getStudentDatabaseSynchronizedChangeDefinitions(webData, excelData);
+    const changes = definitions.map((definition) => ({
+      entity: definition.label,
+      record: "Все записи раздела",
+      action: choice === "excel" ? "XLSB → Web" : "Web → XLSB",
+      field: "Все управляемые поля и состав записей",
+      before: choice === "excel" ? "Web" : "XLSB",
+      after: choice === "excel" ? "XLSB" : "Web",
+      recordId: ""
+    }));
+    return {
+      students: materializedCollections.students,
+      collections: materializedCollections,
+      conflicts: [],
+      changes,
+      stats: {
+        webToExcel: choice === "web" ? changes.length : 0,
+        excelToWeb: choice === "excel" ? changes.length : 0,
+        conflictsResolved: 1,
+        unchanged: 0
+      },
+      changedWebIds: choice === "excel"
+        ? materializedCollections.students
+          .map((record) => String(record?.id || "").trim())
+          .filter(Boolean)
+        : [],
+      completeReconciliation: true,
+      snapshotFallback: true,
+      eventSettingsChoice: choice,
+      verificationSelections
+    };
+  };
+
+  const snapshotResolution = resolutions.get(snapshotConflictId) || "";
+  if (snapshotResolution) return buildSnapshotResult(snapshotResolution);
+  if (forceSnapshotChoice) return buildSnapshotResult();
+
+  const definitions = getStudentDatabaseSynchronizedChangeDefinitions(webData, excelData)
+    .filter((definition) => ["students", "contracts", "generalExpenses"].includes(definition.key));
+  const webCollections = getCollections(webData);
+  const excelCollections = getCollections(excelData);
+  const mergedCollections = {};
+  const conflicts = [];
+  const changes = [];
+  const verificationSelections = [];
+  const changedWebIds = new Set();
+  const stats = {
+    webToExcel: 0,
+    excelToWeb: 0,
+    conflictsResolved: 0,
+    unchanged: 0
+  };
+  let differenceCount = 0;
+
+  const registerDifference = () => {
+    differenceCount += 1;
+    return differenceCount <= STUDENT_DATABASE_SYNC_DIAGNOSTIC_LIMIT;
+  };
+  const buildRecordToken = (definition, record, side, index) => {
+    const recordId = getStudentDatabaseChangeRecordId(record)
+      || String(record?.id || "").trim();
+    if (recordId) return `${definition.key}\u0000${recordId}\u0000${side}\u0000${index}`;
+    const projected = definition.fields.map((fieldName) => (
+      normalizeStudentDatabaseChangeComparableValue(definition.normalize(record, fieldName))
+    ));
+    const fingerprint = crypto.createHash("sha256")
+      .update(JSON.stringify(projected))
+      .digest("hex");
+    return `${definition.key}\u0000${fingerprint}\u0000${side}\u0000${index}`;
+  };
+  const studentHasLinkedExpenses = (record) => {
+    const uid = String(record?.uid || "").trim().replace(/\.0+$/u, "");
+    if (!uid) return false;
+    return [webCollections, excelCollections].some((collections) => (
+      (collections.directExpenses || []).some((expense) => (
+        String(expense?.uid || "").trim().replace(/\.0+$/u, "") === uid
+      ))
+    ));
+  };
+
+  const webCriticalSnapshot = buildStudentDatabaseCriticalSnapshot(webData);
+  const excelCriticalSnapshot = buildStudentDatabaseCriticalSnapshot(excelData);
+  const hashSnapshotKeys = (snapshot, keys) => crypto.createHash("sha256")
+    .update(JSON.stringify(keys.map((key) => [key, snapshot[key]])))
+    .digest("hex");
+  const linkedGroups = [
+    {
+      token: "inventory-expenses",
+      entity: "Запасы и прямые затраты",
+      record: "Все связанные выдачи запасов и прямые затраты",
+      criticalKeys: ["directExpenses", "inventoryUnits"],
+      collectionKeys: ["directExpenses", "inventory"],
+      definitionKeys: new Set(["directExpenses", "inventory"]),
+      reason: "Выдачи запасов и прямые затраты связаны между собой. Для этой группы нужен один источник, чтобы не создавать дубли и разорванные связи."
+    },
+    {
+      token: "programs-plans",
+      entity: "Программы и учебные планы",
+      record: "Все программы и связанные строки учебных планов",
+      criticalKeys: ["programs", "trainingPlans"],
+      collectionKeys: ["programs", "trainingPlans"],
+      definitionKeys: new Set(["programs", "trainingPlans"]),
+      reason: "Программы и учебные планы связаны идентификаторами. Для этой группы нужен один источник, чтобы не потерять соответствие строк."
+    }
+  ];
+  const resolvedLinkedVerificationGroups = [];
+  linkedGroups.forEach((group) => {
+    const webGroupHash = hashSnapshotKeys(webCriticalSnapshot, group.criticalKeys);
+    const excelGroupHash = hashSnapshotKeys(excelCriticalSnapshot, group.criticalKeys);
+    if (webGroupHash === excelGroupHash) {
+      group.collectionKeys.forEach((key) => {
+        mergedCollections[key] = clone(webCollections[key]) || [];
+      });
+      stats.unchanged += 1;
+      return;
+    }
+    differenceCount += 1;
+    const conflictId = buildStudentDatabaseSyncConflictId(
+      `complete-reconciliation-${group.token}`,
+      "linked-snapshot",
+      "",
+      webGroupHash,
+      excelGroupHash
+    );
+    const resolution = resolutions.get(conflictId) || "";
+    if (!resolution) {
+      conflicts.push({
+        id: conflictId,
+        kind: "snapshot-group",
+        completeReconciliation: true,
+        entity: group.entity,
+        record: group.record,
+        fieldName: "linkedSnapshot",
+        field: "Общий источник для связанной группы",
+        web: `Использовать Web для группы «${group.entity}»`,
+        excel: `Использовать XLSB для группы «${group.entity}»`,
+        reason: group.reason,
+        destructive: true
+      });
+      return;
+    }
+    const selectedCollections = resolution === "excel" ? excelCollections : webCollections;
+    group.collectionKeys.forEach((key) => {
+      mergedCollections[key] = clone(selectedCollections[key]) || [];
+    });
+    resolvedLinkedVerificationGroups.push({
+      resolution,
+      definitionKeys: group.definitionKeys
+    });
+    stats.conflictsResolved += 1;
+    if (resolution === "excel") stats.excelToWeb += 1;
+    else stats.webToExcel += 1;
+    changes.push({
+      entity: group.entity,
+      record: group.record,
+      action: resolution === "excel" ? "XLSB → Web" : "Web → XLSB",
+      field: "Все данные связанной группы",
+      before: resolution === "excel" ? "Web" : "XLSB",
+      after: resolution === "excel" ? "XLSB" : "Web",
+      recordId: ""
+    });
+  });
+  let selectedEventSettingsChoice = "";
+  if (webEventSettingsHash === excelEventSettingsHash) {
+    stats.unchanged += 1;
+  } else {
+    differenceCount += 1;
+    const eventConflictId = buildStudentDatabaseSyncConflictId(
+      "complete-reconciliation-event-settings",
+      "event-settings",
+      "",
+      webEventSettingsHash,
+      excelEventSettingsHash
+    );
+    selectedEventSettingsChoice = resolutions.get(eventConflictId) || "";
+    if (!selectedEventSettingsChoice) {
+      conflicts.push({
+        id: eventConflictId,
+        kind: "settings",
+        completeReconciliation: true,
+        entity: "Настройки событий",
+        record: "События слушателей и сотрудников",
+        fieldName: "eventSettings",
+        field: "Общий источник настроек событий",
+        web: "Использовать настройки событий Web",
+        excel: "Использовать настройки событий XLSB",
+        reason: "Наборы событий различаются. Выберите источник только для настроек событий; остальные данные разрешаются отдельно.",
+        destructive: true
+      });
+    } else {
+      stats.conflictsResolved += 1;
+      if (selectedEventSettingsChoice === "excel") stats.excelToWeb += 1;
+      else stats.webToExcel += 1;
+      changes.push({
+        entity: "Настройки событий",
+        record: "События слушателей и сотрудников",
+        action: selectedEventSettingsChoice === "excel" ? "XLSB → Web" : "Web → XLSB",
+        field: "Все настройки событий",
+        before: selectedEventSettingsChoice === "excel" ? "Web" : "XLSB",
+        after: selectedEventSettingsChoice === "excel" ? "XLSB" : "Web",
+        recordId: ""
+      });
+    }
+  }
+  const canCompareRecordEvents = webEventSettingsHash === excelEventSettingsHash
+    || Boolean(selectedEventSettingsChoice);
+  const selectedEventSettingsSource = selectedEventSettingsChoice === "excel"
+    ? excelData
+    : webData;
+  const selectedMacroSettings = selectedEventSettingsSource?.macroSettings
+    && typeof selectedEventSettingsSource.macroSettings === "object"
+    ? selectedEventSettingsSource.macroSettings
+    : {};
+  const selectedStudentEventTemplates = Array.isArray(selectedMacroSettings.studentEventTemplates)
+    && selectedMacroSettings.studentEventTemplates.length
+    ? selectedMacroSettings.studentEventTemplates
+    : STUDENT_EVENT_IMPORT_TEMPLATES;
+  const selectedContractEventTemplates = Array.isArray(selectedMacroSettings.contractEventTemplates)
+    && selectedMacroSettings.contractEventTemplates.length
+    ? selectedMacroSettings.contractEventTemplates
+    : CONTRACT_EVENT_IMPORT_TEMPLATES;
+
+  for (const definition of definitions) {
+    const fields = definition.fields.filter((fieldName) => (
+      !isStudentDatabaseRecordEventField(fieldName)
+      && !STUDENT_DATABASE_DERIVED_FIXED_VALUE_FIELDS[definition.key]?.has(fieldName)
+    ));
+    const matchingDefinition = { ...definition, fields };
+    const matches = pairStudentDatabaseFieldMergeRecords(
+      definition.before,
+      definition.after,
+      matchingDefinition
+    );
+    const mergedRows = definition.before.map((record) => clone(record));
+    const removedWebIndexes = new Set();
+    const appendedExcelRows = [];
+
+    for (const pair of matches.pairs) {
+      const webRecord = pair.before;
+      const excelRecord = pair.after;
+      const mergedRecord = mergedRows[pair.beforeIndex];
+      const recordId = getStudentDatabaseChangeRecordId(webRecord)
+        || getStudentDatabaseChangeRecordId(excelRecord)
+        || String(webRecord?.id || excelRecord?.id || "").trim()
+        || `${definition.key}-${pair.beforeIndex + 1}`;
+      const recordToken = `${definition.key}\u0000${recordId}\u0000${pair.beforeIndex}\u0000${pair.afterIndex}`;
+
+      for (const fieldName of fields) {
+        const webFieldValue = definition.normalize(webRecord, fieldName);
+        const excelFieldValue = definition.normalize(excelRecord, fieldName);
+        const webSerialized = serializeStudentDatabaseChangeValue(webFieldValue);
+        const excelSerialized = serializeStudentDatabaseChangeValue(excelFieldValue);
+        if (webSerialized === excelSerialized) {
+          stats.unchanged += 1;
+          continue;
+        }
+        if (
+          definition.key === "students"
+          && ["uid", "program"].includes(fieldName)
+        ) return buildSnapshotResult();
+        if (!registerDifference()) return buildSnapshotResult();
+        const conflictId = buildStudentDatabaseSyncConflictId(
+          recordToken,
+          fieldName,
+          "complete-reconciliation",
+          webFieldValue,
+          excelFieldValue
+        );
+        const resolution = resolutions.get(conflictId) || "";
+        if (!resolution) {
+          conflicts.push({
+            id: conflictId,
+            kind: "field",
+            completeReconciliation: true,
+            entity: definition.label,
+            recordId,
+            uid: String(webRecord?.uid || excelRecord?.uid || "").trim(),
+            record: formatStudentDatabaseChangeRecordLabel(webRecord, definition),
+            fieldName,
+            field: getStudentDatabaseChangeFieldLabel(fieldName, definition),
+            web: formatStudentDatabaseChangeValue(webFieldValue, fieldName, definition),
+            excel: formatStudentDatabaseChangeValue(excelFieldValue, fieldName, definition),
+            reason: "Текущие значения Web и XLSB различаются. Выберите вариант, который должен остаться в обеих базах."
+          });
+          continue;
+        }
+        let selectedFormulaValueMaterialized = false;
+        if (resolution === "excel") {
+          applyStudentDatabaseSelectedFieldValue(
+            mergedRecord,
+            excelRecord,
+            definition.key,
+            fieldName
+          );
+          selectedFormulaValueMaterialized = materializeStudentDatabaseSelectedFormulaValue(
+            mergedRecord,
+            excelRecord,
+            definition.key,
+            fieldName
+          );
+          if (!selectedFormulaValueMaterialized) {
+            setStudentDatabaseFixedValueOverride(mergedRecord, fieldName, false);
+          }
+          stats.excelToWeb += 1;
+          if (definition.key === "students") changedWebIds.add(String(webRecord?.id || recordId).trim());
+        } else {
+          setStudentDatabaseFixedValueOverride(mergedRecord, fieldName, true);
+          stats.webToExcel += 1;
+        }
+        stats.conflictsResolved += 1;
+        changes.push({
+          entity: definition.label,
+          record: formatStudentDatabaseChangeRecordLabel(webRecord, definition),
+          action: resolution === "excel" ? "XLSB → Web" : "Web → XLSB",
+          field: getStudentDatabaseChangeFieldLabel(fieldName, definition),
+          before: resolution === "excel"
+            ? formatStudentDatabaseChangeValue(webFieldValue, fieldName, definition)
+            : formatStudentDatabaseChangeValue(excelFieldValue, fieldName, definition),
+          after: resolution === "excel"
+            ? formatStudentDatabaseChangeValue(excelFieldValue, fieldName, definition)
+            : formatStudentDatabaseChangeValue(webFieldValue, fieldName, definition),
+          recordId
+        });
+        verificationSelections.push(buildVerificationSelection({
+          definition,
+          selectedRecord: mergedRecord,
+          alternateRecord: resolution === "excel" ? webRecord : excelRecord,
+          fieldName,
+          choice: resolution,
+          exact: true
+        }));
+      }
+
+      if (canCompareRecordEvents && ["students", "contracts"].includes(definition.key)) {
+        const eventNormalizer = definition.key === "students"
+          ? normalizeStudentDatabaseCriticalStudentValue
+          : normalizeStudentDatabaseCriticalContractValue;
+        const eventTemplates = definition.key === "students"
+          ? selectedStudentEventTemplates
+          : selectedContractEventTemplates;
+        const webEvents = getStudentDatabaseCriticalRecordEvents(
+          webRecord,
+          eventNormalizer,
+          eventTemplates
+        );
+        const excelEvents = getStudentDatabaseCriticalRecordEvents(
+          excelRecord,
+          eventNormalizer,
+          eventTemplates
+        );
+        const webEventsSerialized = serializeStudentDatabaseChangeValue(webEvents);
+        const excelEventsSerialized = serializeStudentDatabaseChangeValue(excelEvents);
+        if (webEventsSerialized === excelEventsSerialized) {
+          stats.unchanged += 1;
+        } else {
+          if (!registerDifference()) return buildSnapshotResult();
+          const conflictId = buildStudentDatabaseSyncConflictId(
+            recordToken,
+            "record-events",
+            "complete-reconciliation",
+            webEvents,
+            excelEvents
+          );
+          const resolution = resolutions.get(conflictId) || "";
+          if (!resolution) {
+            conflicts.push({
+              id: conflictId,
+              kind: "record-events",
+              completeReconciliation: true,
+              entity: definition.label,
+              recordId,
+              uid: String(webRecord?.uid || excelRecord?.uid || "").trim(),
+              record: formatStudentDatabaseChangeRecordLabel(webRecord, definition),
+              fieldName: "recordEvents",
+              field: "События карточки",
+              web: formatStudentDatabaseChangeValue(webEvents, "recordEvents", definition),
+              excel: formatStudentDatabaseChangeValue(excelEvents, "recordEvents", definition),
+              reason: "Состав, порядок или состояние событий карточки различаются. Выберите источник для всех событий этой записи."
+            });
+          } else {
+            if (resolution === "excel") {
+              replaceStudentDatabaseRecordEvents(mergedRecord, excelRecord);
+              stats.excelToWeb += 1;
+              if (definition.key === "students") {
+                changedWebIds.add(String(webRecord?.id || recordId).trim());
+              }
+            } else {
+              stats.webToExcel += 1;
+            }
+            stats.conflictsResolved += 1;
+            changes.push({
+              entity: definition.label,
+              record: formatStudentDatabaseChangeRecordLabel(webRecord, definition),
+              action: resolution === "excel" ? "XLSB → Web" : "Web → XLSB",
+              field: "События карточки",
+              before: resolution === "excel"
+                ? formatStudentDatabaseChangeValue(webEvents, "recordEvents", definition)
+                : formatStudentDatabaseChangeValue(excelEvents, "recordEvents", definition),
+              after: resolution === "excel"
+                ? formatStudentDatabaseChangeValue(excelEvents, "recordEvents", definition)
+                : formatStudentDatabaseChangeValue(webEvents, "recordEvents", definition),
+              recordId
+            });
+            verificationSelections.push(buildVerificationSelection({
+              definition,
+              selectedRecord: resolution === "excel" ? excelRecord : mergedRecord,
+              alternateRecord: resolution === "excel" ? webRecord : excelRecord,
+              fieldName: "recordEvents",
+              choice: resolution,
+              eventTemplates,
+              exact: true
+            }));
+          }
+        }
+      }
+    }
+
+    for (const item of matches.removed) {
+      if (definition.key === "students" && studentHasLinkedExpenses(item.record)) {
+        return buildSnapshotResult();
+      }
+      if (!registerDifference()) return buildSnapshotResult();
+      const webRecord = item.record;
+      const recordId = getStudentDatabaseChangeRecordId(webRecord)
+        || String(webRecord?.id || "").trim()
+        || `${definition.key}-web-${item.index + 1}`;
+      const recordToken = buildRecordToken(definition, webRecord, "web", item.index);
+      const conflictId = buildStudentDatabaseSyncConflictId(
+        recordToken,
+        "record-presence",
+        "complete-reconciliation",
+        summarizeStudentDatabaseChangeRecord(webRecord, definition),
+        ""
+      );
+      const resolution = resolutions.get(conflictId) || "";
+      if (!resolution) {
+        conflicts.push({
+          id: conflictId,
+          kind: "record-presence",
+          completeReconciliation: true,
+          entity: definition.label,
+          recordId,
+          record: formatStudentDatabaseChangeRecordLabel(webRecord, definition),
+          fieldName: "recordPresence",
+          field: "Наличие записи",
+          web: `Сохранить запись: ${summarizeStudentDatabaseChangeRecord(webRecord, definition)}`,
+          excel: "Удалить запись: в XLSB она отсутствует",
+          reason: "Запись есть только в Web. Выбор XLSB удалит её из итоговой базы.",
+          destructive: true
+        });
+        continue;
+      }
+      if (resolution === "excel") {
+        removedWebIndexes.add(item.index);
+        stats.excelToWeb += 1;
+        if (definition.key === "students") changedWebIds.add(String(webRecord?.id || recordId).trim());
+      } else {
+        appendSelectedRecordVerifications(
+          verificationSelections,
+          definition,
+          mergedRows[item.index],
+          null,
+          "web",
+          definition.key === "students" ? selectedStudentEventTemplates
+            : definition.key === "contracts" ? selectedContractEventTemplates
+              : definition.eventTemplates
+        );
+        stats.webToExcel += 1;
+      }
+      stats.conflictsResolved += 1;
+      changes.push({
+        entity: definition.label,
+        record: formatStudentDatabaseChangeRecordLabel(webRecord, definition),
+        action: resolution === "excel" ? "Удаление по варианту XLSB" : "Добавление из Web в XLSB",
+        field: "Наличие записи",
+        before: resolution === "excel" ? "Есть в Web" : "Нет в XLSB",
+        after: resolution === "excel" ? "Удалена" : "Сохранена",
+        recordId
+      });
+    }
+
+    for (const item of matches.added) {
+      if (definition.key === "students" && studentHasLinkedExpenses(item.record)) {
+        return buildSnapshotResult();
+      }
+      if (!registerDifference()) return buildSnapshotResult();
+      const excelRecord = item.record;
+      const recordId = getStudentDatabaseChangeRecordId(excelRecord)
+        || String(excelRecord?.id || "").trim()
+        || `${definition.key}-xlsb-${item.index + 1}`;
+      const recordToken = buildRecordToken(definition, excelRecord, "excel", item.index);
+      const conflictId = buildStudentDatabaseSyncConflictId(
+        recordToken,
+        "record-presence",
+        "complete-reconciliation",
+        "",
+        summarizeStudentDatabaseChangeRecord(excelRecord, definition)
+      );
+      const resolution = resolutions.get(conflictId) || "";
+      if (!resolution) {
+        conflicts.push({
+          id: conflictId,
+          kind: "record-presence",
+          completeReconciliation: true,
+          entity: definition.label,
+          recordId,
+          record: formatStudentDatabaseChangeRecordLabel(excelRecord, definition),
+          fieldName: "recordPresence",
+          field: "Наличие записи",
+          web: "Удалить запись: в Web она отсутствует",
+          excel: `Сохранить запись: ${summarizeStudentDatabaseChangeRecord(excelRecord, definition)}`,
+          reason: "Запись есть только в XLSB. Выбор Web удалит её из итогового файла.",
+          destructive: true
+        });
+        continue;
+      }
+      if (resolution === "excel") {
+        const appendedRecord = clone(excelRecord);
+        appendedExcelRows.push({ index: item.index, record: appendedRecord });
+        appendSelectedRecordVerifications(
+          verificationSelections,
+          definition,
+          appendedRecord,
+          null,
+          "excel",
+          definition.key === "students" ? selectedStudentEventTemplates
+            : definition.key === "contracts" ? selectedContractEventTemplates
+              : definition.eventTemplates
+        );
+        stats.excelToWeb += 1;
+        if (definition.key === "students") changedWebIds.add(String(excelRecord?.id || recordId).trim());
+      } else {
+        stats.webToExcel += 1;
+      }
+      stats.conflictsResolved += 1;
+      changes.push({
+        entity: definition.label,
+        record: formatStudentDatabaseChangeRecordLabel(excelRecord, definition),
+        action: resolution === "excel" ? "Добавление из XLSB в Web" : "Удаление по варианту Web",
+        field: "Наличие записи",
+        before: resolution === "excel" ? "Нет в Web" : "Есть в XLSB",
+        after: resolution === "excel" ? "Сохранена" : "Удалена",
+        recordId
+      });
+    }
+
+    mergedCollections[definition.key] = [
+      ...mergedRows.filter((record, index) => !removedWebIndexes.has(index)),
+      ...appendedExcelRows.sort((left, right) => left.index - right.index).map((item) => item.record)
+    ];
+  }
+
+  if (!conflicts.length && !mergedCollections.students.length) {
+    const webStudentsHash = hashSnapshotKeys(webCriticalSnapshot, ["students"]);
+    const excelStudentsHash = hashSnapshotKeys(excelCriticalSnapshot, ["students"]);
+    const nonEmptyStudentsConflictId = buildStudentDatabaseSyncConflictId(
+      "complete-reconciliation-non-empty-students",
+      "students-snapshot",
+      "",
+      webStudentsHash,
+      excelStudentsHash
+    );
+    const resolution = resolutions.get(nonEmptyStudentsConflictId) || "";
+    if (!resolution) {
+      conflicts.push({
+        id: nonEmptyStudentsConflictId,
+        kind: "snapshot-group",
+        completeReconciliation: true,
+        entity: "Слушатели",
+        record: "Весь список слушателей",
+        fieldName: "nonEmptyStudentsSnapshot",
+        field: "Источник списка после взаимоисключающих удалений",
+        web: "Использовать полный список слушателей Web",
+        excel: "Использовать полный список слушателей XLSB",
+        reason: "Выбранная комбинация удалила бы всех слушателей, а пустая база не может быть записана в XLSB. Выберите целиком один из непустых списков.",
+        destructive: true
+      });
+    } else {
+      mergedCollections.students = clone(
+        resolution === "excel" ? excelCollections.students : webCollections.students
+      ) || [];
+      const studentDefinition = definitions.find((definition) => definition.key === "students");
+      if (studentDefinition) {
+        mergedCollections.students.forEach((record) => {
+          appendSelectedRecordVerifications(
+            verificationSelections,
+            studentDefinition,
+            record,
+            null,
+            resolution,
+            selectedStudentEventTemplates
+          );
+        });
+      }
+      stats.conflictsResolved += 1;
+      if (resolution === "excel") {
+        stats.excelToWeb += 1;
+        [...webCollections.students, ...excelCollections.students].forEach((record) => {
+          const id = String(record?.id || "").trim();
+          if (id) changedWebIds.add(id);
+        });
+      } else {
+        stats.webToExcel += 1;
+      }
+      changes.push({
+        entity: "Слушатели",
+        record: "Весь список слушателей",
+        action: resolution === "excel" ? "XLSB → Web" : "Web → XLSB",
+        field: "Состав записей",
+        before: "Пустой результат смешанного выбора",
+        after: resolution === "excel" ? "Полный список XLSB" : "Полный список Web",
+        recordId: ""
+      });
+    }
+  }
+
+  if (!differenceCount && webCriticalHash !== excelCriticalHash) return buildSnapshotResult();
+  if (conflicts.length) {
+    return {
+      students: null,
+      collections: null,
+      conflicts,
+      changes,
+      stats,
+      changedWebIds: [...changedWebIds],
+      completeReconciliation: true,
+      snapshotFallback: false,
+      eventSettingsChoice: selectedEventSettingsChoice,
+      verificationSelections
+    };
+  }
+  const selectedProgramNameById = new Map((mergedCollections.programs || [])
+    .map((program) => [
+      String(program?.id || "").trim(),
+      String(program?.name || program?.xlsbProgramName || "").trim()
+    ])
+    .filter(([id, name]) => id && name));
+  if (Array.isArray(mergedCollections.trainingPlans)) {
+    mergedCollections.trainingPlans = mergedCollections.trainingPlans.map((plan) => ({
+      ...(plan || {}),
+      programName: selectedProgramNameById.get(String(plan?.programId || "").trim())
+        || plan?.programName
+    }));
+  }
+  const materializedCollections = materializeStudentDatabaseReconciledCollections(
+    mergedCollections,
+    ""
+  );
+  resolvedLinkedVerificationGroups.forEach(({ resolution, definitionKeys }) => {
+    verificationSelections.push(...buildSnapshotVerificationSelections(
+      resolution,
+      materializedCollections,
+      definitionKeys
+    ));
+  });
+  return {
+    students: materializedCollections.students,
+    collections: materializedCollections,
+    conflicts,
+    changes,
+    stats,
+    changedWebIds: [...changedWebIds],
+    completeReconciliation: true,
+    snapshotFallback: false,
+    eventSettingsChoice: selectedEventSettingsChoice,
+    verificationSelections
+  };
+}
+
+function createStudentDatabaseReconciliationOutputMismatchError(detail = "") {
+  const suffix = String(detail || "").trim();
+  const error = new Error(
+    "Проверка сформированного XLSB не подтвердила выбранный вариант синхронизации. "
+    + (suffix ? `${suffix} ` : "")
+    + "Исходный файл не изменён; повторите синхронизацию или выберите другой вариант."
+  );
+  error.code = "STUDENT_DATABASE_RECONCILIATION_OUTPUT_MISMATCH";
+  error.statusCode = 409;
+  return error;
+}
+
+function validateStudentDatabaseReconciliationSelectionsAgainstOutput(
+  intendedData,
+  outputData,
+  mergeResult
+) {
+  const selections = Array.isArray(mergeResult?.verificationSelections)
+    ? mergeResult.verificationSelections
+    : [];
+  const definitions = getStudentDatabaseSynchronizedChangeDefinitions(intendedData, outputData);
+  const matchesByDefinition = new Map();
+
+  definitions.forEach((definition) => {
+    const matches = pairStudentDatabaseFieldMergeRecords(
+      definition.before,
+      definition.after,
+      definition
+    );
+    if (matches.removed.length || matches.added.length) {
+      throw createStudentDatabaseReconciliationOutputMismatchError(
+        `Состав записей раздела «${definition.label}» после записи отличается от выбранного.`
+      );
+    }
+    matchesByDefinition.set(definition.key, { definition, matches });
+  });
+
+  const intendedMacroSettings = intendedData?.macroSettings
+    && typeof intendedData.macroSettings === "object"
+    ? intendedData.macroSettings
+    : {};
+  const intendedStudentEventTemplates = Array.isArray(
+    intendedMacroSettings.studentEventTemplates
+  ) && intendedMacroSettings.studentEventTemplates.length
+    ? intendedMacroSettings.studentEventTemplates
+    : STUDENT_EVENT_IMPORT_TEMPLATES;
+  const intendedContractEventTemplates = Array.isArray(
+    intendedMacroSettings.contractEventTemplates
+  ) && intendedMacroSettings.contractEventTemplates.length
+    ? intendedMacroSettings.contractEventTemplates
+    : CONTRACT_EVENT_IMPORT_TEMPLATES;
+
+  matchesByDefinition.forEach(({ definition, matches }) => {
+    matches.pairs.forEach((pair) => {
+      definition.fields.forEach((fieldName) => {
+        if (
+          !isStudentDatabaseFixedValueOverrideField(definition.key, fieldName)
+          || isStudentDatabaseRecordEventField(fieldName)
+        ) return;
+        if (
+          isStudentDatabasePotentialFormulaValueField(definition.key, fieldName)
+          && (
+            definition.key !== "programs"
+            || isStudentDatabaseRecordFormulaBacked(pair.before, fieldName)
+            || isStudentDatabaseRecordFormulaBacked(pair.after, fieldName)
+          )
+        ) return;
+        const intendedValue = definition.normalize(pair.before, fieldName);
+        const outputValue = definition.normalize(pair.after, fieldName);
+        if (
+          serializeStudentDatabaseChangeValue(intendedValue)
+          === serializeStudentDatabaseChangeValue(outputValue)
+        ) return;
+        throw createStudentDatabaseReconciliationOutputMismatchError(
+          `Поле «${getStudentDatabaseChangeFieldLabel(fieldName, definition)}» записи `
+          + `«${formatStudentDatabaseChangeRecordLabel(pair.before, definition)}» `
+          + "изменилось при записи книги."
+        );
+      });
+      if (!["students", "contracts"].includes(definition.key)) return;
+      const eventTemplates = definition.key === "students"
+        ? intendedStudentEventTemplates
+        : intendedContractEventTemplates;
+      const intendedEvents = getStudentDatabaseCriticalRecordEvents(
+        pair.before,
+        definition.normalize,
+        eventTemplates
+      );
+      const outputEvents = getStudentDatabaseCriticalRecordEvents(
+        pair.after,
+        definition.normalize,
+        eventTemplates
+      );
+      if (
+        serializeStudentDatabaseChangeValue(intendedEvents)
+        !== serializeStudentDatabaseChangeValue(outputEvents)
+      ) {
+        throw createStudentDatabaseReconciliationOutputMismatchError(
+          `События записи «${formatStudentDatabaseChangeRecordLabel(
+            pair.before,
+            definition
+          )}» изменились при записи книги.`
+        );
+      }
+    });
+  });
+
+  const findPair = (definition, matches, selection) => {
+    const recordId = String(selection?.recordId || "").trim();
+    if (recordId) {
+      const byId = matches.pairs.filter((pair) => (
+        getStudentDatabaseChangeRecordId(pair.before) === recordId
+        || getStudentDatabaseChangeRecordId(pair.after) === recordId
+        || String(pair.before?.id || "").trim() === recordId
+        || String(pair.after?.id || "").trim() === recordId
+      ));
+      if (byId.length === 1) return byId[0];
+    }
+    const identities = new Set(
+      (Array.isArray(selection?.recordIdentities) ? selection.recordIdentities : [])
+        .map((value) => String(value || ""))
+        .filter(Boolean)
+    );
+    if (identities.size) {
+      const byIdentity = matches.pairs.filter((pair) => (
+        (definition.identityFields || []).some((fields) => (
+          identities.has(buildStudentDatabaseChangeIdentity(
+            pair.before,
+            fields,
+            definition.normalize
+          ))
+          || identities.has(buildStudentDatabaseChangeIdentity(
+            pair.after,
+            fields,
+            definition.normalize
+          ))
+        ))
+      ));
+      if (byIdentity.length === 1) return byIdentity[0];
+    }
+    return null;
+  };
+
+  let verified = 0;
+  selections.forEach((selection) => {
+    const entry = matchesByDefinition.get(String(selection?.definitionKey || ""));
+    if (!entry) {
+      throw createStudentDatabaseReconciliationOutputMismatchError(
+        "Не найден раздел для проверки выбранного значения."
+      );
+    }
+    const pair = findPair(entry.definition, entry.matches, selection);
+    if (!pair) {
+      throw createStudentDatabaseReconciliationOutputMismatchError(
+        `Не найдена выбранная запись раздела «${entry.definition.label}».`
+      );
+    }
+    const actualValue = selection.kind === "record-events"
+      ? getStudentDatabaseCriticalRecordEvents(
+        pair.after,
+        entry.definition.normalize,
+        Array.isArray(selection.eventTemplates)
+          ? selection.eventTemplates
+          : entry.definition.eventTemplates
+      )
+      : entry.definition.normalize(pair.after, selection.fieldName);
+    const actualSerialized = serializeStudentDatabaseChangeValue(actualValue);
+    const expectedSerialized = serializeStudentDatabaseChangeValue(selection.expectedValue);
+    const rejectedSerialized = serializeStudentDatabaseChangeValue(selection.rejectedValue);
+    const matchesExpected = actualSerialized === expectedSerialized;
+    const retainedRejectedValue = expectedSerialized !== rejectedSerialized
+      && actualSerialized === rejectedSerialized;
+    if ((selection.exact && !matchesExpected) || (!selection.exact && retainedRejectedValue)) {
+      throw createStudentDatabaseReconciliationOutputMismatchError(
+        `Поле «${getStudentDatabaseChangeFieldLabel(
+          selection.fieldName,
+          entry.definition
+        )}» записи «${formatStudentDatabaseChangeRecordLabel(
+          pair.before,
+          entry.definition
+        )}» записано не в выбранном варианте.`
+      );
+    }
+    verified += 1;
+  });
+
+  return {
+    verifiedSelectionCount: verified,
+    verifiedCollectionCount: definitions.length
   };
 }
 
@@ -16252,6 +17735,13 @@ function buildProgramDatabaseRecordId(record, rowNumber) {
   return "program-db-" + hash;
 }
 
+function studentDatabaseCellHasFormula(cell) {
+  return Boolean(cell && (
+    Object.prototype.hasOwnProperty.call(cell, "f")
+    || Object.prototype.hasOwnProperty.call(cell, "F")
+  ));
+}
+
 function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}, syncMetadataIndex = new Map()) {
   const worksheet = workbook.Sheets["Реестр программ"];
   if (!worksheet) throw new Error("В файле не найден лист «Реестр программ».");
@@ -16313,6 +17803,11 @@ function parseProgramPaymentDatabaseSheet(workbook, onProgress = () => {}, syncM
           : row[index];
         record[fieldName] = normalizeProgramDatabaseValue(fieldName, value);
       });
+      record.databaseSyncFormulaFields = mappedColumns
+        .filter(({ index }) => studentDatabaseCellHasFormula(
+          worksheet[XLSX.utils.encode_cell({ r: xlsbProgramRow - 1, c: index })]
+        ))
+        .map(({ fieldName }) => fieldName);
       record.id = databaseSync?.recordId || buildProgramDatabaseRecordId(record, xlsbProgramRow);
       if (databaseSync) record.databaseSync = databaseSync;
       record.databaseSyncSourceRow = xlsbProgramRow;
@@ -16395,6 +17890,11 @@ function parseTrainingPlanDatabaseSheet(workbook, onProgress = () => {}, syncMet
         record.practiceHours
       );
       const rowNumber = headerRowIndex + offset + 2;
+      record.databaseSyncFormulaFields = mappedColumns
+        .filter(({ index }) => studentDatabaseCellHasFormula(
+          worksheet[XLSX.utils.encode_cell({ r: rowNumber - 1, c: index })]
+        ))
+        .map(({ fieldName }) => fieldName);
       const databaseSync = getStudentDatabaseManagedSyncMetadata(
         syncMetadataIndex,
         "Учебные планы",
@@ -16471,6 +17971,11 @@ function parseDirectExpenseDatabaseSheet(workbook, onProgress = () => {}, syncMe
       if (value === "") return;
       expense[column.fieldName] = value;
     });
+    expense.databaseSyncFormulaFields = mappedColumns
+      .filter(({ index }) => studentDatabaseCellHasFormula(
+        worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: index })]
+      ))
+      .map(({ fieldName }) => fieldName);
     const databaseSync = getStudentDatabaseManagedSyncMetadata(
       syncMetadataIndex,
       "Прямые затраты",
@@ -16753,7 +18258,9 @@ function buildInventoryDatabaseRecordId(itemType) {
 }
 
 function buildInventoryGeneratedExpenseId(unit) {
-  const syncRecordId = String(unit?.databaseSync?.recordId || "").trim();
+  const syncRecordId = String(
+    getStudentDatabaseChangeRecordId(unit) || unit?.id || ""
+  ).trim();
   if (syncRecordId) {
     const stableHash = crypto.createHash("sha1").update(syncRecordId).digest("hex").slice(0, 16);
     return "direct-expense-inventory-" + stableHash;
@@ -17197,6 +18704,11 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}, options = {}
       if (value === "") return;
       student[column.fieldName] = value;
     });
+    student.databaseSyncFormulaFields = mappedColumns
+      .filter(({ index }) => studentDatabaseCellHasFormula(
+        worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: index })]
+      ))
+      .map(({ fieldName }) => fieldName);
     if (eventSettingsColumn >= 0) {
       Object.assign(student, parseStudentEventSettings(
         row[eventSettingsColumn],
@@ -21892,16 +23404,31 @@ function sanitizeStudentDatabaseExportTrainingPlans(value, synchronizedAt = "") 
       throw new Error("В учебных планах повторяется служебный ID «" + id + "».");
     }
     usedIds.add(id);
-    return {
+    const result = {
       ...record,
       id,
       programId: String(item.programId || "").trim().slice(0, 191),
+      databaseSyncFormulaFields: [...new Set(
+        (Array.isArray(item.databaseSyncFormulaFields)
+          ? item.databaseSyncFormulaFields
+          : [])
+          .map((fieldName) => String(fieldName || "").trim())
+          .filter((fieldName) => Object.values(TRAINING_PLAN_DATABASE_COLUMN_MAP)
+            .includes(fieldName))
+      )],
       __syncComment: buildStudentDatabaseManagedSyncComment(
         "trainingPlans",
         id,
         { syncedAt: synchronizedAt }
       )
     };
+    const fixedValueOverrides = getStudentDatabaseRecordFixedValueOverrides(
+      item.databaseFixedValueOverrides
+    );
+    if (fixedValueOverrides.length) {
+      result.databaseFixedValueOverrides = fixedValueOverrides;
+    }
+    return result;
   });
   return { provided: true, trainingPlans };
 }
@@ -21967,6 +23494,13 @@ function sanitizeStudentDatabaseExportPrograms(value, synchronizedAt = "") {
         promoMessage1,
         promoMessage2,
         emailMessageTemplate,
+        databaseSyncFormulaFields: [...new Set(
+          (Array.isArray(program.databaseSyncFormulaFields)
+            ? program.databaseSyncFormulaFields
+            : [])
+            .map((fieldName) => String(fieldName || "").trim())
+            .filter((fieldName) => Object.values(PROGRAM_DATABASE_COLUMN_MAP).includes(fieldName))
+        )],
         providedFields: [],
         __syncComment: buildStudentDatabaseManagedSyncComment(
           "programs",
@@ -22006,6 +23540,12 @@ function sanitizeStudentDatabaseExportPrograms(value, synchronizedAt = "") {
           result[fieldName] = normalized;
           result.providedFields.push(fieldName);
         });
+      const fixedValueOverrides = getStudentDatabaseRecordFixedValueOverrides(
+        program.databaseFixedValueOverrides
+      );
+      if (fixedValueOverrides.length) {
+        result.databaseFixedValueOverrides = fixedValueOverrides;
+      }
       return result;
     })
     .filter((program) => program.name || program.xlsbProgramName);
@@ -22348,6 +23888,130 @@ function attachStudentDatabaseExportSyncComment(
       ...extra,
       syncedAt: synchronizedAt
     })
+  };
+}
+
+function materializeStudentDatabaseReconciledCollections(
+  collectionsValue,
+  synchronizedAt = new Date().toISOString()
+) {
+  const collections = collectionsValue && typeof collectionsValue === "object"
+    && !Array.isArray(collectionsValue)
+    ? collectionsValue
+    : {};
+  const readParentRecordId = (record) => {
+    const metadataParentId = String(
+      record?.inventoryId || record?.databaseSync?.parentRecordId || ""
+    ).trim();
+    if (metadataParentId) return metadataParentId;
+    try {
+      return String(JSON.parse(String(record?.__syncComment || "{}"))?.parentRecordId || "").trim();
+    } catch {
+      return "";
+    }
+  };
+  const materialize = (rowsValue, {
+    entity,
+    label,
+    fallbackId,
+    extra = () => ({})
+  }) => {
+    const seenIds = new Set();
+    return (Array.isArray(rowsValue) ? rowsValue : []).map((record, index) => {
+      const recordId = getStudentDatabaseChangeRecordId(record)
+        || String(record?.id || "").trim()
+        || fallbackId(record, index);
+      return attachStudentDatabaseExportSyncComment(
+        { ...(record || {}), id: recordId },
+        {
+          entity,
+          fallbackId: recordId,
+          seenIds,
+          label,
+          index,
+          synchronizedAt,
+          extra: extra(record, index)
+        }
+      );
+    });
+  };
+  const inventory = materialize(collections.inventory, {
+    entity: "inventoryUnits",
+    label: "поштучных строк запасов",
+    fallbackId: (record, index) => buildInventoryDatabaseUnitRecordId(
+      readParentRecordId(record) || buildInventoryDatabaseRecordId(record?.itemType),
+      String(record?.id || record?.databaseSyncSourceRow || index + 1),
+      "reconciliation",
+      index
+    ),
+    extra: (record) => ({
+      parentRecordId: readParentRecordId(record)
+        || buildInventoryDatabaseRecordId(record?.itemType)
+    })
+  });
+  const inventoryItemsById = new Map();
+  const inventoryUnits = inventory.map((record) => {
+    const inventoryId = readParentRecordId(record)
+      || buildInventoryDatabaseRecordId(record?.itemType);
+    if (!inventoryItemsById.has(inventoryId)) {
+      inventoryItemsById.set(inventoryId, {
+        id: inventoryId,
+        itemType: String(record?.itemType || "").trim()
+      });
+    }
+    return { ...(record || {}), inventoryId };
+  });
+  const linkedDirectExpenses = linkInventoryToDirectExpenses(
+    [...inventoryItemsById.values()],
+    inventoryUnits,
+    Array.isArray(collections.directExpenses) ? collections.directExpenses : []
+  ).directExpenses;
+  return {
+    students: materialize(
+      (Array.isArray(collections.students) ? collections.students : []).map((student) => {
+        const { photoData, photoUrl, directExpenses, ...record } = student || {};
+        return record;
+      }),
+      {
+        entity: "students",
+        label: "слушателей",
+        fallbackId: (record, index) => buildStudentDatabaseRecordId(record?.uid, index + 1)
+      }
+    ),
+    contracts: materialize(collections.contracts, {
+      entity: "contracts",
+      label: "договоров",
+      fallbackId: (record, index) => buildContractDatabaseRecordId(record, index + 1)
+    }),
+    directExpenses: materialize(linkedDirectExpenses, {
+      entity: "directExpenses",
+      label: "прямых затрат",
+      fallbackId: (record, index) => buildDirectExpenseDatabaseRecordId(record, index + 1)
+    }),
+    generalExpenses: materialize(collections.generalExpenses, {
+      entity: "generalExpenses",
+      label: "общих затрат",
+      fallbackId: (record, index) => buildGeneralExpenseDatabaseRecordId(record, index + 1)
+    }),
+    inventory,
+    programs: sanitizeStudentDatabaseExportPrograms(
+      (Array.isArray(collections.programs) ? collections.programs : []).map((record, index) => ({
+        ...(record || {}),
+        id: getStudentDatabaseChangeRecordId(record)
+          || String(record?.id || "").trim()
+          || buildProgramDatabaseRecordId(record, index + 1)
+      })),
+      synchronizedAt
+    ),
+    trainingPlans: sanitizeStudentDatabaseExportTrainingPlans(
+      (Array.isArray(collections.trainingPlans) ? collections.trainingPlans : []).map((record, index) => ({
+        ...(record || {}),
+        id: getStudentDatabaseChangeRecordId(record)
+          || String(record?.id || "").trim()
+          || buildTrainingPlanDatabaseRecordId(record, index + 1)
+      })),
+      synchronizedAt
+    ).trainingPlans
   };
 }
 
@@ -22765,6 +24429,179 @@ function getStudentDatabaseFixedValueOverrideTargets(payload, sourceData) {
     });
   });
   return targets;
+}
+
+const STUDENT_DATABASE_INFERRED_FORMULA_OVERRIDE_FIELDS = Object.freeze({
+  students: STUDENT_DATABASE_POTENTIAL_FORMULA_FIELDS.students,
+  directExpenses: new Set(["amount"]),
+  programs: new Set(["shortName", "price", "oldPrice", "hours"]),
+  trainingPlans: new Set(["theoryHours", "practiceHours"])
+});
+
+function applyStudentDatabaseFormulaBackedWebOverrides(
+  payload,
+  sourceData
+) {
+  const targets = [];
+  const definitions = getStudentDatabaseSynchronizedChangeDefinitions(payload, sourceData)
+    .filter((definition) => STUDENT_DATABASE_INFERRED_FORMULA_OVERRIDE_FIELDS[definition.key]);
+  definitions.forEach((definition) => {
+    const matches = pairStudentDatabaseFieldMergeRecords(
+      definition.before,
+      definition.after,
+      definition
+    );
+    const appendTarget = ({ webRecord, excelRecord = null, fieldName, missingInExcel = false }) => {
+      const webValue = definition.normalize(webRecord, fieldName);
+      const excelValue = excelRecord ? definition.normalize(excelRecord, fieldName) : "";
+      const valueDiffers = serializeStudentDatabaseChangeValue(webValue)
+        !== serializeStudentDatabaseChangeValue(excelValue);
+      setStudentDatabaseFixedValueOverride(webRecord, fieldName, true);
+      const remainingFormulaFields = (Array.isArray(webRecord.databaseSyncFormulaFields)
+        ? webRecord.databaseSyncFormulaFields
+        : [])
+        .map((value) => String(value || "").trim())
+        .filter((value) => value && value !== fieldName);
+      if (remainingFormulaFields.length) {
+        webRecord.databaseSyncFormulaFields = [...new Set(remainingFormulaFields)];
+      } else {
+        delete webRecord.databaseSyncFormulaFields;
+      }
+      targets.push({
+        definitionKey: definition.key,
+        recordId: getStudentDatabaseChangeRecordId(webRecord)
+          || getStudentDatabaseChangeRecordId(excelRecord)
+          || String(webRecord?.id || excelRecord?.id || "").trim(),
+        recordIdentities: [...new Set((definition.identityFields || [])
+          .flatMap((fields) => [
+            buildStudentDatabaseChangeIdentity(webRecord, fields, definition.normalize),
+            buildStudentDatabaseChangeIdentity(excelRecord, fields, definition.normalize)
+          ])
+          .filter(Boolean))],
+        fieldName,
+        expectedValue: webValue,
+        missingInExcel,
+        differs: true,
+        valueDiffers
+      });
+    };
+    matches.pairs.forEach((pair) => {
+      const webRecord = pair.before;
+      const excelRecord = pair.after;
+      const existingOverrides = new Set(getStudentDatabaseRecordFixedValueOverrides(
+        webRecord?.databaseFixedValueOverrides
+      ));
+      STUDENT_DATABASE_INFERRED_FORMULA_OVERRIDE_FIELDS[definition.key]
+        .forEach((fieldName) => {
+          if (!isStudentDatabaseRecordFormulaBacked(excelRecord, fieldName)) return;
+          const webValue = definition.normalize(webRecord, fieldName);
+          const excelValue = definition.normalize(excelRecord, fieldName);
+          const valueDiffers = serializeStudentDatabaseChangeValue(webValue)
+            !== serializeStudentDatabaseChangeValue(excelValue);
+          if (!existingOverrides.has(fieldName)) return;
+          appendTarget({ webRecord, excelRecord, fieldName });
+        });
+    });
+    matches.removed.forEach(({ record: webRecord }) => {
+      const existingOverrides = new Set(getStudentDatabaseRecordFixedValueOverrides(
+        webRecord?.databaseFixedValueOverrides
+      ));
+      STUDENT_DATABASE_INFERRED_FORMULA_OVERRIDE_FIELDS[definition.key]
+        .forEach((fieldName) => {
+          const webValue = definition.normalize(webRecord, fieldName);
+          if (!existingOverrides.has(fieldName)) return;
+          appendTarget({ webRecord, fieldName, missingInExcel: true });
+        });
+    });
+  });
+  return targets;
+}
+
+function validateStudentDatabaseFormulaBackedWebOverridesAgainstOutput(
+  intendedData,
+  outputData,
+  targetsValue
+) {
+  const targets = Array.isArray(targetsValue) ? targetsValue : [];
+  if (!targets.length) return 0;
+  const definitions = getStudentDatabaseSynchronizedChangeDefinitions(intendedData, outputData);
+  const entries = new Map(definitions.map((definition) => [
+    definition.key,
+    {
+      definition,
+      matches: pairStudentDatabaseFieldMergeRecords(
+        definition.before,
+        definition.after,
+        definition
+      )
+    }
+  ]));
+  targets.forEach((target) => {
+    const entry = entries.get(String(target?.definitionKey || ""));
+    if (!entry) {
+      const error = new Error(
+        "Проверка XLSB не нашла раздел для изменённого формульного значения Web."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    const recordId = String(target?.recordId || "").trim();
+    let candidates = recordId
+      ? entry.matches.pairs.filter((pair) => (
+        getStudentDatabaseChangeRecordId(pair.before) === recordId
+        || getStudentDatabaseChangeRecordId(pair.after) === recordId
+        || String(pair.before?.id || "").trim() === recordId
+        || String(pair.after?.id || "").trim() === recordId
+      ))
+      : [];
+    if (candidates.length !== 1) {
+      const identities = new Set(
+        (Array.isArray(target?.recordIdentities) ? target.recordIdentities : [])
+          .map((value) => String(value || ""))
+          .filter(Boolean)
+      );
+      candidates = identities.size
+        ? entry.matches.pairs.filter((pair) => (
+          (entry.definition.identityFields || []).some((fields) => (
+            identities.has(buildStudentDatabaseChangeIdentity(
+              pair.before,
+              fields,
+              entry.definition.normalize
+            ))
+            || identities.has(buildStudentDatabaseChangeIdentity(
+              pair.after,
+              fields,
+              entry.definition.normalize
+            ))
+          ))
+        ))
+        : [];
+    }
+    if (candidates.length !== 1) {
+      const error = new Error(
+        `Проверка XLSB не нашла изменённую запись раздела «${entry.definition.label}».`
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    const outputRecord = candidates[0].after;
+    const actualValue = entry.definition.normalize(outputRecord, target.fieldName);
+    const expectedMatches = serializeStudentDatabaseChangeValue(actualValue)
+      === serializeStudentDatabaseChangeValue(target.expectedValue);
+    if (
+      !expectedMatches
+      || isStudentDatabaseRecordFormulaBacked(outputRecord, target.fieldName)
+    ) {
+      const error = new Error(
+        "Проверка сформированного XLSB не пройдена: изменённое в Web формульное поле "
+        + `«${getStudentDatabaseChangeFieldLabel(target.fieldName, entry.definition)}» `
+        + "не было записано как фиксированное значение."
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+  });
+  return targets.length;
 }
 
 function validateStudentDatabaseFixedValueOverridesAgainstOutput(payload, outputData) {
@@ -24398,6 +26235,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     let directionalSyncResult = null;
     let directionalMergeResult = null;
     let fixedValueOverrideTargets = [];
+    let formulaBackedWebOverrideTargets = [];
     if (directionalSync) {
       onProgress({
         progress: 14,
@@ -24419,11 +26257,21 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       const currentExcelCriticalHash = hashStudentDatabaseCriticalSnapshot(sourceDataForExport);
       const currentWebCriticalIdentityHash = hashStudentDatabaseCriticalIdentity(payload);
       const currentExcelCriticalIdentityHash = hashStudentDatabaseCriticalIdentity(sourceDataForExport);
+      const currentWebEventSettingsHash = hashStudentDatabaseEventSettings(payload);
+      const currentExcelEventSettingsHash = hashStudentDatabaseEventSettings(sourceDataForExport);
       const sourceEmbeddedSynchronizedAt = getStudentDatabaseEmbeddedSyncTimestamp(
         sourceDataForExport
       );
       onProgress({ progress: 15, stage: "compare", message: "Сравнение критичных данных Web и XLSB..." });
       try {
+        if (currentWebEventSettingsHash !== currentExcelEventSettingsHash) {
+          const eventSettingsConflictError = new Error(
+            "Настройки событий в Web-базе и XLSB различаются; требуется явно выбрать итоговую сторону."
+          );
+          eventSettingsConflictError.code = "STUDENT_DATABASE_EVENT_SETTINGS_RECONCILIATION_REQUIRED";
+          eventSettingsConflictError.statusCode = 409;
+          throw eventSettingsConflictError;
+        }
         directionalSyncResult = resolveStudentDatabaseSyncDirection({
           baseline: body.syncBaseline,
           currentWebRevision: sharedStateMetadata?.revision || body.sharedStateRevision,
@@ -24444,29 +26292,30 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           currentExcelCriticalIdentityHash
         });
       } catch (error) {
-        if (error?.code !== STUDENT_DATABASE_DUAL_CRITICAL_CHANGE_CODE) throw error;
-        const auditRows = await readAuditRows();
-        directionalMergeResult = resolveStudentDatabaseFieldLevelMerge({
+        const normalizedBaseline = normalizeStudentDatabaseSyncBaseline(body.syncBaseline);
+        const sourceIdentityChanged = Boolean(
+          normalizedBaseline.sourceIdentity
+          && normalizedBaseline.sourceIdentity !== sourceIdentity
+        );
+        const currentSnapshotsCanBeReconciled = Boolean(
+          Number(error?.statusCode) === 409
+          && currentWebCriticalHash
+          && currentExcelCriticalHash
+          && !sourceIdentityChanged
+        );
+        if (!currentSnapshotsCanBeReconciled) throw error;
+        directionalMergeResult = resolveStudentDatabaseCompleteReconciliation({
           webData: payload,
           excelData: sourceDataForExport,
-          baseline: body.syncBaseline,
-          auditRows,
           conflictResolutions: body.syncConflictResolutions
         });
-        if (!directionalMergeResult) {
-          error.failureDetails = buildStudentDatabaseSyncConflictDiagnosticReport({
-            webData: payload,
-            excelData: sourceDataForExport,
-            baseline: body.syncBaseline,
-            auditRows
-          });
-          throw error;
-        }
         if (directionalMergeResult.conflicts.length) {
           onProgress({
             progress: 100,
             stage: "conflicts",
-            message: `Требуется выбрать значения для полей: ${directionalMergeResult.conflicts.length}.`
+            message: directionalMergeResult.completeReconciliation
+              ? `Требуется выбрать варианты для всех расхождений: ${directionalMergeResult.conflicts.length}.`
+              : `Требуется выбрать значения для полей: ${directionalMergeResult.conflicts.length}.`
           });
           return {
             source: sourceType,
@@ -24477,16 +26326,48 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
             sourceModifiedAt,
             preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0),
             syncConflictCount: directionalMergeResult.conflicts.length,
-            syncConflicts: directionalMergeResult.conflicts
+            syncConflicts: directionalMergeResult.conflicts,
+            syncConflictMode: directionalMergeResult.completeReconciliation
+              ? "complete-reconciliation"
+              : "field-merge",
+            syncConflictComplete: directionalMergeResult.completeReconciliation === true,
+            syncConflictHasDestructiveChoices: directionalMergeResult.conflicts.some((item) => (
+              item?.destructive === true
+            ))
           };
         }
-        payload.students = directionalMergeResult.collections.students;
-        payload.contracts = directionalMergeResult.collections.contracts;
-        payload.directExpenses = directionalMergeResult.collections.directExpenses;
-        payload.generalExpenses = directionalMergeResult.collections.generalExpenses;
-        payload.inventoryRows = directionalMergeResult.collections.inventory;
-        payload.programs = directionalMergeResult.collections.programs;
-        payload.trainingPlans = directionalMergeResult.collections.trainingPlans;
+        const materializedCollections = materializeStudentDatabaseReconciledCollections(
+          directionalMergeResult.collections
+        );
+        payload.students = materializedCollections.students;
+        payload.contracts = materializedCollections.contracts;
+        payload.directExpenses = materializedCollections.directExpenses;
+        payload.generalExpenses = materializedCollections.generalExpenses;
+        payload.inventoryRows = materializedCollections.inventory;
+        payload.programs = materializedCollections.programs;
+        payload.trainingPlans = materializedCollections.trainingPlans;
+        if (
+          directionalMergeResult.eventSettingsChoice === "excel"
+          && sourceDataForExport?.macroSettings
+          && typeof sourceDataForExport.macroSettings === "object"
+        ) {
+          payload.macroSettings = {
+            ...(payload.macroSettings || {}),
+            studentEventTemplates: JSON.parse(JSON.stringify(
+              sourceDataForExport.macroSettings.studentEventTemplates || []
+            )),
+            contractEventTemplates: JSON.parse(JSON.stringify(
+              sourceDataForExport.macroSettings.contractEventTemplates || []
+            )),
+            eventSettingsUpdatedAt: sourceDataForExport.macroSettings.eventSettingsUpdatedAt || ""
+          };
+          payload.studentEventTemplates = payload.macroSettings.studentEventTemplates.length
+            ? JSON.parse(JSON.stringify(payload.macroSettings.studentEventTemplates))
+            : JSON.parse(JSON.stringify(STUDENT_EVENT_IMPORT_TEMPLATES));
+          payload.contractEventTemplates = payload.macroSettings.contractEventTemplates.length
+            ? JSON.parse(JSON.stringify(payload.macroSettings.contractEventTemplates))
+            : JSON.parse(JSON.stringify(CONTRACT_EVENT_IMPORT_TEMPLATES));
+        }
         directionalSyncResult = {
           direction: "web-to-excel",
           baseline: normalizeStudentDatabaseSyncBaseline(body.syncBaseline),
@@ -24497,8 +26378,16 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         onProgress({
           progress: 15.5,
           stage: "merge",
-          message: "Независимые изменения полей слушателей объединены; подготовка Web и XLSB..."
+          message: directionalMergeResult.completeReconciliation
+            ? "Выбранные значения и состав записей объединены; подготовка Web и XLSB..."
+            : "Независимые изменения полей слушателей объединены; подготовка Web и XLSB..."
         });
+      }
+      if (["web-to-excel", "unchanged"].includes(directionalSyncResult?.direction)) {
+        formulaBackedWebOverrideTargets = applyStudentDatabaseFormulaBackedWebOverrides(
+          payload,
+          sourceDataForExport
+        );
       }
       fixedValueOverrideTargets = getStudentDatabaseFixedValueOverrideTargets(
         payload,
@@ -24506,19 +26395,27 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       );
       directionalSyncResult = recoverStudentDatabaseFixedValueOverrideDirection({
         directionResult: directionalSyncResult,
-        targets: fixedValueOverrideTargets,
+        targets: [...fixedValueOverrideTargets, ...formulaBackedWebOverrideTargets],
         baseline: body.syncBaseline,
         sourceHash,
         currentWebCriticalHash,
         currentWebCriticalIdentityHash
       });
-      directionalSyncResult = resolveStudentDatabaseEventSettingsSyncDirection({
-        directionResult: directionalSyncResult,
-        baseline: body.syncBaseline,
-        webData: payload,
-        excelData: sourceDataForExport,
-        sourceHash
-      });
+      if (directionalMergeResult?.eventSettingsChoice) {
+        directionalSyncResult = {
+          ...directionalSyncResult,
+          eventSettingsDirection: "web-to-excel",
+          eventSettingsHash: hashStudentDatabaseEventSettings(payload)
+        };
+      } else {
+        directionalSyncResult = resolveStudentDatabaseEventSettingsSyncDirection({
+          directionResult: directionalSyncResult,
+          baseline: body.syncBaseline,
+          webData: payload,
+          excelData: sourceDataForExport,
+          sourceHash
+        });
+      }
       if (directionalSyncResult.recoveredFixedValueOverride === true) {
         onProgress({
           progress: 15.5,
@@ -24708,7 +26605,9 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           synchronizedChangeCount: synchronizedChangeReport.totalCount,
           synchronizedChanges: synchronizedChangeReport.rows,
           synchronizedChangesTruncated: synchronizedChangeReport.truncated,
-          synchronizedChangeEntityCounts: synchronizedChangeReport.entityCounts
+          synchronizedChangeEntityCounts: synchronizedChangeReport.entityCounts,
+          formulaMetadataPayload: importPayload,
+          formulaMetadataCriticalHash: currentExcelCriticalHash
         };
       }
     }
@@ -24885,6 +26784,38 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       });
       parsedOutputData = await parseStudentDatabaseInWorker(outputBytes);
     }
+    if (formulaBackedWebOverrideTargets.length) {
+      const verifiedFormulaOverrideCount = validateStudentDatabaseFormulaBackedWebOverridesAgainstOutput(
+        payload,
+        parsedOutputData,
+        formulaBackedWebOverrideTargets
+      );
+      if (verifiedFormulaOverrideCount !== formulaBackedWebOverrideTargets.length) {
+        const error = new Error(
+          "Проверка сформированного XLSB не подтвердила изменённые формульные значения Web."
+        );
+        error.statusCode = 409;
+        throw error;
+      }
+    }
+    let reconciliationOutputAdjustedByWorkbook = false;
+    if (directionalMergeResult) {
+      const intendedCriticalHash = hashStudentDatabaseCriticalSnapshot(payload);
+      const writtenCriticalHash = hashStudentDatabaseCriticalSnapshot(parsedOutputData);
+      const intendedEventSettingsHash = hashStudentDatabaseEventSettings(payload);
+      const writtenEventSettingsHash = hashStudentDatabaseEventSettings(parsedOutputData);
+      reconciliationOutputAdjustedByWorkbook = intendedCriticalHash !== writtenCriticalHash;
+      validateStudentDatabaseReconciliationSelectionsAgainstOutput(
+        payload,
+        parsedOutputData,
+        directionalMergeResult
+      );
+      if (intendedEventSettingsHash !== writtenEventSettingsHash) {
+        throw createStudentDatabaseReconciliationOutputMismatchError(
+          "Выбранные настройки событий не были записаны."
+        );
+      }
+    }
     onProgress({ progress: 95, stage: "verify", message: "Проверка VBA и формул..." });
     const outputInspection = inspectStudentDatabaseBinary(outputBytes, {
       targetedStudentNoteUids
@@ -24947,6 +26878,33 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       0,
       Number(scriptResult.programFormulaCellsDeleted || 0)
     );
+    const getReportedFormulaReplacementCount = (propertyName) => {
+      const count = Number(scriptResult[propertyName] || 0);
+      if (!Number.isInteger(count) || count < 0) {
+        throw new Error(
+          `Microsoft Excel вернул некорректный счётчик заменённых формул: ${propertyName}.`
+        );
+      }
+      return count;
+    };
+    const directExpenseFormulaReplacementLimit = getReportedFormulaReplacementCount(
+      "directExpenseFormulaCellsReplaced"
+    );
+    const generalExpenseFormulaReplacementLimit = getReportedFormulaReplacementCount(
+      "generalExpenseFormulaCellsReplaced"
+    );
+    const contractFormulaReplacementLimit = getReportedFormulaReplacementCount(
+      "contractFormulaCellsReplaced"
+    );
+    const inventoryFormulaReplacementLimit = getReportedFormulaReplacementCount(
+      "inventoryFormulaCellsReplaced"
+    );
+    const trainingPlanFormulaReplacementLimit = getReportedFormulaReplacementCount(
+      "trainingPlanFormulaCellsReplaced"
+    );
+    const programFormulaReplacementLimit = getReportedFormulaReplacementCount(
+      "programFormulaCellsReplaced"
+    );
     const removedGeneralExpenseRows = Math.max(
       0,
       sourceInspection.generalExpenseRecordCount - outputInspection.generalExpenseRecordCount
@@ -24959,12 +26917,14 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
     const contractFormulaLossLimit = 5 + removedContractRows * 15;
     if (
       baseFormulaLoss > 5 + reportedFormulaReplacementCount
-      || directExpenseFormulaLoss > 5
-      || generalExpenseFormulaLoss > generalExpenseFormulaLossLimit
-      || contractFormulaLoss > contractFormulaLossLimit
-      || inventoryFormulaLoss > 0
-      || trainingPlanFormulaLoss > 0
-      || programFormulaLoss > expectedProgramFormulaLoss
+      || directExpenseFormulaLoss > 5 + directExpenseFormulaReplacementLimit
+      || generalExpenseFormulaLoss > (
+        generalExpenseFormulaLossLimit + generalExpenseFormulaReplacementLimit
+      )
+      || contractFormulaLoss > contractFormulaLossLimit + contractFormulaReplacementLimit
+      || inventoryFormulaLoss > inventoryFormulaReplacementLimit
+      || trainingPlanFormulaLoss > trainingPlanFormulaReplacementLimit
+      || programFormulaLoss > expectedProgramFormulaLoss + programFormulaReplacementLimit
     ) {
       throw new Error(
         "Проверка сформированной книги не пройдена: потеряно слишком много формул "
@@ -25061,8 +27021,11 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           )))
         ].slice(0, STUDENT_DATABASE_SYNCHRONIZED_CHANGE_LIMIT)
       : synchronizedChangeReport.rows;
-    const directionalImportPayload = directionalMergeResult
+    const directionalFormulaMetadataPayload = directionalSync
       ? buildStudentDatabaseImportResult(parsedOutputData, sourceType)
+      : null;
+    const directionalImportPayload = directionalMergeResult
+      ? directionalFormulaMetadataPayload
       : null;
     return {
       ...savedResult,
@@ -25118,6 +27081,7 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
         syncDirection: directionalMergeResult ? "excel-to-web" : "web-to-excel",
         mergedBidirectional: Boolean(directionalMergeResult),
         mergeStats: directionalMergeResult?.stats || null,
+        reconciliationOutputAdjustedByWorkbook,
         requiresCommit: true,
         sourceModifiedAt,
         sourceIdentity,
@@ -25129,6 +27093,8 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           : directionalSyncResult?.criticalIdentityHash || "",
         eventSettingsHash: hashStudentDatabaseEventSettings(parsedOutputData),
         preparedWebRevision: Math.max(0, Number(body.sharedStateRevision) || 0),
+        formulaMetadataPayload: directionalFormulaMetadataPayload,
+        formulaMetadataCriticalHash: hashStudentDatabaseCriticalSnapshot(parsedOutputData),
         ...(directionalImportPayload ? {
           importPayload: directionalImportPayload,
           serverMacroSettingsImport: {
@@ -31484,6 +33450,9 @@ module.exports = {
   hashStudentDatabaseCriticalIdentity,
   resolveLegacyStudentDatabaseIndependentNoteMerge,
   resolveStudentDatabaseFieldLevelMerge,
+  resolveStudentDatabaseCompleteReconciliation,
+  validateStudentDatabaseReconciliationSelectionsAgainstOutput,
+  materializeStudentDatabaseReconciledCollections,
   buildStudentDatabaseSyncConflictDiagnosticReport,
   buildStudentDatabaseSynchronizedChanges,
   getStudentDatabaseEmbeddedSyncTimestamp,
@@ -31503,6 +33472,8 @@ module.exports = {
   validateTargetedStudentFieldPatchesAgainstOutput,
   sanitizeStudentDatabaseFixedValueOverrides,
   getStudentDatabaseFixedValueOverrideTargets,
+  applyStudentDatabaseFormulaBackedWebOverrides,
+  validateStudentDatabaseFormulaBackedWebOverridesAgainstOutput,
   validateStudentDatabaseFixedValueOverridesAgainstOutput,
   recoverStudentDatabaseFixedValueOverrideDirection,
   sanitizeStudentDatabaseExportPayload,

@@ -86,7 +86,7 @@ function Test-RecordFixedValueOverride {
     [string]$FieldName
   )
   if ($null -eq $Record -or [string]::IsNullOrWhiteSpace($FieldName)) { return $false }
-  if ($FieldName -ne "contractAmount") { return $false }
+  if ($FieldName -in @("agentAmount", "balance", "paidAmount", "__eventSettings")) { return $false }
   return [bool](@(Get-RecordFixedValueOverrideFields $Record) -contains $FieldName)
 }
 
@@ -1836,8 +1836,10 @@ function Update-StudentSheet {
       FormulaCellsReplaced = 0
     }
     foreach ($record in $recordByRow.Values) {
-      if (@(Get-RecordFixedValueOverrideFields $record) -contains "contractAmount") {
-        $fixedValueOverrideStats.Requested = [int]$fixedValueOverrideStats.Requested + 1
+      foreach ($fieldName in @(Get-RecordFixedValueOverrideFields $record)) {
+        if (Test-RecordFixedValueOverride $record $fieldName) {
+          $fixedValueOverrideStats.Requested = [int]$fixedValueOverrideStats.Requested + 1
+        }
       }
     }
 
@@ -1860,7 +1862,7 @@ function Update-StudentSheet {
     if ([int]$fixedValueOverrideStats.Applied -ne [int]$fixedValueOverrideStats.Requested) {
       throw (
         "Записано фиксированных значений слушателей: $($fixedValueOverrideStats.Applied) " +
-        "из $($fixedValueOverrideStats.Requested). Проверьте колонку суммы договора."
+        "из $($fixedValueOverrideStats.Requested). Проверьте явно выбранные значения."
       )
     }
     $syncCommentCount = Update-AisSyncMetadataForRows $sheet $recordByRow $startRow $lastRow 1
@@ -1919,14 +1921,24 @@ function Update-DirectExpenseSheet {
     $columns = @(Get-MappedColumns $sheet $header.Row $header.LastColumn $Payload.directExpenseColumnMap)
     $startRow = $header.Row + 1
     $expenses = @($Payload.directExpenses)
-    $lastRow = [Math]::Max([int]$header.LastRow, $header.Row + $expenses.Count)
+    $lastRow = [int]$header.LastRow
+    $desiredLastRow = $header.Row + $expenses.Count
+    $insertedRows = [Math]::Max(0, $desiredLastRow - $lastRow)
+    if ($insertedRows -gt 0) {
+      if ($lastRow -lt $startRow) {
+        throw "На листе нет шаблонной строки для безопасного добавления прямых затрат."
+      }
+      Insert-StudentTemplateRows $sheet $lastRow ($lastRow + 1) $header.LastColumn $insertedRows
+      $lastRow = $desiredLastRow
+    }
     $recordByRow = @{}
     for ($index = 0; $index -lt $expenses.Count; $index += 1) {
       $recordByRow[$startRow + $index] = $expenses[$index]
     }
+    $fixedValueOverrideStats = @{ Applied = 0; FormulaCellsReplaced = 0 }
     $processedColumns = 0
     foreach ($column in $columns) {
-      Update-MappedColumn $sheet $startRow $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null
+      Update-MappedColumn $sheet $startRow $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null $fixedValueOverrideStats
       $processedColumns += 1
       Write-SyncProgress (
         70 + [Math]::Floor(($processedColumns / [Math]::Max(1, $columns.Count)) * 20)
@@ -1936,6 +1948,8 @@ function Update-DirectExpenseSheet {
     return [pscustomobject]@{
       Count = $expenses.Count
       LastRow = $lastRow
+      InsertedRows = $insertedRows
+      FormulaCellsReplaced = [int]$fixedValueOverrideStats.FormulaCellsReplaced
     }
   } finally {
     Release-ComObject $sheet
@@ -2134,11 +2148,12 @@ function Update-ContractSheet {
     Ensure-ContractFormulaRows $sheet $columns $partnerStart $partnerStart $records.partners.Count
     Ensure-ContractFormulaRows $sheet $columns $expiredStart $expiredStart $records.expired.Count
 
+    $fixedValueOverrideStats = @{ Applied = 0; FormulaCellsReplaced = 0 }
     $processedColumns = 0
     foreach ($column in $columns) {
-      Update-MappedColumn $sheet $activeStart ([int]$sectionRows.partners - 1) $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.contractEventTemplates) $null
-      Update-MappedColumn $sheet $partnerStart ([int]$sectionRows.expired - 1) $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.contractEventTemplates) $null
-      Update-MappedColumn $sheet $expiredStart $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.contractEventTemplates) $null
+      Update-MappedColumn $sheet $activeStart ([int]$sectionRows.partners - 1) $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.contractEventTemplates) $null $fixedValueOverrideStats
+      Update-MappedColumn $sheet $partnerStart ([int]$sectionRows.expired - 1) $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.contractEventTemplates) $null $fixedValueOverrideStats
+      Update-MappedColumn $sheet $expiredStart $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @($Payload.contractEventTemplates) $null $fixedValueOverrideStats
       $processedColumns += 1
       Write-SyncProgress 95 "Обновление договоров: $processedColumns из $($columns.Count) колонок"
     }
@@ -2155,6 +2170,7 @@ function Update-ContractSheet {
       Expired = $records.expired.Count
       LastRow = $lastRow
       MaxRowHeightPoints = [double]$maximumRowHeight
+      FormulaCellsReplaced = [int]$fixedValueOverrideStats.FormulaCellsReplaced
     }
   } catch {
     throw "Ошибка обновления листа 'Реестр договоров': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
@@ -2260,10 +2276,11 @@ function Update-GeneralExpenseSheet {
       $organizationRecordByRow[$organizationStartRow + $index] = $organizationExpenses[$index]
     }
 
+    $fixedValueOverrideStats = @{ Applied = 0; FormulaCellsReplaced = 0 }
     $processedColumns = 0
     foreach ($column in $columns) {
-      Update-MappedColumn $sheet $individualStartRow ($organizationSectionRow - 1) $column.Column $column.FieldName $individualRecordByRow $DateFields $NumberFields @() $null
-      Update-MappedColumn $sheet $organizationStartRow $lastExistingRow $column.Column $column.FieldName $organizationRecordByRow $DateFields $NumberFields @() $null
+      Update-MappedColumn $sheet $individualStartRow ($organizationSectionRow - 1) $column.Column $column.FieldName $individualRecordByRow $DateFields $NumberFields @() $null $fixedValueOverrideStats
+      Update-MappedColumn $sheet $organizationStartRow $lastExistingRow $column.Column $column.FieldName $organizationRecordByRow $DateFields $NumberFields @() $null $fixedValueOverrideStats
       $processedColumns += 1
       Write-SyncProgress (
         90 + [Math]::Floor(($processedColumns / [Math]::Max(1, $columns.Count)) * 5)
@@ -2282,6 +2299,7 @@ function Update-GeneralExpenseSheet {
       Individuals = $individualExpenses.Count
       Organizations = $organizationExpenses.Count
       LastRow = $lastExistingRow
+      FormulaCellsReplaced = [int]$fixedValueOverrideStats.FormulaCellsReplaced
     }
   } catch {
     throw "Ошибка обновления листа 'Общие затраты': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
@@ -2308,6 +2326,7 @@ function Update-InventorySheet {
       Units = 0
       LastRow = 0
       InsertedRows = 0
+      FormulaCellsReplaced = 0
     }
   }
 
@@ -2335,9 +2354,10 @@ function Update-InventorySheet {
     for ($index = 0; $index -lt $records.Count; $index += 1) {
       $recordByRow[$startRow + $index] = $records[$index]
     }
+    $fixedValueOverrideStats = @{ Applied = 0; FormulaCellsReplaced = 0 }
     $processedColumns = 0
     foreach ($column in $columns) {
-      Update-MappedColumn $sheet $startRow $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null
+      Update-MappedColumn $sheet $startRow $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null $fixedValueOverrideStats
       $processedColumns += 1
       Write-SyncProgress 94 "Обновление запасов: $processedColumns из $($columns.Count) колонок"
     }
@@ -2348,6 +2368,7 @@ function Update-InventorySheet {
       Units = $records.Count
       LastRow = $lastRow
       InsertedRows = $insertedRows
+      FormulaCellsReplaced = [int]$fixedValueOverrideStats.FormulaCellsReplaced
     }
   } catch {
     throw "Ошибка обновления листа 'Запасы': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
@@ -2372,6 +2393,7 @@ function Update-TrainingPlanSheet {
       LastRow = 0
       InsertedRows = 0
       ClearedRows = 0
+      FormulaCellsReplaced = 0
     }
   }
 
@@ -2424,9 +2446,10 @@ function Update-TrainingPlanSheet {
       $recordByRow[$startRow + $index] = $records[$index]
     }
     Ensure-ContractFormulaRows $sheet $columns $startRow $startRow $records.Count
+    $fixedValueOverrideStats = @{ Applied = 0; FormulaCellsReplaced = 0 }
     $processedColumns = 0
     foreach ($column in $columns) {
-      Update-MappedColumn $sheet $startRow $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null
+      Update-MappedColumn $sheet $startRow $lastRow $column.Column $column.FieldName $recordByRow $DateFields $NumberFields @() $null $fixedValueOverrideStats
       $processedColumns += 1
       Write-SyncProgress 95 "Обновление учебных планов: $processedColumns из $($columns.Count) колонок"
     }
@@ -2437,6 +2460,7 @@ function Update-TrainingPlanSheet {
       LastRow = $lastRow
       InsertedRows = $insertedRows
       ClearedRows = [Math]::Max(0, $lastRow - $desiredLastRow)
+      FormulaCellsReplaced = [int]$fixedValueOverrideStats.FormulaCellsReplaced
     }
   } catch {
     throw "Ошибка обновления листа 'Учебные планы': $($_.Exception.Message)`n$($_.ScriptStackTrace)"
@@ -2633,6 +2657,7 @@ function Set-ProgramManagedValueCell {
     [object]$Sheet,
     [int]$Row,
     [int]$Column,
+    [object]$Record,
     [string]$FieldName,
     [object]$Value,
     [Collections.Generic.HashSet[string]]$DateFields,
@@ -2642,7 +2667,8 @@ function Set-ProgramManagedValueCell {
   try {
     $cell = $Sheet.Cells.Item($Row, $Column)
     $currentFormula = [string]$cell.Formula
-    if ($currentFormula.StartsWith("=")) {
+    $hadFormula = $currentFormula.StartsWith("=")
+    if ($hadFormula -and -not (Test-RecordFixedValueOverride $Record $FieldName)) {
       if (
         $FieldName -eq "name" `
         -and (Normalize-Header $cell.Value2) -ne (Normalize-Header $Value)
@@ -2652,7 +2678,7 @@ function Set-ProgramManagedValueCell {
       return "formula"
     }
     $cell.Formula = Convert-CellValue $Value $FieldName $DateFields $NumberFields
-    return "updated"
+    return $(if ($hadFormula) { "formula-replaced" } else { "updated" })
   } finally {
     Release-ComObject $cell
   }
@@ -3022,6 +3048,7 @@ function Update-ProgramPromoMessages {
       EmailMessages = 0
       ManagedCells = 0
       FormulaCellsPreserved = 0
+      FormulaCellsReplaced = 0
       MissingManagedColumns = 0
       MissingManagedColumnNames = @()
       Skipped = 0
@@ -3089,6 +3116,7 @@ function Update-ProgramPromoMessages {
         EmailMessages = 0
         ManagedCells = 0
         FormulaCellsPreserved = 0
+        FormulaCellsReplaced = 0
         MissingManagedColumns = 0
         MissingManagedColumnNames = @()
         Skipped = $programs.Count
@@ -3104,6 +3132,19 @@ function Update-ProgramPromoMessages {
 
     $dataRange = $sheet.Range($sheet.Cells.Item($startRow, 1), $sheet.Cells.Item($lastRow, $header.LastColumn))
     $values = $dataRange.Value2
+    # Keep an immutable formula template before any existing program can be
+    # intentionally converted to a fixed Web value. Later inserted rows must
+    # not depend on the current state of a row already updated in this run.
+    $initialFormulaMatrix = $dataRange.FormulaR1C1
+    $programTemplateFormulas = New-Object "object[,]" 1, $dataLastColumn
+    for ($column = 1; $column -le $dataLastColumn; $column += 1) {
+      $templateFormula = Get-MatrixValue $initialFormulaMatrix 1 $column
+      if ($templateFormula -is [string] -and $templateFormula.StartsWith("=")) {
+        $programTemplateFormulas.SetValue($templateFormula, 0, [int]($column - 1))
+      } else {
+        $programTemplateFormulas.SetValue($null, 0, [int]($column - 1))
+      }
+    }
     $rowByIdentity = @{}
     $identityByRow = @{}
     $rowByRecordId = @{}
@@ -3147,6 +3188,7 @@ function Update-ProgramPromoMessages {
     $emailMessageCount = 0
     $managedCellCount = 0
     $formulaCellsPreserved = 0
+    $formulaCellsReplaced = 0
     $missingManagedColumns = 0
     $missingManagedColumnNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $skippedCount = 0
@@ -3236,6 +3278,7 @@ function Update-ProgramPromoMessages {
             $sheet.Cells.Item($targetRow, $dataLastColumn)
           )
           try { [void]$insertedRange.ClearComments() } catch {}
+          $insertedRange.FormulaR1C1 = $programTemplateFormulas
         } finally {
           Release-ComObject $insertedRange
         }
@@ -3268,6 +3311,7 @@ function Update-ProgramPromoMessages {
           $sheet `
           $targetRow `
           ([int]$columnByField[$fieldName]) `
+          $program `
           $fieldName `
           (Get-ObjectProperty $program $fieldName) `
           $DateFields `
@@ -3276,6 +3320,9 @@ function Update-ProgramPromoMessages {
           $formulaCellsPreserved += 1
         } else {
           $managedCellCount += 1
+          if ($result -eq "formula-replaced") {
+            $formulaCellsReplaced += 1
+          }
         }
       }
       if ($promoMessage1Provided) {
@@ -3387,6 +3434,7 @@ function Update-ProgramPromoMessages {
       EmailMessages = $emailMessageCount
       ManagedCells = $managedCellCount
       FormulaCellsPreserved = $formulaCellsPreserved
+      FormulaCellsReplaced = $formulaCellsReplaced
       MissingManagedColumns = $missingManagedColumns
       MissingManagedColumnNames = @($missingManagedColumnNames | Sort-Object)
       Skipped = $skippedCount
@@ -4163,10 +4211,14 @@ try {
     contracts = $contractResult.Count
     contractMaxRowHeightPoints = $contractResult.MaxRowHeightPoints
     directExpenses = $expenseResult.Count
+    directExpenseRowsInserted = $expenseResult.InsertedRows
+    directExpenseFormulaCellsReplaced = $expenseResult.FormulaCellsReplaced
     generalExpenses = $generalExpenseResult.Count
+    generalExpenseFormulaCellsReplaced = $generalExpenseResult.FormulaCellsReplaced
     programs = $programPromoResult.Count
     programManagedCells = $programPromoResult.ManagedCells
     programFormulaCellsPreserved = $programPromoResult.FormulaCellsPreserved
+    programFormulaCellsReplaced = $programPromoResult.FormulaCellsReplaced
     programMissingManagedColumns = $programPromoResult.MissingManagedColumns
     programMissingManagedColumnNames = @($programPromoResult.MissingManagedColumnNames)
     programPromoMessages = $programPromoResult.Messages
@@ -4182,9 +4234,12 @@ try {
     inventoryItems = $inventoryResult.Items
     inventoryUnits = $inventoryResult.Units
     inventoryRowsInserted = $inventoryResult.InsertedRows
+    inventoryFormulaCellsReplaced = $inventoryResult.FormulaCellsReplaced
     trainingPlans = $trainingPlanResult.Count
     trainingPlanRowsInserted = $trainingPlanResult.InsertedRows
     trainingPlanRowsCleared = $trainingPlanResult.ClearedRows
+    trainingPlanFormulaCellsReplaced = $trainingPlanResult.FormulaCellsReplaced
+    contractFormulaCellsReplaced = $contractResult.FormulaCellsReplaced
     studentEventTemplates = $macroSettingsResult.StudentEvents
     contractEventTemplates = $macroSettingsResult.ContractEvents
     automaticExpenseRules = $macroSettingsResult.PaymentRules

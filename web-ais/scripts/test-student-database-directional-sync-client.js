@@ -13,7 +13,17 @@ function extractBetween(startMarker, endMarker) {
 }
 
 function loadImportMergeHelpers() {
-  const context = {};
+  const context = {
+    state: { data: { collections: {} } },
+    studentDatabaseFixedValuesEqual(left, right) {
+      return String(left ?? "") === String(right ?? "");
+    },
+    getProgramWorkbookIdentity(name, landingCode) {
+      const normalizedName = String(name || "").trim().toLocaleLowerCase("ru-RU");
+      const normalizedCode = String(landingCode || "").trim().toLocaleLowerCase("ru-RU");
+      return normalizedName ? `${normalizedName}\u0000${normalizedCode}` : "";
+    }
+  };
   vm.createContext(context);
   vm.runInContext(
     extractBetween(
@@ -21,7 +31,8 @@ function loadImportMergeHelpers() {
       "  function mergeImportedStudentAgentPaymentMetadata"
     )
       + "\nthis.mergeStudents = mergeStudentDatabaseImportedStudents;"
-      + "\nthis.mergeRecords = mergeStudentDatabaseImportedRecords;",
+      + "\nthis.mergeRecords = mergeStudentDatabaseImportedRecords;"
+      + "\nthis.refreshFormulaMetadata = applyStudentDatabaseFormulaMetadataRefresh;",
     context
   );
   return context;
@@ -87,10 +98,14 @@ function testManualContractAmountOverrideFromAudit() {
     id: "student-db-1166",
     uid: "1166",
     name: "Добрышкина Екатерина Сергеевна",
-    contractAmount: 2500
+    contractAmount: 2500,
+    endDate: "2026-09-30"
   };
   const context = {
-    STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS: Object.freeze(["contractAmount"]),
+    STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS: Object.freeze([
+      "contractAmount",
+      "endDate"
+    ]),
     state: {
       data: {
         collections: {
@@ -99,7 +114,10 @@ function testManualContractAmountOverrideFromAudit() {
             entityId: "student-db-1166",
             action: "Изменена запись",
             source: "web",
-            changes: [{ field: "contractAmount", before: "4000", after: "2500" }]
+            changes: [
+              { field: "contractAmount", before: "4000", after: "2500" },
+              { field: "endDate", before: "2026-08-26", after: "2026-09-30" }
+            ]
           }]
         }
       }
@@ -113,15 +131,18 @@ function testManualContractAmountOverrideFromAudit() {
     ) + "\nthis.getOverrides = getStudentDatabaseFixedValueOverrides;",
     context
   );
-  assert.deepEqual(Array.from(context.getOverrides(student)), ["contractAmount"]);
+  assert.deepEqual(
+    Array.from(context.getOverrides(student)),
+    ["contractAmount", "endDate"]
+  );
   assert.deepEqual(Array.from(context.getOverrides({
     ...student,
     contractAmount: 4000,
     databaseFixedValueOverrides: ["contractAmount", "balance"]
-  })), ["contractAmount"]);
+  })), ["contractAmount", "endDate"]);
   assert.match(
     appSource,
-    /formData\.has\("contractAmount"\)[\s\S]{0,280}databaseFixedValueOverrides/u
+    /changedFixedValueFields[\s\S]{0,500}databaseFixedValueOverrides/u
   );
   assert.match(
     appSource,
@@ -158,6 +179,7 @@ function buildPreviousStudent() {
 function testManagedFieldClearingAndWebOnlyPreservation() {
   const helpers = loadImportMergeHelpers();
   const previous = buildPreviousStudent();
+  previous.databaseFixedValueOverrides = ["endDate"];
   const imported = {
     id: "student-db-42",
     uid: "42",
@@ -165,6 +187,7 @@ function testManagedFieldClearingAndWebOnlyPreservation() {
     applicationDate: "2026-08-01",
     program: "Курс",
     frdoDate: "2026-08-20",
+    databaseSyncFormulaFields: ["endDate"],
     directExpenses: [{
       id: "expense-1",
       uid: "42",
@@ -188,6 +211,8 @@ function testManagedFieldClearingAndWebOnlyPreservation() {
   assert.deepEqual(merged[0].documentRecognitionResult, previous.documentRecognitionResult);
   assert.deepEqual(merged[0].history, previous.history);
   assert.deepEqual(merged[0].customWebMetadata, previous.customWebMetadata);
+  assert.deepEqual(Array.from(merged[0].databaseSyncFormulaFields), ["endDate"]);
+  assert.equal(merged[0].databaseFixedValueOverrides, undefined);
   assert.equal(merged[0].directExpenses[0].amount, 150);
   assert.equal(merged[0].directExpenses[0].note, "");
   assert.deepEqual(
@@ -212,7 +237,8 @@ function testManagedFieldClearingAndWebOnlyPreservation() {
       contractDate: "2026-01-01",
       phone: "старый",
       note: "Очистить",
-      webApproval: { keep: true }
+      webApproval: { keep: true },
+      databaseFixedValueOverrides: ["amount"]
     }],
     {
       label: "договора",
@@ -224,6 +250,7 @@ function testManagedFieldClearingAndWebOnlyPreservation() {
   assert.equal(contract.phone, "+7 999 111-22-33");
   assert.equal(contract.note, "");
   assert.deepEqual(contract.webApproval, { keep: true });
+  assert.equal(contract.databaseFixedValueOverrides, undefined);
 
   assert.throws(() => helpers.mergeStudents(
     [{ uid: "7", name: "Дубль", applicationDate: "2026-01-01", program: "Курс" }],
@@ -264,14 +291,16 @@ function testExplicitImportDeletionSemantics() {
       id: "program-stable",
       name: "Новое имя",
       xlsbProgramName: "Новое имя",
-      xlsbProgramLandingCode: "new"
+      xlsbProgramLandingCode: "new",
+      databaseFixedValueOverrides: ["price"]
     }],
     [{
       id: "program-stable",
       databaseSync: { recordId: "program-stable" },
       name: "Старое имя",
       xlsbProgramLandingCode: "old",
-      shortName: "Имя из Excel"
+      shortName: "Имя из Excel",
+      databaseSyncFormulaFields: ["price"]
     }],
     50,
     ["shortName"]
@@ -279,6 +308,8 @@ function testExplicitImportDeletionSemantics() {
   assert.equal(renamedByStableId.length, 1);
   assert.equal(renamedByStableId[0].id, "program-stable");
   assert.equal(renamedByStableId[0].shortName, "Имя из Excel");
+  assert.deepEqual(Array.from(renamedByStableId[0].databaseSyncFormulaFields), ["price"]);
+  assert.equal(renamedByStableId[0].databaseFixedValueOverrides, undefined);
   const mismatchedStableId = programContext.mergePrograms(
     [{ id: "program-web", name: "Одинаковое имя" }],
     [{
@@ -323,14 +354,16 @@ function testExplicitImportDeletionSemantics() {
       programName: "Старая программа",
       code: "1",
       discipline: "Раздел",
-      webApproval: { keep: true }
+      webApproval: { keep: true },
+      databaseFixedValueOverrides: ["theoryHours"]
     }],
     [{
       id: "plan-stable",
       databaseSync: { recordId: "plan-stable" },
       programName: "Новая программа",
       code: "1",
-      discipline: "Раздел"
+      discipline: "Раздел",
+      databaseSyncFormulaFields: ["theoryHours"]
     }],
     ["code", "programName", "discipline"]
   )[0];
@@ -340,6 +373,8 @@ function testExplicitImportDeletionSemantics() {
     "При смене программы в Excel старый programId должен быть сброшен перед сопоставлением."
   );
   assert.deepEqual(movedPlan.webApproval, { keep: true });
+  assert.deepEqual(Array.from(movedPlan.databaseSyncFormulaFields), ["theoryHours"]);
+  assert.equal(movedPlan.databaseFixedValueOverrides, undefined);
   planContext.findProgramInRows = (rows, name) => rows.find((row) => row.name === name) || null;
   vm.runInContext(
     extractBetween(
@@ -696,14 +731,16 @@ function makeExportContext(result, { validBaseline = true } = {}) {
     buildStudentDatabaseExportPaymentConstants: () => [],
     buildStudentDatabaseExportAgentPaymentRates: () => ({}),
     buildStudentDatabaseExportMacroSettings: () => ({}),
+    applyStudentDatabaseFormulaMetadataRefresh: () => 0,
     runStudentDatabaseExport: async (body) => {
       order.push("run");
       context.exportBody = body;
       return { ...result, jobId: result.jobId || "job-1" };
     },
-    chooseStudentDatabaseSyncConflictResolutions: async (conflicts) => {
+    chooseStudentDatabaseSyncConflictResolutions: async (conflicts, options) => {
       order.push("resolve-conflicts");
       context.receivedConflicts = conflicts;
+      context.receivedConflictOptions = options;
       return context.conflictResolutions || null;
     },
     updateDatabaseExportIndicator: () => {},
@@ -834,14 +871,128 @@ async function testDirectionalExportFlows() {
   };
   await conflictMerge.operation({ shiftKey: false });
   assert.equal(conflictBodies.length, 2);
-  assert.deepEqual(conflictBodies[1].syncConflictResolutions, { [conflictId]: "excel" });
+  assert.deepEqual(
+    { ...conflictBodies[1].syncConflictResolutions },
+    { [conflictId]: "excel" }
+  );
   assert.deepEqual(conflictMerge.receivedConflicts, [
     { id: conflictId, record: "Пащенко", field: "Примечание" }
   ]);
+  assert.equal(conflictMerge.receivedConflictOptions.completeReconciliation, false);
   assert.ok(
     conflictMerge.order.indexOf("resolve-conflicts") < conflictMerge.order.indexOf("commit"),
     "XLSB можно сохранять только после выбора пользователя"
   );
+
+  const completeConflictId = "d".repeat(64);
+  const completeReconciliation = makeExportContext({ syncDirection: "conflicts" });
+  completeReconciliation.conflictResolutions = { [completeConflictId]: "web" };
+  const completeReconciliationBodies = [];
+  completeReconciliation.runStudentDatabaseExport = async (body) => {
+    completeReconciliationBodies.push(body);
+    completeReconciliation.order.push("run");
+    if (completeReconciliationBodies.length === 1) {
+      return {
+        syncDirection: "conflicts",
+        syncConflictMode: "complete-reconciliation",
+        syncConflictComplete: true,
+        syncConflictCount: 1,
+        syncConflicts: [{
+          id: completeConflictId,
+          kind: "record-presence",
+          entity: "Слушатели",
+          record: "Загодарчук Инна Владимировна",
+          field: "Наличие записи",
+          web: "Сохранить запись",
+          excel: "Удалить запись",
+          reason: "Запись существует только в Web.",
+          destructive: true
+        }],
+        jobId: "complete-conflict-check"
+      };
+    }
+    return {
+      syncDirection: "web-to-excel",
+      requiresCommit: true,
+      sourceHash: "4".repeat(64),
+      sourceIdentity: "5".repeat(64),
+      studentCount: 1,
+      mergedBidirectional: true,
+      jobId: "complete-resolved-job"
+    };
+  };
+  completeReconciliation.commitResult = {
+    committed: true,
+    syncCommitToken: "complete-resolved-token",
+    sourceHash: "6".repeat(64),
+    sourceIdentity: "5".repeat(64)
+  };
+  await completeReconciliation.operation({ shiftKey: false });
+  assert.equal(completeReconciliationBodies.length, 2);
+  assert.equal(completeReconciliation.receivedConflictOptions.completeReconciliation, true);
+  assert.equal(completeReconciliation.receivedConflicts[0].kind, "record-presence");
+  assert.equal(completeReconciliation.receivedConflicts[0].web, "Сохранить запись");
+  assert.equal(completeReconciliation.receivedConflicts[0].excel, "Удалить запись");
+  assert.deepEqual(
+    { ...completeReconciliationBodies[1].syncConflictResolutions },
+    { [completeConflictId]: "web" }
+  );
+
+  const firstChangingConflictId = "e".repeat(64);
+  const secondChangingConflictId = "f".repeat(64);
+  const changingConflicts = makeExportContext({ syncDirection: "conflicts" });
+  const changingConflictBodies = [];
+  changingConflicts.chooseStudentDatabaseSyncConflictResolutions = async (conflicts, options) => {
+    changingConflicts.order.push("resolve-conflicts");
+    changingConflicts.receivedConflicts = conflicts;
+    changingConflicts.receivedConflictOptions = options;
+    const id = String(conflicts[0]?.id || "");
+    return id ? { [id]: id === firstChangingConflictId ? "web" : "excel" } : {};
+  };
+  changingConflicts.runStudentDatabaseExport = async (body) => {
+    changingConflictBodies.push(body);
+    changingConflicts.order.push("run");
+    if (changingConflictBodies.length === 1) {
+      return {
+        syncDirection: "conflicts",
+        syncConflictCount: 1,
+        syncConflicts: [{ id: firstChangingConflictId, record: "Первая запись", field: "Примечание" }],
+        jobId: "changing-conflicts-first"
+      };
+    }
+    if (changingConflictBodies.length === 2) {
+      return {
+        syncDirection: "conflicts",
+        syncConflictCount: 1,
+        syncConflicts: [{ id: secondChangingConflictId, record: "Вторая запись", field: "Статус" }],
+        jobId: "changing-conflicts-second"
+      };
+    }
+    return {
+      syncDirection: "web-to-excel",
+      requiresCommit: true,
+      sourceHash: "7".repeat(64),
+      sourceIdentity: "8".repeat(64),
+      studentCount: 2,
+      mergedBidirectional: true,
+      jobId: "changing-conflicts-resolved"
+    };
+  };
+  changingConflicts.commitResult = {
+    committed: true,
+    syncCommitToken: "changing-conflicts-token",
+    sourceHash: "9".repeat(64),
+    sourceIdentity: "8".repeat(64)
+  };
+  await changingConflicts.operation({ shiftKey: false });
+  assert.equal(changingConflictBodies.length, 3);
+  assert.deepEqual({ ...changingConflictBodies[1].syncConflictResolutions }, {
+    [firstChangingConflictId]: "web"
+  });
+  assert.deepEqual({ ...changingConflictBodies[2].syncConflictResolutions }, {
+    [firstChangingConflictId]: "web",
+    [secondChangingConflictId]: "excel"
+  });
 
   const changedDuringPreparation = makeExportContext({
     syncDirection: "web-to-excel",
@@ -1058,6 +1209,130 @@ async function testDirectionalExportFlows() {
   assert.equal(emptyDiagnosticItem.value, "Не определены");
   assert.equal(emptyDiagnosticItem.rows.length, 0);
   assert.match(emptyDiagnosticItem.note, /не покрывает контрольную точку/iu);
+}
+
+function testFormulaMetadataRefreshCopiesOnlyFormulaBackedValues() {
+  const helpers = loadImportMergeHelpers();
+  helpers.state.data.collections = {
+    students: [{
+      id: "student-1",
+      uid: "1",
+      name: "Тестова Анна",
+      endDate: "",
+      note: "Web note",
+      directExpenses: [{
+        id: "expense-1",
+        uid: "1",
+        date: "2026-08-01",
+        type: "Почта",
+        amount: 100
+      }]
+    }],
+    directExpenses: [],
+    programs: [{
+      id: "program-1",
+      name: "Курс",
+      landingCode: "course",
+      hours: 36,
+      price: 5000,
+      databaseSyncFormulaFields: ["price"],
+      databaseFixedValueOverrides: ["price"]
+    }],
+    trainingPlans: [{
+      id: "plan-1",
+      programName: "Курс",
+      discipline: "Раздел",
+      code: "1",
+      theoryHours: 1
+    }]
+  };
+  const changed = helpers.refreshFormulaMetadata({
+    students: [{
+      id: "student-1",
+      uid: "1",
+      name: "Тестова Анна",
+      endDate: "2026-09-30",
+      note: "Excel note",
+      databaseSyncFormulaFields: ["endDate"],
+      directExpenses: [{
+        id: "expense-1",
+        uid: "1",
+        date: "2026-08-01",
+        type: "Почта",
+        amount: 300,
+        databaseSyncFormulaFields: ["amount"]
+      }]
+    }],
+    directExpenses: [],
+    programPaymentSettings: [{
+      id: "program-1",
+      name: "Курс",
+      landingCode: "course",
+      hours: 72,
+      price: 7000,
+      databaseSyncFormulaFields: ["hours"]
+    }],
+    trainingPlans: [{
+      id: "plan-1",
+      programName: "Курс",
+      discipline: "Раздел",
+      code: "2",
+      theoryHours: 4,
+      databaseSyncFormulaFields: ["code", "theoryHours"]
+    }]
+  });
+  assert.equal(changed, 4);
+  assert.equal(helpers.state.data.collections.students[0].endDate, "2026-09-30");
+  assert.equal(helpers.state.data.collections.students[0].note, "Web note");
+  assert.equal(helpers.state.data.collections.students[0].directExpenses[0].amount, 300);
+  assert.equal(helpers.state.data.collections.programs[0].hours, 72);
+  assert.equal(
+    helpers.state.data.collections.programs[0].price,
+    5000,
+    "A value whose output cell is no longer formula-backed must stay unchanged"
+  );
+  assert.deepEqual(
+    Array.from(helpers.state.data.collections.programs[0].databaseFixedValueOverrides),
+    ["price"],
+    "Metadata refresh must not discard a fixed-value decision"
+  );
+  assert.equal(helpers.state.data.collections.trainingPlans[0].code, "2");
+  assert.equal(helpers.state.data.collections.trainingPlans[0].theoryHours, 4);
+  const stateBeforeFailedRefresh = JSON.stringify(helpers.state.data.collections);
+  assert.throws(
+    () => helpers.refreshFormulaMetadata({
+      students: [],
+      directExpenses: [],
+      trainingPlans: [],
+      programPaymentSettings: [
+        {
+          id: "program-1",
+          name: "Курс",
+          landingCode: "course",
+          hours: 80,
+          databaseSyncFormulaFields: ["hours"]
+        },
+        {
+          id: "unmatched-a",
+          name: "Дубль",
+          price: 100,
+          databaseSyncFormulaFields: ["price"]
+        },
+        {
+          id: "unmatched-b",
+          name: "Дубль",
+          price: 200,
+          databaseSyncFormulaFields: ["price"]
+        }
+      ]
+    }),
+    /Контрольная точка не изменена/iu
+  );
+  assert.equal(
+    JSON.stringify(helpers.state.data.collections),
+    stateBeforeFailedRefresh,
+    "A failed metadata refresh must not partially mutate Web records"
+  );
 }
 
 async function testFailedBackgroundJobPayloadPreserved() {
@@ -1299,14 +1574,38 @@ assert.match(
   "Excel → Web должен применять payload после серверного commit настроек."
 );
 assert.match(appSource, /function chooseStudentDatabaseSyncConflictResolutions/u);
+const conflictChooserSource = extractBetween(
+  "  function chooseStudentDatabaseSyncConflictResolutions",
+  "  function getStudentDatabaseSyncFailureDetails"
+);
 assert.match(appSource, /data-conflict-bulk="web-selected"/u);
 assert.match(appSource, /data-conflict-bulk="excel-selected"/u);
 assert.match(appSource, /data-conflict-bulk="web-all"/u);
 assert.match(appSource, /data-conflict-bulk="excel-all"/u);
-assert.match(appSource, /syncConflictResolutions:\s*resolutions/u);
+assert.match(conflictChooserSource, /Перечислены ВСЕ критичные расхождения Web и XLSB/u);
+assert.match(conflictChooserSource, /наличие или удаление записей/u);
+assert.match(conflictChooserSource, /«Сохранить запись» или «Удалить запись»/u);
+assert.match(conflictChooserSource, />XLSB для отмеченных</u);
+assert.match(conflictChooserSource, />XLSB для всех</u);
+assert.match(conflictChooserSource, /<th>XLSB<\/th>/u);
+assert.match(conflictChooserSource, /> XLSB<\/label>/u);
+assert.doesNotMatch(conflictChooserSource, />Excel(?:<|\s)/u);
+assert.match(conflictChooserSource, /data-conflict-kind=/u);
+assert.match(conflictChooserSource, /title="\$\{escapeAttr\(conflict\.reason/u);
+assert.match(conflictChooserSource, /continueButton\.disabled = unresolved > 0/u);
+assert.match(conflictChooserSource, /if \(choices\.size !== conflicts\.length\) return;/u);
+assert.match(appSource, /result\.syncConflictMode === "complete-reconciliation"/u);
+assert.match(appSource, /result\.syncConflictComplete === true/u);
+assert.match(appSource, /const cumulativeConflictResolutions = \{\}/u);
+assert.match(appSource, /Object\.assign\(cumulativeConflictResolutions, resolutions\)/u);
+assert.match(
+  appSource,
+  /syncConflictResolutions:\s*\{\s*\.\.\.cumulativeConflictResolutions\s*\}/u
+);
 
 (async () => {
   testManagedFieldClearingAndWebOnlyPreservation();
+  testFormulaMetadataRefreshCopiesOnlyFormulaBackedValues();
   testBaselineNormalizationAndLatestTimestamp();
   testManualContractAmountOverrideFromAudit();
   testExplicitImportDeletionSemantics();

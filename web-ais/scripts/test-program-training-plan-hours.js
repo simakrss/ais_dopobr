@@ -119,6 +119,16 @@ assert.match(
   "Сервер должен пересчитывать итоговые часы при импорте и экспорте"
 );
 assert.match(
+  serverSource,
+  /record\.databaseSyncFormulaFields = mappedColumns[\s\S]{0,260}worksheet\[XLSX\.utils\.encode_cell/u,
+  "Импорт учебного плана должен запоминать формульные поля конкретной строки."
+);
+assert.match(
+  appSource,
+  /directlyEditableFormulaFields[\s\S]{0,1600}databaseFixedValueOverrides/u,
+  "Ручная правка формульного поля учебного плана должна заменять соответствующую формулу."
+);
+assert.match(
   stylesSource,
   /input\[name="hours"\]\.is-hours-mismatch[\s\S]*#dc2626[\s\S]*\.program-training-plan-hours-summary\.is-mismatch/iu,
   "Для расхождения должна быть красная визуальная индикация"

@@ -164,10 +164,19 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.328",
+    version: "1.7.329",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.329",
+      releasedAt: "2026-08-27",
+      changes: [
+        "При одновременных изменениях Web и XLSB синхронизацию теперь всегда можно продолжить после явного выбора варианта для каждого расхождения.",
+        "В полный список выбора входят отличающиеся поля, а также записи, добавленные или удалённые только на одной стороне; для связанных данных доступен единый источник Web или XLSB.",
+        "XLSB не записывается, пока пользователь не разрешит все показанные расхождения."
+      ]
+    },
     {
       version: "1.7.328",
       releasedAt: "2026-08-27",
@@ -2928,7 +2937,20 @@
   const DEFAULT_PARTNER_MATERIALS_URL = "https://disk.yandex.ru/d/9BBGBNBIum252w";
   const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
   const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
-  const STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS = Object.freeze(["contractAmount"]);
+  const STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS = Object.freeze([
+    "hours",
+    "contractAmount",
+    "payment1Date",
+    "payment1Amount",
+    "enrollmentOrderNo",
+    "group",
+    "startDate",
+    "endDate",
+    "expulsionOrderNo",
+    "diplomaIssueDate",
+    "login",
+    "password"
+  ]);
   const STUDENT_LEARNING_ADDITIONAL_STATUS = "Обучающиеся";
   const PRO_STUDENT_ADDITIONAL_STATUS = "Вебинары";
   const PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS = "Вебинары. Архив";
@@ -30942,7 +30964,9 @@ MAX - https://bizvmax.ru/zifra_plus
     return {
       ...record,
       directExpenses: directExpenses.map((expense, index) => (
-        index === directIndex ? { ...expense, ...normalizedValues } : expense
+        index === directIndex
+          ? applyDirectExpenseFormulaValueOverride(expense, normalizedValues)
+          : expense
       ))
     };
   }
@@ -35772,6 +35796,27 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
+  function applyDirectExpenseFormulaValueOverride(sourceExpense = {}, nextValues = {}) {
+    const nextExpense = { ...sourceExpense, ...nextValues };
+    const formulaFields = (
+      Array.isArray(sourceExpense.databaseSyncFormulaFields)
+        ? sourceExpense.databaseSyncFormulaFields
+        : []
+    ).map((fieldName) => String(fieldName || "").trim()).filter(Boolean);
+    const formulaMetadataKnown = Array.isArray(sourceExpense.databaseSyncFormulaFields);
+    if (studentDatabaseFixedValuesEqual(sourceExpense.amount, nextExpense.amount)
+      || (formulaMetadataKnown && !formulaFields.includes("amount"))) {
+      return nextExpense;
+    }
+    const fixedValueOverrides = new Set(
+      normalizeStudentDatabaseFixedValueOverrides(sourceExpense.databaseFixedValueOverrides)
+    );
+    fixedValueOverrides.add("amount");
+    nextExpense.databaseSyncFormulaFields = formulaFields.filter((fieldName) => fieldName !== "amount");
+    nextExpense.databaseFixedValueOverrides = [...fixedValueOverrides].sort();
+    return nextExpense;
+  }
+
   function collectStudentDirectExpenses(formElement, record = {}) {
     const directExpenses = Array.isArray(record.directExpenses)
       ? record.directExpenses.map((expense) => ({ ...expense }))
@@ -35786,7 +35831,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const noteInput = field("Note");
       const inventoryIdInput = field("InventoryId");
       const inventoryLinkInput = field("InventoryLink");
-      return {
+      return applyDirectExpenseFormulaValueOverride(expense, {
         ...expense,
         date: String(dateInput.value || ""),
         type: String(typeInput?.value || ""),
@@ -35795,7 +35840,7 @@ MAX - https://bizvmax.ru/zifra_plus
         note: String(noteInput?.value || ""),
         inventoryId: String(inventoryIdInput?.value || ""),
         inventoryLink: String(inventoryLinkInput?.value || "")
-      };
+      });
     });
   }
 
@@ -39122,7 +39167,57 @@ MAX - https://bizvmax.ru/zifra_plus
         relatedIds.add(item.id);
       }
     });
-    const submittedRows = collectProgramTrainingPlanRows(formElement, programId, currentProgram);
+    const previousRowsById = new Map(rows
+      .map((item) => [String(item?.id || "").trim(), item])
+      .filter(([id]) => id));
+    const directlyEditableFormulaFields = new Set(["theoryHours", "practiceHours"]);
+    const submittedRows = collectProgramTrainingPlanRows(
+      formElement,
+      programId,
+      currentProgram
+    ).map((submittedRow) => {
+      const previousRow = previousRowsById.get(String(submittedRow.id || "").trim());
+      const formulaFields = (Array.isArray(previousRow?.databaseSyncFormulaFields)
+        ? previousRow.databaseSyncFormulaFields
+        : [])
+        .map((fieldName) => String(fieldName || "").trim())
+        .filter(Boolean);
+      const formulaMetadataKnown = Array.isArray(previousRow?.databaseSyncFormulaFields);
+      const changedFormulaFields = [...directlyEditableFormulaFields].filter((fieldName) => (
+        !studentDatabaseFixedValuesEqual(previousRow?.[fieldName], submittedRow[fieldName])
+        && (
+          formulaFields.includes(fieldName)
+          || (
+            !formulaMetadataKnown
+            && (
+              Boolean(previousRow)
+              || String(submittedRow[fieldName] ?? "").trim() !== ""
+            )
+          )
+        )
+      ));
+      const fixedValueOverrides = new Set(
+        (Array.isArray(previousRow?.databaseFixedValueOverrides)
+          ? previousRow.databaseFixedValueOverrides
+          : [])
+          .map((fieldName) => String(fieldName || "").trim())
+          .filter(Boolean)
+      );
+      changedFormulaFields.forEach((fieldName) => fixedValueOverrides.add(fieldName));
+      const nextRow = {
+        ...(previousRow || {}),
+        ...submittedRow,
+        databaseSyncFormulaFields: formulaFields.filter((fieldName) => (
+          !changedFormulaFields.includes(fieldName)
+        ))
+      };
+      if (fixedValueOverrides.size) {
+        nextRow.databaseFixedValueOverrides = [...fixedValueOverrides].sort();
+      } else {
+        delete nextRow.databaseFixedValueOverrides;
+      }
+      return nextRow;
+    });
     const submittedIds = new Set(submittedRows.map((item) => item.id).filter(Boolean));
     const removeIds = new Set([...relatedIds, ...submittedIds]);
     let inserted = false;
@@ -39204,6 +39299,42 @@ MAX - https://bizvmax.ru/zifra_plus
         currentRecord.defaultAuthorPaymentPercent,
         state.data.meta.defaultAuthorPaymentPercent || 50
       );
+      const currentFormulaFields = (
+        Array.isArray(currentRecord.databaseSyncFormulaFields)
+          ? currentRecord.databaseSyncFormulaFields
+          : []
+      ).map((fieldName) => String(fieldName || "").trim()).filter(Boolean);
+      const programFixedValueFields = ["shortName", "price", "oldPrice", "hours"];
+      const formulaMetadataKnown = Array.isArray(currentRecord.databaseSyncFormulaFields);
+      const changedFormulaFields = programFixedValueFields.filter((fieldName) => (
+        formData.has(fieldName)
+        && !studentDatabaseFixedValuesEqual(currentRecord[fieldName], values[fieldName])
+        && (
+          currentFormulaFields.includes(fieldName)
+          || (
+            !formulaMetadataKnown
+            && (
+              Boolean(formElement.dataset.id)
+              || String(formData.get(fieldName) ?? "").trim() !== ""
+            )
+          )
+        )
+      ));
+      values.databaseSyncFormulaFields = currentFormulaFields.filter((fieldName) => (
+        !formData.has(fieldName)
+        || studentDatabaseFixedValuesEqual(currentRecord[fieldName], values[fieldName])
+      ));
+      const programFixedValueOverrides = new Set(
+        (Array.isArray(currentRecord.databaseFixedValueOverrides)
+          ? currentRecord.databaseFixedValueOverrides
+          : [])
+          .map((fieldName) => String(fieldName || "").trim())
+          .filter(Boolean)
+      );
+      changedFormulaFields.forEach((fieldName) => programFixedValueOverrides.add(fieldName));
+      if (programFixedValueOverrides.size) {
+        values.databaseFixedValueOverrides = [...programFixedValueOverrides].sort();
+      }
     }
     if (isStudentCard || isContractCard) {
       formData.forEach((raw, key) => {
@@ -39216,23 +39347,43 @@ MAX - https://bizvmax.ru/zifra_plus
       values.discountUnit = "percent";
       values.directExpenses = collectStudentDirectExpenses(formElement, values);
       clearUnchangedGeneratedCommunicationMessages(values, formElement);
-      if (
-        formElement.dataset.id
-        && formData.has("contractAmount")
-        && !studentDatabaseFixedValuesEqual(currentRecord.contractAmount, values.contractAmount)
-      ) {
+      const changedFixedValueFields = STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS
+        .filter((fieldName) => (
+          formData.has(fieldName)
+          && !studentDatabaseFixedValuesEqual(currentRecord[fieldName], values[fieldName])
+          && (
+            Boolean(formElement.dataset.id)
+            || String(formData.get(fieldName) ?? "").trim() !== ""
+          )
+        ));
+      if (changedFixedValueFields.length) {
+        const changedFixedValueFieldSet = new Set(changedFixedValueFields);
+        values.databaseSyncFormulaFields = (
+          Array.isArray(currentRecord.databaseSyncFormulaFields)
+            ? currentRecord.databaseSyncFormulaFields
+            : []
+        ).filter((fieldName) => !changedFixedValueFieldSet.has(String(fieldName || "").trim()));
         values.databaseFixedValueOverrides = [
           ...new Set([
             ...normalizeStudentDatabaseFixedValueOverrides(
               currentRecord.databaseFixedValueOverrides
             ),
-            "contractAmount"
+            ...changedFixedValueFields
           ])
         ];
       }
     }
     if (isContractCard) {
       clearUnchangedGeneratedEmployeeCommunicationMessages(values, formElement);
+    }
+    if (
+      config.collection === "directExpenses"
+      && (
+        Boolean(formElement.dataset.id)
+        || String(formData.get("amount") ?? "").trim() !== ""
+      )
+    ) {
+      Object.assign(values, applyDirectExpenseFormulaValueOverride(currentRecord, values));
     }
     if (!formElement.dataset.id && fields.some((item) => item.key === "uid") && !values.uid) {
       values.uid = getNextUid();
@@ -53444,10 +53595,17 @@ MAX - https://bizvmax.ru/zifra_plus
     return quotedMatch?.[1] || fallback;
   }
 
-  function chooseStudentDatabaseSyncConflictResolutions(conflictsValue) {
+  function chooseStudentDatabaseSyncConflictResolutions(conflictsValue, options = {}) {
     const conflicts = (Array.isArray(conflictsValue) ? conflictsValue : [])
       .filter((item) => item && typeof item === "object" && String(item.id || "").trim());
     if (!conflicts.length) return Promise.resolve({});
+    const completeReconciliation = options.completeReconciliation === true;
+    const dialogTitle = completeReconciliation
+      ? "Разрешите все критичные расхождения Web и XLSB"
+      : "Выберите значения конфликтующих полей";
+    const dialogDescription = completeReconciliation
+      ? "Перечислены ВСЕ критичные расхождения Web и XLSB: значения полей, наличие или удаление записей и различия снимков данных. Для каждой строки выберите, что сохранить. В строках наличия записи варианты Web и XLSB показывают действие: «Сохранить запись» или «Удалить запись»."
+      : "Разные поля уже объединены автоматически. Для одинаковых полей укажите, какое значение сохранить.";
     return new Promise((resolve) => {
       const choices = new Map();
       const backdrop = document.createElement("div");
@@ -53461,17 +53619,17 @@ MAX - https://bizvmax.ru/zifra_plus
           <header class="modal-head">
             <div>
               <span class="eyebrow">Синхронизация с XLSB</span>
-              <h2 id="studentDatabaseConflictsTitle">Выберите значения конфликтующих полей</h2>
-              <p>Разные поля уже объединены автоматически. Для одинаковых полей укажите, какое значение сохранить.</p>
+              <h2 id="studentDatabaseConflictsTitle">${escapeHtml(dialogTitle)}</h2>
+              <p>${escapeHtml(dialogDescription)}</p>
             </div>
             <button class="icon-button" type="button" data-action="cancel-sync-conflicts" aria-label="Закрыть">×</button>
           </header>
           <div class="student-database-conflicts-tools">
             <button class="ghost-button" type="button" data-conflict-bulk="web-selected">Web для отмеченных</button>
-            <button class="ghost-button" type="button" data-conflict-bulk="excel-selected">Excel для отмеченных</button>
+            <button class="ghost-button" type="button" data-conflict-bulk="excel-selected">XLSB для отмеченных</button>
             <span class="student-database-conflicts-tools-spacer"></span>
             <button class="ghost-button" type="button" data-conflict-bulk="web-all">Web для всех</button>
-            <button class="ghost-button" type="button" data-conflict-bulk="excel-all">Excel для всех</button>
+            <button class="ghost-button" type="button" data-conflict-bulk="excel-all">XLSB для всех</button>
           </div>
           <div class="student-database-conflicts-table-wrap">
             <table class="student-database-conflicts-table">
@@ -53482,13 +53640,17 @@ MAX - https://bizvmax.ru/zifra_plus
                   <th>Запись</th>
                   <th>Поле</th>
                   <th>Web</th>
-                  <th>Excel</th>
+                  <th>XLSB</th>
                   <th>Сохранить</th>
                 </tr>
               </thead>
               <tbody>
                 ${conflicts.map((conflict, index) => `
-                  <tr data-conflict-row="${escapeAttr(conflict.id)}">
+                  <tr
+                    data-conflict-row="${escapeAttr(conflict.id)}"
+                    data-conflict-kind="${escapeAttr(conflict.kind || "field")}"
+                    title="${escapeAttr(conflict.reason || "")}"
+                  >
                     <td class="student-database-conflict-check"><input type="checkbox" data-conflict-select aria-label="Отметить конфликт ${index + 1}"></td>
                     <td title="${escapeAttr(conflict.entity || "")}">${escapeHtml(clipped(conflict.entity || "Слушатели"))}</td>
                     <td title="${escapeAttr(conflict.record || "")}">${escapeHtml(clipped(conflict.record || "Запись"))}</td>
@@ -53497,8 +53659,8 @@ MAX - https://bizvmax.ru/zifra_plus
                     <td class="student-database-conflict-value" title="${escapeAttr(conflict.excel || "")}">${escapeHtml(clipped(conflict.excel || "—"))}</td>
                     <td>
                       <div class="student-database-conflict-choice" role="radiogroup" aria-label="Источник значения">
-                        <label><input type="radio" name="sync-conflict-${index}" value="web" data-conflict-choice="${escapeAttr(conflict.id)}"> Web</label>
-                        <label><input type="radio" name="sync-conflict-${index}" value="excel" data-conflict-choice="${escapeAttr(conflict.id)}"> Excel</label>
+                        <label><input type="radio" name="sync-conflict-${index}" value="web" data-conflict-choice="${escapeAttr(conflict.id)}" aria-label="Web: ${escapeAttr(conflict.web || "—")}"> Web</label>
+                        <label><input type="radio" name="sync-conflict-${index}" value="excel" data-conflict-choice="${escapeAttr(conflict.id)}" aria-label="XLSB: ${escapeAttr(conflict.excel || "—")}"> XLSB</label>
                       </div>
                     </td>
                   </tr>
@@ -53521,7 +53683,9 @@ MAX - https://bizvmax.ru/zifra_plus
         const unresolved = conflicts.length - choices.size;
         if (summary) summary.textContent = unresolved
           ? `Не выбрано: ${unresolved}`
-          : `Выбраны все поля: ${conflicts.length}`;
+          : completeReconciliation
+            ? `Выбраны все расхождения: ${conflicts.length}`
+            : `Выбраны все поля: ${conflicts.length}`;
         if (continueButton) continueButton.disabled = unresolved > 0;
         backdrop.querySelectorAll("[data-conflict-row]").forEach((row) => {
           row.classList.toggle("is-resolved", choices.has(String(row.dataset.conflictRow || "")));
@@ -53780,6 +53944,7 @@ MAX - https://bizvmax.ru/zifra_plus
         macroSettings
       };
       let result = await runStudentDatabaseExport(exportRequest);
+      const cumulativeConflictResolutions = {};
       for (let conflictRound = 0; result?.syncDirection === "conflicts"; conflictRound += 1) {
         if (conflictRound >= 5) {
           throw new Error(
@@ -53791,14 +53956,18 @@ MAX - https://bizvmax.ru/zifra_plus
           progress: 28,
           tone: "active"
         });
+        const completeReconciliation = result.syncConflictMode === "complete-reconciliation"
+          && result.syncConflictComplete === true;
         const resolutions = await chooseStudentDatabaseSyncConflictResolutions(
-          result.syncConflicts
+          result.syncConflicts,
+          { completeReconciliation }
         );
         if (!resolutions) {
           updateDatabaseExportIndicator({ running: false, visible: false });
           render();
           return;
         }
+        Object.assign(cumulativeConflictResolutions, resolutions);
         if (sharedStateChangeGeneration !== syncPreparedGeneration) {
           throw new Error(
             "Web-данные изменились во время выбора конфликтов. "
@@ -53812,7 +53981,7 @@ MAX - https://bizvmax.ru/zifra_plus
         });
         result = await runStudentDatabaseExport({
           ...exportRequest,
-          syncConflictResolutions: resolutions
+          syncConflictResolutions: { ...cumulativeConflictResolutions }
         });
       }
       if (sharedStateChangeGeneration !== syncPreparedGeneration) {
@@ -53835,6 +54004,9 @@ MAX - https://bizvmax.ru/zifra_plus
         state.data.meta.advertisingExclusionsSyncSource = String(advertisingExclusionsSync.source || "");
         if (state.advertising?.exclusions) state.advertising.exclusions.loaded = false;
       }
+      let formulaMetadataRefreshCount = direction === "unchanged"
+        ? applyStudentDatabaseFormulaMetadataRefresh(result.formulaMetadataPayload)
+        : 0;
 
       let operationSummary = null;
       let committedResult = {};
@@ -53929,13 +54101,19 @@ MAX - https://bizvmax.ru/zifra_plus
             + "Контрольная точка не обновлена; повторная синхронизация безопасно обнаружит конфликт."
           );
         }
+        formulaMetadataRefreshCount = applyStudentDatabaseFormulaMetadataRefresh(
+          committedResult.formulaMetadataPayload || result.formulaMetadataPayload
+        );
         const synchronizedAt = new Date().toISOString();
         state.data.meta.studentDatabaseSyncBaseline = buildStudentDatabaseSyncBaseline(
           committedResult.sourceHash,
           committedResult.sourceIdentity || result.sourceIdentity,
           syncBaseRevision + 1,
           synchronizedAt,
-          committedResult.criticalHash || result.criticalHash,
+          committedResult.formulaMetadataCriticalHash
+            || result.formulaMetadataCriticalHash
+            || committedResult.criticalHash
+            || result.criticalHash,
           committedResult.criticalIdentityHash || result.criticalIdentityHash,
           committedResult.eventSettingsHash || result.eventSettingsHash
         );
@@ -53973,6 +54151,8 @@ MAX - https://bizvmax.ru/zifra_plus
         activeReservation = { jobId: "", token: "" };
         void postAuditEntry(auditEntry);
       } else if (
+        formulaMetadataRefreshCount > 0
+        ||
         !hadValidBaseline
         || (
           result.eventSettingsHash
@@ -53985,7 +54165,7 @@ MAX - https://bizvmax.ru/zifra_plus
           result.sourceIdentity,
           syncBaseRevision + 1,
           synchronizedAt,
-          result.criticalHash,
+          result.formulaMetadataCriticalHash || result.criticalHash,
           result.criticalIdentityHash,
           result.eventSettingsHash
         );
@@ -54582,6 +54762,149 @@ MAX - https://bizvmax.ru/zifra_plus
       .filter((field) => /^[A-Za-z][A-Za-z0-9_-]{0,119}$/u.test(field)))];
   }
 
+  function applyStudentDatabaseFormulaMetadataRefresh(payloadValue) {
+    const payload = payloadValue && typeof payloadValue === "object"
+      ? payloadValue
+      : {};
+    const normalizeFormulaFields = (record) => [...new Set(
+      (Array.isArray(record?.databaseSyncFormulaFields)
+        ? record.databaseSyncFormulaFields
+        : [])
+        .map((fieldName) => String(fieldName || "").trim())
+        .filter(Boolean)
+    )].sort();
+    const buildIndex = (rows, keyGetter) => {
+      const index = new Map();
+      (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const key = String(keyGetter(row) || "").trim();
+        if (!key) return;
+        const matches = index.get(key) || [];
+        matches.push(row);
+        index.set(key, matches);
+      });
+      return index;
+    };
+    const pendingChanges = [];
+    const metadataErrors = [];
+    const refreshRows = (currentRows, importedRows, keyGetters, label) => {
+      const imported = Array.isArray(importedRows) ? importedRows : [];
+      const indexes = keyGetters.map((keyGetter) => buildIndex(imported, keyGetter));
+      const usedImported = new Set();
+      (Array.isArray(currentRows) ? currentRows : []).forEach((current) => {
+        let matched = null;
+        for (let index = 0; index < keyGetters.length; index += 1) {
+          const key = String(keyGetters[index](current) || "").trim();
+          if (!key) continue;
+          const candidates = (indexes[index].get(key) || [])
+            .filter((row) => !usedImported.has(row));
+          if (candidates.length === 1) {
+            matched = candidates[0];
+            break;
+          }
+        }
+        if (!matched) {
+          if (normalizeFormulaFields(current).length) {
+            metadataErrors.push(`${label}: не сопоставлена запись Web`);
+          }
+          return;
+        }
+        usedImported.add(matched);
+        const previousFields = normalizeFormulaFields(current);
+        const importedFields = normalizeFormulaFields(matched);
+        let recordChanged = JSON.stringify(previousFields) !== JSON.stringify(importedFields);
+        const importedFormulaValues = {};
+        importedFields.forEach((fieldName) => {
+          const importedValue = Object.prototype.hasOwnProperty.call(matched, fieldName)
+            ? matched[fieldName]
+            : "";
+          importedFormulaValues[fieldName] = importedValue;
+          if (!studentDatabaseFixedValuesEqual(current[fieldName], importedValue)) {
+            recordChanged = true;
+          }
+        });
+        if (!recordChanged) return;
+        pendingChanges.push({ current, importedFields, importedFormulaValues });
+      });
+      const unmatchedFormulaRows = imported.filter((row) => (
+        normalizeFormulaFields(row).length > 0 && !usedImported.has(row)
+      ));
+      if (unmatchedFormulaRows.length) {
+        metadataErrors.push(
+          `${label}: не сопоставлено формульных строк XLSB — ${unmatchedFormulaRows.length}`
+        );
+      }
+    };
+    const recordId = (record) => String(
+      record?.id || record?.databaseSync?.recordId || ""
+    ).trim();
+    const normalizedPart = (value) => normalizeStudentDatabaseImportIdentityValue(value);
+    const joinIdentity = (...values) => {
+      const parts = values.map(normalizedPart);
+      return parts.some(Boolean) ? parts.join("\u0000") : "";
+    };
+    const currentStudents = state.data.collections.students || [];
+    const importedStudents = Array.isArray(payload.students) ? payload.students : [];
+    refreshRows(currentStudents, importedStudents, [
+      recordId,
+      (record) => normalizedPart(record?.uid),
+      buildStudentDatabaseImportCompositeIdentity
+    ], "Слушатели");
+    const currentDirectExpenses = [
+      ...(state.data.collections.directExpenses || []),
+      ...currentStudents.flatMap((student) => (
+        Array.isArray(student?.directExpenses) ? student.directExpenses : []
+      ))
+    ];
+    const importedDirectExpenses = [
+      ...(Array.isArray(payload.directExpenses) ? payload.directExpenses : []),
+      ...importedStudents.flatMap((student) => (
+        Array.isArray(student?.directExpenses) ? student.directExpenses : []
+      ))
+    ];
+    refreshRows(currentDirectExpenses, importedDirectExpenses, [
+      recordId,
+      (record) => joinIdentity(record?.uid, record?.date, record?.type)
+    ], "Прямые затраты");
+    refreshRows(
+      state.data.collections.programs || [],
+      payload.programPaymentSettings || [],
+      [
+        recordId,
+        (record) => getProgramWorkbookIdentity(
+          record?.xlsbProgramName || record?.name,
+          Object.prototype.hasOwnProperty.call(record || {}, "xlsbProgramLandingCode")
+            ? record.xlsbProgramLandingCode
+            : record?.landingCode
+        ),
+        (record) => String(record?.xlsbProgramRow || "").trim(),
+        (record) => normalizedPart(record?.name)
+      ],
+      "Программы"
+    );
+    refreshRows(
+      state.data.collections.trainingPlans || [],
+      payload.trainingPlans || [],
+      [
+        recordId,
+        (record) => joinIdentity(record?.code, record?.programName, record?.discipline),
+        (record) => joinIdentity(record?.programName, record?.discipline)
+      ],
+      "Учебные планы"
+    );
+    if (metadataErrors.length) {
+      throw new Error(
+        "Не удалось безопасно обновить значения и признаки формул XLSB: "
+        + metadataErrors.join("; ")
+        + ". Контрольная точка не изменена."
+      );
+    }
+    pendingChanges.forEach(({ current, importedFields, importedFormulaValues }) => {
+      Object.assign(current, importedFormulaValues);
+      current.databaseSyncFormulaFields = importedFields;
+    });
+    return pendingChanges.length;
+  }
+
   function projectStudentDatabaseImportedManagedFields(imported, managedFields) {
     return Object.fromEntries(normalizeStudentDatabaseImportManagedFields(managedFields)
       .map((field) => [
@@ -54675,9 +54998,17 @@ MAX - https://bizvmax.ru/zifra_plus
         ...(matched || imported || {}),
         ...importedManagedFields,
         ...(matched ? { id: String(matched.id || imported?.id || "") } : {}),
-        ...(Array.isArray(mergedDirectExpenses) ? { directExpenses: mergedDirectExpenses } : {})
+        ...(Array.isArray(mergedDirectExpenses) ? { directExpenses: mergedDirectExpenses } : {}),
+        databaseSyncFormulaFields: [...new Set(
+          (Array.isArray(imported?.databaseSyncFormulaFields)
+            ? imported.databaseSyncFormulaFields
+            : [])
+            .map((fieldName) => String(fieldName || "").trim())
+            .filter(Boolean)
+        )]
       };
       delete merged.databaseSync;
+      delete merged.databaseFixedValueOverrides;
       return merged;
     });
   }
@@ -54732,9 +55063,17 @@ MAX - https://bizvmax.ru/zifra_plus
       const merged = {
         ...(matched || imported || {}),
         ...importedManagedFields,
-        ...(matched ? { id: String(matched.id || imported?.id || "") } : {})
+        ...(matched ? { id: String(matched.id || imported?.id || "") } : {}),
+        databaseSyncFormulaFields: [...new Set(
+          (Array.isArray(imported?.databaseSyncFormulaFields)
+            ? imported.databaseSyncFormulaFields
+            : [])
+            .map((fieldName) => String(fieldName || "").trim())
+            .filter(Boolean)
+        )]
       };
       delete merged.databaseSync;
+      delete merged.databaseFixedValueOverrides;
       return merged;
     });
   }
@@ -54846,7 +55185,7 @@ MAX - https://bizvmax.ru/zifra_plus
           ? importedFields.authorSource
           : program?.authorSource || program?.author || ""
       ).trim();
-      return {
+      const mergedProgram = {
         ...(program || {}),
         ...importedFields,
         id: String(program?.id || imported?.id || "").trim() || buildLegacyRecordId("program-xlsb", [
@@ -54862,11 +55201,20 @@ MAX - https://bizvmax.ru/zifra_plus
             ? imported.xlsbProgramLandingCode
             : imported.landingCode || ""
         ).trim(),
+        databaseSyncFormulaFields: [...new Set(
+          (Array.isArray(imported.databaseSyncFormulaFields)
+            ? imported.databaseSyncFormulaFields
+            : [])
+            .map((fieldName) => String(fieldName || "").trim())
+            .filter(Boolean)
+        )],
         author: authorSource,
         authorSource,
         authorPayments: parseProgramAuthorPayments(authorSource, defaultAuthorPercent),
         defaultAuthorPaymentPercent: defaultAuthorPercent
       };
+      delete mergedProgram.databaseFixedValueOverrides;
+      return mergedProgram;
     };
     const mergedPrograms = (Array.isArray(programs) ? programs : []).map((program) => {
       const recordId = String(program?.id || "").trim();

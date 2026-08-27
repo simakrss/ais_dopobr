@@ -86,15 +86,39 @@ try {
   const contractAmountColumnIndex = baseHeaders.findIndex((header) => (
     header === "Сумма по договору (руб)" || header === "Сумма  по договору (руб)"
   ));
+  const daysRemainingColumnIndex = baseHeaders.lastIndexOf("Дней до окончания");
+  const endDateColumnIndex = daysRemainingColumnIndex >= 0
+    ? daysRemainingColumnIndex + 1
+    : -1;
   const fixedValueTarget = imported.students.find((student) => {
     const rowIndex = Number(student.databaseSyncSourceRow) - 1;
     if (rowIndex < 0 || contractAmountColumnIndex < 0) return false;
     const address = XLSX.utils.encode_cell({ r: rowIndex, c: contractAmountColumnIndex });
     return Boolean(getCell(before, "База", address).f);
   });
+  const fixedEndDateTarget = imported.students.find((student) => {
+    const rowIndex = Number(student.databaseSyncSourceRow) - 1;
+    if (rowIndex < 0 || endDateColumnIndex < 0) return false;
+    const address = XLSX.utils.encode_cell({ r: rowIndex, c: endDateColumnIndex });
+    return Boolean(getCell(before, "База", address).f);
+  });
   assert.ok(imported.inventory.length, "В исходной книге нет запасов.");
   assert.ok(imported.trainingPlans.length, "В исходной книге нет учебных планов.");
   assert.ok(imported.programPaymentSettings.length, "В исходной книге нет реестра программ.");
+  assert.ok(
+    imported.programPaymentSettings.some((program) => (
+      Array.isArray(program.databaseSyncFormulaFields)
+      && program.databaseSyncFormulaFields.length > 0
+    )),
+    "Импорт должен помечать формульные поля каждой конкретной программы."
+  );
+  assert.ok(
+    imported.trainingPlans.some((plan) => (
+      Array.isArray(plan.databaseSyncFormulaFields)
+      && plan.databaseSyncFormulaFields.includes("totalHours")
+    )),
+    "Импорт должен помечать формульные поля каждой строки учебного плана."
+  );
   assert.ok(
     imported.inventoryDatabaseSyncFields.includes("balance"),
     "Поле остатка не объявлено управляемым при Excel → Web."
@@ -104,6 +128,8 @@ try {
   const trainingTarget = imported.trainingPlans[0];
   const programTarget = imported.programPaymentSettings.find((program) => (
     Number(program.xlsbProgramRow) > 1
+    && Array.isArray(program.databaseSyncFormulaFields)
+    && program.databaseSyncFormulaFields.includes("hours")
   ));
   const deletedProgram = imported.programPaymentSettings.find((program) => (
     program.id !== programTarget?.id
@@ -111,14 +137,25 @@ try {
     && String(program.name || "").trim() !== String(trainingTarget?.programName || "").trim()
   ));
   assert.ok(
-    inventoryTarget && trainingTarget && programTarget && deletedProgram && fixedValueTarget,
-    "Не найдены строки для round-trip проверки."
+    inventoryTarget && trainingTarget && programTarget && deletedProgram
+      && fixedValueTarget && fixedEndDateTarget,
+    "Не найдены строки для round-trip проверки: " + JSON.stringify({
+      inventoryTarget: Boolean(inventoryTarget),
+      trainingTarget: Boolean(trainingTarget),
+      programTarget: Boolean(programTarget),
+      deletedProgram: Boolean(deletedProgram),
+      fixedValueTarget: Boolean(fixedValueTarget),
+      fixedEndDateTarget: Boolean(fixedEndDateTarget),
+      endDateColumnIndex,
+      baseHeaderRowIndex
+    })
   );
 
   const runId = Date.now();
   const inventoryNote = `Round-trip запас ${runId}`;
   const trainingTeacher = `Round-trip преподаватель ${runId}`;
   const programManager = `Round-trip менеджер ${runId}`;
+  const programFormulaHours = Number(programTarget.hours || 0) + 1;
   const insertedProgram = {
     id: `roundtrip-program-${runId}`,
     name: `Автоматически добавленная программа ${runId} (5 ч)`,
@@ -147,6 +184,19 @@ try {
     materials: "Тестовые материалы",
     content: "Тестовое содержание"
   };
+  const insertedDirectExpense = {
+    id: `roundtrip-direct-expense-${runId}`,
+    uid: "",
+    date: "2026-08-27",
+    type: "Тестовая прямая затрата",
+    amount: 123,
+    note: `Строка добавлена round-trip тестом ${runId}`,
+    inventoryLink: "",
+    act: "",
+    actStatus: "",
+    recommendation: "",
+    additionalInfo: ""
+  };
   const inventory = imported.inventory.map((item) => (
     item.id === inventoryTarget.id ? { ...item, note: inventoryNote } : { ...item }
   ));
@@ -166,22 +216,40 @@ try {
       .filter((program) => program.id !== deletedProgram.id)
       .map((program) => (
         program.xlsbProgramRow === programTarget.xlsbProgramRow
-          ? { ...program, manager: programManager }
+          ? {
+            ...program,
+            manager: programManager,
+            hours: programFormulaHours,
+            databaseSyncFormulaFields: program.databaseSyncFormulaFields
+              .filter((fieldName) => fieldName !== "hours"),
+            databaseFixedValueOverrides: [
+              ...new Set([
+                ...(program.databaseFixedValueOverrides || []),
+                "hours"
+              ])
+            ]
+          }
           : { ...program }
       )),
     insertedProgram
   ];
-  const directExpenses = flattenDirectExpenses(imported);
+  const directExpenses = [...flattenDirectExpenses(imported), insertedDirectExpense];
   const fixedContractAmount = Number(fixedValueTarget.contractAmount || 0) + 1;
-  const students = imported.students.map((student) => (
-    student.id === fixedValueTarget.id
-      ? {
-          ...student,
-          contractAmount: fixedContractAmount,
-          databaseFixedValueOverrides: ["contractAmount"]
-        }
-      : student
-  ));
+  const fixedEndDate = "2031-12-31";
+  const students = imported.students.map((student) => {
+    const updated = { ...student };
+    const overrides = new Set(student.databaseFixedValueOverrides || []);
+    if (student.id === fixedValueTarget.id) {
+      updated.contractAmount = fixedContractAmount;
+      overrides.add("contractAmount");
+    }
+    if (student.id === fixedEndDateTarget.id) {
+      updated.endDate = fixedEndDate;
+      overrides.add("endDate");
+    }
+    if (overrides.size) updated.databaseFixedValueOverrides = [...overrides];
+    return updated;
+  });
   const payload = sanitizeStudentDatabaseExportPayload({
     students,
     contracts: imported.contracts,
@@ -201,12 +269,32 @@ try {
     r: Number(fixedValueTarget.databaseSyncSourceRow) - 1,
     c: contractAmountColumnIndex
   });
+  const fixedEndDateAddress = XLSX.utils.encode_cell({
+    r: Number(fixedEndDateTarget.databaseSyncSourceRow) - 1,
+    c: endDateColumnIndex
+  });
   const formulaSnapshot = {
     trainingCode: getCell(before, "Учебные планы", "A2").f,
     trainingTotal: getCell(before, "Учебные планы", "E2").f,
-    programShortName: getCell(before, "Реестр программ", `B${programRow}`).f,
-    programHours: getCell(before, "Реестр программ", `M${programRow}`).f
+    programShortName: getCell(before, "Реестр программ", `B${programRow}`).f
   };
+  const directExpenseRows = XLSX.utils.sheet_to_json(before.Sheets["Прямые затраты"], {
+    header: 1,
+    defval: "",
+    raw: true
+  });
+  const directExpenseHeaderRowIndex = directExpenseRows.findIndex((row) => (
+    row.includes("uid") && row.includes("Вид затрат")
+  ));
+  const directExpenseHeaders = directExpenseRows[directExpenseHeaderRowIndex]
+    .map((value) => String(value || "").trim());
+  const recommendationColumnIndex = directExpenseHeaders.indexOf("Рекомендация оплаты");
+  assert.ok(recommendationColumnIndex >= 0, "Не найдена колонка рекомендации оплаты.");
+  const insertedDirectExpenseRow = directExpenseHeaderRowIndex + directExpenses.length + 1;
+  const insertedDirectExpenseRecommendationAddress = XLSX.utils.encode_cell({
+    r: insertedDirectExpenseRow - 1,
+    c: recommendationColumnIndex
+  });
   const commentSnapshot = {
     inventoryUid: getCommentText(before, "Запасы", "E1"),
     trainingPractice: getCommentText(before, "Учебные планы", "G1")
@@ -246,6 +334,7 @@ try {
   assert.equal(result.inventoryItems, inventory.length);
   assert.equal(result.inventoryUnits, payload.inventoryRows.length);
   assert.equal(result.trainingPlans, trainingPlans.length);
+  assert.equal(result.directExpenseRowsInserted, 1);
   assert.equal(result.programRowsInserted, 1);
   assert.equal(result.programRowsDeleted, 1);
   assert.equal(result.programRowsSorted, programs.length);
@@ -255,12 +344,32 @@ try {
     result.programFormulaCellsPreserved > 0,
     "Не зафиксировано сохранение формульных ячеек реестра программ."
   );
-  assert.equal(result.studentFixedValueOverridesApplied, 1);
-  assert.equal(result.studentFormulaCellsReplaced, 1);
+  assert.ok(
+    result.programFormulaCellsReplaced >= 1,
+    "Не подтверждена замена вручную изменённой формулы программы."
+  );
+  assert.equal(result.studentFixedValueOverridesApplied, 2);
+  assert.equal(result.studentFormulaCellsReplaced, 2);
 
   const after = readRaw(outputPath);
+  assert.ok(
+    getCell(
+      after,
+      "Прямые затраты",
+      insertedDirectExpenseRecommendationAddress
+    ).f,
+    "Новая строка прямой затраты должна получить формулу рекомендации оплаты из шаблона."
+  );
   assert.equal(getCell(after, "База", fixedValueAddress).f, undefined);
   assert.equal(Number(getCell(after, "База", fixedValueAddress).v), fixedContractAmount);
+  assert.equal(getCell(after, "База", fixedEndDateAddress).f, undefined);
+  const fixedEndDateCellValue = getCell(after, "База", fixedEndDateAddress).v;
+  assert.equal(
+    fixedEndDateCellValue instanceof Date
+      ? fixedEndDateCellValue.toISOString().slice(0, 10)
+      : XLSX.SSF.format("yyyy-mm-dd", fixedEndDateCellValue),
+    fixedEndDate
+  );
   assert.doesNotMatch(getCommentText(after, "Запасы", "A2"), /\[\[AIS_SYNC_V1\]\]/u);
   assert.doesNotMatch(getCommentText(after, "Учебные планы", "A2"), /\[\[AIS_SYNC_V1\]\]/u);
   assert.doesNotMatch(
@@ -270,8 +379,7 @@ try {
   assert.deepEqual({
     trainingCode: getCell(after, "Учебные планы", "A2").f,
     trainingTotal: getCell(after, "Учебные планы", "E2").f,
-    programShortName: getCell(after, "Реестр программ", `B${programRow}`).f,
-    programHours: getCell(after, "Реестр программ", `M${programRow}`).f
+    programShortName: getCell(after, "Реестр программ", `B${programRow}`).f
   }, formulaSnapshot, "Формулы управляемых листов изменились.");
   assert.deepEqual({
     inventoryUid: getCommentText(after, "Запасы", "E1"),
@@ -318,6 +426,10 @@ try {
     "Протокол не показал удалённую программу."
   );
   assert.equal(roundTrip.inventoryUnitCount, imported.inventoryUnitCount);
+  assert.ok(
+    flattenDirectExpenses(roundTrip).some((expense) => expense.id === insertedDirectExpense.id),
+    "Новая прямая затрата не была записана в XLSB."
+  );
   assert.ok(roundTrip.inventoryDatabaseSyncFields.includes("balance"));
   assert.equal(
     roundTrip.inventory.find((item) => item.id === inventoryTarget.id)?.note,
@@ -350,6 +462,16 @@ try {
     }, null, 2));
   }
   assert.equal(updatedProgramResult?.manager, programManager);
+  assert.equal(Number(updatedProgramResult?.hours), programFormulaHours);
+  assert.equal(
+    getCell(
+      after,
+      "Реестр программ",
+      `M${updatedProgramResult.xlsbProgramRow}`
+    ).f,
+    undefined,
+    "Вручную изменённые часы программы не должны остаться формулой."
+  );
   assert.ok(
     roundTrip.programPaymentSettings.some((program) => program.id === programTarget.id),
     "Служебный ID программы не сохранился."

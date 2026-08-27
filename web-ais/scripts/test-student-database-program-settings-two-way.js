@@ -58,7 +58,9 @@ const payload = sanitizeStudentDatabaseExportPayload({
     xlsbProgramName: "Старое имя в Excel",
     xlsbProgramLandingCode: "old-code",
     xlsbProgramRow: 2,
-    shortName: "Новое краткое имя"
+    shortName: "Новое краткое имя",
+    hours: 36,
+    databaseSyncFormulaFields: ["hours"]
   }],
   programDictionaries: {
     frdoProfessionalAreas: ["Образование", " образование ", "Здравоохранение"],
@@ -69,6 +71,7 @@ const payload = sanitizeStudentDatabaseExportPayload({
 assert.equal(payload.programColumnMap["Наименование программы"], "name");
 assert.ok(payload.programs[0].providedFields.includes("name"));
 assert.equal(payload.programs[0].name, "Новое имя в Web");
+assert.deepEqual(payload.programs[0].databaseSyncFormulaFields, ["hours"]);
 assert.equal(payload.programDictionariesProvided, true);
 assert.deepEqual(payload.programDictionaries, {
   frdoProfessionalAreas: ["Образование", "Здравоохранение"],
@@ -101,7 +104,9 @@ const merged = mergePrograms(
     name: "Новое имя в Excel",
     xlsbProgramRow: 2,
     xlsbProgramLandingCode: "new-code",
-    shortName: "Excel short"
+    shortName: "Excel short",
+    hours: 36,
+    databaseSyncFormulaFields: ["hours"]
   }],
   50,
   ["name", "shortName"]
@@ -112,6 +117,7 @@ assert.equal(merged[0].name, "Новое имя в Excel");
 assert.equal(merged[0].xlsbProgramName, "Новое имя в Excel");
 assert.equal(merged[0].xlsbProgramRow, 2);
 assert.equal(merged[0].xlsbProgramLandingCode, "new-code");
+assert.deepEqual(Array.from(merged[0].databaseSyncFormulaFields), ["hours"]);
 assert.deepEqual(merged[0].webOnly, { keep: true });
 
 assert.match(syncScriptSource, /function Update-ProgramDictionaries/u);
@@ -122,6 +128,21 @@ assert.match(syncScriptSource, /\$definedName\.RefersTo = Get-ExcelRangeReferenc
 assert.match(syncScriptSource, /Название программы в строке \$Row вычисляется формулой/u);
 assert.match(syncScriptSource, /function Sort-ProgramRegistryRows/u);
 assert.match(syncScriptSource, /programRowsInserted = \$programPromoResult\.InsertedRows/u);
+assert.match(
+  clientSource,
+  /values\.databaseSyncFormulaFields[\s\S]{0,300}!formData\.has\(fieldName\)[\s\S]{0,180}studentDatabaseFixedValuesEqual/u,
+  "После ручного изменения формульного поля программы оно должно стать явным Web-значением."
+);
+assert.match(
+  clientSource,
+  /changedFormulaFields[\s\S]{0,900}programFixedValueOverrides\.add\(fieldName\)/u,
+  "Ручное изменение формульного поля программы должно запросить замену формулы XLSB."
+);
+assert.doesNotMatch(
+  serverSource,
+  /STUDENT_DATABASE_CRITICAL_PROGRAM_EXCLUDED_FIELDS = new Set\(\[\s*"shortName"/u,
+  "Краткое название программы не должно безусловно исключаться из контроля изменений."
+);
 assert.match(
   syncScriptSource,
   /emailMessageTemplateColumn[\s\S]{0,180}-IndicatorText "Сообщ"/u,

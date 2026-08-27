@@ -36,9 +36,20 @@ function extractFunction(name) {
   throw new Error(`Function ${name} is incomplete`);
 }
 
-const context = {};
+const context = {
+  normalizeStudentDatabaseFixedValueOverrides(value) {
+    return [...new Set((Array.isArray(value) ? value : [])
+      .map((fieldName) => String(fieldName || "").trim())
+      .filter(Boolean))];
+  },
+  studentDatabaseFixedValuesEqual(left, right) {
+    return String(left ?? "") === String(right ?? "");
+  }
+};
 vm.runInNewContext(
-  `${extractFunction("applyStudentExpenseEditorValues")}; this.applyValues = applyStudentExpenseEditorValues;`,
+  `${extractFunction("applyDirectExpenseFormulaValueOverride")};\n`
+    + `${extractFunction("applyStudentExpenseEditorValues")};\n`
+    + "this.applyValues = applyStudentExpenseEditorValues;",
   context
 );
 const applyValues = context.applyValues;
@@ -85,7 +96,9 @@ const directRecord = {
       act: "+",
       recommendation: "+",
       automaticPaymentKey: "automatic-expense-1:author-test",
-      automaticPaymentFormula: "[Ставка]"
+      automaticPaymentFormula: "[Ставка]",
+      databaseSyncFormulaFields: ["amount"],
+      databaseFixedValueOverrides: ["note"]
     }
   ]
 };
@@ -111,6 +124,16 @@ assert.strictEqual(directUpdated.directExpenses[1].act, "+");
 assert.strictEqual(directUpdated.directExpenses[1].recommendation, "+");
 assert.strictEqual(directUpdated.directExpenses[1].automaticPaymentKey, "automatic-expense-1:author-test");
 assert.strictEqual(directUpdated.directExpenses[1].automaticPaymentFormula, "[Ставка]");
+assert.deepStrictEqual(
+  [...directUpdated.directExpenses[1].databaseSyncFormulaFields],
+  [],
+  "The edited amount must no longer be marked as formula-backed"
+);
+assert.deepStrictEqual(
+  [...directUpdated.directExpenses[1].databaseFixedValueOverrides],
+  ["amount", "note"],
+  "The edited formula-backed amount must be exported as a fixed Web value"
+);
 assert.strictEqual(
   applyValues(directRecord, { kind: "direct", id: "missing", fallbackIndex: 0 }, {}).directExpenses,
   directRecord.directExpenses,
@@ -157,6 +180,14 @@ assert.match(appSource, /backdrop\.addEventListener\("click", \(event\) => \{\s*
 assert.match(appSource, /event\.key !== "Tab"/u);
 assert.match(appSource, /applyStudentExpenseInventoryChoice\(inventoryChoice, \{ syncFinance: false \}\)/u);
 assert.match(appSource, /\[data-student-expense-inventory-choice\]:not\(\[data-student-expense-editor-type\]\)/u);
+assert.match(
+  extractFunction("collectStudentDirectExpenses"),
+  /return applyDirectExpenseFormulaValueOverride\(expense,/u
+);
+assert.match(
+  extractFunction("saveFormRecord"),
+  /config\.collection === "directExpenses"[\s\S]*?applyDirectExpenseFormulaValueOverride\(currentRecord, values\)/u
+);
 
 const saveSource = extractFunction("saveStudentExpenseEditor");
 assert.match(saveSource, /calculateStudentFinance/u);
