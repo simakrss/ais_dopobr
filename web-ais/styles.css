@@ -1911,7 +1911,8 @@ body.is-session-expired {
 
 .database-operation-result-table-wrap {
   max-height: min(360px, 42vh);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: #fff;
@@ -7870,7 +7871,9 @@ body.long-press-dragging * {
   line-height: 1.45;
   outline: none;
   tab-size: 2;
-  white-space: pre;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: normal;
 }
 
 .admin-sql-query-editor:focus {
@@ -22145,6 +22148,94 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 .admin-training-end-notification-fields input[readonly] {
   color: var(--muted-strong, #53645f);
   background: #f5f7f6;
+}
+
+:is(.admin-connection-panel, .admin-external-services-panel, .admin-users-panel, .admin-audit-panel) :is(
+  input:not([type]),
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  input[type="url"],
+  input[type="tel"],
+  input[type="search"],
+  input[type="number"],
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  select,
+  textarea
+) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+
+:is(.admin-connection-panel, .admin-external-services-panel, .admin-users-panel) :is(
+  input:not([type]),
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  input[type="url"],
+  input[type="tel"],
+  input[type="search"],
+  input[type="number"],
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  select
+) {
+  min-height: 38px;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+:is(.admin-connection-panel, .admin-external-services-panel, .admin-users-panel) textarea {
+  min-height: 88px;
+  padding: 8px 10px;
+  resize: vertical;
+  font-size: 13px;
+}
+
+:is(.admin-connection-panel, .admin-external-services-panel, .admin-users-panel, .admin-audit-panel) :is(
+  input:not([type]),
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  input[type="url"],
+  input[type="tel"],
+  input[type="search"],
+  input[type="number"],
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  select,
+  textarea
+):focus {
+  border-color: var(--teal);
+  outline: 0;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+:is(.admin-connection-panel, .admin-external-services-panel, .admin-users-panel, .admin-audit-panel) :is(input, textarea)::placeholder {
+  color: #8a9893;
+  opacity: 1;
+}
+
+:is(.admin-connection-panel, .admin-external-services-panel, .admin-users-panel, .admin-audit-panel) :is(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
+  select,
+  textarea
+):disabled,
+:is(.admin-connection-panel, .admin-external-services-panel, .admin-users-panel, .admin-audit-panel) :is(input, textarea)[readonly] {
+  background: #f3f5f4;
+  color: var(--muted);
 }
 
 .admin-training-end-notification-status {

@@ -100,8 +100,31 @@ assert.match(appSource, /Ctrl[\s\S]*Пробел/u);
 assert.match(appSource, /ADMIN_SQL_SUGGESTIONS/u);
 assert.match(appSource, /showSqlMiniIdeSuggestions\(editor, true\)/u);
 assert.match(appSource, /data-sql-open-suggestions/u);
+const sqlEditorBindingSource = sliceSource(
+  "function bindSqlMiniIdeEditor(",
+  "function bindSqlMiniIdeEditors("
+);
+const sqlInputHandlerStart = sqlEditorBindingSource.indexOf('editor.addEventListener("input", () => {');
+const sqlInputHandlerEnd = sqlEditorBindingSource.indexOf('editor.addEventListener("keydown"', sqlInputHandlerStart);
+assert.ok(sqlInputHandlerStart >= 0 && sqlInputHandlerEnd > sqlInputHandlerStart, "Не найден обработчик ввода SQL");
+const sqlInputHandlerSource = sqlEditorBindingSource.slice(sqlInputHandlerStart, sqlInputHandlerEnd);
+assert.doesNotMatch(sqlInputHandlerSource, /refreshAdminSqlQueryEditor|refresh\(true\)/u);
+assert.match(sqlInputHandlerSource, /suggestionPanel && !suggestionPanel\.hidden/u);
+assert.match(sqlEditorBindingSource, /event\.ctrlKey[\s\S]*event\.code === "Space"[\s\S]*showSqlMiniIdeSuggestions\(editor, true\)/u);
+const sqlRefreshSource = sliceSource(
+  "function refreshAdminSqlQueryEditor(",
+  "function bindSqlMiniIdeEditor("
+);
+assert.match(sqlRefreshSource, /const scrollTop = editor\.scrollTop/u);
+assert.match(sqlRefreshSource, /editor\.scrollTop = scrollTop/u);
 assert.match(stylesSource, /\.sql-mini-ide-suggestions/u);
 assert.match(stylesSource, /\.sql-mini-ide\.is-error/u);
 assert.match(stylesSource, /\.admin-sql-token\.is-keyword/u);
+assert.match(
+  stylesSource,
+  /\.admin-sql-query-editor\s*\{[\s\S]*?overflow-x:\s*hidden;[\s\S]*?overflow-wrap:\s*anywhere;[\s\S]*?white-space:\s*pre-wrap;/u,
+  "SQL editor should wrap long queries to the available field width"
+);
+assert.match(stylesSource, /\.admin-connection-panel[\s\S]*input\[type="text"\][\s\S]*border-radius: 8px/u);
 
 console.log("SQL mini IDE tests passed.");

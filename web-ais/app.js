@@ -89,10 +89,19 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.311",
+    version: "1.7.312",
     releasedAt: "2026-08-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.312",
+      releasedAt: "2026-08-27",
+      changes: [
+        "SQL-редактор больше не раскрывает подсказки автоматически и не перестраивает подсветку во время набора текста.",
+        "Положение курсора и прокрутка SQL-запроса сохраняются, длинные строки переносятся по ширине поля; подсказки открываются кнопкой «Команды» или сочетанием Ctrl+Пробел.",
+        "Текстовые поля во всех разделах админки приведены к единому стилю системы."
+      ]
+    },
     {
       version: "1.7.311",
       releasedAt: "2026-08-27",
@@ -20802,7 +20811,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="sql-mini-ide-toolbar">
           <span class="sql-mini-ide-language" aria-hidden="true">SQL</span>
           <span class="sql-mini-ide-validation" data-sql-validation-status>Проверка запроса…</span>
-          <button class="sql-mini-ide-suggest-button" type="button" data-sql-open-suggestions title="Показать подсказки SQL-команд">Команды</button>
+          <button class="sql-mini-ide-suggest-button" type="button" data-sql-open-suggestions aria-expanded="false" title="Показать подсказки SQL-команд">Команды</button>
           <span class="sql-mini-ide-position" data-sql-caret-status>Строка 1, столбец 1</span>
         </div>
         <div class="sql-mini-ide-editor-shell">
@@ -20813,6 +20822,9 @@ MAX - https://bizvmax.ru/zifra_plus
             role="textbox"
             aria-label="${escapeAttr(ariaLabel)}"
             aria-multiline="true"
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            aria-expanded="false"
             spellcheck="false"
             autocapitalize="off"
             autocomplete="off"
@@ -21452,7 +21464,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ${!["database", "email"].includes(adminTab) ? "hidden" : ""}
       >
           <div class="admin-database-settings">
-            <form class="sdo-settings-form" data-action="save-student-database-settings" novalidate>
+            <form class="sdo-settings-form admin-settings-form" data-action="save-student-database-settings" novalidate>
               <div class="admin-database-subtab-row">
                 <nav class="admin-database-subtabs" role="tablist" aria-label="Подключения к базам">
                   ${adminDatabaseTabs.map((tab) => `
@@ -50786,6 +50798,8 @@ MAX - https://bizvmax.ru/zifra_plus
     panel.innerHTML = "";
     wrapper.classList.remove("has-suggestions");
     editor.dataset.sqlSuggestionIndex = "";
+    editor.setAttribute("aria-expanded", "false");
+    wrapper.querySelector("[data-sql-open-suggestions]")?.setAttribute("aria-expanded", "false");
   }
 
   function setSqlMiniIdeSuggestionIndex(editor, requestedIndex) {
@@ -50841,6 +50855,8 @@ MAX - https://bizvmax.ru/zifra_plus
     panel.hidden = false;
     wrapper.classList.add("has-suggestions");
     editor.dataset.sqlSuggestionIndex = "0";
+    editor.setAttribute("aria-expanded", "true");
+    wrapper.querySelector("[data-sql-open-suggestions]")?.setAttribute("aria-expanded", "true");
     panel.querySelectorAll("[data-sql-suggestion]").forEach((button) => {
       button.addEventListener("mousedown", (event) => event.preventDefault());
       button.addEventListener("click", () => acceptSqlMiniIdeSuggestion(
@@ -50854,9 +50870,13 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!editor) return;
     const query = serializeCommunicationTemplateEditor(editor);
     const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
+    const scrollTop = editor.scrollTop;
+    const scrollLeft = editor.scrollLeft;
     editor.innerHTML = renderAdminSqlQuerySyntax(query);
     syncAdminSqlQueryEditor(editor);
     if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
+    editor.scrollTop = scrollTop;
+    editor.scrollLeft = scrollLeft;
     updateSqlMiniIdeValidation(editor);
   }
 
@@ -50875,7 +50895,8 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     editor.addEventListener("compositionend", () => {
       editor.dataset.composing = "";
-      refresh(true);
+      syncAdminSqlQueryEditor(editor);
+      updateSqlMiniIdeValidation(editor);
     });
     editor.addEventListener("paste", (event) => {
       const text = event.clipboardData?.getData("text/plain");
@@ -50890,13 +50911,14 @@ MAX - https://bizvmax.ru/zifra_plus
       window.clearTimeout(highlightTimer);
       highlightTimer = window.setTimeout(() => {
         if (!editor.isConnected || editor.dataset.composing === "true") return;
-        refresh(true);
+        updateSqlMiniIdeValidation(editor);
         if (editor.dataset.sqlSuppressSuggestions === "true") {
           editor.dataset.sqlSuppressSuggestions = "";
           return;
         }
-        showSqlMiniIdeSuggestions(editor);
-      }, 140);
+        const suggestionPanel = editor.closest("[data-sql-mini-ide]")?.querySelector("[data-sql-suggestions]");
+        if (suggestionPanel && !suggestionPanel.hidden) showSqlMiniIdeSuggestions(editor, true);
+      }, 180);
     });
     editor.addEventListener("keydown", (event) => {
       const suggestionPanel = editor.closest("[data-sql-mini-ide]")?.querySelector("[data-sql-suggestions]");
@@ -50932,9 +50954,13 @@ MAX - https://bizvmax.ru/zifra_plus
       editor.dispatchEvent(new Event("input", { bubbles: true }));
     });
     editor.addEventListener("keyup", () => updateSqlMiniIdeCaretStatus(editor));
-    editor.addEventListener("click", () => updateSqlMiniIdeCaretStatus(editor));
+    editor.addEventListener("click", () => {
+      closeSqlMiniIdeSuggestions(editor);
+      updateSqlMiniIdeCaretStatus(editor);
+    });
     editor.addEventListener("focus", () => updateSqlMiniIdeCaretStatus(editor));
     editor.addEventListener("blur", () => {
+      window.clearTimeout(highlightTimer);
       refresh();
       window.setTimeout(() => closeSqlMiniIdeSuggestions(editor), 120);
     });
