@@ -25346,7 +25346,18 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   white-space: nowrap;
 }
 
-.advertising-history-copy .auth-spinner {
+.advertising-history-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.advertising-history-delete {
+  min-height: 30px;
+}
+
+.advertising-history-actions .auth-spinner {
   width: 14px;
   height: 14px;
 }

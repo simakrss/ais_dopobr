@@ -37,6 +37,7 @@ const advertisingState = sourceSlice(
 );
 assert.match(advertisingState, /resultLoading:\s*false/u);
 assert.match(advertisingState, /resultLoaded:\s*false/u);
+assert.match(advertisingState, /resultCachePartial:\s*false/u);
 assert.match(
   advertisingState,
   /sourcePickerExpanded:\s*false/u,
@@ -47,6 +48,13 @@ assert.match(
   /history:\s*\{[\s\S]*?rows:\s*\[\][\s\S]*?loaded:\s*false[\s\S]*?loading:\s*false[\s\S]*?error:\s*["']["'][\s\S]*?copyingRunId:\s*["']["'][\s\S]*?\}/u,
   "Для таблицы рекламных запросов требуется отдельное состояние загрузки и копирования."
 );
+assert.match(advertisingState, /deletingRunId:\s*["']["']/u);
+assert.match(appSource, /ADVERTISING_EMAIL_VIEW_CACHE_KEY\s*=\s*["']advertising-email-view-v1["']/u);
+assert.match(appSource, /readBrowserOfflineValue\(ADVERTISING_EMAIL_VIEW_CACHE_KEY\)/u);
+assert.match(appSource, /hydrateAdvertisingEmailViewCache\(advertisingSnapshot\)/u);
+assert.match(appSource, /writeBrowserOfflineValue\(ADVERTISING_EMAIL_VIEW_CACHE_KEY, snapshot\)/u);
+assert.match(appSource, /viewerKey:\s*getAdvertisingEmailViewCacheViewerKey\(\)/u);
+assert.match(appSource, /String\(snapshot\.viewerKey\s*\|\|\s*["']["']\)\s*!==\s*viewerKey/u);
 
 const advertisingViewEntry = sourceSlice(
   appSource,
@@ -189,6 +197,12 @@ assert.match(perRunCopyButton, /data-run-id="\$\{escapeAttr\((?:run|row)\.runId(
 assert.match(renderHistoryFunction, /summary\.newReady/u);
 assert.match(renderHistoryFunction, /history\.copyingRunId/u);
 assert.match(perRunCopyButton, /disabled/u);
+const perRunDeleteButton = /<button\b[^>]*data-action="delete-advertising-history-run"[^>]*>[\s\S]*?<\/button>/u
+  .exec(renderHistoryFunction)?.[0] || "";
+assert.ok(perRunDeleteButton, "У каждого доступного администратору запроса нужна кнопка удаления.");
+assert.match(perRunDeleteButton, /data-run-id="\$\{escapeAttr\((?:run|row)\.runId(?:\s*\|\|\s*"")?\)\}"/u);
+assert.match(renderHistoryFunction, /isAdminUser\(\)[\s\S]{0,120}?row\.canDelete\s*!==\s*false/u);
+assert.match(renderHistoryFunction, /history\.deletingRunId/u);
 const historySourceDetails = /<details\b[^>]*class="advertising-history-source-details[^>]*>[\s\S]*?<\/details>/u
   .exec(renderHistoryFunction)?.[0] || "";
 assert.ok(historySourceDetails, "Источники каждого рекламного запроса должны быть сворачиваемыми.");
@@ -315,6 +329,34 @@ assert.match(
 assert.match(historyLoader, /(?:advertising\.history|history)\.rows\s*=\s*Array\.isArray\(payload\.rows\)/u);
 assert.match(historyLoader, /(?:advertising\.history|history)\.loaded\s*=\s*true/u);
 assert.match(historyLoader, /(?:advertising\.history|history)\.loading\s*=\s*false/u);
+assert.match(historyLoader, /persistAdvertisingEmailViewCache/u);
+
+const resultLoader = namedFunction(blocks, "loadAdvertisingEmailResult");
+assert.match(resultLoader, /knownRunId=\$\{encodeURIComponent\(knownRunId\)\}/u);
+assert.match(resultLoader, /!payload\.notModified/u);
+assert.match(resultLoader, /persistAdvertisingEmailViewCache/u);
+assert.match(
+  resultLoader,
+  /state\.view\s*===\s*"advertising"\s*&&\s*!hadCachedResult/u,
+  "Фоновое обновление не должно заменять сохранённые данные повторным экраном загрузки."
+);
+
+const deleteHistoryFunction = namedFunction(blocks, "deleteAdvertisingEmailHistoryRun");
+assert.match(deleteHistoryFunction, /isAdminUser\(\)/u);
+assert.match(deleteHistoryFunction, /window\.confirm/u);
+assert.match(deleteHistoryFunction, /method:\s*"DELETE"/u);
+assert.match(
+  deleteHistoryFunction,
+  /\/api\/advertising\/email-collector\/history\?runId=\$\{encodeURIComponent\(normalizedRunId\)\}/u
+);
+assert.match(deleteHistoryFunction, /history\.rows\s*=\s*Array\.isArray\(payload\.rows\)/u);
+assert.match(deleteHistoryFunction, /persistAdvertisingEmailViewCache/u);
+const deleteBindingStart = bindFunction.indexOf("[data-action='delete-advertising-history-run']");
+assert.ok(deleteBindingStart >= 0, "Не найден обработчик удаления рекламного запроса.");
+assert.match(
+  bindFunction.slice(deleteBindingStart, deleteBindingStart + 500),
+  /deleteAdvertisingEmailHistoryRun\(button\.dataset\.runId\)/u
+);
 
 const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authSource)?.[1] || "";
 const indexBuild = /const build = "([^"]+)"/u.exec(indexSource)?.[1] || "";

@@ -92,6 +92,7 @@ assert.match(
 
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_contacts/u);
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_runs/u);
+assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_deleted_runs/u);
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_run_contacts/u);
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_state/u);
 assert.match(
@@ -174,10 +175,43 @@ const historyHandlerStart = serverSource.indexOf(`async function ${historyHandle
 const nextFunctionStart = serverSource.indexOf("\nasync function ", historyHandlerStart + 1);
 assert.ok(nextFunctionStart > historyHandlerStart, "Не найден конец обработчика истории рекламных запросов.");
 const historyHandlerSource = serverSource.slice(historyHandlerStart, nextFunctionStart);
-assert.match(historyHandlerSource, /req\.method\s*!==\s*"GET"/u);
+assert.match(historyHandlerSource, /\["GET",\s*"DELETE"\]\.includes\(req\.method\)/u);
 assert.match(historyHandlerSource, /searchParams\.get\("runId"\)|\.searchParams\.get\("runId"\)/u);
 assert.match(historyHandlerSource, /readAdvertisingEmailHistoryRuns/u);
 assert.match(historyHandlerSource, /readAdvertisingEmailHistory(?:Run)?New/u);
+assert.match(historyHandlerSource, /deleteAdvertisingEmailHistoryRun/u);
+assert.match(historyHandlerSource, /safelyAppendAuditEntry/u);
+
+const deleteHistorySource = sourceSlice(
+  serverSource,
+  "async function deleteAdvertisingEmailHistoryRun(",
+  "async function readAdvertisingEmailHistoryNewReadyEmails("
+);
+assert.match(deleteHistorySource, /authUser\?\.role[\s\S]{0,80}?admin/u);
+assert.match(deleteHistorySource, /beginTransaction\(\)/u);
+assert.match(deleteHistorySource, /FOR UPDATE/u);
+assert.match(deleteHistorySource, /INSERT INTO ais_advertising_email_history_deleted_runs/u);
+assert.match(deleteHistorySource, /commit\(\)/u);
+assert.match(deleteHistorySource, /rollback\(\)/u);
+assert.doesNotMatch(deleteHistorySource, /DELETE FROM ais_advertising_email_history_runs/u);
+assert.doesNotMatch(deleteHistorySource, /UPDATE ais_advertising_email_history_state/u);
+
+const historyListSource = sourceSlice(
+  serverSource,
+  "async function readAdvertisingEmailHistoryRuns(",
+  "async function readLatestAdvertisingEmailHistoryRunId("
+);
+assert.match(historyListSource, /LEFT JOIN ais_advertising_email_history_deleted_runs/u);
+assert.match(historyListSource, /deleted_run\.run_id IS NULL/u);
+
+const collectorHandlerSource = sourceSlice(
+  serverSource,
+  "async function handleAdvertisingEmailCollector(",
+  "async function handleAdvertisingEmailHistory("
+);
+assert.match(collectorHandlerSource, /searchParams\?\.get\("knownRunId"\)/u);
+assert.match(collectorHandlerSource, /readLatestAdvertisingEmailHistoryRunId/u);
+assert.match(collectorHandlerSource, /notModified:\s*true/u);
 
 assert.match(
   serverSource,

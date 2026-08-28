@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.344",
+    version: "1.7.345",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.345",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Администратор может удалять отдельные строки из таблицы «Запросы рекламы» с подтверждением; удаление не нарушает сохранённое сравнение новых контактов между запусками.",
+        "Раздел «Реклама» сразу показывает быстрый локальный снимок последнего результата и истории, а актуальность проверяет в фоне по идентификатору запуска без повторной передачи неизменившегося набора контактов."
+      ]
+    },
     {
       version: "1.7.344",
       releasedAt: "2026-08-28",
@@ -2959,6 +2967,8 @@
   const BROWSER_OFFLINE_STORE_NAME = "snapshots";
   const BROWSER_OFFLINE_STATE_KEY = "application-state";
   const BROWSER_OFFLINE_RECOVERY_KEY = "shared-state-recovery";
+  const ADVERTISING_EMAIL_VIEW_CACHE_KEY = "advertising-email-view-v1";
+  const ADVERTISING_EMAIL_VIEW_CACHE_MAX_ROWS = 5000;
   const BROWSER_OFFLINE_MODE_STORAGE_KEY = "ais-dopobr-web-offline-storage-v1";
   const SHARED_STATE_SAVE_DELAY_MS = 700;
   const SHARED_STATE_PROGRESS_TICK_MS = 700;
@@ -3084,6 +3094,7 @@
     browserStateIndexedDbMode = true;
   }
   let browserOfflineWriteChain = Promise.resolve(true);
+  let advertisingEmailCacheWriteChain = Promise.resolve(true);
   const AUDIT_FILTER_DEFAULTS = Object.freeze({
     q: "",
     from: "",
@@ -5910,6 +5921,7 @@ MAX - https://bizvmax.ru/zifra_plus
       loaded: false,
       resultLoading: false,
       resultLoaded: false,
+      resultCachePartial: false,
       error: "",
       result: null,
       selectedSourceIds: ADVERTISING_EMAIL_SOURCES.map((source) => source.id),
@@ -5931,7 +5943,8 @@ MAX - https://bizvmax.ru/zifra_plus
         loading: false,
         pendingRefresh: false,
         error: "",
-        copyingRunId: ""
+        copyingRunId: "",
+        deletingRunId: ""
       },
       exclusions: {
         rows: [],
@@ -6380,13 +6393,84 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  function hydrateAdvertisingEmailViewCache(snapshot) {
+    const viewerKey = getAdvertisingEmailViewCacheViewerKey();
+    if (
+      !snapshot
+      || Number(snapshot.schemaVersion) !== 1
+      || !viewerKey
+      || String(snapshot.viewerKey || "") !== viewerKey
+    ) return false;
+    const cachedResult = snapshot.result && typeof snapshot.result === "object"
+      ? snapshot.result
+      : null;
+    if (cachedResult && cachedResult.exists !== false) {
+      state.advertising.result = {
+        ...cachedResult,
+        rows: Array.isArray(cachedResult.rows) ? cachedResult.rows : []
+      };
+      state.advertising.loaded = true;
+      state.advertising.resultCachePartial = Boolean(snapshot.resultPartial);
+    }
+    if (Array.isArray(snapshot.historyRows)) {
+      state.advertising.history.rows = snapshot.historyRows;
+    }
+    return Boolean(cachedResult || Array.isArray(snapshot.historyRows));
+  }
+
+  function buildAdvertisingEmailViewCacheSnapshot() {
+    const advertising = state.advertising;
+    const result = advertising.result && typeof advertising.result === "object"
+      ? advertising.result
+      : null;
+    const rows = Array.isArray(result?.rows) ? result.rows : [];
+    const resultPartial = Boolean(
+      advertising.resultCachePartial
+      || rows.length > ADVERTISING_EMAIL_VIEW_CACHE_MAX_ROWS
+    );
+    return {
+      schemaVersion: 1,
+      viewerKey: getAdvertisingEmailViewCacheViewerKey(),
+      savedAt: new Date().toISOString(),
+      result: result ? {
+        ...result,
+        rows: rows.slice(0, ADVERTISING_EMAIL_VIEW_CACHE_MAX_ROWS)
+      } : null,
+      resultPartial,
+      historyRows: Array.isArray(advertising.history?.rows)
+        ? advertising.history.rows.slice(0, 30)
+        : []
+    };
+  }
+
+  function getAdvertisingEmailViewCacheViewerKey() {
+    const user = getCurrentAuthUser();
+    const id = String(user?.id || "").trim();
+    const login = String(user?.login || "").trim().toLocaleLowerCase("ru-RU");
+    return id || login ? `${id}\n${login}` : "";
+  }
+
+  function persistAdvertisingEmailViewCache() {
+    const snapshot = buildAdvertisingEmailViewCacheSnapshot();
+    const operation = advertisingEmailCacheWriteChain
+      .catch(() => false)
+      .then(() => writeBrowserOfflineValue(ADVERTISING_EMAIL_VIEW_CACHE_KEY, snapshot));
+    advertisingEmailCacheWriteChain = operation.catch((error) => {
+      console.warn("Не удалось сохранить быстрый снимок раздела рекламы", error);
+      return false;
+    });
+    return operation;
+  }
+
   async function initializeBrowserOfflineStorage() {
     try {
       const shouldMigrateLocalState = hadLocalStateAtStartup && !browserStateIndexedDbMode;
-      const [stateSnapshot, recoverySnapshot] = await Promise.all([
+      const [stateSnapshot, recoverySnapshot, advertisingSnapshot] = await Promise.all([
         readBrowserOfflineValue(BROWSER_OFFLINE_STATE_KEY),
-        readBrowserOfflineValue(BROWSER_OFFLINE_RECOVERY_KEY)
+        readBrowserOfflineValue(BROWSER_OFFLINE_RECOVERY_KEY),
+        readBrowserOfflineValue(ADVERTISING_EMAIL_VIEW_CACHE_KEY)
       ]);
+      hydrateAdvertisingEmailViewCache(advertisingSnapshot);
       const indexedState = stateSnapshot?.data;
       if ((browserStateIndexedDbMode || !hadLocalStateAtStartup) && indexedState?.collections) {
         state.data = ensureDataShape(indexedState);
@@ -13058,7 +13142,9 @@ MAX - https://bizvmax.ru/zifra_plus
                       const newUnique = Math.max(0, Number(summary.newUnique) || 0);
                       const failedSources = sources.filter((source) => source?.status === "error").length;
                       const isCopying = history.copyingRunId === row.runId;
-                      const copyDisabled = Boolean(history.copyingRunId) || !newReady;
+                      const isDeleting = history.deletingRunId === row.runId;
+                      const copyDisabled = Boolean(history.copyingRunId || history.deletingRunId) || !newReady;
+                      const canDelete = isAdminUser() && row.canDelete !== false;
                       return `
                         <tr data-advertising-history-run="${escapeAttr(row.runId || "")}">
                           <td>
@@ -13081,7 +13167,10 @@ MAX - https://bizvmax.ru/zifra_plus
                             : '<strong>Первый сохранённый поиск</strong><small>Весь набор считался новым</small>'}</td>
                           <td class="advertising-history-metric"><strong>${formatStatisticsInteger(summary.ready)}</strong><small>готовы из ${formatStatisticsInteger(summary.unique)}</small><small>${escapeHtml(formatAdvertisingDuration(row.durationMs))}</small></td>
                           <td class="advertising-history-metric"><strong>${formatStatisticsInteger(newReady)}</strong><small>готовы из ${formatStatisticsInteger(newUnique)} новых</small></td>
-                          <td><button class="ghost-button compact-button advertising-history-copy" data-action="copy-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${copyDisabled ? "disabled" : ""}>${isCopying ? '<span class="auth-spinner" aria-hidden="true"></span> Копирование…' : `Копировать набор (${formatStatisticsInteger(newReady)})`}</button></td>
+                          <td><div class="advertising-history-actions">
+                            <button class="ghost-button compact-button advertising-history-copy" data-action="copy-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${copyDisabled ? "disabled" : ""}>${isCopying ? '<span class="auth-spinner" aria-hidden="true"></span> Копирование…' : `Копировать набор (${formatStatisticsInteger(newReady)})`}</button>
+                            ${canDelete ? `<button class="danger-button compact-button advertising-history-delete" data-action="delete-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${history.loading || history.deletingRunId || history.copyingRunId || state.advertising.resultLoading ? "disabled" : ""}>${isDeleting ? '<span class="auth-spinner" aria-hidden="true"></span> Удаление…' : "Удалить"}</button>` : ""}
+                          </div></td>
                         </tr>
                       `;
                     }).join("")}
@@ -13210,7 +13299,8 @@ MAX - https://bizvmax.ru/zifra_plus
             <label><span>Статус</span><select data-advertising-filter="status"><option value="ready" ${advertising.filters.status === "ready" ? "selected" : ""}>Готовы к рекламе</option><option value="new" ${advertising.filters.status === "new" ? "selected" : ""}>Новые готовые</option><option value="excluded" ${advertising.filters.status === "excluded" ? "selected" : ""}>Исключённые</option><option value="all" ${advertising.filters.status === "all" ? "selected" : ""}>Все адреса</option></select></label>
             <button class="ghost-button" data-action="reset-advertising-filters" type="button">Сбросить</button>
           </div>
-          ${busy && !advertising.result
+          ${advertising.resultCachePartial ? '<div class="advertising-inline-message" role="status">Сохранённая сводка показана сразу. Полный список контактов обновляется в фоне.</div>' : ""}
+          ${busy && (!advertising.result || (advertising.resultCachePartial && !pageRows.length))
             ? `<div class="advertising-loading"><span class="auth-spinner" aria-hidden="true"></span><span>${advertising.resultLoading ? "Загружается сохранённый поиск…" : "Источники опрашиваются, адреса объединяются…"}</span></div>`
             : (!pageRows.length
               ? '<div class="empty-state compact"><strong>Адресов не найдено</strong><span>Запустите сбор или измените фильтры.</span></div>'
@@ -13275,11 +13365,16 @@ MAX - https://bizvmax.ru/zifra_plus
   async function loadAdvertisingEmailResult(options = {}) {
     const advertising = state.advertising;
     if (advertising.resultLoading || (advertising.resultLoaded && !options.force)) return;
+    const hadCachedResult = Boolean(advertising.result);
     advertising.resultLoading = true;
     advertising.error = "";
-    if (state.view === "advertising") render();
+    if (state.view === "advertising" && !hadCachedResult) render();
     try {
-      const response = await fetch(photoApiUrl("/api/advertising/email-collector/collect"), {
+      const knownRunId = !advertising.resultCachePartial
+        ? String(advertising.result?.runId || "").trim()
+        : "";
+      const query = knownRunId ? `?knownRunId=${encodeURIComponent(knownRunId)}` : "";
+      const response = await fetch(photoApiUrl(`/api/advertising/email-collector/collect${query}`), {
         method: "GET",
         credentials: "same-origin",
         cache: "no-store",
@@ -13287,11 +13382,15 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
-      advertising.result = payload;
-      if (payload?.exists === false) advertising.result = null;
+      if (!payload.notModified) {
+        advertising.result = payload;
+        if (payload?.exists === false) advertising.result = null;
+        advertising.resultCachePartial = false;
+      }
       advertising.loaded = Boolean(advertising.result);
       advertising.resultLoaded = true;
       state.tablePages.advertisingEmails = 1;
+      void persistAdvertisingEmailViewCache();
     } catch (error) {
       advertising.error = `Не удалось загрузить сохранённые контакты: ${error.message || "ошибка сервера"}`;
       advertising.resultLoaded = true;
@@ -13299,6 +13398,24 @@ MAX - https://bizvmax.ru/zifra_plus
       advertising.resultLoading = false;
       if (state.view === "advertising") render();
     }
+  }
+
+  function applyAdvertisingEmailHistoryPreview(row) {
+    if (!row || typeof row !== "object") return false;
+    state.advertising.result = {
+      exists: true,
+      runId: row.runId,
+      refreshedAt: row.refreshedAt,
+      durationMs: row.durationMs,
+      sources: row.sources,
+      workbook: null,
+      summary: row.summary,
+      rows: [],
+      comparedTo: row.comparedTo
+    };
+    state.advertising.loaded = true;
+    state.advertising.resultCachePartial = true;
+    return true;
   }
 
   async function loadAdvertisingEmailHistory(options = {}) {
@@ -13311,7 +13428,11 @@ MAX - https://bizvmax.ru/zifra_plus
     if (history.loaded && !options.force) return;
     history.loading = true;
     history.error = "";
-    if (state.view === "advertising" && advertising.tab === "collector") render();
+    if (
+      state.view === "advertising"
+      && advertising.tab === "collector"
+      && !history.rows.length
+    ) render();
     try {
       const response = await fetch(photoApiUrl("/api/advertising/email-collector/history"), {
         method: "GET",
@@ -13323,6 +13444,8 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       history.rows = Array.isArray(payload.rows) ? payload.rows : [];
       history.loaded = true;
+      if (!advertising.result) applyAdvertisingEmailHistoryPreview(history.rows[0]);
+      void persistAdvertisingEmailViewCache();
     } catch (error) {
       history.error = `Не удалось загрузить историю запросов: ${error.message || "ошибка сервера"}`;
       history.loaded = true;
@@ -13367,6 +13490,54 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  async function deleteAdvertisingEmailHistoryRun(runId) {
+    const advertising = state.advertising;
+    const history = advertising.history;
+    const normalizedRunId = String(runId || "").trim();
+    if (
+      !isAdminUser()
+      || !normalizedRunId
+      || history.deletingRunId
+      || history.copyingRunId
+      || history.loading
+      || advertising.resultLoading
+    ) return;
+    const row = history.rows.find((item) => String(item?.runId || "") === normalizedRunId);
+    if (!row || row.canDelete === false) return;
+    const summary = row.summary || {};
+    const confirmed = window.confirm([
+      `Удалить запрос рекламы № ${Math.max(0, Number(row.sequence) || 0)}?`,
+      formatDateTimeRu(row.refreshedAt) || "Дата запуска не указана",
+      `Контактов: ${formatStatisticsInteger(summary.unique)}. Строка исчезнет из списка запросов.`
+    ].join("\n\n"));
+    if (!confirmed) return;
+    history.deletingRunId = normalizedRunId;
+    advertising.error = "";
+    advertising.notice = "";
+    if (state.view === "advertising") render();
+    try {
+      const response = await fetch(photoApiUrl(`/api/advertising/email-collector/history?runId=${encodeURIComponent(normalizedRunId)}`), {
+        method: "DELETE",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "X-Requested-With": "AIS-Web" }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      history.rows = Array.isArray(payload.rows)
+        ? payload.rows
+        : history.rows.filter((item) => String(item?.runId || "") !== normalizedRunId);
+      history.loaded = true;
+      advertising.notice = `Запрос рекламы № ${Math.max(0, Number(row.sequence) || 0)} удалён.`;
+      void persistAdvertisingEmailViewCache();
+    } catch (error) {
+      advertising.error = error.message || "Не удалось удалить запрос рекламы.";
+    } finally {
+      history.deletingRunId = "";
+      if (state.view === "advertising") render();
+    }
+  }
+
   async function collectAdvertisingEmails() {
     const advertising = state.advertising;
     if (advertising.loading || advertising.resultLoading) return;
@@ -13396,6 +13567,7 @@ MAX - https://bizvmax.ru/zifra_plus
       advertising.result = payload;
       advertising.loaded = true;
       advertising.resultLoaded = true;
+      advertising.resultCachePartial = false;
       advertising.exclusions.loaded = false;
       advertising.history.loaded = false;
       refreshHistory = true;
@@ -13405,6 +13577,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const failedSources = (Array.isArray(payload.sources) ? payload.sources : [])
         .filter((source) => source.status === "error").length;
       advertising.notice = `${payload.comparedTo?.hasPrevious ? "Поиск сохранён" : "Первый поиск сохранён"}. Новых контактов: ${formatStatisticsInteger(newUnique)}; готовы к копированию: ${formatStatisticsInteger(newReady)}.${failedSources ? ` Не ответили источники: ${failedSources}.` : ""}`;
+      void persistAdvertisingEmailViewCache();
     } catch (error) {
       advertising.error = error.message || "Не удалось собрать и сохранить email-адреса.";
       advertising.loaded = true;
@@ -13710,6 +13883,9 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.querySelectorAll("[data-action='copy-advertising-history-run']").forEach((button) => {
       button.addEventListener("click", () => copyAdvertisingEmailHistoryRun(button.dataset.runId));
+    });
+    document.querySelectorAll("[data-action='delete-advertising-history-run']").forEach((button) => {
+      button.addEventListener("click", () => deleteAdvertisingEmailHistoryRun(button.dataset.runId));
     });
     document.querySelector("form[data-action='save-advertising-settings']")?.addEventListener("submit", saveAdvertisingEmailSettings);
     document.querySelector("[data-action='add-advertising-source']")?.addEventListener("click", () => {
