@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.333",
-    releasedAt: "2026-08-27"
+    version: "1.7.334",
+    releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.334",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Поиск по настройкам перенесён в верхнюю строку и занимает всю свободную ширину до кнопок управления.",
+        "Список разделов настроек растянут на освободившуюся высоту; на мобильных экранах поиск остаётся полноширинным."
+      ]
+    },
     {
       version: "1.7.333",
       releasedAt: "2026-08-27",
@@ -18979,6 +18987,20 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <section class="panel settings-page-panel">
         <div class="section-head section-head--headingless settings-page-head">
+          <div class="search-box dictionary-search" role="search">
+            <span aria-hidden="true">⌕</span>
+            <input id="dictionarySearch" type="search" value="${escapeAttr(state.dictionarySearch)}" placeholder="Поиск по настройкам" autocomplete="off" aria-label="Поиск по названиям и содержимому настроек">
+            <button
+              class="dictionary-search-clear"
+              data-action="clear-dictionary-search"
+              type="button"
+              title="Сбросить поиск"
+              aria-label="Сбросить поиск по настройкам"
+              ${state.dictionarySearch ? "" : "hidden"}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"></path></svg>
+            </button>
+          </div>
           <div class="settings-page-actions">
             <span class="settings-draft-status ${hasDraftChanges ? "is-unsaved" : ""}" data-settings-draft-status role="status" aria-live="polite">
               ${state.settingsDraftSaving
@@ -19005,20 +19027,6 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         <div class="dictionary-browser">
           <aside class="dictionary-list-panel">
-            <div class="search-box dictionary-search" role="search">
-              <span aria-hidden="true">⌕</span>
-              <input id="dictionarySearch" type="search" value="${escapeAttr(state.dictionarySearch)}" placeholder="Поиск по настройкам" autocomplete="off" aria-label="Поиск по названиям и содержимому настроек">
-              <button
-                class="dictionary-search-clear"
-                data-action="clear-dictionary-search"
-                type="button"
-                title="Сбросить поиск"
-                aria-label="Сбросить поиск по настройкам"
-                ${state.dictionarySearch ? "" : "hidden"}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"></path></svg>
-              </button>
-            </div>
             <div class="dictionary-list" role="listbox" aria-label="Справочники">
               ${visibleItems.length ? visibleItems.map((item) => `
                 <button class="dictionary-list-item ${item.key === selectedKey ? "active" : ""}" data-action="select-dictionary" data-dict="${item.key}" type="button" role="option" aria-selected="${item.key === selectedKey ? "true" : "false"}" tabindex="${item.key === selectedKey ? "0" : "-1"}">
