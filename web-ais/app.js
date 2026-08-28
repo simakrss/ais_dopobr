@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.342",
+    version: "1.7.343",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.343",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Акт на оплату формируется по текущим значениям списка выплат сотрудника, даже если изменения карточки ещё не сохранены.",
+        "После отправки акта отметки строк применяются к тому же черновику выплат и не теряются при последующем сохранении карточки."
+      ]
+    },
     {
       version: "1.7.342",
       releasedAt: "2026-08-28",
@@ -59736,15 +59744,15 @@ MAX - https://bizvmax.ru/zifra_plus
       .join("\n");
   }
 
-  function getEmployeeActVariablePaymentRows(record) {
+  function getEmployeeActVariablePaymentRows(record, collections = getEmployeePaymentCollections()) {
     const employeeName = normalizeEmployeeActPersonName(record?.name);
     if (!employeeName) return [];
-    const studentsByUid = new Map((state.data.collections.students || []).map((student) => [
+    const studentsByUid = new Map((collections.students || []).map((student) => [
       String(student?.uid || "").trim(),
       student
     ]));
     const seen = new Set();
-    const directRows = getAllDirectExpenses().reduce((rows, expense, index) => {
+    const directRows = getAllDirectExpenses(collections).reduce((rows, expense, index) => {
       if (normalizeEmployeeActPersonName(expense?.note) !== employeeName) return rows;
       if (isEmployeePaymentSettled(expense)) return rows;
       if (String(expense?.act || "").trim()) return rows;
@@ -59765,7 +59773,7 @@ MAX - https://bizvmax.ru/zifra_plus
       rows.push({ description, amount });
       return rows;
     }, []);
-    const generalRows = (state.data.collections.generalExpenses || []).reduce((rows, expense) => {
+    const generalRows = (collections.generalExpenses || []).reduce((rows, expense) => {
       if (normalizeEmployeeActPersonName(expense?.counterparty) !== employeeName) return rows;
       if (isEmployeePaymentSettled(expense)) return rows;
       if (String(expense?.act || "").trim()) return rows;
@@ -59782,8 +59790,8 @@ MAX - https://bizvmax.ru/zifra_plus
     return [...directRows, ...generalRows];
   }
 
-  function getEmployeeActPartnerPaymentRows(record) {
-    const accounting = getEmployeePaymentAccounting(record, state.data.collections);
+  function getEmployeeActPartnerPaymentRows(record, collections = getEmployeePaymentCollections()) {
+    const accounting = getEmployeePaymentAccounting(record, collections);
     const rows = accounting.partnerRows.reduce((result, row) => {
       if (!row.payable || row.slot !== "due") return result;
       const values = normalizeEmployeePaymentSourceRow("partner", row.source);
@@ -59803,11 +59811,11 @@ MAX - https://bizvmax.ru/zifra_plus
     return rows;
   }
 
-  function getEmployeeActPaymentSummary(record) {
-    const accounting = getEmployeePaymentAccounting(record, state.data.collections);
+  function getEmployeeActPaymentSummary(record, collections = getEmployeePaymentCollections()) {
+    const accounting = getEmployeePaymentAccounting(record, collections);
     const hasDetailedExpenseSources = accounting.directEntries.length > 0 || accounting.generalEntries.length > 0;
     const hasDetailedPaymentSources = hasDetailedExpenseSources || accounting.partnerStudents.length > 0;
-    let variableRows = getEmployeeActVariablePaymentRows(record);
+    let variableRows = getEmployeeActVariablePaymentRows(record, collections);
     let variableTotal = variableRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
     if (!variableRows.length && !hasDetailedExpenseSources && Number(record?.paid || 0)) {
       variableTotal = Number(record.paid);
@@ -59816,7 +59824,7 @@ MAX - https://bizvmax.ru/zifra_plus
         amount: variableTotal
       }];
     }
-    const partnerRows = getEmployeeActPartnerPaymentRows(record);
+    const partnerRows = getEmployeeActPartnerPaymentRows(record, collections);
     const partnerTotal = partnerRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
     let total = variableTotal + partnerTotal;
     if (
@@ -59843,8 +59851,8 @@ MAX - https://bizvmax.ru/zifra_plus
     return saveFormat ? `${year}.${month}.${day}` : `${day}.${month}.${year}`;
   }
 
-  function prepareEmployeeActDocumentRecord(record) {
-    const summary = getEmployeeActPaymentSummary(record);
+  function prepareEmployeeActDocumentRecord(record, collections = getEmployeePaymentCollections()) {
+    const summary = getEmployeeActPaymentSummary(record, collections);
     const nameParts = splitFullName(record?.name);
     const words = numberToRussianWords(summary.total);
     const actValues = {
@@ -60019,8 +60027,8 @@ MAX - https://bizvmax.ru/zifra_plus
     return missing.length === 0;
   }
 
-  function getEmployeeActDocumentRequiredFields(record) {
-    const summary = getEmployeeActPaymentSummary(record);
+  function getEmployeeActDocumentRequiredFields(record, collections = getEmployeePaymentCollections()) {
+    const summary = getEmployeeActPaymentSummary(record, collections);
     return [
       { key: "name", label: "ФИО / контрагент" },
       { key: "contractNo", label: "Номер договора" },
@@ -60035,23 +60043,23 @@ MAX - https://bizvmax.ru/zifra_plus
     ];
   }
 
-  function getMissingEmployeeActDocumentFields(record) {
-    return getEmployeeActDocumentRequiredFields(record).filter((item) => {
+  function getMissingEmployeeActDocumentFields(record, collections = getEmployeePaymentCollections()) {
+    return getEmployeeActDocumentRequiredFields(record, collections).filter((item) => {
       const value = item.value ?? record?.[item.key];
       return item.positive ? !(Number(value) > 0) : !String(value ?? "").trim();
     });
   }
 
-  function validateEmployeeActDocumentFields(record, documentTemplate) {
-    const missing = getMissingEmployeeActDocumentFields(record);
+  function validateEmployeeActDocumentFields(record, documentTemplate, collections = getEmployeePaymentCollections()) {
+    const missing = getMissingEmployeeActDocumentFields(record, collections);
     if (!missing.length) return true;
     alert(`Документ «${documentTemplate?.title || "Акт оказанных услуг"}» не сформирован.\nНе заполнены поля:\n${formatStudentDocumentMissingFields(missing)}`);
     focusEmployeeContractDocumentField(missing[0].key, record);
     return false;
   }
 
-  function checkEmployeeActDocumentData(record, documentTemplate) {
-    const missing = getMissingEmployeeActDocumentFields(record);
+  function checkEmployeeActDocumentData(record, documentTemplate, collections = getEmployeePaymentCollections()) {
+    const missing = getMissingEmployeeActDocumentFields(record, collections);
     showStudentDocumentDataCheckDialog(record, documentTemplate, missing, {
       focusField: focusEmployeeContractDocumentField
     });
@@ -60103,11 +60111,11 @@ MAX - https://bizvmax.ru/zifra_plus
     );
   }
 
-  function markEmployeeActPaymentRowsAsSent(record) {
+  function markEmployeeActPaymentRowsAsSent(record, collections = getEmployeePaymentCollections()) {
     const employeeName = normalizeEmployeeActPersonName(record?.name);
     if (!employeeName) return 0;
     let changed = 0;
-    getDirectExpenseEntriesFromCollections(state.data.collections).forEach(({ expense }) => {
+    getDirectExpenseEntriesFromCollections(collections).forEach(({ expense }) => {
       if (normalizeEmployeeActPersonName(expense?.note) !== employeeName) return;
       if (isEmployeePaymentSettled(expense)) return;
       if (String(expense?.act || "").trim()) return;
@@ -60116,14 +60124,14 @@ MAX - https://bizvmax.ru/zifra_plus
       expense.actStatus = "Отправлен";
       changed += 1;
     });
-    (state.data.collections.generalExpenses || []).forEach((expense) => {
+    (collections.generalExpenses || []).forEach((expense) => {
       if (normalizeEmployeeActPersonName(expense?.counterparty) !== employeeName) return;
       if (isEmployeePaymentSettled(expense) || String(expense?.act || "").trim()) return;
       expense.act = "+";
       expense.actStatus = "Отправлен";
       changed += 1;
     });
-    getEmployeePaymentAccounting(record, state.data.collections).partnerRows.forEach((row) => {
+    getEmployeePaymentAccounting(record, collections).partnerRows.forEach((row) => {
       if (!row.payable || row.slot !== "due") return;
       const values = normalizeEmployeePaymentSourceRow("partner", row.source);
       if (!values.recommendation || isEmployeePaymentSettled(values) || values.act || !(values.amount > 0)) return;
@@ -60146,13 +60154,14 @@ MAX - https://bizvmax.ru/zifra_plus
   async function openEmployeeActDocument(event) {
     const button = event?.currentTarget;
     const record = collectContractFormDraft();
+    const collections = getEmployeePaymentCollections();
     const documentTemplate = getEmployeeActDocumentTemplate();
     if (!documentTemplate) {
       alert("В Конструкторе документов не найден шаблон «Акт оказанных услуг».");
       return;
     }
-    if (!validateEmployeeActDocumentFields(record, documentTemplate)) return;
-    const generationRecord = prepareEmployeeActDocumentRecord(record);
+    if (!validateEmployeeActDocumentFields(record, documentTemplate, collections)) return;
+    const generationRecord = prepareEmployeeActDocumentRecord(record, collections);
     const result = await downloadStudentDocumentFromTemplate(
       documentTemplate,
       generationRecord,
@@ -60165,7 +60174,7 @@ MAX - https://bizvmax.ru/zifra_plus
         storageRequest: getEmployeeDocumentStorageRequest(record, documentTemplate)
       }
     );
-    if (result?.emailed) markEmployeeActPaymentRowsAsSent(record);
+    if (result?.emailed) markEmployeeActPaymentRowsAsSent(record, collections);
   }
 
   function isStudentFundedByLegalEntity(record) {
