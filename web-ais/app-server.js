@@ -359,7 +359,8 @@ const STATISTICS_SOURCE_DEFINITIONS = Object.freeze([
   consumers: Object.freeze([...source.consumers])
 })));
 const ADVERTISING_EMAIL_HISTORY_STATE_KEY = "global";
-const ADVERTISING_EMAIL_HISTORY_RETAINED_RUNS = 2;
+const ADVERTISING_EMAIL_HISTORY_RETAINED_RUNS = 30;
+const ADVERTISING_EMAIL_HISTORY_FULL_SNAPSHOT_RUNS = 2;
 const ADVERTISING_EMAIL_HISTORY_MAX_CONTACTS_PER_RUN = 200000;
 const ADVERTISING_EMAIL_HISTORY_WRITE_CHUNK_SIZE = 150;
 const ADVERTISING_EMAIL_HISTORY_READ_PAGE_SIZE = 5000;
@@ -8507,6 +8508,155 @@ function publicAdvertisingEmailHistoryRun(row) {
   };
 }
 
+function normalizeAdvertisingEmailHistoryRunId(value) {
+  const runId = String(value || "").trim();
+  if (
+    !runId
+    || runId.length > 64
+    || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u.test(runId)
+  ) {
+    throw advertisingEmailHistoryError(
+      "Указан некорректный идентификатор запуска сборщика.",
+      400,
+      "ADVERTISING_HISTORY_INVALID_RUN_ID"
+    );
+  }
+  return runId;
+}
+
+function publicAdvertisingEmailHistoryListRun(row) {
+  const previousRunId = String(row?.previous_run_id || "");
+  const sources = advertisingEmailHistoryJson(row?.sources_json, []);
+  return {
+    runId: String(row?.run_id || ""),
+    sequence: Math.max(0, Number(row?.run_sequence) || 0),
+    refreshedAt: advertisingEmailHistoryIsoDate(row?.refreshed_at),
+    durationMs: Math.max(0, Number(row?.duration_ms) || 0),
+    user: {
+      id: String(row?.user_id || ""),
+      login: String(row?.user_login || ""),
+      name: String(row?.user_name || "")
+    },
+    sources: Array.isArray(sources) ? sources : [],
+    summary: advertisingEmailHistoryJson(row?.summary_json, {}),
+    comparedTo: {
+      hasPrevious: Boolean(previousRunId),
+      runId: previousRunId,
+      refreshedAt: advertisingEmailHistoryIsoDate(row?.previous_refreshed_at)
+    }
+  };
+}
+
+async function readAdvertisingEmailHistoryRuns() {
+  let pool;
+  try {
+    pool = await getSharedRecordLocksMySqlPool();
+    if (!pool) {
+      throw advertisingEmailHistoryError(
+        "MySQL общей базы не настроен.",
+        503,
+        "ADVERTISING_HISTORY_UNAVAILABLE"
+      );
+    }
+    const [rows] = await pool.query(
+      `SELECT current_run.run_id, current_run.run_sequence AS run_sequence, current_run.previous_run_id,
+              current_run.refreshed_at, current_run.duration_ms,
+              current_run.user_id, current_run.user_login, current_run.user_name,
+              current_run.sources_json, current_run.summary_json,
+              previous_run.refreshed_at AS previous_refreshed_at
+         FROM ais_advertising_email_history_runs AS current_run
+         LEFT JOIN ais_advertising_email_history_runs AS previous_run
+           ON previous_run.run_id = current_run.previous_run_id
+        ORDER BY current_run.run_sequence DESC
+        LIMIT ${ADVERTISING_EMAIL_HISTORY_RETAINED_RUNS}`
+    );
+    return rows.map(publicAdvertisingEmailHistoryListRun);
+  } catch (error) {
+    if (error?.statusCode) throw error;
+    throw advertisingEmailHistoryError(
+      `Не удалось загрузить историю запусков сборщика: ${error.message}`,
+      isMySqlConnectivityError(error) ? 503 : 500,
+      "ADVERTISING_HISTORY_READ_FAILED"
+    );
+  }
+}
+
+async function readAdvertisingEmailHistoryNewReadyEmails(value) {
+  const runId = normalizeAdvertisingEmailHistoryRunId(value);
+  let pool;
+  try {
+    pool = await getSharedRecordLocksMySqlPool();
+    if (!pool) throw new Error("MySQL общей базы не настроен.");
+  } catch (error) {
+    if (error?.statusCode) throw error;
+    throw advertisingEmailHistoryError(
+      `Не удалось открыть историю рекламных контактов: ${error.message}`,
+      503,
+      "ADVERTISING_HISTORY_UNAVAILABLE"
+    );
+  }
+  const connection = await pool.getConnection().catch((error) => {
+    throw advertisingEmailHistoryError(
+      `Не удалось подключиться к истории рекламных контактов: ${error.message}`,
+      503,
+      "ADVERTISING_HISTORY_UNAVAILABLE"
+    );
+  });
+  try {
+    await connection.beginTransaction();
+    const [runRows] = await connection.query(
+      `SELECT run_id
+         FROM ais_advertising_email_history_runs
+        WHERE run_id = ?
+        LIMIT 1`,
+      [runId]
+    );
+    if (!runRows.length) {
+      throw advertisingEmailHistoryError(
+        "Запуск сборщика не найден.",
+        404,
+        "ADVERTISING_HISTORY_RUN_NOT_FOUND"
+      );
+    }
+    const emails = [];
+    const seenEmails = new Set();
+    let cursor = "";
+    while (true) {
+      const [rows] = await connection.query(
+        `SELECT email_key, data_json
+           FROM ais_advertising_email_history_run_contacts
+          WHERE run_id = ? AND is_new = 1 AND excluded = 0 AND email_key > ?
+          ORDER BY email_key
+          LIMIT ${ADVERTISING_EMAIL_HISTORY_READ_PAGE_SIZE}`,
+        [runId, cursor]
+      );
+      if (!rows.length) break;
+      for (const row of rows) {
+        const snapshot = advertisingEmailHistoryJson(row.data_json, null);
+        const email = extractAdvertisingEmails(snapshot?.email)[0] || "";
+        if (!email || seenEmails.has(email)) continue;
+        seenEmails.add(email);
+        emails.push(email);
+      }
+      cursor = String(rows[rows.length - 1]?.email_key || "");
+      if (rows.length < ADVERTISING_EMAIL_HISTORY_READ_PAGE_SIZE || !cursor) break;
+    }
+    emails.sort((left, right) => left.localeCompare(right, "en"));
+    await connection.commit();
+    return { runId, count: emails.length, emails };
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    if (error?.statusCode) throw error;
+    throw advertisingEmailHistoryError(
+      `Не удалось загрузить новые email запуска: ${error.message}`,
+      isMySqlConnectivityError(error) ? 503 : 500,
+      "ADVERTISING_HISTORY_READ_FAILED"
+    );
+  } finally {
+    connection.release();
+  }
+}
+
 async function readAdvertisingEmailHistoryMembership(connection, runId) {
   const keys = new Set();
   const normalizedRunId = String(runId || "").trim();
@@ -8634,17 +8784,36 @@ async function pruneAdvertisingEmailHistoryRuns(connection) {
   );
   const retainedIds = retainedRows.map((row) => String(row.run_id || "")).filter(Boolean);
   if (!retainedIds.length) return;
+  const historicalIds = retainedIds.slice(ADVERTISING_EMAIL_HISTORY_FULL_SNAPSHOT_RUNS);
+  if (historicalIds.length) {
+    const historicalPlaceholders = historicalIds.map(() => "?").join(", ");
+    await connection.query(
+      `DELETE FROM ais_advertising_email_history_run_contacts
+        WHERE run_id IN (${historicalPlaceholders}) AND is_new = 0`,
+      historicalIds
+    );
+  }
   const placeholders = retainedIds.map(() => "?").join(", ");
-  await connection.query(
-    `DELETE FROM ais_advertising_email_history_run_contacts
+  const [expiredRows] = await connection.query(
+    `SELECT run_id
+       FROM ais_advertising_email_history_runs
       WHERE run_id NOT IN (${placeholders})`,
     retainedIds
   );
-  await connection.query(
-    `DELETE FROM ais_advertising_email_history_runs
-      WHERE run_id NOT IN (${placeholders})`,
-    retainedIds
-  );
+  const expiredIds = expiredRows.map((row) => String(row.run_id || "")).filter(Boolean);
+  if (expiredIds.length) {
+    const expiredPlaceholders = expiredIds.map(() => "?").join(", ");
+    await connection.query(
+      `DELETE FROM ais_advertising_email_history_run_contacts
+        WHERE run_id IN (${expiredPlaceholders})`,
+      expiredIds
+    );
+    await connection.query(
+      `DELETE FROM ais_advertising_email_history_runs
+        WHERE run_id IN (${expiredPlaceholders})`,
+      expiredIds
+    );
+  }
 }
 
 async function persistAdvertisingEmailHistoryResult(result, authUser = null) {
@@ -9233,6 +9402,27 @@ async function handleAdvertisingEmailCollector(req, res, authUser) {
     sendJson(res, 200, result);
   } catch (error) {
     sendError(res, Number(error?.statusCode) || 502, `Не удалось собрать адреса: ${error.message}`);
+  }
+}
+
+async function handleAdvertisingEmailHistory(req, res, requestUrl) {
+  if (req.method !== "GET") {
+    sendError(res, 405, "Method not allowed");
+    return;
+  }
+  try {
+    if (requestUrl.searchParams.has("runId")) {
+      sendJson(
+        res,
+        200,
+        await readAdvertisingEmailHistoryNewReadyEmails(requestUrl.searchParams.get("runId"))
+      );
+      return;
+    }
+    const rows = await readAdvertisingEmailHistoryRuns();
+    sendJson(res, 200, { rows });
+  } catch (error) {
+    sendError(res, Number(error?.statusCode) || 503, error.message);
   }
 }
 
@@ -33692,6 +33882,10 @@ async function route(req, res) {
     await handleAdvertisingEmailSettings(req, res, authUser);
     return;
   }
+  if (requestUrl.pathname === "/api/advertising/email-collector/history") {
+    await handleAdvertisingEmailHistory(req, res, requestUrl);
+    return;
+  }
   if (requestUrl.pathname === "/api/advertising/email-collector/collect") {
     await handleAdvertisingEmailCollector(req, res, authUser);
     return;
@@ -33950,11 +34144,14 @@ module.exports = {
   mergeAdvertisingEmailExclusions,
   collectAdvertisingEmails,
   advertisingEmailHistoryEmailKey,
+  normalizeAdvertisingEmailHistoryRunId,
   normalizeAdvertisingEmailHistoryRows,
   emptyAdvertisingEmailHistoryResult,
   buildAdvertisingEmailHistoryResult,
   persistAdvertisingEmailHistoryResult,
   readLatestAdvertisingEmailHistoryResult,
+  readAdvertisingEmailHistoryRuns,
+  readAdvertisingEmailHistoryNewReadyEmails,
   optimizeStudentApplicationsSqlQuery,
   runStudentApplicationsQuery,
   parseStudentDatabaseWorkbook,

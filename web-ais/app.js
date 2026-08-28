@@ -164,10 +164,19 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.334",
+    version: "1.7.335",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.335",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Область выбора источников в сборщике email теперь сворачивается и при открытии вкладки по умолчанию скрыта.",
+        "На вкладке «Сборщик» добавлена история запросов рекламы с новыми адресами относительно непосредственно предыдущего запуска.",
+        "Для каждого сохранённого запуска можно отдельно скопировать его набор новых готовых email-адресов."
+      ]
+    },
     {
       version: "1.7.334",
       releasedAt: "2026-08-28",
@@ -5823,6 +5832,7 @@ MAX - https://bizvmax.ru/zifra_plus
     },
     advertising: {
       tab: "collector",
+      sourcePickerExpanded: false,
       loading: false,
       loaded: false,
       resultLoading: false,
@@ -5842,6 +5852,13 @@ MAX - https://bizvmax.ru/zifra_plus
       settingsSaving: false,
       settingsError: "",
       settingsMessage: "",
+      history: {
+        rows: [],
+        loaded: false,
+        loading: false,
+        error: "",
+        copyingRunId: ""
+      },
       exclusions: {
         rows: [],
         loaded: false,
@@ -10912,6 +10929,13 @@ MAX - https://bizvmax.ru/zifra_plus
         queueMicrotask(() => loadAdvertisingEmailSettings());
       }
       if (
+        state.advertising.tab === "collector"
+        && !state.advertising.history.loaded
+        && !state.advertising.history.loading
+      ) {
+        queueMicrotask(() => loadAdvertisingEmailHistory());
+      }
+      if (
         state.advertising.tab === "exclusions"
         && !state.advertising.exclusions.loaded
         && !state.advertising.exclusions.loading
@@ -12901,6 +12925,78 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderAdvertisingHistory() {
+    const history = state.advertising.history;
+    const rows = Array.isArray(history.rows) ? history.rows : [];
+    return `
+      <section class="panel advertising-history-panel">
+        <div class="panel-head advertising-results-head">
+          <div>
+            <p class="eyebrow">Сохранённые запуски</p>
+            <h2>Запросы рекламы</h2>
+            <p>Новые адреса каждого запуска рассчитаны относительно непосредственно предыдущего сохранённого запуска.</p>
+          </div>
+          <span class="statistics-row-count">${formatStatisticsInteger(rows.length)}</span>
+        </div>
+        ${history.error ? `<div class="advertising-inline-message advertising-history-error is-error" role="alert"><span>${escapeHtml(history.error)}</span><button class="ghost-button compact-button" data-action="reload-advertising-history" type="button" ${history.loading ? "disabled" : ""}>Повторить</button></div>` : ""}
+        ${history.loading && !rows.length
+          ? '<div class="advertising-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Загружается история запросов…</span></div>'
+          : (!rows.length
+            ? (history.error ? "" : '<div class="empty-state compact"><strong>История пока пуста</strong><span>Первый набор появится после запуска сборщика.</span></div>')
+            : `
+              <div class="table-wrap advertising-history-table-wrap">
+                <table class="data-table advertising-history-table">
+                  <thead>
+                    <tr>
+                      <th>Дата и время</th>
+                      <th>Источники запроса</th>
+                      <th>Сравнение</th>
+                      <th>Результат</th>
+                      <th>Новые адреса</th>
+                      <th>Действие</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rows.map((row) => {
+                      const summary = row?.summary || {};
+                      const sources = Array.isArray(row?.sources) ? row.sources : [];
+                      const comparedTo = row?.comparedTo || {};
+                      const user = row?.user || {};
+                      const userLabel = user.name || user.login || "—";
+                      const userLogin = user.name && user.login ? user.login : "";
+                      const newReady = Math.max(0, Number(summary.newReady) || 0);
+                      const newUnique = Math.max(0, Number(summary.newUnique) || 0);
+                      const isCopying = history.copyingRunId === row.runId;
+                      const copyDisabled = Boolean(history.copyingRunId) || !newReady;
+                      return `
+                        <tr data-advertising-history-run="${escapeAttr(row.runId || "")}">
+                          <td>
+                            <strong>${escapeHtml(formatDateTimeRu(row.refreshedAt) || "—")}</strong>
+                            <small>Запуск № ${formatStatisticsInteger(row.sequence)}</small>
+                            <small>${escapeHtml(userLabel)}${userLogin ? ` · ${escapeHtml(userLogin)}` : ""}</small>
+                          </td>
+                          <td>
+                            <div class="advertising-history-sources">
+                              ${sources.map((source) => `<span class="${source?.status === "error" ? "is-error" : ""}" title="${escapeAttr(source?.error || source?.label || "Источник")}">${escapeHtml(source?.label || source?.id || "Источник")}${Number.isFinite(Number(source?.count)) ? ` · ${formatStatisticsInteger(source.count)}` : ""}</span>`).join("") || "—"}
+                            </div>
+                          </td>
+                          <td>${comparedTo.hasPrevious
+                            ? `<strong>С предыдущим запуском</strong><small>${comparedTo.refreshedAt ? escapeHtml(formatDateTimeRu(comparedTo.refreshedAt)) : "Дата недоступна"}</small>`
+                            : '<strong>Первый сохранённый поиск</strong><small>Весь набор считался новым</small>'}</td>
+                          <td class="advertising-history-metric"><strong>${formatStatisticsInteger(summary.ready)}</strong><small>готовы из ${formatStatisticsInteger(summary.unique)}</small><small>${escapeHtml(formatAdvertisingDuration(row.durationMs))}</small></td>
+                          <td class="advertising-history-metric"><strong>${formatStatisticsInteger(newReady)}</strong><small>готовы из ${formatStatisticsInteger(newUnique)} новых</small></td>
+                          <td><button class="ghost-button compact-button advertising-history-copy" data-action="copy-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${copyDisabled ? "disabled" : ""}>${isCopying ? '<span class="auth-spinner" aria-hidden="true"></span> Копирование…' : `Копировать набор (${formatStatisticsInteger(newReady)})`}</button></td>
+                        </tr>
+                      `;
+                    }).join("")}
+                  </tbody>
+                </table>
+              </div>
+            `)}
+      </section>
+    `;
+  }
+
   function renderAdvertising() {
     const advertising = state.advertising;
     const busy = advertising.loading || advertising.resultLoading;
@@ -12931,6 +13027,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ? `С прошлого поиска${comparedTo.refreshedAt ? ` от ${formatDateTimeRu(comparedTo.refreshedAt)}` : ""}`
         : "Первый сохранённый поиск")
       : "Нет сохранённых поисков";
+    const sourcePickerExpanded = Boolean(advertising.sourcePickerExpanded);
     return `
       <section class="advertising-page">
         <nav class="program-tabs advertising-tabs" data-orderable-tabs="advertising" role="tablist" aria-label="Разделы рекламы">
@@ -12961,13 +13058,32 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           ${advertising.error ? `<div class="advertising-inline-message is-error" role="alert">${escapeHtml(advertising.error)}</div>` : ""}
           ${advertising.notice ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(advertising.notice)}</div>` : ""}
-          <div class="advertising-source-toolbar">
-            <strong>Источники</strong>
-             <span>Выбрано ${advertising.selectedSourceIds.length} из ${getAdvertisingEmailSources().length}</span>
-            <button class="ghost-button compact-button" data-action="select-all-advertising-sources" type="button" ${busy ? "disabled" : ""}>Выбрать все</button>
-            <button class="ghost-button compact-button" data-action="clear-advertising-sources" type="button" ${busy ? "disabled" : ""}>Снять все</button>
+          <div class="advertising-source-picker">
+            <button
+              id="advertisingSourcePickerToggle"
+              class="advertising-source-picker-toggle"
+              data-action="toggle-advertising-source-picker"
+              type="button"
+              aria-expanded="${sourcePickerExpanded ? "true" : "false"}"
+              aria-controls="advertisingSourcePickerContent"
+            >
+              <span class="advertising-source-picker-title"><strong>Источники</strong><span>Выбрано ${advertising.selectedSourceIds.length} из ${getAdvertisingEmailSources().length}</span></span>
+              <svg class="advertising-source-picker-chevron" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="m5 7.5 5 5 5-5"/></svg>
+            </button>
+            <div
+              id="advertisingSourcePickerContent"
+              class="advertising-source-picker-content"
+              role="region"
+              aria-labelledby="advertisingSourcePickerToggle"
+              ${sourcePickerExpanded ? "" : "hidden"}
+            >
+              <div class="advertising-source-toolbar">
+                <button class="ghost-button compact-button" data-action="select-all-advertising-sources" type="button" ${busy ? "disabled" : ""}>Выбрать все</button>
+                <button class="ghost-button compact-button" data-action="clear-advertising-sources" type="button" ${busy ? "disabled" : ""}>Снять все</button>
+              </div>
+              <div class="advertising-source-grid">${renderAdvertisingSourceCards()}</div>
+            </div>
           </div>
-          <div class="advertising-source-grid">${renderAdvertisingSourceCards()}</div>
           <div class="advertising-workbook-status ${workbook?.status === "error" ? "is-error" : ""}">
             <span>Правила исключений: <strong>${formatStatisticsInteger(summary.exclusionRules)}</strong></span>
             <span>Книга: <strong>${escapeHtml(workbook?.source || "ожидает запуска")}</strong></span>
@@ -12975,6 +13091,8 @@ MAX - https://bizvmax.ru/zifra_plus
             ${workbook?.error ? `<span>${escapeHtml(workbook.error)}</span>` : ""}
           </div>
         </section>
+
+        ${renderAdvertisingHistory()}
 
         <div class="advertising-kpi-grid">
           <article class="statistics-kpi-card"><span>Уникальные</span><strong>${formatStatisticsInteger(summary.unique)}</strong><small>В последнем поиске</small></article>
@@ -13086,6 +13204,65 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  async function loadAdvertisingEmailHistory(options = {}) {
+    const advertising = state.advertising;
+    const history = advertising.history;
+    if (history.loading || (history.loaded && !options.force)) return;
+    history.loading = true;
+    history.error = "";
+    if (state.view === "advertising" && advertising.tab === "collector") render();
+    try {
+      const response = await fetch(photoApiUrl("/api/advertising/email-collector/history"), {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "X-Requested-With": "AIS-Web" }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      history.rows = Array.isArray(payload.rows) ? payload.rows : [];
+      history.loaded = true;
+    } catch (error) {
+      history.error = `Не удалось загрузить историю запросов: ${error.message || "ошибка сервера"}`;
+      history.loaded = true;
+    } finally {
+      history.loading = false;
+      if (state.view === "advertising" && advertising.tab === "collector") render();
+    }
+  }
+
+  async function copyAdvertisingEmailHistoryRun(runId) {
+    const advertising = state.advertising;
+    const history = advertising.history;
+    const normalizedRunId = String(runId || "").trim();
+    if (!normalizedRunId || history.copyingRunId) return;
+    history.copyingRunId = normalizedRunId;
+    advertising.error = "";
+    advertising.notice = "";
+    if (state.view === "advertising") render();
+    try {
+      const response = await fetch(photoApiUrl(`/api/advertising/email-collector/history?runId=${encodeURIComponent(normalizedRunId)}`), {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "X-Requested-With": "AIS-Web" }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      const emails = getAdvertisingClipboardEmails(
+        (Array.isArray(payload.emails) ? payload.emails : []).map((email) => ({ email }))
+      );
+      if (!emails.length) throw new Error("В этом запуске нет новых готовых адресов.");
+      await copyTextToClipboard(emails.join("\r\n"));
+      advertising.notice = `Скопирован набор запуска: ${formatStatisticsInteger(emails.length)} новых адресов.`;
+    } catch (error) {
+      advertising.error = error.message || "Не удалось скопировать набор новых адресов.";
+    } finally {
+      history.copyingRunId = "";
+      if (state.view === "advertising") render();
+    }
+  }
+
   async function collectAdvertisingEmails() {
     const advertising = state.advertising;
     if (advertising.loading || advertising.resultLoading) return;
@@ -13094,6 +13271,7 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
       return;
     }
+    let refreshHistory = false;
     advertising.loading = true;
     advertising.error = "";
     advertising.notice = "";
@@ -13115,6 +13293,8 @@ MAX - https://bizvmax.ru/zifra_plus
       advertising.loaded = true;
       advertising.resultLoaded = true;
       advertising.exclusions.loaded = false;
+      advertising.history.loaded = false;
+      refreshHistory = true;
       state.tablePages.advertisingEmails = 1;
       const newUnique = Number(payload.summary?.newUnique) || 0;
       const newReady = Number(payload.summary?.newReady) || 0;
@@ -13127,6 +13307,7 @@ MAX - https://bizvmax.ru/zifra_plus
     } finally {
       advertising.loading = false;
       if (state.view === "advertising") render();
+      if (refreshHistory) queueMicrotask(() => loadAdvertisingEmailHistory({ force: true }));
     }
   }
 
@@ -13329,7 +13510,18 @@ MAX - https://bizvmax.ru/zifra_plus
         render();
       });
     });
+    document.querySelector("[data-action='toggle-advertising-source-picker']")?.addEventListener("click", (event) => {
+      const button = event.currentTarget;
+      const content = document.getElementById("advertisingSourcePickerContent");
+      state.advertising.sourcePickerExpanded = !state.advertising.sourcePickerExpanded;
+      const expanded = Boolean(state.advertising.sourcePickerExpanded);
+      button.setAttribute("aria-expanded", expanded ? "true" : "false");
+      if (content) content.hidden = !expanded;
+    });
     document.querySelector("[data-action='collect-advertising-emails']")?.addEventListener("click", collectAdvertisingEmails);
+    document.querySelector("[data-action='reload-advertising-history']")?.addEventListener("click", () => {
+      loadAdvertisingEmailHistory({ force: true });
+    });
     document.querySelector("[data-action='select-all-advertising-sources']")?.addEventListener("click", () => {
       state.advertising.selectedSourceIds = getAdvertisingEmailSources().map((source) => source.id);
       state.advertising.error = "";
@@ -13410,6 +13602,9 @@ MAX - https://bizvmax.ru/zifra_plus
         state.advertising.error = error.message || "Не удалось скопировать новые адреса.";
       }
       render();
+    });
+    document.querySelectorAll("[data-action='copy-advertising-history-run']").forEach((button) => {
+      button.addEventListener("click", () => copyAdvertisingEmailHistoryRun(button.dataset.runId));
     });
     document.querySelector("form[data-action='save-advertising-settings']")?.addEventListener("submit", saveAdvertisingEmailSettings);
     document.querySelector("[data-action='add-advertising-source']")?.addEventListener("click", () => {

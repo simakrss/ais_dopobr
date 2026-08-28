@@ -25000,6 +25000,104 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   font-size: 13px;
 }
 
+.advertising-source-picker {
+  min-width: 0;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f8faf9;
+}
+
+.advertising-source-picker-toggle {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 10px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.advertising-source-picker-toggle:hover {
+  background: #eef7f4;
+  color: var(--teal);
+}
+
+.advertising-source-picker-toggle:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid rgba(15, 118, 110, 0.32);
+  outline-offset: -2px;
+}
+
+.advertising-source-picker-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.advertising-source-picker-title strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.advertising-source-picker-title :is(span, small) {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.advertising-source-picker-chevron {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  margin-left: auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  transition: transform 160ms ease;
+}
+
+.advertising-source-picker-toggle[aria-expanded="true"] .advertising-source-picker-chevron {
+  transform: rotate(180deg);
+}
+
+.advertising-source-picker-content {
+  min-width: 0;
+  display: grid;
+  gap: 9px;
+  border-top: 1px solid var(--line);
+  padding: 10px;
+}
+
+.advertising-source-picker-content[hidden] {
+  display: none !important;
+}
+
+.advertising-source-picker-content .advertising-source-toolbar {
+  justify-content: flex-end;
+}
+
+.advertising-source-picker-content .advertising-source-toolbar > button {
+  flex: 0 0 auto;
+}
+
 .advertising-source-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -25098,6 +25196,133 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 .advertising-results-panel {
   display: grid;
   gap: 10px;
+}
+
+.advertising-history-panel {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.advertising-history-panel h2 {
+  margin: 0;
+}
+
+.advertising-history-panel .advertising-results-head p:not(.eyebrow) {
+  max-width: 760px;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.advertising-history-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.advertising-history-error > span {
+  min-width: 0;
+}
+
+.advertising-history-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  max-height: min(52vh, 560px);
+  overflow: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  -webkit-overflow-scrolling: touch;
+}
+
+.advertising-history-table {
+  width: 100%;
+  min-width: 940px;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.advertising-history-table :is(th, td) {
+  padding: 7px 8px;
+  vertical-align: top;
+  font-size: 12px;
+}
+
+.advertising-history-table th {
+  white-space: nowrap;
+}
+
+.advertising-history-table td > strong,
+.advertising-history-table td > small {
+  display: block;
+}
+
+.advertising-history-table td > small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.advertising-history-sources {
+  min-width: 170px;
+  max-width: 300px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.advertising-history-sources span {
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf5f2;
+  padding: 2px 6px;
+  color: #35655b;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.advertising-history-sources span.is-error {
+  background: #fde4e1;
+  color: #a6322b;
+}
+
+.advertising-history-metric {
+  min-width: 72px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.advertising-history-metric strong,
+.advertising-history-metric small {
+  display: block;
+}
+
+.advertising-history-metric strong {
+  font-size: 13px;
+}
+
+.advertising-history-metric small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.advertising-history-copy {
+  min-width: 108px;
+  min-height: 30px;
+  white-space: nowrap;
+}
+
+.advertising-history-copy .auth-spinner {
+  width: 14px;
+  height: 14px;
 }
 
 .advertising-results-head {
@@ -25567,11 +25792,16 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   .admin-advertising-database-paths {
     grid-template-columns: 1fr;
   }
+
+  .advertising-history-table {
+    min-width: 820px;
+  }
 }
 
 @media (max-width: 640px) {
   .advertising-controls-panel,
   .advertising-results-panel,
+  .advertising-history-panel,
   .advertising-settings-panel,
   .advertising-source-builder-panel,
   .advertising-exclusions-panel {
@@ -25602,6 +25832,38 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
     min-height: 56px;
   }
 
+  .advertising-source-picker-toggle {
+    min-height: 44px;
+    align-items: flex-start;
+    padding: 9px;
+  }
+
+  .advertising-source-picker-title {
+    display: grid;
+    gap: 2px;
+  }
+
+  .advertising-source-picker-title :is(span, small) {
+    white-space: normal;
+  }
+
+  .advertising-source-picker-content {
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .advertising-source-picker-content .advertising-source-toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    gap: 6px;
+  }
+
+  .advertising-source-picker-content .advertising-source-toolbar > button {
+    width: 100%;
+    min-width: 0;
+  }
+
   .advertising-filters {
     grid-template-columns: 1fr;
   }
@@ -25617,6 +25879,28 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 
   .advertising-email-table {
     min-width: 760px;
+  }
+
+  .advertising-history-panel {
+    gap: 8px;
+  }
+
+  .advertising-history-table-wrap {
+    max-height: min(58vh, 480px);
+    scrollbar-gutter: auto;
+  }
+
+  .advertising-history-table {
+    min-width: 760px;
+  }
+
+  .advertising-history-sources {
+    min-width: 150px;
+    max-width: 220px;
+  }
+
+  .advertising-history-copy {
+    min-width: 96px;
   }
 
   .advertising-source-editor > header {

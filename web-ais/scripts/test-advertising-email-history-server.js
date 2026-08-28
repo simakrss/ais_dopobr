@@ -13,6 +13,13 @@ const {
 const root = path.resolve(__dirname, "..");
 const serverSource = fs.readFileSync(path.join(root, "app-server.js"), "utf8");
 
+function sourceSlice(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0 && end > start, `Не найден блок ${startMarker}.`);
+  return source.slice(start, end);
+}
+
 const normalized = normalizeAdvertisingEmailHistoryRows([
   { email: " Saved@Example.ru ", name: "Сохранённый" },
   { email: "saved@example.ru", name: "Последняя версия" },
@@ -72,6 +79,17 @@ assert.deepEqual(emptyAdvertisingEmailHistoryResult().comparedTo, {
 assert.equal(emptyAdvertisingEmailHistoryResult().summary.newUnique, 0);
 assert.equal(emptyAdvertisingEmailHistoryResult().summary.newReady, 0);
 
+assert.match(
+  serverSource,
+  /const ADVERTISING_EMAIL_HISTORY_RETAINED_RUNS\s*=\s*30;/u,
+  "Метаданные и new-only наборы должны храниться для 30 последних запросов."
+);
+assert.match(
+  serverSource,
+  /const ADVERTISING_EMAIL_HISTORY_FULL(?:_SNAPSHOT)?_RUNS\s*=\s*2;/u,
+  "Полные снимки должны сохраняться только для двух последних запросов."
+);
+
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_contacts/u);
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_runs/u);
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_run_contacts/u);
@@ -82,7 +100,28 @@ assert.match(
 );
 assert.match(serverSource, /ADVERTISING_EMAIL_HISTORY_WRITE_CHUNK_SIZE/u);
 assert.match(serverSource, /ADVERTISING_EMAIL_HISTORY_MAX_CONTACTS_PER_RUN/u);
-assert.match(serverSource, /ADVERTISING_EMAIL_HISTORY_RETAINED_RUNS = 2/u);
+const pruneHistorySource = sourceSlice(
+  serverSource,
+  "async function pruneAdvertisingEmailHistoryRuns(",
+  "async function persistAdvertisingEmailHistoryResult("
+);
+assert.match(pruneHistorySource, /ADVERTISING_EMAIL_HISTORY_RETAINED_RUNS/u);
+assert.match(pruneHistorySource, /ADVERTISING_EMAIL_HISTORY_FULL(?:_SNAPSHOT)?_RUNS/u);
+assert.match(
+  pruneHistorySource,
+  /\.slice\(ADVERTISING_EMAIL_HISTORY_FULL(?:_SNAPSHOT)?_RUNS\)/u,
+  "Очистка не-новых контактов должна начинаться только после двух полных запусков."
+);
+assert.match(
+  pruneHistorySource,
+  /DELETE FROM ais_advertising_email_history_run_contacts[\s\S]*?is_new\s*=\s*0/u,
+  "У более старых, но ещё сохранённых запусков нужно удалять только не-новые контакты."
+);
+assert.match(
+  pruneHistorySource,
+  /SELECT run_id[\s\S]*?NOT IN[\s\S]*?DELETE FROM ais_advertising_email_history_runs[\s\S]*?WHERE run_id IN/u,
+  "Запуски старше retention-лимита должны удаляться полностью."
+);
 assert.match(
   serverSource,
   /if \(req\.method === "GET"\)[\s\S]*?readLatestAdvertisingEmailHistoryResult\(\)/u
@@ -90,6 +129,44 @@ assert.match(
 assert.match(
   serverSource,
   /const collected = await collectAdvertisingEmails[\s\S]*?persistAdvertisingEmailHistoryResult\(collected, authUser\)/u
+);
+
+assert.match(
+  serverSource,
+  /requestUrl\.pathname === "\/api\/advertising\/email-collector\/history"/u,
+  "Не найден маршрут истории рекламных запросов."
+);
+const historyHandlerMatch = /async function (handleAdvertisingEmailHistory[A-Za-z0-9_$]*)\(/u.exec(serverSource);
+assert.ok(historyHandlerMatch, "Не найден обработчик истории рекламных запросов.");
+const historyHandlerName = historyHandlerMatch[1];
+const historyHandlerStart = serverSource.indexOf(`async function ${historyHandlerName}(`);
+const nextFunctionStart = serverSource.indexOf("\nasync function ", historyHandlerStart + 1);
+assert.ok(nextFunctionStart > historyHandlerStart, "Не найден конец обработчика истории рекламных запросов.");
+const historyHandlerSource = serverSource.slice(historyHandlerStart, nextFunctionStart);
+assert.match(historyHandlerSource, /req\.method\s*!==\s*"GET"/u);
+assert.match(historyHandlerSource, /searchParams\.get\("runId"\)|\.searchParams\.get\("runId"\)/u);
+assert.match(historyHandlerSource, /readAdvertisingEmailHistoryRuns/u);
+assert.match(historyHandlerSource, /readAdvertisingEmailHistory(?:Run)?New/u);
+
+assert.match(
+  serverSource,
+  /SELECT[\s\S]{0,900}?FROM ais_advertising_email_history_runs[\s\S]{0,500}?ORDER BY (?:current_run\.)?run_sequence DESC[\s\S]{0,200}?LIMIT \$\{ADVERTISING_EMAIL_HISTORY_RETAINED_RUNS\}/u,
+  "Список запусков должен возвращаться от нового к старому и быть ограничен retention-лимитом."
+);
+
+const newOnlyReaderMatch = /async function (readAdvertisingEmailHistory(?:Run)?New[A-Za-z0-9_$]*)\(/u.exec(serverSource);
+assert.ok(newOnlyReaderMatch, "Не найдена загрузка new-only набора отдельного запуска.");
+const newOnlyReaderStart = serverSource.indexOf(`async function ${newOnlyReaderMatch[1]}(`);
+const newOnlyReaderEnd = serverSource.indexOf("\nasync function ", newOnlyReaderStart + 1);
+assert.ok(newOnlyReaderEnd > newOnlyReaderStart, "Не найден конец загрузки new-only набора.");
+const newOnlyReaderSource = serverSource.slice(newOnlyReaderStart, newOnlyReaderEnd);
+assert.match(newOnlyReaderSource, /WHERE run_id\s*=\s*\?/u, "runId должен передаваться параметром SQL.");
+assert.match(newOnlyReaderSource, /is_new\s*=\s*1/u);
+assert.match(newOnlyReaderSource, /excluded\s*=\s*0/u);
+assert.doesNotMatch(
+  newOnlyReaderSource,
+  /\$\{[^}]*runId[^}]*\}/u,
+  "runId нельзя подставлять непосредственно в SQL."
 );
 
 (async () => {

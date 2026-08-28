@@ -37,6 +37,16 @@ const advertisingState = sourceSlice(
 );
 assert.match(advertisingState, /resultLoading:\s*false/u);
 assert.match(advertisingState, /resultLoaded:\s*false/u);
+assert.match(
+  advertisingState,
+  /sourcePickerExpanded:\s*false/u,
+  "Список источников должен быть свёрнут при первом открытии сборщика."
+);
+assert.match(
+  advertisingState,
+  /history:\s*\{[\s\S]*?rows:\s*\[\][\s\S]*?loaded:\s*false[\s\S]*?loading:\s*false[\s\S]*?error:\s*["']["'][\s\S]*?copyingRunId:\s*["']["'][\s\S]*?\}/u,
+  "Для таблицы рекламных запросов требуется отдельное состояние загрузки и копирования."
+);
 
 const advertisingViewEntry = sourceSlice(
   appSource,
@@ -50,6 +60,11 @@ assert.match(
 assert.match(
   advertisingViewEntry,
   /queueMicrotask\(\(\)\s*=>\s*loadAdvertising[A-Za-z0-9_$]*Result\(\)\)/u
+);
+assert.match(
+  advertisingViewEntry,
+  /!state\.advertising\.history\.loaded\s*&&\s*!state\.advertising\.history\.loading[\s\S]*?queueMicrotask\(\(\)\s*=>\s*loadAdvertisingEmailHistory\(\)\)/u,
+  "История рекламных запросов должна загружаться отдельно при открытии раздела."
 );
 assert.doesNotMatch(
   advertisingViewEntry,
@@ -73,6 +88,11 @@ const collectFunction = namedFunction(blocks, "collectAdvertisingEmails");
 assert.match(collectFunction, /method:\s*["']POST["']/u);
 assert.match(collectFunction, /advertising\.result\s*=\s*payload/u);
 assert.match(collectFunction, /advertising\.resultLoaded\s*=\s*true/u);
+assert.match(
+  collectFunction,
+  /(?:await\s+|queueMicrotask\(\(\)\s*=>\s*)loadAdvertisingEmailHistory\(\{\s*force:\s*true\s*\}\)\)?/u,
+  "После успешного POST-поиска таблица запросов должна принудительно обновляться."
+);
 assert.doesNotMatch(
   collectFunction,
   /localStorage|saveState\s*\(|requestSharedApplicationState|\/api\/shared-state/u,
@@ -105,6 +125,48 @@ assert.match(
   "Большой сохранённый снимок не должен сортироваться отдельно для каждого счётчика."
 );
 
+const sourcePickerToggle = /<button\b[^>]*data-action="toggle-advertising-source-picker"[^>]*>[\s\S]*?<\/button>/u
+  .exec(renderFunction)?.[0] || "";
+assert.ok(sourcePickerToggle, "Не найдена кнопка раскрытия источников.");
+assert.match(
+  sourcePickerToggle,
+  /aria-expanded="\$\{(?:advertising\.)?sourcePickerExpanded\s*\?\s*"true"\s*:\s*"false"\}"/u,
+  "aria-expanded должна отражать фактическое состояние блока источников."
+);
+const sourcePickerControlsId = /aria-controls="([^"]+)"/u.exec(sourcePickerToggle)?.[1] || "";
+assert.ok(sourcePickerControlsId, "Кнопка источников должна содержать aria-controls.");
+const escapedSourcePickerControlsId = sourcePickerControlsId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+const sourcePickerRegion = new RegExp(
+  `<(?:div|section)\\b[^>]*id="${escapedSourcePickerControlsId}"[^>]*>`,
+  "u"
+).exec(renderFunction)?.[0] || "";
+assert.ok(sourcePickerRegion, "aria-controls должен ссылаться на существующий контейнер источников.");
+assert.match(sourcePickerRegion, /role="region"/u);
+assert.match(
+  sourcePickerRegion,
+  /\$\{(?:advertising\.)?sourcePickerExpanded\s*\?\s*""\s*:\s*"hidden"\}/u,
+  "Свёрнутый контейнер источников должен получать hidden и выпадать из tab-порядка."
+);
+
+const renderHistoryFunction = namedFunction(blocks, "renderAdvertisingHistory");
+assert.match(
+  renderHistoryFunction,
+  /<table\b[^>]*class="[^"]*advertising-history-table/u,
+  "Нужна отдельная таблица сохранённых рекламных запросов."
+);
+assert.match(
+  renderHistoryFunction,
+  /history\.rows[\s\S]*?rows\.map\(\((?:run|row)\)\s*=>/u,
+  "Строки таблицы должны строиться из state.advertising.history.rows."
+);
+const perRunCopyButton = /<button\b[^>]*data-action="copy-advertising-history-(?:new|run)"[^>]*>[\s\S]*?<\/button>/u
+  .exec(renderHistoryFunction)?.[0] || "";
+assert.ok(perRunCopyButton, "У каждого рекламного запроса нужна кнопка копирования новых адресов.");
+assert.match(perRunCopyButton, /data-run-id="\$\{escapeAttr\((?:run|row)\.runId(?:\s*\|\|\s*"")?\)\}"/u);
+assert.match(renderHistoryFunction, /summary\.newReady/u);
+assert.match(renderHistoryFunction, /history\.copyingRunId/u);
+assert.match(perRunCopyButton, /disabled/u);
+
 const copyButton = /<button\b[^>]*data-action="copy-new-advertising-emails"[\s\S]*?<\/button>/u
   .exec(renderFunction)?.[0] || "";
 assert.ok(copyButton, "Не найдена кнопка копирования новых контактов.");
@@ -131,6 +193,29 @@ assert.match(
 );
 
 const bindFunction = namedFunction(blocks, "bindAdvertisingEvents");
+const sourcePickerHandlerStart = bindFunction.indexOf("[data-action='toggle-advertising-source-picker']");
+assert.ok(sourcePickerHandlerStart >= 0, "Не найден обработчик раскрытия источников.");
+const sourcePickerHandlerEnd = bindFunction.indexOf(
+  "[data-action='collect-advertising-emails']",
+  sourcePickerHandlerStart + 1
+);
+assert.ok(sourcePickerHandlerEnd > sourcePickerHandlerStart, "Не найден конец обработчика раскрытия источников.");
+const sourcePickerHandler = bindFunction.slice(sourcePickerHandlerStart, sourcePickerHandlerEnd);
+assert.match(
+  sourcePickerHandler,
+  /sourcePickerExpanded\s*=\s*!state\.advertising\.sourcePickerExpanded/u
+);
+assert.match(
+  sourcePickerHandler,
+  /(?:render\(\)|setAttribute\("aria-expanded"[\s\S]*?\.hidden\s*=\s*!expanded)/u,
+  "Раскрытие должно одновременно обновлять aria-expanded и видимость управляемого блока."
+);
+assert.doesNotMatch(
+  sourcePickerHandler,
+  /selectedSourceIds\s*=/u,
+  "Сворачивание источников не должно сбрасывать выбранные источники."
+);
+
 const copyHandlerStart = bindFunction.indexOf("[data-action='copy-new-advertising-emails']");
 assert.ok(copyHandlerStart >= 0, "Не найден обработчик копирования новых контактов.");
 const copyHandler = bindFunction.slice(copyHandlerStart, copyHandlerStart + 1800);
@@ -142,6 +227,35 @@ assert.match(
 assert.match(copyHandler, /getAdvertisingClipboardEmails/u);
 assert.match(copyHandler, /\.join\(["']\\r\\n["']\)/u);
 assert.doesNotMatch(copyHandler, /status:\s*["']ready["']/u);
+
+const historyCopyHandlerAction = bindFunction.includes("[data-action='copy-advertising-history-run']")
+  ? "[data-action='copy-advertising-history-run']"
+  : "[data-action='copy-advertising-history-new']";
+const historyCopyHandlerStart = bindFunction.indexOf(historyCopyHandlerAction);
+assert.ok(historyCopyHandlerStart >= 0, "Не найден обработчик копирования набора отдельного запроса.");
+const historyCopyBinding = bindFunction.slice(historyCopyHandlerStart, historyCopyHandlerStart + 500);
+assert.match(historyCopyBinding, /copyAdvertisingEmailHistoryRun\(button\.dataset\.runId\)/u);
+const historyCopyHandler = namedFunction(blocks, "copyAdvertisingEmailHistoryRun");
+assert.match(historyCopyHandler, /String\(runId/u);
+assert.match(
+  historyCopyHandler,
+  /\/api\/advertising\/email-collector\/history\?runId=\$\{encodeURIComponent\((?:normalizedRunId|runId)\)\}/u,
+  "Набор нужно загружать по идентификатору выбранного запуска."
+);
+assert.match(historyCopyHandler, /copyTextToClipboard/u);
+assert.match(historyCopyHandler, /\.join\(["']\\r\\n["']\)/u);
+assert.doesNotMatch(
+  historyCopyHandler,
+  /getAdvertisingFilteredRows|state\.advertising\.filters/u,
+  "Копирование исторического набора не должно зависеть от фильтров текущей таблицы."
+);
+
+const historyLoader = namedFunction(blocks, "loadAdvertisingEmailHistory");
+assert.match(historyLoader, /\/api\/advertising\/email-collector\/history/u);
+assert.match(historyLoader, /method:\s*["']GET["']/u);
+assert.match(historyLoader, /(?:advertising\.history|history)\.rows\s*=\s*Array\.isArray\(payload\.rows\)/u);
+assert.match(historyLoader, /(?:advertising\.history|history)\.loaded\s*=\s*true/u);
+assert.match(historyLoader, /(?:advertising\.history|history)\.loading\s*=\s*false/u);
 
 const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authSource)?.[1] || "";
 const indexBuild = /const build = "([^"]+)"/u.exec(indexSource)?.[1] || "";
