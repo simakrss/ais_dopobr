@@ -3,7 +3,8 @@ param(
   [ValidateSet("Run", "Validate")]
   [string]$Action = "Run",
   [switch]$SkipGit,
-  [switch]$SkipDeployment
+  [switch]$SkipDeployment,
+  [switch]$ForceDeployment
 )
 
 Set-StrictMode -Version Latest
@@ -18,6 +19,7 @@ $repositoryRoot = Split-Path -Parent $appRoot
 $deployScriptPath = Join-Path $PSScriptRoot "deploy-lms.ps1"
 $logRoot = Join-Path $appRoot ".runtime\logs"
 $logPath = Join-Path $logRoot "startup-update.log"
+$deploymentStatePath = Join-Path $appRoot ".runtime\startup-ftp-state.json"
 $script:gitPath = $null
 
 function Write-Update([string]$Message) {
@@ -135,6 +137,101 @@ function Save-UntrackedUpdateCollisions([string]$Upstream) {
   Write-Update "Пересекающиеся с обновлением новые файлы сохранены в $($stash.Text)."
 }
 
+function Get-DeployablePaths {
+  $output = @(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+    -File $deployScriptPath -ListDeployable 2>&1)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Не удалось проверить список публикации: $($output -join ' ')"
+  }
+  return @(
+    $output |
+      ForEach-Object { ([string]$_).Trim().Replace("\", "/") } |
+      Where-Object { $_ } |
+      Sort-Object -Unique
+  )
+}
+
+function Get-DeploymentSnapshot([string[]]$RelativePaths) {
+  $hashes = [ordered]@{}
+  foreach ($relativePath in @($RelativePaths | Sort-Object -Unique)) {
+    $localPath = Join-Path $appRoot ($relativePath.Replace("/", [IO.Path]::DirectorySeparatorChar))
+    if (-not (Test-Path -LiteralPath $localPath -PathType Leaf)) {
+      throw "Не найден локальный файл публикации: $relativePath"
+    }
+    $hashes[$relativePath] = (Get-FileHash -LiteralPath $localPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  }
+  return $hashes
+}
+
+function Read-DeploymentState {
+  if (-not (Test-Path -LiteralPath $deploymentStatePath -PathType Leaf)) { return $null }
+  try {
+    $state = Get-Content -LiteralPath $deploymentStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (
+      -not $state -or
+      -not $state.PSObject.Properties["schemaVersion"] -or
+      [int]$state.schemaVersion -ne 1 -or
+      -not $state.PSObject.Properties["files"] -or
+      -not $state.files
+    ) { return $null }
+    return $state
+  } catch {
+    Write-Update "Предыдущее состояние FTP не удалось прочитать; будет выполнена полная безопасная публикация."
+    return $null
+  }
+}
+
+function Get-PendingDeployment {
+  $paths = @(Get-DeployablePaths)
+  $hashes = Get-DeploymentSnapshot $paths
+  $state = Read-DeploymentState
+  $previousHashes = @{}
+  if ($state) {
+    foreach ($property in @($state.files.PSObject.Properties)) {
+      $previousHashes[[string]$property.Name] = ([string]$property.Value).ToLowerInvariant()
+    }
+  }
+  $changedFiles = @($paths | Where-Object {
+    $ForceDeployment `
+      -or -not $state `
+      -or -not $previousHashes.ContainsKey($_) `
+      -or $previousHashes[$_] -ne [string]$hashes[$_]
+  })
+  return [pscustomobject]@{
+    Paths = $paths
+    Hashes = $hashes
+    ChangedFiles = $changedFiles
+    PreviousStateFound = [bool]$state
+  }
+}
+
+function Save-DeploymentState([object]$Deployment) {
+  $directory = Split-Path -Parent $deploymentStatePath
+  if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+  }
+  $head = (Invoke-Git -Arguments @("rev-parse", "HEAD")).Text
+  $document = [ordered]@{
+    schemaVersion = 1
+    deployedAt = (Get-Date).ToUniversalTime().ToString("o")
+    gitRevision = $head
+    files = $Deployment.Hashes
+  }
+  $temporaryPath = "$deploymentStatePath.tmp-$([Guid]::NewGuid().ToString('N'))"
+  try {
+    [IO.File]::WriteAllText(
+      $temporaryPath,
+      (($document | ConvertTo-Json -Depth 6) + [Environment]::NewLine),
+      $utf8
+    )
+    Move-Item -LiteralPath $temporaryPath -Destination $deploymentStatePath -Force
+  } finally {
+    if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
+      Remove-Item -LiteralPath $temporaryPath -Force
+    }
+  }
+}
+
 function Test-RepositoryAndDeploymentConfiguration {
   if (-not (Test-Path -LiteralPath $deployScriptPath -PathType Leaf)) {
     throw "Не найден сценарий публикации: $deployScriptPath"
@@ -150,11 +247,7 @@ function Test-RepositoryAndDeploymentConfiguration {
   if ($LASTEXITCODE -ne 0) {
     throw "Проверка FTP-профиля завершилась ошибкой: $($profileOutput -join ' ')"
   }
-  $deployable = @(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File $deployScriptPath -ListDeployable 2>&1)
-  if ($LASTEXITCODE -ne 0) {
-    throw "Не удалось проверить список публикации: $($deployable -join ' ')"
-  }
+  $deployable = @(Get-DeployablePaths)
   if ($deployable -contains "storage/document-templates/employee-contract-education.docx" -or
       $deployable -contains "storage/document-templates/employee-contract-general.docx") {
     throw "Приватные шаблоны с печатями обнаружены в списке публикации."
@@ -206,10 +299,20 @@ if (-not $SkipGit) {
 }
 
 if (-not $SkipDeployment) {
-  Write-Update "Публикация безопасного набора файлов на edu-plus.ru/lms..."
-  & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $deployScriptPath -All
-  if ($LASTEXITCODE -ne 0) { throw "FTP-публикация завершилась с кодом $LASTEXITCODE." }
-  Write-Update "FTP-публикация и проверка размеров файлов завершены."
+  $deployment = Get-PendingDeployment
+  if ($deployment.ChangedFiles.Count) {
+    $scope = if ($deployment.PreviousStateFound -and -not $ForceDeployment) {
+      "$($deployment.ChangedFiles.Count) изменённых из $($deployment.Paths.Count)"
+    } else {
+      "все $($deployment.ChangedFiles.Count)"
+    }
+    Write-Update "FTP-публикация: выбраны $scope файлов."
+    & $deployScriptPath -RelativePath @($deployment.ChangedFiles)
+    Write-Update "FTP-публикация изменённых файлов и проверка размеров завершены."
+  } else {
+    Write-Update "Файлы сайта не изменились; FTP-публикация не требуется и пропущена."
+  }
+  Save-DeploymentState $deployment
 } else {
   Write-Update "FTP-публикация пропущена параметром -SkipDeployment."
 }

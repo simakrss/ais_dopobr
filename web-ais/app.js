@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.336",
+    version: "1.7.337",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.337",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Повторный запуск АИС сравнивает SHA-256 локальных файлов с последней успешной публикацией и отправляет по FTP только изменившиеся файлы.",
+        "После готовности локальных серверов запуск через BAT или CMD автоматически открывает АИС по адресу 127.0.0.1:8081."
+      ]
+    },
     {
       version: "1.7.336",
       releasedAt: "2026-08-28",

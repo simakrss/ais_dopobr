@@ -45,7 +45,12 @@ assert.match(bootstrapSource, /stop-lan-system\.ps1[\s\S]*?-KeepDocker/u);
 assert.match(startupUpdateSource, /fetch", "--prune", "origin"/u);
 assert.match(startupUpdateSource, /merge", "--ff-only"/u);
 assert.match(startupUpdateSource, /stash", "push"/u);
-assert.match(startupUpdateSource, /deploy-lms\.ps1[\s\S]*?-All/u);
+assert.match(startupUpdateSource, /startup-ftp-state\.json/u);
+assert.match(startupUpdateSource, /Get-DeploymentSnapshot[\s\S]*?Get-FileHash[\s\S]*?SHA256/u);
+assert.match(startupUpdateSource, /ChangedFiles\.Count/u);
+assert.match(startupUpdateSource, /Файлы сайта не изменились; FTP-публикация не требуется и пропущена/u);
+assert.match(startupUpdateSource, /& \$deployScriptPath -RelativePath @\(\$deployment\.ChangedFiles\)/u);
+assert.doesNotMatch(startupUpdateSource, /& powershell\.exe[^\r\n]*\$deployScriptPath -All/u);
 assert.match(startupUpdateSource, /Автоматическая отправка в GitHub отключена/u);
 assert.match(startupUpdateSource, /\$previousErrorActionPreference = \$ErrorActionPreference/u);
 assert.match(startupUpdateSource, /\$_ -is \[Management\.Automation\.ErrorRecord\]/u);
@@ -72,12 +77,27 @@ assert.match(generatedSafePaths[1], /employee-contract-education-no-stamp\.docx/
 assert.match(generatedSafePaths[1], /employee-contract-general-no-stamp\.docx/u);
 assert.match(rootLauncherSource, /bootstrap-local-system\.ps1/u);
 assert.match(localLauncherSource, /bootstrap-local-system\.ps1/u);
+assert.match(rootLauncherSource, /--open-browser/u);
+assert.match(localLauncherSource, /--open-browser/u);
 assert.doesNotMatch(rootLauncherSource, /Установите Node\.js/u);
 assert.doesNotMatch(localLauncherSource, /Установите Node\.js/u);
 assert.match(rootStopSource, /stop-lan-system\.ps1/u);
 assert.match(localStopSource, /stop-lan-system\.ps1/u);
 assert.match(startSource, /port:\s*19081/u);
 assert.match(startSource, /AIS_APP_SERVER_ORIGIN:\s*"http:\/\/127\.0\.0\.1:19081"/u);
+assert.match(startSource, /localBrowserUrl = "http:\/\/127\.0\.0\.1:8081\/"/u);
+assert.match(startSource, /openBrowser = argumentsLower\.has\("--open-browser"\)/u);
+assert.match(startSource, /spawn\([\s\S]*?"cmd\.exe"[\s\S]*?localBrowserUrl/u);
+assert.match(
+  startSource,
+  /existingSystemRuntimeMatches[\s\S]*?printExistingSystemStatus\(previousStatus\);\s*openLocalBrowser\(\);\s*return;/u
+);
+const readyMessageIndex = startSource.indexOf('console.log("\\n[AIS] System is ready")');
+const readyBrowserIndex = startSource.indexOf("openLocalBrowser();", readyMessageIndex);
+const runOnceIndex = startSource.indexOf("if (runOnce)", readyMessageIndex);
+assert.ok(readyMessageIndex >= 0, "System-ready marker was not found");
+assert.ok(readyBrowserIndex > readyMessageIndex, "Browser must open only after AIS is ready");
+assert.ok(runOnceIndex > readyBrowserIndex, "Browser opening must happen before the supervisor loop");
 assert.match(startSource, /AIS_DOCKER_PATH/u);
 assert.match(startSource, /isAisServiceHealthy/u);
 assert.match(startSource, /runtimeRoot[\s\S]*?\.runtime/u);

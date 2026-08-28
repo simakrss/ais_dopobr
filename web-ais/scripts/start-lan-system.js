@@ -44,6 +44,8 @@ const composePath = path.join(appRoot, "docker-compose.onlyoffice.yml");
 const argumentsLower = new Set(process.argv.slice(2).map((value) => value.toLowerCase()));
 const skipDocker = argumentsLower.has("--skip-docker") || argumentsLower.has("-skipdocker");
 const runOnce = argumentsLower.has("--once");
+const openBrowser = argumentsLower.has("--open-browser");
+const localBrowserUrl = "http://127.0.0.1:8081/";
 const managedChildren = new Map();
 let shuttingDown = false;
 let monitorBusy = false;
@@ -125,9 +127,31 @@ function readOfflineStateStatus() {
 function printExistingSystemStatus(status) {
   console.log("\n[AIS] Система уже запущена");
   console.log(`Процесс запуска: ${status.launcherPid}`);
-  console.log(`Этот компьютер: ${status.localUrl || "http://localhost:8081/"}`);
+  console.log(`Этот компьютер: ${status.localUrl || localBrowserUrl}`);
   for (const url of status.lanUrls || []) console.log(`Локальная сеть: ${url}`);
   console.log("Для перезапуска сначала используйте файл «ОСТАНОВИТЬ АИС.cmd».");
+}
+
+function openLocalBrowser() {
+  if (!openBrowser) return;
+  if (process.platform !== "win32") {
+    console.warn(`Автоматическое открытие браузера недоступно; откройте ${localBrowserUrl}`);
+    return;
+  }
+  try {
+    const browserLauncher = spawn(
+      "cmd.exe",
+      ["/d", "/c", "start", "", localBrowserUrl],
+      { cwd: appRoot, detached: true, stdio: "ignore", windowsHide: true },
+    );
+    browserLauncher.once("error", (error) => {
+      console.warn(`Не удалось автоматически открыть браузер: ${error.message}`);
+    });
+    browserLauncher.unref();
+    console.log(`Открывается локальная АИС: ${localBrowserUrl}`);
+  } catch (error) {
+    console.warn(`Не удалось автоматически открыть браузер: ${error.message}`);
+  }
 }
 
 function getOnlyOfficeSecret() {
@@ -575,6 +599,7 @@ async function main() {
   if (previousStatus && processExists(Number(previousStatus.launcherPid))) {
     if (await existingSystemRuntimeMatches(previousStatus, commonEnvironment)) {
       printExistingSystemStatus(previousStatus);
+      openLocalBrowser();
       return;
     }
     const previousLauncherPid = Number(previousStatus.launcherPid);
@@ -593,7 +618,7 @@ async function main() {
     launcherPid: process.pid,
     appServerPid: 0,
     localServerPid: 0,
-    localUrl: "http://localhost:8081/",
+    localUrl: localBrowserUrl,
     lanUrls: lanUrls(),
     internetUrl: "https://edu-plus.ru/lms/",
     documentServices: "unknown",
@@ -614,7 +639,7 @@ async function main() {
   writeStatus(status);
 
   console.log("\n[AIS] System is ready");
-  console.log("This computer: http://localhost:8081/");
+  console.log(`This computer: ${localBrowserUrl}`);
   for (const url of status.lanUrls) console.log(`Local network: ${url}`);
   console.log("Internet version: https://edu-plus.ru/lms/");
   console.log(`Logs: ${logRoot}`);
@@ -634,6 +659,7 @@ async function main() {
     console.log("Automatic publication task is not configured on this computer.");
   }
   console.log("Keep this window open; it is the transparent AIS server supervisor.");
+  openLocalBrowser();
 
   if (runOnce) {
     console.log("One-time startup check completed.");

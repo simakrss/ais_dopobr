@@ -9,10 +9,10 @@ if not exist ".\scripts\bootstrap-local-system.ps1" goto :bootstrap_error
 
 :run
 if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" (
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\bootstrap-local-system.ps1" -Action Validate -LauncherArguments "%*"
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\bootstrap-local-system.ps1" -Action Validate -LauncherArguments "--open-browser %*"
 ) else (
   call :log Проверка и установка необходимых компонентов.
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\bootstrap-local-system.ps1" -Action Start -LauncherArguments "%*"
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\bootstrap-local-system.ps1" -Action Start -LauncherArguments "--open-browser %*"
 )
 set "AIS_EXIT_CODE=%ERRORLEVEL%"
 if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" (
