@@ -15553,6 +15553,12 @@ function isStudentDatabaseFixedValueOverrideField(definitionKey, fieldName) {
   return true;
 }
 
+function isStudentDatabasePersistableFixedValueOverrideField(definitionKey, fieldName) {
+  if (!isStudentDatabaseFixedValueOverrideField(definitionKey, fieldName)) return false;
+  return definitionKey !== "students"
+    || STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS.has(fieldName);
+}
+
 function materializeStudentDatabaseSelectedFormulaValue(
   targetRecord,
   selectedRecord,
@@ -15561,7 +15567,7 @@ function materializeStudentDatabaseSelectedFormulaValue(
 ) {
   if (
     !isStudentDatabasePotentialFormulaValueField(definitionKey, fieldName)
-    || !isStudentDatabaseFixedValueOverrideField(definitionKey, fieldName)
+    || !isStudentDatabasePersistableFixedValueOverrideField(definitionKey, fieldName)
     || !isStudentDatabaseRecordFormulaBacked(selectedRecord, fieldName)
   ) return false;
   setStudentDatabaseFixedValueOverride(targetRecord, fieldName, true);
@@ -15578,7 +15584,7 @@ function materializeStudentDatabaseSelectedFormulaValue(
 function markStudentDatabaseRecordFixedValueOverrides(record, definition) {
   if (!record || !definition) return;
   (definition.fields || []).forEach((fieldName) => {
-    if (!isStudentDatabaseFixedValueOverrideField(definition.key, fieldName)) return;
+    if (!isStudentDatabasePersistableFixedValueOverrideField(definition.key, fieldName)) return;
     const value = definition.normalize(record, fieldName);
     const normalized = normalizeStudentDatabaseChangeComparableValue(value);
     const hasExplicitValue = normalized !== ""
@@ -16270,7 +16276,10 @@ function resolveStudentDatabaseCompleteReconciliation({
             serializeStudentDatabaseChangeValue(selectedValue)
             === serializeStudentDatabaseChangeValue(alternateValue)
           ) return;
-          if (choice === "web") {
+          if (
+            choice === "web"
+            && isStudentDatabasePersistableFixedValueOverrideField(definition.key, fieldName)
+          ) {
             setStudentDatabaseFixedValueOverride(selectedRecord, fieldName, true);
           }
           selections.push(buildVerificationSelection({
@@ -16688,7 +16697,9 @@ function resolveStudentDatabaseCompleteReconciliation({
           stats.excelToWeb += 1;
           if (definition.key === "students") changedWebIds.add(String(webRecord?.id || recordId).trim());
         } else {
-          setStudentDatabaseFixedValueOverride(mergedRecord, fieldName, true);
+          if (isStudentDatabasePersistableFixedValueOverrideField(definition.key, fieldName)) {
+            setStudentDatabaseFixedValueOverride(mergedRecord, fieldName, true);
+          }
           stats.webToExcel += 1;
         }
         stats.conflictsResolved += 1;
@@ -24670,6 +24681,14 @@ function materializeStudentDatabaseReconciledCollections(
     students: materialize(
       (Array.isArray(collections.students) ? collections.students : []).map((student) => {
         const { photoData, photoUrl, directExpenses, ...record } = student || {};
+        const fixedValueOverrides = sanitizeStudentDatabaseFixedValueOverrides(
+          record.databaseFixedValueOverrides
+        );
+        if (fixedValueOverrides.length) {
+          record.databaseFixedValueOverrides = fixedValueOverrides;
+        } else {
+          delete record.databaseFixedValueOverrides;
+        }
         return record;
       }),
       {

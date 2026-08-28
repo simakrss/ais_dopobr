@@ -77,7 +77,7 @@ function Get-RecordFixedValueOverrideFields {
   if ($null -eq $value) { return @() }
   return @($value | ForEach-Object {
     ([string]$_).Trim()
-  } | Where-Object { $_ })
+  } | Where-Object { $_ } | Select-Object -Unique)
 }
 
 function Test-RecordFixedValueOverride {
@@ -86,7 +86,7 @@ function Test-RecordFixedValueOverride {
     [string]$FieldName
   )
   if ($null -eq $Record -or [string]::IsNullOrWhiteSpace($FieldName)) { return $false }
-  if ($FieldName -in @("agentAmount", "balance", "paidAmount", "__eventSettings")) { return $false }
+  if ($FieldName -in @("agentAmount", "balance", "paidAmount", "additionalStatus", "__eventSettings")) { return $false }
   return [bool](@(Get-RecordFixedValueOverrideFields $Record) -contains $FieldName)
 }
 

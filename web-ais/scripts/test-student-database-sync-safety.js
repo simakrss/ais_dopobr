@@ -252,7 +252,12 @@ function testStudentContractAmountFixedValueOverride() {
       uid: "1166",
       name: "Добрышкина Екатерина Сергеевна",
       contractAmount: 2500,
-      databaseFixedValueOverrides: ["contractAmount", "balance", "contractAmount"]
+      databaseFixedValueOverrides: [
+        "contractAmount",
+        "balance",
+        "additionalStatus",
+        "contractAmount"
+      ]
     }],
     contracts: [],
     directExpenses: [],

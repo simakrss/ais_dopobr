@@ -436,6 +436,7 @@ webDataWithIndependentAddition.students.push({
   name: "Загодарчук Инна Владимировна",
   applicationDate: "2026-08-27",
   program: "Программа 4",
+  additionalStatus: "На зачисление (пока без документов)",
   endDate: "2031-12-31",
   note: "Новая заявка"
 });
@@ -537,6 +538,21 @@ const retainedWebOnlyStudent = allWebCompleteReconciliation.students.find((stude
 ));
 assert.ok(retainedWebOnlyStudent.databaseFixedValueOverrides.includes("endDate"));
 assert.ok(retainedWebOnlyStudent.databaseFixedValueOverrides.includes("note"));
+assert.equal(retainedWebOnlyStudent.additionalStatus, "На зачисление (пока без документов)");
+assert.equal(
+  retainedWebOnlyStudent.databaseFixedValueOverrides.includes("additionalStatus"),
+  false,
+  "Дополнительный статус задаёт раздел строки XLSB и не должен считаться фиксированной ячейкой"
+);
+assert.ok(
+  allWebCompleteReconciliation.verificationSelections.some((selection) => (
+    selection.definitionKey === "students"
+    && selection.recordId === "student-zagodarchuk-new"
+    && selection.fieldName === "additionalStatus"
+    && selection.expectedValue === "на зачисление (пока без документов)"
+  )),
+  "Выбранный дополнительный статус должен по-прежнему проверяться после записи XLSB"
+);
 assert.equal(
   validateStudentDatabaseReconciliationSelectionsAgainstOutput(
     allWebCompleteReconciliation.collections,
@@ -563,6 +579,18 @@ assert.throws(
   () => validateStudentDatabaseReconciliationSelectionsAgainstOutput(
     allWebCompleteReconciliation.collections,
     incorrectRetainedRecordOutput,
+    allWebCompleteReconciliation
+  ),
+  /изменилось при записи|записано не в выбранном варианте/iu
+);
+const incorrectAdditionalStatusOutput = clone(allWebCompleteReconciliation.collections);
+incorrectAdditionalStatusOutput.students.find((student) => (
+  student.id === "student-zagodarchuk-new"
+)).additionalStatus = "Обучающиеся";
+assert.throws(
+  () => validateStudentDatabaseReconciliationSelectionsAgainstOutput(
+    allWebCompleteReconciliation.collections,
+    incorrectAdditionalStatusOutput,
     allWebCompleteReconciliation
   ),
   /изменилось при записи|записано не в выбранном варианте/iu

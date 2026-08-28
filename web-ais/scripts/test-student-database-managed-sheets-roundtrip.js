@@ -260,6 +260,12 @@ try {
     programs,
     agentPaymentRates: imported.agentPaymentRates || {}
   });
+  const backstopTarget = payload.students.find((student) => student.id === fixedValueTarget.id);
+  backstopTarget.databaseFixedValueOverrides = [
+    ...(backstopTarget.databaseFixedValueOverrides || []),
+    "contractAmount",
+    "additionalStatus"
+  ];
   payload.programsReplaceAll = true;
   assert.equal(payload.inventoryRows.length, imported.inventoryUnitCount);
   fs.writeFileSync(payloadPath, JSON.stringify(payload), "utf8");
@@ -397,6 +403,11 @@ try {
     fs.readFileSync(outputPath),
     () => {},
     { syncMetadataRows }
+  );
+  assert.equal(
+    roundTrip.students.find((student) => student.id === fixedValueTarget.id)?.additionalStatus,
+    fixedValueTarget.additionalStatus,
+    "Служебный additionalStatus должен применяться размещением строки и не считаться фиксированной ячейкой."
   );
   const synchronizedChanges = buildStudentDatabaseSynchronizedChanges(imported, roundTrip);
   assert.ok(synchronizedChanges.totalCount > 0, "Протокол не нашёл изменения в сформированном XLSB.");

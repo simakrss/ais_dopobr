@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.335",
+    version: "1.7.336",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.336",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Исправлена синхронизация выбранных значений Web с XLSB: дополнительный статус слушателя больше не учитывается как отдельная ячейка листа «База».",
+        "Дополнительный статус по-прежнему сохраняется через раздел строки и проверяется после формирования файла; повторяющиеся фиксированные поля учитываются один раз."
+      ]
+    },
     {
       version: "1.7.335",
       releasedAt: "2026-08-28",
