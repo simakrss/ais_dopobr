@@ -371,7 +371,7 @@ const DEFAULT_ADVERTISING_EMAIL_SOURCES = Object.freeze([
     group: "SQL",
     kind: "sql",
     connection: "assistant",
-    sql: "SELECT DISTINCT email, org AS organization, location AS origin FROM wp_ass_reg WHERE email IS NOT NULL AND TRIM(email) <> ''",
+    sql: "SELECT DISTINCT email, org AS organization, location AS origin, date AS sourceReceivedAt FROM wp_ass_reg WHERE email IS NOT NULL AND TRIM(email) <> ''",
     enabled: true
   },
   {
@@ -380,7 +380,7 @@ const DEFAULT_ADVERTISING_EMAIL_SOURCES = Object.freeze([
     group: "SQL",
     kind: "sql",
     connection: "applications",
-    sql: "SELECT DISTINCT meta_value AS value FROM wp_dae_subscribermeta WHERE meta_value IS NOT NULL AND TRIM(meta_value) <> ''",
+    sql: "SELECT DISTINCT meta.meta_value AS value, subscriber.time AS sourceReceivedAt FROM wp_dae_subscribermeta AS meta LEFT JOIN wp_dae_subscribers AS subscriber ON subscriber.id = meta.subscriber_id WHERE meta.meta_value IS NOT NULL AND TRIM(meta.meta_value) <> ''",
     enabled: true
   },
   {
@@ -396,7 +396,7 @@ const DEFAULT_ADVERTISING_EMAIL_SOURCES = Object.freeze([
     group: "SQL",
     kind: "sql",
     connection: "applications",
-    sql: "SELECT DISTINCT email, TRIM(CONCAT(COALESCE(last_name, ''), ' ', COALESCE(first_name, ''))) AS name, city AS origin FROM wp_wc_customer_lookup WHERE email IS NOT NULL AND TRIM(email) <> ''",
+    sql: "SELECT DISTINCT email, TRIM(CONCAT(COALESCE(last_name, ''), ' ', COALESCE(first_name, ''))) AS name, city AS origin, date_registered AS sourceReceivedAt FROM wp_wc_customer_lookup WHERE email IS NOT NULL AND TRIM(email) <> ''",
     enabled: true
   },
   {
@@ -405,7 +405,7 @@ const DEFAULT_ADVERTISING_EMAIL_SOURCES = Object.freeze([
     group: "SQL",
     kind: "sql",
     connection: "abit",
-    sql: "SELECT DISTINCT email FROM wp_abit_reg WHERE email IS NOT NULL AND TRIM(email) <> ''",
+    sql: "SELECT DISTINCT email, date AS sourceReceivedAt FROM wp_abit_reg WHERE email IS NOT NULL AND TRIM(email) <> ''",
     enabled: true
   },
   {
@@ -414,7 +414,7 @@ const DEFAULT_ADVERTISING_EMAIL_SOURCES = Object.freeze([
     group: "SQL",
     kind: "sql",
     connection: "abit",
-    sql: "SELECT DISTINCT user_email AS email FROM wp_users WHERE user_email IS NOT NULL AND TRIM(user_email) <> ''",
+    sql: "SELECT DISTINCT user_email AS email, user_registered AS sourceReceivedAt FROM wp_users WHERE user_email IS NOT NULL AND TRIM(user_email) <> ''",
     enabled: true
   },
   {
@@ -444,7 +444,7 @@ const DEFAULT_ADVERTISING_EMAIL_SOURCES = Object.freeze([
     group: "SQL",
     kind: "sql",
     connection: "applications",
-    sql: "SELECT DISTINCT user_email AS email FROM wp_test_reg WHERE user_email IS NOT NULL AND TRIM(user_email) <> ''",
+    sql: "SELECT DISTINCT user_email AS email, date AS sourceReceivedAt FROM wp_test_reg WHERE user_email IS NOT NULL AND TRIM(user_email) <> ''",
     enabled: true
   },
   {
@@ -464,7 +464,7 @@ const DEFAULT_ADVERTISING_EMAIL_SOURCES = Object.freeze([
     group: "SQL",
     kind: "sql",
     connection: "moodle",
-    sql: "SELECT DISTINCT email, TRIM(CONCAT(COALESCE(lastname, ''), ' ', COALESCE(firstname, ''))) AS name FROM mdl_user WHERE email IS NOT NULL AND TRIM(email) <> '' AND email LIKE '%@%'",
+    sql: "SELECT DISTINCT email, TRIM(CONCAT(COALESCE(lastname, ''), ' ', COALESCE(firstname, ''))) AS name, timecreated AS sourceReceivedAt FROM mdl_user WHERE email IS NOT NULL AND TRIM(email) <> '' AND email LIKE '%@%'",
     enabled: true
   },
   {
@@ -7926,6 +7926,77 @@ function cleanAdvertisingContactText(value, maxLength = 320) {
     .slice(0, maxLength);
 }
 
+function advertisingSourceReceivedAtFromUtcParts(year, month, day, hour = 0, minute = 0, second = 0, millisecond = 0) {
+  const parts = [year, month, day, hour, minute, second, millisecond].map(Number);
+  if (parts.some((part) => !Number.isInteger(part))) return "";
+  const [normalizedYear, normalizedMonth, normalizedDay, normalizedHour, normalizedMinute, normalizedSecond, normalizedMillisecond] = parts;
+  if (normalizedYear < 1900 || normalizedYear > 3000) return "";
+  const date = new Date(Date.UTC(
+    normalizedYear,
+    normalizedMonth - 1,
+    normalizedDay,
+    normalizedHour,
+    normalizedMinute,
+    normalizedSecond,
+    normalizedMillisecond
+  ));
+  if (
+    date.getUTCFullYear() !== normalizedYear
+    || date.getUTCMonth() !== normalizedMonth - 1
+    || date.getUTCDate() !== normalizedDay
+    || date.getUTCHours() !== normalizedHour
+    || date.getUTCMinutes() !== normalizedMinute
+    || date.getUTCSeconds() !== normalizedSecond
+    || date.getUTCMilliseconds() !== normalizedMillisecond
+  ) return "";
+  return date.toISOString();
+}
+
+function normalizeAdvertisingSourceReceivedAt(value) {
+  if (value === null || value === undefined || value === "" || typeof value === "boolean") return "";
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : "";
+  if (typeof value === "number" || /^\d+(?:\.\d+)?$/u.test(String(value).trim())) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) return "";
+    let milliseconds = 0;
+    if (numeric >= 20000 && numeric < 100000) milliseconds = (numeric - 25569) * 86400000;
+    else if (numeric >= 1000000000 && numeric < 100000000000) milliseconds = numeric * 1000;
+    else if (numeric >= 100000000000) milliseconds = numeric;
+    if (!milliseconds) return "";
+    const date = new Date(milliseconds);
+    return Number.isFinite(date.getTime()) && date.getUTCFullYear() >= 1900 && date.getUTCFullYear() <= 3000
+      ? date.toISOString()
+      : "";
+  }
+  const source = String(value).normalize("NFKC").trim();
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,9}))?)?\s*(Z|[+-]\d{2}:?\d{2})?)?$/iu.exec(source);
+  if (isoMatch) {
+    const millisecond = Number(String(isoMatch[7] || "").slice(0, 3).padEnd(3, "0") || 0);
+    const plainIso = advertisingSourceReceivedAtFromUtcParts(
+      isoMatch[1], isoMatch[2], isoMatch[3], isoMatch[4] || 0, isoMatch[5] || 0, isoMatch[6] || 0, millisecond
+    );
+    if (!plainIso || !isoMatch[8] || /^Z$/iu.test(isoMatch[8])) return plainIso;
+    const timezone = isoMatch[8].replace(/^([+-]\d{2})(\d{2})$/u, "$1:$2");
+    const timestamp = Date.parse(`${plainIso.slice(0, -1)}${timezone}`);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+  }
+  const localMatch = /^(\d{1,2})[./](\d{1,2})[./](\d{2}|\d{4})(?:[\sT]+(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,9}))?)?)?$/u.exec(source);
+  if (!localMatch) return "";
+  let day = Number(localMatch[1]);
+  let month = Number(localMatch[2]);
+  if (day <= 12 && month > 12) [day, month] = [month, day];
+  const year = Number(localMatch[3]) + (localMatch[3].length === 2 ? 2000 : 0);
+  return advertisingSourceReceivedAtFromUtcParts(
+    year,
+    month,
+    day,
+    localMatch[4] || 0,
+    localMatch[5] || 0,
+    localMatch[6] || 0,
+    Number(String(localMatch[7] || "").slice(0, 3).padEnd(3, "0") || 0)
+  );
+}
+
 function extractAdvertisingEmails(value) {
   const source = String(value ?? "").normalize("NFKC");
   ADVERTISING_EMAIL_PATTERN.lastIndex = 0;
@@ -7945,6 +8016,17 @@ function normalizeAdvertisingWorkbookHeader(value) {
     .trim();
 }
 
+function findAdvertisingSourceReceivedAtColumn(headers) {
+  const candidates = [
+    "Дата добавления", "Дата получения", "Отметка времени", "Временная метка",
+    "Дата отправки", "Дата регистрации", "Дата нахождения", "Дата создания",
+    "Timestamp", "Submitted at", "Received at", "Created at", "Date added", "Found at"
+  ].map(normalizeAdvertisingWorkbookHeader);
+  return headers.findIndex((header) => candidates.some((candidate) => (
+    header === candidate || header.startsWith(`${candidate} `) || header.startsWith(`${candidate} (`)
+  )));
+}
+
 function parseAdvertisingCollectorWorkbook(bytes) {
   const workbook = XLSX.read(Buffer.from(bytes), { type: "buffer", cellDates: true });
   const getRows = (sheetName) => {
@@ -7956,11 +8038,13 @@ function parseAdvertisingCollectorWorkbook(bytes) {
   const contactHeaders = (contactRows[0] || []).map(normalizeAdvertisingWorkbookHeader);
   const contactColumn = (label) => contactHeaders.indexOf(normalizeAdvertisingWorkbookHeader(label));
   const emailColumn = contactColumn("Email");
+  const sourceReceivedAtColumn = findAdvertisingSourceReceivedAtColumn(contactHeaders);
   if (emailColumn < 0) throw new Error("На листе «База контактов» не найдена колонка Email.");
   const legacyContacts = contactRows.slice(1).flatMap((row) => {
     const emails = extractAdvertisingEmails(row[emailColumn]);
     return emails.map((email) => ({
       email,
+      sourceReceivedAt: normalizeAdvertisingSourceReceivedAt(row[sourceReceivedAtColumn]),
       name: cleanAdvertisingContactText(row[contactColumn("FIO")], 240),
       phone: cleanAdvertisingContactText(row[contactColumn("Phone")], 120),
       organization: cleanAdvertisingContactText(row[contactColumn("Organization")], 240),
@@ -8104,8 +8188,12 @@ function parseAdvertisingGoogleWorkbook(bytes, candidateColumns = []) {
   if (!Number.isInteger(columnIndex)) {
     throw new Error(`Не найдена колонка ${candidateColumns.join(" / ")}.`);
   }
+  const sourceReceivedAtColumn = findAdvertisingSourceReceivedAtColumn(headers);
   return rows.slice(1).flatMap((row) => (
-    extractAdvertisingEmails(row[columnIndex]).map((email) => ({ email }))
+    extractAdvertisingEmails(row[columnIndex]).map((email) => ({
+      email,
+      sourceReceivedAt: normalizeAdvertisingSourceReceivedAt(row[sourceReceivedAtColumn])
+    }))
   ));
 }
 
@@ -8150,7 +8238,10 @@ function normalizeAdvertisingEmailRecords(rows, mapper = null) {
       organization: cleanAdvertisingContactText(value.organization, 240),
       jobTitle: cleanAdvertisingContactText(value.jobTitle, 240),
       category: cleanAdvertisingContactText(value.category, 160),
-      origin: cleanAdvertisingContactText(value.origin, 240)
+      origin: cleanAdvertisingContactText(value.origin, 240),
+      sourceReceivedAt: normalizeAdvertisingSourceReceivedAt(
+        value.sourceReceivedAt ?? value.source_received_at
+      )
     }));
   });
 }
@@ -8177,7 +8268,8 @@ async function readAdvertisingAisContacts() {
       organization: student.workPlace,
       jobTitle: student.position,
       category: "Слушатели Цифровизации+",
-      origin: student.source
+      origin: student.source,
+      sourceReceivedAt: normalizeAdvertisingSourceReceivedAt(student.applicationDate)
     }))),
     ...contracts.flatMap((contract) => extractAdvertisingEmails(contract.email).map((email) => ({
       email,
@@ -8186,7 +8278,8 @@ async function readAdvertisingAisContacts() {
       organization: contract.organization || "",
       jobTitle: contract.position || "",
       category: "Договоры и партнёры",
-      origin: contract.section || contract.type
+      origin: contract.section || contract.type,
+      sourceReceivedAt: normalizeAdvertisingSourceReceivedAt(contract.contractDate)
     })))
   ];
 }
@@ -8316,6 +8409,7 @@ function aggregateAdvertisingEmailResults(sourceResults, exclusions = []) {
             jobTitle: "",
             category: "",
             origin: "",
+            sourceReceivedAt: "",
             sources: []
           };
           contacts.set(email, contact);
@@ -8323,6 +8417,10 @@ function aggregateAdvertisingEmailResults(sourceResults, exclusions = []) {
         for (const key of metadataKeys) {
           const candidate = cleanAdvertisingContactText(record?.[key], key === "phone" ? 120 : 240);
           if (candidate && (!contact[key] || candidate.length > contact[key].length)) contact[key] = candidate;
+        }
+        const sourceReceivedAt = normalizeAdvertisingSourceReceivedAt(record?.sourceReceivedAt);
+        if (sourceReceivedAt && (!contact.sourceReceivedAt || sourceReceivedAt < contact.sourceReceivedAt)) {
+          contact.sourceReceivedAt = sourceReceivedAt;
         }
         if (!contact.sources.some((item) => item.id === source.id)) {
           contact.sources.push({ id: source.id, label: source.label });
@@ -8412,6 +8510,7 @@ function normalizeAdvertisingEmailHistoryRows(value) {
       jobTitle: cleanAdvertisingContactText(item?.jobTitle, 240),
       category: cleanAdvertisingContactText(item?.category, 160),
       origin: cleanAdvertisingContactText(item?.origin, 240),
+      sourceReceivedAt: normalizeAdvertisingSourceReceivedAt(item?.sourceReceivedAt),
       sources: sources.sort((left, right) => left.label.localeCompare(right.label, "ru")),
       excluded: Boolean(item?.excluded),
       exclusionReason: cleanAdvertisingContactText(item?.exclusionReason, 500)
@@ -8686,10 +8785,13 @@ async function readAdvertisingEmailHistoryRunContacts(connection, runId) {
   let cursor = "";
   while (true) {
     const [rows] = await connection.query(
-      `SELECT email_key, is_new, data_json
-         FROM ais_advertising_email_history_run_contacts
-        WHERE run_id = ? AND email_key > ?
-        ORDER BY email_key
+      `SELECT run_contact.email_key, run_contact.is_new, run_contact.data_json,
+              contact.first_seen_at
+         FROM ais_advertising_email_history_run_contacts AS run_contact
+         LEFT JOIN ais_advertising_email_history_contacts AS contact
+           ON contact.email_key = run_contact.email_key
+        WHERE run_contact.run_id = ? AND run_contact.email_key > ?
+        ORDER BY run_contact.email_key
         LIMIT ${ADVERTISING_EMAIL_HISTORY_READ_PAGE_SIZE}`,
       [normalizedRunId, cursor]
     );
@@ -8697,7 +8799,14 @@ async function readAdvertisingEmailHistoryRunContacts(connection, runId) {
     for (const row of rows) {
       const contact = advertisingEmailHistoryJson(row.data_json, null);
       if (contact && typeof contact === "object") {
-        contacts.push({ ...contact, isNew: Number(row.is_new) === 1 });
+        contacts.push({
+          ...contact,
+          firstSeenAt: advertisingEmailHistoryIsoDate(
+            row.first_seen_at,
+            advertisingEmailHistoryIsoDate(contact.firstSeenAt)
+          ),
+          isNew: Number(row.is_new) === 1
+        });
       }
     }
     cursor = String(rows[rows.length - 1]?.email_key || "");
@@ -8919,6 +9028,7 @@ async function persistAdvertisingEmailHistoryResult(result, authUser = null) {
     );
     await insertAdvertisingEmailHistoryContacts(connection, payload, runId, payload.refreshedAt);
     await insertAdvertisingEmailHistoryRunContacts(connection, payload, runId, payload.refreshedAt);
+    payload.rows = await readAdvertisingEmailHistoryRunContacts(connection, runId);
     await connection.query(
       `UPDATE ais_advertising_email_history_state
           SET last_run_id = ?, run_sequence = ?, updated_at = UTC_TIMESTAMP(3)
@@ -34168,7 +34278,10 @@ module.exports = {
   normalizeAssistantStatisticsRows,
   readAssistantStatistics,
   extractAdvertisingEmails,
+  normalizeAdvertisingSourceReceivedAt,
   parseAdvertisingCollectorWorkbook,
+  parseAdvertisingGoogleWorkbook,
+  normalizeAdvertisingEmailRecords,
   aggregateAdvertisingEmailResults,
   normalizeAdvertisingEmailSources,
   normalizeAdvertisingEmailExclusions,

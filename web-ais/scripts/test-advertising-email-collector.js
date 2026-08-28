@@ -4,11 +4,15 @@ const path = require("node:path");
 
 const {
   extractAdvertisingEmails,
+  normalizeAdvertisingSourceReceivedAt,
   parseAdvertisingCollectorWorkbook,
+  parseAdvertisingGoogleWorkbook,
+  normalizeAdvertisingEmailRecords,
   aggregateAdvertisingEmailResults,
   normalizeAdvertisingEmailSources,
   normalizeAdvertisingEmailExclusions,
-  mergeAdvertisingEmailExclusions
+  mergeAdvertisingEmailExclusions,
+  normalizeAdvertisingEmailHistoryRows
 } = require("../app-server.js");
 
 const root = path.resolve(__dirname, "..");
@@ -19,18 +23,73 @@ const serverCliSource = fs.readFileSync(path.join(root, "server-cli.js"), "utf8"
 const stylesSource = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 const indexSource = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const workbookPath = "Y:\\Реклама\\Базы рассылок\\База рассылок.xlsb";
+const XLSX = require(path.join(root, "vendor", "sheetjs", "xlsx.full.min.js"));
 
 assert.deepEqual(
   extractAdvertisingEmails("Первый USER@Example.ru; повтор user@example.ru и second.person+tag@mail.org"),
   ["user@example.ru", "second.person+tag@mail.org"]
 );
 
+assert.equal(
+  normalizeAdvertisingSourceReceivedAt(new Date("2024-05-16T09:30:00.000Z")),
+  "2024-05-16T09:30:00.000Z"
+);
+assert.equal(normalizeAdvertisingSourceReceivedAt("2024-05-16 09:30:00"), "2024-05-16T09:30:00.000Z");
+assert.equal(normalizeAdvertisingSourceReceivedAt("16.05.2024 09:30:00"), "2024-05-16T09:30:00.000Z");
+assert.equal(normalizeAdvertisingSourceReceivedAt("2024-01-02T12:00:00+03:00"), "2024-01-02T09:00:00.000Z");
+assert.equal(normalizeAdvertisingSourceReceivedAt(Date.UTC(2024, 0, 2, 9) / 1000), "2024-01-02T09:00:00.000Z");
+assert.equal(normalizeAdvertisingSourceReceivedAt("не дата"), "");
+
+const collectorFixture = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(collectorFixture, XLSX.utils.aoa_to_sheet([
+  ["FIO", "Дата добавления", "Email"],
+  ["Иван", "16.05.2024 09:30:00", "ONE@example.ru; two@example.ru"],
+  ["Без даты", "", "old@example.ru"]
+]), "База контактов");
+XLSX.utils.book_append_sheet(collectorFixture, XLSX.utils.aoa_to_sheet([
+  [], [], [], ["", "", "", "", "", "", "", "", "", "", "google@example.ru"]
+]), "Выгрузка Email");
+XLSX.utils.book_append_sheet(collectorFixture, XLSX.utils.aoa_to_sheet([
+  ["Email", "Примечание"]
+]), "База исключений");
+const parsedFixture = parseAdvertisingCollectorWorkbook(XLSX.write(collectorFixture, {
+  type: "buffer",
+  bookType: "xlsb"
+}));
+assert.equal(
+  parsedFixture.legacyContacts.find((row) => row.email === "one@example.ru").sourceReceivedAt,
+  "2024-05-16T09:30:00.000Z"
+);
+assert.equal(
+  parsedFixture.legacyContacts.find((row) => row.email === "two@example.ru").sourceReceivedAt,
+  "2024-05-16T09:30:00.000Z"
+);
+assert.equal(parsedFixture.legacyContacts.find((row) => row.email === "old@example.ru").sourceReceivedAt, "");
+
+const googleFixture = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(googleFixture, XLSX.utils.aoa_to_sheet([
+  ["Отметка времени", "Адрес электронной почты"],
+  ["02.01.2024 12:30:00", "FORM@example.ru"]
+]), "Ответы на форму (1)");
+const googleRows = parseAdvertisingGoogleWorkbook(
+  XLSX.write(googleFixture, { type: "buffer", bookType: "xlsx" }),
+  ["Адрес электронной почты"]
+);
+assert.equal(googleRows[0].sourceReceivedAt, "2024-01-02T12:30:00.000Z");
+
+const sqlRows = normalizeAdvertisingEmailRecords([
+  { email: "sql@example.ru", sourceReceivedAt: "2024-03-01 10:20:30" },
+  { email: "legacy@example.ru", sourceReceivedAt: "некорректно" }
+]);
+assert.equal(sqlRows[0].sourceReceivedAt, "2024-03-01T10:20:30.000Z");
+assert.equal(sqlRows[1].sourceReceivedAt, "");
+
 const aggregated = aggregateAdvertisingEmailResults([
   {
     id: "one",
     label: "Источник 1",
     records: [
-      { email: "first@example.ru", name: "Первый" },
+      { email: "first@example.ru", name: "Первый", sourceReceivedAt: "2025-04-20T10:00:00Z" },
       { email: "repeat@example.org", organization: "Организация" }
     ]
   },
@@ -38,7 +97,7 @@ const aggregated = aggregateAdvertisingEmailResults([
     id: "two",
     label: "Источник 2",
     records: [
-      { email: "FIRST@example.ru", phone: "+7 900 000-00-00" },
+      { email: "FIRST@example.ru", phone: "+7 900 000-00-00", sourceReceivedAt: "2024-01-02T12:00:00+03:00" },
       { email: "blocked@deny.ru" }
     ]
   }
@@ -53,7 +112,22 @@ assert.equal(aggregated.summary.duplicates, 1);
 assert.equal(aggregated.summary.excluded, 2);
 assert.equal(aggregated.summary.ready, 1);
 assert.equal(aggregated.rows.find((row) => row.email === "first@example.ru").sources.length, 2);
+assert.equal(
+  aggregated.rows.find((row) => row.email === "first@example.ru").sourceReceivedAt,
+  "2024-01-02T09:00:00.000Z"
+);
 assert.equal(aggregated.rows.find((row) => row.email === "blocked@deny.ru").excluded, true);
+assert.equal(aggregated.rows.find((row) => row.email === "repeat@example.org").sourceReceivedAt, "");
+
+const historyRows = normalizeAdvertisingEmailHistoryRows([
+  { email: "old-snapshot@example.ru", firstSeenAt: "2026-08-27T12:00:00Z" },
+  { email: "dated-snapshot@example.ru", sourceReceivedAt: "2024-05-16T09:30:00Z" }
+]);
+assert.equal(historyRows.find((row) => row.email === "old-snapshot@example.ru").sourceReceivedAt, "");
+assert.equal(
+  historyRows.find((row) => row.email === "dated-snapshot@example.ru").sourceReceivedAt,
+  "2024-05-16T09:30:00.000Z"
+);
 
 const customSources = normalizeAdvertisingEmailSources([
   {
@@ -117,6 +191,7 @@ if (fs.existsSync(workbookPath)) {
   assert.ok(parsed.sheets.includes("База контактов"));
   assert.ok(parsed.sheets.includes("База исключений"));
   assert.ok(parsed.legacyContacts.length > 1000, "Историческая база контактов должна быть прочитана");
+  assert.ok(parsed.legacyContacts.some((row) => row.sourceReceivedAt), "Дата добавления должна быть прочитана");
   assert.ok(parsed.exclusions.length > 100, "Правила исключений должны быть прочитаны");
 }
 
@@ -134,6 +209,9 @@ assert.doesNotMatch(appSource, /class="text-button" data-action="(?:select-all|c
 assert.match(serverSource, /\/api\/advertising\/email-collector\/collect/u);
 assert.match(serverSource, /\/api\/advertising\/email-collector\/settings/u);
 assert.match(serverSource, /DEFAULT_ADVERTISING_EMAIL_SOURCES/u);
+assert.ok((serverSource.match(/AS sourceReceivedAt/gu) || []).length >= 7);
+assert.match(serverSource, /student\.applicationDate/u);
+assert.match(serverSource, /contract\.contractDate/u);
 assert.match(serverSource, /normalizeAdvertisingEmailSources/u);
 assert.match(serverSource, /\/api\/advertising\/email-collector\/exclusions/u);
 assert.match(serverSource, /\/api\/advertising\/email-collector\/sync/u);

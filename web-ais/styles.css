@@ -25277,6 +25277,31 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   gap: 3px;
 }
 
+.advertising-history-source-details {
+  min-width: 170px;
+  max-width: 300px;
+}
+
+.advertising-history-source-details > summary {
+  cursor: pointer;
+  color: #35655b;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.advertising-history-source-details.has-errors > summary {
+  color: #a6322b;
+}
+
+.advertising-history-source-details[open] > summary {
+  margin-bottom: 5px;
+}
+
+.advertising-history-source-details .advertising-history-sources {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .advertising-history-sources span {
   max-width: 100%;
   overflow: hidden;
@@ -25385,15 +25410,16 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 
 .advertising-email-table {
   width: 100%;
-  min-width: 860px;
+  min-width: 940px;
   table-layout: fixed;
 }
 
-.advertising-email-table th:nth-child(1) { width: 22%; }
-.advertising-email-table th:nth-child(2) { width: 19%; }
-.advertising-email-table th:nth-child(3) { width: 19%; }
-.advertising-email-table th:nth-child(4) { width: 25%; }
-.advertising-email-table th:nth-child(5) { width: 15%; }
+.advertising-email-table th:nth-child(1) { width: 19%; }
+.advertising-email-table th:nth-child(2) { width: 17%; }
+.advertising-email-table th:nth-child(3) { width: 16%; }
+.advertising-email-table th:nth-child(4) { width: 22%; }
+.advertising-email-table th:nth-child(5) { width: 12%; }
+.advertising-email-table th:nth-child(6) { width: 14%; }
 
 .advertising-email-table th,
 .advertising-email-table td {
@@ -25426,6 +25452,16 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   margin-top: 3px;
   color: var(--muted);
   font-size: 10px;
+}
+
+.advertising-email-received {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.advertising-email-received time {
+  display: block;
+  font-weight: 700;
 }
 
 .advertising-email-table tr.is-excluded td {
@@ -25896,6 +25932,11 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   }
 
   .advertising-history-sources {
+    min-width: 150px;
+    max-width: 220px;
+  }
+
+  .advertising-history-source-details {
     min-width: 150px;
     max-width: 220px;
   }

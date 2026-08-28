@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.339",
+    version: "1.7.340",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.340",
+      releasedAt: "2026-08-28",
+      changes: [
+        "В списке собранных Email теперь показывается дата получения из XLSB, формы, SQL или АИС; для старой истории используется дата первого обнаружения сборщиком. Дата также добавлена в поиск и экспорт CSV.",
+        "Источники каждого сохранённого запроса рекламы по умолчанию свёрнуты и раскрываются по нажатию."
+      ]
+    },
     {
       version: "1.7.339",
       releasedAt: "2026-08-28",
@@ -4817,6 +4825,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { key: "name", label: "ФИО / контакт" },
     { key: "organization", label: "Организация" },
     { key: "sources", label: "Источники" },
+    { key: "sourceReceivedAt", label: "Дата получения" },
     { key: "status", label: "Статус" }
   ]);
 
@@ -12723,6 +12732,17 @@ MAX - https://bizvmax.ru/zifra_plus
     return `${minutes} мин. ${String(seconds).padStart(2, "0")} сек.`;
   }
 
+  function formatAdvertisingEmailReceivedDate(value) {
+    const date = new Date(value);
+    return Number.isFinite(date.getTime())
+      ? date.toLocaleDateString("ru-RU", { timeZone: "UTC" })
+      : "";
+  }
+
+  function getAdvertisingEmailReceivedAt(row) {
+    return String(row?.sourceReceivedAt || row?.firstSeenAt || "");
+  }
+
   function getAdvertisingSourceLabel(sourceId) {
     return getAdvertisingEmailSources({ includeDisabled: true })
       .find((source) => source.id === sourceId)?.label || sourceId || "Источник";
@@ -12752,6 +12772,10 @@ MAX - https://bizvmax.ru/zifra_plus
         row.jobTitle,
         row.category,
         row.origin,
+        row.sourceReceivedAt,
+        formatAdvertisingEmailReceivedDate(row.sourceReceivedAt),
+        row.firstSeenAt,
+        formatAdvertisingEmailReceivedDate(row.firstSeenAt),
         row.exclusionReason,
         ...(row.sources || []).map((source) => source.label)
       ].join(" ").toLocaleLowerCase("ru-RU");
@@ -12763,6 +12787,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return filtered.sort((left, right) => {
       const value = (row) => {
         if (sort.key === "sources") return (row.sources || []).map((source) => source.label).join(", ");
+        if (sort.key === "sourceReceivedAt") return getAdvertisingEmailReceivedAt(row);
         if (sort.key === "status") return `${row.isNew ? "0" : "1"}-${row.excluded ? "Исключён" : "Готов"}`;
         return row[sort.key] || "";
       };
@@ -12999,6 +13024,7 @@ MAX - https://bizvmax.ru/zifra_plus
                       const userLogin = user.name && user.login ? user.login : "";
                       const newReady = Math.max(0, Number(summary.newReady) || 0);
                       const newUnique = Math.max(0, Number(summary.newUnique) || 0);
+                      const failedSources = sources.filter((source) => source?.status === "error").length;
                       const isCopying = history.copyingRunId === row.runId;
                       const copyDisabled = Boolean(history.copyingRunId) || !newReady;
                       return `
@@ -13009,9 +13035,14 @@ MAX - https://bizvmax.ru/zifra_plus
                             <small>${escapeHtml(userLabel)}${userLogin ? ` · ${escapeHtml(userLogin)}` : ""}</small>
                           </td>
                           <td>
-                            <div class="advertising-history-sources">
-                              ${sources.map((source) => `<span class="${source?.status === "error" ? "is-error" : ""}" title="${escapeAttr(source?.error || source?.label || "Источник")}">${escapeHtml(source?.label || source?.id || "Источник")}${Number.isFinite(Number(source?.count)) ? ` · ${formatStatisticsInteger(source.count)}` : ""}</span>`).join("") || "—"}
-                            </div>
+                            ${sources.length ? `
+                              <details class="advertising-history-source-details ${failedSources ? "has-errors" : ""}">
+                                <summary>Источники · ${formatStatisticsInteger(sources.length)}${failedSources ? ` · ошибок ${formatStatisticsInteger(failedSources)}` : ""}</summary>
+                                <div class="advertising-history-sources">
+                                  ${sources.map((source) => `<span class="${source?.status === "error" ? "is-error" : ""}" title="${escapeAttr(source?.error || source?.label || "Источник")}">${escapeHtml(source?.label || source?.id || "Источник")}${Number.isFinite(Number(source?.count)) ? ` · ${formatStatisticsInteger(source.count)}` : ""}</span>`).join("")}
+                                </div>
+                              </details>
+                            ` : "—"}
                           </td>
                           <td>${comparedTo.hasPrevious
                             ? `<strong>С предыдущим запуском</strong><small>${comparedTo.refreshedAt ? escapeHtml(formatDateTimeRu(comparedTo.refreshedAt)) : "Дата недоступна"}</small>`
@@ -13161,6 +13192,7 @@ MAX - https://bizvmax.ru/zifra_plus
                         <td title="${escapeAttr([row.name, row.phone, row.jobTitle].filter(Boolean).join(" · "))}"><strong>${escapeHtml(row.name || "—")}</strong>${row.phone ? `<small>${escapeHtml(row.phone)}</small>` : ""}</td>
                         <td title="${escapeAttr([row.organization, row.jobTitle, row.origin].filter(Boolean).join(" · "))}">${escapeHtml(row.organization || row.origin || "—")}</td>
                         <td><div class="advertising-source-tags">${(row.sources || []).map((source) => `<span title="${escapeAttr(source.label)}">${escapeHtml(source.label)}</span>`).join("")}</div></td>
+                        <td class="advertising-email-received"><time datetime="${escapeAttr(getAdvertisingEmailReceivedAt(row))}" title="${escapeAttr(row.sourceReceivedAt ? `Дата из источника: ${formatDateTimeRu(row.sourceReceivedAt)}` : (row.firstSeenAt ? `Дата первого обнаружения сборщиком: ${formatDateTimeRu(row.firstSeenAt)}` : "Дата получения недоступна"))}">${escapeHtml(formatAdvertisingEmailReceivedDate(getAdvertisingEmailReceivedAt(row)) || "—")}</time></td>
                         <td><div class="advertising-status-badges">${row.isNew ? '<span class="advertising-status-badge is-new">Новый</span>' : ""}<span class="advertising-status-badge ${row.excluded ? "is-excluded" : "is-ready"}" title="${escapeAttr(row.exclusionReason || "Адрес готов к использованию")}">${row.excluded ? "Исключён" : "Готов"}</span></div>${row.exclusionReason ? `<small>${escapeHtml(row.exclusionReason)}</small>` : ""}</td>
                       </tr>
                     `).join("")}</tbody>
@@ -13520,7 +13552,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const rows = getAdvertisingFilteredRows({ status: "ready" });
     if (!rows.length) return;
     const content = [
-      ["Email", "ФИО / контакт", "Телефон", "Организация", "Должность", "Категория", "Источник данных", "Источники"].map(csvCell).join(";"),
+      ["Email", "ФИО / контакт", "Телефон", "Организация", "Должность", "Категория", "Источник данных", "Источники", "Дата получения"].map(csvCell).join(";"),
       ...rows.map((row) => [
         row.email,
         row.name,
@@ -13529,7 +13561,8 @@ MAX - https://bizvmax.ru/zifra_plus
         row.jobTitle,
         row.category,
         row.origin,
-        (row.sources || []).map((source) => source.label).join(", ")
+        (row.sources || []).map((source) => source.label).join(", "),
+        formatAdvertisingEmailReceivedDate(getAdvertisingEmailReceivedAt(row))
       ].map(csvCell).join(";"))
     ].join("\n");
     download(

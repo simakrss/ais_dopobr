@@ -100,6 +100,37 @@ assert.match(
 );
 assert.match(serverSource, /ADVERTISING_EMAIL_HISTORY_WRITE_CHUNK_SIZE/u);
 assert.match(serverSource, /ADVERTISING_EMAIL_HISTORY_MAX_CONTACTS_PER_RUN/u);
+const runContactsReaderSource = sourceSlice(
+  serverSource,
+  "async function readAdvertisingEmailHistoryRunContacts(",
+  "async function insertAdvertisingEmailHistoryContacts("
+);
+assert.match(
+  runContactsReaderSource,
+  /SELECT[\s\S]*?contact\.first_seen_at[\s\S]*?LEFT JOIN ais_advertising_email_history_contacts AS contact/u,
+  "Снимок запуска должен получать дату первого появления адреса из общего реестра контактов."
+);
+assert.match(
+  runContactsReaderSource,
+  /firstSeenAt:\s*advertisingEmailHistoryIsoDate\(\s*row\.first_seen_at/u,
+  "API должен возвращать дату первого получения адреса в ISO-формате."
+);
+const persistHistorySource = sourceSlice(
+  serverSource,
+  "async function persistAdvertisingEmailHistoryResult(",
+  "async function readLatestAdvertisingEmailHistoryResult("
+);
+const canonicalInsertIndex = persistHistorySource.indexOf("insertAdvertisingEmailHistoryContacts(connection");
+const snapshotInsertIndex = persistHistorySource.indexOf("insertAdvertisingEmailHistoryRunContacts(connection");
+const enrichedReadIndex = persistHistorySource.indexOf("payload.rows = await readAdvertisingEmailHistoryRunContacts(connection");
+const commitIndex = persistHistorySource.indexOf("await connection.commit()");
+assert.ok(
+  canonicalInsertIndex >= 0
+    && canonicalInsertIndex < snapshotInsertIndex
+    && snapshotInsertIndex < enrichedReadIndex
+    && enrichedReadIndex < commitIndex,
+  "Ответ нового запуска должен обогащаться датами первого получения после записи контактов и до commit."
+);
 const pruneHistorySource = sourceSlice(
   serverSource,
   "async function pruneAdvertisingEmailHistoryRuns(",

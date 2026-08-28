@@ -108,6 +108,29 @@ assert.match(filterFunction, /const query\s*=\s*String\(filters\.query/u);
 assert.match(filterFunction, /const sourceId\s*=\s*String\(filters\.source/u);
 assert.match(filterFunction, /Array\.isArray\(options\.rows\)/u);
 assert.match(filterFunction, /if \(options\.sort === false\) return filtered/u);
+assert.match(filterFunction, /row\.sourceReceivedAt/u, "Поиск должен учитывать дату получения из источника.");
+assert.match(
+  filterFunction,
+  /formatAdvertisingEmailReceivedDate\(row\.sourceReceivedAt\)/u,
+  "Поиск должен учитывать отображаемую дату получения."
+);
+const receivedAtFunction = namedFunction(blocks, "getAdvertisingEmailReceivedAt");
+const receivedDateFormatter = namedFunction(blocks, "formatAdvertisingEmailReceivedDate");
+assert.match(
+  receivedDateFormatter,
+  /toLocaleDateString\("ru-RU",\s*\{\s*timeZone:\s*"UTC"\s*\}\)/u,
+  "Дата из источника не должна сдвигаться при смене часового пояса браузера."
+);
+assert.match(
+  receivedAtFunction,
+  /row\?\.sourceReceivedAt\s*\|\|\s*row\?\.firstSeenAt/u,
+  "Дата из источника должна иметь приоритет, а старые снимки — использовать дату первого обнаружения."
+);
+assert.match(
+  filterFunction,
+  /sort\.key === "sourceReceivedAt"[\s\S]{0,120}?getAdvertisingEmailReceivedAt\(row\)/u,
+  "Сортировка даты должна совпадать с отображаемым значением."
+);
 
 const clipboardFunction = namedFunction(blocks, "getAdvertisingClipboardEmails");
 assert.match(clipboardFunction, /new Set/u, "Email для буфера должны дедублироваться.");
@@ -166,6 +189,19 @@ assert.match(perRunCopyButton, /data-run-id="\$\{escapeAttr\((?:run|row)\.runId(
 assert.match(renderHistoryFunction, /summary\.newReady/u);
 assert.match(renderHistoryFunction, /history\.copyingRunId/u);
 assert.match(perRunCopyButton, /disabled/u);
+const historySourceDetails = /<details\b[^>]*class="advertising-history-source-details[^>]*>[\s\S]*?<\/details>/u
+  .exec(renderHistoryFunction)?.[0] || "";
+assert.ok(historySourceDetails, "Источники каждого рекламного запроса должны быть сворачиваемыми.");
+assert.doesNotMatch(
+  historySourceDetails.match(/^<details\b[^>]*>/u)?.[0] || "",
+  /\bopen(?:\s|=|>)/u,
+  "Источники запроса должны быть свёрнуты по умолчанию."
+);
+assert.match(historySourceDetails, /<summary>Источники · \$\{formatStatisticsInteger\(sources\.length\)\}/u);
+assert.match(historySourceDetails, /advertising-history-sources/u);
+assert.match(historySourceDetails, /source\?\.status === "error"/u);
+assert.match(renderHistoryFunction, /\$\{sources\.length \? `[\s\S]*?` : "—"\}/u);
+assert.match(stylesSource, /\.advertising-history-source-details\s*>\s*summary/u);
 
 const copyButton = /<button\b[^>]*data-action="copy-new-advertising-emails"[\s\S]*?<\/button>/u
   .exec(renderFunction)?.[0] || "";
@@ -191,6 +227,19 @@ assert.match(
   /(?:\.advertising-email-table[^\n{]*\.is-new|\.advertising-new-badge)/u,
   "Новые строки или их бейдж должны иметь отдельное оформление."
 );
+assert.match(
+  appSource,
+  /\{\s*key:\s*"sourceReceivedAt",\s*label:\s*"Дата получения"\s*\}/u,
+  "В таблице Email нужна отдельная колонка даты получения."
+);
+assert.match(
+  renderFunction,
+  /class="advertising-email-received"[\s\S]{0,700}?formatAdvertisingEmailReceivedDate\(getAdvertisingEmailReceivedAt\(row\)\)/u,
+  "В каждой строке Email должна выводиться дата первого получения."
+);
+const exportFunction = namedFunction(blocks, "exportAdvertisingEmails");
+assert.match(exportFunction, /"Дата получения"/u, "CSV должен содержать колонку даты получения.");
+assert.match(exportFunction, /formatAdvertisingEmailReceivedDate\(getAdvertisingEmailReceivedAt\(row\)\)/u);
 
 const bindFunction = namedFunction(blocks, "bindAdvertisingEvents");
 const sourcePickerHandlerStart = bindFunction.indexOf("[data-action='toggle-advertising-source-picker']");
