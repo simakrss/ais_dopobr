@@ -66,11 +66,14 @@ const resetState = {
   issuedDocumentViewInitialized: false,
   tablePages: { issuedDocuments: 4 }
 };
+const clearedValueFilterConfigs = [];
 const runReset = new Function(
   "state",
+  "clearTableValueFilter",
+  "ISSUED_DOCUMENT_TABLE_CONFIG_ID",
   `${appSource.slice(resetHelperStart, resetHelperEnd)}\nresetIssuedDocumentRegistryFilters();\nreturn state;`
 );
-runReset(resetState);
+runReset(resetState, (configId) => clearedValueFilterConfigs.push(configId), "issuedDocuments");
 assert.deepEqual(resetState.issuedDocumentFilters, {
   documentNumber: "",
   issueDateFrom: "",
@@ -83,6 +86,7 @@ assert.deepEqual(resetState.issuedDocumentFilters, {
 assert.equal(resetState.issuedDocumentAutoFallback, false);
 assert.equal(resetState.issuedDocumentViewInitialized, true);
 assert.equal(resetState.tablePages.issuedDocuments, 1);
+assert.deepEqual(clearedValueFilterConfigs, ["issuedDocuments"]);
 
 assert.match(appSource, /if \(!state\.issuedDocumentViewInitialized\) prepareIssuedDocumentsRegistryOnOpen\(allRows\)/u);
 assert.match(appSource, /state\.issuedDocumentFilters = \{[\s\S]*frdo: openingView\.frdo/u);

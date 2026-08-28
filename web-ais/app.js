@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.350",
+    version: "1.7.351",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.351",
+      releasedAt: "2026-08-28",
+      changes: [
+        "В таблице импорта слушателей и остальных таблицах после секунды наведения на значение плавно появляется кнопка с иконкой фильтра; основные реестры и выданные документы фильтруются по всему набору данных до сортировки и страниц, а активные значения можно снять отдельными метками."
+      ]
+    },
     {
       version: "1.7.350",
       releasedAt: "2026-08-28",
@@ -3051,6 +3058,7 @@
   const STUDENTS_TABLE_LAYOUT_VERSION = "days-until-end-replaces-documents";
   const STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID = "studentApplicationsImport";
   const STUDENT_APPLICATIONS_IMPORT_DEFAULT_SORT = Object.freeze({ key: "date", dir: "desc" });
+  const TABLE_VALUE_FILTER_HOVER_DELAY_MS = 1000;
   const STUDENT_APPLICATIONS_IMPORT_TABLE_COLUMNS = Object.freeze([
     Object.freeze({ key: "date", label: "Дата", type: "date", defaultWidth: 145 }),
     Object.freeze({ key: "name", label: "ФИО", defaultWidth: 230 }),
@@ -5891,6 +5899,7 @@ MAX - https://bizvmax.ru/zifra_plus
     tableOptions: null,
     tableSettings: loadTableSettings(),
     tablePages: {},
+    tableValueFilters: {},
     inventoryStudentSort: { key: "name", dir: "asc" },
     dictionarySearch: "",
     selectedDictionary: "",
@@ -6093,6 +6102,16 @@ MAX - https://bizvmax.ru/zifra_plus
   let globalEscapeKeyBound = false;
   let shiftDragRequirementBound = false;
   let longPressDragRequirementBound = false;
+  let tableValueFilterEventsBound = false;
+  let tableValueFilterHoverTimer = 0;
+  let tableValueFilterHideTimer = 0;
+  let tableValueFilterPointerMoveHandler = null;
+  let tableValueFilterHoveredCell = null;
+  let tableValueFilterButton = null;
+  let tableValueFilterButtonMeta = null;
+  let tableValueFilterDomId = 0;
+  const tableValueFilterDomTables = new Map();
+  const tableValueFilterDomState = new WeakMap();
   let adminBeforeUnloadBound = false;
   let settingsDraftApplyInProgress = false;
   let settingsDraftMutationGeneration = 0;
@@ -10711,6 +10730,152 @@ MAX - https://bizvmax.ru/zifra_plus
     return row?.[key];
   }
 
+  function normalizeTableValueFilterValue(value) {
+    return String(value ?? "")
+      .normalize("NFKC")
+      .replace(/\s+/gu, " ")
+      .trim()
+      .toLocaleLowerCase("ru-RU")
+      .replace(/ё/gu, "е");
+  }
+
+  function getTableConfigId(config) {
+    return Object.entries(configs).find(([, item]) => item === config)?.[0] || "";
+  }
+
+  function getStudentApplicationTableFilterDisplayValue(row, key) {
+    if (key === "payment") {
+      const amount = getStudentApplicationReceiptAmount(row);
+      return amount > 0 || row?.paid ? money(amount) : "—";
+    }
+    const value = row?.[key];
+    return value === undefined || value === null || value === "" ? "" : String(value);
+  }
+
+  function getTableValueFilterDisplayValue(configId, key, row, config = null) {
+    if (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) {
+      return getStudentApplicationTableFilterDisplayValue(row, key);
+    }
+    const tableConfig = config || getTableLayoutConfig(configId);
+    return valueForDisplay(key, getTableCellValue(tableConfig, row, key), configId);
+  }
+
+  function getTableValueFilters(configId) {
+    const filters = state.tableValueFilters?.[String(configId || "")];
+    return filters && typeof filters === "object" ? filters : {};
+  }
+
+  function getTableValueFilter(configId, key) {
+    return getTableValueFilters(configId)[String(key || "")] || null;
+  }
+
+  function getTableValueFilterEntries(configId) {
+    return Object.entries(getTableValueFilters(configId)).filter(([, filter]) => (
+      filter && typeof filter === "object" && String(filter.value || "")
+    ));
+  }
+
+  function setTableValueFilter(configId, key, displayValue) {
+    const tableId = String(configId || "");
+    const columnKey = String(key || "");
+    const label = String(displayValue ?? "").replace(/\s+/gu, " ").trim();
+    const value = normalizeTableValueFilterValue(label);
+    if (!tableId || !columnKey || !value) return false;
+    const currentFilters = getTableValueFilters(tableId);
+    const current = currentFilters[columnKey];
+    const nextFilters = { ...currentFilters };
+    if (current?.value === value) delete nextFilters[columnKey];
+    else nextFilters[columnKey] = { value, label };
+    state.tableValueFilters = {
+      ...(state.tableValueFilters || {}),
+      [tableId]: nextFilters
+    };
+    if (!Object.keys(nextFilters).length) delete state.tableValueFilters[tableId];
+    return true;
+  }
+
+  function clearTableValueFilter(configId, key = "") {
+    const tableId = String(configId || "");
+    if (!tableId || !state.tableValueFilters?.[tableId]) return false;
+    if (!key) {
+      const next = { ...(state.tableValueFilters || {}) };
+      delete next[tableId];
+      state.tableValueFilters = next;
+      return true;
+    }
+    const nextFilters = { ...getTableValueFilters(tableId) };
+    if (!Object.prototype.hasOwnProperty.call(nextFilters, key)) return false;
+    delete nextFilters[key];
+    state.tableValueFilters = {
+      ...(state.tableValueFilters || {}),
+      [tableId]: nextFilters
+    };
+    if (!Object.keys(nextFilters).length) delete state.tableValueFilters[tableId];
+    return true;
+  }
+
+  function filterRowsByTableValueFilters(rows, configId, valueForRow) {
+    const filters = getTableValueFilterEntries(configId);
+    if (!filters.length || typeof valueForRow !== "function") return rows;
+    return rows.filter((row) => filters.every(([key, filter]) => (
+      normalizeTableValueFilterValue(valueForRow(row, key)) === filter.value
+    )));
+  }
+
+  function getTableValueFilterColumnLabel(configId, key) {
+    const config = getTableLayoutConfig(configId);
+    const fieldItem = config?.fields?.find((item) => item.key === key);
+    return String(fieldItem?.options?.tableLabel || fieldItem?.label || key || "Столбец");
+  }
+
+  function renderTableValueFilterIcon(className = "") {
+    return `
+      <svg class="${escapeAttr(className)}" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+        <path d="M3 4h14l-5.4 6.1v4.7l-3.2 1.6v-6.3L3 4Z"></path>
+      </svg>
+    `;
+  }
+
+  function renderTableValueFilterChips(configId) {
+    const entries = getTableValueFilterEntries(configId);
+    if (!entries.length) return "";
+    return `
+      <div class="table-value-filter-chips" data-table-value-filter-chips="${escapeAttr(configId)}" role="status" aria-label="Активные фильтры по значениям">
+        <span class="table-value-filter-chips-caption">
+          ${renderTableValueFilterIcon("table-value-filter-chip-icon")}
+          По значениям
+        </span>
+        ${entries.map(([key, filter]) => {
+          const columnLabel = getTableValueFilterColumnLabel(configId, key);
+          const title = `${columnLabel}: ${filter.label}`;
+          return `
+            <button
+              class="table-value-filter-chip"
+              data-action="clear-table-value-filter"
+              data-config="${escapeAttr(configId)}"
+              data-key="${escapeAttr(key)}"
+              type="button"
+              title="${escapeAttr(`Снять фильтр «${title}»`)}"
+              aria-label="${escapeAttr(`Снять фильтр «${title}»`)}"
+            >
+              <span>${escapeHtml(title)}</span><strong aria-hidden="true">×</strong>
+            </button>
+          `;
+        }).join("")}
+        ${entries.length > 1 ? `
+          <button class="table-value-filter-clear-all" data-action="clear-table-value-filter" data-config="${escapeAttr(configId)}" type="button">Сбросить все</button>
+        ` : ""}
+      </div>
+    `;
+  }
+
+  function tableValueFilterDataAttrs(configId, key, displayValue) {
+    const label = String(displayValue ?? "").replace(/\s+/gu, " ").trim();
+    const value = normalizeTableValueFilterValue(label);
+    if (!value) return "";
+    return `data-table-filter-value="${escapeAttr(value)}" data-table-filter-label="${escapeAttr(label)}" data-table-filter-config="${escapeAttr(configId)}" data-table-filter-key="${escapeAttr(key)}"`;
+  }
+
   function pushStudentStatusHistory(status) {
     void status;
     synchronizeAisBrowserHistory();
@@ -11018,6 +11183,7 @@ MAX - https://bizvmax.ru/zifra_plus
       window.clearTimeout(mainRegistrySearchTimer);
       mainRegistrySearchTimer = 0;
     }
+    hideTableValueFilterButton({ immediate: true });
     hideSystemHelpTooltip();
     hideCommunicationTemplateFieldMenu();
     closeNavItemMenu();
@@ -14825,6 +14991,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getMainRegistryActiveFilterCount(view = state.view) {
     let count = String(state.search || "").trim() ? 1 : 0;
+    count += getTableValueFilterEntries(view).length;
     if (String(state.statusFilter || "").trim() && state.statusFilter !== "Все") count += 1;
     if (view === "students") {
       const studentFilters = state.studentListFilters || {};
@@ -15003,6 +15170,7 @@ MAX - https://bizvmax.ru/zifra_plus
     state.issuedDocumentAutoFallback = openingView.autoFallback;
     state.issuedDocumentViewInitialized = true;
     state.tablePages.issuedDocuments = 1;
+    clearTableValueFilter(ISSUED_DOCUMENT_TABLE_CONFIG_ID);
     return openingView;
   }
 
@@ -15019,6 +15187,7 @@ MAX - https://bizvmax.ru/zifra_plus
     state.issuedDocumentAutoFallback = false;
     state.issuedDocumentViewInitialized = true;
     state.tablePages.issuedDocuments = 1;
+    clearTableValueFilter(ISSUED_DOCUMENT_TABLE_CONFIG_ID);
   }
 
   function buildIssuedDocumentFrdoExportRecords() {
@@ -15179,8 +15348,23 @@ MAX - https://bizvmax.ru/zifra_plus
     }).map((entry) => entry.row);
   }
 
+  function getIssuedDocumentTableFilterDisplayValue(row, key) {
+    if (key === "student") return row.studentName || "";
+    if (key === "documentNumber") return row.documentNumber || row.registrationNumber || "";
+    if (key === "issueDate") return row.issueDate ? dateRu(row.issueDate) : "";
+    if (key === "elapsedDays") return row.elapsedDays === null ? "" : String(row.elapsedDays);
+    if (key === "frdo") return row.frdoLabel || "";
+    if (key === "program") return row.program || "";
+    return row.programType || "";
+  }
+
   function getVisibleIssuedDocumentRows(rows = getIssuedDocumentRows()) {
-    return sortIssuedDocumentRows(rows.filter((row) => issuedDocumentRowMatchesFilters(row)));
+    const filteredRows = filterRowsByTableValueFilters(
+      rows.filter((row) => issuedDocumentRowMatchesFilters(row)),
+      ISSUED_DOCUMENT_TABLE_CONFIG_ID,
+      getIssuedDocumentTableFilterDisplayValue
+    );
+    return sortIssuedDocumentRows(filteredRows);
   }
 
   function renderIssuedDocumentSortHeader(key, label) {
@@ -15203,10 +15387,15 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderIssuedDocumentTableCell(row, column) {
     const attrs = columnDataAttrs(ISSUED_DOCUMENT_TABLE_CONFIG_ID, column.key);
+    const filterAttrs = tableValueFilterDataAttrs(
+      ISSUED_DOCUMENT_TABLE_CONFIG_ID,
+      column.key,
+      getIssuedDocumentTableFilterDisplayValue(row, column.key)
+    );
     const style = issuedDocumentColumnStyleAttr(column);
     if (column.key === "student") {
       return `
-        <td ${attrs} ${style}>
+        <td ${attrs} ${filterAttrs} ${style}>
           <button class="table-edit-link issued-document-student-link" data-action="open-issued-document-student" data-student-id="${escapeAttr(row.studentId)}" type="button">
             ${escapeHtml(row.studentName || "Без ФИО")}
           </button>
@@ -15216,20 +15405,21 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (column.key === "documentNumber") {
       return `
-        <td ${attrs} ${style}>
+        <td ${attrs} ${filterAttrs} ${style}>
           <strong>${escapeHtml(row.documentNumber || row.registrationNumber || "—")}</strong>
           ${row.documentNumber && row.registrationNumber ? `<small>Рег. № ${escapeHtml(row.registrationNumber)}</small>` : ""}
         </td>
       `;
     }
     if (column.key === "issueDate") {
-      return `<td ${attrs} ${style}>${row.issueDate ? escapeHtml(dateRu(row.issueDate)) : "—"}</td>`;
+      return `<td ${attrs} ${filterAttrs} ${style}>${row.issueDate ? escapeHtml(dateRu(row.issueDate)) : "—"}</td>`;
     }
     if (column.key === "elapsedDays") {
       return `
         <td
           class="issued-document-days-cell"
           ${attrs}
+          ${filterAttrs}
           ${style}
           title="${row.elapsedDays === null ? "Дата выдачи не указана" : escapeAttr(`Норматив: ${row.deadlineDays} дней. Осталось: ${row.remainingDays} дней.`)}"
         >${row.elapsedDays === null ? "—" : escapeHtml(String(row.elapsedDays))}</td>
@@ -15240,16 +15430,16 @@ MAX - https://bizvmax.ru/zifra_plus
         ? `Расчётный срок: норматив ${row.deadlineDays} дней минус резерв ${FRDO_UPLOAD_RESERVE_DAYS} дней.`
         : "";
       return `
-        <td ${attrs} ${style}>
+        <td ${attrs} ${filterAttrs} ${style}>
           <span class="issued-document-frdo-status is-${escapeAttr(row.frdoKey)}" ${deadlineTitle ? `title="${escapeAttr(deadlineTitle)}"` : ""}>${escapeHtml(row.frdoLabel)}</span>
           ${row.frdoDate ? `<small>${escapeHtml(dateRu(row.frdoDate))}</small>` : ""}
         </td>
       `;
     }
     if (column.key === "program") {
-      return `<td ${attrs} ${style}>${escapeHtml(row.program || "—")}</td>`;
+      return `<td ${attrs} ${filterAttrs} ${style}>${escapeHtml(row.program || "—")}</td>`;
     }
-    return `<td ${attrs} ${style}>${escapeHtml(row.programType || "—")}</td>`;
+    return `<td ${attrs} ${filterAttrs} ${style}>${escapeHtml(row.programType || "—")}</td>`;
   }
 
   function renderIssuedDocumentsRegistry() {
@@ -15326,9 +15516,10 @@ MAX - https://bizvmax.ru/zifra_plus
             <input type="date" data-issued-document-filter="issueDateTo" value="${escapeAttr(filters.issueDateTo || "")}">
           </label>
         </div>
+        ${renderTableValueFilterChips(ISSUED_DOCUMENT_TABLE_CONFIG_ID)}
         ${rows.length ? `
           <div class="table-wrap issued-documents-table-wrap">
-            <table class="data-table issued-documents-table">
+            <table class="data-table issued-documents-table" data-table-value-filter-config="${ISSUED_DOCUMENT_TABLE_CONFIG_ID}">
               <thead>
                 <tr>
                   ${columns.map((column) => `
@@ -15701,6 +15892,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function refreshStudentApplicationsImportDialog(options = {}) {
     if (!state.studentApplicationsImport.open) return;
+    hideTableValueFilterButton({ immediate: true });
     const current = document.querySelector("[data-student-applications-import-backdrop]");
     const tableWrap = current?.querySelector(".student-applications-import-table-wrap");
     const scrollLeft = tableWrap?.scrollLeft || 0;
@@ -16549,7 +16741,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function getVisibleStudentApplications() {
     const query = String(state.studentApplicationsImport.filters.search || "").trim().toLocaleLowerCase("ru-RU");
     const rows = state.studentApplicationsImport.rows || [];
-    const filteredRows = query ? rows.filter((row) => (
+    let filteredRows = query ? rows.filter((row) => (
       [
         row.date,
         row.name,
@@ -16566,6 +16758,11 @@ MAX - https://bizvmax.ru/zifra_plus
         row.note
       ].some((value) => String(value || "").toLocaleLowerCase("ru-RU").includes(query))
     )) : rows;
+    filteredRows = filterRowsByTableValueFilters(
+      filteredRows,
+      STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID,
+      getStudentApplicationTableFilterDisplayValue
+    );
     return sortStudentApplicationRows(filteredRows, state.studentApplicationsImport.sort);
   }
 
@@ -16830,16 +17027,26 @@ MAX - https://bizvmax.ru/zifra_plus
     const style = columnStyleAttr(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID, column.key);
     const paymentAmount = Number(context.paymentAmount) || 0;
     const plainCell = (value, className = "") => {
-      const text = String(value || "");
+      const text = String(value ?? "");
+      const filterAttrs = tableValueFilterDataAttrs(
+        STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID,
+        column.key,
+        text
+      );
       return `
-        <td ${className ? `class="${className}"` : ""} title="${escapeAttr(text)}" ${attrs} ${style}>
+        <td ${className ? `class="${className}"` : ""} title="${escapeAttr(text)}" ${attrs} ${filterAttrs} ${style}>
           <div class="student-application-cell-content">${escapeHtml(text)}</div>
         </td>
       `;
     };
     if (column.key === "name") {
+      const filterAttrs = tableValueFilterDataAttrs(
+        STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID,
+        column.key,
+        row.name || ""
+      );
       return `
-        <td title="${escapeAttr(row.name || "")}" ${attrs} ${style}>
+        <td title="${escapeAttr(row.name || "")}" ${attrs} ${filterAttrs} ${style}>
           <div class="student-application-name-cell">
             <span>${escapeHtml(row.name || "")}</span>
             ${context.imported ? `<span class="student-application-repeat-badge" title="${escapeMultilineAttr(context.repeatTooltip)}">Повтор</span>` : ""}
@@ -16849,7 +17056,12 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (column.key === "payment") {
       const value = paymentAmount > 0 || row.paid ? money(paymentAmount) : "—";
-      return `<td class="student-applications-payment-cell" title="${escapeAttr(value)}" ${attrs} ${style}>${escapeHtml(value)}</td>`;
+      const filterAttrs = tableValueFilterDataAttrs(
+        STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID,
+        column.key,
+        paymentAmount > 0 || row.paid ? value : ""
+      );
+      return `<td class="student-applications-payment-cell" title="${escapeAttr(value)}" ${attrs} ${filterAttrs} ${style}>${escapeHtml(value)}</td>`;
     }
     if (column.key === "program") {
       const recommendation = context.recommendation;
@@ -16857,8 +17069,13 @@ MAX - https://bizvmax.ru/zifra_plus
         ? `Рекомендуется: ${recommendation.program.name} (${Math.round(recommendation.score * 100)}%)`
         : "";
       const title = [row.program, recommendationText].filter(Boolean).join(" · ");
+      const filterAttrs = tableValueFilterDataAttrs(
+        STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID,
+        column.key,
+        row.program || ""
+      );
       return `
-        <td title="${escapeAttr(title)}" ${attrs} ${style}>
+        <td title="${escapeAttr(title)}" ${attrs} ${filterAttrs} ${style}>
           <div class="student-application-cell-content">${escapeHtml(row.program || "")}${recommendation ? ` · ${escapeHtml(recommendationText)}` : ""}</div>
         </td>
       `;
@@ -17005,7 +17222,8 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
 
             <div class="student-applications-import-table-wrap">
-              <table class="student-applications-import-table">
+              ${renderTableValueFilterChips(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID)}
+              <table class="student-applications-import-table" data-table-value-filter-config="${STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID}">
                 <thead>
                   <tr>
                     <th aria-label="Выбор"></th>
@@ -17232,6 +17450,7 @@ MAX - https://bizvmax.ru/zifra_plus
     state.studentApplicationsImport.truncated = false;
     state.studentApplicationsImport.error = "";
     state.studentApplicationsImport.warnings = [];
+    clearTableValueFilter(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID);
     refreshStudentApplicationsImportDialog();
   }
 
@@ -18489,6 +18708,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getVisibleRows(config, rowsOverride = null) {
+    const configId = getTableConfigId(config)
+      || (state.view === "documentConstructor" ? "documentTemplates" : state.view);
     const isDocumentTemplateTable = config.collection === "documentTemplates";
     const isGeneralExpenseTable = config.collection === "generalExpenses";
     const query = (isDocumentTemplateTable ? state.documentTemplateSearch : state.search).trim().toLowerCase();
@@ -18573,6 +18794,11 @@ MAX - https://bizvmax.ru/zifra_plus
         && matchGeneralExpenseSection
         && matchGeneralExpenseWorkType;
     });
+    filtered = filterRowsByTableValueFilters(
+      filtered,
+      configId,
+      (row, key) => getTableValueFilterDisplayValue(configId, key, row, config)
+    );
     if (state.sort.key) {
       const dir = state.sort.dir === "asc" ? 1 : -1;
       const sortField = config.fields?.find((fieldDefinition) => fieldDefinition.key === state.sort.key);
@@ -18680,8 +18906,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const fields = getTableFields(config, configId);
     const selected = getSelected(configId);
     const lastEdited = state.lastEditedRow || {};
+    const valueFilterChips = renderTableValueFilterChips(configId);
     if (!rows.length) {
       return `
+        ${valueFilterChips}
         <div class="empty-state"><strong>Записей нет</strong><span>Измените фильтр или добавьте новую запись.</span></div>
       `;
     }
@@ -18694,8 +18922,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ? "Выбрать все отфильтрованные строки"
       : "Выбрать строки текущей страницы";
     return `
+      ${valueFilterChips}
       <div class="table-wrap">
-        <table class="data-table">
+        <table class="data-table" data-table-value-filter-config="${escapeAttr(configId)}">
           <thead>
             <tr>
               <th class="select-col">
@@ -18749,6 +18978,10 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${fields.map((fieldItem, index) => {
                   const rawValue = getTableCellValue(config, row, fieldItem.key);
                   const displayValue = valueForDisplay(fieldItem.key, rawValue, configId) || "Открыть";
+                  const rawFilterValue = rawValue === undefined || rawValue === null || String(rawValue).trim() === ""
+                    ? ""
+                    : displayValue;
+                  const filterAttrs = tableValueFilterDataAttrs(configId, fieldItem.key, rawFilterValue);
                   const externalUrl = configId === "programs" && fieldItem.key === "promoSite"
                     ? normalizeExternalUrl(rawValue)
                     : "";
@@ -18765,7 +18998,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     : "";
                   if (index === 0) {
                     return `
-                      <td class="table-primary-col" ${attrs} ${style}>
+                      <td class="table-primary-col" ${attrs} ${filterAttrs} ${style}>
                         <button class="table-edit-link" data-action="edit" data-config="${configId}" data-id="${row.id}" type="button" ${lockedByOther ? `aria-label="${escapeAttr(lockTitle)}"` : ""}>
                           ${value}
                           ${recordLock ? '<span class="record-lock-indicator" aria-hidden="true">🔒</span>' : ""}
@@ -18773,7 +19006,7 @@ MAX - https://bizvmax.ru/zifra_plus
                       </td>
                     `;
                   }
-                  return `<td ${mismatchAttrs} ${attrs} ${style}>${value}</td>`;
+                   return `<td ${mismatchAttrs} ${attrs} ${filterAttrs} ${style}>${value}</td>`;
                 }).join("")}
               </tr>
             `;
@@ -18973,6 +19206,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function resetTableOptions(configId) {
     delete state.tableSettings[configId];
     delete state.tablePages[configId];
+    clearTableValueFilter(configId);
     const activeTableConfigId = state.view === "documentConstructor" ? "documentTemplates" : state.view;
     if (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) {
       state.studentApplicationsImport.sort = { ...STUDENT_APPLICATIONS_IMPORT_DEFAULT_SORT };
@@ -33968,6 +34202,408 @@ MAX - https://bizvmax.ru/zifra_plus
     window.addEventListener("scroll", () => hideSystemHelpTooltip(), { capture: true });
   }
 
+  function isTableValueFilterHoverSupported(event = null) {
+    if (event?.pointerType && event.pointerType !== "mouse") return false;
+    return !window.matchMedia || window.matchMedia("(any-hover: hover) and (any-pointer: fine)").matches;
+  }
+
+  function getTableValueFilterHeaderLabel(table, columnIndex) {
+    const rows = Array.from(table?.tHead?.rows || []).reverse();
+    let emptyHeaderFound = false;
+    for (const row of rows) {
+      let currentIndex = 0;
+      for (const cell of Array.from(row.cells || [])) {
+        const span = Math.max(1, Number(cell.colSpan) || 1);
+        if (columnIndex >= currentIndex && columnIndex < currentIndex + span) {
+          const label = String(cell.textContent || "")
+            .replace(/[↑↓↕]/gu, "")
+            .replace(/\s+/gu, " ")
+            .trim();
+          if (label) return label;
+          emptyHeaderFound = true;
+          break;
+        }
+        currentIndex += span;
+      }
+    }
+    if (emptyHeaderFound) return "";
+    return `Столбец ${columnIndex + 1}`;
+  }
+
+  function getDomTableValueFilterCellLabel(cell) {
+    const explicitLabel = String(cell?.dataset?.tableFilterLabel || "").replace(/\s+/gu, " ").trim();
+    if (explicitLabel) return explicitLabel;
+    if (!(cell instanceof HTMLTableCellElement)) return "";
+    const clone = cell.cloneNode(true);
+    clone.querySelectorAll([
+      ".table-value-filter-button",
+      ".record-lock-indicator",
+      ".student-application-repeat-badge",
+      "[aria-hidden='true']",
+      "script",
+      "style"
+    ].join(",")).forEach((element) => element.remove());
+    return String(clone.textContent || "").replace(/\s+/gu, " ").trim();
+  }
+
+  function isStateDrivenTableValueFilter(configId, key) {
+    if (!configId || !key) return false;
+    return configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID
+      || configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID
+      || Object.prototype.hasOwnProperty.call(configs, configId);
+  }
+
+  function getTableValueFilterCellMeta(node) {
+    if (!(node instanceof Element) || node.closest("[data-table-value-filter-portal]")) return null;
+    const cell = node.closest("tbody td");
+    if (!(cell instanceof HTMLTableCellElement) || cell.colSpan > 1) return null;
+    const table = cell.closest("table");
+    if (!(table instanceof HTMLTableElement) || table.closest(".student-database-conflicts-table-wrap")) return null;
+    if (cell.matches("[data-table-filter-disabled], .select-col") || cell.querySelector("input, select, textarea, [contenteditable='true']")) {
+      return null;
+    }
+    const columnIndex = cell.cellIndex;
+    const columnLabel = getTableValueFilterHeaderLabel(table, columnIndex);
+    if (!columnLabel || /^(?:действия|выбор|операции|№|#)$/iu.test(columnLabel)) return null;
+    const label = getDomTableValueFilterCellLabel(cell);
+    const explicitValue = String(cell.dataset.tableFilterValue || "");
+    const value = explicitValue || normalizeTableValueFilterValue(label);
+    if (!value || value === "—" || value === "-") return null;
+    const configId = String(cell.dataset.tableFilterConfig || cell.dataset.tableConfig || "");
+    const key = String(cell.dataset.tableFilterKey || cell.dataset.columnKey || "");
+    const mode = isStateDrivenTableValueFilter(configId, key) ? "state" : "dom";
+    if (mode === "dom" && table.querySelector("tbody input[type='checkbox'], tbody input[type='radio']")) {
+      return null;
+    }
+    return {
+      mode,
+      cell,
+      table,
+      configId,
+      key,
+      columnIndex,
+      columnLabel: columnLabel || getTableValueFilterColumnLabel(configId, key),
+      label,
+      value
+    };
+  }
+
+  function isTableValueFilterMetaActive(meta) {
+    if (!meta) return false;
+    if (meta.mode === "state") return getTableValueFilter(meta.configId, meta.key)?.value === meta.value;
+    return tableValueFilterDomState.get(meta.table)?.get(meta.columnIndex)?.value === meta.value;
+  }
+
+  function summarizeTableValueFilterLabel(value, maxLength = 120) {
+    const text = String(value || "").replace(/\s+/gu, " ").trim();
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+  }
+
+  function getTableValueFilterButton() {
+    if (tableValueFilterButton?.isConnected) return tableValueFilterButton;
+    const button = document.createElement("button");
+    button.className = "table-value-filter-button";
+    button.dataset.action = "filter-table-by-hovered-value";
+    button.dataset.tableValueFilterPortal = "true";
+    button.type = "button";
+    button.hidden = true;
+    button.innerHTML = renderTableValueFilterIcon("table-value-filter-button-icon");
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    button.addEventListener("pointerenter", () => {
+      if (tableValueFilterHideTimer) window.clearTimeout(tableValueFilterHideTimer);
+      tableValueFilterHideTimer = 0;
+    });
+    button.addEventListener("pointerleave", () => scheduleHideTableValueFilterButton());
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      applyHoveredTableValueFilter();
+    });
+    document.body.appendChild(button);
+    tableValueFilterButton = button;
+    return button;
+  }
+
+  function positionTableValueFilterButton(button, cell) {
+    const rect = cell.getBoundingClientRect();
+    const size = 30;
+    const margin = 4;
+    const left = Math.max(margin, Math.min(window.innerWidth - size - margin, rect.right - size - margin));
+    const top = Math.max(margin, Math.min(window.innerHeight - size - margin, rect.top + (rect.height - size) / 2));
+    button.style.left = `${Math.round(left)}px`;
+    button.style.top = `${Math.round(top)}px`;
+  }
+
+  function showTableValueFilterButton(meta) {
+    if (!meta?.cell?.isConnected) return;
+    const button = getTableValueFilterButton();
+    const active = isTableValueFilterMetaActive(meta);
+    const shortValue = summarizeTableValueFilterLabel(meta.label);
+    const actionLabel = active ? "Снять фильтр" : "Фильтровать";
+    button.setAttribute("aria-label", `${actionLabel}: ${meta.columnLabel} — ${shortValue}`);
+    button.classList.toggle("is-active", active);
+    button.hidden = false;
+    tableValueFilterButtonMeta = meta;
+    positionTableValueFilterButton(button, meta.cell);
+    requestAnimationFrame(() => {
+      if (tableValueFilterButtonMeta === meta && button.isConnected) button.classList.add("is-visible");
+    });
+  }
+
+  function cancelPendingTableValueFilterButton() {
+    if (tableValueFilterHoverTimer) window.clearTimeout(tableValueFilterHoverTimer);
+    tableValueFilterHoverTimer = 0;
+    if (tableValueFilterPointerMoveHandler) {
+      document.removeEventListener("pointermove", tableValueFilterPointerMoveHandler, true);
+      tableValueFilterPointerMoveHandler = null;
+    }
+    tableValueFilterHoveredCell = null;
+  }
+
+  function hideTableValueFilterButton(options = {}) {
+    cancelPendingTableValueFilterButton();
+    if (tableValueFilterHideTimer) window.clearTimeout(tableValueFilterHideTimer);
+    tableValueFilterHideTimer = 0;
+    tableValueFilterButtonMeta = null;
+    const button = tableValueFilterButton;
+    if (!button) return;
+    button.classList.remove("is-visible", "is-active");
+    if (options.immediate) {
+      button.hidden = true;
+      return;
+    }
+    window.setTimeout(() => {
+      if (!button.classList.contains("is-visible")) button.hidden = true;
+    }, 190);
+  }
+
+  function scheduleHideTableValueFilterButton(delay = 110) {
+    cancelPendingTableValueFilterButton();
+    if (tableValueFilterHideTimer) window.clearTimeout(tableValueFilterHideTimer);
+    tableValueFilterHideTimer = window.setTimeout(() => {
+      tableValueFilterHideTimer = 0;
+      hideTableValueFilterButton();
+    }, delay);
+  }
+
+  function scheduleTableValueFilterButton(meta, pointer = {}) {
+    cancelPendingTableValueFilterButton();
+    if (tableValueFilterHideTimer) window.clearTimeout(tableValueFilterHideTimer);
+    tableValueFilterHideTimer = 0;
+    if (!meta?.cell?.isConnected) return;
+    tableValueFilterHoveredCell = meta.cell;
+    let pointerX = Number(pointer.clientX);
+    let pointerY = Number(pointer.clientY);
+    const updatePointer = (event) => {
+      if (event.buttons) {
+        cancelPendingTableValueFilterButton();
+        return;
+      }
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+    };
+    tableValueFilterPointerMoveHandler = updatePointer;
+    document.addEventListener("pointermove", updatePointer, true);
+    tableValueFilterHoverTimer = window.setTimeout(() => {
+      tableValueFilterHoverTimer = 0;
+      document.removeEventListener("pointermove", updatePointer, true);
+      if (tableValueFilterPointerMoveHandler === updatePointer) tableValueFilterPointerMoveHandler = null;
+      if (!meta.cell.isConnected || tableValueFilterHoveredCell !== meta.cell) return;
+      const selection = window.getSelection?.();
+      if (selection && !selection.isCollapsed) return;
+      if (Number.isFinite(pointerX) && Number.isFinite(pointerY)) {
+        const pointedElement = document.elementFromPoint(pointerX, pointerY);
+        if (!(pointedElement instanceof Node) || !meta.cell.contains(pointedElement)) return;
+      }
+      showTableValueFilterButton(meta);
+    }, TABLE_VALUE_FILTER_HOVER_DELAY_MS);
+  }
+
+  function getDomTableValueFilterId(table) {
+    tableValueFilterDomTables.forEach((item, key) => {
+      if (!item?.isConnected) tableValueFilterDomTables.delete(key);
+    });
+    let id = String(table.dataset.tableValueFilterDomId || "");
+    if (!id) {
+      tableValueFilterDomId += 1;
+      id = `table-value-filter-${tableValueFilterDomId}`;
+      table.dataset.tableValueFilterDomId = id;
+    }
+    tableValueFilterDomTables.set(id, table);
+    return id;
+  }
+
+  function applyDomTableValueFilters(table) {
+    const filters = tableValueFilterDomState.get(table);
+    Array.from(table?.tBodies || []).forEach((body) => {
+      Array.from(body.rows || []).forEach((row) => {
+        const matches = !filters?.size || Array.from(filters.entries()).every(([columnIndex, filter]) => {
+          const cell = row.cells[columnIndex];
+          return cell && normalizeTableValueFilterValue(getDomTableValueFilterCellLabel(cell)) === filter.value;
+        });
+        row.classList.toggle("is-table-value-filtered-out", !matches);
+      });
+    });
+  }
+
+  function renderDomTableValueFilterChips(table) {
+    const id = getDomTableValueFilterId(table);
+    const parent = table.parentElement;
+    if (!parent) return;
+    parent.querySelector(`[data-dom-table-value-filter-chips="${CSS.escape(id)}"]`)?.remove();
+    const filters = tableValueFilterDomState.get(table);
+    if (!filters?.size) return;
+    const container = document.createElement("div");
+    container.className = "table-value-filter-chips is-current-page";
+    container.dataset.domTableValueFilterChips = id;
+    container.setAttribute("role", "status");
+    container.setAttribute("aria-label", "Активные фильтры по значениям текущей страницы");
+    const caption = document.createElement("span");
+    caption.className = "table-value-filter-chips-caption";
+    caption.innerHTML = `${renderTableValueFilterIcon("table-value-filter-chip-icon")} По значениям на странице`;
+    container.appendChild(caption);
+    Array.from(filters.entries()).forEach(([columnIndex, filter]) => {
+      const button = document.createElement("button");
+      button.className = "table-value-filter-chip";
+      button.dataset.action = "clear-dom-table-value-filter";
+      button.dataset.tableId = id;
+      button.dataset.columnIndex = String(columnIndex);
+      button.type = "button";
+      const title = `${filter.columnLabel}: ${filter.label}`;
+      button.title = `Снять фильтр «${title}»`;
+      button.setAttribute("aria-label", button.title);
+      const text = document.createElement("span");
+      text.textContent = title;
+      const close = document.createElement("strong");
+      close.setAttribute("aria-hidden", "true");
+      close.textContent = "×";
+      button.append(text, close);
+      container.appendChild(button);
+    });
+    if (filters.size > 1) {
+      const clearAll = document.createElement("button");
+      clearAll.className = "table-value-filter-clear-all";
+      clearAll.dataset.action = "clear-dom-table-value-filter";
+      clearAll.dataset.tableId = id;
+      clearAll.type = "button";
+      clearAll.textContent = "Сбросить все";
+      container.appendChild(clearAll);
+    }
+    table.before(container);
+  }
+
+  function refreshTableAfterValueFilter(configId) {
+    hideTableValueFilterButton({ immediate: true });
+    if (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) {
+      state.studentApplicationsImport.page = 1;
+      state.studentApplicationsImport.activeId = String(getVisibleStudentApplications()[0]?.id || "");
+      refreshStudentApplicationsImportDialog();
+      return;
+    }
+    state.tablePages[configId] = 1;
+    render();
+  }
+
+  function applyHoveredTableValueFilter() {
+    const meta = tableValueFilterButtonMeta;
+    if (!meta?.cell?.isConnected) {
+      hideTableValueFilterButton({ immediate: true });
+      return;
+    }
+    if (meta.mode === "state") {
+      if (!setTableValueFilter(meta.configId, meta.key, meta.label)) return;
+      refreshTableAfterValueFilter(meta.configId);
+      return;
+    }
+    const filters = new Map(tableValueFilterDomState.get(meta.table) || []);
+    if (filters.get(meta.columnIndex)?.value === meta.value) filters.delete(meta.columnIndex);
+    else filters.set(meta.columnIndex, {
+      value: meta.value,
+      label: meta.label,
+      columnLabel: meta.columnLabel
+    });
+    if (filters.size) tableValueFilterDomState.set(meta.table, filters);
+    else tableValueFilterDomState.delete(meta.table);
+    applyDomTableValueFilters(meta.table);
+    renderDomTableValueFilterChips(meta.table);
+    hideTableValueFilterButton();
+  }
+
+  function clearDomTableValueFilter(button) {
+    const table = tableValueFilterDomTables.get(String(button.dataset.tableId || ""));
+    if (!table?.isConnected) return;
+    const filters = new Map(tableValueFilterDomState.get(table) || []);
+    const columnIndexText = String(button.dataset.columnIndex || "");
+    const columnIndex = Number(columnIndexText);
+    if (/^\d+$/u.test(columnIndexText) && Number.isInteger(columnIndex)) filters.delete(columnIndex);
+    else filters.clear();
+    if (filters.size) tableValueFilterDomState.set(table, filters);
+    else tableValueFilterDomState.delete(table);
+    applyDomTableValueFilters(table);
+    renderDomTableValueFilterChips(table);
+  }
+
+  function bindTableValueFilterEvents() {
+    if (tableValueFilterEventsBound) return;
+    tableValueFilterEventsBound = true;
+    document.addEventListener("pointerover", (event) => {
+      if (!isTableValueFilterHoverSupported(event) || event.buttons) return;
+      const meta = getTableValueFilterCellMeta(event.target);
+      if (!meta || meta.cell.contains(event.relatedTarget)) return;
+      hideSystemHelpTooltip();
+      if (tableValueFilterButtonMeta?.cell !== meta.cell) hideTableValueFilterButton({ immediate: true });
+      scheduleTableValueFilterButton(meta, event);
+    });
+    document.addEventListener("pointerout", (event) => {
+      const meta = getTableValueFilterCellMeta(event.target);
+      if (!meta || meta.cell.contains(event.relatedTarget)) return;
+      if (event.relatedTarget === tableValueFilterButton || tableValueFilterButton?.contains(event.relatedTarget)) {
+        cancelPendingTableValueFilterButton();
+        return;
+      }
+      if (tableValueFilterHoveredCell === meta.cell || tableValueFilterButtonMeta?.cell === meta.cell) {
+        scheduleHideTableValueFilterButton();
+      }
+    });
+    document.addEventListener("click", (event) => {
+      const stateClear = event.target.closest?.("[data-action='clear-table-value-filter']");
+      if (stateClear) {
+        event.preventDefault();
+        event.stopPropagation();
+        const configId = String(stateClear.dataset.config || "");
+        if (clearTableValueFilter(configId, String(stateClear.dataset.key || ""))) {
+          refreshTableAfterValueFilter(configId);
+        }
+        return;
+      }
+      const domClear = event.target.closest?.("[data-action='clear-dom-table-value-filter']");
+      if (domClear) {
+        event.preventDefault();
+        event.stopPropagation();
+        clearDomTableValueFilter(domClear);
+      }
+    });
+    document.addEventListener("pointerdown", (event) => {
+      if (event.target.closest?.("[data-table-value-filter-portal]")) return;
+      hideTableValueFilterButton({ immediate: true });
+    }, { capture: true });
+    document.addEventListener("selectionchange", () => {
+      const selection = window.getSelection?.();
+      if (selection && !selection.isCollapsed) hideTableValueFilterButton({ immediate: true });
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") hideTableValueFilterButton({ immediate: true });
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) hideTableValueFilterButton({ immediate: true });
+    });
+    window.addEventListener("resize", () => hideTableValueFilterButton({ immediate: true }));
+    window.addEventListener("scroll", () => hideTableValueFilterButton({ immediate: true }), { capture: true });
+  }
+
   function isShiftDragExemptElement(element) {
     return element instanceof Element && Boolean(element.closest(SHIFT_DRAG_EXEMPT_SELECTOR));
   }
@@ -34585,6 +35221,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindProgramTypeFilterOutsideClick();
     bindDirectExpenseNoteFilterOutsideClick();
     bindSystemHelpTooltips();
+    bindTableValueFilterEvents();
     bindShiftDragRequirement();
     bindLongPressDragRequirement();
     bindCardWindowControls();
