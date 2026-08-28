@@ -109,8 +109,13 @@ vm.runInContext(`
   ${extractFunction("getEmployeeActPartnerPaymentRows")}
   ${extractFunction("getEmployeeActPaymentSummary")}
   ${extractFunction("prepareEmployeeActDocumentRecord")}
+  ${extractFunction("getEmployeeContractDocumentRequiredFields")}
+  ${extractFunction("getEmployeeActDocumentRequiredFields")}
+  ${extractFunction("getMissingEmployeeActDocumentFields")}
   this.getSummary = getEmployeeActPaymentSummary;
   this.prepareRecord = prepareEmployeeActDocumentRecord;
+  this.getEmployeeContractRequiredFields = getEmployeeContractDocumentRequiredFields;
+  this.getMissingEmployeeActFields = getMissingEmployeeActDocumentFields;
 `, context);
 
 const record = {
@@ -139,6 +144,30 @@ assert.match(generated.employeeActDocumentValues["Переменные выпл�
 assert.match(generated.employeeActDocumentValues["Партнерская программа"], /Петров Пётр[\s\S]*\t44/u);
 assert.ok(accountingCollections.length >= 4);
 assert.ok(accountingCollections.every((collections) => collections === draft), "Все расчёты акта должны использовать черновую коллекцию выплат.");
+
+const recordWithoutContractNumber = { ...record, contractNo: "" };
+assert.equal(
+  context.getEmployeeContractRequiredFields(recordWithoutContractNumber)
+    .some((field) => field.key === "contractNo"),
+  false,
+  "Номер договора не должен блокировать формирование договора сотрудника."
+);
+assert.equal(
+  context.getMissingEmployeeActFields(recordWithoutContractNumber, draft)
+    .some((field) => field.key === "contractNo"),
+  false,
+  "Номер договора не должен блокировать формирование акта сотрудника."
+);
+const configsStart = source.indexOf("  const configs = {");
+const contractsConfigStart = source.indexOf("    contracts: {", configsStart);
+const programsConfigStart = source.indexOf("    programs: {", contractsConfigStart);
+assert.ok(configsStart >= 0 && contractsConfigStart >= 0 && programsConfigStart > contractsConfigStart);
+const contractsConfigSource = source.slice(contractsConfigStart, programsConfigStart);
+assert.match(
+  contractsConfigSource,
+  /field\("contractNo", "Номер договора"\),/u,
+  "Поле номера договора в карточке сотрудника должно быть необязательным."
+);
 
 const markSentSource = extractFunction("markEmployeeActPaymentRowsAsSent");
 assert.doesNotMatch(markSentSource, /state\.data\.collections/u);

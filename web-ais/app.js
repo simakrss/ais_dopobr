@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.347",
+    version: "1.7.348",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.348",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Номер договора у сотрудника стал необязательным: карточку, договор и акт на оплату можно сохранить или сформировать без заполнения этого поля."
+      ]
+    },
     {
       version: "1.7.347",
       releasedAt: "2026-08-28",
@@ -4980,7 +4987,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("coupon", "Персональный купон"),
         field("couponId", "ID купона"),
         field("notificationEmail", "Уведомления по email", "checkbox"),
-        field("contractNo", "Номер договора", "text", true),
+        field("contractNo", "Номер договора"),
         field("contractDate", "Дата договора", "date"),
         field("type", "Вид договора", "select", false, "contractTypes"),
         field("startDate", "Срок с", "date"),
@@ -60153,7 +60160,6 @@ MAX - https://bizvmax.ru/zifra_plus
   function getEmployeeContractDocumentRequiredFields(record) {
     return [
       { key: "name", label: "ФИО / контрагент" },
-      { key: "contractNo", label: "Номер договора" },
       { key: "contractDate", label: "Дата договора" },
       { key: "startDate", label: "Срок с" },
       { key: "endDate", label: "Срок по" },
@@ -60228,7 +60234,6 @@ MAX - https://bizvmax.ru/zifra_plus
     const summary = getEmployeeActPaymentSummary(record, collections);
     return [
       { key: "name", label: "ФИО / контрагент" },
-      { key: "contractNo", label: "Номер договора" },
       { key: "contractDate", label: "Дата договора" },
       { key: "subject", label: "Предмет договора" },
       {
