@@ -12393,8 +12393,8 @@ body.card-window-moving {
 }
 
 .generated-document-preview-actions [data-action="confirm-generated-document-preview"] {
-  grid-column: 1 / -1;
-  grid-row: 2;
+  grid-column: auto;
+  grid-row: auto;
   justify-self: end;
   width: max-content;
   max-width: 100%;
@@ -23006,6 +23006,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .generated-document-preview-actions [data-action="confirm-generated-document-preview"] {
+    grid-column: auto;
     grid-row: auto;
     width: max-content;
     justify-self: end;

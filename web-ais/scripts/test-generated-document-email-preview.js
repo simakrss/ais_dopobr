@@ -94,7 +94,7 @@ assert.match(stylesSource, /\.generated-document-email-workspace\.is-editing/u);
 assert.match(stylesSource, /\.generated-document-email-editor/u);
 assert.match(
   stylesSource,
-  /\[data-action="confirm-generated-document-preview"\][\s\S]{0,220}grid-row:\s*2;[\s\S]{0,220}width:\s*max-content;/u
+  /\[data-action="confirm-generated-document-preview"\]\s*\{[\s\S]{0,120}grid-column:\s*auto;[\s\S]{0,120}grid-row:\s*auto;[\s\S]{0,220}width:\s*max-content;/u
 );
 assert.match(stylesSource, /@media \(max-width: 720px\)[\s\S]*\.generated-document-email-summary/u);
 

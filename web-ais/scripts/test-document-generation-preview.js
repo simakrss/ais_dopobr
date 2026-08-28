@@ -9,6 +9,15 @@ const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const serverSource = fs.readFileSync(path.join(root, "app-server.js"), "utf8");
 const stylesSource = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 const gatewaySource = fs.readFileSync(path.join(root, "gateway.php"), "utf8");
+
+function getCssRule(source, selector, fromIndex = 0) {
+  const marker = `${selector} {`;
+  const start = source.indexOf(marker, fromIndex);
+  assert.notEqual(start, -1, `Не найден CSS-селектор: ${selector}`);
+  const end = source.indexOf("}", start);
+  assert.notEqual(end, -1, `Не найден конец CSS-правила: ${selector}`);
+  return source.slice(start, end + 1);
+}
 const {
   registerGeneratedDocumentPreview,
   beginGeneratedDocumentPreviewEditor,
@@ -729,7 +738,40 @@ assert.match(gatewaySource, /stream_get_contents\(\$inputStream,\s*\$requestBody
 assert.match(stylesSource, /\.generated-document-preview-dialog/u);
 assert.match(stylesSource, /\.generated-document-preview-frame/u);
 assert.match(stylesSource, /\.generated-document-preview-frame\.is-editor/u);
-assert.match(stylesSource, /\.generated-document-preview-actions\s*\{\s*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/u);
+const desktopPreviewActionsRule = getCssRule(
+  stylesSource,
+  ".generated-document-preview-actions"
+);
+assert.match(
+  desktopPreviewActionsRule,
+  /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*repeat\(3,\s*auto\)/u
+);
+const continuePreviewActionRule = getCssRule(
+  stylesSource,
+  '.generated-document-preview-actions [data-action="confirm-generated-document-preview"]'
+);
+assert.match(
+  continuePreviewActionRule,
+  /grid-column:\s*auto;[\s\S]*grid-row:\s*auto;/u
+);
+assert.doesNotMatch(continuePreviewActionRule, /grid-column:\s*1\s*\/\s*-1|grid-row:\s*2/u);
+const mobilePreviewStart = stylesSource.indexOf("@media (max-width: 720px)", stylesSource.indexOf(".student-mailbox-dialog"));
+assert.notEqual(mobilePreviewStart, -1, "Не найден адаптивный блок предварительного просмотра.");
+const mobilePreviewActionsRule = getCssRule(
+  stylesSource,
+  ".generated-document-preview-actions",
+  mobilePreviewStart
+);
+assert.match(
+  mobilePreviewActionsRule,
+  /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/u
+);
+const mobilePreviewHintRule = getCssRule(
+  stylesSource,
+  ".generated-document-preview-actions small",
+  mobilePreviewStart
+);
+assert.match(mobilePreviewHintRule, /grid-column:\s*1\s*\/\s*-1/u);
 assert.doesNotMatch(stylesSource, /generated-document-preview-actions \[data-action="edit-generated-document-preview"\][\s\S]*?grid-column:\s*1\s*\/\s*-1/u);
 
 console.log("Document generation preview tests passed.");

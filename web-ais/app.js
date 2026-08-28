@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.338",
+    version: "1.7.339",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.339",
+      releasedAt: "2026-08-28",
+      changes: [
+        "В предварительном просмотре документа об образовании кнопки редактирования, отмены и продолжения располагаются в одной нижней строке, пока ширина экрана это позволяет.",
+        "На узких экранах пояснение вынесено отдельно, а сами кнопки сохраняют общий ряд с адаптивными подписями."
+      ]
+    },
     {
       version: "1.7.338",
       releasedAt: "2026-08-28",
