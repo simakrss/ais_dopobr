@@ -1686,6 +1686,17 @@ async function testWebDavConditionalSaveAndVerification() {
 }
 
 function testClientGenerationGuardAndSourceProtocols() {
+  const buildExportSource = extractBetween(
+    serverSource,
+    "async function buildStudentDatabaseExport(body, onProgress = () => {})",
+    "\nasync function handleStudentDatabaseExport(req, res)"
+  );
+  assert.match(buildExportSource, /readStudentDatabaseReconciliationAuditRows/u);
+  assert.doesNotMatch(
+    buildExportSource,
+    /await readAuditRows\(\)/u,
+    "Автослияние разрешено только по журналу снимка точной Web-ревизии"
+  );
   const exportSource = extractBetween(
     clientSource,
     "  async function exportStudentsToDatabase(event)",

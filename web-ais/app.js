@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.349",
+    version: "1.7.350",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.350",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Синхронизация XLSB автоматически объединяет независимые изменения Web и Excel по контрольной точке и спрашивает выбор только при настоящем конфликте одного поля; формульные и технические расхождения в такой диалог не попадают."
+      ]
+    },
     {
       version: "1.7.349",
       releasedAt: "2026-08-28",
@@ -54008,6 +54015,15 @@ MAX - https://bizvmax.ru/zifra_plus
     return timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : "";
   }
 
+  function isStudentDatabaseCriticalAuditMutation(entry, criticalEntityTypes) {
+    if (!criticalEntityTypes.has(String(entry?.entityType || "").trim())) return false;
+    const source = String(entry?.source || "").trim().toLocaleLowerCase("ru-RU");
+    if (source.startsWith("xlsb-sync-")) return false;
+    if (["document-generation", "ocr"].includes(source)) return false;
+    return String(entry?.action || "").trim().toLocaleLowerCase("ru-RU")
+      !== "добавлены типовые расходы";
+  }
+
   function getStudentDatabaseCriticalAuditWindow() {
     const criticalEntityTypes = new Set([
       "students",
@@ -54025,7 +54041,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .map((entry) => Date.parse(String(entry?.createdAt || "").trim()))
       .filter(Number.isFinite);
     const criticalTimestamps = audit
-      .filter((entry) => criticalEntityTypes.has(String(entry?.entityType || "").trim()))
+      .filter((entry) => isStudentDatabaseCriticalAuditMutation(entry, criticalEntityTypes))
       .map((entry) => Date.parse(String(entry?.createdAt || "").trim()))
       .filter(Number.isFinite);
     return {

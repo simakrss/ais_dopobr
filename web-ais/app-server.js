@@ -1055,6 +1055,24 @@ const STUDENT_DATABASE_SYNC_COMMENT_START = "[[AIS_SYNC_V1]]";
 const STUDENT_DATABASE_SYNC_COMMENT_END = "[[/AIS_SYNC_V1]]";
 const STUDENT_DATABASE_SYNC_VERSION = 1;
 const STUDENT_DATABASE_DUAL_CRITICAL_CHANGE_CODE = "STUDENT_DATABASE_DUAL_CRITICAL_CHANGE";
+const STUDENT_DATABASE_CRITICAL_AUDIT_ENTITY_TYPES = new Set([
+  "students",
+  "contracts",
+  "directExpenses",
+  "generalExpenses",
+  "inventory",
+  "programs",
+  "trainingPlans"
+]);
+const STUDENT_DATABASE_NON_MUTATING_AUDIT_SOURCES = new Set([
+  "document-generation",
+  "ocr"
+]);
+const STUDENT_DATABASE_NON_MUTATING_AUDIT_ACTIONS = new Set([
+  "добавлены типовые расходы"
+]);
+const STUDENT_DATABASE_REVERSIBLE_AUDIT_MAX_CHANGES = 40;
+const STUDENT_DATABASE_REVERSIBLE_AUDIT_VALUE_LIMIT = 1200;
 const STUDENT_DATABASE_SYNC_COMMENT_SHEETS = Object.freeze([
   { sheetName: "База", entity: "students" },
   { sheetName: "Реестр договоров", entity: "contracts" },
@@ -10973,6 +10991,20 @@ async function readSharedApplicationStateMirrorSnapshot(options = {}) {
   });
 }
 
+async function readStudentDatabaseReconciliationAuditRows(expectedRevision) {
+  const expected = Math.max(0, Math.floor(Number(expectedRevision) || 0));
+  if (!expected) return null;
+  try {
+    const snapshot = await readSharedApplicationStateMirrorSnapshot({ expectedRevision: expected });
+    if (Number(snapshot?.document?.revision || 0) !== expected) return null;
+    const auditRows = snapshot.document?.data?.collections?.audit;
+    return Array.isArray(auditRows) ? auditRows : null;
+  } catch (error) {
+    console.warn("Не удалось прочитать журнал подтверждённого снимка общей базы:", error.message);
+    return null;
+  }
+}
+
 async function rememberSharedApplicationStateMirrorSave(result, operation) {
   const revision = Math.max(0, Math.floor(Number(result?.revision) || 0));
   let document = Number(sharedStateMirrorDocument?.revision || 0) === revision
@@ -16270,7 +16302,7 @@ const STUDENT_DATABASE_POTENTIAL_FORMULA_FIELDS = Object.freeze({
 });
 
 const STUDENT_DATABASE_DERIVED_FIXED_VALUE_FIELDS = Object.freeze({
-  directExpenses: new Set(["recommendation"]),
+  directExpenses: new Set(["recommendation", "inventoryLink"]),
   generalExpenses: new Set(["paid"]),
   contracts: STUDENT_DATABASE_POTENTIAL_FORMULA_FIELDS.contracts
 });
@@ -16302,6 +16334,37 @@ function isStudentDatabaseFixedValueOverrideField(definitionKey, fieldName) {
     && STUDENT_DATABASE_CRITICAL_TRAINING_PLAN_EXCLUDED_FIELDS.has(fieldName)
   ) return false;
   return true;
+}
+
+function isStudentDatabaseCriticalAuditMutation(entry) {
+  if (!STUDENT_DATABASE_CRITICAL_AUDIT_ENTITY_TYPES.has(
+    String(entry?.entityType || "").trim()
+  )) return false;
+  const source = String(entry?.source || "").trim().toLocaleLowerCase("ru-RU");
+  if (source.startsWith("xlsb-sync-")) return false;
+  if (STUDENT_DATABASE_NON_MUTATING_AUDIT_SOURCES.has(source)) return false;
+  const action = String(entry?.action || "").trim().toLocaleLowerCase("ru-RU");
+  return !STUDENT_DATABASE_NON_MUTATING_AUDIT_ACTIONS.has(action);
+}
+
+function buildStudentDatabaseCriticalAuditWindow(auditRows) {
+  const audit = Array.isArray(auditRows) ? auditRows : [];
+  const allTimestamps = audit
+    .map((entry) => Date.parse(String(entry?.createdAt || "").trim()))
+    .filter(Number.isFinite);
+  const criticalTimestamps = audit
+    .filter(isStudentDatabaseCriticalAuditMutation)
+    .map((entry) => Date.parse(String(entry?.createdAt || "").trim()))
+    .filter(Number.isFinite);
+  return {
+    latestCriticalAt: criticalTimestamps.length
+      ? new Date(Math.max(...criticalTimestamps)).toISOString()
+      : "",
+    oldestAt: allTimestamps.length
+      ? new Date(Math.min(...allTimestamps)).toISOString()
+      : "",
+    complete: audit.length < 200
+  };
 }
 
 function isStudentDatabasePersistableFixedValueOverrideField(definitionKey, fieldName) {
@@ -16556,6 +16619,60 @@ function buildStudentDatabaseSyncConflictDiagnosticReport({
   };
 }
 
+function studentDatabaseDefinitionHasReportableCurrentDifference(
+  definitionKey,
+  webData,
+  excelData
+) {
+  const definition = getStudentDatabaseSynchronizedChangeDefinitions(webData, excelData)
+    .find((item) => item.key === definitionKey);
+  if (!definition) return true;
+  const matches = pairStudentDatabaseFieldMergeRecords(
+    definition.before,
+    definition.after,
+    definition
+  );
+  if (matches.added.length || matches.removed.length) return true;
+  const managedFields = getStudentDatabaseSynchronizedManagedFields(definition.key, excelData);
+  return matches.pairs.some((pair) => definition.fields.some((fieldName) => {
+    const differs = serializeStudentDatabaseChangeValue(
+      definition.normalize(pair.before, fieldName)
+    ) !== serializeStudentDatabaseChangeValue(definition.normalize(pair.after, fieldName));
+    if (!differs) return false;
+    if (isStudentDatabaseSynchronizedChangeReportable(
+      definition,
+      pair,
+      fieldName,
+      managedFields
+    )) return true;
+    const explicitWebOverrides = new Set(getStudentDatabaseRecordFixedValueOverrides(
+      pair.before?.databaseFixedValueOverrides
+    ));
+    return (!managedFields || managedFields.has(fieldName))
+      && isStudentDatabasePotentialFormulaValueField(definition.key, fieldName)
+      && isStudentDatabaseFixedValueOverrideField(definition.key, fieldName)
+      && explicitWebOverrides.has(fieldName);
+  }));
+}
+
+function isStudentDatabaseIgnorableUnsupportedAuditChange(
+  entityKey,
+  fieldName,
+  webData,
+  excelData
+) {
+  if (["databaseSyncFormulaFields", "databaseFixedValueOverrides"].includes(fieldName)) {
+    return true;
+  }
+  return entityKey === "students"
+    && fieldName === "directExpenses"
+    && !studentDatabaseDefinitionHasReportableCurrentDifference(
+      "directExpenses",
+      webData,
+      excelData
+    );
+}
+
 function resolveStudentDatabaseFieldLevelMerge({
   webData,
   excelData,
@@ -16577,14 +16694,19 @@ function resolveStudentDatabaseFieldLevelMerge({
     definition.key,
     definition
   ]));
-  const relevantEntries = (Array.isArray(auditRows) ? auditRows : [])
+  const postBaselineCriticalEntries = (Array.isArray(auditRows) ? auditRows : [])
     .filter((entry) => (
       definitionByKey.has(String(entry?.entityType || "").trim())
-      && String(entry?.action || "").trim().toLocaleLowerCase("ru-RU") === "изменена запись"
+      && isStudentDatabaseCriticalAuditMutation(entry)
       && Date.parse(String(entry?.createdAt || "")) > baselineAt
-      && Array.isArray(entry?.changes)
-      && entry.changes.length
-    ))
+    ));
+  if (postBaselineCriticalEntries.some((entry) => (
+    String(entry?.action || "").trim().toLocaleLowerCase("ru-RU") !== "изменена запись"
+    || !Array.isArray(entry?.changes)
+    || !entry.changes.length
+    || entry.changes.length >= STUDENT_DATABASE_REVERSIBLE_AUDIT_MAX_CHANGES
+  ))) return null;
+  const relevantEntries = postBaselineCriticalEntries
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
   if (!relevantEntries.length) return null;
 
@@ -16619,9 +16741,28 @@ function resolveStudentDatabaseFieldLevelMerge({
       ) continue;
       if (!definition.fields.includes(fieldName)) {
         if (["cardEventState", "cardEventLabel"].includes(fieldName)) return null;
-        continue;
+        if (isStudentDatabaseIgnorableUnsupportedAuditChange(
+          entityKey,
+          fieldName,
+          webData,
+          excelData
+        )) continue;
+        return null;
       }
       if (String(change?.before ?? "") === "[скрыто]") return null;
+      if (
+        String(change?.before ?? "").length >= STUDENT_DATABASE_REVERSIBLE_AUDIT_VALUE_LIMIT
+        || String(change?.after ?? "").length >= STUDENT_DATABASE_REVERSIBLE_AUDIT_VALUE_LIMIT
+      ) return null;
+      const currentFieldValue = definition.normalize(record, fieldName);
+      const auditAfterFieldValue = definition.normalize(
+        { [fieldName]: change?.after ?? "" },
+        fieldName
+      );
+      if (
+        serializeStudentDatabaseChangeValue(currentFieldValue)
+        !== serializeStudentDatabaseChangeValue(auditAfterFieldValue)
+      ) return null;
       record[fieldName] = change?.before ?? "";
       revertedFieldCount += 1;
       if (entityKey === "students") changedWebIds.add(String(record.id || id).trim());
@@ -16679,6 +16820,7 @@ function resolveStudentDatabaseFieldLevelMerge({
         ...excelDefinition.fields
       ])].filter((fieldName) => (
         !(baselineDefinition.key === "trainingPlans" && fieldName === "totalHours")
+        && !STUDENT_DATABASE_DERIVED_FIXED_VALUE_FIELDS[baselineDefinition.key]?.has(fieldName)
         && !(baselineDefinition.key === "programs"
           && STUDENT_DATABASE_CRITICAL_PROGRAM_EXCLUDED_FIELDS.has(fieldName))
       )),
@@ -16731,8 +16873,20 @@ function resolveStudentDatabaseFieldLevelMerge({
         || getStudentDatabaseChangeRecordId(baselineRecord)
         || `${definition.key}-${baselineIndex + 1}`;
       const mergedRecord = JSON.parse(JSON.stringify(webRecord));
+      const explicitWebOverrides = new Set(getStudentDatabaseRecordFixedValueOverrides(
+        webRecord?.databaseFixedValueOverrides
+      ));
 
       for (const fieldName of definition.fields) {
+        if (
+          isStudentDatabasePotentialFormulaValueField(definition.key, fieldName)
+          && !explicitWebOverrides.has(fieldName)
+          && [baselineRecord, webRecord, excelRecord]
+            .some((record) => isStudentDatabaseRecordFormulaBacked(record, fieldName))
+        ) {
+          stats.unchanged += 1;
+          continue;
+        }
         const baselineFieldValue = definition.normalize(baselineRecord, fieldName);
         const webFieldValue = definition.normalize(webRecord, fieldName);
         const excelFieldValue = definition.normalize(excelRecord, fieldName);
@@ -16856,6 +17010,31 @@ function studentDatabaseLinkedOrDerivedCollectionsDiffer(webData, excelData) {
   ].some((key) => (
     JSON.stringify(webCriticalSnapshot[key]) !== JSON.stringify(excelCriticalSnapshot[key])
   ));
+}
+
+function resolveStudentDatabaseReconciliationAfterDirectionError({
+  errorCode = "",
+  webData,
+  excelData,
+  baseline,
+  auditRows = [],
+  conflictResolutions = {}
+} = {}) {
+  if (String(errorCode || "") === STUDENT_DATABASE_DUAL_CRITICAL_CHANGE_CODE) {
+    const fieldLevelResult = resolveStudentDatabaseFieldLevelMerge({
+      webData,
+      excelData,
+      baseline,
+      auditRows,
+      conflictResolutions
+    });
+    if (fieldLevelResult) return fieldLevelResult;
+  }
+  return resolveStudentDatabaseCompleteReconciliation({
+    webData,
+    excelData,
+    conflictResolutions
+  });
 }
 
 function resolveStudentDatabaseCompleteReconciliation({
@@ -27674,11 +27853,20 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       throw error;
     }
     let sharedStateMetadata = null;
-    if (directionalSync) {
+    let reconciliationAuditRows = null;
+    let authoritativeCriticalAuditWindow = null;
+    if (directionalSync || body.twoWaySync === true) {
       sharedStateMetadata = await assertSharedApplicationStateRevision(body.sharedStateRevision);
     }
-    if (body.twoWaySync === true) {
-      await assertSharedApplicationStateRevision(body.sharedStateRevision);
+    if (directionalSync) {
+      reconciliationAuditRows = await readStudentDatabaseReconciliationAuditRows(
+        body.sharedStateRevision
+      );
+      if (Array.isArray(reconciliationAuditRows)) {
+        authoritativeCriticalAuditWindow = buildStudentDatabaseCriticalAuditWindow(
+          reconciliationAuditRows
+        );
+      }
     }
     onProgress({
       progress: 2,
@@ -27759,9 +27947,13 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           lastExportedAt: body.lastExportedAt,
           lastDownloadedAt: body.lastDownloadedAt,
           sourceEmbeddedSynchronizedAt,
-          currentWebCriticalUpdatedAt: body.currentWebCriticalUpdatedAt,
-          currentWebAuditOldestAt: body.currentWebAuditOldestAt,
-          currentWebAuditComplete: body.currentWebAuditComplete === true,
+          currentWebCriticalUpdatedAt: authoritativeCriticalAuditWindow?.latestCriticalAt
+            ?? body.currentWebCriticalUpdatedAt,
+          currentWebAuditOldestAt: authoritativeCriticalAuditWindow?.oldestAt
+            ?? body.currentWebAuditOldestAt,
+          currentWebAuditComplete: authoritativeCriticalAuditWindow
+            ? authoritativeCriticalAuditWindow.complete
+            : body.currentWebAuditComplete === true,
           currentWebCriticalHash,
           currentExcelCriticalHash,
           currentWebCriticalIdentityHash,
@@ -27780,9 +27972,12 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
           && !sourceIdentityChanged
         );
         if (!currentSnapshotsCanBeReconciled) throw error;
-        directionalMergeResult = resolveStudentDatabaseCompleteReconciliation({
+        directionalMergeResult = resolveStudentDatabaseReconciliationAfterDirectionError({
+          errorCode: error?.code,
           webData: payload,
           excelData: sourceDataForExport,
+          baseline: body.syncBaseline,
+          auditRows: Array.isArray(reconciliationAuditRows) ? reconciliationAuditRows : [],
           conflictResolutions: body.syncConflictResolutions
         });
         if (directionalMergeResult.conflicts.length) {
@@ -34954,6 +35149,7 @@ module.exports = {
   hashStudentDatabaseCriticalIdentity,
   resolveLegacyStudentDatabaseIndependentNoteMerge,
   resolveStudentDatabaseFieldLevelMerge,
+  resolveStudentDatabaseReconciliationAfterDirectionError,
   resolveStudentDatabaseCompleteReconciliation,
   validateStudentDatabaseReconciliationSelectionsAgainstOutput,
   materializeStudentDatabaseReconciledCollections,

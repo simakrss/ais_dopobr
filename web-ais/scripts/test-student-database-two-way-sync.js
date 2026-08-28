@@ -6,6 +6,7 @@ const {
   hashStudentDatabaseCriticalIdentity,
   resolveLegacyStudentDatabaseIndependentNoteMerge,
   resolveStudentDatabaseFieldLevelMerge,
+  resolveStudentDatabaseReconciliationAfterDirectionError,
   resolveStudentDatabaseCompleteReconciliation,
   validateStudentDatabaseReconciliationSelectionsAgainstOutput,
   applyStudentDatabaseFormulaBackedWebOverrides,
@@ -375,6 +376,170 @@ assert.deepStrictEqual(
   [["Отзыв на сайте", "Excel → Web"], ["Примечание", "Web → Excel"]].sort()
 );
 
+const oneSidedBaselineData = clone(sameStudentBaselineData);
+Object.assign(oneSidedBaselineData.students[0], {
+  additionalStatus: "обучающаяся",
+  contractAmount: 8000,
+  eventOrder: "enrollment,documents"
+});
+oneSidedBaselineData.directExpenses = [{
+  id: "expense-formula-cache",
+  uid: "1148",
+  date: "2026-08-20",
+  type: "Материалы",
+  amount: 100,
+  recommendation: "100"
+}];
+const oneSidedWebData = clone(oneSidedBaselineData);
+Object.assign(oneSidedWebData.students[0], {
+  contractAmount: 6000,
+  eventOrder: "enrollment",
+  databaseFixedValueOverrides: ["contractAmount"]
+});
+const oneSidedExcelData = clone(oneSidedBaselineData);
+oneSidedExcelData.students[0].additionalStatus = "на продление";
+oneSidedExcelData.students[0].databaseSyncFormulaFields = ["contractAmount"];
+oneSidedExcelData.directExpenses[0].recommendation = "200";
+oneSidedExcelData.directExpenses[0].databaseSyncFormulaFields = ["recommendation"];
+const oneSidedBaseline = {
+  ...sameStudentBaseline,
+  criticalHash: hashStudentDatabaseCriticalSnapshot(oneSidedBaselineData),
+  criticalIdentityHash: hashStudentDatabaseCriticalIdentity(oneSidedBaselineData)
+};
+const oneSidedAuditRows = [{
+  createdAt: "2026-08-20T09:59:00.000Z",
+  action: "Синхронизация",
+  entityType: "database",
+  changes: []
+}, {
+  createdAt: "2026-08-20T11:00:00.000Z",
+  action: "Изменена запись",
+  entityType: "students",
+  entityId: "student-pashchenko",
+  entityLabel: "Пащенко Мария Александровна",
+  source: "web",
+  changes: [{
+    field: "contractAmount",
+    before: 8000,
+    after: 6000
+  }, {
+    field: "eventOrder",
+    before: "enrollment,documents",
+    after: "enrollment"
+  }]
+}];
+const rawOneSidedReconciliation = resolveStudentDatabaseCompleteReconciliation({
+  webData: oneSidedWebData,
+  excelData: oneSidedExcelData
+});
+assert.ok(
+  rawOneSidedReconciliation.conflicts.length >= 3,
+  "Сравнение только текущих снимков воспроизводит лишние вопросы"
+);
+const automaticOneSidedReconciliation = resolveStudentDatabaseReconciliationAfterDirectionError({
+  errorCode: "STUDENT_DATABASE_DUAL_CRITICAL_CHANGE",
+  webData: oneSidedWebData,
+  excelData: oneSidedExcelData,
+  baseline: oneSidedBaseline,
+  auditRows: oneSidedAuditRows
+});
+assert.deepStrictEqual(automaticOneSidedReconciliation.conflicts, []);
+assert.equal(automaticOneSidedReconciliation.completeReconciliation, undefined);
+assert.equal(automaticOneSidedReconciliation.collections.students[0].contractAmount, 6000);
+assert.equal(automaticOneSidedReconciliation.collections.students[0].additionalStatus, "на продление");
+assert.equal(automaticOneSidedReconciliation.collections.students[0].eventOrder, "enrollment");
+assert.equal(automaticOneSidedReconciliation.collections.directExpenses[0].recommendation, "100");
+assert.equal(
+  automaticOneSidedReconciliation.changes.some((change) => change.field === "Рекомендация оплаты"),
+  false,
+  "Производный результат формулы не должен считаться изменением"
+);
+const safeFallbackReconciliation = resolveStudentDatabaseReconciliationAfterDirectionError({
+  errorCode: "STUDENT_DATABASE_DUAL_CRITICAL_CHANGE",
+  webData: oneSidedWebData,
+  excelData: oneSidedExcelData,
+  baseline: oneSidedBaseline,
+  auditRows: []
+});
+assert.equal(safeFallbackReconciliation.completeReconciliation, true);
+assert.ok(safeFallbackReconciliation.conflicts.length > 0);
+const nonReversibleMutationFallback = resolveStudentDatabaseReconciliationAfterDirectionError({
+  errorCode: "STUDENT_DATABASE_DUAL_CRITICAL_CHANGE",
+  webData: oneSidedWebData,
+  excelData: oneSidedExcelData,
+  baseline: oneSidedBaseline,
+  auditRows: [...oneSidedAuditRows, {
+    createdAt: "2026-08-20T11:05:00.000Z",
+    action: "Автозаполнение для группового документа",
+    entityType: "students",
+    entityId: "student-pashchenko",
+    source: "bulk-document-autofill",
+    changes: []
+  }]
+});
+assert.equal(
+  nonReversibleMutationFallback.completeReconciliation,
+  true,
+  "Необратимая Web-мутация должна оставлять безопасный полный выбор"
+);
+assert.ok(nonReversibleMutationFallback.conflicts.length > 0);
+const nestedExpenseWebData = clone(oneSidedWebData);
+nestedExpenseWebData.directExpenses[0].amount = 150;
+nestedExpenseWebData.directExpenses[0].databaseFixedValueOverrides = ["amount"];
+const nestedExpenseExcelData = clone(oneSidedExcelData);
+nestedExpenseExcelData.directExpenses[0].databaseSyncFormulaFields = ["amount", "recommendation"];
+const nestedExpenseAuditRows = clone(oneSidedAuditRows);
+nestedExpenseAuditRows[1].changes.push({
+  field: "directExpenses",
+  before: "[{amount:100}]",
+  after: "[{amount:150}]"
+});
+const nestedExpenseFallback = resolveStudentDatabaseReconciliationAfterDirectionError({
+  errorCode: "STUDENT_DATABASE_DUAL_CRITICAL_CHANGE",
+  webData: nestedExpenseWebData,
+  excelData: nestedExpenseExcelData,
+  baseline: oneSidedBaseline,
+  auditRows: nestedExpenseAuditRows
+});
+assert.equal(
+  nestedExpenseFallback.completeReconciliation,
+  true,
+  "Необратимое изменение вложенной затраты с Web override нельзя принимать за Excel-only"
+);
+assert.ok(nestedExpenseFallback.conflicts.length > 0);
+const truncatedAuditRows = clone(oneSidedAuditRows);
+truncatedAuditRows[1].changes = Array.from({ length: 40 }, () => ({
+  field: "contractAmount",
+  before: 8000,
+  after: 6000
+}));
+const truncatedAuditFallback = resolveStudentDatabaseReconciliationAfterDirectionError({
+  errorCode: "STUDENT_DATABASE_DUAL_CRITICAL_CHANGE",
+  webData: oneSidedWebData,
+  excelData: oneSidedExcelData,
+  baseline: oneSidedBaseline,
+  auditRows: truncatedAuditRows
+});
+assert.equal(
+  truncatedAuditFallback.completeReconciliation,
+  true,
+  "Потенциально усечённая запись из 40 изменений должна обрабатываться fail-closed"
+);
+const discontinuousAuditRows = clone(oneSidedAuditRows);
+discontinuousAuditRows[1].changes[0].after = 7000;
+const discontinuousAuditFallback = resolveStudentDatabaseReconciliationAfterDirectionError({
+  errorCode: "STUDENT_DATABASE_DUAL_CRITICAL_CHANGE",
+  webData: oneSidedWebData,
+  excelData: oneSidedExcelData,
+  baseline: oneSidedBaseline,
+  auditRows: discontinuousAuditRows
+});
+assert.equal(
+  discontinuousAuditFallback.completeReconciliation,
+  true,
+  "Разрыв цепочки current → audit.after должен запрещать автоматическое слияние"
+);
+
 const sameFieldExcelData = clone(sameStudentBaselineData);
 sameFieldExcelData.students[0].note = "Добавлено в Excel";
 const unresolvedSameField = resolveStudentDatabaseFieldLevelMerge({
@@ -388,6 +553,16 @@ assert.equal(unresolvedSameField.conflicts[0].field, "Примечание");
 assert.equal(unresolvedSameField.conflicts[0].web, "Добавлено в Web");
 assert.equal(unresolvedSameField.conflicts[0].excel, "Добавлено в Excel");
 assert.equal(unresolvedSameField.students, null);
+const routedSameFieldConflict = resolveStudentDatabaseReconciliationAfterDirectionError({
+  errorCode: "STUDENT_DATABASE_DUAL_CRITICAL_CHANGE",
+  webData: sameStudentWebData,
+  excelData: sameFieldExcelData,
+  baseline: sameStudentBaseline,
+  auditRows: sameStudentAuditRows
+});
+assert.equal(routedSameFieldConflict.completeReconciliation, undefined);
+assert.equal(routedSameFieldConflict.conflicts.length, 1);
+assert.equal(routedSameFieldConflict.conflicts[0].field, "Примечание");
 
 const driftedBaselineData = clone(sameStudentBaselineData);
 driftedBaselineData.students[0].phone = "+7 000 000-00-00";

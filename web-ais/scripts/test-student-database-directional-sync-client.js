@@ -46,6 +46,27 @@ function testBaselineNormalizationAndLatestTimestamp() {
           audit: [
             { createdAt: "2026-08-20T09:00:00.000Z", entityType: "database" },
             { createdAt: "2026-08-20T08:00:00.000Z", entityType: "students" },
+            {
+              createdAt: "2026-08-20T11:00:00.000Z",
+              entityType: "students",
+              source: "document-generation"
+            },
+            {
+              createdAt: "2026-08-20T12:00:00.000Z",
+              entityType: "students",
+              source: "ocr"
+            },
+            {
+              createdAt: "2026-08-20T13:00:00.000Z",
+              entityType: "students",
+              source: "xlsb-sync-local"
+            },
+            {
+              createdAt: "2026-08-20T13:30:00.000Z",
+              entityType: "students",
+              action: "Добавлены типовые расходы",
+              source: "web"
+            },
             { createdAt: "2026-08-01T00:00:00.000Z", entityType: "documents" }
           ]
         }
@@ -90,6 +111,16 @@ function testBaselineNormalizationAndLatestTimestamp() {
       oldestAt: "2026-08-01T00:00:00.000Z",
       complete: true
     }
+  );
+  context.state.data.collections.audit.push({
+    createdAt: "2026-08-20T14:00:00.000Z",
+    entityType: "students",
+    source: "automatic-student-event"
+  });
+  assert.equal(
+    context.auditWindow().latestCriticalAt,
+    "2026-08-20T14:00:00.000Z",
+    "Реальная автоматическая правка карточки должна считаться критичной"
   );
 }
 
