@@ -253,6 +253,16 @@ assert.doesNotMatch(
 const historyLoader = namedFunction(blocks, "loadAdvertisingEmailHistory");
 assert.match(historyLoader, /\/api\/advertising\/email-collector\/history/u);
 assert.match(historyLoader, /method:\s*["']GET["']/u);
+assert.match(
+  historyLoader,
+  /if \(history\.loading\)[\s\S]*?options\.force[\s\S]*?history\.pendingRefresh\s*=\s*true/u,
+  "Принудительное обновление не должно теряться, пока выполняется предыдущий GET истории."
+);
+assert.match(
+  historyLoader,
+  /const shouldRefresh\s*=\s*history\.pendingRefresh[\s\S]*?history\.pendingRefresh\s*=\s*false[\s\S]*?loadAdvertisingEmailHistory\(\{\s*force:\s*true\s*\}\)/u,
+  "После завершения текущего GET должен выполняться отложенный принудительный запрос."
+);
 assert.match(historyLoader, /(?:advertising\.history|history)\.rows\s*=\s*Array\.isArray\(payload\.rows\)/u);
 assert.match(historyLoader, /(?:advertising\.history|history)\.loaded\s*=\s*true/u);
 assert.match(historyLoader, /(?:advertising\.history|history)\.loading\s*=\s*false/u);

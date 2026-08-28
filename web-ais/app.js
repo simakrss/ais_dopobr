@@ -5856,6 +5856,7 @@ MAX - https://bizvmax.ru/zifra_plus
         rows: [],
         loaded: false,
         loading: false,
+        pendingRefresh: false,
         error: "",
         copyingRunId: ""
       },
@@ -13207,7 +13208,11 @@ MAX - https://bizvmax.ru/zifra_plus
   async function loadAdvertisingEmailHistory(options = {}) {
     const advertising = state.advertising;
     const history = advertising.history;
-    if (history.loading || (history.loaded && !options.force)) return;
+    if (history.loading) {
+      if (options.force) history.pendingRefresh = true;
+      return;
+    }
+    if (history.loaded && !options.force) return;
     history.loading = true;
     history.error = "";
     if (state.view === "advertising" && advertising.tab === "collector") render();
@@ -13227,7 +13232,10 @@ MAX - https://bizvmax.ru/zifra_plus
       history.loaded = true;
     } finally {
       history.loading = false;
+      const shouldRefresh = history.pendingRefresh;
+      history.pendingRefresh = false;
       if (state.view === "advertising" && advertising.tab === "collector") render();
+      if (shouldRefresh) queueMicrotask(() => loadAdvertisingEmailHistory({ force: true }));
     }
   }
 
