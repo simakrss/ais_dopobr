@@ -1,5 +1,6 @@
 (() => {
-  const AUTH_BUILD = "20260828-employee-payment-layout-toast-v1";
+  const AUTH_BUILD = "20260828-modal-backdrop-drag-guard-v1";
+  const DISMISSIBLE_MODAL_BACKDROP_SELECTOR = ".modal-backdrop, .partner-modal-backdrop, [data-documents-backdrop]";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
   const nativeFetch = window.fetch.bind(window);
@@ -11,6 +12,61 @@
   let sessionExpiryTimer = 0;
   let sessionExpiredDialog = null;
   let startupFailureRendered = false;
+  let modalBackdropPointerCandidate = null;
+  let confirmedModalBackdropClick = null;
+
+  function getDismissibleModalBackdrop(target) {
+    return target instanceof Element && target.matches(DISMISSIBLE_MODAL_BACKDROP_SELECTOR)
+      ? target
+      : null;
+  }
+
+  function resetModalBackdropPointerIntent() {
+    modalBackdropPointerCandidate = null;
+    confirmedModalBackdropClick = null;
+  }
+
+  function installModalBackdropCloseGuard() {
+    document.addEventListener("pointerdown", (event) => {
+      resetModalBackdropPointerIntent();
+      const backdrop = getDismissibleModalBackdrop(event.target);
+      if (!backdrop || event.button !== 0 || event.isPrimary === false) return;
+      modalBackdropPointerCandidate = {
+        backdrop,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY
+      };
+    }, { capture: true });
+
+    document.addEventListener("pointerup", (event) => {
+      const candidate = modalBackdropPointerCandidate;
+      modalBackdropPointerCandidate = null;
+      confirmedModalBackdropClick = null;
+      if (
+        !candidate
+        || event.pointerId !== candidate.pointerId
+        || event.target !== candidate.backdrop
+        || Math.hypot(event.clientX - candidate.startX, event.clientY - candidate.startY) > 4
+      ) return;
+      confirmedModalBackdropClick = candidate.backdrop;
+    }, { capture: true });
+
+    document.addEventListener("pointercancel", resetModalBackdropPointerIntent, { capture: true });
+    window.addEventListener("blur", resetModalBackdropPointerIntent);
+    document.addEventListener("click", (event) => {
+      const backdrop = getDismissibleModalBackdrop(event.target);
+      if (!backdrop) {
+        confirmedModalBackdropClick = null;
+        return;
+      }
+      const isExplicitBackdropClick = confirmedModalBackdropClick === backdrop;
+      resetModalBackdropPointerIntent();
+      if (isExplicitBackdropClick || event.detail === 0) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, { capture: true });
+  }
 
   function appUrl(pathname) {
     return new URL(String(pathname || "").replace(/^\/+/, ""), baseUrl).toString();
@@ -733,5 +789,6 @@
     if (!applicationStarted) renderStartupFailure(event.reason);
   });
 
+  installModalBackdropCloseGuard();
   initialize().catch(renderStartupFailure);
 })();

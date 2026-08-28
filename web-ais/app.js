@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.341",
+    version: "1.7.342",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.342",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Выделение текста, начатое внутри поля формы, больше не закрывает активное окно при выходе указателя за его границы.",
+        "Закрытие по фону выполняется только после короткого нажатия, начатого и завершённого непосредственно на фоне окна; защита действует также в кабинете партнёра."
+      ]
+    },
     {
       version: "1.7.341",
       releasedAt: "2026-08-28",
