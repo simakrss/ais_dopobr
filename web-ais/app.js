@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.343",
+    version: "1.7.344",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.344",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Сумма к оплате сотрудника продолжает отображаться после формирования и отправки акта и исключается из расчёта только после статуса акта «Получен» или указания даты оплаты."
+      ]
+    },
     {
       version: "1.7.343",
       releasedAt: "2026-08-28",
@@ -8110,14 +8117,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const unpaidGeneralTotal = generalEntries.reduce((sum, { expense }) => (
       isEmployeePaymentSettled(expense) ? sum : sum + Number(expense?.amount || 0)
     ), 0);
-    const directWithoutActTotal = directEntries.reduce((sum, { expense }) => (
-      isEmployeePaymentSettled(expense) || String(expense?.act || "").trim()
+    const unpaidDirectTotal = directEntries.reduce((sum, { expense }) => (
+      isEmployeePaymentSettled(expense)
         ? sum
         : sum + Number(expense?.amount || 0)
     ), 0);
     const recommendedDirectTotal = directEntries.reduce((sum, { expense }) => (
       !isEmployeePaymentSettled(expense)
-        && !String(expense?.act || "").trim()
         && String(expense?.recommendation || "").trim() === "+"
         ? sum + Number(expense?.amount || 0)
         : sum
@@ -8128,13 +8134,14 @@ MAX - https://bizvmax.ru/zifra_plus
       : Number(record.paid || 0);
     const calculatedAgencyAmount = partnerRows.reduce((sum, row) => (
       row.affectsAccounting
+        && !isEmployeePaymentSettled(normalizeEmployeePaymentSourceRow("partner", row.source))
         ? sum + Number(row.calculation?.payableAmount ?? row.amount ?? 0)
         : sum
     ), 0);
     const agencyAmount = calculatedAgencyAmount;
     const amount = services + agencyAmount;
     const balance = hasExpenseSources
-      ? Math.trunc(unpaidGeneralTotal + directWithoutActTotal) + agencyAmount - amount
+      ? Math.trunc(unpaidGeneralTotal + unpaidDirectTotal) + agencyAmount - amount
       : Number(record.balance || 0);
     return {
       amount: Math.round(amount * 100) / 100,
