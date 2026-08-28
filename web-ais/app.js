@@ -164,10 +164,19 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.340",
+    version: "1.7.341",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.341",
+      releasedAt: "2026-08-28",
+      changes: [
+        "В карточке сотрудника панель вкладок поднята над областью «Учёт выплат», а рабочая область оплаты занимает всю доступную высоту.",
+        "Колонка «Комментарий» в таблице выплат стала в три раза шире.",
+        "После успешного дублирования прямого или общего расхода с текущей датой показывается всплывающее уведомление."
+      ]
+    },
     {
       version: "1.7.340",
       releasedAt: "2026-08-28",
@@ -2956,7 +2965,7 @@
     { key: "status", label: "Статус", className: "employee-payment-status-column", defaultWidth: 78, sortType: "text" },
     { key: "date", label: "Дата", className: "employee-payment-date-column", defaultWidth: 92, sortType: "date" },
     { key: "source", label: "Источник", className: "employee-payment-source-column", defaultWidth: 88, sortType: "text" },
-    { key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 64, sortType: "text" },
+    { key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 192, sortType: "text" },
     { key: "description", label: "Основание", className: "employee-payment-basis-column", defaultWidth: 88, sortType: "text" },
     { key: "amount", label: "Сумма", className: "employee-payment-amount-column", defaultWidth: 60, sortType: "number" },
     { key: "recommendation", label: "Рекомендация", className: "employee-payment-recommendation-column", defaultWidth: 56, sortType: "boolean" },
@@ -26342,10 +26351,6 @@ MAX - https://bizvmax.ru/zifra_plus
             </header>
 
             <div class="contract-modal-body">
-              <section class="mobile-card-context-actions" aria-label="Быстрые действия с документами сотрудника">
-                ${renderCardContextActions(record, "contract")}
-                <small class="mobile-field-help-guide">ⓘ Дважды коснитесь поля, чтобы показать примечание</small>
-              </section>
               <div class="student-tabs contract-tabs" data-orderable-tabs="contract-card" role="tablist" aria-label="Разделы карточки договора">
                 ${tabs.map((tab) => `
                   <button
@@ -26362,6 +26367,10 @@ MAX - https://bizvmax.ru/zifra_plus
                   >${escapeHtml(tab.label)}</button>
                 `).join("")}
               </div>
+              <section class="mobile-card-context-actions" aria-label="Быстрые действия с документами сотрудника">
+                ${renderCardContextActions(record, "contract")}
+                <small class="mobile-field-help-guide">ⓘ Дважды коснитесь поля, чтобы показать примечание</small>
+              </section>
 
               <div class="contract-card-layout ${isCardSidePanelCollapsed("contract") ? "is-side-panel-collapsed" : ""}">
                 <main class="contract-card-main">
@@ -37746,6 +37755,9 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     );
     commitEmployeePaymentAccountingChange(draft, { sourceId: nextId, field: "amount" }, true);
+    showDocumentGenerationNotice(
+      `${sourceType === "general" ? "Общий" : "Прямой"} расход продублирован. Текущая дата: ${formatContractDate(duplicate.date)}.`
+    );
   }
 
   function removeEmployeePaymentSourceRecord(sourceType, sourceId) {

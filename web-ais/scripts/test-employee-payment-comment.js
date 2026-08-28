@@ -23,6 +23,15 @@ assert.equal(getEmployeePaymentDisplayComment("Слушатель : Савель
 assert.equal(getEmployeePaymentDisplayComment("Оплата слушателя: отдельно", ""), "Оплата слушателя: отдельно");
 assert.match(source, /if \(key === "comment"\) \{\s*return getEmployeePaymentDisplayComment\(row\.comment, row\.details\);/u);
 assert.match(source, /const commentText = normalizeEmployeePaymentFilterText\(getEmployeePaymentDisplayComment\(row\.comment, row\.details\)\);/u);
+assert.match(
+  source,
+  /\{ key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 192, sortType: "text" \}/u
+);
+
+const stylesPath = path.resolve(__dirname, "..", "styles.css");
+const stylesSource = fs.readFileSync(stylesPath, "utf8");
+const commentColumnRule = stylesSource.match(/\.employee-payment-comment-column\s*\{([^}]*)\}/u)?.[1] || "";
+assert.match(commentColumnRule, /width:\s*192px/u);
 
 const start = source.indexOf("  function renderEmployeePaymentAccounting(record) {");
 const end = source.indexOf("  function getEmployeePaymentDomRowFilterModel(row) {", start);

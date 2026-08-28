@@ -44,6 +44,14 @@ const studentRenderSource = extractFunction("renderStudentModal");
 const contractRenderSource = extractFunction("renderContractModal");
 assert.match(studentRenderSource, /class="student-tabs" data-student-tabs/u);
 assert.match(contractRenderSource, /class="student-tabs contract-tabs"/u);
+const contractTabsIndex = contractRenderSource.indexOf('class="student-tabs contract-tabs"');
+const contractMobileActionsIndex = contractRenderSource.indexOf('class="mobile-card-context-actions"');
+const contractPaymentPanelIndex = contractRenderSource.indexOf('data-contract-tab-panel="payment"');
+const contractPaymentAccountingIndex = contractRenderSource.indexOf("renderEmployeePaymentAccounting(record)");
+assert.ok(contractTabsIndex >= 0, "Панель вкладок сотрудника не найдена.");
+assert.ok(contractMobileActionsIndex > contractTabsIndex, "Мобильные действия должны располагаться ниже вкладок сотрудника.");
+assert.ok(contractPaymentPanelIndex > contractMobileActionsIndex, "Панель оплаты должна располагаться ниже вкладок и мобильных действий.");
+assert.ok(contractPaymentAccountingIndex > contractPaymentPanelIndex, "Область учёта выплат должна находиться внутри панели оплаты.");
 
 const stickyRule = stylesSource.match(
   /\.student-modal \.student-tabs\[data-student-tabs\],\s*\.contract-modal \.student-tabs\.contract-tabs\s*\{([^}]*)\}/u
@@ -57,6 +65,11 @@ const headStackingRule = stylesSource.match(
   /\.student-modal-head,\s*\.contract-modal-head\s*\{([^}]*)\}/u
 )?.[1] || "";
 assert.match(headStackingRule, /z-index:\s*4/u);
+
+const paymentBodyGridRule = stylesSource.match(
+  /\.contract-modal\.is-payment-tab-active \.contract-modal-body\s*\{([^}]*)\}/u
+)?.[1] || "";
+assert.match(paymentBodyGridRule, /grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/u);
 
 const bindControlsSource = extractFunction("bindCardWindowControls");
 assert.match(

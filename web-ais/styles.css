@@ -14184,7 +14184,7 @@ body.card-window-moving {
   .contract-modal.is-payment-tab-active .contract-modal-body {
     min-height: 0;
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     overflow: hidden;
   }
 
@@ -14371,7 +14371,7 @@ body.card-window-moving {
 }
 
 .employee-payment-comment-column {
-  width: 64px;
+  width: 192px;
 }
 
 .employee-payment-basis-column {
