@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.348",
+    version: "1.7.349",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.349",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Начальная загрузка общей базы использует проверенный серверный снимок: MySQL проверяется одним механизмом по числовой ревизии, а полные данные перечитываются только после её изменения."
+      ]
+    },
     {
       version: "1.7.348",
       releasedAt: "2026-08-28",
@@ -6114,6 +6121,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let sharedStateReady = false;
   let sharedStateOffline = false;
   let sharedStateRevision = Math.max(0, Number(sharedStateRecovery.meta.revision) || 0);
+  let sharedStateBackendId = String(sharedStateRecovery.meta.backendId || "");
   let sharedStateVersionTag = String(sharedStateRecovery.meta.versionTag || "");
   let sharedStateUpdatedAt = String(sharedStateRecovery.meta.updatedAt || "");
   let sharedStateUpdatedBy = String(sharedStateRecovery.meta.updatedBy || "");
@@ -6502,6 +6510,7 @@ MAX - https://bizvmax.ru/zifra_plus
         sharedStatePendingPatch = recoverySnapshot.pendingPatch;
         const meta = recoverySnapshot.meta || {};
         sharedStateRevision = Math.max(sharedStateRevision, Number(meta.revision) || 0);
+        sharedStateBackendId = String(meta.backendId || sharedStateBackendId || "");
         sharedStateVersionTag = String(meta.versionTag || sharedStateVersionTag || "");
         sharedStateUpdatedAt = String(meta.updatedAt || sharedStateUpdatedAt || "");
         sharedStateUpdatedBy = String(meta.updatedBy || sharedStateUpdatedBy || "");
@@ -9125,6 +9134,7 @@ MAX - https://bizvmax.ru/zifra_plus
       sharedStatePendingPatch = mergeSharedApplicationStatePatches(sharedStatePendingPatch, currentPatch);
       const meta = {
         revision: sharedStateRevision,
+        backendId: sharedStateBackendId,
         versionTag: sharedStateVersionTag,
         updatedAt: sharedStateUpdatedAt,
         updatedBy: sharedStateUpdatedBy,
@@ -9266,6 +9276,7 @@ MAX - https://bizvmax.ru/zifra_plus
       : serverData;
     persistStateToLocalStorage(state.data);
     sharedStateRevision = Math.max(0, Number(payload.revision) || 0);
+    sharedStateBackendId = String(payload.backendId || sharedStateBackendId || "");
     sharedStateVersionTag = String(payload.versionTag || "");
     sharedStateUpdatedAt = String(payload.updatedAt || "");
     sharedStateUpdatedBy = String(payload.updatedBy || "");
@@ -9299,6 +9310,7 @@ MAX - https://bizvmax.ru/zifra_plus
         }
       });
       sharedStateRevision = Math.max(0, Number(payload.revision) || 0);
+      sharedStateBackendId = String(payload.backendId || sharedStateBackendId || "");
       sharedStateVersionTag = String(payload.versionTag || "");
       sharedStateUpdatedAt = String(payload.updatedAt || "");
       sharedStateUpdatedBy = String(payload.updatedBy || "");
@@ -9425,6 +9437,7 @@ MAX - https://bizvmax.ru/zifra_plus
         }
       });
       sharedStateRevision = Math.max(0, Number(payload.revision) || sharedStateRevision);
+      sharedStateBackendId = String(payload.backendId || sharedStateBackendId || "");
       sharedStateVersionTag = String(payload.versionTag || sharedStateVersionTag);
       sharedStateUpdatedAt = String(payload.updatedAt || "");
       sharedStateUpdatedBy = String(payload.updatedBy || "");
@@ -9542,14 +9555,18 @@ MAX - https://bizvmax.ru/zifra_plus
     }, 0);
   }
 
-  async function reloadSharedApplicationState({ renderAfter = true } = {}) {
-    const payload = await requestSharedApplicationState("", {
-      sharedStateProgress: {
-        operation: "Обновление общей MySQL-базы",
-        message: "Получение изменений из MySQL",
-        completeMessage: "Изменения общей MySQL-базы загружены"
+  async function reloadSharedApplicationState({ renderAfter = true, expectedRevision = 0 } = {}) {
+    const revision = Math.max(0, Math.floor(Number(expectedRevision) || 0));
+    const payload = await requestSharedApplicationState(
+      revision ? `snapshot=1&revision=${encodeURIComponent(revision)}` : "",
+      {
+        sharedStateProgress: {
+          operation: "Обновление общей MySQL-базы",
+          message: "Получение изменений из MySQL",
+          completeMessage: "Изменения общей MySQL-базы загружены"
+        }
       }
-    });
+    );
     if (!payload.exists) throw new Error("Общая база не найдена.");
     applySharedApplicationState(payload, { renderAfter });
     sharedStateReady = payload.writable !== false;
@@ -9569,9 +9586,7 @@ MAX - https://bizvmax.ru/zifra_plus
     ) return;
     sharedStatePollRunning = true;
     try {
-      const metadata = await requestSharedApplicationState(
-        `metadata=1&versionTag=${encodeURIComponent(sharedStateVersionTag)}`
-      );
+      const metadata = await requestSharedApplicationState("metadata=1");
       if (!metadata.exists) return;
       sharedStateOffline = Boolean(metadata.offline);
       sharedStatePendingCount = Math.max(0, Number(metadata.pendingCount) || 0);
@@ -9580,11 +9595,21 @@ MAX - https://bizvmax.ru/zifra_plus
       sharedStateUpdatedAt = String(metadata.updatedAt || sharedStateUpdatedAt || "");
       sharedStateUpdatedBy = String(metadata.updatedBy || sharedStateUpdatedBy || "");
       const nextVersionTag = String(metadata.versionTag || "");
-      const hasChanged = nextVersionTag
-        ? nextVersionTag !== sharedStateVersionTag
-        : Number(metadata.revision) > sharedStateRevision;
-      if (hasChanged) await reloadSharedApplicationState({ renderAfter: !state.modal });
-      else {
+      const nextRevision = Math.max(0, Math.floor(Number(metadata.revision) || 0));
+      const nextBackendId = String(metadata.backendId || "");
+      const hasChanged = nextRevision !== sharedStateRevision || Boolean(
+        nextBackendId
+        && sharedStateBackendId
+        && nextBackendId !== sharedStateBackendId
+      );
+      if (hasChanged) {
+        await reloadSharedApplicationState({
+          renderAfter: !state.modal,
+          expectedRevision: nextRevision
+        });
+      } else {
+        sharedStateBackendId = nextBackendId || sharedStateBackendId;
+        sharedStateVersionTag = nextVersionTag || sharedStateVersionTag;
         persistSharedStateRecovery();
         updateSharedStateStatusUi();
       }

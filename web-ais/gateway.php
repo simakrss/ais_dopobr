@@ -1554,6 +1554,7 @@ function gateway_shared_state_public_meta(?array $meta): array
     return [
         'exists' => $meta !== null,
         'revision' => $revision,
+        'backendId' => gateway_shared_state_snapshot_backend_id(),
         'versionTag' => $meta !== null ? gateway_shared_state_version($revision) : '',
         'updatedAt' => $meta !== null ? gateway_shared_state_iso_date((string) $meta['updated_at']) : '',
         'updatedBy' => (string) ($meta['updated_by'] ?? ''),
@@ -1562,6 +1563,296 @@ function gateway_shared_state_public_meta(?array $meta): array
         'writable' => true,
         'pendingCount' => 0,
     ];
+}
+
+function gateway_shared_state_snapshot_backend_id(): string
+{
+    static $backendId = null;
+    if (is_string($backendId)) {
+        return $backendId;
+    }
+    $settings = gateway_server_settings();
+    $environmentConnection = trim((string) (getenv('AIS_RECORD_LOCKS_MYSQL_CONNECTION_STRING') ?: ''));
+    $dedicatedConnection = trim((string) ($settings['sharedRecordLocksMySqlConnectionString'] ?? ''));
+    $useApplicationsConnection = ($settings['sharedRecordLocksMySqlUseApplicationsConnection'] ?? true) !== false;
+    if ($environmentConnection !== '' || $dedicatedConnection !== '' || $useApplicationsConnection) {
+        $connection = gateway_parse_connection_string(
+            $environmentConnection !== ''
+                ? $environmentConnection
+                : ($dedicatedConnection !== ''
+                    ? $dedicatedConnection
+                    : (string) ($settings['studentApplicationsMySqlConnectionString'] ?? ''))
+        );
+    } else {
+        $connection = [
+            'host' => (string) ($settings['sharedRecordLocksMySqlHost'] ?? ''),
+            'port' => (string) ($settings['sharedRecordLocksMySqlPort'] ?? '3306'),
+            'database' => (string) ($settings['sharedRecordLocksMySqlDatabase'] ?? ''),
+            'user' => (string) ($settings['sharedRecordLocksMySqlUser'] ?? ''),
+        ];
+    }
+    $identity = [
+        'host' => strtolower(trim((string) ($connection['server'] ?? $connection['host'] ?? ''))),
+        'port' => max(1, (int) ($connection['port'] ?? 3306)),
+        'database' => trim((string) ($connection['database'] ?? '')),
+        'user' => trim((string) ($connection['uid'] ?? $connection['user'] ?? '')),
+    ];
+    $encoded = json_encode($identity, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $backendId = hash('sha256', is_string($encoded) ? $encoded : serialize($identity));
+    return $backendId;
+}
+
+function gateway_shared_state_snapshot_base_path(): string
+{
+    $suffix = substr(
+        hash('sha256', gateway_shared_state_snapshot_backend_id() . '|' . gateway_shared_state_key()),
+        0,
+        24
+    );
+    return ais_auth_storage_root() . '/shared-state-snapshot-' . $suffix;
+}
+
+function gateway_shared_state_snapshot_meta_path(): string
+{
+    return gateway_shared_state_snapshot_base_path() . '.meta.json';
+}
+
+function gateway_shared_state_snapshot_data_path(): string
+{
+    return gateway_shared_state_snapshot_base_path() . '.data.json';
+}
+
+function gateway_shared_state_snapshot_with_lock(callable $operation): mixed
+{
+    $lockPath = gateway_shared_state_snapshot_base_path() . '.lock';
+    $lock = fopen($lockPath, 'c+');
+    if ($lock === false) {
+        throw new RuntimeException('Не удалось открыть блокировку снимка общей базы.');
+    }
+    @chmod($lockPath, 0600);
+    try {
+        if (!flock($lock, LOCK_EX)) {
+            throw new RuntimeException('Не удалось заблокировать снимок общей базы.');
+        }
+        return $operation();
+    } finally {
+        flock($lock, LOCK_UN);
+        fclose($lock);
+    }
+}
+
+function gateway_shared_state_snapshot_write_json(string $path, array $payload): void
+{
+    $json = json_encode(
+        $payload,
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+    if ($json === false) {
+        throw new RuntimeException('Не удалось подготовить снимок общей базы.');
+    }
+    $temporary = $path . '.tmp-' . bin2hex(random_bytes(6));
+    if (file_put_contents($temporary, $json, LOCK_EX) === false) {
+        @unlink($temporary);
+        throw new RuntimeException('Не удалось сохранить снимок общей базы.');
+    }
+    @chmod($temporary, 0600);
+    if (!rename($temporary, $path)) {
+        @unlink($temporary);
+        throw new RuntimeException('Не удалось обновить снимок общей базы.');
+    }
+}
+
+function gateway_shared_state_snapshot_read_meta(): ?array
+{
+    $path = gateway_shared_state_snapshot_meta_path();
+    if (!is_file($path)) {
+        return null;
+    }
+    $payload = json_decode((string) file_get_contents($path), true);
+    if (
+        !is_array($payload)
+        || (int) ($payload['schemaVersion'] ?? 0) !== 1
+        || (string) ($payload['stateKey'] ?? '') !== gateway_shared_state_key()
+        || (string) ($payload['backendId'] ?? '') !== gateway_shared_state_snapshot_backend_id()
+        || !is_array($payload['meta'] ?? null)
+    ) {
+        return null;
+    }
+    return $payload['meta'];
+}
+
+function gateway_shared_state_snapshot_read_data(int $revision): ?array
+{
+    if ($revision <= 0) {
+        return null;
+    }
+    $path = gateway_shared_state_snapshot_data_path();
+    if (!is_file($path)) {
+        return null;
+    }
+    $payload = json_decode((string) file_get_contents($path), true);
+    if (
+        !is_array($payload)
+        || (int) ($payload['schemaVersion'] ?? 0) !== 1
+        || (string) ($payload['stateKey'] ?? '') !== gateway_shared_state_key()
+        || (string) ($payload['backendId'] ?? '') !== gateway_shared_state_snapshot_backend_id()
+        || (int) ($payload['revision'] ?? 0) !== $revision
+        || !is_array($payload['data'] ?? null)
+    ) {
+        return null;
+    }
+    return $payload['data'];
+}
+
+function gateway_shared_state_snapshot_store(array $meta, array $data, bool $lockHeld = false): void
+{
+    $revision = max(0, (int) ($meta['revision'] ?? 0));
+    if ($revision <= 0) {
+        return;
+    }
+    if (!$lockHeld) {
+        try {
+            gateway_shared_state_snapshot_with_lock(
+                static function () use ($meta, $data): mixed {
+                    gateway_shared_state_snapshot_store($meta, $data, true);
+                    return null;
+                }
+            );
+        } catch (Throwable) {
+            // The snapshot is only an optimization. Preserve the last complete
+            // snapshot if the lock or a temporary file cannot be created.
+        }
+        return;
+    }
+    $currentMeta = gateway_shared_state_snapshot_read_meta();
+    $currentRevision = max(0, (int) ($currentMeta['revision'] ?? 0));
+    if ($currentRevision > $revision) {
+        return;
+    }
+    try {
+        gateway_shared_state_snapshot_write_json(gateway_shared_state_snapshot_data_path(), [
+            'schemaVersion' => 1,
+            'stateKey' => gateway_shared_state_key(),
+            'backendId' => gateway_shared_state_snapshot_backend_id(),
+            'revision' => $revision,
+            'data' => $data,
+        ]);
+        gateway_shared_state_snapshot_write_json(gateway_shared_state_snapshot_meta_path(), [
+            'schemaVersion' => 1,
+            'stateKey' => gateway_shared_state_key(),
+            'backendId' => gateway_shared_state_snapshot_backend_id(),
+            'meta' => $meta,
+        ]);
+    } catch (Throwable) {
+        $latestMeta = gateway_shared_state_snapshot_read_meta();
+        $latestRevision = max(0, (int) ($latestMeta['revision'] ?? 0));
+        if ($latestRevision <= $revision) {
+            @unlink(gateway_shared_state_snapshot_data_path());
+            try {
+                gateway_shared_state_snapshot_write_json(gateway_shared_state_snapshot_meta_path(), [
+                    'schemaVersion' => 1,
+                    'stateKey' => gateway_shared_state_key(),
+                    'backendId' => gateway_shared_state_snapshot_backend_id(),
+                    'meta' => ['revision' => $revision],
+                ]);
+            } catch (Throwable) {
+                @unlink(gateway_shared_state_snapshot_meta_path());
+            }
+        }
+    }
+}
+
+function gateway_shared_state_snapshot_invalidate(
+    ?int $revision = null,
+    bool $lockHeld = false,
+    ?array $meta = null
+): void
+{
+    if (!$lockHeld) {
+        try {
+            gateway_shared_state_snapshot_with_lock(
+                static function () use ($revision, $meta): mixed {
+                    gateway_shared_state_snapshot_invalidate($revision, true, $meta);
+                    return null;
+                }
+            );
+        } catch (Throwable) {
+            // A later revision may already own the snapshot. Do not remove it
+            // without the lock merely because cache invalidation failed.
+        }
+        return;
+    }
+    if ($revision !== null) {
+        $revision = max(0, $revision);
+        $currentMeta = gateway_shared_state_snapshot_read_meta();
+        $currentRevision = max(0, (int) ($currentMeta['revision'] ?? 0));
+        if ($currentRevision >= $revision) {
+            return;
+        }
+        @unlink(gateway_shared_state_snapshot_data_path());
+        $markerMeta = $meta !== null && (int) ($meta['revision'] ?? 0) === $revision
+            ? $meta
+            : ['revision' => $revision];
+        try {
+            gateway_shared_state_snapshot_write_json(gateway_shared_state_snapshot_meta_path(), [
+                'schemaVersion' => 1,
+                'stateKey' => gateway_shared_state_key(),
+                'backendId' => gateway_shared_state_snapshot_backend_id(),
+                'meta' => $markerMeta,
+            ]);
+        } catch (Throwable) {
+            @unlink(gateway_shared_state_snapshot_meta_path());
+        }
+        return;
+    }
+    @unlink(gateway_shared_state_snapshot_meta_path());
+    @unlink(gateway_shared_state_snapshot_data_path());
+}
+
+function gateway_shared_state_snapshot_cached(int $expectedRevision = 0): ?array
+{
+    $meta = gateway_shared_state_snapshot_read_meta();
+    $revision = max(0, (int) ($meta['revision'] ?? 0));
+    if ($meta === null || $revision <= 0 || ($expectedRevision > 0 && $revision !== $expectedRevision)) {
+        return null;
+    }
+    $data = gateway_shared_state_snapshot_read_data($revision);
+    return $data === null ? null : ['meta' => $meta, 'data' => $data];
+}
+
+function gateway_shared_state_snapshot_refresh(PDO $pdo, bool $includeData = true): array
+{
+    return gateway_shared_state_snapshot_with_lock(static function () use ($pdo, $includeData): array {
+        for ($attempt = 0; $attempt < 4; $attempt += 1) {
+            $metaBefore = gateway_shared_state_meta($pdo);
+            if ($metaBefore === null) {
+                gateway_shared_state_snapshot_invalidate(null, true);
+                return ['meta' => null, 'data' => null];
+            }
+            $revisionBefore = max(0, (int) ($metaBefore['revision'] ?? 0));
+            $cachedMeta = gateway_shared_state_snapshot_read_meta();
+            if (max(0, (int) ($cachedMeta['revision'] ?? 0)) === $revisionBefore) {
+                if (!$includeData) {
+                    return ['meta' => $metaBefore, 'data' => null];
+                }
+                $cachedData = gateway_shared_state_snapshot_read_data($revisionBefore);
+                if ($cachedData !== null) {
+                    return ['meta' => $metaBefore, 'data' => $cachedData];
+                }
+            }
+            $data = gateway_shared_state_read_data($pdo);
+            $metaAfter = gateway_shared_state_meta($pdo);
+            $revisionAfter = max(0, (int) ($metaAfter['revision'] ?? 0));
+            if ($metaAfter === null || $revisionAfter !== $revisionBefore) {
+                continue;
+            }
+            gateway_shared_state_snapshot_store($metaAfter, $data, true);
+            return ['meta' => $metaAfter, 'data' => $data];
+        }
+        throw new RuntimeException(
+            'Общая база изменялась во время подготовки снимка. Повторите запрос.'
+        );
+    });
 }
 
 function gateway_shared_state_upsert_entry(
@@ -1757,11 +2048,21 @@ function gateway_handle_shared_state(string $method, string $body, array $curren
 {
     $pdo = gateway_record_locks_pdo();
     if ($method === 'GET') {
-        $meta = gateway_shared_state_meta($pdo);
-        $response = gateway_shared_state_public_meta($meta);
-        if (($_GET['metadata'] ?? '') !== '1') {
+        $metadataOnly = ($_GET['metadata'] ?? '') === '1';
+        $expectedRevision = max(0, (int) ($_GET['revision'] ?? 0));
+        $usePreparedSnapshot = !$metadataOnly
+            && ($_GET['snapshot'] ?? '') === '1'
+            && $expectedRevision > 0;
+        $snapshot = $usePreparedSnapshot
+            ? gateway_shared_state_snapshot_cached($expectedRevision)
+            : null;
+        if ($snapshot === null) {
+            $snapshot = gateway_shared_state_snapshot_refresh($pdo, !$metadataOnly);
+        }
+        $response = gateway_shared_state_public_meta($snapshot['meta']);
+        if (!$metadataOnly) {
             $response['warning'] = '';
-            $response['data'] = $meta !== null ? gateway_shared_state_read_data($pdo) : null;
+            $response['data'] = $snapshot['data'];
         }
         gateway_json(200, $response);
     }
@@ -1849,17 +2150,27 @@ ON DUPLICATE KEY UPDATE
   revision = VALUES(revision), updated_at = VALUES(updated_at), updated_by = VALUES(updated_by)
 SQL);
         $upsertMeta->execute([gateway_shared_state_key(), $nextRevision, $updatedBy]);
-        $pdo->commit();
         $savedMeta = gateway_shared_state_meta($pdo);
+        $merged = $patch !== null && $requestedRevision !== $currentRevision;
+        $savedData = null;
+        if ($data !== null || $merged) {
+            $savedData = gateway_shared_state_read_data($pdo);
+        }
+        $pdo->commit();
+        if ($savedData !== null && $savedMeta !== null) {
+            gateway_shared_state_snapshot_store($savedMeta, $savedData);
+        } else {
+            gateway_shared_state_snapshot_invalidate($nextRevision, false, $savedMeta);
+        }
         $response = [
             'ok' => true,
             'conflict' => false,
             'locked' => false,
-            'merged' => $patch !== null && $requestedRevision !== $currentRevision,
+            'merged' => $merged,
             ...gateway_shared_state_public_meta($savedMeta),
         ];
         if ($response['merged']) {
-            $response['data'] = gateway_shared_state_read_data($pdo);
+            $response['data'] = $savedData;
         } else {
             $response['data'] = null;
         }
@@ -2116,6 +2427,8 @@ ON DUPLICATE KEY UPDATE
   revision = VALUES(revision), updated_at = VALUES(updated_at), updated_by = VALUES(updated_by)
 SQL);
         $upsertMeta->execute([gateway_shared_state_key(), $nextRevision, $updatedBy]);
+        $savedMeta = gateway_shared_state_meta($pdo);
+        $savedData = gateway_shared_state_read_data($pdo);
         $pdo->commit();
         ais_audit_try_append([
             'action' => $permanentDelete
@@ -2135,7 +2448,11 @@ SQL);
                     . $summary['restoredExpenses'],
             'source' => 'recycle-bin',
         ], $currentUser);
-        $savedMeta = gateway_shared_state_meta($pdo);
+        if ($savedMeta !== null) {
+            gateway_shared_state_snapshot_store($savedMeta, $savedData);
+        } else {
+            gateway_shared_state_snapshot_invalidate($nextRevision);
+        }
         gateway_json(200, [
             'ok' => true,
             ($permanentDelete ? 'deleted' : 'restored') => $summary,

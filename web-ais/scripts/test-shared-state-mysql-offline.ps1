@@ -27,6 +27,7 @@ $environmentNames = @(
   "AIS_TRUST_GATEWAY",
   "AIS_SHARED_STATE_KEY",
   "AIS_SHARED_STATE_TEST_MODE",
+  "AIS_SHARED_STATE_TEST_FORCE_MYSQL_OFFLINE",
   "AIS_SHARED_STATE_DISABLE_LEGACY_MIGRATION",
   "AIS_SHARED_STATE_LOCAL_PATH",
   "AIS_SHARED_STATE_PENDING_PATH",
@@ -110,8 +111,8 @@ try {
   $onlineLoaded = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 30
   Stop-TestServer
 
-  $offlineConnection = "Server={127.0.0.1};Port={1};Database={offline};Uid={offline};Pwd={offline}"
-  Start-TestServer $offlineConnection
+  Set-ProcessEnvironment "AIS_SHARED_STATE_TEST_FORCE_MYSQL_OFFLINE" "1"
+  Start-TestServer $oldEnvironment["AIS_RECORD_LOCKS_MYSQL_CONNECTION_STRING"]
   $offlinePatch = @{
     baseRevision = [int]$created.revision
     clientId = "test-client-a"
@@ -132,6 +133,7 @@ try {
     -Body (@{ action = "acquire"; entityType = "students"; entityId = "student-1"; clientId = "offline-lock-client" } | ConvertTo-Json -Compress) `
     -TimeoutSec 30
   Stop-TestServer
+  Set-ProcessEnvironment "AIS_SHARED_STATE_TEST_FORCE_MYSQL_OFFLINE" $oldEnvironment["AIS_SHARED_STATE_TEST_FORCE_MYSQL_OFFLINE"]
 
   Start-TestServer $oldEnvironment["AIS_RECORD_LOCKS_MYSQL_CONNECTION_STRING"]
   $deadline = (Get-Date).AddSeconds(45)

@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260828-employee-contract-number-optional-v1";
+  const AUTH_BUILD = "20260828-shared-state-startup-snapshot-v1";
   const DISMISSIBLE_MODAL_BACKDROP_SELECTOR = ".modal-backdrop, .partner-modal-backdrop, [data-documents-backdrop]";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");

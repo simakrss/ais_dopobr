@@ -508,7 +508,7 @@ const MAX_SHARED_APPLICATION_STATE_BYTES = 36 * 1024 * 1024;
 const MAX_SHARED_RECORD_LOCKS_BYTES = 1024 * 1024;
 const SHARED_RECORD_LOCK_TTL_MS = 30 * 1000;
 const SHARED_RECORD_LOCK_MAX_COUNT = 5000;
-const SHARED_STATE_MIRROR_INTERVAL_MS = 2000;
+const SHARED_STATE_MIRROR_INTERVAL_MS = 1000;
 const SHARED_STATE_MYSQL_KEY = String(process.env.AIS_SHARED_STATE_KEY || "main").trim().slice(0, 64) || "main";
 const SHARED_STATE_OFFLINE_QUEUE_MAX_OPERATIONS = 5000;
 const SHARED_STATE_MYSQL_OFFLINE_RETRY_MS = 15 * 1000;
@@ -568,8 +568,10 @@ let advertisingMoodleMySqlInitialization = null;
 let trainingEndNotificationJobPromise = null;
 let trainingEndNotificationSchedulerTimer = null;
 let scheduledJobRunsTableInitialization = null;
-let sharedStateMirrorRunning = false;
-let sharedStateMirrorVersionTag = "";
+let sharedStateMirrorRefreshPromise = null;
+let sharedStateMirrorInitialized = false;
+let sharedStateMirrorMetadata = null;
+let sharedStateMirrorDocument = null;
 let sharedStateMirrorLastError = "";
 let sharedStateOfflineSyncPromise = null;
 let sharedStateMySqlUnavailableUntil = 0;
@@ -6387,6 +6389,7 @@ function normalizeSharedApplicationStateDocument(value) {
   return {
     schemaVersion: 1,
     revision,
+    backendId: String(value.backendId || "").slice(0, 64),
     updatedAt: String(value.updatedAt || ""),
     updatedBy: String(value.updatedBy || "").slice(0, 160),
     data: normalizeSharedApplicationData(value.data)
@@ -6421,10 +6424,14 @@ function writeSharedApplicationStateCache(document) {
     if (!sharedApplicationStateCacheLoaded) await readSharedApplicationStateCache();
     const currentRevision = Math.max(0, Number(sharedApplicationStateCacheMemory?.revision) || 0);
     const nextRevision = Math.max(0, Number(document?.revision) || 0);
-    if (currentRevision >= nextRevision) return false;
+    const currentBackendId = String(sharedApplicationStateCacheMemory?.backendId || "");
+    const nextBackendId = String(document?.backendId || "");
+    const sameBackend = !nextBackendId || currentBackendId === nextBackendId;
+    if (sameBackend && currentRevision >= nextRevision) return false;
     await writeJsonAtomic(cachePath, document, true);
     sharedApplicationStateCacheMemory = document;
     sharedApplicationStateCacheLoaded = true;
+    sharedStateMirrorDocument = document;
     return true;
   });
   sharedApplicationStateCacheWriteQueue = operation.catch(() => {});
@@ -6560,43 +6567,150 @@ async function readLegacySharedApplicationStateMetadata() {
   };
 }
 
-async function refreshSharedApplicationStateMirror() {
-  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1" || sharedStateMirrorRunning) return;
-  sharedStateMirrorRunning = true;
-  try {
-    await flushSharedApplicationStateOfflineQueue();
-    const metadata = await readSharedApplicationStateMetadata();
-    if (!metadata.exists) return;
-    const cached = await readSharedApplicationStateCache();
-    const unchangedByRevision = Number(metadata.revision) > 0
-      && Number(cached?.revision || 0) === Number(metadata.revision);
-    const unchangedByVersion = Boolean(
-      metadata.versionTag
-      && sharedStateMirrorVersionTag
-      && metadata.versionTag === sharedStateMirrorVersionTag
-    );
-    if (unchangedByRevision || unchangedByVersion) return;
-    const result = await readSharedApplicationStateDocument({ allowCache: false });
-    sharedStateMirrorVersionTag = String(result.versionTag || metadata.versionTag || "");
-    sharedStateMirrorLastError = "";
-  } catch (error) {
-    const message = String(error?.message || error);
-    if (message !== sharedStateMirrorLastError) {
-      console.warn(`Обновление локального зеркала общей базы отложено: ${message}`);
-      sharedStateMirrorLastError = message;
+function sharedApplicationStateMirrorNeedsReload(cached, metadata) {
+  if (!cached) return true;
+  if (!metadata?.exists) return true;
+  const cachedRevision = Math.max(0, Math.floor(Number(cached.revision) || 0));
+  const metadataRevision = Math.max(0, Math.floor(Number(metadata.revision) || 0));
+  const cachedBackendId = String(cached.backendId || "");
+  const metadataBackendId = String(metadata.backendId || "");
+  return !cachedRevision
+    || !metadataRevision
+    || cachedRevision !== metadataRevision
+    || (Boolean(metadataBackendId) && cachedBackendId !== metadataBackendId);
+}
+
+function sharedApplicationStateCacheMatchesBackend(cached) {
+  const cachedBackendId = String(cached?.backendId || "");
+  return !cachedBackendId || cachedBackendId === sharedApplicationStateMySqlBackendId();
+}
+
+function rememberSharedApplicationStateMirrorResult(result) {
+  if (!result || typeof result !== "object") return;
+  const document = result.document && typeof result.document === "object" ? result.document : null;
+  if (document) sharedStateMirrorDocument = document;
+  else if (result.exists === false && !result.offline) sharedStateMirrorDocument = null;
+  const revision = Math.max(0, Math.floor(Number(result.revision) || Number(document?.revision) || 0));
+  sharedStateMirrorMetadata = {
+    exists: Boolean(result.exists),
+    revision,
+    backendId: String(result.backendId || document?.backendId || ""),
+    versionTag: String(result.versionTag || (revision ? sharedApplicationStateMySqlVersionTag(revision) : "")),
+    updatedAt: String(result.updatedAt || document?.updatedAt || ""),
+    updatedBy: String(result.updatedBy || document?.updatedBy || ""),
+    source: String(result.source || "mysql"),
+    offline: Boolean(result.offline),
+    writable: result.writable !== false,
+    pendingCount: Math.max(0, Number(result.pendingCount) || 0),
+    syncPending: Boolean(result.syncPending),
+    syncBlockedReason: String(result.syncBlockedReason || ""),
+    syncBlockedLock: result.syncBlockedLock || null,
+    warning: String(result.warning || "")
+  };
+}
+
+function refreshSharedApplicationStateMirror() {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") return Promise.resolve(null);
+  if (sharedStateMirrorRefreshPromise) return sharedStateMirrorRefreshPromise;
+  const operation = (async () => {
+    try {
+      const syncResult = await flushSharedApplicationStateOfflineQueue();
+      const confirmedEmpty = sharedStateMirrorMetadata?.exists === false && !sharedStateMirrorDocument;
+      const candidate = sharedStateMirrorDocument || (
+        confirmedEmpty ? null : await readSharedApplicationStateCache()
+      );
+      const cached = sharedApplicationStateCacheMatchesBackend(candidate) ? candidate : null;
+      if (!sharedStateMirrorDocument && cached) sharedStateMirrorDocument = cached;
+      if (!cached) {
+        if (confirmedEmpty) {
+          const metadata = await readSharedApplicationStateMetadata({
+            skipOfflineSync: true,
+            syncResult
+          });
+          if (!metadata.exists) {
+            rememberSharedApplicationStateMirrorResult(metadata);
+            sharedStateMirrorLastError = "";
+            return metadata;
+          }
+        }
+        const initial = await readSharedApplicationStateDocument({
+          allowCache: false,
+          skipOfflineSync: true,
+          syncResult
+        });
+        rememberSharedApplicationStateMirrorResult(initial);
+        sharedStateMirrorLastError = "";
+        return initial;
+      }
+      const metadata = await readSharedApplicationStateMetadata({
+        skipOfflineSync: true,
+        syncResult
+      });
+      if (!sharedApplicationStateMirrorNeedsReload(cached, metadata)) {
+        rememberSharedApplicationStateMirrorResult(metadata);
+        sharedStateMirrorLastError = "";
+        return metadata;
+      }
+      const result = await readSharedApplicationStateDocument({
+        allowCache: false,
+        skipOfflineSync: true,
+        syncResult
+      });
+      rememberSharedApplicationStateMirrorResult(result);
+      sharedStateMirrorLastError = "";
+      return result;
+    } catch (error) {
+      const message = String(error?.message || error);
+      const confirmedEmpty = sharedStateMirrorMetadata?.exists === false && !sharedStateMirrorDocument;
+      const fallback = confirmedEmpty
+        ? null
+        : await readSharedApplicationStateCacheResult(error).catch(() => null);
+      if (fallback) {
+        const fallbackDocument = fallback.document || null;
+        const fallbackPending = Math.max(0, Number(fallback.pendingCount) || 0);
+        const fallbackCanAdvancePending = Boolean(
+          fallbackPending
+          && fallbackDocument
+          && Number(fallbackDocument.revision || 0) >= Number(sharedStateMirrorDocument?.revision || 0)
+        );
+        rememberSharedApplicationStateMirrorResult({
+          ...fallback,
+          document: !sharedStateMirrorDocument || fallbackCanAdvancePending
+            ? fallbackDocument
+            : sharedStateMirrorDocument
+        });
+      } else if (confirmedEmpty) {
+        sharedStateMirrorMetadata = {
+          ...sharedStateMirrorMetadata,
+          offline: true,
+          source: "local-cache",
+          warning: message
+        };
+      }
+      if (message !== sharedStateMirrorLastError) {
+        console.warn(`Обновление локального зеркала общей базы отложено: ${message}`);
+        sharedStateMirrorLastError = message;
+      }
+      return fallback;
+    } finally {
+      sharedStateMirrorInitialized = true;
     }
-  } finally {
-    sharedStateMirrorRunning = false;
-  }
+  })();
+  sharedStateMirrorRefreshPromise = operation;
+  operation.finally(() => {
+    if (sharedStateMirrorRefreshPromise === operation) sharedStateMirrorRefreshPromise = null;
+  }).catch(() => {});
+  return operation;
 }
 
 function startSharedApplicationStateMirror() {
-  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") return;
-  refreshSharedApplicationStateMirror().catch(() => {});
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") return Promise.resolve(null);
+  const initialRefresh = refreshSharedApplicationStateMirror();
   const timer = setInterval(() => {
     refreshSharedApplicationStateMirror().catch(() => {});
   }, SHARED_STATE_MIRROR_INTERVAL_MS);
   timer.unref?.();
+  return initialRefresh;
 }
 
 async function maybeBackupSharedApplicationState(document) {
@@ -9743,6 +9857,20 @@ function getSharedRecordLocksMySqlConnectionString() {
   return Object.entries(values).map(([key, value]) => `${key}=${encode(value)}`).join(";");
 }
 
+function sharedApplicationStateMySqlBackendId() {
+  const connection = parseSharedRecordLocksMySqlConnectionString(
+    getSharedRecordLocksMySqlConnectionString()
+  );
+  const identity = {
+    host: String(connection.server || connection.host || "").trim().toLowerCase(),
+    port: Math.max(1, Number(connection.port) || 3306),
+    database: String(connection.database || connection.initialcatalog || "").trim(),
+    user: String(connection.uid || connection.user || connection.userid || "").trim(),
+    stateKey: SHARED_STATE_MYSQL_KEY
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(identity)).digest("hex");
+}
+
 function publicSharedRecordLocksMySqlSettings() {
   const useApplicationsConnection = serverSettings.sharedRecordLocksMySqlUseApplicationsConnection !== false;
   const connectionString = getSharedRecordLocksMySqlConnectionString();
@@ -9764,6 +9892,14 @@ function publicSharedRecordLocksMySqlSettings() {
 
 async function getSharedRecordLocksMySqlPool() {
   if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") return null;
+  if (
+    process.env.AIS_SHARED_STATE_TEST_MODE === "1"
+    && process.env.AIS_SHARED_STATE_TEST_FORCE_MYSQL_OFFLINE === "1"
+  ) {
+    const error = new Error("MySQL временно недоступен в тестовом режиме.");
+    error.code = "ECONNREFUSED";
+    throw error;
+  }
   const connectionString = getSharedRecordLocksMySqlConnectionString();
   if (!connectionString) return null;
   if (sharedRecordLocksMySqlPool) return sharedRecordLocksMySqlPool;
@@ -9959,78 +10095,94 @@ function parseSharedApplicationStateEntryValue(row) {
 
 async function readSharedApplicationStateMySqlDocument(pool, connection = null) {
   const queryable = connection || pool;
-  const [metaRows] = await queryable.query(
-    `SELECT revision, updated_at, updated_by
-       FROM ais_shared_state_meta
-      WHERE state_key = ?
-      LIMIT 1`,
-    [SHARED_STATE_MYSQL_KEY]
-  );
-  if (!metaRows.length) {
-    return { exists: false, document: null, versionTag: "", source: "mysql", offline: false };
-  }
-  const [rows] = await queryable.query(
-    `SELECT entry_type, group_name, item_key, sort_order, data_json
-       FROM ais_shared_state_entries
-      WHERE state_key = ?
-      ORDER BY entry_type, group_name, sort_order, item_key`,
-    [SHARED_STATE_MYSQL_KEY]
-  );
-  const data = { collections: {}, dictionaries: {}, meta: {} };
-  const collectionRows = new Map();
-  const collectionReplacements = new Map();
-  for (const row of rows) {
-    const entryType = String(row.entry_type || "");
-    const groupName = String(row.group_name || "");
-    const itemKey = String(row.item_key || "");
-    if (entryType === "collection_meta") {
-      if (!collectionRows.has(groupName)) collectionRows.set(groupName, []);
-      continue;
+  const maximumAttempts = connection ? 1 : 4;
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+    const [metaRows] = await queryable.query(
+      `SELECT revision, updated_at, updated_by
+         FROM ais_shared_state_meta
+        WHERE state_key = ?
+        LIMIT 1`,
+      [SHARED_STATE_MYSQL_KEY]
+    );
+    if (!metaRows.length) {
+      return { exists: false, document: null, versionTag: "", source: "mysql", offline: false };
     }
-    if (entryType === "collection_replace") {
-      collectionReplacements.set(groupName, parseSharedApplicationStateEntryValue(row));
-      continue;
+    const revisionBefore = Math.max(0, Math.floor(Number(metaRows[0].revision) || 0));
+    const [rows] = await queryable.query(
+      `SELECT entry_type, group_name, item_key, sort_order, data_json
+         FROM ais_shared_state_entries
+        WHERE state_key = ?
+        ORDER BY entry_type, group_name, sort_order, item_key`,
+      [SHARED_STATE_MYSQL_KEY]
+    );
+    if (!connection) {
+      const [confirmedMetaRows] = await queryable.query(
+        `SELECT revision, updated_at, updated_by
+           FROM ais_shared_state_meta
+          WHERE state_key = ?
+          LIMIT 1`,
+        [SHARED_STATE_MYSQL_KEY]
+      );
+      const revisionAfter = Math.max(0, Math.floor(Number(confirmedMetaRows[0]?.revision) || 0));
+      if (!confirmedMetaRows.length || revisionAfter !== revisionBefore) continue;
     }
-    if (entryType === "collection") {
-      if (!collectionRows.has(groupName)) collectionRows.set(groupName, []);
-      collectionRows.get(groupName).push({
-        order: Number(row.sort_order) || 0,
-        key: itemKey,
-        value: parseSharedApplicationStateEntryValue(row)
-      });
-      continue;
+    const data = { collections: {}, dictionaries: {}, meta: {} };
+    const collectionRows = new Map();
+    const collectionReplacements = new Map();
+    for (const row of rows) {
+      const entryType = String(row.entry_type || "");
+      const groupName = String(row.group_name || "");
+      const itemKey = String(row.item_key || "");
+      if (entryType === "collection_meta") {
+        if (!collectionRows.has(groupName)) collectionRows.set(groupName, []);
+        continue;
+      }
+      if (entryType === "collection_replace") {
+        collectionReplacements.set(groupName, parseSharedApplicationStateEntryValue(row));
+        continue;
+      }
+      if (entryType === "collection") {
+        if (!collectionRows.has(groupName)) collectionRows.set(groupName, []);
+        collectionRows.get(groupName).push({
+          order: Number(row.sort_order) || 0,
+          key: itemKey,
+          value: parseSharedApplicationStateEntryValue(row)
+        });
+        continue;
+      }
+      if (entryType === "dictionary") data.dictionaries[itemKey] = parseSharedApplicationStateEntryValue(row);
+      else if (entryType === "meta") data.meta[itemKey] = parseSharedApplicationStateEntryValue(row);
+      else if (entryType === "root") data[itemKey] = parseSharedApplicationStateEntryValue(row);
     }
-    if (entryType === "dictionary") data.dictionaries[itemKey] = parseSharedApplicationStateEntryValue(row);
-    else if (entryType === "meta") data.meta[itemKey] = parseSharedApplicationStateEntryValue(row);
-    else if (entryType === "root") data[itemKey] = parseSharedApplicationStateEntryValue(row);
+    for (const [name, items] of collectionRows) {
+      data.collections[name] = items
+        .sort((left, right) => left.order - right.order || left.key.localeCompare(right.key))
+        .map((item) => item.value);
+    }
+    for (const [name, value] of collectionReplacements) data.collections[name] = value;
+    const needsCitizenshipMigration = sharedApplicationDataNeedsCitizenshipMigration(data);
+    const meta = metaRows[0];
+    const updatedAt = meta.updated_at instanceof Date
+      ? meta.updated_at.toISOString()
+      : new Date(String(meta.updated_at || "").replace(" ", "T") + "Z").toISOString();
+    const document = normalizeSharedApplicationStateDocument({
+      schemaVersion: 2,
+      revision: revisionBefore,
+      backendId: sharedApplicationStateMySqlBackendId(),
+      updatedAt,
+      updatedBy: String(meta.updated_by || ""),
+      data
+    });
+    return {
+      exists: true,
+      document,
+      needsCitizenshipMigration,
+      versionTag: sharedApplicationStateMySqlVersionTag(revisionBefore),
+      source: "mysql",
+      offline: false
+    };
   }
-  for (const [name, items] of collectionRows) {
-    data.collections[name] = items
-      .sort((left, right) => left.order - right.order || left.key.localeCompare(right.key))
-      .map((item) => item.value);
-  }
-  for (const [name, value] of collectionReplacements) data.collections[name] = value;
-  const needsCitizenshipMigration = sharedApplicationDataNeedsCitizenshipMigration(data);
-  const meta = metaRows[0];
-  const revision = Math.max(0, Math.floor(Number(meta.revision) || 0));
-  const updatedAt = meta.updated_at instanceof Date
-    ? meta.updated_at.toISOString()
-    : new Date(String(meta.updated_at || "").replace(" ", "T") + "Z").toISOString();
-  const document = normalizeSharedApplicationStateDocument({
-    schemaVersion: 2,
-    revision,
-    updatedAt,
-    updatedBy: String(meta.updated_by || ""),
-    data
-  });
-  return {
-    exists: true,
-    document,
-    needsCitizenshipMigration,
-    versionTag: sharedApplicationStateMySqlVersionTag(revision),
-    source: "mysql",
-    offline: false
-  };
+  throw new Error("Общая база изменялась во время подготовки снимка. Повторите запрос.");
 }
 
 function buildSharedApplicationStateMySqlEntries(data) {
@@ -10259,9 +10411,13 @@ async function readSharedApplicationStatePendingDocument() {
   try {
     const parsed = JSON.parse(await fs.readFile(getSharedApplicationStatePendingPath(), "utf8"));
     const operations = Array.isArray(parsed?.operations) ? parsed.operations : [];
-    sharedApplicationStatePendingMemory = { schemaVersion: 1, operations };
+    sharedApplicationStatePendingMemory = {
+      schemaVersion: 1,
+      backendId: String(parsed?.backendId || ""),
+      operations
+    };
   } catch {
-    sharedApplicationStatePendingMemory = { schemaVersion: 1, operations: [] };
+    sharedApplicationStatePendingMemory = { schemaVersion: 1, backendId: "", operations: [] };
   }
   sharedApplicationStatePendingLoaded = true;
   return sharedApplicationStatePendingMemory;
@@ -10279,6 +10435,7 @@ async function writeSharedApplicationStatePendingDocument(document) {
   }
   await writeJsonAtomic(pendingPath, {
     schemaVersion: 1,
+    backendId: String(document.backendId || sharedApplicationStateMySqlBackendId()),
     updatedAt: new Date().toISOString(),
     operations: document.operations
   }, true);
@@ -10301,6 +10458,9 @@ async function saveSharedApplicationStateMySqlOperation(pool, operation, authUse
       };
     }
   }
+  const cachedBefore = options.skipCache
+    ? null
+    : await readSharedApplicationStateCache();
   const connection = await pool.getConnection();
   let currentRevision = 0;
   let updatedAt = "";
@@ -10370,35 +10530,43 @@ async function saveSharedApplicationStateMySqlOperation(pool, operation, authUse
          updated_by = VALUES(updated_by)`,
       [SHARED_STATE_MYSQL_KEY, nextRevision, new Date(updatedAt), updatedBy]
     );
-    await connection.commit();
     const merged = Boolean(patch && requestedRevision !== currentRevision);
     let mergedData = null;
+    let savedDocument = null;
     if (!options.skipCache) {
-      const cached = await readSharedApplicationStateCache();
       let nextData = suppliedData;
-      if (!nextData && patch && cached && cached.revision === currentRevision) {
-        nextData = applySharedApplicationStatePatch(cached.data, patch);
+      if (
+        !nextData
+        && patch
+        && cachedBefore
+        && cachedBefore.revision === currentRevision
+        && String(cachedBefore.backendId || "") === sharedApplicationStateMySqlBackendId()
+      ) {
+        nextData = applySharedApplicationStatePatch(cachedBefore.data, patch);
+      }
+      if (suppliedData || !nextData) {
+        const canonical = await readSharedApplicationStateMySqlDocument(pool, connection);
+        nextData = canonical.document?.data || null;
       }
       if (nextData) {
-        await writeSharedApplicationStateCache({
+        savedDocument = normalizeSharedApplicationStateDocument({
           schemaVersion: 2,
           revision: nextRevision,
+          backendId: sharedApplicationStateMySqlBackendId(),
           updatedAt,
           updatedBy,
           data: nextData
-        }).catch(() => {});
+        });
       }
-      if (merged || !nextData) {
-        const latest = await readSharedApplicationStateMySqlDocument(pool);
-        mergedData = merged ? latest.document?.data || null : null;
-        if (latest.document) await writeSharedApplicationStateCache(latest.document).catch(() => {});
-      }
+      mergedData = merged ? nextData : null;
     }
-    return {
+    await connection.commit();
+    const savedResult = {
       conflict: false,
       locked: false,
       merged,
       revision: nextRevision,
+      backendId: sharedApplicationStateMySqlBackendId(),
       versionTag: sharedApplicationStateMySqlVersionTag(nextRevision),
       updatedAt,
       updatedBy,
@@ -10407,6 +10575,15 @@ async function saveSharedApplicationStateMySqlOperation(pool, operation, authUse
       pendingCount: 0,
       data: mergedData
     };
+    if (savedDocument) {
+      rememberSharedApplicationStateMirrorResult({
+        ...savedResult,
+        exists: true,
+        document: savedDocument
+      });
+      await writeSharedApplicationStateCache(savedDocument).catch(() => {});
+    }
+    return savedResult;
   } catch (error) {
     await connection.rollback().catch(() => {});
     throw error;
@@ -10417,10 +10594,20 @@ async function saveSharedApplicationStateMySqlOperation(pool, operation, authUse
 
 async function queueSharedApplicationStateOfflineOperation(operation, authUser, options = {}) {
   const pending = await readSharedApplicationStatePendingDocument();
+  const activeBackendId = sharedApplicationStateMySqlBackendId();
+  const pendingBackendId = String(pending.backendId || "");
+  if (pending.operations.length && pendingBackendId && pendingBackendId !== activeBackendId) {
+    throw new Error(
+      "Очередь автономных изменений относится к другому MySQL-подключению."
+    );
+  }
   if (pending.operations.length >= SHARED_STATE_OFFLINE_QUEUE_MAX_OPERATIONS) {
     throw new Error("Очередь автономных изменений переполнена. Подключите интернет для синхронизации.");
   }
-  const current = await readSharedApplicationStateCache();
+  const storedCurrent = await readSharedApplicationStateCache();
+  const current = storedCurrent?.backendId && storedCurrent.backendId !== activeBackendId
+    ? null
+    : storedCurrent;
   const patch = normalizeSharedApplicationStatePatch(operation.patch);
   const suppliedData = operation.data ? normalizeSharedApplicationData(operation.data) : null;
   const baseData = current?.data || suppliedData;
@@ -10438,9 +10625,11 @@ async function queueSharedApplicationStateOfflineOperation(operation, authUser, 
     updatedBy,
     ...(patch ? { patch } : { data: suppliedData })
   });
+  pending.backendId = activeBackendId;
   await writeSharedApplicationStateCache({
     schemaVersion: 2,
     revision,
+    backendId: sharedApplicationStateMySqlBackendId(),
     updatedAt,
     updatedBy,
     data
@@ -10451,6 +10640,7 @@ async function queueSharedApplicationStateOfflineOperation(operation, authUser, 
     locked: false,
     merged: false,
     revision,
+    backendId: activeBackendId,
     versionTag: `offline-${revision}-${pending.operations.length}`,
     updatedAt,
     updatedBy,
@@ -10468,6 +10658,18 @@ async function flushSharedApplicationStateOfflineQueue(options = {}) {
   if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") return null;
   const pending = await readSharedApplicationStatePendingDocument();
   if (!pending.operations.length) return { flushed: 0, pendingCount: 0 };
+  const activeBackendId = sharedApplicationStateMySqlBackendId();
+  let pendingBackendId = String(pending.backendId || "");
+  if (!pendingBackendId) {
+    const cached = await readSharedApplicationStateCache();
+    pendingBackendId = String(cached?.backendId || "");
+  }
+  if (pendingBackendId && pendingBackendId !== activeBackendId) {
+    throw new Error(
+      "Автономные изменения не выгружены: MySQL-подключение было изменено."
+    );
+  }
+  pending.backendId = activeBackendId;
   if (sharedStateOfflineSyncPromise) return sharedStateOfflineSyncPromise;
   if (!options.force && Date.now() < sharedStateMySqlUnavailableUntil) {
     return { flushed: 0, pendingCount: pending.operations.length, deferred: true };
@@ -10526,12 +10728,20 @@ async function flushSharedApplicationStateOfflineQueue(options = {}) {
 async function readSharedApplicationStateCacheResult(error, options = {}) {
   const cached = await readSharedApplicationStateCache();
   if (!cached) throw (error || new Error("Локальная копия общей базы недоступна."));
+  const cachedBackendId = String(cached.backendId || "");
+  const activeBackendId = sharedApplicationStateMySqlBackendId();
+  if (cachedBackendId && cachedBackendId !== activeBackendId) {
+    throw new Error(
+      "Локальный снимок относится к другому MySQL-подключению и не может быть использован."
+    );
+  }
   const pending = await readSharedApplicationStatePendingDocument();
   const offline = options.offline !== false;
   const source = offline ? "local-cache" : "local-queue";
   const versionTag = `${offline ? "offline" : "pending"}-${cached.revision}-${pending.operations.length}`;
   const common = {
     exists: true,
+    backendId: String(cached.backendId || ""),
     versionTag,
     source,
     offline,
@@ -10563,7 +10773,9 @@ async function readSharedApplicationStateDocument(options = {}) {
     return readSharedApplicationStateCacheResult(error);
   }
   try {
-    const syncResult = await flushSharedApplicationStateOfflineQueue();
+    const syncResult = options.skipOfflineSync
+      ? options.syncResult || null
+      : await flushSharedApplicationStateOfflineQueue();
     const pool = await getSharedRecordLocksMySqlPool();
     if (!pool) throw new Error("MySQL для общей базы не настроен.");
     const result = await ensureSharedApplicationStateMySqlDocument(pool);
@@ -10573,7 +10785,10 @@ async function readSharedApplicationStateDocument(options = {}) {
     }
     sharedStateMySqlUnavailableUntil = 0;
     const cached = await readSharedApplicationStateCache();
-    if (result.document && Number(cached?.revision || 0) !== Number(result.document.revision || 0)) {
+    if (result.document && (
+      Number(cached?.revision || 0) !== Number(result.document.revision || 0)
+      || String(cached?.backendId || "") !== String(result.document.backendId || "")
+    )) {
       await writeSharedApplicationStateCache(result.document).catch(() => {});
     }
     return {
@@ -10593,7 +10808,7 @@ async function readSharedApplicationStateDocument(options = {}) {
   }
 }
 
-async function readSharedApplicationStateMetadata() {
+async function readSharedApplicationStateMetadata(options = {}) {
   if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
     return readLegacySharedApplicationStateMetadata();
   }
@@ -10604,7 +10819,9 @@ async function readSharedApplicationStateMetadata() {
     );
   }
   try {
-    const syncResult = await flushSharedApplicationStateOfflineQueue();
+    const syncResult = options.skipOfflineSync
+      ? options.syncResult || null
+      : await flushSharedApplicationStateOfflineQueue();
     const pool = await getSharedRecordLocksMySqlPool();
     if (!pool) throw new Error("MySQL для общей базы не настроен.");
     const [rows] = await pool.query(
@@ -10627,6 +10844,7 @@ async function readSharedApplicationStateMetadata() {
       return {
         exists: false,
         revision: 0,
+        backendId: sharedApplicationStateMySqlBackendId(),
         updatedAt: "",
         updatedBy: "",
         versionTag: "",
@@ -10643,6 +10861,7 @@ async function readSharedApplicationStateMetadata() {
     return {
       exists: true,
       revision,
+      backendId: sharedApplicationStateMySqlBackendId(),
       updatedAt: rows[0].updated_at instanceof Date ? rows[0].updated_at.toISOString() : String(rows[0].updated_at || ""),
       updatedBy: String(rows[0].updated_by || ""),
       versionTag: sharedApplicationStateMySqlVersionTag(revision),
@@ -10659,6 +10878,147 @@ async function readSharedApplicationStateMetadata() {
     if (isMySqlConnectivityError(error)) await closeSharedRecordLocksStorage();
     return readSharedApplicationStateCacheResult(error, { metadata: true });
   }
+}
+
+function buildSharedApplicationStateMirrorSnapshot(cached, pending, status = {}, options = {}) {
+  const pendingCount = Math.max(0, Number(pending?.operations?.length) || 0);
+  if (!cached) {
+    return {
+      exists: false,
+      revision: 0,
+      backendId: String(status.backendId || ""),
+      updatedAt: "",
+      updatedBy: "",
+      versionTag: "",
+      source: String(status.source || "mysql"),
+      offline: Boolean(options.forceOffline || status.offline),
+      writable: status.writable !== false,
+      pendingCount,
+      syncPending: pendingCount > 0,
+      syncBlockedReason: String(status.syncBlockedReason || ""),
+      syncBlockedLock: status.syncBlockedLock || null,
+      warning: String(options.warning || status.warning || ""),
+      ...(options.metadata ? {} : { document: null })
+    };
+  }
+  const revision = Math.max(0, Math.floor(Number(cached.revision) || 0));
+  const statusRevision = Math.max(0, Math.floor(Number(status.revision) || 0));
+  const statusMatchesRevision = statusRevision === revision;
+  const offline = Boolean(options.forceOffline || (statusMatchesRevision && status.offline));
+  const source = pendingCount
+    ? "local-queue"
+    : offline
+      ? "local-cache"
+      : statusMatchesRevision
+        ? String(status.source || "mysql")
+        : "mysql";
+  const versionTag = pendingCount
+    ? `${offline ? "offline" : "pending"}-${revision}-${pendingCount}`
+    : offline
+      ? `cache-${revision}`
+      : sharedApplicationStateMySqlVersionTag(revision);
+  const common = {
+    exists: true,
+    revision,
+    backendId: String(cached.backendId || status.backendId || ""),
+    updatedAt: String(cached.updatedAt || ""),
+    updatedBy: String(cached.updatedBy || ""),
+    versionTag,
+    source,
+    offline,
+    writable: statusMatchesRevision ? status.writable !== false : true,
+    pendingCount,
+    syncPending: pendingCount > 0,
+    syncBlockedReason: pendingCount ? String(status.syncBlockedReason || "") : "",
+    syncBlockedLock: pendingCount ? status.syncBlockedLock || null : null,
+    warning: offline ? String(options.warning || status.warning || "") : ""
+  };
+  return options.metadata ? common : { ...common, document: cached };
+}
+
+async function readSharedApplicationStateMirrorSnapshot(options = {}) {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+    return options.metadata
+      ? readLegacySharedApplicationStateMetadata()
+      : readLegacySharedApplicationStateDocument();
+  }
+  if (!sharedStateMirrorInitialized) await refreshSharedApplicationStateMirror();
+  const confirmedEmpty = sharedStateMirrorMetadata?.exists === false && !sharedStateMirrorDocument;
+  const candidate = sharedStateMirrorDocument || (
+    confirmedEmpty ? null : await readSharedApplicationStateCache()
+  );
+  let cached = sharedApplicationStateCacheMatchesBackend(candidate) ? candidate : null;
+  if (!sharedStateMirrorDocument && cached) sharedStateMirrorDocument = cached;
+  const expectedRevision = Math.max(0, Math.floor(Number(options.expectedRevision) || 0));
+  if (expectedRevision && Number(cached?.revision || 0) !== expectedRevision) {
+    await refreshSharedApplicationStateMirror();
+    const refreshedCandidate = sharedStateMirrorDocument || await readSharedApplicationStateCache();
+    cached = sharedApplicationStateCacheMatchesBackend(refreshedCandidate)
+      ? refreshedCandidate
+      : null;
+  }
+  if (confirmedEmpty) {
+    cached = null;
+  }
+  if (!cached && !confirmedEmpty) {
+    const direct = await readSharedApplicationStateDocument();
+    rememberSharedApplicationStateMirrorResult(direct);
+    cached = sharedStateMirrorDocument || direct.document || null;
+  }
+  const pending = await readSharedApplicationStatePendingDocument();
+  return buildSharedApplicationStateMirrorSnapshot(cached, pending, sharedStateMirrorMetadata || {}, {
+    metadata: options.metadata === true,
+    forceOffline: Date.now() < sharedStateMySqlUnavailableUntil,
+    warning: sharedStateMirrorLastError
+  });
+}
+
+async function rememberSharedApplicationStateMirrorSave(result, operation) {
+  const revision = Math.max(0, Math.floor(Number(result?.revision) || 0));
+  let document = Number(sharedStateMirrorDocument?.revision || 0) === revision
+    && String(sharedStateMirrorDocument?.backendId || "") === sharedApplicationStateMySqlBackendId()
+    ? sharedStateMirrorDocument
+    : null;
+  let data = null;
+  if (!document && operation?.data && typeof operation.data === "object") {
+    data = normalizeSharedApplicationData(operation.data);
+  } else if (
+    !document
+    && operation?.patch
+    && sharedStateMirrorDocument
+    && Number(sharedStateMirrorDocument.revision || 0) + 1 === revision
+  ) {
+    data = applySharedApplicationStatePatch(
+      sharedStateMirrorDocument.data,
+      normalizeSharedApplicationStatePatch(operation.patch)
+    );
+  } else if (!document && result?.data && typeof result.data === "object") {
+    data = normalizeSharedApplicationData(result.data);
+  }
+  if (!document && data) {
+    document = normalizeSharedApplicationStateDocument({
+      schemaVersion: 2,
+      revision,
+      backendId: sharedApplicationStateMySqlBackendId(),
+      updatedAt: String(result?.updatedAt || new Date().toISOString()),
+      updatedBy: String(result?.updatedBy || ""),
+      data
+    });
+  }
+  if (!document) {
+    const cached = await readSharedApplicationStateCache().catch(() => null);
+    if (
+      Number(cached?.revision || 0) === revision
+      && String(cached?.backendId || "") === sharedApplicationStateMySqlBackendId()
+    ) document = cached;
+  }
+  const exactDocument = Number(document?.revision || 0) === revision ? document : null;
+  rememberSharedApplicationStateMirrorResult({
+    ...result,
+    exists: true,
+    ...(exactDocument ? { document: exactDocument } : {})
+  });
+  if (!exactDocument) await refreshSharedApplicationStateMirror();
 }
 
 function sharedRecordLockFromMySqlRow(row) {
@@ -11696,13 +12056,26 @@ async function mutateRecycleBinMySql(request, authUser, mutator) {
       [SHARED_STATE_MYSQL_KEY, nextRevision, new Date(updatedAt), updatedBy]
     );
     await connection.commit();
-    await writeSharedApplicationStateCache({
+    const savedDocument = normalizeSharedApplicationStateDocument({
       schemaVersion: 2,
       revision: nextRevision,
+      backendId: sharedApplicationStateMySqlBackendId(),
       updatedAt,
       updatedBy,
       data: mutation.data
-    }).catch(() => {});
+    });
+    sharedStateMirrorDocument = savedDocument;
+    rememberSharedApplicationStateMirrorResult({
+      exists: true,
+      document: savedDocument,
+      versionTag: sharedApplicationStateMySqlVersionTag(nextRevision),
+      source: "mysql",
+      offline: false,
+      writable: true,
+      pendingCount: 0,
+      syncPending: false
+    });
+    await writeSharedApplicationStateCache(savedDocument).catch(() => {});
     sharedStateMySqlUnavailableUntil = 0;
     return {
       revision: nextRevision,
@@ -11801,14 +12174,17 @@ async function handleSharedApplicationState(req, res, authUser, requestUrl) {
   try {
     if (req.method === "GET") {
       if (requestUrl.searchParams.get("metadata") === "1") {
-        const metadata = await readSharedApplicationStateMetadata();
+        const metadata = await readSharedApplicationStateMirrorSnapshot({ metadata: true });
         sendJson(res, 200, metadata);
         return;
       }
-      const result = await readSharedApplicationStateDocument();
+      const result = await readSharedApplicationStateMirrorSnapshot({
+        expectedRevision: requestUrl.searchParams.get("revision")
+      });
       sendJson(res, 200, {
         exists: result.exists,
         revision: result.document?.revision || 0,
+        backendId: String(result.document?.backendId || result.backendId || ""),
         versionTag: result.versionTag,
         updatedAt: result.document?.updatedAt || "",
         updatedBy: result.document?.updatedBy || "",
@@ -11825,7 +12201,8 @@ async function handleSharedApplicationState(req, res, authUser, requestUrl) {
       return;
     }
     if (req.method === "POST") {
-      const result = await saveSharedApplicationState(await readJsonBody(req), authUser);
+      const operation = await readJsonBody(req);
+      const result = await saveSharedApplicationState(operation, authUser);
       if (result.locked) {
         sendJson(res, 423, {
           error: "Одна из изменяемых записей сейчас заблокирована другим пользователем.",
@@ -11841,6 +12218,7 @@ async function handleSharedApplicationState(req, res, authUser, requestUrl) {
         });
         return;
       }
+      await rememberSharedApplicationStateMirrorSave(result, operation);
       sendJson(res, 200, { ok: true, ...result });
       return;
     }
@@ -11872,6 +12250,26 @@ async function handleSharedApplicationState(req, res, authUser, requestUrl) {
       }
       await fs.unlink(getSharedApplicationStatePendingPath()).catch(() => {});
       await fs.unlink(getSharedApplicationStateLocalPath()).catch(() => {});
+      sharedApplicationStateCacheMemory = null;
+      sharedApplicationStateCacheLoaded = true;
+      sharedApplicationStatePendingMemory = { schemaVersion: 1, backendId: "", operations: [] };
+      sharedApplicationStatePendingLoaded = true;
+      sharedStateMirrorDocument = null;
+      sharedStateMirrorMetadata = {
+        exists: false,
+        revision: 0,
+        versionTag: "",
+        updatedAt: "",
+        updatedBy: "",
+        source: "mysql",
+        offline: false,
+        writable: true,
+        pendingCount: 0,
+        syncPending: false,
+        syncBlockedReason: "",
+        syncBlockedLock: null,
+        warning: ""
+      };
       sendJson(res, 200, { ok: true, deleted: true });
       return;
     }
@@ -34108,6 +34506,7 @@ async function route(req, res) {
       ok: true,
       storage: "mysql",
       sharedStateStorage: "mysql",
+      sharedStateSnapshotMode: "revision-validated",
       offlineQueueStorage: "local",
       sharedStatePollIntervalMs: 1000,
       ...(runtimeSecrets ? { runtimeSecrets } : {})
@@ -34588,6 +34987,9 @@ module.exports = {
   normalizeSharedApplicationData,
   normalizeSharedApplicationStatePatch,
   sharedApplicationDataNeedsCitizenshipMigration,
+  sharedApplicationStateMirrorNeedsReload,
+  sharedApplicationStateCacheMatchesBackend,
+  buildSharedApplicationStateMirrorSnapshot,
   writeSharedApplicationStateCache,
   readSharedApplicationStateCache,
   sanitizeFrdoExportPayload,
