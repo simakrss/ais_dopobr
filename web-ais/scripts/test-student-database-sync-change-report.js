@@ -110,4 +110,152 @@ const unchanged = buildStudentDatabaseSynchronizedChanges(after, after);
 assert.equal(unchanged.totalCount, 0);
 assert.deepEqual(unchanged.rows, []);
 
+const realChangesBefore = emptyDatabase({
+  students: [
+    {
+      id: "student-db-1166",
+      uid: "1166",
+      name: "Добрышкина Елена Сергеевна",
+      additionalStatus: "Обучающиеся"
+    },
+    {
+      id: "student-db-1171",
+      uid: "1171",
+      name: "Загодарчук Инна Владимировна",
+      additionalStatus: "Обучающиеся"
+    },
+    {
+      id: "student-formula-1",
+      uid: "1172",
+      name: "Формульное поле",
+      contractAmount: 4000,
+      databaseSyncFormulaFields: ["contractAmount"]
+    }
+  ],
+  contracts: [{
+    id: "contract-1",
+    section: "Сотрудники",
+    name: "Технический договор",
+    contractNo: "1",
+    contractDate: "2026-08-01",
+    whatsapp: "Сохранённое Web-значение"
+  }],
+  directExpenses: [{
+    id: "expense-formula-1",
+    uid: "1166",
+    date: "2026-08-28",
+    type: "Оплата сотруднику",
+    recommendation: "+",
+    databaseSyncFormulaFields: ["recommendation"]
+  }],
+  trainingPlans: [{
+    id: "training-plan-formula-1",
+    code: "ТП-1",
+    programName: "Тестовая программа",
+    discipline: "Модуль",
+    totalHours: 72
+  }],
+  studentDatabaseSyncFields: ["uid", "name", "additionalStatus", "contractAmount"],
+  contractDatabaseSyncFields: ["section", "name", "contractNo", "contractDate", "whatsapp"],
+  directExpenseDatabaseSyncFields: ["uid", "date", "type", "recommendation"],
+  trainingPlanDatabaseSyncFields: ["code", "programName", "discipline", "totalHours"]
+});
+const realChangesAfter = emptyDatabase({
+  students: [
+    {
+      id: "student-db-1166",
+      uid: "1166",
+      name: "Добрышкина Елена Сергеевна",
+      additionalStatus: "Печать документов"
+    },
+    {
+      id: "student-db-1171",
+      uid: "1171",
+      name: "Загодарчук Инна Владимировна",
+      additionalStatus: "Печать документов"
+    },
+    {
+      id: "student-formula-1",
+      uid: "1172",
+      name: "Формульное поле",
+      contractAmount: 4500,
+      databaseSyncFormulaFields: ["contractAmount"]
+    }
+  ],
+  contracts: [{
+    id: "contract-1",
+    section: "Сотрудники",
+    name: "Технический договор",
+    contractNo: "1",
+    contractDate: "2026-08-01",
+    whatsapp: ""
+  }],
+  directExpenses: [{
+    id: "expense-formula-1",
+    uid: "1166",
+    date: "2026-08-28",
+    type: "Оплата сотруднику",
+    recommendation: "—",
+    databaseSyncFormulaFields: ["recommendation"]
+  }],
+  trainingPlans: [{
+    id: "training-plan-formula-1",
+    code: "ТП-1",
+    programName: "Тестовая программа",
+    discipline: "Модуль",
+    totalHours: 80
+  }],
+  studentDatabaseSyncFields: ["uid", "name", "additionalStatus", "contractAmount"],
+  contractDatabaseSyncFields: ["section", "name", "contractNo", "contractDate", "whatsapp"],
+  directExpenseDatabaseSyncFields: ["uid", "date", "type", "recommendation"],
+  trainingPlanDatabaseSyncFields: ["code", "programName", "discipline", "totalHours"]
+});
+const realChangesReport = buildStudentDatabaseSynchronizedChanges(
+  realChangesBefore,
+  realChangesAfter
+);
+assert.equal(realChangesReport.totalCount, 2);
+assert.equal(realChangesReport.rows.length, 2);
+assert.deepEqual(realChangesReport.entityCounts, { students: 2 });
+assert.ok(realChangesReport.rows.every((row) => row.field === "Доп. статус"));
+assert.deepEqual(
+  realChangesReport.rows.map((row) => row.recordId).sort(),
+  ["student-db-1166", "student-db-1171"]
+);
+
+const fixedFormulaBefore = emptyDatabase({
+  students: [{
+    id: "student-fixed-formula-1",
+    uid: "1173",
+    name: "Зафиксированная формула",
+    contractAmount: 4000,
+    databaseSyncFormulaFields: ["contractAmount"]
+  }]
+});
+const fixedFormulaAfter = emptyDatabase({
+  students: [{
+    id: "student-fixed-formula-1",
+    uid: "1173",
+    name: "Зафиксированная формула",
+    contractAmount: 5000
+  }]
+});
+const fixedFormulaReport = buildStudentDatabaseSynchronizedChanges(
+  fixedFormulaBefore,
+  fixedFormulaAfter
+);
+assert.equal(fixedFormulaReport.totalCount, 1);
+assert.equal(fixedFormulaReport.rows[0].field, "Сумма по договору (руб)");
+
+const schemaFilteredReport = buildStudentDatabaseSynchronizedChanges(
+  emptyDatabase({
+    students: [{ id: "student-schema-1", uid: "1174", name: "Схема", note: "До" }]
+  }),
+  emptyDatabase({
+    students: [{ id: "student-schema-1", uid: "1174", name: "Схема", note: "После" }],
+    studentDatabaseSyncFields: ["uid", "name"]
+  })
+);
+assert.equal(schemaFilteredReport.totalCount, 0);
+
 console.log("student database synchronized change report checks: OK");

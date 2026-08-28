@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.346",
+    version: "1.7.347",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.347",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Отчёт синхронизации показывает только реально перенесённые изменения: вычисляемые значения, формульные ячейки, технические расхождения и поля вне управляемой схемы XLSB больше не увеличивают счётчик."
+      ]
+    },
     {
       version: "1.7.346",
       releasedAt: "2026-08-28",

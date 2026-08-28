@@ -15283,6 +15283,42 @@ function getStudentDatabaseSynchronizedChangeDefinitions(beforeValue, afterValue
   ];
 }
 
+const STUDENT_DATABASE_SYNCHRONIZED_CHANGE_SCHEMA_FIELDS = Object.freeze({
+  students: "studentDatabaseSyncFields",
+  contracts: "contractDatabaseSyncFields",
+  directExpenses: "directExpenseDatabaseSyncFields",
+  generalExpenses: "generalExpenseDatabaseSyncFields",
+  inventory: "inventoryDatabaseSyncFields",
+  programs: "programDatabaseSyncFields",
+  trainingPlans: "trainingPlanDatabaseSyncFields"
+});
+
+function getStudentDatabaseSynchronizedManagedFields(definitionKey, value) {
+  const schemaField = STUDENT_DATABASE_SYNCHRONIZED_CHANGE_SCHEMA_FIELDS[definitionKey];
+  const fields = schemaField && Array.isArray(value?.[schemaField])
+    ? value[schemaField].map((field) => String(field || "").trim()).filter(Boolean)
+    : [];
+  return fields.length ? new Set(fields) : null;
+}
+
+function isStudentDatabaseSynchronizedChangeReportable(
+  definition,
+  pair,
+  fieldName,
+  managedFields
+) {
+  if (managedFields && !managedFields.has(fieldName)) return false;
+
+  // These values are recalculated after import and therefore are not changes made by synchronization.
+  if (
+    STUDENT_DATABASE_DERIVED_FIXED_VALUE_FIELDS[definition.key]?.has(fieldName)
+    || (definition.key === "trainingPlans" && fieldName === "totalHours")
+  ) return false;
+
+  // A changed cached result is technical noise while replacing a formula with a fixed value is real.
+  return !isStudentDatabaseRecordFormulaBacked(pair.after, fieldName);
+}
+
 function buildStudentDatabaseSynchronizedChanges(beforeValue, afterValue, options = {}) {
   const limit = Math.max(
     1,
@@ -15307,6 +15343,10 @@ function buildStudentDatabaseSynchronizedChanges(beforeValue, afterValue, option
 
   getStudentDatabaseSynchronizedChangeDefinitions(beforeValue, afterValue)
     .forEach((definition) => {
+      const managedFields = getStudentDatabaseSynchronizedManagedFields(
+        definition.key,
+        afterValue
+      );
       const matched = pairStudentDatabaseChangeRecords(
         definition.before,
         definition.after,
@@ -15314,6 +15354,12 @@ function buildStudentDatabaseSynchronizedChanges(beforeValue, afterValue, option
       );
       matched.pairs.forEach((pair) => {
         definition.fields.forEach((fieldName) => {
+          if (!isStudentDatabaseSynchronizedChangeReportable(
+            definition,
+            pair,
+            fieldName,
+            managedFields
+          )) return;
           const beforeValueNormalized = definition.normalize(pair.before, fieldName);
           const afterValueNormalized = definition.normalize(pair.after, fieldName);
           if (
@@ -28044,14 +28090,9 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       : buildStudentDatabaseSynchronizedChanges(payload, payload);
     const mergedDirectionalChanges = directionalMergeResult?.changes || [];
     const synchronizedChanges = directionalMergeResult
-      ? [
-          ...mergedDirectionalChanges,
-          ...synchronizedChangeReport.rows.filter((row) => !mergedDirectionalChanges.some((merged) => (
-            merged.entity === row.entity
-            && merged.recordId === row.recordId
-            && merged.field === row.field
-          )))
-        ].slice(0, STUDENT_DATABASE_SYNCHRONIZED_CHANGE_LIMIT)
+      ? mergedDirectionalChanges
+        .slice(0, STUDENT_DATABASE_SYNCHRONIZED_CHANGE_LIMIT)
+        .map((change, index) => ({ number: index + 1, ...change }))
       : synchronizedChangeReport.rows;
     const directionalFormulaMetadataPayload = directionalSync
       ? buildStudentDatabaseImportResult(parsedOutputData, sourceType)
@@ -28094,11 +28135,12 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
       communicationTemplateNamedRangeFormulaPreservedCount:
         communicationTemplateVerification.formulaPreserved,
       synchronizedChangeCount: directionalMergeResult
-        ? Math.max(synchronizedChanges.length, synchronizedChangeReport.totalCount)
+        ? mergedDirectionalChanges.length
         : synchronizedChangeReport.totalCount,
       synchronizedChanges,
-      synchronizedChangesTruncated: synchronizedChangeReport.truncated
-        || synchronizedChanges.length < mergedDirectionalChanges.length + synchronizedChangeReport.rows.length,
+      synchronizedChangesTruncated: directionalMergeResult
+        ? mergedDirectionalChanges.length > synchronizedChanges.length
+        : synchronizedChangeReport.truncated,
       synchronizedChangeEntityCounts: synchronizedChangeReport.entityCounts,
       targetedStudentFieldPatchCount: payload.targetedStudentFieldPatches.length,
       ...(studentSyncResult ? {
