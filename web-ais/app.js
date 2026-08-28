@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.345",
+    version: "1.7.346",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.346",
+      releasedAt: "2026-08-28",
+      changes: [
+        "На вкладке «Оплата» панель вкладок больше не перекрывает итоговые карточки и область «Учёт выплат» при прокрутке или изменении размера окна."
+      ]
+    },
     {
       version: "1.7.345",
       releasedAt: "2026-08-28",

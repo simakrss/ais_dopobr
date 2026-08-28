@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260828-advertising-history-delete-fast-cache-v1";
+  const AUTH_BUILD = "20260828-payment-tabs-overlap-fix-v1";
   const DISMISSIBLE_MODAL_BACKDROP_SELECTOR = ".modal-backdrop, .partner-modal-backdrop, [data-documents-backdrop]";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");

@@ -16228,6 +16228,11 @@ body.event-reorder-dragging .student-event-row.is-dragging {
   box-shadow: 0 2px 8px rgba(19, 54, 48, 0.08);
 }
 
+.contract-modal.is-payment-tab-active .student-tabs.contract-tabs {
+  position: static;
+  top: auto;
+}
+
 .student-modal-head,
 .contract-modal-head {
   z-index: 4;

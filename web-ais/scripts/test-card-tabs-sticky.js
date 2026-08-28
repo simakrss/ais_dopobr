@@ -61,6 +61,12 @@ assert.match(stickyRule, /top:\s*var\(--card-window-sticky-tabs-top,\s*0px\)/u);
 assert.match(stickyRule, /z-index:\s*3/u);
 assert.match(stickyRule, /background:\s*#fff/u);
 
+const paymentTabsLayoutRule = stylesSource.match(
+  /\.contract-modal\.is-payment-tab-active \.student-tabs\.contract-tabs\s*\{([^}]*)\}/u
+)?.[1] || "";
+assert.match(paymentTabsLayoutRule, /position:\s*static/u);
+assert.match(paymentTabsLayoutRule, /top:\s*auto/u);
+
 const headStackingRule = stylesSource.match(
   /\.student-modal-head,\s*\.contract-modal-head\s*\{([^}]*)\}/u
 )?.[1] || "";
