@@ -344,6 +344,49 @@ function testStudentContractAmountFixedValueOverride() {
     }),
     /фиксированные значения/iu
   );
+
+  const genderPayload = sanitizeStudentDatabaseExportPayload({
+    students: [{
+      id: "students-mtbhy188-rkk4w",
+      uid: "1171",
+      name: "Загодарчук Инна Владимировна",
+      gender: "Женский",
+      databaseFixedValueOverrides: ["gender"]
+    }],
+    contracts: [],
+    directExpenses: [],
+    generalExpenses: []
+  });
+  const abbreviatedGenderOutput = {
+    students: [{
+      id: "students-mtbhy188-rkk4w",
+      uid: "1171",
+      name: "Загодарчук Инна Владимировна",
+      gender: "Ж"
+    }]
+  };
+  const genderTargets = getStudentDatabaseFixedValueOverrideTargets(
+    genderPayload,
+    abbreviatedGenderOutput
+  );
+  assert.equal(genderTargets[0].webValue, "Ж");
+  assert.equal(genderTargets[0].excelValue, "Ж");
+  assert.equal(genderTargets[0].differs, false);
+  assert.equal(
+    validateStudentDatabaseFixedValueOverridesAgainstOutput(
+      genderPayload,
+      abbreviatedGenderOutput
+    ),
+    1,
+    "Пол «Женский» из Web должен считаться равным сокращению «Ж» в XLSB"
+  );
+  assert.throws(
+    () => validateStudentDatabaseFixedValueOverridesAgainstOutput(genderPayload, {
+      students: [{ ...abbreviatedGenderOutput.students[0], gender: "М" }]
+    }),
+    /ожидалось «Ж»; записано «М»/iu,
+    "Реальное несовпадение пола должно остаться блокирующей ошибкой"
+  );
   assert.match(syncScriptSource, /\$hasFormula\s+-and\s+-not\s+\$isFixedValueOverride/u);
   assert.match(syncScriptSource, /if\s*\(\[bool\]\$cell\.HasFormula\)[\s\S]{0,180}не заменена фиксированным значением/u);
 }

@@ -164,10 +164,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.337",
+    version: "1.7.338",
     releasedAt: "2026-08-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.338",
+      releasedAt: "2026-08-28",
+      changes: [
+        "Исправлена проверка выбранного Web-значения пола при синхронизации: полные варианты «Женский/Мужской» теперь корректно сопоставляются с форматом «Ж/М» в XLSB.",
+        "При настоящем несовпадении отчёт теперь отдельно показывает ожидаемое Web-значение и фактически записанное значение XLSB."
+      ]
+    },
     {
       version: "1.7.337",
       releasedAt: "2026-08-28",

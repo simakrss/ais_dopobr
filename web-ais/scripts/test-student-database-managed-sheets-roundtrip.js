@@ -9,7 +9,8 @@ const XLSX = require("../vendor/sheetjs/xlsx.full.min.js");
 const {
   parseStudentDatabaseWorkbook,
   sanitizeStudentDatabaseExportPayload,
-  buildStudentDatabaseSynchronizedChanges
+  buildStudentDatabaseSynchronizedChanges,
+  validateStudentDatabaseFixedValueOverridesAgainstOutput
 } = require("../app-server.js");
 
 const sourcePath = path.resolve(
@@ -102,6 +103,9 @@ try {
     const address = XLSX.utils.encode_cell({ r: rowIndex, c: endDateColumnIndex });
     return Boolean(getCell(before, "База", address).f);
   });
+  const fixedGenderTarget = imported.students.find((student) => (
+    /^[жм]/iu.test(String(student.gender || "").trim())
+  ));
   assert.ok(imported.inventory.length, "В исходной книге нет запасов.");
   assert.ok(imported.trainingPlans.length, "В исходной книге нет учебных планов.");
   assert.ok(imported.programPaymentSettings.length, "В исходной книге нет реестра программ.");
@@ -138,7 +142,7 @@ try {
   ));
   assert.ok(
     inventoryTarget && trainingTarget && programTarget && deletedProgram
-      && fixedValueTarget && fixedEndDateTarget,
+      && fixedValueTarget && fixedEndDateTarget && fixedGenderTarget,
     "Не найдены строки для round-trip проверки: " + JSON.stringify({
       inventoryTarget: Boolean(inventoryTarget),
       trainingTarget: Boolean(trainingTarget),
@@ -146,6 +150,7 @@ try {
       deletedProgram: Boolean(deletedProgram),
       fixedValueTarget: Boolean(fixedValueTarget),
       fixedEndDateTarget: Boolean(fixedEndDateTarget),
+      fixedGenderTarget: Boolean(fixedGenderTarget),
       endDateColumnIndex,
       baseHeaderRowIndex
     })
@@ -246,6 +251,12 @@ try {
     if (student.id === fixedEndDateTarget.id) {
       updated.endDate = fixedEndDate;
       overrides.add("endDate");
+    }
+    if (student.id === fixedGenderTarget.id) {
+      updated.gender = /^ж/iu.test(String(student.gender || "").trim())
+        ? "Женский"
+        : "Мужской";
+      overrides.add("gender");
     }
     if (overrides.size) updated.databaseFixedValueOverrides = [...overrides];
     return updated;
@@ -354,7 +365,7 @@ try {
     result.programFormulaCellsReplaced >= 1,
     "Не подтверждена замена вручную изменённой формулы программы."
   );
-  assert.equal(result.studentFixedValueOverridesApplied, 2);
+  assert.equal(result.studentFixedValueOverridesApplied, 3);
   assert.equal(result.studentFormulaCellsReplaced, 2);
 
   const after = readRaw(outputPath);
@@ -403,6 +414,11 @@ try {
     fs.readFileSync(outputPath),
     () => {},
     { syncMetadataRows }
+  );
+  assert.equal(
+    validateStudentDatabaseFixedValueOverridesAgainstOutput(payload, roundTrip),
+    3,
+    "Финальная проверка должна принимать пол «Женский/Мужской» из Web в формате «Ж/М» XLSB."
   );
   assert.equal(
     roundTrip.students.find((student) => student.id === fixedValueTarget.id)?.additionalStatus,

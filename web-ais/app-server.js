@@ -14254,6 +14254,12 @@ function normalizeStudentDatabaseSyncValue(value, fieldName) {
   }
   if (fieldName === "uid") return String(value ?? "").trim().replace(/\.0+$/u, "");
   if (fieldName === "citizenship") return normalizeCitizenshipValue(value);
+  if (fieldName === "gender") {
+    const gender = normalizeStudentDatabaseCriticalGender(value);
+    if (gender === "ж") return "Ж";
+    if (gender === "м") return "М";
+    return gender;
+  }
   if (typeof value === "boolean") return value ? "1" : "0";
   if (value === null || value === undefined) return "";
   return String(value).replace(/\r\n?/gu, "\n").trim();
@@ -25327,8 +25333,14 @@ function validateStudentDatabaseFixedValueOverridesAgainstOutput(payload, output
   const targets = getStudentDatabaseFixedValueOverrideTargets(payload, outputData);
   const mismatches = targets.filter((target) => target.differs);
   if (mismatches.length) {
+    const displayValue = (value) => {
+      const normalized = String(value ?? "");
+      return normalized === "" ? "—" : normalized;
+    };
     const preview = mismatches.slice(0, 5).map((target) => (
-      `${target.name || target.uid}: ${target.field} = ${String(target.excelValue)}`
+      `${target.name || target.uid}: ${target.field}: `
+      + `ожидалось «${displayValue(target.webValue)}»; `
+      + `записано «${displayValue(target.excelValue)}»`
     )).join("; ");
     const error = new Error(
       "Проверка сформированного XLSB не пройдена: фиксированные значения Web-базы "
