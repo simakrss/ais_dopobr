@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.353",
+    version: "1.7.354",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.354",
+      releasedAt: "2026-08-29",
+      changes: [
+        "Конструкторы и ручной выбор источников в интерактивной статистике и рекламе доступны только администратору; менеджер запускает сбор рекламы по всем включённым администратором источникам, а прямые запросы к настройкам защищены на сервере."
+      ]
+    },
     {
       version: "1.7.353",
       releasedAt: "2026-08-29",
@@ -10495,6 +10502,10 @@ MAX - https://bizvmax.ru/zifra_plus
     return String(getCurrentAuthUser().role || "") === "admin";
   }
 
+  function getAvailableStatisticsTabs() {
+    return statisticsTabs.filter((tab) => tab.id !== "sources" || isAdminUser());
+  }
+
   function canAccessView(viewId) {
     return isAdminUser() || !MANAGER_RESTRICTED_VIEWS.has(String(viewId || ""));
   }
@@ -11079,7 +11090,10 @@ MAX - https://bizvmax.ru/zifra_plus
     state.selectedDictionary = String(snapshot.selectedDictionary || "");
     state.adminTab = String(snapshot.adminTab || "database");
     state.adminDatabaseTab = String(snapshot.adminDatabaseTab || "ais");
-    state.statistics.tab = String(snapshot.statisticsTab || "income");
+    const restoredStatisticsTab = String(snapshot.statisticsTab || "income");
+    state.statistics.tab = getAvailableStatisticsTabs().some((tab) => tab.id === restoredStatisticsTab)
+      ? restoredStatisticsTab
+      : "income";
     state.statistics.profitabilityDetails.open = Boolean(snapshot.profitabilityDetailsOpen);
     state.profileOpen = snapshot.overlay === "profile";
     state.releaseHistoryOpen = snapshot.overlay === "release-history" && isAdminUser();
@@ -11306,6 +11320,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (
       state.view === "statistics"
+      && isAdminUser()
       && state.statistics.tab === "sources"
       && !state.statistics.sources.loaded
       && !state.statistics.sources.loading
@@ -11316,7 +11331,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!state.advertising.resultLoaded && !state.advertising.resultLoading) {
         queueMicrotask(() => loadAdvertisingEmailResult());
       }
-      if (!state.advertising.settingsLoaded && !state.advertising.settingsLoading) {
+      if (isAdminUser() && !state.advertising.settingsLoaded && !state.advertising.settingsLoading) {
         queueMicrotask(() => loadAdvertisingEmailSettings());
       }
       if (
@@ -12568,6 +12583,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderStatisticsSources() {
+    if (!isAdminUser()) return "";
     const sourcesState = state.statistics.sources;
     const sources = getStatisticsSourceDefinitions();
     const consumerCount = new Set(sources.flatMap((source) => (
@@ -12642,10 +12658,11 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderStatistics() {
     const filters = state.statistics.filters;
     const options = getStatisticsFilterOptions();
-    const tabs = getOrderedTabs("statistics", statisticsTabs);
-    const activeTab = statisticsTabs.some((tab) => tab.id === state.statistics.tab)
+    const tabs = getOrderedTabs("statistics", getAvailableStatisticsTabs());
+    const activeTab = tabs.some((tab) => tab.id === state.statistics.tab)
       ? state.statistics.tab
       : "income";
+    state.statistics.tab = activeTab;
     const monthNames = Array.from({ length: 12 }, (_, index) => ({
       value: String(index + 1).padStart(2, "0"),
       label: new Intl.DateTimeFormat("ru-RU", { month: "long", timeZone: "UTC" })
@@ -12752,6 +12769,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function loadStatisticsSources(options = {}) {
+    if (!isAdminUser()) return;
     const sourcesState = state.statistics.sources;
     if (sourcesState.loading || (sourcesState.loaded && !options.force)) return;
     sourcesState.loading = true;
@@ -12997,7 +13015,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='switch-statistics-tab']").forEach((button) => {
       button.addEventListener("click", () => {
         const tab = String(button.dataset.statisticsTab || "");
-        if (!statisticsTabs.some((item) => item.id === tab) || tab === state.statistics.tab) return;
+        if (!getAvailableStatisticsTabs().some((item) => item.id === tab) || tab === state.statistics.tab) return;
         if (state.statistics.tab === "sources") syncStatisticsSourceDraftsFromDom();
         state.statistics.tab = tab;
         state.tablePages.statisticsExpenses = 1;
@@ -13170,6 +13188,17 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getAdvertisingEmailSources(options = {}) {
+    if (!isAdminUser()) {
+      return (Array.isArray(state.advertising.result?.sources) ? state.advertising.result.sources : [])
+        .map((source) => ({
+          id: String(source?.id || ""),
+          label: String(source?.label || source?.id || "Источник"),
+          group: String(source?.group || ""),
+          kind: String(source?.kind || ""),
+          enabled: true
+        }))
+        .filter((source) => source.id);
+    }
     const configured = Array.isArray(state.advertising.settings?.sources)
       ? state.advertising.settings.sources
       : [];
@@ -13245,7 +13274,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderAdvertisingSourceBuilder() {
     if (!isAdminUser()) {
-      return '<section class="panel"><div class="empty-state compact"><strong>Конструктор доступен администратору</strong><span>Менеджер может выбирать и запускать настроенные источники на вкладке «Сборщик».</span></div></section>';
+      return '<section class="panel"><div class="empty-state compact"><strong>Конструктор доступен администратору</strong><span>Менеджер может запускать настроенный сбор на вкладке «Сборщик».</span></div></section>';
     }
     const advertising = state.advertising;
     const sources = getAdvertisingEmailSources({ includeDisabled: true });
@@ -13426,6 +13455,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const advertisingTab = advertisingTabs.some((tab) => tab.id === advertising.tab)
       ? advertising.tab
       : "collector";
+    advertising.tab = advertisingTab;
     const summary = advertising.result?.summary || {};
     const scopedRows = getAdvertisingFilteredRows({ status: "all", sort: false });
     const rows = getAdvertisingFilteredRows({ rows: scopedRows });
@@ -13476,7 +13506,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           ${advertising.error ? `<div class="advertising-inline-message is-error" role="alert">${escapeHtml(advertising.error)}</div>` : ""}
           ${advertising.notice ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(advertising.notice)}</div>` : ""}
-          <div class="advertising-source-picker">
+          ${isAdminUser() ? `<div class="advertising-source-picker">
             <button
               id="advertisingSourcePickerToggle"
               class="advertising-source-picker-toggle"
@@ -13501,7 +13531,7 @@ MAX - https://bizvmax.ru/zifra_plus
               </div>
               <div class="advertising-source-grid">${renderAdvertisingSourceCards()}</div>
             </div>
-          </div>
+          </div>` : ""}
           <div class="advertising-workbook-status ${workbook?.status === "error" ? "is-error" : ""}">
             <span>Правила исключений: <strong>${formatStatisticsInteger(summary.exclusionRules)}</strong></span>
             <span>Книга: <strong>${escapeHtml(workbook?.source || "ожидает запуска")}</strong></span>
@@ -13562,6 +13592,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function loadAdvertisingEmailSettings(options = {}) {
+    if (!isAdminUser()) return;
     const advertising = state.advertising;
     if (advertising.settingsLoading || (advertising.settingsLoaded && !options.force)) return;
     advertising.settingsLoading = true;
@@ -13774,7 +13805,8 @@ MAX - https://bizvmax.ru/zifra_plus
   async function collectAdvertisingEmails() {
     const advertising = state.advertising;
     if (advertising.loading || advertising.resultLoading) return;
-    if (!advertising.selectedSourceIds.length) {
+    const sourceIds = isAdminUser() ? advertising.selectedSourceIds : [];
+    if (isAdminUser() && !sourceIds.length) {
       advertising.error = "Выберите хотя бы один источник.";
       render();
       return;
@@ -13793,7 +13825,7 @@ MAX - https://bizvmax.ru/zifra_plus
           "Content-Type": "application/json",
           "X-Requested-With": "AIS-Web"
         },
-        body: JSON.stringify({ sourceIds: advertising.selectedSourceIds })
+        body: JSON.stringify({ sourceIds })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);

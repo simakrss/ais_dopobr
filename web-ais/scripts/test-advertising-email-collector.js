@@ -12,7 +12,8 @@ const {
   normalizeAdvertisingEmailSources,
   normalizeAdvertisingEmailExclusions,
   mergeAdvertisingEmailExclusions,
-  normalizeAdvertisingEmailHistoryRows
+  normalizeAdvertisingEmailHistoryRows,
+  resolveAdvertisingEmailCollectionRequest
 } = require("../app-server.js");
 
 const root = path.resolve(__dirname, "..");
@@ -24,6 +25,13 @@ const stylesSource = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 const indexSource = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const workbookPath = "Y:\\Реклама\\Базы рассылок\\База рассылок.xlsb";
 const XLSX = require(path.join(root, "vendor", "sheetjs", "xlsx.full.min.js"));
+
+function sourceBlock(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0 && end > start, `Не найден блок ${startMarker}`);
+  return source.slice(start, end);
+}
 
 assert.deepEqual(
   extractAdvertisingEmails("Первый USER@Example.ru; повтор user@example.ru и second.person+tag@mail.org"),
@@ -165,6 +173,21 @@ assert.throws(
 );
 
 assert.deepEqual(
+  resolveAdvertisingEmailCollectionRequest(
+    { sourceIds: ["custom-sql"], source: "local" },
+    { role: "manager" }
+  ),
+  { sourceIds: [], source: "auto" }
+);
+assert.deepEqual(
+  resolveAdvertisingEmailCollectionRequest(
+    { sourceIds: ["custom-sql"], source: "webdav" },
+    { role: "admin" }
+  ),
+  { sourceIds: ["custom-sql"], source: "webdav" }
+);
+
+assert.deepEqual(
   normalizeAdvertisingEmailExclusions([
     { key: "USER@EXAMPLE.RU", note: "Первое правило" },
     { key: "user@example.ru", note: "Обновлённое правило" },
@@ -200,6 +223,31 @@ assert.match(appSource, /function renderAdvertising\(\)/u);
 assert.match(appSource, /function collectAdvertisingEmails\(\)/u);
 assert.doesNotMatch(appSource, /queueMicrotask\(\(\) => collectAdvertisingEmails\(\)\)/u);
 assert.match(appSource, /\[data-action='collect-advertising-emails'\][\s\S]*?addEventListener\("click", collectAdvertisingEmails\)/u);
+const advertisingRendererBlock = sourceBlock(appSource, "function renderAdvertising()", "async function loadAdvertisingEmailSettings(");
+assert.match(advertisingRendererBlock, /\.\.\.\(isAdminUser\(\) \? \[\{ id: "sources", label: "Источники" \}\] : \[\]\)/u);
+assert.match(advertisingRendererBlock, /const advertisingTab = advertisingTabs\.some[\s\S]*: "collector"/u);
+assert.match(advertisingRendererBlock, /advertising\.tab = advertisingTab/u);
+assert.match(advertisingRendererBlock, /\$\{isAdminUser\(\) \? `<div class="advertising-source-picker">/u);
+assert.match(appSource, /isAdminUser\(\) && !state\.advertising\.settingsLoaded/u);
+const advertisingSourcesBlock = sourceBlock(appSource, "function getAdvertisingEmailSources(", "function renderAdvertisingSourceCards(");
+assert.match(advertisingSourcesBlock, /if \(!isAdminUser\(\)\)/u);
+assert.match(advertisingSourcesBlock, /state\.advertising\.result\?\.sources/u);
+const advertisingSettingsLoaderBlock = sourceBlock(appSource, "async function loadAdvertisingEmailSettings(", "async function loadAdvertisingEmailResult(");
+assert.match(advertisingSettingsLoaderBlock, /if \(!isAdminUser\(\)\) return;/u);
+const advertisingCollectorBlock = sourceBlock(appSource, "async function collectAdvertisingEmails()", "function parseAdvertisingWorkbookEditorValue(");
+assert.match(advertisingCollectorBlock, /const sourceIds = isAdminUser\(\) \? advertising\.selectedSourceIds : \[\]/u);
+assert.match(advertisingCollectorBlock, /if \(isAdminUser\(\) && !sourceIds\.length\)/u);
+assert.match(advertisingCollectorBlock, /body: JSON\.stringify\(\{ sourceIds \}\)/u);
+const advertisingEventsBlock = sourceBlock(appSource, "function bindAdvertisingEvents()", "function bindFinanceDetailsEvents(");
+assert.match(advertisingEventsBlock, /tab === "sources" && !isAdminUser\(\)/u);
+const advertisingServerCollectorBlock = sourceBlock(serverSource, "async function handleAdvertisingEmailCollector(", "async function handleAdvertisingEmailHistory(");
+assert.match(advertisingServerCollectorBlock, /resolveAdvertisingEmailCollectionRequest\(body, authUser\)/u);
+assert.match(advertisingServerCollectorBlock, /collectAdvertisingEmails\(collectionRequest\.sourceIds,/u);
+const advertisingSettingsHandlerBlock = sourceBlock(serverSource, "async function handleAdvertisingEmailSettings(", "async function handleAdvertisingEmailExclusions(");
+const advertisingSettingsRoleIndex = advertisingSettingsHandlerBlock.indexOf('authUser?.role !== "admin"');
+const advertisingSettingsGetIndex = advertisingSettingsHandlerBlock.indexOf('req.method === "GET"');
+assert.ok(advertisingSettingsRoleIndex >= 0 && advertisingSettingsGetIndex > advertisingSettingsRoleIndex);
+assert.match(advertisingSettingsHandlerBlock, /publicAdvertisingEmailSettings\(true\)/u);
 assert.match(appSource, /Копировать готовые/u);
 assert.match(appSource, /Экспорт CSV/u);
 assert.match(appSource, /ADVERTISING_EMAIL_SOURCES/u);
@@ -227,6 +275,7 @@ assert.match(serverSource, /queryAdvertisingEmailRecordsThroughSite/u);
 assert.match(serverSource, /source-proxy/u);
 assert.match(gatewaySource, /gateway_handle_advertising_source_proxy/u);
 assert.match(gatewaySource, /hash_equals/u);
+assert.match(gatewaySource, /'\/api\/advertising\/email-collector\/settings'[\s\S]*gateway_require_admin\(\$currentUser\)/u);
 assert.match(appSource, /advertisingExclusionsSync/u);
 assert.match(appSource, /через сайт/u);
 const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(

@@ -7,12 +7,20 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const serverPath = path.join(root, "app-server.js");
 const serverSource = fs.readFileSync(serverPath, "utf8").replace(/\r\n/g, "\n");
+const gatewaySource = fs.readFileSync(path.join(root, "gateway.php"), "utf8").replace(/\r\n/g, "\n");
 const {
   normalizeStatisticsSourceSqlQuery,
   normalizeStatisticsSources,
   validateStatisticsSourceResultColumns,
   getStatisticsSourceDefinitions
 } = require(serverPath);
+
+function sourceBlock(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0 && end > start, `Не найден блок ${startMarker}`);
+  return source.slice(start, end);
+}
 
 const defaults = getStatisticsSourceDefinitions();
 assert.equal(defaults.length, 9);
@@ -68,7 +76,19 @@ assert.throws(
   /не вернул обязательные поля/iu
 );
 
-assert.match(serverSource, /publicStatisticsSources\(authUser\?\.role === "admin"\)/u);
+const statisticsSourcesHandlerBlock = sourceBlock(
+  serverSource,
+  "async function handleStatisticsSources(",
+  "function cleanAdvertisingContactText("
+);
+const roleGuardIndex = statisticsSourcesHandlerBlock.indexOf('authUser?.role !== "admin"');
+const getBranchIndex = statisticsSourcesHandlerBlock.indexOf('req.method === "GET"');
+assert.ok(roleGuardIndex >= 0 && getBranchIndex > roleGuardIndex, "Проверка роли должна выполняться до GET");
+assert.match(statisticsSourcesHandlerBlock, /publicStatisticsSources\(true\)/u);
+assert.doesNotMatch(statisticsSourcesHandlerBlock, /publicStatisticsSources\(authUser\?\.role === "admin"\)/u);
+const adminOnlyRouteBlock = sourceBlock(serverSource, "const adminOnlyRequest = (", "if (adminOnlyRequest");
+assert.match(adminOnlyRouteBlock, /"\/api\/statistics\/sources"[\s\S]*"\/api\/statistics\/sources\/test"/u);
+assert.match(gatewaySource, /'\/api\/statistics\/sources'[\s\S]*'\/api\/statistics\/sources\/test'[\s\S]*gateway_require_admin\(\$currentUser\)/u);
 assert.match(serverSource, /await Promise\.all\([\s\S]*testStatisticsSource/u);
 assert.match(serverSource, /saveServerSettings\(\{ statisticsSources:/u);
 assert.match(serverSource, /let serverSettingsSaveQueue = Promise\.resolve\(\)/u);

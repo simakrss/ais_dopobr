@@ -2698,6 +2698,11 @@ try {
     if (
         ($method === 'POST' && $requestPath === '/api/settings/system-documents')
         || in_array($requestPath, [
+            '/api/statistics/sources',
+            '/api/statistics/sources/test',
+            '/api/advertising/email-collector/settings',
+        ], true)
+        || in_array($requestPath, [
             '/api/yandex-disk/test',
             '/api/student-applications-email/test',
             '/api/mysql-locks/test',

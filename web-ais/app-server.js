@@ -8007,12 +8007,12 @@ async function testStatisticsSource(source) {
 }
 
 async function handleStatisticsSources(req, res, authUser, options = {}) {
-  if (req.method === "GET" && !options.test) {
-    sendJson(res, 200, { sources: publicStatisticsSources(authUser?.role === "admin") });
-    return;
-  }
   if (authUser?.role !== "admin") {
     sendError(res, 403, "Настройки источников статистики доступны только администратору.");
+    return;
+  }
+  if (req.method === "GET" && !options.test) {
+    sendJson(res, 200, { sources: publicStatisticsSources(true) });
     return;
   }
   if (req.method !== "POST") {
@@ -9592,13 +9592,23 @@ function normalizeAdvertisingConnectionSettings(body, kind) {
   };
 }
 
-async function handleAdvertisingEmailSettings(req, res, authUser) {
-  if (req.method === "GET") {
-    sendJson(res, 200, publicAdvertisingEmailSettings(authUser?.role === "admin"));
-    return;
+function resolveAdvertisingEmailCollectionRequest(body = {}, authUser = {}) {
+  if (authUser?.role !== "admin") {
+    return { sourceIds: [], source: "auto" };
   }
+  return {
+    sourceIds: Array.isArray(body?.sourceIds) ? body.sourceIds : [],
+    source: String(body?.source || "auto")
+  };
+}
+
+async function handleAdvertisingEmailSettings(req, res, authUser) {
   if (authUser?.role !== "admin") {
     sendError(res, 403, "Настройки источников доступны только администратору.");
+    return;
+  }
+  if (req.method === "GET") {
+    sendJson(res, 200, publicAdvertisingEmailSettings(true));
     return;
   }
   if (req.method !== "POST") {
@@ -9783,7 +9793,10 @@ async function handleAdvertisingEmailCollector(req, res, authUser, requestUrl) {
   }
   try {
     const body = await readJsonBody(req, 64 * 1024);
-    const collected = await collectAdvertisingEmails(body.sourceIds, { source: body.source || "auto" });
+    const collectionRequest = resolveAdvertisingEmailCollectionRequest(body, authUser);
+    const collected = await collectAdvertisingEmails(collectionRequest.sourceIds, {
+      source: collectionRequest.source
+    });
     const result = await persistAdvertisingEmailHistoryResult(collected, authUser);
     await safelyAppendAuditEntry({
       action: "Собрана база email",
@@ -34765,12 +34778,16 @@ async function route(req, res) {
     return;
   }
   const adminOnlyRequest = (
+    [
+      "/api/statistics/sources",
+      "/api/statistics/sources/test",
+      "/api/advertising/email-collector/settings"
+    ].includes(requestUrl.pathname)
+    ||
     (
       req.method === "POST"
       && [
-        "/api/settings/system-documents",
-        "/api/statistics/sources",
-        "/api/statistics/sources/test"
+        "/api/settings/system-documents"
       ].includes(requestUrl.pathname)
     )
     || [
@@ -35114,6 +35131,7 @@ module.exports = {
   normalizeAdvertisingEmailExclusions,
   mergeAdvertisingEmailExclusions,
   collectAdvertisingEmails,
+  resolveAdvertisingEmailCollectionRequest,
   advertisingEmailHistoryEmailKey,
   normalizeAdvertisingEmailHistoryRunId,
   normalizeAdvertisingEmailHistoryRows,

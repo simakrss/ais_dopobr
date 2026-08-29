@@ -26,12 +26,29 @@ assert.deepEqual(navigationIds.slice(0, 3), ["dashboard", "statistics", "adverti
 assert.match(appSource, /NAV_ITEM_ORDER_LAYOUT_VERSION = "advertising-after-statistics"/u);
 assert.match(appSource, /dashboardIndex >= 0 \? dashboardIndex \+ 1 : 0/u);
 assert.match(appSource, /state\.view === "statistics"\) return renderStatistics\(\)/u);
-assert.match(appSource, /getOrderedTabs\("statistics", statisticsTabs\)/u);
+assert.match(appSource, /getOrderedTabs\("statistics", getAvailableStatisticsTabs\(\)\)/u);
 assert.match(appSource, /data-orderable-tabs="statistics"/u);
 assert.match(appSource, /Интерактивная статистика/u);
 const statisticsTabsBlock = sourceBlock(appSource, "const statisticsTabs =", "const STATISTICS_SOURCE_CONSUMERS");
 assert.match(statisticsTabsBlock, /\{ id: "sources", label: "Источники" \}/u);
 assert.ok(statisticsTabsBlock.indexOf('id: "sources"') > statisticsTabsBlock.indexOf('id: "assistant"'));
+const availableStatisticsTabsBlock = sourceBlock(
+  appSource,
+  "function getAvailableStatisticsTabs()",
+  "function canAccessView("
+);
+assert.match(availableStatisticsTabsBlock, /tab\.id !== "sources" \|\| isAdminUser\(\)/u);
+assert.match(appSource, /const activeTab = tabs\.some\(\(tab\) => tab\.id === state\.statistics\.tab\)/u);
+assert.match(appSource, /state\.statistics\.tab = activeTab/u);
+assert.match(appSource, /restoredStatisticsTab[\s\S]*getAvailableStatisticsTabs\(\)\.some[\s\S]*: "income"/u);
+assert.match(appSource, /state\.view === "statistics"\s*&& isAdminUser\(\)\s*&& state\.statistics\.tab === "sources"/u);
+const loadStatisticsSourcesBlock = sourceBlock(
+  appSource,
+  "async function loadStatisticsSources(",
+  "async function saveStatisticsSources("
+);
+assert.match(loadStatisticsSourcesBlock, /if \(!isAdminUser\(\)\) return;/u);
+assert.match(appSource, /!getAvailableStatisticsTabs\(\)\.some\(\(item\) => item\.id === tab\)/u);
 const statisticsSourceConsumersBlock = sourceBlock(
   appSource,
   "const STATISTICS_SOURCE_CONSUMERS =",
