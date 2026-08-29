@@ -12,9 +12,14 @@ assert.match(appSource, /function captureAisNavigationSnapshot\(\)[\s\S]*?status
 assert.match(appSource, /function synchronizeAisBrowserHistory\(\)[\s\S]*?replace: nextKey === currentKey/u);
 assert.match(appSource, /function bindStudentStatusHistoryNavigation\(\)[\s\S]*?replace: true, root: true[\s\S]*?writeAisHistoryState\(initialSnapshot\)[\s\S]*?popstate/u);
 assert.match(appSource, /if \(!canAccessView\(state\.view\)\) state\.view = "dashboard";\s*synchronizeAisBrowserHistory\(\);/u);
-assert.match(appSource, /function closeModalWithUnsavedCheck\(\)[\s\S]*?aisHistoryNavigationCloseModalRequested = true;[\s\S]*?returnToPreviousAisScreen\(\)/u);
+assert.match(appSource, /async function closeModalWithUnsavedCheck\(\)[\s\S]*?chooseUnsavedChangesAction\([\s\S]*?decision === "cancel"[\s\S]*?decision === "save"[\s\S]*?form\?\.requestSubmit\(\)[\s\S]*?aisHistoryNavigationCloseModalRequested = true;[\s\S]*?returnToPreviousAisScreen\(\)/u);
 assert.match(appSource, /async function saveRecord\(event\)[\s\S]*?aisHistoryNavigationCloseModalRequested = true;[\s\S]*?returnToPreviousAisScreen\(\)/u);
-assert.match(appSource, /Есть несохраненные изменения\. Перейти к предыдущему экрану без сохранения\?/u);
+assert.match(
+  appSource,
+  /async function handleAisHistoryNavigation\(event\)[\s\S]*?chooseUnsavedChangesAction\([\s\S]*?decision === "cancel"[\s\S]*?restoreCancelledAisHistoryNavigation\(currentSnapshot\)[\s\S]*?decision === "save"[\s\S]*?saveRecordFormBeforeContinuation\(form, \{ flush: true \}\)[\s\S]*?restoreAisNavigationSnapshot\(targetSnapshot\)/u,
+  "Переход назад должен поддерживать сохранение, отказ от сохранения и отмену перехода"
+);
+assert.doesNotMatch(appSource, /Есть несохраненные изменения\. Перейти к предыдущему экрану без сохранения\?/u);
 assert.doesNotMatch(appSource, /aisStudentStatusNavigation:/u);
 
 assert.match(partnerSource, /function bindPartnerHistoryGuard\(\)[\s\S]*?aisPartnerNavigationRoot: true[\s\S]*?aisPartnerNavigationGuard: true/u);

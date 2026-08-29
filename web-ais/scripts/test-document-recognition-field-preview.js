@@ -324,6 +324,37 @@ async function main() {
   assert.match(clientSource, /\.filter\(\(\{ file \}\) => file && isStudentRecognitionRegionSourceFile\(file\)\)/u);
   assert.match(clientSource, /Нет изображений, PDF или DOCX со сканами, доступных для выбора области\./u);
 
+  const recognitionDialogStart = clientSource.indexOf("  function createStudentDocumentRecognitionDialog");
+  const recognitionDialogEnd = clientSource.indexOf(
+    "\n\n  function updateStudentDocumentRecognitionProgress",
+    recognitionDialogStart
+  );
+  assert.ok(recognitionDialogStart >= 0 && recognitionDialogEnd > recognitionDialogStart);
+  const recognitionDialogSource = clientSource.slice(recognitionDialogStart, recognitionDialogEnd);
+  assert.match(recognitionDialogSource, /backdrop\.dataset\.recognitionDirty = "false"/u);
+  assert.match(
+    recognitionDialogSource,
+    /const requestCloseStudentDocumentRecognitionDialog = async \(\{ force = false \} = \{\}\) => \{[\s\S]*?!force && backdrop\.dataset\.recognitionDirty === "true"[\s\S]*?chooseUnsavedChangesAction\([\s\S]*?decision === "cancel"[\s\S]*?decision === "save"[\s\S]*?await applyStudentDocumentRecognition\(backdrop, activeApplyButton\)[\s\S]*?finishCloseStudentDocumentRecognitionDialog\(\)/u,
+    "OCR-окно с изменёнными результатами должно предлагать применить, отбросить или отменить изменения"
+  );
+  assert.match(recognitionDialogSource, /backdrop\.closeStudentDocumentRecognitionDialog = requestCloseStudentDocumentRecognitionDialog/u);
+  assert.match(recognitionDialogSource, /closeStudentDocumentRegionSelector\?\.\(\{ force: true \}\)/u);
+  assert.match(recognitionDialogSource, /close-student-document-recognition[\s\S]*?addEventListener\("click", backdrop\.closeStudentDocumentRecognitionDialog\)/u);
+  assert.match(recognitionDialogSource, /event\.target === backdrop\) backdrop\.closeStudentDocumentRecognitionDialog\(\)/u);
+  assert.match(
+    clientSource,
+    /const markRecognitionChanges = \(event\) => \{[\s\S]*?dialog\.dataset\.recognitionDirty = "true";[\s\S]*?modal\.addEventListener\("input", markRecognitionChanges\);[\s\S]*?modal\.addEventListener\("change", markRecognitionChanges\)/u
+  );
+  assert.ok(
+    (clientSource.match(/dataset\.recognitionDirty = "true"/gu) || []).length >= 3,
+    "Ручные поля, точечное OCR и выбор фото должны помечать результат несохранённым"
+  );
+  assert.match(
+    clientSource,
+    /async function applyStudentDocumentRecognition\([\s\S]*?dialog\.closeStudentDocumentRecognitionDialog\?\.\(\{ force: true \}\)/u,
+    "Успешное применение OCR должно закрывать окно без повторного диалога"
+  );
+
   const serverSource = fs.readFileSync(path.join(__dirname, "..", "app-server.js"), "utf8");
   assert.match(serverSource, /kind: "text"/u);
   assert.match(serverSource, /kind: "image"/u);

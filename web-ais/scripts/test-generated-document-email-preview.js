@@ -68,6 +68,30 @@ assert.match(previewDialogBlock, /frame\.srcdoc = buildGeneratedDocumentEmailPre
 assert.match(previewDialogBlock, /return \{ \.\.\.emailRequest, subject, message \}/u);
 assert.match(previewDialogBlock, /sandbox="allow-popups allow-popups-to-escape-sandbox"/u);
 assert.doesNotMatch(previewDialogBlock, /allow-scripts/u);
+assert.match(previewDialogBlock, /let emailEditorDirty = false/u);
+assert.match(
+  previewDialogBlock,
+  /const readEditedEmailRequest = \(\) => \{[\s\S]*?emailEditorDirty = false;[\s\S]*?return \{ \.\.\.emailRequest, subject, message \}/u,
+  "После применения изменений письмо должно становиться чистым"
+);
+assert.match(
+  previewDialogBlock,
+  /const requestCloseEmailPreview = async \(\) => \{[\s\S]*?if \(emailEditorDirty\)[\s\S]*?chooseUnsavedChangesAction\([\s\S]*?decision === "cancel"[\s\S]*?decision === "save"[\s\S]*?applyEditedEmailChanges\(\)[\s\S]*?finish\(false\)/u,
+  "Закрытие письма с неприменёнными правками должно предлагать сохранение, отказ от сохранения и отмену"
+);
+assert.match(previewDialogBlock, /backdrop\.closeGeneratedDocumentEmailPreview = requestCloseEmailPreview/u);
+assert.match(previewDialogBlock, /backdrop\.forceCloseGeneratedDocumentEmailPreview = finish/u);
+assert.match(previewDialogBlock, /if \(event\.target === backdrop\) requestCloseEmailPreview\(\)/u);
+assert.match(previewDialogBlock, /\[data-action='cancel-generated-document-email-preview'\][\s\S]*?addEventListener\("click", requestCloseEmailPreview\)/u);
+assert.match(
+  previewDialogBlock,
+  /const markEmailEditorDirty = \(\) => \{\s*emailEditorDirty = true;[\s\S]*?subjectInput\?\.addEventListener\("input", markEmailEditorDirty\);[\s\S]*?messageInput\?\.addEventListener\("input", markEmailEditorDirty\)/u
+);
+assert.match(
+  previewDialogBlock,
+  /typeof previousPreview\?\.forceCloseGeneratedDocumentEmailPreview === "function"[\s\S]*?previousPreview\.forceCloseGeneratedDocumentEmailPreview\(false\)/u,
+  "Техническая замена предпросмотра не должна открывать второй guarded-диалог"
+);
 
 const generationBlock = sourceBlock(
   appSource,

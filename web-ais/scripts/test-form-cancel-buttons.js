@@ -76,6 +76,7 @@ const expectedActions = [
   "close-student-bulk-operations",
   "close-document-email-template-value",
   "close-communication-template-field-dialog",
+  "cancel-unsaved-changes",
   "cancel-sync-conflicts",
   "cancel-generated-document-editor-or-preview",
   "cancel-generated-document-email-preview",
@@ -83,7 +84,7 @@ const expectedActions = [
 ].sort();
 
 const appCancelIcons = getCancelIconBlocks(appSource);
-assert.equal(appCancelIcons.length, 27, "В app.js должны быть преобразованы все 27 кнопок «Отмена»");
+assert.equal(appCancelIcons.length, 28, "В app.js должны быть преобразованы все 28 кнопок «Отмена»");
 assert.deepEqual(
   appCancelIcons.map((button) => /\bdata-action="([^"]+)"/u.exec(button)?.[1] || "").sort(),
   expectedActions,

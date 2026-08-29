@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.362",
+    version: "1.7.363",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.363",
+      releasedAt: "2026-08-29",
+      changes: [
+        "При закрытии окна с несохранёнными изменениями система предлагает сохранить их, закрыть без сохранения или отменить закрытие; защита применяется к карточкам, настройкам, расходам, событиям, скидкам, фото и OCR, формулам, шаблонам, а также предпросмотру документов и писем."
+      ]
+    },
     {
       version: "1.7.362",
       releasedAt: "2026-08-29",
@@ -6178,6 +6185,10 @@ MAX - https://bizvmax.ru/zifra_plus
   let pendingEmployeePaymentPreview = null;
   let fieldEditHistoryBound = false;
   let globalEscapeKeyBound = false;
+  let unsavedChangesDialogSession = null;
+  let profileClosePending = false;
+  let recordFormSavePending = false;
+  let documentTemplateSavePending = false;
   let shiftDragRequirementBound = false;
   let longPressDragRequirementBound = false;
   let tableValueFilterEventsBound = false;
@@ -10411,20 +10422,16 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Дождитесь завершения сохранения настроек.");
       return false;
     }
-    if (confirm(
-      "В настройках есть несохранённые изменения.\n\n"
-      + "Нажмите «ОК», чтобы сохранить их перед выходом.\n"
-      + "Нажмите «Отмена», чтобы выбрать выход без сохранения."
-    )) {
+    const decision = await chooseUnsavedChangesAction({
+      title: "Настройки не сохранены",
+      message: "Сохранить изменения настроек перед выходом из раздела?"
+    });
+    if (decision === "save") {
       const saved = await saveSettingsDraftChanges({ renderAfterSave: false });
       if (saved) endSettingsDraftSession();
       return saved;
     }
-    if (!confirm(
-      "Выйти без сохранения изменений настроек?\n\n"
-      + "Нажмите «ОК», чтобы отменить все изменения и выйти.\n"
-      + "Нажмите «Отмена», чтобы остаться в настройках."
-    )) return false;
+    if (decision === "cancel") return false;
     return cancelSettingsDraftChanges({
       confirmDiscard: false,
       keepSession: false,
@@ -11180,6 +11187,10 @@ MAX - https://bizvmax.ru/zifra_plus
     if (aisHistoryNavigationRestoring) return;
     const targetSnapshot = event.state?.aisNavigation;
     const currentSnapshot = captureAisNavigationSnapshot();
+    if (recordFormSavePending || documentTemplateSavePending || profileClosePending) {
+      restoreCancelledAisHistoryNavigation(currentSnapshot);
+      return;
+    }
     if (!targetSnapshot) {
       aisHistoryNavigationCloseModalRequested = false;
       aisHistoryNavigationDiscardApproved = false;
@@ -11191,14 +11202,26 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     const form = document.getElementById("recordForm");
-    if (
+    const hasUnsavedRecordChanges = (
       !aisHistoryNavigationDiscardApproved
       &&
       (state.modal?.hasDraftChanges || hasUnsavedFormChanges(form))
-      && !confirm("Есть несохраненные изменения. Перейти к предыдущему экрану без сохранения?")
-    ) {
-      restoreCancelledAisHistoryNavigation(currentSnapshot);
-      return;
+    );
+    if (hasUnsavedRecordChanges) {
+      const decision = await chooseUnsavedChangesAction({
+        message: "Сохранить изменения текущей карточки перед переходом к предыдущему экрану?"
+      });
+      if (decision === "cancel") {
+        restoreCancelledAisHistoryNavigation(currentSnapshot);
+        return;
+      }
+      if (decision === "save") {
+        const savedId = await saveRecordFormBeforeContinuation(form, { flush: true });
+        if (!savedId) {
+          restoreCancelledAisHistoryNavigation(currentSnapshot);
+          return;
+        }
+      }
     }
     aisHistoryNavigationCloseModalRequested = false;
     aisHistoryNavigationDiscardApproved = false;
@@ -25010,13 +25033,40 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function closeProfile() {
-    if (returnToPreviousAisScreen()) return;
+  async function closeProfile({ skipUnsavedCheck = false } = {}) {
+    if (profileClosePending) return false;
+    const profileForm = document.querySelector("form[data-action='save-profile']");
+    const passwordForm = document.querySelector("form[data-action='change-password']");
+    const profileChanged = hasUnsavedFormChanges(profileForm);
+    const passwordChanged = hasUnsavedFormChanges(passwordForm);
+    if (!skipUnsavedCheck && (profileChanged || passwordChanged)) {
+      const decision = await chooseUnsavedChangesAction({
+        title: "Личный кабинет не сохранён",
+        message: "Сохранить изменения учётной записи перед закрытием?"
+      });
+      if (decision === "cancel") return false;
+      if (decision === "save") {
+        profileClosePending = true;
+        try {
+          if (profileChanged && !await saveProfile({ preventDefault() {}, currentTarget: profileForm }, { closeAfterSave: false })) {
+            return false;
+          }
+          if (passwordChanged && !await changeCurrentUserPassword({ preventDefault() {}, currentTarget: passwordForm })) {
+            return false;
+          }
+        } finally {
+          profileClosePending = false;
+        }
+        return closeProfile({ skipUnsavedCheck: true });
+      }
+    }
+    if (returnToPreviousAisScreen()) return true;
     state.profileOpen = false;
     render();
+    return true;
   }
 
-  async function saveProfile(event) {
+  async function saveProfile(event, { closeAfterSave = true } = {}) {
     event.preventDefault();
     const form = event.currentTarget;
     const button = form.querySelector("button[type='submit']");
@@ -25031,11 +25081,14 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       authenticatedUser = { ...payload.user };
       window.AIS_AUTH_USER = authenticatedUser;
-      state.profileOpen = false;
-      if (!returnToPreviousAisScreen()) render();
+      initializeRecordFormSnapshot(form);
+      button.disabled = false;
+      if (closeAfterSave) await closeProfile();
+      return true;
     } catch (error) {
       alert(`Не удалось сохранить контактные данные: ${error.message}`);
       button.disabled = false;
+      return false;
     }
   }
 
@@ -25058,9 +25111,12 @@ MAX - https://bizvmax.ru/zifra_plus
         body: JSON.stringify({ currentPassword, newPassword })
       });
       form.reset();
+      initializeRecordFormSnapshot(form);
       alert("Пароль изменён.");
+      return true;
     } catch (error) {
       alert(`Не удалось изменить пароль: ${error.message}`);
+      return false;
     } finally {
       button.disabled = false;
     }
@@ -30020,10 +30076,10 @@ MAX - https://bizvmax.ru/zifra_plus
     return row;
   }
 
-  function showStudentEventInsertDialog(context, trigger = null) {
-    document.querySelector("[data-student-event-insert-dialog]")
-      ?.closeStudentEventInsertDialog?.();
-    closeStudentEventEditor();
+  async function showStudentEventInsertDialog(context, trigger = null) {
+    const existingDialog = document.querySelector("[data-student-event-insert-dialog]");
+    if (existingDialog && !await existingDialog.closeStudentEventInsertDialog?.()) return;
+    if (!await closeStudentEventEditor()) return;
     const existingKeys = new Set(
       [...document.querySelectorAll("[data-student-events-list] .student-event-row")]
         .map((row) => String(row.dataset.eventKey || "").trim())
@@ -30105,11 +30161,23 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
     let closed = false;
     const form = backdrop.querySelector("[data-student-event-insert-form]");
-    const close = () => {
+    const close = async ({ skipUnsavedCheck = false } = {}) => {
       if (closed) return;
+      if (!skipUnsavedCheck && hasUnsavedFormChanges(form)) {
+        const decision = await chooseUnsavedChangesAction({
+          title: "Событие не добавлено",
+          message: "Добавить настроенное событие перед закрытием окна?"
+        });
+        if (decision === "cancel") return false;
+        if (decision === "save") {
+          form?.requestSubmit();
+          return closed;
+        }
+      }
       closed = true;
       backdrop.remove();
       if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+      return true;
     };
     const switchMode = (mode) => {
       if (!form || !["typical", "custom"].includes(mode)) return;
@@ -30130,6 +30198,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const target = mode === "custom" ? form.elements.customLabel : form.elements.templateKey;
       target?.focus({ preventScroll: true });
     };
+    initializeRecordFormSnapshot(form);
     backdrop.closeStudentEventInsertDialog = close;
     backdrop.addEventListener("pointerdown", (event) => {
       if (event.target === backdrop) close();
@@ -30167,7 +30236,7 @@ MAX - https://bizvmax.ru/zifra_plus
         alert("Не удалось добавить событие. Выберите другое значение.");
         return;
       }
-      close();
+      close({ skipUnsavedCheck: true });
       row.focus({ preventScroll: true });
     });
     document.body.appendChild(backdrop);
@@ -30185,14 +30254,14 @@ MAX - https://bizvmax.ru/zifra_plus
     );
   }
 
-  function deleteStudentEvent(event) {
+  async function deleteStudentEvent(event) {
     event.preventDefault();
     event.stopPropagation();
     const editor = document.querySelector("[data-event-editor]");
     const key = editor?.dataset.eventKey;
     const row = key ? document.querySelector(`.student-event-row[data-event-key="${CSS.escape(key)}"]`) : null;
     if (!row || !key) return;
-    closeStudentEventEditor();
+    if (!await closeStudentEventEditor()) return;
     if (row.dataset.eventCustom === "true") {
       setCsvHidden("[data-event-custom-keys]", csvList(document.querySelector("[data-event-custom-keys]")?.value).filter((item) => item !== key));
     } else {
@@ -31378,7 +31447,7 @@ MAX - https://bizvmax.ru/zifra_plus
     syncCardEventDraftFromDom();
   }
 
-  function openStudentEventEditor(row, clientX = 0, clientY = 0) {
+  async function openStudentEventEditor(row, clientX = 0, clientY = 0) {
     const key = row.dataset.eventKey;
     const editor = document.querySelector("[data-event-editor]");
     const dateInput = editor?.querySelector("[data-event-editor-date]");
@@ -31386,9 +31455,16 @@ MAX - https://bizvmax.ru/zifra_plus
     const dateValue = row.querySelector(`[data-event-date="${key}"]`)?.value || "";
     const labelValue = row.querySelector(`[data-event-label-value="${key}"]`)?.value || row.querySelector("[data-event-label-text]")?.textContent || "";
     if (!editor || !dateInput || !labelInput) return;
+    if (!editor.hidden && editor.dataset.eventKey === key) {
+      labelInput.focus({ preventScroll: true });
+      return;
+    }
+    if (!editor.hidden && editor.dataset.eventKey !== key && !await closeStudentEventEditor()) return;
     document.querySelectorAll(".student-event-row.is-editing").forEach((item) => item.classList.remove("is-editing"));
     row.classList.add("is-editing");
     editor.dataset.eventKey = key;
+    editor.dataset.initialEventDate = dateValue;
+    editor.dataset.initialEventLabel = labelValue;
     dateInput.value = dateValue;
     labelInput.value = labelValue;
     editor.hidden = false;
@@ -31399,12 +31475,32 @@ MAX - https://bizvmax.ru/zifra_plus
     labelInput.select();
   }
 
-  function closeStudentEventEditor() {
+  async function closeStudentEventEditor({ skipUnsavedCheck = false } = {}) {
     const editor = document.querySelector("[data-event-editor]");
-    if (!editor) return;
+    if (!editor || editor.hidden) return true;
+    const dateInput = editor.querySelector("[data-event-editor-date]");
+    const labelInput = editor.querySelector("[data-event-editor-label]");
+    const hasChanges = (
+      String(dateInput?.value || "") !== String(editor.dataset.initialEventDate || "")
+      || String(labelInput?.value || "") !== String(editor.dataset.initialEventLabel || "")
+    );
+    if (!skipUnsavedCheck && hasChanges) {
+      const decision = await chooseUnsavedChangesAction({
+        title: "Событие не сохранено",
+        message: "Применить изменения события перед закрытием редактора?"
+      });
+      if (decision === "cancel") return false;
+      if (decision === "save") {
+        applyStudentEventEditor();
+        return true;
+      }
+    }
     editor.hidden = true;
     editor.dataset.eventKey = "";
+    editor.dataset.initialEventDate = "";
+    editor.dataset.initialEventLabel = "";
     document.querySelectorAll(".student-event-row.is-editing").forEach((item) => item.classList.remove("is-editing"));
+    return true;
   }
 
   function applyStudentEventEditor() {
@@ -31435,7 +31531,7 @@ MAX - https://bizvmax.ru/zifra_plus
     row.classList.toggle("is-selected", isSelected);
     row.classList.toggle("has-date", stateInput?.value === "dated");
     syncCardEventDraftFromDom();
-    closeStudentEventEditor();
+    closeStudentEventEditor({ skipUnsavedCheck: true });
   }
 
   function getComboVisibleVerticalBounds(field) {
@@ -32699,10 +32795,20 @@ MAX - https://bizvmax.ru/zifra_plus
     enhanceSettingsLinkedDropdowns();
   }
 
-  function closeStudentExpenseEditor() {
+  async function closeStudentExpenseEditor() {
     if (!state.studentExpenseEditor) return;
     const form = document.getElementById("studentExpenseEditorForm");
-    if (hasUnsavedFormChanges(form) && !confirm("Есть несохранённые изменения расхода. Закрыть без сохранения?")) return;
+    if (hasUnsavedFormChanges(form)) {
+      const decision = await chooseUnsavedChangesAction({
+        title: "Расход не сохранён",
+        message: "Сохранить изменения записи расхода перед закрытием?"
+      });
+      if (decision === "cancel") return;
+      if (decision === "save") {
+        form?.requestSubmit();
+        return;
+      }
+    }
     const editor = { ...state.studentExpenseEditor };
     state.studentExpenseEditor = null;
     setStudentExpenseEditorBackgroundInert(false);
@@ -32761,9 +32867,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = event.currentTarget;
     const context = getStudentExpenseEditorContext();
     if (!context || !state.modal) {
-      state.studentExpenseEditor = null;
-      setStudentExpenseEditorBackgroundInert(false);
-      document.querySelector("[data-student-expense-editor]")?.remove();
+      alert("Запись расхода не найдена. Обновите карточку и повторите сохранение.");
       return;
     }
     const editor = { ...context.editor };
@@ -35094,7 +35198,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (context.immediate) markReady();
     }, { capture: true });
 
-    document.addEventListener("pointermove", (event) => {
+    document.addEventListener("pointermove", async (event) => {
       if (!pending || event.pointerId !== pending.pointerId) return;
       pending.lastX = event.clientX;
       pending.lastY = event.clientY;
@@ -35106,6 +35210,19 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!pending.dragging) {
         const distance = Math.hypot(event.clientX - pending.readyX, event.clientY - pending.readyY);
         if (distance < LONG_PRESS_DRAG_START_THRESHOLD) return;
+        if (pending.type === "events" && !pending.eventEditorCloseApproved) {
+          if (pending.eventEditorClosePending) return;
+          const current = pending;
+          current.eventEditorClosePending = true;
+          const editorClosed = await closeStudentEventEditor();
+          if (pending !== current) return;
+          current.eventEditorClosePending = false;
+          if (!editorClosed) {
+            clearPending();
+            return;
+          }
+          current.eventEditorCloseApproved = true;
+        }
         pending.dragging = true;
         pending.element.classList.remove("is-long-press-ready");
         pending.element.classList.add("is-long-press-dragging", "is-dragging");
@@ -35116,7 +35233,6 @@ MAX - https://bizvmax.ru/zifra_plus
         if (pending.type === "status") document.body.classList.add("dashboard-status-dragging");
         if (pending.type === "tabs") document.body.classList.add("orderable-tab-dragging");
         if (pending.type === "events") {
-          closeStudentEventEditor();
           document.body.classList.add("event-reorder-dragging");
         }
       }
@@ -35294,6 +35410,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeTopmostWindowByEscape() {
+    const unsavedChangesDialog = document.querySelector("[data-unsaved-changes-dialog]");
+    if (unsavedChangesDialog) {
+      unsavedChangesDialog.cancelUnsavedChangesDialog?.();
+      return true;
+    }
     const settingsListDialog = document.querySelector("[data-settings-list-dialog]");
     if (settingsListDialog) {
       settingsListDialog.closeSettingsListDialog?.();
@@ -35386,7 +35507,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const communicationFieldDialog = document.querySelector("[data-communication-template-field-dialog]");
     if (communicationFieldDialog) {
-      communicationFieldDialog.remove();
+      communicationFieldDialog.closeCommunicationTemplateFieldDialog?.();
       return true;
     }
     if (document.querySelector("[data-communication-template-field-menu]")) {
@@ -35526,6 +35647,8 @@ MAX - https://bizvmax.ru/zifra_plus
     initializeRecordFormSnapshot(document.getElementById("recordForm"));
     initializeRecordFormSnapshot(document.getElementById("studentExpenseEditorForm"));
     initializeRecordFormSnapshot(document.getElementById("employeeExpenseEditorForm"));
+    initializeRecordFormSnapshot(document.querySelector("form[data-action='save-profile']"));
+    initializeRecordFormSnapshot(document.querySelector("form[data-action='change-password']"));
 
     document.querySelector("[data-action='open-profile']")?.addEventListener("click", () => {
       if (state.view === "settings" && !applySettingsEditorDrafts()) return;
@@ -35940,6 +36063,9 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='open-discount-picker']")?.addEventListener("click", openDiscountPicker);
     document.querySelectorAll("[data-action='close-discount-picker']").forEach((button) => {
       button.addEventListener("click", closeDiscountPicker);
+    });
+    document.querySelector("[data-discount-note]")?.addEventListener("input", (event) => {
+      if (state.discountPicker) state.discountPicker.description = event.currentTarget.value;
     });
     document.querySelector("[data-action='refresh-discount-picker']")?.addEventListener("click", refreshDiscountPicker);
     document.querySelectorAll("[data-action='restore-default-discount-rules']").forEach((button) => {
@@ -37505,6 +37631,35 @@ MAX - https://bizvmax.ru/zifra_plus
     return rows[index + (Number(direction) < 0 ? -1 : 1)] || null;
   }
 
+  async function saveRecordFormBeforeContinuation(formElement, { flush = false } = {}) {
+    if (!formElement || recordFormSavePending) return "";
+    recordFormSavePending = true;
+    try {
+      if (!formElement.checkValidity()) {
+        formElement.reportValidity();
+        return "";
+      }
+      if (!await ensureRecordLockForSave(formElement)) return "";
+      const savedId = saveFormRecord(formElement);
+      if (!savedId) return "";
+      const configId = String(formElement.dataset.config || "");
+      formElement.dataset.id = savedId;
+      if (state.modal) {
+        state.modal.id = savedId;
+        state.modal.hasDraftChanges = false;
+        state.modal.draft = null;
+      }
+      initializeRecordFormSnapshot(formElement);
+      state.lastEditedRow = { config: configId, id: savedId };
+      setTablePageForRow(configId, savedId);
+      persist();
+      if (flush && !await flushSharedApplicationState()) return "";
+      return savedId;
+    } finally {
+      recordFormSavePending = false;
+    }
+  }
+
   function resetStudentCardTransientState() {
     state.openPaymentRows = [];
     state.openExpenseRows = [];
@@ -37533,18 +37688,20 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function navigateStudentCard(direction) {
+    if (recordFormSavePending) return;
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "students" || !state.modal?.id) return;
     let currentId = formElement.dataset.id || state.modal.id;
     const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
     if (hasChanges) {
-      if (confirm("Сохранить изменения перед переходом к другой карточке?")) {
-        const savedId = saveFormRecord(formElement);
+      const decision = await chooseUnsavedChangesAction({
+        message: "Сохранить изменения текущей карточки перед переходом к другой?"
+      });
+      if (decision === "cancel") return;
+      if (decision === "save") {
+        const savedId = await saveRecordFormBeforeContinuation(formElement);
         if (!savedId) return;
-        persist();
         currentId = savedId;
-      } else if (!confirm("Перейти без сохранения изменений?")) {
-        return;
       }
     }
     const target = getStudentNavigationTarget(currentId, direction);
@@ -37587,19 +37744,20 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function navigateProgramCard(direction) {
+    if (recordFormSavePending) return;
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "programs" || !state.modal?.id) return;
     let currentId = formElement.dataset.id || state.modal.id;
     const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
     if (hasChanges) {
-      if (confirm("Сохранить изменения перед переходом к другой карточке?")) {
-        const savedId = saveFormRecord(formElement);
+      const decision = await chooseUnsavedChangesAction({
+        message: "Сохранить изменения текущей карточки перед переходом к другой?"
+      });
+      if (decision === "cancel") return;
+      if (decision === "save") {
+        const savedId = await saveRecordFormBeforeContinuation(formElement, { flush: true });
         if (!savedId) return;
-        persist();
-        if (!await flushSharedApplicationState()) return;
         currentId = savedId;
-      } else if (!confirm("Перейти без сохранения изменений?")) {
-        return;
       }
     }
     const target = getProgramNavigationTarget(currentId, direction);
@@ -37642,19 +37800,20 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function navigateContractCard(direction) {
+    if (recordFormSavePending) return;
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "contracts" || !state.modal?.id) return;
     let currentId = formElement.dataset.id || state.modal.id;
     const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
     if (hasChanges) {
-      if (confirm("Сохранить изменения перед переходом к другой карточке?")) {
-        const savedId = saveFormRecord(formElement);
+      const decision = await chooseUnsavedChangesAction({
+        message: "Сохранить изменения текущей карточки перед переходом к другой?"
+      });
+      if (decision === "cancel") return;
+      if (decision === "save") {
+        const savedId = await saveRecordFormBeforeContinuation(formElement, { flush: true });
         if (!savedId) return;
-        persist();
-        if (!await flushSharedApplicationState()) return;
         currentId = savedId;
-      } else if (!confirm("Перейти без сохранения изменений?")) {
-        return;
       }
     }
     if (state.modal?.config === "contracts" && state.modal?.employeePaymentTransaction) {
@@ -37679,16 +37838,45 @@ MAX - https://bizvmax.ru/zifra_plus
     state.discountPicker = {
       key: picker.key,
       description: picker.description,
-      percent: picker.percent || option?.rates?.[0] || 0
+      percent: picker.percent || option?.rates?.[0] || 0,
+      initial: {
+        key: picker.key,
+        description: picker.description,
+        percent: picker.percent || option?.rates?.[0] || 0
+      }
     };
     state.discountPickerOpen = true;
     render();
   }
 
-  function closeDiscountPicker() {
+  async function closeDiscountPicker() {
+    const picker = state.discountPicker || {};
+    const initial = picker.initial || {};
+    const current = {
+      key: String(picker.key || ""),
+      description: String(document.querySelector("[data-discount-note]")?.value ?? picker.description ?? "").trim(),
+      percent: Number(picker.percent || 0)
+    };
+    const hasChanges = JSON.stringify(current) !== JSON.stringify({
+      key: String(initial.key || ""),
+      description: String(initial.description || "").trim(),
+      percent: Number(initial.percent || 0)
+    });
+    if (hasChanges) {
+      const decision = await chooseUnsavedChangesAction({
+        title: "Скидка не применена",
+        message: "Применить выбранную скидку перед закрытием окна?"
+      });
+      if (decision === "cancel") return false;
+      if (decision === "save") {
+        applyDiscountPicker();
+        return true;
+      }
+    }
     state.discountPickerOpen = false;
     state.discountPicker = null;
     render();
+    return true;
   }
 
   function selectDiscountOption(key) {
@@ -37700,6 +37888,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!option) return;
     const currentPercent = Number(state.discountPicker?.percent || draft.discount || 0);
     state.discountPicker = {
+      ...state.discountPicker,
       key,
       description: option.title,
       percent: option.rates.includes(currentPercent) ? currentPercent : option.rates[0]
@@ -37726,6 +37915,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const picker = getDiscountPickerState(state.modal?.draft || {});
     const option = findDiscountOptionByKey(picker.key) || getFlatDiscountOptions()[0];
     state.discountPicker = {
+      ...state.discountPicker,
       key: option?.key || picker.key || "",
       description: option?.title || picker.description || "",
       percent: option?.rates?.includes(picker.percent) ? picker.percent : (option?.rates?.[0] || picker.percent || 0)
@@ -38241,10 +38431,20 @@ MAX - https://bizvmax.ru/zifra_plus
     requestAnimationFrame(() => document.querySelector("#employeeExpenseEditorForm input, #employeeExpenseEditorForm select")?.focus({ preventScroll: true }));
   }
 
-  function closeEmployeeExpenseEditor() {
+  async function closeEmployeeExpenseEditor() {
     if (!state.employeeExpenseEditor) return;
     const form = document.getElementById("employeeExpenseEditorForm");
-    if (hasUnsavedFormChanges(form) && !confirm("Есть несохранённые изменения записи оплаты. Закрыть без сохранения?")) return;
+    if (hasUnsavedFormChanges(form)) {
+      const decision = await chooseUnsavedChangesAction({
+        title: "Запись оплаты не сохранена",
+        message: "Сохранить изменения записи оплаты перед закрытием?"
+      });
+      if (decision === "cancel") return;
+      if (decision === "save") {
+        form?.requestSubmit();
+        return;
+      }
+    }
     const sourceId = String(state.employeeExpenseEditor.sourceId || "");
     state.employeeExpenseEditor = null;
     document.querySelector("[data-employee-expense-editor]")?.remove();
@@ -38329,7 +38529,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = event.currentTarget;
     const context = getEmployeeExpenseEditorContext();
     if (!context) {
-      closeEmployeeExpenseEditor();
+      alert("Запись оплаты не найдена. Обновите карточку и повторите сохранение.");
       return;
     }
     const fields = getEmployeeExpenseEditorFields(context);
@@ -39283,10 +39483,84 @@ MAX - https://bizvmax.ru/zifra_plus
     return form.dataset.initialSnapshot !== captureFormSnapshot(form);
   }
 
-  function closeModalWithUnsavedCheck() {
+  function chooseUnsavedChangesAction(options = {}) {
+    if (unsavedChangesDialogSession?.backdrop?.isConnected) {
+      unsavedChangesDialogSession.backdrop
+        .querySelector("[data-action='save-unsaved-changes']")
+        ?.focus({ preventScroll: true });
+      return Promise.resolve("cancel");
+    }
+    const title = String(options.title || "Есть несохранённые изменения").trim();
+    const message = String(
+      options.message
+        || "Сохранить внесённые изменения перед закрытием окна?"
+    ).trim();
+    const previousFocus = document.activeElement;
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop unsaved-changes-dialog-backdrop";
+    backdrop.dataset.unsavedChangesDialog = "";
+    backdrop.innerHTML = `
+      <section class="modal unsaved-changes-dialog" role="alertdialog" aria-modal="true" aria-labelledby="unsavedChangesDialogTitle" aria-describedby="unsavedChangesDialogMessage">
+        <header class="modal-head">
+          <div>
+            <p class="eyebrow">Подтверждение закрытия</p>
+            <h2 id="unsavedChangesDialogTitle">${escapeHtml(title)}</h2>
+          </div>
+        </header>
+        <p id="unsavedChangesDialogMessage" class="unsaved-changes-dialog-message">${escapeHtml(message)}</p>
+        <footer class="modal-actions unsaved-changes-dialog-actions">
+          <button class="primary-button" data-action="save-unsaved-changes" type="button">Сохранить</button>
+          <button class="ghost-button" data-action="discard-unsaved-changes" type="button">Не сохранять</button>
+          <button class="icon-button form-cancel-button" data-action="cancel-unsaved-changes" type="button" title="Отмена" aria-label="Отмена">×</button>
+        </footer>
+      </section>
+    `;
+    document.body.appendChild(backdrop);
+    let settled = false;
+    let resolveDecision = null;
+    const promise = new Promise((resolve) => {
+      resolveDecision = resolve;
+    });
+    const finish = (decision) => {
+      if (settled) return;
+      settled = true;
+      backdrop.remove();
+      unsavedChangesDialogSession = null;
+      if (decision === "cancel" && previousFocus?.isConnected) {
+        previousFocus.focus({ preventScroll: true });
+      }
+      resolveDecision(decision);
+    };
+    backdrop.cancelUnsavedChangesDialog = () => finish("cancel");
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) {
+        finish("cancel");
+        return;
+      }
+      const button = event.target.closest("[data-action]");
+      if (!button || !backdrop.contains(button)) return;
+      if (button.dataset.action === "save-unsaved-changes") finish("save");
+      if (button.dataset.action === "discard-unsaved-changes") finish("discard");
+      if (button.dataset.action === "cancel-unsaved-changes") finish("cancel");
+    });
+    unsavedChangesDialogSession = { backdrop, promise };
+    queueMicrotask(() => {
+      backdrop.querySelector("[data-action='save-unsaved-changes']")?.focus({ preventScroll: true });
+    });
+    return promise;
+  }
+
+  async function closeModalWithUnsavedCheck() {
+    if (recordFormSavePending) return false;
     const form = document.getElementById("recordForm");
-    if ((state.modal?.hasDraftChanges || hasUnsavedFormChanges(form)) && !confirm("Есть несохраненные изменения. Закрыть без сохранения?")) {
-      return;
+    if (state.modal?.hasDraftChanges || hasUnsavedFormChanges(form)) {
+      const decision = await chooseUnsavedChangesAction({
+        message: "В карточке есть несохранённые изменения. Сохранить их перед закрытием?"
+      });
+      if (decision === "cancel") return;
+      if (decision === "save") {
+        if (!await saveRecordFormBeforeContinuation(form, { flush: true })) return false;
+      }
     }
     aisHistoryNavigationDiscardApproved = true;
     aisHistoryNavigationCloseModalRequested = true;
@@ -39528,7 +39802,11 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Недостаточно прав для редактирования настроек.");
       return false;
     }
-    document.querySelector("[data-settings-list-dialog]")?.closeSettingsListDialog?.();
+    const existingSettingsListDialog = document.querySelector("[data-settings-list-dialog]");
+    if (existingSettingsListDialog) {
+      existingSettingsListDialog.querySelector("input, button")?.focus({ preventScroll: true });
+      return false;
+    }
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop settings-list-dialog-backdrop";
     backdrop.dataset.settingsListDialog = "";
@@ -39550,15 +39828,55 @@ MAX - https://bizvmax.ru/zifra_plus
     let draftValues = dict === "finalAttestationSettings"
       ? clone(state.data.dictionaries[dict])
       : [];
+    const initialFinalAttestationSnapshot = dict === "finalAttestationSettings"
+      ? JSON.stringify(normalizeFinalAttestationSettings(draftValues))
+      : "";
     let settled = false;
     let savedDuringSession = false;
+    let savePendingSimpleDictionaryValue = null;
 
-    const close = ({ saved = savedDuringSession } = {}) => {
-      if (settled) return;
+    const close = async ({ saved = savedDuringSession, skipUnsavedCheck = false } = {}) => {
+      if (settled) return true;
+      const finalAttestationForm = body.querySelector("form[data-action='save-final-attestation-settings']");
+      const currentFinalAttestationSnapshot = dict === "finalAttestationSettings"
+        ? JSON.stringify(normalizeFinalAttestationSettings(
+          finalAttestationForm ? collectFinalAttestationSettings(finalAttestationForm) : draftValues
+        ))
+        : initialFinalAttestationSnapshot;
+      if (
+        !skipUnsavedCheck
+        && dict === "finalAttestationSettings"
+        && currentFinalAttestationSnapshot !== initialFinalAttestationSnapshot
+      ) {
+        const decision = await chooseUnsavedChangesAction({
+          title: "Настройки аттестации не сохранены",
+          message: "Сохранить изменения категорий и шкалы оценок перед закрытием?"
+        });
+        if (decision === "cancel") return false;
+        if (decision === "save") {
+          finalAttestationForm?.requestSubmit();
+          return true;
+        }
+      }
+      const pendingDictionaryValue = dict !== "finalAttestationSettings"
+        ? String(body.querySelector("[data-dictionary-add-input]")?.value || "").trim()
+        : "";
+      if (!skipUnsavedCheck && pendingDictionaryValue) {
+        const decision = await chooseUnsavedChangesAction({
+          title: "Значение справочника не сохранено",
+          message: `Добавить введённое значение в справочник «${dictionaryTitle(dict)}» перед закрытием?`
+        });
+        if (decision === "cancel") return false;
+        if (decision === "save") {
+          if (!savePendingSimpleDictionaryValue?.()) return false;
+          return close({ saved: true, skipUnsavedCheck: true });
+        }
+      }
       settled = true;
       if (saved) refreshSettingsLinkedControls(dict);
       backdrop.remove();
       if (sourceControl?.isConnected) sourceControl.focus({ preventScroll: true });
+      return true;
     };
     backdrop.closeSettingsListDialog = close;
 
@@ -39619,6 +39937,9 @@ MAX - https://bizvmax.ru/zifra_plus
         renderSimpleList({ focusAdd: true, preserveScroll: true });
         return true;
       };
+      savePendingSimpleDictionaryValue = () => addValues([
+        body.querySelector("[data-dictionary-add-input]")?.value || ""
+      ]);
       form?.addEventListener("submit", (event) => {
         event.preventDefault();
         const input = form.elements.value;
@@ -39715,7 +40036,7 @@ MAX - https://bizvmax.ru/zifra_plus
         addAudit("Изменен справочник", dictionaryTitle(dict), "Сохранены категории и шкала оценок");
         savedDuringSession = true;
         persist();
-        close({ saved: true });
+        close({ saved: true, skipUnsavedCheck: true });
       });
       form?.querySelector("[data-action='add-attestation-category']")?.addEventListener("click", () => {
         draftValues = collectFinalAttestationSettings(form);
@@ -40509,9 +40830,23 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
     document.body.appendChild(backdrop);
     bindMoneyInputStepControls(backdrop);
-    const close = () => {
+    const form = backdrop.querySelector("form[data-action='save-payment-constant-dialog']");
+    initializeRecordFormSnapshot(form);
+    const close = async ({ skipUnsavedCheck = false } = {}) => {
+      if (!skipUnsavedCheck && hasUnsavedFormChanges(form)) {
+        const decision = await chooseUnsavedChangesAction({
+          title: "Константа оплаты не сохранена",
+          message: "Сохранить изменения константы оплаты перед закрытием?"
+        });
+        if (decision === "cancel") return false;
+        if (decision === "save") {
+          form?.requestSubmit();
+          return true;
+        }
+      }
       document.removeEventListener("keydown", handleKeydown, true);
       backdrop.remove();
+      return true;
     };
     const handleKeydown = (event) => {
       if (event.key !== "Escape") return;
@@ -40525,7 +40860,7 @@ MAX - https://bizvmax.ru/zifra_plus
     backdrop.querySelectorAll("[data-action='close-payment-constant-dialog']").forEach((button) => {
       button.addEventListener("click", close);
     });
-    backdrop.querySelector("form[data-action='save-payment-constant-dialog']")?.addEventListener("submit", (event) => {
+    form?.addEventListener("submit", (event) => {
       event.preventDefault();
       const form = event.currentTarget;
       const nextMarker = normalizePaymentConstantMarker(form.elements.marker.value);
@@ -40594,7 +40929,7 @@ MAX - https://bizvmax.ru/zifra_plus
       persist();
       refreshVisiblePaymentFormulaEditors();
       refreshProgramPaymentConstantPalette();
-      close();
+      close({ skipUnsavedCheck: true });
     });
     document.addEventListener("keydown", handleKeydown, true);
     requestAnimationFrame(() => {
@@ -41503,38 +41838,45 @@ MAX - https://bizvmax.ru/zifra_plus
   async function saveRecord(event) {
     event.preventDefault();
     const form = event.currentTarget;
+    if (recordFormSavePending) return false;
+    recordFormSavePending = true;
     const submitButton = getFormSubmitButton(form);
-    if (!await ensureRecordLockForSave(form)) return;
-    if (submitButton) submitButton.disabled = true;
-    const savedId = saveFormRecord(form);
-    if (!savedId) {
-      if (submitButton) submitButton.disabled = false;
-      return;
+    try {
+      if (!await ensureRecordLockForSave(form)) return false;
+      if (submitButton) submitButton.disabled = true;
+      const savedId = saveFormRecord(form);
+      if (!savedId) {
+        if (submitButton) submitButton.disabled = false;
+        return false;
+      }
+      const configId = form.dataset.config;
+      state.lastEditedRow = { config: configId || "", id: savedId };
+      setTablePageForRow(configId, savedId);
+      persist();
+      const generation = sharedStateChangeGeneration;
+      const lock = activeRecordLock;
+      activeRecordLock = null;
+      stopRecordLockHeartbeat();
+      state.studentExpenseEditor = null;
+      state.employeeExpenseEditor = null;
+      state.modal = null;
+      resetCardWindowState();
+      state.discountPickerOpen = false;
+      state.discountPicker = null;
+      state.openPaymentRows = [];
+      state.openExpenseRows = [];
+      aisHistoryNavigationDiscardApproved = true;
+      aisHistoryNavigationCloseModalRequested = true;
+      if (!returnToPreviousAisScreen()) {
+        aisHistoryNavigationDiscardApproved = false;
+        aisHistoryNavigationCloseModalRequested = false;
+        render();
+      }
+      saveSharedApplicationStateInBackground({ generation, lock });
+      return true;
+    } finally {
+      recordFormSavePending = false;
     }
-    const configId = form.dataset.config;
-    state.lastEditedRow = { config: configId || "", id: savedId };
-    setTablePageForRow(configId, savedId);
-    persist();
-    const generation = sharedStateChangeGeneration;
-    const lock = activeRecordLock;
-    activeRecordLock = null;
-    stopRecordLockHeartbeat();
-    state.studentExpenseEditor = null;
-    state.employeeExpenseEditor = null;
-    state.modal = null;
-    resetCardWindowState();
-    state.discountPickerOpen = false;
-    state.discountPicker = null;
-    state.openPaymentRows = [];
-    state.openExpenseRows = [];
-    aisHistoryNavigationDiscardApproved = true;
-    aisHistoryNavigationCloseModalRequested = true;
-    if (!returnToPreviousAisScreen()) {
-      aisHistoryNavigationDiscardApproved = false;
-      aisHistoryNavigationCloseModalRequested = false;
-      render();
-    }
-    saveSharedApplicationStateInBackground({ generation, lock });
   }
 
   function normalizeStudentPhotoRotation(value) {
@@ -41629,7 +41971,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return new Promise((resolve, reject) => {
       const previousEditor = document.querySelector("[data-student-photo-crop-editor]");
       if (previousEditor) {
-        previousEditor.closeStudentPhotoCropEditor?.();
+        previousEditor.closeStudentPhotoCropEditor?.({ force: true });
         if (previousEditor.isConnected) previousEditor.remove();
       }
       const backdrop = document.createElement("div");
@@ -41709,6 +42051,19 @@ MAX - https://bizvmax.ru/zifra_plus
       let interaction = null;
       let settled = false;
       let resizeObserver = null;
+      let initialEditSnapshot = null;
+      let closeRequestPending = false;
+
+      const captureEditSnapshot = () => JSON.stringify({
+        rotation,
+        selection: selection
+          ? [selection.x, selection.y, selection.width, selection.height]
+          : null
+      });
+      const hasUnsavedCropChanges = () => (
+        initialEditSnapshot !== null
+        && captureEditSnapshot() !== initialEditSnapshot
+      );
 
       const finish = (value) => {
         if (settled) return;
@@ -41717,7 +42072,27 @@ MAX - https://bizvmax.ru/zifra_plus
         backdrop.remove();
         resolve(value);
       };
-      backdrop.closeStudentPhotoCropEditor = () => finish(null);
+      const requestCloseStudentPhotoCropEditor = async ({ force = false } = {}) => {
+        if (settled || closeRequestPending) return false;
+        if (!force && hasUnsavedCropChanges()) {
+          closeRequestPending = true;
+          try {
+            const decision = await chooseUnsavedChangesAction({
+              message: "В области фото есть несохранённые изменения. Использовать выбранную область перед закрытием?"
+            });
+            if (decision === "cancel") return false;
+            if (decision === "save") {
+              if (!useButton.disabled) useButton.click();
+              return !backdrop.isConnected;
+            }
+          } finally {
+            closeRequestPending = false;
+          }
+        }
+        finish(null);
+        return true;
+      };
+      backdrop.closeStudentPhotoCropEditor = requestCloseStudentPhotoCropEditor;
       const fail = (error) => {
         if (settled) return;
         settled = true;
@@ -41883,6 +42258,7 @@ MAX - https://bizvmax.ru/zifra_plus
           height: initialHeight
         };
         fitImage();
+        initialEditSnapshot = captureEditSnapshot();
         resizeObserver = new ResizeObserver(() => {
           updateFitScale();
           focusSelection();
@@ -42037,13 +42413,13 @@ MAX - https://bizvmax.ru/zifra_plus
       });
 
       backdrop.querySelectorAll("[data-action='close-student-photo-editor']").forEach((button) => {
-        button.addEventListener("click", () => finish(null));
+        button.addEventListener("click", () => requestCloseStudentPhotoCropEditor());
       });
       backdrop.addEventListener("pointerdown", (event) => {
-        if (event.target === backdrop) finish(null);
+        if (event.target === backdrop) requestCloseStudentPhotoCropEditor();
       });
       backdrop.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") finish(null);
+        if (event.key === "Escape") requestCloseStudentPhotoCropEditor();
       });
       useButton.addEventListener("click", () => {
         if (!isUsableSelection()) return;
@@ -44401,38 +44777,60 @@ MAX - https://bizvmax.ru/zifra_plus
     renderStudentDocumentRecognitionResults(dialog, result, currentRecord);
   }
 
-  function closeStudentDocumentRecognitionDialog() {
+  function closeStudentDocumentRecognitionDialog(options = {}) {
     const dialog = document.querySelector("[data-student-document-recognition-dialog]");
     if (!dialog) return false;
-    hideStudentDocumentRecognitionFieldMenu();
-    hideFieldCopyPopup();
-    const regionSelector = document.querySelector("[data-student-document-photo-cropper]");
-    regionSelector?.closeStudentDocumentRegionSelector?.();
-    if (regionSelector?.isConnected) regionSelector.remove();
-    dialog.closeStudentDocumentRecognitionDialog?.();
-    return true;
+    return dialog.closeStudentDocumentRecognitionDialog?.(options) ?? false;
   }
 
   function createStudentDocumentRecognitionDialog(options = {}) {
-    closeStudentDocumentRecognitionDialog();
+    closeStudentDocumentRecognitionDialog({ force: true });
     const isContract = options.entityType === "contract";
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop student-document-recognition-backdrop";
     backdrop.dataset.studentDocumentRecognitionDialog = "";
     backdrop.dataset.documentRecognitionEntity = isContract ? "contract" : "student";
+    backdrop.dataset.recognitionDirty = "false";
     let closed = false;
     let timerId = 0;
+    let closeRequestPending = false;
     const timerStartedAt = performance.now();
-    backdrop.closeStudentDocumentRecognitionDialog = () => {
+    const finishCloseStudentDocumentRecognitionDialog = () => {
+      if (closed) return;
       closed = true;
       if (timerId) window.clearInterval(timerId);
       hideStudentDocumentRecognitionFieldMenu();
       hideFieldCopyPopup();
       const regionSelector = document.querySelector("[data-student-document-photo-cropper]");
-      regionSelector?.closeStudentDocumentRegionSelector?.();
+      regionSelector?.closeStudentDocumentRegionSelector?.({ force: true });
       if (regionSelector?.isConnected) regionSelector.remove();
       backdrop.remove();
     };
+    const requestCloseStudentDocumentRecognitionDialog = async ({ force = false } = {}) => {
+      if (closed || !backdrop.isConnected || closeRequestPending) return false;
+      const activeApplyButton = backdrop.querySelector("[data-action='apply-student-document-recognition']");
+      if (!force && activeApplyButton?.getAttribute("aria-busy") === "true") return false;
+      if (!force && backdrop.dataset.recognitionDirty === "true") {
+        closeRequestPending = true;
+        try {
+          const decision = await chooseUnsavedChangesAction({
+            message: "В результатах распознавания есть несохранённые изменения. Применить выбранные данные перед закрытием?"
+          });
+          if (decision === "cancel") return false;
+          if (decision === "save") {
+            if (activeApplyButton && !activeApplyButton.disabled) {
+              await applyStudentDocumentRecognition(backdrop, activeApplyButton);
+            }
+            return !backdrop.isConnected;
+          }
+        } finally {
+          closeRequestPending = false;
+        }
+      }
+      finishCloseStudentDocumentRecognitionDialog();
+      return true;
+    };
+    backdrop.closeStudentDocumentRecognitionDialog = requestCloseStudentDocumentRecognitionDialog;
     backdrop.stopStudentDocumentRecognitionTimer = () => {
       if (!timerId) return;
       window.clearInterval(timerId);
@@ -45352,6 +45750,24 @@ MAX - https://bizvmax.ru/zifra_plus
         <button class="primary-button" data-action="apply-student-document-recognition" type="button" ${fields.length || photoCandidates.length ? "" : "disabled"}>Применить выбранное</button>
       </footer>
     `);
+    dialog.dataset.recognitionDirty = "false";
+    const markRecognitionChanges = (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.matches([
+        "[data-ocr-field-enabled]",
+        "[data-ocr-field-value]",
+        "[data-ocr-select-all-fields]",
+        "[data-ocr-select-document-fields]",
+        "[data-ocr-select-group-fields]",
+        "[data-ocr-photo-enabled]",
+        "input[name='ocr-student-photo-candidate']"
+      ].join(","))) {
+        dialog.dataset.recognitionDirty = "true";
+      }
+    };
+    modal.addEventListener("input", markRecognitionChanges);
+    modal.addEventListener("change", markRecognitionChanges);
     const recognitionResult = modal.querySelector(".student-document-recognition-result");
     if (recognitionResult) {
       recognitionResult.scrollTop = 0;
@@ -46479,6 +46895,8 @@ MAX - https://bizvmax.ru/zifra_plus
             payload,
             field
           );
+          const recognitionDialog = modal.closest("[data-student-document-recognition-dialog]");
+          if (recognitionDialog) recognitionDialog.dataset.recognitionDirty = "true";
           showFieldPreview(field, input, false);
         }
       });
@@ -46770,6 +47188,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (empty) empty.hidden = true;
     const applyButton = dialog.querySelector("[data-action='apply-student-document-recognition']");
     if (applyButton) applyButton.disabled = false;
+    dialog.dataset.recognitionDirty = "true";
     return true;
   }
 
@@ -46959,7 +47378,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     }
     const existingCropper = document.querySelector("[data-student-document-photo-cropper]");
-    existingCropper?.closeStudentDocumentRegionSelector?.();
+    existingCropper?.closeStudentDocumentRegionSelector?.({ force: true });
     existingCropper?.remove();
     const previouslyFocused = document.activeElement;
     const backdrop = document.createElement("div");
@@ -47072,8 +47491,10 @@ MAX - https://bizvmax.ru/zifra_plus
     let rotation = 0;
     let baseWidth = 0;
     let baseHeight = 0;
+    let hasUnsavedCropChanges = false;
+    let closeRequestPending = false;
 
-    const close = (cancelled = true) => {
+    const finishCloseStudentDocumentPhotoCropper = (cancelled = true) => {
       if (!backdrop.isConnected) return;
       if (cancelled) options.onCancel?.();
       backdrop.remove();
@@ -47081,7 +47502,28 @@ MAX - https://bizvmax.ru/zifra_plus
         requestAnimationFrame(() => previouslyFocused.focus({ preventScroll: true }));
       }
     };
-    backdrop.closeStudentDocumentRegionSelector = close;
+    const requestCloseStudentDocumentPhotoCropper = async ({ force = false, cancelled = true } = {}) => {
+      if (!backdrop.isConnected || closeRequestPending) return false;
+      if (!force && useButton.getAttribute("aria-busy") === "true") return false;
+      if (!force && hasUnsavedCropChanges) {
+        closeRequestPending = true;
+        try {
+          const decision = await chooseUnsavedChangesAction({
+            message: "В выделенной области документа есть несохранённые изменения. Использовать её перед закрытием?"
+          });
+          if (decision === "cancel") return false;
+          if (decision === "save") {
+            if (!useButton.disabled) await useCurrentStudentDocumentCrop();
+            return !backdrop.isConnected;
+          }
+        } finally {
+          closeRequestPending = false;
+        }
+      }
+      finishCloseStudentDocumentPhotoCropper(cancelled);
+      return true;
+    };
+    backdrop.closeStudentDocumentRegionSelector = requestCloseStudentDocumentPhotoCropper;
     const currentFileEntry = () => availableFiles[currentFilePosition];
     const currentPageKey = () => `${getStudentRecognitionFileKey(currentFileEntry().file)}:${currentPage}`;
     if (!rotations.has(currentPageKey())) {
@@ -47341,6 +47783,7 @@ MAX - https://bizvmax.ru/zifra_plus
         width: Math.abs(point.x - interaction.startPoint.x),
         height: Math.abs(point.y - interaction.startPoint.y)
       });
+      hasUnsavedCropChanges = true;
       paintSelection();
     });
     selectionElement.addEventListener("pointerdown", (event) => {
@@ -47372,6 +47815,7 @@ MAX - https://bizvmax.ru/zifra_plus
           x: clamp(start.x + dx, 0, 1 - start.width),
           y: clamp(start.y + dy, 0, 1 - start.height)
         });
+        hasUnsavedCropChanges = true;
         paintSelection();
         return;
       }
@@ -47384,6 +47828,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (interaction.handle.includes("n")) top = clamp(start.y + dy, 0, bottom - 0.015);
       if (interaction.handle.includes("s")) bottom = clamp(start.y + start.height + dy, top + 0.015, 1);
       selections.set(currentPageKey(), { x: left, y: top, width: right - left, height: bottom - top });
+      hasUnsavedCropChanges = true;
       paintSelection();
     });
     const stopSelection = (event) => {
@@ -47423,6 +47868,7 @@ MAX - https://bizvmax.ru/zifra_plus
         x: clamp(selection.x + dx, 0, 1 - selection.width),
         y: clamp(selection.y + dy, 0, 1 - selection.height)
       });
+      hasUnsavedCropChanges = true;
       paintSelection();
     });
     selectModeButton.addEventListener("click", () => setEditMode("select"));
@@ -47439,6 +47885,7 @@ MAX - https://bizvmax.ru/zifra_plus
       rotation = normalizeStudentPhotoRotation(rotation + delta);
       rotations.set(key, rotation);
       if (sourceSelection) selections.set(key, rotateStudentPhotoNormalizedRect(sourceSelection, rotation));
+      hasUnsavedCropChanges = true;
       interaction = null;
       stage.classList.remove("is-panning");
       rotationLabel.textContent = `${rotation}°`;
@@ -47485,19 +47932,20 @@ MAX - https://bizvmax.ru/zifra_plus
     previousButton.addEventListener("click", () => loadPage(currentPage - 1));
     nextButton.addEventListener("click", () => loadPage(currentPage + 1));
     backdrop.querySelectorAll("[data-action='close-student-photo-cropper']").forEach((button) => {
-      button.addEventListener("click", () => close());
+      button.addEventListener("click", () => requestCloseStudentDocumentPhotoCropper());
     });
-    backdrop.querySelector("[data-action='choose-student-photo-file']")?.addEventListener("click", () => {
-      close(false);
-      options.onChooseFile?.();
+    backdrop.querySelector("[data-action='choose-student-photo-file']")?.addEventListener("click", async () => {
+      if (await requestCloseStudentDocumentPhotoCropper({ cancelled: false })) {
+        options.onChooseFile?.();
+      }
     });
     backdrop.addEventListener("pointerdown", (event) => {
-      if (event.target === backdrop) close();
+      if (event.target === backdrop) requestCloseStudentDocumentPhotoCropper();
     });
     backdrop.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape") requestCloseStudentDocumentPhotoCropper();
     });
-    useButton.addEventListener("click", async () => {
+    const useCurrentStudentDocumentCrop = async () => {
       const selection = selections.get(currentPageKey());
       if (!selection || !image.naturalWidth || !image.naturalHeight) return;
       const maxOutputSize = Math.max(320, Number(options.maxOutputSize) || 1200);
@@ -47544,7 +47992,7 @@ MAX - https://bizvmax.ru/zifra_plus
             cropPreview: { mimeType: "image/jpeg", base64 },
             pagePreview: pageResult?.preview || null
           });
-          close(false);
+          finishCloseStudentDocumentPhotoCropper(false);
         } catch (error) {
           if (error?.name !== "AbortError") {
             alert(error.message || "Не удалось подготовить выбранную область документа.");
@@ -47575,8 +48023,9 @@ MAX - https://bizvmax.ru/zifra_plus
       } catch (error) {
         alert(`Не удалось обновить фото в карточке: ${error.message}`);
       }
-      close(false);
-    });
+      finishCloseStudentDocumentPhotoCropper(false);
+    };
+    useButton.addEventListener("click", useCurrentStudentDocumentCrop);
     backdrop.querySelector("[data-action='close-student-photo-cropper']")?.focus({ preventScroll: true });
     loadPage(currentPage, currentFilePosition);
     return true;
@@ -47703,7 +48152,7 @@ MAX - https://bizvmax.ru/zifra_plus
     } else if (updateKeys.length) {
       state.studentCardTab = getStudentDocumentFieldTab(updateKeys[0]);
     }
-    dialog.closeStudentDocumentRecognitionDialog?.();
+    dialog.closeStudentDocumentRecognitionDialog?.({ force: true });
     render();
     requestAnimationFrame(() => {
       if (updates.photoUrl) {
@@ -50019,59 +50468,66 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function hasUnsavedDocumentTemplateChanges(form = document.querySelector("form[data-action='save-contract-template-fields']")) {
     if (!form) return false;
-    const { document: draftDocument } = collectContractTemplateForm(form);
-    const savedDocument = (documentTemplateEditOriginal?.documents || getDocumentTemplates())
-      .find((item) => item.id === draftDocument.id);
-    if (!savedDocument) return true;
-    return JSON.stringify(getDocumentTemplateEditSnapshot(draftDocument)) !== JSON.stringify(getDocumentTemplateEditSnapshot(savedDocument));
+    const currentDocuments = getDocumentTemplates();
+    const { documents: draftDocuments } = collectContractTemplateForm(form);
+    const savedDocuments = documentTemplateEditOriginal?.documents || currentDocuments;
+    const captureDocumentsSnapshot = (documents) => documents.map((documentTemplate) => ({
+      id: String(documentTemplate.id || ""),
+      ...getDocumentTemplateEditSnapshot(documentTemplate)
+    }));
+    return JSON.stringify(captureDocumentsSnapshot(draftDocuments))
+      !== JSON.stringify(captureDocumentsSnapshot(savedDocuments));
   }
   async function saveContractTemplateFields(event) {
     event.preventDefault();
     const form = event.currentTarget;
-    if (!await ensureRecordLockForSave(form)) return;
-    const submitButton = getFormSubmitButton(form);
+    if (documentTemplateSavePending) return false;
+    documentTemplateSavePending = true;
+    try {
+      if (!await ensureRecordLockForSave(form)) return false;
+      const submitButton = getFormSubmitButton(form);
     const { documents, document, fields } = collectContractTemplateForm(form);
     if (!document.title) {
       alert("Укажите название документа.");
       switchDocumentTemplateSettingsTab("main");
       form.elements.documentTitle?.focus();
-      return;
+      return false;
     }
     if (!document.templateUrl.trim() && !document.templatePath.trim()) {
       alert("Укажите ссылку на шаблон или загрузите файл Word.");
       switchDocumentTemplateSettingsTab("main");
       form.elements.templateUrl?.focus();
-      return;
+      return false;
     }
     if (!document.saveFolderTemplate.trim()) {
       alert("Укажите папку сохранения документа.");
       switchDocumentTemplateSettingsTab("main");
       form.querySelector("[data-document-save-folder-editor]")?.focus();
-      return;
+      return false;
     }
     if (document.emailDeliveryMode !== "off" && !document.emailSubjectTemplate.trim()) {
       alert("Заполните тему сообщения или отключите отправку по почте.");
       switchDocumentTemplateSettingsTab("email");
       form.querySelector("[data-document-email-field='emailSubjectTemplate']")?.focus();
-      return;
+      return false;
     }
     if (document.emailDeliveryMode !== "off" && !document.emailMessageTemplate.trim()) {
       alert("Заполните текст сообщения или отключите отправку по почте.");
       switchDocumentTemplateSettingsTab("email");
       form.querySelector("[data-document-email-field='emailMessageTemplate']")?.focus();
-      return;
+      return false;
     }
     const duplicate = fields.find((field, index) => fields.findIndex((item) => item.name === field.name) !== index);
     if (duplicate) {
       alert(`Имя поля документа повторяется: ${duplicate.name}`);
       switchDocumentTemplateSettingsTab("fields");
-      return;
+      return false;
     }
     const formulaGraphError = validateContractTemplateFormulaGraph(fields);
     if (formulaGraphError) {
       alert(formulaGraphError);
       switchDocumentTemplateSettingsTab("fields");
-      return;
+      return false;
     }
     if (submitButton) submitButton.disabled = true;
     commitDocumentTemplates(documents, document);
@@ -50089,11 +50545,15 @@ MAX - https://bizvmax.ru/zifra_plus
     state.activeContractTemplateFieldId = "";
     state.pendingContractTemplateFieldFocus = "";
     render();
-    saveSharedApplicationStateInBackground({
-      generation,
-      lock,
-      afterLockRelease: () => releaseDocumentTemplateRecordLockAndRestore(null)
-    });
+      saveSharedApplicationStateInBackground({
+        generation,
+        lock,
+        afterLockRelease: () => releaseDocumentTemplateRecordLockAndRestore(null)
+      });
+      return true;
+    } finally {
+      documentTemplateSavePending = false;
+    }
   }
 
   function addContractTemplateField() {
@@ -50226,13 +50686,17 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function closeDocumentTemplateSettings() {
+    if (documentTemplateSavePending) return false;
     const form = document.querySelector("form[data-action='save-contract-template-fields']");
     if (hasUnsavedDocumentTemplateChanges(form)) {
-      if (confirm("В карточке документа есть несохраненные изменения. Сохранить перед закрытием?")) {
-        await saveContractTemplateFields({ preventDefault() {}, currentTarget: form });
-        return;
+      const decision = await chooseUnsavedChangesAction({
+        title: "Документ не сохранён",
+        message: "Сохранить изменения шаблона, полей и формул перед закрытием?"
+      });
+      if (decision === "save") {
+        return saveContractTemplateFields({ preventDefault() {}, currentTarget: form });
       }
-      if (!confirm("Закрыть карточку документа без сохранения изменений?")) return;
+      if (decision === "cancel") return false;
     }
     const revertedPersistedChanges = discardDocumentTemplateEdit();
     const generation = sharedStateChangeGeneration;
@@ -50250,9 +50714,10 @@ MAX - https://bizvmax.ru/zifra_plus
         lock,
         afterLockRelease: () => releaseDocumentTemplateRecordLockAndRestore(null)
       });
-      return;
+      return true;
     }
     await releaseDocumentTemplateRecordLockAndRestore(lock);
+    return true;
   }
 
   function sortDocumentTemplates(key) {
@@ -50283,12 +50748,29 @@ MAX - https://bizvmax.ru/zifra_plus
     commitDocumentTemplates(documents.map((item) => item.id === activeDocument.id ? activeDocument : item), activeDocument);
     state.documentTemplateLinkDialog = true;
     render();
-    window.setTimeout(() => document.querySelector("[name='newDocumentUrl']")?.focus({ preventScroll: true }));
+    window.setTimeout(() => {
+      const form = document.querySelector("form[data-action='submit-document-template-link']");
+      initializeRecordFormSnapshot(form);
+      form?.elements.newDocumentUrl?.focus({ preventScroll: true });
+    });
   }
 
-  function closeDocumentTemplateLinkDialog() {
+  async function closeDocumentTemplateLinkDialog() {
+    const form = document.querySelector("form[data-action='submit-document-template-link']");
+    if (hasUnsavedFormChanges(form)) {
+      const decision = await chooseUnsavedChangesAction({
+        title: "Источник документа не добавлен",
+        message: "Добавить указанный источник документа перед закрытием?"
+      });
+      if (decision === "cancel") return false;
+      if (decision === "save") {
+        form?.requestSubmit();
+        return !state.documentTemplateLinkDialog;
+      }
+    }
     state.documentTemplateLinkDialog = false;
     render();
+    return true;
   }
 
   async function removeDocumentTemplate(id) {
@@ -51661,9 +52143,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = backdrop.querySelector("form[data-action='save-document-email-template-value']");
     const editor = backdrop.querySelector("[data-document-email-template-value-editor]");
     let highlightTimer = null;
+    let initialSerializedValue = String(currentValues[normalizedName] || "");
     if (editor) {
       editor.innerHTML = renderCommunicationTemplateLinks(currentValues[normalizedName] || "");
       initializeCommunicationTemplateEditorHistory(editor);
+      initialSerializedValue = serializeCommunicationTemplateEditor(editor);
       editor.focus({ preventScroll: true });
       setCommunicationTemplateEditorCaretOffset(editor, 0);
       editor.addEventListener("click", openTemplateEditorLink);
@@ -51682,10 +52166,25 @@ MAX - https://bizvmax.ru/zifra_plus
         refreshTemplateLinkEditor(editor);
       });
     }
-    const close = () => {
+    const close = async ({ skipUnsavedCheck = false } = {}) => {
+      const currentSerializedValue = editor
+        ? serializeCommunicationTemplateEditor(editor)
+        : initialSerializedValue;
+      if (!skipUnsavedCheck && currentSerializedValue !== initialSerializedValue) {
+        const decision = await chooseUnsavedChangesAction({
+          title: "Значение поля не сохранено",
+          message: `Сохранить изменения поля [${normalizedName}] перед закрытием?`
+        });
+        if (decision === "cancel") return false;
+        if (decision === "save") {
+          form?.requestSubmit();
+          return true;
+        }
+      }
       window.clearTimeout(highlightTimer);
       window.document.removeEventListener("keydown", handleKeydown, true);
       backdrop.remove();
+      return true;
     };
     const handleKeydown = (event) => {
       if (event.key !== "Escape") return;
@@ -51724,7 +52223,7 @@ MAX - https://bizvmax.ru/zifra_plus
         `${nextValue.length} символов`
       );
       persist();
-      close();
+      close({ skipUnsavedCheck: true });
       render();
     });
     window.document.addEventListener("keydown", handleKeydown, true);
@@ -52463,9 +52962,15 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-communication-template-field-menu]")?.remove();
   }
 
-  function showCommunicationTemplateFieldDialog(field = null) {
+  async function showCommunicationTemplateFieldDialog(field = null) {
     hideCommunicationTemplateFieldMenu();
-    document.querySelector("[data-communication-template-field-dialog]")?.remove();
+    const existingDialog = document.querySelector("[data-communication-template-field-dialog]");
+    if (existingDialog) {
+      const closed = existingDialog.closeCommunicationTemplateFieldDialog
+        ? await existingDialog.closeCommunicationTemplateFieldDialog()
+        : (existingDialog.remove(), true);
+      if (!closed) return;
+    }
     const isStandardField = Boolean(field && !field.custom);
     const fieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     const availableFields = sortCommunicationTemplateFieldDefinitions(
@@ -52516,14 +53021,39 @@ MAX - https://bizvmax.ru/zifra_plus
       </form>
     `;
     document.body.appendChild(dialog);
-    const close = () => dialog.remove();
+    const form = dialog.querySelector("form");
+    const formulaEditor = dialog.querySelector("[data-formula-editor]");
+    const initialSnapshot = JSON.stringify({
+      name: String(form?.elements.fieldName?.value || ""),
+      formula: formulaEditor ? serializeCommunicationTemplateEditor(formulaEditor) : ""
+    });
+    const close = async ({ skipUnsavedCheck = false } = {}) => {
+      const currentSnapshot = JSON.stringify({
+        name: String(form?.elements.fieldName?.value || ""),
+        formula: formulaEditor ? serializeCommunicationTemplateEditor(formulaEditor) : ""
+      });
+      if (!skipUnsavedCheck && currentSnapshot !== initialSnapshot) {
+        const decision = await chooseUnsavedChangesAction({
+          title: "Поле шаблона не сохранено",
+          message: "Сохранить название и формулу поля перед закрытием?"
+        });
+        if (decision === "cancel") return false;
+        if (decision === "save") {
+          form?.requestSubmit();
+          return true;
+        }
+      }
+      dialog.remove();
+      return true;
+    };
+    dialog.closeCommunicationTemplateFieldDialog = close;
     dialog.addEventListener("pointerdown", (event) => {
       if (event.target === dialog) close();
     });
     dialog.querySelectorAll("[data-action='close-communication-template-field-dialog']").forEach((button) => {
       button.addEventListener("click", close);
     });
-    dialog.querySelector("form")?.addEventListener("submit", (event) => {
+    form?.addEventListener("submit", (event) => {
       event.preventDefault();
       saveCommunicationTemplateField(dialog, field);
     });
@@ -54000,18 +54530,16 @@ MAX - https://bizvmax.ru/zifra_plus
       return false;
     }
     const form = document.querySelector("form[data-action='save-student-database-settings']");
-    if (form && confirm(
-      "В админке есть несохранённые изменения.\n\n"
-      + "Нажмите «ОК», чтобы сохранить их перед выходом.\n"
-      + "Нажмите «Отмена», чтобы выбрать выход без сохранения."
-    )) {
-      return persistStudentDatabaseSettings(form, { renderAfterSave: false });
+    const decision = await chooseUnsavedChangesAction({
+      title: "Настройки админки не сохранены",
+      message: "Сохранить изменения подключения и внешних сервисов перед выходом?"
+    });
+    if (decision === "save") {
+      return form
+        ? persistStudentDatabaseSettings(form, { renderAfterSave: false })
+        : false;
     }
-    if (!confirm(
-      "Выйти без сохранения изменений?\n\n"
-      + "Нажмите «ОК», чтобы выйти без сохранения.\n"
-      + "Нажмите «Отмена», чтобы остаться в админке."
-    )) return false;
+    if (decision === "cancel") return false;
     clearAdminSettingsDirtyState(form);
     return true;
   }
@@ -59890,8 +60418,12 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function showGeneratedDocumentPreview(previewBlob, options = {}) {
-    document.querySelector("[data-generated-document-preview]")
-      ?.closeGeneratedDocumentPreview?.(false);
+    const previousPreview = document.querySelector("[data-generated-document-preview]");
+    if (typeof previousPreview?.forceCloseGeneratedDocumentPreview === "function") {
+      previousPreview.forceCloseGeneratedDocumentPreview(false);
+    } else {
+      previousPreview?.closeGeneratedDocumentPreview?.(false);
+    }
     const title = String(options.title || "Документ").trim() || "Документ";
     const fileName = String(options.fileName || "документ").trim() || "документ";
     const outputFormat = normalizeDocumentGenerationFormat(options.outputFormat);
@@ -59937,6 +60469,10 @@ MAX - https://bizvmax.ru/zifra_plus
       let editorSession = null;
       let editorReady = false;
       let editorChangesPending = false;
+      let editorDirty = false;
+      let editorActionPending = false;
+      let editorStartPending = false;
+      let editorStartSequence = 0;
       const frame = backdrop.querySelector("[data-generated-document-preview-frame]")
         || backdrop.querySelector(".generated-document-preview-frame");
       const heading = backdrop.querySelector("[data-generated-document-preview-heading]");
@@ -59950,6 +60486,8 @@ MAX - https://bizvmax.ru/zifra_plus
       const setPreviewMode = (message = "") => {
         editorReady = false;
         editorChangesPending = false;
+        editorDirty = false;
+        editorActionPending = false;
         if (frame) {
           frame.classList.remove("is-editor");
           frame.src = `${previewUrl}#toolbar=1&navpanes=0`;
@@ -59980,6 +60518,8 @@ MAX - https://bizvmax.ru/zifra_plus
         editorSession = session;
         editorReady = false;
         editorChangesPending = false;
+        editorDirty = false;
+        editorActionPending = false;
         if (frame) {
           frame.classList.add("is-editor");
           frame.src = session.editorUrl;
@@ -60023,6 +60563,7 @@ MAX - https://bizvmax.ru/zifra_plus
           }
         } else if (event.data.type === "state") {
           editorChangesPending = Boolean(event.data.modified);
+          if (editorChangesPending) editorDirty = true;
           if (saveButton && !saveButton.hasAttribute("aria-busy")) {
             saveButton.disabled = !editorReady || editorChangesPending;
           }
@@ -60056,6 +60597,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const finish = (confirmed) => {
         if (settled) return;
         settled = true;
+        editorStartSequence += 1;
         backdrop.removeEventListener("keydown", trapFocus);
         window.removeEventListener("message", handleEditorMessage);
         URL.revokeObjectURL(previewUrl);
@@ -60065,63 +60607,18 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         resolve(Boolean(confirmed));
       };
-      backdrop.closeGeneratedDocumentPreview = finish;
-      backdrop.addEventListener("keydown", trapFocus);
-      window.addEventListener("message", handleEditorMessage);
-      backdrop.addEventListener("pointerdown", (event) => {
-        if (event.target === backdrop) finish(false);
-      });
-      backdrop.querySelector(".modal-head [data-action='cancel-generated-document-preview']")
-        ?.addEventListener("click", () => finish(false));
-      cancelButton?.addEventListener("click", async () => {
-        if (cancelButton.disabled) return;
-        if (!editorSession) {
-          finish(false);
-          return;
+      const saveCurrentEditorChanges = async () => {
+        if (settled || editorActionPending || !editorSession) return false;
+        if (!editorReady || editorChangesPending) {
+          if (description) {
+            description.textContent = editorChangesPending
+              ? "ONLYOFFICE передаёт последнюю правку… Дождитесь завершения передачи и повторите сохранение."
+              : "Дождитесь полной загрузки ONLYOFFICE и повторите сохранение.";
+          }
+          return false;
         }
-        const sessionToDiscard = editorSession;
-        cancelButton.disabled = true;
-        cancelButton.setAttribute("aria-busy", "true");
-        if (saveButton) saveButton.disabled = true;
-        if (description) description.textContent = "Отменяем изменения и возвращаем исходный PDF…";
-        try {
-          await discardGeneratedDocumentEditor(
-            previewToken,
-            sessionToDiscard.editorToken,
-            processingOrigin
-          );
-          if (settled || editorSession !== sessionToDiscard) return;
-          setPreviewMode(
-            `Изменения отменены. Проверьте предыдущую версию документа перед продолжением.${emailDescription
-              ? ` Отправка по email: ${emailDescription}.`
-              : ""}`
-          );
-        } catch (error) {
-          if (settled || editorSession !== sessionToDiscard) return;
-          if (description) description.textContent = `Изменения не отменены: ${error.message}`;
-          if (saveButton) saveButton.disabled = !editorReady;
-          cancelButton.disabled = false;
-          cancelButton.removeAttribute("aria-busy");
-          alert(`Не удалось отменить изменения: ${error.message}`);
-        }
-      });
-      editButton?.addEventListener("click", async () => {
-        if (!previewToken || !processingOrigin || editButton.disabled) return;
-        editButton.disabled = true;
-        editButton.setAttribute("aria-busy", "true");
-        if (description) description.textContent = "Подготавливаем защищённую сессию ONLYOFFICE…";
-        try {
-          setEditorMode(await requestGeneratedDocumentEditor(previewToken, processingOrigin));
-        } catch (error) {
-          if (description) description.textContent = defaultDescription;
-          alert(`Не удалось открыть редактор: ${error.message}`);
-        } finally {
-          editButton.disabled = false;
-          editButton.removeAttribute("aria-busy");
-        }
-      });
-      saveButton?.addEventListener("click", async () => {
-        if (!editorSession || !editorReady || saveButton.disabled) return;
+        const sessionToSave = editorSession;
+        editorActionPending = true;
         saveButton.disabled = true;
         saveButton.setAttribute("aria-busy", "true");
         if (cancelButton) cancelButton.disabled = true;
@@ -60129,27 +60626,164 @@ MAX - https://bizvmax.ru/zifra_plus
         try {
           const saved = await saveGeneratedDocumentEditor(
             previewToken,
-            editorSession,
+            sessionToSave,
             processingOrigin,
-            editorChangesPending
+            editorDirty
           );
+          if (settled || editorSession !== sessionToSave) return false;
           const previousPreviewUrl = previewUrl;
           previewUrl = URL.createObjectURL(new Blob([saved.blob], { type: "application/pdf" }));
-          editorSession.editRevision = saved.editRevision;
+          sessionToSave.editRevision = saved.editRevision;
           setPreviewMode(
             `Изменения сохранены. Проверьте обновлённый документ перед продолжением.${emailDescription
               ? ` Отправка по email: ${emailDescription}.`
               : ""}`
           );
           URL.revokeObjectURL(previousPreviewUrl);
+          return true;
         } catch (error) {
+          if (settled || editorSession !== sessionToSave) return false;
           if (description) description.textContent = `Изменения пока не сохранены: ${error.message}`;
           alert(`Не удалось сохранить изменения: ${error.message}`);
-          saveButton.disabled = editorChangesPending;
-          saveButton.removeAttribute("aria-busy");
-          if (cancelButton) cancelButton.disabled = false;
+          return false;
+        } finally {
+          editorActionPending = false;
+          if (!settled && editorSession === sessionToSave) {
+            saveButton.disabled = !editorReady || editorChangesPending;
+            saveButton.removeAttribute("aria-busy");
+            if (cancelButton) cancelButton.disabled = false;
+          }
+        }
+      };
+      const discardCurrentEditorChanges = async ({ closePreview = false } = {}) => {
+        if (settled || editorActionPending) return false;
+        if (!editorSession) {
+          if (closePreview) finish(false);
+          return true;
+        }
+        const sessionToDiscard = editorSession;
+        editorActionPending = true;
+        cancelButton.disabled = true;
+        cancelButton.setAttribute("aria-busy", "true");
+        if (saveButton) saveButton.disabled = true;
+        if (description) {
+          description.textContent = closePreview
+            ? "Отменяем изменения перед закрытием…"
+            : "Отменяем изменения и возвращаем исходный PDF…";
+        }
+        try {
+          await discardGeneratedDocumentEditor(
+            previewToken,
+            sessionToDiscard.editorToken,
+            processingOrigin
+          );
+          if (settled || editorSession !== sessionToDiscard) return false;
+          editorDirty = false;
+          if (closePreview) {
+            finish(false);
+          } else {
+            setPreviewMode(
+              `Изменения отменены. Проверьте предыдущую версию документа перед продолжением.${emailDescription
+                ? ` Отправка по email: ${emailDescription}.`
+                : ""}`
+            );
+          }
+          return true;
+        } catch (error) {
+          if (settled || editorSession !== sessionToDiscard) return false;
+          if (description) description.textContent = `Изменения не отменены: ${error.message}`;
+          alert(`Не удалось отменить изменения: ${error.message}`);
+          return false;
+        } finally {
+          editorActionPending = false;
+          if (!settled && editorSession === sessionToDiscard) {
+            if (saveButton) saveButton.disabled = !editorReady || editorChangesPending;
+            cancelButton.disabled = false;
+            cancelButton.removeAttribute("aria-busy");
+          }
+        }
+      };
+      const requestClosePreview = async () => {
+        if (settled || editorActionPending) return false;
+        if (editorDirty) {
+          const decision = await chooseUnsavedChangesAction({
+            title: "Изменения документа не сохранены",
+            message: "Сохранить изменения документа перед закрытием предпросмотра?"
+          });
+          if (settled || editorActionPending) return false;
+          if (decision === "cancel") return false;
+          if (decision === "save") return saveCurrentEditorChanges();
+          return discardCurrentEditorChanges({ closePreview: true });
+        }
+        if (editorSession) return discardCurrentEditorChanges({ closePreview: true });
+        finish(false);
+        return true;
+      };
+      const requestCancelEditorOrPreview = async () => {
+        if (settled || editorActionPending) return false;
+        if (!editorSession) return requestClosePreview();
+        if (editorDirty) {
+          const decision = await chooseUnsavedChangesAction({
+            title: "Изменения документа не сохранены",
+            message: "Сохранить изменения документа перед возвратом к предварительному просмотру?"
+          });
+          if (settled || editorActionPending) return false;
+          if (decision === "cancel") return false;
+          if (decision === "save") return saveCurrentEditorChanges();
+        }
+        return discardCurrentEditorChanges();
+      };
+      backdrop.closeGeneratedDocumentPreview = requestClosePreview;
+      backdrop.forceCloseGeneratedDocumentPreview = (confirmed = false) => {
+        const sessionToDiscard = editorSession;
+        if (sessionToDiscard) {
+          discardGeneratedDocumentEditor(
+            previewToken,
+            sessionToDiscard.editorToken,
+            processingOrigin
+          ).catch(() => null);
+        }
+        finish(confirmed);
+      };
+      backdrop.addEventListener("keydown", trapFocus);
+      window.addEventListener("message", handleEditorMessage);
+      backdrop.addEventListener("pointerdown", (event) => {
+        if (event.target === backdrop) requestClosePreview();
+      });
+      backdrop.querySelector(".modal-head [data-action='cancel-generated-document-preview']")
+        ?.addEventListener("click", requestClosePreview);
+      cancelButton?.addEventListener("click", requestCancelEditorOrPreview);
+      editButton?.addEventListener("click", async () => {
+        if (!previewToken || !processingOrigin || editButton.disabled || editorStartPending) return;
+        const startSequence = ++editorStartSequence;
+        editorStartPending = true;
+        editButton.disabled = true;
+        editButton.setAttribute("aria-busy", "true");
+        if (description) description.textContent = "Подготавливаем защищённую сессию ONLYOFFICE…";
+        try {
+          const requestedSession = await requestGeneratedDocumentEditor(previewToken, processingOrigin);
+          if (settled || startSequence !== editorStartSequence) {
+            await discardGeneratedDocumentEditor(
+              previewToken,
+              requestedSession.editorToken,
+              processingOrigin
+            ).catch(() => null);
+            return;
+          }
+          setEditorMode(requestedSession);
+        } catch (error) {
+          if (settled || startSequence !== editorStartSequence) return;
+          if (description) description.textContent = defaultDescription;
+          alert(`Не удалось открыть редактор: ${error.message}`);
+        } finally {
+          if (startSequence === editorStartSequence) editorStartPending = false;
+          if (!settled && startSequence === editorStartSequence) {
+            editButton.disabled = false;
+            editButton.removeAttribute("aria-busy");
+          }
         }
       });
+      saveButton?.addEventListener("click", saveCurrentEditorChanges);
       backdrop.querySelector("[data-action='confirm-generated-document-preview']")?.addEventListener("click", () => {
         finish(true);
       });
@@ -60202,8 +60836,12 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function showGeneratedDocumentEmailPreview(emailRequest, options = {}) {
-    document.querySelector("[data-generated-document-email-preview]")
-      ?.closeGeneratedDocumentEmailPreview?.(false);
+    const previousPreview = document.querySelector("[data-generated-document-email-preview]");
+    if (typeof previousPreview?.forceCloseGeneratedDocumentEmailPreview === "function") {
+      previousPreview.forceCloseGeneratedDocumentEmailPreview(false);
+    } else {
+      previousPreview?.closeGeneratedDocumentEmailPreview?.(false);
+    }
     const title = String(options.title || "Документ").trim() || "Документ";
     const fileName = String(options.fileName || "документ").trim() || "документ";
     let subject = String(emailRequest?.subject || "").trim();
@@ -60273,6 +60911,8 @@ MAX - https://bizvmax.ru/zifra_plus
       `;
       let settled = false;
       let previewRefreshTimer = 0;
+      let emailEditorDirty = false;
+      let emailClosePending = false;
       const frame = backdrop.querySelector("[data-generated-document-email-frame]");
       const workspace = backdrop.querySelector("[data-generated-document-email-workspace]");
       const editor = backdrop.querySelector("[data-generated-document-email-editor]");
@@ -60310,6 +60950,7 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         subject = nextSubject;
         message = nextMessage;
+        emailEditorDirty = false;
         if (subjectInput) subjectInput.value = subject;
         if (messageInput) messageInput.value = message;
         refreshPreview();
@@ -60350,22 +60991,45 @@ MAX - https://bizvmax.ru/zifra_plus
         if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
         resolve(result && typeof result === "object" ? result : null);
       };
-      backdrop.closeGeneratedDocumentEmailPreview = finish;
-      backdrop.addEventListener("keydown", trapFocus);
-      backdrop.addEventListener("pointerdown", (event) => {
-        if (event.target === backdrop) finish(false);
-      });
-      backdrop.querySelectorAll("[data-action='cancel-generated-document-email-preview']").forEach((button) => {
-        button.addEventListener("click", () => finish(false));
-      });
-      editButton?.addEventListener("click", () => setEditing(true));
-      applyButton?.addEventListener("click", () => {
-        if (!readEditedEmailRequest()) return;
+      const applyEditedEmailChanges = () => {
+        if (!readEditedEmailRequest()) return false;
         setEditing(false);
         editButton?.focus({ preventScroll: true });
+        return true;
+      };
+      const requestCloseEmailPreview = async () => {
+        if (settled || emailClosePending) return false;
+        if (emailEditorDirty) {
+          emailClosePending = true;
+          const decision = await chooseUnsavedChangesAction({
+            title: "Изменения письма не применены",
+            message: "Применить изменения темы и текста письма перед закрытием предпросмотра?"
+          });
+          emailClosePending = false;
+          if (settled) return false;
+          if (decision === "cancel") return false;
+          if (decision === "save") return applyEditedEmailChanges();
+        }
+        finish(false);
+        return true;
+      };
+      backdrop.closeGeneratedDocumentEmailPreview = requestCloseEmailPreview;
+      backdrop.forceCloseGeneratedDocumentEmailPreview = finish;
+      backdrop.addEventListener("keydown", trapFocus);
+      backdrop.addEventListener("pointerdown", (event) => {
+        if (event.target === backdrop) requestCloseEmailPreview();
       });
-      subjectInput?.addEventListener("input", schedulePreviewRefresh);
-      messageInput?.addEventListener("input", schedulePreviewRefresh);
+      backdrop.querySelectorAll("[data-action='cancel-generated-document-email-preview']").forEach((button) => {
+        button.addEventListener("click", requestCloseEmailPreview);
+      });
+      editButton?.addEventListener("click", () => setEditing(true));
+      applyButton?.addEventListener("click", applyEditedEmailChanges);
+      const markEmailEditorDirty = () => {
+        emailEditorDirty = true;
+        schedulePreviewRefresh();
+      };
+      subjectInput?.addEventListener("input", markEmailEditorDirty);
+      messageInput?.addEventListener("input", markEmailEditorDirty);
       backdrop.querySelector("[data-action='confirm-generated-document-email-preview']")
         ?.addEventListener("click", () => {
           const reviewedEmailRequest = readEditedEmailRequest();

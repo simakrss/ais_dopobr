@@ -172,7 +172,17 @@ assert.match(editorRenderSource, /name: "studentExpenseEditorNote"/u);
 assert.match(appSource, /\$\{state\.studentExpenseEditor \? renderStudentExpenseEditor\(\) : ""\}/u);
 assert.match(appSource, /if \(state\.studentExpenseEditor\) \{\s*closeStudentExpenseEditor\(\);\s*return true;/u);
 assert.match(appSource, /async function restoreAisNavigationSnapshot\([^)]*\)[\s\S]*?state\.studentExpenseEditor = null;\s*state\.modal = null;/u);
-assert.match(appSource, /Есть несохранённые изменения расхода\. Закрыть без сохранения\?/u);
+assert.match(
+  appSource,
+  /async function closeStudentExpenseEditor\(\)[\s\S]*?hasUnsavedFormChanges\(form\)[\s\S]*?chooseUnsavedChangesAction\([\s\S]*?title: "Расход не сохранён"[\s\S]*?decision === "cancel"[\s\S]*?decision === "save"[\s\S]*?form\?\.requestSubmit\(\)[\s\S]*?state\.studentExpenseEditor = null/u,
+  "При закрытии изменённого расхода должны быть доступны сохранение, отказ от сохранения и отмена закрытия"
+);
+assert.match(
+  appSource,
+  /async function closeEmployeeExpenseEditor\(\)[\s\S]*?hasUnsavedFormChanges\(form\)[\s\S]*?chooseUnsavedChangesAction\([\s\S]*?title: "Запись оплаты не сохранена"[\s\S]*?decision === "cancel"[\s\S]*?decision === "save"[\s\S]*?form\?\.requestSubmit\(\)[\s\S]*?state\.employeeExpenseEditor = null/u,
+  "Вложенный редактор оплаты должен использовать тот же диалог"
+);
+assert.doesNotMatch(appSource, /Есть несохранённые изменения расхода\. Закрыть без сохранения\?/u);
 assert.match(appSource, /setStudentExpenseEditorBackgroundInert\(true\)/u);
 assert.match(appSource, /closest\("\.student-modal-backdrop"\)/u);
 assert.match(appSource, /document\.activeElement\?\.blur\?\.\(\);[\s\S]*?focusTarget\?\.focus\(\{ preventScroll: true \}\);[\s\S]*?setStudentExpenseEditorBackgroundInert\(true\)/u);

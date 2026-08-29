@@ -27,7 +27,8 @@ assert.match(indexSource, /script\.textContent = `\$\{request\.responseText\}/u)
 assert.doesNotMatch(indexSource, /<script src="auth-bootstrap\.js/u);
 assert.match(appSource, /AIS_AUTH_API\?\.redirectToLogin/u);
 assert.match(partnerSource, /authApi\.redirectToLogin/u);
-assert.match(appSource, /Выйти без сохранения изменений/u);
+assert.match(appSource, /async function saveAdminSettingsBeforeExit[\s\S]*?chooseUnsavedChangesAction/u);
+assert.match(appSource, /Настройки админки не сохранены/u);
 assert.match(appSource, /clearAdminSettingsDirtyState\(form\)/u);
 assert.match(phpSource, /\$cookiePaths = array_values\(array_unique/u);
 assert.match(phpSource, /rtrim\(\$basePath, '\/'\)/u);

@@ -635,8 +635,18 @@ assert.match(appSource, /Отправка по email:/u);
 assert.match(appSource, /button\?\.isConnected\s*&&\s*!button\.disabled/u);
 assert.match(
   appSource,
-  /event\.data\.type === "state"[\s\S]+editorChangesPending = Boolean\(event\.data\.modified\)[\s\S]+saveButton\.disabled = !editorReady \|\| editorChangesPending/u,
+  /event\.data\.type === "state"[\s\S]+editorChangesPending = Boolean\(event\.data\.modified\)[\s\S]+if \(editorChangesPending\) editorDirty = true[\s\S]+saveButton\.disabled = !editorReady \|\| editorChangesPending/u,
   "Сохранение должно ждать передачи последней правки из редактора в ONLYOFFICE"
+);
+assert.match(
+  appSource,
+  /const saveCurrentEditorChanges = async \(\) => \{[\s\S]+saveGeneratedDocumentEditor\([\s\S]+editorDirty[\s\S]+setPreviewMode\(/u,
+  "Явный выбор «Сохранить» должен передать в ONLYOFFICE флаг наличия правок и вернуть обновлённый PDF"
+);
+assert.match(
+  appSource,
+  /const discardCurrentEditorChanges = async \(\{ closePreview = false \} = \{\}\) => \{[\s\S]+discardGeneratedDocumentEditor\([\s\S]+if \(closePreview\) \{\s*finish\(false\);/u,
+  "Выбор «Не сохранять» должен отменить серверную сессию редактора до закрытия"
 );
 assert.match(
   appSource,
@@ -653,20 +663,53 @@ assert.match(
   /\.modal-head \[data-action='cancel-generated-document-preview'\]/u,
   "Крестик должен по-прежнему закрывать весь процесс формирования"
 );
-const editorCancelHandlerStart = previewModalSource.indexOf('cancelButton?.addEventListener("click"');
-const editorCancelHandlerEnd = previewModalSource.indexOf('editButton?.addEventListener("click"', editorCancelHandlerStart);
+assert.match(
+  previewModalSource,
+  /const requestClosePreview = async \(\) => \{[\s\S]+if \(editorDirty\)[\s\S]+chooseUnsavedChangesAction\([\s\S]+decision === "cancel"[\s\S]+decision === "save"[\s\S]+saveCurrentEditorChanges\(\)[\s\S]+discardCurrentEditorChanges\(\{ closePreview: true \}\)/u,
+  "Закрытие ONLYOFFICE с правками должно показывать общий диалог «Сохранить / Не сохранять / Отмена»"
+);
+assert.match(
+  previewModalSource,
+  /if \(editorSession\) return discardCurrentEditorChanges\(\{ closePreview: true \}\);[\s\S]+finish\(false\)/u,
+  "Даже чистую сессию ONLYOFFICE нужно удалить на сервере перед закрытием предпросмотра"
+);
+assert.match(previewModalSource, /backdrop\.closeGeneratedDocumentPreview = requestClosePreview/u);
+assert.match(
+  previewModalSource,
+  /backdrop\.forceCloseGeneratedDocumentPreview = \(confirmed = false\) => \{[\s\S]+const sessionToDiscard = editorSession[\s\S]+discardGeneratedDocumentEditor\([\s\S]+sessionToDiscard\.editorToken[\s\S]+\.catch\(\(\) => null\)[\s\S]+finish\(confirmed\)/u,
+  "Принудительное закрытие должно очистить активную серверную сессию ONLYOFFICE"
+);
+assert.match(previewModalSource, /if \(event\.target === backdrop\) requestClosePreview\(\)/u);
+assert.match(previewModalSource, /\.modal-head \[data-action='cancel-generated-document-preview'\][\s\S]+\.addEventListener\("click", requestClosePreview\)/u);
+const editorCancelHandlerStart = previewModalSource.indexOf("const requestCancelEditorOrPreview = async () =>");
+const editorCancelHandlerEnd = previewModalSource.indexOf("backdrop.closeGeneratedDocumentPreview", editorCancelHandlerStart);
 assert.ok(editorCancelHandlerStart >= 0 && editorCancelHandlerEnd > editorCancelHandlerStart);
 const editorCancelHandlerSource = previewModalSource.slice(editorCancelHandlerStart, editorCancelHandlerEnd);
-assert.match(editorCancelHandlerSource, /if \(!editorSession\)[\s\S]+finish\(false\)/u);
-assert.ok(
-  editorCancelHandlerSource.indexOf("finish(false)")
-    < editorCancelHandlerSource.indexOf("discardGeneratedDocumentEditor"),
-  "В режиме просмотра нижняя кнопка должна отменять весь процесс, а в редакторе — только изменения"
+assert.match(editorCancelHandlerSource, /if \(!editorSession\) return requestClosePreview\(\)/u);
+assert.match(editorCancelHandlerSource, /if \(editorDirty\)[\s\S]+chooseUnsavedChangesAction\(/u);
+assert.match(editorCancelHandlerSource, /decision === "cancel"[\s\S]+return false/u);
+assert.match(editorCancelHandlerSource, /decision === "save"[\s\S]+saveCurrentEditorChanges\(\)/u);
+assert.match(
+  editorCancelHandlerSource,
+  /return discardCurrentEditorChanges\(\)/u,
+  "После выбора «Не сохранять» нижняя кнопка должна вернуть исходный PDF"
 );
-assert.ok(
-  editorCancelHandlerSource.indexOf("discardGeneratedDocumentEditor")
-    < editorCancelHandlerSource.indexOf("setPreviewMode"),
-  "После серверной отмены изменений интерфейс должен вернуться к исходному PDF"
+assert.match(previewModalSource, /cancelButton\?\.addEventListener\("click", requestCancelEditorOrPreview\)/u);
+assert.match(previewModalSource, /let editorStartPending = false;\s+let editorStartSequence = 0;/u);
+assert.match(
+  previewModalSource,
+  /const finish = \(confirmed\) => \{[\s\S]+settled = true;\s+editorStartSequence \+= 1;/u,
+  "Закрытие предпросмотра должно инвалидировать незавершённый запуск ONLYOFFICE"
+);
+assert.match(
+  previewModalSource,
+  /editButton\?\.addEventListener\("click", async \(\) => \{[\s\S]+const startSequence = \+\+editorStartSequence;\s+editorStartPending = true;[\s\S]+const requestedSession = await requestGeneratedDocumentEditor\([\s\S]+if \(settled \|\| startSequence !== editorStartSequence\) \{[\s\S]+await discardGeneratedDocumentEditor\([\s\S]+requestedSession\.editorToken[\s\S]+\.catch\(\(\) => null\);\s+return;[\s\S]+setEditorMode\(requestedSession\)/u,
+  "Поздний ответ editor-start после закрытия должен удалить созданную сессию, а не открыть редактор в удалённом окне"
+);
+assert.match(
+  previewModalSource,
+  /finally \{\s+if \(startSequence === editorStartSequence\) editorStartPending = false;\s+if \(!settled && startSequence === editorStartSequence\)/u,
+  "Завершение устаревшего editor-start не должно менять состояние нового или закрытого предпросмотра"
 );
 
 const pipelineStart = appSource.indexOf("async function downloadStudentDocumentFromTemplate");

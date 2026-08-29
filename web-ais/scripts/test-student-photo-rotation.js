@@ -145,6 +145,20 @@ assert.match(photoEditorSource, /backdrop\.querySelector\("\[data-photo-crop-rot
 assert.match(photoEditorSource, /rotateStudentPhotoNormalizedRect\(sourceSelection, rotation\)/u);
 assert.match(photoEditorSource, /createStudentPhotoCropCanvas\(image, normalizedSourceSelection, rotation, 1600\)/u);
 assert.match(photoEditorSource, /исходный файл не изменяется/u);
+assert.match(photoEditorSource, /previousEditor\.closeStudentPhotoCropEditor\?\.\(\{ force: true \}\)/u);
+assert.match(photoEditorSource, /let initialEditSnapshot = null/u);
+assert.match(photoEditorSource, /const captureEditSnapshot = \(\) => JSON\.stringify\(\{[\s\S]*?rotation,[\s\S]*?selection:/u);
+assert.match(photoEditorSource, /const hasUnsavedCropChanges = \(\) => \([\s\S]*?captureEditSnapshot\(\) !== initialEditSnapshot/u);
+assert.match(photoEditorSource, /initialEditSnapshot = captureEditSnapshot\(\)/u);
+assert.match(
+  photoEditorSource,
+  /const requestCloseStudentPhotoCropEditor = async \(\{ force = false \} = \{\}\) => \{[\s\S]*?!force && hasUnsavedCropChanges\(\)[\s\S]*?chooseUnsavedChangesAction\([\s\S]*?decision === "cancel"[\s\S]*?decision === "save"[\s\S]*?useButton\.click\(\)[\s\S]*?finish\(null\)/u,
+  "Закрытие изменённой области фото должно предлагать использовать, отбросить или отменить правки"
+);
+assert.match(photoEditorSource, /backdrop\.closeStudentPhotoCropEditor = requestCloseStudentPhotoCropEditor/u);
+assert.match(photoEditorSource, /close-student-photo-editor[\s\S]*?requestCloseStudentPhotoCropEditor\(\)/u);
+assert.match(photoEditorSource, /event\.target === backdrop\) requestCloseStudentPhotoCropEditor\(\)/u);
+assert.match(photoEditorSource, /event\.key === "Escape"\) requestCloseStudentPhotoCropEditor\(\)/u);
 
 const ocrCropperSource = extractFunction("openStudentDocumentPhotoCropper");
 assert.match(ocrCropperSource, /data-ocr-crop-rotate-left/u);
@@ -168,6 +182,24 @@ assert.match(ocrCropperSource, /rotateRightButton\.addEventListener\("click", \(
 assert.match(ocrCropperSource, /selection: \{ \.\.\.normalizedSourceSelection \}/u);
 assert.match(ocrCropperSource, /createStudentPhotoCropCanvas\([\s\S]*?normalizedSourceSelection,[\s\S]*?rotation,/u);
 assert.match(ocrCropperSource, /image\.style\.transform = `translate/u);
+assert.match(ocrCropperSource, /existingCropper\?\.closeStudentDocumentRegionSelector\?\.\(\{ force: true \}\)/u);
+assert.match(ocrCropperSource, /let hasUnsavedCropChanges = false/u);
+assert.match(
+  ocrCropperSource,
+  /const requestCloseStudentDocumentPhotoCropper = async \(\{ force = false, cancelled = true \} = \{\}\) => \{[\s\S]*?!force && hasUnsavedCropChanges[\s\S]*?chooseUnsavedChangesAction\([\s\S]*?decision === "cancel"[\s\S]*?decision === "save"[\s\S]*?await useCurrentStudentDocumentCrop\(\)[\s\S]*?finishCloseStudentDocumentPhotoCropper\(cancelled\)/u,
+  "Выбор области OCR должен использовать общий диалог несохранённых изменений"
+);
+assert.match(ocrCropperSource, /backdrop\.closeStudentDocumentRegionSelector = requestCloseStudentDocumentPhotoCropper/u);
+assert.match(ocrCropperSource, /hasUnsavedCropChanges = true;[\s\S]*?paintSelection\(\)/u);
+assert.match(ocrCropperSource, /rotateDocumentPage[\s\S]*?hasUnsavedCropChanges = true/u);
+assert.match(ocrCropperSource, /close-student-photo-cropper[\s\S]*?requestCloseStudentDocumentPhotoCropper\(\)/u);
+assert.match(
+  ocrCropperSource,
+  /choose-student-photo-file[\s\S]*?await requestCloseStudentDocumentPhotoCropper\(\{ cancelled: false \}\)[\s\S]*?options\.onChooseFile/u,
+  "Переход к другому OCR-файлу не должен обходить защиту изменённого выделения"
+);
+assert.match(ocrCropperSource, /event\.target === backdrop\) requestCloseStudentDocumentPhotoCropper\(\)/u);
+assert.match(ocrCropperSource, /event\.key === "Escape"\) requestCloseStudentDocumentPhotoCropper\(\)/u);
 
 assert.match(stylesSource, /\.student-document-photo-cropper-stage img\s*\{[^}]*position:\s*absolute;[^}]*max-height:\s*none;/u);
 assert.match(stylesSource, /\.student-document-photo-cropper-rotation\s*\{/u);

@@ -9052,6 +9052,39 @@ body.long-press-dragging * {
   box-shadow: 0 24px 70px rgba(17, 24, 39, 0.28);
 }
 
+.unsaved-changes-dialog-backdrop {
+  z-index: 13000;
+  background: rgba(17, 24, 39, 0.58);
+}
+
+.unsaved-changes-dialog {
+  width: min(520px, 100%);
+  overflow: hidden;
+}
+
+.unsaved-changes-dialog-message {
+  margin: 0;
+  padding: 18px 16px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.unsaved-changes-dialog-actions {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 520px) {
+  .unsaved-changes-dialog-backdrop {
+    padding: 12px;
+  }
+
+  .unsaved-changes-dialog-actions .primary-button,
+  .unsaved-changes-dialog-actions .ghost-button {
+    flex: 1 1 calc(50% - 26px);
+  }
+}
+
 .student-database-conflicts-backdrop {
   z-index: 1300;
 }
