@@ -25379,6 +25379,12 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 .advertising-results-panel {
   display: grid;
   gap: 10px;
+  scroll-margin-top: 76px;
+}
+
+.advertising-results-panel:focus {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
 }
 
 .advertising-history-panel {
@@ -25421,6 +25427,119 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   border-radius: 8px;
   background: #fff;
   -webkit-overflow-scrolling: touch;
+}
+
+.advertising-history-older-details {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faf9;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.advertising-history-older-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 8px 11px;
+  color: #35655b;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  list-style: none;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.advertising-history-older-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.advertising-history-older-details > summary::before {
+  content: "›";
+  display: inline-grid;
+  width: 17px;
+  flex: 0 0 17px;
+  place-items: center;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  transition: color 140ms ease, transform 160ms ease;
+}
+
+.advertising-history-older-details > summary > span {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.advertising-history-older-details > summary > strong {
+  min-width: 27px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #e8f3ef;
+  padding: 3px 8px;
+  color: #35655b;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.advertising-history-older-details > summary:hover {
+  background: #eef7f4;
+  color: var(--teal);
+}
+
+.advertising-history-older-details > summary:hover::before {
+  color: var(--teal);
+}
+
+.advertising-history-older-details > summary:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
+}
+
+.advertising-history-older-details[open] {
+  border-color: #bad9d1;
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(15, 118, 110, 0.07);
+}
+
+.advertising-history-older-details[open] > summary {
+  border-bottom: 1px solid #dce9e5;
+  background: #f0f8f5;
+  color: var(--teal);
+}
+
+.advertising-history-older-details[open] > summary::before {
+  color: var(--teal);
+  transform: rotate(90deg);
+}
+
+.advertising-history-older-content {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  max-height: min(52vh, 560px);
+  overflow: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+  background: #fff;
+  -webkit-overflow-scrolling: touch;
+}
+
+.advertising-history-older-content > .advertising-history-table {
+  border-radius: 0;
+}
+
+.advertising-history-older-content .advertising-history-table-wrap {
+  max-height: none;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
 }
 
 .advertising-history-table {
@@ -26116,6 +26235,16 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   }
 
   .advertising-history-table-wrap {
+    max-height: min(58vh, 480px);
+    scrollbar-gutter: auto;
+  }
+
+  .advertising-history-older-details > summary {
+    min-height: 44px;
+    padding: 8px 9px;
+  }
+
+  .advertising-history-older-content {
     max-height: min(58vh, 480px);
     scrollbar-gutter: auto;
   }

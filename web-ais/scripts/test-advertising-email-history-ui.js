@@ -49,6 +49,11 @@ assert.match(
   "Для таблицы рекламных запросов требуется отдельное состояние загрузки и копирования."
 );
 assert.match(advertisingState, /deletingRunId:\s*["']["']/u);
+assert.match(
+  advertisingState,
+  /olderExpanded:\s*false/u,
+  "Старые рекламные запросы должны быть свёрнуты при первом открытии."
+);
 assert.match(appSource, /ADVERTISING_EMAIL_VIEW_CACHE_KEY\s*=\s*["']advertising-email-view-v1["']/u);
 assert.match(appSource, /readBrowserOfflineValue\(ADVERTISING_EMAIL_VIEW_CACHE_KEY\)/u);
 assert.match(appSource, /hydrateAdvertisingEmailViewCache\(advertisingSnapshot\)/u);
@@ -98,6 +103,36 @@ assert.match(collectFunction, /advertising\.result\s*=\s*payload/u);
 assert.match(collectFunction, /advertising\.resultLoaded\s*=\s*true/u);
 assert.match(
   collectFunction,
+  /if\s*\(\s*newUnique\s*>\s*0\s*\)[\s\S]*?advertising\.filters\s*=\s*\{\s*query:\s*["']["']\s*,\s*source:\s*["']["']\s*,\s*status:\s*["']new["']\s*\}/u,
+  "После успешного поиска новых адресов поиск и источник должны очищаться, а таблица — переключаться на статус «Новые»."
+);
+assert.match(
+  collectFunction,
+  /state\.tablePages\.advertisingEmails\s*=\s*1/u,
+  "После сбора таблица адресов должна открываться с первой страницы."
+);
+assert.match(
+  collectFunction,
+  /document\.querySelector\(["']\[data-advertising-results\]["']\)[\s\S]{0,500}?\.scrollIntoView\s*\(/u,
+  "После нахождения новых адресов интерфейс должен прокрутиться к таблице адресов."
+);
+assert.match(
+  collectFunction,
+  /matchMedia\?\.\(["']\(prefers-reduced-motion:\s*reduce\)["']\)[\s\S]{0,300}?behavior:\s*reduceMotion\s*\?\s*["']auto["']\s*:\s*["']smooth["']/u,
+  "Автопрокрутка должна учитывать системное ограничение анимации."
+);
+assert.match(
+  collectFunction,
+  /resultsPanel\.focus\(\{\s*preventScroll:\s*true\s*\}\)[\s\S]{0,160}?resultsPanel\.scrollIntoView/u,
+  "После перерисовки клавиатурный фокус должен переходить к показанной таблице адресов."
+);
+assert.match(
+  collectFunction,
+  /(?:let|var)\s+revealNewAddresses\s*=\s*false[\s\S]*?if\s*\(\s*newUnique\s*>\s*0\s*\)[\s\S]*?revealNewAddresses\s*=\s*true[\s\S]*?if\s*\(\s*revealNewAddresses\s*\)[\s\S]*?\[data-advertising-results\][\s\S]*?scrollIntoView/u,
+  "Прокрутка к адресам должна выполняться только когда текущий запуск действительно нашёл новые контакты."
+);
+assert.match(
+  collectFunction,
   /(?:await\s+|queueMicrotask\(\(\)\s*=>\s*)loadAdvertisingEmailHistory\(\{\s*force:\s*true\s*\}\)\)?/u,
   "После успешного POST-поиска таблица запросов должна принудительно обновляться."
 );
@@ -110,7 +145,13 @@ assert.doesNotMatch(
 const filterFunction = namedFunction(blocks, "getAdvertisingFilteredRows");
 assert.match(
   filterFunction,
-  /requestedStatus\s*===\s*["']new["'][^\n]*!row\.isNew[^\n]*row\.excluded/u
+  /requestedStatus\s*===\s*["']new["']\s*&&\s*!row\.isNew/u,
+  "Статус «Новые» должен включать все новые адреса, в том числе исключённые."
+);
+assert.doesNotMatch(
+  filterFunction,
+  /requestedStatus\s*===\s*["']new["'][^\n]*row\.excluded/u,
+  "Исключённые новые адреса не должны исчезать из режима «Новые»."
 );
 assert.match(filterFunction, /const query\s*=\s*String\(filters\.query/u);
 assert.match(filterFunction, /const sourceId\s*=\s*String\(filters\.source/u);
@@ -149,12 +190,26 @@ const renderFunction = namedFunction(blocks, "renderAdvertising");
 assert.match(renderFunction, /summary\.newUnique/u);
 assert.match(renderFunction, /summary\.newReady/u);
 assert.match(renderFunction, /<span>Новые<\/span>/u);
-assert.match(renderFunction, /<option value="new"[^>]*>Новые готовые<\/option>/u);
+assert.match(renderFunction, /<option value="new"[^>]*>Новые<\/option>/u);
 assert.match(
   renderFunction,
   /getAdvertisingFilteredRows\(\{\s*status:\s*"all",\s*sort:\s*false\s*\}\)/u,
   "Большой сохранённый снимок не должен сортироваться отдельно для каждого счётчика."
 );
+const advertisingKpiIndex = renderFunction.indexOf('class="advertising-kpi-grid"');
+const advertisingControlsIndex = renderFunction.indexOf('class="panel advertising-controls-panel"');
+const advertisingResultsIndex = renderFunction.indexOf("data-advertising-results");
+const advertisingHistoryIndex = renderFunction.indexOf("renderAdvertisingHistory()");
+assert.ok(advertisingKpiIndex >= 0, "Не найден блок плиток статистики рекламы.");
+assert.ok(advertisingControlsIndex > advertisingKpiIndex, "Плитки статистики должны располагаться выше панели сборщика.");
+assert.ok(advertisingResultsIndex >= 0, "Таблица адресов должна иметь якорь data-advertising-results.");
+assert.ok(advertisingHistoryIndex > advertisingResultsIndex, "Таблица адресов должна располагаться выше истории рекламных запросов.");
+assert.match(
+  renderFunction,
+  /<section\b[^>]*data-advertising-results[^>]*tabindex=["']-1["']/u,
+  "Панель результатов должна принимать программный фокус после сбора."
+);
+assert.match(stylesSource, /\.advertising-results-panel\s*\{[\s\S]*?scroll-margin-top:\s*\d+px/u);
 
 const sourcePickerToggle = /<button\b[^>]*data-action="toggle-advertising-source-picker"[^>]*>[\s\S]*?<\/button>/u
   .exec(renderFunction)?.[0] || "";
@@ -187,8 +242,13 @@ assert.match(
 );
 assert.match(
   renderHistoryFunction,
-  /history\.rows[\s\S]*?rows\.map\(\((?:run|row)\)\s*=>/u,
-  "Строки таблицы должны строиться из state.advertising.history.rows."
+  /rows\.slice\(\s*0\s*,\s*2\s*\)/u,
+  "Без раскрытия должны показываться только два последних рекламных запроса."
+);
+assert.match(
+  renderHistoryFunction,
+  /rows\.slice\(\s*2\s*\)/u,
+  "Запросы старше двух последних должны формировать отдельный сворачиваемый список."
 );
 const perRunCopyButton = /<button\b[^>]*data-action="copy-advertising-history-(?:new|run)"[^>]*>[\s\S]*?<\/button>/u
   .exec(renderHistoryFunction)?.[0] || "";
@@ -216,6 +276,29 @@ assert.match(historySourceDetails, /advertising-history-sources/u);
 assert.match(historySourceDetails, /source\?\.status === "error"/u);
 assert.match(renderHistoryFunction, /\$\{sources\.length \? `[\s\S]*?` : "—"\}/u);
 assert.match(stylesSource, /\.advertising-history-source-details\s*>\s*summary/u);
+assert.match(
+  stylesSource,
+  /\.advertising-history-older-details\s*>\s*summary:focus-visible\s*\{[\s\S]*?outline:\s*2px\s+solid\s+var\(--teal\)/u,
+  "Кнопка раскрытия старых запросов должна иметь контрастный индикатор фокуса."
+);
+const olderHistoryDetails = /<details\b[^>]*data-advertising-history-older[^>]*>[\s\S]*?<\/details>/u
+  .exec(renderHistoryFunction)?.[0] || "";
+assert.ok(olderHistoryDetails, "Старые рекламные запросы должны находиться в отдельном details-блоке.");
+const olderHistoryOpeningTag = olderHistoryDetails.match(/^<details\b[^>]*>/u)?.[0] || "";
+assert.match(
+  olderHistoryOpeningTag,
+  /\$\{\s*history\.olderExpanded\s*\?\s*["']open["']\s*:\s*["']["']\s*\}/u,
+  "Открытое состояние старых запросов должно управляться history.olderExpanded."
+);
+const olderHistoryOpeningWithoutControlledState = olderHistoryOpeningTag.replace(
+  /\$\{\s*history\.olderExpanded\s*\?\s*["']open["']\s*:\s*["']["']\s*\}/u,
+  ""
+);
+assert.doesNotMatch(
+  olderHistoryOpeningWithoutControlledState,
+  /\bopen(?:\s|=|>)/u,
+  "Список старых запросов не должен быть безусловно раскрыт."
+);
 
 const copyButton = /<button\b[^>]*data-action="copy-new-advertising-emails"[\s\S]*?<\/button>/u
   .exec(renderFunction)?.[0] || "";
@@ -287,6 +370,11 @@ assert.match(
   /getAdvertisingFilteredRows\(\{\s*status:\s*["']new["']\s*\}\)/u,
   "Копирование новых контактов должно сохранять текущие query/source-фильтры."
 );
+assert.match(
+  copyHandler,
+  /\.filter\(\s*\(?row\)?\s*=>\s*!row\.excluded\s*\)/u,
+  "Копировать можно только новые адреса, не попавшие в исключения."
+);
 assert.match(copyHandler, /getAdvertisingClipboardEmails/u);
 assert.match(copyHandler, /\.join\(["']\\r\\n["']\)/u);
 assert.doesNotMatch(copyHandler, /status:\s*["']ready["']/u);
@@ -330,6 +418,21 @@ assert.match(historyLoader, /(?:advertising\.history|history)\.rows\s*=\s*Array\
 assert.match(historyLoader, /(?:advertising\.history|history)\.loaded\s*=\s*true/u);
 assert.match(historyLoader, /(?:advertising\.history|history)\.loading\s*=\s*false/u);
 assert.match(historyLoader, /persistAdvertisingEmailViewCache/u);
+assert.match(
+  historyLoader,
+  /document\.activeElement\?\.matches\?\.\(["']\[data-advertising-results\]["']\)[\s\S]{0,420}?\.focus\(\{\s*preventScroll:\s*true\s*\}\)/u,
+  "Фоновое обновление истории не должно терять фокус панели новых адресов."
+);
+
+const olderHistoryToggleStart = bindFunction.indexOf("[data-advertising-history-older]");
+assert.ok(olderHistoryToggleStart >= 0, "Не найден обработчик раскрытия старых рекламных запросов.");
+const olderHistoryToggleHandler = bindFunction.slice(olderHistoryToggleStart, olderHistoryToggleStart + 600);
+assert.match(olderHistoryToggleHandler, /addEventListener\(["']toggle["']/u);
+assert.match(
+  olderHistoryToggleHandler,
+  /state\.advertising\.history\.olderExpanded\s*=\s*Boolean\([^)]*\.open\)/u,
+  "Обработчик details должен сохранять фактическое состояние раскрытия."
+);
 
 const resultLoader = namedFunction(blocks, "loadAdvertisingEmailResult");
 assert.match(resultLoader, /knownRunId=\$\{encodeURIComponent\(knownRunId\)\}/u);
