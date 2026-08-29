@@ -7,6 +7,8 @@ param(
   [switch]$ShowTray,
   [switch]$AsJson,
   [switch]$Elevated,
+  [string]$InteractiveUser = "",
+  [string]$SourceAppRoot = "",
   [ValidateRange(5, 600)]
   [int]$TimeoutSeconds = 240
 )
@@ -20,13 +22,23 @@ $OutputEncoding = $utf8
 $serviceName = "AisDopobrWeb"
 $trayTaskName = "AisDopobrServiceTray"
 $workerTaskName = "AisDopobrInteractiveHost"
-$appRoot = Split-Path -Parent $PSScriptRoot
-$installerPath = Join-Path $PSScriptRoot "install-ais-service.ps1"
+$scriptAppRoot = Split-Path -Parent $PSScriptRoot
+$appRoot = if ([string]::IsNullOrWhiteSpace($SourceAppRoot)) {
+  $scriptAppRoot
+} else {
+  [IO.Path]::GetFullPath($SourceAppRoot)
+}
+$installerPath = Join-Path $PSScriptRoot "setup-ais-windows-service.ps1"
 $trayPath = Join-Path $PSScriptRoot "ais-service-tray.ps1"
 $logViewerPath = Join-Path $PSScriptRoot "show-ais-service-log.ps1"
 $legacyStopPath = Join-Path $PSScriptRoot "stop-lan-system.ps1"
 $localUrl = "http://127.0.0.1:8081/"
 $healthUrl = "http://127.0.0.1:8081/api/health"
+$interactiveUserName = if ([string]::IsNullOrWhiteSpace($InteractiveUser)) {
+  [Security.Principal.WindowsIdentity]::GetCurrent().Name
+} else {
+  $InteractiveUser.Trim()
+}
 
 function Test-IsAdministrator {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -39,6 +51,33 @@ function Quote-ProcessArgument([string]$Value) {
   return '"' + $Value.Replace('"', '\"') + '"'
 }
 
+function Resolve-ElevationSafePath([string]$PathValue) {
+  $fullPath = [IO.Path]::GetFullPath($PathValue)
+  $root = [IO.Path]::GetPathRoot($fullPath)
+  if ([string]::IsNullOrWhiteSpace($root)) { return $fullPath }
+  $driveName = $root.TrimEnd('\')
+  $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$driveName'" -ErrorAction SilentlyContinue
+  if (-not $disk -or [int]$disk.DriveType -ne 4) { return $fullPath }
+
+  $mapping = Get-SmbMapping -LocalPath $driveName -ErrorAction SilentlyContinue | Select-Object -First 1
+  $remotePath = if ($mapping) { [string]$mapping.RemotePath } else { [string]$disk.ProviderName }
+  $relativePath = $fullPath.Substring($root.Length)
+  $remoteMatch = [regex]::Match($remotePath, '^\\\\(?<server>[^\\]+)\\(?<share>[^\\]+)\\?$')
+  if ($remoteMatch.Success) {
+    $serverName = $remoteMatch.Groups["server"].Value
+    $localNames = @($env:COMPUTERNAME, "localhost", ".")
+    if ($localNames -contains $serverName) {
+      $shareName = $remoteMatch.Groups["share"].Value
+      $share = Get-CimInstance Win32_Share -Filter "Name='$($shareName.Replace("'", "''"))'" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+      if ($share -and -not [string]::IsNullOrWhiteSpace([string]$share.Path)) {
+        return [IO.Path]::GetFullPath((Join-Path ([string]$share.Path) $relativePath))
+      }
+    }
+  }
+  return Join-Path $remotePath $relativePath
+}
+
 function Get-ControlElevationArguments {
   $arguments = New-Object Collections.Generic.List[string]
   $arguments.Add("-NoLogo")
@@ -46,12 +85,16 @@ function Get-ControlElevationArguments {
   $arguments.Add("-ExecutionPolicy")
   $arguments.Add("Bypass")
   $arguments.Add("-File")
-  $arguments.Add($PSCommandPath)
+  $arguments.Add((Resolve-ElevationSafePath $PSCommandPath))
   $arguments.Add("-Action")
   $arguments.Add($Action)
   $arguments.Add("-TimeoutSeconds")
   $arguments.Add([string]$TimeoutSeconds)
   $arguments.Add("-Elevated")
+  $arguments.Add("-InteractiveUser")
+  $arguments.Add($interactiveUserName)
+  $arguments.Add("-SourceAppRoot")
+  $arguments.Add($appRoot)
   if ($InstallIfMissing) { $arguments.Add("-InstallIfMissing") }
   if ($OpenBrowser) { $arguments.Add("-OpenBrowser") }
   if ($ShowTray) { $arguments.Add("-ShowTray") }
@@ -148,7 +191,8 @@ function Install-AisService {
   }
   $arguments = @(
     "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $installerPath,
-    "-Action", "Install", "-StartService", "-StartTray"
+    "-Action", "Install", "-AppRoot", $scriptAppRoot, "-InteractiveAppRoot", $appRoot,
+    "-InteractiveUser", $interactiveUserName, "-StartService", "-StartTray"
   )
   if (Test-IsAdministrator) {
     & powershell.exe @arguments
@@ -210,6 +254,10 @@ function Stop-AisService {
     Stop-Service -Name $serviceName
     Wait-ServiceState "Stopped" 240
   }
+  Start-Sleep -Milliseconds 500
+  if (Test-AisHealth) {
+    throw "Служба Windows остановлена, но локальная АИС продолжает отвечать. Откройте окно журнала запуска."
+  }
   Write-Host "Служба остановлена. Контейнеры Docker оставлены работающими."
 }
 
@@ -264,7 +312,7 @@ switch ($Action) {
       serviceStatus = if ($service) { [string]$service.Status } else { "NotInstalled" }
       workerTaskName = $workerTaskName
       workerTaskState = if ($workerTask) { [string]$workerTask.State } else { "NotInstalled" }
-      workerLastResult = if ($workerInfo) { [int]$workerInfo.LastTaskResult } else { $null }
+      workerLastResult = if ($workerInfo) { [long]$workerInfo.LastTaskResult } else { $null }
       healthy = $healthy
       localUrl = $localUrl
       state = if (-not $service) {

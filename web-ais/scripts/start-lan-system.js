@@ -564,7 +564,13 @@ function deploymentWatcherStatus() {
 }
 
 function writeStatus(values) {
-  fs.writeFileSync(statusPath, `${JSON.stringify(values, null, 2)}\n`, "utf8");
+  const temporaryPath = `${statusPath}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(values, null, 2)}\n`, "utf8");
+    fs.renameSync(temporaryPath, statusPath);
+  } finally {
+    fs.rmSync(temporaryPath, { force: true });
+  }
 }
 
 async function ensureServers(commonEnvironment, status) {

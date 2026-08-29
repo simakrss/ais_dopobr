@@ -10,7 +10,7 @@ const appRoot = path.resolve(__dirname, "..");
 const repositoryRoot = path.resolve(appRoot, "..");
 const bootstrapPath = path.join(__dirname, "bootstrap-local-system.ps1");
 const serviceControlPath = path.join(__dirname, "control-ais-service.ps1");
-const serviceInstallerPath = path.join(__dirname, "install-ais-service.ps1");
+const serviceInstallerPath = path.join(__dirname, "setup-ais-windows-service.ps1");
 const startupUpdatePath = path.join(__dirname, "sync-and-deploy-startup.ps1");
 const deployPath = path.join(__dirname, "deploy-lms.ps1");
 const rootLauncherPath = path.join(repositoryRoot, "ЗАПУСТИТЬ АИС.bat");
@@ -85,18 +85,20 @@ for (const launcherSource of [rootLauncherSource, localLauncherSource]) {
     launcherSource,
     /control-ais-service\.ps1" -Action Start -InstallIfMissing -OpenBrowser -ShowTray/u
   );
-  assert.match(launcherSource, /install-ais-service\.ps1" -Action Validate/u);
+  assert.match(launcherSource, /setup-ais-windows-service\.ps1" -Action Validate/u);
   assert.doesNotMatch(launcherSource, /bootstrap-local-system\.ps1/u);
 }
 for (const launcherSource of [rootStopSource, localStopSource]) {
   assert.match(launcherSource, /control-ais-service\.ps1" -Action Stop/u);
-  assert.match(launcherSource, /install-ais-service\.ps1" -Action Validate/u);
+  assert.match(launcherSource, /setup-ais-windows-service\.ps1" -Action Validate/u);
   assert.doesNotMatch(launcherSource, /stop-lan-system\.ps1/u);
 }
 assert.doesNotMatch(rootLauncherSource, /Установите Node\.js/u);
 assert.doesNotMatch(localLauncherSource, /Установите Node\.js/u);
 assert.match(serviceControlSource, /stop-lan-system\.ps1/u);
 assert.match(serviceControlSource, /-KeepDocker/u);
+assert.match(serviceControlSource, /Resolve-ElevationSafePath/u);
+assert.match(serviceControlSource, /-InteractiveUser/u);
 assert.match(serviceInstallerSource, /\[ValidateSet\("Install", "Uninstall", "Validate"\)\]/u);
 assert.match(serviceInstallerSource, /AIS_SERVICE_TEST_MODE/u);
 assert.match(startSource, /port:\s*19081/u);
@@ -122,6 +124,7 @@ assert.match(startSource, /existingSystemRuntimeMatches/u);
 assert.match(startSource, /isExpectedNodeServiceProcess\(launcherPid,[\s\S]*?start-lan-system\.js/u);
 assert.match(startSource, /onlyOfficeContainerSecretMatches/u);
 assert.match(startSource, /stopExpectedNodeService/u);
+assert.match(startSource, /writeStatus[\s\S]*?renameSync\(temporaryPath, statusPath\)/u);
 assert.match(startSource, /payload\.runtimeSecrets\?\.gateway/u);
 assert.match(startSource, /payload\.runtimeSecrets\?\.documentConverter/u);
 assert.match(appServerSource, /LOCAL_ONLYOFFICE_JWT_SECRET_PATH/u);
@@ -135,6 +138,9 @@ assert.match(remoteServicesSource, /ONLYOFFICE_JWT_SECRET = \$OnlyOfficeSecret/u
 assert.match(onlyOfficeComposeSource, /JWT_SECRET: "\$\{ONLYOFFICE_JWT_SECRET:\?Set ONLYOFFICE_JWT_SECRET\}"/u);
 assert.match(stopSource, /@\(8081, 19081\)/u);
 assert.match(stopSource, /\$candidates\s*=\s*@\(\s*@\([\s\S]*?Where-Object/u);
+assert.match(stopSource, /taskkill\.exe[\s\S]*?\/PID[\s\S]*?\/T[\s\S]*?\/F/u);
+assert.match(stopSource, /\.cleanup-worker\.lock/u);
+assert.match(stopSource, /FromUnixTimeMilliseconds/u);
 assert.match(localServerSource, /AIS_APP_SERVER_ORIGIN \|\| "http:\/\/127\.0\.0\.1:19081"/u);
 
 if (process.platform === "win32") {

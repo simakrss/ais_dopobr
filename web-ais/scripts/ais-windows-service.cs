@@ -34,7 +34,6 @@ namespace AisDopobrWebService
         private readonly ManualResetEvent consoleExit = new ManualResetEvent(false);
 
         private Timer workerTimer;
-        private StreamWriter logWriter;
         private volatile bool stopping;
         private int stopStarted;
         private string lastSchedulerFailure;
@@ -42,6 +41,7 @@ namespace AisDopobrWebService
 
         internal AisWindowsService(
             string appRoot,
+            string stopScriptPath,
             string workerTaskName,
             bool consoleMode,
             string mappedDrive,
@@ -52,7 +52,9 @@ namespace AisDopobrWebService
             this.consoleMode = consoleMode;
             this.mappedDrive = mappedDrive;
             this.mappedTarget = mappedTarget;
-            stopScript = Path.Combine(appRoot, "scripts", "stop-lan-system.ps1");
+            stopScript = String.IsNullOrWhiteSpace(stopScriptPath)
+                ? Path.Combine(appRoot, "scripts", "stop-lan-system.ps1")
+                : Path.GetFullPath(stopScriptPath);
             logPath = Path.Combine(appRoot, "tmp", "lan-system", "service-launch.log");
 
             ServiceName = WindowsServiceName;
@@ -295,7 +297,9 @@ namespace AisDopobrWebService
                     "Bypass",
                     "-File",
                     stopScript,
-                    "-KeepDocker"
+                    "-KeepDocker",
+                    "-AppRoot",
+                    appRoot
                 },
                 appRoot,
                 new UTF8Encoding(false));
@@ -496,22 +500,6 @@ namespace AisDopobrWebService
         {
             string directory = Path.GetDirectoryName(logPath);
             Directory.CreateDirectory(directory);
-
-            lock (logSync)
-            {
-                if (logWriter != null)
-                {
-                    return;
-                }
-
-                FileStream stream = new FileStream(
-                    logPath,
-                    FileMode.Append,
-                    FileAccess.Write,
-                    FileShare.ReadWrite | FileShare.Delete);
-                logWriter = new StreamWriter(stream, new UTF8Encoding(false));
-                logWriter.AutoFlush = true;
-            }
         }
 
         private void WriteLog(string source, string message)
@@ -519,9 +507,29 @@ namespace AisDopobrWebService
             string line = "[" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "] [" + source + "] " + message;
             lock (logSync)
             {
-                if (logWriter != null)
+                for (int attempt = 0; ; attempt++)
                 {
-                    logWriter.WriteLine(line);
+                    try
+                    {
+                        using (FileStream stream = new FileStream(
+                            logPath,
+                            FileMode.Append,
+                            FileAccess.Write,
+                            FileShare.Read | FileShare.Delete))
+                        using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false)))
+                        {
+                            writer.WriteLine(line);
+                        }
+                        break;
+                    }
+                    catch (IOException)
+                    {
+                        if (attempt >= 39)
+                        {
+                            throw;
+                        }
+                        Thread.Sleep(25);
+                    }
                 }
             }
 
@@ -548,23 +556,7 @@ namespace AisDopobrWebService
 
         private void CloseLog()
         {
-            lock (logSync)
-            {
-                if (logWriter == null)
-                {
-                    return;
-                }
-
-                try
-                {
-                    logWriter.Flush();
-                    logWriter.Dispose();
-                }
-                finally
-                {
-                    logWriter = null;
-                }
-            }
+            // Each line is appended under an exclusive writer handle and closed immediately.
         }
 
         private static ProcessStartInfo CreateHiddenStartInfo(
@@ -785,6 +777,7 @@ namespace AisDopobrWebService
         private sealed class Options
         {
             internal string AppRoot;
+            internal string StopScriptPath;
             internal string WorkerTaskName = AisWindowsService.DefaultWorkerTaskName;
             internal string MappedDrive;
             internal string MappedTarget;
@@ -831,11 +824,16 @@ namespace AisDopobrWebService
             }
 
             string appRoot;
+            string stopScriptPath = null;
             string mappedDrive = null;
             string mappedTarget = null;
             try
             {
                 appRoot = Path.GetFullPath(options.AppRoot.Trim());
+                if (!String.IsNullOrWhiteSpace(options.StopScriptPath))
+                {
+                    stopScriptPath = Path.GetFullPath(options.StopScriptPath.Trim());
+                }
                 NormalizeMapping(options, out mappedDrive, out mappedTarget);
             }
             catch (Exception exception)
@@ -855,6 +853,7 @@ namespace AisDopobrWebService
                 EnsureDiagnosticConsole();
                 return RunInConsole(
                     appRoot,
+                    stopScriptPath,
                     options.WorkerTaskName,
                     mappedDrive,
                     mappedTarget);
@@ -863,6 +862,7 @@ namespace AisDopobrWebService
             ServiceBase.Run(new ServiceBase[] {
                 new AisWindowsService(
                     appRoot,
+                    stopScriptPath,
                     options.WorkerTaskName,
                     false,
                     mappedDrive,
@@ -873,12 +873,14 @@ namespace AisDopobrWebService
 
         private static int RunInConsole(
             string appRoot,
+            string stopScriptPath,
             string workerTaskName,
             string mappedDrive,
             string mappedTarget)
         {
             using (AisWindowsService service = new AisWindowsService(
                 appRoot,
+                stopScriptPath,
                 workerTaskName,
                 true,
                 mappedDrive,
@@ -954,6 +956,14 @@ namespace AisDopobrWebService
                 else if (argument.StartsWith("--worker-task=", StringComparison.OrdinalIgnoreCase))
                 {
                     options.WorkerTaskName = argument.Substring("--worker-task=".Length);
+                }
+                else if (String.Equals(argument, "--stop-script", StringComparison.OrdinalIgnoreCase))
+                {
+                    options.StopScriptPath = RequireValue(args, ref index, "--stop-script");
+                }
+                else if (argument.StartsWith("--stop-script=", StringComparison.OrdinalIgnoreCase))
+                {
+                    options.StopScriptPath = argument.Substring("--stop-script=".Length);
                 }
                 else if (String.Equals(argument, "--mapped-drive", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1059,9 +1069,9 @@ namespace AisDopobrWebService
         {
             Console.WriteLine("Usage:");
             Console.WriteLine(
-                "  ais-windows-service.exe --service --app-root <path> [--worker-task <name>]");
+                "  ais-windows-service.exe --service --app-root <path> [--stop-script <path>] [--worker-task <name>]");
             Console.WriteLine(
-                "  ais-windows-service.exe --console --app-root <path> [--worker-task <name>]");
+                "  ais-windows-service.exe --console --app-root <path> [--stop-script <path>] [--worker-task <name>]");
             Console.WriteLine(
                 "  Compatibility options: --mapped-drive Y: --mapped-target <path>");
         }

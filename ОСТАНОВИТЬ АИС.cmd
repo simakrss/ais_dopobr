@@ -5,12 +5,12 @@ title АИС Допобразование — остановка службы
 set "AIS_APP_DIR=%~dp0web-ais"
 call :log Начало остановки службы АИС.
 if not exist "%AIS_APP_DIR%\scripts\control-ais-service.ps1" goto :path_error
-if not exist "%AIS_APP_DIR%\scripts\install-ais-service.ps1" goto :path_error
+if not exist "%AIS_APP_DIR%\scripts\setup-ais-windows-service.ps1" goto :path_error
 pushd "%AIS_APP_DIR%"
 if errorlevel 1 goto :path_error
 
 if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" (
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\install-ais-service.ps1" -Action Validate
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\setup-ais-windows-service.ps1" -Action Validate
 ) else (
   call :log Отправлена команда остановки службы АИС. Контейнеры Docker будут сохранены.
   powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\control-ais-service.ps1" -Action Stop

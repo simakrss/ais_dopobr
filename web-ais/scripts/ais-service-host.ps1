@@ -26,18 +26,26 @@ function Write-ServiceLog([string]$Source, [string]$Message) {
     New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
   }
   $line = "[{0}] [{1}] {2}{3}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"), $Source, $Message, [Environment]::NewLine
-  $stream = New-Object IO.FileStream(
-    $serviceLogPath,
-    [IO.FileMode]::Append,
-    [IO.FileAccess]::Write,
-    [IO.FileShare]::ReadWrite
-  )
-  try {
-    $bytes = $utf8.GetBytes($line)
-    $stream.Write($bytes, 0, $bytes.Length)
-    $stream.Flush()
-  } finally {
-    $stream.Dispose()
+  for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    try {
+      $stream = New-Object IO.FileStream(
+        $serviceLogPath,
+        [IO.FileMode]::Append,
+        [IO.FileAccess]::Write,
+        ([IO.FileShare]::Read -bor [IO.FileShare]::Delete)
+      )
+      try {
+        $bytes = $utf8.GetBytes($line)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush()
+      } finally {
+        $stream.Dispose()
+      }
+      return
+    } catch [IO.IOException] {
+      if ($attempt -ge 39) { throw }
+      Start-Sleep -Milliseconds 25
+    }
   }
 }
 
@@ -166,7 +174,7 @@ function Ensure-ServiceDriveMapping([string]$Drive, [string]$Target) {
   if (-not $logicalDisk -or [int]$logicalDisk.DriveType -ne 3) {
     throw "Для служебного диска разрешена только локальная папка NTFS: $targetPath"
   }
-  $existing = @(& subst.exe 2>$null) | Where-Object { $_ -match "^$([regex]::Escape($driveName))\\:\\s*=>\\s*" } | Select-Object -First 1
+  $existing = @(& subst.exe 2>$null) | Where-Object { $_ -match "^$([regex]::Escape($driveName))\\:\s*=>\s*" } | Select-Object -First 1
   if ($existing) {
     $existingTarget = ([regex]::Replace([string]$existing, '^\S+\s*=>\s*', '')).Trim()
     if ([IO.Path]::GetFullPath($existingTarget).TrimEnd('\') -ine $targetPath.TrimEnd('\')) {

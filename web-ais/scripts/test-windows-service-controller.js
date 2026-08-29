@@ -10,7 +10,7 @@ const appRoot = path.resolve(__dirname, "..");
 const paths = {
   host: path.join(__dirname, "ais-service-host.ps1"),
   controller: path.join(__dirname, "control-ais-service.ps1"),
-  installer: path.join(__dirname, "install-ais-service.ps1"),
+  installer: path.join(__dirname, "setup-ais-windows-service.ps1"),
   tray: path.join(__dirname, "ais-service-tray.ps1"),
   logViewer: path.join(__dirname, "show-ais-service-log.ps1"),
   serviceSource: path.join(__dirname, "ais-windows-service.cs"),
@@ -28,6 +28,7 @@ const installerSource = read(paths.installer);
 const traySource = read(paths.tray);
 const logViewerSource = read(paths.logViewer);
 const serviceSource = read(paths.serviceSource);
+const stopSource = read(paths.stop);
 
 assert.match(serviceSource, /class AisWindowsService\s*:\s*ServiceBase/u);
 assert.match(serviceSource, /WindowsServiceName\s*=\s*"AisDopobrWeb"/u);
@@ -37,6 +38,7 @@ assert.match(serviceSource, /RunSchedulerCommand\("\/Run"/u);
 assert.match(serviceSource, /RunSchedulerCommand\("\/End"/u);
 assert.match(serviceSource, /new Timer\(/u);
 assert.match(serviceSource, /stop-lan-system\.ps1[\s\S]*?"-KeepDocker"/u);
+assert.match(serviceSource, /--stop-script/u);
 assert.match(serviceSource, /--mapped-drive/u);
 assert.match(serviceSource, /--service/u);
 assert.match(serviceSource, /--worker-task/u);
@@ -57,14 +59,21 @@ assert.match(controllerSource, /Stop-Service\s+-Name\s+\$serviceName/u);
 assert.match(controllerSource, /stop-lan-system\.ps1/u);
 assert.match(controllerSource, /-KeepDocker/u);
 assert.match(controllerSource, /show-ais-service-log\.ps1/u);
+assert.match(controllerSource, /setup-ais-windows-service\.ps1/u);
+assert.doesNotMatch(controllerSource, /Join-Path\s+\$PSScriptRoot\s+"install-ais-service\.ps1"/u);
 assert.match(installerSource, /start= delayed-auto/u);
 assert.match(installerSource, /failure[\s\S]*restart\/5000\/restart\/15000\/restart\/60000/u);
 assert.match(installerSource, /New-ScheduledTaskTrigger\s+-AtLogOn/u);
 assert.match(installerSource, /AisDopobrInteractiveHost/u);
 assert.match(installerSource, /Register-WorkerTask/u);
 assert.match(installerSource, /-LogonType\s+Interactive/u);
+assert.match(installerSource, /-RunLevel\s+Limited/u);
+assert.doesNotMatch(installerSource, /-RunLevel\s+Highest/u);
 assert.match(installerSource, /-MultipleInstances\s+IgnoreNew/u);
 assert.match(installerSource, /AIS_SERVICE_TEST_MODE/u);
+assert.match(installerSource, /serviceStopScriptPath/u);
+assert.match(installerSource, /Protect-ProgramDataRoot/u);
+assert.match(installerSource, /--stop-script/u);
 
 assert.match(traySource, /System\.Windows\.Forms/u);
 assert.match(traySource, /NotifyIcon/u);
@@ -78,6 +87,9 @@ assert.match(traySource, /Открыть папку журналов/u);
 assert.match(traySource, /127\.0\.0\.1:8081/u);
 assert.match(logViewerSource, /Get-Content[\s\S]*-Tail\s+200[\s\S]*-Wait/u);
 assert.match(logViewerSource, /service-launch\.log/u);
+assert.match(stopSource, /taskkill\.exe[\s\S]*?\/PID[\s\S]*?\/T[\s\S]*?\/F/u);
+assert.match(stopSource, /Stop-PreviewCleanupWorker/u);
+assert.match(stopSource, /\.cleanup-worker\.lock/u);
 
 if (process.platform === "win32") {
   for (const filePath of [paths.host, paths.controller, paths.installer, paths.tray, paths.logViewer]) {

@@ -6,10 +6,10 @@ call :log Начало остановки службы АИС.
 pushd "%~dp0"
 if errorlevel 1 goto :path_error
 if not exist ".\scripts\control-ais-service.ps1" goto :path_error
-if not exist ".\scripts\install-ais-service.ps1" goto :path_error
+if not exist ".\scripts\setup-ais-windows-service.ps1" goto :path_error
 
 if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" (
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\install-ais-service.ps1" -Action Validate
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\setup-ais-windows-service.ps1" -Action Validate
 ) else (
   call :log Отправлена команда остановки службы АИС. Контейнеры Docker будут сохранены.
   powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\control-ais-service.ps1" -Action Stop

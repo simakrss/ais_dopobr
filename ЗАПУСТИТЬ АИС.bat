@@ -6,12 +6,12 @@ set "AIS_APP_DIR=%~dp0web-ais"
 call :log Начало запуска службы АИС.
 if not exist "%AIS_APP_DIR%\app-server.js" goto :path_error
 if not exist "%AIS_APP_DIR%\scripts\control-ais-service.ps1" goto :controller_error
-if not exist "%AIS_APP_DIR%\scripts\install-ais-service.ps1" goto :controller_error
+if not exist "%AIS_APP_DIR%\scripts\setup-ais-windows-service.ps1" goto :controller_error
 pushd "%AIS_APP_DIR%"
 if errorlevel 1 goto :path_error
 
 if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" (
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\install-ais-service.ps1" -Action Validate
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\setup-ais-windows-service.ps1" -Action Validate
 ) else (
   call :log Запуск службы, иконки управления и локального сайта.
   powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\control-ais-service.ps1" -Action Start -InstallIfMissing -OpenBrowser -ShowTray
