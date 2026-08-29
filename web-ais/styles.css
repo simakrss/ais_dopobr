@@ -16529,6 +16529,75 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   gap: 8px;
 }
 
+/* Student card desktop scroll containment */
+@media (min-width: 721px) {
+  .student-modal {
+    height: min(804px, 94vh);
+    height: min(804px, 94dvh);
+    max-height: min(804px, 94vh);
+    max-height: min(804px, 94dvh);
+    overflow: hidden;
+  }
+
+  .student-modal > form {
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .student-card-layout,
+  .student-card-main,
+  .student-side-panel,
+  .student-side-panel-content,
+  .student-events-block,
+  .student-tab-body {
+    min-height: 0;
+  }
+
+  .student-card-layout {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .student-card-main {
+    overflow: hidden;
+  }
+
+  .student-tab-body {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .student-side-panel {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .student-side-panel-content {
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+    overflow: hidden;
+  }
+
+  .student-events-block {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    align-self: stretch;
+    overflow: hidden;
+  }
+
+  .student-events-list {
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+  }
+}
+/* End student card desktop scroll containment */
+
 .student-main-tab {
   padding: 5px;
   gap: 5px;
