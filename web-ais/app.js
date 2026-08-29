@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.356",
+    version: "1.7.357",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.357",
+      releasedAt: "2026-08-29",
+      changes: [
+        "На рабочем столе партнёра в таблице «К выплате» для каждой выплаты теперь отображается комментарий из соответствующей записи."
+      ]
+    },
     {
       version: "1.7.356",
       releasedAt: "2026-08-29",

@@ -108,6 +108,7 @@ const paymentData = buildPartnerPaymentData({
             date: "02.08.2026",
             note: "Иванов Иван Иванович",
             type: "Подготовка материалов",
+            additionalInfo: "Комментарий партнёру",
             amount: 400,
             recommendation: "+"
           },
@@ -145,6 +146,10 @@ const paymentData = buildPartnerPaymentData({
 assert.equal(paymentData.summary.currentPayable, 1600);
 assert.equal(paymentData.summary.totalPaid, 300);
 assert.equal(paymentData.rows.filter((row) => row.statusKey === "payable").length, 3);
+assert.equal(
+  paymentData.rows.find((row) => row.id === "direct:direct-payable")?.comment,
+  "Комментарий партнёру · Слушатель Первый"
+);
 assert.equal(paymentData.monthly[0].month, "2026-07");
 assert.equal(paymentData.monthly[0].amount, 300);
 assert.deepEqual(paymentData.groups.map((group) => group.month), ["2026-08", "2026-07"]);
@@ -224,6 +229,10 @@ assert.match(
   /function gateway_serve_protected_data[\s\S]{0,240}\$user\['role'\][\s\S]{0,80}'partner'/u
 );
 assert.match(partnerSource, /data-action="open-payable"/u);
+assert.match(
+  partnerSource,
+  /partner-compact-payment-comment[\s\S]{0,160}escapeHtml\(row\.comment \|\| "—"\)/u
+);
 assert.match(partnerSource, /data-feedback-form/u);
 assert.match(partnerSource, /data-profile-form/u);
 assert.match(partnerSource, /data-partner-photo-input/u);
@@ -252,6 +261,7 @@ assert.match(stylesSource, /\.partner-filters\s*\{[\s\S]{0,180}minmax\(145px, 1\
 assert.match(stylesSource, /\.partner-filter-actions > :is\([\s\S]{0,180}min-height: 32px/u);
 assert.match(stylesSource, /\.partner-profile-field\s*\{[^}]*padding:\s*7px 6px/u);
 assert.match(stylesSource, /\.partner-profile-actions\s*\{[^}]*padding:\s*10px 18px 14px/u);
+assert.match(stylesSource, /\.partner-compact-list \.partner-compact-payment-comment\s*\{[^}]*overflow-wrap:\s*anywhere/u);
 assert.match(stylesSource, /body\.partner-portal-body\s*\{[^}]*font-size:\s*15px/u);
 assert.match(stylesSource, /\.partner-profile-photo-upload\s*\{[^}]*cursor:\s*pointer/u);
 assert.match(deploySource, /"partner-app\.js"/u);

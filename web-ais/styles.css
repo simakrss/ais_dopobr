@@ -26848,6 +26848,16 @@ button.partner-kpi-card:hover {
   font-size: 11px;
 }
 
+.partner-compact-list .partner-compact-payment-comment {
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.partner-compact-list .partner-compact-payment-comment b {
+  color: #52625d;
+  font-size: inherit;
+}
+
 .partner-compact-list > button > b {
   font-size: 14px;
   white-space: nowrap;

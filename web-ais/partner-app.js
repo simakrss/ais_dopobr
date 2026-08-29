@@ -348,7 +348,11 @@
   function renderCompactPayments(rows) {
     return `<div class="partner-compact-list">${rows.map((row) => `
       <button data-action="open-payment-row" data-month="${escapeAttr(row.monthKey)}" type="button">
-        <span><strong>${escapeHtml(row.description)}</strong><small>${formatDate(row.effectiveDate)} · ${escapeHtml(row.source)}</small></span>
+        <span>
+          <strong>${escapeHtml(row.description)}</strong>
+          <small>${formatDate(row.effectiveDate)} · ${escapeHtml(row.source)}</small>
+          <small class="partner-compact-payment-comment"><b>Комментарий:</b> ${escapeHtml(row.comment || "—")}</small>
+        </span>
         <b>${formatMoney(row.amount)}</b>${icon("chevron")}
       </button>
     `).join("")}</div>`;
