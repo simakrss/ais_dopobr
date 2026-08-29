@@ -1,5 +1,6 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
+  const MAX_MESSENGER_ICON_URL = new URL("data/max-messenger-icon.png", APP_BASE_URL).href;
   const DEFAULT_STUDENT_APPLICATIONS_EMAIL = Object.freeze({
     login: "mail@edu-plus.ru",
     host: "imap.timeweb.ru",
@@ -164,10 +165,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.369",
+    version: "1.7.370",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.370",
+      releasedAt: "2026-08-29",
+      changes: [
+        "Кнопка Telegram открывает сохранённый аккаунт или телефон напрямую в приложении без перехода на сайт; MAX использует официальный фирменный знак."
+      ]
+    },
     {
       version: "1.7.369",
       releasedAt: "2026-08-29",
@@ -29555,7 +29563,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="student-phone-messenger-row">
             <input name="phone" type="tel" value="${escapeAttr(record.phone || "")}" aria-label="Телефон">
             <div class="student-messenger-actions">
-              ${renderMessengerButton("max", "Открыть Max", renderMaxIcon(), "", record.preferredMessenger)}
+              ${renderMessengerButton("max", "Открыть MAX", renderMaxIcon(), "", record.preferredMessenger)}
               ${renderMessengerButton("telegram", "Открыть Telegram", renderTelegramIcon(), "", record.preferredMessenger)}
               ${renderMessengerButton("whatsapp", "Открыть WhatsApp", renderWhatsAppIcon(), "", record.preferredMessenger)}
             </div>
@@ -29587,7 +29595,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <button class="icon-button custom-record-email-button student-card-header-action" data-action="open-custom-record-email" type="button" title="${escapeAttr(`Написать произвольное письмо ${personLabel}\nПисьмо будет отправлено через системный почтовый ящик и сохранено в журнале действий.`)}" aria-label="${escapeAttr(`Написать письмо ${personLabel}`)}">
           ${renderCommunicationActionIcon("mail")}
         </button>
-        ${renderMessengerButton("max", "Открыть Max", renderMaxIcon(), "student-card-header-action", record.preferredMessenger)}
+        ${renderMessengerButton("max", "Открыть MAX", renderMaxIcon(), "student-card-header-action", record.preferredMessenger)}
         ${renderMessengerButton("telegram", "Открыть Telegram", renderTelegramIcon(), "student-card-header-action", record.preferredMessenger)}
         ${renderMessengerButton("whatsapp", "Открыть WhatsApp", renderWhatsAppIcon(), "student-card-header-action", record.preferredMessenger)}
       </div>
@@ -29663,9 +29671,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderMaxIcon() {
     return `
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d="M4.5 17.5V6.5h3.1l4.4 6.4 4.4-6.4h3.1v11h-3.2v-5.8l-3.3 4.6h-2l-3.3-4.6v5.8z"></path>
-      </svg>
+      <img class="max-messenger-brand-icon" src="${escapeAttr(MAX_MESSENGER_ICON_URL)}" alt="" aria-hidden="true" draggable="false">
     `;
   }
 
@@ -59354,17 +59360,31 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function preferredMessengerDisplayName(value) {
     const messenger = normalizePreferredMessenger(value);
-    return ({ max: "Max", telegram: "Telegram", whatsapp: "WhatsApp" })[messenger] || "";
+    return ({ max: "MAX", telegram: "Telegram", whatsapp: "WhatsApp" })[messenger] || "";
+  }
+
+  function getMessengerLaunchUrl(messenger, values = {}) {
+    const kind = normalizePreferredMessenger(messenger);
+    if (!kind) return "";
+    const phone = normalizeMessengerPhone(values.phone || "");
+    const telegramAccountUrl = kind === "telegram"
+      ? getTelegramAppUrl(values.telegramAccount || "")
+      : "";
+    const customUrl = getMessengerCustomUrl(kind, values.messengerUrl || "");
+    return telegramAccountUrl || customUrl || getMessengerPhoneUrl(kind, phone);
   }
 
   async function openStudentMessenger(messenger) {
     const phoneInput = document.querySelector("[name='phone']");
+    const telegramInput = document.querySelector("#recordForm [name='telegram']");
     const messengerUrlInput = document.querySelector("[name='messengerUrl']");
     const phone = normalizeMessengerPhone(phoneInput?.value || "");
     const phoneForCopy = phone ? `+${phone}` : String(phoneInput?.value || "").trim();
-    const customUrl = getMessengerCustomUrl(messenger, messengerUrlInput?.value || "");
-
-    const url = customUrl || getMessengerPhoneUrl(messenger, phone);
+    const url = getMessengerLaunchUrl(messenger, {
+      telegramAccount: telegramInput?.value || state.modal?.draft?.telegram || "",
+      messengerUrl: messengerUrlInput?.value || "",
+      phone
+    });
     if (!url) {
       alert("Укажите телефон или ссылку мессенджера.");
       return;
@@ -59384,7 +59404,7 @@ MAX - https://bizvmax.ru/zifra_plus
       input?.focus();
       return;
     }
-    openExternalUrl(getWhatsAppAppUrl(url) || url.href);
+    openExternalUrl(getTelegramAppUrl(url) || getWhatsAppAppUrl(url) || url.href);
   }
 
   function openStudentProgramPromo() {
@@ -63260,15 +63280,85 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getMessengerCustomUrl(messenger, value) {
+    if (messenger === "telegram") return getTelegramAppUrl(value);
     const url = parseMessengerUrl(value);
     if (!url) return "";
     const host = url.hostname.replace(/^www\./i, "").toLowerCase();
     const protocol = url.protocol.toLowerCase();
     const href = url.href;
     if (messenger === "max" && (protocol === "max:" || host === "max.ru" || host === "web.max.ru")) return href;
-    if (messenger === "telegram" && (protocol === "tg:" || ["t.me", "telegram.me", "telegram.dog"].includes(host))) return href;
     if (messenger === "whatsapp") return getWhatsAppAppUrl(url);
     return "";
+  }
+
+  function getTelegramAppUrl(value) {
+    const text = value instanceof URL ? value.href : String(value || "").trim();
+    if (!text) return "";
+    let parsed = value instanceof URL ? value : parseMessengerUrl(text);
+    if (!parsed && /^(?:(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)|[a-z][a-z\d_]{2,31}\.t\.me)(?:[/?#]|$)/i.test(text)) {
+      parsed = parseMessengerUrl(`https://${text}`);
+    }
+    if (parsed?.protocol.toLowerCase() === "tg:") return parsed.href;
+
+    const rawUsername = /^@?([a-z][a-z\d_]{2,31})$/i.exec(text);
+    if (rawUsername) return `tg://resolve?domain=${encodeURIComponent(rawUsername[1])}`;
+    if (/^\+?[\d\s().-]{7,}$/u.test(text)) {
+      const phone = normalizeMessengerPhone(text);
+      if (phone) return `tg://resolve?phone=${encodeURIComponent(phone)}`;
+    }
+    if (!parsed || !["http:", "https:"].includes(parsed.protocol.toLowerCase())) return "";
+
+    const rawHost = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+    const standardHosts = new Set(["t.me", "telegram.me", "telegram.dog"]);
+    let subdomainUsername = "";
+    if (rawHost.endsWith(".t.me")) {
+      subdomainUsername = rawHost.slice(0, -".t.me".length);
+    } else if (!standardHosts.has(rawHost)) {
+      return "";
+    }
+
+    const pathParts = parsed.pathname
+      .split("/")
+      .filter(Boolean)
+      .map((part) => {
+        try {
+          return decodeURIComponent(part);
+        } catch (error) {
+          return part;
+        }
+      });
+    if (subdomainUsername) pathParts.unshift(subdomainUsername);
+    const first = String(pathParts[0] || "").trim();
+    const second = String(pathParts[1] || "").trim();
+    if (!first) return "";
+
+    const withOriginalQuery = (fixedValues) => {
+      const params = new URLSearchParams(fixedValues);
+      const managedKeys = new Set(["domain", "phone", "invite", "token", "post"]);
+      parsed.searchParams.forEach((queryValue, key) => {
+        if (!managedKeys.has(key.toLowerCase())) params.append(key, queryValue);
+      });
+      return params;
+    };
+    if (first.startsWith("+")) {
+      const target = first.slice(1);
+      if (!target) return "";
+      if (/^\d+$/u.test(target)) {
+        return `tg://resolve?${withOriginalQuery({ phone: target })}`;
+      }
+      return `tg://join?${withOriginalQuery({ invite: target })}`;
+    }
+    if (first.toLowerCase() === "joinchat" && second) {
+      return `tg://join?${withOriginalQuery({ invite: second })}`;
+    }
+    if (first.toLowerCase() === "contact" && second) {
+      return `tg://contact?${withOriginalQuery({ token: second })}`;
+    }
+    if (!/^[a-z][a-z\d_]{2,31}$/i.test(first)) return "";
+
+    const fixedValues = { domain: first };
+    if (/^\d+$/u.test(second)) fixedValues.post = second;
+    return `tg://resolve?${withOriginalQuery(fixedValues)}`;
   }
 
   function getWhatsAppAppUrl(url) {
@@ -63322,7 +63412,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function openExternalUrl(url) {
     const link = document.createElement("a");
     link.href = url;
-    link.target = "_blank";
+    if (!/^(?:tg|max|whatsapp):/i.test(String(url || ""))) link.target = "_blank";
     link.rel = "noreferrer";
     document.body.appendChild(link);
     link.click();

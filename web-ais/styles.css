@@ -15936,6 +15936,7 @@ body.card-window-moving {
 }
 
 .student-messenger-button svg,
+.student-messenger-button img,
 .student-messenger-url-button svg {
   width: 17px;
   height: 17px;
@@ -15947,14 +15948,17 @@ body.card-window-moving {
   stroke-linejoin: round;
 }
 
-.student-messenger-button.max svg path,
 .student-messenger-button.telegram svg path {
   fill: currentColor;
   stroke: none;
 }
 
+.max-messenger-brand-icon {
+  object-fit: contain;
+}
+
 .student-messenger-button.max {
-  color: var(--violet);
+  color: #6e1aff;
 }
 
 .student-messenger-button.telegram {
