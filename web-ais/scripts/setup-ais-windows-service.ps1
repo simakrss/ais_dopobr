@@ -499,6 +499,24 @@ function Install-ProtectedStopScript([pscustomobject]$PathInfo) {
   }
 }
 
+function Test-InteractiveServiceControlSddl([string]$Sddl, [string]$UserSid) {
+  try {
+    $descriptor = New-Object Security.AccessControl.CommonSecurityDescriptor($false, $false, $Sddl)
+    foreach ($ace in $descriptor.DiscretionaryAcl) {
+      if (
+        $ace.SecurityIdentifier.Value -eq $UserSid -and
+        $ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and
+        [int]$ace.AccessMask -eq 0xB4
+      ) {
+        return $true
+      }
+    }
+  } catch {
+    return $false
+  }
+  return $false
+}
+
 function Grant-InteractiveServiceControl {
   $interactiveSid = (New-Object Security.Principal.NTAccount($interactiveUserName)).Translate(
     [Security.Principal.SecurityIdentifier]
@@ -510,7 +528,7 @@ function Grant-InteractiveServiceControl {
     throw "Не удалось прочитать права службы $serviceName."
   }
   $serviceSddl = [string]$sddl[0]
-  if ($serviceSddl.IndexOf($controlAce, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+  if (-not (Test-InteractiveServiceControlSddl $serviceSddl $interactiveSid)) {
     $saclIndex = $serviceSddl.IndexOf("S:", [StringComparison]::Ordinal)
     $serviceSddl = if ($saclIndex -ge 0) {
       $serviceSddl.Insert($saclIndex, $controlAce)
@@ -523,7 +541,7 @@ function Grant-InteractiveServiceControl {
   $verifiedSddl = @(& $scPath sdshow $serviceName 2>$null | Where-Object { [string]$_ -match '^D:' } |
     Select-Object -First 1)
   if ($LASTEXITCODE -ne 0 -or $verifiedSddl.Count -ne 1 -or
-    ([string]$verifiedSddl[0]).IndexOf($controlAce, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+    -not (Test-InteractiveServiceControlSddl ([string]$verifiedSddl[0]) $interactiveSid)) {
     throw "Права запуска и остановки службы не прошли проверку для $interactiveUserName."
   }
 }
