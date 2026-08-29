@@ -195,6 +195,7 @@ function buildPreviousStudent() {
     documentRecognitionResult: { fields: { snils: "123" } },
     history: [{ action: "created" }],
     customWebMetadata: { keep: true },
+    preferredMessenger: "telegram",
     directExpenses: [{
       id: "expense-1",
       uid: "42",
@@ -242,6 +243,7 @@ function testManagedFieldClearingAndWebOnlyPreservation() {
   assert.deepEqual(merged[0].documentRecognitionResult, previous.documentRecognitionResult);
   assert.deepEqual(merged[0].history, previous.history);
   assert.deepEqual(merged[0].customWebMetadata, previous.customWebMetadata);
+  assert.equal(merged[0].preferredMessenger, "telegram");
   assert.deepEqual(Array.from(merged[0].databaseSyncFormulaFields), ["endDate"]);
   assert.equal(merged[0].databaseFixedValueOverrides, undefined);
   assert.equal(merged[0].directExpenses[0].amount, 150);
@@ -269,6 +271,7 @@ function testManagedFieldClearingAndWebOnlyPreservation() {
       phone: "старый",
       note: "Очистить",
       webApproval: { keep: true },
+      preferredMessenger: "whatsapp",
       databaseFixedValueOverrides: ["amount"]
     }],
     {
@@ -281,6 +284,7 @@ function testManagedFieldClearingAndWebOnlyPreservation() {
   assert.equal(contract.phone, "+7 999 111-22-33");
   assert.equal(contract.note, "");
   assert.deepEqual(contract.webApproval, { keep: true });
+  assert.equal(contract.preferredMessenger, "whatsapp");
   assert.equal(contract.databaseFixedValueOverrides, undefined);
 
   assert.throws(() => helpers.mergeStudents(

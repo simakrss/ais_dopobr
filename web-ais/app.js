@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.358",
+    version: "1.7.359",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.359",
+      releasedAt: "2026-08-29",
+      changes: [
+        "В карточках слушателя и сотрудника мессенджер можно назначить предпочитаемым через контекстное меню «Использовать по умолчанию»; выбранная кнопка выделяется жёлтым цветом."
+      ]
+    },
     {
       version: "1.7.358",
       releasedAt: "2026-08-29",
@@ -5653,7 +5660,7 @@ MAX - https://bizvmax.ru/zifra_plus
   ]);
   const STUDENT_APPLICATION_REUSABLE_PERSONAL_FIELDS = Object.freeze([
     "nameEnglish", "gender", "noDeclension", "addressByFirstName",
-    "telegram", "whatsapp", "messengerUrl",
+    "telegram", "whatsapp", "messengerUrl", "preferredMessenger",
     "registrationAddress", "mailingAddress",
     "photoPath", "photoData", "photoUrl"
   ]);
@@ -7964,6 +7971,7 @@ MAX - https://bizvmax.ru/zifra_plus
         : student.program,
       educationType: importedApplicationProgramType || student.educationType,
       additionalStatus: String(student.additionalStatus || "").trim(),
+      preferredMessenger: normalizePreferredMessenger(student.preferredMessenger),
       citizenship: normalizeCitizenshipValue(student.citizenship),
       studyForm: normalizeStudyForm(student.studyForm),
       gender: normalizeStudentGender(student.gender),
@@ -8083,6 +8091,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...contract,
       section,
       status,
+      preferredMessenger: normalizePreferredMessenger(contract.preferredMessenger),
       citizenship: normalizeCitizenshipValue(contract.citizenship),
       amount: Number(contract.amount || 0),
       paid: Number(contract.paid || 0),
@@ -11244,6 +11253,7 @@ MAX - https://bizvmax.ru/zifra_plus
     hideSystemHelpTooltip();
     hideCommunicationTemplateFieldMenu();
     closeNavItemMenu();
+    closeMessengerPreferenceMenu();
     closeSystemMailboxEmailMenu();
     document.querySelector("[data-communication-template-field-dialog]")?.remove();
     if (!canAccessView(state.view)) state.view = "dashboard";
@@ -26909,6 +26919,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="modal-backdrop card-window-backdrop ${cardWindowClass}" data-action="close-modal">
         <section class="modal contract-modal card-window ${cardWindowClass} ${activeTab.id === "payment" ? "is-payment-tab-active" : ""}" data-card-window ${getCardWindowStyleAttribute()} role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
           <form id="recordForm" data-config="contracts" data-id="${escapeAttr(record.id || "")}">
+            <input name="preferredMessenger" type="hidden" value="${escapeAttr(normalizePreferredMessenger(record.preferredMessenger))}">
             <header class="modal-head contract-modal-head card-window-drag-handle" data-card-window-drag-handle>
               <div class="contract-modal-title">
                 <p class="eyebrow">${escapeHtml(configs.contracts.title)}</p>
@@ -27878,6 +27889,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="modal-backdrop student-modal-backdrop card-window-backdrop ${cardWindowClass}" data-action="close-modal">
         <section class="modal student-modal card-window ${cardWindowClass}" data-card-window ${getCardWindowStyleAttribute()} role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
           <form id="recordForm" data-config="students" data-id="${record.id || ""}">
+            <input name="preferredMessenger" type="hidden" value="${escapeAttr(normalizePreferredMessenger(record.preferredMessenger))}">
             <header class="modal-head student-modal-head card-window-drag-handle" data-card-window-drag-handle>
               <div class="student-modal-title">
                 <h2>${escapeHtml(title)}</h2>
@@ -29366,9 +29378,9 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="student-phone-messenger-row">
             <input name="phone" type="tel" value="${escapeAttr(record.phone || "")}" aria-label="Телефон">
             <div class="student-messenger-actions">
-              ${renderMessengerButton("max", "Открыть Max", renderMaxIcon())}
-              ${renderMessengerButton("telegram", "Открыть Telegram", renderTelegramIcon())}
-              ${renderMessengerButton("whatsapp", "Открыть WhatsApp", renderWhatsAppIcon())}
+              ${renderMessengerButton("max", "Открыть Max", renderMaxIcon(), "", record.preferredMessenger)}
+              ${renderMessengerButton("telegram", "Открыть Telegram", renderTelegramIcon(), "", record.preferredMessenger)}
+              ${renderMessengerButton("whatsapp", "Открыть WhatsApp", renderWhatsAppIcon(), "", record.preferredMessenger)}
             </div>
           </div>
         </div>
@@ -29398,9 +29410,9 @@ MAX - https://bizvmax.ru/zifra_plus
         <button class="icon-button custom-record-email-button student-card-header-action" data-action="open-custom-record-email" type="button" title="${escapeAttr(`Написать произвольное письмо ${personLabel}\nПисьмо будет отправлено через системный почтовый ящик и сохранено в журнале действий.`)}" aria-label="${escapeAttr(`Написать письмо ${personLabel}`)}">
           ${renderCommunicationActionIcon("mail")}
         </button>
-        ${renderMessengerButton("max", "Открыть Max", renderMaxIcon(), "student-card-header-action")}
-        ${renderMessengerButton("telegram", "Открыть Telegram", renderTelegramIcon(), "student-card-header-action")}
-        ${renderMessengerButton("whatsapp", "Открыть WhatsApp", renderWhatsAppIcon(), "student-card-header-action")}
+        ${renderMessengerButton("max", "Открыть Max", renderMaxIcon(), "student-card-header-action", record.preferredMessenger)}
+        ${renderMessengerButton("telegram", "Открыть Telegram", renderTelegramIcon(), "student-card-header-action", record.preferredMessenger)}
+        ${renderMessengerButton("whatsapp", "Открыть WhatsApp", renderWhatsAppIcon(), "student-card-header-action", record.preferredMessenger)}
       </div>
     `;
   }
@@ -29460,9 +29472,13 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderMessengerButton(messenger, label, icon, extraClass = "") {
+  function renderMessengerButton(messenger, label, icon, extraClass = "", preferredMessenger = "") {
+    const isPreferred = normalizePreferredMessenger(preferredMessenger) === messenger;
+    const preferenceHint = isPreferred
+      ? "Используется по умолчанию"
+      : "Контекстное меню или Shift+F10: использовать по умолчанию";
     return `
-      <button class="icon-button student-messenger-button ${messenger} ${escapeAttr(extraClass)}" data-action="open-student-messenger" data-messenger="${messenger}" type="button" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}">
+      <button class="icon-button student-messenger-button ${messenger} ${isPreferred ? "is-preferred" : ""} ${escapeAttr(extraClass)}" data-action="open-student-messenger" data-messenger="${messenger}" data-messenger-label="${escapeAttr(label)}" type="button" title="${escapeAttr(`${label}\n${preferenceHint}`)}" aria-label="${escapeAttr(`${label}. ${preferenceHint}`)}" aria-haspopup="menu" aria-expanded="false" data-preferred-messenger="${isPreferred ? "true" : "false"}">
         ${icon}
       </button>
     `;
@@ -33850,6 +33866,142 @@ MAX - https://bizvmax.ru/zifra_plus
     closeSystemMailboxEmailMenu();
   }
 
+  function closeMessengerPreferenceMenu(options = {}) {
+    document.removeEventListener("pointerdown", closeMessengerPreferenceMenuOnOutsidePointer, { capture: true });
+    window.removeEventListener("resize", closeMessengerPreferenceMenuOnViewportChange);
+    window.removeEventListener("scroll", closeMessengerPreferenceMenuOnViewportChange, true);
+    const menu = document.querySelector("[data-messenger-preference-menu]");
+    const opener = menu?.messengerPreferenceOpener;
+    if (opener instanceof Element) opener.setAttribute("aria-expanded", "false");
+    menu?.remove();
+    if (options.restoreFocus && opener?.isConnected && !opener.disabled) {
+      opener.focus({ preventScroll: true });
+    }
+  }
+
+  function closeMessengerPreferenceMenuOnOutsidePointer(event) {
+    if (event.target?.closest?.("[data-messenger-preference-menu]")) return;
+    closeMessengerPreferenceMenu();
+  }
+
+  function closeMessengerPreferenceMenuOnViewportChange() {
+    closeMessengerPreferenceMenu();
+  }
+
+  function updateMessengerButtonPreference(button, preferredMessenger) {
+    if (!(button instanceof Element)) return;
+    const messenger = normalizePreferredMessenger(button.dataset.messenger);
+    const isPreferred = Boolean(messenger && messenger === normalizePreferredMessenger(preferredMessenger));
+    const label = String(button.dataset.messengerLabel || button.getAttribute("aria-label") || "Открыть мессенджер")
+      .split(".")[0]
+      .trim();
+    const preferenceHint = isPreferred
+      ? "Используется по умолчанию"
+      : "Контекстное меню или Shift+F10: использовать по умолчанию";
+    button.classList.toggle("is-preferred", isPreferred);
+    button.dataset.preferredMessenger = isPreferred ? "true" : "false";
+    button.title = `${label}\n${preferenceHint}`;
+    button.setAttribute("aria-label", `${label}. ${preferenceHint}`);
+  }
+
+  function setPreferredMessenger(button) {
+    const messenger = normalizePreferredMessenger(button?.dataset?.messenger);
+    const form = button?.closest?.("#recordForm");
+    const input = form?.elements?.preferredMessenger;
+    if (!messenger || !form || !input || !["students", "contracts"].includes(form.dataset.config)) return;
+    if (normalizePreferredMessenger(input.value) === messenger) {
+      form.querySelectorAll("[data-action='open-student-messenger']")
+        .forEach((item) => updateMessengerButtonPreference(item, messenger));
+      return;
+    }
+    input.value = messenger;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    form.querySelectorAll("[data-action='open-student-messenger']")
+      .forEach((item) => updateMessengerButtonPreference(item, messenger));
+    if (state.modal) {
+      state.modal.draft = form.dataset.config === "contracts"
+        ? collectContractFormDraft()
+        : collectStudentFormDraft();
+      state.modal.hasDraftChanges = true;
+    }
+  }
+
+  function showMessengerPreferenceMenu(button, x, y) {
+    closeMessengerPreferenceMenu();
+    closeSystemMailboxEmailMenu();
+    if (
+      !(button instanceof Element)
+      || !button.isConnected
+      || button.disabled
+      || button.getAttribute("aria-disabled") === "true"
+    ) return;
+    const messenger = normalizePreferredMessenger(button.dataset.messenger);
+    if (!messenger) return;
+    const currentMessenger = normalizePreferredMessenger(
+      button.closest?.("#recordForm")?.elements?.preferredMessenger?.value
+    );
+    const menu = document.createElement("div");
+    menu.className = "field-copy-popup messenger-preference-menu";
+    menu.dataset.messengerPreferenceMenu = "true";
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "Настройка предпочитаемого мессенджера");
+    menu.messengerPreferenceOpener = button;
+    menu.innerHTML = `
+      <button data-action="set-preferred-messenger" type="button" role="menuitem" tabindex="0" aria-current="${currentMessenger === messenger ? "true" : "false"}">
+        <span>Использовать по умолчанию</span>
+      </button>
+    `;
+    document.body.appendChild(menu);
+    button.setAttribute("aria-expanded", "true");
+    const openerRect = button.getBoundingClientRect();
+    const useOpenerPosition = !(Number.isFinite(x) && Number.isFinite(y)) || (x === 0 && y === 0);
+    const desiredX = useOpenerPosition ? openerRect.left : x;
+    const desiredY = useOpenerPosition ? openerRect.bottom + 4 : y;
+    const menuRect = menu.getBoundingClientRect();
+    menu.style.left = `${clamp(desiredX, 8, Math.max(8, window.innerWidth - menuRect.width - 8))}px`;
+    menu.style.top = `${clamp(desiredY, 8, Math.max(8, window.innerHeight - menuRect.height - 8))}px`;
+    const menuItem = menu.querySelector("[data-action='set-preferred-messenger']");
+    menuItem?.addEventListener("click", () => {
+      setPreferredMessenger(button);
+      closeMessengerPreferenceMenu();
+      button.focus({ preventScroll: true });
+    });
+    menu.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" && event.key !== "Tab") return;
+      event.preventDefault();
+      closeMessengerPreferenceMenu({ restoreFocus: true });
+    });
+    menu.addEventListener("contextmenu", (event) => event.preventDefault());
+    window.setTimeout(() => {
+      if (!menu.isConnected) return;
+      document.addEventListener("pointerdown", closeMessengerPreferenceMenuOnOutsidePointer, { capture: true });
+      window.addEventListener("resize", closeMessengerPreferenceMenuOnViewportChange);
+      window.addEventListener("scroll", closeMessengerPreferenceMenuOnViewportChange, true);
+      menuItem?.focus({ preventScroll: true });
+    });
+  }
+
+  function bindMessengerPreferenceMenus(root = document) {
+    root.querySelectorAll?.("[data-action='open-student-messenger']").forEach((button) => {
+      if (button.dataset.messengerPreferenceMenuBound === "true") return;
+      button.dataset.messengerPreferenceMenuBound = "true";
+      button.addEventListener("contextmenu", (event) => {
+        if (button.disabled || button.getAttribute("aria-disabled") === "true") return;
+        event.preventDefault();
+        event.stopPropagation();
+        showMessengerPreferenceMenu(button, event.clientX, event.clientY);
+      });
+      button.addEventListener("keydown", (event) => {
+        if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+        if (button.disabled || button.getAttribute("aria-disabled") === "true") return;
+        event.preventDefault();
+        event.stopPropagation();
+        showMessengerPreferenceMenu(button, 0, 0);
+      });
+    });
+  }
+
   async function runSystemMailboxEmailButtonAction(button, recipientMode) {
     const action = String(button?.dataset?.action || "");
     const syntheticEvent = { currentTarget: button, shiftKey: false };
@@ -33872,6 +34024,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function showSystemMailboxEmailMenu(button, x, y) {
+    closeMessengerPreferenceMenu();
     closeSystemMailboxEmailMenu();
     if (
       !(button instanceof Element)
@@ -35172,6 +35325,10 @@ MAX - https://bizvmax.ru/zifra_plus
       closeSystemMailboxEmailMenu({ restoreFocus: true });
       return true;
     }
+    if (document.querySelector("[data-messenger-preference-menu]")) {
+      closeMessengerPreferenceMenu({ restoreFocus: true });
+      return true;
+    }
     const studentWebDavBrowser = document.querySelector("[data-student-webdav-browser]");
     if (studentWebDavBrowser) {
       studentWebDavBrowser.closeStudentWebDavBrowser?.();
@@ -35693,6 +35850,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='open-student-messenger']").forEach((button) => {
       button.addEventListener("click", () => openStudentMessenger(button.dataset.messenger));
     });
+    bindMessengerPreferenceMenus();
     document.querySelectorAll("[data-action='open-custom-record-email']").forEach((button) => {
       button.addEventListener("click", openCustomRecordEmailComposer);
     });
@@ -37644,6 +37802,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const raw = formData.get(item.key);
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
+    values.preferredMessenger = normalizePreferredMessenger(formData.get("preferredMessenger"));
     values.discountUnit = "percent";
     values.directExpenses = collectStudentDirectExpenses(formElement, values);
     formData.forEach((raw, key) => {
@@ -37768,6 +37927,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const raw = formData.get(item.key);
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
+    values.preferredMessenger = normalizePreferredMessenger(formData.get("preferredMessenger"));
     formData.forEach((raw, key) => {
       if (/^event_[A-Za-z0-9_-]+_(state|date|label)$/.test(key)) values[key] = String(raw || "");
     });
@@ -38958,6 +39118,7 @@ MAX - https://bizvmax.ru/zifra_plus
       phone: pick(student.phone, current.phone),
       email: pick(student.email, current.email),
       telegram: pick(student.telegram, student.telegramLogin, current.telegram),
+      preferredMessenger: normalizePreferredMessenger(pick(student.preferredMessenger, current.preferredMessenger)),
       photoPath: studentPhotoPath,
       citizenship: pick(student.citizenship, current.citizenship),
       birthDate: pick(student.birthDate, current.birthDate),
@@ -41039,6 +41200,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ? { ...currentRecord, ...(state.modal?.draft || {}) }
       : {};
     const fields = isStudentCard ? studentAllFields : config.fields;
+    const auditFields = isStudentCard || isContractCard
+      ? [...fields, { key: "preferredMessenger", label: "Предпочитаемый мессенджер" }]
+      : fields;
     fields.forEach((item) => {
       if (item.type === "checkbox") {
         if (!formElement.elements[item.key]) return;
@@ -41053,6 +41217,9 @@ MAX - https://bizvmax.ru/zifra_plus
       const raw = formData.get(item.key);
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
+    if (isStudentCard || isContractCard) {
+      values.preferredMessenger = normalizePreferredMessenger(formData.get("preferredMessenger"));
+    }
     if (fields.some((item) => item.key === "manager") && getCurrentUserLogin()) {
       values.manager = getCurrentUserLogin();
       state.data.dictionaries.managers = unique([
@@ -41243,7 +41410,7 @@ MAX - https://bizvmax.ru/zifra_plus
         entityType: config.collection,
         entityId: savedId,
         entityLabel,
-        changes: buildRecordAuditChanges(formElement.dataset.config, beforeRecord, nextRecord, fields)
+        changes: buildRecordAuditChanges(formElement.dataset.config, beforeRecord, nextRecord, auditFields)
       });
     } else {
       savedId = makeId(config.collection);
@@ -41254,7 +41421,7 @@ MAX - https://bizvmax.ru/zifra_plus
         entityType: config.collection,
         entityId: savedId,
         entityLabel,
-        changes: buildRecordAuditChanges(formElement.dataset.config, {}, nextRecord, fields)
+        changes: buildRecordAuditChanges(formElement.dataset.config, {}, nextRecord, auditFields)
       });
     }
     if (isStudentCard || formElement.dataset.config === "directExpenses") {
@@ -57960,6 +58127,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function auditValue(value, field = "") {
     if (isAuditSensitiveField(field)) return "[скрыто]";
+    if (field === "preferredMessenger") return preferredMessengerDisplayName(value);
     if (value === null || value === undefined) return "";
     let result = value;
     if (typeof result === "object") {
@@ -58380,6 +58548,16 @@ MAX - https://bizvmax.ru/zifra_plus
     const digits = String(value || "").replace(/\D/g, "");
     if (digits.length === 11 && digits.startsWith("8")) return `7${digits.slice(1)}`;
     return digits;
+  }
+
+  function normalizePreferredMessenger(value) {
+    const messenger = String(value || "").trim().toLocaleLowerCase("ru-RU");
+    return ["max", "telegram", "whatsapp"].includes(messenger) ? messenger : "";
+  }
+
+  function preferredMessengerDisplayName(value) {
+    const messenger = normalizePreferredMessenger(value);
+    return ({ max: "Max", telegram: "Telegram", whatsapp: "WhatsApp" })[messenger] || "";
   }
 
   async function openStudentMessenger(messenger) {

@@ -15865,6 +15865,23 @@ body.card-window-moving {
   color: var(--green);
 }
 
+.student-messenger-button.is-preferred {
+  border-color: #d6a919;
+  background: #ffe082;
+  color: #694d00;
+  box-shadow: 0 0 0 1px rgba(214, 169, 25, 0.22);
+}
+
+.student-messenger-button.is-preferred:hover {
+  border-color: #bd8f00;
+  background: #ffd45a;
+  color: #4f3a00;
+}
+
+.messenger-preference-menu {
+  min-width: 220px;
+}
+
 .student-name-status-grid input,
 .student-name-status-grid select {
   min-width: 0;
