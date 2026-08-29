@@ -197,5 +197,13 @@ assert.equal((appSource.match(/showDatabaseOperationResult\(\{/gu) || []).length
 assert.match(stylesSource, /student-database-operation-history-modal/u);
 assert.match(stylesSource, /student-database-operation-history-status\.is-error/u);
 assert.match(stylesSource, /student-database-operation-history-toggle-row/u);
+assert.match(
+  stylesSource,
+  /\.student-database-operation-history-filters :is\(input, select\) \{[\s\S]*?border: 1px solid var\(--line\);[\s\S]*?border-radius: 8px;[\s\S]*?font-size: 13px;/u
+);
+assert.match(
+  stylesSource,
+  /\.student-database-operation-history-filters :is\(input, select\):focus \{[\s\S]*?border-color: var\(--teal\);[\s\S]*?box-shadow: 0 0 0 3px rgba\(15, 118, 110, 0\.12\);/u
+);
 
 console.log("student database operation history checks: OK");

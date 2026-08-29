@@ -2028,7 +2028,7 @@ body.is-session-expired {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: #fff;
+  background: var(--panel-soft);
 }
 
 .student-database-operation-history-filters label {
@@ -2039,15 +2039,35 @@ body.is-session-expired {
 
 .student-database-operation-history-filters label > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
 }
 
-.student-database-operation-history-filters input,
-.student-database-operation-history-filters select {
+.student-database-operation-history-filters :is(input, select) {
+  box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  height: 34px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+
+.student-database-operation-history-filters :is(input, select):focus {
+  border-color: var(--teal);
+  outline: 0;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.student-database-operation-history-filters input::placeholder {
+  color: #8a9893;
+  opacity: 1;
 }
 
 .student-database-operation-history-table-wrap {
