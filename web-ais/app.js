@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.364",
+    version: "1.7.365",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.365",
+      releasedAt: "2026-08-29",
+      changes: [
+        "Перед синхронизацией с XLSB система автоматически передаёт ожидающие Web-изменения в MySQL с отображением прогресса и только после подтверждения общей базы запускает обмен с Excel."
+      ]
+    },
     {
       version: "1.7.364",
       releasedAt: "2026-08-29",
@@ -9495,9 +9502,6 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function flushSharedApplicationState(options = {}) {
     const saveOptions = options && typeof options === "object" ? options : {};
-    if (isSettingsDraftSessionActive() && !state.settingsDraftSaving) {
-      return Promise.resolve(true);
-    }
     if (sharedStateSavePromise) {
       if (saveOptions.strictRevision === true) {
         return Promise.reject(new Error(
@@ -9505,6 +9509,13 @@ MAX - https://bizvmax.ru/zifra_plus
         ));
       }
       return sharedStateSavePromise;
+    }
+    if (
+      isSettingsDraftSessionActive()
+      && !state.settingsDraftSaving
+      && saveOptions.allowSettingsDraft !== true
+    ) {
+      return Promise.resolve(true);
     }
     const savePromise = performSharedApplicationStateSave(saveOptions);
     sharedStateSavePromise = savePromise;
@@ -9639,7 +9650,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function flushSharedApplicationStateThroughGeneration(targetGeneration, options = {}) {
-    if (isSettingsDraftSessionActive() && !state.settingsDraftSaving) return true;
+    if (
+      isSettingsDraftSessionActive()
+      && !state.settingsDraftSaving
+      && options.allowSettingsDraft !== true
+    ) return true;
     const target = Math.max(0, Number(targetGeneration) || 0);
     while (
       sharedStateReady
@@ -9701,6 +9716,8 @@ MAX - https://bizvmax.ru/zifra_plus
     if (
       sharedStatePollRunning
       || !sharedStateReady
+      || state.databaseExport.running
+      || state.databaseImport.running
       || sharedStateDirty
       || sharedStateSaveRunning
       || sharedStateConflict
@@ -56426,12 +56443,125 @@ MAX - https://bizvmax.ru/zifra_plus
       operation: "sync"
     });
     try {
-      const flushedBeforeSync = await flushSharedApplicationState();
-      if (!flushedBeforeSync || sharedStateConflict || sharedStateOffline) {
+      if (isSettingsDraftSessionActive() && hasUnsavedSettingsChanges()) {
+        const settingsSaved = await saveSettingsDraftChanges({ renderAfterSave: false });
+        if (!settingsSaved) {
+          throw new Error("Не удалось сохранить изменения настроек перед синхронизацией XLSB.");
+        }
+      }
+      cancelScheduledSharedApplicationStateSave();
+      updateDatabaseExportIndicator({
+        status: "Этап 1 из 2 · Передача Web-данных в MySQL...",
+        progress: 0,
+        tone: "active",
+        indeterminate: true
+      });
+      let mysqlPreflightComplete = false;
+      let mysqlPreflightError = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (sharedStateSavePromise) {
+          await flushSharedApplicationState();
+        }
+        const mysqlPreflightGeneration = sharedStateChangeGeneration;
+        if (sharedStatePendingPatch && !sharedStateDirty) {
+          sharedStateDirty = true;
+        }
+        if (sharedStateDirty || sharedStatePendingPatch) {
+          const savedCurrentState = await flushSharedApplicationState({ allowSettingsDraft: true });
+          if (!savedCurrentState || sharedStateConflict) {
+            throw new Error(
+              "Не удалось передать изменения Web-базы в MySQL перед синхронизацией XLSB."
+            );
+          }
+        }
+        const flushedBeforeSync = await flushSharedApplicationStateThroughGeneration(
+          mysqlPreflightGeneration,
+          { allowSettingsDraft: true }
+        );
+        if (!flushedBeforeSync || sharedStateConflict) {
+          throw new Error(
+            "Не удалось передать изменения Web-базы в MySQL перед синхронизацией XLSB."
+          );
+        }
+        if (
+          sharedStateChangeGeneration !== mysqlPreflightGeneration
+          || sharedStateDirty
+          || sharedStatePendingPatch
+        ) {
+          continue;
+        }
+        let authoritativeSharedState;
+        try {
+          authoritativeSharedState = await requestSharedApplicationState("flush=1", {
+            sharedStateProgress: {
+              operation: "Подготовка синхронизации XLSB",
+              message: "Передача Web-данных в MySQL",
+              responseMessage: "Проверка общей MySQL-базы",
+              completeMessage: "Web-данные переданы в MySQL"
+            }
+          });
+        } catch (error) {
+          const status = Math.max(0, Number(error?.status) || 0);
+          const message = String(error?.message || "");
+          const retryablePendingTransfer = (status === 409 || status === 423)
+            && !/конфликт/iu.test(message)
+            && /(?:ожидающ|временно заблокирован|передач\S*[^.]{0,80}MySQL)/iu.test(message);
+          if (!retryablePendingTransfer || attempt + 1 >= 3) throw error;
+          mysqlPreflightError = error;
+          updateDatabaseExportIndicator({
+            status: "Этап 1 из 2 · Ожидание передачи Web-данных в MySQL..."
+          });
+          await waitForStudentImportPoll(400 * (attempt + 1));
+          continue;
+        }
+        if (
+          sharedStateChangeGeneration !== mysqlPreflightGeneration
+          || sharedStateDirty
+          || sharedStatePendingPatch
+          || (isSettingsDraftSessionActive() && hasUnsavedSettingsChanges())
+        ) {
+          continue;
+        }
+        if (
+          authoritativeSharedState.offline === true
+          || authoritativeSharedState.writable === false
+          || authoritativeSharedState.syncPending === true
+          || Math.max(0, Number(authoritativeSharedState.pendingCount) || 0) > 0
+        ) {
+          updateDatabaseExportIndicator({
+            status: "Этап 1 из 2 · Завершение передачи Web-данных в MySQL..."
+          });
+          if (attempt + 1 < 3) await waitForStudentImportPoll(400 * (attempt + 1));
+          continue;
+        }
+        if (!applySharedApplicationState(authoritativeSharedState, { renderAfter: false })) {
+          throw new Error("Общая MySQL-база не вернула актуальные данные.");
+        }
+        sharedStateReady = authoritativeSharedState.writable !== false;
+        if (
+          !sharedStateConflict
+          && !sharedStateOffline
+          && sharedStatePendingCount === 0
+        ) {
+          mysqlPreflightComplete = true;
+          break;
+        }
+        updateDatabaseExportIndicator({
+          status: "Этап 1 из 2 · Завершение передачи Web-данных в MySQL..."
+        });
+      }
+      if (!mysqlPreflightComplete) {
         throw new Error(
-          "Двусторонняя синхронизация требует доступной общей Web-базы без ожидающих изменений."
+          mysqlPreflightError?.message
+          || "Передача Web-данных в MySQL не завершилась. Проверьте подключение и повторите синхронизацию."
         );
       }
+      updateDatabaseExportIndicator({
+        status: "Этап 2 из 2 · Подготовка синхронизации XLSB...",
+        progress: 0,
+        tone: "active",
+        indeterminate: false
+      });
       const syncBaseRevision = sharedStateRevision;
       const syncPreparedGeneration = sharedStateChangeGeneration;
       const syncBaseline = normalizeStudentDatabaseSyncBaseline(

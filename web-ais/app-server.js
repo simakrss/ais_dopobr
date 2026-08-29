@@ -12220,9 +12220,134 @@ async function handleRecycleBinRequest(req, res, authUser, requestUrl) {
   }
 }
 
+async function flushSharedApplicationStateForSyncPreflight() {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+    const authoritative = await enqueueSharedApplicationStateWrite(
+      () => readLegacySharedApplicationStateDocument({ allowCache: false })
+    );
+    if (authoritative?.offline === true) {
+      const error = new Error(
+        "Общая Web-база недоступна. Синхронизация XLSB требует авторитетного состояния базы."
+      );
+      error.statusCode = 503;
+      throw error;
+    }
+    const document = authoritative.document || null;
+    return {
+      exists: Boolean(authoritative.exists),
+      revision: Math.max(0, Number(document?.revision || authoritative.revision) || 0),
+      backendId: String(document?.backendId || authoritative.backendId || ""),
+      versionTag: String(authoritative.versionTag || ""),
+      updatedAt: String(document?.updatedAt || authoritative.updatedAt || ""),
+      updatedBy: String(document?.updatedBy || authoritative.updatedBy || ""),
+      source: authoritative.source || "local",
+      offline: false,
+      writable: true,
+      pendingCount: 0,
+      syncPending: false,
+      syncBlockedReason: "",
+      syncBlockedLock: null,
+      flushed: 0,
+      data: document?.data || null
+    };
+  }
+
+  sharedStateMySqlUnavailableUntil = 0;
+  let syncResult;
+  try {
+    syncResult = await flushSharedApplicationStateOfflineQueue({ force: true });
+  } catch (error) {
+    if (!Number(error?.statusCode)) error.statusCode = 503;
+    throw error;
+  }
+  const pending = await readSharedApplicationStatePendingDocument();
+  const pendingCount = pending.operations.length;
+  if (pendingCount > 0) {
+    const blockedReason = String(syncResult?.syncBlockedReason || "");
+    const message = blockedReason === "locked"
+      ? "Передача ожидающих изменений в MySQL временно заблокирована редактируемой записью."
+      : blockedReason === "conflict"
+        ? "Передача ожидающих изменений в MySQL остановлена из-за конфликта общей базы."
+        : `После попытки передачи в MySQL осталось ожидающих изменений: ${pendingCount}.`;
+    const error = new Error(message);
+    error.statusCode = blockedReason === "locked" ? 423 : 409;
+    error.pendingCount = pendingCount;
+    error.syncBlockedReason = blockedReason;
+    error.syncBlockedLock = syncResult?.syncBlockedLock || null;
+    throw error;
+  }
+
+  let authoritative;
+  try {
+    authoritative = await readSharedApplicationStateDocument({
+      allowCache: false,
+      skipOfflineSync: true,
+      syncResult
+    });
+  } catch (error) {
+    if (!Number(error?.statusCode)) error.statusCode = 503;
+    throw error;
+  }
+  const pendingAfterAuthoritativeRead = await readSharedApplicationStatePendingDocument();
+  const authoritativePendingCount = Math.max(
+    pendingAfterAuthoritativeRead.operations.length,
+    Math.max(0, Number(authoritative.pendingCount) || 0)
+  );
+  if (
+    authoritative.offline === true
+    || authoritative.writable === false
+    || authoritative.syncPending === true
+    || authoritativePendingCount > 0
+  ) {
+    const blockedReason = String(
+      authoritative.syncBlockedReason || syncResult?.syncBlockedReason || ""
+    );
+    const error = new Error(
+      authoritativePendingCount > 0
+        ? `Во время проверки появились новые ожидающие изменения MySQL: ${authoritativePendingCount}.`
+        : "Авторитетная общая MySQL-база временно недоступна для синхронизации XLSB."
+    );
+    error.statusCode = authoritative.offline === true || authoritative.writable === false
+      ? 503
+      : blockedReason === "locked"
+        ? 423
+        : 409;
+    error.pendingCount = authoritativePendingCount;
+    error.syncBlockedReason = blockedReason;
+    error.syncBlockedLock = authoritative.syncBlockedLock || syncResult?.syncBlockedLock || null;
+    throw error;
+  }
+  rememberSharedApplicationStateMirrorResult(authoritative);
+  const document = authoritative.document || null;
+  return {
+    exists: Boolean(authoritative.exists),
+    revision: Math.max(0, Number(document?.revision || authoritative.revision) || 0),
+    backendId: String(document?.backendId || authoritative.backendId || ""),
+    versionTag: String(authoritative.versionTag || ""),
+    updatedAt: String(document?.updatedAt || authoritative.updatedAt || ""),
+    updatedBy: String(document?.updatedBy || authoritative.updatedBy || ""),
+    source: String(authoritative.source || "mysql"),
+    offline: Boolean(authoritative.offline),
+    writable: authoritative.writable !== false,
+    pendingCount: authoritativePendingCount,
+    syncPending: Boolean(authoritative.syncPending),
+    syncBlockedReason: String(authoritative.syncBlockedReason || ""),
+    syncBlockedLock: authoritative.syncBlockedLock || null,
+    flushed: Math.max(0, Number(syncResult?.flushed) || 0),
+    data: document?.data || null
+  };
+}
+
 async function handleSharedApplicationState(req, res, authUser, requestUrl) {
   try {
     if (req.method === "GET") {
+      if (requestUrl.searchParams.get("flush") === "1") {
+        sendJson(res, 200, {
+          ok: true,
+          ...await flushSharedApplicationStateForSyncPreflight()
+        });
+        return;
+      }
       if (requestUrl.searchParams.get("metadata") === "1") {
         const metadata = await readSharedApplicationStateMirrorSnapshot({ metadata: true });
         sendJson(res, 200, metadata);
@@ -21915,13 +22040,26 @@ async function readAuthoritativeSharedApplicationStateMetadata() {
       syncPending: false
     };
   }
+  sharedStateMySqlUnavailableUntil = 0;
+  let syncResult;
+  try {
+    syncResult = await flushSharedApplicationStateOfflineQueue({ force: true });
+  } catch (error) {
+    if (!Number(error?.statusCode)) error.statusCode = 503;
+    throw error;
+  }
   const pending = await readSharedApplicationStatePendingDocument();
   if (pending.operations.length) {
-    const error = new Error(
-      "В общей Web-базе есть ожидающие автономные изменения. "
-      + "Дождитесь их сохранения перед синхронизацией XLSB."
-    );
-    error.statusCode = 409;
+    const blockedReason = String(syncResult?.syncBlockedReason || "");
+    const error = new Error(blockedReason === "locked"
+      ? "Передача ожидающих изменений в MySQL временно заблокирована редактируемой записью."
+      : blockedReason === "conflict"
+        ? "Передача ожидающих изменений в MySQL остановлена из-за конфликта общей базы."
+        : `После попытки передачи в MySQL осталось ожидающих изменений: ${pending.operations.length}.`);
+    error.statusCode = blockedReason === "locked" ? 423 : 409;
+    error.pendingCount = pending.operations.length;
+    error.syncBlockedReason = blockedReason;
+    error.syncBlockedLock = syncResult?.syncBlockedLock || null;
     throw error;
   }
   const pool = await getSharedRecordLocksMySqlPool();

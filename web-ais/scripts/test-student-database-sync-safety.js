@@ -1194,6 +1194,238 @@ async function testAuthoritativeRevisionAssertions() {
   }
 }
 
+async function testSharedStateSyncPreflightFlushesPendingQueue() {
+  const source = extractBetween(
+    serverSource,
+    "async function flushSharedApplicationStateForSyncPreflight",
+    "\nasync function handleSharedApplicationState"
+  );
+  const calls = [];
+  let flushFinished = false;
+  const authoritativeData = { collections: { students: [{ id: "student-1" }] } };
+  const context = {
+    process: { env: {} },
+    sharedStateMySqlUnavailableUntil: Date.now() + 60_000,
+    flushSharedApplicationStateOfflineQueue: async (options) => {
+      assert.equal(
+        context.sharedStateMySqlUnavailableUntil,
+        0,
+        "Preflight должен снять MySQL cooldown до запуска принудительной выгрузки"
+      );
+      calls.push(["flush", options]);
+      await Promise.resolve();
+      flushFinished = true;
+      return { flushed: 2, pendingCount: 0 };
+    },
+    readSharedApplicationStatePendingDocument: async () => {
+      assert.equal(flushFinished, true, "Проверка очереди должна выполняться после завершения flush");
+      calls.push(["pending"]);
+      return { operations: [] };
+    },
+    readSharedApplicationStateDocument: async (options) => {
+      calls.push(["authoritative", options]);
+      return {
+        exists: true,
+        document: {
+          revision: 41,
+          backendId: "mysql-main",
+          updatedAt: "2026-08-29T12:00:00.000Z",
+          updatedBy: "admin",
+          data: authoritativeData
+        },
+        versionTag: "mysql-41",
+        source: "mysql",
+        offline: false,
+        writable: true
+      };
+    },
+    rememberSharedApplicationStateMirrorResult: (result) => {
+      calls.push(["mirror", result]);
+    },
+    enqueueSharedApplicationStateWrite: async (operation) => operation(),
+    readLegacySharedApplicationStateDocument: async () => ({ exists: true, document: null })
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    source + "\nthis.flushForSync = flushSharedApplicationStateForSyncPreflight;",
+    context
+  );
+
+  const result = await context.flushForSync();
+  assert.equal(calls[0][0], "flush");
+  assert.equal(calls[0][1].force, true, "Preflight должен принудительно обходить MySQL cooldown");
+  assert.equal(context.sharedStateMySqlUnavailableUntil, 0);
+  assert.deepEqual(
+    calls.map(([name]) => name),
+    ["flush", "pending", "authoritative", "pending", "mirror"]
+  );
+  assert.equal(result.revision, 41);
+  assert.equal(result.exists, true);
+  assert.equal(result.data, authoritativeData);
+  assert.equal(result.flushed, 2);
+  assert.equal(result.pendingCount, 0);
+  assert.equal(result.syncPending, false);
+  assert.equal(result.offline, false);
+
+  const legacyData = { collections: { students: [{ id: "legacy-student" }] } };
+  context.process.env.AIS_SHARED_STATE_LOCAL_ONLY = "1";
+  context.readLegacySharedApplicationStateDocument = async (options) => {
+    assert.equal(options.allowCache, false);
+    return {
+      exists: true,
+      document: {
+        revision: 7,
+        updatedAt: "2026-08-29T13:00:00.000Z",
+        updatedBy: "local-admin",
+        data: legacyData
+      },
+      versionTag: "local-7",
+      source: "local-test",
+      offline: false
+    };
+  };
+  const legacyResult = await context.flushForSync();
+  assert.equal(legacyResult.exists, true);
+  assert.equal(legacyResult.revision, 7);
+  assert.equal(legacyResult.data, legacyData);
+  assert.equal(legacyResult.pendingCount, 0);
+  context.process.env.AIS_SHARED_STATE_LOCAL_ONLY = "";
+
+  let racePendingReadCount = 0;
+  context.flushSharedApplicationStateOfflineQueue = async (options) => {
+    assert.equal(options.force, true);
+    return { flushed: 0, pendingCount: 0 };
+  };
+  context.readSharedApplicationStatePendingDocument = async () => ({
+    operations: racePendingReadCount++ === 0 ? [] : [{ id: "concurrent-save" }]
+  });
+  context.readSharedApplicationStateDocument = async () => ({
+    exists: true,
+    document: { revision: 42, backendId: "mysql-main", data: authoritativeData },
+    versionTag: "mysql-42",
+    source: "local-queue",
+    offline: false,
+    writable: true,
+    pendingCount: 0,
+    syncPending: false
+  });
+  context.rememberSharedApplicationStateMirrorResult = () => {
+    assert.fail("Снимок с появившейся после первой проверки очередью нельзя считать авторитетным");
+  };
+  await assert.rejects(
+    () => context.flushForSync(),
+    statusError(409, /появились новые ожидающие изменения/iu)
+  );
+
+  for (const [blockedReason, expectedStatus, expectedMessage] of [
+    ["locked", 423, /заблокирована/iu],
+    ["conflict", 409, /конфликт/iu],
+    ["", 409, /осталось ожидающих изменений/iu]
+  ]) {
+    context.flushSharedApplicationStateOfflineQueue = async (options) => {
+      assert.equal(options.force, true);
+      return { flushed: 1, pendingCount: 1, syncBlockedReason: blockedReason };
+    };
+    context.readSharedApplicationStatePendingDocument = async () => ({ operations: [{ id: "pending" }] });
+    context.readSharedApplicationStateDocument = async () => {
+      assert.fail("Авторитетный снимок нельзя читать, пока очередь не очищена");
+    };
+    await assert.rejects(
+      () => context.flushForSync(),
+      statusError(expectedStatus, expectedMessage)
+    );
+  }
+
+  const handlerSource = extractBetween(
+    serverSource,
+    "async function handleSharedApplicationState(req, res, authUser, requestUrl)",
+    "\nasync function handleEnsureStudentDocumentFolders"
+  );
+  assert.match(handlerSource, /searchParams\.get\("flush"\) === "1"/u);
+  assert.match(handlerSource, /flushSharedApplicationStateForSyncPreflight\(\)/u);
+}
+
+async function testAuthoritativeMetadataFlushesQueueBeforeDecision() {
+  const source = extractBetween(
+    serverSource,
+    "async function readAuthoritativeSharedApplicationStateMetadata()",
+    "\nasync function assertSharedApplicationStateRevision"
+  );
+  const calls = [];
+  const connection = {
+    beginTransaction: async () => calls.push("begin"),
+    query: async () => {
+      calls.push("query");
+      return [[{
+        revision: 54,
+        updated_at: "2026-08-29 14:00:00",
+        updated_by: "admin"
+      }]];
+    },
+    commit: async () => calls.push("commit"),
+    rollback: async () => calls.push("rollback"),
+    release: () => calls.push("release")
+  };
+  const context = {
+    process: { env: {} },
+    SHARED_STATE_MYSQL_KEY: "test-shared-state",
+    sharedStateMySqlUnavailableUntil: Date.now() + 60_000,
+    flushSharedApplicationStateOfflineQueue: async (options) => {
+      assert.equal(context.sharedStateMySqlUnavailableUntil, 0);
+      assert.equal(options.force, true);
+      calls.push("flush");
+      return { flushed: 1, pendingCount: 0 };
+    },
+    readSharedApplicationStatePendingDocument: async () => {
+      calls.push("pending");
+      return { operations: [] };
+    },
+    getSharedRecordLocksMySqlPool: async () => {
+      calls.push("pool");
+      return { getConnection: async () => connection };
+    },
+    sharedApplicationStateMySqlVersionTag: (revision) => `mysql-${revision}`,
+    enqueueSharedApplicationStateWrite: async (operation) => operation(),
+    readLegacySharedApplicationStateMetadata: async () => ({ exists: true, revision: 1 })
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    source + "\nthis.readAuthoritative = readAuthoritativeSharedApplicationStateMetadata;",
+    context
+  );
+
+  const metadata = await context.readAuthoritative();
+  assert.equal(metadata.revision, 54);
+  assert.deepEqual(calls, ["flush", "pending", "pool", "begin", "query", "commit", "release"]);
+
+  calls.length = 0;
+  context.flushSharedApplicationStateOfflineQueue = async (options) => {
+    assert.equal(options.force, true);
+    calls.push("flush");
+    return { flushed: 0, pendingCount: 1, syncBlockedReason: "conflict" };
+  };
+  context.readSharedApplicationStatePendingDocument = async () => {
+    calls.push("pending");
+    return { operations: [{ id: "pending" }] };
+  };
+  context.getSharedRecordLocksMySqlPool = async () => {
+    assert.fail("MySQL metadata нельзя читать до выгрузки ожидающей очереди");
+  };
+  await assert.rejects(
+    () => context.readAuthoritative(),
+    statusError(409, /конфликт/iu)
+  );
+  assert.deepEqual(calls, ["flush", "pending"]);
+
+  context.flushSharedApplicationStateOfflineQueue = async () => {
+    throw new Error("ECONNREFUSED");
+  };
+  await assert.rejects(
+    () => context.readAuthoritative(),
+    statusError(503, /ECONNREFUSED/u)
+  );
+}
+
 function createSharedSaveContext(activeReservation, options = {}) {
   const source = extractBetween(
     serverSource,
@@ -1789,6 +2021,8 @@ async function main() {
   testTargetedStudentFieldPatchAuditFallbackSafety();
   testStudentContractAmountFixedValueOverride();
   testReservationRevisionAndTtl();
+  await testSharedStateSyncPreflightFlushesPendingQueue();
+  await testAuthoritativeMetadataFlushesQueueBeforeDecision();
   await testAuthoritativeRevisionAssertions();
   await testStrictReservationTokenAndBaseRevision();
   await testPreparedRevisionAndExpiredTokenRecheck();

@@ -718,6 +718,9 @@ function makeExportContext(result, { validBaseline = true } = {}) {
   const order = [];
   const baselineCalls = [];
   const operationResults = [];
+  const indicatorUpdates = [];
+  const sharedStateRequests = [];
+  const flushedGenerations = [];
   const context = {
     state: {
       databaseExport: { running: false, operation: "" },
@@ -736,12 +739,21 @@ function makeExportContext(result, { validBaseline = true } = {}) {
       }
     },
     sharedStateRevision: 7,
+    sharedStateReady: true,
     sharedStateConflict: false,
     sharedStateOffline: false,
+    sharedStatePendingCount: 0,
+    sharedStatePendingPatch: null,
+    sharedStateDirty: false,
+    sharedStateSavePromise: null,
     sharedStateChangeGeneration: 3,
     performance: { now: () => 1000 },
     alert: () => assert.fail("alert не ожидается"),
     confirm: () => true,
+    isSettingsDraftSessionActive: () => false,
+    hasUnsavedSettingsChanges: () => false,
+    saveSettingsDraftChanges: async () => true,
+    waitForStudentImportPoll: async () => {},
     getStudentDocumentsSource: () => "local",
     getStudentDatabaseSyncConfirmation: () => "confirm",
     getStudentDatabaseWebDavPath: () => "db.xlsb",
@@ -753,7 +765,37 @@ function makeExportContext(result, { validBaseline = true } = {}) {
       oldestAt: "2026-08-01T00:00:00.000Z",
       complete: false
     }),
-    flushSharedApplicationState: async () => true,
+    flushSharedApplicationState: async () => {
+      order.push("active-save");
+      context.sharedStateDirty = false;
+      context.sharedStatePendingPatch = null;
+      context.sharedStateSavePromise = null;
+      return true;
+    },
+    requestSharedApplicationState: async (pathname, options = {}) => {
+      order.push("flush-mysql");
+      sharedStateRequests.push({ pathname, options });
+      return context.authoritativeSharedState || {
+        exists: true,
+        data: context.state.data,
+        revision: context.sharedStateRevision,
+        writable: true,
+        offline: false,
+        pendingCount: 0,
+        syncPending: false
+      };
+    },
+    applySharedApplicationState: (payload, options = {}) => {
+      order.push("apply-mysql");
+      context.appliedSharedStateOptions = options;
+      if (!payload?.exists || !payload.data) return false;
+      context.state.data = payload.data;
+      context.sharedStateRevision = Math.max(0, Number(payload.revision) || 0);
+      context.sharedStateConflict = false;
+      context.sharedStateOffline = Boolean(payload.offline);
+      context.sharedStatePendingCount = Math.max(0, Number(payload.pendingCount) || 0);
+      return true;
+    },
     buildStudentDatabaseExportStudents: () => [{ id: "s1" }],
     buildStudentDatabaseExportContracts: () => [{ id: "c1" }],
     buildStudentDatabaseExportDirectExpenses: () => [{ id: "d1" }],
@@ -778,7 +820,7 @@ function makeExportContext(result, { validBaseline = true } = {}) {
       context.receivedConflictOptions = options;
       return context.conflictResolutions || null;
     },
-    updateDatabaseExportIndicator: () => {},
+    updateDatabaseExportIndicator: (patch) => { indicatorUpdates.push({ ...patch }); },
     finishDatabaseExportIndicator: () => {},
     showDatabaseOperationResult: (value) => { operationResults.push(value); },
     databaseOperationDetailFields: {
@@ -815,7 +857,7 @@ function makeExportContext(result, { validBaseline = true } = {}) {
       order.push("import");
       return { studentCount: 1, auditEntry: { action: "excel-import" } };
     },
-    cancelScheduledSharedApplicationStateSave: () => {},
+    cancelScheduledSharedApplicationStateSave: () => { order.push("cancel-scheduled-save"); },
     flushStudentDatabaseSynchronizationState: async () => { order.push("strict-flush"); },
     persist: () => { order.push("persist"); },
     addAudit: () => {
@@ -823,8 +865,9 @@ function makeExportContext(result, { validBaseline = true } = {}) {
       return { action: "web-export" };
     },
     postAuditEntry: async () => { order.push("post-audit"); },
-    flushSharedApplicationStateThroughGeneration: async () => {
-      order.push("baseline-flush");
+    flushSharedApplicationStateThroughGeneration: async (generation, options = {}) => {
+      flushedGenerations.push({ generation, options });
+      order.push(options.strictRevision === true ? "baseline-flush" : "mysql-generation-flush");
       return true;
     },
     cancelStudentDatabaseSyncReservation: async (jobId, token) => {
@@ -835,6 +878,9 @@ function makeExportContext(result, { validBaseline = true } = {}) {
   context.order = order;
   context.baselineCalls = baselineCalls;
   context.operationResults = operationResults;
+  context.indicatorUpdates = indicatorUpdates;
+  context.sharedStateRequests = sharedStateRequests;
+  context.flushedGenerations = flushedGenerations;
   vm.createContext(context);
   vm.runInContext(
     extractBetween("  function getStudentDatabaseSyncFailureDetails", "  async function downloadStudentsDatabase")
@@ -859,6 +905,151 @@ async function testDirectionalExportFlows() {
   assert.equal(unchanged.exportBody.trainingPlans.length, 1);
   assert.equal(unchanged.exportBody.currentWebCriticalUpdatedAt, "2026-08-20T09:00:00.000Z");
   assert.equal(unchanged.exportBody.currentWebAuditOldestAt, "2026-08-01T00:00:00.000Z");
+  assert.equal(unchanged.sharedStateRequests[0].pathname, "flush=1");
+  assert.equal(
+    unchanged.sharedStateRequests[0].options.sharedStateProgress.message,
+    "Передача Web-данных в MySQL"
+  );
+  assert.ok(unchanged.order.indexOf("mysql-generation-flush") < unchanged.order.indexOf("flush-mysql"));
+  assert.ok(unchanged.order.indexOf("flush-mysql") < unchanged.order.indexOf("apply-mysql"));
+  assert.ok(unchanged.order.indexOf("apply-mysql") < unchanged.order.indexOf("run"));
+  assert.equal(unchanged.appliedSharedStateOptions.renderAfter, false);
+  assert.ok(unchanged.indicatorUpdates.some((item) => /\u042dтап 1 из 2/iu.test(item.status || "")));
+  assert.ok(unchanged.indicatorUpdates.some((item) => /\u042dтап 2 из 2/iu.test(item.status || "")));
+
+  const recovery = makeExportContext({
+    syncDirection: "unchanged",
+    sourceHash: "a".repeat(64),
+    sourceIdentity: "b".repeat(64),
+    studentCount: 1
+  });
+  recovery.sharedStateChangeGeneration = 0;
+  recovery.sharedStateDirty = false;
+  recovery.sharedStatePendingPatch = { collections: { students: { upserts: [{ id: "pending" }] } } };
+  recovery.sharedStateOffline = true;
+  recovery.sharedStatePendingCount = 1;
+  const authoritativeData = {
+    ...recovery.state.data,
+    collections: { students: [{ id: "authoritative-student" }] }
+  };
+  recovery.authoritativeSharedState = {
+    exists: true,
+    data: authoritativeData,
+    revision: 12,
+    writable: true,
+    offline: false,
+    pendingCount: 0,
+    syncPending: false
+  };
+  recovery.buildStudentDatabaseExportStudents = () => recovery.state.data.collections.students;
+  await recovery.operation({ shiftKey: false });
+  assert.ok(recovery.order.indexOf("active-save") < recovery.order.indexOf("flush-mysql"));
+  assert.equal(recovery.flushedGenerations[0].generation, 0);
+  assert.equal(recovery.flushedGenerations[0].options.allowSettingsDraft, true);
+  assert.equal(recovery.state.data.collections.students[0].id, "authoritative-student");
+  assert.equal(recovery.exportBody.students[0].id, "authoritative-student");
+  assert.equal(recovery.exportBody.sharedStateRevision, 12);
+
+  const cachedPending = makeExportContext({ syncDirection: "unchanged" });
+  cachedPending.authoritativeSharedState = {
+    exists: true,
+    data: cachedPending.state.data,
+    revision: 8,
+    writable: true,
+    offline: true,
+    pendingCount: 1,
+    syncPending: true
+  };
+  await cachedPending.operation({ shiftKey: false });
+  assert.equal(cachedPending.sharedStateRequests.length, 3);
+  assert.equal(cachedPending.order.includes("apply-mysql"), false);
+  assert.equal(cachedPending.order.includes("run"), false);
+
+  const transientLock = makeExportContext({
+    syncDirection: "unchanged",
+    sourceHash: "a".repeat(64),
+    sourceIdentity: "b".repeat(64),
+    studentCount: 1
+  });
+  let transientLockRequests = 0;
+  const transientRetryDelays = [];
+  transientLock.waitForStudentImportPoll = async (delay) => { transientRetryDelays.push(delay); };
+  transientLock.requestSharedApplicationState = async (pathname, options = {}) => {
+    transientLockRequests += 1;
+    transientLock.order.push("flush-mysql");
+    transientLock.sharedStateRequests.push({ pathname, options });
+    if (transientLockRequests === 1) {
+      const error = new Error(
+        "Передача ожидающих изменений в MySQL временно заблокирована редактируемой записью."
+      );
+      error.status = 423;
+      throw error;
+    }
+    return {
+      exists: true,
+      data: transientLock.state.data,
+      revision: 8,
+      writable: true,
+      offline: false,
+      pendingCount: 0,
+      syncPending: false
+    };
+  };
+  await transientLock.operation({ shiftKey: false });
+  assert.equal(transientLockRequests, 2);
+  assert.deepEqual(transientRetryDelays, [400]);
+  assert.equal(transientLock.order.includes("run"), true);
+
+  const generationRace = makeExportContext({
+    syncDirection: "unchanged",
+    sourceHash: "a".repeat(64),
+    sourceIdentity: "b".repeat(64),
+    studentCount: 1
+  });
+  let generationRaceRequests = 0;
+  generationRace.requestSharedApplicationState = async (pathname, options = {}) => {
+    generationRaceRequests += 1;
+    generationRace.order.push("flush-mysql");
+    generationRace.sharedStateRequests.push({ pathname, options });
+    if (generationRaceRequests === 1) {
+      generationRace.sharedStateChangeGeneration += 1;
+      generationRace.sharedStateDirty = true;
+      generationRace.sharedStatePendingPatch = { meta: { changedDuringFlush: true } };
+    }
+    return {
+      exists: true,
+      data: generationRace.state.data,
+      revision: 9,
+      writable: true,
+      offline: false,
+      pendingCount: 0,
+      syncPending: false
+    };
+  };
+  await generationRace.operation({ shiftKey: false });
+  assert.equal(generationRaceRequests, 2);
+  assert.equal(generationRace.order.filter((item) => item === "apply-mysql").length, 1);
+  assert.ok(generationRace.order.lastIndexOf("apply-mysql") < generationRace.order.indexOf("run"));
+  assert.equal(generationRace.exportBody.sharedStateRevision, 9);
+
+  const settingsDraft = makeExportContext({
+    syncDirection: "unchanged",
+    sourceHash: "a".repeat(64),
+    sourceIdentity: "b".repeat(64),
+    studentCount: 1
+  });
+  let settingsDirty = true;
+  settingsDraft.isSettingsDraftSessionActive = () => true;
+  settingsDraft.hasUnsavedSettingsChanges = () => settingsDirty;
+  settingsDraft.saveSettingsDraftChanges = async (options) => {
+    settingsDraft.order.push("save-settings");
+    assert.equal(options.renderAfterSave, false);
+    settingsDirty = false;
+    return true;
+  };
+  await settingsDraft.operation({ shiftKey: false });
+  assert.ok(settingsDraft.order.indexOf("save-settings") < settingsDraft.order.indexOf("flush-mysql"));
+  assert.ok(settingsDraft.order.indexOf("apply-mysql") < settingsDraft.order.indexOf("run"));
 
   const eventBaselineMigration = makeExportContext({
     syncDirection: "unchanged",
@@ -1637,6 +1828,12 @@ assert.match(
   appSource,
   /syncConflictResolutions:\s*\{\s*\.\.\.cumulativeConflictResolutions\s*\}/u
 );
+const sharedStatePollSource = extractBetween(
+  "  async function pollSharedApplicationState()",
+  "  function recordLockKey"
+);
+assert.match(sharedStatePollSource, /state\.databaseExport\.running/u);
+assert.match(sharedStatePollSource, /state\.databaseImport\.running/u);
 
 (async () => {
   testManagedFieldClearingAndWebOnlyPreservation();
