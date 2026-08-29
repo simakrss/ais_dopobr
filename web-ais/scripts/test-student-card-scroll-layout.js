@@ -112,6 +112,14 @@ const desktopEnd = stylesSource.indexOf(
 );
 assert.ok(desktopStart >= 0, "Не найден начальный маркер desktop-блока карточки слушателя.");
 assert.ok(desktopEnd > desktopStart, "Конечный маркер desktop-блока расположен неверно.");
+const baseStickyTabsRuleIndex = stylesSource.indexOf(
+  ".student-modal .student-tabs[data-student-tabs],"
+);
+assert.ok(baseStickyTabsRuleIndex >= 0, "Не найдено базовое sticky-правило вкладок карточки.");
+assert.ok(
+  desktopStart > baseStickyTabsRuleIndex,
+  "Desktop-отмена sticky-смещения должна находиться после базового правила, чтобы иметь приоритет в каскаде."
+);
 const markedDesktopSource = stylesSource.slice(
   desktopStart + DESKTOP_START_MARKER.length,
   desktopEnd
@@ -172,6 +180,22 @@ assertDeclaration(layoutDeclarations, /(?:^|;)\s*overflow\s*:\s*hidden\s*(?:;|$)
 const mainDeclarations = declarationsFor(desktopRules, classSelector(".student-card-main"), "student-card-main");
 assertDeclaration(mainDeclarations, /(?:^|;)\s*min-height\s*:\s*0\s*(?:;|$)/u);
 assertDeclaration(mainDeclarations, /(?:^|;)\s*overflow\s*:\s*hidden\s*(?:;|$)/u);
+
+const tabsDeclarations = declarationsFor(
+  desktopRules,
+  (selector) => selector === ".student-modal .student-tabs[data-student-tabs]",
+  "строки вкладок карточки слушателя"
+);
+assertDeclaration(
+  tabsDeclarations,
+  /(?:^|;)\s*position\s*:\s*static\s*(?:;|$)/u,
+  "При отдельной прокрутке содержимого вкладки сама строка не должна получать sticky-смещение повторно."
+);
+assertDeclaration(
+  tabsDeclarations,
+  /(?:^|;)\s*top\s*:\s*auto\s*(?:;|$)/u,
+  "Строка вкладок уже расположена ниже заголовка и не должна дополнительно сдвигаться на его высоту."
+);
 
 const sideDeclarations = declarationsFor(desktopRules, classSelector(".student-side-panel"), "student-side-panel");
 assertDeclaration(sideDeclarations, /(?:^|;)\s*min-height\s*:\s*0\s*(?:;|$)/u);

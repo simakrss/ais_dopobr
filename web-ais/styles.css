@@ -16626,6 +16626,11 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     overflow: hidden;
   }
 
+  .student-modal .student-tabs[data-student-tabs] {
+    position: static;
+    top: auto;
+  }
+
   .student-tab-body {
     overflow-x: hidden;
     overflow-y: auto;

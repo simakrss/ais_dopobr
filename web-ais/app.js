@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.363",
+    version: "1.7.364",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.364",
+      releasedAt: "2026-08-29",
+      changes: [
+        "Строка вкладок в карточке слушателя снова располагается сразу под заголовком без лишнего вертикального смещения."
+      ]
+    },
     {
       version: "1.7.363",
       releasedAt: "2026-08-29",
