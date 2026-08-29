@@ -3,6 +3,7 @@ param(
   [string]$AppRoot = ""
 )
 
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, "Modules")
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $utf8 = New-Object Text.UTF8Encoding($false)

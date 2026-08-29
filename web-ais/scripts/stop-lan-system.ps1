@@ -4,6 +4,7 @@ param(
   [string]$AppRoot = ""
 )
 
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, "Modules")
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
@@ -15,7 +16,8 @@ $appRoot = if ([string]::IsNullOrWhiteSpace($AppRoot)) {
 }
 $logRoot = Join-Path $appRoot "tmp\lan-system"
 $statusPath = Join-Path $logRoot "status.json"
-$serviceConfigPath = Join-Path $env:ProgramData "AisDopobrWeb\service-config.json"
+$commonProgramData = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+$serviceConfigPath = Join-Path $commonProgramData "AisDopobrWeb\service-config.json"
 $expectedAppRoots = New-Object Collections.Generic.List[string]
 $expectedAppRoots.Add([IO.Path]::GetFullPath($appRoot))
 $serviceConfig = $null
@@ -92,7 +94,7 @@ function Stop-VerifiedProcessTree($Process, [string]$Label) {
   $creation = Convert-CreationDate $Process
   if (-not $creation) { throw "Не удалось определить время запуска PID $processId ($Label)." }
 
-  $taskKillPath = Join-Path $env:SystemRoot "System32\taskkill.exe"
+  $taskKillPath = Join-Path ([Environment]::SystemDirectory) "taskkill.exe"
   $killer = Start-Process -FilePath $taskKillPath -ArgumentList @("/PID", "$processId", "/T", "/F") `
     -WindowStyle Hidden -Wait -PassThru
   if ($killer.ExitCode -ne 0 -and (Test-SameProcessAlive $processId $creation)) {
@@ -169,6 +171,19 @@ function Stop-ListenerAtPort([int]$Port, [string]$ScriptName) {
   return $true
 }
 
+function Stop-AllManagedNodeProcesses([string]$ScriptName) {
+  $stoppedCount = 0
+  for ($attempt = 0; $attempt -lt 32; $attempt++) {
+    $process = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { Test-ExpectedNodeProcess $_ $ScriptName } |
+      Select-Object -First 1
+    if (-not $process) { return $stoppedCount }
+    Stop-VerifiedProcessTree $process $ScriptName
+    $stoppedCount++
+  }
+  throw "Не удалось завершить все процессы $ScriptName после 32 попыток."
+}
+
 function Remove-PreviewCleanupLease([string]$LeasePath, [string]$ExpectedContents) {
   if (-not (Test-Path -LiteralPath $LeasePath -PathType Leaf)) { return }
   $currentContents = Get-Content -LiteralPath $LeasePath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
@@ -231,6 +246,13 @@ foreach ($portAndScript in @(
   [void](Stop-ListenerAtPort ([int]$portAndScript.Port) ([string]$portAndScript.Script))
 }
 
+# A detached preview cleanup worker does not listen on either server port and
+# may use a custom storage root. Exact full script paths let us stop every
+# remaining process belonging to this AIS copy without trusting a lease path.
+foreach ($scriptName in @("start-lan-system.js", "local-server.js", "app-server.js")) {
+  [void](Stop-AllManagedNodeProcesses $scriptName)
+}
+
 $previewLeasePath = Join-Path $appRoot "storage\generated-document-previews\.cleanup-worker.lock"
 for ($attempt = 0; $attempt -lt 3; $attempt++) {
   [void](Stop-PreviewCleanupWorker $previewLeasePath)
@@ -246,6 +268,14 @@ foreach ($port in @(8081, 19081)) {
     Select-Object -First 1
   if ($listener) {
     throw "АИС не остановлена: порт $port снова открыт процессом PID $([int]$listener.OwningProcess)."
+  }
+}
+foreach ($scriptName in @("start-lan-system.js", "local-server.js", "app-server.js")) {
+  $remainingProcess = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { Test-ExpectedNodeProcess $_ $scriptName } |
+    Select-Object -First 1
+  if ($remainingProcess) {
+    throw "АИС не остановлена: процесс $scriptName PID $([int]$remainingProcess.ProcessId) продолжает работать."
   }
 }
 [void](Stop-PreviewCleanupWorker $previewLeasePath)

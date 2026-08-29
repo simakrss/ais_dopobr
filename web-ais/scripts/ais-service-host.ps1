@@ -6,6 +6,7 @@ param(
   [string]$MappedTarget = ""
 )
 
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, "Modules")
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $utf8 = New-Object Text.UTF8Encoding($false)
@@ -15,10 +16,10 @@ $OutputEncoding = $utf8
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $resolvedAppRoot = [IO.Path]::GetFullPath($AppRoot)
-$launcherPath = Join-Path $resolvedAppRoot "scripts\start-lan-system.js"
-$startupUpdatePath = Join-Path $resolvedAppRoot "scripts\sync-and-deploy-startup.ps1"
-$portableNodePath = Join-Path $resolvedAppRoot ".runtime\node\node.exe"
-$serviceLogPath = Join-Path $resolvedAppRoot "tmp\lan-system\service-launch.log"
+$launcherPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "scripts\start-lan-system.js"))
+$startupUpdatePath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "scripts\sync-and-deploy-startup.ps1"))
+$portableNodePath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, ".runtime\node\node.exe"))
+$serviceLogPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "tmp\lan-system\service-launch.log"))
 
 function Write-ServiceLog([string]$Source, [string]$Message) {
   $logDirectory = Split-Path -Parent $serviceLogPath
@@ -63,6 +64,11 @@ function Write-ServiceOutput([string]$Source, $Value) {
   if ([string]::IsNullOrWhiteSpace($message)) { return }
   Write-Host $message
   Write-ServiceLog $Source $message
+}
+
+function Test-AisServiceRunning {
+  $currentService = Get-Service -Name "AisDopobrWeb" -ErrorAction SilentlyContinue
+  return $currentService -and [string]$currentService.Status -in @("Running", "StartPending")
 }
 
 function Test-NodeRuntime([string]$Candidate) {
@@ -227,6 +233,10 @@ try {
     $ErrorActionPreference = $previousErrorActionPreference
   }
 }
+if (-not (Test-AisServiceRunning)) {
+  Write-ServiceStep "Служба остановлена во время обновления; запуск серверов отменён."
+  exit 0
+}
 
 $nodeRuntime = Find-NodeRuntime
 $env:AIS_NODE_PATH = $nodeRuntime.Path
@@ -251,6 +261,10 @@ if ($dockerPath -and (Wait-DockerEngine $dockerPath)) {
 }
 
 $env:AIS_SERVICE_MODE = "1"
+if (-not (Test-AisServiceRunning)) {
+  Write-ServiceStep "Служба остановлена во время подготовки Docker; запуск серверов отменён."
+  exit 0
+}
 Write-ServiceStep "Запуск фонового супервизора АИС..."
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"

@@ -257,20 +257,20 @@ namespace AisDopobrWebService
 
             try
             {
-                RunStopScript();
-            }
-            catch (Exception exception)
-            {
-                WriteLog("ERROR", "AIS stop script failed: " + exception);
-            }
-
-            try
-            {
                 EndWorkerTask();
             }
             catch (Exception exception)
             {
                 WriteLog("WARN", "Could not end the interactive worker task: " + exception);
+            }
+
+            try
+            {
+                RunStopScript();
+            }
+            catch (Exception exception)
+            {
+                WriteLog("ERROR", "AIS stop script failed: " + exception);
             }
 
             WriteLog("SERVICE", WindowsServiceName + " stopped.");

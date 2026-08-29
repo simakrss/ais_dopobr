@@ -13,6 +13,7 @@ param(
   [int]$TimeoutSeconds = 240
 )
 
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, "Modules")
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $utf8 = New-Object Text.UTF8Encoding($false)
@@ -22,14 +23,39 @@ $OutputEncoding = $utf8
 $serviceName = "AisDopobrWeb"
 $trayTaskName = "AisDopobrServiceTray"
 $workerTaskName = "AisDopobrInteractiveHost"
-$scriptAppRoot = Split-Path -Parent $PSScriptRoot
+$commonProgramData = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+$systemDirectory = [Environment]::SystemDirectory
+$programDataRoot = [IO.Path]::GetFullPath((Join-Path $commonProgramData "AisDopobrWeb"))
+$serviceConfigPath = Join-Path $programDataRoot "service-config.json"
+$protectedStopPath = Join-Path $programDataRoot "stop-lan-system.ps1"
+$protectedTrayPath = Join-Path $programDataRoot "ais-service-tray.ps1"
+$powerShellPath = Join-Path $systemDirectory "WindowsPowerShell\v1.0\powershell.exe"
+$runningFromProtectedRoot = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') -ieq $programDataRoot.TrimEnd('\')
+$installedConfig = $null
+if ($runningFromProtectedRoot -and (Test-Path -LiteralPath $serviceConfigPath -PathType Leaf)) {
+  try {
+    $installedConfig = Get-Content -LiteralPath $serviceConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  } catch {
+    throw "Защищённая конфигурация службы повреждена: $($_.Exception.Message)"
+  }
+}
+$scriptAppRoot = if ($runningFromProtectedRoot -and $installedConfig -and
+  $installedConfig.PSObject.Properties["serviceAppRoot"]) {
+  [IO.Path]::GetFullPath([string]$installedConfig.serviceAppRoot)
+} else {
+  Split-Path -Parent $PSScriptRoot
+}
 $appRoot = if ([string]::IsNullOrWhiteSpace($SourceAppRoot)) {
   $scriptAppRoot
 } else {
   [IO.Path]::GetFullPath($SourceAppRoot)
 }
 $installerPath = Join-Path $PSScriptRoot "setup-ais-windows-service.ps1"
-$trayPath = Join-Path $PSScriptRoot "ais-service-tray.ps1"
+$trayPath = if (Test-Path -LiteralPath $protectedTrayPath -PathType Leaf) {
+  $protectedTrayPath
+} else {
+  Join-Path $PSScriptRoot "ais-service-tray.ps1"
+}
 $logViewerPath = Join-Path $PSScriptRoot "show-ais-service-log.ps1"
 $legacyStopPath = Join-Path $PSScriptRoot "stop-lan-system.ps1"
 $localUrl = "http://127.0.0.1:8081/"
@@ -47,8 +73,11 @@ function Test-IsAdministrator {
 }
 
 function Quote-ProcessArgument([string]$Value) {
-  if ($null -eq $Value) { return '""' }
-  return '"' + $Value.Replace('"', '\"') + '"'
+  if ($null -eq $Value -or $Value.Length -eq 0) { return '""' }
+  if ($Value -notmatch '[\s"]') { return $Value }
+  $escaped = [regex]::Replace($Value, '(\\*)"', '${1}${1}\"')
+  $escaped = [regex]::Replace($escaped, '(\\+)$', '${1}${1}')
+  return '"' + $escaped + '"'
 }
 
 function Resolve-ElevationSafePath([string]$PathValue) {
@@ -104,7 +133,7 @@ function Get-ControlElevationArguments {
 
 function Invoke-ElevatedControl {
   $argumentLine = (Get-ControlElevationArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
-  $process = Start-Process -FilePath "powershell.exe" -ArgumentList $argumentLine `
+  $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine `
     -Verb RunAs -Wait -PassThru
   exit $process.ExitCode
 }
@@ -121,6 +150,72 @@ function Test-AisHealth {
     return [bool]$payload.ok
   } catch {
     return $false
+  }
+}
+
+function Test-AisPortListener([int]$Port) {
+  return [bool](Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
+    Select-Object -First 1)
+}
+
+function Get-AisManagedNodeProcesses {
+  $roots = New-Object Collections.Generic.List[string]
+  $roots.Add([IO.Path]::GetFullPath($appRoot))
+  if (Test-Path -LiteralPath $serviceConfigPath -PathType Leaf) {
+    try {
+      $serviceConfig = Get-Content -LiteralPath $serviceConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+      foreach ($propertyName in @("sourceAppRoot", "serviceAppRoot")) {
+        if ($serviceConfig.PSObject.Properties[$propertyName]) {
+          $candidate = [string]$serviceConfig.$propertyName
+          if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            $candidate = [IO.Path]::GetFullPath($candidate)
+            if (-not $roots.Contains($candidate)) { $roots.Add($candidate) }
+          }
+        }
+      }
+    } catch {
+      Write-Warning "Не удалось прочитать конфигурацию службы для проверки процессов: $($_.Exception.Message)"
+    }
+  }
+  $expectedPaths = @($roots | ForEach-Object {
+    $rootPath = $_
+    @("scripts\start-lan-system.js", "app-server.js", "local-server.js") | ForEach-Object {
+      [IO.Path]::GetFullPath([IO.Path]::Combine($rootPath, $_)).Replace("/", "\").ToLowerInvariant()
+    }
+  } | Select-Object -Unique)
+  return @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue | Where-Object {
+    $commandLine = ([string]$_.CommandLine).Replace("/", "\").ToLowerInvariant()
+    @($expectedPaths | Where-Object {
+      $commandLine.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0
+    }).Count -gt 0
+  })
+}
+
+function Get-AisStopResidue {
+  return [pscustomobject]@{
+    Ports = @(@(8081, 19081) | Where-Object { Test-AisPortListener $_ })
+    Processes = @(Get-AisManagedNodeProcesses)
+  }
+}
+
+function Invoke-AisProtectedCleanup {
+  if (-not (Test-Path -LiteralPath $protectedStopPath -PathType Leaf)) {
+    throw "Защищённый сценарий остановки службы не найден: $protectedStopPath"
+  }
+  $cleanupAppRoot = [IO.Path]::GetFullPath($appRoot)
+  if (Test-Path -LiteralPath $serviceConfigPath -PathType Leaf) {
+    $serviceConfig = Get-Content -LiteralPath $serviceConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($serviceConfig.PSObject.Properties["serviceAppRoot"]) {
+      $configuredRoot = [string]$serviceConfig.serviceAppRoot
+      if (-not [string]::IsNullOrWhiteSpace($configuredRoot)) {
+        $cleanupAppRoot = [IO.Path]::GetFullPath($configuredRoot)
+      }
+    }
+  }
+  & $powerShellPath -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+    -File $protectedStopPath -KeepDocker -AppRoot $cleanupAppRoot
+  if ($LASTEXITCODE -ne 0) {
+    throw "Повторная очистка процессов АИС завершилась с кодом $LASTEXITCODE."
   }
 }
 
@@ -158,21 +253,17 @@ function Start-AisTray {
   }
   $task = Get-ScheduledTask -TaskName $trayTaskName -ErrorAction SilentlyContinue
   if ($task) {
-    Start-ScheduledTask -TaskName $trayTaskName
-    return
+    try {
+      Start-ScheduledTask -TaskName $trayTaskName -ErrorAction Stop
+      return
+    } catch {
+      Write-Warning "Планировщик не разрешил ручной запуск иконки; запускается защищённая копия в текущем сеансе."
+    }
   }
   $argumentLine = @(
     "-NoLogo", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", $trayPath
   ) | ForEach-Object { Quote-ProcessArgument $_ }
-  Start-Process -FilePath "powershell.exe" -ArgumentList ($argumentLine -join " ") -WindowStyle Hidden | Out-Null
-}
-
-function Start-AisInteractiveWorker {
-  $task = Get-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
-  if (-not $task) {
-    throw "Интерактивная задача АИС не зарегистрирована. Повторите установку службы."
-  }
-  Start-ScheduledTask -TaskName $workerTaskName
+  Start-Process -FilePath $powerShellPath -ArgumentList ($argumentLine -join " ") -WindowStyle Hidden | Out-Null
 }
 
 function Show-AisLogTerminal {
@@ -182,25 +273,51 @@ function Show-AisLogTerminal {
   $argumentLine = @(
     "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $logViewerPath, "-AppRoot", $appRoot
   ) | ForEach-Object { Quote-ProcessArgument $_ }
-  Start-Process -FilePath "powershell.exe" -ArgumentList ($argumentLine -join " ") -WorkingDirectory $appRoot | Out-Null
+  Start-Process -FilePath $powerShellPath -ArgumentList ($argumentLine -join " ") -WorkingDirectory $appRoot | Out-Null
 }
 
 function Install-AisService {
+  if ($runningFromProtectedRoot) {
+    throw "Для переустановки службы запустите установщик из папки дистрибутива АИС."
+  }
   if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
     throw "Не найден установщик службы: $installerPath"
   }
+  $elevationInstallerPath = Resolve-ElevationSafePath $installerPath
+  $elevationAppRoot = Resolve-ElevationSafePath $scriptAppRoot
   $arguments = @(
-    "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $installerPath,
-    "-Action", "Install", "-AppRoot", $scriptAppRoot, "-InteractiveAppRoot", $appRoot,
+    "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $elevationInstallerPath,
+    "-Action", "Install", "-AppRoot", $elevationAppRoot, "-InteractiveAppRoot", $appRoot,
     "-InteractiveUser", $interactiveUserName, "-StartService", "-StartTray"
   )
   if (Test-IsAdministrator) {
-    & powershell.exe @arguments
+    & $powerShellPath @arguments
     if ($LASTEXITCODE -ne 0) { throw "Установка службы завершилась с кодом $LASTEXITCODE." }
   } else {
     $argumentLine = ($arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
-    $process = Start-Process -FilePath "powershell.exe" -ArgumentList $argumentLine -Verb RunAs -Wait -PassThru
+    $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine -Verb RunAs -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Установка службы завершилась с кодом $($process.ExitCode)." }
+  }
+}
+
+function Uninstall-AisService {
+  if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+    throw "Не найден защищённый установщик службы: $installerPath"
+  }
+  $elevationInstallerPath = Resolve-ElevationSafePath $installerPath
+  $elevationAppRoot = Resolve-ElevationSafePath $scriptAppRoot
+  $arguments = @(
+    "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $elevationInstallerPath,
+    "-Action", "Uninstall", "-AppRoot", $elevationAppRoot, "-InteractiveAppRoot", $appRoot,
+    "-InteractiveUser", $interactiveUserName
+  )
+  if (Test-IsAdministrator) {
+    & $powerShellPath @arguments
+    if ($LASTEXITCODE -ne 0) { throw "Удаление службы завершилось с кодом $LASTEXITCODE." }
+  } else {
+    $argumentLine = ($arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
+    $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine -Verb RunAs -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Удаление службы завершилось с кодом $($process.ExitCode)." }
   }
 }
 
@@ -222,7 +339,6 @@ function Start-AisService {
     Start-Service -Name $serviceName
   }
   Wait-ServiceState "Running" 60
-  Start-AisInteractiveWorker
   Write-Host "Служба запущена. Ожидание готовности локального адреса..."
   if (-not (Wait-AisHealth $TimeoutSeconds)) {
     throw "Служба работает, но АИС не ответила на $healthUrl за $TimeoutSeconds сек. Откройте окно журнала запуска."
@@ -235,7 +351,7 @@ function Stop-AisService {
   if (-not $service) {
     if (Test-Path -LiteralPath $legacyStopPath -PathType Leaf) {
       Write-Host "Служба не установлена; останавливается прежний локальный запуск с сохранением Docker."
-      & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $legacyStopPath -KeepDocker
+      & $powerShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File $legacyStopPath -KeepDocker
       if ($LASTEXITCODE -ne 0) { throw "Прежний запуск не удалось остановить." }
     }
     return
@@ -254,17 +370,24 @@ function Stop-AisService {
     Stop-Service -Name $serviceName
     Wait-ServiceState "Stopped" 240
   }
+  Stop-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 500
-  if (Test-AisHealth) {
-    throw "Служба Windows остановлена, но локальная АИС продолжает отвечать. Откройте окно журнала запуска."
+  $residue = Get-AisStopResidue
+  if ($residue.Ports.Count -gt 0 -or $residue.Processes.Count -gt 0) {
+    Write-Host "Обнаружены оставшиеся компоненты АИС; выполняется повторная защищённая очистка..."
+    Invoke-AisProtectedCleanup
+    Start-Sleep -Milliseconds 500
+    $residue = Get-AisStopResidue
+  }
+  if ($residue.Ports.Count -gt 0 -or $residue.Processes.Count -gt 0) {
+    $details = New-Object Collections.Generic.List[string]
+    if ($residue.Ports.Count -gt 0) { $details.Add("порты $($residue.Ports -join ', ')") }
+    if ($residue.Processes.Count -gt 0) {
+      $details.Add("процессы PID $(@($residue.Processes.ProcessId) -join ', ')")
+    }
+    throw "Служба Windows остановлена, но компоненты АИС ещё работают ($($details -join '; ')). Откройте окно журнала запуска."
   }
   Write-Host "Служба остановлена. Контейнеры Docker оставлены работающими."
-}
-
-$mutatingActions = @("Start", "Stop", "Restart", "Install", "Uninstall")
-if ($mutatingActions -contains $Action -and -not (Test-IsAdministrator)) {
-  if ($Elevated) { throw "Повышение прав администратора не получено." }
-  Invoke-ElevatedControl
 }
 
 switch ($Action) {
@@ -272,9 +395,7 @@ switch ($Action) {
     Install-AisService
   }
   "Uninstall" {
-    if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) { throw "Не найден установщик службы." }
-    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $installerPath -Action Uninstall
-    if ($LASTEXITCODE -ne 0) { throw "Удаление службы завершилось с кодом $LASTEXITCODE." }
+    Uninstall-AisService
   }
   "Start" {
     Start-AisService

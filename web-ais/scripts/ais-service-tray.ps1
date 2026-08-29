@@ -3,6 +3,7 @@ param(
   [string]$AppRoot = ""
 )
 
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, "Modules")
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $utf8 = New-Object Text.UTF8Encoding($false)
@@ -12,6 +13,7 @@ $OutputEncoding = $utf8
 $serviceName = "AisDopobrWeb"
 $localUrl = "http://127.0.0.1:8081/"
 $healthUrl = "http://127.0.0.1:8081/api/health"
+$powerShellPath = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\v1.0\powershell.exe"
 $controlScript = Join-Path $PSScriptRoot "control-ais-service.ps1"
 $logViewerScript = Join-Path $PSScriptRoot "show-ais-service-log.ps1"
 $resolvedAppRoot = if ([string]::IsNullOrWhiteSpace($AppRoot)) {
@@ -23,8 +25,11 @@ $resolvedAppRoot = [IO.Path]::GetFullPath($resolvedAppRoot)
 $logDirectory = Join-Path $resolvedAppRoot "tmp\lan-system"
 
 function Quote-ProcessArgument([string]$Value) {
-  if ($null -eq $Value) { return '""' }
-  return '"' + $Value.Replace('"', '\"') + '"'
+  if ($null -eq $Value -or $Value.Length -eq 0) { return '""' }
+  if ($Value -notmatch '[\s"]') { return $Value }
+  $escaped = [regex]::Replace($Value, '(\\*)"', '${1}${1}\"')
+  $escaped = [regex]::Replace($escaped, '(\\+)$', '${1}${1}')
+  return '"' + $escaped + '"'
 }
 
 if ([Threading.Thread]::CurrentThread.ApartmentState -ne [Threading.ApartmentState]::STA) {
@@ -32,7 +37,7 @@ if ([Threading.Thread]::CurrentThread.ApartmentState -ne [Threading.ApartmentSta
     "-NoLogo", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
     "-File", $PSCommandPath, "-AppRoot", $resolvedAppRoot
   ) | ForEach-Object { Quote-ProcessArgument $_ }
-  Start-Process -FilePath "powershell.exe" -ArgumentList ($relaunchArguments -join " ") -WindowStyle Hidden | Out-Null
+  Start-Process -FilePath $powerShellPath -ArgumentList ($relaunchArguments -join " ") -WindowStyle Hidden | Out-Null
   exit 0
 }
 
@@ -138,7 +143,7 @@ function Start-DetachedPowerShell(
   foreach ($argument in $Arguments) { $processArguments.Add($argument) }
 
   $startInfo = New-Object Diagnostics.ProcessStartInfo
-  $startInfo.FileName = "powershell.exe"
+  $startInfo.FileName = $powerShellPath
   $startInfo.Arguments = (@($processArguments) | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
   $startInfo.WorkingDirectory = $resolvedAppRoot
   $startInfo.UseShellExecute = $true
@@ -155,7 +160,6 @@ function Invoke-ControlAction([string]$Action) {
     $arguments = New-Object Collections.Generic.List[string]
     $arguments.Add("-Action")
     $arguments.Add($Action)
-    if ($Action -eq "Start") { $arguments.Add("-InstallIfMissing") }
     Start-DetachedPowerShell -ScriptPath $controlScript -Arguments @($arguments) -Hidden $true
     Show-TrayMessage "АИС Допобразование" "Команда «$Action» отправлена."
   } catch {
