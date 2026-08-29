@@ -9,6 +9,8 @@ const { spawnSync } = require("node:child_process");
 const appRoot = path.resolve(__dirname, "..");
 const repositoryRoot = path.resolve(appRoot, "..");
 const bootstrapPath = path.join(__dirname, "bootstrap-local-system.ps1");
+const serviceControlPath = path.join(__dirname, "control-ais-service.ps1");
+const serviceInstallerPath = path.join(__dirname, "install-ais-service.ps1");
 const startupUpdatePath = path.join(__dirname, "sync-and-deploy-startup.ps1");
 const deployPath = path.join(__dirname, "deploy-lms.ps1");
 const rootLauncherPath = path.join(repositoryRoot, "ЗАПУСТИТЬ АИС.bat");
@@ -18,6 +20,8 @@ const localStopPath = path.join(appRoot, "ОСТАНОВИТЬ АИС.cmd");
 
 const read = (filePath) => fs.readFileSync(filePath, "utf8");
 const bootstrapSource = read(bootstrapPath);
+const serviceControlSource = read(serviceControlPath);
+const serviceInstallerSource = read(serviceInstallerPath);
 const startupUpdateSource = read(startupUpdatePath);
 const deploySource = read(deployPath);
 const rootLauncherSource = read(rootLauncherPath);
@@ -75,14 +79,26 @@ assert.doesNotMatch(generatedSafePaths[1], /employee-contract-education\.docx/u)
 assert.doesNotMatch(generatedSafePaths[1], /employee-contract-general\.docx/u);
 assert.match(generatedSafePaths[1], /employee-contract-education-no-stamp\.docx/u);
 assert.match(generatedSafePaths[1], /employee-contract-general-no-stamp\.docx/u);
-assert.match(rootLauncherSource, /bootstrap-local-system\.ps1/u);
-assert.match(localLauncherSource, /bootstrap-local-system\.ps1/u);
-assert.match(rootLauncherSource, /--open-browser/u);
-assert.match(localLauncherSource, /--open-browser/u);
+for (const launcherSource of [rootLauncherSource, localLauncherSource]) {
+  assert.match(launcherSource, /control-ais-service\.ps1/u);
+  assert.match(
+    launcherSource,
+    /control-ais-service\.ps1" -Action Start -InstallIfMissing -OpenBrowser -ShowTray/u
+  );
+  assert.match(launcherSource, /install-ais-service\.ps1" -Action Validate/u);
+  assert.doesNotMatch(launcherSource, /bootstrap-local-system\.ps1/u);
+}
+for (const launcherSource of [rootStopSource, localStopSource]) {
+  assert.match(launcherSource, /control-ais-service\.ps1" -Action Stop/u);
+  assert.match(launcherSource, /install-ais-service\.ps1" -Action Validate/u);
+  assert.doesNotMatch(launcherSource, /stop-lan-system\.ps1/u);
+}
 assert.doesNotMatch(rootLauncherSource, /Установите Node\.js/u);
 assert.doesNotMatch(localLauncherSource, /Установите Node\.js/u);
-assert.match(rootStopSource, /stop-lan-system\.ps1/u);
-assert.match(localStopSource, /stop-lan-system\.ps1/u);
+assert.match(serviceControlSource, /stop-lan-system\.ps1/u);
+assert.match(serviceControlSource, /-KeepDocker/u);
+assert.match(serviceInstallerSource, /\[ValidateSet\("Install", "Uninstall", "Validate"\)\]/u);
+assert.match(serviceInstallerSource, /AIS_SERVICE_TEST_MODE/u);
 assert.match(startSource, /port:\s*19081/u);
 assert.match(startSource, /AIS_APP_SERVER_ORIGIN:\s*"http:\/\/127\.0\.0\.1:19081"/u);
 assert.match(startSource, /localBrowserUrl = "http:\/\/127\.0\.0\.1:8081\/"/u);
@@ -221,7 +237,8 @@ if ($resolved.Count -ne 1 -or
     ...process.env,
     AIS_NODE_PATH: process.execPath,
     AIS_BOOTSTRAP_SKIP_INSTALL: "1",
-    AIS_BOOTSTRAP_SKIP_DOCKER: "1"
+    AIS_BOOTSTRAP_SKIP_DOCKER: "1",
+    AIS_SERVICE_TEST_MODE: "1"
   };
   const validation = spawnSync("powershell.exe", [
     "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -243,7 +260,7 @@ if ($resolved.Count -ne 1 -or
     timeout: 30000
   });
   assert.equal(launcherValidation.status, 0, `${launcherValidation.stdout}\n${launcherValidation.stderr}`);
-  assert.match(launcherValidation.stdout, /Сценарий запуска и окружение проверены/u);
+  assert.match(launcherValidation.stdout, /Конфигурация службы проверена/u);
 }
 
 console.log("local bootstrap tests: OK");

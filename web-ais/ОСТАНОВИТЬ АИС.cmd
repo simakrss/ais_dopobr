@@ -1,33 +1,30 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul
-title АИС Допобразование — остановка
-call :log Начало остановки АИС.
+title АИС Допобразование — остановка службы
+call :log Начало остановки службы АИС.
 pushd "%~dp0"
 if errorlevel 1 goto :path_error
-if not exist ".\scripts\stop-lan-system.ps1" goto :path_error
+if not exist ".\scripts\control-ais-service.ps1" goto :path_error
+if not exist ".\scripts\install-ais-service.ps1" goto :path_error
 
-:run
-if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" goto :validation_ok
-call :log Отправлена команда остановки локальных серверов АИС.
-set "AIS_STOP_ARGUMENTS="
-if /i "%~1"=="--keep-docker" set "AIS_STOP_ARGUMENTS=-KeepDocker"
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\stop-lan-system.ps1" %AIS_STOP_ARGUMENTS%
-set "AIS_EXIT_CODE=%ERRORLEVEL%"
-if "%AIS_EXIT_CODE%"=="0" (
-  call :log Локальные серверы АИС остановлены.
+if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" (
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\install-ais-service.ps1" -Action Validate
 ) else (
-  call :log ОШИБКА: остановка АИС завершилась с кодом %AIS_EXIT_CODE%.
+  call :log Отправлена команда остановки службы АИС. Контейнеры Docker будут сохранены.
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\control-ais-service.ps1" -Action Stop
 )
+set "AIS_EXIT_CODE=%ERRORLEVEL%"
 popd
+if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" exit /b %AIS_EXIT_CODE%
+if "%AIS_EXIT_CODE%"=="0" (
+  call :log Служба АИС остановлена. Контейнеры Docker оставлены работающими.
+  exit /b 0
+)
+call :log ОШИБКА: остановка службы АИС завершилась с кодом %AIS_EXIT_CODE%.
 echo.
 pause
 exit /b %AIS_EXIT_CODE%
-
-:validation_ok
-call :log Проверка сценария остановки АИС выполнена успешно.
-popd
-exit /b 0
 
 :path_error
 call :log ОШИБКА: не удалось открыть папку АИС.

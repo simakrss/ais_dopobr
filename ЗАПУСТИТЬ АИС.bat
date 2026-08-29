@@ -1,38 +1,35 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul
-title АИС Допобразование — автономный сервер
+title АИС Допобразование — запуск службы
 set "AIS_APP_DIR=%~dp0web-ais"
-call :log Начало запуска АИС.
+call :log Начало запуска службы АИС.
 if not exist "%AIS_APP_DIR%\app-server.js" goto :path_error
-if not exist "%AIS_APP_DIR%\scripts\bootstrap-local-system.ps1" goto :bootstrap_error
+if not exist "%AIS_APP_DIR%\scripts\control-ais-service.ps1" goto :controller_error
+if not exist "%AIS_APP_DIR%\scripts\install-ais-service.ps1" goto :controller_error
 pushd "%AIS_APP_DIR%"
 if errorlevel 1 goto :path_error
 
-:run
 if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" (
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\bootstrap-local-system.ps1" -Action Validate -LauncherArguments "--open-browser %*"
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\install-ais-service.ps1" -Action Validate
 ) else (
-  call :log Проверка и установка необходимых компонентов.
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\bootstrap-local-system.ps1" -Action Start -LauncherArguments "--open-browser %*"
+  call :log Запуск службы, иконки управления и локального сайта.
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\control-ais-service.ps1" -Action Start -InstallIfMissing -OpenBrowser -ShowTray
 )
 set "AIS_EXIT_CODE=%ERRORLEVEL%"
-if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" (
-  popd
-  exit /b %AIS_EXIT_CODE%
-)
-if "%AIS_EXIT_CODE%"=="0" (
-  call :log Работа локальных серверов АИС завершена.
-) else (
-  call :log ОШИБКА: не удалось запустить АИС. Сообщение об ошибке указано выше.
-)
 popd
+if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" exit /b %AIS_EXIT_CODE%
+if "%AIS_EXIT_CODE%"=="0" (
+  call :log Служба АИС запущена. Управление доступно через иконку в трее Windows.
+  exit /b 0
+)
+call :log ОШИБКА: не удалось запустить службу АИС. Сообщение указано выше.
 echo.
 pause
 exit /b %AIS_EXIT_CODE%
 
-:bootstrap_error
-call :log ОШИБКА: не найден сценарий подготовки окружения АИС.
+:controller_error
+call :log ОШИБКА: не найден сценарий управления службой АИС.
 echo.
 pause
 exit /b 1

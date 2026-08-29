@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.351",
-    releasedAt: "2026-08-28"
+    version: "1.7.352",
+    releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.352",
+      releasedAt: "2026-08-29",
+      changes: [
+        "Локальная АИС переведена на штатную службу Windows: служба контролирует отдельный интерактивный сервер, чтобы были доступны Excel и локальные окна; значок в трее позволяет запускать, останавливать и перезапускать АИС и смотреть живой журнал; Docker-контейнеры при остановке сохраняются."
+      ]
+    },
     {
       version: "1.7.351",
       releasedAt: "2026-08-28",

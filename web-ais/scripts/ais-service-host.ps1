@@ -1,0 +1,257 @@
+﻿[CmdletBinding()]
+param(
+  [Parameter(Mandatory = $true)]
+  [string]$AppRoot,
+  [string]$MappedDrive = "",
+  [string]$MappedTarget = ""
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$utf8 = New-Object Text.UTF8Encoding($false)
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$resolvedAppRoot = [IO.Path]::GetFullPath($AppRoot)
+$launcherPath = Join-Path $resolvedAppRoot "scripts\start-lan-system.js"
+$startupUpdatePath = Join-Path $resolvedAppRoot "scripts\sync-and-deploy-startup.ps1"
+$portableNodePath = Join-Path $resolvedAppRoot ".runtime\node\node.exe"
+$serviceLogPath = Join-Path $resolvedAppRoot "tmp\lan-system\service-launch.log"
+
+function Write-ServiceLog([string]$Source, [string]$Message) {
+  $logDirectory = Split-Path -Parent $serviceLogPath
+  if (-not (Test-Path -LiteralPath $logDirectory -PathType Container)) {
+    New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+  }
+  $line = "[{0}] [{1}] {2}{3}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"), $Source, $Message, [Environment]::NewLine
+  $stream = New-Object IO.FileStream(
+    $serviceLogPath,
+    [IO.FileMode]::Append,
+    [IO.FileAccess]::Write,
+    [IO.FileShare]::ReadWrite
+  )
+  try {
+    $bytes = $utf8.GetBytes($line)
+    $stream.Write($bytes, 0, $bytes.Length)
+    $stream.Flush()
+  } finally {
+    $stream.Dispose()
+  }
+}
+
+function Write-ServiceStep([string]$Message) {
+  Write-Host "[Служба АИС] $Message"
+  Write-ServiceLog "WORKER" $Message
+}
+
+function Write-ServiceOutput([string]$Source, $Value) {
+  $message = if ($Value -is [Management.Automation.ErrorRecord]) {
+    [string]$Value.Exception.Message
+  } else {
+    [string]$Value
+  }
+  if ([string]::IsNullOrWhiteSpace($message)) { return }
+  Write-Host $message
+  Write-ServiceLog $Source $message
+}
+
+function Test-NodeRuntime([string]$Candidate) {
+  if ([string]::IsNullOrWhiteSpace($Candidate) -or -not (Test-Path -LiteralPath $Candidate -PathType Leaf)) {
+    return $null
+  }
+  try {
+    $version = (& $Candidate --version 2>$null | Select-Object -First 1).Trim()
+    $match = [regex]::Match($version, '^v(?<major>\d+)\.')
+    if (-not $match.Success -or [int]$match.Groups["major"].Value -lt 20) { return $null }
+    return [pscustomobject]@{
+      Path = [IO.Path]::GetFullPath($Candidate)
+      Version = $version
+    }
+  } catch {
+    return $null
+  }
+}
+
+function Find-NodeRuntime {
+  $candidates = New-Object Collections.Generic.List[string]
+  foreach ($candidate in @(
+    $env:AIS_NODE_PATH,
+    $portableNodePath,
+    (Join-Path $env:ProgramFiles "nodejs\node.exe"),
+    $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} "nodejs\node.exe" } else { $null })
+  )) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$candidate)) { $candidates.Add([string]$candidate) }
+  }
+  $command = Get-Command node.exe -ErrorAction SilentlyContinue
+  if ($command) { $candidates.Add($command.Source) }
+  foreach ($candidate in @($candidates | Select-Object -Unique)) {
+    $runtime = Test-NodeRuntime $candidate
+    if ($runtime) { return $runtime }
+  }
+  throw "Node.js 20 или новее не найден. Запустите установку службы повторно из интерактивного сеанса."
+}
+
+function Find-DockerCli {
+  $candidates = New-Object Collections.Generic.List[string]
+  foreach ($candidate in @(
+    $env:AIS_DOCKER_PATH,
+    (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe"),
+    (Join-Path $env:LOCALAPPDATA "Docker\resources\bin\docker.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\resources\bin\docker.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\resources\bin\docker.exe")
+  )) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$candidate)) { $candidates.Add([string]$candidate) }
+  }
+  $command = Get-Command docker.exe -ErrorAction SilentlyContinue
+  if ($command) { $candidates.Add($command.Source) }
+  return @($candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -Unique) |
+    Select-Object -First 1
+}
+
+function Test-DockerEngine([string]$DockerPath) {
+  if ([string]::IsNullOrWhiteSpace($DockerPath)) { return $false }
+  try {
+    & $DockerPath info --format "{{.ServerVersion}}" *> $null
+    return $LASTEXITCODE -eq 0
+  } catch {
+    return $false
+  }
+}
+
+function Find-DockerDesktop {
+  foreach ($candidate in @(
+    (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
+    (Join-Path $env:LOCALAPPDATA "Docker\Docker Desktop.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\Docker Desktop.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\Docker Desktop.exe")
+  )) {
+    if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+      return [IO.Path]::GetFullPath($candidate)
+    }
+  }
+  return $null
+}
+
+function Wait-DockerEngine([string]$DockerPath, [int]$TimeoutSeconds = 90) {
+  if (Test-DockerEngine $DockerPath) { return $true }
+  $desktopPath = Find-DockerDesktop
+  if (-not $desktopPath) { return $false }
+  if (-not (Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue)) {
+    Write-ServiceStep "Запуск Docker Desktop в интерактивном сеансе..."
+    Start-Process -FilePath $desktopPath -WorkingDirectory (Split-Path -Parent $desktopPath) `
+      -WindowStyle Hidden | Out-Null
+  } else {
+    Write-ServiceStep "Ожидание готовности Docker Desktop..."
+  }
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    if (Test-DockerEngine $DockerPath) { return $true }
+    Start-Sleep -Seconds 2
+  }
+  return $false
+}
+
+function Ensure-ServiceDriveMapping([string]$Drive, [string]$Target) {
+  $driveName = ([string]$Drive).Trim().ToUpperInvariant()
+  if (-not $driveName -and -not $Target) { return }
+  if ($driveName -notmatch '^[A-Z]:$') { throw "Недопустимое имя служебного диска: $Drive" }
+  $targetPath = [IO.Path]::GetFullPath($Target)
+  if (-not (Test-Path -LiteralPath $targetPath -PathType Container)) {
+    throw "Локальная папка для диска $driveName недоступна: $targetPath"
+  }
+  $targetDrive = [IO.Path]::GetPathRoot($targetPath).TrimEnd('\')
+  $logicalDisk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$targetDrive'" -ErrorAction SilentlyContinue
+  if (-not $logicalDisk -or [int]$logicalDisk.DriveType -ne 3) {
+    throw "Для служебного диска разрешена только локальная папка NTFS: $targetPath"
+  }
+  $existing = @(& subst.exe 2>$null) | Where-Object { $_ -match "^$([regex]::Escape($driveName))\\:\\s*=>\\s*" } | Select-Object -First 1
+  if ($existing) {
+    $existingTarget = ([regex]::Replace([string]$existing, '^\S+\s*=>\s*', '')).Trim()
+    if ([IO.Path]::GetFullPath($existingTarget).TrimEnd('\') -ine $targetPath.TrimEnd('\')) {
+      throw "Диск $driveName уже сопоставлен с другой папкой: $existingTarget"
+    }
+  } elseif (Test-Path -LiteralPath "$driveName\" -PathType Container) {
+    Write-ServiceStep "Диск $driveName уже доступен в интерактивном сеансе; текущее сопоставление сохранено."
+    return
+  } else {
+    & subst.exe $driveName $targetPath
+    if ($LASTEXITCODE -ne 0) { throw "Не удалось создать служебный диск $driveName для $targetPath" }
+  }
+  if (-not (Test-Path -LiteralPath "$driveName\" -PathType Container)) {
+    throw "Служебный диск $driveName создан, но недоступен."
+  }
+  Write-ServiceStep "Служебный диск $driveName сопоставлен с $targetPath"
+}
+
+$service = Get-Service -Name "AisDopobrWeb" -ErrorAction SilentlyContinue
+if (-not $service -or [string]$service.Status -notin @("Running", "StartPending")) {
+  Write-Host "[Служба АИС] Интерактивный рабочий процесс не запущен: служба АИС остановлена или не установлена."
+  exit 0
+}
+
+Ensure-ServiceDriveMapping $MappedDrive $MappedTarget
+if (-not (Test-Path -LiteralPath $resolvedAppRoot -PathType Container)) {
+  throw "Папка АИС недоступна интерактивному рабочему процессу: $resolvedAppRoot"
+}
+if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
+  throw "Не найден сценарий запуска АИС: $launcherPath"
+}
+if (-not (Test-Path -LiteralPath $startupUpdatePath -PathType Leaf)) {
+  throw "Не найден сценарий синхронизации GitHub и сайта: $startupUpdatePath"
+}
+Write-ServiceStep "Рабочая папка: $resolvedAppRoot"
+Write-ServiceStep "Проверка обновлений GitHub и edu-plus.ru/lms..."
+try {
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $startupUpdatePath 2>&1 |
+    ForEach-Object { Write-ServiceOutput "UPDATE" $_ }
+  $syncExitCode = $LASTEXITCODE
+  if ($LASTEXITCODE -ne 0) {
+    Write-ServiceStep "Синхронизация завершилась с кодом $syncExitCode. Запуск продолжается на локальной версии."
+  }
+} catch {
+  Write-ServiceStep "Синхронизация сейчас недоступна: $($_.Exception.Message). Запуск продолжается на локальной версии."
+} finally {
+  if ($null -ne $previousErrorActionPreference) {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+}
+
+$nodeRuntime = Find-NodeRuntime
+$env:AIS_NODE_PATH = $nodeRuntime.Path
+$nodeDirectory = Split-Path -Parent $nodeRuntime.Path
+if (-not (($env:Path -split ';') -contains $nodeDirectory)) {
+  $env:Path = "$nodeDirectory;$env:Path"
+}
+Write-ServiceStep "Node.js $($nodeRuntime.Version): $($nodeRuntime.Path)"
+
+$launcherArguments = New-Object Collections.Generic.List[string]
+$dockerPath = Find-DockerCli
+if ($dockerPath -and (Wait-DockerEngine $dockerPath)) {
+  $env:AIS_DOCKER_PATH = [IO.Path]::GetFullPath($dockerPath)
+  $dockerDirectory = Split-Path -Parent $env:AIS_DOCKER_PATH
+  if (-not (($env:Path -split ';') -contains $dockerDirectory)) {
+    $env:Path = "$dockerDirectory;$env:Path"
+  }
+  Write-ServiceStep "Docker доступен; OCR и OnlyOffice будут проверены штатным сценарием."
+} else {
+  $launcherArguments.Add("--skip-docker")
+  Write-ServiceStep "Docker Desktop пока недоступен. Основной сервер запустится сразу; контейнеры с restart=unless-stopped подключатся после запуска Docker."
+}
+
+$env:AIS_SERVICE_MODE = "1"
+Write-ServiceStep "Запуск фонового супервизора АИС..."
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+  & $nodeRuntime.Path $launcherPath @launcherArguments 2>&1 |
+    ForEach-Object { Write-ServiceOutput "AIS" $_ }
+  $exitCode = $LASTEXITCODE
+} finally {
+  $ErrorActionPreference = $previousErrorActionPreference
+}
+Write-ServiceStep "Фоновый супервизор завершён с кодом $exitCode."
+exit $exitCode
