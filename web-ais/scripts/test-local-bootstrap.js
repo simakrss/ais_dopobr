@@ -124,6 +124,11 @@ assert.match(startSource, /port:\s*19081/u);
 assert.match(startSource, /AIS_APP_SERVER_ORIGIN:\s*"http:\/\/127\.0\.0\.1:19081"/u);
 assert.match(startSource, /localBrowserUrl = "http:\/\/127\.0\.0\.1:8081\/"/u);
 assert.match(startSource, /openBrowser = argumentsLower\.has\("--open-browser"\)/u);
+assert.match(startSource, /serviceMode = process\.env\.AIS_SERVICE_MODE === "1"/u);
+assert.match(
+  startSource,
+  /if \(serviceMode\)[\s\S]*?Фоновый супервизор продолжает работу через службу Windows[\s\S]*?else[\s\S]*?openLocalBrowser\(\)/u
+);
 assert.doesNotMatch(startSource, /windowsHide\s*:\s*false/u);
 assert.ok(
   (startSource.match(/windowsHide\s*:\s*true/gu) || []).length >= 10,

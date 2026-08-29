@@ -45,6 +45,7 @@ const argumentsLower = new Set(process.argv.slice(2).map((value) => value.toLowe
 const skipDocker = argumentsLower.has("--skip-docker") || argumentsLower.has("-skipdocker");
 const runOnce = argumentsLower.has("--once");
 const openBrowser = argumentsLower.has("--open-browser");
+const serviceMode = process.env.AIS_SERVICE_MODE === "1";
 const localBrowserUrl = "http://127.0.0.1:8081/";
 const managedChildren = new Map();
 let shuttingDown = false;
@@ -664,8 +665,12 @@ async function main() {
   } else {
     console.log("Automatic publication task is not configured on this computer.");
   }
-  console.log("Keep this window open; it is the transparent AIS server supervisor.");
-  openLocalBrowser();
+  if (serviceMode) {
+    console.log("Фоновый супервизор продолжает работу через службу Windows.");
+  } else {
+    console.log("Не закрывайте это окно: в нём работает супервизор серверов АИС.");
+    openLocalBrowser();
+  }
 
   if (runOnce) {
     console.log("One-time startup check completed.");
