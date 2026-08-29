@@ -686,6 +686,29 @@ const completeWebPresenceConflict = completeReconciliation.conflicts.find((confl
 assert.ok(completeFieldConflict, "Полная сверка должна показать расхождение примечания Пащенко");
 assert.ok(completeWebPresenceConflict, "Полная сверка должна показать Web-only заявку");
 
+const excelDeletionAfterBaselineData = clone(sameStudentBaselineData);
+excelDeletionAfterBaselineData.students = [];
+const excelDeletionAfterBaselineReconciliation = resolveStudentDatabaseCompleteReconciliation({
+  webData: sameStudentBaselineData,
+  excelData: excelDeletionAfterBaselineData,
+  baseline: sameStudentBaseline,
+  auditRows: [coveredAuditRows[0]],
+  sourceModifiedAt: "2026-08-20T11:00:00.000Z"
+});
+const excelDeletionAfterBaselineConflict = excelDeletionAfterBaselineReconciliation.conflicts.find(
+  (conflict) => conflict.kind === "record-presence"
+    && conflict.recordId === "student-pashchenko"
+);
+assert.ok(
+  excelDeletionAfterBaselineConflict,
+  "Полная сверка должна показать удалённую после baseline запись XLSB"
+);
+assert.equal(
+  excelDeletionAfterBaselineConflict.recommendedSource,
+  "excel",
+  "Если запись осталась в baseline и Web, но удалена только в XLSB, следует рекомендовать XLSB"
+);
+
 const allWebCompleteReconciliation = resolveStudentDatabaseCompleteReconciliation({
   webData: webDataWithIndependentAddition,
   excelData: sameFieldExcelData,

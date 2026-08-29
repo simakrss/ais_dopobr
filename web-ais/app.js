@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.361",
+    version: "1.7.362",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.362",
+      releasedAt: "2026-08-29",
+      changes: [
+        "События в отчётах синхронизации показываются как понятные добавления, удаления, переименования и изменения даты или состояния без длинного технического текста; независимые изменения Web и XLSB объединяются автоматически, а для настоящих конфликтов система заранее отмечает рекомендуемый источник, который пользователь может изменить."
+      ]
+    },
     {
       version: "1.7.361",
       releasedAt: "2026-08-29",
@@ -31319,6 +31326,7 @@ MAX - https://bizvmax.ru/zifra_plus
         source: "automatic-student-event",
         changes: [{
           field: "cardEventDate",
+          eventKey: key,
           label: `Событие: ${label}`,
           before: previous.value,
           after: `Выполнено · ${dateRu(date)}`
@@ -48727,6 +48735,7 @@ MAX - https://bizvmax.ru/zifra_plus
           record[`event_${key}_label`] = label;
           changes.push({
             field: "cardEventState",
+            eventKey: key,
             label,
             before: source[`event_${key}_date`] || source[`event_${key}_state`] || "",
             after: date || "Отмечено"
@@ -48924,7 +48933,7 @@ MAX - https://bizvmax.ru/zifra_plus
           entityLabel: record.name,
           changes: [
             { field: "login", label: "Логин СДО", before: source.login || "", after: record.login },
-            { field: "cardEventDate", label: "Дата отправки доступа", before: source.event_portalCredentialsSent_date || "", after: date }
+            { field: "cardEventDate", eventKey: "portalCredentialsSent", label: "Дата отправки доступа", before: source.event_portalCredentialsSent_date || "", after: date }
           ]
         });
         result.success += 1;
@@ -55580,10 +55589,15 @@ MAX - https://bizvmax.ru/zifra_plus
       ? "Разрешите все критичные расхождения Web и XLSB"
       : "Выберите значения конфликтующих полей";
     const dialogDescription = completeReconciliation
-      ? "Перечислены ВСЕ критичные расхождения Web и XLSB: значения полей, наличие или удаление записей и различия снимков данных. Для каждой строки выберите, что сохранить. В строках наличия записи варианты Web и XLSB показывают действие: «Сохранить запись» или «Удалить запись»."
-      : "Разные поля уже объединены автоматически. Для одинаковых полей укажите, какое значение сохранить.";
+      ? "Перечислены ВСЕ критичные расхождения Web и XLSB: значения полей, а также наличие или удаление записей. Для таких строк варианты означают «Сохранить запись» или «Удалить запись». Система уже отметила рекомендуемые решения по контрольной точке и журналу изменений; проверьте их и при необходимости выберите другую сторону."
+      : "Разные поля уже объединены автоматически. Для оставшихся конфликтов отмечен рекомендуемый вариант, который можно изменить.";
     return new Promise((resolve) => {
-      const choices = new Map();
+      const choices = new Map(conflicts.flatMap((conflict) => {
+        const recommendation = String(conflict.recommendedSource || "").trim().toLowerCase();
+        return ["web", "excel"].includes(recommendation)
+          ? [[String(conflict.id || ""), recommendation]]
+          : [];
+      }));
       const backdrop = document.createElement("div");
       backdrop.className = "modal-backdrop student-database-conflicts-backdrop";
       const clipped = (value) => {
@@ -55621,7 +55635,15 @@ MAX - https://bizvmax.ru/zifra_plus
                 </tr>
               </thead>
               <tbody>
-                ${conflicts.map((conflict, index) => `
+                ${conflicts.map((conflict, index) => {
+                  const recommendation = String(conflict.recommendedSource || "")
+                    .trim()
+                    .toLowerCase();
+                  const hasRecommendation = ["web", "excel"].includes(recommendation);
+                  const recommendationLabel = recommendation === "excel" ? "XLSB" : "Web";
+                  const recommendationReason = String(conflict.recommendationReason || "").trim();
+                  const confidence = String(conflict.recommendationConfidence || "").trim().toLowerCase();
+                  return `
                   <tr
                     data-conflict-row="${escapeAttr(conflict.id)}"
                     data-conflict-kind="${escapeAttr(conflict.kind || "field")}"
@@ -55635,12 +55657,19 @@ MAX - https://bizvmax.ru/zifra_plus
                     <td class="student-database-conflict-value" title="${escapeAttr(conflict.excel || "")}">${escapeHtml(clipped(conflict.excel || "—"))}</td>
                     <td>
                       <div class="student-database-conflict-choice" role="radiogroup" aria-label="Источник значения">
-                        <label><input type="radio" name="sync-conflict-${index}" value="web" data-conflict-choice="${escapeAttr(conflict.id)}" aria-label="Web: ${escapeAttr(conflict.web || "—")}"> Web</label>
-                        <label><input type="radio" name="sync-conflict-${index}" value="excel" data-conflict-choice="${escapeAttr(conflict.id)}" aria-label="XLSB: ${escapeAttr(conflict.excel || "—")}"> XLSB</label>
+                        <label class="${recommendation === "web" ? "is-recommended" : ""}"><input type="radio" name="sync-conflict-${index}" value="web" data-conflict-choice="${escapeAttr(conflict.id)}" aria-label="Web: ${escapeAttr(conflict.web || "—")}" ${recommendation === "web" ? "checked" : ""}> Web</label>
+                        <label class="${recommendation === "excel" ? "is-recommended" : ""}"><input type="radio" name="sync-conflict-${index}" value="excel" data-conflict-choice="${escapeAttr(conflict.id)}" aria-label="XLSB: ${escapeAttr(conflict.excel || "—")}" ${recommendation === "excel" ? "checked" : ""}> XLSB</label>
+                        ${hasRecommendation ? `
+                          <small class="student-database-conflict-recommendation ${confidence ? `is-${escapeAttr(confidence)}` : ""}">
+                            <strong>Рекомендуется ${recommendationLabel}.</strong>
+                            ${recommendationReason ? escapeHtml(recommendationReason) : "Вариант можно изменить."}
+                          </small>
+                        ` : ""}
                       </div>
                     </td>
                   </tr>
-                `).join("")}
+                `;
+                }).join("")}
               </tbody>
             </table>
           </div>
@@ -58210,6 +58239,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (previous.stateValue !== next.stateValue || previous.dateValue !== next.dateValue) {
         changes.push({
           field: "cardEventState",
+          eventKey,
           label: `Событие: ${next.label || previous.label}`,
           before: previous.value,
           after: next.value
@@ -58218,6 +58248,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (previous.label !== next.label) {
         changes.push({
           field: "cardEventLabel",
+          eventKey,
           label: `Название события: ${previous.label}`,
           before: previous.label,
           after: next.label

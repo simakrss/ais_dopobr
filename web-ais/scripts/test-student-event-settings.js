@@ -11,6 +11,7 @@ const syncScriptSource = fs.readFileSync(syncScriptPath, "utf8");
 const {
   hashStudentDatabaseEventSettings,
   parseStudentDatabaseMacroSettings,
+  resolveStudentDatabaseEventSettingsReconciliation,
   resolveStudentDatabaseEventSettingsSyncDirection
 } = require("../app-server.js");
 
@@ -173,6 +174,49 @@ assert.equal(
   }).direction,
   "excel-to-web"
 );
+const changedExcelSettings = {
+  macroSettings: {
+    studentEventTemplates: [{ label: "Другое событие XLSB", includeTypes: ["КПК"], excludeTypes: [] }],
+    contractEventTemplates: [{ label: "Исходное событие сотрудника" }]
+  }
+};
+const dualEventSettingsDirection = resolveStudentDatabaseEventSettingsSyncDirection({
+  directionResult: { direction: "unchanged" },
+  baseline: { eventSettingsHash: baselineEventSettingsHash },
+  webData: changedWebSettings,
+  excelData: changedExcelSettings
+});
+assert.equal(dualEventSettingsDirection.eventSettingsConflict, true);
+assert.equal(dualEventSettingsDirection.direction, "unchanged");
+
+const eventSettingsConflict = resolveStudentDatabaseEventSettingsReconciliation({
+  mergeResult: { conflicts: [], changes: [], stats: {} },
+  baseline: { eventSettingsHash: baselineEventSettingsHash },
+  webData: changedWebSettings,
+  excelData: changedExcelSettings
+});
+assert.equal(eventSettingsConflict.conflicts.length, 1);
+assert.equal(eventSettingsConflict.conflicts[0].kind, "settings");
+assert.ok(["web", "excel"].includes(eventSettingsConflict.conflicts[0].recommendedSource));
+const selectedEventSettings = resolveStudentDatabaseEventSettingsReconciliation({
+  mergeResult: { conflicts: [], changes: [], stats: {} },
+  baseline: { eventSettingsHash: baselineEventSettingsHash },
+  webData: changedWebSettings,
+  excelData: changedExcelSettings,
+  conflictResolutions: { [eventSettingsConflict.conflicts[0].id]: "excel" }
+});
+assert.deepEqual(selectedEventSettings.conflicts, []);
+assert.equal(selectedEventSettings.eventSettingsChoice, "excel");
+
+const splitEventSettingsDirection = resolveStudentDatabaseEventSettingsSyncDirection({
+  directionResult: { direction: "excel-to-web" },
+  baseline: { eventSettingsHash: baselineEventSettingsHash },
+  webData: changedWebSettings,
+  excelData: baselineSettings
+});
+assert.equal(splitEventSettingsDirection.direction, "excel-to-web");
+assert.equal(splitEventSettingsDirection.eventSettingsDirection, "web-to-excel");
+assert.equal(splitEventSettingsDirection.splitEventSettingsDirection, true);
 assert.match(syncScriptSource, /Set-MacroSettingTextValue \$text "События"/u);
 assert.match(syncScriptSource, /Set-MacroSettingTextValue \$text "СобытияКонтрагент"/u);
 
