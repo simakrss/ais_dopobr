@@ -1067,7 +1067,11 @@ body.is-session-expired {
     align-items: stretch;
   }
 
-  .partner-registration-actions,
+  .partner-registration-actions {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+
   .auth-public-result-actions {
     align-items: stretch;
     flex-direction: column-reverse;
@@ -12704,7 +12708,7 @@ body.card-window-moving {
 
 .generated-document-email-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(4, auto);
+  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
   align-items: center;
 }
 
@@ -16353,6 +16357,11 @@ body.event-reorder-dragging .student-event-row.is-dragging {
   .student-event-insert-actions button {
     flex: 1 1 0;
     min-width: 0;
+  }
+
+  .student-event-insert-actions button.icon-button.form-cancel-button {
+    flex: 0 0 32px;
+    min-width: 32px;
   }
 }
 
@@ -20507,10 +20516,13 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     padding: 6px;
   }
 
-  .discount-apply-button,
-  .discount-cancel-button {
+  .discount-apply-button {
     flex: 1 1 0;
     justify-content: center;
+  }
+
+  button.icon-button.discount-cancel-button {
+    flex: 0 0 32px;
   }
 }
 
@@ -21809,6 +21821,11 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     width: 100%;
   }
 
+  .student-expense-editor-actions button.icon-button.form-cancel-button {
+    width: 32px;
+    justify-self: end;
+  }
+
   .payment-grid .row-number-cell,
   .expense-grid .row-number-cell {
     padding-bottom: 2px;
@@ -22043,7 +22060,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   .student-card-primary-actions {
     width: 100%;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 31px auto auto;
+    grid-template-columns: minmax(0, 1fr) 31px auto auto 32px;
     gap: 5px;
   }
 
@@ -23156,6 +23173,13 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     white-space: normal;
   }
 
+  .generated-document-preview-actions button.icon-button.form-cancel-button {
+    width: 32px;
+    padding-inline: 0;
+    justify-self: end;
+    font-size: 22px;
+  }
+
   .generated-document-preview-actions [data-action="confirm-generated-document-preview"] {
     grid-column: auto;
     grid-row: auto;
@@ -23194,7 +23218,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .generated-document-email-actions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
   }
 
@@ -23206,6 +23230,13 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     width: 100%;
     min-width: 0;
     padding-inline: 7px;
+  }
+
+  .generated-document-email-actions button.icon-button.form-cancel-button {
+    width: 32px;
+    min-width: 32px;
+    padding-inline: 0;
+    justify-self: end;
   }
 }
 
@@ -27899,4 +27930,14 @@ button.partner-kpi-card:hover {
   .recycle-bin-table {
     min-width: 820px;
   }
+}
+
+button.icon-button.form-cancel-button {
+  flex: 0 0 32px;
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  justify-self: end;
+  font-size: 22px;
+  line-height: 1;
 }

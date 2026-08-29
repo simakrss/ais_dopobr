@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260829-windows-service-tray-v1";
+  const AUTH_BUILD = "20260829-cancel-icons-v1";
   const DISMISSIBLE_MODAL_BACKDROP_SELECTOR = ".modal-backdrop, .partner-modal-backdrop, [data-documents-backdrop]";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
@@ -424,8 +424,8 @@
             <label class="auth-honeypot" aria-hidden="true">Сайт<input name="website" type="text" tabindex="-1" autocomplete="off"></label>
             <p class="auth-error" data-partner-registration-error role="alert" aria-live="assertive" hidden></p>
             <div class="partner-registration-actions">
-              <button class="ghost-button" data-auth-return-login type="button">Отмена</button>
               <button class="primary-button auth-submit" type="submit"><span>Отправить анкету</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M14 7l5 5-5 5"/></svg></button>
+              <button class="icon-button form-cancel-button" data-auth-return-login type="button" title="Отмена" aria-label="Отмена">×</button>
             </div>
           </form>
         </section>

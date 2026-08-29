@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.352",
+    version: "1.7.353",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.353",
+      releasedAt: "2026-08-29",
+      changes: [
+        "Во всех формах кнопка «Отмена» заменена компактным крестиком и перенесена в крайнее правое положение ряда; исходные действия отмены, подсказки и доступность сохранены на компьютере и мобильных устройствах."
+      ]
+    },
     {
       version: "1.7.352",
       releasedAt: "2026-08-29",
@@ -21340,8 +21347,8 @@ MAX - https://bizvmax.ru/zifra_plus
               <input name="newDocumentUrl" type="text" placeholder="Документы/Шаблон.docx или ссылка Яндекс-Диска" autocomplete="off" required>
             </label>
             <footer class="modal-actions">
-              <button class="ghost-button" data-action="close-document-template-link-dialog" type="button">Отмена</button>
               <button class="primary-button" type="submit">Добавить</button>
+              <button class="icon-button form-cancel-button" data-action="close-document-template-link-dialog" type="button" title="Отмена" aria-label="Отмена">×</button>
             </footer>
           </form>
         </section>
@@ -21410,8 +21417,8 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${renderDocumentTemplateActionIcon("refresh")}
                   <span>Обновить данные</span>
                 </button>
-                <button class="ghost-button" data-action="close-document-template-settings" type="button">Отмена</button>
                 <button class="primary-button" form="documentTemplateSettingsForm" type="submit">Сохранить</button>
+                <button class="icon-button form-cancel-button" data-action="close-document-template-settings" type="button" title="Отмена" aria-label="Отмена">×</button>
               </div>
             </div>
           </header>
@@ -25061,8 +25068,8 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${renderCardRecordLockStatus(record || {})}
               </div>
               <div class="modal-head-actions">
-                <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
                 <button class="primary-button" type="submit">Сохранить</button>
+                <button class="icon-button form-cancel-button" data-action="close-modal" type="button" title="Отмена" aria-label="Отмена">×</button>
               </div>
             </header>
             <div class="form-grid">
@@ -26705,8 +26712,8 @@ MAX - https://bizvmax.ru/zifra_plus
               </details>
             ` : ""}
             <footer class="modal-actions employee-expense-editor-actions">
-              <button class="ghost-button" data-action="close-employee-expense-editor" type="button">Отмена</button>
               <button class="primary-button" type="submit">Сохранить оплату</button>
+              <button class="icon-button form-cancel-button" data-action="close-employee-expense-editor" type="button" title="Отмена" aria-label="Отмена">×</button>
             </footer>
           </form>
         </section>
@@ -26823,9 +26830,9 @@ MAX - https://bizvmax.ru/zifra_plus
                   >
                     ${renderOrdersSdoIcon("history")}
                   </button>
-                  <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
                   <button class="primary-button" type="submit">Сохранить</button>
                   ${renderCardWindowControls()}
+                  <button class="icon-button form-cancel-button" data-action="close-modal" type="button" title="Отмена" aria-label="Отмена">×</button>
                 </div>
                 <div class="student-card-secondary-actions">
                   <div class="card-header-context-actions">
@@ -26995,8 +27002,8 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${renderCardRecordLockStatus(record)}
               </div>
               <div class="modal-head-actions">
-                <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
                 <button class="primary-button" type="submit">Сохранить</button>
+                <button class="icon-button form-cancel-button" data-action="close-modal" type="button" title="Отмена" aria-label="Отмена">×</button>
               </div>
             </header>
             <div class="form-grid">
@@ -27085,7 +27092,6 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${renderCardRecordLockStatus(record || {})}
               </div>
               <div class="modal-head-actions">
-                <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
                 <button class="primary-button" type="submit">Сохранить</button>
                 <div class="student-card-nav program-card-nav" aria-label="Переход между карточками программ">
                   <button class="icon-button student-card-nav-button" data-action="navigate-program-card" data-direction="-1" type="button" title="Предыдущая программа" aria-label="Предыдущая программа" ${navigation.hasPrev ? "" : "disabled"}>
@@ -27095,6 +27101,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6l6 6-6 6"></path></svg>
                   </button>
                 </div>
+                <button class="icon-button form-cancel-button" data-action="close-modal" type="button" title="Отмена" aria-label="Отмена">×</button>
               </div>
             </header>
             <div class="program-modal-body">
@@ -27792,9 +27799,9 @@ MAX - https://bizvmax.ru/zifra_plus
                   >
                     ${renderOrdersSdoIcon("history")}
                   </button>
-                  <button class="ghost-button" data-action="close-modal" type="button">Отмена</button>
                   <button class="primary-button" type="submit">Сохранить</button>
                   ${renderCardWindowControls()}
+                  <button class="icon-button form-cancel-button" data-action="close-modal" type="button" title="Отмена" aria-label="Отмена">×</button>
                 </div>
                 <div class="student-card-secondary-actions">
                   <div class="card-header-context-actions">
@@ -29665,8 +29672,8 @@ MAX - https://bizvmax.ru/zifra_plus
                 <path d="M14 11v6"></path>
               </svg>
             </button>
-            <button class="ghost-button" data-action="close-event-editor" type="button">Отмена</button>
             <button class="primary-button" data-action="apply-event-editor" type="button">Применить</button>
+            <button class="icon-button form-cancel-button" data-action="close-event-editor" type="button" title="Отмена" aria-label="Отмена">×</button>
           </div>
         </div>
       </section>
@@ -29955,8 +29962,8 @@ MAX - https://bizvmax.ru/zifra_plus
             <input name="date" type="date">
           </label>
           <footer class="modal-actions student-event-insert-actions">
-            <button class="ghost-button" data-action="close-student-event-insert" type="button">Отмена</button>
             <button class="primary-button" type="submit">Добавить</button>
+            <button class="icon-button form-cancel-button" data-action="close-student-event-insert" type="button" title="Отмена" aria-label="Отмена">×</button>
           </footer>
         </form>
       </section>
@@ -30456,10 +30463,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 13l4 4L19 7"></path></svg>
               <span>Применить</span>
             </button>
-            <button class="ghost-button discount-cancel-button" data-action="close-discount-picker" type="button">
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 7l10 10"></path><path d="M17 7L7 17"></path></svg>
-              <span>Отмена</span>
-            </button>
+            <button class="icon-button form-cancel-button discount-cancel-button" data-action="close-discount-picker" type="button" title="Отмена" aria-label="Отмена">×</button>
           </footer>
         </section>
       </div>
@@ -32318,8 +32322,8 @@ MAX - https://bizvmax.ru/zifra_plus
               ${automaticHint ? `<p class="student-expense-editor-hint">${escapeHtml(automaticHint)}</p>` : ""}
             </div>
             <footer class="modal-actions student-expense-editor-actions">
-              <button class="ghost-button" data-action="close-student-expense-editor" type="button">Отмена</button>
               <button class="primary-button" type="submit">Сохранить расход</button>
+              <button class="icon-button form-cancel-button" data-action="close-student-expense-editor" type="button" title="Отмена" aria-label="Отмена">×</button>
             </footer>
           </form>
         </section>
@@ -33451,11 +33455,11 @@ MAX - https://bizvmax.ru/zifra_plus
             <p class="custom-record-email-status" data-custom-record-email-status role="status" aria-live="polite"></p>
           </div>
           <footer class="custom-record-email-footer">
-            <button class="ghost-button" data-action="close-custom-record-email" type="button">Отмена</button>
             <button class="primary-button" type="submit">
               ${renderCommunicationActionIcon("mail")}
               <span>Отправить</span>
             </button>
+            <button class="icon-button form-cancel-button" data-action="close-custom-record-email" type="button" title="Отмена" aria-label="Отмена">×</button>
           </footer>
         </form>
       </section>
@@ -38908,7 +38912,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="contract-student-picker-results" data-contract-student-results role="listbox" aria-label="Слушатели"></div>
         </div>
         <footer class="modal-actions">
-          <button class="ghost-button" data-action="close-contract-student-picker" type="button">Отмена</button>
+          <button class="icon-button form-cancel-button" data-action="close-contract-student-picker" type="button" title="Отмена" aria-label="Отмена">×</button>
         </footer>
       </section>
     `;
@@ -40216,8 +40220,8 @@ MAX - https://bizvmax.ru/zifra_plus
             </label>
           </div>
           <footer class="modal-actions">
-            <button class="ghost-button" data-action="close-payment-constant-dialog" type="button">Отмена</button>
             <button class="primary-button" type="submit">${create ? "Создать" : "Сохранить"}</button>
+            <button class="icon-button form-cancel-button" data-action="close-payment-constant-dialog" type="button" title="Отмена" aria-label="Отмена">×</button>
           </footer>
         </form>
       </section>
@@ -41389,8 +41393,8 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
           </div>
           <footer class="modal-actions">
-            <button class="ghost-button" data-action="close-student-photo-editor" type="button">Отмена</button>
             <button class="primary-button" data-action="use-student-photo-crop" type="button" disabled>Использовать выделение</button>
+            <button class="icon-button form-cancel-button" data-action="close-student-photo-editor" type="button" title="Отмена" aria-label="Отмена">×</button>
           </footer>
         </section>
       `;
@@ -41800,8 +41804,8 @@ MAX - https://bizvmax.ru/zifra_plus
           <p>Выберите фотографию на этом устройстве. После выбора откроется окно кадрирования.</p>
         </div>
         <footer class="modal-actions">
-          <button class="ghost-button" data-action="close-person-photo-device-fallback" type="button">Отмена</button>
           <button class="primary-button" data-action="choose-person-photo-device" type="button">Выбрать файл на устройстве</button>
+          <button class="icon-button form-cancel-button" data-action="close-person-photo-device-fallback" type="button" title="Отмена" aria-label="Отмена">×</button>
         </footer>
       </section>
     `;
@@ -42390,8 +42394,8 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         <div class="student-mailbox-list" data-student-mailbox-list></div>
         <footer class="student-mailbox-footer">
-          <button class="ghost-button" data-action="close-student-mailbox" type="button">Отмена</button>
           <button class="primary-button student-mailbox-import-button" data-action="import-student-mailbox" type="button" disabled><span data-student-mailbox-import-label>Загрузить выбранные</span></button>
+          <button class="icon-button form-cancel-button" data-action="close-student-mailbox" type="button" title="Отмена" aria-label="Отмена">×</button>
         </footer>
       </section>
     `;
@@ -46737,8 +46741,8 @@ MAX - https://bizvmax.ru/zifra_plus
           ${typeof options.onChooseFile === "function" ? `
             <button class="ghost-button" data-action="choose-student-photo-file" type="button">Выбрать файл на устройстве</button>
           ` : ""}
-          <button class="ghost-button" data-action="close-student-photo-cropper" type="button">Отмена</button>
           <button class="primary-button" data-action="use-student-photo-crop" type="button" disabled>${escapeHtml(options.useLabel || "Использовать выделение")}</button>
+          <button class="icon-button form-cancel-button" data-action="close-student-photo-cropper" type="button" title="Отмена" aria-label="Отмена">×</button>
         </footer>
       </section>
     `;
@@ -47504,10 +47508,10 @@ MAX - https://bizvmax.ru/zifra_plus
             ${skippedCount ? `<p class="student-document-recognition-selection-warning">Не показано файлов из-за формата или размера: ${skippedCount}.</p>` : ""}
           </div>
           <footer class="modal-actions">
-            <button class="ghost-button" data-action="cancel-student-document-recognition-selection" type="button">Отмена</button>
             <button class="primary-button" data-action="confirm-student-document-recognition-selection" type="submit">
               Распознать выбранные (<span data-ocr-file-submit-count>${availableFiles.length}</span>)
             </button>
+            <button class="icon-button form-cancel-button" data-action="cancel-student-document-recognition-selection" type="button" title="Отмена" aria-label="Отмена">×</button>
           </footer>
         </form>
       `;
@@ -49217,8 +49221,8 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="student-bulk-operation-progress" data-student-bulk-progress hidden><span></span><strong data-student-bulk-progress-label>Подготовка...</strong></div>
         </div>
         <footer class="modal-actions">
-          <button class="ghost-button" data-action="close-student-bulk-operations" type="button">Отмена</button>
           <button class="primary-button" type="submit">Выполнить 1 операцию</button>
+          <button class="icon-button form-cancel-button" data-action="close-student-bulk-operations" type="button" title="Отмена" aria-label="Отмена">×</button>
         </footer>
       </form>
     `;
@@ -51359,8 +51363,8 @@ MAX - https://bizvmax.ru/zifra_plus
             <small>Поддерживаются HTML, ссылки и изображения в формате data:image. Ctrl + щелчок открывает подсвеченную ссылку.</small>
           </label>
           <footer class="modal-actions">
-            <button class="ghost-button" data-action="close-document-email-template-value" type="button">Отмена</button>
             <button class="primary-button" type="submit">Сохранить</button>
+            <button class="icon-button form-cancel-button" data-action="close-document-email-template-value" type="button" title="Отмена" aria-label="Отмена">×</button>
           </footer>
         </form>
       </section>
@@ -52218,8 +52222,8 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </section>
         <footer>
-          <button class="ghost-button" data-action="close-communication-template-field-dialog" type="button">Отмена</button>
           <button class="primary-button" type="submit">${field ? "Сохранить" : "Добавить"}</button>
+          <button class="icon-button form-cancel-button" data-action="close-communication-template-field-dialog" type="button" title="Отмена" aria-label="Отмена">×</button>
         </footer>
       </form>
     `;
@@ -55363,8 +55367,8 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           <footer class="modal-actions student-database-conflicts-actions">
             <span data-conflict-summary>Не выбрано: ${conflicts.length}</span>
-            <button class="ghost-button" type="button" data-action="cancel-sync-conflicts">Отмена</button>
             <button class="primary-button" type="button" data-action="continue-sync-conflicts" disabled>Продолжить синхронизацию</button>
+            <button class="icon-button form-cancel-button" type="button" data-action="cancel-sync-conflicts" title="Отменить синхронизацию" aria-label="Отменить синхронизацию">×</button>
           </footer>
         </section>
       `;
@@ -59603,8 +59607,8 @@ MAX - https://bizvmax.ru/zifra_plus
             <small data-generated-document-preview-hint>Сохранение, скачивание и отправка начнутся только после подтверждения.</small>
             <button class="ghost-button" data-action="edit-generated-document-preview" type="button">Редактировать</button>
             <button class="primary-button" data-action="save-generated-document-editor" type="button" hidden disabled>Сохранить изменения</button>
-            <button class="ghost-button" data-action="cancel-generated-document-editor-or-preview" type="button" title="Отменить формирование документа">Отмена</button>
             <button class="primary-button" data-action="confirm-generated-document-preview" type="button">Продолжить</button>
+            <button class="icon-button form-cancel-button" data-action="cancel-generated-document-editor-or-preview" type="button" title="Отменить формирование документа" aria-label="Отменить формирование документа">×</button>
           </footer>
         </section>
       `;
@@ -59640,8 +59644,11 @@ MAX - https://bizvmax.ru/zifra_plus
           saveButton.removeAttribute("aria-busy");
         }
         if (cancelButton) {
-          cancelButton.textContent = "Отмена";
+          cancelButton.textContent = "×";
           cancelButton.title = "Отменить формирование документа";
+          cancelButton.setAttribute("aria-label", "Отменить формирование документа");
+          cancelButton.classList.add("icon-button", "form-cancel-button");
+          cancelButton.classList.remove("ghost-button");
           cancelButton.disabled = false;
           cancelButton.removeAttribute("aria-busy");
         }
@@ -59668,6 +59675,9 @@ MAX - https://bizvmax.ru/zifra_plus
         if (cancelButton) {
           cancelButton.textContent = "Отменить изменения";
           cancelButton.title = "Отменить изменения и вернуться к предварительному просмотру";
+          cancelButton.setAttribute("aria-label", "Отменить изменения и вернуться к предварительному просмотру");
+          cancelButton.classList.add("ghost-button");
+          cancelButton.classList.remove("icon-button", "form-cancel-button");
           cancelButton.disabled = false;
           cancelButton.removeAttribute("aria-busy");
         }
@@ -59935,8 +59945,8 @@ MAX - https://bizvmax.ru/zifra_plus
             <small>Письмо будет отправлено вместе со сформированным документом только после подтверждения.</small>
             <button class="ghost-button" data-action="edit-generated-document-email" type="button">Редактировать</button>
             <button class="primary-button" data-action="apply-generated-document-email" type="button" hidden>Применить изменения</button>
-            <button class="ghost-button" data-action="cancel-generated-document-email-preview" type="button">Отмена</button>
             <button class="primary-button" data-action="confirm-generated-document-email-preview" type="button">Продолжить</button>
+            <button class="icon-button form-cancel-button" data-action="cancel-generated-document-email-preview" type="button" title="Отмена" aria-label="Отмена">×</button>
           </footer>
         </section>
       `;
@@ -61113,8 +61123,8 @@ MAX - https://bizvmax.ru/zifra_plus
             ${note ? `<small>${escapeHtml(note)}</small>` : ""}
           </div>
           <footer class="modal-actions">
-            <button class="ghost-button" data-action="close-student-document-choice" type="button">Отмена</button>
             <button class="primary-button" type="submit">Сформировать</button>
+            <button class="icon-button form-cancel-button" data-action="close-student-document-choice" type="button" title="Отмена" aria-label="Отмена">×</button>
           </footer>
         </form>
       `;
