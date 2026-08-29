@@ -111,6 +111,21 @@ assert.match(traySource, /notifyIcon\.add_MouseDoubleClick/u);
 assert.match(traySource, /MouseButtons\]::Left[\s\S]{0,100}Open-Ais/u);
 assert.doesNotMatch(traySource, /notifyIcon\.add_DoubleClick/u);
 assert.doesNotMatch(traySource, /InstallIfMissing/u);
+assert.match(traySource, /\$script:exitItem\s*=\s*New-Object Windows\.Forms\.ToolStripMenuItem "Выход из трея"/u);
+assert.match(traySource, /\$script:exitItem\.Enabled\s*=\s*\$false/u);
+assert.match(
+  traySource,
+  /\$script:exitItem\.Enabled\s*=\s*\$Installed\s+-and\s+\$ServiceStatus\s+-eq\s+"Stopped"/u
+);
+assert.match(
+  traySource,
+  /function Invoke-ControlAction[\s\S]*?\$script:exitItem\.Enabled\s*=\s*\$false[\s\S]*?Start-DetachedPowerShell/u
+);
+assert.match(traySource, /contextMenu\.add_Opening\(\{ Update-TrayState \}\)/u);
+assert.match(
+  traySource,
+  /exitItem\.add_Click\(\{[\s\S]*?Get-Service\s+-Name\s+\$serviceName[\s\S]*?Status\s+-ne\s+"Stopped"[\s\S]*?return[\s\S]*?ExitThread\(\)/u
+);
 assert.match(traySource, /\$faviconPath\s*=\s*Join-Path\s+\$resolvedAppRoot\s+"favicon\.ico"/u);
 assert.match(traySource, /function New-FaviconStateIcon/u);
 assert.match(traySource, /Drawing\.Image\]::FromFile\(\$Path\)/u);

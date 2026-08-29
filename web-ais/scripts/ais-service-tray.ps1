@@ -67,6 +67,7 @@ $script:statusItem = $null
 $script:startItem = $null
 $script:stopItem = $null
 $script:restartItem = $null
+$script:exitItem = $null
 
 function Write-TrayError([string]$Message) {
   try {
@@ -217,6 +218,9 @@ function Start-DetachedPowerShell(
 
 function Invoke-ControlAction([string]$Action) {
   try {
+    if ($null -ne $script:exitItem) {
+      $script:exitItem.Enabled = $false
+    }
     $arguments = New-Object Collections.Generic.List[string]
     $arguments.Add("-Action")
     $arguments.Add($Action)
@@ -224,6 +228,7 @@ function Invoke-ControlAction([string]$Action) {
     Show-TrayMessage "АИС Допобразование" "Команда «$Action» отправлена."
   } catch {
     Write-TrayError $_.Exception.ToString()
+    Update-TrayState
     Show-TrayMessage "Ошибка управления АИС" $_.Exception.Message ([Windows.Forms.ToolTipIcon]::Error)
   }
 }
@@ -303,6 +308,9 @@ function Set-TrayVisual(
   $script:startItem.Enabled = (-not $isPending) -and ((-not $Installed) -or $ServiceStatus -eq "Stopped")
   $script:stopItem.Enabled = $Installed -and (-not $isPending) -and $ServiceStatus -ne "Stopped"
   $script:restartItem.Enabled = $Installed -and (-not $isPending)
+  if ($null -ne $script:exitItem) {
+    $script:exitItem.Enabled = $Installed -and $ServiceStatus -eq "Stopped"
+  }
 
   $visualState = "$State|$StatusText"
   if ($null -ne $script:lastVisualState -and $script:lastVisualState -ne $visualState) {
@@ -429,7 +437,8 @@ namespace AisDopobr.Tray
   $script:restartItem = New-Object Windows.Forms.ToolStripMenuItem "Перезапустить"
   $terminalItem = New-Object Windows.Forms.ToolStripMenuItem "Окно терминала запуска"
   $folderItem = New-Object Windows.Forms.ToolStripMenuItem "Открыть папку журналов"
-  $exitItem = New-Object Windows.Forms.ToolStripMenuItem "Выход из трея"
+  $script:exitItem = New-Object Windows.Forms.ToolStripMenuItem "Выход из трея"
+  $script:exitItem.Enabled = $false
 
   $openItem.add_Click({ Open-Ais })
   $script:startItem.add_Click({ Invoke-ControlAction "Start" })
@@ -437,10 +446,16 @@ namespace AisDopobr.Tray
   $script:restartItem.add_Click({ Invoke-ControlAction "Restart" })
   $terminalItem.add_Click({ Open-LogTerminal })
   $folderItem.add_Click({ Open-LogDirectory })
-  $exitItem.add_Click({
+  $script:exitItem.add_Click({
+    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($null -eq $service -or [string]$service.Status -ne "Stopped") {
+      Update-TrayState
+      return
+    }
     $script:notifyIcon.Visible = $false
     $script:applicationContext.ExitThread()
   })
+  $script:contextMenu.add_Opening({ Update-TrayState })
 
   [void]$script:contextMenu.Items.Add($script:statusItem)
   [void]$script:contextMenu.Items.Add($openItem)
@@ -452,7 +467,7 @@ namespace AisDopobr.Tray
   [void]$script:contextMenu.Items.Add($terminalItem)
   [void]$script:contextMenu.Items.Add($folderItem)
   [void]$script:contextMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
-  [void]$script:contextMenu.Items.Add($exitItem)
+  [void]$script:contextMenu.Items.Add($script:exitItem)
 
   $script:notifyIcon = New-Object Windows.Forms.NotifyIcon
   $script:notifyIcon.ContextMenuStrip = $script:contextMenu

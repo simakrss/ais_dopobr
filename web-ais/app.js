@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.365",
+    version: "1.7.366",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.366",
+      releasedAt: "2026-08-29",
+      changes: [
+        "Пункт «Выход из трея» доступен только после полной остановки службы АИС; при открытии меню состояние службы проверяется заново."
+      ]
+    },
     {
       version: "1.7.365",
       releasedAt: "2026-08-29",
