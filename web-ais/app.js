@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.367",
+    version: "1.7.368",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.368",
+      releasedAt: "2026-08-29",
+      changes: [
+        "В истории операций с базой сразу показываются только три последние записи; предыдущие операции свёрнуты и раскрываются одной кнопкой."
+      ]
+    },
     {
       version: "1.7.367",
       releasedAt: "2026-08-29",
@@ -3214,6 +3221,7 @@
   const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH =
     "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
   const STUDENT_DATABASE_OPERATION_HISTORY_LIMIT = 100;
+  const STUDENT_DATABASE_OPERATION_HISTORY_VISIBLE_COUNT = 3;
   const STUDENT_DATABASE_OPERATION_HISTORY_ROW_LIMIT = 500;
   const STUDENT_DATABASE_OPERATION_HISTORY_FILTER_DEFAULTS = Object.freeze({
     query: "",
@@ -6132,6 +6140,7 @@ MAX - https://bizvmax.ru/zifra_plus
       open: false,
       selectedId: "",
       selectedItemKey: "",
+      olderExpanded: false,
       filters: { ...STUDENT_DATABASE_OPERATION_HISTORY_FILTER_DEFAULTS }
     },
     adminTab: "database",
@@ -24404,6 +24413,16 @@ MAX - https://bizvmax.ru/zifra_plus
       .slice(0, STUDENT_DATABASE_OPERATION_HISTORY_LIMIT);
   }
 
+  function splitStudentDatabaseOperationHistoryEntries(entries = []) {
+    const list = Array.isArray(entries) ? entries : [];
+    const recentEntries = list.slice(0, STUDENT_DATABASE_OPERATION_HISTORY_VISIBLE_COUNT);
+    const olderEntries = list.slice(STUDENT_DATABASE_OPERATION_HISTORY_VISIBLE_COUNT);
+    return {
+      recentEntries,
+      olderEntries
+    };
+  }
+
   function appendStudentDatabaseOperationHistory(result = {}) {
     const authUser = getCurrentAuthUser();
     const entry = normalizeStudentDatabaseOperationHistoryEntry({
@@ -24704,6 +24723,7 @@ MAX - https://bizvmax.ru/zifra_plus
     state.databaseOperationHistory.open = true;
     state.databaseOperationHistory.selectedId = entries[0]?.id || "";
     state.databaseOperationHistory.selectedItemKey = "";
+    state.databaseOperationHistory.olderExpanded = false;
     render();
     requestAnimationFrame(() => {
       document.querySelector(".student-database-operation-history-modal [data-action='close-student-database-operation-history']")
@@ -24717,6 +24737,7 @@ MAX - https://bizvmax.ru/zifra_plus
     state.databaseOperationHistory.open = false;
     state.databaseOperationHistory.selectedId = "";
     state.databaseOperationHistory.selectedItemKey = "";
+    state.databaseOperationHistory.olderExpanded = false;
     render();
     document.querySelector("[data-action='open-student-database-operation-history']")
       ?.focus({ preventScroll: true });
@@ -24851,9 +24872,34 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderStudentDatabaseOperationHistoryRows(entries, selectedEntry) {
+    return entries.map((entry) => `
+      <tr
+        class="${entry.status === "error" ? "is-error" : ""} ${selectedEntry?.id === entry.id ? "is-selected" : ""}"
+        data-action="select-student-database-operation-history"
+        data-history-id="${escapeAttr(entry.id)}"
+        role="button"
+        tabindex="0"
+        title="Открыть подробности операции"
+      >
+        <td>${escapeHtml(formatDateTimeRu(entry.generatedAt))}</td>
+        <td><strong>${escapeHtml(entry.operationLabel)}</strong></td>
+        <td><span class="student-database-operation-history-status is-${escapeAttr(entry.status)}">${entry.status === "error" ? "Ошибка" : "Успешно"}</span></td>
+        <td><span>${escapeHtml(entry.sourceLabel || "—")}</span>${entry.direction ? `<small>${escapeHtml(entry.direction)}</small>` : ""}</td>
+        <td><span>${escapeHtml(entry.userName || entry.userLogin)}</span>${entry.userName && entry.userLogin ? `<small>${escapeHtml(entry.userLogin)}</small>` : ""}</td>
+        <td>${escapeHtml(entry.duration || "—")}</td>
+        <td class="student-database-operation-history-summary" title="${escapeAttr(entry.summary)}">${escapeHtml(entry.summary || "—")}</td>
+      </tr>
+    `).join("");
+  }
+
   function renderStudentDatabaseOperationHistoryDialog() {
     const allEntries = getStudentDatabaseOperationHistoryEntries();
     const entries = getFilteredStudentDatabaseOperationHistoryEntries();
+    const {
+      recentEntries,
+      olderEntries
+    } = splitStudentDatabaseOperationHistoryEntries(entries);
     const filters = {
       ...STUDENT_DATABASE_OPERATION_HISTORY_FILTER_DEFAULTS,
       ...(state.databaseOperationHistory.filters || {})
@@ -24861,6 +24907,13 @@ MAX - https://bizvmax.ru/zifra_plus
     let selectedEntry = entries.find((entry) => entry.id === state.databaseOperationHistory.selectedId)
       || entries[0]
       || null;
+    if (
+      selectedEntry
+      && !state.databaseOperationHistory.olderExpanded
+      && !recentEntries.some((entry) => entry.id === selectedEntry.id)
+    ) {
+      selectedEntry = recentEntries[0] || null;
+    }
     if (selectedEntry && selectedEntry.id !== state.databaseOperationHistory.selectedId) {
       state.databaseOperationHistory.selectedId = selectedEntry.id;
       state.databaseOperationHistory.selectedItemKey = "";
@@ -24903,24 +24956,26 @@ MAX - https://bizvmax.ru/zifra_plus
                 <table class="data-table student-database-operation-history-table">
                   <thead><tr><th>Дата и время</th><th>Операция</th><th>Результат</th><th>Источник / направление</th><th>Пользователь</th><th>Время</th><th>Описание</th></tr></thead>
                   <tbody>
-                    ${entries.map((entry) => `
-                      <tr
-                        class="${entry.status === "error" ? "is-error" : ""} ${selectedEntry?.id === entry.id ? "is-selected" : ""}"
-                        data-action="select-student-database-operation-history"
-                        data-history-id="${escapeAttr(entry.id)}"
-                        role="button"
-                        tabindex="0"
-                        title="Открыть подробности операции"
-                      >
-                        <td>${escapeHtml(formatDateTimeRu(entry.generatedAt))}</td>
-                        <td><strong>${escapeHtml(entry.operationLabel)}</strong></td>
-                        <td><span class="student-database-operation-history-status is-${escapeAttr(entry.status)}">${entry.status === "error" ? "Ошибка" : "Успешно"}</span></td>
-                        <td><span>${escapeHtml(entry.sourceLabel || "—")}</span>${entry.direction ? `<small>${escapeHtml(entry.direction)}</small>` : ""}</td>
-                        <td><span>${escapeHtml(entry.userName || entry.userLogin)}</span>${entry.userName && entry.userLogin ? `<small>${escapeHtml(entry.userLogin)}</small>` : ""}</td>
-                        <td>${escapeHtml(entry.duration || "—")}</td>
-                        <td class="student-database-operation-history-summary" title="${escapeAttr(entry.summary)}">${escapeHtml(entry.summary || "—")}</td>
+                    ${renderStudentDatabaseOperationHistoryRows(recentEntries, selectedEntry)}
+                    ${olderEntries.length ? `
+                      <tr class="student-database-operation-history-toggle-row">
+                        <td colspan="7">
+                          <button
+                            class="ghost-button compact-button student-database-operation-history-toggle"
+                            data-action="toggle-student-database-operation-history-older"
+                            type="button"
+                            aria-expanded="${state.databaseOperationHistory.olderExpanded ? "true" : "false"}"
+                          >
+                            ${state.databaseOperationHistory.olderExpanded
+                              ? "Свернуть предыдущие операции"
+                              : `Показать предыдущие операции (${olderEntries.length})`}
+                          </button>
+                        </td>
                       </tr>
-                    `).join("")}
+                    ` : ""}
+                    ${state.databaseOperationHistory.olderExpanded
+                      ? renderStudentDatabaseOperationHistoryRows(olderEntries, selectedEntry)
+                      : ""}
                   </tbody>
                 </table>
               </div>
@@ -35818,6 +35873,7 @@ MAX - https://bizvmax.ru/zifra_plus
         };
         state.databaseOperationHistory.selectedId = "";
         state.databaseOperationHistory.selectedItemKey = "";
+        state.databaseOperationHistory.olderExpanded = false;
         render();
       });
     document.querySelector("[data-action='reset-student-database-operation-history-filters']")
@@ -35827,7 +35883,17 @@ MAX - https://bizvmax.ru/zifra_plus
         };
         state.databaseOperationHistory.selectedId = "";
         state.databaseOperationHistory.selectedItemKey = "";
+        state.databaseOperationHistory.olderExpanded = false;
         render();
+      });
+    document.querySelector("[data-action='toggle-student-database-operation-history-older']")
+      ?.addEventListener("click", () => {
+        state.databaseOperationHistory.olderExpanded = !state.databaseOperationHistory.olderExpanded;
+        render();
+        requestAnimationFrame(() => {
+          document.querySelector("[data-action='toggle-student-database-operation-history-older']")
+            ?.focus({ preventScroll: true });
+        });
       });
     document.querySelectorAll("[data-action='select-student-database-operation-history']").forEach((row) => {
       const select = () => {

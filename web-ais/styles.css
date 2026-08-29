@@ -2073,6 +2073,25 @@ body.is-session-expired {
   cursor: pointer;
 }
 
+.student-database-operation-history-table tbody tr.student-database-operation-history-toggle-row {
+  cursor: default;
+  background: #f7faf9;
+}
+
+.student-database-operation-history-table tbody tr.student-database-operation-history-toggle-row:hover {
+  background: #f7faf9;
+}
+
+.student-database-operation-history-toggle-row td {
+  max-width: none;
+  padding: 7px;
+  text-align: center;
+}
+
+.student-database-operation-history-toggle {
+  width: 100%;
+}
+
 .student-database-operation-history-table tbody tr:hover,
 .student-database-operation-history-table tbody tr:focus-visible,
 .student-database-operation-history-table tbody tr.is-selected {

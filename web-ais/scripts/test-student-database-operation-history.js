@@ -21,11 +21,13 @@ const historyFunctions = sourceBlock(
 );
 const historyApi = new Function(`
   const STUDENT_DATABASE_OPERATION_HISTORY_LIMIT = 100;
+  const STUDENT_DATABASE_OPERATION_HISTORY_VISIBLE_COUNT = 3;
   const STUDENT_DATABASE_OPERATION_HISTORY_ROW_LIMIT = 500;
   ${historyFunctions}
   return {
     normalizeStudentDatabaseOperationHistoryEntry,
-    normalizeStudentDatabaseOperationHistory
+    normalizeStudentDatabaseOperationHistory,
+    splitStudentDatabaseOperationHistoryEntries
   };
 `)();
 
@@ -154,6 +156,28 @@ const limitedHistory = historyApi.normalizeStudentDatabaseOperationHistory(
 assert.equal(limitedHistory.length, 100);
 assert.equal(limitedHistory[0].id, "operation-119");
 
+const collapsedHistory = historyApi.splitStudentDatabaseOperationHistoryEntries(limitedHistory);
+assert.deepEqual(
+  collapsedHistory.recentEntries.map((item) => item.id),
+  ["operation-119", "operation-118", "operation-117"],
+  "В свёрнутой истории должны оставаться три последние операции"
+);
+assert.equal(collapsedHistory.olderEntries.length, 97);
+const shortHistory = historyApi.splitStudentDatabaseOperationHistoryEntries(limitedHistory.slice(0, 3));
+assert.equal(shortHistory.recentEntries.length, 3);
+assert.equal(shortHistory.olderEntries.length, 0);
+
+const historyDialogBlock = sourceBlock(
+  appSource,
+  "function renderStudentDatabaseOperationHistoryDialog(",
+  "function getAuthUserEditorRecord("
+);
+const recentRowsPosition = historyDialogBlock.indexOf("renderStudentDatabaseOperationHistoryRows(recentEntries");
+const togglePosition = historyDialogBlock.indexOf("toggle-student-database-operation-history-older");
+const olderRowsPosition = historyDialogBlock.indexOf("renderStudentDatabaseOperationHistoryRows(olderEntries");
+assert.ok(recentRowsPosition >= 0 && recentRowsPosition < togglePosition);
+assert.ok(togglePosition < olderRowsPosition, "Старые строки должны раскрываться под кнопкой управления");
+
 assert.match(appSource, /studentDatabaseOperationHistory\s*=\s*normalizeStudentDatabaseOperationHistory/u);
 assert.match(appSource, /appendStudentDatabaseOperationHistory\(normalizedResult\)/u);
 assert.match(appSource, /data-action="open-student-database-operation-history"/u);
@@ -164,10 +188,14 @@ assert.match(appSource, /data-import-button-label>\$\{state\.databaseImport\.run
 assert.match(appSource, /data-database-download-button-label>\$\{state\.databaseExport\.running[\s\S]*?"Формирование\.\.\." : "Экспорт"\}<\/span>/u);
 assert.match(appSource, /data-database-export-button-label>\$\{state\.databaseExport\.running[\s\S]*?"Синхронизация\.\.\." : "Синхронизация"\}<\/span>/u);
 assert.match(appSource, /filter-student-database-operation-history/u);
+assert.match(appSource, /data-action="toggle-student-database-operation-history-older"/u);
+assert.match(appSource, /Показать предыдущие операции/u);
+assert.match(appSource, /olderExpanded:\s*false/u);
 assert.match(appSource, /exportStudentDatabaseOperationHistory/u);
 assert.match(appSource, /Состояние XLSB/u);
 assert.equal((appSource.match(/showDatabaseOperationResult\(\{/gu) || []).length, 6);
 assert.match(stylesSource, /student-database-operation-history-modal/u);
 assert.match(stylesSource, /student-database-operation-history-status\.is-error/u);
+assert.match(stylesSource, /student-database-operation-history-toggle-row/u);
 
 console.log("student database operation history checks: OK");
