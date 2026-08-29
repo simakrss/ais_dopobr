@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.355",
+    version: "1.7.356",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.356",
+      releasedAt: "2026-08-29",
+      changes: [
+        "PDF всех документов формируется через высококачественный векторный экспорт без уменьшения разрешения и повторного сжатия; автоматический откат к конвертеру, растрирующему фон и сжимающему изображения, запрещён."
+      ]
+    },
     {
       version: "1.7.355",
       releasedAt: "2026-08-29",

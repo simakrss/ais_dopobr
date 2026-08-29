@@ -158,6 +158,17 @@ async function main() {
     await degradedResolver.resolveDocumentProcessingOrigin("documentConversion"),
     "http://127.0.0.1:8081"
   );
+  const editingOnlyResolver = createDocumentProcessingResolver({
+    appServerAvailable: true,
+    ocrAvailable: false,
+    documentConversionAvailable: false,
+    documentEditingAvailable: true
+  });
+  assert.equal(
+    await editingOnlyResolver.resolveDocumentProcessingOrigin("documentConversion"),
+    "https://edu-plus.ru/lms",
+    "ONLYOFFICE-редактор не должен выдаваться за высококачественный PDF-конвертер"
+  );
   const unavailableResolver = createDocumentProcessingResolver({}, { reject: true });
   assert.equal(
     await unavailableResolver.resolveDocumentProcessingOrigin("ocr"),
@@ -165,13 +176,19 @@ async function main() {
   );
 
   const forwardedRequests = [];
+  let appHealthPayload = {
+    ok: true,
+    storage: "mysql",
+    highQualityPdfConversionAvailable: true
+  };
+  let documentEditingHealthy = true;
   const appServer = http.createServer((req, res) => {
     const chunks = [];
     req.on("data", (chunk) => chunks.push(chunk));
     req.on("end", () => {
       if (req.url === "/api/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true, storage: "mysql" }));
+        res.end(JSON.stringify(appHealthPayload));
         return;
       }
       forwardedRequests.push({
@@ -189,8 +206,8 @@ async function main() {
     res.end(JSON.stringify({ ok: true }));
   });
   const conversionServer = http.createServer((_req, res) => {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("true");
+    res.writeHead(documentEditingHealthy ? 200 : 503, { "Content-Type": "text/plain" });
+    res.end(documentEditingHealthy ? "true" : "false");
   });
 
   let child = null;
@@ -234,7 +251,8 @@ async function main() {
       ok: true,
       appServerAvailable: true,
       ocrAvailable: true,
-      documentConversionAvailable: true
+      documentConversionAvailable: true,
+      documentEditingAvailable: true
     });
 
     const preflight = await fetch(`${baseUrl}/api/students/recognize-documents/files`, {
@@ -282,6 +300,34 @@ async function main() {
     });
     assert.equal(disallowedOrigin.status, 403);
 
+    appHealthPayload = { ok: true, storage: "mysql" };
+    const editingOnlyHealthResponse = await fetch(`${baseUrl}/api/local-document-services/health`, {
+      headers: remoteHeaders
+    });
+    const editingOnlyHealth = await editingOnlyHealthResponse.json();
+    assert.deepEqual(editingOnlyHealth, {
+      ok: true,
+      appServerAvailable: true,
+      ocrAvailable: true,
+      documentConversionAvailable: false,
+      documentEditingAvailable: true
+    });
+
+    appHealthPayload.highQualityPdfConversionAvailable = true;
+    documentEditingHealthy = false;
+    const generationOnlyHealthResponse = await fetch(`${baseUrl}/api/local-document-services/health`, {
+      headers: remoteHeaders
+    });
+    const generationOnlyHealth = await generationOnlyHealthResponse.json();
+    assert.deepEqual(generationOnlyHealth, {
+      ok: true,
+      appServerAvailable: true,
+      ocrAvailable: true,
+      documentConversionAvailable: true,
+      documentEditingAvailable: false
+    });
+    documentEditingHealthy = true;
+
     await close(ocrServer);
     const degradedResponse = await fetch(`${baseUrl}/api/local-document-services/health`, {
       headers: remoteHeaders
@@ -290,6 +336,7 @@ async function main() {
     assert.equal(degraded.appServerAvailable, true);
     assert.equal(degraded.ocrAvailable, false);
     assert.equal(degraded.documentConversionAvailable, true);
+    assert.equal(degraded.documentEditingAvailable, true);
 
     assert.match(appSource, /resolveDocumentProcessingOrigin\("ocr"\)/u);
     assert.match(appSource, /resolveDocumentProcessingOrigin\("documentConversion"\)/u);

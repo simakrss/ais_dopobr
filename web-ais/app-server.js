@@ -7,6 +7,7 @@ const crypto = require("node:crypto");
 const zlib = require("node:zlib");
 const os = require("node:os");
 const { spawn } = require("node:child_process");
+const { pathToFileURL } = require("node:url");
 const { Worker, isMainThread } = require("node:worker_threads");
 const { TextDecoder } = require("node:util");
 
@@ -513,6 +514,7 @@ const SHARED_STATE_MYSQL_KEY = String(process.env.AIS_SHARED_STATE_KEY || "main"
 const SHARED_STATE_OFFLINE_QUEUE_MAX_OPERATIONS = 5000;
 const SHARED_STATE_MYSQL_OFFLINE_RETRY_MS = 15 * 1000;
 const MAX_DOCX_BYTES = 24 * 1024 * 1024;
+const MAX_GENERATED_PDF_BYTES = 128 * 1024 * 1024;
 const MAX_STUDENT_DATABASE_BYTES = 24 * 1024 * 1024;
 const MAX_STUDENT_PHOTO_BYTES = 16 * 1024 * 1024;
 const MAX_OCR_DOCUMENT_BYTES = 24 * 1024 * 1024;
@@ -29681,7 +29683,318 @@ async function requestOnlyOfficeConversion(payload, converterUrl, jwtSecret) {
   throw new Error("ONLYOFFICE не завершил преобразование в PDF за 2 минуты.");
 }
 
-async function convertDocxBytesToPdf(docxBytes) {
+const LIBREOFFICE_PDF_CONVERSION_TIMEOUT_MS = 2 * 60 * 1000;
+const LIBREOFFICE_PDF_QUEUE_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
+const LIBREOFFICE_PDF_MAX_PENDING_CONVERSIONS = 8;
+const LIBREOFFICE_PDF_DIAGNOSTIC_LIMIT_BYTES = 256 * 1024;
+let libreOfficePdfConversionTail = Promise.resolve();
+let libreOfficePdfPendingConversions = 0;
+
+function buildLibreOfficePdfConversionFilter() {
+  return `pdf:writer_pdf_Export:${JSON.stringify({
+    UseLosslessCompression: { type: "boolean", value: "true" },
+    Quality: { type: "long", value: "100" },
+    ReduceImageResolution: { type: "boolean", value: "false" },
+    EmbedStandardFonts: { type: "boolean", value: "true" }
+  })}`;
+}
+
+async function resolveLibreOfficeBinary() {
+  const configuredBinary = String(
+    process.env.AIS_LIBREOFFICE_BINARY
+      || process.env.LIBREOFFICE_BINARY
+      || process.env.SOFFICE_BINARY
+      || ""
+  ).trim();
+  const candidates = [];
+  if (configuredBinary) candidates.push(configuredBinary);
+  if (process.platform === "win32") {
+    [
+      process.env.ProgramW6432,
+      process.env.ProgramFiles,
+      process.env["ProgramFiles(x86)"],
+      "C:\\Program Files",
+      "C:\\Program Files (x86)"
+    ].filter(Boolean).forEach((programFilesPath) => {
+      candidates.push(path.join(programFilesPath, "LibreOffice", "program", "soffice.com"));
+      candidates.push(path.join(programFilesPath, "LibreOffice", "program", "soffice.exe"));
+    });
+  } else {
+    candidates.push(
+      "/usr/bin/libreoffice",
+      "/usr/bin/soffice",
+      "/usr/local/bin/libreoffice",
+      "/usr/local/bin/soffice",
+      "/opt/libreoffice/program/soffice",
+      "libreoffice",
+      "soffice"
+    );
+  }
+  const executableAccessMode = process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK;
+  const isExecutableFile = async (filePath) => {
+    try {
+      await fs.access(filePath, executableAccessMode);
+      return (await fs.stat(filePath)).isFile();
+    } catch {
+      return false;
+    }
+  };
+  const checked = new Set();
+  for (const candidate of candidates) {
+    const normalized = String(candidate || "").trim();
+    if (!normalized) continue;
+    const key = process.platform === "win32" ? normalized.toLowerCase() : normalized;
+    if (checked.has(key)) continue;
+    checked.add(key);
+    if (!path.isAbsolute(normalized)) {
+      const commandNames = process.platform === "win32" && !path.extname(normalized)
+        ? [`${normalized}.com`, `${normalized}.exe`, normalized]
+        : [normalized];
+      const searchDirectories = String(process.env.Path || process.env.PATH || "")
+        .split(path.delimiter)
+        .map((directory) => directory.trim().replace(/^"|"$/gu, ""))
+        .filter(Boolean);
+      for (const directory of searchDirectories) {
+        for (const commandName of commandNames) {
+          const executablePath = path.resolve(directory, commandName);
+          if (await isExecutableFile(executablePath)) return executablePath;
+        }
+      }
+      continue;
+    }
+    if (await isExecutableFile(normalized)) return normalized;
+  }
+  return "";
+}
+
+function enqueueLibreOfficePdfConversion(operation) {
+  if (libreOfficePdfPendingConversions >= LIBREOFFICE_PDF_MAX_PENDING_CONVERSIONS) {
+    return Promise.reject(new Error(
+      "Очередь высококачественного PDF-экспорта заполнена. Повторите через несколько минут."
+    ));
+  }
+  libreOfficePdfPendingConversions += 1;
+  const queuedAt = Date.now();
+  const result = libreOfficePdfConversionTail.then(() => {
+    if (Date.now() - queuedAt > LIBREOFFICE_PDF_QUEUE_WAIT_TIMEOUT_MS) {
+      throw new Error("Ожидание в очереди PDF-экспорта превысило 5 минут.");
+    }
+    return operation();
+  });
+  libreOfficePdfConversionTail = result.catch(() => null);
+  return result.finally(() => {
+    libreOfficePdfPendingConversions = Math.max(0, libreOfficePdfPendingConversions - 1);
+  });
+}
+
+function compactLibreOfficeDiagnostic(stdout, stderr) {
+  return `${String(stderr || "")}\n${String(stdout || "")}`
+    .replace(/^\uFEFF/u, "")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 1200);
+}
+
+async function terminateLibreOfficeProcess(child) {
+  if (!Number.isInteger(child.pid) || child.pid <= 0) return;
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    } catch {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Процесс уже завершён.
+      }
+      return;
+    }
+  }
+  const systemRoot = String(process.env.SystemRoot || "C:\\Windows").trim() || "C:\\Windows";
+  const taskkillPath = path.join(systemRoot, "System32", "taskkill.exe");
+  try {
+    const cleanup = spawn(taskkillPath, ["/PID", String(child.pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore"
+    });
+    await new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        try {
+          cleanup.kill("SIGKILL");
+        } catch {
+          // taskkill уже завершён.
+        }
+        finish();
+      }, 10000);
+      cleanup.once("error", finish);
+      cleanup.once("close", finish);
+    });
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // taskkill уже завершил дерево процессов.
+    }
+  } catch {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // Процесс уже завершён.
+    }
+  }
+}
+
+function runLibreOfficePdfConversion(binaryPath, argumentsList) {
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(binaryPath, argumentsList, {
+        detached: process.platform !== "win32",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+    } catch (error) {
+      reject(new Error(`Не удалось запустить LibreOffice: ${error.message}`));
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    let forcedSettlementTimer = null;
+    let terminationPromise = Promise.resolve();
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutTimer);
+      clearTimeout(forcedSettlementTimer);
+      callback();
+    };
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      terminationPromise = terminateLibreOfficeProcess(child);
+      forcedSettlementTimer = setTimeout(() => {
+        terminationPromise.finally(() => {
+          finish(() => reject(new Error("LibreOffice не завершил преобразование в PDF за 2 минуты.")));
+        });
+      }, 5000);
+    }, LIBREOFFICE_PDF_CONVERSION_TIMEOUT_MS);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      if (Buffer.byteLength(stdout, "utf8") < LIBREOFFICE_PDF_DIAGNOSTIC_LIMIT_BYTES) {
+        stdout += chunk;
+      }
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      if (Buffer.byteLength(stderr, "utf8") < LIBREOFFICE_PDF_DIAGNOSTIC_LIMIT_BYTES) {
+        stderr += chunk;
+      }
+    });
+    child.on("error", (error) => {
+      finish(() => reject(new Error(`Не удалось запустить LibreOffice: ${error.message}`)));
+    });
+    child.on("close", (code) => {
+      if (timedOut) {
+        terminationPromise.finally(() => {
+          finish(() => reject(new Error("LibreOffice не завершил преобразование в PDF за 2 минуты.")));
+        });
+        return;
+      }
+      if (code !== 0) {
+        const diagnostic = compactLibreOfficeDiagnostic(stdout, stderr);
+        finish(() => reject(new Error(
+          diagnostic
+            ? `LibreOffice завершил преобразование с кодом ${code}: ${diagnostic}`
+            : `LibreOffice завершил преобразование с кодом ${code}.`
+        )));
+        return;
+      }
+      finish(resolve);
+    });
+  });
+}
+
+async function safelyRemoveLibreOfficePdfDirectory(directoryPath) {
+  const tempRoot = path.resolve(os.tmpdir());
+  const resolvedPath = path.resolve(directoryPath);
+  const relativePath = path.relative(tempRoot, resolvedPath);
+  if (
+    !relativePath
+    || relativePath.startsWith("..")
+    || path.isAbsolute(relativePath)
+    || !path.basename(resolvedPath).startsWith("ais-document-pdf-")
+  ) return;
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await fs.rm(resolvedPath, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+    }
+  }
+  console.warn(`[документы] Не удалось очистить временные файлы PDF: ${lastError?.message || "неизвестная ошибка"}`);
+}
+
+async function convertDocxBytesToPdfWithLibreOffice(docxBytes) {
+  const sourceBytes = Buffer.isBuffer(docxBytes) ? docxBytes : Buffer.from(docxBytes || []);
+  if (!sourceBytes.length || sourceBytes.length > MAX_DOCX_BYTES) {
+    throw new Error("DOCX для преобразования пуст или превышает 24 МБ.");
+  }
+  const binaryPath = await resolveLibreOfficeBinary();
+  if (!binaryPath) {
+    throw new Error("LibreOffice не найден на сервере.");
+  }
+  return enqueueLibreOfficePdfConversion(async () => {
+    const tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ais-document-pdf-"));
+    const profileDirectory = path.join(tempDirectory, "profile");
+    const sourcePath = path.join(tempDirectory, "document.docx");
+    const outputPath = path.join(tempDirectory, "document.pdf");
+    try {
+      await fs.mkdir(profileDirectory, { recursive: true });
+      await fs.writeFile(sourcePath, sourceBytes, { flag: "wx" });
+      const profileUrl = pathToFileURL(profileDirectory).href;
+      await runLibreOfficePdfConversion(binaryPath, [
+        `-env:UserInstallation=${profileUrl}`,
+        "--headless",
+        "--nologo",
+        "--nodefault",
+        "--nolockcheck",
+        "--nofirststartwizard",
+        "--norestore",
+        "--convert-to",
+        buildLibreOfficePdfConversionFilter(),
+        "--outdir",
+        tempDirectory,
+        sourcePath
+      ]);
+      const stats = await fs.stat(outputPath).catch(() => null);
+      if (!stats?.isFile() || !stats.size) {
+        throw new Error("LibreOffice не создал PDF-файл.");
+      }
+      if (stats.size > MAX_GENERATED_PDF_BYTES) {
+        throw new Error("PDF LibreOffice превышает допустимый размер 128 МБ.");
+      }
+      const pdfBytes = await fs.readFile(outputPath);
+      if (pdfBytes.subarray(0, 5).toString("ascii") !== "%PDF-") {
+        throw new Error("LibreOffice создал некорректный PDF-файл.");
+      }
+      return pdfBytes;
+    } finally {
+      await safelyRemoveLibreOfficePdfDirectory(tempDirectory);
+    }
+  });
+}
+
+async function convertDocxBytesToPdfWithOnlyOffice(docxBytes) {
   const { converterUrl, sourceUrl, jwtSecret } = await getOnlyOfficeConverterSettings();
   const sourceToken = await registerDocumentConversionSource(docxBytes);
   const key = crypto
@@ -29701,7 +30014,7 @@ async function convertDocxBytesToPdf(docxBytes) {
   try {
     const pdfUrl = await requestOnlyOfficeConversion(payload, converterUrl, jwtSecret);
     const pdfBytes = await requestBuffer(pdfUrl, {
-      maxResponseBytes: MAX_DOCX_BYTES,
+      maxResponseBytes: MAX_GENERATED_PDF_BYTES,
       timeoutMs: 60000,
       errorPrefix: "Не удалось скачать PDF из ONLYOFFICE",
       timeoutError: "Истекло время скачивания PDF из ONLYOFFICE."
@@ -29712,6 +30025,22 @@ async function convertDocxBytesToPdf(docxBytes) {
     return pdfBytes;
   } finally {
     await removeDocumentConversionSource(sourceToken).catch(() => null);
+  }
+}
+
+async function convertDocxBytesToPdf(docxBytes, options = {}) {
+  const conversionOptions = options && typeof options === "object" ? options : {};
+  const highQualityConverter = typeof conversionOptions.libreOfficeConverter === "function"
+    ? conversionOptions.libreOfficeConverter
+    : convertDocxBytesToPdfWithLibreOffice;
+  try {
+    return await highQualityConverter(docxBytes);
+  } catch (error) {
+    throw new Error(
+      "Не удалось сформировать PDF без потери качества через LibreOffice: "
+        + `${error?.message || "неизвестная ошибка"}. `
+        + "Генерация через ONLYOFFICE не выполнена, чтобы не растрировать фон и не сжать изображения."
+    );
   }
 }
 
@@ -34704,6 +35033,7 @@ async function route(req, res) {
   }
   if (req.method === "GET" && req.url === "/api/health") {
     const includeRuntimeSecrets = requestHasConfiguredGatewaySecret(req);
+    const highQualityPdfConverterBinary = await resolveLibreOfficeBinary();
     const runtimeSecrets = includeRuntimeSecrets
       ? {
           gateway: runtimeSecretFingerprint(process.env.AIS_GATEWAY_SHARED_SECRET),
@@ -34717,6 +35047,8 @@ async function route(req, res) {
       sharedStateSnapshotMode: "revision-validated",
       offlineQueueStorage: "local",
       sharedStatePollIntervalMs: 1000,
+      highQualityPdfConversionAvailable: Boolean(highQualityPdfConverterBinary),
+      highQualityPdfConverter: highQualityPdfConverterBinary ? "libreoffice" : null,
       ...(runtimeSecrets ? { runtimeSecrets } : {})
     });
     return;
@@ -35226,6 +35558,10 @@ module.exports = {
   publicStudentDocumentMailboxes,
   queryStudentMailboxMessages,
   applyCustomDocumentPropertyFormulas,
+  buildLibreOfficePdfConversionFilter,
+  resolveLibreOfficeBinary,
+  convertDocxBytesToPdfWithLibreOffice,
+  convertDocxBytesToPdfWithOnlyOffice,
   convertDocxBytesToPdf,
   registerDocumentConversionSource,
   readDocumentConversionSource,

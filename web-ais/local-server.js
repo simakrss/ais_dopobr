@@ -10,7 +10,8 @@ const appServerRetryDelays = [0, 250, 500, 1000, 1500, 2000, 2500];
 const maxProxyRequestBytes = 48 * 1024 * 1024;
 const localDocumentServicesHealthPath = "/api/local-document-services/health";
 const ocrHealthUrl = process.env.AIS_OCR_HEALTH_URL || "http://127.0.0.1:8083/health";
-const documentConversionHealthUrl = process.env.AIS_DOCUMENT_CONVERSION_HEALTH_URL
+const documentEditingHealthUrl = process.env.AIS_DOCUMENT_EDITING_HEALTH_URL
+  || process.env.AIS_DOCUMENT_CONVERSION_HEALTH_URL
   || "http://127.0.0.1:8082/healthcheck";
 const trustedRemoteAppOrigins = new Set(
   String(process.env.AIS_REMOTE_APP_ORIGINS || "https://edu-plus.ru,https://www.edu-plus.ru")
@@ -132,17 +133,44 @@ async function testHttpService(url, timeoutMilliseconds = 1800) {
   }
 }
 
+async function readHttpServiceHealth(url, timeoutMilliseconds = 1800) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMilliseconds);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal
+    });
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => null);
+    return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function handleLocalDocumentServicesHealth(req, res, accessContext) {
-  const [appServerAvailable, ocrAvailable, documentConversionAvailable] = await Promise.all([
-    testHttpService(new URL("/api/health", appServerOrigin).toString()),
+  const [appServerHealth, ocrServiceAvailable, documentEditingServiceAvailable] = await Promise.all([
+    readHttpServiceHealth(new URL("/api/health", appServerOrigin).toString()),
     testHttpService(ocrHealthUrl),
-    testHttpService(documentConversionHealthUrl)
+    testHttpService(documentEditingHealthUrl)
   ]);
+  const appServerAvailable = appServerHealth?.ok === true;
+  const ocrAvailable = appServerAvailable && ocrServiceAvailable;
+  const documentConversionAvailable = appServerAvailable
+    && appServerHealth.highQualityPdfConversionAvailable === true;
+  const documentEditingAvailable = appServerAvailable && documentEditingServiceAvailable;
   const payload = JSON.stringify({
-    ok: appServerAvailable && (ocrAvailable || documentConversionAvailable),
+    ok: appServerAvailable && (
+      ocrAvailable || documentConversionAvailable || documentEditingAvailable
+    ),
     appServerAvailable,
-    ocrAvailable: appServerAvailable && ocrAvailable,
-    documentConversionAvailable: appServerAvailable && documentConversionAvailable
+    ocrAvailable,
+    documentConversionAvailable,
+    documentEditingAvailable
   });
   const headers = accessContext.trustedRemoteService
     ? getRemoteServiceCorsHeaders(accessContext.origin)
