@@ -164,10 +164,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.366",
+    version: "1.7.367",
     releasedAt: "2026-08-29"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.367",
+      releasedAt: "2026-08-29",
+      changes: [
+        "Запуск службы показывает ход GitHub-, FTP-, Docker- и серверной подготовки в одном окне без всплывающих консолей; после готовности сайта и значка в трее окно запуска закрывается автоматически."
+      ]
+    },
     {
       version: "1.7.366",
       releasedAt: "2026-08-29",

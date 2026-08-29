@@ -57,6 +57,10 @@ assert.match(hostSource, /Get-Service\s+-Name\s+"AisDopobrWeb"/u);
 assert.match(hostSource, /Test-AisServiceRunning/u);
 assert.match(hostSource, /IO\.Path\]::Combine\(\$resolvedAppRoot/u);
 assert.doesNotMatch(hostSource, /--open-browser/u);
+assert.match(hostSource, /function Invoke-HiddenPowerShellScript/u);
+assert.match(hostSource, /CreateNoWindow\s*=\s*\$true/u);
+assert.match(hostSource, /WindowStyle\s*=\s*\[Diagnostics\.ProcessWindowStyle\]::Hidden/u);
+assert.doesNotMatch(hostSource, /& powershell\.exe[\s\S]*?\$startupUpdatePath/u);
 
 assert.match(controllerSource, /Start-Service\s+-Name\s+\$serviceName/u);
 assert.match(controllerSource, /Stop-Service\s+-Name\s+\$serviceName/u);
@@ -68,6 +72,14 @@ assert.match(controllerSource, /Test-AisPortListener/u);
 assert.match(controllerSource, /8081,\s*19081/u);
 assert.match(controllerSource, /Get-AisManagedNodeProcesses/u);
 assert.match(controllerSource, /Invoke-AisProtectedCleanup/u);
+assert.match(controllerSource, /tray-ready\.json/u);
+assert.match(controllerSource, /function Test-AisTrayReady/u);
+assert.match(controllerSource, /function Wait-AisTrayReady/u);
+assert.match(
+  controllerSource,
+  /function Start-AisTray[\s\S]*?Start-ScheduledTask[\s\S]*?Wait-AisTrayReady/u
+);
+assert.match(controllerSource, /CreateNoWindow\s*=\s*\$true/u);
 assert.doesNotMatch(controllerSource, /function Start-AisInteractiveWorker/u);
 assert.doesNotMatch(controllerSource, /Join-Path\s+\$PSScriptRoot\s+"install-ais-service\.ps1"/u);
 assert.match(installerSource, /start= delayed-auto/u);
@@ -122,6 +134,17 @@ assert.match(
   /function Invoke-ControlAction[\s\S]*?\$script:exitItem\.Enabled\s*=\s*\$false[\s\S]*?Start-DetachedPowerShell/u
 );
 assert.match(traySource, /contextMenu\.add_Opening\(\{ Update-TrayState \}\)/u);
+assert.match(traySource, /tray-ready\.json/u);
+assert.match(traySource, /function Write-TrayReadyMarker/u);
+assert.match(traySource, /function Remove-TrayReadyMarker/u);
+assert.match(
+  traySource,
+  /Set-TrayVisual[\s\S]*?Write-TrayReadyMarker\s+\$State\s+\$ServiceStatus/u
+);
+assert.match(
+  traySource,
+  /function Stop-TrayResources[\s\S]*?Remove-TrayReadyMarker/u
+);
 assert.match(
   traySource,
   /exitItem\.add_Click\(\{[\s\S]*?Get-Service\s+-Name\s+\$serviceName[\s\S]*?Status\s+-ne\s+"Stopped"[\s\S]*?return[\s\S]*?ExitThread\(\)/u
@@ -173,6 +196,39 @@ if ($failed) { exit 1 }`;
     Buffer.from(parseProbe, "utf16le").toString("base64")
   ], { cwd: appRoot, encoding: "utf8", timeout: 30000 });
   assert.equal(parseResult.status, 0, `${parseResult.stdout}\n${parseResult.stderr}`);
+
+  const hiddenPowerShellProbe = `$source = Get-Content -LiteralPath '${paths.host.replace(/'/gu, "''")}' -Raw -Encoding UTF8
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
+foreach ($name in @("Quote-ProcessArgument", "Invoke-HiddenPowerShellScript")) {
+  $functionAst = $ast.Find({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+  }, $true)
+  if (-not $functionAst) { throw "Missing function: $name" }
+  Invoke-Expression $functionAst.Extent.Text
+}
+$powerShellPath = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\\v1.0\\powershell.exe"
+$resolvedAppRoot = '${appRoot.replace(/'/gu, "''")}'
+$utf8 = New-Object Text.UTF8Encoding($false)
+$script:captured = New-Object Collections.Generic.List[string]
+function Write-ServiceOutput([string]$Source, $Value) {
+  if (-not [string]::IsNullOrWhiteSpace([string]$Value)) { $script:captured.Add("$Source|$Value") }
+}
+$exitCode = Invoke-HiddenPowerShellScript '${paths.controller.replace(/'/gu, "''")}' "TEST"
+if ($exitCode -ne 0 -or -not ($script:captured -match "Служба:")) {
+  throw "Hidden PowerShell output was not captured. Exit=$exitCode"
+}`;
+  const hiddenPowerShellResult = spawnSync("powershell.exe", [
+    "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
+    Buffer.from(hiddenPowerShellProbe, "utf16le").toString("base64")
+  ], { cwd: appRoot, encoding: "utf8", timeout: 30000 });
+  assert.equal(
+    hiddenPowerShellResult.status,
+    0,
+    `${hiddenPowerShellResult.stdout}\n${hiddenPowerShellResult.stderr}`
+  );
 
   const validationResult = spawnSync("powershell.exe", [
     "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", paths.installer,

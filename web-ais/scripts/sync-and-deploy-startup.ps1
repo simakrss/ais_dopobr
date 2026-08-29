@@ -138,9 +138,10 @@ function Save-UntrackedUpdateCollisions([string]$Upstream) {
 }
 
 function Get-DeployablePaths {
-  $output = @(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File $deployScriptPath -ListDeployable 2>&1)
-  if ($LASTEXITCODE -ne 0) {
+  try {
+    $output = @(& $deployScriptPath -ListDeployable 2>&1)
+  } catch {
+    $output = @($_.Exception.Message)
     throw "Не удалось проверить список публикации: $($output -join ' ')"
   }
   return @(
@@ -242,9 +243,10 @@ function Test-RepositoryAndDeploymentConfiguration {
   if ([string]::IsNullOrWhiteSpace($branch)) { throw "Git находится в detached HEAD; автоматическое обновление остановлено." }
   $upstream = Get-UpstreamBranch
 
-  $profileOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File $deployScriptPath -ValidateProfile 2>&1
-  if ($LASTEXITCODE -ne 0) {
+  try {
+    $profileOutput = @(& $deployScriptPath -ValidateProfile 2>&1)
+  } catch {
+    $profileOutput = @($_.Exception.Message)
     throw "Проверка FTP-профиля завершилась ошибкой: $($profileOutput -join ' ')"
   }
   $deployable = @(Get-DeployablePaths)

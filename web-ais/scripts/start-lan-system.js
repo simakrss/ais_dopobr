@@ -80,7 +80,7 @@ function processExists(pid) {
     const output = execFileSync("tasklist.exe", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], {
       encoding: "utf8",
       timeout: 5000,
-      windowsHide: false,
+      windowsHide: true,
     });
     return output.toLowerCase().includes("node.exe");
   } catch (_error) {
@@ -196,7 +196,7 @@ function listeningPid(port) {
     const output = execFileSync("netstat.exe", ["-ano", "-p", "tcp"], {
       encoding: "utf8",
       timeout: 5000,
-      windowsHide: false,
+      windowsHide: true,
     });
     for (const line of output.split(/\r?\n/)) {
       const match = line.match(/^\s*TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$/i);
@@ -286,7 +286,7 @@ function processCommandLine(pid) {
         "-Command",
         `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`,
       ],
-      { encoding: "utf8", timeout: 7000, windowsHide: false },
+      { encoding: "utf8", timeout: 7000, windowsHide: true },
     ).trim();
   } catch (_error) {
     return "";
@@ -305,7 +305,7 @@ async function stopExpectedNodeService(pid, scriptName) {
   }
   execFileSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
     timeout: 10000,
-    windowsHide: false,
+    windowsHide: true,
     stdio: "ignore",
   });
   const deadline = Date.now() + 10000;
@@ -319,7 +319,7 @@ function onlyOfficeContainerSecretMatches(commonEnvironment) {
     const output = execFileSync(
       dockerPath,
       ["inspect", "ais-onlyoffice", "--format", "{{range .Config.Env}}{{println .}}{{end}}"],
-      { encoding: "utf8", timeout: 7000, windowsHide: false },
+      { encoding: "utf8", timeout: 7000, windowsHide: true },
     );
     const configured = output.split(/\r?\n/u)
       .find((line) => line.startsWith("JWT_SECRET="))
@@ -381,7 +381,7 @@ async function startServer(definition, commonEnvironment) {
     child = spawn(process.execPath, [path.join(appRoot, definition.scriptName)], {
       cwd: appRoot,
       detached: false,
-      windowsHide: false,
+      windowsHide: true,
       env: {
         ...process.env,
         ...commonEnvironment,
@@ -421,7 +421,7 @@ function startDocumentServices(commonEnvironment) {
     execFileSync(dockerPath, ["info", "--format", "{{.ServerVersion}}"], {
       encoding: "utf8",
       timeout: 6000,
-      windowsHide: false,
+      windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (_error) {
@@ -440,7 +440,7 @@ function startDocumentServices(commonEnvironment) {
           cwd: appRoot,
           env: { ...process.env, ...commonEnvironment },
           timeout: 300000,
-          windowsHide: false,
+          windowsHide: true,
           stdio: "inherit",
         },
       );
@@ -455,7 +455,7 @@ function startDocumentServices(commonEnvironment) {
           cwd: appRoot,
           env: { ...process.env, ...commonEnvironment },
           timeout: 120000,
-          windowsHide: false,
+          windowsHide: true,
           stdio: "inherit",
         },
       );
@@ -472,7 +472,7 @@ function startDocumentServices(commonEnvironment) {
         cwd: appRoot,
         env: { ...process.env, ...commonEnvironment },
         timeout: 300000,
-        windowsHide: false,
+        windowsHide: true,
         stdio: "inherit",
       },
     );
@@ -497,7 +497,7 @@ function ensureOnlyOfficeDocumentFonts(dockerPath = process.env.AIS_DOCKER_PATH 
       ["exec", "ais-onlyoffice", "bash", "-lc", requiredFontCheck],
       {
         timeout: 15000,
-        windowsHide: false,
+        windowsHide: true,
         stdio: "ignore",
       },
     );
@@ -518,7 +518,7 @@ function ensureOnlyOfficeDocumentFonts(dockerPath = process.env.AIS_DOCKER_PATH 
       ],
       {
         timeout: 300000,
-        windowsHide: false,
+        windowsHide: true,
         stdio: "inherit",
       },
     );
@@ -527,7 +527,7 @@ function ensureOnlyOfficeDocumentFonts(dockerPath = process.env.AIS_DOCKER_PATH 
       ["exec", "ais-onlyoffice", "bash", "-lc", requiredFontCheck],
       {
         timeout: 15000,
-        windowsHide: false,
+        windowsHide: true,
         stdio: "ignore",
       },
     );
@@ -554,7 +554,7 @@ function deploymentWatcherStatus() {
   try {
     execFileSync("schtasks.exe", ["/Query", "/TN", "WebAisLmsAutoDeploy"], {
       timeout: 4000,
-      windowsHide: false,
+      windowsHide: true,
       stdio: "ignore",
     });
     return "scheduled-task";

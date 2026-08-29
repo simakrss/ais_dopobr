@@ -10,7 +10,7 @@ param(
   [string]$InteractiveUser = "",
   [string]$SourceAppRoot = "",
   [ValidateRange(5, 600)]
-  [int]$TimeoutSeconds = 240
+  [int]$TimeoutSeconds = 600
 )
 
 $env:PSModulePath = [IO.Path]::Combine($PSHOME, "Modules")
@@ -50,6 +50,8 @@ $appRoot = if ([string]::IsNullOrWhiteSpace($SourceAppRoot)) {
 } else {
   [IO.Path]::GetFullPath($SourceAppRoot)
 }
+$serviceLogPath = [IO.Path]::GetFullPath([IO.Path]::Combine($appRoot, "tmp\lan-system\service-launch.log"))
+$trayReadyPath = [IO.Path]::GetFullPath([IO.Path]::Combine($appRoot, "tmp\lan-system\tray-ready.json"))
 $installerPath = Join-Path $PSScriptRoot "setup-ais-windows-service.ps1"
 $trayPath = if (Test-Path -LiteralPath $protectedTrayPath -PathType Leaf) {
   $protectedTrayPath
@@ -134,7 +136,7 @@ function Get-ControlElevationArguments {
 function Invoke-ElevatedControl {
   $argumentLine = (Get-ControlElevationArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
   $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine `
-    -Verb RunAs -Wait -PassThru
+    -Verb RunAs -WindowStyle Hidden -Wait -PassThru
   exit $process.ExitCode
 }
 
@@ -150,6 +152,60 @@ function Test-AisHealth {
     return [bool]$payload.ok
   } catch {
     return $false
+  }
+}
+
+function Get-AisStartupLogOffset {
+  try {
+    if (Test-Path -LiteralPath $serviceLogPath -PathType Leaf) {
+      return [long](Get-Item -LiteralPath $serviceLogPath -Force).Length
+    }
+  } catch { }
+  return [long]0
+}
+
+function Write-AisStartupLogProgress([ref]$Offset) {
+  $stream = $null
+  $reader = $null
+  $text = ""
+  try {
+    if (-not (Test-Path -LiteralPath $serviceLogPath -PathType Leaf)) { return }
+    $stream = [IO.FileStream]::new(
+      $serviceLogPath,
+      [IO.FileMode]::Open,
+      [IO.FileAccess]::Read,
+      ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+    )
+    $position = [long]$Offset.Value
+    if ($position -lt 0 -or $position -gt $stream.Length) { $position = 0 }
+    [void]$stream.Seek($position, [IO.SeekOrigin]::Begin)
+    $reader = [IO.StreamReader]::new($stream, $utf8, $true, 4096, $true)
+    $text = $reader.ReadToEnd()
+    $Offset.Value = [long]$stream.Position
+  } catch {
+    return
+  } finally {
+    if ($null -ne $reader) { try { $reader.Dispose() } catch { } }
+    if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
+  }
+
+  foreach ($line in @([regex]::Split([string]$text, '\r?\n'))) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    $match = [regex]::Match($line, '^\[[^\]]+\]\s+\[(?<source>[^\]]+)\]\s+(?<message>.*)$')
+    if (-not $match.Success) {
+      Write-Host $line
+      continue
+    }
+    $source = $match.Groups["source"].Value
+    $message = $match.Groups["message"].Value
+    $message = [regex]::Replace($message, '^\[(?:Обновление|Служба АИС)\]\s*', '')
+    $label = switch ($source) {
+      "WORKER" { "Запуск" }
+      "UPDATE" { "Обновление" }
+      "AIS" { "Компоненты" }
+      default { $source }
+    }
+    Write-Host "[$label] $message"
   }
 }
 
@@ -230,40 +286,112 @@ function Wait-ServiceState([string]$State, [int]$Timeout = 60) {
   }
 }
 
-function Wait-AisHealth([int]$Timeout) {
+function Wait-AisHealth([int]$Timeout, [ref]$LogOffset) {
   $deadline = (Get-Date).AddSeconds($Timeout)
   while ((Get-Date) -lt $deadline) {
-    if (Test-AisHealth) { return $true }
+    Write-AisStartupLogProgress $LogOffset
+    if (Test-AisHealth) {
+      Write-AisStartupLogProgress $LogOffset
+      return $true
+    }
     $service = Get-AisService
     if (-not $service) { return $false }
     $service.Refresh()
-    if ($service.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Stopped) { return $false }
+    if ($service.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+      Write-AisStartupLogProgress $LogOffset
+      return $false
+    }
     Start-Sleep -Milliseconds 800
   }
+  Write-AisStartupLogProgress $LogOffset
   return $false
 }
 
 function Open-AisBrowser {
+  Write-Host "Открытие АИС в браузере: $localUrl"
   Start-Process $localUrl | Out-Null
 }
 
-function Start-AisTray {
+function Get-AisTrayProcess([int]$ExpectedProcessId = 0) {
+  $expectedTrayPath = [IO.Path]::GetFullPath($trayPath).Replace("/", "\").ToLowerInvariant()
+  return @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object {
+      ($ExpectedProcessId -le 0 -or [int]$_.ProcessId -eq $ExpectedProcessId) -and
+      ([string]$_.CommandLine).Replace("/", "\").ToLowerInvariant().IndexOf(
+        $expectedTrayPath,
+        [StringComparison]::OrdinalIgnoreCase
+      ) -ge 0
+    } | Select-Object -First 1)
+}
+
+function Test-AisTrayReady([bool]$RequireRunning) {
+  if (Test-Path -LiteralPath $trayReadyPath -PathType Leaf) {
+    try {
+      $marker = Get-Content -LiteralPath $trayReadyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+      $trayProcessId = [int]$marker.processId
+      $trayProcess = Get-AisTrayProcess $trayProcessId
+      if ($trayProcess -and (-not $RequireRunning -or [string]$marker.state -eq "running")) {
+        return $true
+      }
+    } catch { }
+  }
+
+  # Compatibility with a tray instance installed before the ready marker existed.
+  $legacyProcess = Get-AisTrayProcess
+  if (-not $legacyProcess) { return $false }
+  try {
+    $createdAt = [DateTime]$legacyProcess.CreationDate
+    if (((Get-Date) - $createdAt).TotalSeconds -lt 1) { return $false }
+  } catch {
+    return $false
+  }
+  return (-not $RequireRunning) -or (Test-AisHealth)
+}
+
+function Wait-AisTrayReady([bool]$RequireRunning, [int]$Timeout = 20) {
+  $deadline = (Get-Date).AddSeconds($Timeout)
+  while ((Get-Date) -lt $deadline) {
+    if (Test-AisTrayReady $RequireRunning) { return $true }
+    Start-Sleep -Milliseconds 200
+  }
+  return $false
+}
+
+function Start-AisTray([bool]$RequireRunning = $false) {
   if (-not (Test-Path -LiteralPath $trayPath -PathType Leaf)) {
     throw "Не найден контроллер трея: $trayPath"
   }
+  Write-Host "Запуск значка АИС в системном трее..."
   $task = Get-ScheduledTask -TaskName $trayTaskName -ErrorAction SilentlyContinue
+  $trayStartRequested = $false
   if ($task) {
     try {
       Start-ScheduledTask -TaskName $trayTaskName -ErrorAction Stop
-      return
+      $trayStartRequested = $true
     } catch {
       Write-Warning "Планировщик не разрешил ручной запуск иконки; запускается защищённая копия в текущем сеансе."
     }
   }
-  $argumentLine = @(
-    "-NoLogo", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", $trayPath
-  ) | ForEach-Object { Quote-ProcessArgument $_ }
-  Start-Process -FilePath $powerShellPath -ArgumentList ($argumentLine -join " ") -WindowStyle Hidden | Out-Null
+  if (-not $trayStartRequested) {
+    $argumentLine = @(
+      "-NoLogo", "-NoProfile", "-STA", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+      "-WindowStyle", "Hidden", "-File", $trayPath, "-AppRoot", $appRoot
+    ) | ForEach-Object { Quote-ProcessArgument $_ }
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $powerShellPath
+    $startInfo.Arguments = $argumentLine -join " "
+    $startInfo.WorkingDirectory = $appRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+    $trayProcess = [Diagnostics.Process]::Start($startInfo)
+    if ($null -eq $trayProcess) { throw "Не удалось запустить значок АИС в трее." }
+    $trayProcess.Dispose()
+  }
+  if (-not (Wait-AisTrayReady $RequireRunning)) {
+    throw "Значок АИС не появился в системном трее за отведённое время."
+  }
+  Write-Host "Значок АИС готов в системном трее."
 }
 
 function Show-AisLogTerminal {
@@ -295,7 +423,8 @@ function Install-AisService {
     if ($LASTEXITCODE -ne 0) { throw "Установка службы завершилась с кодом $LASTEXITCODE." }
   } else {
     $argumentLine = ($arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
-    $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine -Verb RunAs -Wait -PassThru
+    $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine `
+      -Verb RunAs -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Установка службы завершилась с кодом $($process.ExitCode)." }
   }
 }
@@ -316,12 +445,14 @@ function Uninstall-AisService {
     if ($LASTEXITCODE -ne 0) { throw "Удаление службы завершилось с кодом $LASTEXITCODE." }
   } else {
     $argumentLine = ($arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
-    $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine -Verb RunAs -Wait -PassThru
+    $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine `
+      -Verb RunAs -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Удаление службы завершилось с кодом $($process.ExitCode)." }
   }
 }
 
 function Start-AisService {
+  $startupLogOffset = Get-AisStartupLogOffset
   $service = Get-AisService
   if (-not $service) {
     if (-not $InstallIfMissing) { throw "Служба АИС не установлена. Запустите установщик службы." }
@@ -340,7 +471,8 @@ function Start-AisService {
   }
   Wait-ServiceState "Running" 60
   Write-Host "Служба запущена. Ожидание готовности локального адреса..."
-  if (-not (Wait-AisHealth $TimeoutSeconds)) {
+  Write-Host "Ход запуска GitHub, FTP, Docker и серверов будет показан в этом окне."
+  if (-not (Wait-AisHealth $TimeoutSeconds ([ref]$startupLogOffset))) {
     throw "Служба работает, но АИС не ответила на $healthUrl за $TimeoutSeconds сек. Откройте окно журнала запуска."
   }
   Write-Host "АИС готова: $localUrl"
@@ -399,7 +531,7 @@ switch ($Action) {
   }
   "Start" {
     Start-AisService
-    if ($ShowTray) { Start-AisTray }
+    if ($ShowTray) { Start-AisTray $true }
     if ($OpenBrowser) { Open-AisBrowser }
   }
   "Stop" {
@@ -408,7 +540,7 @@ switch ($Action) {
   "Restart" {
     Stop-AisService
     Start-AisService
-    if ($ShowTray) { Start-AisTray }
+    if ($ShowTray) { Start-AisTray $true }
     if ($OpenBrowser) { Open-AisBrowser }
   }
   "Open" {

@@ -24,6 +24,7 @@ $resolvedAppRoot = if ([string]::IsNullOrWhiteSpace($AppRoot)) {
 $resolvedAppRoot = [IO.Path]::GetFullPath($resolvedAppRoot)
 $logDirectory = Join-Path $resolvedAppRoot "tmp\lan-system"
 $faviconPath = Join-Path $resolvedAppRoot "favicon.ico"
+$trayReadyPath = Join-Path $logDirectory "tray-ready.json"
 
 function Quote-ProcessArgument([string]$Value) {
   if ($null -eq $Value -or $Value.Length -eq 0) { return '""' }
@@ -62,6 +63,7 @@ $script:httpClient = $null
 $script:healthTask = $null
 $script:lastHealth = $false
 $script:lastVisualState = $null
+$script:lastReadyMarkerState = $null
 $script:stateIcons = @{}
 $script:statusItem = $null
 $script:startItem = $null
@@ -76,6 +78,41 @@ function Write-TrayError([string]$Message) {
     [IO.File]::AppendAllText((Join-Path $logDirectory "tray-error.log"), $line, $utf8)
   } catch {
     # The tray must stay available even if its diagnostic log cannot be written.
+  }
+}
+
+function Write-TrayReadyMarker([string]$State, [string]$ServiceStatus) {
+  $markerState = "$State|$ServiceStatus"
+  if ($script:lastReadyMarkerState -eq $markerState) { return }
+  try {
+    [void][IO.Directory]::CreateDirectory($logDirectory)
+    $document = [ordered]@{
+      schemaVersion = 1
+      processId = $PID
+      state = $State
+      serviceStatus = $ServiceStatus
+      readyAt = (Get-Date).ToUniversalTime().ToString("o")
+    }
+    [IO.File]::WriteAllText(
+      $trayReadyPath,
+      (($document | ConvertTo-Json -Compress) + [Environment]::NewLine),
+      $utf8
+    )
+    $script:lastReadyMarkerState = $markerState
+  } catch {
+    Write-TrayError "Не удалось обновить маркер готовности трея: $($_.Exception.Message)"
+  }
+}
+
+function Remove-TrayReadyMarker {
+  try {
+    if (-not (Test-Path -LiteralPath $trayReadyPath -PathType Leaf)) { return }
+    $marker = Get-Content -LiteralPath $trayReadyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([int]$marker.processId -eq $PID) {
+      [IO.File]::Delete($trayReadyPath)
+    }
+  } catch {
+    # A stale marker is ignored and replaced by the next tray instance.
   }
 }
 
@@ -311,6 +348,7 @@ function Set-TrayVisual(
   if ($null -ne $script:exitItem) {
     $script:exitItem.Enabled = $Installed -and $ServiceStatus -eq "Stopped"
   }
+  Write-TrayReadyMarker $State $ServiceStatus
 
   $visualState = "$State|$StatusText"
   if ($null -ne $script:lastVisualState -and $script:lastVisualState -ne $visualState) {
@@ -362,6 +400,7 @@ function Update-TrayState {
 function Stop-TrayResources {
   if ($script:cleanupStarted) { return }
   $script:cleanupStarted = $true
+  Remove-TrayReadyMarker
 
   if ($null -ne $script:pollTimer) {
     try { $script:pollTimer.Stop() } catch { }

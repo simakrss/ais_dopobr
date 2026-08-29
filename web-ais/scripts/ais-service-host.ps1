@@ -20,6 +20,7 @@ $launcherPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "scr
 $startupUpdatePath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "scripts\sync-and-deploy-startup.ps1"))
 $portableNodePath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, ".runtime\node\node.exe"))
 $serviceLogPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "tmp\lan-system\service-launch.log"))
+$powerShellPath = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\v1.0\powershell.exe"
 
 function Write-ServiceLog([string]$Source, [string]$Message) {
   $logDirectory = Split-Path -Parent $serviceLogPath
@@ -64,6 +65,54 @@ function Write-ServiceOutput([string]$Source, $Value) {
   if ([string]::IsNullOrWhiteSpace($message)) { return }
   Write-Host $message
   Write-ServiceLog $Source $message
+}
+
+function Quote-ProcessArgument([string]$Value) {
+  if ($null -eq $Value -or $Value.Length -eq 0) { return '""' }
+  if ($Value -notmatch '[\s"]') { return $Value }
+  $escaped = [regex]::Replace($Value, '(\\*)"', '${1}${1}\"')
+  $escaped = [regex]::Replace($escaped, '(\\+)$', '${1}${1}')
+  return '"' + $escaped + '"'
+}
+
+function Invoke-HiddenPowerShellScript([string]$ScriptPath, [string]$LogSource) {
+  $argumentValues = @(
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $ScriptPath
+  )
+  $startInfo = New-Object Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $powerShellPath
+  $startInfo.Arguments = (@($argumentValues) | ForEach-Object {
+    Quote-ProcessArgument ([string]$_)
+  }) -join " "
+  $startInfo.WorkingDirectory = $resolvedAppRoot
+  $startInfo.UseShellExecute = $false
+  $startInfo.CreateNoWindow = $true
+  $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+  $startInfo.RedirectStandardOutput = $true
+  $startInfo.RedirectStandardError = $true
+  $startInfo.StandardOutputEncoding = $utf8
+  $startInfo.StandardErrorEncoding = $utf8
+
+  $process = New-Object Diagnostics.Process
+  $process.StartInfo = $startInfo
+  try {
+    if (-not $process.Start()) {
+      throw "Не удалось запустить фоновый сценарий: $ScriptPath"
+    }
+    $standardErrorTask = $process.StandardError.ReadToEndAsync()
+    $line = $null
+    while ($null -ne ($line = $process.StandardOutput.ReadLine())) {
+      Write-ServiceOutput $LogSource $line
+    }
+    $process.WaitForExit()
+    $standardError = $standardErrorTask.GetAwaiter().GetResult()
+    foreach ($errorLine in @([regex]::Split([string]$standardError, '\r?\n'))) {
+      Write-ServiceOutput $LogSource $errorLine
+    }
+    return [int]$process.ExitCode
+  } finally {
+    $process.Dispose()
+  }
 }
 
 function Test-AisServiceRunning {
@@ -218,20 +267,12 @@ if (-not (Test-Path -LiteralPath $startupUpdatePath -PathType Leaf)) {
 Write-ServiceStep "Рабочая папка: $resolvedAppRoot"
 Write-ServiceStep "Проверка обновлений GitHub и edu-plus.ru/lms..."
 try {
-  $previousErrorActionPreference = $ErrorActionPreference
-  $ErrorActionPreference = "Continue"
-  & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $startupUpdatePath 2>&1 |
-    ForEach-Object { Write-ServiceOutput "UPDATE" $_ }
-  $syncExitCode = $LASTEXITCODE
-  if ($LASTEXITCODE -ne 0) {
+  $syncExitCode = Invoke-HiddenPowerShellScript $startupUpdatePath "UPDATE"
+  if ($syncExitCode -ne 0) {
     Write-ServiceStep "Синхронизация завершилась с кодом $syncExitCode. Запуск продолжается на локальной версии."
   }
 } catch {
   Write-ServiceStep "Синхронизация сейчас недоступна: $($_.Exception.Message). Запуск продолжается на локальной версии."
-} finally {
-  if ($null -ne $previousErrorActionPreference) {
-    $ErrorActionPreference = $previousErrorActionPreference
-  }
 }
 if (-not (Test-AisServiceRunning)) {
   Write-ServiceStep "Служба остановлена во время обновления; запуск серверов отменён."

@@ -105,7 +105,7 @@ function Invoke-SelfElevated {
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
   $process = Start-Process -FilePath $powerShellPath -ArgumentList @(
     "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded
-  ) -Verb RunAs -Wait -PassThru
+  ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
   exit $process.ExitCode
 }
 

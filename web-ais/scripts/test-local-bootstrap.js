@@ -55,6 +55,7 @@ assert.match(startupUpdateSource, /ChangedFiles\.Count/u);
 assert.match(startupUpdateSource, /Файлы сайта не изменились; FTP-публикация не требуется и пропущена/u);
 assert.match(startupUpdateSource, /& \$deployScriptPath -RelativePath @\(\$deployment\.ChangedFiles\)/u);
 assert.doesNotMatch(startupUpdateSource, /& powershell\.exe[^\r\n]*\$deployScriptPath -All/u);
+assert.doesNotMatch(startupUpdateSource, /& powershell\.exe[\s\S]{0,200}\$deployScriptPath/u);
 assert.match(startupUpdateSource, /Автоматическая отправка в GitHub отключена/u);
 assert.match(startupUpdateSource, /\$previousErrorActionPreference = \$ErrorActionPreference/u);
 assert.match(startupUpdateSource, /\$_ -is \[Management\.Automation\.ErrorRecord\]/u);
@@ -87,6 +88,12 @@ for (const launcherSource of [rootLauncherSource, localLauncherSource]) {
   );
   assert.match(launcherSource, /setup-ais-windows-service\.ps1" -Action Validate/u);
   assert.doesNotMatch(launcherSource, /bootstrap-local-system\.ps1/u);
+  assert.equal(
+    (launcherSource.match(/control-ais-service\.ps1" -Action Start/gu) || []).length,
+    1,
+    "Launcher must use one synchronous service controller in its only visible window"
+  );
+  assert.doesNotMatch(launcherSource, /\bstart\s+""[\s\S]*?control-ais-service/u);
 }
 for (const launcherSource of [rootStopSource, localStopSource]) {
   assert.match(launcherSource, /control-ais-service\.ps1" -Action Stop/u);
@@ -99,12 +106,29 @@ assert.match(serviceControlSource, /stop-lan-system\.ps1/u);
 assert.match(serviceControlSource, /-KeepDocker/u);
 assert.match(serviceControlSource, /Resolve-ElevationSafePath/u);
 assert.match(serviceControlSource, /-InteractiveUser/u);
+assert.match(serviceControlSource, /service-launch\.log/u);
+assert.match(serviceControlSource, /function Write-AisStartupLogProgress/u);
+assert.match(
+  serviceControlSource,
+  /function Wait-AisHealth[\s\S]*?Write-AisStartupLogProgress[\s\S]*?Test-AisHealth/u
+);
+assert.match(serviceControlSource, /function Wait-AisTrayReady/u);
+assert.match(serviceControlSource, /\[int\]\$TimeoutSeconds\s*=\s*600/u);
+assert.match(
+  serviceControlSource,
+  /"Start"\s*\{[\s\S]*?Start-AisService[\s\S]*?Start-AisTray\s+\$true[\s\S]*?Open-AisBrowser/u
+);
 assert.match(serviceInstallerSource, /\[ValidateSet\("Install", "Uninstall", "Validate"\)\]/u);
 assert.match(serviceInstallerSource, /AIS_SERVICE_TEST_MODE/u);
 assert.match(startSource, /port:\s*19081/u);
 assert.match(startSource, /AIS_APP_SERVER_ORIGIN:\s*"http:\/\/127\.0\.0\.1:19081"/u);
 assert.match(startSource, /localBrowserUrl = "http:\/\/127\.0\.0\.1:8081\/"/u);
 assert.match(startSource, /openBrowser = argumentsLower\.has\("--open-browser"\)/u);
+assert.doesNotMatch(startSource, /windowsHide\s*:\s*false/u);
+assert.ok(
+  (startSource.match(/windowsHide\s*:\s*true/gu) || []).length >= 10,
+  "All supervisor child processes must stay hidden"
+);
 assert.match(startSource, /spawn\([\s\S]*?"cmd\.exe"[\s\S]*?localBrowserUrl/u);
 assert.match(
   startSource,
@@ -144,6 +168,33 @@ assert.match(stopSource, /FromUnixTimeMilliseconds/u);
 assert.match(localServerSource, /AIS_APP_SERVER_ORIGIN \|\| "http:\/\/127\.0\.0\.1:19081"/u);
 
 if (process.platform === "win32") {
+  const progressProbeScript = `$source = Get-Content -LiteralPath '${serviceControlPath.replace(/'/gu, "''")}' -Raw -Encoding UTF8
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
+$functionAst = $ast.Find({
+  param($node)
+  $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq "Write-AisStartupLogProgress"
+}, $true)
+if (-not $functionAst) { throw "Startup log progress function was not found." }
+Invoke-Expression $functionAst.Extent.Text
+$utf8 = New-Object Text.UTF8Encoding($false)
+$serviceLogPath = '${rootLauncherPath.replace(/'/gu, "''")}'
+$offset = [long]0
+$first = @(Write-AisStartupLogProgress ([ref]$offset) 6>&1)
+$firstOffset = $offset
+$second = @(Write-AisStartupLogProgress ([ref]$offset) 6>&1)
+$expectedLength = (Get-Item -LiteralPath $serviceLogPath).Length
+if ($first.Count -eq 0 -or $firstOffset -ne $expectedLength -or $second.Count -ne 0) {
+  throw "Startup log progress duplicated or skipped data."
+}`;
+  const progressProbe = spawnSync("powershell.exe", [
+    "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+    "-EncodedCommand", Buffer.from(progressProbeScript, "utf16le").toString("base64")
+  ], { cwd: repositoryRoot, encoding: "utf8", timeout: 30000 });
+  assert.equal(progressProbe.status, 0, `${progressProbe.stdout}\n${progressProbe.stderr}`);
+
   const invokeGitFunctionMatch = startupUpdateSource.match(
     /function Invoke-Git \{[\s\S]*?\r?\n\}/u
   );
