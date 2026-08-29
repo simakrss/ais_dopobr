@@ -399,7 +399,12 @@ namespace AisDopobr.Tray
   $script:notifyIcon.Icon = $script:stateIcons.missing
   $script:notifyIcon.Text = "АИС: проверка состояния"
   $script:notifyIcon.Visible = $true
-  $script:notifyIcon.add_DoubleClick({ Open-Ais })
+  $script:notifyIcon.add_MouseDoubleClick({
+    param($sender, $eventArgs)
+    if ($eventArgs.Button -eq [Windows.Forms.MouseButtons]::Left) {
+      Open-Ais
+    }
+  })
 
   $script:httpHandler = New-Object Net.Http.HttpClientHandler
   $script:httpHandler.UseProxy = $false
