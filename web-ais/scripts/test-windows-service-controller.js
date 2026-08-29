@@ -12,6 +12,7 @@ const paths = {
   controller: path.join(__dirname, "control-ais-service.ps1"),
   installer: path.join(__dirname, "setup-ais-windows-service.ps1"),
   tray: path.join(__dirname, "ais-service-tray.ps1"),
+  favicon: path.join(appRoot, "favicon.ico"),
   logViewer: path.join(__dirname, "show-ais-service-log.ps1"),
   serviceSource: path.join(__dirname, "ais-windows-service.cs"),
   stop: path.join(__dirname, "stop-lan-system.ps1")
@@ -110,6 +111,18 @@ assert.match(traySource, /notifyIcon\.add_MouseDoubleClick/u);
 assert.match(traySource, /MouseButtons\]::Left[\s\S]{0,100}Open-Ais/u);
 assert.doesNotMatch(traySource, /notifyIcon\.add_DoubleClick/u);
 assert.doesNotMatch(traySource, /InstallIfMissing/u);
+assert.match(traySource, /\$faviconPath\s*=\s*Join-Path\s+\$resolvedAppRoot\s+"favicon\.ico"/u);
+assert.match(traySource, /function New-FaviconStateIcon/u);
+assert.match(traySource, /Drawing\.Image\]::FromFile\(\$Path\)/u);
+assert.match(traySource, /\.GetHicon\(\)/u);
+assert.match(traySource, /running\s*=\s*New-AisStateIcon\s+\$false/u);
+for (const stateName of ["pending", "stopped", "missing"]) {
+  assert.match(traySource, new RegExp(`${stateName}\\s*=\\s*New-AisStateIcon\\s+\\$true`, "u"));
+}
+const faviconBytes = fs.readFileSync(paths.favicon);
+assert.deepEqual([...faviconBytes.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+assert.equal(faviconBytes.readUInt32BE(16), 76);
+assert.equal(faviconBytes.readUInt32BE(20), 76);
 assert.match(logViewerSource, /Get-Content[\s\S]*-Tail\s+200[\s\S]*-Wait/u);
 assert.match(logViewerSource, /service-launch\.log/u);
 assert.match(stopSource, /taskkill\.exe[\s\S]*?\/PID[\s\S]*?\/T[\s\S]*?\/F/u);

@@ -23,6 +23,7 @@ $resolvedAppRoot = if ([string]::IsNullOrWhiteSpace($AppRoot)) {
 }
 $resolvedAppRoot = [IO.Path]::GetFullPath($resolvedAppRoot)
 $logDirectory = Join-Path $resolvedAppRoot "tmp\lan-system"
+$faviconPath = Join-Path $resolvedAppRoot "favicon.ico"
 
 function Quote-ProcessArgument([string]$Value) {
   if ($null -eq $Value -or $Value.Length -eq 0) { return '""' }
@@ -105,6 +106,65 @@ function New-StateIcon([Drawing.Color]$Color) {
     $fillBrush.Dispose()
     $graphics.Dispose()
     $bitmap.Dispose()
+  }
+}
+
+function New-FaviconStateIcon([string]$Path, [bool]$Grayscale) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    throw "Не найден значок АИС: $Path"
+  }
+  $source = $null
+  $bitmap = $null
+  $graphics = $null
+  $iconHandle = [IntPtr]::Zero
+  try {
+    $source = [Drawing.Image]::FromFile($Path)
+    $bitmap = [Drawing.Bitmap]::new(32, 32, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    $graphics.Clear([Drawing.Color]::Transparent)
+    $graphics.CompositingMode = [Drawing.Drawing2D.CompositingMode]::SourceCopy
+    $graphics.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
+    $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::HighQuality
+    $graphics.DrawImage($source, [Drawing.Rectangle]::new(0, 0, 32, 32))
+    $graphics.Dispose()
+    $graphics = $null
+
+    if ($Grayscale) {
+      for ($x = 0; $x -lt $bitmap.Width; $x += 1) {
+        for ($y = 0; $y -lt $bitmap.Height; $y += 1) {
+          $pixel = $bitmap.GetPixel($x, $y)
+          if ($pixel.A -eq 0) { continue }
+          $luminance = [Math]::Max(0, [Math]::Min(255, [int][Math]::Round(
+            (0.299 * $pixel.R) + (0.587 * $pixel.G) + (0.114 * $pixel.B)
+          )))
+          $bitmap.SetPixel($x, $y, [Drawing.Color]::FromArgb(
+            $pixel.A, $luminance, $luminance, $luminance
+          ))
+        }
+      }
+    }
+
+    $iconHandle = $bitmap.GetHicon()
+    $temporaryIcon = [Drawing.Icon]::FromHandle($iconHandle)
+    return [Drawing.Icon]$temporaryIcon.Clone()
+  } finally {
+    if ($iconHandle -ne [IntPtr]::Zero) {
+      [void][AisDopobr.Tray.NativeMethods]::DestroyIcon($iconHandle)
+    }
+    if ($null -ne $graphics) { $graphics.Dispose() }
+    if ($null -ne $bitmap) { $bitmap.Dispose() }
+    if ($null -ne $source) { $source.Dispose() }
+  }
+}
+
+function New-AisStateIcon([bool]$Grayscale, [Drawing.Color]$FallbackColor) {
+  try {
+    return New-FaviconStateIcon -Path $faviconPath -Grayscale $Grayscale
+  } catch {
+    Write-TrayError "Не удалось подготовить favicon для трея: $($_.Exception.Message)"
+    return New-StateIcon $FallbackColor
   }
 }
 
@@ -354,10 +414,10 @@ namespace AisDopobr.Tray
   [Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
 
   $script:stateIcons = @{
-    running = New-StateIcon ([Drawing.Color]::FromArgb(22, 163, 74))
-    pending = New-StateIcon ([Drawing.Color]::FromArgb(245, 158, 11))
-    stopped = New-StateIcon ([Drawing.Color]::FromArgb(220, 38, 38))
-    missing = New-StateIcon ([Drawing.Color]::FromArgb(100, 116, 139))
+    running = New-AisStateIcon $false ([Drawing.Color]::FromArgb(22, 163, 74))
+    pending = New-AisStateIcon $true ([Drawing.Color]::FromArgb(100, 116, 139))
+    stopped = New-AisStateIcon $true ([Drawing.Color]::FromArgb(100, 116, 139))
+    missing = New-AisStateIcon $true ([Drawing.Color]::FromArgb(100, 116, 139))
   }
 
   $script:contextMenu = New-Object Windows.Forms.ContextMenuStrip
