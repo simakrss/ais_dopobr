@@ -35353,11 +35353,19 @@ MAX - https://bizvmax.ru/zifra_plus
     const messenger = normalizePreferredMessenger(button?.dataset?.messenger);
     const form = button?.closest?.("#recordForm");
     const input = form?.elements?.preferredMessenger;
-    if (!messenger || !form || !input || !["students", "contracts"].includes(form.dataset.config)) return;
+    if (!messenger || !form || !input || !["students", "contracts"].includes(form.dataset.config)) return false;
+    if (messenger === "url") {
+      const messengerUrlInput = form.elements?.messengerUrl;
+      if (!String(messengerUrlInput?.value || "").trim()) {
+        alert("Сначала укажите адрес мессенджера.");
+        messengerUrlInput?.focus({ preventScroll: true });
+        return false;
+      }
+    }
     if (normalizePreferredMessenger(input.value) === messenger) {
       form.querySelectorAll("[data-messenger-preference-button]")
         .forEach((item) => updateMessengerButtonPreference(item, messenger));
-      return;
+      return true;
     }
     input.value = messenger;
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -35370,6 +35378,7 @@ MAX - https://bizvmax.ru/zifra_plus
         : collectStudentFormDraft();
       state.modal.hasDraftChanges = true;
     }
+    return true;
   }
 
   function showMessengerPreferenceMenu(button, x, y) {
@@ -35408,9 +35417,9 @@ MAX - https://bizvmax.ru/zifra_plus
     menu.style.top = `${clamp(desiredY, 8, Math.max(8, window.innerHeight - menuRect.height - 8))}px`;
     const menuItem = menu.querySelector("[data-action='set-preferred-messenger']");
     menuItem?.addEventListener("click", () => {
-      setPreferredMessenger(button);
+      const preferenceApplied = setPreferredMessenger(button);
       closeMessengerPreferenceMenu();
-      button.focus({ preventScroll: true });
+      if (preferenceApplied) button.focus({ preventScroll: true });
     });
     menu.addEventListener("keydown", (event) => {
       if (event.key !== "Escape" && event.key !== "Tab") return;

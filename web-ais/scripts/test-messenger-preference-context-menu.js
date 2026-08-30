@@ -110,6 +110,10 @@ class FakeInput {
     this.events.push(event.type);
     return true;
   }
+
+  focus() {
+    fakeDocument.activeElement = this;
+  }
 }
 
 class FakeEvent {
@@ -160,11 +164,12 @@ const fakeWindow = {
 };
 
 const preferredInput = new FakeInput();
+const messengerUrlInput = new FakeInput();
 const buttons = ["max", "max", "telegram", "telegram", "whatsapp", "whatsapp", "url"]
   .map((messenger) => new FakeElement(messenger));
 const form = {
   dataset: { config: "students" },
-  elements: { preferredMessenger: preferredInput },
+  elements: { preferredMessenger: preferredInput, messengerUrl: messengerUrlInput },
   querySelectorAll(selector) {
     return selector === "[data-messenger-preference-button]" ? buttons : [];
   }
@@ -174,6 +179,7 @@ buttons.forEach((button) => { button.form = form; });
 const state = { modal: { draft: { unsavedField: "сохранить" }, hasDraftChanges: false } };
 let studentDraftCollections = 0;
 let contractDraftCollections = 0;
+const alerts = [];
 const context = {
   document: fakeDocument,
   window: fakeWindow,
@@ -183,6 +189,7 @@ const context = {
   Math,
   state,
   clamp: (value, min, max) => Math.max(min, Math.min(max, value)),
+  alert: (message) => alerts.push(String(message)),
   closeSystemMailboxEmailMenu() {},
   collectStudentFormDraft: () => {
     studentDraftCollections += 1;
@@ -282,9 +289,20 @@ assert.equal(state.modal.hasDraftChanges, true);
 form.dataset.config = "students";
 
 const messengerUrlButton = buttons[6];
+state.modal.hasDraftChanges = false;
+messengerUrlButton.listeners.get("contextmenu")[0](createInteractionEvent());
+fakeDocument.menu.item.listeners.get("click")[0]();
+assert.equal(preferredInput.value, "max");
+assert.deepEqual(alerts, ["Сначала укажите адрес мессенджера."]);
+assert.equal(fakeDocument.activeElement, messengerUrlInput);
+assert.equal(state.modal.hasDraftChanges, false);
+
+messengerUrlInput.value = "https://max.ru/u/example";
 messengerUrlButton.listeners.get("contextmenu")[0](createInteractionEvent());
 fakeDocument.menu.item.listeners.get("click")[0]();
 assert.equal(preferredInput.value, "url");
+assert.deepEqual(alerts, ["Сначала укажите адрес мессенджера."]);
+assert.equal(state.modal.hasDraftChanges, true);
 buttons.forEach((button) => {
   assert.equal(button.classList.contains("is-preferred"), button === messengerUrlButton);
 });
@@ -318,6 +336,7 @@ assert.equal(fakeDocument.menu, null);
 assert.equal((appSource.match(/name="preferredMessenger" type="hidden"/gu) || []).length, 2);
 assert.match(appSource, /renderStudentContactLine[\s\S]{0,900}record\.preferredMessenger/u);
 assert.match(appSource, /function renderMessengerUrlButton[\s\S]{0,1200}data-messenger="\$\{messenger\}"/u);
+assert.match(appSource, /messenger === "url"[\s\S]{0,500}form\.elements\?\.messengerUrl[\s\S]{0,500}Сначала укажите адрес мессенджера/u);
 assert.match(appSource, /renderCardContextActions[\s\S]{0,1400}record\.preferredMessenger/u);
 assert.match(appSource, /function render\(\)[\s\S]{0,500}closeMessengerPreferenceMenu\(\)/u);
 assert.match(appSource, /data-messenger-preference-menu[\s\S]{0,240}closeMessengerPreferenceMenu\(\{ restoreFocus: true \}\)/u);
