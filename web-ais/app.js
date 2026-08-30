@@ -28693,10 +28693,12 @@ MAX - https://bizvmax.ru/zifra_plus
           ${renderOrdersSdoControl("enrollmentOrderNo", "Номер приказа", record, "text", { tools: ["generateEnrollmentOrderNo", "document", "educationCertificate"] })}
           <div class="orders-sdo-expulsion-order-stack">
             ${renderOrdersSdoControl("expulsionOrderNo", "Номер приказа", record, "text", { tools: ["generateExpulsionOrderNo", "document"] })}
-            <div class="orders-sdo-contract-document-row">
-              ${renderStudentTrainingTermDocumentButton("trainingExtension", "Продление", "Сформировать заявление и дополнительное соглашение о продлении обучения.")}
-              ${renderStudentTrainingTermDocumentButton("trainingReduction", "Сокращение", "Сформировать заявление и дополнительное соглашение о сокращении обучения.")}
+            <div class="orders-sdo-contract-document-row student-contract-document-stack">
               ${renderStudentContractButton()}
+              <div class="orders-sdo-training-term-row">
+                ${renderStudentTrainingTermDocumentButton("trainingExtension", "Продление", "Сформировать заявление и дополнительное соглашение о продлении обучения.")}
+                ${renderStudentTrainingTermDocumentButton("trainingReduction", "Сокращение", "Сформировать заявление и дополнительное соглашение о сокращении обучения.")}
+              </div>
             </div>
           </div>
           ${renderOrdersSdoControl("group", "Номер группы", record, "text", { tools: ["generateGroupNo"], className: "orders-sdo-group-field" })}

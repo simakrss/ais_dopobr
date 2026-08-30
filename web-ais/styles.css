@@ -19569,6 +19569,18 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   padding-left: 0;
 }
 
+.student-contract-document-stack {
+  display: grid;
+  justify-items: end;
+}
+
+.orders-sdo-training-term-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .employee-contract-document-row {
   margin: 0;
   padding-left: 0;
@@ -22069,6 +22081,15 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .orders-sdo-contract-document-row {
     padding-left: 0;
+  }
+
+  .student-contract-document-stack {
+    justify-items: stretch;
+  }
+
+  .orders-sdo-training-term-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .student-financial-result-grid {
