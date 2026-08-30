@@ -5176,6 +5176,31 @@ function normalizeSystemDocumentsRelativePath(value) {
   return parts.join("/");
 }
 
+function formatSystemDocumentsCardPath(value) {
+  const source = String(value || "").trim();
+  if (
+    !source
+    || /^data:|^https?:/iu.test(source)
+    || /^[a-z]:[\\/]/iu.test(source)
+    || /^\\\\[^\\/]+[\\/][^\\/]+/u.test(source)
+    || /^\[-1\](?:[\\/]+|$)/u.test(source)
+  ) {
+    return source;
+  }
+  const relativePath = normalizeSystemDocumentsRelativePath(source);
+  if (!/^(?:Слушатели|Сотрудники)(?:\/|$)/iu.test(relativePath)) return source;
+  return `\\${relativePath.replace(/\//g, "\\")}`;
+}
+
+function systemDocumentsPathsEqual(leftValue, rightValue) {
+  const leftRelative = normalizeSystemDocumentsRelativePath(leftValue);
+  const rightRelative = normalizeSystemDocumentsRelativePath(rightValue);
+  if (leftRelative && rightRelative) {
+    return leftRelative.localeCompare(rightRelative, "ru", { sensitivity: "base" }) === 0;
+  }
+  return String(leftValue || "").trim() === String(rightValue || "").trim();
+}
+
 function normalizeFrdoExportFolder(value) {
   const source = String(value || DEFAULT_FRDO_EXPORT_FOLDER).trim();
   if (source.length > 500) throw new Error("Путь к папке выгрузки ФРДО слишком длинный.");
@@ -6196,6 +6221,26 @@ function normalizeSharedApplicationCitizenships(data) {
   return data;
 }
 
+function normalizeSharedApplicationPersonPhotoRows(collectionName, value) {
+  if (!Array.isArray(value) || !["students", "contracts"].includes(collectionName)) return value;
+  return value.map((record) => {
+    if (!record || typeof record !== "object" || Array.isArray(record)) return record;
+    const photoPath = formatSystemDocumentsCardPath(record.photoPath);
+    if (!Object.prototype.hasOwnProperty.call(record, "photoPath") && !photoPath) return record;
+    return { ...record, photoPath };
+  });
+}
+
+function normalizeSharedApplicationPersonPhotoPaths(data) {
+  for (const collectionName of ["students", "contracts"]) {
+    data.collections[collectionName] = normalizeSharedApplicationPersonPhotoRows(
+      collectionName,
+      data.collections[collectionName]
+    );
+  }
+  return data;
+}
+
 function sharedApplicationDataNeedsCitizenshipMigration(data) {
   const currentDictionary = Array.isArray(data?.dictionaries?.citizenships)
     ? data.dictionaries.citizenships
@@ -6233,6 +6278,7 @@ function normalizeSharedApplicationData(value) {
     ? normalized.meta
     : {};
   normalizeSharedApplicationCitizenships(normalized);
+  normalizeSharedApplicationPersonPhotoPaths(normalized);
   if (Number(normalized.meta.frdoUploadDeadlinePolicyVersion || 0) < FRDO_UPLOAD_DEADLINE_POLICY_VERSION) {
     const settings = Array.isArray(normalized.dictionaries.issuedDocumentSettings)
       ? normalized.dictionaries.issuedDocumentSettings.map((setting) => ({ ...setting }))
@@ -6268,12 +6314,18 @@ function normalizeSharedApplicationStatePatch(value) {
     if (!/^[A-Za-z0-9_-]{1,120}$/.test(collectionName) || !rawChange || typeof rawChange !== "object") continue;
     if (Array.isArray(rawChange.replace)) {
       patch.collections[collectionName] = {
-        replace: normalizeSharedApplicationCitizenshipRows(collectionName, rawChange.replace)
+        replace: normalizeSharedApplicationPersonPhotoRows(
+          collectionName,
+          normalizeSharedApplicationCitizenshipRows(collectionName, rawChange.replace)
+        )
       };
       continue;
     }
     const upserts = Array.isArray(rawChange.upserts)
-      ? normalizeSharedApplicationCitizenshipRows(collectionName, rawChange.upserts)
+      ? normalizeSharedApplicationPersonPhotoRows(
+        collectionName,
+        normalizeSharedApplicationCitizenshipRows(collectionName, rawChange.upserts)
+      )
         .filter((record) => record && typeof record === "object" && !Array.isArray(record) && String(record.id || "").trim())
       : [];
     const deletes = Array.isArray(rawChange.deletes)
@@ -12487,7 +12539,10 @@ async function handleEnsureStudentDocumentFolders(req, res) {
     }
 
     sendJson(res, 200, {
-      folders: folders.map(({ id, relativePath }) => ({ id, relativePath }))
+      folders: folders.map(({ id, relativePath }) => ({
+        id,
+        relativePath: formatSystemDocumentsCardPath(relativePath)
+      }))
     });
   } catch (error) {
     sendError(res, 400, error.message);
@@ -27334,6 +27389,9 @@ function sanitizeStudentDatabaseExportPayload(body) {
       );
       databaseFields.frdoStatus = frdo.frdoDate || frdo.frdoStatus;
       databaseFields.citizenship = normalizeCitizenshipValue(databaseFields.citizenship);
+      if (Object.prototype.hasOwnProperty.call(databaseFields, "photoPath")) {
+        databaseFields.photoPath = formatSystemDocumentsCardPath(databaseFields.photoPath);
+      }
       const databaseFixedValueOverrides = sanitizeStudentDatabaseFixedValueOverrides(
         databaseFields.databaseFixedValueOverrides
       );
@@ -27361,6 +27419,9 @@ function sanitizeStudentDatabaseExportPayload(body) {
       const normalized = {
         ...contract,
         citizenship: normalizeCitizenshipValue(contract.citizenship),
+        ...(Object.prototype.hasOwnProperty.call(contract, "photoPath")
+          ? { photoPath: formatSystemDocumentsCardPath(contract.photoPath) }
+          : {}),
         section,
         status: section === CONTRACT_DATABASE_SECTIONS.active
           ? "Действует"
@@ -33469,7 +33530,7 @@ async function storeManagedPersonPhoto({ dataUrl, entityType, personName }) {
   }
   return {
     ...target,
-    photoPath: target.relativePath,
+    photoPath: formatSystemDocumentsCardPath(target.relativePath),
     photoUrl: `/api/student-photo?path=${encodeURIComponent(target.relativePath)}`
   };
 }
@@ -33536,7 +33597,7 @@ async function handlePhotoUpload(req, res) {
     ).trim();
     const uploaded = await storeManagedPersonPhoto({ dataUrl: body.dataUrl, entityType, personName });
     const previousPath = String(body.previousPath || "").trim();
-    if (previousPath && previousPath !== uploaded.photoPath) {
+    if (previousPath && !systemDocumentsPathsEqual(previousPath, uploaded.photoPath)) {
       try {
         if (!await deleteManagedStudentPhoto(previousPath)) await deletePhoto(previousPath);
       } catch (cleanupError) {
@@ -35150,7 +35211,7 @@ async function updatePartnerPhoto(req, res, authUser) {
     }
     saved = true;
   } finally {
-    if (!saved && uploaded.photoPath !== previousPath) {
+    if (!saved && !systemDocumentsPathsEqual(uploaded.photoPath, previousPath)) {
       try {
         if (!await deleteManagedStudentPhoto(uploaded.photoPath)) await deletePhoto(uploaded.photoPath);
       } catch (cleanupError) {
@@ -35159,7 +35220,7 @@ async function updatePartnerPhoto(req, res, authUser) {
     }
   }
 
-  if (previousPath && previousPath !== uploaded.photoPath) {
+  if (previousPath && !systemDocumentsPathsEqual(previousPath, uploaded.photoPath)) {
     try {
       if (!await deleteManagedStudentPhoto(previousPath)) await deletePhoto(previousPath);
     } catch (cleanupError) {
@@ -36589,6 +36650,8 @@ module.exports = {
   runStudentApplicationsQuery,
   parseStudentDatabaseWorkbook,
   normalizeStudentDatabaseDiscountPercent,
+  formatSystemDocumentsCardPath,
+  systemDocumentsPathsEqual,
   parseCommunicationTemplateNamedRangeValues,
   getCommunicationTemplateNamedRangeMismatches,
   assertCommunicationTemplateNamedRangeWorkbookOutput,

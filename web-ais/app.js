@@ -8056,6 +8056,7 @@ MAX - https://bizvmax.ru/zifra_plus
       educationType: importedApplicationProgramType || student.educationType,
       additionalStatus: String(student.additionalStatus || "").trim(),
       preferredMessenger: normalizePreferredMessenger(student.preferredMessenger),
+      photoPath: normalizePersonPhotoCardPath(student.photoPath),
       citizenship: normalizeCitizenshipValue(student.citizenship),
       studyForm: normalizeStudyForm(student.studyForm),
       gender: normalizeStudentGender(student.gender),
@@ -8176,6 +8177,7 @@ MAX - https://bizvmax.ru/zifra_plus
       section,
       status,
       preferredMessenger: normalizePreferredMessenger(contract.preferredMessenger),
+      photoPath: normalizePersonPhotoCardPath(contract.photoPath),
       citizenship: normalizeCitizenshipValue(contract.citizenship),
       amount: Number(contract.amount || 0),
       paid: Number(contract.paid || 0),
@@ -38145,6 +38147,7 @@ MAX - https://bizvmax.ru/zifra_plus
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
     values.preferredMessenger = normalizePreferredMessenger(formData.get("preferredMessenger"));
+    values.photoPath = normalizePersonPhotoCardPath(values.photoPath);
     values.discountUnit = "percent";
     values.directExpenses = collectStudentDirectExpenses(formElement, values);
     formData.forEach((raw, key) => {
@@ -41706,6 +41709,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     if (isStudentCard || isContractCard) {
       values.preferredMessenger = normalizePreferredMessenger(formData.get("preferredMessenger"));
+      values.photoPath = normalizePersonPhotoCardPath(values.photoPath);
     }
     if (fields.some((item) => item.key === "manager") && getCurrentUserLogin()) {
       values.manager = getCurrentUserLogin();
@@ -43081,6 +43085,28 @@ MAX - https://bizvmax.ru/zifra_plus
       if (formula) return `${item.recipient} (${formula} руб.)`;
       return item.recipient;
     }).join(", ");
+  }
+
+  function normalizePersonPhotoCardPath(value) {
+    const source = String(value || "").trim();
+    if (
+      !source
+      || /^data:|^https?:/iu.test(source)
+      || /^[a-z]:[\\/]/iu.test(source)
+      || /^\\\\[^\\/]+[\\/][^\\/]+/u.test(source)
+      || /^\[-1\](?:[\\/]+|$)/u.test(source)
+    ) {
+      return source;
+    }
+    let relativePath = source.replace(/\\/g, "/");
+    const rootMarker = "аис допобразование/";
+    const rootIndex = relativePath.toLocaleLowerCase("ru-RU").indexOf(rootMarker);
+    if (rootIndex >= 0) relativePath = relativePath.slice(rootIndex + rootMarker.length);
+    relativePath = relativePath.replace(/^\/+|\/+$/g, "");
+    if (!/^(?:Слушатели|Сотрудники)(?:\/|$)/iu.test(relativePath)) return source;
+    const parts = relativePath.split("/").map((part) => part.trim()).filter(Boolean);
+    if (!parts.length || parts.some((part) => part === "." || part === "..")) return source;
+    return `\\${parts.join("\\")}`;
   }
 
   function isStudentSourcePhotoPath(value) {
