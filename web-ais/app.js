@@ -55079,7 +55079,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const diagnostic = wrapper.querySelector("[data-sql-diagnostic]");
     if (validation) {
       validation.textContent = result.tone === "valid"
-        ? "Синтаксис: корректно"
+        ? "Синтаксис корректен"
         : result.tone === "error" ? "Синтаксис: есть ошибка" : "Запрос не введён";
     }
     if (diagnostic) {

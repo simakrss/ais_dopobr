@@ -201,6 +201,8 @@ assert.match(appSource, /data-sql-query-editor/u);
 assert.match(appSource, /data-sql-line-numbers/u);
 assert.match(appSource, /data-action="format-sql-query"/u);
 assert.match(appSource, /function formatSqlMiniIdeEditor\(/u);
+assert.match(appSource, /Синтаксис корректен/u);
+assert.doesNotMatch(appSource, /Синтаксис: корректно/u);
 assert.match(appSource, /data-advertising-source-field="sql"/u);
 assert.match(appSource, /Ctrl[\s\S]*Пробел/u);
 assert.match(appSource, /ADMIN_SQL_SUGGESTIONS/u);
