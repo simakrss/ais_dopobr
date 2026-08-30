@@ -211,6 +211,11 @@ assert.doesNotMatch(appSource, /data-sql-open-suggestions/u);
 assert.match(appSource, /data-sql-keyword-help/u);
 assert.match(appSource, /data-sql-keyword-tooltip/u);
 assert.match(appSource, /function updateSqlMiniIdeBracketHighlight\(/u);
+assert.doesNotMatch(
+  appSource,
+  /<label class="(?:statistics-source-query|advertising-source-query|admin-applications-sql-field)">[\s\S]{0,5000}?renderSqlMiniIde\(/u,
+  "SQL mini IDE must not be nested in a label because the label's default click action drops the contenteditable caret"
+);
 const sqlEditorBindingSource = sliceSource(
   "function bindSqlMiniIdeEditor(",
   "function bindSqlMiniIdeEditors("

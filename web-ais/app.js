@@ -13000,7 +13000,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <div>${renderStatisticsSourceConsumers(source)}</div>
           </div>
           ${canEdit ? `
-            <label class="statistics-source-query">
+            <div class="statistics-source-query">
               <span>SQL-запрос SELECT</span>
               ${renderSqlMiniIde(source.sql || "", {
                 inputAttributes: 'data-statistics-source-field="sql"',
@@ -13010,7 +13010,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 allowTrailingSemicolon: false,
                 requiredParameters: 0
               })}
-            </label>
+            </div>
             <div class="statistics-source-test-row">
               <button class="ghost-button" data-action="test-statistics-source" data-source-id="${escapeAttr(sourceId)}" type="button" ${testing || sourcesState.saving ? "disabled" : ""}>${testing ? "Проверка…" : "Проверить источник"}</button>
               ${testResult ? `<span class="statistics-source-test-result ${testResult.ok ? "is-success" : "is-error"}" role="status">${escapeHtml(testResult.message || (testResult.ok ? "Источник работает." : "Проверка не выполнена."))}</span>` : ""}
@@ -13807,14 +13807,14 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderAdvertisingSourceConfiguration(source, index) {
     if (source.kind === "sql") {
       return `
-        <label class="advertising-source-query">
+        <div class="advertising-source-query">
           <span>SQL-запрос SELECT</span>
           ${renderSqlMiniIde(source.sql || "", {
             compact: true,
             inputAttributes: 'data-advertising-source-field="sql"',
             ariaLabel: `SQL-запрос источника ${source.label || index + 1}`
           })}
-        </label>
+        </div>
       `;
     }
     if (source.kind === "google") {
@@ -24873,7 +24873,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   <input name="applicationsOrderAdminUrlTemplate" type="url" value="${escapeAttr(applicationsOrderAdminUrlTemplate)}" required spellcheck="false">
                   <small class="sdo-settings-hint">Маркер <code>{НомерЗаказа}</code> заменяется номером из карточки слушателя.</small>
                 </label>
-                <label class="admin-applications-sql-field">
+                <div class="admin-applications-sql-field">
                   <span>SQL-запрос получения заявок</span>
                   ${renderSqlMiniIde(applicationsSqlQuery, {
                     allowWith: false,
@@ -24885,7 +24885,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     ariaLabel: "SQL-запрос получения заявок"
                   })}
                   <small class="sdo-settings-hint">Разрешён один запрос SELECT. Два знака <code>?</code> соответствуют началу и концу периода. Запрос должен возвращать перечисленные в стандартном запросе служебные поля и колонки заявки.</small>
-                </label>
+                </div>
                 ${applicationsMysqlFieldsDisabled ? '<small class="sdo-settings-hint">Параметры подключения заданы переменной окружения сервера; в админке можно изменять SQL-запрос.</small>' : ""}
                 </section>
                 <section
