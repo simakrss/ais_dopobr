@@ -26519,8 +26519,8 @@ MAX - https://bizvmax.ru/zifra_plus
             <input data-employee-payment-group-paid type="date" value="${escapeAttr(todayIso())}" aria-label="Групповая дата оплаты">
           </label>
           <button class="ghost-button" data-action="apply-employee-payment-group-paid" type="button" disabled>Применить дату</button>
-          <button class="ghost-button employee-payment-group-delete" data-action="delete-selected-employee-payments" type="button" disabled>Удалить выбранные</button>
-          <button class="ghost-button employee-payment-group-clear" data-action="clear-employee-payment-selection" type="button" disabled>Снять выбор</button>
+          <button class="ghost-button employee-payment-group-delete" data-action="delete-selected-employee-payments" type="button" title="Удалить выбранные выплаты" aria-label="Удалить выбранные выплаты" disabled>Удалить</button>
+          <button class="ghost-button employee-payment-group-clear" data-action="clear-employee-payment-selection" type="button" title="Снять выбор со всех выплат" aria-label="Снять выбор со всех выплат" disabled>Снять</button>
         </div>
         <div class="employee-payment-table-wrap">
           <table class="employee-payment-table" style="min-width:${getEmployeePaymentTableMinWidth()}px">
