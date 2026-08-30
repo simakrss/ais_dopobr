@@ -4072,6 +4072,9 @@ body.sidebar-collapsed .sidebar-toggle {
   position: sticky;
   top: 0;
   z-index: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .table-column-head {
@@ -4137,15 +4140,33 @@ body.is-resizing-column {
 }
 
 .data-table th button {
+  min-width: 0;
   max-width: 100%;
+  overflow: hidden;
   border: 0;
   background: transparent;
   font-weight: 700;
   color: inherit;
   padding: 0;
   text-align: left;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.data-table .table-head-cell > button {
+  flex: 1 1 auto;
+}
+
+.data-table thead th button > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-table thead th button > span:last-child:not(:first-child) {
+  flex: 0 0 auto;
 }
 
 .data-table tr:hover td {
@@ -24429,7 +24450,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: normal;
+  white-space: nowrap;
   line-height: 1.15;
 }
 
@@ -26148,7 +26169,7 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 }
 
 .advertising-history-table th {
-  white-space: normal;
+  white-space: nowrap;
 }
 
 .advertising-history-table tr.is-transferred > td {
