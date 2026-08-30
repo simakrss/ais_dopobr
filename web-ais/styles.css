@@ -3053,13 +3053,51 @@ button.mobile-registry-filters-toggle {
 }
 
 @media (min-width: 721px) {
-  .collection-register .section-head--headingless .collection-primary-filters > .search-box {
-    flex: 1 1 320px;
-    min-width: 260px;
+  .collection-register .toolbar {
+    column-gap: 6px;
   }
 
-  .collection-register .section-head--headingless .collection-toolbar-actions {
+  .collection-register .collection-primary-filters > .search-box {
+    flex: 1 1 140px;
+    min-width: 120px;
+  }
+
+  .collection-register .collection-primary-filters > .select-control {
+    width: 160px;
+    min-width: 130px;
+    max-width: 190px;
+    flex: 0 1 160px;
+  }
+
+  .collection-register .collection-primary-filters > .student-program-type-filter {
+    width: 184px;
+    min-width: 150px;
+    flex: 0 1 184px;
+  }
+
+  .collection-register .collection-primary-filters > .student-program-type-filter summary {
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    padding-inline: 8px;
+  }
+
+  .collection-register .collection-primary-filters > .direct-expense-note-filter {
+    width: 200px;
+    min-width: 150px;
+    flex: 0 1 200px;
+  }
+
+  .collection-register .collection-toolbar-actions {
     flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .collection-register .collection-toolbar-actions > button {
+    min-width: 0;
+    padding-inline: 8px;
+    white-space: nowrap;
   }
 }
 
