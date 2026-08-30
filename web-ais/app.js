@@ -55812,6 +55812,17 @@ MAX - https://bizvmax.ru/zifra_plus
     updateSqlMiniIdeBracketHighlight(editor);
   }
 
+  function setSqlMiniIdeCaretFromPointer(editor, event) {
+    if (!editor || !event || event.button !== 0 || event.shiftKey) return false;
+    const range = getCommunicationTemplateDropRange(editor, event.clientX, event.clientY);
+    const selection = window.getSelection?.();
+    if (!range || !selection) return false;
+    editor.focus({ preventScroll: true });
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  }
+
   function bindSqlMiniIdeEditor(editor) {
     if (!editor || editor.dataset.sqlMiniIdeBound === "true") return;
     editor.dataset.sqlMiniIdeBound = "true";
@@ -55902,7 +55913,11 @@ MAX - https://bizvmax.ru/zifra_plus
       updateSqlMiniIdeCaretStatus(editor);
       updateSqlMiniIdeBracketHighlight(editor);
     });
-    editor.addEventListener("pointerdown", () => closeSqlMiniIdeSuggestions(editor));
+    editor.addEventListener("pointerdown", (event) => {
+      closeSqlMiniIdeSuggestions(editor);
+      hideSqlMiniIdeKeywordTooltip(editor);
+      setSqlMiniIdeCaretFromPointer(editor, event);
+    });
     editor.addEventListener("click", () => {
       closeSqlMiniIdeSuggestions(editor);
       hideSqlMiniIdeKeywordTooltip(editor);

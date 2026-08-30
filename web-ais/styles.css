@@ -8207,6 +8207,7 @@ body.long-press-dragging * {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   word-break: normal;
+  cursor: text;
 }
 
 .admin-sql-query-editor:focus {
@@ -8512,7 +8513,7 @@ body.long-press-dragging * {
   text-decoration: underline dotted rgba(15, 95, 179, 0.48);
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
-  cursor: help;
+  cursor: text;
 }
 
 .admin-sql-bracket {

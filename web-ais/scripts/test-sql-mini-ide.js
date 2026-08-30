@@ -227,7 +227,15 @@ const sqlInputHandlerSource = sqlEditorBindingSource.slice(sqlInputHandlerStart,
 assert.doesNotMatch(sqlInputHandlerSource, /refreshAdminSqlQueryEditor|refresh\(true\)/u);
 assert.match(sqlInputHandlerSource, /suggestionPanel && !suggestionPanel\.hidden/u);
 assert.match(sqlEditorBindingSource, /event\.ctrlKey[\s\S]*event\.code === "Space"[\s\S]*showSqlMiniIdeSuggestions\(editor, true\)/u);
-assert.match(sqlEditorBindingSource, /editor\.addEventListener\("pointerdown", \(\) => closeSqlMiniIdeSuggestions\(editor\)\)/u);
+assert.match(sqlEditorBindingSource, /editor\.addEventListener\("pointerdown", \(event\) => \{[\s\S]*setSqlMiniIdeCaretFromPointer\(editor, event\)/u);
+const sqlPointerCaretSource = sliceSource(
+  "function setSqlMiniIdeCaretFromPointer(",
+  "function bindSqlMiniIdeEditor("
+);
+assert.match(sqlPointerCaretSource, /getCommunicationTemplateDropRange\(editor, event\.clientX, event\.clientY\)/u);
+assert.match(sqlPointerCaretSource, /editor\.focus\(\{ preventScroll: true \}\)/u);
+assert.match(sqlPointerCaretSource, /selection\.addRange\(range\)/u);
+assert.doesNotMatch(sqlPointerCaretSource, /preventDefault/u);
 assert.match(sqlEditorBindingSource, /mouseover[\s\S]*showSqlMiniIdeKeywordTooltip/u);
 const sqlRefreshSource = sliceSource(
   "function refreshAdminSqlQueryEditor(",
@@ -242,6 +250,7 @@ const sqlEditorStyle = /\.admin-sql-query-editor\s*\{([^}]*)\}/u.exec(stylesSour
 assert.match(sqlEditorStyle, /overflow-x:\s*hidden;/u);
 assert.match(sqlEditorStyle, /overflow-wrap:\s*anywhere;/u);
 assert.match(sqlEditorStyle, /white-space:\s*pre-wrap;/u);
+assert.match(sqlEditorStyle, /cursor:\s*text;/u);
 assert.match(stylesSource, /\.sql-mini-ide-keyword-tooltip/u);
 assert.match(stylesSource, /\.sql-mini-ide-editor-frame/u);
 assert.match(stylesSource, /\.sql-mini-ide-line-numbers/u);
@@ -256,6 +265,7 @@ assert.match(sqlMiniIdeEditorStyle, /min-height:\s*0;/u);
 assert.match(sqlMiniIdeEditorStyle, /resize:\s*none;/u);
 assert.match(stylesSource, /::highlight\(ais-sql-matching-brackets\)/u);
 assert.match(stylesSource, /\.admin-sql-bracket\.is-matching/u);
+assert.match(stylesSource, /\.admin-sql-token\.is-keyword\[data-sql-keyword-help\][\s\S]*?cursor:\s*text;/u);
 assert.match(stylesSource, /\.admin-connection-panel[\s\S]*input\[type="text"\][\s\S]*border-radius: 8px/u);
 
 console.log("SQL mini IDE tests passed.");
