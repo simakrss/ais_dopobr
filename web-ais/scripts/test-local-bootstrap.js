@@ -152,6 +152,9 @@ assert.match(startSource, /AIS_DOCKER_PATH/u);
 assert.match(startSource, /isAisServiceHealthy/u);
 assert.match(startSource, /runtimeRoot[\s\S]*?\.runtime/u);
 assert.match(startSource, /gatewaySecretPath = path\.join\(runtimeRoot, "tunnel-secret\.txt"\)/u);
+assert.match(startSource, /remoteServicesScriptPath = path\.join\(__dirname, "start-remote-services\.ps1"\)/u);
+assert.match(startSource, /function startRemoteServicesSupervisor\(\)[\s\S]*?if \(runOnce\) return "skipped"/u);
+assert.match(startSource, /status\.remoteDocumentServices = startRemoteServicesSupervisor\(\)/u);
 assert.match(startSource, /existingSystemRuntimeMatches/u);
 assert.match(startSource, /isExpectedNodeServiceProcess\(launcherPid,[\s\S]*?start-lan-system\.js/u);
 assert.match(startSource, /onlyOfficeContainerSecretMatches/u);
@@ -171,6 +174,8 @@ assert.match(onlyOfficeComposeSource, /JWT_SECRET: "\$\{ONLYOFFICE_JWT_SECRET:\?
 assert.match(stopSource, /@\(8081, 19081\)/u);
 assert.match(stopSource, /\$candidates\s*=\s*@\(\s*@\([\s\S]*?Where-Object/u);
 assert.match(stopSource, /taskkill\.exe[\s\S]*?\/PID[\s\S]*?\/T[\s\S]*?\/F/u);
+assert.match(stopSource, /Stop-AllManagedPowerShellProcesses "start-remote-services\.ps1"/u);
+assert.match(stopSource, /Test-ExpectedPowerShellScriptProcess/u);
 assert.match(stopSource, /\.cleanup-worker\.lock/u);
 assert.match(stopSource, /FromUnixTimeMilliseconds/u);
 assert.match(localServerSource, /AIS_APP_SERVER_ORIGIN \|\| "http:\/\/127\.0\.0\.1:19081"/u);

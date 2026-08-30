@@ -41,6 +41,7 @@ const secretPath = path.join(logRoot, "onlyoffice-jwt-secret.txt");
 const gatewaySecretPath = path.join(runtimeRoot, "tunnel-secret.txt");
 const legacyGatewaySecretPath = path.join(logRoot, "local-service-gateway-secret.txt");
 const composePath = path.join(appRoot, "docker-compose.onlyoffice.yml");
+const remoteServicesScriptPath = path.join(__dirname, "start-remote-services.ps1");
 const argumentsLower = new Set(process.argv.slice(2).map((value) => value.toLowerCase()));
 const skipDocker = argumentsLower.has("--skip-docker") || argumentsLower.has("-skipdocker");
 const runOnce = argumentsLower.has("--once");
@@ -487,6 +488,41 @@ function startDocumentServices(commonEnvironment) {
   }
 }
 
+function startRemoteServicesSupervisor() {
+  if (runOnce) return "skipped";
+  if (process.platform !== "win32" || !fs.existsSync(remoteServicesScriptPath)) {
+    console.warn("Сценарий внешнего туннеля не найден; удалённое формирование документов недоступно.");
+    return "unavailable";
+  }
+  try {
+    const output = execFileSync(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        remoteServicesScriptPath,
+      ],
+      {
+        cwd: appRoot,
+        encoding: "utf8",
+        timeout: 20000,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const message = String(output || "").trim();
+    console.log(message || "Супервизор внешнего туннеля запущен.");
+    return "starting";
+  } catch (error) {
+    const details = String(error?.stderr || error?.message || "").trim();
+    console.warn(`Не удалось запустить супервизор внешнего туннеля: ${details}`);
+    return "unavailable";
+  }
+}
+
 function ensureOnlyOfficeDocumentFonts(dockerPath = process.env.AIS_DOCKER_PATH || "docker.exe") {
   const fontCachePath = "/var/www/onlyoffice/documentserver/server/FileConverter/bin/AllFonts.js";
   const requiredFontCheck = ["Calibri", "Cambria", "Lucida Sans", "Times New Roman"]
@@ -629,6 +665,7 @@ async function main() {
     lanUrls: lanUrls(),
     internetUrl: "https://edu-plus.ru/lms/",
     documentServices: "unknown",
+    remoteDocumentServices: "unknown",
     deployWatcher: deploymentWatcherStatus(),
     logDirectory: logRoot,
     offlineReady: offlineState.ready,
@@ -643,6 +680,8 @@ async function main() {
   for (const definition of serverDefinitions) {
     status[`${definition.key}Pid`] = await startServer(definition, commonEnvironment);
   }
+  console.log("\n[AIS] Starting secure external tunnel");
+  status.remoteDocumentServices = startRemoteServicesSupervisor();
   writeStatus(status);
 
   console.log("\n[AIS] System is ready");

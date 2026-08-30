@@ -55,14 +55,25 @@ function Find-DockerCli {
 }
 
 function Get-ExpectedScriptPaths([string]$ScriptName) {
-  $relativePath = if ($ScriptName -eq "start-lan-system.js") {
-    "scripts\start-lan-system.js"
+  $relativePath = if ($ScriptName -in @("start-lan-system.js", "start-remote-services.ps1")) {
+    "scripts\$ScriptName"
   } else {
     $ScriptName
   }
   return @($expectedAppRoots | ForEach-Object {
     [IO.Path]::GetFullPath([IO.Path]::Combine($_, $relativePath)).Replace("/", "\").ToLowerInvariant()
   } | Select-Object -Unique)
+}
+
+function Test-ExpectedPowerShellScriptProcess($Process, [string]$ScriptName) {
+  if (-not $Process -or [string]$Process.Name -notin @("powershell.exe", "pwsh.exe")) { return $false }
+  $commandLine = ([string]$Process.CommandLine).Replace("/", "\").ToLowerInvariant()
+  foreach ($expectedPath in @(Get-ExpectedScriptPaths $ScriptName)) {
+    if ($commandLine.IndexOf($expectedPath, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      return $true
+    }
+  }
+  return $false
 }
 
 function Test-ExpectedNodeProcess($Process, [string]$ScriptName) {
@@ -184,6 +195,19 @@ function Stop-AllManagedNodeProcesses([string]$ScriptName) {
   throw "Не удалось завершить все процессы $ScriptName после 32 попыток."
 }
 
+function Stop-AllManagedPowerShellProcesses([string]$ScriptName) {
+  $stoppedCount = 0
+  for ($attempt = 0; $attempt -lt 8; $attempt++) {
+    $process = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+      Where-Object { Test-ExpectedPowerShellScriptProcess $_ $ScriptName } |
+      Select-Object -First 1
+    if (-not $process) { return $stoppedCount }
+    Stop-VerifiedProcessTree $process $ScriptName
+    $stoppedCount++
+  }
+  throw "Не удалось завершить все процессы $ScriptName после 8 попыток."
+}
+
 function Remove-PreviewCleanupLease([string]$LeasePath, [string]$ExpectedContents) {
   if (-not (Test-Path -LiteralPath $LeasePath -PathType Leaf)) { return }
   $currentContents = Get-Content -LiteralPath $LeasePath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
@@ -228,6 +252,7 @@ function Stop-PreviewCleanupWorker([string]$LeasePath) {
 }
 
 $status = $null
+[void](Stop-AllManagedPowerShellProcesses "start-remote-services.ps1")
 if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
   $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
   $launcherPid = if ($status.PSObject.Properties["launcherPid"]) { [int]$status.launcherPid } else { 0 }
