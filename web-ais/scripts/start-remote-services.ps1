@@ -27,17 +27,15 @@ $localPort = 8081
 
 if (-not $Supervisor) {
   $shellPath = (Get-Process -Id $PID).Path
-  $supervisorArguments = New-Object Collections.Generic.List[object]
-  @(
+  $supervisorArguments = @(
     "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
     "-File", "`"$scriptPath`"", "-Supervisor",
     "-CheckIntervalSeconds", $CheckIntervalSeconds
-  ) | ForEach-Object { $supervisorArguments.Add($_) }
+  )
   if ($ParentProcessId -gt 0) {
-    $supervisorArguments.Add("-ParentProcessId")
-    $supervisorArguments.Add($ParentProcessId)
+    $supervisorArguments += @("-ParentProcessId", $ParentProcessId)
   }
-  $process = Start-Process -FilePath $shellPath -ArgumentList @($supervisorArguments) `
+  $process = Start-Process -FilePath $shellPath -ArgumentList $supervisorArguments `
     -WindowStyle Hidden -PassThru
   Write-Host "Службы АИС запускаются в фоновом режиме (PID $($process.Id))."
   exit 0
