@@ -29573,9 +29573,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <span>Адрес мессенджера</span>
           <div class="student-messenger-url-row">
             <input name="messengerUrl" type="text" value="${escapeAttr(record.messengerUrl || "")}" placeholder="https://max.ru/u/...">
-            <button class="icon-button student-messenger-url-button" data-action="open-student-messenger-url" type="button" title="Перейти по адресу мессенджера" aria-label="Перейти по адресу мессенджера">
-              ${renderExternalLinkIcon()}
-            </button>
+            ${renderMessengerUrlButton(record.preferredMessenger)}
           </div>
         </label>
       </div>
@@ -29663,8 +29661,22 @@ MAX - https://bizvmax.ru/zifra_plus
       ? "Используется по умолчанию"
       : "Контекстное меню или Shift+F10: использовать по умолчанию";
     return `
-      <button class="icon-button student-messenger-button ${messenger} ${isPreferred ? "is-preferred" : ""} ${escapeAttr(extraClass)}" data-action="open-student-messenger" data-messenger="${messenger}" data-messenger-label="${escapeAttr(label)}" type="button" title="${escapeAttr(`${label}\n${preferenceHint}`)}" aria-label="${escapeAttr(`${label}. ${preferenceHint}`)}" aria-haspopup="menu" aria-expanded="false" data-preferred-messenger="${isPreferred ? "true" : "false"}">
+      <button class="icon-button student-messenger-button ${messenger} ${isPreferred ? "is-preferred" : ""} ${escapeAttr(extraClass)}" data-action="open-student-messenger" data-messenger-preference-button data-messenger="${messenger}" data-messenger-label="${escapeAttr(label)}" type="button" title="${escapeAttr(`${label}\n${preferenceHint}`)}" aria-label="${escapeAttr(`${label}. ${preferenceHint}`)}" aria-haspopup="menu" aria-expanded="false" data-preferred-messenger="${isPreferred ? "true" : "false"}">
         ${icon}
+      </button>
+    `;
+  }
+
+  function renderMessengerUrlButton(preferredMessenger = "") {
+    const messenger = "url";
+    const label = "Перейти по адресу мессенджера";
+    const isPreferred = normalizePreferredMessenger(preferredMessenger) === messenger;
+    const preferenceHint = isPreferred
+      ? "Используется по умолчанию"
+      : "Контекстное меню или Shift+F10: использовать по умолчанию";
+    return `
+      <button class="icon-button student-messenger-url-button ${isPreferred ? "is-preferred" : ""}" data-action="open-student-messenger-url" data-messenger-preference-button data-messenger="${messenger}" data-messenger-label="${escapeAttr(label)}" type="button" title="${escapeAttr(`${label}\n${preferenceHint}`)}" aria-label="${escapeAttr(`${label}. ${preferenceHint}`)}" aria-haspopup="menu" aria-expanded="false" data-preferred-messenger="${isPreferred ? "true" : "false"}">
+        ${renderExternalLinkIcon()}
       </button>
     `;
   }
@@ -34142,14 +34154,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const input = form?.elements?.preferredMessenger;
     if (!messenger || !form || !input || !["students", "contracts"].includes(form.dataset.config)) return;
     if (normalizePreferredMessenger(input.value) === messenger) {
-      form.querySelectorAll("[data-action='open-student-messenger']")
+      form.querySelectorAll("[data-messenger-preference-button]")
         .forEach((item) => updateMessengerButtonPreference(item, messenger));
       return;
     }
     input.value = messenger;
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
-    form.querySelectorAll("[data-action='open-student-messenger']")
+    form.querySelectorAll("[data-messenger-preference-button]")
       .forEach((item) => updateMessengerButtonPreference(item, messenger));
     if (state.modal) {
       state.modal.draft = form.dataset.config === "contracts"
@@ -34215,7 +34227,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function bindMessengerPreferenceMenus(root = document) {
-    root.querySelectorAll?.("[data-action='open-student-messenger']").forEach((button) => {
+    root.querySelectorAll?.("[data-messenger-preference-button]").forEach((button) => {
       if (button.dataset.messengerPreferenceMenuBound === "true") return;
       button.dataset.messengerPreferenceMenuBound = "true";
       button.addEventListener("contextmenu", (event) => {
@@ -59355,12 +59367,12 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function normalizePreferredMessenger(value) {
     const messenger = String(value || "").trim().toLocaleLowerCase("ru-RU");
-    return ["max", "telegram", "whatsapp"].includes(messenger) ? messenger : "";
+    return ["max", "telegram", "whatsapp", "url"].includes(messenger) ? messenger : "";
   }
 
   function preferredMessengerDisplayName(value) {
     const messenger = normalizePreferredMessenger(value);
-    return ({ max: "MAX", telegram: "Telegram", whatsapp: "WhatsApp" })[messenger] || "";
+    return ({ max: "MAX", telegram: "Telegram", whatsapp: "WhatsApp", url: "Адрес мессенджера" })[messenger] || "";
   }
 
   function getMessengerLaunchUrl(messenger, values = {}) {

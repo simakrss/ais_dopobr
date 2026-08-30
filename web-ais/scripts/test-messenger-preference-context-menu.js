@@ -160,13 +160,13 @@ const fakeWindow = {
 };
 
 const preferredInput = new FakeInput();
-const buttons = ["max", "max", "telegram", "telegram", "whatsapp", "whatsapp"]
+const buttons = ["max", "max", "telegram", "telegram", "whatsapp", "whatsapp", "url"]
   .map((messenger) => new FakeElement(messenger));
 const form = {
   dataset: { config: "students" },
   elements: { preferredMessenger: preferredInput },
   querySelectorAll(selector) {
-    return selector === "[data-action='open-student-messenger']" ? buttons : [];
+    return selector === "[data-messenger-preference-button]" ? buttons : [];
   }
 };
 buttons.forEach((button) => { button.form = form; });
@@ -220,12 +220,13 @@ function createInteractionEvent(overrides = {}) {
 assert.equal(context.normalizePreferredMessenger(" MAX "), "max");
 assert.equal(context.normalizePreferredMessenger("Telegram"), "telegram");
 assert.equal(context.normalizePreferredMessenger("WHATSAPP"), "whatsapp");
+assert.equal(context.normalizePreferredMessenger("URL"), "url");
 assert.equal(context.normalizePreferredMessenger("viber"), "");
 assert.equal(context.normalizePreferredMessenger(), "");
 
 const root = {
   querySelectorAll(selector) {
-    assert.equal(selector, "[data-action='open-student-messenger']");
+    assert.equal(selector, "[data-messenger-preference-button]");
     return buttons;
   }
 };
@@ -280,6 +281,14 @@ assert.equal(state.modal.draft.preferredMessenger, "max");
 assert.equal(state.modal.hasDraftChanges, true);
 form.dataset.config = "students";
 
+const messengerUrlButton = buttons[6];
+messengerUrlButton.listeners.get("contextmenu")[0](createInteractionEvent());
+fakeDocument.menu.item.listeners.get("click")[0]();
+assert.equal(preferredInput.value, "url");
+buttons.forEach((button) => {
+  assert.equal(button.classList.contains("is-preferred"), button === messengerUrlButton);
+});
+
 const whatsappButton = buttons[4];
 const keyboardEvent = createInteractionEvent({ key: "F10", shiftKey: true });
 whatsappButton.listeners.get("keydown")[0](keyboardEvent);
@@ -308,6 +317,7 @@ assert.equal(fakeDocument.menu, null);
 
 assert.equal((appSource.match(/name="preferredMessenger" type="hidden"/gu) || []).length, 2);
 assert.match(appSource, /renderStudentContactLine[\s\S]{0,900}record\.preferredMessenger/u);
+assert.match(appSource, /function renderMessengerUrlButton[\s\S]{0,1200}data-messenger="\$\{messenger\}"/u);
 assert.match(appSource, /renderCardContextActions[\s\S]{0,1400}record\.preferredMessenger/u);
 assert.match(appSource, /function render\(\)[\s\S]{0,500}closeMessengerPreferenceMenu\(\)/u);
 assert.match(appSource, /data-messenger-preference-menu[\s\S]{0,240}closeMessengerPreferenceMenu\(\{ restoreFocus: true \}\)/u);
@@ -316,6 +326,6 @@ assert.match(appSource, /key:\s*"preferredMessenger",\s*label:\s*"Предпоч
 assert.match(appSource, /field === "preferredMessenger"\) return preferredMessengerDisplayName\(value\)/u);
 assert.match(appSource, /preferredMessenger:\s*normalizePreferredMessenger\(student\.preferredMessenger\)/u);
 assert.match(appSource, /preferredMessenger:\s*normalizePreferredMessenger\(contract\.preferredMessenger\)/u);
-assert.match(stylesSource, /\.student-messenger-button\.is-preferred\s*\{[^}]*background:\s*#ffe082[^}]*color:\s*#694d00/u);
+assert.match(stylesSource, /\.student-messenger-button\.is-preferred,\s*\.student-messenger-url-button\.is-preferred\s*\{[^}]*background:\s*#ffe082[^}]*color:\s*#694d00/u);
 
 console.log("messenger preference context menu tests: OK");
