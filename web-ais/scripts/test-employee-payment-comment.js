@@ -25,13 +25,17 @@ assert.match(source, /if \(key === "comment"\) \{\s*return getEmployeePaymentDis
 assert.match(source, /const commentText = normalizeEmployeePaymentFilterText\(getEmployeePaymentDisplayComment\(row\.comment, row\.details\)\);/u);
 assert.match(
   source,
-  /\{ key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 192, sortType: "text" \}/u
+  /\{ key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 96, minWidth: 32, sortType: "text" \}/u
 );
+assert.match(source, /return \{ min: Number\(column\.minWidth \|\| column\.defaultWidth\), max: 640 \};/u);
+assert.match(source, /clamp\(width \|\| column\.defaultWidth, Number\(column\.minWidth \|\| column\.defaultWidth\), 640\)/u);
+assert.match(source, /data-min-width="\$\{column\.minWidth \|\| column\.defaultWidth\}"/u);
+assert.match(source, /aria-valuemin="\$\{column\.minWidth \|\| column\.defaultWidth\}"/u);
 
 const stylesPath = path.resolve(__dirname, "..", "styles.css");
 const stylesSource = fs.readFileSync(stylesPath, "utf8");
 const commentColumnRule = stylesSource.match(/\.employee-payment-comment-column\s*\{([^}]*)\}/u)?.[1] || "";
-assert.match(commentColumnRule, /width:\s*192px/u);
+assert.match(commentColumnRule, /width:\s*96px/u);
 
 const start = source.indexOf("  function renderEmployeePaymentAccounting(record) {");
 const end = source.indexOf("  function getEmployeePaymentDomRowFilterModel(row) {", start);

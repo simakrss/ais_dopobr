@@ -3181,7 +3181,7 @@
     { key: "status", label: "Статус", className: "employee-payment-status-column", defaultWidth: 78, sortType: "text" },
     { key: "date", label: "Дата", className: "employee-payment-date-column", defaultWidth: 92, sortType: "date" },
     { key: "source", label: "Источник", className: "employee-payment-source-column", defaultWidth: 88, sortType: "text" },
-    { key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 192, sortType: "text" },
+    { key: "comment", label: "Комментарий", className: "employee-payment-comment-column", defaultWidth: 96, minWidth: 32, sortType: "text" },
     { key: "description", label: "Основание", className: "employee-payment-basis-column", defaultWidth: 88, sortType: "text" },
     { key: "amount", label: "Сумма", className: "employee-payment-amount-column", defaultWidth: 60, sortType: "number" },
     { key: "recommendation", label: "Рекомендация", className: "employee-payment-recommendation-column", defaultWidth: 56, sortType: "boolean" },
@@ -19645,7 +19645,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function getColumnWidthBounds(configId, key) {
     if (configId === EMPLOYEE_PAYMENT_TABLE_CONFIG_ID) {
       const column = EMPLOYEE_PAYMENT_TABLE_COLUMNS.find((item) => item.key === key);
-      if (column) return { min: column.defaultWidth, max: 640 };
+      if (column) return { min: Number(column.minWidth || column.defaultWidth), max: 640 };
     }
     if (configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID) {
       const column = issuedDocumentTableConfig.fields.find((item) => item.key === key);
@@ -19698,7 +19698,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const width = column.key === overrideKey
       ? Number(overrideWidth)
       : Number(getColumnWidth(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, column.key));
-    return clamp(width || column.defaultWidth, column.defaultWidth, 640);
+    return clamp(width || column.defaultWidth, Number(column.minWidth || column.defaultWidth), 640);
   }
 
   function employeePaymentColumnStyleAttr(column) {
@@ -20033,7 +20033,8 @@ MAX - https://bizvmax.ru/zifra_plus
       || getEmployeePaymentColumnWidth(column);
     const step = event.shiftKey ? 24 : 8;
     const direction = event.key === "ArrowRight" ? 1 : -1;
-    const nextWidth = clamp(Math.round(currentWidth + step * direction), column.defaultWidth, 640);
+    const bounds = getColumnWidthBounds(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, fieldKey);
+    const nextWidth = clamp(Math.round(currentWidth + step * direction), bounds.min, bounds.max);
     applyColumnWidthToDom(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, fieldKey, nextWidth);
     setTableColumnWidth(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, fieldKey, nextWidth);
     handle.setAttribute("aria-valuenow", String(nextWidth));
@@ -27132,11 +27133,11 @@ MAX - https://bizvmax.ru/zifra_plus
                         data-action="resize-column"
                         data-config="${EMPLOYEE_PAYMENT_TABLE_CONFIG_ID}"
                         data-field="${escapeAttr(column.key)}"
-                        data-min-width="${column.defaultWidth}"
+                        data-min-width="${column.minWidth || column.defaultWidth}"
                         role="separator"
                         aria-orientation="vertical"
                         aria-label="Изменить ширину колонки «${escapeAttr(column.label)}»"
-                        aria-valuemin="${column.defaultWidth}"
+                        aria-valuemin="${column.minWidth || column.defaultWidth}"
                         aria-valuemax="640"
                         aria-valuenow="${getEmployeePaymentColumnWidth(column)}"
                         tabindex="0"
