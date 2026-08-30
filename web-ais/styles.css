@@ -14442,6 +14442,10 @@ body.card-window-moving {
     overflow: hidden;
   }
 
+  .contract-modal.is-payment-tab-active > form[data-record-lock-lost="true"] {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
   .contract-modal.is-payment-tab-active .contract-modal-body {
     min-height: 0;
     display: grid;

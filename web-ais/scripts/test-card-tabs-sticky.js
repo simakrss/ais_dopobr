@@ -77,6 +77,15 @@ const paymentBodyGridRule = stylesSource.match(
 )?.[1] || "";
 assert.match(paymentBodyGridRule, /grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/u);
 
+const paymentLostLockGridRule = stylesSource.match(
+  /\.contract-modal\.is-payment-tab-active\s*>\s*form\[data-record-lock-lost="true"\]\s*\{([^}]*)\}/u
+)?.[1] || "";
+assert.match(
+  paymentLostLockGridRule,
+  /grid-template-rows:\s*auto\s+auto\s+minmax\(0,\s*1fr\)/u,
+  "Во вкладке оплаты предупреждение о потерянной блокировке должно занимать отдельную строку."
+);
+
 const bindControlsSource = extractFunction("bindCardWindowControls");
 assert.match(
   bindControlsSource,
