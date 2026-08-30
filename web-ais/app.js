@@ -9842,6 +9842,44 @@ MAX - https://bizvmax.ru/zifra_plus
     return getRecordLock(normalizedEntityType, normalizedEntityId);
   }
 
+  function getCurrentModalRecordLockIdentity(modal = state.modal) {
+    const configId = String(modal?.config || "").trim();
+    const entityId = String(modal?.id || "").trim();
+    if (!configId || !entityId || !configs[configId]) return null;
+    const entityType = recordLockEntityType(configId);
+    return {
+      configId,
+      entityId,
+      entityType,
+      key: recordLockKey(entityType, entityId)
+    };
+  }
+
+  async function acquireRecordLockForCard(configId, entityId) {
+    const normalizedConfigId = String(configId || "").trim();
+    const normalizedEntityId = String(entityId || "").trim();
+    if (!normalizedConfigId || !normalizedEntityId) return { readOnly: false };
+    const entityType = recordLockEntityType(normalizedConfigId);
+    const key = recordLockKey(entityType, normalizedEntityId);
+    const previousLock = activeRecordLock?.key !== key ? activeRecordLock : null;
+    const acquired = await acquireRecordLock(entityType, normalizedEntityId, {
+      readOnlyFallback: true
+    });
+    if (acquired) return { readOnly: false };
+    const foreignLock = getRecordLock(entityType, normalizedEntityId);
+    if (!foreignLock) return null;
+    if (previousLock && activeRecordLock?.key === previousLock.key) {
+      await releaseRecordLock(previousLock);
+    }
+    return { readOnly: true, lock: foreignLock };
+  }
+
+  function getRecordLockModalState(lockMode) {
+    return lockMode?.readOnly
+      ? { readOnly: true, lockAvailable: false }
+      : {};
+  }
+
   function formatRecordLockMessage(lock = {}, prefix = "Запись временно заблокирована") {
     const owner = String(lock.ownerName || lock.ownerLogin || "другой пользователь").trim();
     const expiresAt = new Date(lock.expiresAt || 0);
@@ -9929,6 +9967,199 @@ MAX - https://bizvmax.ru/zifra_plus
     else title?.insertAdjacentHTML("beforeend", markup);
   }
 
+  function isRecordReadOnlyButtonAllowed(button) {
+    if (!(button instanceof HTMLButtonElement)) return false;
+    if (button.matches('[role="tab"], [data-student-tab]')) return true;
+    const action = String(button.dataset.action || "").trim();
+    if (!action) return false;
+    if (action.startsWith("close-") || action.startsWith("navigate-")) return true;
+    if (action.startsWith("copy-")) return true;
+    return new Set([
+      "acquire-available-record-lock",
+      "check-post-index",
+      "open-sdo-courses",
+      "open-student-activity-log",
+      "open-student-audit-log",
+      "open-student-course-page",
+      "open-student-grade-report",
+      "open-student-messenger",
+      "open-student-messenger-url",
+      "open-student-order-admin",
+      "open-student-program-promo",
+      "takeover-current-record-lock",
+      "toggle-card-side-panel",
+      "toggle-card-window-fullscreen",
+      "toggle-card-window-minimize"
+    ]).has(action);
+  }
+
+  function renderRecordReadOnlyWarning(lock = null) {
+    const lockAvailable = Boolean(state.modal?.lockAvailable && !lock);
+    if (lockAvailable) {
+      return `
+        <div class="record-lock-warning is-readonly is-available" data-record-lock-warning role="status" aria-live="polite">
+          <span><strong>Запись освободилась.</strong> Карточка пока открыта только для просмотра.</span>
+          <button class="primary-button" data-action="acquire-available-record-lock" type="button">Перейти к редактированию</button>
+        </div>
+      `;
+    }
+    const owner = String(lock?.ownerName || lock?.ownerLogin || "другой пользователь").trim();
+    const message = lock
+      ? `Сейчас запись редактирует ${owner}. Мы уведомим вас, когда она освободится.`
+      : "Состояние блокировки пока не подтверждено. Мы продолжим проверку и уведомим вас, когда запись освободится.";
+    return `
+      <div class="record-lock-warning is-readonly" data-record-lock-warning role="status" aria-live="polite">
+        <span><strong>Режим просмотра.</strong> ${escapeHtml(message)}</span>
+        <button class="ghost-button" data-action="takeover-current-record-lock" type="button">Перехватить блокировку</button>
+      </div>
+    `;
+  }
+
+  function applyRecordFormReadOnlyMode(form = document.getElementById("recordForm"), lock = null) {
+    if (!form || !state.modal?.readOnly) return;
+    const identity = getCurrentModalRecordLockIdentity();
+    const currentLock = lock || (identity ? getRecordLock(identity.entityType, identity.entityId) : null);
+    form.dataset.recordReadonly = "true";
+    form.setAttribute("aria-readonly", "true");
+    form.querySelector("[data-record-lock-warning]")?.remove();
+    form.querySelector(".modal-head")?.insertAdjacentHTML("afterend", renderRecordReadOnlyWarning(currentLock));
+
+    form.querySelectorAll("input, textarea").forEach((control) => {
+      const type = String(control.type || "").toLowerCase();
+      if (type === "hidden") return;
+      if (["button", "checkbox", "color", "file", "radio", "range", "reset", "submit"].includes(type)) {
+        if (!control.disabled) {
+          control.dataset.recordReadonlyDisabled = "true";
+          control.disabled = true;
+        }
+        return;
+      }
+      if (!control.disabled && !control.readOnly) {
+        control.dataset.recordReadonlyControl = "true";
+        control.readOnly = true;
+      }
+    });
+    form.querySelectorAll("select").forEach((control) => {
+      if (control.disabled) return;
+      control.dataset.recordReadonlyDisabled = "true";
+      control.disabled = true;
+    });
+    form.querySelectorAll("button").forEach((button) => {
+      if (button.disabled || isRecordReadOnlyButtonAllowed(button)) return;
+      button.dataset.recordReadonlyDisabled = "true";
+      button.disabled = true;
+    });
+    form.querySelectorAll('[contenteditable="true"]').forEach((control) => {
+      control.dataset.recordReadonlyContenteditable = "true";
+      control.setAttribute("contenteditable", "false");
+    });
+    form.querySelectorAll('[draggable="true"]').forEach((control) => {
+      if (control.matches('[role="tab"], [data-student-tab]')) return;
+      control.dataset.recordReadonlyDraggable = "true";
+      control.setAttribute("draggable", "false");
+    });
+    const submitButton = getFormSubmitButton(form);
+    if (submitButton) {
+      if (!submitButton.dataset.recordReadonlyLabel) {
+        submitButton.dataset.recordReadonlyLabel = submitButton.textContent || "Сохранить";
+      }
+      submitButton.textContent = "Только просмотр";
+      submitButton.disabled = true;
+    }
+  }
+
+  function restoreRecordFormEditingMode(form = document.getElementById("recordForm")) {
+    if (!form) return;
+    form.querySelectorAll('[data-record-readonly-disabled="true"]').forEach((control) => {
+      control.disabled = false;
+      delete control.dataset.recordReadonlyDisabled;
+    });
+    form.querySelectorAll('[data-record-readonly-control="true"]').forEach((control) => {
+      control.readOnly = false;
+      delete control.dataset.recordReadonlyControl;
+    });
+    form.querySelectorAll('[data-record-readonly-contenteditable="true"]').forEach((control) => {
+      control.setAttribute("contenteditable", "true");
+      delete control.dataset.recordReadonlyContenteditable;
+    });
+    form.querySelectorAll('[data-record-readonly-draggable="true"]').forEach((control) => {
+      control.setAttribute("draggable", "true");
+      delete control.dataset.recordReadonlyDraggable;
+    });
+    const submitButton = getFormSubmitButton(form);
+    if (submitButton?.dataset.recordReadonlyLabel) {
+      submitButton.textContent = submitButton.dataset.recordReadonlyLabel;
+      delete submitButton.dataset.recordReadonlyLabel;
+    }
+    delete form.dataset.recordReadonly;
+    delete form.dataset.recordLockLost;
+    form.removeAttribute("aria-readonly");
+    form.querySelector("[data-record-lock-warning]")?.remove();
+  }
+
+  function dismissRecordLockNotice(recordKey = "") {
+    const notice = document.querySelector("[data-record-lock-notice]");
+    if (!notice || (recordKey && notice.dataset.recordLockKey !== recordKey)) return;
+    notice.remove();
+  }
+
+  function showRecordLockNotice(title, message, options = {}) {
+    const identity = getCurrentModalRecordLockIdentity();
+    if (!identity) return;
+    dismissRecordLockNotice();
+    const notice = document.createElement("div");
+    notice.className = `record-lock-notice is-${String(options.kind || "success")}`;
+    notice.dataset.recordLockNotice = "";
+    notice.dataset.recordLockKey = identity.key;
+    notice.setAttribute("role", "status");
+    notice.setAttribute("aria-live", "polite");
+    notice.innerHTML = `
+      <div class="record-lock-notice-copy">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(message)}</span>
+      </div>
+      <div class="record-lock-notice-actions">
+        ${options.actionLabel ? `<button class="primary-button" data-record-lock-notice-action type="button">${escapeHtml(options.actionLabel)}</button>` : ""}
+        <button class="icon-button" data-record-lock-notice-close type="button" title="Закрыть" aria-label="Закрыть уведомление">×</button>
+      </div>
+    `;
+    document.body.appendChild(notice);
+    notice.querySelector("[data-record-lock-notice-close]")?.addEventListener("click", () => notice.remove());
+    notice.querySelector("[data-record-lock-notice-action]")?.addEventListener("click", (event) => {
+      options.onAction?.(event.currentTarget);
+    });
+    if (!options.persistent) window.setTimeout(() => notice.remove(), 9000);
+  }
+
+  function markReadOnlyRecordLockAvailable() {
+    const identity = getCurrentModalRecordLockIdentity();
+    if (!identity || !state.modal?.readOnly || state.modal.lockAvailable) return;
+    state.modal.lockAvailable = true;
+    updateCardRecordLockStatusUi(null);
+    applyRecordFormReadOnlyMode(document.getElementById("recordForm"), null);
+    const recordLabel = getCardLoadingRecordLabel(identity.configId, identity.entityId);
+    showRecordLockNotice(
+      "Запись освободилась",
+      `${recordLabel ? `${recordLabel}. ` : ""}Можно перейти из режима просмотра к редактированию.`,
+      {
+        actionLabel: "Редактировать",
+        persistent: true,
+        onAction: acquireAvailableCurrentRecordLock
+      }
+    );
+    bindTakeoverCurrentRecordLockButtons(document);
+  }
+
+  function markReadOnlyRecordLockBusy(lock) {
+    if (!state.modal?.readOnly) return;
+    state.modal.lockAvailable = false;
+    const identity = getCurrentModalRecordLockIdentity();
+    dismissRecordLockNotice(identity?.key || "");
+    updateCardRecordLockStatusUi(lock);
+    applyRecordFormReadOnlyMode(document.getElementById("recordForm"), lock);
+    bindTakeoverCurrentRecordLockButtons(document);
+  }
+
   async function requestSharedRecordLocks(options = {}) {
     const method = String(options.method || "GET").toUpperCase();
     const query = method === "GET" ? `?clientId=${encodeURIComponent(recordLockClientId)}` : "";
@@ -9957,6 +10188,10 @@ MAX - https://bizvmax.ru/zifra_plus
     if (recordLocksPollRunning || document.visibilityState !== "visible") return;
     recordLocksPollRunning = true;
     try {
+      const readOnlyIdentity = state.modal?.readOnly ? getCurrentModalRecordLockIdentity() : null;
+      const previousReadOnlyLock = readOnlyIdentity
+        ? recordLocks.get(readOnlyIdentity.key) || null
+        : null;
       const payload = await requestSharedRecordLocks();
       const nextLocks = new Map((payload.locks || []).map((lock) => [
         recordLockKey(lock.entityType, lock.entityId),
@@ -9965,10 +10200,20 @@ MAX - https://bizvmax.ru/zifra_plus
       const previousSignature = JSON.stringify([...recordLocks.entries()]);
       const nextSignature = JSON.stringify([...nextLocks.entries()]);
       recordLocks = nextLocks;
+      const nextReadOnlyLock = readOnlyIdentity
+        ? nextLocks.get(readOnlyIdentity.key) || null
+        : null;
       const currentActiveLock = activeRecordLock;
       const currentRemoteLock = currentActiveLock ? nextLocks.get(currentActiveLock.key) : null;
       if (currentActiveLock && currentRemoteLock && !currentRemoteLock.ownedByClient) {
         markActiveRecordLockLost(currentActiveLock, currentRemoteLock);
+      }
+      if (readOnlyIdentity && state.modal?.readOnly) {
+        if (previousReadOnlyLock && !nextReadOnlyLock) {
+          markReadOnlyRecordLockAvailable();
+        } else if (nextReadOnlyLock && state.modal.lockAvailable) {
+          markReadOnlyRecordLockBusy(nextReadOnlyLock);
+        }
       }
       if (renderAfter && previousSignature !== nextSignature) {
         if (state.documentTemplateDialogId) {
@@ -9994,6 +10239,11 @@ MAX - https://bizvmax.ru/zifra_plus
       button.dataset.takeoverLockBound = "true";
       button.addEventListener("click", () => takeoverCurrentRecordLock(button));
     });
+    root.querySelectorAll("[data-action='acquire-available-record-lock']").forEach((button) => {
+      if (button.dataset.acquireAvailableLockBound === "true") return;
+      button.dataset.acquireAvailableLockBound = "true";
+      button.addEventListener("click", () => acquireAvailableCurrentRecordLock(button));
+    });
   }
 
   function markActiveRecordLockLost(lock = activeRecordLock, replacementLock = null) {
@@ -10006,22 +10256,24 @@ MAX - https://bizvmax.ru/zifra_plus
       : document.getElementById("recordForm");
     if (form) {
       form.dataset.recordLockLost = "true";
-      const saveButton = document.querySelector(`button[type="submit"][form="${CSS.escape(form.id)}"]`)
-        || form.querySelector('button[type="submit"]');
-      if (saveButton) saveButton.disabled = true;
-      const warningHost = state.documentTemplateDialogId
-        ? document.querySelector(".document-template-settings-head")
-        : form.querySelector(".modal-head");
-      const warningContainer = state.documentTemplateDialogId
-        ? document.querySelector(".document-template-settings-modal")
-        : form;
-      if (!warningContainer?.querySelector("[data-record-lock-warning]")) {
-        warningHost?.insertAdjacentHTML("afterend", `
-          <div class="record-lock-warning" data-record-lock-warning role="alert">
-            <span>Запись больше не заблокирована за вами. Сохранение отключено.</span>
-            <button class="ghost-button" data-action="takeover-current-record-lock" type="button">Перехватить блокировку</button>
-          </div>
-        `);
+      if (!state.documentTemplateDialogId && state.modal) {
+        state.modal.readOnly = true;
+        state.modal.lockAvailable = false;
+        applyRecordFormReadOnlyMode(form, replacementLock);
+      } else {
+        const saveButton = document.querySelector(`button[type="submit"][form="${CSS.escape(form.id)}"]`)
+          || form.querySelector('button[type="submit"]');
+        if (saveButton) saveButton.disabled = true;
+        const warningHost = document.querySelector(".document-template-settings-head");
+        const warningContainer = document.querySelector(".document-template-settings-modal");
+        if (!warningContainer?.querySelector("[data-record-lock-warning]")) {
+          warningHost?.insertAdjacentHTML("afterend", `
+            <div class="record-lock-warning" data-record-lock-warning role="alert">
+              <span>Запись больше не заблокирована за вами. Сохранение отключено.</span>
+              <button class="ghost-button" data-action="takeover-current-record-lock" type="button">Перехватить блокировку</button>
+            </div>
+          `);
+        }
       }
       bindTakeoverCurrentRecordLockButtons(form);
       updateCardRecordLockStatusUi(replacementLock);
@@ -10149,6 +10401,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const key = recordLockKey(entityType, id);
     const takeover = Boolean(options.takeover);
     const promptTakeover = options.promptTakeover !== false;
+    const readOnlyFallback = Boolean(options.readOnlyFallback);
     if (activeRecordLock?.key === key && !takeover) return true;
     let payload;
     try {
@@ -10170,9 +10423,14 @@ MAX - https://bizvmax.ru/zifra_plus
         const confirmed = confirm([
           formatRecordLockMessage(lock),
           "",
-          "Нажмите OK, чтобы разблокировать запись для текущей сессии и заблокировать её для других сессий. Несохранённые изменения в другой сессии не будут применены."
+          "Нажмите OK, чтобы разблокировать запись для текущей сессии и заблокировать её для других сессий. Несохранённые изменения в другой сессии не будут применены.",
+          ...(readOnlyFallback ? ["", "При отмене карточка откроется только для просмотра и сообщит, когда запись освободится."] : [])
         ].join("\n"));
-        if (confirmed) return acquireRecordLock(entityType, id, { takeover: true, promptTakeover });
+        if (confirmed) return acquireRecordLock(entityType, id, {
+          takeover: true,
+          promptTakeover,
+          readOnlyFallback
+        });
         return false;
       }
       alert(`Не удалось заблокировать запись для редактирования: ${error.message}`);
@@ -10253,7 +10511,53 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!confirm("Перехватить блокировку записи? Текущая сессия получит право сохранения, а остальные сессии будут заблокированы.")) return;
     if (button) button.disabled = true;
     const acquired = await acquireRecordLock(recordLockEntityType(configId), entityId, { takeover: true });
-    if (!acquired && button) button.disabled = false;
+    if (acquired) {
+      activateCurrentRecordEditing();
+      return;
+    }
+    if (button) button.disabled = false;
+  }
+
+  async function acquireAvailableCurrentRecordLock(button) {
+    const identity = getCurrentModalRecordLockIdentity();
+    if (!identity || !state.modal?.readOnly) return;
+    if (button) {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+    }
+    const acquired = await acquireRecordLock(identity.entityType, identity.entityId, {
+      promptTakeover: false
+    });
+    if (acquired) {
+      activateCurrentRecordEditing();
+      return;
+    }
+    const lock = getRecordLock(identity.entityType, identity.entityId);
+    markReadOnlyRecordLockBusy(lock);
+    showRecordLockNotice(
+      "Запись снова занята",
+      "Другой пользователь успел открыть запись. Карточка остаётся в режиме просмотра.",
+      { kind: "warning" }
+    );
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  }
+
+  function activateCurrentRecordEditing() {
+    const identity = getCurrentModalRecordLockIdentity();
+    if (!identity || !state.modal || activeRecordLock?.key !== identity.key) return;
+    state.modal.readOnly = false;
+    state.modal.lockAvailable = false;
+    dismissRecordLockNotice(identity.key);
+    const form = document.getElementById("recordForm");
+    restoreRecordFormEditingMode(form);
+    updateCardRecordLockStatusUi({ ...activeRecordLock, ownedByClient: true });
+    showRecordLockNotice(
+      "Редактирование доступно",
+      "Блокировка получена текущей сессией. Изменения снова можно сохранять."
+    );
   }
 
   function persistStateToLocalStorage(data = state.data) {
@@ -11178,8 +11482,9 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       : null;
     if (nextModal?.id) {
-      const acquired = await acquireRecordLock(recordLockEntityType(nextModal.config), nextModal.id);
-      if (!acquired) nextModal = null;
+      const lockMode = await acquireRecordLockForCard(nextModal.config, nextModal.id);
+      if (!lockMode) nextModal = null;
+      else Object.assign(nextModal, getRecordLockModalState(lockMode));
     } else {
       const lock = activeRecordLock;
       activeRecordLock = null;
@@ -11377,6 +11682,11 @@ MAX - https://bizvmax.ru/zifra_plus
     closeNavItemMenu();
     closeMessengerPreferenceMenu();
     closeSystemMailboxEmailMenu();
+    const recordLockNotice = document.querySelector("[data-record-lock-notice]");
+    const readOnlyIdentity = state.modal?.readOnly ? getCurrentModalRecordLockIdentity() : null;
+    if (recordLockNotice && (!readOnlyIdentity || recordLockNotice.dataset.recordLockKey !== readOnlyIdentity.key)) {
+      recordLockNotice.remove();
+    }
     document.querySelector("[data-communication-template-field-dialog]")?.remove();
     if (!canAccessView(state.view)) state.view = "dashboard";
     synchronizeAisBrowserHistory();
@@ -15231,7 +15541,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const row = getFilteredFinanceDetailRows().find((item) => String(item.id) === String(rowId));
     if (!row?.sourceConfig || !row.sourceId || !configs[row.sourceConfig]) return;
     await withCardLoadingIndicator(row.sourceConfig, row.sourceId, async () => {
-      if (!await acquireRecordLock(recordLockEntityType(row.sourceConfig), row.sourceId)) return;
+      const lockMode = await acquireRecordLockForCard(row.sourceConfig, row.sourceId);
+      if (!lockMode) return;
       const keepFinanceInBackground = row.sourceConfig === "students";
       if (!keepFinanceInBackground) state.financeDetails.open = false;
       state.lastEditedRow = { config: row.sourceConfig, id: row.sourceId };
@@ -15244,6 +15555,7 @@ MAX - https://bizvmax.ru/zifra_plus
       state.modal = {
         config: row.sourceConfig,
         id: row.sourceId,
+        ...getRecordLockModalState(lockMode),
         ...(keepFinanceInBackground ? { studentNavigationIds: getFinanceDetailStudentNavigationIds() } : {})
       };
       render();
@@ -36557,6 +36869,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindSqlMiniIdeEditors(document);
     bindStudentExpenseEditorEvents();
     bindMoneyInputStepControls(document);
+    applyRecordFormReadOnlyMode();
     initializeRecordFormSnapshot(document.getElementById("recordForm"));
     initializeRecordFormSnapshot(document.getElementById("studentExpenseEditorForm"));
     initializeRecordFormSnapshot(document.getElementById("employeeExpenseEditorForm"));
@@ -37577,11 +37890,8 @@ MAX - https://bizvmax.ru/zifra_plus
         button.disabled = true;
         try {
           await withCardLoadingIndicator(button.dataset.config, button.dataset.id, async () => {
-            const acquired = await acquireRecordLock(
-              recordLockEntityType(button.dataset.config),
-              button.dataset.id
-            );
-            if (!acquired) return;
+            const lockMode = await acquireRecordLockForCard(button.dataset.config, button.dataset.id);
+            if (!lockMode) return;
             setTablePageForRow(button.dataset.config, button.dataset.id);
             if (button.dataset.config === "students") state.studentCardTab = "main";
             if (button.dataset.config === "programs") state.programCardTab = "main";
@@ -37591,7 +37901,11 @@ MAX - https://bizvmax.ru/zifra_plus
             if (button.dataset.config === "students") state.discountPickerOpen = false;
             if (button.dataset.config === "students") state.discountPicker = null;
             if (["students", "contracts"].includes(button.dataset.config)) resetCardWindowState();
-            state.modal = { config: button.dataset.config, id: button.dataset.id };
+            state.modal = {
+              config: button.dataset.config,
+              id: button.dataset.id,
+              ...getRecordLockModalState(lockMode)
+            };
             render();
           });
         } finally {
@@ -38600,7 +38914,8 @@ MAX - https://bizvmax.ru/zifra_plus
   async function openStudentCardById(id, navigationIds = null) {
     if (!id) return;
     await withCardLoadingIndicator("students", id, async () => {
-      if (!await acquireRecordLock(recordLockEntityType("students"), id)) return;
+      const lockMode = await acquireRecordLockForCard("students", id);
+      if (!lockMode) return;
       const studentNavigationIds = Array.isArray(navigationIds)
         ? [...navigationIds]
         : (Array.isArray(state.modal?.studentNavigationIds) ? [...state.modal.studentNavigationIds] : []);
@@ -38610,6 +38925,7 @@ MAX - https://bizvmax.ru/zifra_plus
       state.modal = {
         config: "students",
         id,
+        ...getRecordLockModalState(lockMode),
         ...(studentNavigationIds.length ? { studentNavigationIds } : {})
       };
       render();
@@ -38664,10 +38980,11 @@ MAX - https://bizvmax.ru/zifra_plus
   async function openProgramCardById(id) {
     if (!id) return;
     await withCardLoadingIndicator("programs", id, async () => {
-      if (!await acquireRecordLock(recordLockEntityType("programs"), id)) return;
+      const lockMode = await acquireRecordLockForCard("programs", id);
+      if (!lockMode) return;
       state.lastEditedRow = { config: "programs", id };
       setTablePageForRow("programs", id);
-      state.modal = { config: "programs", id };
+      state.modal = { config: "programs", id, ...getRecordLockModalState(lockMode) };
       render();
     });
   }
@@ -38720,10 +39037,11 @@ MAX - https://bizvmax.ru/zifra_plus
   async function openContractCardById(id) {
     if (!id) return;
     await withCardLoadingIndicator("contracts", id, async () => {
-      if (!await acquireRecordLock(recordLockEntityType("contracts"), id)) return;
+      const lockMode = await acquireRecordLockForCard("contracts", id);
+      if (!lockMode) return;
       state.lastEditedRow = { config: "contracts", id };
       setTablePageForRow("contracts", id);
-      state.modal = { config: "contracts", id };
+      state.modal = { config: "contracts", id, ...getRecordLockModalState(lockMode) };
       render();
     });
   }

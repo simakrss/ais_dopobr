@@ -4655,12 +4655,85 @@ tr.is-table-value-filtered-out {
   flex: 1 1 320px;
 }
 
-.record-lock-warning .ghost-button {
+.record-lock-warning :is(.ghost-button, .primary-button) {
   flex: 0 0 auto;
   min-height: 34px;
+}
+
+.record-lock-warning .ghost-button {
   border-color: #d97768;
   background: #fff;
   color: #8b1e13;
+}
+
+.record-lock-warning.is-available {
+  border-color: #8ccfbe;
+  background: #edfbf7;
+  color: #0f6f64;
+}
+
+#recordForm[data-record-readonly="true"] :is(input, textarea, select):is([readonly], :disabled) {
+  opacity: 1;
+  color: #344541;
+  background: #f4f7f6;
+  cursor: default;
+}
+
+.record-lock-notice {
+  position: fixed;
+  z-index: 12030;
+  right: 18px;
+  bottom: 18px;
+  width: min(500px, calc(100vw - 28px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 12px 13px 15px;
+  color: #25423b;
+  border: 1px solid #8ccfbe;
+  border-radius: 10px;
+  background: rgba(245, 255, 252, 0.99);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
+  animation: system-help-tooltip-in 0.2s ease-out both;
+}
+
+.record-lock-notice.is-warning {
+  color: #6f4b00;
+  border-color: #e2c36c;
+  background: rgba(255, 249, 226, 0.99);
+}
+
+.record-lock-notice-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.record-lock-notice-copy strong {
+  font-size: 14px;
+}
+
+.record-lock-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.record-lock-notice-actions .primary-button {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
+.record-lock-notice-actions .icon-button {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .card-record-lock-status {
@@ -14524,6 +14597,10 @@ body.card-window-moving {
     grid-template-rows: auto auto minmax(0, 1fr);
   }
 
+  .contract-modal.is-payment-tab-active > form[data-record-readonly="true"] {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
   .contract-modal.is-payment-tab-active .contract-modal-body {
     min-height: 0;
     display: grid;
@@ -16797,6 +16874,10 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .student-modal > form[data-record-lock-lost="true"] {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .student-modal > form[data-record-readonly="true"] {
     grid-template-rows: auto auto minmax(0, 1fr);
   }
 
@@ -22403,6 +22484,20 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .record-lock-warning .ghost-button {
     width: 100%;
+  }
+
+  .record-lock-warning .primary-button {
+    width: 100%;
+  }
+
+  .record-lock-notice {
+    right: 14px;
+    bottom: 14px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .record-lock-notice-actions {
+    justify-content: space-between;
   }
 
   .student-modal-head {
