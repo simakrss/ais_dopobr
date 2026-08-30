@@ -30272,7 +30272,7 @@ MAX - https://bizvmax.ru/zifra_plus
               ${renderAddressCopyIcon(item.key === "registrationAddress" ? "down" : "up")}
             </button>
             <button class="icon-button student-address-action student-address-check-action" data-action="check-post-index" data-source="${item.key}" type="button" title="Проверить почтовый индекс через Почту России" aria-label="Проверить почтовый индекс через Почту России">
-              ${renderGlobeGridIcon()}
+              ${renderBinocularsIcon()}
             </button>
           </div>
         </div>
@@ -30520,14 +30520,14 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderGlobeGridIcon() {
+  function renderBinocularsIcon() {
     return `
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <circle cx="12" cy="12" r="8"></circle>
-        <path d="M4 12h16"></path>
-        <path d="M6.4 7.5h11.2"></path>
-        <path d="M6.4 16.5h11.2"></path>
-        <ellipse cx="12" cy="12" rx="3.2" ry="8"></ellipse>
+        <path d="M10 10h4"></path>
+        <path d="M9 7V4a1 1 0 0 0-1-1H6a1 1 0 0 0-1 1v3"></path>
+        <path d="M15 7V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3"></path>
+        <path d="M5 7h1a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3v-4a3 3 0 0 1 3-3Z"></path>
+        <path d="M18 7h1a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3h-1a3 3 0 0 1-3-3v-4a3 3 0 0 1 3-3Z"></path>
       </svg>
     `;
   }
