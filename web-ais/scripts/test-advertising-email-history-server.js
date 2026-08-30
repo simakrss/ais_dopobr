@@ -7,6 +7,7 @@ const {
   normalizeAdvertisingEmailHistoryRows,
   emptyAdvertisingEmailHistoryResult,
   buildAdvertisingEmailHistoryResult,
+  publicAdvertisingEmailHistoryListRun,
   persistAdvertisingEmailHistoryResult
 } = require("../app-server.js");
 
@@ -79,6 +80,27 @@ assert.deepEqual(emptyAdvertisingEmailHistoryResult().comparedTo, {
 assert.equal(emptyAdvertisingEmailHistoryResult().summary.newUnique, 0);
 assert.equal(emptyAdvertisingEmailHistoryResult().summary.newReady, 0);
 
+const transferredRun = publicAdvertisingEmailHistoryListRun({
+  run_id: "run-transferred",
+  run_sequence: 12,
+  refreshed_at: "2026-08-29T05:17:10.000Z",
+  sources_json: "[]",
+  summary_json: "{}",
+  transferred_to_advertising: 1,
+  transferred_at: "2026-08-30T07:00:00.000Z",
+  transfer_user_id: "user-1",
+  transfer_user_login: "manager",
+  transfer_user_name: "Менеджер"
+});
+assert.equal(transferredRun.transferredToAdvertising, true);
+assert.equal(transferredRun.transferredAt, "2026-08-30T07:00:00.000Z");
+assert.deepEqual(transferredRun.transferredBy, {
+  id: "user-1",
+  login: "manager",
+  name: "Менеджер"
+});
+assert.equal(publicAdvertisingEmailHistoryListRun({ run_id: "run-open" }).transferredToAdvertising, false);
+
 assert.match(
   serverSource,
   /const ADVERTISING_EMAIL_HISTORY_RETAINED_RUNS\s*=\s*30;/u,
@@ -92,6 +114,7 @@ assert.match(
 
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_contacts/u);
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_runs/u);
+assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_transfers/u);
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_deleted_runs/u);
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_run_contacts/u);
 assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_history_state/u);
@@ -175,12 +198,26 @@ const historyHandlerStart = serverSource.indexOf(`async function ${historyHandle
 const nextFunctionStart = serverSource.indexOf("\nasync function ", historyHandlerStart + 1);
 assert.ok(nextFunctionStart > historyHandlerStart, "Не найден конец обработчика истории рекламных запросов.");
 const historyHandlerSource = serverSource.slice(historyHandlerStart, nextFunctionStart);
-assert.match(historyHandlerSource, /\["GET",\s*"DELETE"\]\.includes\(req\.method\)/u);
+assert.match(historyHandlerSource, /\["GET",\s*"POST",\s*"DELETE"\]\.includes\(req\.method\)/u);
 assert.match(historyHandlerSource, /searchParams\.get\("runId"\)|\.searchParams\.get\("runId"\)/u);
 assert.match(historyHandlerSource, /readAdvertisingEmailHistoryRuns/u);
 assert.match(historyHandlerSource, /readAdvertisingEmailHistory(?:Run)?New/u);
 assert.match(historyHandlerSource, /deleteAdvertisingEmailHistoryRun/u);
+assert.match(historyHandlerSource, /updateAdvertisingEmailHistoryTransfer/u);
 assert.match(historyHandlerSource, /safelyAppendAuditEntry/u);
+
+const updateTransferSource = sourceSlice(
+  serverSource,
+  "async function updateAdvertisingEmailHistoryTransfer(",
+  "async function deleteAdvertisingEmailHistoryRun("
+);
+assert.match(updateTransferSource, /typeof transferredToAdvertising\s*!==\s*"boolean"/u);
+assert.match(updateTransferSource, /beginTransaction\(\)/u);
+assert.match(updateTransferSource, /FOR UPDATE/u);
+assert.match(updateTransferSource, /INSERT INTO ais_advertising_email_history_transfers/u);
+assert.match(updateTransferSource, /ON DUPLICATE KEY UPDATE/u);
+assert.match(updateTransferSource, /commit\(\)/u);
+assert.match(updateTransferSource, /rollback\(\)/u);
 
 const deleteHistorySource = sourceSlice(
   serverSource,
@@ -202,6 +239,7 @@ const historyListSource = sourceSlice(
   "async function readLatestAdvertisingEmailHistoryRunId("
 );
 assert.match(historyListSource, /LEFT JOIN ais_advertising_email_history_deleted_runs/u);
+assert.match(historyListSource, /LEFT JOIN ais_advertising_email_history_transfers/u);
 assert.match(historyListSource, /deleted_run\.run_id IS NULL/u);
 
 const collectorHandlerSource = sourceSlice(

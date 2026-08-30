@@ -49,6 +49,7 @@ assert.match(
   "Для таблицы рекламных запросов требуется отдельное состояние загрузки и копирования."
 );
 assert.match(advertisingState, /deletingRunId:\s*["']["']/u);
+assert.match(advertisingState, /updatingTransferRunId:\s*["']["']/u);
 assert.match(
   advertisingState,
   /olderExpanded:\s*false/u,
@@ -203,7 +204,10 @@ const advertisingHistoryIndex = renderFunction.indexOf("renderAdvertisingHistory
 assert.ok(advertisingKpiIndex >= 0, "Не найден блок плиток статистики рекламы.");
 assert.ok(advertisingControlsIndex > advertisingKpiIndex, "Плитки статистики должны располагаться выше панели сборщика.");
 assert.ok(advertisingResultsIndex >= 0, "Таблица адресов должна иметь якорь data-advertising-results.");
-assert.ok(advertisingHistoryIndex > advertisingResultsIndex, "Таблица адресов должна располагаться выше истории рекламных запросов.");
+assert.ok(
+  advertisingHistoryIndex > advertisingControlsIndex && advertisingHistoryIndex < advertisingResultsIndex,
+  "История рекламных запросов должна располагаться после сборщика и выше списка email."
+);
 assert.match(
   renderFunction,
   /<section\b[^>]*data-advertising-results[^>]*tabindex=["']-1["']/u,
@@ -263,6 +267,21 @@ assert.ok(perRunDeleteButton, "У каждого доступного админ
 assert.match(perRunDeleteButton, /data-run-id="\$\{escapeAttr\((?:run|row)\.runId(?:\s*\|\|\s*"")?\)\}"/u);
 assert.match(renderHistoryFunction, /isAdminUser\(\)[\s\S]{0,120}?row\.canDelete\s*!==\s*false/u);
 assert.match(renderHistoryFunction, /history\.deletingRunId/u);
+const transferCheckbox = /<input\b[^>]*data-action="toggle-advertising-history-transfer"[^>]*>/u
+  .exec(renderHistoryFunction)?.[0] || "";
+assert.ok(transferCheckbox, "У каждого запроса нужна ручная отметка передачи email в рекламу.");
+assert.match(transferCheckbox, /data-run-id="\$\{escapeAttr\(row\.runId\s*\|\|\s*""\)\}"/u);
+assert.match(transferCheckbox, /type="checkbox"/u);
+assert.match(transferCheckbox, /transferredToAdvertising\s*\?\s*"checked"/u);
+assert.match(renderHistoryFunction, /Email переданы в рекламу/u);
+assert.match(renderHistoryFunction, /history\.updatingTransferRunId/u);
+assert.match(renderHistoryFunction, /data-label="(?:Запуск|Источники|Результат|Передано|Действия)"/u);
+assert.match(
+  stylesSource,
+  /\.advertising-history-table\s*\{[\s\S]*?min-width:\s*0[\s\S]*?table-layout:\s*fixed/u,
+  "Таблица запросов не должна принудительно создавать горизонтальную прокрутку."
+);
+assert.match(stylesSource, /\.advertising-history-table td::before\s*\{[\s\S]*?content:\s*attr\(data-label\)/u);
 const historySourceDetails = /<details\b[^>]*class="advertising-history-source-details[^>]*>[\s\S]*?<\/details>/u
   .exec(renderHistoryFunction)?.[0] || "";
 assert.ok(historySourceDetails, "Источники каждого рекламного запроса должны быть сворачиваемыми.");
@@ -386,6 +405,12 @@ const historyCopyHandlerStart = bindFunction.indexOf(historyCopyHandlerAction);
 assert.ok(historyCopyHandlerStart >= 0, "Не найден обработчик копирования набора отдельного запроса.");
 const historyCopyBinding = bindFunction.slice(historyCopyHandlerStart, historyCopyHandlerStart + 500);
 assert.match(historyCopyBinding, /copyAdvertisingEmailHistoryRun\(button\.dataset\.runId\)/u);
+const transferBindingStart = bindFunction.indexOf("[data-action='toggle-advertising-history-transfer']");
+assert.ok(transferBindingStart >= 0, "Не найден обработчик ручной отметки передачи email.");
+assert.match(
+  bindFunction.slice(transferBindingStart, transferBindingStart + 500),
+  /updateAdvertisingEmailHistoryTransfer\([\s\S]*?checkbox\.dataset\.runId[\s\S]*?checkbox\.checked/u
+);
 const historyCopyHandler = namedFunction(blocks, "copyAdvertisingEmailHistoryRun");
 assert.match(historyCopyHandler, /String\(runId/u);
 assert.match(
@@ -400,6 +425,13 @@ assert.doesNotMatch(
   /getAdvertisingFilteredRows|state\.advertising\.filters/u,
   "Копирование исторического набора не должно зависеть от фильтров текущей таблицы."
 );
+
+const transferHandler = namedFunction(blocks, "updateAdvertisingEmailHistoryTransfer");
+assert.match(transferHandler, /method:\s*"POST"/u);
+assert.match(transferHandler, /transferredToAdvertising:\s*nextState/u);
+assert.match(transferHandler, /history\.updatingTransferRunId/u);
+assert.match(transferHandler, /persistAdvertisingEmailViewCache/u);
+assert.match(transferHandler, /previousRow/u, "При ошибке ручная отметка должна восстанавливаться.");
 
 const historyLoader = namedFunction(blocks, "loadAdvertisingEmailHistory");
 assert.match(historyLoader, /\/api\/advertising\/email-collector\/history/u);

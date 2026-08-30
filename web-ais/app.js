@@ -165,10 +165,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.370",
-    releasedAt: "2026-08-29"
+    version: "1.7.371",
+    releasedAt: "2026-08-30"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.371",
+      releasedAt: "2026-08-30",
+      changes: [
+        "История запросов рекламы перенесена выше списка email, адаптирована без обязательной горизонтальной прокрутки и получила сохраняемую ручную отметку передачи адресов в рекламу."
+      ]
+    },
     {
       version: "1.7.370",
       releasedAt: "2026-08-29",
@@ -6124,7 +6131,8 @@ MAX - https://bizvmax.ru/zifra_plus
         olderExpanded: false,
         error: "",
         copyingRunId: "",
-        deletingRunId: ""
+        deletingRunId: "",
+        updatingTransferRunId: ""
       },
       exclusions: {
         rows: [],
@@ -13525,16 +13533,27 @@ MAX - https://bizvmax.ru/zifra_plus
       const failedSources = sources.filter((source) => source?.status === "error").length;
       const isCopying = history.copyingRunId === row.runId;
       const isDeleting = history.deletingRunId === row.runId;
+      const isUpdatingTransfer = history.updatingTransferRunId === row.runId;
+      const transferredToAdvertising = Boolean(row?.transferredToAdvertising);
+      const transferredBy = row?.transferredBy || {};
+      const transferredByLabel = transferredBy.name || transferredBy.login || "";
+      const transferredTitle = transferredToAdvertising
+        ? [
+          "Email переданы в рекламу",
+          row.transferredAt ? formatDateTimeRu(row.transferredAt) : "",
+          transferredByLabel
+        ].filter(Boolean).join(" · ")
+        : "Установите отметку вручную после передачи email в рекламу";
       const copyDisabled = Boolean(history.copyingRunId || history.deletingRunId) || !newReady;
       const canDelete = isAdminUser() && row.canDelete !== false;
       return `
-        <tr data-advertising-history-run="${escapeAttr(row.runId || "")}">
-          <td>
+        <tr class="${transferredToAdvertising ? "is-transferred" : ""}" data-advertising-history-run="${escapeAttr(row.runId || "")}">
+          <td data-label="Запуск">
             <strong>${escapeHtml(formatDateTimeRu(row.refreshedAt) || "—")}</strong>
             <small>Запуск № ${formatStatisticsInteger(row.sequence)}</small>
             <small>${escapeHtml(userLabel)}${userLogin ? ` · ${escapeHtml(userLogin)}` : ""}</small>
           </td>
-          <td>
+          <td data-label="Источники">
             ${sources.length ? `
               <details class="advertising-history-source-details ${failedSources ? "has-errors" : ""}">
                 <summary>Источники · ${formatStatisticsInteger(sources.length)}${failedSources ? ` · ошибок ${formatStatisticsInteger(failedSources)}` : ""}</summary>
@@ -13544,14 +13563,26 @@ MAX - https://bizvmax.ru/zifra_plus
               </details>
             ` : "—"}
           </td>
-          <td>${comparedTo.hasPrevious
-            ? `<strong>С предыдущим запуском</strong><small>${comparedTo.refreshedAt ? escapeHtml(formatDateTimeRu(comparedTo.refreshedAt)) : "Дата недоступна"}</small>`
-            : '<strong>Первый сохранённый поиск</strong><small>Весь набор считался новым</small>'}</td>
-          <td class="advertising-history-metric"><strong>${formatStatisticsInteger(summary.ready)}</strong><small>готовы из ${formatStatisticsInteger(summary.unique)}</small><small>${escapeHtml(formatAdvertisingDuration(row.durationMs))}</small></td>
-          <td class="advertising-history-metric"><strong>${formatStatisticsInteger(newReady)}</strong><small>готовы из ${formatStatisticsInteger(newUnique)} новых</small></td>
-          <td><div class="advertising-history-actions">
-            <button class="ghost-button compact-button advertising-history-copy" data-action="copy-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${copyDisabled ? "disabled" : ""}>${isCopying ? '<span class="auth-spinner" aria-hidden="true"></span> Копирование…' : `Копировать набор (${formatStatisticsInteger(newReady)})`}</button>
-            ${canDelete ? `<button class="danger-button compact-button advertising-history-delete" data-action="delete-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${history.loading || history.deletingRunId || history.copyingRunId || state.advertising.resultLoading ? "disabled" : ""}>${isDeleting ? '<span class="auth-spinner" aria-hidden="true"></span> Удаление…' : "Удалить"}</button>` : ""}
+          <td class="advertising-history-summary" data-label="Результат">
+            <div class="advertising-history-summary-content">
+              <div class="advertising-history-metric"><strong>${formatStatisticsInteger(summary.ready)} из ${formatStatisticsInteger(summary.unique)}</strong><small>готовы к рекламе</small></div>
+              <div class="advertising-history-metric"><strong>${formatStatisticsInteger(newReady)} из ${formatStatisticsInteger(newUnique)}</strong><small>новых готовы</small></div>
+              <small>${escapeHtml(formatAdvertisingDuration(row.durationMs))}</small>
+              <small>${comparedTo.hasPrevious
+                ? `Сравнение с ${comparedTo.refreshedAt ? escapeHtml(formatDateTimeRu(comparedTo.refreshedAt)) : "предыдущим запуском"}`
+                : "Первый сохранённый поиск"}</small>
+            </div>
+          </td>
+          <td class="advertising-history-transfer" data-label="Передано">
+            <label class="advertising-history-transfer-toggle" title="${escapeAttr(transferredTitle)}">
+              <input data-action="toggle-advertising-history-transfer" data-run-id="${escapeAttr(row.runId || "")}" type="checkbox" ${transferredToAdvertising ? "checked" : ""} ${history.updatingTransferRunId ? "disabled" : ""}>
+              <span>${isUpdatingTransfer ? "Сохранение…" : "Email переданы в рекламу"}</span>
+            </label>
+            ${transferredToAdvertising ? `<small>${escapeHtml([row.transferredAt ? formatDateTimeRu(row.transferredAt) : "", transferredByLabel].filter(Boolean).join(" · ") || "Отметка сохранена")}</small>` : ""}
+          </td>
+          <td data-label="Действия"><div class="advertising-history-actions">
+            <button class="ghost-button compact-button advertising-history-copy" data-action="copy-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${copyDisabled ? "disabled" : ""}>${isCopying ? '<span class="auth-spinner" aria-hidden="true"></span> Копирование…' : `Копировать (${formatStatisticsInteger(newReady)})`}</button>
+            ${canDelete ? `<button class="danger-button compact-button advertising-history-delete" data-action="delete-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${history.loading || history.deletingRunId || history.copyingRunId || history.updatingTransferRunId || state.advertising.resultLoading ? "disabled" : ""}>${isDeleting ? '<span class="auth-spinner" aria-hidden="true"></span> Удаление…' : "Удалить"}</button>` : ""}
           </div></td>
         </tr>
       `;
@@ -13561,12 +13592,11 @@ MAX - https://bizvmax.ru/zifra_plus
         <table class="data-table advertising-history-table">
           <thead>
             <tr>
-              <th>Дата и время</th>
-              <th>Источники запроса</th>
-              <th>Сравнение</th>
+              <th>Запуск</th>
+              <th>Источники</th>
               <th>Результат</th>
-              <th>Новые адреса</th>
-              <th>Действие</th>
+              <th>Email переданы</th>
+              <th>Действия</th>
             </tr>
           </thead>
           <tbody>${renderRows(items)}</tbody>
@@ -13706,6 +13736,8 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </section>
 
+        ${renderAdvertisingHistory()}
+
         <section class="panel advertising-results-panel" data-advertising-results tabindex="-1">
           <div class="panel-head advertising-results-head">
             <div><p class="eyebrow">Сохранённый результат</p><h2>Email-адреса последнего поиска</h2></div>
@@ -13741,8 +13773,6 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${renderTablePagination("advertisingEmails", rows.length, pagination)}
               `)}
         </section>
-
-        ${renderAdvertisingHistory()}
         ` : advertisingTab === "sources" ? renderAdvertisingSourceBuilder() : renderAdvertisingExclusions()}
       </section>
     `;
@@ -13918,6 +13948,69 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  async function updateAdvertisingEmailHistoryTransfer(runId, transferredToAdvertising) {
+    const advertising = state.advertising;
+    const history = advertising.history;
+    const normalizedRunId = String(runId || "").trim();
+    if (!normalizedRunId || history.updatingTransferRunId) return;
+    const rowIndex = history.rows.findIndex((item) => String(item?.runId || "") === normalizedRunId);
+    if (rowIndex < 0) return;
+    const previousRow = { ...history.rows[rowIndex] };
+    const nextState = Boolean(transferredToAdvertising);
+    const currentUser = getCurrentAuthUser();
+    history.rows = history.rows.map((item, index) => index === rowIndex ? {
+      ...item,
+      transferredToAdvertising: nextState,
+      transferredAt: nextState ? new Date().toISOString() : "",
+      transferredBy: nextState ? {
+        id: String(currentUser.id || ""),
+        login: String(currentUser.login || ""),
+        name: String(currentUser.name || "")
+      } : { id: "", login: "", name: "" }
+    } : item);
+    history.updatingTransferRunId = normalizedRunId;
+    history.error = "";
+    advertising.error = "";
+    if (state.view === "advertising") render();
+    try {
+      const response = await fetch(photoApiUrl("/api/advertising/email-collector/history"), {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({
+          runId: normalizedRunId,
+          transferredToAdvertising: nextState
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      history.rows = history.rows.map((item) => String(item?.runId || "") === normalizedRunId ? {
+        ...item,
+        transferredToAdvertising: Boolean(payload.transferredToAdvertising),
+        transferredAt: String(payload.transferredAt || ""),
+        transferredBy: payload.transferredBy && typeof payload.transferredBy === "object"
+          ? payload.transferredBy
+          : { id: "", login: "", name: "" }
+      } : item);
+      advertising.notice = nextState
+        ? `Запрос рекламы № ${formatStatisticsInteger(previousRow.sequence)} отмечен как переданный.`
+        : `Для запроса рекламы № ${formatStatisticsInteger(previousRow.sequence)} отметка снята.`;
+      void persistAdvertisingEmailViewCache();
+    } catch (error) {
+      history.rows = history.rows.map((item) => String(item?.runId || "") === normalizedRunId
+        ? previousRow
+        : item);
+      history.error = error.message || "Не удалось сохранить отметку передачи email в рекламу.";
+    } finally {
+      history.updatingTransferRunId = "";
+      if (state.view === "advertising") render();
+    }
+  }
+
   async function deleteAdvertisingEmailHistoryRun(runId) {
     const advertising = state.advertising;
     const history = advertising.history;
@@ -13927,6 +14020,7 @@ MAX - https://bizvmax.ru/zifra_plus
       || !normalizedRunId
       || history.deletingRunId
       || history.copyingRunId
+      || history.updatingTransferRunId
       || history.loading
       || advertising.resultLoading
     ) return;
@@ -14332,6 +14426,12 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.querySelectorAll("[data-action='copy-advertising-history-run']").forEach((button) => {
       button.addEventListener("click", () => copyAdvertisingEmailHistoryRun(button.dataset.runId));
+    });
+    document.querySelectorAll("[data-action='toggle-advertising-history-transfer']").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => updateAdvertisingEmailHistoryTransfer(
+        checkbox.dataset.runId,
+        checkbox.checked
+      ));
     });
     document.querySelectorAll("[data-action='delete-advertising-history-run']").forEach((button) => {
       button.addEventListener("click", () => deleteAdvertisingEmailHistoryRun(button.dataset.runId));

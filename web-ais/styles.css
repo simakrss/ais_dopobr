@@ -25617,7 +25617,8 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   width: 100%;
   max-width: 100%;
   max-height: min(52vh, 560px);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior-inline: contain;
   scrollbar-gutter: stable;
   border: 1px solid var(--line);
@@ -25721,7 +25722,8 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   max-width: 100%;
   min-width: 0;
   max-height: min(52vh, 560px);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior-inline: contain;
   scrollbar-gutter: stable;
   background: #fff;
@@ -25741,19 +25743,31 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 
 .advertising-history-table {
   width: 100%;
-  min-width: 940px;
+  min-width: 0;
+  table-layout: fixed;
   border-collapse: collapse;
   background: #fff;
 }
+
+.advertising-history-table th:nth-child(1) { width: 18%; }
+.advertising-history-table th:nth-child(2) { width: 20%; }
+.advertising-history-table th:nth-child(3) { width: 22%; }
+.advertising-history-table th:nth-child(4) { width: 21%; }
+.advertising-history-table th:nth-child(5) { width: 19%; }
 
 .advertising-history-table :is(th, td) {
   padding: 7px 8px;
   vertical-align: top;
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .advertising-history-table th {
-  white-space: nowrap;
+  white-space: normal;
+}
+
+.advertising-history-table tr.is-transferred > td {
+  background: #f5faf8;
 }
 
 .advertising-history-table td > strong,
@@ -25768,23 +25782,23 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 }
 
 .advertising-history-sources {
-  min-width: 170px;
-  max-width: 300px;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
 }
 
 .advertising-history-source-details {
-  min-width: 170px;
-  max-width: 300px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .advertising-history-source-details > summary {
   cursor: pointer;
   color: #35655b;
   font-weight: 700;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .advertising-history-source-details.has-errors > summary {
@@ -25818,9 +25832,9 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 }
 
 .advertising-history-metric {
-  min-width: 72px;
+  min-width: 0;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .advertising-history-metric strong,
@@ -25838,20 +25852,63 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   font-size: 10px;
 }
 
+.advertising-history-summary-content {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+}
+
+.advertising-history-summary-content > small {
+  grid-column: 1 / -1;
+}
+
+.advertising-history-transfer-toggle {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 6px;
+  color: #314a43;
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.advertising-history-transfer-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 16px;
+  accent-color: var(--teal);
+}
+
+.advertising-history-transfer-toggle input:disabled {
+  cursor: progress;
+}
+
+.advertising-history-transfer > small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .advertising-history-copy {
-  min-width: 108px;
+  width: 100%;
+  min-width: 0;
   min-height: 30px;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .advertising-history-actions {
-  display: flex;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .advertising-history-delete {
+  width: 100%;
+  min-width: 0;
   min-height: 30px;
 }
 
@@ -26339,9 +26396,6 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
     grid-template-columns: 1fr;
   }
 
-  .advertising-history-table {
-    min-width: 820px;
-  }
 }
 
 @media (max-width: 640px) {
@@ -26432,8 +26486,59 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   }
 
   .advertising-history-table-wrap {
-    max-height: min(58vh, 480px);
+    max-height: none;
+    overflow: visible;
     scrollbar-gutter: auto;
+  }
+
+  .advertising-history-table,
+  .advertising-history-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .advertising-history-table thead {
+    display: none;
+  }
+
+  .advertising-history-table tr {
+    display: grid;
+    width: 100%;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .advertising-history-table tr:last-child {
+    border-bottom: 0;
+  }
+
+  .advertising-history-table td {
+    display: block;
+    width: 100%;
+    border-bottom: 0;
+    padding: 8px 9px;
+  }
+
+  .advertising-history-table td + td {
+    border-top: 1px solid #edf2ef;
+  }
+
+  .advertising-history-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: var(--muted);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .advertising-history-summary-content {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .advertising-history-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .advertising-history-older-details > summary {
@@ -26446,22 +26551,18 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
     scrollbar-gutter: auto;
   }
 
-  .advertising-history-table {
-    min-width: 760px;
-  }
-
   .advertising-history-sources {
-    min-width: 150px;
-    max-width: 220px;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .advertising-history-source-details {
-    min-width: 150px;
-    max-width: 220px;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .advertising-history-copy {
-    min-width: 96px;
+    min-width: 0;
   }
 
   .advertising-source-editor > header {

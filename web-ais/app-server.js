@@ -8815,6 +8815,7 @@ function normalizeAdvertisingEmailHistoryRunId(value) {
 function publicAdvertisingEmailHistoryListRun(row, authUser = null) {
   const previousRunId = String(row?.previous_run_id || "");
   const sources = advertisingEmailHistoryJson(row?.sources_json, []);
+  const transferredToAdvertising = Boolean(Number(row?.transferred_to_advertising) || 0);
   return {
     runId: String(row?.run_id || ""),
     sequence: Math.max(0, Number(row?.run_sequence) || 0),
@@ -8828,6 +8829,15 @@ function publicAdvertisingEmailHistoryListRun(row, authUser = null) {
     canDelete: String(authUser?.role || "") === "admin",
     sources: Array.isArray(sources) ? sources : [],
     summary: advertisingEmailHistoryJson(row?.summary_json, {}),
+    transferredToAdvertising,
+    transferredAt: transferredToAdvertising
+      ? advertisingEmailHistoryIsoDate(row?.transferred_at)
+      : "",
+    transferredBy: transferredToAdvertising ? {
+      id: String(row?.transfer_user_id || ""),
+      login: String(row?.transfer_user_login || ""),
+      name: String(row?.transfer_user_name || "")
+    } : { id: "", login: "", name: "" },
     comparedTo: {
       hasPrevious: Boolean(previousRunId),
       runId: previousRunId,
@@ -8852,10 +8862,16 @@ async function readAdvertisingEmailHistoryRuns(authUser = null) {
               current_run.refreshed_at, current_run.duration_ms,
               current_run.user_id, current_run.user_login, current_run.user_name,
               current_run.sources_json, current_run.summary_json,
+              transfer_state.transferred_to_advertising, transfer_state.transferred_at,
+              transfer_state.updated_by_id AS transfer_user_id,
+              transfer_state.updated_by_login AS transfer_user_login,
+              transfer_state.updated_by_name AS transfer_user_name,
               previous_run.refreshed_at AS previous_refreshed_at
          FROM ais_advertising_email_history_runs AS current_run
          LEFT JOIN ais_advertising_email_history_runs AS previous_run
            ON previous_run.run_id = current_run.previous_run_id
+         LEFT JOIN ais_advertising_email_history_transfers AS transfer_state
+           ON transfer_state.run_id = current_run.run_id
          LEFT JOIN ais_advertising_email_history_deleted_runs AS deleted_run
            ON deleted_run.state_key = ? AND deleted_run.run_id = current_run.run_id
         WHERE deleted_run.run_id IS NULL
@@ -8891,6 +8907,98 @@ async function readLatestAdvertisingEmailHistoryRunId() {
     [ADVERTISING_EMAIL_HISTORY_STATE_KEY]
   );
   return String(rows[0]?.last_run_id || "");
+}
+
+async function updateAdvertisingEmailHistoryTransfer(value, transferredToAdvertising, authUser = null) {
+  const runId = normalizeAdvertisingEmailHistoryRunId(value);
+  if (typeof transferredToAdvertising !== "boolean") {
+    throw advertisingEmailHistoryError(
+      "Передайте состояние отметки «Email переданы в рекламу».",
+      400,
+      "ADVERTISING_HISTORY_TRANSFER_INVALID_STATE"
+    );
+  }
+  const pool = await getSharedRecordLocksMySqlPool();
+  if (!pool) {
+    throw advertisingEmailHistoryError(
+      "MySQL общей базы не настроен.",
+      503,
+      "ADVERTISING_HISTORY_UNAVAILABLE"
+    );
+  }
+  const connection = await pool.getConnection().catch((error) => {
+    throw advertisingEmailHistoryError(
+      `Не удалось подключиться к истории рекламных контактов: ${error.message}`,
+      503,
+      "ADVERTISING_HISTORY_UNAVAILABLE"
+    );
+  });
+  try {
+    await connection.beginTransaction();
+    const [runRows] = await connection.query(
+      `SELECT current_run.run_id
+         FROM ais_advertising_email_history_runs AS current_run
+         LEFT JOIN ais_advertising_email_history_deleted_runs AS deleted_run
+           ON deleted_run.state_key = ? AND deleted_run.run_id = current_run.run_id
+        WHERE current_run.run_id = ? AND deleted_run.run_id IS NULL
+        LIMIT 1
+        FOR UPDATE`,
+      [ADVERTISING_EMAIL_HISTORY_STATE_KEY, runId]
+    );
+    if (!runRows.length) {
+      throw advertisingEmailHistoryError(
+        "Запрос рекламы не найден.",
+        404,
+        "ADVERTISING_HISTORY_RUN_NOT_FOUND"
+      );
+    }
+    const updatedAt = new Date();
+    const transferredAt = transferredToAdvertising ? updatedAt : null;
+    const user = {
+      id: cleanAdvertisingContactText(authUser?.id, 191),
+      login: cleanAdvertisingContactText(authUser?.login, 160),
+      name: cleanAdvertisingContactText(authUser?.name, 240)
+    };
+    await connection.query(
+      `INSERT INTO ais_advertising_email_history_transfers
+        (run_id, transferred_to_advertising, transferred_at,
+         updated_by_id, updated_by_login, updated_by_name, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         transferred_to_advertising = VALUES(transferred_to_advertising),
+         transferred_at = VALUES(transferred_at),
+         updated_by_id = VALUES(updated_by_id),
+         updated_by_login = VALUES(updated_by_login),
+         updated_by_name = VALUES(updated_by_name),
+         updated_at = VALUES(updated_at)`,
+      [
+        runId,
+        transferredToAdvertising ? 1 : 0,
+        transferredAt,
+        user.id,
+        user.login,
+        user.name,
+        updatedAt
+      ]
+    );
+    await connection.commit();
+    return {
+      runId,
+      transferredToAdvertising,
+      transferredAt: transferredAt ? transferredAt.toISOString() : "",
+      transferredBy: transferredToAdvertising ? user : { id: "", login: "", name: "" }
+    };
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    if (error?.statusCode) throw error;
+    throw advertisingEmailHistoryError(
+      `Не удалось сохранить отметку передачи email в рекламу: ${error.message}`,
+      isMySqlConnectivityError(error) ? 503 : 500,
+      "ADVERTISING_HISTORY_TRANSFER_SAVE_FAILED"
+    );
+  } finally {
+    connection.release();
+  }
 }
 
 async function deleteAdvertisingEmailHistoryRun(value, authUser = null) {
@@ -9243,6 +9351,13 @@ async function pruneAdvertisingEmailHistoryRuns(connection) {
       expiredIds
     );
   }
+  await connection.query(
+    `DELETE transfer_state
+       FROM ais_advertising_email_history_transfers AS transfer_state
+       LEFT JOIN ais_advertising_email_history_runs AS retained_run
+         ON retained_run.run_id = transfer_state.run_id
+      WHERE retained_run.run_id IS NULL`
+  );
   await connection.query(
     `DELETE deleted_run
        FROM ais_advertising_email_history_deleted_runs AS deleted_run
@@ -9870,11 +9985,33 @@ async function handleAdvertisingEmailCollector(req, res, authUser, requestUrl) {
 }
 
 async function handleAdvertisingEmailHistory(req, res, requestUrl, authUser) {
-  if (!["GET", "DELETE"].includes(req.method)) {
-    sendError(res, 405, "Method not allowed");
+  if (!["GET", "POST", "DELETE"].includes(req.method)) {
+    sendError(res, 405, "Метод не поддерживается.");
     return;
   }
   try {
+    if (req.method === "POST") {
+      const body = await readJsonBody(req, 16 * 1024);
+      const updated = await updateAdvertisingEmailHistoryTransfer(
+        body.runId,
+        body.transferredToAdvertising,
+        authUser
+      );
+      await safelyAppendAuditEntry({
+        action: updated.transferredToAdvertising
+          ? "Email запроса отмечены как переданные в рекламу"
+          : "Снята отметка передачи email запроса в рекламу",
+        area: "Реклама",
+        entityType: "advertising-collection",
+        entityId: updated.runId,
+        details: updated.transferredToAdvertising
+          ? "Пользователь вручную подтвердил передачу email в рекламу."
+          : "Пользователь вручную снял отметку передачи email в рекламу.",
+        source: "advertising-email-collector"
+      }, authUser, req);
+      sendJson(res, 200, { ok: true, ...updated });
+      return;
+    }
     if (req.method === "DELETE") {
       const deleted = await deleteAdvertisingEmailHistoryRun(
         requestUrl.searchParams.get("runId"),
@@ -10087,6 +10224,19 @@ async function getSharedRecordLocksMySqlPool() {
           PRIMARY KEY (run_id),
           UNIQUE KEY ais_advertising_email_history_runs_sequence (run_sequence),
           KEY ais_advertising_email_history_runs_refreshed (refreshed_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ais_advertising_email_history_transfers (
+          run_id VARCHAR(64) NOT NULL,
+          transferred_to_advertising TINYINT(1) NOT NULL DEFAULT 0,
+          transferred_at DATETIME(3) NULL,
+          updated_by_id VARCHAR(191) NOT NULL DEFAULT '',
+          updated_by_login VARCHAR(160) NOT NULL DEFAULT '',
+          updated_by_name VARCHAR(240) NOT NULL DEFAULT '',
+          updated_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (run_id),
+          KEY ais_advertising_email_history_transfers_state (transferred_to_advertising, transferred_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
       await pool.query(`
@@ -36643,6 +36793,8 @@ module.exports = {
   persistAdvertisingEmailHistoryResult,
   readLatestAdvertisingEmailHistoryResult,
   readLatestAdvertisingEmailHistoryRunId,
+  publicAdvertisingEmailHistoryListRun,
+  updateAdvertisingEmailHistoryTransfer,
   readAdvertisingEmailHistoryRuns,
   readAdvertisingEmailHistoryNewReadyEmails,
   deleteAdvertisingEmailHistoryRun,
