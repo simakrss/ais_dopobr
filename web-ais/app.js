@@ -13671,12 +13671,21 @@ MAX - https://bizvmax.ru/zifra_plus
     return Boolean(row?.isNew) && !isAdvertisingCurrentRunTransferred();
   }
 
-  function getAdvertisingEffectiveNewSummary(summary, transferredToAdvertising) {
+  function getAdvertisingStoredNewSummary(summary) {
     const source = summary && typeof summary === "object" ? summary : {};
     return {
+      newUnique: Math.max(0, Math.floor(Number(source.newUnique) || 0)),
+      newReady: Math.max(0, Math.floor(Number(source.newReady) || 0))
+    };
+  }
+
+  function getAdvertisingEffectiveNewSummary(summary, transferredToAdvertising) {
+    const source = summary && typeof summary === "object" ? summary : {};
+    const stored = getAdvertisingStoredNewSummary(source);
+    return {
       ...source,
-      newUnique: transferredToAdvertising ? 0 : Math.max(0, Number(source.newUnique) || 0),
-      newReady: transferredToAdvertising ? 0 : Math.max(0, Number(source.newReady) || 0)
+      newUnique: transferredToAdvertising ? 0 : stored.newUnique,
+      newReady: transferredToAdvertising ? 0 : stored.newReady
     };
   }
 
@@ -13959,9 +13968,9 @@ MAX - https://bizvmax.ru/zifra_plus
       const isDeleting = history.deletingRunId === row.runId;
       const isUpdatingTransfer = history.updatingTransferRunId === row.runId;
       const transferredToAdvertising = Boolean(row?.transferredToAdvertising);
+      const storedNewSummary = getAdvertisingStoredNewSummary(summary);
       const effectiveSummary = getAdvertisingEffectiveNewSummary(summary, transferredToAdvertising);
-      const newReady = effectiveSummary.newReady;
-      const newUnique = effectiveSummary.newUnique;
+      const availableNewReady = effectiveSummary.newReady;
       const transferredBy = row?.transferredBy || {};
       const transferredByLabel = transferredBy.name || transferredBy.login || "";
       const transferredTitle = transferredToAdvertising
@@ -13973,7 +13982,7 @@ MAX - https://bizvmax.ru/zifra_plus
         : "Установите отметку вручную после передачи email в рекламу";
       const copyDisabled = Boolean(
         history.copyingRunId || history.deletingRunId || history.updatingTransferRunId
-      ) || !newReady;
+      ) || !availableNewReady;
       const canDelete = isAdminUser() && row.canDelete !== false;
       return `
         <tr class="${transferredToAdvertising ? "is-transferred" : ""}" data-advertising-history-run="${escapeAttr(row.runId || "")}">
@@ -13995,7 +14004,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <td class="advertising-history-summary" data-label="Результат">
             <div class="advertising-history-summary-content">
               <div class="advertising-history-metric"><strong>${formatStatisticsInteger(summary.ready)} из ${formatStatisticsInteger(summary.unique)}</strong><small>готовы к рекламе</small></div>
-              <div class="advertising-history-metric"><strong>${formatStatisticsInteger(newReady)} из ${formatStatisticsInteger(newUnique)}</strong><small>новых готовы</small></div>
+              <div class="advertising-history-metric" title="Зафиксировано в момент выполнения поиска и не меняется при последующих операциях"><strong>${formatStatisticsInteger(storedNewSummary.newReady)} из ${formatStatisticsInteger(storedNewSummary.newUnique)}</strong><small>новых было готово</small></div>
               <small>${escapeHtml(formatAdvertisingDuration(row.durationMs))}</small>
               <small>${comparedTo.hasPrevious
                 ? `Сравнение с ${comparedTo.refreshedAt ? escapeHtml(formatDateTimeRu(comparedTo.refreshedAt)) : "предыдущим запуском"}`
@@ -14010,7 +14019,7 @@ MAX - https://bizvmax.ru/zifra_plus
             ${transferredToAdvertising ? `<small>${escapeHtml([row.transferredAt ? formatDateTimeRu(row.transferredAt) : "", transferredByLabel].filter(Boolean).join(" · ") || "Отметка сохранена")}</small>` : ""}
           </td>
           <td data-label="Действия"><div class="advertising-history-actions">
-            <button class="ghost-button compact-button advertising-history-copy" data-action="copy-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${copyDisabled ? "disabled" : ""}>${isCopying ? '<span class="auth-spinner" aria-hidden="true"></span> Копирование…' : `Копировать (${formatStatisticsInteger(newReady)})`}</button>
+            <button class="ghost-button compact-button advertising-history-copy" data-action="copy-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${copyDisabled ? "disabled" : ""}>${isCopying ? '<span class="auth-spinner" aria-hidden="true"></span> Копирование…' : `Копировать (${formatStatisticsInteger(availableNewReady)})`}</button>
             ${canDelete ? `<button class="danger-button compact-button advertising-history-delete" data-action="delete-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${history.loading || history.deletingRunId || history.copyingRunId || history.updatingTransferRunId || state.advertising.resultLoading ? "disabled" : ""}>${isDeleting ? '<span class="auth-spinner" aria-hidden="true"></span> Удаление…' : "Удалить"}</button>` : ""}
           </div></td>
         </tr>

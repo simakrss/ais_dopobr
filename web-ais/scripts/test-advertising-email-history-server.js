@@ -7,6 +7,7 @@ const {
   normalizeAdvertisingEmailHistoryRows,
   emptyAdvertisingEmailHistoryResult,
   buildAdvertisingEmailHistoryResult,
+  resolveAdvertisingEmailHistorySummary,
   publicAdvertisingEmailHistoryListRun,
   persistAdvertisingEmailHistoryResult
 } = require("../app-server.js");
@@ -82,6 +83,30 @@ assert.equal(firstRun.comparedTo.hasPrevious, false);
 assert.ok(firstRun.rows.every((row) => row.isNew));
 assert.equal(firstRun.summary.newUnique, 3);
 assert.equal(firstRun.summary.newReady, 2);
+
+const storedNewSummary = { newUnique: 17, newReady: 12 };
+const summaryBeforeRowChanges = resolveAdvertisingEmailHistorySummary(storedNewSummary, [
+  { isNew: true, excluded: false },
+  { isNew: false, excluded: false }
+]);
+const summaryAfterRowChanges = resolveAdvertisingEmailHistorySummary(storedNewSummary, [
+  { isNew: false, excluded: true },
+  { isNew: false, excluded: false },
+  { isNew: false, excluded: false }
+]);
+assert.equal(summaryBeforeRowChanges.newUnique, 17);
+assert.equal(summaryBeforeRowChanges.newReady, 12);
+assert.equal(summaryAfterRowChanges.newUnique, 17);
+assert.equal(summaryAfterRowChanges.newReady, 12);
+assert.notEqual(summaryBeforeRowChanges.unique, summaryAfterRowChanges.unique);
+assert.deepEqual(
+  resolveAdvertisingEmailHistorySummary({}, [
+    { isNew: true, excluded: false },
+    { isNew: true, excluded: true }
+  ]),
+  { unique: 2, ready: 1, excluded: 1, newUnique: 2, newReady: 1 },
+  "Старые записи без сохранённых счётчиков должны использовать безопасный расчёт по снимку"
+);
 
 assert.deepEqual(emptyAdvertisingEmailHistoryResult().comparedTo, {
   hasPrevious: false,

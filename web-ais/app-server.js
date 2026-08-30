@@ -8839,6 +8839,25 @@ function buildAdvertisingEmailHistoryResult(result, previousEmailKeys = [], opti
   };
 }
 
+function resolveAdvertisingEmailHistorySummary(value, rows = []) {
+  const summary = value && typeof value === "object" ? value : {};
+  const currentRows = Array.isArray(rows) ? rows : [];
+  const newRows = currentRows.filter((row) => row?.isNew);
+  const storedCount = (key, fallback) => {
+    if (!Object.prototype.hasOwnProperty.call(summary, key)) return fallback;
+    const count = Number(summary[key]);
+    return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : fallback;
+  };
+  return {
+    ...summary,
+    unique: currentRows.length,
+    ready: currentRows.filter((row) => !row?.excluded).length,
+    excluded: currentRows.filter((row) => row?.excluded).length,
+    newUnique: storedCount("newUnique", newRows.length),
+    newReady: storedCount("newReady", newRows.filter((row) => !row?.excluded).length)
+  };
+}
+
 function publicAdvertisingEmailHistoryRun(row) {
   if (!row) return null;
   return {
@@ -9665,14 +9684,7 @@ async function readLatestAdvertisingEmailHistoryResult() {
       durationMs: Math.max(0, Number(run.duration_ms) || 0),
       sources: advertisingEmailHistoryJson(run.sources_json, []),
       workbook: advertisingEmailHistoryJson(run.workbook_json, null),
-      summary: {
-        ...summary,
-        unique: rows.length,
-        ready: rows.filter((row) => !row.excluded).length,
-        excluded: rows.filter((row) => row.excluded).length,
-        newUnique: rows.filter((row) => row.isNew).length,
-        newReady: rows.filter((row) => row.isNew && !row.excluded).length
-      },
+      summary: resolveAdvertisingEmailHistorySummary(summary, rows),
       rows,
       comparedTo: {
         hasPrevious: Boolean(previousRun),
@@ -36922,6 +36934,7 @@ module.exports = {
   normalizeAdvertisingEmailHistoryRows,
   emptyAdvertisingEmailHistoryResult,
   buildAdvertisingEmailHistoryResult,
+  resolveAdvertisingEmailHistorySummary,
   persistAdvertisingEmailHistoryResult,
   readLatestAdvertisingEmailHistoryResult,
   readLatestAdvertisingEmailHistoryRunId,

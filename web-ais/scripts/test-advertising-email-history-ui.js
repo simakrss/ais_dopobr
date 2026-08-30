@@ -195,6 +195,15 @@ const effectiveSummaryFunction = namedFunction(blocks, "getAdvertisingEffectiveN
 assert.match(effectiveSummaryFunction, /transferredToAdvertising\s*\?\s*0/u);
 assert.match(effectiveSummaryFunction, /newUnique/u);
 assert.match(effectiveSummaryFunction, /newReady/u);
+const storedSummaryFunction = namedFunction(blocks, "getAdvertisingStoredNewSummary");
+const getAdvertisingStoredNewSummary = new Function(
+  `${storedSummaryFunction.replace(/^  /gmu, "")}\nreturn getAdvertisingStoredNewSummary;`
+)();
+assert.deepEqual(getAdvertisingStoredNewSummary({ newUnique: 17.9, newReady: 12.8 }), {
+  newUnique: 17,
+  newReady: 12
+});
+assert.deepEqual(getAdvertisingStoredNewSummary(null), { newUnique: 0, newReady: 0 });
 
 const renderFunction = namedFunction(blocks, "renderAdvertising");
 assert.match(renderFunction, /summary\.newUnique/u);
@@ -289,6 +298,14 @@ assert.ok(perRunCopyButton, "У каждого рекламного запрос
 assert.match(perRunCopyButton, /data-run-id="\$\{escapeAttr\((?:run|row)\.runId(?:\s*\|\|\s*"")?\)\}"/u);
 assert.match(renderHistoryFunction, /effectiveSummary\.newReady/u);
 assert.match(renderHistoryFunction, /getAdvertisingEffectiveNewSummary\(summary,\s*transferredToAdvertising\)/u);
+assert.match(renderHistoryFunction, /storedNewSummary\s*=\s*getAdvertisingStoredNewSummary\(summary\)/u);
+const storedHistoryMetric = /<div class="advertising-history-metric"[^>]*title="Зафиксировано[^>]*>[\s\S]*?<\/div>/u
+  .exec(renderHistoryFunction)?.[0] || "";
+assert.ok(storedHistoryMetric, "История должна пояснять, что количество новых фиксируется в момент поиска.");
+assert.match(storedHistoryMetric, /storedNewSummary\.newReady/u);
+assert.match(storedHistoryMetric, /storedNewSummary\.newUnique/u);
+assert.match(storedHistoryMetric, /новых было готово/u);
+assert.doesNotMatch(storedHistoryMetric, /effectiveSummary|transferredToAdvertising/u);
 assert.match(renderHistoryFunction, /history\.copyingRunId/u);
 assert.match(perRunCopyButton, /disabled/u);
 const perRunDeleteButton = /<button\b[^>]*data-action="delete-advertising-history-run"[^>]*>[\s\S]*?<\/button>/u
