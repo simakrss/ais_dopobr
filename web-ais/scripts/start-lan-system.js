@@ -504,6 +504,10 @@ function startRemoteServicesSupervisor() {
         "Bypass",
         "-File",
         remoteServicesScriptPath,
+        "-ParentProcessId",
+        String(process.pid),
+        "-CheckIntervalSeconds",
+        "5",
       ],
       {
         cwd: appRoot,
@@ -636,7 +640,8 @@ async function main() {
   const commonEnvironment = {
     ONLYOFFICE_JWT_SECRET: getOnlyOfficeSecret(),
     AIS_TRUST_GATEWAY: "1",
-    AIS_GATEWAY_SHARED_SECRET: getLocalServiceGatewaySecret()
+    AIS_GATEWAY_SHARED_SECRET: getLocalServiceGatewaySecret(),
+    AIS_TUNNEL_ONLY: "1"
   };
   const previousStatus = readLauncherStatus();
   if (previousStatus && processExists(Number(previousStatus.launcherPid))) {

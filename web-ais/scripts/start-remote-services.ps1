@@ -1,7 +1,9 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [switch]$Supervisor,
-  [ValidateRange(10, 300)]
+  [ValidateRange(0, 2147483647)]
+  [int]$ParentProcessId = 0,
+  [ValidateRange(2, 300)]
   [int]$CheckIntervalSeconds = 20
 )
 
@@ -25,11 +27,18 @@ $localPort = 8081
 
 if (-not $Supervisor) {
   $shellPath = (Get-Process -Id $PID).Path
-  $process = Start-Process -FilePath $shellPath -ArgumentList @(
+  $supervisorArguments = New-Object Collections.Generic.List[object]
+  @(
     "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
     "-File", "`"$scriptPath`"", "-Supervisor",
     "-CheckIntervalSeconds", $CheckIntervalSeconds
-  ) -WindowStyle Hidden -PassThru
+  ) | ForEach-Object { $supervisorArguments.Add($_) }
+  if ($ParentProcessId -gt 0) {
+    $supervisorArguments.Add("-ParentProcessId")
+    $supervisorArguments.Add($ParentProcessId)
+  }
+  $process = Start-Process -FilePath $shellPath -ArgumentList @($supervisorArguments) `
+    -WindowStyle Hidden -PassThru
   Write-Host "Службы АИС запускаются в фоновом режиме (PID $($process.Id))."
   exit 0
 }
@@ -214,13 +223,40 @@ function Get-TunnelSecret {
 
 function Test-OnlyOfficeContainerSecret([string]$OnlyOfficeSecret) {
   try {
-    $environment = & (Get-DockerPath) inspect ais-onlyoffice --format '{{range .Config.Env}}{{println .}}{{end}}'
+    # Build the Go template without literal paired braces, which Windows PowerShell 5 misparses here.
+    $openBraces = ([string][char]123) * 2
+    $closeBraces = ([string][char]125) * 2
+    $environmentTemplate = $openBraces + 'range .Config.Env' + $closeBraces `
+      + $openBraces + 'println .' + $closeBraces `
+      + $openBraces + 'end' + $closeBraces
+    $environment = & (Get-DockerPath) inspect ais-onlyoffice --format $environmentTemplate
     if ($LASTEXITCODE -ne 0) { return $false }
     $configured = [string](@($environment | Where-Object { $_ -like "JWT_SECRET=*" } | Select-Object -First 1) -replace '^JWT_SECRET=', '')
     return (Get-SecretFingerprint $configured) -eq (Get-SecretFingerprint $OnlyOfficeSecret)
   } catch {
     return $false
   }
+}
+
+function Test-ManagedParentProcess {
+  if ($ParentProcessId -le 0) { return $true }
+  try {
+    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$ParentProcessId" -ErrorAction Stop
+    $commandLine = ([string]$parent.CommandLine).Replace("/", "\").ToLowerInvariant()
+    return [string]$parent.Name -eq "node.exe" `
+      -and $commandLine.Contains("scripts\start-lan-system.js")
+  } catch {
+    return $false
+  }
+}
+
+function Test-ManagedDocumentServices(
+  [string]$Secret,
+  [string]$OnlyOfficeSecret
+) {
+  return (Test-Health "http://127.0.0.1:8082/healthcheck") `
+    -and (Test-Health "http://127.0.0.1:8083/health") `
+    -and (Test-ApplicationRuntime "http://127.0.0.1:$appPort/api/health" $Secret $OnlyOfficeSecret)
 }
 
 function Ensure-Containers([string]$OnlyOfficeSecret) {
@@ -362,8 +398,24 @@ try {
   Write-ServiceLog "Супервизор локальных сервисов запущен."
   while ($true) {
     try {
-      Ensure-Containers $onlyOfficeSecret
-      Ensure-ApplicationServers $secret $onlyOfficeSecret
+      if (-not (Test-ManagedParentProcess)) {
+        Write-ServiceLog "Основной супервизор АИС остановлен; внешний туннель завершается."
+        break
+      }
+      if ($ParentProcessId -gt 0) {
+        if (-not (Test-ManagedDocumentServices $secret $onlyOfficeSecret)) {
+          if ($null -ne $tunnel -and -not $tunnel.Process.HasExited) {
+            Stop-Process -Id $tunnel.Process.Id -Force -ErrorAction SilentlyContinue
+          }
+          $tunnel = $null
+          Write-ServiceLog "Ожидание готовности локальных сервисов перед запуском туннеля."
+          Start-Sleep -Seconds $CheckIntervalSeconds
+          continue
+        }
+      } else {
+        Ensure-Containers $onlyOfficeSecret
+        Ensure-ApplicationServers $secret $onlyOfficeSecret
+      }
       if ($null -eq $tunnel -or $tunnel.Process.HasExited) {
         $tunnel = Start-QuickTunnel
         Publish-TunnelRuntime $tunnel.Url $secret
@@ -389,6 +441,9 @@ try {
     Start-Sleep -Seconds $CheckIntervalSeconds
   }
 } finally {
+  if ($null -ne $tunnel -and -not $tunnel.Process.HasExited) {
+    Stop-Process -Id $tunnel.Process.Id -Force -ErrorAction SilentlyContinue
+  }
   $mutex.ReleaseMutex()
   $mutex.Dispose()
 }

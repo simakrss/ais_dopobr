@@ -13,6 +13,7 @@ const serviceControlPath = path.join(__dirname, "control-ais-service.ps1");
 const serviceInstallerPath = path.join(__dirname, "setup-ais-windows-service.ps1");
 const startupUpdatePath = path.join(__dirname, "sync-and-deploy-startup.ps1");
 const deployPath = path.join(__dirname, "deploy-lms.ps1");
+const remoteServicesPath = path.join(__dirname, "start-remote-services.ps1");
 const rootLauncherPath = path.join(repositoryRoot, "ЗАПУСТИТЬ АИС.bat");
 const localLauncherPath = path.join(appRoot, "ЗАПУСТИТЬ АИС В ЛОКАЛЬНОЙ СЕТИ.cmd");
 const rootStopPath = path.join(repositoryRoot, "ОСТАНОВИТЬ АИС.cmd");
@@ -32,7 +33,7 @@ const startSource = read(path.join(__dirname, "start-lan-system.js"));
 const stopSource = read(path.join(__dirname, "stop-lan-system.ps1"));
 const localServerSource = read(path.join(appRoot, "local-server.js"));
 const appServerSource = read(path.join(appRoot, "app-server.js"));
-const remoteServicesSource = read(path.join(__dirname, "start-remote-services.ps1"));
+const remoteServicesSource = read(remoteServicesPath);
 const onlyOfficeComposeSource = read(path.join(appRoot, "docker-compose.onlyoffice.yml"));
 
 assert.match(bootstrapSource, /https:\/\/nodejs\.org\/dist\/index\.json/u);
@@ -154,6 +155,7 @@ assert.match(startSource, /runtimeRoot[\s\S]*?\.runtime/u);
 assert.match(startSource, /gatewaySecretPath = path\.join\(runtimeRoot, "tunnel-secret\.txt"\)/u);
 assert.match(startSource, /remoteServicesScriptPath = path\.join\(__dirname, "start-remote-services\.ps1"\)/u);
 assert.match(startSource, /function startRemoteServicesSupervisor\(\)[\s\S]*?if \(runOnce\) return "skipped"/u);
+assert.match(startSource, /remoteServicesScriptPath,[\s\S]*?"-ParentProcessId",[\s\S]*?String\(process\.pid\)/u);
 assert.match(startSource, /status\.remoteDocumentServices = startRemoteServicesSupervisor\(\)/u);
 assert.match(startSource, /existingSystemRuntimeMatches/u);
 assert.match(startSource, /isExpectedNodeServiceProcess\(launcherPid,[\s\S]*?start-lan-system\.js/u);
@@ -167,8 +169,17 @@ assert.match(appServerSource, /await readLocalOnlyOfficeJwtSecret\(\)[\s\S]*?pro
 assert.match(appServerSource, /runtimeSecrets[\s\S]*?gateway:[\s\S]*?documentConverter:/u);
 assert.match(appServerSource, /await getOnlyOfficeConverterSettings\(\)/u);
 assert.match(remoteServicesSource, /onlyOfficeSecretPath[\s\S]*?onlyoffice-jwt-secret\.txt/u);
+assert.deepEqual(
+  fs.readFileSync(remoteServicesPath).subarray(0, 3),
+  Buffer.from([0xef, 0xbb, 0xbf]),
+  "Windows PowerShell scripts with Russian text require a UTF-8 BOM",
+);
 assert.match(remoteServicesSource, /Test-ApplicationRuntime/u);
 assert.match(remoteServicesSource, /Test-OnlyOfficeContainerSecret/u);
+assert.match(remoteServicesSource, /\$openBraces = \(\[string\]\[char\]123\) \* 2/u);
+assert.match(remoteServicesSource, /\$environmentTemplate = \$openBraces \+ 'range \.Config\.Env'/u);
+assert.match(remoteServicesSource, /function Test-ManagedParentProcess/u);
+assert.match(remoteServicesSource, /Основной супервизор АИС остановлен; внешний туннель завершается/u);
 assert.match(remoteServicesSource, /ONLYOFFICE_JWT_SECRET = \$OnlyOfficeSecret/u);
 assert.match(onlyOfficeComposeSource, /JWT_SECRET: "\$\{ONLYOFFICE_JWT_SECRET:\?Set ONLYOFFICE_JWT_SECRET\}"/u);
 assert.match(stopSource, /@\(8081, 19081\)/u);
@@ -181,6 +192,24 @@ assert.match(stopSource, /FromUnixTimeMilliseconds/u);
 assert.match(localServerSource, /AIS_APP_SERVER_ORIGIN \|\| "http:\/\/127\.0\.0\.1:19081"/u);
 
 if (process.platform === "win32") {
+  const remoteServicesSyntaxProbe = spawnSync(
+    "powershell.exe",
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-Command",
+      `$tokens = $null
+$errors = $null
+[void][Management.Automation.Language.Parser]::ParseFile('${remoteServicesPath.replace(/'/gu, "''")}', [ref]$tokens, [ref]$errors)
+if ($errors.Count) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }`,
+    ],
+    { encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(
+    remoteServicesSyntaxProbe.status,
+    0,
+    `Windows PowerShell rejected start-remote-services.ps1: ${remoteServicesSyntaxProbe.stderr}`,
+  );
   const progressProbeScript = `$source = Get-Content -LiteralPath '${serviceControlPath.replace(/'/gu, "''")}' -Raw -Encoding UTF8
 $tokens = $null
 $errors = $null
