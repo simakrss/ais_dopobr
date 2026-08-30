@@ -18,6 +18,7 @@ $resolvedAppRoot = if ([string]::IsNullOrWhiteSpace($AppRoot)) {
 $resolvedAppRoot = [IO.Path]::GetFullPath($resolvedAppRoot)
 $logDirectory = Join-Path $resolvedAppRoot "tmp\lan-system"
 $serviceLog = Join-Path $logDirectory "service-launch.log"
+$workerLog = Join-Path $logDirectory "worker-launch.log"
 
 try {
   $Host.UI.RawUI.WindowTitle = "АИС Допобразование — терминал запуска"
@@ -29,11 +30,19 @@ try {
 if (-not (Test-Path -LiteralPath $serviceLog -PathType Leaf)) {
   [IO.File]::WriteAllText($serviceLog, "", $utf8)
 }
+if (-not (Test-Path -LiteralPath $workerLog -PathType Leaf)) {
+  [IO.File]::WriteAllText($workerLog, "", $utf8)
+}
 
 Write-Host "АИС Допобразование — журнал службы" -ForegroundColor Cyan
-Write-Host "Файл: $serviceLog"
+Write-Host "Служба: $serviceLog"
+Write-Host "Рабочий процесс: $workerLog"
 Write-Host "Закрытие этого окна не останавливает службу АИС."
 Write-Host "Для завершения просмотра нажмите Ctrl+C или закройте окно." -ForegroundColor DarkGray
 Write-Host ""
 
-Get-Content -LiteralPath $serviceLog -Encoding UTF8 -Tail 200 -Wait
+Write-Host "Последние сообщения Windows-службы:" -ForegroundColor DarkCyan
+Get-Content -LiteralPath $serviceLog -Encoding UTF8 -Tail 50
+Write-Host ""
+Write-Host "Запуск и работа серверов:" -ForegroundColor DarkCyan
+Get-Content -LiteralPath $workerLog -Encoding UTF8 -Tail 200 -Wait

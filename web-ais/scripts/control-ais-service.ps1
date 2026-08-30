@@ -50,7 +50,7 @@ $appRoot = if ([string]::IsNullOrWhiteSpace($SourceAppRoot)) {
 } else {
   [IO.Path]::GetFullPath($SourceAppRoot)
 }
-$serviceLogPath = [IO.Path]::GetFullPath([IO.Path]::Combine($appRoot, "tmp\lan-system\service-launch.log"))
+$workerLogPath = [IO.Path]::GetFullPath([IO.Path]::Combine($appRoot, "tmp\lan-system\worker-launch.log"))
 $trayReadyPath = [IO.Path]::GetFullPath([IO.Path]::Combine($appRoot, "tmp\lan-system\tray-ready.json"))
 $installerPath = Join-Path $PSScriptRoot "setup-ais-windows-service.ps1"
 $trayPath = if (Test-Path -LiteralPath $protectedTrayPath -PathType Leaf) {
@@ -157,8 +157,8 @@ function Test-AisHealth {
 
 function Get-AisStartupLogOffset {
   try {
-    if (Test-Path -LiteralPath $serviceLogPath -PathType Leaf) {
-      return [long](Get-Item -LiteralPath $serviceLogPath -Force).Length
+    if (Test-Path -LiteralPath $workerLogPath -PathType Leaf) {
+      return [long](Get-Item -LiteralPath $workerLogPath -Force).Length
     }
   } catch { }
   return [long]0
@@ -169,9 +169,9 @@ function Write-AisStartupLogProgress([ref]$Offset) {
   $reader = $null
   $text = ""
   try {
-    if (-not (Test-Path -LiteralPath $serviceLogPath -PathType Leaf)) { return }
+    if (-not (Test-Path -LiteralPath $workerLogPath -PathType Leaf)) { return }
     $stream = [IO.FileStream]::new(
-      $serviceLogPath,
+      $workerLogPath,
       [IO.FileMode]::Open,
       [IO.FileAccess]::Read,
       ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)

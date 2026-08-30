@@ -19,11 +19,11 @@ $resolvedAppRoot = [IO.Path]::GetFullPath($AppRoot)
 $launcherPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "scripts\start-lan-system.js"))
 $startupUpdatePath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "scripts\sync-and-deploy-startup.ps1"))
 $portableNodePath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, ".runtime\node\node.exe"))
-$serviceLogPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "tmp\lan-system\service-launch.log"))
+$workerLogPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "tmp\lan-system\worker-launch.log"))
 $powerShellPath = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\v1.0\powershell.exe"
 
 function Write-ServiceLog([string]$Source, [string]$Message) {
-  $logDirectory = Split-Path -Parent $serviceLogPath
+  $logDirectory = Split-Path -Parent $workerLogPath
   if (-not (Test-Path -LiteralPath $logDirectory -PathType Container)) {
     New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
   }
@@ -31,7 +31,7 @@ function Write-ServiceLog([string]$Source, [string]$Message) {
   for ($attempt = 0; $attempt -lt 40; $attempt++) {
     try {
       $stream = New-Object IO.FileStream(
-        $serviceLogPath,
+        $workerLogPath,
         [IO.FileMode]::Append,
         [IO.FileAccess]::Write,
         ([IO.FileShare]::Read -bor [IO.FileShare]::Delete)
