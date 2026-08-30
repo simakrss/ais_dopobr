@@ -6241,6 +6241,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let systemHelpTwoFingerGesture = null;
   let systemHelpTouchActionSuppression = null;
   let employeePaymentPersistTimer = 0;
+  const pendingEmployeePaymentActChanges = new WeakMap();
   let studentApplicationsSearchTimer = 0;
   let mainRegistrySearchTimer = 0;
   let employeePaymentPreviewFrame = 0;
@@ -26312,6 +26313,17 @@ MAX - https://bizvmax.ru/zifra_plus
     return container?.querySelector('[data-employee-payment-field="actStatus"], [name="paymentActStatus"]') || null;
   }
 
+  function applyEmployeePaymentActControlsState(input, requestedState = "none") {
+    const checkboxState = applyEmployeePaymentActCheckboxState(input, requestedState);
+    const statusControl = getEmployeePaymentActStatusControl(input);
+    if (statusControl) {
+      if (checkboxState === "without") statusControl.value = EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT;
+      else if (checkboxState === "none") statusControl.value = "";
+      else if (!statusControl.value || isEmployeePaymentWithoutActStatus(statusControl.value)) statusControl.value = "Отправлен";
+    }
+    return checkboxState;
+  }
+
   function syncEmployeePaymentActCheckboxes(root = document) {
     root?.querySelectorAll('input[data-employee-payment-field="act"], input[name="paymentAct"]').forEach((input) => {
       const statusControl = getEmployeePaymentActStatusControl(input);
@@ -26329,13 +26341,32 @@ MAX - https://bizvmax.ru/zifra_plus
       ? String(input.dataset.employeePaymentActState)
       : getEmployeePaymentActCheckboxState({ act: input.checked });
     const nextState = currentState === "none" ? "formed" : currentState === "formed" ? "without" : "none";
-    applyEmployeePaymentActCheckboxState(input, nextState);
-    const statusControl = getEmployeePaymentActStatusControl(input);
-    if (statusControl) {
-      if (nextState === "without") statusControl.value = EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT;
-      else if (nextState === "none") statusControl.value = "";
-      else if (!statusControl.value || isEmployeePaymentWithoutActStatus(statusControl.value)) statusControl.value = "Отправлен";
-    }
+    applyEmployeePaymentActControlsState(input, nextState);
+    return true;
+  }
+
+  function scheduleEmployeePaymentActCheckboxChange(event, root) {
+    const input = event.target.closest('input[data-employee-payment-field="act"], input[name="paymentAct"]');
+    if (!input || !root?.contains(input) || input.disabled) return false;
+    event.preventDefault();
+    if (!cycleEmployeePaymentActCheckbox(event, root)) return false;
+    const requestedState = String(input.dataset.employeePaymentActState || "none");
+    const previousTask = pendingEmployeePaymentActChanges.get(input);
+    if (previousTask?.frame) window.cancelAnimationFrame(previousTask.frame);
+    if (previousTask?.timer) window.clearTimeout(previousTask.timer);
+    const task = { frame: 0, timer: 0 };
+    task.frame = window.requestAnimationFrame(() => {
+      task.frame = 0;
+      if (pendingEmployeePaymentActChanges.get(input) !== task || !root.contains(input)) return;
+      applyEmployeePaymentActControlsState(input, requestedState);
+      task.timer = window.setTimeout(() => {
+        task.timer = 0;
+        if (pendingEmployeePaymentActChanges.get(input) !== task || !root.contains(input)) return;
+        pendingEmployeePaymentActChanges.delete(input);
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }, 0);
+    });
+    pendingEmployeePaymentActChanges.set(input, task);
     return true;
   }
 
@@ -27399,7 +27430,7 @@ MAX - https://bizvmax.ru/zifra_plus
         skippedCount ? `Автоматические начисления, которые нельзя удалить, будут пропущены: ${skippedCount}.` : ""
       ].filter(Boolean).join("\n\n");
       if (!window.confirm(confirmation)) return;
-      const draft = getEmployeePaymentAccountingDraft();
+      const draft = getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false });
       const auditFields = getEmployeePaymentAuditFields();
       const changes = [];
       let removedCount = 0;
@@ -27440,7 +27471,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const operation = button.matches("[data-action='apply-employee-payment-group-act']") ? "act" : "paid";
     const actState = String(section.querySelector("[data-employee-payment-group-act]")?.value || "sent");
     const paidDate = String(section.querySelector("[data-employee-payment-group-paid]")?.value || "");
-    const draft = getEmployeePaymentAccountingDraft();
+    const draft = getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false });
     const auditFields = getEmployeePaymentAuditFields();
     const changes = [];
     let changedRows = 0;
@@ -37902,7 +37933,7 @@ MAX - https://bizvmax.ru/zifra_plus
         applyEmployeePaymentSortToDom(document.querySelector("[data-employee-payment-accounting]"));
       });
     });
-    employeePaymentAccounting?.addEventListener("click", (event) => cycleEmployeePaymentActCheckbox(event, employeePaymentAccounting));
+    employeePaymentAccounting?.addEventListener("click", (event) => scheduleEmployeePaymentActCheckboxChange(event, employeePaymentAccounting));
     employeePaymentAccounting?.addEventListener("click", duplicateEmployeePaymentAccountingRow);
     employeePaymentAccounting?.addEventListener("click", openEmployeeExpenseEditor);
     employeePaymentAccounting?.addEventListener("click", (event) => applyEmployeePaymentGroupOperation(event, employeePaymentAccounting));
@@ -39020,7 +39051,7 @@ MAX - https://bizvmax.ru/zifra_plus
     employeePaymentPersistTimer = 0;
   }
 
-  function collectContractFormDraft() {
+  function collectContractFormDraft(options = {}) {
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "contracts") return state.modal?.draft || {};
     const collections = getEmployeePaymentCollections();
@@ -39046,6 +39077,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     clearUnchangedGeneratedEmployeeCommunicationMessages(values, formElement);
     values.portalCredentials = buildContractPortalCredentials(values);
+    if (options.recalculatePaymentAccounting === false) return normalizeContractRecord(values);
     const accounting = getEmployeePaymentAccounting(values, collections);
     return normalizeContractRecord({
       ...values,
@@ -39383,7 +39415,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (form && form.dataset.employeeExpenseSubmitBound !== "true") {
       form.dataset.employeeExpenseSubmitBound = "true";
       syncEmployeePaymentActCheckboxes(form);
-      form.addEventListener("click", (event) => cycleEmployeePaymentActCheckbox(event, form));
+      form.addEventListener("click", (event) => scheduleEmployeePaymentActCheckboxChange(event, form));
       form.addEventListener("submit", saveEmployeeExpenseEditor);
       const actInput = form.elements.paymentAct;
       const actStatusInput = form.elements.paymentActStatus;
@@ -39472,7 +39504,7 @@ MAX - https://bizvmax.ru/zifra_plus
     let sourceType = context.sourceType;
     let sourceId = context.sourceId;
     let source = context.source;
-    const draft = getEmployeePaymentAccountingDraft();
+    const draft = getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false });
     const targetType = String(formData.get("paymentSource") || sourceType);
     if (!["direct", "general", "partner", "contract"].includes(targetType)) return;
     if (!["direct", "general"].includes(sourceType) && targetType !== sourceType) return;
@@ -39571,9 +39603,9 @@ MAX - https://bizvmax.ru/zifra_plus
     commitEmployeePaymentAccountingChange(draft, { sourceId }, true);
   }
 
-  function getEmployeePaymentAccountingDraft() {
+  function getEmployeePaymentAccountingDraft(options = {}) {
     const form = document.querySelector("#recordForm[data-config='contracts']");
-    if (form) return collectContractFormDraft();
+    if (form) return collectContractFormDraft(options);
     const id = String(form?.dataset.id || state.modal?.id || "").trim();
     const stored = (getEmployeePaymentCollections().contracts || [])
       .find((contract) => String(contract?.id || "").trim() === id) || {};
@@ -39701,7 +39733,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const pending = pendingEmployeePaymentPreview;
       pendingEmployeePaymentPreview = null;
       if (!pending) return;
-      const draft = getEmployeePaymentAccountingDraft();
+      const draft = getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false });
       synchronizeEmployeePaymentAgencyDraft(draft, pending.sourceType, pending.source);
       commitEmployeePaymentAccountingChange(draft, {
         sourceId: pending.sourceId,
@@ -39722,7 +39754,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const source = findEmployeePaymentSourceRecord(sourceType, sourceId);
     if (!source) return;
     const beforePayment = getEmployeePaymentEditorAuditRecord(sourceType, source);
-    const draft = getEmployeePaymentAccountingDraft();
+    const draft = getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false });
     const field = String(input.dataset.employeePaymentField || "");
     if (field === "source") {
       const targetType = String(input.value || "");
@@ -39866,7 +39898,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function commitEmployeePaymentOrderFromTable(tbody) {
-    const draft = getEmployeePaymentAccountingDraft();
+    const draft = getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false });
     const sourceLookup = buildEmployeePaymentSourceLookup();
     if (!syncEmployeePaymentOrderFromTable(tbody, sourceLookup)) return false;
     addEmployeePaymentAudit("Изменён порядок выплат", "Договоры сотрудников", draft.name || "Сотрудник", {
@@ -40059,7 +40091,7 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Не удалось продублировать связанную запись выплаты.");
       return;
     }
-    const draft = getEmployeePaymentAccountingDraft();
+    const draft = getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false });
     const values = getEmployeePaymentSourceValues(sourceType, source);
     addEmployeePaymentAudit(
       "Продублирована выплата",

@@ -38,20 +38,47 @@ function extractFunction(source, name) {
   throw new Error(`Функция ${name} не завершена.`);
 }
 
+const animationFrames = [];
+const timers = [];
 const context = {
   formatOrdersSdoDate: () => "",
-  document: {}
+  document: {},
+  Event: class TestEvent {
+    constructor(type, options = {}) {
+      this.type = type;
+      this.bubbles = Boolean(options.bubbles);
+    }
+  },
+  window: {
+    requestAnimationFrame(callback) {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    },
+    cancelAnimationFrame(id) {
+      animationFrames[id - 1] = null;
+    },
+    setTimeout(callback) {
+      timers.push(callback);
+      return timers.length;
+    },
+    clearTimeout(id) {
+      timers[id - 1] = null;
+    }
+  }
 };
 vm.createContext(context);
 vm.runInContext(`
   const EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT = "Без акта";
+  const pendingEmployeePaymentActChanges = new WeakMap();
   ${extractFunction(appSource, "normalizeEmployeePaymentActStatus")}
   ${extractFunction(appSource, "isEmployeePaymentWithoutActStatus")}
   ${extractFunction(appSource, "isEmployeePaymentCompletedActStatus")}
   ${extractFunction(appSource, "getEmployeePaymentActCheckboxState")}
   ${extractFunction(appSource, "applyEmployeePaymentActCheckboxState")}
   ${extractFunction(appSource, "getEmployeePaymentActStatusControl")}
+  ${extractFunction(appSource, "applyEmployeePaymentActControlsState")}
   ${extractFunction(appSource, "cycleEmployeePaymentActCheckbox")}
+  ${extractFunction(appSource, "scheduleEmployeePaymentActCheckboxChange")}
   ${extractFunction(appSource, "normalizeEmployeePaymentDateInput")}
   ${extractFunction(appSource, "isEmployeePaymentSettled")}
   ${extractFunction(appSource, "getEmployeePaymentActFilterValue")}
@@ -60,6 +87,7 @@ vm.runInContext(`
   this.api = {
     applyEmployeePaymentActCheckboxState,
     cycleEmployeePaymentActCheckbox,
+    scheduleEmployeePaymentActCheckboxChange,
     getEmployeePaymentActFilterOptions,
     getEmployeePaymentActFilterValue,
     isEmployeePaymentSettled,
@@ -99,6 +127,36 @@ assert.equal(context.api.cycleEmployeePaymentActCheckbox(event, root), true);
 assert.equal(checkbox.dataset.employeePaymentActState, "none");
 assert.equal(checkbox.indeterminate, false);
 assert.equal(statusControl.value, "");
+
+context.api.applyEmployeePaymentActCheckboxState(checkbox, "formed");
+statusControl.value = "Отправлен";
+let defaultPrevented = false;
+let dispatchedChange = null;
+checkbox.dispatchEvent = (changeEvent) => {
+  dispatchedChange = changeEvent;
+  return true;
+};
+assert.equal(context.api.scheduleEmployeePaymentActCheckboxChange({
+  target: checkbox,
+  preventDefault() {
+    defaultPrevented = true;
+  }
+}, root), true);
+assert.equal(defaultPrevented, true);
+assert.equal(checkbox.dataset.employeePaymentActState, "without");
+assert.equal(statusControl.value, "Без акта");
+assert.equal(dispatchedChange, null);
+
+// A cancelled native checkbox click may restore its previous visual state.
+checkbox.checked = true;
+checkbox.indeterminate = false;
+animationFrames.splice(0).forEach((callback) => callback?.());
+assert.equal(checkbox.checked, false);
+assert.equal(checkbox.indeterminate, true);
+assert.equal(checkbox.dataset.employeePaymentActState, "without");
+timers.splice(0).forEach((callback) => callback?.());
+assert.equal(dispatchedChange?.type, "change");
+assert.equal(dispatchedChange?.bubbles, true);
 
 const directExpense = { act: "+", actStatus: "Получен" };
 context.api.setEmployeePaymentSourceField("direct", directExpense, "act", {
@@ -142,6 +200,9 @@ assert.equal(serverContext.isPartnerPaymentSettled({ actStatus: "Отправл�
 
 assert.match(appSource, /<option value="without">Без акта<\/option>/u);
 assert.match(appSource, /data-employee-payment-act-state=/u);
+assert.match(appSource, /addEventListener\("click", \(event\) => scheduleEmployeePaymentActCheckboxChange/u);
+assert.match(appSource, /getEmployeePaymentAccountingDraft\(\{ recalculatePaymentAccounting: false \}\)/u);
+assert.match(appSource, /if \(options\.recalculatePaymentAccounting === false\) return normalizeContractRecord\(values\);/u);
 assert.match(stylesSource, /input\[data-employee-payment-field="act"\]:indeterminate::after/u);
 
 console.log("Employee payment without-act tri-state tests passed.");
