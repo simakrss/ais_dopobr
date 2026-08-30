@@ -84,6 +84,23 @@ assert.equal(
   ).tone,
   "valid"
 );
+assert.equal(
+  validateSqlMiniIdeQuery(
+    "SELECT DISTINCT email, org AS organization, location AS origin, date AS sourceReceivedAt FROM wp_ass_reg WHERE email IS NOT NULL AND TRIM(email) <> ''",
+    { allowWith: true, allowComments: true, allowTrailingSemicolon: true }
+  ).tone,
+  "valid",
+  "Оператор сравнения перед пустой строкой не должен считаться незавершённым"
+);
+assert.equal(
+  validateSqlMiniIdeQuery("SELECT '' AS empty_value, '(' AS marker FROM `contacts`", {}).tone,
+  "valid",
+  "Строковые литералы и экранированные имена должны учитываться как значения"
+);
+assert.match(
+  validateSqlMiniIdeQuery("SELECT email FROM contacts WHERE email <>", {}).message,
+  /не завершена/u
+);
 assert.match(
   validateSqlMiniIdeQuery("SELECT email FROM contacts WHERE name = 'Иванов", {}).message,
   /Не закрыта строка/u

@@ -22924,6 +22924,7 @@ MAX - https://bizvmax.ru/zifra_plus
           index += 1;
         }
         blankRange(start, Math.min(index, source.length));
+        if (closed) scrubbed[start] = "x";
         if (!closed) {
           issues.push({
             index: start,
