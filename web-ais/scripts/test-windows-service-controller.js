@@ -53,6 +53,8 @@ assert.match(hostSource, /subst\.exe/u);
 assert.match(hostSource, /--skip-docker/u);
 assert.match(hostSource, /Docker Desktop\.exe/u);
 assert.match(hostSource, /Wait-DockerEngine/u);
+assert.match(hostSource, /codex-runtimes/u);
+assert.match(hostSource, /dependencies[\s\S]{0,30}node[\s\S]{0,30}bin/u);
 assert.match(hostSource, /Get-Service\s+-Name\s+"AisDopobrWeb"/u);
 assert.match(hostSource, /Test-AisServiceRunning/u);
 assert.match(hostSource, /IO\.Path\]::Combine\(\$resolvedAppRoot/u);

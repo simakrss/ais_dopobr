@@ -149,6 +149,14 @@ function Find-NodeRuntime {
   }
   $command = Get-Command node.exe -ErrorAction SilentlyContinue
   if ($command) { $candidates.Add($command.Source) }
+  $codexRuntimeRoot = Join-Path $env:USERPROFILE ".cache\codex-runtimes"
+  if (Test-Path -LiteralPath $codexRuntimeRoot -PathType Container) {
+    $bundled = Get-ChildItem -LiteralPath $codexRuntimeRoot -Filter "node.exe" -File -Recurse -ErrorAction SilentlyContinue |
+      Where-Object { $_.FullName -match '[\\/]dependencies[\\/]node[\\/]bin[\\/]node\.exe$' } |
+      Sort-Object LastWriteTime -Descending |
+      Select-Object -First 1 -ExpandProperty FullName
+    if ($bundled) { $candidates.Add($bundled) }
+  }
   foreach ($candidate in @($candidates | Select-Object -Unique)) {
     $runtime = Test-NodeRuntime $candidate
     if ($runtime) { return $runtime }
