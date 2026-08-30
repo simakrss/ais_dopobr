@@ -146,9 +146,10 @@ assert.doesNotMatch(
 const filterFunction = namedFunction(blocks, "getAdvertisingFilteredRows");
 assert.match(
   filterFunction,
-  /requestedStatus\s*===\s*["']new["']\s*&&\s*!row\.isNew/u,
+  /requestedStatus\s*===\s*["']new["']\s*&&\s*!isEffectiveNew\(row\)/u,
   "Статус «Новые» должен включать все новые адреса, в том числе исключённые."
 );
+assert.match(filterFunction, /isEffectiveNew\s*=\s*\(row\)\s*=>\s*Boolean\(row\?\.isNew\)\s*&&\s*!currentRunTransferred/u);
 assert.doesNotMatch(
   filterFunction,
   /requestedStatus\s*===\s*["']new["'][^\n]*row\.excluded/u,
@@ -187,10 +188,20 @@ assert.match(clipboardFunction, /new Set/u, "Email для буфера долж�
 assert.match(clipboardFunction, /toLocaleLowerCase\(["']en-US["']\)/u);
 assert.match(clipboardFunction, /\.filter\(Boolean\)/u);
 
+const transferStateFunction = namedFunction(blocks, "getAdvertisingRunTransferState");
+assert.match(transferStateFunction, /historyRow/u);
+assert.match(transferStateFunction, /transferredToAdvertising/u);
+const effectiveSummaryFunction = namedFunction(blocks, "getAdvertisingEffectiveNewSummary");
+assert.match(effectiveSummaryFunction, /transferredToAdvertising\s*\?\s*0/u);
+assert.match(effectiveSummaryFunction, /newUnique/u);
+assert.match(effectiveSummaryFunction, /newReady/u);
+
 const renderFunction = namedFunction(blocks, "renderAdvertising");
 assert.match(renderFunction, /summary\.newUnique/u);
 assert.match(renderFunction, /summary\.newReady/u);
 assert.match(renderFunction, /<span>Новые<\/span>/u);
+assert.match(renderFunction, /getAdvertisingEffectiveNewSummary/u);
+assert.match(renderFunction, /Email уже переданы в рекламу/u);
 assert.match(renderFunction, /<option value="new"[^>]*>Новые<\/option>/u);
 assert.match(
   renderFunction,
@@ -276,7 +287,8 @@ const perRunCopyButton = /<button\b[^>]*data-action="copy-advertising-history-(?
   .exec(renderHistoryFunction)?.[0] || "";
 assert.ok(perRunCopyButton, "У каждого рекламного запроса нужна кнопка копирования новых адресов.");
 assert.match(perRunCopyButton, /data-run-id="\$\{escapeAttr\((?:run|row)\.runId(?:\s*\|\|\s*"")?\)\}"/u);
-assert.match(renderHistoryFunction, /summary\.newReady/u);
+assert.match(renderHistoryFunction, /effectiveSummary\.newReady/u);
+assert.match(renderHistoryFunction, /getAdvertisingEffectiveNewSummary\(summary,\s*transferredToAdvertising\)/u);
 assert.match(renderHistoryFunction, /history\.copyingRunId/u);
 assert.match(perRunCopyButton, /disabled/u);
 const perRunDeleteButton = /<button\b[^>]*data-action="delete-advertising-history-run"[^>]*>[\s\S]*?<\/button>/u
@@ -350,10 +362,10 @@ assert.match(
   "Текст кнопки должен показывать количество новых готовых контактов."
 );
 
-assert.match(renderFunction, /<tr class="\$\{[^}]*row\.isNew[^}]*is-new/u);
+assert.match(renderFunction, /<tr class="\$\{[^}]*isAdvertisingCurrentRowNew\(row\)[^}]*is-new/u);
 assert.match(
   renderFunction,
-  /row\.isNew[\s\S]{0,1200}>Новый<\/span>/u,
+  /isAdvertisingCurrentRowNew\(row\)[\s\S]{0,1200}>Новый<\/span>/u,
   "У новой строки должен быть видимый бейдж «Новый»."
 );
 assert.match(
@@ -461,6 +473,7 @@ assert.match(transferHandler, /transferredToAdvertising:\s*nextState/u);
 assert.match(transferHandler, /history\.updatingTransferRunId/u);
 assert.match(transferHandler, /persistAdvertisingEmailViewCache/u);
 assert.match(transferHandler, /previousRow/u, "При ошибке ручная отметка должна восстанавливаться.");
+assert.match(transferHandler, /applyResultTransfer/u, "Отметка должна сразу обновлять плитку последнего запуска.");
 
 const historyLoader = namedFunction(blocks, "loadAdvertisingEmailHistory");
 assert.match(historyLoader, /\/api\/advertising\/email-collector\/history/u);

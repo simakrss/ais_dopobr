@@ -13643,6 +13643,43 @@ MAX - https://bizvmax.ru/zifra_plus
       .find((source) => source.id === sourceId)?.label || sourceId || "Источник";
   }
 
+  function getAdvertisingRunTransferState(runId) {
+    const normalizedRunId = String(runId || "").trim();
+    const historyRow = (state.advertising.history?.rows || [])
+      .find((row) => String(row?.runId || "") === normalizedRunId);
+    const currentResult = String(state.advertising.result?.runId || "") === normalizedRunId
+      ? state.advertising.result
+      : null;
+    const source = [historyRow, currentResult].find((item) => (
+      item && Object.prototype.hasOwnProperty.call(item, "transferredToAdvertising")
+    ));
+    const transferredToAdvertising = Boolean(source?.transferredToAdvertising);
+    return {
+      transferredToAdvertising,
+      transferredAt: transferredToAdvertising ? String(source?.transferredAt || "") : "",
+      transferredBy: transferredToAdvertising && source?.transferredBy && typeof source.transferredBy === "object"
+        ? source.transferredBy
+        : { id: "", login: "", name: "" }
+    };
+  }
+
+  function isAdvertisingCurrentRunTransferred() {
+    return getAdvertisingRunTransferState(state.advertising.result?.runId).transferredToAdvertising;
+  }
+
+  function isAdvertisingCurrentRowNew(row) {
+    return Boolean(row?.isNew) && !isAdvertisingCurrentRunTransferred();
+  }
+
+  function getAdvertisingEffectiveNewSummary(summary, transferredToAdvertising) {
+    const source = summary && typeof summary === "object" ? summary : {};
+    return {
+      ...source,
+      newUnique: transferredToAdvertising ? 0 : Math.max(0, Number(source.newUnique) || 0),
+      newReady: transferredToAdvertising ? 0 : Math.max(0, Number(source.newReady) || 0)
+    };
+  }
+
   function getAdvertisingFilteredRows(options = {}) {
     const suppliedRows = Array.isArray(options.rows) ? options.rows : null;
     const rows = suppliedRows || (Array.isArray(state.advertising.result?.rows) ? state.advertising.result.rows : []);
@@ -13651,12 +13688,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const requestedStatus = Object.prototype.hasOwnProperty.call(options, "status")
       ? options.status
       : filters.status;
+    const currentRunTransferred = isAdvertisingCurrentRunTransferred();
+    const isEffectiveNew = (row) => Boolean(row?.isNew) && !currentRunTransferred;
     const query = String(filters.query || "").trim().toLocaleLowerCase("ru-RU");
     const sourceId = String(filters.source || "").trim();
     const filtered = rows.filter((row) => {
       if (requestedStatus === "ready" && row.excluded) return false;
       if (requestedStatus === "excluded" && !row.excluded) return false;
-      if (requestedStatus === "new" && !row.isNew) return false;
+      if (requestedStatus === "new" && !isEffectiveNew(row)) return false;
       if (applyScopeFilters && sourceId && !(row.sources || []).some((source) => source.id === sourceId)) return false;
       if (!applyScopeFilters || !query) return true;
       const haystack = [
@@ -13683,7 +13722,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const value = (row) => {
         if (sort.key === "sources") return (row.sources || []).map((source) => source.label).join(", ");
         if (sort.key === "sourceReceivedAt") return getAdvertisingEmailReceivedAt(row);
-        if (sort.key === "status") return `${row.isNew ? "0" : "1"}-${row.excluded ? "Исключён" : "Готов"}`;
+        if (sort.key === "status") return `${isEffectiveNew(row) ? "0" : "1"}-${row.excluded ? "Исключён" : "Готов"}`;
         return row[sort.key] || "";
       };
       return String(value(left)).localeCompare(String(value(right)), "ru-RU", {
@@ -13915,13 +13954,14 @@ MAX - https://bizvmax.ru/zifra_plus
       const user = row?.user || {};
       const userLabel = user.name || user.login || "—";
       const userLogin = user.name && user.login ? user.login : "";
-      const newReady = Math.max(0, Number(summary.newReady) || 0);
-      const newUnique = Math.max(0, Number(summary.newUnique) || 0);
       const failedSources = sources.filter((source) => source?.status === "error").length;
       const isCopying = history.copyingRunId === row.runId;
       const isDeleting = history.deletingRunId === row.runId;
       const isUpdatingTransfer = history.updatingTransferRunId === row.runId;
       const transferredToAdvertising = Boolean(row?.transferredToAdvertising);
+      const effectiveSummary = getAdvertisingEffectiveNewSummary(summary, transferredToAdvertising);
+      const newReady = effectiveSummary.newReady;
+      const newUnique = effectiveSummary.newUnique;
       const transferredBy = row?.transferredBy || {};
       const transferredByLabel = transferredBy.name || transferredBy.login || "";
       const transferredTitle = transferredToAdvertising
@@ -13931,7 +13971,9 @@ MAX - https://bizvmax.ru/zifra_plus
           transferredByLabel
         ].filter(Boolean).join(" · ")
         : "Установите отметку вручную после передачи email в рекламу";
-      const copyDisabled = Boolean(history.copyingRunId || history.deletingRunId) || !newReady;
+      const copyDisabled = Boolean(
+        history.copyingRunId || history.deletingRunId || history.updatingTransferRunId
+      ) || !newReady;
       const canDelete = isAdminUser() && row.canDelete !== false;
       return `
         <tr class="${transferredToAdvertising ? "is-transferred" : ""}" data-advertising-history-run="${escapeAttr(row.runId || "")}">
@@ -13996,7 +14038,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div>
             <p class="eyebrow">Сохранённые запуски</p>
             <h2>История сбора email</h2>
-            <p>Новые адреса каждого запуска рассчитаны относительно непосредственно предыдущего сохранённого запуска.</p>
+            <p>Новые адреса рассчитаны относительно предыдущего поиска; после отметки передачи они исключаются из новых.</p>
           </div>
           <span class="statistics-row-count">${formatStatisticsInteger(rows.length)}</span>
         </div>
@@ -14030,12 +14072,18 @@ MAX - https://bizvmax.ru/zifra_plus
       ? advertising.tab
       : "collector";
     advertising.tab = advertisingTab;
-    const summary = advertising.result?.summary || {};
+    const transferredToAdvertising = isAdvertisingCurrentRunTransferred();
+    const summary = getAdvertisingEffectiveNewSummary(
+      advertising.result?.summary,
+      transferredToAdvertising
+    );
     const scopedRows = getAdvertisingFilteredRows({ status: "all", sort: false });
     const rows = getAdvertisingFilteredRows({ rows: scopedRows });
     const readyRows = scopedRows.filter((row) => !row.excluded);
     const readyEmails = getAdvertisingClipboardEmails(readyRows);
-    const newReadyRows = scopedRows.filter((row) => row.isNew && !row.excluded);
+    const newReadyRows = transferredToAdvertising
+      ? []
+      : scopedRows.filter((row) => row.isNew && !row.excluded);
     const newReadyEmails = getAdvertisingClipboardEmails(newReadyRows);
     const pagination = getTablePagination("advertisingEmails", rows.length);
     const pageRows = rows.slice(pagination.start, pagination.end);
@@ -14061,7 +14109,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="advertising-kpi-grid">
           <article class="statistics-kpi-card"><span>Уникальные</span><strong>${formatStatisticsInteger(summary.unique)}</strong><small>В последнем поиске</small></article>
           <article class="statistics-kpi-card tone-green"><span>Готовы к рекламе</span><strong>${formatStatisticsInteger(summary.ready)}</strong><small>Без исключённых адресов</small></article>
-          <article class="statistics-kpi-card tone-blue"><span>Новые</span><strong>${formatStatisticsInteger(summary.newUnique)}</strong><small>${formatStatisticsInteger(summary.newReady)} готовы · ${escapeHtml(comparisonLabel)}</small></article>
+          <article class="statistics-kpi-card tone-blue"><span>Новые</span><strong>${formatStatisticsInteger(summary.newUnique)}</strong><small>${formatStatisticsInteger(summary.newReady)} готовы · ${escapeHtml(transferredToAdvertising ? "Email уже переданы в рекламу" : comparisonLabel)}</small></article>
           <article class="statistics-kpi-card tone-red"><span>Исключены</span><strong>${formatStatisticsInteger(summary.excluded)}</strong><small>Адреса и домены из XLSB</small></article>
           <article class="statistics-kpi-card tone-amber"><span>Повторы</span><strong>${formatStatisticsInteger(summary.duplicates)}</strong><small>Удалены при объединении</small></article>
           <article class="statistics-kpi-card"><span>Время сбора</span><strong>${advertising.result ? escapeHtml(formatAdvertisingDuration(advertising.result.durationMs)) : "—"}</strong><small>${escapeHtml(lastUpdated)}</small></article>
@@ -14149,13 +14197,13 @@ MAX - https://bizvmax.ru/zifra_plus
                   <table class="data-table advertising-email-table">
                     <thead><tr>${ADVERTISING_EMAIL_TABLE_COLUMNS.map((column) => `<th>${renderAdvertisingSortHeader(column)}</th>`).join("")}</tr></thead>
                     <tbody>${pageRows.map((row) => `
-                      <tr class="${[row.excluded ? "is-excluded" : "", row.isNew ? "is-new" : ""].filter(Boolean).join(" ")}">
+                      <tr class="${[row.excluded ? "is-excluded" : "", isAdvertisingCurrentRowNew(row) ? "is-new" : ""].filter(Boolean).join(" ")}">
                         <td><a href="mailto:${escapeAttr(row.email)}">${escapeHtml(row.email)}</a></td>
                         <td title="${escapeAttr([row.name, row.phone, row.jobTitle].filter(Boolean).join(" · "))}"><strong>${escapeHtml(row.name || "—")}</strong>${row.phone ? `<small>${escapeHtml(row.phone)}</small>` : ""}</td>
                         <td title="${escapeAttr([row.organization, row.jobTitle, row.origin].filter(Boolean).join(" · "))}">${escapeHtml(row.organization || row.origin || "—")}</td>
                         <td><div class="advertising-source-tags">${(row.sources || []).map((source) => `<span title="${escapeAttr(source.label)}">${escapeHtml(source.label)}</span>`).join("")}</div></td>
                         <td class="advertising-email-received"><time datetime="${escapeAttr(getAdvertisingEmailReceivedAt(row))}" title="${escapeAttr(row.sourceReceivedAt ? `Дата из источника: ${formatDateTimeRu(row.sourceReceivedAt)}` : (row.firstSeenAt ? `Дата первого обнаружения сборщиком: ${formatDateTimeRu(row.firstSeenAt)}` : "Дата получения недоступна"))}">${escapeHtml(formatAdvertisingEmailReceivedDate(getAdvertisingEmailReceivedAt(row)) || "—")}</time></td>
-                        <td><div class="advertising-status-badges">${row.isNew ? '<span class="advertising-status-badge is-new">Новый</span>' : ""}<span class="advertising-status-badge ${row.excluded ? "is-excluded" : "is-ready"}" title="${escapeAttr(row.exclusionReason || "Адрес готов к использованию")}">${row.excluded ? "Исключён" : "Готов"}</span></div>${row.exclusionReason ? `<small>${escapeHtml(row.exclusionReason)}</small>` : ""}</td>
+                        <td><div class="advertising-status-badges">${isAdvertisingCurrentRowNew(row) ? '<span class="advertising-status-badge is-new">Новый</span>' : ""}<span class="advertising-status-badge ${row.excluded ? "is-excluded" : "is-ready"}" title="${escapeAttr(row.exclusionReason || "Адрес готов к использованию")}">${row.excluded ? "Исключён" : "Готов"}</span></div>${row.exclusionReason ? `<small>${escapeHtml(row.exclusionReason)}</small>` : ""}</td>
                       </tr>
                     `).join("")}</tbody>
                   </table>
@@ -14249,6 +14297,11 @@ MAX - https://bizvmax.ru/zifra_plus
     state.advertising.result = {
       exists: true,
       runId: row.runId,
+      transferredToAdvertising: Boolean(row.transferredToAdvertising),
+      transferredAt: String(row.transferredAt || ""),
+      transferredBy: row.transferredBy && typeof row.transferredBy === "object"
+        ? row.transferredBy
+        : { id: "", login: "", name: "" },
       refreshedAt: row.refreshedAt,
       durationMs: row.durationMs,
       sources: row.sources,
@@ -14288,6 +14341,19 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       history.rows = Array.isArray(payload.rows) ? payload.rows : [];
       history.loaded = true;
+      const currentHistoryRow = history.rows.find((row) => (
+        String(row?.runId || "") === String(advertising.result?.runId || "")
+      ));
+      if (currentHistoryRow && advertising.result) {
+        advertising.result = {
+          ...advertising.result,
+          transferredToAdvertising: Boolean(currentHistoryRow.transferredToAdvertising),
+          transferredAt: String(currentHistoryRow.transferredAt || ""),
+          transferredBy: currentHistoryRow.transferredBy && typeof currentHistoryRow.transferredBy === "object"
+            ? currentHistoryRow.transferredBy
+            : { id: "", login: "", name: "" }
+        };
+      }
       if (!advertising.result) applyAdvertisingEmailHistoryPreview(history.rows[0]);
       void persistAdvertisingEmailViewCache();
     } catch (error) {
@@ -14349,10 +14415,28 @@ MAX - https://bizvmax.ru/zifra_plus
     const rowIndex = history.rows.findIndex((item) => String(item?.runId || "") === normalizedRunId);
     if (rowIndex < 0) return;
     const previousRow = { ...history.rows[rowIndex] };
+    const resultMatchesRun = String(advertising.result?.runId || "") === normalizedRunId;
+    const previousResultTransfer = resultMatchesRun ? {
+      transferredToAdvertising: Boolean(advertising.result?.transferredToAdvertising),
+      transferredAt: String(advertising.result?.transferredAt || ""),
+      transferredBy: advertising.result?.transferredBy && typeof advertising.result.transferredBy === "object"
+        ? advertising.result.transferredBy
+        : { id: "", login: "", name: "" }
+    } : null;
+    const applyResultTransfer = (transferState) => {
+      if (!resultMatchesRun || !advertising.result) return;
+      advertising.result = {
+        ...advertising.result,
+        transferredToAdvertising: Boolean(transferState?.transferredToAdvertising),
+        transferredAt: String(transferState?.transferredAt || ""),
+        transferredBy: transferState?.transferredBy && typeof transferState.transferredBy === "object"
+          ? transferState.transferredBy
+          : { id: "", login: "", name: "" }
+      };
+    };
     const nextState = Boolean(transferredToAdvertising);
     const currentUser = getCurrentAuthUser();
-    history.rows = history.rows.map((item, index) => index === rowIndex ? {
-      ...item,
+    const optimisticTransfer = {
       transferredToAdvertising: nextState,
       transferredAt: nextState ? new Date().toISOString() : "",
       transferredBy: nextState ? {
@@ -14360,7 +14444,12 @@ MAX - https://bizvmax.ru/zifra_plus
         login: String(currentUser.login || ""),
         name: String(currentUser.name || "")
       } : { id: "", login: "", name: "" }
+    };
+    history.rows = history.rows.map((item, index) => index === rowIndex ? {
+      ...item,
+      ...optimisticTransfer
     } : item);
+    applyResultTransfer(optimisticTransfer);
     history.updatingTransferRunId = normalizedRunId;
     history.error = "";
     advertising.error = "";
@@ -14381,14 +14470,18 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
-      history.rows = history.rows.map((item) => String(item?.runId || "") === normalizedRunId ? {
-        ...item,
+      const savedTransfer = {
         transferredToAdvertising: Boolean(payload.transferredToAdvertising),
         transferredAt: String(payload.transferredAt || ""),
         transferredBy: payload.transferredBy && typeof payload.transferredBy === "object"
           ? payload.transferredBy
           : { id: "", login: "", name: "" }
+      };
+      history.rows = history.rows.map((item) => String(item?.runId || "") === normalizedRunId ? {
+        ...item,
+        ...savedTransfer
       } : item);
+      applyResultTransfer(savedTransfer);
       advertising.notice = nextState
         ? `Запуск сбора email № ${formatStatisticsInteger(previousRow.sequence)} отмечен как переданный.`
         : `Для запуска сбора email № ${formatStatisticsInteger(previousRow.sequence)} отметка снята.`;
@@ -14397,6 +14490,7 @@ MAX - https://bizvmax.ru/zifra_plus
       history.rows = history.rows.map((item) => String(item?.runId || "") === normalizedRunId
         ? previousRow
         : item);
+      if (previousResultTransfer) applyResultTransfer(previousResultTransfer);
       history.error = error.message || "Не удалось сохранить отметку передачи email в рекламу.";
     } finally {
       history.updatingTransferRunId = "";
@@ -14796,7 +14890,7 @@ MAX - https://bizvmax.ru/zifra_plus
         formatAdvertisingEmailReceivedDate(getAdvertisingEmailReceivedAt(row)),
         row.excluded ? "Исключён" : "Готов",
         row.exclusionReason,
-        row.isNew ? "Да" : ""
+        isAdvertisingCurrentRowNew(row) ? "Да" : ""
       ].map(csvCell).join(";"))
     ].join("\n");
     download(

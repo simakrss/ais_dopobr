@@ -66,6 +66,17 @@ assert.equal(compared.rows.find((row) => row.email === "blocked@example.ru").isN
 assert.equal(compared.summary.newUnique, 2);
 assert.equal(compared.summary.newReady, 1);
 
+const transferredKeys = new Set([advertisingEmailHistoryEmailKey("new@example.ru")]);
+const comparedAfterTransfer = buildAdvertisingEmailHistoryResult(collected, previousKeys, {
+  runId: "run-after-transfer",
+  previousRun: { runId: "run-previous", refreshedAt: "2026-08-26T12:00:00.000Z" },
+  transferredEmailKeys: transferredKeys
+});
+assert.equal(comparedAfterTransfer.rows.find((row) => row.email === "new@example.ru").isNew, false);
+assert.equal(comparedAfterTransfer.rows.find((row) => row.email === "blocked@example.ru").isNew, true);
+assert.equal(comparedAfterTransfer.summary.newUnique, 1);
+assert.equal(comparedAfterTransfer.summary.newReady, 0);
+
 const firstRun = buildAdvertisingEmailHistoryResult(collected, [], { runId: "run-first" });
 assert.equal(firstRun.comparedTo.hasPrevious, false);
 assert.ok(firstRun.rows.every((row) => row.isNew));
@@ -79,6 +90,7 @@ assert.deepEqual(emptyAdvertisingEmailHistoryResult().comparedTo, {
 });
 assert.equal(emptyAdvertisingEmailHistoryResult().summary.newUnique, 0);
 assert.equal(emptyAdvertisingEmailHistoryResult().summary.newReady, 0);
+assert.equal(emptyAdvertisingEmailHistoryResult().transferredToAdvertising, false);
 
 const transferredRun = publicAdvertisingEmailHistoryListRun({
   run_id: "run-transferred",
@@ -121,6 +133,11 @@ assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_advertising_email_his
 assert.match(
   serverSource,
   /beginTransaction\(\)[\s\S]*?ais_advertising_email_history_state[\s\S]*?FOR UPDATE[\s\S]*?readAdvertisingEmailHistoryMembership[\s\S]*?insertAdvertisingEmailHistoryRunContacts[\s\S]*?commit\(\)/u
+);
+assert.match(
+  serverSource,
+  /readAdvertisingEmailHistoryTransferredMembership[\s\S]*?transferred_to_advertising\s*=\s*1[\s\S]*?is_new\s*=\s*1[\s\S]*?excluded\s*=\s*0/u,
+  "Переданные готовые email должны исключаться из новых в последующих запусках."
 );
 assert.match(serverSource, /ADVERTISING_EMAIL_HISTORY_WRITE_CHUNK_SIZE/u);
 assert.match(serverSource, /ADVERTISING_EMAIL_HISTORY_MAX_CONTACTS_PER_RUN/u);
@@ -268,6 +285,8 @@ const newOnlyReaderSource = serverSource.slice(newOnlyReaderStart, newOnlyReader
 assert.match(newOnlyReaderSource, /WHERE run_id\s*=\s*\?/u, "runId должен передаваться параметром SQL.");
 assert.match(newOnlyReaderSource, /is_new\s*=\s*1/u);
 assert.match(newOnlyReaderSource, /excluded\s*=\s*0/u);
+assert.match(newOnlyReaderSource, /ais_advertising_email_history_transfers/u);
+assert.match(newOnlyReaderSource, /transferredToAdvertising:\s*true/u);
 assert.doesNotMatch(
   newOnlyReaderSource,
   /\$\{[^}]*runId[^}]*\}/u,

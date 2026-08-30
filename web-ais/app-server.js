@@ -8754,6 +8754,9 @@ function emptyAdvertisingEmailHistoryResult() {
   return {
     exists: false,
     runId: "",
+    transferredToAdvertising: false,
+    transferredAt: "",
+    transferredBy: { id: "", login: "", name: "" },
     refreshedAt: "",
     durationMs: 0,
     sources: [],
@@ -8789,12 +8792,17 @@ function buildAdvertisingEmailHistoryResult(result, previousEmailKeys = [], opti
   const previousKeys = previousEmailKeys instanceof Set
     ? previousEmailKeys
     : new Set(Array.isArray(previousEmailKeys) ? previousEmailKeys.map(String) : []);
+  const transferredKeys = options.transferredEmailKeys instanceof Set
+    ? options.transferredEmailKeys
+    : new Set(Array.isArray(options.transferredEmailKeys)
+      ? options.transferredEmailKeys.map(String)
+      : []);
   const hasPrevious = Boolean(options.previousRun?.runId);
   const decoratedRows = rows.map((row) => {
     const emailKey = advertisingEmailHistoryEmailKey(row.email);
     return {
       ...row,
-      isNew: !hasPrevious || !previousKeys.has(emailKey)
+      isNew: (!hasPrevious || !previousKeys.has(emailKey)) && !transferredKeys.has(emailKey)
     };
   });
   const newRows = decoratedRows.filter((row) => row.isNew);
@@ -8807,6 +8815,9 @@ function buildAdvertisingEmailHistoryResult(result, previousEmailKeys = [], opti
   return {
     exists: true,
     runId,
+    transferredToAdvertising: false,
+    transferredAt: "",
+    transferredBy: { id: "", login: "", name: "" },
     refreshedAt,
     durationMs: Math.max(0, Math.floor(Number(result?.durationMs) || 0)),
     sources: Array.isArray(result?.sources) ? result.sources : [],
@@ -9172,8 +9183,10 @@ async function readAdvertisingEmailHistoryNewReadyEmails(value) {
   try {
     await connection.beginTransaction();
     const [runRows] = await connection.query(
-      `SELECT run.run_id
+      `SELECT run.run_id, COALESCE(transfer_state.transferred_to_advertising, 0) AS transferred_to_advertising
          FROM ais_advertising_email_history_runs AS run
+         LEFT JOIN ais_advertising_email_history_transfers AS transfer_state
+           ON transfer_state.run_id = run.run_id
          LEFT JOIN ais_advertising_email_history_deleted_runs AS deleted_run
            ON deleted_run.state_key = ? AND deleted_run.run_id = run.run_id
         WHERE run.run_id = ? AND deleted_run.run_id IS NULL
@@ -9186,6 +9199,10 @@ async function readAdvertisingEmailHistoryNewReadyEmails(value) {
         404,
         "ADVERTISING_HISTORY_RUN_NOT_FOUND"
       );
+    }
+    if (Boolean(Number(runRows[0]?.transferred_to_advertising) || 0)) {
+      await connection.commit();
+      return { runId, count: 0, emails: [], transferredToAdvertising: true };
     }
     const emails = [];
     const seenEmails = new Set();
@@ -9212,7 +9229,7 @@ async function readAdvertisingEmailHistoryNewReadyEmails(value) {
     }
     emails.sort((left, right) => left.localeCompare(right, "en"));
     await connection.commit();
-    return { runId, count: emails.length, emails };
+    return { runId, count: emails.length, emails, transferredToAdvertising: false };
   } catch (error) {
     await connection.rollback().catch(() => {});
     if (error?.statusCode) throw error;
@@ -9239,6 +9256,31 @@ async function readAdvertisingEmailHistoryMembership(connection, runId) {
         ORDER BY email_key
         LIMIT ${ADVERTISING_EMAIL_HISTORY_READ_PAGE_SIZE}`,
       [normalizedRunId, cursor]
+    );
+    if (!rows.length) break;
+    for (const row of rows) keys.add(String(row.email_key || ""));
+    cursor = String(rows[rows.length - 1]?.email_key || "");
+    if (rows.length < ADVERTISING_EMAIL_HISTORY_READ_PAGE_SIZE || !cursor) break;
+  }
+  return keys;
+}
+
+async function readAdvertisingEmailHistoryTransferredMembership(connection) {
+  const keys = new Set();
+  let cursor = "";
+  while (true) {
+    const [rows] = await connection.query(
+      `SELECT DISTINCT run_contact.email_key
+         FROM ais_advertising_email_history_run_contacts AS run_contact
+         INNER JOIN ais_advertising_email_history_transfers AS transfer_state
+           ON transfer_state.run_id = run_contact.run_id
+          AND transfer_state.transferred_to_advertising = 1
+        WHERE run_contact.is_new = 1
+          AND run_contact.excluded = 0
+          AND run_contact.email_key > ?
+        ORDER BY run_contact.email_key
+        LIMIT ${ADVERTISING_EMAIL_HISTORY_READ_PAGE_SIZE}`,
+      [cursor]
     );
     if (!rows.length) break;
     for (const row of rows) keys.add(String(row.email_key || ""));
@@ -9484,12 +9526,13 @@ async function persistAdvertisingEmailHistoryResult(result, authUser = null) {
     const previousMembership = previousRun
       ? await readAdvertisingEmailHistoryMembership(connection, previousRun.runId)
       : new Set();
+    const transferredMembership = await readAdvertisingEmailHistoryTransferredMembership(connection);
     const runId = crypto.randomUUID();
     const runSequence = Math.max(0, Number(stateRows[0]?.run_sequence) || 0) + 1;
     const payload = buildAdvertisingEmailHistoryResult(
       { ...result, rows: normalizedRows },
       previousMembership,
-      { runId, previousRun }
+      { runId, previousRun, transferredEmailKeys: transferredMembership }
     );
     const refreshedAt = new Date(payload.refreshedAt);
     await connection.query(
@@ -9570,10 +9613,18 @@ async function readLatestAdvertisingEmailHistoryResult() {
       return emptyAdvertisingEmailHistoryResult();
     }
     const [runRows] = await connection.query(
-      `SELECT run_id, run_sequence, previous_run_id, refreshed_at, duration_ms,
-              user_id, user_login, user_name, sources_json, workbook_json, summary_json
-         FROM ais_advertising_email_history_runs
-        WHERE run_id = ?
+      `SELECT current_run.run_id, current_run.run_sequence, current_run.previous_run_id,
+              current_run.refreshed_at, current_run.duration_ms,
+              current_run.user_id, current_run.user_login, current_run.user_name,
+              current_run.sources_json, current_run.workbook_json, current_run.summary_json,
+              transfer_state.transferred_to_advertising, transfer_state.transferred_at,
+              transfer_state.updated_by_id AS transfer_user_id,
+              transfer_state.updated_by_login AS transfer_user_login,
+              transfer_state.updated_by_name AS transfer_user_name
+         FROM ais_advertising_email_history_runs AS current_run
+         LEFT JOIN ais_advertising_email_history_transfers AS transfer_state
+           ON transfer_state.run_id = current_run.run_id
+        WHERE current_run.run_id = ?
         LIMIT 1`,
       [runId]
     );
@@ -9596,10 +9647,20 @@ async function readLatestAdvertisingEmailHistoryResult() {
       previousRun = publicAdvertisingEmailHistoryRun(previousRows[0]);
     }
     const summary = advertisingEmailHistoryJson(run.summary_json, {});
+    const transferredToAdvertising = Boolean(Number(run.transferred_to_advertising) || 0);
     await connection.commit();
     return {
       exists: true,
       runId,
+      transferredToAdvertising,
+      transferredAt: transferredToAdvertising
+        ? advertisingEmailHistoryIsoDate(run.transferred_at)
+        : "",
+      transferredBy: transferredToAdvertising ? {
+        id: String(run.transfer_user_id || ""),
+        login: String(run.transfer_user_login || ""),
+        name: String(run.transfer_user_name || "")
+      } : { id: "", login: "", name: "" },
       refreshedAt: advertisingEmailHistoryIsoDate(run.refreshed_at),
       durationMs: Math.max(0, Number(run.duration_ms) || 0),
       sources: advertisingEmailHistoryJson(run.sources_json, []),
