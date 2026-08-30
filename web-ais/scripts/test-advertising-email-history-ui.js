@@ -213,7 +213,23 @@ assert.match(
   /<section\b[^>]*data-advertising-results[^>]*tabindex=["']-1["']/u,
   "Панель результатов должна принимать программный фокус после сбора."
 );
+assert.match(
+  renderFunction,
+  /data-action="export-advertising-emails"\s+data-advertising-export-scope="filtered"/u,
+  "У таблицы email должна быть отдельная кнопка экспорта текущей отфильтрованной выборки."
+);
 assert.match(stylesSource, /\.advertising-results-panel\s*\{[\s\S]*?scroll-margin-top:\s*\d+px/u);
+const advertisingEmailTableStyles = sourceSlice(
+  stylesSource,
+  ".advertising-email-table {",
+  ".advertising-email-table th:nth-child(1)"
+);
+assert.match(
+  advertisingEmailTableStyles,
+  /min-width:\s*0/u,
+  "Таблица email не должна принудительно создавать горизонтальную прокрутку на обычном экране."
+);
+assert.doesNotMatch(advertisingEmailTableStyles, /min-width:\s*940px/u);
 
 const sourcePickerToggle = /<button\b[^>]*data-action="toggle-advertising-source-picker"[^>]*>[\s\S]*?<\/button>/u
   .exec(renderFunction)?.[0] || "";
@@ -356,8 +372,19 @@ assert.match(
 const exportFunction = namedFunction(blocks, "exportAdvertisingEmails");
 assert.match(exportFunction, /"Дата получения"/u, "CSV должен содержать колонку даты получения.");
 assert.match(exportFunction, /formatAdvertisingEmailReceivedDate\(getAdvertisingEmailReceivedAt\(row\)\)/u);
+assert.match(
+  exportFunction,
+  /exportScope\s*===\s*"filtered"[\s\S]{0,160}?getAdvertisingFilteredRows\(\)/u,
+  "Экспорт из заголовка таблицы должен учитывать все активные фильтры."
+);
+assert.match(exportFunction, /"Статус"[\s\S]{0,80}?"Причина исключения"/u);
 
 const bindFunction = namedFunction(blocks, "bindAdvertisingEvents");
+assert.match(
+  bindFunction,
+  /querySelectorAll\("\[data-action='export-advertising-emails'\]"\)[\s\S]{0,180}?addEventListener\("click",\s*exportAdvertisingEmails\)/u,
+  "Обе кнопки экспорта рекламы должны получать обработчик."
+);
 const sourcePickerHandlerStart = bindFunction.indexOf("[data-action='toggle-advertising-source-picker']");
 assert.ok(sourcePickerHandlerStart >= 0, "Не найден обработчик раскрытия источников.");
 const sourcePickerHandlerEnd = bindFunction.indexOf(

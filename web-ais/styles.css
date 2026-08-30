@@ -26017,6 +26017,24 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 
 .advertising-results-head {
   margin-bottom: 0;
+  flex-wrap: wrap;
+}
+
+.advertising-results-head > :first-child {
+  flex: 1 1 280px;
+  min-width: min(100%, 240px);
+}
+
+.advertising-results-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.advertising-results-head-actions .ghost-button {
+  min-width: max-content;
 }
 
 .advertising-filters {
@@ -26074,21 +26092,21 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 
 .advertising-email-table {
   width: 100%;
-  min-width: 940px;
+  min-width: 0;
   table-layout: fixed;
 }
 
-.advertising-email-table th:nth-child(1) { width: 19%; }
-.advertising-email-table th:nth-child(2) { width: 17%; }
-.advertising-email-table th:nth-child(3) { width: 16%; }
-.advertising-email-table th:nth-child(4) { width: 22%; }
-.advertising-email-table th:nth-child(5) { width: 12%; }
-.advertising-email-table th:nth-child(6) { width: 14%; }
+.advertising-email-table th:nth-child(1) { width: 20%; }
+.advertising-email-table th:nth-child(2) { width: 18%; }
+.advertising-email-table th:nth-child(3) { width: 20%; }
+.advertising-email-table th:nth-child(4) { width: 20%; }
+.advertising-email-table th:nth-child(5) { width: 11%; }
+.advertising-email-table th:nth-child(6) { width: 11%; }
 
 .advertising-email-table th,
 .advertising-email-table td {
   min-width: 0;
-  padding: 6px 8px;
+  padding: 5px 6px;
   vertical-align: top;
   font-size: 12px;
 }
@@ -26096,6 +26114,10 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 .advertising-email-table td {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.advertising-email-table td:nth-child(3) {
+  overflow-wrap: anywhere;
 }
 
 .advertising-email-table td > a,
@@ -26576,7 +26598,7 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   }
 
   .advertising-email-table {
-    min-width: 760px;
+    min-width: 600px;
   }
 
   .advertising-history-panel {

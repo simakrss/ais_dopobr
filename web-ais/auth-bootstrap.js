@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260830-employee-payment-without-act-v1";
+  const AUTH_BUILD = "20260830-advertising-email-table-fit-export-v1";
   const DISMISSIBLE_MODAL_BACKDROP_SELECTOR = ".modal-backdrop, .partner-modal-backdrop, [data-documents-backdrop]";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");

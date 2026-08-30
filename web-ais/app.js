@@ -13691,7 +13691,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <div class="advertising-heading-actions">
               <button class="ghost-button advertising-copy-new" data-action="copy-new-advertising-emails" type="button" ${!newReadyEmails.length || advertising.loading || advertising.resultLoading ? "disabled" : ""}>Копировать новые (${formatStatisticsInteger(newReadyEmails.length)})</button>
               <button class="ghost-button" data-action="copy-advertising-emails" type="button" ${!readyEmails.length || busy ? "disabled" : ""}>Копировать готовые</button>
-              <button class="ghost-button" data-action="export-advertising-emails" type="button" ${!readyRows.length || busy ? "disabled" : ""}>Экспорт CSV</button>
+              <button class="ghost-button" data-action="export-advertising-emails" data-advertising-export-scope="ready" type="button" ${!readyRows.length || busy ? "disabled" : ""}>Экспорт CSV</button>
               <button class="primary-button" data-action="collect-advertising-emails" type="button" ${busy ? "disabled" : ""}>
                 ${advertising.loading
                   ? '<span class="auth-spinner" aria-hidden="true"></span> Сбор адресов…'
@@ -13742,7 +13742,10 @@ MAX - https://bizvmax.ru/zifra_plus
         <section class="panel advertising-results-panel" data-advertising-results tabindex="-1">
           <div class="panel-head advertising-results-head">
             <div><p class="eyebrow">Сохранённый результат</p><h2>Email-адреса последнего поиска</h2></div>
-            <span class="statistics-row-count">${formatStatisticsInteger(rows.length)}</span>
+            <div class="advertising-results-head-actions">
+              <span class="statistics-row-count">${formatStatisticsInteger(rows.length)}</span>
+              <button class="ghost-button compact-button" data-action="export-advertising-emails" data-advertising-export-scope="filtered" type="button" title="Экспортировать все строки с учётом текущих фильтров" ${!rows.length || busy ? "disabled" : ""}>Экспорт CSV</button>
+            </div>
           </div>
           <div class="advertising-filters">
             <label class="advertising-filter-query"><span>Поиск</span><input data-advertising-filter="query" value="${escapeAttr(advertising.filters.query)}" placeholder="Email, ФИО, организация, телефон" autocomplete="off"></label>
@@ -14294,11 +14297,14 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
-  function exportAdvertisingEmails() {
-    const rows = getAdvertisingFilteredRows({ status: "ready" });
+  function exportAdvertisingEmails(event) {
+    const exportScope = String(event?.currentTarget?.dataset?.advertisingExportScope || "ready");
+    const rows = exportScope === "filtered"
+      ? getAdvertisingFilteredRows()
+      : getAdvertisingFilteredRows({ status: "ready" });
     if (!rows.length) return;
     const content = [
-      ["Email", "ФИО / контакт", "Телефон", "Организация", "Должность", "Категория", "Источник данных", "Источники", "Дата получения"].map(csvCell).join(";"),
+      ["Email", "ФИО / контакт", "Телефон", "Организация", "Должность", "Категория", "Источник данных", "Источники", "Дата получения", "Статус", "Причина исключения", "Новый"].map(csvCell).join(";"),
       ...rows.map((row) => [
         row.email,
         row.name,
@@ -14308,11 +14314,14 @@ MAX - https://bizvmax.ru/zifra_plus
         row.category,
         row.origin,
         (row.sources || []).map((source) => source.label).join(", "),
-        formatAdvertisingEmailReceivedDate(getAdvertisingEmailReceivedAt(row))
+        formatAdvertisingEmailReceivedDate(getAdvertisingEmailReceivedAt(row)),
+        row.excluded ? "Исключён" : "Готов",
+        row.exclusionReason,
+        row.isNew ? "Да" : ""
       ].map(csvCell).join(";"))
     ].join("\n");
     download(
-      `email-reklama-${new Date().toISOString().slice(0, 10)}.csv`,
+      `email-reklama${exportScope === "filtered" ? "-vyborka" : ""}-${new Date().toISOString().slice(0, 10)}.csv`,
       `\ufeff${content}`,
       "text/csv;charset=utf-8"
     );
@@ -14400,7 +14409,9 @@ MAX - https://bizvmax.ru/zifra_plus
         render();
       });
     });
-    document.querySelector("[data-action='export-advertising-emails']")?.addEventListener("click", exportAdvertisingEmails);
+    document.querySelectorAll("[data-action='export-advertising-emails']").forEach((button) => {
+      button.addEventListener("click", exportAdvertisingEmails);
+    });
     document.querySelector("[data-action='copy-advertising-emails']")?.addEventListener("click", async () => {
       const rows = getAdvertisingFilteredRows({ status: "ready" });
       const emails = getAdvertisingClipboardEmails(rows);
