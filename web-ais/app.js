@@ -22978,6 +22978,319 @@ MAX - https://bizvmax.ru/zifra_plus
     return `${result}${renderAdminSqlQueryPlainSyntax(source.slice(offset), offset)}`;
   }
 
+  function tokenizeSqlForFormatting(value) {
+    const source = String(value || "");
+    const tokens = [];
+    const isWordStart = (char) => Boolean(char && /[\p{L}_$]/u.test(char));
+    const isWordPart = (char) => Boolean(char && /[\p{L}\p{N}_$]/u.test(char));
+    const operators = ["->>", "<=>", "::", ">=", "<=", "<>", "!=", "||", "&&", ":=", "->"];
+    let index = 0;
+    while (index < source.length) {
+      const char = source[index];
+      const next = source[index + 1];
+      if (/\s/u.test(char)) {
+        index += 1;
+        continue;
+      }
+      if ((char === "-" && next === "-") || char === "#") {
+        const start = index;
+        index += char === "#" ? 1 : 2;
+        while (index < source.length && source[index] !== "\n") index += 1;
+        tokens.push({ type: "line-comment", text: source.slice(start, index) });
+        continue;
+      }
+      if (char === "/" && next === "*") {
+        const start = index;
+        const closing = source.indexOf("*/", index + 2);
+        if (closing < 0) return null;
+        index = closing + 2;
+        tokens.push({ type: "block-comment", text: source.slice(start, index) });
+        continue;
+      }
+      if (char === "'" || char === '"' || char === "`") {
+        const start = index;
+        const quote = char;
+        index += 1;
+        let closed = false;
+        while (index < source.length) {
+          if (source[index] === "\\" && quote !== "`") {
+            index += 2;
+            continue;
+          }
+          if (source[index] === quote) {
+            if (source[index + 1] === quote) {
+              index += 2;
+              continue;
+            }
+            index += 1;
+            closed = true;
+            break;
+          }
+          index += 1;
+        }
+        if (!closed) return null;
+        tokens.push({ type: quote === "`" ? "identifier" : "quoted", text: source.slice(start, index) });
+        continue;
+      }
+      if (char === "[") {
+        const start = index;
+        index += 1;
+        let closed = false;
+        while (index < source.length) {
+          if (source[index] === "]") {
+            if (source[index + 1] === "]") {
+              index += 2;
+              continue;
+            }
+            index += 1;
+            closed = true;
+            break;
+          }
+          index += 1;
+        }
+        if (!closed) return null;
+        tokens.push({ type: "identifier", text: source.slice(start, index) });
+        continue;
+      }
+      if ((char === "@" || char === ":") && isWordStart(next)) {
+        const start = index;
+        index += 1;
+        if (char === "@" && source[index] === "@") index += 1;
+        while (isWordPart(source[index])) index += 1;
+        tokens.push({ type: "parameter", text: source.slice(start, index) });
+        continue;
+      }
+      if (char === "$" && /\d/u.test(next || "")) {
+        const start = index;
+        index += 2;
+        while (/\d/u.test(source[index] || "")) index += 1;
+        tokens.push({ type: "parameter", text: source.slice(start, index) });
+        continue;
+      }
+      if (isWordStart(char)) {
+        const start = index;
+        index += 1;
+        while (isWordPart(source[index])) index += 1;
+        tokens.push({ type: "word", text: source.slice(start, index) });
+        continue;
+      }
+      if (/\d/u.test(char)) {
+        const start = index;
+        index += 1;
+        while (/[\dA-Fa-fxX.eE_+-]/u.test(source[index] || "")) {
+          const current = source[index];
+          if ((current === "+" || current === "-") && !/[eE]/u.test(source[index - 1] || "")) break;
+          index += 1;
+        }
+        tokens.push({ type: "number", text: source.slice(start, index) });
+        continue;
+      }
+      const operator = operators.find((candidate) => source.startsWith(candidate, index));
+      if (operator) {
+        tokens.push({ type: "operator", text: operator });
+        index += operator.length;
+        continue;
+      }
+      const type = "(),.;".includes(char) ? "punctuation" : char === "?" ? "parameter" : "operator";
+      tokens.push({ type, text: char });
+      index += 1;
+    }
+    return tokens;
+  }
+
+  function formatSqlQueryForAnalysis(value) {
+    const source = String(value || "").trim();
+    if (!source) return "";
+    const tokens = tokenizeSqlForFormatting(source);
+    if (!tokens?.length) return source;
+    const clausePhrases = [
+      { words: ["LEFT", "OUTER", "JOIN"], kind: "join" },
+      { words: ["RIGHT", "OUTER", "JOIN"], kind: "join" },
+      { words: ["FULL", "OUTER", "JOIN"], kind: "join" },
+      { words: ["LEFT", "JOIN"], kind: "join" },
+      { words: ["RIGHT", "JOIN"], kind: "join" },
+      { words: ["FULL", "JOIN"], kind: "join" },
+      { words: ["INNER", "JOIN"], kind: "join" },
+      { words: ["CROSS", "JOIN"], kind: "join" },
+      { words: ["GROUP", "BY"], kind: "clause", clause: "group" },
+      { words: ["ORDER", "BY"], kind: "clause", clause: "order" },
+      { words: ["UNION", "ALL"], kind: "set" },
+      { words: ["UNION", "DISTINCT"], kind: "set" }
+    ];
+    const lines = [];
+    const clauses = new Map();
+    const subqueryDepths = new Set();
+    let line = "";
+    let depth = 0;
+    let previousToken = null;
+    const indentation = (level) => "  ".repeat(Math.max(0, level));
+    const flushLine = () => {
+      const ready = line.replace(/[ \t]+$/u, "");
+      if (ready.trim()) lines.push(ready);
+      line = "";
+    };
+    const startLine = (level) => {
+      flushLine();
+      line = indentation(level);
+      previousToken = null;
+    };
+    const append = (token, options = {}) => {
+      const text = typeof token === "string" ? token : token.text;
+      if (!text) return;
+      if (!line) line = indentation(options.indent ?? depth);
+      const previousText = previousToken?.text || "";
+      const previousNormalized = previousText.toUpperCase();
+      const noSpaceBefore = text === "," || text === ";" || text === ")" || text === ".";
+      const noSpaceAfterPrevious = previousText === "(" || previousText === ".";
+      const functionParenthesis = text === "("
+        && previousToken?.type === "word"
+        && !ADMIN_SQL_KEYWORDS.has(previousNormalized);
+      const prefixedLiteral = token?.type === "quoted"
+        && previousToken?.type === "word"
+        && /^(?:N|E|X|B|_[A-Za-z0-9_]+)$/iu.test(previousText);
+      if (
+        line.trim()
+        && !noSpaceBefore
+        && !noSpaceAfterPrevious
+        && !functionParenthesis
+        && !prefixedLiteral
+        && !/[ \t\n]$/u.test(line)
+      ) line += " ";
+      line += text;
+      previousToken = typeof token === "string" ? { type: "phrase", text } : token;
+    };
+    const normalizedWordAt = (index) => tokens[index]?.type === "word"
+      ? tokens[index].text.toUpperCase()
+      : "";
+    const matchPhraseAt = (index) => clausePhrases.find((phrase) => (
+      phrase.words.every((word, offset) => normalizedWordAt(index + offset) === word)
+    ));
+    const appendPhrase = (index, phrase) => {
+      append({
+        type: "phrase",
+        text: tokens.slice(index, index + phrase.words.length).map((token) => token.text).join(" ")
+      });
+      return phrase.words.length - 1;
+    };
+
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      const normalized = token.type === "word" ? token.text.toUpperCase() : "";
+      const phrase = token.type === "word" ? matchPhraseAt(index) : null;
+      if (token.type === "line-comment") {
+        append(token);
+        startLine(depth);
+        continue;
+      }
+      if (token.type === "block-comment") {
+        append(token);
+        if (token.text.includes("\n")) startLine(depth);
+        continue;
+      }
+      if (phrase?.kind === "set") {
+        startLine(depth);
+        index += appendPhrase(index, phrase);
+        startLine(depth);
+        clauses.delete(depth);
+        continue;
+      }
+      if (phrase?.kind === "join") {
+        startLine(depth);
+        index += appendPhrase(index, phrase);
+        clauses.set(depth, "from");
+        continue;
+      }
+      if (phrase?.kind === "clause") {
+        startLine(depth);
+        index += appendPhrase(index, phrase);
+        clauses.set(depth, phrase.clause);
+        continue;
+      }
+      if (normalized === "SELECT") {
+        if (line.trim()) startLine(depth);
+        append(token);
+        startLine(depth + 1);
+        clauses.set(depth, "select");
+        continue;
+      }
+      if (["FROM", "WHERE", "HAVING", "LIMIT", "OFFSET", "QUALIFY", "WINDOW"].includes(normalized)) {
+        startLine(depth);
+        append(token);
+        clauses.set(depth, normalized.toLowerCase());
+        continue;
+      }
+      if (["UNION", "EXCEPT", "INTERSECT"].includes(normalized)) {
+        startLine(depth);
+        append(token);
+        startLine(depth);
+        clauses.delete(depth);
+        continue;
+      }
+      if (normalized === "JOIN") {
+        startLine(depth);
+        append(token);
+        clauses.set(depth, "from");
+        continue;
+      }
+      if (normalized === "ON" || normalized === "USING") {
+        startLine(depth + 1);
+        append(token);
+        clauses.set(depth, "on");
+        continue;
+      }
+      if (["AND", "OR"].includes(normalized) && ["where", "having", "on", "qualify"].includes(clauses.get(depth))) {
+        startLine(depth + 1);
+        append(token);
+        continue;
+      }
+      if (token.text === ",") {
+        append(token);
+        if (["select", "from", "group", "order"].includes(clauses.get(depth))) startLine(depth + 1);
+        continue;
+      }
+      if (token.text === "(") {
+        const nextNormalized = normalizedWordAt(index + 1);
+        const isSubquery = nextNormalized === "SELECT" || nextNormalized === "WITH";
+        append(token);
+        depth += 1;
+        if (isSubquery) {
+          subqueryDepths.add(depth);
+          startLine(depth);
+        }
+        continue;
+      }
+      if (token.text === ")") {
+        if (subqueryDepths.has(depth)) {
+          startLine(depth - 1);
+          subqueryDepths.delete(depth);
+        }
+        clauses.delete(depth);
+        depth = Math.max(0, depth - 1);
+        append(token);
+        continue;
+      }
+      if (token.text === ";") {
+        append(token);
+        continue;
+      }
+      append(token);
+    }
+    flushLine();
+    return lines.join("\n").trim();
+  }
+
+  function shouldAutoFormatSqlQuery(value) {
+    const source = String(value || "").trim();
+    if (!source) return false;
+    const lines = source.split(/\r?\n/u);
+    return lines.length === 1 || lines.some((line) => line.length > 140);
+  }
+
+  function renderSqlMiniIdeLineNumbers(value) {
+    const lineCount = Math.max(1, String(value || "").split(/\r?\n/u).length);
+    return Array.from({ length: lineCount }, (_, index) => `<span>${index + 1}</span>`).join("");
+  }
+
   function renderSqlMiniIde(value, options = {}) {
     const compact = Boolean(options.compact);
     const allowWith = options.allowWith !== false;
@@ -22987,6 +23300,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const inputAttributes = String(options.inputAttributes || "").trim();
     const editorAttributes = String(options.editorAttributes || "").trim();
     const ariaLabel = String(options.ariaLabel || "SQL-запрос");
+    const query = shouldAutoFormatSqlQuery(value) ? formatSqlQueryForAnalysis(value) : String(value || "");
     return `
       <div
         class="sql-mini-ide ${compact ? "is-compact" : ""}"
@@ -22996,34 +23310,43 @@ MAX - https://bizvmax.ru/zifra_plus
         data-sql-allow-trailing-semicolon="${allowTrailingSemicolon ? "true" : "false"}"
         data-sql-required-parameters="${requiredParameters}"
       >
-        <input type="hidden" value="${escapeAttr(value)}" data-sql-query-input ${inputAttributes}>
+        <input type="hidden" value="${escapeAttr(query)}" data-sql-query-input ${inputAttributes}>
         <div class="sql-mini-ide-toolbar">
           <span class="sql-mini-ide-language" aria-hidden="true">SQL</span>
           <span class="sql-mini-ide-validation" data-sql-validation-status>Проверка запроса…</span>
+          <button
+            class="sql-mini-ide-format-button"
+            data-action="format-sql-query"
+            type="button"
+            title="Расположить поля, таблицы и условия запроса по строкам"
+          >Форматировать</button>
           <span class="sql-mini-ide-position" data-sql-caret-status>Строка 1, столбец 1</span>
         </div>
         <div class="sql-mini-ide-editor-shell">
-          <div
-            class="admin-sql-query-editor sql-mini-ide-editor"
-            contenteditable="true"
-            data-sql-query-editor
-            role="textbox"
-            aria-label="${escapeAttr(ariaLabel)}"
-            aria-multiline="true"
-            aria-autocomplete="list"
-            aria-haspopup="listbox"
-            aria-expanded="false"
-            spellcheck="false"
-            autocapitalize="off"
-            autocomplete="off"
-            ${editorAttributes}
-          >${renderAdminSqlQuerySyntax(value)}</div>
+          <div class="sql-mini-ide-editor-frame">
+            <div class="sql-mini-ide-line-numbers" data-sql-line-numbers aria-hidden="true">${renderSqlMiniIdeLineNumbers(query)}</div>
+            <div
+              class="admin-sql-query-editor sql-mini-ide-editor"
+              contenteditable="true"
+              data-sql-query-editor
+              role="textbox"
+              aria-label="${escapeAttr(ariaLabel)}"
+              aria-multiline="true"
+              aria-autocomplete="list"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              spellcheck="false"
+              autocapitalize="off"
+              autocomplete="off"
+              ${editorAttributes}
+            >${renderAdminSqlQuerySyntax(query)}</div>
+          </div>
           <div class="sql-mini-ide-suggestions" data-sql-suggestions role="listbox" aria-label="Подсказки SQL" hidden></div>
           <div class="sql-mini-ide-keyword-tooltip" data-sql-keyword-tooltip role="tooltip" hidden></div>
         </div>
         <div class="sql-mini-ide-footer">
           <span class="sql-mini-ide-diagnostic" data-sql-diagnostic role="status" aria-live="polite"></span>
-          <span class="sql-mini-ide-shortcut"><kbd>Ctrl</kbd>+<kbd>Пробел</kbd> — подсказки</span>
+          <span class="sql-mini-ide-shortcut"><kbd>Ctrl</kbd>+<kbd>Пробел</kbd> — подсказки; <kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd> — формат</span>
         </div>
       </div>
     `;
@@ -54584,6 +54907,47 @@ MAX - https://bizvmax.ru/zifra_plus
     if (input) input.value = serializeCommunicationTemplateEditor(editor);
   }
 
+  function updateSqlMiniIdeLineNumbers(editor) {
+    const gutter = editor?.closest?.("[data-sql-mini-ide]")?.querySelector("[data-sql-line-numbers]");
+    if (!gutter) return;
+    const query = serializeCommunicationTemplateEditor(editor);
+    const lineCount = Math.max(1, query.split("\n").length);
+    if (Number(gutter.dataset.sqlLineCount || 0) !== lineCount) {
+      gutter.innerHTML = renderSqlMiniIdeLineNumbers(query);
+      gutter.dataset.sqlLineCount = String(lineCount);
+    }
+    gutter.scrollTop = editor.scrollTop;
+  }
+
+  function mapSqlCaretOffsetAfterFormatting(source, formatted, sourceOffset) {
+    const safeOffset = Math.max(0, Math.min(String(source || "").length, Number(sourceOffset) || 0));
+    const significantBeforeCaret = Array.from(String(source || "").slice(0, safeOffset))
+      .filter((char) => !/\s/u.test(char)).length;
+    if (!significantBeforeCaret) return 0;
+    let significant = 0;
+    for (let index = 0; index < formatted.length; index += 1) {
+      if (!/\s/u.test(formatted[index])) significant += 1;
+      if (significant >= significantBeforeCaret) return index + 1;
+    }
+    return formatted.length;
+  }
+
+  function formatSqlMiniIdeEditor(editor) {
+    if (!editor) return false;
+    const query = serializeCommunicationTemplateEditor(editor);
+    const formatted = formatSqlQueryForAnalysis(query);
+    if (!formatted || formatted === query) return false;
+    const caretOffset = getCommunicationTemplateEditorCaretOffset(editor);
+    const nextCaretOffset = mapSqlCaretOffsetAfterFormatting(query, formatted, caretOffset);
+    editor.textContent = formatted;
+    refreshAdminSqlQueryEditor(editor);
+    editor.focus({ preventScroll: true });
+    setCommunicationTemplateEditorCaretOffset(editor, nextCaretOffset);
+    updateSqlMiniIdeCaretStatus(editor);
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }
+
   function updateSqlMiniIdeCaretStatus(editor) {
     const wrapper = editor?.closest?.("[data-sql-mini-ide]");
     const status = wrapper?.querySelector("[data-sql-caret-status]");
@@ -54813,6 +55177,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
     editor.scrollTop = scrollTop;
     editor.scrollLeft = scrollLeft;
+    updateSqlMiniIdeLineNumbers(editor);
     updateSqlMiniIdeValidation(editor);
     updateSqlMiniIdeBracketHighlight(editor);
   }
@@ -54826,6 +55191,10 @@ MAX - https://bizvmax.ru/zifra_plus
       window.clearTimeout(highlightTimer);
       refreshAdminSqlQueryEditor(editor, preserveCaret);
     };
+    const wrapper = editor.closest("[data-sql-mini-ide]");
+    const formatButton = wrapper?.querySelector("[data-action='format-sql-query']");
+    formatButton?.addEventListener("mousedown", (event) => event.preventDefault());
+    formatButton?.addEventListener("click", () => formatSqlMiniIdeEditor(editor));
     editor.addEventListener("compositionstart", () => {
       window.clearTimeout(highlightTimer);
       editor.dataset.composing = "true";
@@ -54833,6 +55202,7 @@ MAX - https://bizvmax.ru/zifra_plus
     editor.addEventListener("compositionend", () => {
       editor.dataset.composing = "";
       syncAdminSqlQueryEditor(editor);
+      updateSqlMiniIdeLineNumbers(editor);
       updateSqlMiniIdeValidation(editor);
     });
     editor.addEventListener("paste", (event) => {
@@ -54844,6 +55214,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     editor.addEventListener("input", () => {
       syncAdminSqlQueryEditor(editor);
+      updateSqlMiniIdeLineNumbers(editor);
       hideSqlMiniIdeKeywordTooltip(editor);
       window.requestAnimationFrame(() => updateSqlMiniIdeBracketHighlight(editor));
       if (editor.dataset.composing === "true") return;
@@ -54862,6 +55233,11 @@ MAX - https://bizvmax.ru/zifra_plus
     editor.addEventListener("keydown", (event) => {
       const suggestionPanel = editor.closest("[data-sql-mini-ide]")?.querySelector("[data-sql-suggestions]");
       const suggestionsOpen = Boolean(suggestionPanel && !suggestionPanel.hidden);
+      if (event.shiftKey && event.altKey && event.code === "KeyF") {
+        event.preventDefault();
+        formatSqlMiniIdeEditor(editor);
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.code === "Space") {
         event.preventDefault();
         showSqlMiniIdeSuggestions(editor, true);
@@ -54914,7 +55290,10 @@ MAX - https://bizvmax.ru/zifra_plus
       if (event.relatedTarget instanceof Node && token.contains(event.relatedTarget)) return;
       hideSqlMiniIdeKeywordTooltip(editor);
     });
-    editor.addEventListener("scroll", () => hideSqlMiniIdeKeywordTooltip(editor), { passive: true });
+    editor.addEventListener("scroll", () => {
+      hideSqlMiniIdeKeywordTooltip(editor);
+      updateSqlMiniIdeLineNumbers(editor);
+    }, { passive: true });
     editor.addEventListener("focus", () => {
       updateSqlMiniIdeCaretStatus(editor);
       updateSqlMiniIdeBracketHighlight(editor);

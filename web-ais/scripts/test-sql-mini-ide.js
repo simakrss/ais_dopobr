@@ -33,7 +33,14 @@ const validationSource = sliceSource(
 const { validateSqlMiniIdeQuery, getSqlMatchingParenthesisOffsets } = new Function(
   `${forbiddenKeywordsSource}\n${validationSource}\nreturn { validateSqlMiniIdeQuery, getSqlMatchingParenthesisOffsets };`
 )();
-const { renderAdminSqlQuerySyntax, ADMIN_SQL_KEYWORDS, ADMIN_SQL_KEYWORD_HELP } = new Function(`
+const {
+  renderAdminSqlQuerySyntax,
+  tokenizeSqlForFormatting,
+  formatSqlQueryForAnalysis,
+  shouldAutoFormatSqlQuery,
+  ADMIN_SQL_KEYWORDS,
+  ADMIN_SQL_KEYWORD_HELP
+} = new Function(`
   ${keywordHelpSource}
   const escapeHtml = (value) => String(value || "")
     .replaceAll("&", "&amp;")
@@ -43,7 +50,14 @@ const { renderAdminSqlQuerySyntax, ADMIN_SQL_KEYWORDS, ADMIN_SQL_KEYWORD_HELP } 
     .replaceAll("'", "&#39;");
   const escapeAttr = escapeHtml;
   ${syntaxRendererSource}
-  return { renderAdminSqlQuerySyntax, ADMIN_SQL_KEYWORDS, ADMIN_SQL_KEYWORD_HELP };
+  return {
+    renderAdminSqlQuerySyntax,
+    tokenizeSqlForFormatting,
+    formatSqlQueryForAnalysis,
+    shouldAutoFormatSqlQuery,
+    ADMIN_SQL_KEYWORDS,
+    ADMIN_SQL_KEYWORD_HELP
+  };
 `)();
 assert.deepEqual(
   [...ADMIN_SQL_KEYWORDS].filter((keyword) => !ADMIN_SQL_KEYWORD_HELP[keyword]),
@@ -154,9 +168,39 @@ assert.match(renderedSql, /data-sql-bracket-offset="7">\(<\/span>/u);
 assert.match(renderedSql, /data-sql-bracket-offset="10">\)<\/span>/u);
 assert.doesNotMatch(renderAdminSqlQuerySyntax("SELECT '(' AS marker"), /data-sql-bracket-offset/u);
 
+const compactSql = "SELECT DISTINCT email, org AS organization, location AS origin, date AS sourceReceivedAt FROM wp_ass_reg WHERE email IS NOT NULL AND TRIM(email) <> ''";
+const formattedSql = formatSqlQueryForAnalysis(compactSql);
+assert.match(formattedSql, /^SELECT\n  DISTINCT email,/u);
+assert.match(formattedSql, /\n  org AS organization,/u);
+assert.match(formattedSql, /\nFROM wp_ass_reg/u);
+assert.match(formattedSql, /\nWHERE email IS NOT NULL\n  AND TRIM\(email\) <> ''$/u);
+assert.equal(
+  tokenizeSqlForFormatting(formattedSql).map((token) => token.text).join("\u0000"),
+  tokenizeSqlForFormatting(compactSql).map((token) => token.text).join("\u0000"),
+  "Форматирование должно менять только пробелы и переносы строк"
+);
+assert.equal(formatSqlQueryForAnalysis(formattedSql), formattedSql, "Повторное форматирование должно быть стабильным");
+const literalSql = "SELECT 'FROM x WHERE y AND z' AS sample, :email AS parameter_value FROM contacts -- WHERE внутри комментария";
+const formattedLiteralSql = formatSqlQueryForAnalysis(literalSql);
+assert.match(formattedLiteralSql, /'FROM x WHERE y AND z'/u);
+assert.match(formattedLiteralSql, /:email/u);
+assert.match(formattedLiteralSql, /-- WHERE внутри комментария/u);
+assert.match(formatSqlQueryForAnalysis("SELECT _utf8mb4'текст', X'AB12'"), /_utf8mb4'текст',[\s\S]*X'AB12'/u);
+assert.match(formatSqlQueryForAnalysis("SELECT email /* пояснение */, org FROM contacts"), /email \/\* пояснение \*\//u);
+assert.equal(formatSqlQueryForAnalysis("SELECT 'незакрытая строка"), "SELECT 'незакрытая строка");
+assert.match(
+  formatSqlQueryForAnalysis("WITH recent AS (SELECT email FROM contacts WHERE active = 1) SELECT email FROM recent"),
+  /^WITH recent AS \(\n  SELECT[\s\S]*\n\)\nSELECT/u
+);
+assert.equal(shouldAutoFormatSqlQuery(compactSql), true);
+assert.equal(shouldAutoFormatSqlQuery("SELECT\n  email\nFROM contacts"), false);
+
 assert.match(appSource, /function renderSqlMiniIde\(/u);
 assert.match(appSource, /data-sql-mini-ide/u);
 assert.match(appSource, /data-sql-query-editor/u);
+assert.match(appSource, /data-sql-line-numbers/u);
+assert.match(appSource, /data-action="format-sql-query"/u);
+assert.match(appSource, /function formatSqlMiniIdeEditor\(/u);
 assert.match(appSource, /data-advertising-source-field="sql"/u);
 assert.match(appSource, /Ctrl[\s\S]*Пробел/u);
 assert.match(appSource, /ADMIN_SQL_SUGGESTIONS/u);
@@ -192,6 +236,9 @@ assert.match(sqlEditorStyle, /overflow-x:\s*hidden;/u);
 assert.match(sqlEditorStyle, /overflow-wrap:\s*anywhere;/u);
 assert.match(sqlEditorStyle, /white-space:\s*pre-wrap;/u);
 assert.match(stylesSource, /\.sql-mini-ide-keyword-tooltip/u);
+assert.match(stylesSource, /\.sql-mini-ide-editor-frame/u);
+assert.match(stylesSource, /\.sql-mini-ide-line-numbers/u);
+assert.match(stylesSource, /\.sql-mini-ide-format-button/u);
 assert.match(stylesSource, /::highlight\(ais-sql-matching-brackets\)/u);
 assert.match(stylesSource, /\.admin-sql-bracket\.is-matching/u);
 assert.match(stylesSource, /\.admin-connection-panel[\s\S]*input\[type="text"\][\s\S]*border-radius: 8px/u);

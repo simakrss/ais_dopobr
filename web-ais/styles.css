@@ -8221,9 +8221,58 @@ body.long-press-dragging * {
   white-space: nowrap;
 }
 
+.sql-mini-ide-format-button {
+  flex: 0 0 auto;
+  border: 1px solid #b9cec6;
+  border-radius: 6px;
+  background: #fff;
+  padding: 3px 8px;
+  color: #075f58;
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sql-mini-ide-format-button:hover,
+.sql-mini-ide-format-button:focus-visible {
+  border-color: var(--teal);
+  background: #e8f5f1;
+  outline: none;
+}
+
 .sql-mini-ide-editor-shell {
   position: relative;
   min-width: 0;
+}
+
+.sql-mini-ide-editor-frame {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: stretch;
+  min-width: 0;
+  background: #fff;
+}
+
+.sql-mini-ide-line-numbers {
+  min-height: 220px;
+  overflow: hidden;
+  border-right: 1px solid #e1e8e5;
+  background: #f5f8f7;
+  padding: 10px 7px 10px 4px;
+  color: #83918b;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  pointer-events: none;
+}
+
+.sql-mini-ide-line-numbers > span {
+  display: block;
+  height: 1.5em;
 }
 
 .sql-mini-ide .admin-sql-query-editor {
@@ -8249,6 +8298,10 @@ body.long-press-dragging * {
 
 .sql-mini-ide.is-compact .admin-sql-query-editor {
   height: 170px;
+  min-height: 130px;
+}
+
+.sql-mini-ide.is-compact .sql-mini-ide-line-numbers {
   min-height: 130px;
 }
 
@@ -8450,6 +8503,10 @@ body.long-press-dragging * {
     margin-left: 0;
   }
 
+  .sql-mini-ide-format-button {
+    margin-left: auto;
+  }
+
   .sql-mini-ide-shortcut {
     display: none;
   }
@@ -8462,6 +8519,15 @@ body.long-press-dragging * {
 
   .sql-mini-ide.is-compact .admin-sql-query-editor {
     height: 180px;
+    min-height: 140px;
+  }
+
+  .sql-mini-ide-line-numbers {
+    min-height: 170px;
+    font-size: 11px;
+  }
+
+  .sql-mini-ide.is-compact .sql-mini-ide-line-numbers {
     min-height: 140px;
   }
 
