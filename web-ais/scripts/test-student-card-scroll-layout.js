@@ -172,6 +172,16 @@ assertDeclaration(
 );
 assertDeclaration(formDeclarations, /(?:^|;)\s*min-height\s*:\s*0\s*(?:;|$)/u);
 assertDeclaration(formDeclarations, /(?:^|;)\s*overflow\s*:\s*hidden\s*(?:;|$)/u);
+assert.match(
+  desktopSource,
+  /\.student-modal\s*>\s*form\[data-record-lock-lost="true"\]\s*\{[\s\S]*?grid-template-rows\s*:\s*auto\s+auto\s+minmax\(\s*0\s*,\s*1fr\s*\)/u,
+  "При потере блокировки предупреждение должно получать отдельную строку и не сжимать содержимое карточки."
+);
+assert.match(
+  stylesSource,
+  /\.record-lock-warning\s*\{[\s\S]*?min-height\s*:\s*48px[\s\S]*?flex-wrap\s*:\s*wrap/u,
+  "Предупреждение о блокировке должно вмещать кнопку по высоте и переносить элементы."
+);
 
 const layoutDeclarations = declarationsFor(desktopRules, classSelector(".student-card-layout"), "student-card-layout");
 assertDeclaration(layoutDeclarations, /(?:^|;)\s*min-height\s*:\s*0\s*(?:;|$)/u);
@@ -284,5 +294,10 @@ assertDeclaration(
   "Мобильный список событий должен иметь конечную максимальную высоту."
 );
 assertDeclaration(mobileEventListDeclarations, /(?:^|;)\s*overflow-y\s*:\s*auto\s*(?:;|$)/u);
+assert.match(
+  mobileMedia.body,
+  /\.record-lock-warning\s+\.ghost-button\s*\{[\s\S]*?width\s*:\s*100%/u,
+  "На мобильном экране кнопка перехвата блокировки должна занимать отдельную строку."
+);
 
 console.log("Student card scroll layout tests passed.");
