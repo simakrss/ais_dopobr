@@ -326,6 +326,7 @@ assert.match(appSource, /key:\s*"preferredMessenger",\s*label:\s*"Предпоч
 assert.match(appSource, /field === "preferredMessenger"\) return preferredMessengerDisplayName\(value\)/u);
 assert.match(appSource, /preferredMessenger:\s*normalizePreferredMessenger\(student\.preferredMessenger\)/u);
 assert.match(appSource, /preferredMessenger:\s*normalizePreferredMessenger\(contract\.preferredMessenger\)/u);
-assert.match(stylesSource, /\.student-messenger-button\.is-preferred,\s*\.student-messenger-url-button\.is-preferred\s*\{[^}]*background:\s*#ffe082[^}]*color:\s*#694d00/u);
+assert.match(stylesSource, /\.student-messenger-button\.is-preferred,\s*\.student-messenger-url-button\.is-preferred\s*\{[^}]*background:\s*#fff6d8[^}]*color:\s*#66531b/u);
+assert.match(stylesSource, /\.student-messenger-button\.is-preferred:hover,\s*\.student-messenger-url-button\.is-preferred:hover\s*\{[^}]*background:\s*#f8e9b7/u);
 
 console.log("messenger preference context menu tests: OK");

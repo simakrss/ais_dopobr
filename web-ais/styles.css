@@ -16191,17 +16191,17 @@ body.card-window-moving {
 
 .student-messenger-button.is-preferred,
 .student-messenger-url-button.is-preferred {
-  border-color: #d6a919;
-  background: #ffe082;
-  color: #694d00;
-  box-shadow: 0 0 0 1px rgba(214, 169, 25, 0.22);
+  border-color: #c9ae60;
+  background: #fff6d8;
+  color: #66531b;
+  box-shadow: 0 0 0 1px rgba(160, 129, 43, 0.12);
 }
 
 .student-messenger-button.is-preferred:hover,
 .student-messenger-url-button.is-preferred:hover {
-  border-color: #bd8f00;
-  background: #ffd45a;
-  color: #4f3a00;
+  border-color: #b99a43;
+  background: #f8e9b7;
+  color: #594711;
 }
 
 .messenger-preference-menu {
