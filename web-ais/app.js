@@ -6093,6 +6093,7 @@ MAX - https://bizvmax.ru/zifra_plus
         loading: false,
         loaded: false,
         saving: false,
+        dirty: false,
         testingId: "",
         error: "",
         message: "",
@@ -6122,6 +6123,9 @@ MAX - https://bizvmax.ru/zifra_plus
       settingsLoading: false,
       settingsLoaded: false,
       settingsSaving: false,
+      settingsDirty: false,
+      settingsSavedSources: null,
+      settingsDraftSources: null,
       settingsError: "",
       settingsMessage: "",
       history: {
@@ -12774,12 +12778,18 @@ MAX - https://bizvmax.ru/zifra_plus
         ${sourcesState.error ? `<div class="statistics-inline-error" role="alert">${escapeHtml(sourcesState.error)}</div>` : ""}
         ${sourcesState.message ? `<div class="statistics-source-message" role="status">${escapeHtml(sourcesState.message)}</div>` : ""}
         <form data-action="save-statistics-sources" class="statistics-source-builder-form">
+          <div class="source-draft-toolbar ${sourcesState.dirty ? "is-unsaved" : ""}" data-statistics-source-draft-toolbar>
+            <span class="source-draft-status" data-statistics-source-draft-status role="status" aria-live="polite">${sourcesState.saving
+              ? "Сохранение изменений…"
+              : sourcesState.dirty ? "Есть несохранённые изменения" : "Изменений нет"}</span>
+            <div class="source-draft-actions">
+              <button class="ghost-button" data-action="reload-statistics-sources" type="button" ${sourcesState.loading || sourcesState.saving || sourcesState.testingId ? "disabled" : ""}>Загрузить заново</button>
+              <button class="ghost-button" data-action="discard-statistics-source-changes" type="button" ${!sourcesState.dirty || sourcesState.saving || sourcesState.testingId ? "disabled" : ""}>Отменить изменения</button>
+              <button class="primary-button source-draft-save-button ${sourcesState.dirty && !sourcesState.saving ? "is-unsaved" : ""}" data-statistics-source-save type="submit" ${!sourcesState.dirty || sourcesState.saving || sourcesState.testingId ? "disabled" : ""}>${sourcesState.saving ? "Сохранение…" : "Сохранить изменения"}</button>
+            </div>
+          </div>
           <div class="statistics-source-builder-list">
             ${sources.map(renderStatisticsSourceEditor).join("")}
-          </div>
-          <div class="statistics-source-builder-actions">
-            <button class="ghost-button" data-action="reload-statistics-sources" type="button" ${sourcesState.loading || sourcesState.saving || sourcesState.testingId ? "disabled" : ""}>Загрузить заново</button>
-            ${isAdminUser() ? `<button class="primary-button" type="submit" ${sourcesState.saving || sourcesState.testingId ? "disabled" : ""}>${sourcesState.saving ? "Сохранение…" : "Сохранить источники"}</button>` : ""}
           </div>
         </form>
       </section>
@@ -12945,6 +12955,7 @@ MAX - https://bizvmax.ru/zifra_plus
       sourcesState.savedSqlById = Object.fromEntries((payload.sources || [])
         .filter((source) => !isStatisticsSourceReadOnly(source))
         .map((source) => [String(source.id || ""), String(source.sql || "").trim()]));
+      sourcesState.dirty = false;
       sourcesState.testResults = {};
     } catch (error) {
       sourcesState.error = error.message || "Не удалось загрузить конструктор источников.";
@@ -12970,6 +12981,8 @@ MAX - https://bizvmax.ru/zifra_plus
       ...(state.statistics.sources.data || {}),
       sources: current
     };
+    state.statistics.sources.dirty = hasStatisticsSourceDraftChanges(current);
+    if (state.statistics.sources.dirty) state.statistics.sources.message = "";
     return current;
   }
 
@@ -12978,6 +12991,51 @@ MAX - https://bizvmax.ru/zifra_plus
       id: String(source.id || ""),
       sql: String(source.sql || "")
     }));
+  }
+
+  function hasStatisticsSourceDraftChanges(sources = getStatisticsSourceDefinitions()) {
+    const savedSqlById = state.statistics.sources.savedSqlById || {};
+    return getEditableStatisticsSourcePayload(sources).some((source) => (
+      String(savedSqlById[source.id] || "").trim() !== String(source.sql || "").trim()
+    ));
+  }
+
+  function updateStatisticsSourceDraftActions(form = document.querySelector("form[data-action='save-statistics-sources']")) {
+    const sourcesState = state.statistics.sources;
+    const dirty = hasStatisticsSourceDraftChanges();
+    const busy = Boolean(sourcesState.saving || sourcesState.testingId);
+    sourcesState.dirty = dirty;
+    const toolbar = form?.querySelector("[data-statistics-source-draft-toolbar]");
+    toolbar?.classList.toggle("is-unsaved", dirty && !sourcesState.saving);
+    const status = form?.querySelector("[data-statistics-source-draft-status]");
+    if (status) status.textContent = sourcesState.saving
+      ? "Сохранение изменений…"
+      : dirty ? "Есть несохранённые изменения" : "Изменений нет";
+    const saveButton = form?.querySelector("[data-statistics-source-save]");
+    if (saveButton) {
+      saveButton.disabled = !dirty || busy;
+      saveButton.classList.toggle("is-unsaved", dirty && !busy);
+    }
+    const discardButton = form?.querySelector("[data-action='discard-statistics-source-changes']");
+    if (discardButton) discardButton.disabled = !dirty || busy;
+  }
+
+  function discardStatisticsSourceChanges() {
+    const sourcesState = state.statistics.sources;
+    if (!sourcesState.dirty || sourcesState.saving || sourcesState.testingId) return;
+    if (!confirm("Отменить несохранённые изменения источников статистики?")) return;
+    const savedSqlById = sourcesState.savedSqlById || {};
+    const sources = getStatisticsSourceDefinitions().map((source) => (
+      isStatisticsSourceReadOnly(source)
+        ? { ...source }
+        : { ...source, sql: String(savedSqlById[String(source.id || "")] || "") }
+    ));
+    sourcesState.data = { ...(sourcesState.data || {}), sources };
+    sourcesState.dirty = false;
+    sourcesState.error = "";
+    sourcesState.message = "Несохранённые изменения отменены.";
+    sourcesState.testResults = {};
+    render();
   }
 
   async function saveStatisticsSources(event) {
@@ -12992,6 +13050,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!changedSources.length) {
       sourcesState.error = "";
       sourcesState.message = "Изменений для сохранения нет.";
+      sourcesState.dirty = false;
       render();
       return;
     }
@@ -13017,6 +13076,7 @@ MAX - https://bizvmax.ru/zifra_plus
       sourcesState.savedSqlById = Object.fromEntries((payload.sources || [])
         .filter((source) => !isStatisticsSourceReadOnly(source))
         .map((source) => [String(source.id || ""), String(source.sql || "").trim()]));
+      sourcesState.dirty = false;
       sourcesState.testResults = {};
       sourcesState.message = "Источники сохранены. Статистика обновляется по новым запросам.";
       state.statistics.assistant.loaded = false;
@@ -13228,20 +13288,21 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='refresh-statistics-data']")?.addEventListener("click", () => {
       loadStatisticsData({ force: true });
     });
-    document.querySelector("form[data-action='save-statistics-sources']")
-      ?.addEventListener("submit", saveStatisticsSources);
-    document.querySelectorAll("[data-statistics-source-editor] [data-sql-query-editor]").forEach((editor) => {
-      editor.addEventListener("input", () => {
-        syncAdminSqlQueryEditor(editor);
-        syncStatisticsSourceDraftsFromDom(editor.closest("form[data-action='save-statistics-sources']"));
-      });
+    const statisticsSourcesForm = document.querySelector("form[data-action='save-statistics-sources']");
+    statisticsSourcesForm?.addEventListener("submit", saveStatisticsSources);
+    statisticsSourcesForm?.addEventListener("input", () => {
+      syncStatisticsSourceDraftsFromDom(statisticsSourcesForm);
+      updateStatisticsSourceDraftActions(statisticsSourcesForm);
     });
+    document.querySelector("[data-action='discard-statistics-source-changes']")
+      ?.addEventListener("click", discardStatisticsSourceChanges);
     document.querySelectorAll("[data-action='test-statistics-source']").forEach((button) => {
       button.addEventListener("click", testStatisticsSource);
     });
     document.querySelectorAll("[data-action='reload-statistics-sources']").forEach((button) => {
       button.addEventListener("click", () => {
-        syncStatisticsSourceDraftsFromDom();
+        if (state.statistics.sources.dirty
+          && !confirm("Загрузить сохранённые источники? Несохранённые изменения будут отменены.")) return;
         loadStatisticsSources({ force: true });
       });
     });
@@ -13355,9 +13416,12 @@ MAX - https://bizvmax.ru/zifra_plus
         }))
         .filter((source) => source.id);
     }
-    const configured = Array.isArray(state.advertising.settings?.sources)
+    const draftSources = options.includeDraft && Array.isArray(state.advertising.settingsDraftSources)
+      ? state.advertising.settingsDraftSources
+      : null;
+    const configured = draftSources || (Array.isArray(state.advertising.settings?.sources)
       ? state.advertising.settings.sources
-      : [];
+      : []);
     const sources = configured.length ? configured : ADVERTISING_EMAIL_SOURCES;
     return sources.filter((source) => options.includeDisabled || source.enabled !== false);
   }
@@ -13433,17 +13497,26 @@ MAX - https://bizvmax.ru/zifra_plus
       return '<section class="panel"><div class="empty-state compact"><strong>Конструктор доступен администратору</strong><span>Менеджер может запускать настроенный сбор на вкладке «Сборщик».</span></div></section>';
     }
     const advertising = state.advertising;
-    const sources = getAdvertisingEmailSources({ includeDisabled: true });
+    const sources = getAdvertisingEmailSources({ includeDisabled: true, includeDraft: true });
     return `
       <section class="panel advertising-source-builder-panel">
         <div class="panel-head advertising-results-head">
           <div><p class="eyebrow">Настройка сбора</p><h2>Конструктор источников</h2></div>
-          <button class="ghost-button" data-action="add-advertising-source" type="button" ${advertising.settingsSaving ? "disabled" : ""}>Добавить источник</button>
+          <button class="ghost-button" data-action="add-advertising-source" type="button" ${advertising.settingsLoading || advertising.settingsSaving ? "disabled" : ""}>Добавить источник</button>
         </div>
         <p class="advertising-builder-hint">Порядок карточек сохраняется. Подключения и пароли настраиваются в Админке → Подключение к базе → База рекламы.</p>
         ${advertising.settingsError ? `<div class="advertising-inline-message is-error" role="alert">${escapeHtml(advertising.settingsError)}</div>` : ""}
         ${advertising.settingsMessage ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(advertising.settingsMessage)}</div>` : ""}
         <form data-action="save-advertising-settings" class="advertising-source-builder-form">
+          <div class="source-draft-toolbar ${advertising.settingsDirty ? "is-unsaved" : ""}" data-advertising-source-draft-toolbar>
+            <span class="source-draft-status" data-advertising-source-draft-status role="status" aria-live="polite">${advertising.settingsSaving
+              ? "Сохранение изменений…"
+              : advertising.settingsDirty ? "Есть несохранённые изменения" : "Изменений нет"}</span>
+            <div class="source-draft-actions">
+              <button class="ghost-button" data-action="discard-advertising-source-changes" type="button" ${!advertising.settingsDirty || advertising.settingsSaving ? "disabled" : ""}>Отменить изменения</button>
+              <button class="primary-button source-draft-save-button ${advertising.settingsDirty && !advertising.settingsSaving ? "is-unsaved" : ""}" data-advertising-source-save type="submit" ${!advertising.settingsDirty || advertising.settingsSaving ? "disabled" : ""}>${advertising.settingsSaving ? "Сохранение…" : "Сохранить изменения"}</button>
+            </div>
+          </div>
           <div class="advertising-source-builder-list">
             ${sources.map((source, index) => `
               <article class="advertising-source-editor" data-advertising-source-editor data-source-index="${index}">
@@ -13470,9 +13543,6 @@ MAX - https://bizvmax.ru/zifra_plus
                 </div>
               </article>
             `).join("")}
-          </div>
-          <div class="advertising-settings-actions">
-            <button class="primary-button" type="submit" ${advertising.settingsSaving ? "disabled" : ""}>${advertising.settingsSaving ? "Сохранение…" : "Сохранить источники"}</button>
           </div>
         </form>
       </section>
@@ -13798,6 +13868,9 @@ MAX - https://bizvmax.ru/zifra_plus
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
       advertising.settings = payload;
+      advertising.settingsSavedSources = clone(normalizeAdvertisingSourceDrafts(payload.sources || []));
+      advertising.settingsDraftSources = clone(advertising.settingsSavedSources);
+      advertising.settingsDirty = false;
       const enabledSourceIds = (payload.sources || [])
         .filter((source) => source.enabled !== false)
         .map((source) => source.id);
@@ -14142,8 +14215,85 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function normalizeAdvertisingSourceDraft(source = {}, index = 0) {
+    const kind = String(source.kind || "sql");
+    const normalized = {
+      id: String(source.id || `source_${index + 1}`).trim(),
+      label: String(source.label || "").trim(),
+      group: String(source.group || "Другое").trim(),
+      kind,
+      enabled: source.enabled !== false
+    };
+    if (kind === "sql") {
+      normalized.connection = String(source.connection || "applications");
+      normalized.sql = String(source.sql || "").trim();
+    } else if (kind === "google") {
+      const workbooks = Array.isArray(source.workbooks)
+        ? source.workbooks
+        : parseAdvertisingWorkbookEditorValue(source.workbooks || "");
+      normalized.workbooks = workbooks.map((item) => ({
+        url: String(item?.url || "").trim(),
+        columns: (Array.isArray(item?.columns) ? item.columns : [])
+          .map((column) => String(column || "").trim())
+          .filter(Boolean)
+      })).filter((item) => item.url);
+    } else if (kind === "workbook") {
+      normalized.dataset = String(source.dataset || "legacyContacts");
+    }
+    return normalized;
+  }
+
+  function normalizeAdvertisingSourceDrafts(sources = []) {
+    return (Array.isArray(sources) ? sources : []).map(normalizeAdvertisingSourceDraft);
+  }
+
+  function hasAdvertisingSourceDraftChanges(sources = getAdvertisingEmailSources({ includeDisabled: true, includeDraft: true })) {
+    const baseline = state.advertising.settingsSavedSources;
+    if (!Array.isArray(baseline)) return true;
+    return JSON.stringify(normalizeAdvertisingSourceDrafts(sources)) !== JSON.stringify(baseline);
+  }
+
+  function setAdvertisingSourceDrafts(sources = []) {
+    const drafts = normalizeAdvertisingSourceDrafts(sources);
+    state.advertising.settingsDraftSources = drafts;
+    state.advertising.settingsDirty = hasAdvertisingSourceDraftChanges(drafts);
+    if (state.advertising.settingsDirty) state.advertising.settingsMessage = "";
+    return drafts;
+  }
+
+  function updateAdvertisingSourceDraftActions(form = document.querySelector("form[data-action='save-advertising-settings']")) {
+    const advertising = state.advertising;
+    const dirty = hasAdvertisingSourceDraftChanges();
+    advertising.settingsDirty = dirty;
+    const toolbar = form?.querySelector("[data-advertising-source-draft-toolbar]");
+    toolbar?.classList.toggle("is-unsaved", dirty && !advertising.settingsSaving);
+    const status = form?.querySelector("[data-advertising-source-draft-status]");
+    if (status) status.textContent = advertising.settingsSaving
+      ? "Сохранение изменений…"
+      : dirty ? "Есть несохранённые изменения" : "Изменений нет";
+    const saveButton = form?.querySelector("[data-advertising-source-save]");
+    if (saveButton) {
+      saveButton.disabled = !dirty || advertising.settingsSaving;
+      saveButton.classList.toggle("is-unsaved", dirty && !advertising.settingsSaving);
+    }
+    const discardButton = form?.querySelector("[data-action='discard-advertising-source-changes']");
+    if (discardButton) discardButton.disabled = !dirty || advertising.settingsSaving;
+  }
+
+  function discardAdvertisingSourceChanges() {
+    const advertising = state.advertising;
+    if (!advertising.settingsDirty || advertising.settingsSaving) return;
+    if (!confirm("Отменить несохранённые изменения источников рекламы?")) return;
+    const sources = clone(advertising.settingsSavedSources || []);
+    advertising.settingsDraftSources = sources;
+    advertising.settingsDirty = false;
+    advertising.settingsError = "";
+    advertising.settingsMessage = "Несохранённые изменения отменены.";
+    render();
+  }
+
   function syncAdvertisingSourceDraftsFromDom(form = document.querySelector("form[data-action='save-advertising-settings']")) {
-    if (!form) return getAdvertisingEmailSources({ includeDisabled: true });
+    if (!form) return getAdvertisingEmailSources({ includeDisabled: true, includeDraft: true });
     const sources = Array.from(form.querySelectorAll("[data-advertising-source-editor]")).map((editor, index) => {
       const field = (name) => editor.querySelector(`[data-advertising-source-field='${name}']`);
       const kind = String(field("kind")?.value || "sql");
@@ -14164,8 +14314,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       return source;
     });
-    state.advertising.settings = { ...(state.advertising.settings || {}), sources };
-    return sources;
+    return setAdvertisingSourceDrafts(sources);
   }
 
   async function saveAdvertisingEmailSettings(event) {
@@ -14173,7 +14322,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = event.currentTarget;
     const advertising = state.advertising;
     if (advertising.settingsSaving) return;
-    const payload = { sources: syncAdvertisingSourceDraftsFromDom(form) };
+    const sources = syncAdvertisingSourceDraftsFromDom(form);
+    if (!advertising.settingsDirty) {
+      advertising.settingsError = "";
+      advertising.settingsMessage = "Изменений для сохранения нет.";
+      render();
+      return;
+    }
+    const payload = { sources };
     advertising.settingsSaving = true;
     advertising.settingsError = "";
     advertising.settingsMessage = "";
@@ -14192,6 +14348,9 @@ MAX - https://bizvmax.ru/zifra_plus
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `Ошибка сервера: ${response.status}`);
       advertising.settings = result;
+      advertising.settingsSavedSources = clone(normalizeAdvertisingSourceDrafts(result.sources || []));
+      advertising.settingsDraftSources = clone(advertising.settingsSavedSources);
+      advertising.settingsDirty = false;
       advertising.settingsLoaded = true;
       const enabledIds = new Set((result.sources || []).filter((source) => source.enabled !== false).map((source) => source.id));
       advertising.selectedSourceIds = advertising.selectedSourceIds.filter((id) => enabledIds.has(id));
@@ -14448,7 +14607,17 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='delete-advertising-history-run']").forEach((button) => {
       button.addEventListener("click", () => deleteAdvertisingEmailHistoryRun(button.dataset.runId));
     });
-    document.querySelector("form[data-action='save-advertising-settings']")?.addEventListener("submit", saveAdvertisingEmailSettings);
+    const advertisingSourcesForm = document.querySelector("form[data-action='save-advertising-settings']");
+    advertisingSourcesForm?.addEventListener("submit", saveAdvertisingEmailSettings);
+    const trackAdvertisingSourceDraft = (event) => {
+      if (event.target?.closest?.("[data-action='change-advertising-source-kind']")) return;
+      syncAdvertisingSourceDraftsFromDom(advertisingSourcesForm);
+      updateAdvertisingSourceDraftActions(advertisingSourcesForm);
+    };
+    advertisingSourcesForm?.addEventListener("input", trackAdvertisingSourceDraft);
+    advertisingSourcesForm?.addEventListener("change", trackAdvertisingSourceDraft);
+    document.querySelector("[data-action='discard-advertising-source-changes']")
+      ?.addEventListener("click", discardAdvertisingSourceChanges);
     document.querySelector("[data-action='add-advertising-source']")?.addEventListener("click", () => {
       const sources = syncAdvertisingSourceDraftsFromDom();
       const existingIds = new Set(sources.map((source) => source.id));
@@ -14463,7 +14632,7 @@ MAX - https://bizvmax.ru/zifra_plus
         sql: "SELECT DISTINCT email FROM table_name WHERE email IS NOT NULL",
         enabled: true
       });
-      state.advertising.settings = { ...(state.advertising.settings || {}), sources };
+      setAdvertisingSourceDrafts(sources);
       state.advertising.settingsMessage = "";
       render();
     });
@@ -14481,7 +14650,7 @@ MAX - https://bizvmax.ru/zifra_plus
         });
         if (kind === "google" && !sources[index].workbooks?.length) sources[index].workbooks = [];
         if (kind === "workbook") sources[index].dataset = sources[index].dataset || "legacyContacts";
-        state.advertising.settings = { ...(state.advertising.settings || {}), sources };
+        setAdvertisingSourceDrafts(sources);
         render();
       });
     });
@@ -14494,7 +14663,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const target = index + direction;
         if (!Number.isInteger(index) || !Number.isInteger(target) || !sources[index] || !sources[target]) return;
         [sources[index], sources[target]] = [sources[target], sources[index]];
-        state.advertising.settings = { ...(state.advertising.settings || {}), sources };
+        setAdvertisingSourceDrafts(sources);
         render();
       });
     });
@@ -14506,7 +14675,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!Number.isInteger(index) || !sources[index]) return;
         if (!confirm(`Удалить источник «${sources[index].label || sources[index].id}»?`)) return;
         sources.splice(index, 1);
-        state.advertising.settings = { ...(state.advertising.settings || {}), sources };
+        setAdvertisingSourceDrafts(sources);
         render();
       });
     });

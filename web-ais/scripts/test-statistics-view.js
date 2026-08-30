@@ -66,7 +66,7 @@ assert.match(appSource, /data-action="save-statistics-sources"/u);
 assert.match(appSource, /data-action="test-statistics-source"/u);
 assert.match(
   appSource,
-  /\[data-statistics-source-editor\] \[data-sql-query-editor\][\s\S]*addEventListener\("input"[\s\S]*syncStatisticsSourceDraftsFromDom/u
+  /statisticsSourcesForm\?\.addEventListener\("input"[\s\S]*syncStatisticsSourceDraftsFromDom\(statisticsSourcesForm\)[\s\S]*updateStatisticsSourceDraftActions\(statisticsSourcesForm\)/u
 );
 assert.match(appSource, /state\.statistics\.tab === "sources"\) syncStatisticsSourceDraftsFromDom\(\)/u);
 assert.match(appSource, /Карта построения статистики/u);

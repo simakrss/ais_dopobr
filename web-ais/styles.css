@@ -25045,6 +25045,52 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   min-width: 0;
 }
 
+.source-draft-toolbar {
+  position: sticky;
+  z-index: 24;
+  top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid #cbd7d2;
+  border-radius: 10px;
+  background: rgba(248, 251, 250, 0.97);
+  padding: 9px 10px;
+  box-shadow: 0 5px 16px rgba(31, 41, 38, 0.08);
+  backdrop-filter: blur(8px);
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.source-draft-toolbar.is-unsaved {
+  border-color: #d8a33d;
+  background: rgba(255, 249, 230, 0.98);
+  box-shadow: 0 6px 18px rgba(153, 101, 12, 0.14);
+}
+
+.source-draft-status {
+  min-width: 0;
+  color: #64736d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.source-draft-toolbar.is-unsaved .source-draft-status {
+  color: #8a5700;
+}
+
+.source-draft-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.source-draft-save-button.is-unsaved {
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.16), 0 7px 18px rgba(15, 118, 110, 0.18);
+}
+
 .statistics-source-editor {
   min-width: 0;
   overflow: hidden;
@@ -25475,6 +25521,21 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   }
 
   .statistics-source-builder-actions > button {
+    width: 100%;
+  }
+
+  .source-draft-toolbar {
+    position: static;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .source-draft-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .source-draft-actions > button {
     width: 100%;
   }
 }
