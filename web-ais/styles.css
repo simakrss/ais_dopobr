@@ -14424,6 +14424,16 @@ body.card-window-moving {
   border-color: var(--teal);
 }
 
+.employee-payment-column-filter > select[data-employee-payment-filter="payment"] {
+  border-color: #d2a72f;
+  background: #fff2a8;
+}
+
+.employee-payment-column-filter > select[data-employee-payment-filter="payment"]:focus {
+  border-color: #a97800;
+  background: #fff6c7;
+}
+
 .employee-payment-filter-result {
   min-height: 24px;
   display: flex;
