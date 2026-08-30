@@ -47,7 +47,7 @@ const context = {
   isEmployeePaymentSettled: (row = {}) => Boolean(
     row.historicalPayment
     || String(row.paid || "").trim()
-    || String(row.actStatus || "").trim() === "Получен"
+    || ["Получен", "Без акта"].includes(String(row.actStatus || "").trim())
   )
 };
 vm.createContext(context);
@@ -84,6 +84,7 @@ function accountingForDirect(overrides = {}) {
 });
 
 assert.equal(accountingForDirect({ act: "+", actStatus: "Получен" }).amount, 0);
+assert.equal(accountingForDirect({ act: "", actStatus: "Без акта" }).amount, 0);
 assert.equal(accountingForDirect({ act: "+", actStatus: "Отправлен", paid: "2026-08-28" }).amount, 0);
 
 const generalAccounting = context.getAccounting(record, {
@@ -125,6 +126,7 @@ function accountingForPartner(overrides = {}) {
 
 assert.equal(accountingForPartner().agencyAmount, 75);
 assert.equal(accountingForPartner({ actStatus: "Получен" }).agencyAmount, 0);
+assert.equal(accountingForPartner({ act: false, actStatus: "Без акта" }).agencyAmount, 0);
 assert.equal(accountingForPartner({ paid: "2026-08-28" }).agencyAmount, 0);
 
 const accountingSource = extractFunction("getEmployeePaymentAccounting");

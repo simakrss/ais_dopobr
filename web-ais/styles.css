@@ -14810,6 +14810,56 @@ body.card-window-moving {
   margin: 0;
 }
 
+.employee-payment-check-cell input[data-employee-payment-field="act"],
+.employee-payment-editor-check input[name="paymentAct"] {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  min-width: 17px;
+  height: 17px;
+  min-height: 17px;
+  padding: 0;
+  border: 1px solid #83948f;
+  border-radius: 3px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.employee-payment-check-cell input[data-employee-payment-field="act"]:checked,
+.employee-payment-check-cell input[data-employee-payment-field="act"]:indeterminate,
+.employee-payment-editor-check input[name="paymentAct"]:checked,
+.employee-payment-editor-check input[name="paymentAct"]:indeterminate {
+  border-color: var(--teal);
+  background: var(--teal);
+}
+
+.employee-payment-check-cell input[data-employee-payment-field="act"]:checked::after,
+.employee-payment-editor-check input[name="paymentAct"]:checked::after {
+  content: "";
+  width: 4px;
+  height: 8px;
+  margin-top: -2px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.employee-payment-check-cell input[data-employee-payment-field="act"]:indeterminate::after,
+.employee-payment-editor-check input[name="paymentAct"]:indeterminate::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: #fff;
+}
+
+.employee-payment-check-cell input[data-employee-payment-field="act"]:disabled,
+.employee-payment-editor-check input[name="paymentAct"]:disabled {
+  cursor: default;
+  opacity: .62;
+}
+
 .employee-payment-table input.employee-payment-row-selector,
 .employee-payment-table .employee-payment-select-visible input[type="checkbox"] {
   width: 14px;

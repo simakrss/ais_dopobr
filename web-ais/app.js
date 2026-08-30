@@ -25755,11 +25755,82 @@ MAX - https://bizvmax.ru/zifra_plus
     return Number.isNaN(date.getTime()) ? "" : formatOrdersSdoDate(date);
   }
 
+  const EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT = "Без акта";
+
+  function normalizeEmployeePaymentActStatus(value) {
+    return String(value || "").trim().toLocaleLowerCase("ru-RU");
+  }
+
+  function isEmployeePaymentWithoutActStatus(value) {
+    return normalizeEmployeePaymentActStatus(value) === normalizeEmployeePaymentActStatus(EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT);
+  }
+
+  function isEmployeePaymentCompletedActStatus(value) {
+    const status = normalizeEmployeePaymentActStatus(value);
+    return status === "получен" || status === normalizeEmployeePaymentActStatus(EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT);
+  }
+
+  function getEmployeePaymentActCheckboxState(row = {}) {
+    if (isEmployeePaymentWithoutActStatus(row.actStatus)) return "without";
+    return row.act ? "formed" : "none";
+  }
+
+  function applyEmployeePaymentActCheckboxState(input, requestedState = "none") {
+    if (!input) return "none";
+    const checkboxState = ["none", "formed", "without"].includes(String(requestedState || ""))
+      ? String(requestedState)
+      : "none";
+    input.checked = checkboxState === "formed";
+    input.indeterminate = checkboxState === "without";
+    input.dataset.employeePaymentActState = checkboxState;
+    input.setAttribute("aria-checked", checkboxState === "without" ? "mixed" : String(input.checked));
+    const labels = {
+      none: "Акт не сформирован. Нажмите, чтобы отметить сформированный акт",
+      formed: "Акт сформирован. Нажмите, чтобы отметить выплату без акта",
+      without: "Без акта. Оплата считается проведённой. Нажмите, чтобы очистить состояние"
+    };
+    input.title = labels[checkboxState];
+    input.setAttribute("aria-label", labels[checkboxState]);
+    return checkboxState;
+  }
+
+  function getEmployeePaymentActStatusControl(input) {
+    const container = input?.closest("[data-employee-payment-row], #employeeExpenseEditorForm");
+    return container?.querySelector('[data-employee-payment-field="actStatus"], [name="paymentActStatus"]') || null;
+  }
+
+  function syncEmployeePaymentActCheckboxes(root = document) {
+    root?.querySelectorAll('input[data-employee-payment-field="act"], input[name="paymentAct"]').forEach((input) => {
+      const statusControl = getEmployeePaymentActStatusControl(input);
+      applyEmployeePaymentActCheckboxState(input, getEmployeePaymentActCheckboxState({
+        act: input.checked,
+        actStatus: statusControl?.value
+      }));
+    });
+  }
+
+  function cycleEmployeePaymentActCheckbox(event, root) {
+    const input = event.target.closest('input[data-employee-payment-field="act"], input[name="paymentAct"]');
+    if (!input || !root?.contains(input) || input.disabled) return false;
+    const currentState = ["none", "formed", "without"].includes(String(input.dataset.employeePaymentActState || ""))
+      ? String(input.dataset.employeePaymentActState)
+      : getEmployeePaymentActCheckboxState({ act: input.checked });
+    const nextState = currentState === "none" ? "formed" : currentState === "formed" ? "without" : "none";
+    applyEmployeePaymentActCheckboxState(input, nextState);
+    const statusControl = getEmployeePaymentActStatusControl(input);
+    if (statusControl) {
+      if (nextState === "without") statusControl.value = EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT;
+      else if (nextState === "none") statusControl.value = "";
+      else if (!statusControl.value || isEmployeePaymentWithoutActStatus(statusControl.value)) statusControl.value = "Отправлен";
+    }
+    return true;
+  }
+
   function isEmployeePaymentSettled(row = {}) {
     return Boolean(
       row.historicalPayment
       || normalizeEmployeePaymentDateInput(row.paid)
-      || String(row.actStatus || "").trim() === "Получен"
+      || isEmployeePaymentCompletedActStatus(row.actStatus)
     );
   }
 
@@ -26005,7 +26076,7 @@ MAX - https://bizvmax.ru/zifra_plus
     ].includes(String(filters.payment || ""))
       ? String(filters.payment)
       : "";
-    const act = ["none", "formed", "sent", "received"].includes(String(filters.act || ""))
+    const act = ["none", "formed", "sent", "received", "without"].includes(String(filters.act || ""))
       ? String(filters.act)
       : "";
     return {
@@ -26046,7 +26117,8 @@ MAX - https://bizvmax.ru/zifra_plus
     if (key === "comment") {
       return getEmployeePaymentDisplayComment(row.comment, row.details);
     }
-    if (key === "recommendation" || key === "act") return Boolean(row[key]);
+    if (key === "recommendation") return Boolean(row[key]);
+    if (key === "act") return getEmployeePaymentActCheckboxState(row) !== "none";
     return String(row[key] || "").trim();
   }
 
@@ -26230,7 +26302,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getEmployeePaymentActFilterValue(row = {}) {
-    const status = String(row.actStatus || "").trim().toLocaleLowerCase("ru-RU");
+    const status = normalizeEmployeePaymentActStatus(row.actStatus);
+    if (isEmployeePaymentWithoutActStatus(status)) return "without";
     if (status === "получен") return "received";
     if (status === "отправлен") return "sent";
     if (row.act) return "formed";
@@ -26288,10 +26361,11 @@ MAX - https://bizvmax.ru/zifra_plus
   function getEmployeePaymentActFilterOptions() {
     return [
       ["", "Все"],
-      ["none", "Без акта"],
+      ["none", "Не сформирован"],
       ["formed", "Сформирован"],
       ["sent", "Отправлен"],
-      ["received", "Получен"]
+      ["received", "Получен"],
+      ["without", EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT]
     ];
   }
 
@@ -26510,6 +26584,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <select data-employee-payment-group-act aria-label="Групповое состояние акта">
               <option value="sent">Отправлен</option>
               <option value="received">Получен</option>
+              <option value="without">Без акта</option>
               <option value="none">Не сформирован</option>
             </select>
           </label>
@@ -26571,6 +26646,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 const deletable = editable && row.deletable !== false;
                 const sourceLabel = row.source || getEmployeePaymentDefaultSourceLabel(row.sourceType);
                 const displayComment = getEmployeePaymentDisplayComment(row.comment, row.details);
+                const actCheckboxState = getEmployeePaymentActCheckboxState(row);
                 return `
                   <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" data-payment-details="${escapeAttr(row.details)}" data-payment-deletable="${deletable ? "true" : "false"}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
                     <td class="employee-payment-delete-cell" data-employee-payment-column="actions">
@@ -26630,13 +26706,14 @@ MAX - https://bizvmax.ru/zifra_plus
                       <input data-employee-payment-field="recommendation" type="checkbox" ${row.recommendation ? "checked" : ""} aria-label="Рекомендовать к выплате" title="${escapeAttr(row.recommendationManual ? "Рекомендация изменена вручную" : "Рекомендацию можно изменить вручную")}" ${editable ? "" : "disabled"}>
                     </td>
                     <td class="employee-payment-check-cell">
-                      <input data-employee-payment-field="act" type="checkbox" ${row.act ? "checked" : ""} aria-label="Акт сформирован" ${editable ? "" : "disabled"}>
+                      <input data-employee-payment-field="act" data-employee-payment-act-state="${actCheckboxState}" type="checkbox" ${actCheckboxState === "formed" ? "checked" : ""} aria-label="Состояние акта" ${editable ? "" : "disabled"}>
                     </td>
                     <td>
                       <select data-employee-payment-field="actStatus" aria-label="Статус акта" ${editable ? "" : "disabled"}>
                           <option value="" ${row.actStatus ? "" : "selected"}>Не указан</option>
                           <option value="Отправлен" ${row.actStatus === "Отправлен" ? "selected" : ""}>Отправлен</option>
                           <option value="Получен" ${row.actStatus === "Получен" ? "selected" : ""}>Получен</option>
+                          <option value="${EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT}" ${isEmployeePaymentWithoutActStatus(row.actStatus) ? "selected" : ""}>${EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT}</option>
                       </select>
                     </td>
                     <td><input data-employee-payment-field="paid" type="date" value="${escapeAttr(row.paid)}" aria-label="Дата оплаты" ${editable ? "" : "disabled"}></td>
@@ -26861,13 +26938,27 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!source) return;
       const before = getEmployeePaymentEditorAuditRecord(sourceType, source);
       if (operation === "act") {
-        const checked = actState !== "none";
-        setEmployeePaymentSourceField(sourceType, source, "act", { checked });
-        setEmployeePaymentSourceField(sourceType, source, "actStatus", {
-          value: actState === "received" ? "Получен" : actState === "sent" ? "Отправлен" : ""
+        const checkboxState = actState === "without"
+          ? "without"
+          : actState === "none"
+            ? "none"
+            : "formed";
+        setEmployeePaymentSourceField(sourceType, source, "act", {
+          checked: checkboxState === "formed",
+          indeterminate: checkboxState === "without",
+          dataset: { employeePaymentActState: checkboxState }
         });
-        if (sourceType === "partner" && actState === "received") {
-          settleReceivedEmployeePartnerPayment(source, paidDate);
+        setEmployeePaymentSourceField(sourceType, source, "actStatus", {
+          value: actState === "received"
+            ? "Получен"
+            : actState === "sent"
+              ? "Отправлен"
+              : actState === "without"
+                ? EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT
+                : ""
+        });
+        if (sourceType === "partner" && ["received", "without"].includes(actState)) {
+          settleCompletedEmployeePartnerPayment(source, paidDate);
         }
       } else {
         setEmployeePaymentSourceField(sourceType, source, "paid", { value: paidDate });
@@ -26894,7 +26985,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     const actionLabel = operation === "act"
-      ? `Групповое изменение акта: ${actState === "received" ? "Получен" : actState === "sent" ? "Отправлен" : "Не сформирован"}`
+      ? `Групповое изменение акта: ${actState === "received" ? "Получен" : actState === "sent" ? "Отправлен" : actState === "without" ? EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT : "Не сформирован"}`
       : `Групповое изменение даты оплаты: ${paidDate || "дата очищена"}`;
     addEmployeePaymentAudit(actionLabel, "Договоры сотрудников", `${draft.name || "Сотрудник"}: изменено выплат — ${changedRows}`, {
       entityType: "contracts",
@@ -27049,6 +27140,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderEmployeePaymentEditorFields(context) {
     const row = normalizeEmployeePaymentSourceRow(context.sourceType, context.source);
+    const actCheckboxState = getEmployeePaymentActCheckboxState(row);
     const expenseSource = context.sourceType === "direct" || context.sourceType === "general";
     const automaticAgentAmount = context.sourceType === "partner"
       && String(context.source?.__agentPaymentSlot || "due") === "due"
@@ -27100,7 +27192,7 @@ MAX - https://bizvmax.ru/zifra_plus
       </label>
       <label class="employee-payment-editor-check" data-field-key="paymentAct">
         <span>Акт сформирован</span>
-        <input name="paymentAct" type="checkbox" value="Да" ${row.act ? "checked" : ""}>
+        <input name="paymentAct" data-employee-payment-act-state="${actCheckboxState}" type="checkbox" value="Да" ${actCheckboxState === "formed" ? "checked" : ""}>
       </label>
       <label data-field-key="paymentActStatus">
         <span>Статус акта</span>
@@ -27108,6 +27200,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <option value="" ${row.actStatus ? "" : "selected"}>Не указан</option>
           <option value="Отправлен" ${row.actStatus === "Отправлен" ? "selected" : ""}>Отправлен</option>
           <option value="Получен" ${row.actStatus === "Получен" ? "selected" : ""}>Получен</option>
+          <option value="${EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT}" ${isEmployeePaymentWithoutActStatus(row.actStatus) ? "selected" : ""}>${EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT}</option>
         </select>
       </label>
       <label data-field-key="paymentPaid">
@@ -37286,6 +37379,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='generate-employee-coupon']")
       ?.addEventListener("click", generateEmployeeCouponFromLogin);
     const employeePaymentAccounting = document.querySelector("[data-employee-payment-accounting]");
+    syncEmployeePaymentActCheckboxes(employeePaymentAccounting);
     employeePaymentAccounting?.addEventListener("input", previewEmployeePaymentAccountingField);
     employeePaymentAccounting?.addEventListener("change", (event) => {
       if (updateEmployeePaymentSelection(event, employeePaymentAccounting)) return;
@@ -37295,6 +37389,7 @@ MAX - https://bizvmax.ru/zifra_plus
         applyEmployeePaymentSortToDom(document.querySelector("[data-employee-payment-accounting]"));
       });
     });
+    employeePaymentAccounting?.addEventListener("click", (event) => cycleEmployeePaymentActCheckbox(event, employeePaymentAccounting));
     employeePaymentAccounting?.addEventListener("click", duplicateEmployeePaymentAccountingRow);
     employeePaymentAccounting?.addEventListener("click", openEmployeeExpenseEditor);
     employeePaymentAccounting?.addEventListener("click", (event) => applyEmployeePaymentGroupOperation(event, employeePaymentAccounting));
@@ -38528,10 +38623,10 @@ MAX - https://bizvmax.ru/zifra_plus
     return `paid${number}`;
   }
 
-  function settleReceivedEmployeePartnerPayment(source, paidDate = "") {
+  function settleCompletedEmployeePartnerPayment(source, paidDate = "") {
     const student = source?.__partnerStudent;
     if (!student || String(source.__agentPaymentSlot || "due") !== "due") return "";
-    if (String(student.agentPaymentActStatus || "").trim() !== "Получен") return "";
+    if (!isEmployeePaymentCompletedActStatus(student.agentPaymentActStatus)) return "";
     const date = normalizeEmployeePaymentDateInput(paidDate) || todayIso();
     const settledSlot = settleStudentAgentCommission(student, date);
     if (settledSlot) source.__settledSlot = settledSlot;
@@ -38614,16 +38709,32 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     if (field === "act") {
-      targetSource[mappedFields.act] = input.checked ? "+" : "";
-      if (input.checked && !String(targetSource[mappedFields.actStatus] || "").trim()) {
+      const requestedState = String(input.dataset?.employeePaymentActState || "");
+      const checkboxState = ["none", "formed", "without"].includes(requestedState)
+        ? requestedState
+        : input.indeterminate
+          ? "without"
+          : input.checked
+            ? "formed"
+            : "none";
+      targetSource[mappedFields.act] = checkboxState === "formed" ? "+" : "";
+      if (checkboxState === "without") {
+        targetSource[mappedFields.actStatus] = EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT;
+      } else if (checkboxState === "formed" && (
+        !String(targetSource[mappedFields.actStatus] || "").trim()
+        || isEmployeePaymentWithoutActStatus(targetSource[mappedFields.actStatus])
+      )) {
         targetSource[mappedFields.actStatus] = "Отправлен";
       }
-      if (!input.checked) targetSource[mappedFields.actStatus] = "";
+      if (checkboxState === "none") targetSource[mappedFields.actStatus] = "";
       return;
     }
     if (field === "actStatus") {
       targetSource[mappedFields.actStatus] = String(input.value || "");
-      targetSource[mappedFields.act] = targetSource[mappedFields.actStatus] ? "+" : "";
+      targetSource[mappedFields.act] = targetSource[mappedFields.actStatus]
+        && !isEmployeePaymentWithoutActStatus(targetSource[mappedFields.actStatus])
+        ? "+"
+        : "";
     }
   }
 
@@ -38758,6 +38869,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = document.getElementById("employeeExpenseEditorForm");
     if (form && form.dataset.employeeExpenseSubmitBound !== "true") {
       form.dataset.employeeExpenseSubmitBound = "true";
+      syncEmployeePaymentActCheckboxes(form);
+      form.addEventListener("click", (event) => cycleEmployeePaymentActCheckbox(event, form));
       form.addEventListener("submit", saveEmployeeExpenseEditor);
       const actInput = form.elements.paymentAct;
       const actStatusInput = form.elements.paymentActStatus;
@@ -38774,12 +38887,26 @@ MAX - https://bizvmax.ru/zifra_plus
         });
       };
       actInput?.addEventListener("change", () => {
-        if (!actInput.checked && actStatusInput) actStatusInput.value = "";
-        if (actInput.checked && actStatusInput && !actStatusInput.value) actStatusInput.value = "Отправлен";
+        const checkboxState = actInput.indeterminate ? "without" : actInput.checked ? "formed" : "none";
+        applyEmployeePaymentActCheckboxState(actInput, checkboxState);
+        if (actStatusInput) {
+          if (checkboxState === "without") actStatusInput.value = EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT;
+          else if (checkboxState === "none") actStatusInput.value = "";
+          else if (!actStatusInput.value || isEmployeePaymentWithoutActStatus(actStatusInput.value)) actStatusInput.value = "Отправлен";
+        }
         refreshStatus();
       });
       actStatusInput?.addEventListener("change", () => {
-        if (actInput) actInput.checked = Boolean(actStatusInput.value);
+        if (actInput) {
+          applyEmployeePaymentActCheckboxState(
+            actInput,
+            isEmployeePaymentWithoutActStatus(actStatusInput.value)
+              ? "without"
+              : actStatusInput.value
+                ? "formed"
+                : "none"
+          );
+        }
         refreshStatus();
       });
       paidInput?.addEventListener("change", refreshStatus);
@@ -38875,8 +39002,15 @@ MAX - https://bizvmax.ru/zifra_plus
       setEmployeePaymentSourceField(sourceType, source, "recommendation", paymentInputs.recommendation);
     }
     if (paymentInputs.act && paymentInputs.actStatus) {
-      if (!paymentInputs.act.checked) paymentInputs.actStatus.value = "";
-      else if (paymentInputs.actStatus.value) paymentInputs.act.checked = true;
+      const checkboxState = isEmployeePaymentWithoutActStatus(paymentInputs.actStatus.value)
+        ? "without"
+        : paymentInputs.act.checked
+          ? "formed"
+          : "none";
+      applyEmployeePaymentActCheckboxState(paymentInputs.act, checkboxState);
+      if (checkboxState === "without") paymentInputs.actStatus.value = EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT;
+      else if (checkboxState === "none") paymentInputs.actStatus.value = "";
+      else if (!paymentInputs.actStatus.value) paymentInputs.actStatus.value = "Отправлен";
       setEmployeePaymentSourceField(sourceType, source, "act", paymentInputs.act);
       setEmployeePaymentSourceField(sourceType, source, "actStatus", paymentInputs.actStatus);
     }
@@ -38884,9 +39018,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (
       sourceType === "partner"
       && String(source.__agentPaymentSlot || "due") === "due"
-      && String(paymentInputs.actStatus?.value || "").trim() === "Получен"
+      && isEmployeePaymentCompletedActStatus(paymentInputs.actStatus?.value)
     ) {
-      const settledSlot = settleReceivedEmployeePartnerPayment(source, paymentInputs.paid?.value);
+      const settledSlot = settleCompletedEmployeePartnerPayment(source, paymentInputs.paid?.value);
       if (settledSlot) settledSourceId = getEmployeePartnerPaymentSourceId(source.__partnerStudent, settledSlot);
     }
     if (paymentInputs.paid && !settledSourceId) {
@@ -38986,9 +39120,11 @@ MAX - https://bizvmax.ru/zifra_plus
         : "Рекомендацию можно изменить вручную";
     }
     const act = row.querySelector('[data-employee-payment-field="act"]');
-    if (act instanceof HTMLInputElement) act.checked = values.act;
     const actStatus = row.querySelector('[data-employee-payment-field="actStatus"]');
     if (actStatus instanceof HTMLSelectElement) actStatus.value = values.actStatus;
+    if (act instanceof HTMLInputElement) {
+      applyEmployeePaymentActCheckboxState(act, getEmployeePaymentActCheckboxState(values));
+    }
     const statusElement = row.querySelector("[data-employee-payment-status]");
     if (statusElement) {
       statusElement.outerHTML = renderEmployeePaymentStatus({
@@ -39106,11 +39242,12 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     setEmployeePaymentSourceField(sourceType, source, field, input);
-    if (sourceType === "partner" && field === "actStatus" && String(input.value || "").trim() === "Получен") {
-      settleReceivedEmployeePartnerPayment(
-        source,
-        row.querySelector('[data-employee-payment-field="paid"]')?.value
-      );
+    if (
+      sourceType === "partner"
+      && ["act", "actStatus"].includes(field)
+      && isEmployeePaymentCompletedActStatus(normalizeEmployeePaymentSourceRow(sourceType, source).actStatus)
+    ) {
+      settleCompletedEmployeePartnerPayment(source, row.querySelector('[data-employee-payment-field="paid"]')?.value);
     }
     const settledSourceId = sourceType === "partner" && source.__settledSlot
       ? getEmployeePartnerPaymentSourceId(source.__partnerStudent, source.__settledSlot)

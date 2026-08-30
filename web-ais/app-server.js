@@ -35028,9 +35028,11 @@ function collectPartnerDirectExpenseEntries(data = {}) {
 }
 
 function isPartnerPaymentSettled(row = {}) {
+  const actStatus = normalizePartnerIdentity(row.actStatus);
   return Boolean(row.historicalPayment
     || normalizePartnerDate(row.paid)
-    || normalizePartnerIdentity(row.actStatus) === "получен");
+    || actStatus === "получен"
+    || actStatus === "без акта");
 }
 
 function getPartnerPaymentStatus(row = {}) {

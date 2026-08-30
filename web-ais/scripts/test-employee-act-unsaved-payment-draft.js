@@ -76,7 +76,7 @@ const context = {
   state: { data: { collections: persisted } },
   getEmployeePaymentCollections: () => draft,
   getAllDirectExpenses: (collections = persisted) => collections.directExpenses || [],
-  isEmployeePaymentSettled: (row) => Boolean(row?.paid || row?.actStatus === "Получен"),
+  isEmployeePaymentSettled: (row) => Boolean(row?.paid || ["Получен", "Без акта"].includes(row?.actStatus)),
   directExpenseIdentity: (expense, index) => expense?.id || String(index),
   formatContractDate: (value) => value === "2026-08-28" ? "28.08.2026" : String(value || ""),
   getEmployeePaymentAccounting: (record, collections = persisted) => {
