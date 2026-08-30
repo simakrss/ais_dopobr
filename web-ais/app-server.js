@@ -14329,23 +14329,23 @@ function handleStudentDocumentRecognitionResult(req, res, requestUrl) {
   sendJson(res, 200, job.result);
 }
 
+async function readOcrHealthPayload() {
+  if (shouldUseOcrCli()) return runOcrCli(["--health"], null, 30 * 1000);
+  const serviceUrl = String(
+    process.env.OCR_SERVICE_URL || DEFAULT_OCR_SERVICE_URL
+  ).trim().replace(/\/+$/g, "");
+  const response = await requestBuffer(`${serviceUrl}/health`, {
+    timeoutMs: 5000,
+    maxResponseBytes: 64 * 1024,
+    errorPrefix: "OCR-сервис недоступен",
+    timeoutError: "OCR-сервис не ответил"
+  });
+  return JSON.parse(response.toString("utf8"));
+}
+
 async function handleOcrHealth(req, res) {
   try {
-    if (shouldUseOcrCli()) {
-      sendJson(res, 200, await runOcrCli(["--health"], null, 30 * 1000));
-      return;
-    }
-    const serviceUrl = String(
-      process.env.OCR_SERVICE_URL || DEFAULT_OCR_SERVICE_URL
-    ).trim().replace(/\/+$/g, "");
-    const response = await requestBuffer(`${serviceUrl}/health`, {
-      timeoutMs: 5000,
-      maxResponseBytes: 64 * 1024,
-      errorPrefix: "OCR-сервис недоступен",
-      timeoutError: "OCR-сервис не ответил"
-    });
-    const payload = JSON.parse(response.toString("utf8"));
-    sendJson(res, 200, payload);
+    sendJson(res, 200, await readOcrHealthPayload());
   } catch (error) {
     sendError(res, 503, error.message);
   }
@@ -36506,6 +36506,25 @@ async function route(req, res) {
   );
   if (adminOnlyRequest && authUser?.role !== "admin") {
     sendError(res, 403, "Раздел доступен только администратору.");
+    return;
+  }
+  if (
+    ["GET", "HEAD"].includes(req.method)
+    && requestUrl.pathname === "/api/local-document-services/health"
+  ) {
+    const [highQualityPdfConverterBinary, localDocuments, ocrHealth] = await Promise.all([
+      resolveLibreOfficeBinary(),
+      getLocalSystemDocumentsAvailability().catch(() => ({ available: false })),
+      readOcrHealthPayload().catch(() => null)
+    ]);
+    sendJson(res, 200, {
+      ok: true,
+      appServerAvailable: true,
+      ocrAvailable: Boolean(ocrHealth && ocrHealth.ok !== false),
+      documentConversionAvailable: Boolean(highQualityPdfConverterBinary),
+      localDocumentsAvailable: Boolean(localDocuments.available),
+      openDocumentsLocally: serverSettings.openDocumentsLocally !== false
+    });
     return;
   }
   if (requestUrl.pathname === "/api/shared-state/locks") {

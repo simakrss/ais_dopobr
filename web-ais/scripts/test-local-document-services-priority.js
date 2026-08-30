@@ -10,6 +10,7 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const localServerPath = path.join(root, "local-server.js");
 const localServerSource = fs.readFileSync(localServerPath, "utf8").replace(/\r\n/g, "\n");
+const appServerSource = fs.readFileSync(path.join(root, "app-server.js"), "utf8").replace(/\r\n/g, "\n");
 const gatewaySource = fs.readFileSync(path.join(root, "gateway.php"), "utf8").replace(/\r\n/g, "\n");
 const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8").replace(/\r\n/g, "\n");
 const startSource = fs.readFileSync(
@@ -411,6 +412,8 @@ async function main() {
     assert.match(startSource, /AIS_GATEWAY_SHARED_SECRET:\s*getLocalServiceGatewaySecret\(\)/u);
     assert.match(localServerSource, /\/api\/students\/export-database/u);
     assert.match(localServerSource, /trustedForwardedGatewayIdentity/u);
+    assert.match(appServerSource, /\/api\/local-document-services\/health/u);
+    assert.match(appServerSource, /readOcrHealthPayload\(\)\.catch/u);
     assert.match(gatewaySource, /\/api\/students\/export-database/u);
     assert.match(gatewaySource, /\/api\/student-photo/u);
     assert.match(gatewaySource, /\/api\/local-document-services\/health/u);
