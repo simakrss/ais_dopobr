@@ -255,6 +255,8 @@ assert.match(
 );
 
 const renderHistoryFunction = namedFunction(blocks, "renderAdvertisingHistory");
+assert.match(renderHistoryFunction, /<h2>История сбора email<\/h2>/u);
+assert.doesNotMatch(renderHistoryFunction, /<h2>Запросы рекламы<\/h2>/u);
 assert.match(
   renderHistoryFunction,
   /<table\b[^>]*class="[^"]*advertising-history-table/u,
@@ -506,10 +508,10 @@ assert.match(
 const deleteHistoryFunction = namedFunction(blocks, "deleteAdvertisingEmailHistoryRun");
 assert.match(deleteHistoryFunction, /isAdminUser\(\)/u);
 assert.match(deleteHistoryFunction, /window\.confirm/u);
-assert.match(deleteHistoryFunction, /method:\s*"DELETE"/u);
+assert.match(deleteHistoryFunction, /method:\s*"POST"/u);
 assert.match(
   deleteHistoryFunction,
-  /\/api\/advertising\/email-collector\/history\?runId=\$\{encodeURIComponent\(normalizedRunId\)\}/u
+  /body:\s*JSON\.stringify\(\{\s*action:\s*"delete",\s*runId:\s*normalizedRunId\s*\}\)/u
 );
 assert.match(deleteHistoryFunction, /history\.rows\s*=\s*Array\.isArray\(payload\.rows\)/u);
 assert.match(deleteHistoryFunction, /persistAdvertisingEmailViewCache/u);

@@ -203,6 +203,8 @@ assert.match(historyHandlerSource, /searchParams\.get\("runId"\)|\.searchParams\
 assert.match(historyHandlerSource, /readAdvertisingEmailHistoryRuns/u);
 assert.match(historyHandlerSource, /readAdvertisingEmailHistory(?:Run)?New/u);
 assert.match(historyHandlerSource, /deleteAdvertisingEmailHistoryRun/u);
+assert.match(historyHandlerSource, /body\?\.action\s*===\s*"delete"/u);
+assert.match(historyHandlerSource, /req\.method\s*===\s*"DELETE"\s*\|\|\s*body\?\.action\s*===\s*"delete"/u);
 assert.match(historyHandlerSource, /updateAdvertisingEmailHistoryTransfer/u);
 assert.match(historyHandlerSource, /safelyAppendAuditEntry/u);
 

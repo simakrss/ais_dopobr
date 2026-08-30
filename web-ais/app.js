@@ -355,7 +355,7 @@
       version: "1.7.345",
       releasedAt: "2026-08-28",
       changes: [
-        "Администратор может удалять отдельные строки из таблицы «Запросы рекламы» с подтверждением; удаление не нарушает сохранённое сравнение новых контактов между запусками.",
+        "Администратор может удалять отдельные строки из таблицы «История сбора email» с подтверждением; удаление не нарушает сохранённое сравнение новых контактов между запусками.",
         "Раздел «Реклама» сразу показывает быстрый локальный снимок последнего результата и истории, а актуальность проверяет в фоне по идентификатору запуска без повторной передачи неизменившегося набора контактов."
       ]
     },
@@ -13684,21 +13684,21 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="panel-head advertising-results-head">
           <div>
             <p class="eyebrow">Сохранённые запуски</p>
-            <h2>Запросы рекламы</h2>
+            <h2>История сбора email</h2>
             <p>Новые адреса каждого запуска рассчитаны относительно непосредственно предыдущего сохранённого запуска.</p>
           </div>
           <span class="statistics-row-count">${formatStatisticsInteger(rows.length)}</span>
         </div>
         ${history.error ? `<div class="advertising-inline-message advertising-history-error is-error" role="alert"><span>${escapeHtml(history.error)}</span><button class="ghost-button compact-button" data-action="reload-advertising-history" type="button" ${history.loading ? "disabled" : ""}>Повторить</button></div>` : ""}
         ${history.loading && !rows.length
-          ? '<div class="advertising-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Загружается история запросов…</span></div>'
+          ? '<div class="advertising-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Загружается история сбора email…</span></div>'
           : (!rows.length
             ? (history.error ? "" : '<div class="empty-state compact"><strong>История пока пуста</strong><span>Первый набор появится после запуска сборщика.</span></div>')
             : `
               ${renderTable(recentRows)}
               ${olderRows.length ? `
                 <details class="advertising-history-older-details" data-advertising-history-older ${history.olderExpanded ? "open" : ""}>
-                  <summary><span>Предыдущие запросы</span><strong>${formatStatisticsInteger(olderRows.length)}</strong></summary>
+                  <summary><span>Предыдущие запуски</span><strong>${formatStatisticsInteger(olderRows.length)}</strong></summary>
                   <div class="advertising-history-older-content">${renderTable(olderRows)}</div>
                 </details>
               ` : ""}
@@ -13980,7 +13980,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!advertising.result) applyAdvertisingEmailHistoryPreview(history.rows[0]);
       void persistAdvertisingEmailViewCache();
     } catch (error) {
-      history.error = `Не удалось загрузить историю запросов: ${error.message || "ошибка сервера"}`;
+      history.error = `Не удалось загрузить историю сбора email: ${error.message || "ошибка сервера"}`;
       history.loaded = true;
     } finally {
       history.loading = false;
@@ -14079,8 +14079,8 @@ MAX - https://bizvmax.ru/zifra_plus
           : { id: "", login: "", name: "" }
       } : item);
       advertising.notice = nextState
-        ? `Запрос рекламы № ${formatStatisticsInteger(previousRow.sequence)} отмечен как переданный.`
-        : `Для запроса рекламы № ${formatStatisticsInteger(previousRow.sequence)} отметка снята.`;
+        ? `Запуск сбора email № ${formatStatisticsInteger(previousRow.sequence)} отмечен как переданный.`
+        : `Для запуска сбора email № ${formatStatisticsInteger(previousRow.sequence)} отметка снята.`;
       void persistAdvertisingEmailViewCache();
     } catch (error) {
       history.rows = history.rows.map((item) => String(item?.runId || "") === normalizedRunId
@@ -14110,9 +14110,9 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!row || row.canDelete === false) return;
     const summary = row.summary || {};
     const confirmed = window.confirm([
-      `Удалить запрос рекламы № ${Math.max(0, Number(row.sequence) || 0)}?`,
+      `Удалить запуск сбора email № ${Math.max(0, Number(row.sequence) || 0)}?`,
       formatDateTimeRu(row.refreshedAt) || "Дата запуска не указана",
-      `Контактов: ${formatStatisticsInteger(summary.unique)}. Строка исчезнет из списка запросов.`
+      `Контактов: ${formatStatisticsInteger(summary.unique)}. Строка исчезнет из истории сбора email.`
     ].join("\n\n"));
     if (!confirmed) return;
     history.deletingRunId = normalizedRunId;
@@ -14120,11 +14120,15 @@ MAX - https://bizvmax.ru/zifra_plus
     advertising.notice = "";
     if (state.view === "advertising") render();
     try {
-      const response = await fetch(photoApiUrl(`/api/advertising/email-collector/history?runId=${encodeURIComponent(normalizedRunId)}`), {
-        method: "DELETE",
+      const response = await fetch(photoApiUrl("/api/advertising/email-collector/history"), {
+        method: "POST",
         credentials: "same-origin",
         cache: "no-store",
-        headers: { "X-Requested-With": "AIS-Web" }
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({ action: "delete", runId: normalizedRunId })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
@@ -14132,10 +14136,10 @@ MAX - https://bizvmax.ru/zifra_plus
         ? payload.rows
         : history.rows.filter((item) => String(item?.runId || "") !== normalizedRunId);
       history.loaded = true;
-      advertising.notice = `Запрос рекламы № ${Math.max(0, Number(row.sequence) || 0)} удалён.`;
+      advertising.notice = `Запуск сбора email № ${Math.max(0, Number(row.sequence) || 0)} удалён.`;
       void persistAdvertisingEmailViewCache();
     } catch (error) {
-      advertising.error = error.message || "Не удалось удалить запрос рекламы.";
+      advertising.error = error.message || "Не удалось удалить запуск сбора email.";
     } finally {
       history.deletingRunId = "";
       if (state.view === "advertising") render();

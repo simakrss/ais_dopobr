@@ -8989,7 +8989,7 @@ async function updateAdvertisingEmailHistoryTransfer(value, transferredToAdverti
     );
     if (!runRows.length) {
       throw advertisingEmailHistoryError(
-        "Запрос рекламы не найден.",
+        "Запуск сбора email не найден.",
         404,
         "ADVERTISING_HISTORY_RUN_NOT_FOUND"
       );
@@ -9046,7 +9046,7 @@ async function updateAdvertisingEmailHistoryTransfer(value, transferredToAdverti
 async function deleteAdvertisingEmailHistoryRun(value, authUser = null) {
   if (String(authUser?.role || "") !== "admin") {
     throw advertisingEmailHistoryError(
-      "Удалять запросы рекламы может только администратор.",
+      "Удалять запуски сбора email может только администратор.",
       403,
       "ADVERTISING_HISTORY_DELETE_FORBIDDEN"
     );
@@ -9093,7 +9093,7 @@ async function deleteAdvertisingEmailHistoryRun(value, authUser = null) {
     const run = runRows[0];
     if (!run) {
       throw advertisingEmailHistoryError(
-        "Запрос рекламы не найден.",
+        "Запуск сбора email не найден.",
         404,
         "ADVERTISING_HISTORY_RUN_NOT_FOUND"
       );
@@ -9107,7 +9107,7 @@ async function deleteAdvertisingEmailHistoryRun(value, authUser = null) {
     );
     if (deletedRows.length) {
       throw advertisingEmailHistoryError(
-        "Запрос рекламы уже удалён.",
+        "Запуск сбора email уже удалён.",
         404,
         "ADVERTISING_HISTORY_RUN_NOT_FOUND"
       );
@@ -9139,7 +9139,7 @@ async function deleteAdvertisingEmailHistoryRun(value, authUser = null) {
     await connection.rollback().catch(() => {});
     if (error?.statusCode) throw error;
     throw advertisingEmailHistoryError(
-      `Не удалось удалить запрос рекламы: ${error.message}`,
+      `Не удалось удалить запуск сбора email: ${error.message}`,
       isMySqlConnectivityError(error) ? 503 : 500,
       "ADVERTISING_HISTORY_DELETE_FAILED"
     );
@@ -10032,35 +10032,38 @@ async function handleAdvertisingEmailHistory(req, res, requestUrl, authUser) {
     return;
   }
   try {
+    let body = null;
     if (req.method === "POST") {
-      const body = await readJsonBody(req, 16 * 1024);
-      const updated = await updateAdvertisingEmailHistoryTransfer(
-        body.runId,
-        body.transferredToAdvertising,
-        authUser
-      );
-      await safelyAppendAuditEntry({
-        action: updated.transferredToAdvertising
-          ? "Email запроса отмечены как переданные в рекламу"
-          : "Снята отметка передачи email запроса в рекламу",
-        area: "Реклама",
-        entityType: "advertising-collection",
-        entityId: updated.runId,
-        details: updated.transferredToAdvertising
-          ? "Пользователь вручную подтвердил передачу email в рекламу."
-          : "Пользователь вручную снял отметку передачи email в рекламу.",
-        source: "advertising-email-collector"
-      }, authUser, req);
-      sendJson(res, 200, { ok: true, ...updated });
-      return;
+      body = await readJsonBody(req, 16 * 1024);
+      if (String(body.action || "") !== "delete") {
+        const updated = await updateAdvertisingEmailHistoryTransfer(
+          body.runId,
+          body.transferredToAdvertising,
+          authUser
+        );
+        await safelyAppendAuditEntry({
+          action: updated.transferredToAdvertising
+            ? "Email запуска отмечены как переданные в рекламу"
+            : "Снята отметка передачи email запуска в рекламу",
+          area: "Реклама",
+          entityType: "advertising-collection",
+          entityId: updated.runId,
+          details: updated.transferredToAdvertising
+            ? "Пользователь вручную подтвердил передачу email в рекламу."
+            : "Пользователь вручную снял отметку передачи email в рекламу.",
+          source: "advertising-email-collector"
+        }, authUser, req);
+        sendJson(res, 200, { ok: true, ...updated });
+        return;
+      }
     }
-    if (req.method === "DELETE") {
+    if (req.method === "DELETE" || body?.action === "delete") {
       const deleted = await deleteAdvertisingEmailHistoryRun(
-        requestUrl.searchParams.get("runId"),
+        req.method === "DELETE" ? requestUrl.searchParams.get("runId") : body.runId,
         authUser
       );
       await safelyAppendAuditEntry({
-        action: "Удалён запрос рекламы",
+        action: "Удалён запуск сбора email",
         area: "Реклама",
         entityType: "advertising-collection",
         entityId: deleted.runId,
