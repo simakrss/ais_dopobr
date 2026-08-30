@@ -78,6 +78,12 @@ assert.match(controllerSource, /Get-AisManagedNodeProcesses/u);
 assert.match(controllerSource, /Invoke-AisProtectedCleanup/u);
 assert.match(controllerSource, /tray-ready\.json/u);
 assert.match(controllerSource, /worker-launch\.log/u);
+assert.match(controllerSource, /function Request-AisWorkerStart[\s\S]*?Start-ScheduledTask/u);
+assert.match(controllerSource, /\[Ожидание\] Прошло/u);
+assert.match(controllerSource, /function Start-AisTrayDirect/u);
+assert.match(controllerSource, /Stop-IncompatibleAisTrayProcesses/u);
+assert.match(controllerSource, /Задача планировщика не подготовила значок/u);
+assert.match(controllerSource, /\$runningFromProtectedRoot[\s\S]*?\$protectedTrayPath/u);
 assert.match(controllerSource, /function Test-AisTrayReady/u);
 assert.match(controllerSource, /function Wait-AisTrayReady/u);
 assert.match(
@@ -128,7 +134,7 @@ assert.match(traySource, /notifyIcon\.add_MouseDoubleClick/u);
 assert.match(traySource, /MouseButtons\]::Left[\s\S]{0,100}Open-Ais/u);
 assert.doesNotMatch(traySource, /notifyIcon\.add_DoubleClick/u);
 assert.doesNotMatch(traySource, /InstallIfMissing/u);
-assert.match(traySource, /\$script:exitItem\s*=\s*New-Object Windows\.Forms\.ToolStripMenuItem "Выход из трея"/u);
+assert.match(traySource, /\$script:exitItem\s*=\s*New-Object Windows\.Forms\.ToolStripMenuItem "Выход"/u);
 assert.match(traySource, /\$script:exitItem\.Enabled\s*=\s*\$false/u);
 assert.match(
   traySource,

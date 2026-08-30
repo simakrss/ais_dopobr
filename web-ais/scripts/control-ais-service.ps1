@@ -13,7 +13,20 @@ param(
   [int]$TimeoutSeconds = 600
 )
 
-$env:PSModulePath = [IO.Path]::Combine($PSHOME, "Modules")
+$trustedModulePaths = New-Object Collections.Generic.List[string]
+foreach ($modulePath in @(
+  [IO.Path]::Combine($PSHOME, "Modules"),
+  [IO.Path]::Combine([Environment]::SystemDirectory, "WindowsPowerShell\v1.0\Modules")
+)) {
+  if (
+    -not [string]::IsNullOrWhiteSpace($modulePath) -and
+    (Test-Path -LiteralPath $modulePath -PathType Container) -and
+    -not $trustedModulePaths.Contains($modulePath)
+  ) {
+    $trustedModulePaths.Add($modulePath)
+  }
+}
+$env:PSModulePath = @($trustedModulePaths) -join [IO.Path]::PathSeparator
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $utf8 = New-Object Text.UTF8Encoding($false)
@@ -53,7 +66,7 @@ $appRoot = if ([string]::IsNullOrWhiteSpace($SourceAppRoot)) {
 $workerLogPath = [IO.Path]::GetFullPath([IO.Path]::Combine($appRoot, "tmp\lan-system\worker-launch.log"))
 $trayReadyPath = [IO.Path]::GetFullPath([IO.Path]::Combine($appRoot, "tmp\lan-system\tray-ready.json"))
 $installerPath = Join-Path $PSScriptRoot "setup-ais-windows-service.ps1"
-$trayPath = if (Test-Path -LiteralPath $protectedTrayPath -PathType Leaf) {
+$trayPath = if ($runningFromProtectedRoot -and (Test-Path -LiteralPath $protectedTrayPath -PathType Leaf)) {
   $protectedTrayPath
 } else {
   Join-Path $PSScriptRoot "ais-service-tray.ps1"
@@ -133,11 +146,36 @@ function Get-ControlElevationArguments {
   return @($arguments)
 }
 
+function Wait-AisProcessWithProgress(
+  [Diagnostics.Process]$Process,
+  [string]$OperationName,
+  [int]$ProgressIntervalSeconds = 5
+) {
+  $startedAt = Get-Date
+  $nextProgressAt = $startedAt.AddSeconds($ProgressIntervalSeconds)
+  try {
+    while (-not $Process.HasExited) {
+      $now = Get-Date
+      if ($now -ge $nextProgressAt) {
+        $elapsedSeconds = [Math]::Max(0, [int][Math]::Floor(($now - $startedAt).TotalSeconds))
+        Write-Host "[Ожидание] $OperationName — прошло $elapsedSeconds сек."
+        $nextProgressAt = $now.AddSeconds($ProgressIntervalSeconds)
+      }
+      Start-Sleep -Milliseconds 250
+      $Process.Refresh()
+    }
+    return [int]$Process.ExitCode
+  } finally {
+    $Process.Dispose()
+  }
+}
+
 function Invoke-ElevatedControl {
   $argumentLine = (Get-ControlElevationArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
   $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine `
-    -Verb RunAs -WindowStyle Hidden -Wait -PassThru
-  exit $process.ExitCode
+    -Verb RunAs -WindowStyle Hidden -PassThru
+  $exitCode = Wait-AisProcessWithProgress $process "Выполняется команда с правами администратора"
+  exit $exitCode
 }
 
 function Get-AisService {
@@ -286,8 +324,31 @@ function Wait-ServiceState([string]$State, [int]$Timeout = 60) {
   }
 }
 
+function Request-AisWorkerStart {
+  if (Test-AisHealth) { return $true }
+  $workerTask = Get-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
+  if (-not $workerTask) {
+    Write-Warning "Не найдена фоновая задача $workerTaskName. Служба установлена неполностью."
+    return $false
+  }
+  if ([string]$workerTask.State -eq "Running") {
+    Write-Host "Рабочий процесс АИС уже выполняется."
+    return $true
+  }
+  Write-Host "Запуск рабочего процесса АИС..."
+  try {
+    Start-ScheduledTask -TaskName $workerTaskName -ErrorAction Stop
+    return $true
+  } catch {
+    Write-Warning "Не удалось немедленно запустить рабочий процесс: $($_.Exception.Message)"
+    return $false
+  }
+}
+
 function Wait-AisHealth([int]$Timeout, [ref]$LogOffset) {
+  $startedAt = Get-Date
   $deadline = (Get-Date).AddSeconds($Timeout)
+  $nextProgressAt = $startedAt.AddSeconds(5)
   while ((Get-Date) -lt $deadline) {
     Write-AisStartupLogProgress $LogOffset
     if (Test-AisHealth) {
@@ -300,6 +361,17 @@ function Wait-AisHealth([int]$Timeout, [ref]$LogOffset) {
     if ($service.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
       Write-AisStartupLogProgress $LogOffset
       return $false
+    }
+    $now = Get-Date
+    if ($now -ge $nextProgressAt) {
+      $workerTask = Get-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
+      $workerState = if ($workerTask) { [string]$workerTask.State } else { "не найдена" }
+      $elapsedSeconds = [Math]::Max(0, [int][Math]::Floor(($now - $startedAt).TotalSeconds))
+      Write-Host (
+        "[Ожидание] Прошло {0} сек. Служба: {1}; рабочий процесс: {2}; локальный сайт ещё запускается." -f
+        $elapsedSeconds, [string]$service.Status, $workerState
+      )
+      $nextProgressAt = $now.AddSeconds(5)
     }
     Start-Sleep -Milliseconds 800
   }
@@ -349,12 +421,67 @@ function Test-AisTrayReady([bool]$RequireRunning) {
 }
 
 function Wait-AisTrayReady([bool]$RequireRunning, [int]$Timeout = 20) {
+  $startedAt = Get-Date
   $deadline = (Get-Date).AddSeconds($Timeout)
+  $nextProgressAt = $startedAt.AddSeconds(5)
   while ((Get-Date) -lt $deadline) {
     if (Test-AisTrayReady $RequireRunning) { return $true }
+    $now = Get-Date
+    if ($now -ge $nextProgressAt) {
+      $elapsedSeconds = [Math]::Max(0, [int][Math]::Floor(($now - $startedAt).TotalSeconds))
+      Write-Host "[Ожидание] Подготовка значка в трее — прошло $elapsedSeconds сек."
+      $nextProgressAt = $now.AddSeconds(5)
+    }
     Start-Sleep -Milliseconds 200
   }
   return $false
+}
+
+function Stop-IncompatibleAisTrayProcesses {
+  $expectedTrayPath = [IO.Path]::GetFullPath($trayPath).Replace("/", "\").ToLowerInvariant()
+  $readyProcessId = 0
+  if (Test-Path -LiteralPath $trayReadyPath -PathType Leaf) {
+    try {
+      $marker = Get-Content -LiteralPath $trayReadyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+      $readyProcessId = [int]$marker.processId
+    } catch { }
+  }
+  $trayProcesses = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object {
+      ([string]$_.CommandLine).Replace("/", "\").ToLowerInvariant().IndexOf(
+        "ais-service-tray.ps1",
+        [StringComparison]::OrdinalIgnoreCase
+      ) -ge 0
+    })
+  foreach ($process in $trayProcesses) {
+    $commandLine = ([string]$process.CommandLine).Replace("/", "\").ToLowerInvariant()
+    $isCurrent = $commandLine.IndexOf($expectedTrayPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
+    if ($isCurrent -and [int]$process.ProcessId -eq $readyProcessId) { continue }
+    try {
+      Write-Host "Завершение устаревшего процесса значка АИС (PID $($process.ProcessId))..."
+      Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+    } catch {
+      Write-Warning "Не удалось завершить устаревший процесс значка: $($_.Exception.Message)"
+    }
+  }
+}
+
+function Start-AisTrayDirect {
+  Stop-IncompatibleAisTrayProcesses
+  $argumentLine = @(
+    "-NoLogo", "-NoProfile", "-STA", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-WindowStyle", "Hidden", "-File", $trayPath, "-AppRoot", $appRoot
+  ) | ForEach-Object { Quote-ProcessArgument $_ }
+  $startInfo = New-Object Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $powerShellPath
+  $startInfo.Arguments = $argumentLine -join " "
+  $startInfo.WorkingDirectory = $appRoot
+  $startInfo.UseShellExecute = $false
+  $startInfo.CreateNoWindow = $true
+  $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+  $trayProcess = [Diagnostics.Process]::Start($startInfo)
+  if ($null -eq $trayProcess) { throw "Не удалось запустить значок АИС в трее." }
+  $trayProcess.Dispose()
 }
 
 function Start-AisTray([bool]$RequireRunning = $false) {
@@ -372,22 +499,16 @@ function Start-AisTray([bool]$RequireRunning = $false) {
       Write-Warning "Планировщик не разрешил ручной запуск иконки; запускается защищённая копия в текущем сеансе."
     }
   }
-  if (-not $trayStartRequested) {
-    $argumentLine = @(
-      "-NoLogo", "-NoProfile", "-STA", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-      "-WindowStyle", "Hidden", "-File", $trayPath, "-AppRoot", $appRoot
-    ) | ForEach-Object { Quote-ProcessArgument $_ }
-    $startInfo = New-Object Diagnostics.ProcessStartInfo
-    $startInfo.FileName = $powerShellPath
-    $startInfo.Arguments = $argumentLine -join " "
-    $startInfo.WorkingDirectory = $appRoot
-    $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $true
-    $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
-    $trayProcess = [Diagnostics.Process]::Start($startInfo)
-    if ($null -eq $trayProcess) { throw "Не удалось запустить значок АИС в трее." }
-    $trayProcess.Dispose()
+  if ($trayStartRequested -and (Wait-AisTrayReady $RequireRunning 8)) {
+    Write-Host "Значок АИС готов в системном трее."
+    return
   }
+  if ($trayStartRequested) {
+    Write-Warning "Задача планировщика не подготовила значок; выполняется прямой запуск актуальной версии."
+    Stop-ScheduledTask -TaskName $trayTaskName -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 300
+  }
+  Start-AisTrayDirect
   if (-not (Wait-AisTrayReady $RequireRunning)) {
     throw "Значок АИС не появился в системном трее за отведённое время."
   }
@@ -424,8 +545,9 @@ function Install-AisService {
   } else {
     $argumentLine = ($arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
     $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine `
-      -Verb RunAs -WindowStyle Hidden -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Установка службы завершилась с кодом $($process.ExitCode)." }
+      -Verb RunAs -WindowStyle Hidden -PassThru
+    $exitCode = Wait-AisProcessWithProgress $process "Установка и настройка службы АИС"
+    if ($exitCode -ne 0) { throw "Установка службы завершилась с кодом $exitCode." }
   }
 }
 
@@ -446,19 +568,31 @@ function Uninstall-AisService {
   } else {
     $argumentLine = ($arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
     $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine `
-      -Verb RunAs -WindowStyle Hidden -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Удаление службы завершилось с кодом $($process.ExitCode)." }
+      -Verb RunAs -WindowStyle Hidden -PassThru
+    $exitCode = Wait-AisProcessWithProgress $process "Удаление службы АИС"
+    if ($exitCode -ne 0) { throw "Удаление службы завершилось с кодом $exitCode." }
   }
 }
 
 function Start-AisService {
   $startupLogOffset = Get-AisStartupLogOffset
   $service = Get-AisService
+  $serviceWasPresent = [bool]$service
   if (-not $service) {
     if (-not $InstallIfMissing) { throw "Служба АИС не установлена. Запустите установщик службы." }
     Install-AisService
     $service = Get-AisService
     if (-not $service) { throw "Служба не появилась после установки." }
+  }
+  $workerTask = Get-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
+  if (-not $workerTask -and $serviceWasPresent -and $InstallIfMissing) {
+    Write-Host "Фоновая задача службы отсутствует. Выполняется восстановление установки АИС."
+    Install-AisService
+    $service = Get-AisService
+    $workerTask = Get-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
+  }
+  if (-not $workerTask) {
+    throw "Не найдена фоновая задача $workerTaskName. Переустановите службу АИС через этот BAT-файл."
   }
   $service.Refresh()
   if ($service.Status -eq [System.ServiceProcess.ServiceControllerStatus]::StopPending) {
@@ -470,6 +604,7 @@ function Start-AisService {
     Start-Service -Name $serviceName
   }
   Wait-ServiceState "Running" 60
+  [void](Request-AisWorkerStart)
   Write-Host "Служба запущена. Ожидание готовности локального адреса..."
   Write-Host "Ход запуска GitHub, FTP, Docker и серверов будет показан в этом окне."
   if (-not (Wait-AisHealth $TimeoutSeconds ([ref]$startupLogOffset))) {

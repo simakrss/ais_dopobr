@@ -476,7 +476,7 @@ namespace AisDopobr.Tray
   $script:restartItem = New-Object Windows.Forms.ToolStripMenuItem "Перезапустить"
   $terminalItem = New-Object Windows.Forms.ToolStripMenuItem "Окно терминала запуска"
   $folderItem = New-Object Windows.Forms.ToolStripMenuItem "Открыть папку журналов"
-  $script:exitItem = New-Object Windows.Forms.ToolStripMenuItem "Выход из трея"
+  $script:exitItem = New-Object Windows.Forms.ToolStripMenuItem "Выход"
   $script:exitItem.Enabled = $false
 
   $openItem.add_Click({ Open-Ais })

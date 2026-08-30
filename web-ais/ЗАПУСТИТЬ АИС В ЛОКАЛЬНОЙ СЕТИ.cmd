@@ -12,6 +12,7 @@ if /i "%AIS_LAUNCHER_VALIDATE_ONLY%"=="1" (
   powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\setup-ais-windows-service.ps1" -Action Validate
 ) else (
   call :log Запуск службы, иконки управления и локального сайта.
+  call :log Этапы подготовки будут показаны ниже; первый запуск может занять несколько минут.
   powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ".\scripts\control-ais-service.ps1" -Action Start -InstallIfMissing -OpenBrowser -ShowTray
 )
 set "AIS_EXIT_CODE=%ERRORLEVEL%"

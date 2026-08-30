@@ -94,6 +94,7 @@ for (const launcherSource of [rootLauncherSource, localLauncherSource]) {
     "Launcher must use one synchronous service controller in its only visible window"
   );
   assert.doesNotMatch(launcherSource, /\bstart\s+""[\s\S]*?control-ais-service/u);
+  assert.match(launcherSource, /Этапы подготовки будут показаны ниже/u);
 }
 for (const launcherSource of [rootStopSource, localStopSource]) {
   assert.match(launcherSource, /control-ais-service\.ps1" -Action Stop/u);
@@ -106,8 +107,10 @@ assert.match(serviceControlSource, /stop-lan-system\.ps1/u);
 assert.match(serviceControlSource, /-KeepDocker/u);
 assert.match(serviceControlSource, /Resolve-ElevationSafePath/u);
 assert.match(serviceControlSource, /-InteractiveUser/u);
-assert.match(serviceControlSource, /service-launch\.log/u);
+assert.match(serviceControlSource, /worker-launch\.log/u);
 assert.match(serviceControlSource, /function Write-AisStartupLogProgress/u);
+assert.match(serviceControlSource, /function Request-AisWorkerStart/u);
+assert.match(serviceControlSource, /\[Ожидание\] Прошло/u);
 assert.match(
   serviceControlSource,
   /function Wait-AisHealth[\s\S]*?Write-AisStartupLogProgress[\s\S]*?Test-AisHealth/u
@@ -185,12 +188,12 @@ $functionAst = $ast.Find({
 if (-not $functionAst) { throw "Startup log progress function was not found." }
 Invoke-Expression $functionAst.Extent.Text
 $utf8 = New-Object Text.UTF8Encoding($false)
-$serviceLogPath = '${rootLauncherPath.replace(/'/gu, "''")}'
+$workerLogPath = '${rootLauncherPath.replace(/'/gu, "''")}'
 $offset = [long]0
 $first = @(Write-AisStartupLogProgress ([ref]$offset) 6>&1)
 $firstOffset = $offset
 $second = @(Write-AisStartupLogProgress ([ref]$offset) 6>&1)
-$expectedLength = (Get-Item -LiteralPath $serviceLogPath).Length
+$expectedLength = (Get-Item -LiteralPath $workerLogPath).Length
 if ($first.Count -eq 0 -or $firstOffset -ne $expectedLength -or $second.Count -ne 0) {
   throw "Startup log progress duplicated or skipped data."
 }`;
