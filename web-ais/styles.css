@@ -4358,6 +4358,7 @@ tr.is-table-value-filtered-out {
 .issued-documents-filter-actions {
   min-height: 34px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;

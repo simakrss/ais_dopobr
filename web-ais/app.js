@@ -5964,6 +5964,7 @@ MAX - https://bizvmax.ru/zifra_plus
     issuedDocumentViewInitialized: false,
     issuedDocumentAutoFallback: false,
     issuedDocumentExportRunning: false,
+    issuedDocumentMarkRunning: false,
     programRegistryTypeFilter: [],
     contractSectionFilter: initialView === "contracts" ? [CONTRACT_SECTIONS[0]] : [],
     mobileRegistryFiltersOpen: {},
@@ -15697,6 +15698,59 @@ MAX - https://bizvmax.ru/zifra_plus
     return sortIssuedDocumentRows(filteredRows);
   }
 
+  function getVisiblePendingIssuedDocumentStudentRecords(rows = getVisibleIssuedDocumentRows()) {
+    const studentIds = new Set(
+      rows
+        .filter(isIssuedDocumentFrdoExportEligible)
+        .map((row) => String(row.studentId || ""))
+        .filter(Boolean)
+    );
+    return (state.data.collections.students || [])
+      .filter((student) => studentIds.has(String(student.id || "")));
+  }
+
+  async function markFilteredIssuedDocumentsAsExported(button) {
+    if (state.issuedDocumentMarkRunning || state.issuedDocumentFilters?.frdo !== "pending") return;
+    const records = getVisiblePendingIssuedDocumentStudentRecords();
+    if (!records.length) {
+      alert("По текущим фильтрам нет документов, которые можно отметить как выгруженные в ФРДО.");
+      return;
+    }
+    const date = todayIso();
+    if (!confirm([
+      "Отметить документы как выгруженные в ФРДО?",
+      "",
+      `Будет обновлено карточек: ${records.length}.`,
+      `Дата выгрузки: ${dateRu(date)}.`
+    ].join("\n"))) return;
+
+    state.issuedDocumentMarkRunning = true;
+    const originalText = button?.textContent || "Отметить как выгруженные";
+    if (button) {
+      button.disabled = true;
+      button.classList.add("is-loading");
+      button.setAttribute("aria-busy", "true");
+    }
+    let result = null;
+    try {
+      result = await runStudentBulkFrdoDate(records, date, (index) => {
+        if (button?.isConnected) button.textContent = `Обработка ${index + 1} из ${records.length}`;
+      });
+    } catch (error) {
+      alert(error.message || "Не удалось отметить документы как выгруженные в ФРДО.");
+    } finally {
+      state.issuedDocumentMarkRunning = false;
+      if (button?.isConnected) {
+        button.disabled = false;
+        button.classList.remove("is-loading");
+        button.removeAttribute("aria-busy");
+        button.textContent = originalText;
+      }
+      render();
+    }
+    if (result) showStudentBulkOperationResult(result);
+  }
+
   function renderIssuedDocumentSortHeader(key, label) {
     const sort = state.issuedDocumentSort || {};
     const active = sort.key === key;
@@ -15794,6 +15848,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <span class="${pendingCount ? "is-warning" : ""}">Ожидают ФРДО: <strong>${pendingCount}</strong></span>
           <div class="issued-documents-filter-actions">
             <button class="primary-button issued-documents-frdo-export-button" data-action="export-issued-documents-frdo" type="button" ${pendingCount && !state.issuedDocumentExportRunning ? "" : "disabled"}>Экспорт в ФРДО</button>
+            ${filters.frdo === "pending" ? `<button class="ghost-button" data-action="mark-issued-documents-exported" type="button" ${rows.length && !state.issuedDocumentMarkRunning ? "" : "disabled"}>Отметить как выгруженные</button>` : ""}
             <span>Показано <strong>${rows.length}</strong> из ${allRows.length}</span>
             <button class="ghost-button" data-action="reset-issued-document-filters" type="button" ${issuedDocumentFiltersAreActive(filters) ? "" : "disabled"}>Сбросить</button>
             <button class="ghost-button icon-only table-options-button" data-action="toggle-table-options" data-config="${ISSUED_DOCUMENT_TABLE_CONFIG_ID}" type="button" title="Опции таблицы" aria-label="Опции таблицы">⋯</button>
@@ -36814,6 +36869,9 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       issuedDocumentsRegister.querySelector("[data-action='export-issued-documents-frdo']")?.addEventListener("click", (event) => {
         exportIssuedDocumentsToFrdo(event.currentTarget);
+      });
+      issuedDocumentsRegister.querySelector("[data-action='mark-issued-documents-exported']")?.addEventListener("click", (event) => {
+        markFilteredIssuedDocumentsAsExported(event.currentTarget);
       });
       issuedDocumentsRegister.querySelectorAll("[data-action='open-issued-document-student']").forEach((button) => {
         button.addEventListener("click", () => {
