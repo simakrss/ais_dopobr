@@ -16253,7 +16253,7 @@ function getStudentDatabaseSynchronizedChangeDefinitions(beforeValue, afterValue
     {
       additionalStatus: "Доп. статус",
       note: "Примечание",
-      reviewPublished: "Отзыв на сайте"
+      reviewPublished: "Отзыв размещен на сайте"
     }
   );
   const contractFieldLabels = buildStudentDatabaseChangeFieldLabels(

@@ -373,7 +373,7 @@ assert.strictEqual(sameStudentDifferentFields.students[0].note, "Добавле�
 assert.strictEqual(sameStudentDifferentFields.students[0].reviewPublished, true);
 assert.deepStrictEqual(
   sameStudentDifferentFields.changes.map((change) => [change.field, change.action]).sort(),
-  [["Отзыв на сайте", "Excel → Web"], ["Примечание", "Web → Excel"]].sort()
+  [["Отзыв размещен на сайте", "Excel → Web"], ["Примечание", "Web → Excel"]].sort()
 );
 
 const oneSidedBaselineData = clone(sameStudentBaselineData);

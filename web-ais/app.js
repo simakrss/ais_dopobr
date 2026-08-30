@@ -5681,7 +5681,7 @@ MAX - https://bizvmax.ru/zifra_plus
           reviewPanel: true,
           fields: [
             field("review", "Отзыв", "textarea"),
-            field("reviewPublished", "Отзыв на сайте", "checkbox")
+            field("reviewPublished", "Отзыв размещен на сайте", "checkbox")
           ]
         }
       ]
@@ -5695,7 +5695,7 @@ MAX - https://bizvmax.ru/zifra_plus
           fields: [
             field("review", "Текст отзыва", "textarea"),
             field("reviewDate", "Дата отзыва", "date"),
-            field("reviewPublished", "Отзыв на сайте", "checkbox"),
+            field("reviewPublished", "Отзыв размещен на сайте", "checkbox"),
             field("reviewLink", "Ссылка на отзыв"),
             field("reviewPermission", "Согласие на публикацию"),
             field("reviewNotes", "Примечания", "textarea")
@@ -29260,13 +29260,13 @@ MAX - https://bizvmax.ru/zifra_plus
             ${renderExternalLinkIcon()}
             <span>Журнал активности</span>
           </button>
-          <label class="student-review-published">
-            <input name="reviewPublished" type="checkbox" value="Да" ${isChecked(record.reviewPublished) ? "checked" : ""}>
-            <span>Отзыв на сайте</span>
-          </label>
         </div>
         <label class="student-review-text">
           <textarea name="review">${escapeHtml(record.review || "")}</textarea>
+        </label>
+        <label class="student-review-published">
+          <input name="reviewPublished" type="checkbox" value="Да" ${isChecked(record.reviewPublished) ? "checked" : ""}>
+          <span>Отзыв размещен на сайте</span>
         </label>
       </div>
     `;

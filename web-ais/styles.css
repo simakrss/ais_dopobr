@@ -19552,6 +19552,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 .student-review-published {
   display: inline-flex;
   flex: 0 1 auto;
+  justify-self: start;
   align-items: center;
   gap: 6px;
   color: #3d4945;
