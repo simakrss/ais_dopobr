@@ -1,4 +1,5 @@
 const http = require("http");
+const crypto = require("crypto");
 
 const port = Number(process.env.PORT || 8081);
 const host = process.env.HOST || "127.0.0.1";
@@ -85,12 +86,35 @@ function isRemoteDocumentServicePath(pathname) {
     || pathname === "/api/documents/template-reveal-local"
     || pathname === "/api/contracts/student-document"
     || pathname.startsWith("/api/contracts/student-document-preview/")
-    || pathname.startsWith("/api/students/recognize-documents/");
+    || pathname.startsWith("/api/students/recognize-documents/")
+    || pathname === "/api/students/import-database"
+    || pathname.startsWith("/api/students/import-database/")
+    || pathname === "/api/students/export-database"
+    || pathname.startsWith("/api/students/export-database/")
+    || pathname === "/api/photos"
+    || pathname === "/api/student-photo"
+    || pathname.startsWith("/api/local-documents/");
+}
+
+function hasTrustedForwardedGatewayIdentity(req) {
+  const providedToken = String(req.headers["x-ais-gateway-token"] || "");
+  const userId = String(req.headers["x-ais-user-id"] || "").trim();
+  const role = String(req.headers["x-ais-user-role"] || "").trim();
+  if (!appServerToken || !providedToken || !userId || !["admin", "manager", "partner"].includes(role)) {
+    return false;
+  }
+  const expected = Buffer.from(appServerToken, "utf8");
+  const actual = Buffer.from(providedToken, "utf8");
+  return expected.length === actual.length
+    && expected.length > 0
+    && crypto.timingSafeEqual(expected, actual);
 }
 
 function getRequestAccessContext(req, url) {
   const origin = normalizeOrigin(req.headers.origin);
   const crossOrigin = Boolean(origin) && !isSameRequestOrigin(req, origin);
+  const trustedForwardedGatewayIdentity = isLoopbackAddress(req.socket.remoteAddress)
+    && hasTrustedForwardedGatewayIdentity(req);
   const trustedRemoteService = crossOrigin
     && trustedRemoteAppOrigins.has(origin)
     && isLoopbackAddress(req.socket.remoteAddress)
@@ -99,6 +123,7 @@ function getRequestAccessContext(req, url) {
     origin,
     crossOrigin,
     trustedRemoteService,
+    trustedForwardedGatewayIdentity,
     attachGatewayIdentity: Boolean(appServerToken) && isLoopbackAddress(req.socket.remoteAddress),
     forwardedHost: trustedRemoteService ? new URL(origin).host : String(req.headers.host || `${host}:${port}`)
   };
@@ -107,7 +132,7 @@ function getRequestAccessContext(req, url) {
 function getRemoteServiceCorsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, HEAD, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-Requested-With",
     "Access-Control-Allow-Private-Network": "true",
     "Access-Control-Expose-Headers": "Content-Disposition, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-Local-Document-Revealed, X-Local-Document-Reveal-Error, X-AIS-Processing",
@@ -170,7 +195,11 @@ async function handleLocalDocumentServicesHealth(req, res, accessContext) {
     appServerAvailable,
     ocrAvailable,
     documentConversionAvailable,
-    documentEditingAvailable
+    documentEditingAvailable,
+    localDocumentsAvailable: appServerAvailable
+      && appServerHealth.localDocumentsAvailable === true,
+    openDocumentsLocally: appServerAvailable
+      && appServerHealth.openDocumentsLocally === true
   });
   const headers = accessContext.trustedRemoteService
     ? getRemoteServiceCorsHeaders(accessContext.origin)
@@ -354,6 +383,16 @@ function isRetryableAppServerError(error) {
 
 function forwardToAppServer(req, res, body, accessContext, attempt = 0) {
   const target = new URL(req.url, appServerOrigin);
+  const forwardedGatewayIdentity = accessContext.trustedForwardedGatewayIdentity
+    ? {
+        "x-ais-session-id": req.headers["x-ais-session-id"],
+        "x-ais-user-id": req.headers["x-ais-user-id"],
+        "x-ais-user-login": req.headers["x-ais-user-login"],
+        "x-ais-user-name": req.headers["x-ais-user-name"],
+        "x-ais-user-role": req.headers["x-ais-user-role"],
+        "x-ais-employee-id": req.headers["x-ais-employee-id"]
+      }
+    : null;
   const headers = {
     ...req.headers,
     "x-forwarded-host": accessContext.forwardedHost,
@@ -366,11 +405,16 @@ function forwardToAppServer(req, res, body, accessContext, attempt = 0) {
     "x-ais-user-id",
     "x-ais-user-login",
     "x-ais-user-name",
-    "x-ais-user-role"
+    "x-ais-user-role",
+    "x-ais-employee-id"
   ]) delete headers[name];
   if (accessContext.attachGatewayIdentity) {
     headers["x-ais-gateway-token"] = appServerToken;
-    if (accessContext.trustedRemoteService) {
+    if (forwardedGatewayIdentity) {
+      Object.entries(forwardedGatewayIdentity).forEach(([name, value]) => {
+        if (value !== undefined && value !== null && String(value).trim()) headers[name] = String(value);
+      });
+    } else if (accessContext.trustedRemoteService) {
       headers["x-ais-session-id"] = "local-browser-services";
       headers["x-ais-user-id"] = "local-browser-services";
       headers["x-ais-user-login"] = "local-services";

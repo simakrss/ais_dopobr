@@ -82,6 +82,10 @@ async function verifyCancelledOperation({ source, functionName, extraContext = {
       confirmations.push(message);
       return false;
     },
+    probeLocalDocumentServices: async () => ({
+      appServerAvailable: true,
+      localDocumentsAvailable: true
+    }),
     getStudentDocumentsSource: () => "local",
     getStudentDatabaseSourceLabel: helperContext.getStudentDatabaseSourceLabel,
     getStudentDatabaseImportConfirmation: helperContext.importConfirmation,

@@ -9,6 +9,8 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 const localServerPath = path.join(root, "local-server.js");
+const localServerSource = fs.readFileSync(localServerPath, "utf8").replace(/\r\n/g, "\n");
+const gatewaySource = fs.readFileSync(path.join(root, "gateway.php"), "utf8").replace(/\r\n/g, "\n");
 const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8").replace(/\r\n/g, "\n");
 const startSource = fs.readFileSync(
   path.join(root, "scripts", "start-lan-system.js"),
@@ -55,14 +57,22 @@ function createDocumentProcessingResolver(healthPayload, options = {}) {
   assert.ok(start >= 0 && end > start, "Не найден клиентский блок выбора сервиса документов");
   let fetchCount = 0;
   let capturedRequestOptions = null;
-  const fetchMock = async (_url, requestOptions) => {
+  const fetchMock = async (url, requestOptions) => {
     fetchCount += 1;
     capturedRequestOptions = requestOptions;
-    if (options.reject === true) throw new Error("Local service unavailable");
+    const tunneled = String(url).startsWith("https://");
+    if (options.reject === true || (options.rejectLocal === true && !tunneled)) {
+      throw new Error("Local service unavailable");
+    }
+    const payload = tunneled && options.tunnelPayload ? options.tunnelPayload : healthPayload;
     return {
       ok: true,
-      headers: { get: (name) => name === "X-AIS-Processing" ? "local-docker" : null },
-      json: async () => healthPayload
+      headers: {
+        get: (name) => name === "X-AIS-Processing"
+          ? (tunneled ? "local-tunnel" : "local-docker")
+          : null
+      },
+      json: async () => payload
     };
   };
   const factory = new Function(
@@ -76,7 +86,7 @@ const localDocumentServicesOrigin = "http://127.0.0.1:8081";
 const localDocumentServicesCacheMilliseconds = 10000;
 const localDocumentServicesState = { checkedAt: 0, capabilities: null, request: null };
 ${appSource.slice(start, end)}
-return { resolveDocumentProcessingOrigin };
+return { probeLocalDocumentServices, resolveDocumentProcessingOrigin };
 `
   );
   const api = factory(
@@ -135,7 +145,9 @@ async function main() {
   const localResolver = createDocumentProcessingResolver({
     appServerAvailable: true,
     ocrAvailable: true,
-    documentConversionAvailable: true
+    documentConversionAvailable: true,
+    localDocumentsAvailable: true,
+    openDocumentsLocally: true
   });
   assert.equal(await localResolver.resolveDocumentProcessingOrigin("ocr"), "http://127.0.0.1:8081");
   assert.equal(
@@ -144,6 +156,7 @@ async function main() {
   );
   assert.equal(localResolver.getFetchCount(), 1, "Проверка локальных сервисов должна кэшироваться");
   assert.equal(localResolver.getRequestOptions().targetAddressSpace, "local");
+  assert.equal((await localResolver.probeLocalDocumentServices()).localDocumentsAvailable, true);
 
   const degradedResolver = createDocumentProcessingResolver({
     appServerAvailable: true,
@@ -158,6 +171,21 @@ async function main() {
     await degradedResolver.resolveDocumentProcessingOrigin("documentConversion"),
     "http://127.0.0.1:8081"
   );
+  const tunnelResolver = createDocumentProcessingResolver({}, {
+    rejectLocal: true,
+    tunnelPayload: {
+      appServerAvailable: true,
+      ocrAvailable: true,
+      documentConversionAvailable: true,
+      localDocumentsAvailable: true,
+      openDocumentsLocally: true
+    }
+  });
+  assert.equal(
+    await tunnelResolver.resolveDocumentProcessingOrigin("ocr"),
+    "https://edu-plus.ru/lms"
+  );
+  assert.equal(tunnelResolver.getFetchCount(), 2, "После локального сервиса должен проверяться туннель");
   const editingOnlyResolver = createDocumentProcessingResolver({
     appServerAvailable: true,
     ocrAvailable: false,
@@ -179,7 +207,9 @@ async function main() {
   let appHealthPayload = {
     ok: true,
     storage: "mysql",
-    highQualityPdfConversionAvailable: true
+    highQualityPdfConversionAvailable: true,
+    localDocumentsAvailable: true,
+    openDocumentsLocally: true
   };
   let documentEditingHealthy = true;
   const appServer = http.createServer((req, res) => {
@@ -252,7 +282,9 @@ async function main() {
       appServerAvailable: true,
       ocrAvailable: true,
       documentConversionAvailable: true,
-      documentEditingAvailable: true
+      documentEditingAvailable: true,
+      localDocumentsAvailable: true,
+      openDocumentsLocally: true
     });
 
     const preflight = await fetch(`${baseUrl}/api/students/recognize-documents/files`, {
@@ -293,6 +325,34 @@ async function main() {
     assert.equal(forwardedRequests[1].url, "/api/documents/template-reveal-local");
     assert.equal(forwardedRequests[1].headers["x-ais-gateway-token"], gatewaySecret);
 
+    const databaseResponse = await fetch(
+      `${baseUrl}/api/students/export-database/status?id=test-job`,
+      {
+        headers: {
+          ...remoteHeaders,
+          "X-AIS-Gateway-Token": gatewaySecret,
+          "X-AIS-Session-Id": "remote-session",
+          "X-AIS-User-Id": "admin-id",
+          "X-AIS-User-Login": "admin",
+          "X-AIS-User-Name": "Administrator",
+          "X-AIS-User-Role": "admin"
+        }
+      }
+    );
+    assert.equal(databaseResponse.status, 200);
+    assert.equal(forwardedRequests.length, 3);
+    assert.equal(forwardedRequests[2].headers["x-ais-user-id"], "admin-id");
+    assert.equal(forwardedRequests[2].headers["x-ais-user-role"], "admin");
+    assert.equal(forwardedRequests[2].headers["x-ais-session-id"], "remote-session");
+
+    const photoResponse = await fetch(
+      `${baseUrl}/api/student-photo?path=${encodeURIComponent("\\Слушатели\\Тест\\Документы\\Тест.jpg")}`,
+      { headers: remoteHeaders }
+    );
+    assert.equal(photoResponse.status, 200);
+    assert.equal(forwardedRequests.length, 4);
+    assert.equal(forwardedRequests[3].headers["x-ais-user-role"], "manager");
+
     const disallowedPath = await fetch(`${baseUrl}/api/admin/users`, { headers: remoteHeaders });
     assert.equal(disallowedPath.status, 403);
     const disallowedOrigin = await fetch(`${baseUrl}/api/local-document-services/health`, {
@@ -310,7 +370,9 @@ async function main() {
       appServerAvailable: true,
       ocrAvailable: true,
       documentConversionAvailable: false,
-      documentEditingAvailable: true
+      documentEditingAvailable: true,
+      localDocumentsAvailable: false,
+      openDocumentsLocally: false
     });
 
     appHealthPayload.highQualityPdfConversionAvailable = true;
@@ -324,7 +386,9 @@ async function main() {
       appServerAvailable: true,
       ocrAvailable: true,
       documentConversionAvailable: true,
-      documentEditingAvailable: false
+      documentEditingAvailable: false,
+      localDocumentsAvailable: false,
+      openDocumentsLocally: false
     });
     documentEditingHealthy = true;
 
@@ -345,6 +409,11 @@ async function main() {
     assert.match(appSource, /student-document-preview\/finalize[\s\S]*documentProcessingOrigin/u);
     assert.match(startSource, /AIS_TRUST_GATEWAY:\s*"1"/u);
     assert.match(startSource, /AIS_GATEWAY_SHARED_SECRET:\s*getLocalServiceGatewaySecret\(\)/u);
+    assert.match(localServerSource, /\/api\/students\/export-database/u);
+    assert.match(localServerSource, /trustedForwardedGatewayIdentity/u);
+    assert.match(gatewaySource, /\/api\/students\/export-database/u);
+    assert.match(gatewaySource, /\/api\/student-photo/u);
+    assert.match(gatewaySource, /\/api\/local-document-services\/health/u);
 
     console.log("local document services priority tests: OK");
   } finally {

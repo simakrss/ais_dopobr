@@ -36396,7 +36396,10 @@ async function route(req, res) {
   }
   if (req.method === "GET" && req.url === "/api/health") {
     const includeRuntimeSecrets = requestHasConfiguredGatewaySecret(req);
-    const highQualityPdfConverterBinary = await resolveLibreOfficeBinary();
+    const [highQualityPdfConverterBinary, localDocuments] = await Promise.all([
+      resolveLibreOfficeBinary(),
+      getLocalSystemDocumentsAvailability().catch(() => ({ available: false }))
+    ]);
     const runtimeSecrets = includeRuntimeSecrets
       ? {
           gateway: runtimeSecretFingerprint(process.env.AIS_GATEWAY_SHARED_SECRET),
@@ -36412,6 +36415,8 @@ async function route(req, res) {
       sharedStatePollIntervalMs: 1000,
       highQualityPdfConversionAvailable: Boolean(highQualityPdfConverterBinary),
       highQualityPdfConverter: highQualityPdfConverterBinary ? "libreoffice" : null,
+      localDocumentsAvailable: Boolean(localDocuments.available),
+      openDocumentsLocally: serverSettings.openDocumentsLocally !== false,
       ...(runtimeSecrets ? { runtimeSecrets } : {})
     });
     return;

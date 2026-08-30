@@ -42782,6 +42782,7 @@ MAX - https://bizvmax.ru/zifra_plus
       openPersonPhotoDeviceFallback(entityType, `Не удалось определить папку документов ${personLabel}.`);
       return;
     }
+    await probeLocalDocumentServices(true);
     const preferredSource = getStudentDocumentsSource();
     const sourceCandidates = [...new Set([
       preferredSource,
@@ -43072,8 +43073,41 @@ MAX - https://bizvmax.ru/zifra_plus
     return {
       appServerAvailable: false,
       ocrAvailable: false,
-      documentConversionAvailable: false
+      documentConversionAvailable: false,
+      localDocumentsAvailable: false,
+      openDocumentsLocally: false,
+      apiOrigin: ""
     };
+  }
+
+  async function requestLocalDocumentServiceCapabilities(url, processingHeader, options = {}) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 2500);
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        cache: "no-store",
+        headers: { "X-Requested-With": "AIS-Web" },
+        ...options,
+        signal: controller.signal
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || response.headers.get("X-AIS-Processing") !== processingHeader) return null;
+      return {
+        appServerAvailable: payload.appServerAvailable === true,
+        ocrAvailable: payload.ocrAvailable === true,
+        documentConversionAvailable: payload.documentConversionAvailable === true,
+        localDocumentsAvailable: payload.localDocumentsAvailable === true,
+        openDocumentsLocally: payload.openDocumentsLocally !== false,
+        apiOrigin: processingHeader === "local-docker"
+          ? localDocumentServicesOrigin
+          : photoServerOrigin()
+      };
+    } catch {
+      return null;
+    } finally {
+      window.clearTimeout(timeout);
+    }
   }
 
   async function probeLocalDocumentServices(force = false) {
@@ -43081,7 +43115,10 @@ MAX - https://bizvmax.ru/zifra_plus
       return {
         appServerAvailable: true,
         ocrAvailable: true,
-        documentConversionAvailable: true
+        documentConversionAvailable: true,
+        localDocumentsAvailable: true,
+        openDocumentsLocally: true,
+        apiOrigin: defaultPhotoServerOrigin
       };
     }
     const now = Date.now();
@@ -43094,34 +43131,19 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (localDocumentServicesState.request) return localDocumentServicesState.request;
     localDocumentServicesState.request = (async () => {
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 2500);
-      try {
-        const response = await fetch(
-          `${localDocumentServicesOrigin}/api/local-document-services/health`,
-          {
-            method: "GET",
-            mode: "cors",
-            targetAddressSpace: "local",
-            cache: "no-store",
-            headers: { "X-Requested-With": "AIS-Web" },
-            signal: controller.signal
-          }
-        );
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || response.headers.get("X-AIS-Processing") !== "local-docker") {
-          return unavailableLocalDocumentServiceCapabilities();
-        }
-        return {
-          appServerAvailable: payload.appServerAvailable === true,
-          ocrAvailable: payload.ocrAvailable === true,
-          documentConversionAvailable: payload.documentConversionAvailable === true
-        };
-      } catch {
-        return unavailableLocalDocumentServiceCapabilities();
-      } finally {
-        window.clearTimeout(timeout);
-      }
+      const directCapabilities = await requestLocalDocumentServiceCapabilities(
+        `${localDocumentServicesOrigin}/api/local-document-services/health`,
+        "local-docker",
+        { mode: "cors", targetAddressSpace: "local" }
+      );
+      if (directCapabilities?.appServerAvailable === true) return directCapabilities;
+      const tunneledCapabilities = await requestLocalDocumentServiceCapabilities(
+        documentProcessingApiUrl("/api/local-document-services/health", photoServerOrigin()),
+        "local-tunnel"
+      );
+      return tunneledCapabilities?.appServerAvailable === true
+        ? tunneledCapabilities
+        : unavailableLocalDocumentServiceCapabilities();
     })();
     try {
       localDocumentServicesState.capabilities = await localDocumentServicesState.request;
@@ -43139,7 +43161,9 @@ MAX - https://bizvmax.ru/zifra_plus
       && (capability === "ocr"
         ? capabilities.ocrAvailable === true
         : capabilities.documentConversionAvailable === true);
-    return localAvailable ? localDocumentServicesOrigin : photoServerOrigin();
+    return localAvailable
+      ? String(capabilities.apiOrigin || localDocumentServicesOrigin)
+      : photoServerOrigin();
   }
 
   function photoPublicUrl(pathOrUrl) {
@@ -48711,8 +48735,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getStudentPhotoSrc(record) {
     if (record.photoData) return record.photoData;
-    if (record.photoUrl) return photoPublicUrl(record.photoUrl);
     if (isStudentSourcePhotoPath(record.photoPath)) return studentSourcePhotoUrl(record.photoPath);
+    if (record.photoUrl) return photoPublicUrl(record.photoUrl);
     if (/\.(png|jpe?g|webp|gif)$/i.test(String(record.photoPath || "").trim())) {
       return photoPublicUrl(record.photoPath);
     }
@@ -54096,6 +54120,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function isLocalDocumentsAvailable() {
+    const capabilities = localDocumentServicesState.capabilities;
+    if (
+      capabilities?.appServerAvailable === true
+      && typeof capabilities.localDocumentsAvailable === "boolean"
+    ) {
+      return capabilities.localDocumentsAvailable;
+    }
     return state.data.meta?.localDocumentsAvailable !== false;
   }
 
@@ -55556,6 +55587,10 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function syncServerConnectionSettings() {
     try {
+      const localDocumentsAvailableBefore = isLocalDocumentsAvailable();
+      await probeLocalDocumentServices();
+      const localDocumentsAvailabilityChanged = localDocumentsAvailableBefore
+        !== isLocalDocumentsAvailable();
       const yandexResponse = await fetch(photoApiUrl("/api/settings/system-documents"));
       let changed = false;
       if (yandexResponse.ok) {
@@ -55644,8 +55679,8 @@ MAX - https://bizvmax.ru/zifra_plus
           mysqlManagedByEnvironment: state.data.meta.mysqlManagedByEnvironment
         });
       }
-      if (!changed) return;
-      persist();
+      if (!changed && !localDocumentsAvailabilityChanged) return;
+      if (changed) persist();
       if (state.view === "admin") render();
     } catch (error) {
       console.warn("Не удалось получить серверные настройки подключений", error);
@@ -56656,6 +56691,7 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Дождитесь завершения загрузки данных из базы.");
       return;
     }
+    await probeLocalDocumentServices(true);
     const syncSource = getStudentDocumentsSource(Boolean(event?.shiftKey));
     const sourceLabel = syncSource === "local"
       ? "на локальном компьютере"
@@ -57302,6 +57338,7 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Дождитесь завершения загрузки данных из базы.");
       return;
     }
+    await probeLocalDocumentServices(true);
     const exportSource = getStudentDocumentsSource(Boolean(event?.shiftKey));
     const sourceLabel = exportSource === "local"
       ? "локального файла"
@@ -58170,6 +58207,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     if (!isSynchronizationImport && state.databaseImport.running) return;
+    if (!isSynchronizationImport) await probeLocalDocumentServices(true);
     const importSource = isSynchronizationImport
       ? String(event?.syncSource || "webdav")
       : getStudentDocumentsSource(Boolean(event?.shiftKey));

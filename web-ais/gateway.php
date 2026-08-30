@@ -877,6 +877,32 @@ function gateway_handle_admin_external_services(
 function gateway_tunnel_handles(string $method, string $path): bool
 {
     if (
+        $path === '/api/local-document-services/health'
+        && in_array($method, ['GET', 'HEAD'], true)
+    ) {
+        return true;
+    }
+    if (
+        in_array($method, ['GET', 'HEAD', 'POST'], true)
+        && (
+            $path === '/api/students/import-database'
+            || str_starts_with($path, '/api/students/import-database/')
+            || $path === '/api/students/export-database'
+            || str_starts_with($path, '/api/students/export-database/')
+        )
+    ) {
+        return true;
+    }
+    if ($path === '/api/photos' && in_array($method, ['POST', 'DELETE'], true)) {
+        return true;
+    }
+    if ($path === '/api/student-photo' && in_array($method, ['GET', 'HEAD'], true)) {
+        return true;
+    }
+    if ($method === 'POST' && str_starts_with($path, '/api/local-documents/')) {
+        return true;
+    }
+    if (
         $method === 'POST'
         && (
             $path === '/api/contracts/student-document'
@@ -2740,7 +2766,7 @@ try {
         } catch (Throwable $tunnelError) {
             gateway_fail(
                 503,
-                'Локальные сервисы распознавания и формирования документов недоступны. '
+                'Локальный сервис системы недоступен. '
                 . 'Проверьте, что компьютер включён и туннель запущен.'
             );
         }
