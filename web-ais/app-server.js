@@ -5565,14 +5565,8 @@ async function handleRevealLocalDocumentTemplate(req, res) {
   }
 }
 
-function showLocalDocumentSaveDialog(initialPath, outputFormat) {
-  if (process.platform !== "win32") {
-    return Promise.reject(new Error("Диалог сохранения доступен только на локальном сервере Windows."));
-  }
-  const powershellPath = process.env.SystemRoot
-    ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-    : "powershell.exe";
-  const launcher = [
+function buildLocalDocumentSaveDialogLauncher() {
+  return [
     "$ErrorActionPreference = 'Stop'",
     "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
     "Add-Type -AssemblyName System.Windows.Forms",
@@ -5584,16 +5578,25 @@ function showLocalDocumentSaveDialog(initialPath, outputFormat) {
     "$dialog.DefaultExt = $env:AIS_SAVE_FORMAT",
     "$dialog.AddExtension = $true",
     "$dialog.OverwritePrompt = $false",
+    "$dialog.CheckPathExists = $true",
+    "$dialog.ValidateNames = $true",
     "$dialog.RestoreDirectory = $true",
+    "$owner = New-Object System.Windows.Forms.Form",
+    "$owner.ClientSize = New-Object System.Drawing.Size(1, 1)",
+    "$owner.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen",
+    "$owner.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None",
+    "$owner.ShowInTaskbar = $false",
+    "$owner.TopMost = $true",
+    "$owner.Opacity = 0",
     "function Confirm-RussianFileReplacement([string]$FilePath) {",
     "  $form = New-Object System.Windows.Forms.Form",
     "  $form.Text = 'Подтверждение замены'",
     "  $form.ClientSize = New-Object System.Drawing.Size(460, 150)",
-    "  $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen",
+    "  $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent",
     "  $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog",
     "  $form.MaximizeBox = $false",
     "  $form.MinimizeBox = $false",
-    "  $form.ShowInTaskbar = $true",
+    "  $form.ShowInTaskbar = $false",
     "  $form.TopMost = $true",
     "  $label = New-Object System.Windows.Forms.Label",
     "  $label.AutoSize = $false",
@@ -5613,16 +5616,35 @@ function showLocalDocumentSaveDialog(initialPath, outputFormat) {
     "  $form.Controls.AddRange(@($label, $yesButton, $noButton))",
     "  $form.AcceptButton = $yesButton",
     "  $form.CancelButton = $noButton",
-    "  return $form.ShowDialog() -eq [System.Windows.Forms.DialogResult]::Yes",
+    "  $form.Add_Shown({ [void]$form.Activate(); [void]$form.BringToFront() })",
+    "  try { return $form.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::Yes } finally { $form.Dispose() }",
     "}",
-    "while ($true) {",
-    "  if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { break }",
-    "  $selectedPath = [IO.Path]::ChangeExtension($dialog.FileName, '.' + $env:AIS_SAVE_FORMAT)",
-    "  if ((Test-Path -LiteralPath $selectedPath -PathType Leaf) -and -not (Confirm-RussianFileReplacement $selectedPath)) { continue }",
-    "  [Console]::Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($selectedPath)))",
-    "  break",
+    "$owner.Show()",
+    "[void]$owner.Activate()",
+    "try {",
+    "  while ($true) {",
+    "    if ($dialog.ShowDialog($owner) -ne [System.Windows.Forms.DialogResult]::OK) { break }",
+    "    $selectedPath = [IO.Path]::ChangeExtension($dialog.FileName, '.' + $env:AIS_SAVE_FORMAT)",
+    "    if ((Test-Path -LiteralPath $selectedPath -PathType Leaf) -and -not (Confirm-RussianFileReplacement $selectedPath)) { continue }",
+    "    [Console]::Write('AIS_SAVE_PATH:' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($selectedPath)))",
+    "    break",
+    "  }",
+    "} finally {",
+    "  $dialog.Dispose()",
+    "  $owner.Close()",
+    "  $owner.Dispose()",
     "}"
-  ].join("; ");
+  ].join("\r\n");
+}
+
+function showLocalDocumentSaveDialog(initialPath, outputFormat) {
+  if (process.platform !== "win32") {
+    return Promise.reject(new Error("Диалог сохранения доступен только на локальном сервере Windows."));
+  }
+  const powershellPath = process.env.SystemRoot
+    ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    : "powershell.exe";
+  const launcher = buildLocalDocumentSaveDialogLauncher();
   const args = [
     "-NoLogo",
     "-NoProfile",
@@ -5672,13 +5694,33 @@ function showLocalDocumentSaveDialog(initialPath, outputFormat) {
         reject(new Error(String(stderr || stdout || "").trim() || "Не удалось открыть окно сохранения."));
         return;
       }
-      const encodedPath = String(stdout || "").replace(/^\uFEFF/, "").trim();
-      if (!encodedPath) {
+      const rawOutput = String(stdout || "").replace(/^\uFEFF/, "");
+      const marker = "AIS_SAVE_PATH:";
+      const markerIndex = rawOutput.lastIndexOf(marker);
+      if (markerIndex < 0 && !rawOutput.trim()) {
         resolve("");
         return;
       }
+      if (markerIndex < 0) {
+        reject(new Error("Окно сохранения не вернуло выбранный путь."));
+        return;
+      }
+      const encodedPath = rawOutput.slice(markerIndex + marker.length).split(/\r?\n/u, 1)[0].trim();
+      if (!encodedPath) {
+        reject(new Error("Окно сохранения вернуло пустой путь."));
+        return;
+      }
+      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encodedPath)) {
+        reject(new Error("Окно сохранения вернуло некорректный путь."));
+        return;
+      }
       try {
-        resolve(Buffer.from(encodedPath, "base64").toString("utf8"));
+        const selectedPath = Buffer.from(encodedPath, "base64").toString("utf8");
+        if (!selectedPath || selectedPath.includes("\0")) {
+          reject(new Error("Окно сохранения вернуло некорректный путь."));
+          return;
+        }
+        resolve(selectedPath);
       } catch {
         reject(new Error("Окно сохранения вернуло некорректный путь."));
       }
@@ -36884,6 +36926,7 @@ module.exports = {
   parseStudentMailboxImportSelections,
   publicStudentDocumentMailboxes,
   queryStudentMailboxMessages,
+  buildLocalDocumentSaveDialogLauncher,
   applyCustomDocumentPropertyFormulas,
   buildLibreOfficePdfConversionFilter,
   resolveLibreOfficeBinary,

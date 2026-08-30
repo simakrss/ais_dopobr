@@ -61640,7 +61640,7 @@ MAX - https://bizvmax.ru/zifra_plus
       setDocumentGenerationStatus(
         generationTaskId,
         storageRequest.promptLocalSave
-          ? `Ожидается выбор места сохранения: ${documentTemplate.title}`
+          ? `Ожидается выбор места сохранения или подтверждение замены: ${documentTemplate.title}`
           : (storageRequest.autoSaveLocal || storageRequest.saveToYandexDisk
             ? `Формирование и сохранение: ${documentTemplate.title}`
             : `Формирование: ${documentTemplate.title}`)
