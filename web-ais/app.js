@@ -13457,12 +13457,6 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderAdvertisingSourceConfiguration(source, index) {
     if (source.kind === "sql") {
       return `
-        <label><span>Подключение</span><select data-advertising-source-field="connection">
-          <option value="applications" ${source.connection === "applications" ? "selected" : ""}>Интернет-магазин</option>
-          <option value="assistant" ${source.connection === "assistant" ? "selected" : ""}>Статистика Ассистента</option>
-          <option value="abit" ${source.connection === "abit" ? "selected" : ""}>База ВИИТ</option>
-          <option value="moodle" ${source.connection === "moodle" ? "selected" : ""}>База Moodle</option>
-        </select></label>
         <label class="advertising-source-query">
           <span>SQL-запрос SELECT</span>
           ${renderSqlMiniIde(source.sql || "", {
@@ -13523,6 +13517,17 @@ MAX - https://bizvmax.ru/zifra_plus
                 <header>
                   <strong>${index + 1}. ${escapeHtml(source.label || "Новый источник")}</strong>
                   <div class="advertising-source-editor-actions">
+                    ${source.kind === "sql" ? `
+                      <label class="advertising-source-header-connection">
+                        <span>Подключение</span>
+                        <select data-advertising-source-field="connection">
+                          <option value="applications" ${source.connection === "applications" ? "selected" : ""}>Интернет-магазин</option>
+                          <option value="assistant" ${source.connection === "assistant" ? "selected" : ""}>Статистика Ассистента</option>
+                          <option value="abit" ${source.connection === "abit" ? "selected" : ""}>База ВИИТ</option>
+                          <option value="moodle" ${source.connection === "moodle" ? "selected" : ""}>База Moodle</option>
+                        </select>
+                      </label>
+                    ` : ""}
                     <button class="ghost-button compact-button" data-action="move-advertising-source" data-direction="-1" type="button" ${index === 0 ? "disabled" : ""}>Выше</button>
                     <button class="ghost-button compact-button" data-action="move-advertising-source" data-direction="1" type="button" ${index === sources.length - 1 ? "disabled" : ""}>Ниже</button>
                     <button class="danger-button compact-button" data-action="delete-advertising-source" type="button">Удалить</button>

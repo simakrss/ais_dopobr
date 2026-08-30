@@ -26474,6 +26474,29 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   gap: 4px;
 }
 
+.advertising-source-header-connection {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-right: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.advertising-source-header-connection select {
+  width: clamp(180px, 22vw, 260px);
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  padding: 5px 8px;
+  font: inherit;
+}
+
 .advertising-source-editor-grid {
   display: grid;
   grid-template-columns: minmax(180px, 1.4fr) minmax(120px, 0.7fr) minmax(170px, 0.9fr) minmax(150px, 0.8fr);
@@ -26514,7 +26537,7 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 }
 
 .advertising-source-editor-grid .advertising-source-query {
-  grid-column: span 3;
+  grid-column: 1 / -1;
 }
 
 .advertising-source-enabled {
@@ -26817,6 +26840,20 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
   .advertising-source-editor > header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .advertising-source-editor-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .advertising-source-header-connection {
+    width: 100%;
+    margin-right: 0;
+  }
+
+  .advertising-source-header-connection select {
+    width: 100%;
   }
 
   .advertising-source-editor-grid,

@@ -94,7 +94,12 @@ assert.match(appSource, /data-action="discard-statistics-source-changes"/u);
 assert.match(appSource, /data-action="discard-advertising-source-changes"/u);
 assert.match(appSource, /Сохранить изменения/u);
 assert.match(appSource, /settingsDraftSources/u);
+assert.match(
+  appSource,
+  /advertising-source-header-connection[\s\S]*data-advertising-source-field="connection"[\s\S]*data-action="move-advertising-source"/u
+);
 assert.match(stylesSource, /\.source-draft-toolbar\.is-unsaved/u);
 assert.match(stylesSource, /\.source-draft-save-button\.is-unsaved/u);
+assert.match(stylesSource, /\.advertising-source-editor-grid \.advertising-source-query \{\s*grid-column: 1 \/ -1;/u);
 
 console.log("Source settings draft tests passed.");
