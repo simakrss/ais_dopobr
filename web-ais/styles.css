@@ -19700,12 +19700,6 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   line-height: 1;
 }
 
-.orders-sdo-expulsion-order-stack {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
 .orders-sdo-contract-document-row {
   display: flex;
   flex-wrap: wrap;
@@ -19715,16 +19709,24 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   padding-left: 0;
 }
 
-.student-contract-document-stack {
-  display: grid;
-  justify-items: end;
+.student-orders-sdo-contract-document-row {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.orders-sdo-group-field {
+  grid-column: 1;
+  grid-row: 4;
 }
 
 .orders-sdo-training-term-row {
+  grid-column: 2;
+  grid-row: 4;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+  min-width: 0;
 }
 
 .employee-contract-document-row {
@@ -22229,13 +22231,24 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     padding-left: 0;
   }
 
-  .student-contract-document-stack {
-    justify-items: stretch;
-  }
-
   .orders-sdo-training-term-row {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .student-orders-sdo-contract-document-row {
+    grid-column: 1;
+    grid-row: 5;
+  }
+
+  .orders-sdo-training-term-row {
+    grid-column: 1;
+    grid-row: 6;
+  }
+
+  .orders-sdo-group-field {
+    grid-column: 1;
+    grid-row: 7;
   }
 
   .student-financial-result-grid {

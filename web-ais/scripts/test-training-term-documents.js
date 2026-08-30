@@ -30,18 +30,28 @@ assert.match(appSource, /\[trainingExtensionDocumentTemplateId,\s*trainingReduct
 assert.match(appSource, /"Продленная дата окончания обучения":\s*"extendedEndDate"/u);
 assert.match(appSource, /data-document-context-kind="\$\{escapeAttr\(documentKind\)\}"/u);
 
-const ordersRow = appSource.match(/<div class="orders-sdo-contract-document-row student-contract-document-stack">([\s\S]*?)<\/div>/u)?.[1] || "";
-assert.ok(ordersRow.indexOf('"trainingExtension"') >= 0, "Кнопка продления отсутствует в строке документов.");
-assert.ok(ordersRow.indexOf('"trainingReduction"') > ordersRow.indexOf('"trainingExtension"'), "Кнопка сокращения должна идти после продления.");
-assert.ok(ordersRow.indexOf("renderStudentContractButton") < ordersRow.indexOf('"trainingExtension"'), "Кнопка договора должна располагаться над продлением и сокращением.");
-assert.match(ordersRow, /orders-sdo-training-term-row/u);
+const contractButtonRowIndex = appSource.indexOf("student-orders-sdo-contract-document-row");
+const groupFieldIndex = appSource.indexOf('renderOrdersSdoControl("group"', contractButtonRowIndex);
+const trainingTermRowIndex = appSource.indexOf("orders-sdo-training-term-row", groupFieldIndex);
+const extensionButtonIndex = appSource.indexOf('"trainingExtension"', trainingTermRowIndex);
+const reductionButtonIndex = appSource.indexOf('"trainingReduction"', extensionButtonIndex);
+assert.ok(contractButtonRowIndex >= 0, "Строка кнопки договора не найдена.");
+assert.ok(groupFieldIndex > contractButtonRowIndex, "Номер группы должен располагаться после строки договора.");
+assert.ok(trainingTermRowIndex > groupFieldIndex, "Кнопки изменения срока должны делить строку с номером группы.");
+assert.ok(extensionButtonIndex > trainingTermRowIndex, "Кнопка продления отсутствует в строке изменения срока.");
+assert.ok(reductionButtonIndex > extensionButtonIndex, "Кнопка сокращения должна идти после продления.");
 
 assert.match(appSource, /open-student-training-extension-document'\]"\)\?\.addEventListener\("click", openStudentTrainingExtensionDocument\)/u);
 assert.match(appSource, /open-student-training-reduction-document'\]"\)\?\.addEventListener\("click", openStudentTrainingReductionDocument\)/u);
 assert.match(appSource, /function bindStudentDocumentActionMenus\(\)[\s\S]*?querySelectorAll\("\[data-document-context-kind\]"\)/u);
 assert.match(stylesSource, /\.orders-sdo-contract-document-row\s*\{[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?padding-left:\s*0;/u);
-assert.match(stylesSource, /\.student-contract-document-stack\s*\{[\s\S]*?display:\s*grid;[\s\S]*?justify-items:\s*end;/u);
+assert.match(stylesSource, /\.student-orders-sdo-contract-document-row\s*\{\s*grid-column:\s*2;\s*grid-row:\s*3;/u);
+assert.match(stylesSource, /\.orders-sdo-group-field\s*\{\s*grid-column:\s*1;\s*grid-row:\s*4;/u);
 assert.match(stylesSource, /\.orders-sdo-training-term-row\s*\{[\s\S]*?display:\s*flex;[\s\S]*?justify-content:\s*flex-end;/u);
+assert.match(stylesSource, /\.orders-sdo-training-term-row\s*\{\s*grid-column:\s*2;\s*grid-row:\s*4;/u);
+assert.match(stylesSource, /\.student-orders-sdo-contract-document-row\s*\{\s*grid-column:\s*1;\s*grid-row:\s*5;/u);
+assert.match(stylesSource, /\.orders-sdo-training-term-row\s*\{\s*grid-column:\s*1;\s*grid-row:\s*6;/u);
+assert.match(stylesSource, /\.orders-sdo-group-field\s*\{\s*grid-column:\s*1;\s*grid-row:\s*7;/u);
 
 assert.equal(
   evaluateDocumentFormula(
