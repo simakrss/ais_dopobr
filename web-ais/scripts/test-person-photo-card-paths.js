@@ -98,6 +98,14 @@ assert.equal(
 assert.match(appSource, /photoPath: normalizePersonPhotoCardPath\(student\.photoPath\)/u);
 assert.match(appSource, /photoPath: normalizePersonPhotoCardPath\(contract\.photoPath\)/u);
 assert.match(appSource, /values\.photoPath = normalizePersonPhotoCardPath\(values\.photoPath\)/u);
+assert.ok(
+  appSource.includes('placeholder="\\\\Слушатели\\\\ИвановИИ\\\\Документы\\\\ИвановИИ.jpg"'),
+  "Плейсхолдер фото слушателя должен использовать формат пути карточки."
+);
+assert.ok(
+  appSource.includes('placeholder="\\\\Сотрудники\\\\ИвановИИ\\\\Документы\\\\ИвановИИ.jpg"'),
+  "Плейсхолдер фото сотрудника должен использовать формат пути карточки."
+);
 
 const photoSourceStart = appSource.indexOf("  function getStudentPhotoSrc");
 const photoSourceEnd = appSource.indexOf("\n\n  function getRecycleBinRelatedExpensesByRecord", photoSourceStart);

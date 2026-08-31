@@ -26536,7 +26536,7 @@ MAX - https://bizvmax.ru/zifra_plus
             id="contractPhotoPath"
             type="text"
             value="${escapeAttr(record.photoPath || "")}"
-            placeholder="Сотрудники/ИвановИИ/Документы/ИвановИИ.jpg"
+            placeholder="\\Сотрудники\\ИвановИИ\\Документы\\ИвановИИ.jpg"
             spellcheck="false"
           >
         </label>
@@ -30999,7 +30999,7 @@ MAX - https://bizvmax.ru/zifra_plus
             id="studentPhotoPath"
             type="text"
             value="${escapeAttr(value)}"
-            placeholder="Слушатели/ИвановИИ/Документы/ИвановИИ.jpg"
+            placeholder="\\Слушатели\\ИвановИИ\\Документы\\ИвановИИ.jpg"
             spellcheck="false"
             title="${escapeAttr(tooltip)}"
             aria-label="${escapeAttr(tooltip)}"
