@@ -4068,11 +4068,17 @@ body.sidebar-collapsed .sidebar-toggle {
 }
 
 .table-column-head {
-  cursor: grab;
+  cursor: default;
   user-select: none;
 }
 
-.table-column-head:active {
+.table-column-head.is-long-press-ready,
+body.shift-drag-ready .table-column-head {
+  cursor: grab;
+}
+
+.table-column-head.is-long-press-dragging,
+body.shift-drag-ready .table-column-head:active {
   cursor: grabbing;
 }
 
@@ -4881,7 +4887,8 @@ body.shift-drag-ready .dashboard-status-list .bar-row-link:active {
 [data-nav-item].is-long-press-pending,
 [data-dashboard-student-status-item].is-long-press-pending,
 [data-orderable-tab].is-long-press-pending,
-[data-orderable-event].is-long-press-pending {
+[data-orderable-event].is-long-press-pending,
+.table-column-head.is-long-press-pending {
   cursor: default;
   box-shadow: inset 0 0 0 1px rgba(21, 128, 112, 0.18);
 }
@@ -4890,10 +4897,12 @@ body.shift-drag-ready .dashboard-status-list .bar-row-link:active {
 [data-dashboard-student-status-item].is-long-press-ready,
 [data-orderable-tab].is-long-press-ready,
 [data-orderable-event].is-long-press-ready,
+.table-column-head.is-long-press-ready,
 body.long-press-drag-ready [data-nav-item].is-long-press-ready,
 body.long-press-drag-ready [data-dashboard-student-status-item].is-long-press-ready,
 body.long-press-drag-ready [data-orderable-tab].is-long-press-ready,
-body.long-press-drag-ready [data-orderable-event].is-long-press-ready {
+body.long-press-drag-ready [data-orderable-event].is-long-press-ready,
+body.long-press-drag-ready .table-column-head.is-long-press-ready {
   cursor: grab !important;
   box-shadow: inset 0 0 0 2px rgba(21, 128, 112, 0.42);
 }

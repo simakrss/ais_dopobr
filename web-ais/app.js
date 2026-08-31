@@ -3189,6 +3189,10 @@
     { key: "actStatus", label: "Статус акта", className: "employee-payment-act-status-column", defaultWidth: 72, sortType: "text" },
     { key: "paid", label: "Оплачено", className: "employee-payment-paid-column", defaultWidth: 82, sortType: "date" }
   ]);
+  const employeePaymentTableConfig = Object.freeze({
+    fields: EMPLOYEE_PAYMENT_TABLE_COLUMNS,
+    table: Object.freeze(EMPLOYEE_PAYMENT_TABLE_COLUMNS.map((column) => column.key))
+  });
   const DIRECT_EXPENSES_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-direct-expenses-table-layout-v1";
   const DIRECT_EXPENSES_TABLE_LAYOUT_VERSION = "note-primary-uid-last";
   const GENERAL_EXPENSES_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-general-expenses-table-layout-v1";
@@ -3228,8 +3232,7 @@
     "[data-action='drag-program-training-plan-row']",
     "[data-contract-field-drag-handle]",
     "[data-program-payment-constant-token]",
-    "[data-automatic-expense-rule-token]",
-    `.table-column-head[data-table-config="${STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID}"][data-column-key]`
+    "[data-automatic-expense-rule-token]"
   ].join(", ");
   const STUDENT_CARD_TAB_ORDER_KEY = "ais-dopobr-student-card-tab-order-v1";
   const TAB_ORDER_SETTINGS_KEY = "ais-dopobr-tab-orders-v1";
@@ -12491,9 +12494,11 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderStatisticsProgramProfitabilityHeader(column) {
     return `
       <th
-        class="statistics-profitability-column-head ${column.numeric ? "statistics-number-cell" : ""}"
+        class="table-column-head statistics-profitability-column-head ${column.numeric ? "statistics-number-cell" : ""}"
         ${columnDataAttrs(STATISTICS_PROFITABILITY_TABLE_CONFIG_ID, column.key)}
         ${columnStyleAttr(STATISTICS_PROFITABILITY_TABLE_CONFIG_ID, column.key)}
+        draggable="true"
+        title="Перетащите заголовок для смены порядка"
       >
         <div class="table-head-cell">
           ${renderStatisticsProgramProfitabilitySortButton(column)}
@@ -12534,6 +12539,10 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderStatisticsProfitabilityDetailsDialog() {
     const report = buildStatisticsIncomeReport();
     const rows = getSortedStatisticsProgramProfitabilityRows();
+    const columns = getTableFields(
+      statisticsProgramProfitabilityTableConfig,
+      STATISTICS_PROFITABILITY_TABLE_CONFIG_ID
+    );
     const pagination = getTablePagination("statisticsProfitabilityDetails", rows.length);
     const pageRows = rows.slice(pagination.start, pagination.end);
     return `
@@ -12556,11 +12565,11 @@ MAX - https://bizvmax.ru/zifra_plus
               <div class="table-wrap finance-details-table-wrap">
                 <table class="data-table finance-details-table statistics-profitability-table">
                   <thead><tr>
-                    ${statisticsProgramProfitabilityColumns.map(renderStatisticsProgramProfitabilityHeader).join("")}
+                    ${columns.map(renderStatisticsProgramProfitabilityHeader).join("")}
                   </tr></thead>
                   <tbody>${pageRows.map((row) => `
                     <tr>
-                      ${statisticsProgramProfitabilityColumns.map((column) => renderStatisticsProgramProfitabilityCell(row, column)).join("")}
+                      ${columns.map((column) => renderStatisticsProgramProfitabilityCell(row, column)).join("")}
                     </tr>
                   `).join("")}</tbody>
                 </table>
@@ -20017,6 +20026,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getTableLayoutConfig(configId) {
+    if (configId === EMPLOYEE_PAYMENT_TABLE_CONFIG_ID) return employeePaymentTableConfig;
     if (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) return studentApplicationsImportTableConfig;
     if (configId === ISSUED_DOCUMENT_TABLE_CONFIG_ID) return issuedDocumentTableConfig;
     if (configId === STATISTICS_PROFITABILITY_TABLE_CONFIG_ID) return statisticsProgramProfitabilityTableConfig;
@@ -20180,8 +20190,28 @@ MAX - https://bizvmax.ru/zifra_plus
     if (from < 0 || to < 0) return;
     [order[from], order[to]] = [order[to], order[from]];
     updateTableSettings(configId, (settings) => ({ ...settings, order }));
-    if (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) refreshStudentApplicationsImportDialog();
-    else render();
+    applyTableColumnOrderToDom(configId, order);
+  }
+
+  function applyTableColumnOrderToDom(configId, order = null, root = document) {
+    const config = getTableLayoutConfig(configId);
+    if (!config) return;
+    const keys = Array.isArray(order) && order.length ? order : getTableKeys(config, configId);
+    const parents = new Set();
+    root.querySelectorAll?.("[data-table-config][data-column-key]").forEach((element) => {
+      if (element.dataset.tableConfig === configId && element.parentElement) parents.add(element.parentElement);
+    });
+    parents.forEach((parent) => {
+      const columns = new Map(
+        Array.from(parent.children)
+          .filter((element) => element.dataset?.tableConfig === configId && element.dataset?.columnKey)
+          .map((element) => [element.dataset.columnKey, element])
+      );
+      keys.forEach((key) => {
+        const column = columns.get(key);
+        if (column) parent.appendChild(column);
+      });
+    });
   }
 
   function resetTableOptions(configId) {
@@ -20227,6 +20257,12 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindTableColumnEvents(root = document) {
     root.querySelectorAll(".table-column-head").forEach((header) => {
+      header.addEventListener("click", (event) => {
+        if (header.dataset.wasDragged !== "true") return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        header.dataset.wasDragged = "";
+      }, { capture: true });
       header.addEventListener("dragstart", (event) => {
         if (event.target.closest(".column-resize-handle")) {
           event.preventDefault();
@@ -27470,6 +27506,109 @@ MAX - https://bizvmax.ru/zifra_plus
     return "";
   }
 
+  function renderEmployeePaymentTableCell(column, row, context = {}) {
+    const attrs = columnDataAttrs(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, column.key);
+    const {
+      editable,
+      isExpenseSource,
+      amountReadOnly,
+      sourceLabel,
+      displayComment,
+      actCheckboxState,
+      filtersActive,
+      sort
+    } = context;
+    if (column.key === "actions") {
+      return `
+        <td class="employee-payment-delete-cell" ${attrs}>
+          <div class="employee-payment-row-actions">
+            <input
+              class="employee-payment-row-selector"
+              data-action="select-employee-payment-row"
+              type="checkbox"
+              aria-label="Выбрать выплату ${escapeAttr(row.description || sourceLabel)}"
+              ${editable ? "" : "disabled"}
+            >
+            ${renderEmployeePaymentRowDragHandle(row.sourceType, row.sourceId, filtersActive || Boolean(sort.key))}
+            ${editable ? `
+              <button class="employee-payment-edit-button" data-action="edit-employee-expense" type="button" title="Редактировать запись оплаты во всплывающем окне" aria-label="Редактировать запись оплаты">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 20h4l11-11-4-4L4 16v4z"></path>
+                  <path d="M13.5 6.5l4 4"></path>
+                </svg>
+              </button>
+              ${isExpenseSource ? `
+                <button class="employee-payment-duplicate-button" data-action="duplicate-employee-payment-row" type="button" title="Дублировать строку с текущей датой" aria-label="Дублировать строку выплаты">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <rect x="8" y="8" width="11" height="11" rx="2"></rect>
+                    <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>
+                  </svg>
+                </button>
+              ` : ""}
+            ` : "—"}
+          </div>
+        </td>
+      `;
+    }
+    if (column.key === "status") return `<td ${attrs}>${renderEmployeePaymentStatus(row)}</td>`;
+    if (column.key === "date") {
+      return `<td class="employee-payment-date-cell" ${attrs}><input data-employee-payment-field="date" type="date" value="${escapeAttr(row.date)}" ${row.dateReadOnly ? 'readonly title="Дата проведённой выплаты изменяется в колонке «Оплачено»"' : (editable ? "" : "disabled")}></td>`;
+    }
+    if (column.key === "source") {
+      return `
+        <td data-employee-payment-column="source" title="${escapeAttr(sourceLabel)}" ${attrs}>
+          ${isExpenseSource ? `
+            <select data-employee-payment-field="source" aria-label="Источник затраты" title="Источник затраты" ${editable ? "" : "disabled"}>
+              <option value="direct" ${row.sourceType === "direct" ? "selected" : ""}>Прямые затраты</option>
+              <option value="general" ${row.sourceType === "general" ? "selected" : ""}>Общие затраты</option>
+            </select>
+          ` : `<strong>${escapeHtml(sourceLabel)}</strong>`}
+        </td>
+      `;
+    }
+    if (column.key === "comment") {
+      return `<td class="employee-payment-comment-cell" data-employee-payment-column="comment" title="${escapeAttr(displayComment)}" ${attrs}><input data-employee-payment-field="comment" value="${escapeAttr(displayComment)}" title="${escapeAttr(displayComment)}" aria-label="Комментарий к источнику" ${editable ? "" : "disabled"}></td>`;
+    }
+    if (column.key === "description") {
+      return `
+        <td class="employee-payment-basis-cell" ${attrs}>
+          ${renderComboField({
+            name: "employeePaymentBasis",
+            value: row.description,
+            options: getEmployeePaymentBasisOptions(row.description),
+            dictionary: "employeePaymentBases",
+            attrs: `data-employee-payment-field="description" title="${escapeAttr(row.description)}" aria-label="Основание выплаты" ${editable ? "" : "disabled"}`
+          })}
+        </td>
+      `;
+    }
+    if (column.key === "amount") {
+      return `<td ${attrs}><input data-employee-payment-field="amount" data-money-input data-money-nonnegative type="number" step="${MONEY_INPUT_STEP}" value="${escapeAttr(row.amount)}" ${amountReadOnly ? 'readonly title="Сумма рассчитывается автоматически по поступлениям слушателя"' : (editable ? "" : "disabled")}></td>`;
+    }
+    if (column.key === "recommendation") {
+      return `<td class="employee-payment-check-cell" ${attrs}><input data-employee-payment-field="recommendation" type="checkbox" ${row.recommendation ? "checked" : ""} aria-label="Рекомендовать к выплате" title="${escapeAttr(row.recommendationManual ? "Рекомендация изменена вручную" : "Рекомендацию можно изменить вручную")}" ${editable ? "" : "disabled"}></td>`;
+    }
+    if (column.key === "act") {
+      return `<td class="employee-payment-check-cell" ${attrs}><input data-employee-payment-field="act" data-employee-payment-act-state="${actCheckboxState}" type="checkbox" ${actCheckboxState === "formed" ? "checked" : ""} aria-label="Состояние акта" ${editable ? "" : "disabled"}></td>`;
+    }
+    if (column.key === "actStatus") {
+      return `
+        <td ${attrs}>
+          <select data-employee-payment-field="actStatus" aria-label="Статус акта" ${editable ? "" : "disabled"}>
+            <option value="" ${row.actStatus ? "" : "selected"}>Не указан</option>
+            <option value="Отправлен" ${row.actStatus === "Отправлен" ? "selected" : ""}>Отправлен</option>
+            <option value="Получен" ${row.actStatus === "Получен" ? "selected" : ""}>Получен</option>
+            <option value="${EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT}" ${isEmployeePaymentWithoutActStatus(row.actStatus) ? "selected" : ""}>${EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT}</option>
+          </select>
+        </td>
+      `;
+    }
+    if (column.key === "paid") {
+      return `<td ${attrs}><input data-employee-payment-field="paid" type="date" value="${escapeAttr(row.paid)}" aria-label="Дата оплаты" ${editable ? "" : "disabled"}></td>`;
+    }
+    return `<td ${attrs}></td>`;
+  }
+
   function renderEmployeePaymentAccounting(record) {
     const accounting = getEmployeePaymentAccounting(record, getEmployeePaymentCollections());
     const directRows = accounting.directEntries.map(({ expense, identity, student }) => ({
@@ -27508,6 +27647,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const filterFacets = getEmployeePaymentFilterFacets(rows, filters);
     const filtersActive = employeePaymentFiltersAreActive(filters);
     const visibleRowCount = rows.filter((row) => employeePaymentRowMatchesFilters(row, filters)).length;
+    const columns = getTableFields(employeePaymentTableConfig, EMPLOYEE_PAYMENT_TABLE_CONFIG_ID);
     return `
       <section class="form-section contract-card-section employee-payment-accounting-section" data-employee-payment-accounting>
         <div class="form-section-head employee-payment-accounting-head">
@@ -27550,18 +27690,20 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="employee-payment-table-wrap">
           <table class="employee-payment-table" style="min-width:${getEmployeePaymentTableMinWidth()}px">
             <colgroup>
-              ${EMPLOYEE_PAYMENT_TABLE_COLUMNS.map((column) => `
+              ${columns.map((column) => `
                 <col class="${column.className}" ${columnDataAttrs(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, column.key)} ${employeePaymentColumnStyleAttr(column)}>
               `).join("")}
             </colgroup>
             <thead data-employee-payment-filters>
               <tr>
-                ${EMPLOYEE_PAYMENT_TABLE_COLUMNS.map((column) => `
+                ${columns.map((column) => `
                   <th
-                    class="employee-payment-column-head"
+                    class="table-column-head employee-payment-column-head"
                     ${columnDataAttrs(EMPLOYEE_PAYMENT_TABLE_CONFIG_ID, column.key)}
                     ${column.sortType ? `aria-sort="${sort.key === column.key ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}"` : ""}
                     ${employeePaymentColumnStyleAttr(column)}
+                    draggable="true"
+                    title="Перетащите заголовок для смены порядка"
                   >
                     <div class="table-head-cell employee-payment-table-head-cell">
                       ${renderEmployeePaymentSortButton(column, sort)}
@@ -27599,79 +27741,21 @@ MAX - https://bizvmax.ru/zifra_plus
                 const actCheckboxState = getEmployeePaymentActCheckboxState(row);
                 return `
                   <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" data-payment-details="${escapeAttr(row.details)}" data-payment-deletable="${deletable ? "true" : "false"}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
-                    <td class="employee-payment-delete-cell" data-employee-payment-column="actions">
-                      <div class="employee-payment-row-actions">
-                        <input
-                          class="employee-payment-row-selector"
-                          data-action="select-employee-payment-row"
-                          type="checkbox"
-                          aria-label="Выбрать выплату ${escapeAttr(row.description || sourceLabel)}"
-                          ${editable ? "" : "disabled"}
-                        >
-                        ${renderEmployeePaymentRowDragHandle(row.sourceType, row.sourceId, filtersActive || Boolean(sort.key))}
-                        ${editable ? `
-                          <button class="employee-payment-edit-button" data-action="edit-employee-expense" type="button" title="Редактировать запись оплаты во всплывающем окне" aria-label="Редактировать запись оплаты">
-                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                              <path d="M4 20h4l11-11-4-4L4 16v4z"></path>
-                              <path d="M13.5 6.5l4 4"></path>
-                            </svg>
-                          </button>
-                          ${isExpenseSource ? `
-                            <button class="employee-payment-duplicate-button" data-action="duplicate-employee-payment-row" type="button" title="Дублировать строку с текущей датой" aria-label="Дублировать строку выплаты">
-                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <rect x="8" y="8" width="11" height="11" rx="2"></rect>
-                                <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>
-                              </svg>
-                            </button>
-                          ` : ""}
-                        ` : "—"}
-                      </div>
-                    </td>
-                    <td>${renderEmployeePaymentStatus(row)}</td>
-                    <td class="employee-payment-date-cell">
-                      <input data-employee-payment-field="date" type="date" value="${escapeAttr(row.date)}" ${row.dateReadOnly ? 'readonly title="Дата проведённой выплаты изменяется в колонке «Оплачено»"' : (editable ? "" : "disabled")}>
-                    </td>
-                    <td data-employee-payment-column="source" title="${escapeAttr(sourceLabel)}">
-                      ${isExpenseSource ? `
-                        <select data-employee-payment-field="source" aria-label="Источник затраты" title="Источник затраты" ${editable ? "" : "disabled"}>
-                          <option value="direct" ${row.sourceType === "direct" ? "selected" : ""}>Прямые затраты</option>
-                          <option value="general" ${row.sourceType === "general" ? "selected" : ""}>Общие затраты</option>
-                        </select>
-                      ` : `<strong>${escapeHtml(sourceLabel)}</strong>`}
-                    </td>
-                    <td class="employee-payment-comment-cell" data-employee-payment-column="comment" title="${escapeAttr(displayComment)}">
-                      <input data-employee-payment-field="comment" value="${escapeAttr(displayComment)}" title="${escapeAttr(displayComment)}" aria-label="Комментарий к источнику" ${editable ? "" : "disabled"}>
-                    </td>
-                    <td class="employee-payment-basis-cell">
-                      ${renderComboField({
-                        name: "employeePaymentBasis",
-                        value: row.description,
-                        options: getEmployeePaymentBasisOptions(row.description),
-                        dictionary: "employeePaymentBases",
-                        attrs: `data-employee-payment-field="description" title="${escapeAttr(row.description)}" aria-label="Основание выплаты" ${editable ? "" : "disabled"}`
-                      })}
-                    </td>
-                    <td><input data-employee-payment-field="amount" data-money-input data-money-nonnegative type="number" step="${MONEY_INPUT_STEP}" value="${escapeAttr(row.amount)}" ${amountReadOnly ? 'readonly title="Сумма рассчитывается автоматически по поступлениям слушателя"' : (editable ? "" : "disabled")}></td>
-                    <td class="employee-payment-check-cell">
-                      <input data-employee-payment-field="recommendation" type="checkbox" ${row.recommendation ? "checked" : ""} aria-label="Рекомендовать к выплате" title="${escapeAttr(row.recommendationManual ? "Рекомендация изменена вручную" : "Рекомендацию можно изменить вручную")}" ${editable ? "" : "disabled"}>
-                    </td>
-                    <td class="employee-payment-check-cell">
-                      <input data-employee-payment-field="act" data-employee-payment-act-state="${actCheckboxState}" type="checkbox" ${actCheckboxState === "formed" ? "checked" : ""} aria-label="Состояние акта" ${editable ? "" : "disabled"}>
-                    </td>
-                    <td>
-                      <select data-employee-payment-field="actStatus" aria-label="Статус акта" ${editable ? "" : "disabled"}>
-                          <option value="" ${row.actStatus ? "" : "selected"}>Не указан</option>
-                          <option value="Отправлен" ${row.actStatus === "Отправлен" ? "selected" : ""}>Отправлен</option>
-                          <option value="Получен" ${row.actStatus === "Получен" ? "selected" : ""}>Получен</option>
-                          <option value="${EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT}" ${isEmployeePaymentWithoutActStatus(row.actStatus) ? "selected" : ""}>${EMPLOYEE_PAYMENT_ACT_STATUS_WITHOUT}</option>
-                      </select>
-                    </td>
-                    <td><input data-employee-payment-field="paid" type="date" value="${escapeAttr(row.paid)}" aria-label="Дата оплаты" ${editable ? "" : "disabled"}></td>
+                    ${columns.map((column) => renderEmployeePaymentTableCell(column, row, {
+                      editable,
+                      isExpenseSource,
+                      amountReadOnly,
+                      sourceLabel,
+                      displayComment,
+                      actCheckboxState,
+                      filtersActive,
+                      sort
+                    })).join("")}
                   </tr>
                 `;
               }).join("")}
               <tr data-employee-payment-filter-empty ${visibleRowCount ? "hidden" : ""}>
-                <td colspan="11" class="employee-payment-empty">${rows.length ? "По заданным фильтрам выплаты не найдены." : "Выплаты для сотрудника пока не найдены."}</td>
+                <td colspan="${columns.length}" class="employee-payment-empty">${rows.length ? "По заданным фильтрам выплаты не найдены." : "Выплаты для сотрудника пока не найдены."}</td>
               </tr>
             </tbody>
           </table>
@@ -36455,6 +36539,19 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getLongPressDragContext(node) {
     if (!(node instanceof Element)) return null;
+    const tableColumn = node.closest(".table-column-head[data-table-config][data-column-key]");
+    const columnControl = node.closest(".column-resize-handle, input, select, textarea, [contenteditable='true']");
+    if (tableColumn && !columnControl) {
+      const container = tableColumn.closest("tr");
+      return container ? {
+        type: "table-column",
+        element: tableColumn,
+        container,
+        configId: String(tableColumn.dataset.tableConfig || ""),
+        fieldKey: String(tableColumn.dataset.columnKey || ""),
+        dropTarget: null
+      } : null;
+    }
     const element = node.closest("[data-nav-item], [data-dashboard-student-status-item], [data-orderable-tab], [data-orderable-event]");
     if (!element) return null;
     if (element.matches("[data-nav-item]")) {
@@ -36475,6 +36572,23 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function moveLongPressDragElement(context, clientX, clientY) {
     const { type, element, container } = context;
+    if (type === "table-column") {
+      const hit = document.elementFromPoint(clientX, clientY);
+      const candidate = hit instanceof Element
+        ? hit.closest(".table-column-head[data-table-config][data-column-key]")
+        : null;
+      const target = candidate
+        && candidate !== element
+        && candidate.closest("tr") === container
+        && candidate.dataset.tableConfig === context.configId
+        ? candidate
+        : null;
+      if (target === context.dropTarget) return false;
+      context.dropTarget?.classList.remove("is-drop-target");
+      context.dropTarget = target;
+      context.dropTarget?.classList.add("is-drop-target");
+      return true;
+    }
     const afterElement = type === "nav"
       ? getNavItemDragAfterElement(container, clientY)
       : type === "status"
@@ -36493,7 +36607,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function commitLongPressDragOrder(context) {
-    if (context.type === "nav") {
+    if (context.type === "table-column") {
+      reorderTableColumn(
+        context.configId,
+        context.fieldKey,
+        String(context.dropTarget?.dataset.columnKey || "")
+      );
+    } else if (context.type === "nav") {
       syncNavItemOrderFromDom();
       lastNavItemDragEndedAt = Date.now();
     } else if (context.type === "status") {
@@ -36517,13 +36637,15 @@ MAX - https://bizvmax.ru/zifra_plus
       const current = pending;
       pending = null;
       window.clearTimeout(current.timer);
+      const captureElement = current.pointerCaptureElement || current.element;
       if (current.pointerCaptured) {
         try {
-          current.element.releasePointerCapture(current.pointerId);
+          captureElement.releasePointerCapture(current.pointerId);
         } catch {
           // Указатель уже мог быть освобождён браузером при завершении жеста.
         }
       }
+      current.dropTarget?.classList.remove("is-drop-target");
       current.element.classList.remove("is-long-press-pending", "is-long-press-ready", "is-long-press-dragging", "is-dragging");
       current.element.setAttribute("aria-grabbed", "false");
       if (current.element.dataset.shiftDragEnabled === "true") {
@@ -36555,14 +36677,17 @@ MAX - https://bizvmax.ru/zifra_plus
       context.dragging = false;
       context.moved = false;
       context.pointerCaptured = false;
+      context.pointerCaptureElement = context.type === "table-column" && event.target instanceof Element
+        ? event.target
+        : context.element;
       context.immediate = Boolean(
         event.shiftKey
         || document.body.classList.contains("shift-drag-ready")
       );
       context.element.draggable = false;
       try {
-        context.element.setPointerCapture(event.pointerId);
-        context.pointerCaptured = context.element.hasPointerCapture(event.pointerId);
+        context.pointerCaptureElement.setPointerCapture(event.pointerId);
+        context.pointerCaptured = context.pointerCaptureElement.hasPointerCapture(event.pointerId);
       } catch {
         // В старых браузерах перенос продолжит работать через обработчики document.
       }

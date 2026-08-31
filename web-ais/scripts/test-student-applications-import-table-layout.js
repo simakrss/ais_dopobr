@@ -80,10 +80,10 @@ const shiftExemptSelector = new Function(
   "STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID",
   `${appSource.slice(shiftExemptStart, shiftExemptEnd)}\nreturn SHIFT_DRAG_EXEMPT_SELECTOR;`
 )("studentApplicationsImport");
-assert.match(
+assert.doesNotMatch(
   shiftExemptSelector,
   /\.table-column-head\[data-table-config="studentApplicationsImport"\]\[data-column-key\]/u,
-  "Заголовки импорта должны оставаться draggable без Shift"
+  "Заголовки импорта должны использовать общий режим удержания ЛКМ или Shift"
 );
 const dragHelpersStart = appSource.indexOf("  function isShiftDragExemptElement");
 const dragHelpersEnd = appSource.indexOf("\n\n  function bindShiftDragRequirement", dragHelpersStart);
@@ -123,8 +123,8 @@ const annotateShiftRequiredDraggableElements = new Function(
 annotateShiftRequiredDraggableElements({
   querySelectorAll: () => [importHeader, protectedDragElement]
 });
-assert.equal(importHeader.draggable, true, "Заголовок импорта не должен отключаться без Shift");
-assert.equal(importHeader.dataset.shiftDragEnabled, undefined);
+assert.equal(importHeader.draggable, false, "Заголовок импорта должен ждать удержания ЛКМ или Shift");
+assert.equal(importHeader.dataset.shiftDragEnabled, "true");
 assert.equal(protectedDragElement.draggable, false, "Остальные защищённые draggable-элементы не должны менять поведение");
 assert.equal(protectedDragElement.dataset.shiftDragEnabled, "true");
 assert.match(appSource, /renderTableOptions\(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID\)/u);

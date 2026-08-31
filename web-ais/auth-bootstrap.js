@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260831-photo-path-placeholders-v1";
+  const AUTH_BUILD = "20260831-unified-column-drag-v1";
   const DISMISSIBLE_MODAL_BACKDROP_SELECTOR = ".modal-backdrop, .partner-modal-backdrop, [data-documents-backdrop]";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
