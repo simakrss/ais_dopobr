@@ -1,6 +1,7 @@
 const http = require("node:http");
 const https = require("node:https");
 const tls = require("node:tls");
+const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -58,6 +59,13 @@ async function promoteCodexTrainingEndDateAssets() {
 
 const SERVER_CODE_ROOT = __dirname;
 const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
+const {
+  sanitizeDemoSharedState,
+  sanitizeDemoSharedStateMetadata,
+  redactDemoAuthUser,
+  demoModePhotoToken
+} = require(path.join(SERVER_CODE_ROOT, "demo-mode-privacy.js"));
+const CLIENT_PRIVATE_DEFAULTS = require(path.join(SERVER_CODE_ROOT, "data", "private-defaults.js"));
 const LOCAL_ONLYOFFICE_JWT_SECRET_PATH = path.join(
   ROOT,
   "tmp",
@@ -79,7 +87,19 @@ QR_CODE_GENERATOR.stringToBytes = QR_CODE_GENERATOR.stringToBytesFuncs["UTF-8"];
 const MYSQL2_BUNDLE_PATH = path.join(ROOT, "vendor", "mysql2-bundle.cjs");
 const STORAGE_ROOT = path.join(ROOT, "storage");
 const PHOTO_ROOT = path.join(STORAGE_ROOT, "photos");
-const SERVER_SETTINGS_PATH = path.join(STORAGE_ROOT, "server-settings.json");
+const SERVER_SETTINGS_PATH = path.resolve(
+  String(process.env.AIS_SERVER_SETTINGS_PATH || "").trim()
+    || path.join(STORAGE_ROOT, "server-settings.json")
+);
+const DATABASE_DEMO_MODE_PATH = path.resolve(
+  String(process.env.AIS_DATABASE_DEMO_MODE_PATH || "").trim()
+    || path.join(STORAGE_ROOT, "database-demo-mode.flag")
+);
+const DATABASE_DEMO_ID_SECRET = String(
+  process.env.AIS_DATABASE_DEMO_ID_SECRET
+  || process.env.AIS_GATEWAY_SHARED_SECRET
+  || ""
+).trim() || crypto.randomBytes(32).toString("base64url");
 const PARTNER_REGISTRATION_STORE_PATH = path.join(
   STORAGE_ROOT,
   "shared-state-backups",
@@ -1312,6 +1332,7 @@ async function ensureStorage() {
   }
   const partnerMaterialsSettingMissing = !String(serverSettings.partnerMaterialsUrl || "").trim();
   serverSettings = {
+    databaseDemoModeEnabled: false,
     studentDatabaseWebDavPath: DEFAULT_STUDENT_DATABASE_WEBDAV_PATH,
     yandexDiskBasePath: DEFAULT_YANDEX_DISK_BASE_PATH,
     localDocumentsRoot: DEFAULT_LOCAL_DOCUMENTS_ROOT,
@@ -2057,10 +2078,12 @@ async function handleAuthLogin(req, res) {
     }, publicAuthUser(users[index]), req);
     sendJson(res, 200, {
       ok: true,
-      user: publicAuthUser(users[index]),
-      sessionExpiresAt: session.expiresAt
+      user: databaseDemoModePublicUser(users[index]),
+      sessionExpiresAt: session.expiresAt,
+      demoModeEnabled: isDatabaseDemoModeEnabled()
     }, {
-      "Set-Cookie": authCookieHeader(session.token, req)
+      "Set-Cookie": authCookieHeader(session.token, req),
+      ...databaseDemoModeResponseHeaders()
     });
     return;
   }
@@ -2081,10 +2104,12 @@ async function handleAuthLogin(req, res) {
   }, partnerUser, req);
   sendJson(res, 200, {
     ok: true,
-    user: partnerUser,
-    sessionExpiresAt: session.expiresAt
+    user: isDatabaseDemoModeEnabled() ? redactDemoAuthUser(partnerUser) : partnerUser,
+    sessionExpiresAt: session.expiresAt,
+    demoModeEnabled: isDatabaseDemoModeEnabled()
   }, {
-    "Set-Cookie": authCookieHeader(session.token, req)
+    "Set-Cookie": authCookieHeader(session.token, req),
+    ...databaseDemoModeResponseHeaders()
   });
 }
 
@@ -2095,9 +2120,10 @@ async function handleAuthMe(req, res, user) {
   }
   sendJson(res, 200, {
     ok: true,
-    user: publicAuthUser(user),
-    sessionExpiresAt: Number(user.sessionExpiresAt) || 0
-  });
+    user: databaseDemoModePublicUser(user),
+    sessionExpiresAt: Number(user.sessionExpiresAt) || 0,
+    demoModeEnabled: isDatabaseDemoModeEnabled()
+  }, databaseDemoModeResponseHeaders());
 }
 
 async function handleAuthLogout(req, res) {
@@ -2290,6 +2316,123 @@ async function saveServerSettings(patch) {
   });
   serverSettingsSaveQueue = operation.catch(() => {});
   return operation;
+}
+
+function isDatabaseDemoModeEnabled() {
+  if (process.env.AIS_DATABASE_DEMO_MODE === "1") return true;
+  try {
+    if (fsSync.existsSync(DATABASE_DEMO_MODE_PATH)) {
+      const flag = fsSync.readFileSync(DATABASE_DEMO_MODE_PATH, "utf8").trim().toLowerCase();
+      if (flag === "enabled") return true;
+      if (flag === "disabled") return false;
+      return true;
+    }
+  } catch {
+    return true;
+  }
+  return serverSettings.databaseDemoModeEnabled === true;
+}
+
+function databaseDemoModePublicUser(user) {
+  const publicUser = publicAuthUser(user);
+  return isDatabaseDemoModeEnabled() ? redactDemoAuthUser(publicUser) : publicUser;
+}
+
+function databaseDemoModeResponseHeaders() {
+  return isDatabaseDemoModeEnabled()
+    ? { "Clear-Site-Data": '"cache"' }
+    : {};
+}
+
+function isDatabaseDemoModeAllowedRequest(req, requestUrl, authUser) {
+  const pathname = requestUrl.pathname;
+  if (pathname === "/api/admin/demo-mode") return authUser?.role === "admin";
+  if (
+    pathname === "/api/shared-state"
+    && req.method === "GET"
+    && requestUrl.searchParams.get("flush") !== "1"
+  ) return true;
+  if (pathname === "/api/student-photo" && ["GET", "HEAD"].includes(req.method)) return true;
+  if (pathname === "/data/max-messenger-icon.png" && ["GET", "HEAD"].includes(req.method)) return true;
+  return false;
+}
+
+function sendDatabaseDemoModeReadOnly(res) {
+  sendJson(res, 403, {
+    error: "Действие недоступно: включён деморежим базы.",
+    code: "DEMO_MODE_READ_ONLY",
+    demoModeEnabled: true
+  });
+}
+
+async function handleDatabaseDemoModeSettings(req, res, authUser) {
+  if (authUser?.role !== "admin") {
+    sendError(res, 403, "Деморежим может изменять только администратор.");
+    return;
+  }
+  if (req.method === "GET") {
+    sendJson(res, 200, {
+      ok: true,
+      enabled: isDatabaseDemoModeEnabled()
+    }, databaseDemoModeResponseHeaders());
+    return;
+  }
+  if (req.method !== "POST") {
+    sendError(res, 405, "Method not allowed");
+    return;
+  }
+  const body = await readJsonBody(req);
+  if (typeof body.enabled !== "boolean") {
+    sendError(res, 400, "Передайте логическое значение enabled.");
+    return;
+  }
+  const wasEnabled = isDatabaseDemoModeEnabled();
+  if (wasEnabled && body.enabled === false) {
+    const currentPassword = String(body.currentPassword || "");
+    const gatewayReauthenticated = process.env.AIS_TRUST_GATEWAY === "1"
+      && requestHasConfiguredGatewaySecret(req)
+      && String(req.headers["x-ais-demo-mode-reauthenticated"] || "") === "1";
+    if (!gatewayReauthenticated && !currentPassword) {
+      sendError(res, 400, "Для выключения деморежима введите текущий пароль администратора.");
+      return;
+    }
+    if (!gatewayReauthenticated) {
+      const users = await loadAuthUsers();
+      const admin = users.find((user) => (
+        String(user?.id || "") === String(authUser?.id || "")
+        || normalizeAuthLogin(user?.login) === normalizeAuthLogin(authUser?.login)
+      ));
+      if (!admin || !authVerifyPassword(currentPassword, admin.passwordHash)) {
+        sendError(res, 403, "Текущий пароль администратора указан неверно.");
+        return;
+      }
+    }
+  }
+  await writeBufferAtomic(
+    DATABASE_DEMO_MODE_PATH,
+    Buffer.from(body.enabled ? "enabled\n" : "disabled\n", "utf8")
+  );
+  if (body.enabled === true) {
+    generatedDocumentPreviews.clear();
+    generatedDocumentPreviewRateLimits.clear();
+  }
+  await safelyAppendAuditEntry({
+    action: body.enabled ? "Включён деморежим базы" : "Выключен деморежим базы",
+    area: "Администрирование",
+    entityType: "system-setting",
+    entityId: "database-demo-mode",
+    entityLabel: "Деморежим базы",
+    changes: [{
+      field: "enabled",
+      label: "Деморежим",
+      before: wasEnabled ? "Включён" : "Выключен",
+      after: body.enabled ? "Включён" : "Выключен"
+    }]
+  }, authUser, req);
+  sendJson(res, 200, {
+    ok: true,
+    enabled: isDatabaseDemoModeEnabled()
+  }, databaseDemoModeResponseHeaders());
 }
 
 function sendJson(res, status, payload, extraHeaders = {}) {
@@ -12670,13 +12813,19 @@ async function handleSharedApplicationState(req, res, authUser, requestUrl) {
       }
       if (requestUrl.searchParams.get("metadata") === "1") {
         const metadata = await readSharedApplicationStateMirrorSnapshot({ metadata: true });
-        sendJson(res, 200, metadata);
+        sendJson(res, 200, {
+          ...(isDatabaseDemoModeEnabled()
+            ? sanitizeDemoSharedStateMetadata(metadata)
+            : metadata),
+          demoModeEnabled: isDatabaseDemoModeEnabled()
+        });
         return;
       }
       const result = await readSharedApplicationStateMirrorSnapshot({
         expectedRevision: requestUrl.searchParams.get("revision")
       });
-      sendJson(res, 200, {
+      const responseData = result.document?.data || null;
+      const responseMetadata = {
         exists: result.exists,
         revision: result.document?.revision || 0,
         backendId: String(result.document?.backendId || result.backendId || ""),
@@ -12690,8 +12839,16 @@ async function handleSharedApplicationState(req, res, authUser, requestUrl) {
         syncPending: Boolean(result.syncPending),
         syncBlockedReason: String(result.syncBlockedReason || ""),
         syncBlockedLock: result.syncBlockedLock || null,
-        warning: result.warning || "",
-        data: result.document?.data || null
+        warning: result.warning || ""
+      };
+      sendJson(res, 200, {
+        ...(isDatabaseDemoModeEnabled()
+          ? sanitizeDemoSharedStateMetadata(responseMetadata)
+          : responseMetadata),
+        demoModeEnabled: isDatabaseDemoModeEnabled(),
+        data: isDatabaseDemoModeEnabled() && responseData
+          ? sanitizeDemoSharedState(responseData, { idSecret: DATABASE_DEMO_ID_SECRET })
+          : responseData
       });
       return;
     }
@@ -33436,6 +33593,10 @@ async function proxyOnlyOfficeHttpRequest(req, res, requestUrl) {
 }
 
 async function proxyOnlyOfficeWebSocket(req, socket, head) {
+  if (isDatabaseDemoModeEnabled()) {
+    socket.destroy();
+    return;
+  }
   const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   if (!isOnlyOfficeProxyPath(requestUrl.pathname) || !await hasValidGeneratedDocumentEditorProxyCookie(req)) {
     socket.destroy();
@@ -33910,27 +34071,91 @@ async function handlePhotoDelete(req, res) {
   }
 }
 
+function resolveDatabaseDemoPhotoAccess(req, localDemoModeEnabled = isDatabaseDemoModeEnabled()) {
+  const forwardedDemoModeIdSecret = requestHasConfiguredGatewaySecret(req)
+    ? String(req.headers["x-ais-demo-mode-id-secret"] || "").trim()
+    : "";
+  const trustedForwardedDemoPhoto = forwardedDemoModeIdSecret.length >= 32
+    && forwardedDemoModeIdSecret.length <= 512;
+  return {
+    enabled: localDemoModeEnabled || trustedForwardedDemoPhoto,
+    idSecret: trustedForwardedDemoPhoto
+      ? forwardedDemoModeIdSecret
+      : DATABASE_DEMO_ID_SECRET,
+    forwarded: trustedForwardedDemoPhoto
+  };
+}
+
 async function handleStudentSourcePhoto(req, res, requestUrl) {
-  const sourcePath = String(requestUrl.searchParams.get("path") || "").trim();
-  const ext = imageExtensionFromPath(sourcePath);
-  if (!ext) {
-    sendError(res, 404, "Фото не найдено.");
-    return;
-  }
   try {
-    const relativePath = normalizeSystemDocumentsRelativePath(sourcePath);
-    const localDocuments = serverSettings.openDocumentsLocally !== false
-      ? await getLocalSystemDocumentsAvailability()
-      : { available: false };
+    let sourcePath = String(requestUrl.searchParams.get("path") || "").trim();
     let bytes = null;
-    if (relativePath && localDocuments.available) {
-      const localPath = resolveLocalDocumentsPath(sourcePath, "Не удалось определить путь к фотографии.");
-      const stats = await fs.stat(localPath);
-      if (stats.isFile() && stats.size > 0 && stats.size <= MAX_STUDENT_PHOTO_BYTES) {
-        bytes = await fs.readFile(localPath);
+    let contentType = "";
+    const demoPhotoAccess = resolveDatabaseDemoPhotoAccess(req);
+    if (demoPhotoAccess.enabled) {
+      const photoIdSecret = demoPhotoAccess.idSecret;
+      const token = String(requestUrl.searchParams.get("demoToken") || "").trim();
+      const match = /^demo-photo:(students|contracts):([A-Za-z0-9_-]{24})$/u.exec(token);
+      if (!match) {
+        sendError(res, 404, "Фото не найдено.");
+        return;
       }
-    } else {
-      bytes = await loadSystemDocumentFromYandexDisk(sourcePath);
+      const collection = match[1];
+      const photoToken = match[2];
+      const snapshot = await readSharedApplicationStateMirrorSnapshot();
+      const record = (snapshot.document?.data?.collections?.[collection] || [])
+        .find((item) => demoModePhotoToken(
+          collection,
+          String(item?.id || item?.uid || "").trim(),
+          photoIdSecret
+        ) === photoToken);
+      if (!record) {
+        sendError(res, 404, "Фото не найдено.");
+        return;
+      }
+      sourcePath = String(record.photoPath || "").trim();
+      if (!sourcePath && /^data:image\//iu.test(String(record.photoData || ""))) {
+        const inlinePhoto = parseDataUrl(record.photoData);
+        bytes = inlinePhoto.bytes;
+        contentType = inlinePhoto.mime === "image/jpg" ? "image/jpeg" : inlinePhoto.mime;
+      }
+      if (!sourcePath && !bytes) {
+        sendError(res, 404, "Фото не найдено.");
+        return;
+      }
+    }
+    const ext = imageExtensionFromPath(sourcePath);
+    if (!bytes && !ext) {
+      sendError(res, 404, "Фото не найдено.");
+      return;
+    }
+    if (!bytes) {
+      const storedPhotoPath = resolveStoredPhotoPath(sourcePath);
+      if (storedPhotoPath) {
+        const relativeStoredPath = path.relative(PHOTO_ROOT, storedPhotoPath);
+        if (relativeStoredPath.startsWith("..") || path.isAbsolute(relativeStoredPath)) {
+          throw new Error("Недопустимый путь к фотографии.");
+        }
+        const stats = await fs.stat(storedPhotoPath);
+        if (stats.isFile() && stats.size > 0 && stats.size <= MAX_STUDENT_PHOTO_BYTES) {
+          bytes = await fs.readFile(storedPhotoPath);
+        }
+      } else {
+        const relativePath = normalizeSystemDocumentsRelativePath(sourcePath);
+        const localDocuments = serverSettings.openDocumentsLocally !== false
+          ? await getLocalSystemDocumentsAvailability()
+          : { available: false };
+        if (relativePath && localDocuments.available) {
+          const localPath = resolveLocalDocumentsPath(sourcePath, "Не удалось определить путь к фотографии.");
+          const stats = await fs.stat(localPath);
+          if (stats.isFile() && stats.size > 0 && stats.size <= MAX_STUDENT_PHOTO_BYTES) {
+            bytes = await fs.readFile(localPath);
+          }
+        } else {
+          bytes = await loadSystemDocumentFromYandexDisk(sourcePath);
+        }
+      }
+      contentType = IMAGE_CONTENT_TYPES[ext];
     }
     if (!bytes) {
       sendError(res, 404, "Фото не найдено.");
@@ -33938,7 +34163,7 @@ async function handleStudentSourcePhoto(req, res, requestUrl) {
     }
     const headers = {
       ...CORS_HEADERS,
-      "Content-Type": IMAGE_CONTENT_TYPES[ext],
+      "Content-Type": contentType || "application/octet-stream",
       "Content-Length": bytes.length,
       "Cache-Control": "no-store"
     };
@@ -36333,19 +36558,28 @@ async function handleServerEmail(req, res, authUser) {
   }
 }
 
+const PUBLIC_STATIC_PATHS = new Set([
+  "/app.js",
+  "/auth-bootstrap.js",
+  "/data/max-messenger-icon.png",
+  "/data/program-payment-registry.js",
+  "/data/program-registry.js",
+  "/data/seed.js",
+  "/favicon.ico",
+  "/field-html-links.js",
+  "/index.html",
+  "/partner-app.js",
+  "/styles.css"
+]);
+
 async function serveStatic(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-  const decodedPath = decodeURIComponent(requestUrl.pathname);
-  const normalizedPublicPath = decodedPath.replace(/\\/g, "/").toLowerCase();
-  const isPublicPhotoPath = normalizedPublicPath.startsWith("/storage/photos/");
-  if (
-    (normalizedPublicPath.startsWith("/storage/") && !isPublicPhotoPath)
-    || normalizedPublicPath.startsWith("/scripts/")
-  ) {
+  const publicPath = requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname;
+  if (!PUBLIC_STATIC_PATHS.has(publicPath)) {
     sendError(res, 404, "Not found");
     return;
   }
-  const relativePath = decodedPath === "/" ? "index.html" : decodedPath.replace(/^\/+/, "");
+  const relativePath = publicPath.replace(/^\/+/, "");
   const fullPath = path.resolve(ROOT, relativePath);
   if (!isInsideRoot(fullPath)) {
     sendError(res, 403, "Forbidden");
@@ -36357,18 +36591,13 @@ async function serveStatic(req, res) {
       return;
     }
     const stat = await fs.stat(fullPath);
-    if (stat.isDirectory()) {
-      res.writeHead(301, { Location: `${requestUrl.pathname.replace(/\/$/, "")}/index.html` });
-      res.end();
-      return;
-    }
+    if (!stat.isFile()) throw Object.assign(new Error("Not found"), { code: "ENOENT" });
     const ext = path.extname(fullPath).toLowerCase();
     const headers = {
       ...CORS_HEADERS,
       "Content-Type": MIME_TYPES[ext] || "application/octet-stream",
       "Cache-Control": "no-store"
     };
-    if (decodedPath.startsWith("/storage/photos/")) headers["Cache-Control"] = "public, max-age=31536000, immutable";
     if (req.method === "HEAD") {
       res.writeHead(200, headers);
       res.end();
@@ -36388,6 +36617,17 @@ async function serveStatic(req, res) {
 
 async function route(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  if (
+    isDatabaseDemoModeEnabled()
+    && (
+      isOnlyOfficeProxyPath(requestUrl.pathname)
+      || requestUrl.pathname.startsWith("/api/contracts/student-document-preview/")
+      || requestUrl.pathname.startsWith("/api/document-conversion/source/")
+    )
+  ) {
+    sendDatabaseDemoModeReadOnly(res);
+    return;
+  }
   if (isOnlyOfficeProxyPath(requestUrl.pathname)) {
     await proxyOnlyOfficeHttpRequest(req, res, requestUrl);
     return;
@@ -36444,6 +36684,13 @@ async function route(req, res) {
   }
   if (requestUrl.pathname.startsWith("/api/auth/")) {
     try {
+      if (
+        isDatabaseDemoModeEnabled()
+        && requestUrl.pathname.startsWith("/api/auth/partner-registration")
+      ) {
+        sendDatabaseDemoModeReadOnly(res);
+        return;
+      }
       if (req.method === "GET" && requestUrl.pathname === "/api/auth/partner-registration/challenge") {
         await handlePartnerRegistrationChallenge(req, res);
         return;
@@ -36471,6 +36718,10 @@ async function route(req, res) {
       }
       if (!authUser) {
         sendError(res, 401, "Требуется вход в систему.");
+        return;
+      }
+      if (isDatabaseDemoModeEnabled()) {
+        sendDatabaseDemoModeReadOnly(res);
         return;
       }
       if (req.method === "POST" && requestUrl.pathname === "/api/auth/profile") {
@@ -36532,6 +36783,25 @@ async function route(req, res) {
     sendError(res, 401, "Требуется вход в систему.");
     return;
   }
+  if (requestUrl.pathname === "/api/admin/demo-mode") {
+    try {
+      await handleDatabaseDemoModeSettings(req, res, authUser);
+    } catch (error) {
+      sendJson(res, Number(error?.statusCode) || 400, {
+        error: error.message,
+        ...(error?.publicCode ? { code: String(error.publicCode) } : {})
+      });
+    }
+    return;
+  }
+  if (
+    isDatabaseDemoModeEnabled()
+    && protectedRequest
+    && !isDatabaseDemoModeAllowedRequest(req, requestUrl, authUser)
+  ) {
+    sendDatabaseDemoModeReadOnly(res);
+    return;
+  }
   if (new Set([
     "/api/trash/restore",
     "/api/admin/trash/permanent-delete"
@@ -36545,6 +36815,10 @@ async function route(req, res) {
   }
   if (authUser?.role === "partner" && protectedRequest) {
     sendError(res, 403, "Этот раздел недоступен в кабинете партнёра.");
+    return;
+  }
+  if (requestUrl.pathname === "/api/client-private-defaults" && req.method === "GET") {
+    sendJson(res, 200, { ok: true, defaults: CLIENT_PRIVATE_DEFAULTS });
     return;
   }
   try {
@@ -37129,6 +37403,7 @@ module.exports = {
   normalizePartnerMaterialsUrl,
   requestHasGatewayIdentity,
   requestHasTrustedGatewayIdentity,
+  resolveDatabaseDemoPhotoAccess,
   getRemainingSmtpTimeout,
   writeSmtpSocketData,
   route

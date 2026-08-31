@@ -2762,6 +2762,209 @@ body.shift-drag-ready:not(.nav-item-dragging) .nav-item {
   gap: 12px;
 }
 
+.database-demo-mode-banner {
+  position: sticky;
+  top: 58px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 36px;
+  padding: 7px 16px;
+  border-bottom: 1px solid #d29a22;
+  background: linear-gradient(90deg, #fff4cc, #ffefb2);
+  color: #6b4700;
+  box-shadow: 0 3px 10px rgba(91, 60, 0, 0.08);
+  font-size: 12px;
+}
+
+.database-demo-mode-banner strong {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #8c6100;
+  color: #fff;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.database-demo-private-value {
+  display: inline-block;
+  min-width: 5.5em;
+  filter: blur(4px);
+  user-select: none;
+  pointer-events: none;
+}
+
+.database-demo-private-control {
+  filter: blur(4px);
+  user-select: none;
+  pointer-events: none;
+}
+
+html.is-database-demo-mode .student-photo-path-field,
+html.is-database-demo-mode .contract-photo-path-field {
+  display: none !important;
+}
+
+.database-demo-mode-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(290px, 0.75fr);
+  gap: 18px;
+  border-left: 5px solid #d29a22;
+}
+
+.database-demo-mode-panel-copy {
+  align-self: center;
+}
+
+.database-demo-mode-panel-copy h2 {
+  margin: 2px 0 8px;
+}
+
+.database-demo-mode-panel-copy > p:last-child {
+  max-width: 760px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.database-demo-mode-switch {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 78px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  cursor: pointer;
+}
+
+.database-demo-mode-switch.is-enabled {
+  border-color: #d29a22;
+  background: #fff8df;
+}
+
+.database-demo-mode-switch > input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.database-demo-mode-switch-track {
+  width: 48px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  padding: 3px;
+  border-radius: 999px;
+  background: #aeb8b4;
+  transition: background 160ms ease;
+}
+
+.database-demo-mode-switch-track > span {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(31, 41, 38, 0.24);
+  transition: transform 160ms ease;
+}
+
+.database-demo-mode-switch > input:checked + .database-demo-mode-switch-track {
+  background: #d19513;
+}
+
+.database-demo-mode-switch > input:checked + .database-demo-mode-switch-track > span {
+  transform: translateX(22px);
+}
+
+.database-demo-mode-switch > input:focus-visible + .database-demo-mode-switch-track {
+  outline: 3px solid rgba(15, 129, 122, 0.24);
+  outline-offset: 2px;
+}
+
+.database-demo-mode-switch-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.database-demo-mode-switch-copy small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.database-demo-mode-safety {
+  grid-column: 1 / -1;
+  padding: 13px 15px;
+  border: 1px solid #cfe2dc;
+  border-radius: 10px;
+  background: #f1f9f6;
+}
+
+.database-demo-mode-safety ul {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.database-demo-mode-password-backdrop {
+  z-index: 90;
+}
+
+.database-demo-mode-password-dialog {
+  width: min(520px, 100%);
+}
+
+.database-demo-mode-password-dialog form {
+  display: grid;
+}
+
+.database-demo-mode-password-dialog .modal-body {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.database-demo-mode-password-dialog .modal-body p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.database-demo-mode-password-dialog .field {
+  display: grid;
+  gap: 6px;
+}
+
+.database-demo-mode-password-dialog .field span {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.database-demo-mode-password-dialog .field input {
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+@media (max-width: 760px) {
+  .database-demo-mode-banner {
+    top: 58px;
+    align-items: flex-start;
+    justify-content: flex-start;
+    flex-direction: column;
+  }
+
+  .database-demo-mode-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .panel,
 .metric,
 .dictionary-box {

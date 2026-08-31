@@ -1,14 +1,34 @@
 (() => {
   const APP_BASE_URL = new URL(".", document.currentScript?.src || window.location.href);
   const MAX_MESSENGER_ICON_URL = new URL("data/max-messenger-icon.png", APP_BASE_URL).href;
+  const PRIVATE_DEFAULTS = window.AIS_PRIVATE_DEFAULTS && typeof window.AIS_PRIVATE_DEFAULTS === "object"
+    ? window.AIS_PRIVATE_DEFAULTS
+    : {};
+  const PRIVATE_STUDENT_EMAIL = PRIVATE_DEFAULTS.studentApplicationsEmail
+    && typeof PRIVATE_DEFAULTS.studentApplicationsEmail === "object"
+    ? PRIVATE_DEFAULTS.studentApplicationsEmail
+    : {};
   const DEFAULT_STUDENT_APPLICATIONS_EMAIL = Object.freeze({
-    login: "mail@edu-plus.ru",
-    host: "imap.timeweb.ru",
-    port: 993,
-    smtpHost: "smtp.timeweb.ru",
-    smtpPort: 465
+    login: String(PRIVATE_STUDENT_EMAIL.login || "").trim(),
+    host: String(PRIVATE_STUDENT_EMAIL.host || "imap.timeweb.ru").trim(),
+    port: Number(PRIVATE_STUDENT_EMAIL.port || 993),
+    smtpHost: String(PRIVATE_STUDENT_EMAIL.smtpHost || "smtp.timeweb.ru").trim(),
+    smtpPort: Number(PRIVATE_STUDENT_EMAIL.smtpPort || 465)
   });
-  const DEFAULT_WOOCOMMERCE_EMAIL_LOGIN = "mail@zifra-plus.ru";
+  const DEFAULT_WOOCOMMERCE_EMAIL_LOGIN = String(PRIVATE_DEFAULTS.woocommerceEmailLogin || "").trim();
+  const DEFAULT_REPRESENTATIVE_NAME = String(
+    PRIVATE_DEFAULTS.representativeName || "Представитель учебного центра"
+  ).trim();
+  const DEFAULT_CONTACT_EMAIL = String(PRIVATE_DEFAULTS.contactEmail || "").trim();
+  const DEFAULT_TELEGRAM_URL = String(PRIVATE_DEFAULTS.telegramUrl || "").trim();
+  const DEFAULT_MAX_URL = String(PRIVATE_DEFAULTS.maxUrl || "").trim();
+  const DEFAULT_MESSENGER_CONTACT_TEXT = [
+    DEFAULT_TELEGRAM_URL ? `в Телеграмме ${DEFAULT_TELEGRAM_URL}` : "",
+    DEFAULT_MAX_URL ? `в Максе ${DEFAULT_MAX_URL}` : ""
+  ].filter(Boolean).join(" или ");
+  const DEFAULT_MESSENGER_CONTACT_LINE = DEFAULT_MESSENGER_CONTACT_TEXT
+    ? `Дальнейшую переписку предлагаю вести ${DEFAULT_MESSENGER_CONTACT_TEXT}`
+    : "Дальнейшую переписку предлагаю вести в выбранном мессенджере";
   const DEFAULT_TRAINING_END_NOTIFICATION_DAYS = 5;
   const DEFAULT_TRAINING_END_NOTIFICATION_TIME = "09:00";
   const DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE = "Europe/Moscow";
@@ -165,10 +185,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.374",
+    version: "1.7.375",
     releasedAt: "2026-08-31"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.375",
+      releasedAt: "2026-08-31",
+      changes: [
+        "В админке добавлен безопасный деморежим: персональные данные слушателей и сотрудников обезличиваются до передачи браузеру, фотографии остаются видимыми, а изменение и выгрузка базы блокируются."
+      ]
+    },
     {
       version: "1.7.374",
       releasedAt: "2026-08-31",
@@ -1913,7 +1940,7 @@
       version: "1.7.131",
       releasedAt: "2026-08-12",
       changes: [
-        "Почтовые ящики получили явные назначения: mail@edu-plus.ru — документы слушателей и заявки InSales, mail@zifra-plus.ru — заявки WooCommerce.",
+        "Почтовые ящики получили явные назначения: основной — документы слушателей и заявки InSales, дополнительный — заявки WooCommerce.",
         "Подписи ящиков в админке и окне загрузки документов слушателя приведены к единому виду."
       ]
     },
@@ -1966,8 +1993,8 @@
       version: "1.7.124",
       releasedAt: "2026-08-12",
       changes: [
-        "Основным почтовым ящиком системы назначен mail@edu-plus.ru: он используется первым для заявок, документов и системной отправки.",
-        "Существующий mail@zifra-plus.ru сохраняется как дополнительный рабочий ящик без потери настроек подключения."
+        "Основной почтовый ящик системы используется первым для заявок, документов и системной отправки.",
+        "Существующий дополнительный рабочий ящик сохраняется без потери настроек подключения."
       ]
     },
     {
@@ -2292,7 +2319,7 @@
       version: "1.7.79",
       releasedAt: "2026-08-12",
       changes: [
-        "Импорт заявок из mail@zifra-plus.ru распознаёт уведомления WooCommerce с префиксом сайта и сохраняет поддержку прежнего формата InSales. Поиск сначала проверяет до 5000 тем писем и только затем ограничивает число заказов, поэтому старые заявки не вытесняются обычной перепиской. Совпадающие заявки из почты и базы сайта объединяются без дублирования."
+        "Импорт заявок из дополнительного ящика распознаёт уведомления WooCommerce с префиксом сайта и сохраняет поддержку прежнего формата InSales. Поиск сначала проверяет до 5000 тем писем и только затем ограничивает число заказов, поэтому старые заявки не вытесняются обычной перепиской. Совпадающие заявки из почты и базы сайта объединяются без дублирования."
       ]
     },
     {
@@ -2376,7 +2403,7 @@
       version: "1.7.67",
       releasedAt: "2026-08-11",
       changes: [
-        "В настройках электронной почты выделен отдельный ящик mail@zifra-plus.ru для сбора заявок; ошибочно сохранённый в его поле ящик документов переносится в отдельную карточку без потери пароля."
+        "В настройках электронной почты выделен отдельный ящик для сбора заявок; ошибочно сохранённый в его поле ящик документов переносится в отдельную карточку без потери пароля."
       ]
     },
     {
@@ -2418,7 +2445,7 @@
       version: "1.7.61",
       releasedAt: "2026-08-11",
       changes: [
-        "Настройки основного почтового ящика mail@zifra-plus.ru для загрузки заявок перенесены в единый раздел почтовых ящиков админки."
+        "Настройки основного почтового ящика для загрузки заявок перенесены в единый раздел почтовых ящиков админки."
       ]
     },
     {
@@ -3377,28 +3404,28 @@
   const studentCommunicationTemplateDefaults = [
     `{Приветствие}
 
-Меня зовут Симак Роман Сергеевич, я представляю учебный центр Цифровизация Плюс.
+Меня зовут ${DEFAULT_REPRESENTATIVE_NAME}, я представляю учебный центр Цифровизация Плюс.
 
 Получили от Вас заявку на программу *{ПрограммаКарточки}*, для зачисления необходимо прислать следующие документы:
 {ПереченьДокументов}
 
-Пришлите, пожалуйста, свои документы на адрес mail@edu-plus.ru, мы в ответ подготовим Вам документы для оформления на обучение (договор, анкета, согласие на обработку персональных данных и т.д.).
+Пришлите, пожалуйста, свои документы на адрес ${DEFAULT_CONTACT_EMAIL || "электронной почты учебного центра"}, мы в ответ подготовим Вам документы для оформления на обучение (договор, анкета, согласие на обработку персональных данных и т.д.).
 
-Дальнейшую переписку предлагаю вести в Телеграмме https://t.me/simakrs или Максе https://max.ru/u/f9LHodD0cOJFNLoo1J-p9xzwXq9NcNpBiO_awFVbsccTG5PS38I_pQg_iPE{ОпцияБезДокумента}`,
+${DEFAULT_MESSENGER_CONTACT_LINE}{ОпцияБезДокумента}`,
     `{Приветствие}
 
-Меня зовут Симак Роман Сергеевич, я представляю учебный центр Цифровизация Плюс.
+Меня зовут ${DEFAULT_REPRESENTATIVE_NAME}, я представляю учебный центр Цифровизация Плюс.
 
 Отправили Вам на электронную почту ({EmailКарточки}) комплект документов по курсу *{ПрограммаКарточки}* на подпись для зачисления (письмо могло попасть в спам).
 
-Проверьте его, пожалуйста, если все правильно, подпишите (в местах, выделенных галочкой) и отправьте скан на адрес mail@edu-plus.ru
+Проверьте его, пожалуйста, если все правильно, подпишите (в местах, выделенных галочкой) и отправьте скан на адрес ${DEFAULT_CONTACT_EMAIL || "электронной почты учебного центра"}
 
 Подписать можно одним из следующих способов:
 1) Через онлайн-сервис - https://www.ilovepdf.com/ru/sign-pdf (графической подписью)
 2) С помощью сервиса Госключ (после подписи нажать Скачать подпись и отправить ее в ответном сообщении) - https://www.gosuslugi.ru/600373/1/form
 3) От руки
 
-Дальнейшую переписку предлагаю вести в Телеграмме https://t.me/simakrs или Максе https://max.ru/u/f9LHodD0cOJFNLoo1J-p9xzwXq9NcNpBiO_awFVbsccTG5PS38I_pQg_iPE`,
+${DEFAULT_MESSENGER_CONTACT_LINE}`,
     `{Приветствие}
 
 Поздравляем Вас с завершением обучения по курсу *{ПрограммаКарточки}* и отправляем сюда и на почту ({EmailКарточки}) {ДокументПослеОбучения}{НапоминаниеОбОплате}`,
@@ -3435,7 +3462,7 @@
 
 {ИтогПослеОбучения}
 
-С уважением, Симак Роман Сергеевич
+С уважением, ${DEFAULT_REPRESENTATIVE_NAME}
 Учебный центр Цифровизация Плюс`,
     `{Приветствие}
 
@@ -3443,7 +3470,7 @@
 
 Предлагаем Вам сократить срок обучения до {ДатаСокращенияКарточки} (с учетом нормативной продолжительности обучения) для более быстрого получения документа об образовании, заключив дополнительное соглашение к договору
 
-На всякий случай, отправили Вам на электронную почту ({EmailКарточки}) комплект документов на подпись для сокращения обучения на курсах до {ДатаСокращенияКарточки} (проверьте его, пожалуйста, если все правильно, подпишите и отправьте скан на адрес mail@edu-plus.ru)`,
+На всякий случай, отправили Вам на электронную почту ({EmailКарточки}) комплект документов на подпись для сокращения обучения на курсах до {ДатаСокращенияКарточки} (проверьте его, пожалуйста, если все правильно, подпишите и отправьте скан на адрес ${DEFAULT_CONTACT_EMAIL || "электронной почты учебного центра"})`,
     `{Приветствие}
 
 Благодарим Вас за сотрудничество и дарим купон на дополнительную скидку в 15% на последующее обучение: {ПартнерскийКупонКарточки}
@@ -3465,7 +3492,7 @@
 1) Бесплатно продлить срок обучения до {ДатаСокращенияКарточки}, заключив дополнительное соглашение к договору (не более 1 раза, затем ПЛАТНО 1000 руб. за каждое последующее продление).
 2) Отчислить Вас без выдачи документа об образовании с последующей возможностью бесплатного восстановления (не более 1 раза, затем ПЛАТНО 1000 руб. за каждое последующее восстановление)
 
-На всякий случай, отправили Вам на электронную почту ({EmailКарточки}) комплект документов на подпись для продления обучения на курсах до {ДатаСокращенияКарточки} (проверьте его, пожалуйста, если все правильно, подпишите и отправьте скан на адрес mail@edu-plus.ru)
+На всякий случай, отправили Вам на электронную почту ({EmailКарточки}) комплект документов на подпись для продления обучения на курсах до {ДатаСокращенияКарточки} (проверьте его, пожалуйста, если все правильно, подпишите и отправьте скан на адрес ${DEFAULT_CONTACT_EMAIL || "электронной почты учебного центра"})
 
 Платное продление возможно не более двух раз, затем полная оплата курса с заключением нового договора`,
     `{Приветствие}
@@ -3491,7 +3518,7 @@
 
 Подписывайтесь на наши группы в Телеграм (https://t.me/zifra_plus) и Вконтакте (https://vk.com/zifra_plus)
 
-С уважением, Симак Роман Сергеевич`,
+С уважением, ${DEFAULT_REPRESENTATIVE_NAME}`,
     `{{если:ЕстьЛогин}}{Приветствие}
 
 Вот Ваши учетные данные для обучения на портале дистанционного обучения Цифровизация Плюс (https://portal.edu-plus.ru):
@@ -3508,7 +3535,7 @@
 Вам нужно выполнить задания по всем дисциплинам/модулям (факультативные задания, при наличии, выполняются по желанию) и затем пройти итоговую аттестацию до окончания обучения (проходной балл - не менее 50%: оценка <удовлетворительно> от 50% до 69%, оценка <хорошо> от 70% до 89%, оценка <отлично> 90% и выше){ИтогДоступаКПорталу}
 
 С уважением,
-Симак Роман Сергеевич
+${DEFAULT_REPRESENTATIVE_NAME}
 
 Учебный центр Цифровизация Плюс
 www.edu-plus.ru
@@ -3518,7 +3545,7 @@ www.edu-plus.ru
   const employeeCommunicationTemplateDefaults = [
     `{Приветствие}
 
-Меня зовут Симак Роман Сергеевич, я представляю учебный центр Цифровизация Плюс.
+Меня зовут ${DEFAULT_REPRESENTATIVE_NAME}, я представляю учебный центр Цифровизация Плюс.
 
 Приветствуем Вас в партнерской программе нашего учебного центра. Ваш персональный купон: {КупонКарточки}.`,
     `{Приветствие}
@@ -3546,7 +3573,7 @@ https://edu-plus.ru`,
 
 Отлично! Будем сотрудничать.
 
-Что касается авторских курсов, Вы можете присылать материалы на адрес mail@edu-plus.ru. После согласования программы и условий оформим договор и разместим курс на площадке учебного центра.`,
+Что касается авторских курсов, Вы можете присылать материалы на адрес ${DEFAULT_CONTACT_EMAIL || "электронной почты учебного центра"}. После согласования программы и условий оформим договор и разместим курс на площадке учебного центра.`,
     `Для оформления договора оказания услуг нужны следующие документы:
 1) Копия паспорта с пропиской
 2) Документ о профессиональном образовании
@@ -4675,20 +4702,13 @@ MAX - https://bizvmax.ru/zifra_plus
       key: "automaticExpenseRules",
       label: "Автоматическое назначение оплат",
       type: "textarea",
-      value: [
-        "Оплата преподавателю,[АвторскаяСтавка],-Симак Роман Сергеевич",
-        "Оплата председателю ИАК,[СтавкаОплатыИАК]",
-        "Оплата сотруднику,[СтавкаОплатыСотруднику],Симак Варвара Романовна",
-        "Оплата сотруднику,[СтавкаОплатыСотруднику],Симак Юрий Романович",
-        "Печать документа об образовании,110,Печатная лавка",
-        "Почтовое отправление,130,Почта России"
-      ].join("\n")
+      value: String(PRIVATE_DEFAULTS.automaticExpenseRules || "")
     },
     {
       key: "sourceAgentAssignments",
       label: "Назначение агентов в зависимости от источника заявки",
       type: "textarea",
-      value: "Вконтакте=Симак Варвара Романовна"
+      value: String(PRIVATE_DEFAULTS.sourceAgentAssignments || "")
     },
     {
       key: "agentRateWithoutAuthor",
@@ -6713,6 +6733,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function initializeBrowserOfflineStorage() {
+    if (isDatabaseDemoMode()) return;
     try {
       const shouldMigrateLocalState = hadLocalStateAtStartup && !browserStateIndexedDbMode;
       const [stateSnapshot, recoverySnapshot, advertisingSnapshot] = await Promise.all([
@@ -9340,6 +9361,23 @@ MAX - https://bizvmax.ru/zifra_plus
         error.payload = payload;
         throw error;
       }
+      if (
+        typeof payload.demoModeEnabled === "boolean"
+        && payload.demoModeEnabled !== isDatabaseDemoMode()
+      ) {
+        window.AIS_DATABASE_DEMO_MODE_API?.broadcast?.(payload.demoModeEnabled);
+        app.innerHTML = `
+          <main class="auth-screen" aria-live="polite">
+            <section class="auth-card auth-loading-card">
+              <div class="auth-brand-mark">АИС</div>
+              <strong>Переключение деморежима...</strong>
+              <span class="auth-spinner" aria-hidden="true"></span>
+            </section>
+          </main>
+        `;
+        window.location.reload();
+        await new Promise(() => {});
+      }
       if (progressId) {
         finishSharedStateTransferProgress(
           progressId,
@@ -9359,6 +9397,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function persistSharedStateRecovery() {
+    if (isDatabaseDemoMode()) return;
     let recoverySnapshot = null;
     try {
       const currentPatch = sharedStateDirty && sharedStateBaseData
@@ -9904,6 +9943,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function acquireRecordLockForCard(configId, entityId) {
+    if (globalThis.window?.AIS_DATABASE_DEMO_MODE === true) return { readOnly: true, demoMode: true };
     const normalizedConfigId = String(configId || "").trim();
     const normalizedEntityId = String(entityId || "").trim();
     if (!normalizedConfigId || !normalizedEntityId) return { readOnly: false };
@@ -10042,6 +10082,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderRecordReadOnlyWarning(lock = null) {
+    if (isDatabaseDemoMode()) {
+      return `
+        <div class="record-lock-warning is-readonly" data-record-lock-warning role="status">
+          <span><strong>Деморежим.</strong> Карточка открыта только для просмотра; изменение данных отключено.</span>
+        </div>
+      `;
+    }
     const lockAvailable = Boolean(state.modal?.lockAvailable && !lock);
     if (lockAvailable) {
       return `
@@ -10609,6 +10656,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function persistStateToLocalStorage(data = state.data) {
+    if (isDatabaseDemoMode()) return false;
     const indexedDbWrite = persistStateToIndexedDb(data).catch((error) => {
       console.warn("Не удалось обновить расширенную автономную копию общей базы", error);
       return false;
@@ -10875,6 +10923,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function persist(options = {}) {
+    if (isDatabaseDemoMode()) return;
     registryRowSearchTextCache = new WeakMap();
     programTrainingPlanHoursSummaryCache = { rows: null, values: new WeakMap() };
     if (
@@ -10990,6 +11039,10 @@ MAX - https://bizvmax.ru/zifra_plus
     return authenticatedUser || {};
   }
 
+  function isDatabaseDemoMode() {
+    return window.AIS_DATABASE_DEMO_MODE === true;
+  }
+
   function getCurrentUserLogin() {
     return String(getCurrentAuthUser().login || "").trim();
   }
@@ -11027,6 +11080,98 @@ MAX - https://bizvmax.ru/zifra_plus
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
     return payload;
+  }
+
+  function requestDatabaseDemoModeDisablePassword() {
+    const previousFocus = document.activeElement;
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop database-demo-mode-password-backdrop";
+    backdrop.innerHTML = `
+      <section class="modal database-demo-mode-password-dialog" role="dialog" aria-modal="true" aria-labelledby="databaseDemoModePasswordTitle">
+        <form data-database-demo-mode-password-form>
+          <header class="modal-head">
+            <div>
+              <p class="eyebrow">Повторная проверка администратора</p>
+              <h2 id="databaseDemoModePasswordTitle">Выключение деморежима</h2>
+            </div>
+          </header>
+          <div class="modal-body">
+            <p>После выключения браузер снова получит исходные персональные данные. Введите свой текущий пароль.</p>
+            <label class="field">
+              <span>Пароль администратора</span>
+              <input name="currentPassword" type="password" autocomplete="current-password" required autofocus>
+            </label>
+          </div>
+          <footer class="modal-actions">
+            <button class="danger-button" type="submit">Выключить деморежим</button>
+            <button class="icon-button form-cancel-button" data-action="cancel-database-demo-mode-disable" type="button" title="Отмена" aria-label="Отмена">×</button>
+          </footer>
+        </form>
+      </section>
+    `;
+    document.body.appendChild(backdrop);
+    const form = backdrop.querySelector("[data-database-demo-mode-password-form]");
+    const input = form?.elements.currentPassword;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        backdrop.remove();
+        if (value === null && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+        resolve(value);
+      };
+      form?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const password = String(input?.value || "");
+        if (!password) {
+          input?.focus({ preventScroll: true });
+          return;
+        }
+        finish(password);
+      });
+      backdrop.querySelector("[data-action='cancel-database-demo-mode-disable']")
+        ?.addEventListener("click", () => finish(null));
+      backdrop.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") finish(null);
+      });
+      queueMicrotask(() => input?.focus({ preventScroll: true }));
+    });
+  }
+
+  async function toggleDatabaseDemoMode(event) {
+    const input = event.currentTarget;
+    const enabled = Boolean(input.checked);
+    let currentPassword = "";
+    if (enabled) {
+      const confirmed = window.confirm(
+        "Включить деморежим на текущем адресе? Персональные данные будут скрыты, а база станет доступна только для просмотра."
+      );
+      if (!confirmed) {
+        input.checked = false;
+        return;
+      }
+    } else {
+      currentPassword = await requestDatabaseDemoModeDisablePassword();
+      if (currentPassword === null) {
+        input.checked = true;
+        return;
+      }
+    }
+    input.disabled = true;
+    try {
+      const payload = await authRequest("api/admin/demo-mode", {
+        method: "POST",
+        body: JSON.stringify({ enabled, ...(currentPassword ? { currentPassword } : {}) })
+      });
+      if (payload.enabled === true) app.innerHTML = "";
+      window.AIS_DATABASE_DEMO_MODE_API?.broadcast?.(payload.enabled === true);
+      window.location.reload();
+    } catch (error) {
+      input.checked = !enabled;
+      input.disabled = false;
+      alert(`Не удалось изменить деморежим: ${error.message}`);
+    }
   }
 
   function loadStartView() {
@@ -11475,7 +11620,47 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function sanitizeAisNavigationSnapshotForDemo(snapshot = {}) {
+    if (!isDatabaseDemoMode()) return snapshot;
+    return {
+      version: 1,
+      view: canAccessView(snapshot.view) ? snapshot.view : "dashboard",
+      search: "",
+      statusFilter: String(snapshot.statusFilter || ""),
+      directExpenseNoteFilter: "",
+      generalExpenseSectionFilter: [],
+      generalExpenseWorkTypeFilter: [],
+      studentProgramTypeFilter: [],
+      studentListFilters: { programs: [] },
+      programRegistryTypeFilter: [],
+      contractSectionFilter: [],
+      issuedDocumentFilters: {},
+      issuedDocumentSort: {},
+      sort: {},
+      tablePage: Math.max(1, Number(snapshot.tablePage) || 1),
+      studentCardTab: "main",
+      programCardTab: "main",
+      contractCardTab: "main",
+      selectedDictionary: "",
+      adminTab: String(snapshot.adminTab || "database"),
+      adminDatabaseTab: String(snapshot.adminDatabaseTab || "ais"),
+      statisticsTab: String(snapshot.statisticsTab || "income"),
+      overlay: "",
+      financeDetails: { open: false },
+      profitabilityDetailsOpen: false,
+      modal: null
+    };
+  }
+
   function createAisHistoryState(snapshot, options = {}) {
+    const safeSnapshot = sanitizeAisNavigationSnapshotForDemo(snapshot);
+    if (isDatabaseDemoMode()) {
+      return {
+        aisDatabaseDemoMode: true,
+        aisNavigation: safeSnapshot,
+        aisNavigationRoot: Boolean(options.root)
+      };
+    }
     const currentHistoryState = window.history.state && typeof window.history.state === "object"
       ? window.history.state
       : {};
@@ -11485,7 +11670,7 @@ MAX - https://bizvmax.ru/zifra_plus
     void aisNavigationRoot;
     return {
       ...baseState,
-      aisNavigation: snapshot,
+      aisNavigation: safeSnapshot,
       aisNavigationRoot: Boolean(options.root)
     };
   }
@@ -11616,7 +11801,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function handleAisHistoryNavigation(event) {
     if (aisHistoryNavigationRestoring) return;
-    const targetSnapshot = event.state?.aisNavigation;
+    const targetSnapshot = sanitizeAisNavigationSnapshotForDemo(event.state?.aisNavigation || {});
     const currentSnapshot = captureAisNavigationSnapshot();
     if (recordFormSavePending || documentTemplateSavePending || profileClosePending) {
       restoreCancelledAisHistoryNavigation(currentSnapshot);
@@ -11716,6 +11901,59 @@ MAX - https://bizvmax.ru/zifra_plus
     );
   }
 
+  function applyDatabaseDemoModePresentation(root = app) {
+    if (!isDatabaseDemoMode() || !root) return;
+    root.classList.add("is-database-demo-mode");
+    const mask = String(window.AIS_DEMO_MODE_MASK || "Данные скрыты");
+    const textNodes = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (
+        node.nodeValue?.includes(mask)
+        && !node.parentElement?.closest(".database-demo-mode-banner, .database-demo-mode-panel")
+      ) textNodes.push(node);
+    }
+    textNodes.forEach((node) => {
+      const parts = String(node.nodeValue || "").split(mask);
+      if (parts.length < 2) return;
+      const fragment = document.createDocumentFragment();
+      parts.forEach((part, index) => {
+        if (part) fragment.append(document.createTextNode(part));
+        if (index < parts.length - 1) {
+          const hidden = document.createElement("span");
+          hidden.className = "database-demo-private-value";
+          hidden.textContent = mask;
+          hidden.setAttribute("aria-label", "Персональные данные скрыты");
+          fragment.append(hidden);
+        }
+      });
+      node.replaceWith(fragment);
+    });
+    root.querySelectorAll("input, textarea, select").forEach((control) => {
+      const hasMask = String(control.value || "").includes(mask)
+        || (control instanceof HTMLSelectElement
+          && Array.from(control.selectedOptions).some((option) => option.textContent?.includes(mask)));
+      if (!hasMask) return;
+      control.classList.add("database-demo-private-control");
+      control.setAttribute("aria-label", "Персональные данные скрыты");
+      control.title = "Персональные данные скрыты";
+    });
+    const mutationAction = /(?:^|[-_])(?:add|apply|approve|archive|assign|cancel|clear|commit|create|delete|discard|duplicate|export|finalize|generate|import|invite|move|publish|recognize|remove|restore|save|send|sync|takeover|toggle|unarchive|upload|write)(?:$|[-_])/iu;
+    root.querySelectorAll("button[data-action], input[data-action]").forEach((control) => {
+      const action = String(control.dataset.action || "");
+      if (action === "toggle-database-demo-mode" || !mutationAction.test(action)) return;
+      control.disabled = true;
+      control.title = "Действие отключено в деморежиме";
+      control.setAttribute("aria-disabled", "true");
+    });
+    root.querySelectorAll("form button[type='submit']").forEach((button) => {
+      if (button.closest("[data-table-filter], .table-search, .pagination-controls")) return;
+      button.disabled = true;
+      button.title = "Сохранение отключено в деморежиме";
+    });
+  }
+
   function render() {
     if (settingsDraftApplyInProgress) {
       return;
@@ -11788,6 +12026,12 @@ MAX - https://bizvmax.ru/zifra_plus
             </button>
           </div>
         </header>
+        ${isDatabaseDemoMode() ? `
+          <div class="database-demo-mode-banner" role="status">
+            <strong>Деморежим</strong>
+            <span>Персональные данные скрыты, база открыта только для просмотра. Фотографии доступны.</span>
+          </div>
+        ` : ""}
         <section class="content">
           ${renderView()}
         </section>
@@ -11806,6 +12050,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ${renderDatabaseImportIndicator()}
       ${renderDatabaseExportIndicator()}
     `;
+    applyDatabaseDemoModePresentation(app);
     bindEvents();
     applyDictionarySearchHighlights();
     scheduleMainRegistryTableViewportFit();
@@ -24613,6 +24858,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const adminTabs = getOrderedTabs("admin", [
       { id: "database", label: "Подключение к базе" },
       { id: "email", label: "Почта" },
+      { id: "demo", label: "Деморежим" },
       { id: "external-services", label: "Внешние сервисы" },
       { id: "audit", label: "Журнал действий" },
       { id: "users", label: "Пользователи и роли" }
@@ -25201,6 +25447,48 @@ MAX - https://bizvmax.ru/zifra_plus
       ${adminTab === "external-services" ? renderAdminExternalServicesPanel() : ""}
       ${adminTab === "users" ? renderAdminUsersPanel() : ""}
       ${adminTab === "audit" ? renderAdminAuditPanel() : ""}
+      ${adminTab === "demo" ? renderDatabaseDemoModePanel() : ""}
+    `;
+  }
+
+  function renderDatabaseDemoModePanel() {
+    const enabled = isDatabaseDemoMode();
+    const currentAddress = String(window.location.host || "текущий сервер");
+    return `
+      <section class="panel database-demo-mode-panel" id="admin-tab-demo" role="tabpanel" aria-labelledby="database-demo-mode-title">
+        <div class="database-demo-mode-panel-copy">
+          <p class="eyebrow">Безопасная презентация</p>
+          <h2 id="database-demo-mode-title">Деморежим базы</h2>
+          <p>
+            При включении ФИО, телефоны, email, мессенджеры, паспортные и налоговые реквизиты,
+            адреса, сведения документов об образовании и другие персональные поля обезличиваются
+            на сервере. Фотографии остаются доступными. Настройка действует на адресе
+            <strong>${escapeHtml(currentAddress)}</strong>; для локальной версии и сайта её нужно включить отдельно.
+          </p>
+        </div>
+        <label class="database-demo-mode-switch ${enabled ? "is-enabled" : ""}">
+          <input
+            data-action="toggle-database-demo-mode"
+            type="checkbox"
+            ${enabled ? "checked" : ""}
+          >
+          <span class="database-demo-mode-switch-track" aria-hidden="true"><span></span></span>
+          <span class="database-demo-mode-switch-copy">
+            <strong>${enabled ? "Деморежим включён" : "Деморежим выключен"}</strong>
+            <small>${enabled
+              ? "База обезличена и доступна только для просмотра."
+              : "Авторизованные пользователи видят исходные данные согласно своим правам."}</small>
+          </span>
+        </label>
+        <div class="database-demo-mode-safety" role="note">
+          <strong>Что защищено</strong>
+          <ul>
+            <li>Исходные персональные значения не передаются в браузер и не сохраняются в его кэше.</li>
+            <li>Изменение базы, экспорт, документы, почта, мессенджеры и служебные журналы заблокированы.</li>
+            <li>После переключения все открытые вкладки АИС перезагружаются в новом режиме.</li>
+          </ul>
+        </div>
+      </section>
     `;
   }
 
@@ -34558,24 +34846,6 @@ MAX - https://bizvmax.ru/zifra_plus
       record
     );
     return messages;
-    /*
-     * Старый встроенный набор строк оставлен ниже как справочная копия формул XLSB.
-     * Рабочие тексты собираются из редактируемого справочника шаблонов выше.
-     */
-    return {
-      note1: `${greeting}\n\nМеня зовут Симак Роман Сергеевич, я представляю учебный центр Цифровизация Плюс.\n\nПолучили от Вас заявку на программу *${program}*, для зачисления необходимо прислать следующие документы:\n${documents}\n\nПришлите, пожалуйста, свои документы на адрес mail@edu-plus.ru, мы в ответ подготовим Вам документы для оформления на обучение (договор, анкета, согласие на обработку персональных данных и т.д.).\n\nДальнейшую переписку предлагаю вести в Телеграмме https://t.me/simakrs или Максе https://max.ru/u/f9LHodD0cOJFNLoo1J-p9xzwXq9NcNpBiO_awFVbsccTG5PS38I_pQg_iPE${noEducationDocumentOption}`,
-      note2: `${greeting}\n\nМеня зовут Симак Роман Сергеевич, я представляю учебный центр Цифровизация Плюс.\n\nОтправили Вам на электронную почту (${email}) комплект документов по курсу *${program}* на подпись для зачисления (письмо могло попасть в спам).\n\nПроверьте его, пожалуйста, если все правильно, подпишите (в местах, выделенных галочкой) и отправьте скан на адрес mail@edu-plus.ru\n\nПодписать можно одним из следующих способов:\n1) Через онлайн-сервис - https://www.ilovepdf.com/ru/sign-pdf (графической подписью)\n2) С помощью сервиса Госключ (после подписи нажать Скачать подпись и отправить ее в ответном сообщении) - https://www.gosuslugi.ru/600373/1/form\n3) От руки\n\nДальнейшую переписку предлагаю вести в Телеграмме https://t.me/simakrs или Максе https://max.ru/u/f9LHodD0cOJFNLoo1J-p9xzwXq9NcNpBiO_awFVbsccTG5PS38I_pQg_iPE`,
-      note3: `${greeting}\n\nПоздравляем Вас с завершением обучения по курсу *${program}* и отправляем сюда и на почту (${email}) ${isDpo ? "для согласования макет документа об образовании (проверьте, пожалуйста, личные данные)" : `электронный документ об образовании\n\nБольшая просьба оставить отзыв о пройденном курсе по следующей ссылке ${surveyUrl}`}${balanceReminder}`,
-      note4: `${greeting}\n\n${isDpo ? `Отправляем Вам скан документа об образовании. Оригинал отправим по адресу: ${mailingAddress}` : "Отправляем Вам электронный документ об образовании"}\n\nБольшая просьба оставить отзыв о пройденном курсе по следующей ссылке ${surveyUrl}`,
-      note5: `${greeting}\n\nОтправили Вам документ об образовании на адрес: ${mailingAddress}${postalTrackBlock}\n\nБольшая просьба оставить отзыв о пройденном курсе по следующей ссылке ${surveyUrl}`,
-      note6: `${greeting}\n\nБлагодарим за сотрудничество и дарим купон на дополнительную скидку в 15% на последующее обучение: NEXT15\n\nИ еще одна просьба, сможете отправить своим коллегам, знакомым, разместить в своих соцсетях следующую рекомендацию по нашим курсам?\n\nРекомендую учебный центр Цифровизация Плюс (https://edu-plus.ru?utm_source=${referralCode})\n\nПовышение квалификации, переподготовка, отличный сервис, качество обучения и оперативность.\n\nВот купон на дополнительную скидку в 10% на программы повышения квалификации и переподготовки: SALE10`,
-      note7: `${greeting}\n\nДо окончания Вашего обучения по курсу *${program}* остается ${daysLeft} дн.\n\nЧтобы успеть выполнить все до ${endDateLong} рекомендуется активизировать учебный процесс.\n\nДля просмотра текущих оценок по всем дисциплинам/модулям можете воспользоваться следующей ссылкой - ${reportUrl}\n\nВам нужно выполнить задания по всем дисциплинам/модулям и затем пройти итоговую аттестацию до окончания обучения (проходной балл - не менее 50%: оценка <удовлетворительно> от 50% до 69%, оценка <хорошо> от 70% до 89%, оценка <отлично> 90% и выше)\n\n${isDpo ? "После выполнения всех заданий и прохождения итоговой аттестации по окончанию срока обучения направим Вам макет документа об образовании для согласования" : "После выполнения всех заданий и прохождения итоговой аттестации по окончанию срока обучения направим электронный документ об образовании"}\n\nС уважением, Симак Роман Сергеевич\nУчебный центр Цифровизация Плюс`,
-      note8: `${greeting}\n\nВы досрочно освоили образовательную программу ${program}.\n\nПредлагаем Вам сократить срок обучения до ${reductionDeadline} (с учетом нормативной продолжительности обучения) для более быстрого получения документа об образовании, заключив дополнительное соглашение к договору\n\nНа всякий случай, отправили Вам на электронную почту (${email}) комплект документов на подпись для сокращения обучения на курсах до ${reductionDeadline} (проверьте его, пожалуйста, если все правильно, подпишите и отправьте скан на адрес mail@edu-plus.ru)`,
-      note9: `${greeting}\n\nБлагодарим Вас за сотрудничество и дарим купон на дополнительную скидку в 15% на последующее обучение: ${partnerCoupon}\n\nДанный купон является бессрочным и действует в рамках нашей партнерской программы (https://forms.gle/ArBUi5SB3sw6JHzt6). Вы получите скидку и кэшбэк за свое последующее обучение, а также дополнительный доход от регистраций по купону других слушателей в соответствии с условиями партнерской программы\n\nИ еще одна просьба, сможете отправить своим коллегам, знакомым, разместить в своих соцсетях следующую рекомендацию по нашим курсам?\n\nРекомендую учебный центр Цифровизация Плюс (https://edu-plus.ru?utm_source=${referralCode})\n\nПовышение квалификации, переподготовка, отличный сервис, качество обучения и оперативность.\n\nВот купон на дополнительную скидку в 15% на программы повышения квалификации и переподготовки: ${partnerCoupon}`,
-      note10: `${greeting}\n\nВаш срок обучения по программе ${program} подошел к концу - ${endDate}, но программа не освоена в полном объеме.\n\nПредлагаем Вам на выбор два варианта:\n1) Бесплатно продлить срок обучения до ${reductionDeadline}, заключив дополнительное соглашение к договору (не более 1 раза, затем ПЛАТНО 1000 руб. за каждое последующее продление).\n2) Отчислить Вас без выдачи документа об образовании с последующей возможностью бесплатного восстановления (не более 1 раза, затем ПЛАТНО 1000 руб. за каждое последующее восстановление)\n\nНа всякий случай, отправили Вам на электронную почту (${email}) комплект документов на подпись для продления обучения на курсах до ${reductionDeadline} (проверьте его, пожалуйста, если все правильно, подпишите и отправьте скан на адрес mail@edu-plus.ru)\n\nПлатное продление возможно не более двух раз, затем полная оплата курса с заключением нового договора`,
-      note11: `${greeting}\n\nВаш срок обучения по программе ${program} подошел к концу - ${endDate}, но программа ПОВТОРНО не освоена в полном объеме.\n\nПредлагаем Вам на выбор два варианта:\n1) ПЛАТНО продлить срок обучения до ${reductionDeadline}, заключив дополнительное соглашение к договору (платно 1000 руб. за каждое продление).\n2) Отчислить Вас без выдачи документа об образовании с последующей возможностью ПЛАТНОГО восстановления (платно 1000 руб. за каждое последующее восстановление)\n\nСсылка на оплату: ${extensionPaymentUrl}\n\nПлатное продление возможно не более двух раз, затем полная оплата курса с заключением нового договора`,
-      note12: `${greeting}\n\nОтправляем Вам ссылку для участия в мероприятии ${program} - ${reportUrl}\n\nОтправляем Вам электронный сертификат сюда и на электронную почту (${email}) вместе с записью вебинара\n\nБольшая просьба оставить отзыв, можно написать сюда и прикрепить фотографию (или можем взять из Вашего профиля в вацапе) и мы с Вашего разрешения опубликуем его на странице вебинара\n\nТакже просим заполнить анкету по адресу ${surveyUrl}\n\nПодписывайтесь на наши группы в Телеграм (https://t.me/zifra_plus) и Вконтакте (https://vk.com/zifra_plus)\n\nС уважением, Симак Роман Сергеевич`
-    };
   }
 
   function renderStudentCommunicationTemplates(fields) {
@@ -37280,7 +37550,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button.addEventListener("click", () => {
         const tab = String(button.dataset.adminTab || "");
         if (
-          !["database", "email", "external-services", "audit", "users"].includes(tab)
+          !["database", "email", "demo", "external-services", "audit", "users"].includes(tab)
           || tab === state.adminTab
         ) return;
         state.adminTab = tab;
@@ -37291,6 +37561,8 @@ MAX - https://bizvmax.ru/zifra_plus
         });
       });
     });
+    document.querySelector("[data-action='toggle-database-demo-mode']")
+      ?.addEventListener("change", toggleDatabaseDemoMode);
     document.querySelector("[data-action='refresh-external-services']")?.addEventListener("click", () => {
       loadExternalServices({ force: true });
     });
@@ -44613,6 +44885,9 @@ MAX - https://bizvmax.ru/zifra_plus
   function photoPublicUrl(pathOrUrl) {
     const value = String(pathOrUrl || "");
     if (!value) return "";
+    if (/^(?:https?:\/\/[^/]+)?\/?storage\/photos\//i.test(value)) {
+      return studentSourcePhotoUrl(value);
+    }
     if (/^https?:\/\//i.test(value) || value.startsWith("data:")) return value;
     const pathname = value.startsWith("/") ? value : `/${value}`;
     return window.location.protocol === "file:"
@@ -44679,6 +44954,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function isStudentSourcePhotoPath(value) {
     const source = String(value || "").trim();
+    if (/^demo-photo:(?:students|contracts):/u.test(source)) return true;
     if (!/\.(png|jpe?g|webp|gif)$/i.test(source)) return false;
     return /^[a-z]:[\\/]/i.test(source)
       || /^\[-1\][\\/]+/u.test(source)
@@ -44686,7 +44962,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function studentSourcePhotoUrl(value) {
-    return photoApiUrl(`/api/student-photo?path=${encodeURIComponent(String(value || "").trim())}`);
+    const source = String(value || "").trim();
+    if (/^demo-photo:(?:students|contracts):/u.test(source)) {
+      return photoApiUrl(`/api/student-photo?demoToken=${encodeURIComponent(source)}`);
+    }
+    return photoApiUrl(`/api/student-photo?path=${encodeURIComponent(source)}`);
   }
 
   function getStudentPhotoPathLink(value, storedUrl = "") {
@@ -44747,7 +45027,9 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     document.querySelector("[data-student-mailbox-dialog]")?.remove();
-    const preferredMailbox = mailboxes.find((mailbox) => String(mailbox.login).toLowerCase() === "mail@edu-plus.ru")
+    const preferredMailbox = mailboxes.find((mailbox) => (
+      String(mailbox.login).toLowerCase() === DEFAULT_STUDENT_APPLICATIONS_EMAIL.login.toLowerCase()
+    ))
       || mailboxes[0];
     const backdrop = document.createElement("div");
     backdrop.className = "student-mailbox-backdrop";
@@ -65556,7 +65838,7 @@ MAX - https://bizvmax.ru/zifra_plus
     window.visualViewport?.addEventListener("resize", scheduleMainRegistryTableViewportFit, { passive: true });
     document.addEventListener("scroll", repositionOpenComboPanels, { passive: true, capture: true });
     render();
-    void probeLocalDocumentServices();
+    if (!isDatabaseDemoMode()) void probeLocalDocumentServices();
     if (sharedStateError) {
       window.setTimeout(() => {
         alert(
@@ -65566,11 +65848,13 @@ MAX - https://bizvmax.ru/zifra_plus
         );
       }, 50);
     }
-    const connectionSettingsSync = syncServerConnectionSettings();
-    connectionSettingsSync.finally(() => {
+    const connectionSettingsSync = isDatabaseDemoMode()
+      ? Promise.resolve()
+      : syncServerConnectionSettings();
+    if (!isDatabaseDemoMode()) connectionSettingsSync.finally(() => {
       void checkTrainingEndNotifications();
     });
-    if (shouldBootstrapHostedDatabase) {
+    if (!isDatabaseDemoMode() && shouldBootstrapHostedDatabase) {
       connectionSettingsSync.finally(() => {
         window.setTimeout(() => {
           importStudentsFromDatabase({ shiftKey: false, skipConfirmation: true });
@@ -65578,29 +65862,39 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     }
     window.setInterval(pollSharedApplicationState, SHARED_STATE_POLL_INTERVAL_MS);
-    window.setInterval(checkTrainingEndNotifications, TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS);
+    if (!isDatabaseDemoMode()) {
+      window.setInterval(checkTrainingEndNotifications, TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS);
+    }
     if (sharedStateDirty) scheduleSharedApplicationStateSave(1000);
-    await pollSharedRecordLocks({ renderAfter: false });
-    window.setInterval(pollSharedRecordLocks, RECORD_LOCK_POLL_INTERVAL_MS);
+    if (!isDatabaseDemoMode()) {
+      await pollSharedRecordLocks({ renderAfter: false });
+      window.setInterval(pollSharedRecordLocks, RECORD_LOCK_POLL_INTERVAL_MS);
+    }
     window.addEventListener("visibilitychange", () => {
       if (document.visibilityState !== "visible") return;
       pollSharedApplicationState();
-      pollSharedRecordLocks();
-      void checkTrainingEndNotifications();
+      if (!isDatabaseDemoMode()) {
+        pollSharedRecordLocks();
+        void checkTrainingEndNotifications();
+      }
     });
     window.addEventListener("online", () => {
-      scheduleSharedApplicationStateSave(0);
+      if (!isDatabaseDemoMode()) scheduleSharedApplicationStateSave(0);
       pollSharedApplicationState();
-      pollSharedRecordLocks();
-      void checkTrainingEndNotifications();
+      if (!isDatabaseDemoMode()) {
+        pollSharedRecordLocks();
+        void checkTrainingEndNotifications();
+      }
     });
     window.addEventListener("pagehide", () => {
       const lock = activeRecordLock;
       if (lock) releaseRecordLock(lock, { keepalive: true });
     });
-    window.setTimeout(() => {
-      autoInspectDocumentTemplates();
-    }, 250);
+    if (!isDatabaseDemoMode()) {
+      window.setTimeout(() => {
+        autoInspectDocumentTemplates();
+      }, 250);
+    }
   }
 
   initializeApplication().catch((error) => {

@@ -1,5 +1,7 @@
 (() => {
-  const AUTH_BUILD = "20260831-html-links-visible-text-v2";
+  const AUTH_BUILD = "20260831-database-demo-mode-v1";
+  const DATABASE_DEMO_MODE_CHANNEL = "ais-database-demo-mode";
+  const DATABASE_DEMO_MODE_STORAGE_EVENT_KEY = "ais-database-demo-mode-event";
   const DISMISSIBLE_MODAL_BACKDROP_SELECTOR = ".modal-backdrop, .partner-modal-backdrop, [data-documents-backdrop]";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
@@ -14,6 +16,154 @@
   let startupFailureRendered = false;
   let modalBackdropPointerCandidate = null;
   let confirmedModalBackdropClick = null;
+  let databaseDemoModeEnabled = false;
+  let databaseDemoModeHeartbeatTimer = 0;
+  let databaseDemoModeHeartbeatRunning = false;
+
+  function installSafeDatabaseDemoSeed() {
+    window.AIS_PROGRAM_REGISTRY = [];
+    window.AIS_PROGRAM_REGISTRY_VERSION = "demo";
+    window.AIS_PROGRAM_PAYMENT_REGISTRY = [];
+    window.AIS_PROGRAM_PAYMENT_REGISTRY_VERSION = "demo";
+    window.AIS_SEED = {
+      meta: { organization: "Демонстрационная база", databaseDemoMode: true },
+      dictionaries: {},
+      collections: {}
+    };
+  }
+
+  async function installPrivateDefaultsFromServer() {
+    const payload = await request("api/client-private-defaults");
+    const defaults = payload?.defaults && typeof payload.defaults === "object"
+      ? payload.defaults
+      : {};
+    window.AIS_PRIVATE_DEFAULTS = Object.freeze(defaults);
+  }
+
+  async function purgeDatabaseDemoBrowserData() {
+    const clearApplicationStorage = (storage) => {
+      for (let index = storage.length - 1; index >= 0; index -= 1) {
+        const key = String(storage.key(index) || "");
+        if (/^(?:ais-|advertising-)/i.test(key) && key !== DATABASE_DEMO_MODE_STORAGE_EVENT_KEY) {
+          storage.removeItem(key);
+        }
+      }
+    };
+    try {
+      clearApplicationStorage(localStorage);
+      clearApplicationStorage(sessionStorage);
+    } catch {
+      throw new Error("Деморежим не запущен: браузер не разрешил очистить локальные данные АИС.");
+    }
+    if (!window.indexedDB) return;
+    const names = new Set(["ais-dopobr-web-offline-v1"]);
+    if (typeof window.indexedDB.databases === "function") {
+      try {
+        const databases = await window.indexedDB.databases();
+        databases.forEach((database) => {
+          const name = String(database?.name || "");
+          if (/ais|advertising/i.test(name)) names.add(name);
+        });
+      } catch (error) {
+        console.warn("Не удалось получить перечень автономных баз браузера", error);
+      }
+    }
+    await Promise.all([...names].map((name) => new Promise((resolve, reject) => {
+      const request = window.indexedDB.deleteDatabase(name);
+      let blockedTimer = 0;
+      const finish = (callback, value) => {
+        window.clearTimeout(blockedTimer);
+        callback(value);
+      };
+      request.onsuccess = () => finish(resolve);
+      request.onerror = () => finish(reject, new Error(
+        `Деморежим не запущен: не удалось удалить автономную базу браузера «${name}».`
+      ));
+      request.onblocked = () => {
+        blockedTimer = window.setTimeout(() => finish(reject, new Error(
+          "Деморежим не запущен: автономные данные открыты в другой вкладке. Закройте другие вкладки АИС и повторите вход."
+        )), 5000);
+      };
+    })));
+  }
+
+  function applyDatabaseDemoMode(enabled) {
+    databaseDemoModeEnabled = enabled === true;
+    window.AIS_DATABASE_DEMO_MODE = databaseDemoModeEnabled;
+    window.AIS_DEMO_MODE_MASK = "Данные скрыты";
+    document.documentElement.classList.toggle("is-database-demo-mode", databaseDemoModeEnabled);
+  }
+
+  function broadcastDatabaseDemoMode(enabled) {
+    try {
+      localStorage.setItem(DATABASE_DEMO_MODE_STORAGE_EVENT_KEY, JSON.stringify({
+        enabled: enabled === true,
+        at: Date.now()
+      }));
+    } catch {}
+    try {
+      const channel = new BroadcastChannel(DATABASE_DEMO_MODE_CHANNEL);
+      channel.postMessage({ enabled: enabled === true, at: Date.now() });
+      channel.close();
+    } catch {}
+  }
+
+  window.AIS_DATABASE_DEMO_MODE_API = Object.freeze({ broadcast: broadcastDatabaseDemoMode });
+
+  function handleExternalDatabaseDemoMode(enabled) {
+    if (Boolean(enabled) === databaseDemoModeEnabled) return false;
+    app.innerHTML = "";
+    app.style.visibility = "hidden";
+    window.location.reload();
+    return true;
+  }
+
+  async function verifyDatabaseDemoMode() {
+    if (databaseDemoModeHeartbeatRunning || !authenticatedUser) return;
+    databaseDemoModeHeartbeatRunning = true;
+    try {
+      const payload = await request("api/auth/me");
+      if (typeof payload.demoModeEnabled === "boolean") {
+        return handleExternalDatabaseDemoMode(payload.demoModeEnabled);
+      }
+    } catch {
+      // Обычная обработка истечения сессии остаётся в основном механизме авторизации.
+    } finally {
+      databaseDemoModeHeartbeatRunning = false;
+    }
+    return false;
+  }
+
+  function startDatabaseDemoModeHeartbeat() {
+    if (databaseDemoModeHeartbeatTimer) return;
+    databaseDemoModeHeartbeatTimer = window.setInterval(verifyDatabaseDemoMode, 3000);
+    window.addEventListener("pageshow", (event) => {
+      if (!authenticatedUser) return;
+      if (event.persisted) {
+        app.innerHTML = "";
+        app.style.visibility = "hidden";
+        window.location.reload();
+        return;
+      }
+      void verifyDatabaseDemoMode();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") void verifyDatabaseDemoMode();
+    });
+  }
+
+  window.addEventListener("storage", (event) => {
+    if (event.key !== DATABASE_DEMO_MODE_STORAGE_EVENT_KEY || !event.newValue) return;
+    try {
+      handleExternalDatabaseDemoMode(JSON.parse(event.newValue).enabled);
+    } catch {}
+  });
+  try {
+    const channel = new BroadcastChannel(DATABASE_DEMO_MODE_CHANNEL);
+    channel.addEventListener("message", (event) => {
+      handleExternalDatabaseDemoMode(event.data?.enabled);
+    });
+  } catch {}
 
   function getDismissibleModalBackdrop(target) {
     return target instanceof Element && target.matches(DISMISSIBLE_MODAL_BACKDROP_SELECTOR)
@@ -307,7 +457,7 @@
             password: String(data.get("password") || "")
           })
         });
-        await startApplication(payload.user, payload.sessionExpiresAt);
+        await startApplication(payload.user, payload.sessionExpiresAt, payload.demoModeEnabled);
       } catch (requestError) {
         error.textContent = requestError.message;
         error.hidden = false;
@@ -385,7 +535,7 @@
             <section class="partner-registration-section">
               <div class="partner-registration-section-head"><span>1</span><div><h2>Контактные данные</h2><p>Эти данные нужны для связи и создания кабинета.</p></div></div>
               <div class="partner-registration-grid">
-                <label class="is-wide"><span>Ваше ФИО <b>*</b></span><input name="name" type="text" maxlength="240" autocomplete="name" required placeholder="Иванов Иван Иванович"></label>
+                <label class="is-wide"><span>Ваше ФИО <b>*</b></span><input name="name" type="text" maxlength="240" autocomplete="name" required placeholder="Фамилия Имя Отчество"></label>
                 <label><span>Email <b>*</b></span><input name="email" type="email" maxlength="160" autocomplete="email" required placeholder="name@example.ru"></label>
                 <label><span>Мобильный телефон <b>*</b></span><input name="phone" type="tel" maxlength="40" autocomplete="tel" required placeholder="Желательно с WhatsApp"></label>
                 <label class="is-wide"><span>Место проживания <b>*</b></span><input name="residence" type="text" maxlength="300" autocomplete="address-level2" required placeholder="Город, регион"></label>
@@ -706,18 +856,29 @@
       .replaceAll("'", "&#039;");
   }
 
-  async function startApplication(user, expiresAt) {
+  async function startApplication(user, expiresAt, demoModeEnabled = false) {
+    applyDatabaseDemoMode(demoModeEnabled);
     setAuthenticatedSession(user, expiresAt);
     window.AIS_AUTH_API = Object.freeze({ request, appUrl, redirectToLogin, renderStartupFailure });
     installAuthenticatedFetch();
+    startDatabaseDemoModeHeartbeat();
     renderLoading(user?.role === "partner" ? "Загрузка кабинета партнёра..." : "Загрузка системы...");
     try {
+      if (databaseDemoModeEnabled) {
+        window.history.replaceState({ aisDatabaseDemoMode: true }, "", window.location.href);
+        await purgeDatabaseDemoBrowserData();
+      }
       if (user?.role === "partner") {
         await loadScript("partner-app.js");
       } else {
-        await loadScript("data/program-registry.js");
-        await loadScript("data/program-payment-registry.js");
-        await loadScript("data/seed.js");
+        if (databaseDemoModeEnabled) {
+          installSafeDatabaseDemoSeed();
+        } else {
+          await installPrivateDefaultsFromServer();
+          await loadScript("data/program-registry.js");
+          await loadScript("data/program-payment-registry.js");
+          await loadScript("data/seed.js");
+        }
         await loadScript("app.js");
       }
       applicationStarted = true;
@@ -763,7 +924,7 @@
     }
     try {
       const payload = await request("api/auth/me");
-      await startApplication(payload.user, payload.sessionExpiresAt);
+      await startApplication(payload.user, payload.sessionExpiresAt, payload.demoModeEnabled);
     } catch (error) {
       if (error.status !== 401) console.warn("Служба авторизации недоступна", error);
       renderLogin(error.status === 401 ? "" : error.message);

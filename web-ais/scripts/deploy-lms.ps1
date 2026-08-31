@@ -25,6 +25,8 @@ $runtimeMirrorFiles = @(
   "app-server.js",
   "audit-lib.php",
   "auth-lib.php",
+  "demo-mode-privacy.js",
+  "data/private-defaults.js",
   "data/frdo-export-template.xlsx",
   "services/ocr/server.py",
   "server-cli.js",
@@ -57,6 +59,8 @@ function Test-DeployablePath([string]$PathValue) {
     "audit-lib.php",
     "auth-bootstrap.js",
     "auth-lib.php",
+    "demo-mode-privacy.js",
+    "demo-mode-settings.php",
     "favicon.ico",
     "field-html-links.js",
     "gateway.php",
@@ -484,6 +488,10 @@ function Publish-FileTarget(
 $results = foreach ($relativeFile in $pathsToDeploy) {
   if ($relativeFile -eq ".runtime/tunnel-runtime.json") {
     Publish-FileTarget $relativeFile "$remoteRoot/storage/tunnel-runtime.json" "protected runtime"
+    continue
+  }
+  if ($relativeFile -eq "data/private-defaults.js") {
+    Publish-FileTarget $relativeFile "$runtimeAppRoot/$relativeFile" "runtime"
     continue
   }
   Publish-FileTarget $relativeFile "$remoteRoot/$relativeFile" "public"

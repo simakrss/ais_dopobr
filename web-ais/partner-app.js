@@ -598,7 +598,7 @@
     return `
       <section class="partner-page-heading"><div><p>Связь с учебным центром</p><h2>Обратная связь</h2></div><span>Ответ поступит на email из вашего профиля</span></section>
       <section class="partner-feedback-layout">
-        <article class="partner-panel partner-feedback-info">${icon("mail")}<h3>Напишите нам</h3><p>Задайте вопрос по начислениям, договору или материалам партнёрской программы.</p><dl><dt>Получатель</dt><dd>${escapeHtml(state.portal.feedbackRecipient || "mail@zifra-plus.ru")}</dd><dt>Ваш email</dt><dd>${escapeHtml(authUser.email || state.portal.profile?.tabs?.main?.find((field) => field.key === "email")?.value || "не указан")}</dd></dl></article>
+        <article class="partner-panel partner-feedback-info">${icon("mail")}<h3>Напишите нам</h3><p>Задайте вопрос по начислениям, договору или материалам партнёрской программы.</p><dl><dt>Получатель</dt><dd>${escapeHtml(state.portal.feedbackRecipient || "не настроен")}</dd><dt>Ваш email</dt><dd>${escapeHtml(authUser.email || state.portal.profile?.tabs?.main?.find((field) => field.key === "email")?.value || "не указан")}</dd></dl></article>
         <form class="partner-panel partner-feedback-form" data-feedback-form>
           <label><span>Тема</span><input name="subject" type="text" maxlength="180" required value="${escapeAttr(state.feedbackDraft.subject)}" placeholder="Кратко опишите вопрос"></label>
           <label><span>Сообщение</span><textarea name="message" rows="9" minlength="10" maxlength="10000" required placeholder="Введите сообщение">${escapeHtml(state.feedbackDraft.message)}</textarea></label>

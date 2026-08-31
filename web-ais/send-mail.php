@@ -56,6 +56,13 @@ if ($auditLibrary === null) {
 }
 require_once $auditLibrary;
 
+$demoModeSettingsLibrary = __DIR__ . '/demo-mode-settings.php';
+if (!is_file($demoModeSettingsLibrary)) {
+    http_response_code(500);
+    exit('Database demo mode service is unavailable.');
+}
+require_once $demoModeSettingsLibrary;
+
 function send_json(int $status, array $payload): void
 {
     http_response_code($status);
@@ -619,6 +626,15 @@ function send_smtp_mail(
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     header('Allow: POST');
     send_json(405, ['ok' => false, 'error' => 'Разрешен только POST-запрос.']);
+}
+
+if (ais_database_demo_mode_enabled()) {
+    send_json(403, [
+        'ok' => false,
+        'error' => 'Действие недоступно: включён деморежим базы.',
+        'code' => 'DEMO_MODE_READ_ONLY',
+        'demoModeEnabled' => true,
+    ]);
 }
 
 try {

@@ -49,6 +49,13 @@ if ($auditLibrary === null) {
 }
 require_once $auditLibrary;
 
+$demoModeSettingsLibrary = __DIR__ . '/demo-mode-settings.php';
+if (!is_file($demoModeSettingsLibrary)) {
+    http_response_code(500);
+    exit('Database demo mode service is unavailable.');
+}
+require_once $demoModeSettingsLibrary;
+
 function gateway_json(int $status, array $payload): void
 {
     http_response_code($status);
@@ -62,6 +69,43 @@ function gateway_json(int $status, array $payload): void
 function gateway_fail(int $status, string $message): void
 {
     gateway_json($status, ['error' => $message]);
+}
+
+function gateway_database_demo_mode_enabled(): bool
+{
+    return ais_database_demo_mode_enabled();
+}
+
+function gateway_database_demo_public_user(array $user): array
+{
+    if (!gateway_database_demo_mode_enabled()) {
+        return $user;
+    }
+    $user['id'] = 'demo-user';
+    $user['login'] = 'demo';
+    $user['name'] = (($user['role'] ?? '') === 'admin')
+        ? 'Демо-администратор'
+        : 'Демо-пользователь';
+    $user['email'] = '';
+    $user['phone'] = '';
+    $user['employeeId'] = '';
+    return $user;
+}
+
+function gateway_database_demo_mode_fail(): void
+{
+    gateway_json(403, [
+        'error' => 'Действие недоступно: включён деморежим базы.',
+        'code' => 'DEMO_MODE_READ_ONLY',
+        'demoModeEnabled' => true,
+    ]);
+}
+
+function gateway_database_demo_mode_clear_http_cache(): void
+{
+    if (gateway_database_demo_mode_enabled()) {
+        header('Clear-Site-Data: "cache"');
+    }
 }
 
 function gateway_request_headers(): array
@@ -135,6 +179,8 @@ function gateway_run_node(string $url, string $method, array $headers, string $b
     $stdoutPath = gateway_temp_file('ais-stdout-');
     $stderrPath = gateway_temp_file('ais-stderr-');
     $paths = [$requestPath, $requestBodyPath, $responsePath, $responseBodyPath, $stdoutPath, $stderrPath];
+    $internalGatewaySecret = ais_database_demo_mode_id_secret();
+    $headers['x-ais-gateway-token'] = $internalGatewaySecret;
 
     try {
         file_put_contents($requestPath, json_encode([
@@ -151,6 +197,9 @@ function gateway_run_node(string $url, string $method, array $headers, string $b
             2 => ['file', $stderrPath, 'ab'],
         ];
         putenv('AIS_APP_ROOT=' . __DIR__);
+        putenv('AIS_DATABASE_DEMO_MODE_PATH=' . ais_database_demo_mode_flag_path());
+        putenv('AIS_DATABASE_DEMO_ID_SECRET=' . $internalGatewaySecret);
+        putenv('AIS_GATEWAY_SHARED_SECRET=' . $internalGatewaySecret);
         putenv('AIS_TRUST_GATEWAY=1');
         putenv('AIS_OCR_CLI=1');
         $process = proc_open($command, $descriptors, $pipes, __DIR__, null, ['bypass_shell' => true]);
@@ -340,6 +389,24 @@ function gateway_require_admin(array $user): void
     }
 }
 
+function gateway_verify_admin_password(array $user, string $password): void
+{
+    if ($password === '') {
+        gateway_fail(400, 'Для выключения деморежима введите текущий пароль администратора.');
+    }
+    $userId = (string) ($user['id'] ?? '');
+    $login = ais_auth_normalize_login((string) ($user['login'] ?? ''));
+    foreach (ais_auth_load_users() as $storedUser) {
+        $sameUser = (string) ($storedUser['id'] ?? '') === $userId
+            || ais_auth_normalize_login((string) ($storedUser['login'] ?? '')) === $login;
+        if ($sameUser && ais_auth_verify_password($password, (string) ($storedUser['passwordHash'] ?? ''))) {
+            return;
+        }
+    }
+    usleep(250000);
+    gateway_fail(403, 'Текущий пароль администратора указан неверно.');
+}
+
 function gateway_partner_record_rank(array $employee): int
 {
     $section = mb_strtolower(trim((string) ($employee['section'] ?? $employee['status'] ?? '')), 'UTF-8');
@@ -426,10 +493,12 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
             'entityId' => $user['id'] ?? '',
             'entityLabel' => $user['login'] ?? '',
         ], $user);
+        gateway_database_demo_mode_clear_http_cache();
         gateway_json(200, [
             'ok' => true,
-            'user' => $user,
+            'user' => gateway_database_demo_public_user($user),
             'sessionExpiresAt' => ais_auth_session_expires_at_ms(),
+            'demoModeEnabled' => gateway_database_demo_mode_enabled(),
         ]);
     }
     if ($method === 'GET' && $path === '/api/auth/me') {
@@ -437,10 +506,12 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
         if ($user === null) {
             gateway_fail(401, 'Требуется вход в систему.');
         }
+        gateway_database_demo_mode_clear_http_cache();
         gateway_json(200, [
             'ok' => true,
-            'user' => $user,
+            'user' => gateway_database_demo_public_user($user),
             'sessionExpiresAt' => ais_auth_session_expires_at_ms(),
+            'demoModeEnabled' => gateway_database_demo_mode_enabled(),
         ]);
     }
     if ($method === 'POST' && $path === '/api/auth/logout') {
@@ -458,6 +529,9 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
         gateway_json(200, ['ok' => true]);
     }
     if ($method === 'POST' && $path === '/api/auth/profile') {
+        if (gateway_database_demo_mode_enabled()) {
+            gateway_database_demo_mode_fail();
+        }
         $user = gateway_require_user();
         if ((string) ($user['role'] ?? '') === 'partner') {
             gateway_fail(403, 'Данные партнёра изменяются в карточке сотрудника.');
@@ -482,6 +556,9 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
         gateway_json(200, ['ok' => true, 'user' => $updated]);
     }
     if ($method === 'POST' && $path === '/api/auth/password') {
+        if (gateway_database_demo_mode_enabled()) {
+            gateway_database_demo_mode_fail();
+        }
         $user = gateway_require_user();
         if ((string) ($user['role'] ?? '') === 'partner') {
             gateway_fail(403, 'Пароль партнёра изменяется в реквизитах СДО сотрудника.');
@@ -655,17 +732,25 @@ function gateway_serve_protected_data(string $path): void
         gateway_fail(403, 'Раздел недоступен в кабинете партнёра.');
     }
     $runtimeDataRoot = dirname(__DIR__, 2) . '/lms-runtime/data';
-    $dataRoot = is_dir($runtimeDataRoot) ? $runtimeDataRoot : __DIR__ . '/data';
+    $publicDataRoot = __DIR__ . '/data';
+    $dataFile = static function (string $name) use ($runtimeDataRoot, $publicDataRoot): string {
+        $runtimeFile = $runtimeDataRoot . '/' . $name;
+        return is_file($runtimeFile) ? $runtimeFile : $publicDataRoot . '/' . $name;
+    };
     $allowed = [
-        '/data/program-registry.js' => $dataRoot . '/program-registry.js',
-        '/data/program-payment-registry.js' => $dataRoot . '/program-payment-registry.js',
-        '/data/seed.js' => $dataRoot . '/seed.js',
+        '/data/program-registry.js' => $dataFile('program-registry.js'),
+        '/data/program-payment-registry.js' => $dataFile('program-payment-registry.js'),
+        '/data/seed.js' => $dataFile('seed.js'),
+        '/data/max-messenger-icon.png' => ['file' => $dataFile('max-messenger-icon.png'), 'type' => 'image/png'],
     ];
-    $file = $allowed[$path] ?? '';
+    $selected = $allowed[$path] ?? '';
+    $file = is_array($selected) ? (string) ($selected['file'] ?? '') : (string) $selected;
     if ($file === '' || !is_file($file)) {
         gateway_fail(404, 'Not found');
     }
-    header('Content-Type: text/javascript; charset=utf-8');
+    header('Content-Type: ' . (is_array($selected)
+        ? (string) ($selected['type'] ?? 'application/octet-stream')
+        : 'text/javascript; charset=utf-8'));
     header('Cache-Control: no-store');
     header('X-Content-Type-Options: nosniff');
     readfile($file);
@@ -2866,6 +2951,12 @@ if (strlen($body) > $requestBodyLimit) {
 
 try {
     if (str_starts_with($requestPath, '/data/')) {
+        if (
+            gateway_database_demo_mode_enabled()
+            && $requestPath !== '/data/max-messenger-icon.png'
+        ) {
+            gateway_database_demo_mode_fail();
+        }
         gateway_serve_protected_data($requestPath);
     }
     if (str_starts_with($requestPath, '/api/auth/')) {
@@ -2874,6 +2965,9 @@ try {
             '/api/auth/partner-registration',
             '/api/auth/partner-registration/confirm',
         ], true)) {
+            if (gateway_database_demo_mode_enabled()) {
+                gateway_database_demo_mode_fail();
+            }
             $publicHeaders = gateway_request_headers();
             $publicHeaders['x-ais-public-app-url'] = gateway_public_app_url();
             $publicHeaders['x-ais-client-ip'] = substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 80);
@@ -2888,10 +2982,19 @@ try {
         gateway_send_node_response($response);
     }
     if (str_starts_with($requestPath, '/api/document-conversion/source/')) {
+        if (gateway_database_demo_mode_enabled()) {
+            gateway_database_demo_mode_fail();
+        }
         $response = gateway_run_node(gateway_api_url(), $method, gateway_request_headers(), $body);
         gateway_send_node_response($response);
     }
 
+    if (
+        gateway_database_demo_mode_enabled()
+        && str_starts_with($requestPath, '/api/advertising/')
+    ) {
+        gateway_database_demo_mode_fail();
+    }
     gateway_handle_advertising_source_proxy($method, $requestPath, $body);
 
     $currentUser = gateway_require_user();
@@ -2903,6 +3006,62 @@ try {
     $authenticatedHeaders['x-ais-employee-id'] = (string) ($currentUser['employeeId'] ?? '');
     $authenticatedHeaders['x-ais-session-id'] = hash('sha256', (string) session_id());
     unset($authenticatedHeaders['x-ais-document-backend']);
+    unset($authenticatedHeaders['x-ais-demo-mode-reauthenticated']);
+    unset($authenticatedHeaders['x-ais-demo-mode-id-secret']);
+    if ($requestPath === '/api/admin/demo-mode') {
+        gateway_require_admin($currentUser);
+        if ($method === 'POST' && gateway_database_demo_mode_enabled()) {
+            $demoModePayload = gateway_read_json_body($body);
+            if (($demoModePayload['enabled'] ?? null) === false) {
+                gateway_verify_admin_password(
+                    $currentUser,
+                    (string) ($demoModePayload['currentPassword'] ?? '')
+                );
+                $authenticatedHeaders['x-ais-demo-mode-reauthenticated'] = '1';
+            }
+        }
+        $response = gateway_run_node(gateway_api_url(), $method, $authenticatedHeaders, $body);
+        gateway_send_node_response($response);
+    }
+    if (gateway_database_demo_mode_enabled()) {
+        if (
+            $method === 'GET'
+            && $requestPath === '/api/shared-state'
+            && (string) ($_GET['flush'] ?? '') !== '1'
+        ) {
+            $response = gateway_run_node(gateway_api_url(), $method, $authenticatedHeaders, $body);
+            gateway_send_node_response($response);
+        }
+        if (
+            in_array($method, ['GET', 'HEAD'], true)
+            && $requestPath === '/api/student-photo'
+        ) {
+            $demoPhotoTunnelSettings = gateway_tunnel_settings();
+            if ($demoPhotoTunnelSettings !== null) {
+                try {
+                    $demoPhotoHeaders = $authenticatedHeaders;
+                    $demoPhotoHeaders['x-ais-demo-mode-id-secret'] = ais_database_demo_mode_id_secret();
+                    $response = gateway_run_tunnel(
+                        $demoPhotoTunnelSettings,
+                        gateway_api_url(),
+                        $method,
+                        $demoPhotoHeaders,
+                        $body
+                    );
+                    $response['headers']['X-AIS-Processing'] = 'local-tunnel';
+                    gateway_send_node_response($response);
+                } catch (Throwable $tunnelError) {
+                    gateway_fail(
+                        503,
+                        'Фотография недоступна: проверьте, что компьютер Server включён и туннель запущен.'
+                    );
+                }
+            }
+            $response = gateway_run_node(gateway_api_url(), $method, $authenticatedHeaders, $body);
+            gateway_send_node_response($response);
+        }
+        gateway_database_demo_mode_fail();
+    }
     if ((string) ($currentUser['role'] ?? '') === 'partner'
         && !str_starts_with($requestPath, '/api/partner/')) {
         gateway_fail(403, 'Раздел недоступен в кабинете партнёра.');
