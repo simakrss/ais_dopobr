@@ -585,14 +585,23 @@ function Start-AisService {
     if (-not $service) { throw "Служба не появилась после установки." }
   }
   $workerTask = Get-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
-  if (-not $workerTask -and $serviceWasPresent -and $InstallIfMissing) {
-    Write-Host "Фоновая задача службы отсутствует. Выполняется восстановление установки АИС."
+  $trayTask = Get-ScheduledTask -TaskName $trayTaskName -ErrorAction SilentlyContinue
+  if ((-not $workerTask -or -not $trayTask) -and $serviceWasPresent -and $InstallIfMissing) {
+    $missingTasks = @(
+      $(if (-not $workerTask) { $workerTaskName }),
+      $(if (-not $trayTask) { $trayTaskName })
+    ) | Where-Object { $_ }
+    Write-Host "Отсутствуют задачи автозапуска: $($missingTasks -join ', '). Выполняется восстановление установки АИС."
     Install-AisService
     $service = Get-AisService
     $workerTask = Get-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
+    $trayTask = Get-ScheduledTask -TaskName $trayTaskName -ErrorAction SilentlyContinue
   }
   if (-not $workerTask) {
     throw "Не найдена фоновая задача $workerTaskName. Переустановите службу АИС через этот BAT-файл."
+  }
+  if (-not $trayTask) {
+    Write-Warning "Не найдена задача автозапуска $trayTaskName. Значок будет запущен напрямую в текущем сеансе."
   }
   $service.Refresh()
   if ($service.Status -eq [System.ServiceProcess.ServiceControllerStatus]::StopPending) {
@@ -666,7 +675,7 @@ switch ($Action) {
   }
   "Start" {
     Start-AisService
-    if ($ShowTray) { Start-AisTray $true }
+    Start-AisTray $true
     if ($OpenBrowser) { Open-AisBrowser }
   }
   "Stop" {
@@ -675,7 +684,7 @@ switch ($Action) {
   "Restart" {
     Stop-AisService
     Start-AisService
-    if ($ShowTray) { Start-AisTray $true }
+    Start-AisTray $true
     if ($OpenBrowser) { Open-AisBrowser }
   }
   "Open" {

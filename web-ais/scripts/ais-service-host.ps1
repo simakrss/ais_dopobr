@@ -21,6 +21,14 @@ $startupUpdatePath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot,
 $portableNodePath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, ".runtime\node\node.exe"))
 $workerLogPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "tmp\lan-system\worker-launch.log"))
 $powerShellPath = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\v1.0\powershell.exe"
+$programDataRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) "AisDopobrWeb"
+$protectedControllerPath = Join-Path $programDataRoot "control-ais-service.ps1"
+$sourceControllerPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "scripts\control-ais-service.ps1"))
+$controllerPath = if (Test-Path -LiteralPath $protectedControllerPath -PathType Leaf) {
+  $protectedControllerPath
+} else {
+  $sourceControllerPath
+}
 
 function Write-ServiceLog([string]$Source, [string]$Message) {
   $logDirectory = Split-Path -Parent $workerLogPath
@@ -75,10 +83,14 @@ function Quote-ProcessArgument([string]$Value) {
   return '"' + $escaped + '"'
 }
 
-function Invoke-HiddenPowerShellScript([string]$ScriptPath, [string]$LogSource) {
+function Invoke-HiddenPowerShellScript(
+  [string]$ScriptPath,
+  [string]$LogSource,
+  [string[]]$Arguments = @()
+) {
   $argumentValues = @(
     "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $ScriptPath
-  )
+  ) + @($Arguments)
   $startInfo = New-Object Diagnostics.ProcessStartInfo
   $startInfo.FileName = $powerShellPath
   $startInfo.Arguments = (@($argumentValues) | ForEach-Object {
@@ -112,6 +124,18 @@ function Invoke-HiddenPowerShellScript([string]$ScriptPath, [string]$LogSource) 
     return [int]$process.ExitCode
   } finally {
     $process.Dispose()
+  }
+}
+
+function Ensure-AisTrayVisible {
+  if (-not (Test-Path -LiteralPath $controllerPath -PathType Leaf)) {
+    throw "Не найден контроллер запуска значка АИС: $controllerPath"
+  }
+  $trayExitCode = Invoke-HiddenPowerShellScript $controllerPath "TRAY" @(
+    "-Action", "Tray", "-SourceAppRoot", $resolvedAppRoot
+  )
+  if ($trayExitCode -ne 0) {
+    throw "Контроллер трея завершился с кодом $trayExitCode."
   }
 }
 
@@ -271,6 +295,13 @@ if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
 }
 if (-not (Test-Path -LiteralPath $startupUpdatePath -PathType Leaf)) {
   throw "Не найден сценарий синхронизации GitHub и сайта: $startupUpdatePath"
+}
+Write-ServiceStep "Проверка значка АИС в системном трее..."
+try {
+  Ensure-AisTrayVisible
+  Write-ServiceStep "Значок АИС запущен в системном трее."
+} catch {
+  Write-ServiceStep "Значок АИС пока не запущен: $($_.Exception.Message)"
 }
 Write-ServiceStep "Рабочая папка: $resolvedAppRoot"
 Write-ServiceStep "Проверка обновлений GitHub и edu-plus.ru/lms..."

@@ -62,6 +62,10 @@ assert.match(hostSource, /worker-launch\.log/u);
 assert.doesNotMatch(hostSource, /service-launch\.log/u);
 assert.doesNotMatch(hostSource, /--open-browser/u);
 assert.match(hostSource, /function Invoke-HiddenPowerShellScript/u);
+assert.match(hostSource, /function Ensure-AisTrayVisible/u);
+assert.match(hostSource, /CommonApplicationData[\s\S]*?control-ais-service\.ps1/u);
+assert.match(hostSource, /Invoke-HiddenPowerShellScript\s+\$controllerPath\s+"TRAY"[\s\S]*?"-Action",\s*"Tray"/u);
+assert.match(hostSource, /Проверка значка АИС в системном трее/u);
 assert.match(hostSource, /CreateNoWindow\s*=\s*\$true/u);
 assert.match(hostSource, /WindowStyle\s*=\s*\[Diagnostics\.ProcessWindowStyle\]::Hidden/u);
 assert.doesNotMatch(hostSource, /& powershell\.exe[\s\S]*?\$startupUpdatePath/u);
@@ -86,6 +90,10 @@ assert.match(controllerSource, /Задача планировщика не по�
 assert.match(controllerSource, /\$runningFromProtectedRoot[\s\S]*?\$protectedTrayPath/u);
 assert.match(controllerSource, /function Test-AisTrayReady/u);
 assert.match(controllerSource, /function Wait-AisTrayReady/u);
+assert.match(controllerSource, /\(-not \$workerTask -or -not \$trayTask\)[\s\S]*?Install-AisService/u);
+assert.doesNotMatch(controllerSource, /if\s*\(\$ShowTray\)\s*\{\s*Start-AisTray/u);
+assert.match(controllerSource, /"Start"\s*\{[\s\S]*?Start-AisService[\s\S]*?Start-AisTray\s+\$true/u);
+assert.match(controllerSource, /"Restart"\s*\{[\s\S]*?Start-AisService[\s\S]*?Start-AisTray\s+\$true/u);
 assert.match(
   controllerSource,
   /function Start-AisTray[\s\S]*?Start-ScheduledTask[\s\S]*?Wait-AisTrayReady/u
