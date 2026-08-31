@@ -1604,6 +1604,7 @@ function publicAuthUser(user) {
     email: String(user?.email || ""),
     phone: String(user?.phone || ""),
     employeeId: String(user?.employeeId || ""),
+    authSource: String(user?.authSource || "manual"),
     createdAt: String(user?.createdAt || ""),
     updatedAt: String(user?.updatedAt || ""),
     lastLoginAt: String(user?.lastLoginAt || "")
@@ -2058,9 +2059,55 @@ function validateAuthPhone(value) {
 
 async function handleAuthLogin(req, res) {
   const body = await readJsonBody(req);
-  const users = await loadAuthUsers();
   const login = normalizeAuthLogin(body.login);
-  const index = users.findIndex((user) => normalizeAuthLogin(user.login) === login);
+  let users = await loadAuthUsers();
+  let index = users.findIndex((user) => normalizeAuthLogin(user.login) === login);
+  const findLinkedUserForEmployee = (candidate) => users.find((user) => (
+    String(user.authSource || "") === "employee"
+    && String(user.employeeId || "") === String(candidate?.id || "")
+  )) || null;
+  let synchronized = null;
+  let directorySynchronized = false;
+  let linkedSyncFailed = false;
+  const linkedSyncRequired = index >= 0 && String(users[index].authSource || "") === "employee";
+  const shouldSynchronize = !isDatabaseDemoModeEnabled() && (
+    !users.some((user) => String(user.authSource || "") === "employee")
+    || (index >= 0 && String(users[index].authSource || "") === "employee")
+  );
+  if (shouldSynchronize) {
+    try {
+      synchronized = await synchronizeStoredAuthUsersWithEmployees();
+      directorySynchronized = true;
+      users = synchronized.users;
+      index = users.findIndex((user) => normalizeAuthLogin(user.login) === login);
+    } catch (error) {
+      console.warn(`Не удалось синхронизировать учётные записи сотрудников: ${error.message}`);
+      linkedSyncFailed = linkedSyncRequired;
+    }
+  }
+  if (linkedSyncFailed) {
+    sendError(res, 503, "Не удалось проверить актуальные реквизиты СДО. Повторите вход позже.");
+    return;
+  }
+  let employee = null;
+  if (index < 0 && !directorySynchronized) {
+    employee = await authenticatePartnerEmployee(body.login, body.password).catch(() => null);
+    if (employee && !isDatabaseDemoModeEnabled()) {
+      const linkedEmployeeUser = findLinkedUserForEmployee(employee);
+      try {
+        synchronized = await synchronizeStoredAuthUsersWithEmployees();
+        directorySynchronized = true;
+        users = synchronized.users;
+        index = users.findIndex((user) => normalizeAuthLogin(user.login) === login);
+      } catch (error) {
+        console.warn(`Не удалось создать учётную запись сотрудника при входе: ${error.message}`);
+        if (linkedEmployeeUser) {
+          sendError(res, 503, "Не удалось проверить актуальные реквизиты СДО. Повторите вход позже.");
+          return;
+        }
+      }
+    }
+  }
   if (
     index >= 0
     && users[index].status === "active"
@@ -2087,8 +2134,23 @@ async function handleAuthLogin(req, res) {
     });
     return;
   }
-  const employee = await authenticatePartnerEmployee(body.login, body.password).catch(() => null);
+  if (index >= 0) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    sendError(res, 401, "Неверный логин или пароль.");
+    return;
+  }
+  if (directorySynchronized) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    sendError(res, 401, "Неверный логин или пароль.");
+    return;
+  }
+  employee ||= await authenticatePartnerEmployee(body.login, body.password).catch(() => null);
   if (!employee) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    sendError(res, 401, "Неверный логин или пароль.");
+    return;
+  }
+  if (findLinkedUserForEmployee(employee)) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     sendError(res, 401, "Неверный логин или пароль.");
     return;
@@ -2175,6 +2237,10 @@ async function handleAuthPassword(req, res, user) {
     sendError(res, 403, "Пароль партнёра изменяется в реквизитах СДО сотрудника.");
     return;
   }
+  if (user.employeeId) {
+    sendError(res, 403, "Пароль связанной учётной записи изменяется в реквизитах СДО сотрудника.");
+    return;
+  }
   const body = await readJsonBody(req);
   const newPassword = String(body.newPassword || "");
   if (Array.from(newPassword).length < 6) throw new Error("Новый пароль должен содержать не менее 6 символов.");
@@ -2207,7 +2273,12 @@ async function handleAdminUsers(req, res, user) {
     return;
   }
   if (req.method === "GET") {
-    sendJson(res, 200, { users: (await loadAuthUsers()).map(publicAuthUser) });
+    const synchronized = await synchronizeStoredAuthUsersWithEmployees();
+    sendJson(res, 200, {
+      users: synchronized.users.map(publicAuthUser),
+      employees: synchronized.employees.map(publicAuthEmployee),
+      employeeSync: synchronized.stats
+    });
     return;
   }
   if (req.method !== "POST") {
@@ -2215,16 +2286,33 @@ async function handleAdminUsers(req, res, user) {
     return;
   }
   const body = await readJsonBody(req);
-  const users = await loadAuthUsers();
-  const id = String(body.id || "").trim();
+  const synchronized = await synchronizeStoredAuthUsersWithEmployees();
+  const users = synchronized.users;
+  const requestedEmployeeId = String(body.employeeId || "").trim();
+  const employee = requestedEmployeeId
+    ? synchronized.employees.find((item) => item.id === requestedEmployeeId)
+    : null;
+  if (requestedEmployeeId && !employee) throw new Error("Выбранная карточка сотрудника не найдена.");
+  let id = String(body.id || "").trim();
+  if (!id && employee) {
+    id = String(users.find((item) => (
+      String(item.employeeId || "") === employee.id
+      || normalizeAuthLogin(item.login) === employee.login
+    ))?.id || "");
+  }
   const before = users.find((item) => item.id === id);
-  const login = validateAuthLogin(body.login);
-  const name = String(body.name || "").trim();
-  const role = String(body.role || "manager");
-  const status = String(body.status || "active");
-  let password = String(body.password || "");
+  if (before?.employeeId && !employee) {
+    throw new Error("Связанную учётную запись нельзя отвязать от карточки сотрудника.");
+  }
+  const login = employee ? employee.login : validateAuthLogin(body.login);
+  const name = employee ? employee.name : String(body.name || "").trim();
+  const role = String(body.role || before?.role || employee?.access?.role || "manager");
+  const requestedStatus = String(body.status || before?.status || employee?.access?.status || "active");
+  const status = employee?.access?.status === "blocked" ? "blocked" : requestedStatus;
+  let password = employee ? employee.password : String(body.password || "");
   if (!name || Array.from(name).length > 120) throw new Error("Укажите имя пользователя.");
-  if (!new Set(["admin", "manager"]).has(role)) throw new Error("Выбрана неизвестная роль.");
+  const allowedRoles = employee ? new Set(["manager", "partner"]) : new Set(["admin", "manager"]);
+  if (!allowedRoles.has(role)) throw new Error("Выбрана неизвестная роль.");
   if (!new Set(["active", "blocked"]).has(status)) throw new Error("Выбран неизвестный статус.");
   if (users.some((item) => item.id !== id && normalizeAuthLogin(item.login) === login)) {
     throw new Error("Пользователь с таким логином уже существует.");
@@ -2237,7 +2325,15 @@ async function handleAdminUsers(req, res, user) {
     users.push({
       id: crypto.randomBytes(12).toString("hex"), login, name, role, status,
       email: validateAuthEmail(body.email), phone: validateAuthPhone(body.phone),
-      passwordHash: authHashPassword(password), createdAt: now, updatedAt: now, lastLoginAt: ""
+      employeeId: employee?.id || "",
+      authSource: employee ? "employee" : "manual",
+      ...(employee ? {
+        employeeRoleOverride: role === employee.access.role ? "" : role,
+        employeeStatusOverride: status === employee.access.status ? "" : status
+      } : {}),
+      passwordHash: authHashPassword(password),
+      ...(employee ? { employeeCredentialFingerprint: authEmployeeCredentialFingerprint(employee) } : {}),
+      createdAt: now, updatedAt: now, lastLoginAt: ""
     });
     index = users.length - 1;
   } else {
@@ -2246,12 +2342,19 @@ async function handleAdminUsers(req, res, user) {
     }
     users[index] = {
       ...users[index], login, name, role, status,
-      email: validateAuthEmail(body.email), phone: validateAuthPhone(body.phone), updatedAt: now
+      email: validateAuthEmail(body.email), phone: validateAuthPhone(body.phone),
+      employeeId: employee?.id || "",
+      authSource: employee ? "employee" : "manual",
+      employeeRoleOverride: employee && role !== employee.access.role ? role : "",
+      employeeStatusOverride: employee && status !== employee.access.status ? status : "",
+      updatedAt: now
     };
-    if (password) {
+    const employeeFingerprint = employee ? authEmployeeCredentialFingerprint(employee) : "";
+    if (password && (!employee || users[index].employeeCredentialFingerprint !== employeeFingerprint)) {
       if (Array.from(password).length < 3) throw new Error("Пароль должен содержать не менее 3 символов.");
       users[index].passwordHash = authHashPassword(password);
     }
+    if (employee) users[index].employeeCredentialFingerprint = employeeFingerprint;
   }
   const activeAdmins = users.filter((item) => item.role === "admin" && item.status === "active").length;
   if (!activeAdmins) throw new Error("В системе должен оставаться хотя бы один активный администратор.");
@@ -34086,6 +34189,260 @@ function resolveDatabaseDemoPhotoAccess(req, localDemoModeEnabled = isDatabaseDe
   };
 }
 
+function getEmployeeAuthAccess(employee = {}) {
+  const section = String(employee.section || employee.status || "")
+    .trim()
+    .toLocaleLowerCase("ru-RU");
+  if (section.includes("действующ") || section === "действует") {
+    return { role: "manager", status: "active" };
+  }
+  if (section.includes("партнер") || section.includes("партнёр")) {
+    return { role: "partner", status: "active" };
+  }
+  return { role: "partner", status: "blocked" };
+}
+
+function normalizeEmployeeAuthRecord(employee = {}) {
+  const name = Array.from(String(employee.name || "").trim()).slice(0, 120).join("");
+  const password = String(employee.password || "");
+  let login = "";
+  try {
+    login = validateAuthLogin(employee.login);
+  } catch {
+    return null;
+  }
+  if (!name || !password) return null;
+  const employeeId = String(employee.id || "").trim()
+    || crypto.createHash("sha256")
+      .update(`${login}\0${String(employee.contractNo || "")}\0${name}`)
+      .digest("hex")
+      .slice(0, 24);
+  let email = "";
+  let phone = "";
+  try { email = validateAuthEmail(employee.email); } catch {}
+  try { phone = validateAuthPhone(employee.phone); } catch {}
+  return {
+    ...employee,
+    id: employeeId,
+    login,
+    name,
+    password,
+    email,
+    phone,
+    access: getEmployeeAuthAccess(employee)
+  };
+}
+
+function buildEmployeeAuthDirectory(contracts = []) {
+  const groups = new Map();
+  let skipped = 0;
+  for (const source of Array.isArray(contracts) ? contracts : []) {
+    if (!source || typeof source !== "object") {
+      skipped += 1;
+      continue;
+    }
+    const employee = normalizeEmployeeAuthRecord(source);
+    if (!employee) {
+      skipped += 1;
+      continue;
+    }
+    const rows = groups.get(employee.login) || [];
+    rows.push(employee);
+    groups.set(employee.login, rows);
+  }
+  let duplicatesCollapsed = 0;
+  const employees = [...groups.values()].map((rows) => {
+    rows.sort(comparePartnerEmployeeRank);
+    duplicatesCollapsed += Math.max(0, rows.length - 1);
+    return rows[0];
+  }).sort((left, right) => left.name.localeCompare(right.name, "ru", {
+    numeric: true,
+    sensitivity: "base"
+  }));
+  return { employees, skipped, duplicatesCollapsed };
+}
+
+function publicAuthEmployee(employee = {}) {
+  return {
+    id: String(employee.id || ""),
+    login: String(employee.login || ""),
+    name: String(employee.name || ""),
+    email: String(employee.email || ""),
+    phone: String(employee.phone || ""),
+    section: String(employee.section || employee.status || ""),
+    defaultRole: String(employee.access?.role || "partner"),
+    defaultStatus: String(employee.access?.status || "blocked")
+  };
+}
+
+function authEmployeeCredentialFingerprint(employee, secret = DATABASE_DEMO_ID_SECRET) {
+  return crypto.createHmac("sha256", String(secret || "ais-employee-auth"))
+    .update(`${normalizeAuthLogin(employee?.login)}\0${String(employee?.password || "")}`)
+    .digest("hex");
+}
+
+function synchronizeAuthUsersWithEmployees(users = [], contracts = [], options = {}) {
+  const now = String(options.now || new Date().toISOString());
+  const hashPassword = options.hashPassword || authHashPassword;
+  const verifyPassword = options.verifyPassword || authVerifyPassword;
+  const directory = buildEmployeeAuthDirectory(contracts);
+  const nextUsers = (Array.isArray(users) ? users : []).map((user) => ({ ...user }));
+  const stats = {
+    total: directory.employees.length,
+    created: 0,
+    updated: 0,
+    unchanged: 0,
+    skipped: directory.skipped,
+    conflicts: 0,
+    duplicatesCollapsed: directory.duplicatesCollapsed,
+    blockedMissing: 0
+  };
+  const matchedUserIds = new Set();
+
+  for (const employee of directory.employees) {
+    let index = nextUsers.findIndex((user) => (
+      String(user.employeeId || "").trim() === employee.id
+    ));
+    if (index < 0) {
+      index = nextUsers.findIndex((user) => (
+        String(user.role || "") !== "admin"
+        && normalizeAuthLogin(user.login) === employee.login
+      ));
+    }
+    if (index < 0 && nextUsers.some((user) => normalizeAuthLogin(user.login) === employee.login)) {
+      stats.conflicts += 1;
+      continue;
+    }
+    if (index >= 0 && nextUsers.some((user, otherIndex) => (
+      otherIndex !== index && normalizeAuthLogin(user.login) === employee.login
+    ))) {
+      const current = nextUsers[index];
+      matchedUserIds.add(String(current.id || ""));
+      if (String(current.status || "") !== "blocked") {
+        nextUsers[index] = { ...current, status: "blocked", updatedAt: now };
+        stats.updated += 1;
+      }
+      stats.conflicts += 1;
+      continue;
+    }
+
+    const fingerprint = authEmployeeCredentialFingerprint(employee, options.secret);
+    if (index < 0) {
+      const generatedId = `employee:${crypto.createHash("sha256").update(`${employee.id}\0${employee.login}`).digest("hex").slice(0, 24)}`;
+      nextUsers.push({
+        id: generatedId,
+        employeeId: employee.id,
+        authSource: "employee",
+        login: employee.login,
+        name: employee.name,
+        role: employee.access.role,
+        status: employee.access.status,
+        employeeRoleOverride: "",
+        employeeStatusOverride: "",
+        email: employee.email,
+        phone: employee.phone,
+        passwordHash: hashPassword(employee.password),
+        employeeCredentialFingerprint: fingerprint,
+        createdAt: now,
+        updatedAt: now,
+        lastLoginAt: ""
+      });
+      matchedUserIds.add(generatedId);
+      stats.created += 1;
+      continue;
+    }
+
+    const current = nextUsers[index];
+    matchedUserIds.add(String(current.id || ""));
+    const wasEmployeeManaged = String(current.authSource || "") === "employee";
+    const rawRoleOverride = wasEmployeeManaged
+      ? String(current.employeeRoleOverride || "")
+      : (String(current.role || "") !== employee.access.role ? String(current.role || "") : "");
+    const rawStatusOverride = wasEmployeeManaged
+      ? String(current.employeeStatusOverride || "")
+      : (employee.access.status === "active" && String(current.status || "") !== "active"
+          ? String(current.status || "")
+          : "");
+    const roleOverride = new Set(["manager", "partner"]).has(rawRoleOverride)
+      ? rawRoleOverride
+      : "";
+    const statusOverride = new Set(["active", "blocked"]).has(rawStatusOverride)
+      ? rawStatusOverride
+      : "";
+    const next = {
+      ...current,
+      employeeId: employee.id,
+      authSource: "employee",
+      login: employee.login,
+      name: employee.name,
+      employeeRoleOverride: roleOverride,
+      employeeStatusOverride: statusOverride,
+      role: roleOverride || employee.access.role,
+      status: employee.access.status === "blocked"
+        ? "blocked"
+        : statusOverride || employee.access.status,
+      email: String(current.email || "").trim() || employee.email,
+      phone: String(current.phone || "").trim() || employee.phone
+    };
+    if (!new Set(["manager", "partner"]).has(String(next.role || ""))) {
+      next.role = employee.access.role;
+    }
+    if (!new Set(["active", "blocked"]).has(String(next.status || ""))) {
+      next.status = employee.access.status;
+    }
+    const passwordCurrent = current.employeeCredentialFingerprint === fingerprint
+      || verifyPassword(employee.password, current.passwordHash);
+    if (!passwordCurrent) next.passwordHash = hashPassword(employee.password);
+    next.employeeCredentialFingerprint = fingerprint;
+
+    const changed = [
+      "employeeId", "authSource", "login", "name", "role", "status", "email", "phone",
+      "employeeRoleOverride", "employeeStatusOverride", "passwordHash", "employeeCredentialFingerprint"
+    ].some((key) => String(current[key] ?? "") !== String(next[key] ?? ""));
+    if (changed) {
+      next.updatedAt = now;
+      nextUsers[index] = next;
+      stats.updated += 1;
+    } else {
+      stats.unchanged += 1;
+    }
+  }
+
+  nextUsers.forEach((current, index) => {
+    if (String(current.authSource || "") !== "employee"
+        || matchedUserIds.has(String(current.id || ""))
+        || String(current.status || "") === "blocked") return;
+    nextUsers[index] = { ...current, status: "blocked", updatedAt: now };
+    stats.updated += 1;
+    stats.blockedMissing += 1;
+  });
+
+  return {
+    users: nextUsers,
+    employees: directory.employees,
+    stats,
+    changed: stats.created > 0 || stats.updated > 0
+  };
+}
+
+let authEmployeeSyncInFlight = null;
+
+function synchronizeStoredAuthUsersWithEmployees() {
+  if (authEmployeeSyncInFlight) return authEmployeeSyncInFlight;
+  const operation = (async () => {
+    const [users, contracts] = await Promise.all([loadAuthUsers(), readEmployeeAuthContracts()]);
+    const result = synchronizeAuthUsersWithEmployees(users, contracts);
+    if (result.changed) await saveAuthUsers(result.users);
+    return result;
+  })();
+  authEmployeeSyncInFlight = operation;
+  operation.then(
+    () => { if (authEmployeeSyncInFlight === operation) authEmployeeSyncInFlight = null; },
+    () => { if (authEmployeeSyncInFlight === operation) authEmployeeSyncInFlight = null; }
+  );
+  return operation;
+}
+
 async function handleStudentSourcePhoto(req, res, requestUrl) {
   try {
     let sourcePath = String(requestUrl.searchParams.get("path") || "").trim();
@@ -34979,7 +35336,7 @@ function getPartnerEmployeeRank(employee = {}) {
   const section = normalizePartnerIdentity(employee.section || employee.status);
   const sectionScore = section.includes("действующ") || section === "действует"
     ? 3
-    : section.includes("партнер")
+    : section.includes("партнер") || section.includes("партнёр")
       ? 2
       : 1;
   const date = normalizePartnerDate(employee.endDate || employee.contractDate);
@@ -34991,7 +35348,8 @@ function comparePartnerEmployeeRank(left, right) {
   const rightRank = getPartnerEmployeeRank(right);
   return rightRank[0] - leftRank[0]
     || rightRank[1].localeCompare(leftRank[1], "ru")
-    || rightRank[2].localeCompare(leftRank[2], "ru", { numeric: true, sensitivity: "base" });
+    || rightRank[2].localeCompare(leftRank[2], "ru", { numeric: true, sensitivity: "base" })
+    || String(right.id || "").localeCompare(String(left.id || ""), "ru");
 }
 
 function selectPartnerEmployee(contracts, criteria = {}) {
@@ -35034,15 +35392,111 @@ async function readPartnerSharedData() {
   return data;
 }
 
+async function readEmployeeAuthContracts() {
+  if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+    const data = await readPartnerSharedData();
+    return Array.isArray(data.collections?.contracts) ? data.collections.contracts : [];
+  }
+  let syncResult = null;
+  let offlineSyncError = null;
+  try {
+    syncResult = await flushSharedApplicationStateOfflineQueue();
+  } catch (error) {
+    offlineSyncError = error;
+  }
+  const readPendingContracts = async () => {
+    const cached = await readSharedApplicationStateCacheResult(null, {
+      offline: false,
+      syncResult
+    });
+    const contracts = cached.document?.data?.collections?.contracts;
+    if (!Array.isArray(contracts)) {
+      throw new Error("В локальном снимке общей базы отсутствует раздел сотрудников.");
+    }
+    return contracts;
+  };
+  let pending = await readSharedApplicationStatePendingDocument();
+  if (pending.operations.length) return readPendingContracts();
+  if (offlineSyncError) throw offlineSyncError;
+  const pool = await getSharedRecordLocksMySqlPool();
+  if (!pool) throw new Error("MySQL для общей базы не настроен.");
+  const queryMeta = async () => pool.query(
+    `SELECT revision
+       FROM ais_shared_state_meta
+      WHERE state_key = ?
+      LIMIT 1`,
+    [SHARED_STATE_MYSQL_KEY]
+  );
+  const queryContracts = async () => pool.query(
+    `SELECT entry_type, item_key, sort_order, data_json
+       FROM ais_shared_state_entries
+      WHERE state_key = ?
+        AND group_name = 'contracts'
+        AND entry_type IN ('collection_meta', 'collection_replace', 'collection')
+      ORDER BY entry_type, sort_order, item_key`,
+    [SHARED_STATE_MYSQL_KEY]
+  );
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    let metaRows;
+    try {
+      [metaRows] = await queryMeta();
+    } catch (error) {
+      if (error?.code !== "ER_NO_SUCH_TABLE") throw error;
+      const ensured = await ensureSharedApplicationStateMySqlDocument(pool);
+      if (ensured.document) {
+        const contracts = ensured.document.data?.collections?.contracts;
+        if (Array.isArray(contracts)) return contracts;
+      }
+      throw new Error("Общая база АИС ещё не создана.");
+    }
+    if (!metaRows.length) {
+      const ensured = await ensureSharedApplicationStateMySqlDocument(pool);
+      const contracts = ensured.document?.data?.collections?.contracts;
+      if (Array.isArray(contracts)) return contracts;
+      throw new Error("Общая база АИС ещё не создана.");
+    }
+    const revisionBefore = Math.max(0, Number(metaRows[0].revision) || 0);
+    const [rows] = await queryContracts();
+    const [confirmedMetaRows] = await queryMeta();
+    pending = await readSharedApplicationStatePendingDocument();
+    if (pending.operations.length) return readPendingContracts();
+    const revisionAfter = Math.max(0, Number(confirmedMetaRows[0]?.revision) || 0);
+    if (!confirmedMetaRows.length || revisionBefore !== revisionAfter) continue;
+    const items = [];
+    let replacement = null;
+    let hasCollectionMarker = false;
+    for (const row of Array.isArray(rows) ? rows : []) {
+      hasCollectionMarker = true;
+      if (row.entry_type === "collection_replace") {
+        const value = JSON.parse(String(row.data_json || "[]"));
+        replacement = Array.isArray(value) ? value : [];
+      } else if (row.entry_type === "collection") {
+        items.push({
+          order: Number(row.sort_order) || 0,
+          key: String(row.item_key || ""),
+          value: JSON.parse(String(row.data_json || "null"))
+        });
+      }
+    }
+    if (!hasCollectionMarker) {
+      throw new Error("В общей базе отсутствует раздел сотрудников.");
+    }
+    if (replacement) return replacement;
+    return items.sort((left, right) => left.order - right.order || left.key.localeCompare(right.key, "ru"))
+      .map((item) => item.value);
+  }
+  throw new Error("Общая база изменилась во время проверки реквизитов СДО. Повторите вход.");
+}
+
 async function getPartnerEmployeeFromSharedState(criteria = {}) {
-  const data = await readPartnerSharedData();
-  return selectPartnerEmployee(data.collections?.contracts, criteria);
+  const employee = selectPartnerEmployee(await readEmployeeAuthContracts(), criteria);
+  return employee && getEmployeeAuthAccess(employee).status === "active" ? employee : null;
 }
 
 async function authenticatePartnerEmployee(login, password) {
   if (!String(login || "").trim() || !String(password || "")) return null;
-  const data = await readPartnerSharedData();
-  return selectPartnerEmployee(data.collections?.contracts, { login, password });
+  const employee = selectPartnerEmployee(await readEmployeeAuthContracts(), { login, password });
+  return employee && getEmployeeAuthAccess(employee).status === "active" ? employee : null;
 }
 
 function partnerValueIsChecked(value) {
@@ -37199,6 +37653,11 @@ if (isMainThread && require.main === module) {
 
 module.exports = {
   ensureStorage,
+  getEmployeeAuthAccess,
+  buildEmployeeAuthDirectory,
+  publicAuthEmployee,
+  authEmployeeCredentialFingerprint,
+  synchronizeAuthUsersWithEmployees,
   closeSharedRecordLocksStorage,
   closeStudentApplicationsMySqlStorage,
   closeAssistantStatisticsMySqlStorage,

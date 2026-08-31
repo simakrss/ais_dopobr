@@ -275,6 +275,19 @@
   outline: 3px solid rgba(15, 118, 110, 0.12);
 }
 
+.auth-user-editor input[readonly],
+.auth-user-editor input:disabled,
+.auth-user-editor select:disabled {
+  background: #f1f5f3;
+  color: #49645f;
+}
+
+.auth-user-editor label small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
 .auth-input-shell {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;
@@ -2360,6 +2373,10 @@ body.is-session-expired {
 }
 
 .auth-user-password-field {
+  grid-column: 1 / -1;
+}
+
+.auth-user-employee-field {
   grid-column: 1 / -1;
 }
 

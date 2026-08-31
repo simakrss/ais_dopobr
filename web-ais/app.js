@@ -185,10 +185,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.376",
+    version: "1.7.377",
     releasedAt: "2026-08-31"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.377",
+      releasedAt: "2026-08-31",
+      changes: [
+        "Для сотрудников автоматически создаются связанные учётные записи с актуальными логином, паролем СДО и ФИО из карточки; повторные договоры объединяются, а права учитывают состояние договора."
+      ]
+    },
     {
       version: "1.7.376",
       releasedAt: "2026-08-31",
@@ -6240,10 +6247,13 @@ MAX - https://bizvmax.ru/zifra_plus
     adminTab: "database",
     adminDatabaseTab: "ais",
     authUsers: [],
+    authEmployees: [],
+    authEmployeeSync: null,
     authUsersLoading: false,
     authUsersLoaded: false,
     authUsersError: "",
     authUserEditorId: "",
+    authUserEmployeeSelection: null,
     adminSettingsDirty: false,
     adminSettingsDraft: null,
     adminSettingsBaseline: "",
@@ -11067,7 +11077,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getAuthRoleLabel(role = getCurrentAuthUser().role) {
-    return String(role || "") === "admin" ? "Администратор" : "Менеджер";
+    if (String(role || "") === "admin") return "Администратор";
+    if (String(role || "") === "partner") return "Сотрудник / партнёр";
+    return "Менеджер";
   }
 
   async function authRequest(pathname, options = {}) {
@@ -25658,9 +25670,9 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <section class="panel admin-users-panel" id="admin-tab-users" role="tabpanel">
         <div class="section-head">
-          <p class="admin-tab-summary">Учётные записи администраторов и менеджеров, контакты и состояние доступа.</p>
+          <p class="admin-tab-summary">Учётные записи администраторов, менеджеров и сотрудников. ФИО и реквизиты связанных записей берутся из карточек сотрудников.</p>
           <div class="admin-users-actions">
-            <button class="ghost-button" data-action="refresh-auth-users" type="button" ${state.authUsersLoading ? "disabled" : ""}>Обновить</button>
+            <button class="ghost-button" data-action="refresh-auth-users" type="button" ${state.authUsersLoading ? "disabled" : ""}>Синхронизировать сотрудников</button>
             <button class="primary-button" data-action="create-auth-user" type="button">Добавить пользователя</button>
           </div>
         </div>
@@ -25706,7 +25718,12 @@ MAX - https://bizvmax.ru/zifra_plus
                 <button class="primary-button" type="submit">Сохранить контакты</button>
               </div>
             </form>
-            <form class="account-password-form" data-action="change-password">
+            ${user.employeeId ? `
+              <section class="account-password-form">
+                <h3>Пароль СДО</h3>
+                <p>Пароль этой учётной записи берётся из карточки сотрудника и изменяется вместе с реквизитами СДО.</p>
+              </section>
+            ` : `<form class="account-password-form" data-action="change-password">
               <h3>Смена пароля</h3>
               <div class="account-form-grid is-password">
                 <label>
@@ -25725,7 +25742,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <div class="account-section-actions">
                 <button class="ghost-button" type="submit">Изменить пароль</button>
               </div>
-            </form>
+            </form>`}
           </div>
           <footer class="modal-actions account-modal-actions">
             <button class="danger-button" data-action="logout" type="button">Выйти из системы</button>
@@ -26464,10 +26481,43 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getAuthUserEditorRecord() {
-    if (state.authUserEditorId === "new") {
-      return { id: "", login: "", name: "", email: "", phone: "", role: "manager", status: "active" };
-    }
-    return state.authUsers.find((user) => user.id === state.authUserEditorId) || null;
+    const base = state.authUserEditorId === "new"
+      ? { id: "", employeeId: "", login: "", name: "", email: "", phone: "", role: "manager", status: "active" }
+      : state.authUsers.find((user) => user.id === state.authUserEditorId) || null;
+    if (!base || state.authUserEmployeeSelection === null) return base;
+    const employeeId = String(state.authUserEmployeeSelection || "");
+    const employee = state.authEmployees.find((item) => item.id === employeeId);
+    if (!employee) return { ...base, employeeId: "" };
+    return {
+      ...base,
+      employeeId,
+      login: employee.login,
+      name: employee.name,
+      email: String(base.email || "") || employee.email,
+      phone: String(base.phone || "") || employee.phone,
+      role: base.id ? base.role : employee.defaultRole,
+      status: base.id ? base.status : employee.defaultStatus
+    };
+  }
+
+  function getAuthEmployeeById(employeeId) {
+    const id = String(employeeId || "").trim();
+    return id ? state.authEmployees.find((employee) => employee.id === id) || null : null;
+  }
+
+  function renderAuthEmployeeSyncSummary() {
+    const summary = state.authEmployeeSync;
+    if (!summary || typeof summary !== "object") return "";
+    const details = [
+      `учётных записей: ${Number(summary.total) || 0}`,
+      `создано: ${Number(summary.created) || 0}`,
+      `обновлено: ${Number(summary.updated) || 0}`,
+      `без изменений: ${Number(summary.unchanged) || 0}`
+    ];
+    if (Number(summary.conflicts)) details.push(`требуют проверки: ${Number(summary.conflicts)}`);
+    if (Number(summary.skipped)) details.push(`пропущено карточек: ${Number(summary.skipped)}`);
+    if (Number(summary.blockedMissing)) details.push(`заблокировано без актуальной карточки: ${Number(summary.blockedMissing)}`);
+    return `<div class="user-management-message">Сотрудники синхронизированы — ${escapeHtml(details.join(", "))}.</div>`;
   }
 
   function renderAuthUserManagementContent({ inline = false } = {}) {
@@ -26475,6 +26525,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <div class="user-management-content ${inline ? "is-inline" : ""}">
         ${state.authUsersError ? `<div class="user-management-message is-error">${escapeHtml(state.authUsersError)}</div>` : ""}
+        ${!state.authUsersLoading ? renderAuthEmployeeSyncSummary() : ""}
         ${state.authUsersLoading ? `
           <div class="user-management-message">Загрузка пользователей...</div>
         ` : `
@@ -26495,7 +26546,12 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${state.authUsers.map((user) => `
                   <tr class="${state.authUserEditorId === user.id ? "is-active" : ""}">
                     <td><strong>${escapeHtml(user.login)}</strong></td>
-                    <td>${escapeHtml(user.name)}</td>
+                    <td>
+                      <span class="user-contact-stack">
+                        <span>${escapeHtml(user.name)}</span>
+                        <small>${user.employeeId ? "Карточка сотрудника" : "Ручная запись"}</small>
+                      </span>
+                    </td>
                     <td>${escapeHtml(getAuthRoleLabel(user.role))}</td>
                     <td>
                       <span class="user-contact-stack">
@@ -26545,28 +26601,55 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderAuthUserEditor(user) {
     const isNew = !user.id;
     const isCurrent = user.id && user.id === getCurrentAuthUser().id;
+    const employee = getAuthEmployeeById(user.employeeId);
+    const linked = Boolean(employee);
+    const employeeLocked = Boolean(user.id && user.employeeId);
+    const employeeSelectionDisabled = employeeLocked || user.role === "admin";
+    const employeeOptions = state.authEmployees.map((item) => {
+      const owner = state.authUsers.find((candidate) => candidate.employeeId === item.id && candidate.id !== user.id);
+      const suffix = [item.login, item.section].filter(Boolean).join(" · ");
+      return `<option value="${escapeAttr(item.id)}" ${item.id === user.employeeId ? "selected" : ""} ${owner ? "disabled" : ""}>${escapeHtml(`${item.name}${suffix ? ` · ${suffix}` : ""}${owner ? ` — уже связан с ${owner.login}` : ""}`)}</option>`;
+    }).join("");
     return `
       <form class="auth-user-editor" data-action="save-auth-user" data-user-id="${escapeAttr(user.id || "")}">
         <div class="auth-user-editor-head">
           <div>
             <h3>${isNew ? "Новая учётная запись" : `Редактирование: ${escapeHtml(user.login)}`}</h3>
-            <p>${isNew ? "Для нового менеджера без указанного пароля будет установлен пароль 123." : "Пустое поле пароля оставит текущий пароль без изменений."}</p>
+            <p>${linked
+              ? "ФИО, логин и пароль автоматически берутся из выбранной карточки сотрудника."
+              : isNew
+                ? "Выберите карточку сотрудника либо создайте отдельную ручную учётную запись."
+                : "Ручная учётная запись не связана с карточкой сотрудника."}</p>
           </div>
         </div>
         <div class="auth-user-editor-grid">
+          <label class="auth-user-employee-field">
+            <span>Карточка сотрудника</span>
+            <select name="employeeId" data-action="select-auth-user-employee" ${employeeSelectionDisabled ? "disabled" : ""}>
+              <option value="">Без привязки — ручная учётная запись</option>
+              ${employeeOptions}
+            </select>
+            ${employeeLocked ? `<input name="employeeId" type="hidden" value="${escapeAttr(user.employeeId)}">` : ""}
+            <small>${user.role === "admin" && !linked
+              ? "Учётные записи администраторов остаются ручными и не связываются автоматически."
+              : employeeLocked
+              ? "Связь закреплена. Изменяйте ФИО и реквизиты входа в карточке сотрудника."
+              : "Для связанной записи пароль СДО никогда не передаётся в браузер."}</small>
+          </label>
           <label>
             <span>Логин *</span>
-            <input name="login" value="${escapeAttr(user.login || "")}" required autocomplete="off">
+            <input name="login" value="${escapeAttr(user.login || "")}" required autocomplete="off" ${linked ? "readonly" : ""}>
           </label>
           <label>
             <span>ФИО *</span>
-            <input name="name" value="${escapeAttr(user.name || "")}" required autocomplete="off">
+            <input name="name" value="${escapeAttr(user.name || "")}" required autocomplete="off" ${linked ? "readonly" : ""}>
           </label>
           <label>
             <span>Роль *</span>
             <select name="role" ${isCurrent ? "disabled" : ""}>
               <option value="manager" ${user.role === "manager" ? "selected" : ""}>Менеджер</option>
-              <option value="admin" ${user.role === "admin" ? "selected" : ""}>Администратор</option>
+              ${linked ? `<option value="partner" ${user.role === "partner" ? "selected" : ""}>Сотрудник / партнёр</option>` : ""}
+              ${!linked ? `<option value="admin" ${user.role === "admin" ? "selected" : ""}>Администратор</option>` : ""}
             </select>
             ${isCurrent ? `<input name="role" type="hidden" value="admin">` : ""}
           </label>
@@ -26587,8 +26670,10 @@ MAX - https://bizvmax.ru/zifra_plus
             <input name="phone" type="tel" value="${escapeAttr(user.phone || "")}" autocomplete="off">
           </label>
           <label class="auth-user-password-field">
-            <span>${isNew ? "Пароль" : "Новый пароль"}</span>
-            <input name="password" type="password" value="" autocomplete="new-password" placeholder="${isNew && user.role === "manager" ? "По умолчанию 123" : "Оставьте пустым без изменения"}">
+            <span>${linked ? "Пароль СДО" : isNew ? "Пароль" : "Новый пароль"}</span>
+            ${linked
+              ? '<input type="text" value="••••••••" disabled aria-label="Пароль берётся из карточки сотрудника"><small>Берётся из карточки сотрудника и не показывается в интерфейсе.</small>'
+              : `<input name="password" type="password" value="" autocomplete="new-password" placeholder="${isNew && user.role === "manager" ? "По умолчанию 123" : "Оставьте пустым без изменения"}">`}
           </label>
         </div>
         <div class="account-section-actions">
@@ -26706,11 +26791,18 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!isAdminUser() || state.authUsersLoading) return;
     state.authUsersLoading = true;
     state.authUsersError = "";
-    if (clearEditor) state.authUserEditorId = "";
+    if (clearEditor) {
+      state.authUserEditorId = "";
+      state.authUserEmployeeSelection = null;
+    }
     render();
     try {
       const payload = await authRequest("api/admin/users");
       state.authUsers = Array.isArray(payload.users) ? payload.users : [];
+      state.authEmployees = Array.isArray(payload.employees) ? payload.employees : [];
+      state.authEmployeeSync = payload.employeeSync && typeof payload.employeeSync === "object"
+        ? payload.employeeSync
+        : null;
     } catch (error) {
       state.authUsersError = error.message;
     } finally {
@@ -26754,6 +26846,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function closeUserManagement() {
     state.userManagementOpen = false;
     state.authUserEditorId = "";
+    state.authUserEmployeeSelection = null;
     state.authUsersError = "";
     render();
   }
@@ -26762,6 +26855,7 @@ MAX - https://bizvmax.ru/zifra_plus
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    const employeeId = String(data.get("employeeId") || "").trim();
     const button = form.querySelector("button[type='submit']");
     button.disabled = true;
     state.authUsersError = "";
@@ -26770,13 +26864,16 @@ MAX - https://bizvmax.ru/zifra_plus
         method: "POST",
         body: JSON.stringify({
           id: String(form.dataset.userId || ""),
-          login: String(data.get("login") || "").trim(),
-          name: String(data.get("name") || "").trim(),
+          employeeId,
+          ...(employeeId ? {} : {
+            login: String(data.get("login") || "").trim(),
+            name: String(data.get("name") || "").trim(),
+            password: String(data.get("password") || "")
+          }),
           role: String(data.get("role") || "manager"),
           status: String(data.get("status") || "active"),
           email: String(data.get("email") || "").trim(),
-          phone: String(data.get("phone") || "").trim(),
-          password: String(data.get("password") || "")
+          phone: String(data.get("phone") || "").trim()
         })
       });
       const saved = payload.user;
@@ -26786,6 +26883,7 @@ MAX - https://bizvmax.ru/zifra_plus
       else state.authUsers.push(saved);
       state.authUsers.sort((left, right) => String(left.login).localeCompare(String(right.login), "ru"));
       state.authUserEditorId = saved.id;
+      state.authUserEmployeeSelection = null;
       if (saved.id === getCurrentAuthUser().id) {
         authenticatedUser = { ...saved };
         window.AIS_AUTH_USER = authenticatedUser;
@@ -37601,13 +37699,20 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.querySelector("[data-action='create-auth-user']")?.addEventListener("click", () => {
       state.authUserEditorId = "new";
+      state.authUserEmployeeSelection = null;
       render();
     });
     document.querySelectorAll("[data-action='edit-auth-user']").forEach((button) => {
       button.addEventListener("click", () => {
         state.authUserEditorId = button.dataset.userId || "";
+        state.authUserEmployeeSelection = null;
         render();
       });
+    });
+    document.querySelector("[data-action='select-auth-user-employee']")?.addEventListener("change", (event) => {
+      state.authUserEmployeeSelection = String(event.currentTarget.value || "");
+      render();
+      document.querySelector("[data-action='select-auth-user-employee']")?.focus({ preventScroll: true });
     });
     document.querySelector("form[data-action='save-auth-user']")?.addEventListener("submit", saveAuthUser);
     document.querySelector("[data-action='open-release-history']")?.addEventListener("click", () => {

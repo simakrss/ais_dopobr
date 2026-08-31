@@ -420,16 +420,349 @@ function gateway_partner_record_rank(array $employee): int
     return $sectionScore + ($timestamp === false ? 0 : (int) floor($timestamp / 86400));
 }
 
+function gateway_compare_partner_records(array $left, array $right): int
+{
+    $rank = gateway_partner_record_rank($right) <=> gateway_partner_record_rank($left);
+    if ($rank !== 0) {
+        return $rank;
+    }
+    $contract = strnatcasecmp(
+        (string) ($right['contractNo'] ?? ''),
+        (string) ($left['contractNo'] ?? '')
+    );
+    return $contract !== 0
+        ? $contract
+        : strcmp((string) ($right['id'] ?? ''), (string) ($left['id'] ?? ''));
+}
+
+function gateway_employee_auth_access(array $employee): array
+{
+    $section = mb_strtolower(trim((string) ($employee['section'] ?? $employee['status'] ?? '')), 'UTF-8');
+    if (str_contains($section, 'действующ') || $section === 'действует') {
+        return ['role' => 'manager', 'status' => 'active'];
+    }
+    if (str_contains($section, 'партнер') || str_contains($section, 'партнёр')) {
+        return ['role' => 'partner', 'status' => 'active'];
+    }
+    return ['role' => 'partner', 'status' => 'blocked'];
+}
+
+function gateway_normalize_employee_auth_record(array $employee): ?array
+{
+    $name = mb_substr(trim((string) ($employee['name'] ?? '')), 0, 120, 'UTF-8');
+    $password = (string) ($employee['password'] ?? '');
+    try {
+        $login = ais_auth_validate_login((string) ($employee['login'] ?? ''));
+    } catch (Throwable) {
+        return null;
+    }
+    if ($name === '' || $password === '') {
+        return null;
+    }
+    $employeeId = trim((string) ($employee['id'] ?? ''));
+    if ($employeeId === '') {
+        $employeeId = substr(hash(
+            'sha256',
+            $login . "\0" . (string) ($employee['contractNo'] ?? '') . "\0" . $name
+        ), 0, 24);
+    }
+    try {
+        $email = ais_auth_validate_email((string) ($employee['email'] ?? ''));
+    } catch (Throwable) {
+        $email = '';
+    }
+    try {
+        $phone = ais_auth_validate_phone((string) ($employee['phone'] ?? ''));
+    } catch (Throwable) {
+        $phone = '';
+    }
+    return [
+        ...$employee,
+        'id' => $employeeId,
+        'login' => $login,
+        'name' => $name,
+        'password' => $password,
+        'email' => $email,
+        'phone' => $phone,
+        'access' => gateway_employee_auth_access($employee),
+    ];
+}
+
+function gateway_build_employee_auth_directory(array $contracts): array
+{
+    $groups = [];
+    $skipped = 0;
+    foreach ($contracts as $source) {
+        if (!is_array($source)) {
+            $skipped++;
+            continue;
+        }
+        $employee = gateway_normalize_employee_auth_record($source);
+        if ($employee === null) {
+            $skipped++;
+            continue;
+        }
+        $groups[$employee['login']][] = $employee;
+    }
+    $employees = [];
+    $duplicatesCollapsed = 0;
+    foreach ($groups as $rows) {
+        usort($rows, 'gateway_compare_partner_records');
+        $duplicatesCollapsed += max(0, count($rows) - 1);
+        $employees[] = $rows[0];
+    }
+    usort($employees, static fn (array $left, array $right): int =>
+        strnatcasecmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? ''))
+    );
+    return [
+        'employees' => $employees,
+        'skipped' => $skipped,
+        'duplicatesCollapsed' => $duplicatesCollapsed,
+    ];
+}
+
+function gateway_public_auth_employee(array $employee): array
+{
+    return [
+        'id' => (string) ($employee['id'] ?? ''),
+        'login' => (string) ($employee['login'] ?? ''),
+        'name' => (string) ($employee['name'] ?? ''),
+        'email' => (string) ($employee['email'] ?? ''),
+        'phone' => (string) ($employee['phone'] ?? ''),
+        'section' => (string) ($employee['section'] ?? $employee['status'] ?? ''),
+        'defaultRole' => (string) ($employee['access']['role'] ?? 'partner'),
+        'defaultStatus' => (string) ($employee['access']['status'] ?? 'blocked'),
+    ];
+}
+
+function gateway_employee_credential_fingerprint(array $employee): string
+{
+    return hash_hmac(
+        'sha256',
+        ais_auth_normalize_login((string) ($employee['login'] ?? ''))
+            . "\0" . (string) ($employee['password'] ?? ''),
+        ais_database_demo_mode_id_secret()
+    );
+}
+
+function gateway_sync_employee_auth_users(): array
+{
+    $lockPath = ais_auth_storage_root() . '/employee-users-sync.lock';
+    $lock = fopen($lockPath, 'c+b');
+    if (!is_resource($lock) || !flock($lock, LOCK_EX)) {
+        if (is_resource($lock)) {
+            fclose($lock);
+        }
+        throw new RuntimeException('Не удалось заблокировать синхронизацию пользователей.');
+    }
+    try {
+        $contracts = gateway_shared_state_read_collection(gateway_record_locks_pdo(), 'contracts');
+        $directory = gateway_build_employee_auth_directory($contracts);
+        $users = ais_auth_load_users();
+        $stats = [
+            'total' => count($directory['employees']),
+            'created' => 0,
+            'updated' => 0,
+            'unchanged' => 0,
+            'skipped' => (int) $directory['skipped'],
+            'conflicts' => 0,
+            'duplicatesCollapsed' => (int) $directory['duplicatesCollapsed'],
+            'blockedMissing' => 0,
+        ];
+        $matchedUserIds = [];
+        $now = gmdate('c');
+        foreach ($directory['employees'] as $employee) {
+            $index = null;
+            foreach ($users as $userIndex => $candidate) {
+                if (trim((string) ($candidate['employeeId'] ?? '')) === (string) $employee['id']) {
+                    $index = $userIndex;
+                    break;
+                }
+            }
+            if ($index === null) {
+                foreach ($users as $userIndex => $candidate) {
+                    if ((string) ($candidate['role'] ?? '') !== 'admin'
+                        && ais_auth_normalize_login((string) ($candidate['login'] ?? '')) === $employee['login']) {
+                        $index = $userIndex;
+                        break;
+                    }
+                }
+            }
+            if ($index === null) {
+                $adminCollision = false;
+                foreach ($users as $candidate) {
+                    if (ais_auth_normalize_login((string) ($candidate['login'] ?? '')) === $employee['login']) {
+                        $adminCollision = true;
+                        break;
+                    }
+                }
+                if ($adminCollision) {
+                    $stats['conflicts']++;
+                    continue;
+                }
+            }
+            if ($index !== null) {
+                $loginCollision = false;
+                foreach ($users as $otherIndex => $candidate) {
+                    if ($otherIndex !== $index
+                        && ais_auth_normalize_login((string) ($candidate['login'] ?? '')) === $employee['login']) {
+                        $loginCollision = true;
+                        break;
+                    }
+                }
+                if ($loginCollision) {
+                    $current = $users[$index];
+                    $matchedUserIds[(string) ($current['id'] ?? '')] = true;
+                    if ((string) ($current['status'] ?? '') !== 'blocked') {
+                        $users[$index] = [
+                            ...$current,
+                            'status' => 'blocked',
+                            'updatedAt' => $now,
+                        ];
+                        $stats['updated']++;
+                    }
+                    $stats['conflicts']++;
+                    continue;
+                }
+            }
+            $fingerprint = gateway_employee_credential_fingerprint($employee);
+            if ($index === null) {
+                $generatedId = 'employee:' . substr(hash(
+                        'sha256',
+                        (string) $employee['id'] . "\0" . (string) $employee['login']
+                    ), 0, 24);
+                $users[] = [
+                    'id' => $generatedId,
+                    'employeeId' => (string) $employee['id'],
+                    'authSource' => 'employee',
+                    'login' => (string) $employee['login'],
+                    'name' => (string) $employee['name'],
+                    'role' => (string) $employee['access']['role'],
+                    'status' => (string) $employee['access']['status'],
+                    'employeeRoleOverride' => '',
+                    'employeeStatusOverride' => '',
+                    'email' => (string) $employee['email'],
+                    'phone' => (string) $employee['phone'],
+                    'passwordHash' => ais_auth_hash_password((string) $employee['password']),
+                    'employeeCredentialFingerprint' => $fingerprint,
+                    'createdAt' => $now,
+                    'updatedAt' => $now,
+                    'lastLoginAt' => '',
+                ];
+                $matchedUserIds[$generatedId] = true;
+                $stats['created']++;
+                continue;
+            }
+            $current = $users[$index];
+            $matchedUserIds[(string) ($current['id'] ?? '')] = true;
+            $wasEmployeeManaged = (string) ($current['authSource'] ?? '') === 'employee';
+            $rawRoleOverride = $wasEmployeeManaged
+                ? (string) ($current['employeeRoleOverride'] ?? '')
+                : ((string) ($current['role'] ?? '') !== (string) $employee['access']['role']
+                    ? (string) ($current['role'] ?? '')
+                    : '');
+            $rawStatusOverride = $wasEmployeeManaged
+                ? (string) ($current['employeeStatusOverride'] ?? '')
+                : ((string) $employee['access']['status'] === 'active'
+                    && (string) ($current['status'] ?? '') !== 'active'
+                        ? (string) ($current['status'] ?? '')
+                        : '');
+            $roleOverride = in_array($rawRoleOverride, ['manager', 'partner'], true)
+                ? $rawRoleOverride
+                : '';
+            $statusOverride = in_array($rawStatusOverride, ['active', 'blocked'], true)
+                ? $rawStatusOverride
+                : '';
+            $next = [
+                ...$current,
+                'employeeId' => (string) $employee['id'],
+                'authSource' => 'employee',
+                'login' => (string) $employee['login'],
+                'name' => (string) $employee['name'],
+                'employeeRoleOverride' => $roleOverride,
+                'employeeStatusOverride' => $statusOverride,
+                'role' => $roleOverride !== ''
+                    ? $roleOverride
+                    : (string) $employee['access']['role'],
+                'status' => (string) $employee['access']['status'] === 'blocked'
+                    ? 'blocked'
+                    : ($statusOverride !== '' ? $statusOverride : (string) $employee['access']['status']),
+                'email' => trim((string) ($current['email'] ?? '')) !== ''
+                    ? (string) $current['email']
+                    : (string) $employee['email'],
+                'phone' => trim((string) ($current['phone'] ?? '')) !== ''
+                    ? (string) $current['phone']
+                    : (string) $employee['phone'],
+            ];
+            if (!in_array((string) ($next['role'] ?? ''), ['manager', 'partner'], true)) {
+                $next['role'] = (string) $employee['access']['role'];
+            }
+            if (!in_array((string) ($next['status'] ?? ''), ['active', 'blocked'], true)) {
+                $next['status'] = (string) $employee['access']['status'];
+            }
+            $passwordCurrent = hash_equals(
+                (string) ($current['employeeCredentialFingerprint'] ?? ''),
+                $fingerprint
+            ) || ais_auth_verify_password(
+                (string) $employee['password'],
+                (string) ($current['passwordHash'] ?? '')
+            );
+            if (!$passwordCurrent) {
+                $next['passwordHash'] = ais_auth_hash_password((string) $employee['password']);
+            }
+            $next['employeeCredentialFingerprint'] = $fingerprint;
+            $changed = false;
+            foreach ([
+                'employeeId', 'authSource', 'login', 'name', 'role', 'status', 'email', 'phone',
+                'employeeRoleOverride', 'employeeStatusOverride',
+                'passwordHash', 'employeeCredentialFingerprint',
+            ] as $key) {
+                if ((string) ($current[$key] ?? '') !== (string) ($next[$key] ?? '')) {
+                    $changed = true;
+                    break;
+                }
+            }
+            if ($changed) {
+                $next['updatedAt'] = $now;
+                $users[$index] = $next;
+                $stats['updated']++;
+            } else {
+                $stats['unchanged']++;
+            }
+        }
+        foreach ($users as $userIndex => $current) {
+            $userId = (string) ($current['id'] ?? '');
+            if ((string) ($current['authSource'] ?? '') !== 'employee'
+                || isset($matchedUserIds[$userId])
+                || (string) ($current['status'] ?? '') === 'blocked') {
+                continue;
+            }
+            $users[$userIndex]['status'] = 'blocked';
+            $users[$userIndex]['updatedAt'] = $now;
+            $stats['updated']++;
+            $stats['blockedMissing']++;
+        }
+        if ($stats['created'] > 0 || $stats['updated'] > 0) {
+            ais_auth_write_users($users);
+        }
+        return [
+            'users' => $users,
+            'employees' => $directory['employees'],
+            'stats' => $stats,
+        ];
+    } finally {
+        flock($lock, LOCK_UN);
+        fclose($lock);
+    }
+}
+
 function gateway_find_partner_employee(string $login, string $password): ?array
 {
     $normalizedLogin = ais_auth_normalize_login($login);
     if ($normalizedLogin === '' || $password === '') {
         return null;
     }
-    $data = gateway_shared_state_read_data(gateway_record_locks_pdo());
-    $contracts = is_array($data['collections']['contracts'] ?? null)
-        ? $data['collections']['contracts']
-        : [];
+    $contracts = gateway_shared_state_read_collection(gateway_record_locks_pdo(), 'contracts');
     $matches = [];
     foreach ($contracts as $employee) {
         if (!is_array($employee)
@@ -450,9 +783,10 @@ function gateway_find_partner_employee(string $login, string $password): ?array
     if ($matches === []) {
         return null;
     }
-    usort($matches, static fn (array $left, array $right): int =>
-        gateway_partner_record_rank($right) <=> gateway_partner_record_rank($left)
-    );
+    usort($matches, 'gateway_compare_partner_records');
+    if ((string) (gateway_employee_auth_access($matches[0])['status'] ?? '') !== 'active') {
+        return null;
+    }
     return $matches[0];
 }
 
@@ -469,15 +803,84 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
 {
     if ($method === 'POST' && $path === '/api/auth/login') {
         $payload = gateway_read_json_body($body);
+        $normalizedLogin = ais_auth_normalize_login((string) ($payload['login'] ?? ''));
+        $findStoredMatch = static function (array $users) use ($normalizedLogin): ?array {
+            foreach ($users as $candidate) {
+                if (ais_auth_normalize_login((string) ($candidate['login'] ?? '')) === $normalizedLogin) {
+                    return $candidate;
+                }
+            }
+            return null;
+        };
+        $findLinkedUserForEmployee = static function (array $users, array $employee): ?array {
+            $employeeId = (string) ($employee['id'] ?? '');
+            foreach ($users as $candidate) {
+                if (
+                    (string) ($candidate['authSource'] ?? '') === 'employee'
+                    && (string) ($candidate['employeeId'] ?? '') === $employeeId
+                ) {
+                    return $candidate;
+                }
+            }
+            return null;
+        };
+        $storedUsers = ais_auth_load_users();
+        $storedMatch = $findStoredMatch($storedUsers);
+        $hasEmployeeAccounts = false;
+        foreach ($storedUsers as $candidate) {
+            if ((string) ($candidate['authSource'] ?? '') === 'employee') {
+                $hasEmployeeAccounts = true;
+                break;
+            }
+        }
+        $synchronizedUsers = null;
+        $directorySynchronized = false;
+        $linkedSyncRequired = $storedMatch !== null
+            && (string) ($storedMatch['authSource'] ?? '') === 'employee';
+        $shouldSynchronize = !gateway_database_demo_mode_enabled()
+            && (!$hasEmployeeAccounts || $linkedSyncRequired);
+        if ($shouldSynchronize) {
+            try {
+                $synchronizedUsers = gateway_sync_employee_auth_users()['users'];
+                $directorySynchronized = true;
+                $storedUsers = $synchronizedUsers;
+                $storedMatch = $findStoredMatch($storedUsers);
+            } catch (Throwable $employeeSyncError) {
+                error_log('Employee user synchronization is temporarily unavailable: ' . $employeeSyncError->getMessage());
+                if ($linkedSyncRequired) {
+                    gateway_fail(503, 'Не удалось проверить актуальные реквизиты СДО. Повторите вход позже.');
+                }
+            }
+        }
         $user = ais_auth_login((string) ($payload['login'] ?? ''), (string) ($payload['password'] ?? ''));
-        if ($user === null) {
+        $linkedEmployeeUser = null;
+        if ($user === null && $storedMatch === null && !$directorySynchronized) {
             try {
                 $employee = gateway_find_partner_employee(
                     (string) ($payload['login'] ?? ''),
                     (string) ($payload['password'] ?? '')
                 );
                 if ($employee !== null) {
-                    $user = ais_auth_login_partner($employee);
+                    $linkedEmployeeUser = $findLinkedUserForEmployee($storedUsers, $employee);
+                    if (!gateway_database_demo_mode_enabled()) {
+                        try {
+                            $synchronizedUsers = gateway_sync_employee_auth_users()['users'];
+                            $directorySynchronized = true;
+                            $storedMatch = $findStoredMatch($synchronizedUsers);
+                            $user = ais_auth_login(
+                                (string) ($payload['login'] ?? ''),
+                                (string) ($payload['password'] ?? '')
+                            );
+                        } catch (Throwable $employeeCreateError) {
+                            error_log('Employee account creation during login failed: ' . $employeeCreateError->getMessage());
+                            if ($linkedEmployeeUser !== null) {
+                                gateway_fail(503, 'Не удалось проверить актуальные реквизиты СДО. Повторите вход позже.');
+                            }
+                        }
+                    }
+                    if ($user === null && !$directorySynchronized && $linkedEmployeeUser === null) {
+                        $user = ais_auth_login_partner($employee);
+                    }
                 }
             } catch (Throwable $partnerLoginError) {
                 error_log('Partner authentication is temporarily unavailable: ' . $partnerLoginError->getMessage());
@@ -562,6 +965,9 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
         $user = gateway_require_user();
         if ((string) ($user['role'] ?? '') === 'partner') {
             gateway_fail(403, 'Пароль партнёра изменяется в реквизитах СДО сотрудника.');
+        }
+        if (trim((string) ($user['employeeId'] ?? '')) !== '') {
+            gateway_fail(403, 'Пароль связанной учётной записи изменяется в реквизитах СДО сотрудника.');
         }
         $payload = gateway_read_json_body($body);
         ais_auth_change_password(
@@ -677,18 +1083,84 @@ function gateway_handle_admin_users(string $method, string $path, string $body, 
     }
     gateway_require_admin($currentUser);
     if ($method === 'GET' && $path === '/api/admin/users') {
+        $synchronized = gateway_sync_employee_auth_users();
         gateway_json(200, [
-            'users' => array_map('ais_auth_public_user', ais_auth_load_users()),
+            'users' => array_map('ais_auth_public_user', $synchronized['users']),
+            'employees' => array_map('gateway_public_auth_employee', $synchronized['employees']),
+            'employeeSync' => $synchronized['stats'],
         ]);
     }
     if ($method === 'POST' && $path === '/api/admin/users') {
         $payload = gateway_read_json_body($body);
+        $manualPasswordChanged = (string) ($payload['password'] ?? '') !== '';
+        $synchronized = gateway_sync_employee_auth_users();
+        $users = $synchronized['users'];
+        $requestedEmployeeId = trim((string) ($payload['employeeId'] ?? ''));
+        $employee = null;
+        if ($requestedEmployeeId !== '') {
+            foreach ($synchronized['employees'] as $candidate) {
+                if ((string) ($candidate['id'] ?? '') === $requestedEmployeeId) {
+                    $employee = $candidate;
+                    break;
+                }
+            }
+            if ($employee === null) {
+                gateway_fail(400, 'Выбранная карточка сотрудника не найдена.');
+            }
+        }
+        $id = trim((string) ($payload['id'] ?? ''));
+        if ($id === '' && $employee !== null) {
+            foreach ($users as $candidate) {
+                if ((string) ($candidate['employeeId'] ?? '') === (string) $employee['id']
+                    || ais_auth_normalize_login((string) ($candidate['login'] ?? '')) === (string) $employee['login']) {
+                    $id = (string) ($candidate['id'] ?? '');
+                    break;
+                }
+            }
+        }
         $before = null;
-        foreach (ais_auth_load_users() as $candidate) {
-            if ((string) ($candidate['id'] ?? '') === (string) ($payload['id'] ?? '')) {
+        $beforePrivate = null;
+        foreach ($users as $candidate) {
+            if ((string) ($candidate['id'] ?? '') === $id) {
+                $beforePrivate = $candidate;
                 $before = ais_auth_public_user($candidate);
                 break;
             }
+        }
+        if (trim((string) ($beforePrivate['employeeId'] ?? '')) !== '' && $employee === null) {
+            gateway_fail(400, 'Связанную учётную запись нельзя отвязать от карточки сотрудника.');
+        }
+        if ($employee !== null) {
+            $fingerprint = gateway_employee_credential_fingerprint($employee);
+            $payload['id'] = $id;
+            $payload['employeeId'] = (string) $employee['id'];
+            $payload['login'] = (string) $employee['login'];
+            $payload['name'] = (string) $employee['name'];
+            $payload['role'] = (string) ($payload['role']
+                ?? $beforePrivate['role']
+                ?? $employee['access']['role']);
+            $requestedStatus = (string) ($payload['status']
+                ?? $beforePrivate['status']
+                ?? $employee['access']['status']);
+            $payload['status'] = (string) $employee['access']['status'] === 'blocked'
+                ? 'blocked'
+                : $requestedStatus;
+            $payload['employeeRoleOverride'] = $payload['role'] === (string) $employee['access']['role']
+                ? ''
+                : $payload['role'];
+            $payload['employeeStatusOverride'] = $payload['status'] === (string) $employee['access']['status']
+                ? ''
+                : $payload['status'];
+            $payload['email'] = (string) ($payload['email']
+                ?? $beforePrivate['email']
+                ?? $employee['email']);
+            $payload['phone'] = (string) ($payload['phone']
+                ?? $beforePrivate['phone']
+                ?? $employee['phone']);
+            $payload['password'] = (string) ($beforePrivate['employeeCredentialFingerprint'] ?? '') === $fingerprint
+                ? ''
+                : (string) $employee['password'];
+            $payload['employeeCredentialFingerprint'] = $fingerprint;
         }
         $saved = ais_auth_admin_save_user(
             $payload,
@@ -709,7 +1181,7 @@ function gateway_handle_admin_users(string $method, string $path, string $body, 
                 $changes[] = ['field' => $key, 'label' => $label, 'before' => $oldValue, 'after' => $newValue];
             }
         }
-        if ((string) ($payload['password'] ?? '') !== '') {
+        if ($manualPasswordChanged && $employee === null) {
             $changes[] = ['field' => 'password', 'label' => 'Пароль', 'before' => '[скрыто]', 'after' => '[скрыто]'];
         }
         ais_audit_try_append([
@@ -1723,6 +2195,71 @@ function gateway_shared_state_decode_value(mixed $value): mixed
 {
     $decoded = json_decode((string) $value, true, 512, JSON_THROW_ON_ERROR);
     return $decoded;
+}
+
+function gateway_shared_state_read_collection(PDO $pdo, string $collection): array
+{
+    $sql = <<<'SQL'
+SELECT entry_type, item_key, sort_order, data_json
+FROM ais_shared_state_entries
+WHERE state_key = ?
+  AND group_name = ?
+  AND entry_type IN ('collection_meta', 'collection_replace', 'collection')
+ORDER BY entry_type, sort_order, item_key
+SQL;
+    for ($attempt = 0; $attempt < 4; $attempt++) {
+        $metaBefore = gateway_shared_state_meta($pdo);
+        if ($metaBefore === null) {
+            throw new RuntimeException('Общая база АИС ещё не создана.');
+        }
+        $statement = $pdo->prepare($sql);
+        try {
+            $statement->execute([gateway_shared_state_key(), $collection]);
+        } catch (PDOException $error) {
+            if ((int) ($error->errorInfo[1] ?? 0) !== 1146) {
+                throw $error;
+            }
+            gateway_shared_state_ensure_tables($pdo);
+            throw new RuntimeException('Общая база АИС ещё не создана.', 0, $error);
+        }
+        $rows = $statement->fetchAll();
+        $metaAfter = gateway_shared_state_meta($pdo);
+        if (
+            $metaAfter === null
+            || (int) ($metaBefore['revision'] ?? 0) !== (int) ($metaAfter['revision'] ?? 0)
+        ) {
+            continue;
+        }
+        if (!$rows) {
+            throw new RuntimeException('В общей базе отсутствует раздел сотрудников.');
+        }
+        $items = [];
+        $replacement = null;
+        foreach ($rows as $row) {
+            $type = (string) ($row['entry_type'] ?? '');
+            if ($type === 'collection_replace') {
+                $value = gateway_shared_state_decode_value($row['data_json'] ?? '[]');
+                $replacement = is_array($value) ? array_values($value) : [];
+            } elseif ($type === 'collection') {
+                $items[] = [
+                    'order' => (int) ($row['sort_order'] ?? 0),
+                    'key' => (string) ($row['item_key'] ?? ''),
+                    'value' => gateway_shared_state_decode_value($row['data_json'] ?? 'null'),
+                ];
+            }
+        }
+        if (is_array($replacement)) {
+            return $replacement;
+        }
+        usort($items, static fn (array $left, array $right): int =>
+            $left['order'] <=> $right['order'] ?: strcmp((string) $left['key'], (string) $right['key'])
+        );
+        return array_values(array_map(
+            static fn (array $item): mixed => $item['value'],
+            $items
+        ));
+    }
+    throw new RuntimeException('Общая база изменилась во время проверки реквизитов СДО. Повторите вход.');
 }
 
 function gateway_shared_state_read_data(PDO $pdo): array

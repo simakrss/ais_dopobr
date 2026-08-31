@@ -186,6 +186,7 @@ function ais_auth_public_user(array $user): array
         'email' => (string) ($user['email'] ?? ''),
         'phone' => (string) ($user['phone'] ?? ''),
         'employeeId' => (string) ($user['employeeId'] ?? ''),
+        'authSource' => (string) ($user['authSource'] ?? 'manual'),
         'createdAt' => (string) ($user['createdAt'] ?? ''),
         'updatedAt' => (string) ($user['updatedAt'] ?? ''),
         'lastLoginAt' => (string) ($user['lastLoginAt'] ?? ''),
@@ -405,14 +406,28 @@ function ais_auth_admin_save_user(array $payload, string $currentUserId): array
     $role = (string) ($payload['role'] ?? 'manager');
     $status = (string) ($payload['status'] ?? 'active');
     $password = (string) ($payload['password'] ?? '');
+    $employeeId = trim((string) ($payload['employeeId'] ?? ''));
+    $employeeCredentialFingerprint = trim((string) ($payload['employeeCredentialFingerprint'] ?? ''));
+    $employeeRoleOverride = trim((string) ($payload['employeeRoleOverride'] ?? ''));
+    $employeeStatusOverride = trim((string) ($payload['employeeStatusOverride'] ?? ''));
+    if (mb_strlen($employeeId, 'UTF-8') > 191) {
+        throw new InvalidArgumentException('Идентификатор карточки сотрудника слишком длинный.');
+    }
     if ($name === '' || mb_strlen($name, 'UTF-8') > 120) {
         throw new InvalidArgumentException('Укажите имя пользователя.');
     }
-    if (!in_array($role, ['admin', 'manager'], true)) {
+    $allowedRoles = $employeeId !== '' ? ['manager', 'partner'] : ['admin', 'manager'];
+    if (!in_array($role, $allowedRoles, true)) {
         throw new InvalidArgumentException('Выбрана неизвестная роль.');
+    }
+    if ($employeeRoleOverride !== '' && !in_array($employeeRoleOverride, ['manager', 'partner'], true)) {
+        throw new InvalidArgumentException('Выбрано неизвестное переопределение роли сотрудника.');
     }
     if (!in_array($status, ['active', 'blocked'], true)) {
         throw new InvalidArgumentException('Выбран неизвестный статус.');
+    }
+    if ($employeeStatusOverride !== '' && !in_array($employeeStatusOverride, ['active', 'blocked'], true)) {
+        throw new InvalidArgumentException('Выбрано неизвестное переопределение статуса сотрудника.');
     }
     foreach ($users as $user) {
         if ((string) ($user['id'] ?? '') !== $id
@@ -443,7 +458,14 @@ function ais_auth_admin_save_user(array $payload, string $currentUserId): array
             'status' => $status,
             'email' => ais_auth_validate_email((string) ($payload['email'] ?? '')),
             'phone' => ais_auth_validate_phone((string) ($payload['phone'] ?? '')),
+            'employeeId' => $employeeId,
+            'authSource' => $employeeId !== '' ? 'employee' : 'manual',
+            'employeeRoleOverride' => $employeeId !== '' ? $employeeRoleOverride : '',
+            'employeeStatusOverride' => $employeeId !== '' ? $employeeStatusOverride : '',
             'passwordHash' => ais_auth_hash_password($password),
+            ...($employeeCredentialFingerprint !== ''
+                ? ['employeeCredentialFingerprint' => $employeeCredentialFingerprint]
+                : []),
             'createdAt' => $now,
             'updatedAt' => $now,
             'lastLoginAt' => '',
@@ -463,6 +485,10 @@ function ais_auth_admin_save_user(array $payload, string $currentUserId): array
         'status' => $status,
         'email' => ais_auth_validate_email((string) ($payload['email'] ?? '')),
         'phone' => ais_auth_validate_phone((string) ($payload['phone'] ?? '')),
+        'employeeId' => $employeeId,
+        'authSource' => $employeeId !== '' ? 'employee' : 'manual',
+        'employeeRoleOverride' => $employeeId !== '' ? $employeeRoleOverride : '',
+        'employeeStatusOverride' => $employeeId !== '' ? $employeeStatusOverride : '',
         'updatedAt' => $now,
     ];
     if ($password !== '') {
@@ -470,6 +496,11 @@ function ais_auth_admin_save_user(array $payload, string $currentUserId): array
             throw new InvalidArgumentException('Пароль должен содержать не менее 3 символов.');
         }
         $users[$index]['passwordHash'] = ais_auth_hash_password($password);
+    }
+    if ($employeeCredentialFingerprint !== '') {
+        $users[$index]['employeeCredentialFingerprint'] = $employeeCredentialFingerprint;
+    } elseif ($employeeId === '') {
+        unset($users[$index]['employeeCredentialFingerprint']);
     }
     if (ais_auth_count_active_admins($users) < 1) {
         throw new InvalidArgumentException('В системе должен оставаться хотя бы один активный администратор.');
