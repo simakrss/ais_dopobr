@@ -19383,7 +19383,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <details class="student-program-type-filter ${selected.length ? "is-active" : ""}" data-program-type-filter data-student-program-type-filter>
         <summary title="Фильтр по виду программы">
-          <span>Вид программы</span>
+          <span>Вид</span>
           <strong>${escapeHtml(selectionLabel)}</strong>
           <svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5"></path></svg>
         </summary>

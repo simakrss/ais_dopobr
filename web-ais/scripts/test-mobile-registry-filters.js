@@ -12,6 +12,8 @@ assert.match(appSource, /mobileRegistryFiltersOpen:\s*\{\}/u);
 assert.match(appSource, /function getMainRegistryActiveFilterCount\(view = state\.view\)/u);
 assert.match(appSource, /data-action="toggle-mobile-registry-filters"/u);
 assert.match(appSource, /class="collection-primary-filters"/u);
+assert.match(appSource, /<summary title="Фильтр по виду программы">\s*<span>Вид<\/span>/u);
+assert.doesNotMatch(appSource, /<summary title="Фильтр по виду программы">\s*<span>Вид программы<\/span>/u);
 assert.match(appSource, /toggleMobileRegistryFilters\(event\.currentTarget\)/u);
 assert.match(appSource, /mobile-registry-filters-open[\s\S]{0,500}setMobileRegistryFiltersOpen/u);
 assert.match(stylesSource, /\.collection-primary-filters\s*\{\s*display: contents;/u);

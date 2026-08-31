@@ -23,7 +23,8 @@ assert.match(appSource, /fullLabel !== visibleLabel/u);
 assert.match(appSource, /element\.scrollWidth\s*>\s*element\.clientWidth\s*\+\s*1/u);
 assert.match(appSource, /target\.dataset\.tableHeaderTooltip[\s\S]*?target\.dataset\.mobileFieldHelpSource/u);
 assert.match(appSource, /data-table-header-full-label="\$\{escapeAttr\(fieldItem\.fullLabel \|\| fieldItem\.label\)\}"/u);
-assert.match(authSource, /20260831-table-heading-tooltips-v1/u);
-assert.match(indexSource, /20260831-table-heading-tooltips-v1/u);
+const authBuild = /const AUTH_BUILD = "([^"]+)";/u.exec(authSource)?.[1] || "";
+assert.ok(authBuild, "auth build identifier is required");
+assert.ok(indexSource.includes(authBuild), "index and auth build identifiers must match");
 
 console.log("single-line table heading checks: OK");
