@@ -64,7 +64,12 @@ assert.doesNotMatch(hostSource, /--open-browser/u);
 assert.match(hostSource, /function Invoke-HiddenPowerShellScript/u);
 assert.match(hostSource, /function Ensure-AisTrayVisible/u);
 assert.match(hostSource, /CommonApplicationData[\s\S]*?control-ais-service\.ps1/u);
+assert.match(
+  hostSource,
+  /\$controllerPath\s*=\s*if\s*\(Test-Path[^\r\n]*\$sourceControllerPath[\s\S]*?\$sourceControllerPath[\s\S]*?else[\s\S]*?\$protectedControllerPath/u
+);
 assert.match(hostSource, /Invoke-HiddenPowerShellScript\s+\$controllerPath\s+"TRAY"[\s\S]*?"-Action",\s*"Tray"/u);
+assert.match(hostSource, /"-Action",\s*"Tray",\s*"-SourceAppRoot",\s*\$resolvedAppRoot/u);
 assert.match(hostSource, /Проверка значка АИС в системном трее/u);
 assert.match(hostSource, /CreateNoWindow\s*=\s*\$true/u);
 assert.match(hostSource, /WindowStyle\s*=\s*\[Diagnostics\.ProcessWindowStyle\]::Hidden/u);

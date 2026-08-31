@@ -24,10 +24,10 @@ $powerShellPath = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\
 $programDataRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) "AisDopobrWeb"
 $protectedControllerPath = Join-Path $programDataRoot "control-ais-service.ps1"
 $sourceControllerPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "scripts\control-ais-service.ps1"))
-$controllerPath = if (Test-Path -LiteralPath $protectedControllerPath -PathType Leaf) {
-  $protectedControllerPath
-} else {
+$controllerPath = if (Test-Path -LiteralPath $sourceControllerPath -PathType Leaf) {
   $sourceControllerPath
+} else {
+  $protectedControllerPath
 }
 
 function Write-ServiceLog([string]$Source, [string]$Message) {
