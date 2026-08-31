@@ -16770,7 +16770,6 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
             <div class="collection-toolbar-actions">
               ${state.view === "students" ? `<button class="ghost-button student-applications-import-button" data-action="open-student-applications-import" type="button">Импорт</button>` : ""}
-              <button class="ghost-button" data-action="export-csv" data-config="${state.view}" type="button">CSV</button>
               <button class="primary-button" data-action="create" data-config="${state.view}" type="button">Добавить</button>
             </div>
           </div>
@@ -19301,16 +19300,6 @@ MAX - https://bizvmax.ru/zifra_plus
             Копировать
           </button>
         ` : ""}
-        <button class="ghost-button icon-only csv-button" data-action="bulk-export" data-config="${configId}" type="button" title="Экспорт выбранных в CSV" aria-label="Экспорт выбранных в CSV" ${selectedRows.length ? "" : "disabled"}>
-          <svg class="csv-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <rect x="3" y="4" width="13" height="16" rx="2"></rect>
-            <path d="M3 9h13"></path>
-            <path d="M3 14h9"></path>
-            <path d="M8 4v16"></path>
-            <path d="M19 10v9"></path>
-            <path d="m16 16 3 3 3-3"></path>
-          </svg>
-        </button>
         <button class="danger-button icon-only trash-button" data-action="bulk-delete" data-config="${configId}" type="button" title="Удалить выбранные" aria-label="Удалить выбранные" ${selected.length ? "" : "disabled"}>
           <svg class="trash-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M3 6h18"></path>
@@ -20019,6 +20008,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <strong>Опции таблицы</strong>
             <button class="icon-button" data-action="close-table-options" type="button" title="Закрыть">×</button>
           </div>
+          ${configs[configId] ? `<button class="ghost-button table-option-command" data-action="export-csv" data-config="${configId}" type="button">Экспорт CSV</button>` : ""}
           ${isStudentApplicationsImport ? "" : `<button class="ghost-button table-option-command" data-action="refresh-table-data" data-config="${configId}" type="button">Обновить данные</button>`}
           <button class="ghost-button table-option-command" data-action="reset-table-options" data-config="${configId}" type="button">Восстановить исходный вид</button>
         </div>
@@ -38280,10 +38270,6 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
 
-    document.querySelectorAll("[data-action='bulk-export']").forEach((button) => {
-      button.addEventListener("click", () => exportCsv(button.dataset.config, getRowsByIds(configs[button.dataset.config].collection, getSelected(button.dataset.config))));
-    });
-
     document.querySelectorAll("[data-action='bulk-status']").forEach((button) => {
       button.addEventListener("click", () => bulkSetStatus(button.dataset.config));
     });
@@ -38482,7 +38468,11 @@ MAX - https://bizvmax.ru/zifra_plus
     document.getElementById("jsonImport")?.addEventListener("change", importJson);
 
     document.querySelectorAll("[data-action='export-csv']").forEach((button) => {
-      button.addEventListener("click", () => exportCsv(button.dataset.config));
+      button.addEventListener("click", () => {
+        exportCsv(button.dataset.config);
+        state.tableOptions = null;
+        render();
+      });
     });
 
     document.querySelectorAll("[data-action='dict-remove']").forEach((button) => {

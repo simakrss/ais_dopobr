@@ -3909,11 +3909,6 @@ button.mobile-registry-filters-toggle {
   color: var(--red);
 }
 
-.csv-button {
-  color: var(--green);
-}
-
-.csv-icon,
 .trash-icon,
 .student-folder-icon,
 .student-database-history-icon {
@@ -3925,11 +3920,6 @@ button.mobile-registry-filters-toggle {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.csv-icon {
-  width: 20px;
-  height: 20px;
 }
 
 .icon-button,
