@@ -185,10 +185,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.378",
+    version: "1.7.379",
     releasedAt: "2026-08-31"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.379",
+      releasedAt: "2026-08-31",
+      changes: [
+        "В деморежиме карточки программ и других записей открываются без запроса блокировки — только для просмотра; фоновые проверки блокировок и сохранение отключены."
+      ]
+    },
     {
       version: "1.7.378",
       releasedAt: "2026-08-31",
@@ -9984,10 +9991,23 @@ MAX - https://bizvmax.ru/zifra_plus
     const entityType = recordLockEntityType(normalizedConfigId);
     const key = recordLockKey(entityType, normalizedEntityId);
     const previousLock = activeRecordLock?.key !== key ? activeRecordLock : null;
-    const acquired = await acquireRecordLock(entityType, normalizedEntityId, {
+    const lockOptions = {
       readOnlyFallback: true
-    });
+    };
+    const acquired = await acquireRecordLock(entityType, normalizedEntityId, lockOptions);
     if (acquired) return { readOnly: false };
+    if (lockOptions.demoModeReloadRequired) {
+      const appRoot = globalThis.document?.getElementById?.("app");
+      if (appRoot) {
+        appRoot.replaceChildren();
+        appRoot.style.visibility = "hidden";
+      }
+      globalThis.window?.location?.reload?.();
+      return null;
+    }
+    if (lockOptions.demoModeReadOnly || globalThis.window?.AIS_DATABASE_DEMO_MODE === true) {
+      return { readOnly: true, demoMode: true };
+    }
     const foreignLock = getRecordLock(entityType, normalizedEntityId);
     if (!foreignLock) return null;
     if (previousLock && activeRecordLock?.key === previousLock.key) {
@@ -10314,6 +10334,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function pollSharedRecordLocks({ renderAfter = true } = {}) {
+    if (isDatabaseDemoMode()) {
+      recordLocks.clear();
+      return;
+    }
     if (recordLocksPollRunning || document.visibilityState !== "visible") return;
     recordLocksPollRunning = true;
     try {
@@ -10412,6 +10436,12 @@ MAX - https://bizvmax.ru/zifra_plus
   function startRecordLockHeartbeat() {
     stopRecordLockHeartbeat();
     recordLockHeartbeatTimer = window.setInterval(async () => {
+      if (isDatabaseDemoMode()) {
+        activeRecordLock = null;
+        recordLocks.clear();
+        stopRecordLockHeartbeat();
+        return;
+      }
       const lock = activeRecordLock;
       if (!lock) return;
       try {
@@ -10428,6 +10458,24 @@ MAX - https://bizvmax.ru/zifra_plus
           activeRecordLock = { ...lock, ...payload.lock, key: lock.key };
         }
       } catch (error) {
+        if (error.payload?.code === "DEMO_MODE_READ_ONLY" || error.payload?.demoModeEnabled === true) {
+          stopRecordLockHeartbeat();
+          activeRecordLock = null;
+          recordLocks.clear();
+          window.AIS_DATABASE_DEMO_MODE = true;
+          window.AIS_DEMO_MODE_MASK ||= "Данные скрыты";
+          document.documentElement.classList.add("is-database-demo-mode");
+          if (state?.data?.meta?.databaseDemoMode !== true) {
+            const appRoot = document.getElementById("app");
+            if (appRoot) {
+              appRoot.replaceChildren();
+              appRoot.style.visibility = "hidden";
+            }
+            window.location.reload();
+          }
+          return;
+        }
+        if (isDatabaseDemoMode() || activeRecordLock?.key !== lock.key) return;
         const replacementLock = error.payload?.lock || null;
         markActiveRecordLockLost(lock, replacementLock);
         alert(formatRecordLockMessage(replacementLock || {}, "Блокировка записи потеряна"));
@@ -10525,6 +10573,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function acquireRecordLock(entityType, entityId, options = {}) {
+    if (isDatabaseDemoMode()) return false;
     const id = String(entityId || "").trim();
     if (!id) return true;
     const key = recordLockKey(entityType, id);
@@ -10544,6 +10593,22 @@ MAX - https://bizvmax.ru/zifra_plus
         }
       });
     } catch (error) {
+      if (error.payload?.code === "DEMO_MODE_READ_ONLY" || error.payload?.demoModeEnabled === true) {
+        options.demoModeReadOnly = true;
+        options.demoModeReloadRequired = !(
+          typeof state !== "undefined"
+          && state?.data?.meta?.databaseDemoMode === true
+        );
+        stopRecordLockHeartbeat();
+        activeRecordLock = null;
+        recordLocks.clear();
+        if (globalThis.window) {
+          globalThis.window.AIS_DATABASE_DEMO_MODE = true;
+          globalThis.window.AIS_DEMO_MODE_MASK ||= "Данные скрыты";
+        }
+        globalThis.document?.documentElement?.classList?.add?.("is-database-demo-mode");
+        return false;
+      }
       if (error.status === 423) {
         const lock = error.payload?.lock || {};
         recordLocks.set(key, lock);
@@ -44399,6 +44464,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function ensureRecordLockForSave(form) {
+    if (isDatabaseDemoMode()) return false;
     const existingId = String(form.dataset.id || "").trim();
     if (!existingId) return true;
     const submitButton = getFormSubmitButton(form);
