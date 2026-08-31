@@ -31,6 +31,10 @@ async function testSupervisorTransientHealthTimeoutRecovery() {
     "listeningPid",
     "wait",
     "console",
+    "managedChildren",
+    "childHasExited",
+    "inspectListeningPort",
+    "stopManagedChild",
     `${startSource.slice(retryStart, retryEnd)}\n`
       + `${startSource.slice(serverStart, serverEnd)}\n`
       + "return startServer;"
@@ -42,7 +46,11 @@ async function testSupervisorTransientHealthTimeoutRecovery() {
     },
     () => 4242,
     async () => {},
-    { log: () => {} }
+    { log: () => {} },
+    new Map(),
+    () => false,
+    async () => ({ open: true, pid: 4242 }),
+    async () => true
   );
   const pid = await startServer(
     { name: "Application server", port: 19081, scriptName: "app-server.js" },
@@ -58,9 +66,11 @@ function createDocumentProcessingResolver(healthPayload, options = {}) {
   assert.ok(start >= 0 && end > start, "Не найден клиентский блок выбора сервиса документов");
   let fetchCount = 0;
   let capturedRequestOptions = null;
+  const capturedRequestUrls = [];
   const fetchMock = async (url, requestOptions) => {
     fetchCount += 1;
     capturedRequestOptions = requestOptions;
+    capturedRequestUrls.push(String(url));
     const tunneled = String(url).startsWith("https://");
     if (options.reject === true || (options.rejectLocal === true && !tunneled)) {
       throw new Error("Local service unavailable");
@@ -87,7 +97,7 @@ const localDocumentServicesOrigin = "http://127.0.0.1:8081";
 const localDocumentServicesCacheMilliseconds = 10000;
 const localDocumentServicesState = { checkedAt: 0, capabilities: null, request: null };
 ${appSource.slice(start, end)}
-return { probeLocalDocumentServices, resolveDocumentProcessingOrigin };
+return { documentProcessingApiUrl, probeLocalDocumentServices, resolveDocumentProcessingOrigin };
 `
   );
   const api = factory(
@@ -99,7 +109,8 @@ return { probeLocalDocumentServices, resolveDocumentProcessingOrigin };
   return {
     ...api,
     getFetchCount: () => fetchCount,
-    getRequestOptions: () => capturedRequestOptions
+    getRequestOptions: () => capturedRequestOptions,
+    getRequestUrls: () => [...capturedRequestUrls]
   };
 }
 
@@ -183,10 +194,22 @@ async function main() {
     }
   });
   assert.equal(
-    await tunnelResolver.resolveDocumentProcessingOrigin("ocr"),
+    await tunnelResolver.resolveDocumentProcessingOrigin("documentConversion"),
     "https://edu-plus.ru/lms"
   );
   assert.equal(tunnelResolver.getFetchCount(), 2, "После локального сервиса должен проверяться туннель");
+  assert.deepEqual(tunnelResolver.getRequestUrls(), [
+    "http://127.0.0.1:8081/api/local-document-services/health",
+    "https://edu-plus.ru/lms/api/local-document-services/health"
+  ]);
+  assert.equal(
+    tunnelResolver.documentProcessingApiUrl(
+      "/api/contracts/student-document",
+      "https://edu-plus.ru/lms/"
+    ),
+    "https://edu-plus.ru/lms/api/contracts/student-document",
+    "Public UI должен отправлять формирование через gateway внутри /lms"
+  );
   const editingOnlyResolver = createDocumentProcessingResolver({
     appServerAvailable: true,
     ocrAvailable: false,
@@ -199,9 +222,26 @@ async function main() {
     "ONLYOFFICE-редактор не должен выдаваться за высококачественный PDF-конвертер"
   );
   const unavailableResolver = createDocumentProcessingResolver({}, { reject: true });
+  const unavailableOrigin = await unavailableResolver.resolveDocumentProcessingOrigin("documentConversion");
   assert.equal(
-    await unavailableResolver.resolveDocumentProcessingOrigin("ocr"),
+    unavailableOrigin,
     "https://edu-plus.ru/lms"
+  );
+  assert.deepEqual(
+    unavailableResolver.getRequestUrls(),
+    [
+      "http://127.0.0.1:8081/api/local-document-services/health",
+      "https://edu-plus.ru/lms/api/local-document-services/health"
+    ],
+    "Даже при недоступном локальном сервисе клиент должен проверить public tunnel health"
+  );
+  assert.equal(
+    unavailableResolver.documentProcessingApiUrl(
+      "/api/contracts/student-document",
+      unavailableOrigin
+    ),
+    "https://edu-plus.ru/lms/api/contracts/student-document",
+    "Недоступный health-check не должен уводить запрос формирования на localhost или мимо public gateway"
   );
 
   const forwardedRequests = [];
@@ -417,6 +457,66 @@ async function main() {
     assert.match(gatewaySource, /\/api\/students\/export-database/u);
     assert.match(gatewaySource, /\/api\/student-photo/u);
     assert.match(gatewaySource, /\/api\/local-document-services\/health/u);
+    const documentTunnelRoutesStart = gatewaySource.indexOf("function gateway_document_tunnel_handles");
+    const documentTunnelRoutesEnd = gatewaySource.indexOf(
+      "\n\nfunction gateway_response_header",
+      documentTunnelRoutesStart
+    );
+    assert.ok(
+      documentTunnelRoutesStart >= 0 && documentTunnelRoutesEnd > documentTunnelRoutesStart
+    );
+    assert.match(
+      gatewaySource.slice(documentTunnelRoutesStart, documentTunnelRoutesEnd),
+      /\$method === 'POST'[\s\S]+\$path === '\/api\/contracts\/student-document'/u,
+      "Public gateway должен распознавать туннельный POST формирования документа"
+    );
+    const tunnelRoutesStart = gatewaySource.indexOf("function gateway_tunnel_handles");
+    const tunnelRoutesEnd = gatewaySource.indexOf(
+      "\n\nfunction gateway_parse_tunnel_response_headers",
+      tunnelRoutesStart
+    );
+    assert.ok(tunnelRoutesStart >= 0 && tunnelRoutesEnd > tunnelRoutesStart);
+    assert.match(
+      gatewaySource.slice(tunnelRoutesStart, tunnelRoutesEnd),
+      /gateway_document_tunnel_handles\(\$method, \$path\)/u,
+      "Общий tunnel allowlist должен включать document route helper"
+    );
+    const tunnelDispatchStart = gatewaySource.indexOf("$tunnelSettings = gateway_tunnel_settings();");
+    const tunnelDispatchEnd = gatewaySource.indexOf(
+      "\n\n    if ($method === 'POST' && $path === '/api/students/recognize-documents/start')",
+      tunnelDispatchStart
+    );
+    assert.ok(tunnelDispatchStart >= 0 && tunnelDispatchEnd > tunnelDispatchStart);
+    const tunnelDispatchSource = gatewaySource.slice(tunnelDispatchStart, tunnelDispatchEnd);
+    assert.match(
+      tunnelDispatchSource,
+      /gateway_tunnel_handles\(\$method, \$path\)[\s\S]+gateway_run_tunnel/u,
+      "Разрешённый public route должен передаваться в gateway_run_tunnel"
+    );
+    const generationPipelineStart = appSource.indexOf("  async function downloadStudentDocumentFromTemplate");
+    const generationPipelineEnd = appSource.indexOf(
+      "\n\n  async function openStudentEducationDocument",
+      generationPipelineStart
+    );
+    assert.ok(
+      generationPipelineStart >= 0 && generationPipelineEnd > generationPipelineStart,
+      "Не найден клиентский pipeline формирования документа"
+    );
+    const generationPipelineSource = appSource.slice(generationPipelineStart, generationPipelineEnd);
+    assert.match(
+      generationPipelineSource,
+      /documentProcessingOrigin = await resolveDocumentProcessingOrigin\("documentConversion"\)/u
+    );
+    assert.match(
+      generationPipelineSource,
+      /documentProcessingApiUrl\([\s\S]+"\/api\/contracts\/student-document"[\s\S]+documentProcessingOrigin/u,
+      "Endpoint формирования должен строиться из выбранного processing origin"
+    );
+    assert.match(
+      generationPipelineSource,
+      /payload\.error \|\| `Ошибка сервера: \$\{response\.status\}`[\s\S]+alert\(`\$\{errorTitle\}: \$\{error\.message\}`\)/u,
+      "Public 503 должен быть показан пользователю вместе с сообщением gateway"
+    );
 
     console.log("local document services priority tests: OK");
   } finally {

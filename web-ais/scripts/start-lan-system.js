@@ -37,6 +37,8 @@ const appRoot = path.resolve(__dirname, "..");
 const logRoot = path.join(appRoot, "tmp", "lan-system");
 const runtimeRoot = path.join(appRoot, ".runtime");
 const statusPath = path.join(logRoot, "status.json");
+const launcherFallbackLockPath = path.join(logRoot, "launcher.lock");
+const launcherMutexName = "Global\\AisDopobrWeb.Launcher";
 const secretPath = path.join(logRoot, "onlyoffice-jwt-secret.txt");
 const gatewaySecretPath = path.join(runtimeRoot, "tunnel-secret.txt");
 const legacyGatewaySecretPath = path.join(logRoot, "local-service-gateway-secret.txt");
@@ -49,8 +51,22 @@ const openBrowser = argumentsLower.has("--open-browser");
 const serviceMode = process.env.AIS_SERVICE_MODE === "1";
 const localBrowserUrl = "http://127.0.0.1:8081/";
 const managedChildren = new Map();
+const activeServerOperations = new Set();
 let shuttingDown = false;
 let monitorBusy = false;
+let requestedExitCode = 0;
+let shutdownPromise = null;
+let launcherMutexProcess = null;
+let launcherMutexReleaseRequested = false;
+let launcherFallbackLockDescriptor = null;
+
+class ShutdownRequestedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ShutdownRequestedError";
+    this.code = "AIS_SHUTDOWN_REQUESTED";
+  }
+}
 
 const serverDefinitions = [
   {
@@ -59,6 +75,7 @@ const serverDefinitions = [
     scriptName: "app-server.js",
     host: "127.0.0.1",
     port: 19081,
+    startupTimeoutMilliseconds: 180000,
     environment: {},
   },
   {
@@ -67,6 +84,7 @@ const serverDefinitions = [
     scriptName: "local-server.js",
     host: "0.0.0.0",
     port: 8081,
+    startupTimeoutMilliseconds: 60000,
     environment: { AIS_APP_SERVER_ORIGIN: "http://127.0.0.1:19081" },
   },
 ];
@@ -76,17 +94,247 @@ function ensureDirectories() {
   fs.mkdirSync(runtimeRoot, { recursive: true });
 }
 
-function processExists(pid) {
-  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false;
+function inspectNodeProcess(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return { status: "missing", pid: 0 };
   try {
     const output = execFileSync("tasklist.exe", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], {
       encoding: "utf8",
       timeout: 5000,
       windowsHide: true,
     });
-    return output.toLowerCase().includes("node.exe");
+    for (const line of output.split(/\r?\n/u)) {
+      const match = line.match(/^"([^"]+)","(\d+)"/u);
+      if (!match || Number(match[2]) !== pid) continue;
+      return {
+        status: match[1].toLowerCase() === "node.exe" ? "node" : "other",
+        pid,
+      };
+    }
+    return { status: "missing", pid };
   } catch (_error) {
-    return false;
+    return { status: "unknown", pid };
+  }
+}
+
+function inspectProcessCommandLine(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return { status: "missing", commandLine: "" };
+  try {
+    const commandLine = execFileSync(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-Command",
+        `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`,
+      ],
+      { encoding: "utf8", timeout: 7000, windowsHide: true },
+    ).trim();
+    if (!commandLine) {
+      const processState = inspectNodeProcess(pid);
+      return processState.status === "missing"
+        ? { status: "missing", commandLine: "" }
+        : { status: "unknown", commandLine: "" };
+    }
+    return { status: "known", commandLine };
+  } catch (_error) {
+    return { status: "unknown", commandLine: "" };
+  }
+}
+
+function inspectExpectedNodeServiceProcess(pid, scriptName) {
+  const processState = inspectNodeProcess(pid);
+  if (processState.status !== "node") return processState;
+  const commandState = inspectProcessCommandLine(pid);
+  if (commandState.status !== "known") return { status: commandState.status, pid };
+  const commandLine = commandState.commandLine.replace(/\//g, "\\").toLowerCase();
+  const expectedPath = path.join(appRoot, scriptName).replace(/\//g, "\\").toLowerCase();
+  return {
+    status: commandLine.includes("node") && commandLine.includes(expectedPath)
+      ? "expected"
+      : "other",
+    pid,
+  };
+}
+
+function processExists(pid) {
+  if (pid === process.pid) return false;
+  return inspectNodeProcess(pid).status === "node";
+}
+
+function isExpectedNodeServiceProcess(pid, scriptName) {
+  if (pid === process.pid) return false;
+  return inspectExpectedNodeServiceProcess(pid, scriptName).status === "expected";
+}
+
+function buildLauncherMutexScript(mutexName = launcherMutexName) {
+  const escapedMutexName = String(mutexName).replace(/'/g, "''");
+  return `$ErrorActionPreference = "Stop"
+$mutex = New-Object Threading.Mutex($false, '${escapedMutexName}')
+$ownsMutex = $false
+try {
+  try {
+    $ownsMutex = $mutex.WaitOne(0)
+  } catch [Threading.AbandonedMutexException] {
+    $ownsMutex = $true
+  }
+  if (-not $ownsMutex) {
+    [Console]::Out.WriteLine("BUSY")
+    [Console]::Out.Flush()
+    exit 2
+  }
+  [Console]::Out.WriteLine("ACQUIRED")
+  [Console]::Out.Flush()
+  [void][Console]::In.ReadLine()
+} finally {
+  if ($ownsMutex) {
+    try { $mutex.ReleaseMutex() } catch [ApplicationException] { }
+  }
+  $mutex.Dispose()
+}`;
+}
+
+function acquireWindowsLauncherMutex(timeoutMilliseconds = 15000) {
+  launcherMutexReleaseRequested = false;
+  const encodedCommand = Buffer.from(
+    buildLauncherMutexScript(),
+    "utf16le",
+  ).toString("base64");
+  const child = spawn(
+    "powershell.exe",
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCommand],
+    { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
+  );
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let acquired = false;
+    let output = "";
+    let errorOutput = "";
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { child.kill(); } catch (_error) { }
+      reject(new Error("Timed out while acquiring the machine-wide AIS launcher mutex."));
+    }, timeoutMilliseconds);
+    const finish = (result, error = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(result);
+    };
+    const inspectOutput = () => {
+      if (settled) return;
+      if (output.includes("ACQUIRED")) {
+        acquired = true;
+        launcherMutexProcess = child;
+        finish({ acquired: true, ownerPid: 0 });
+      } else if (output.includes("BUSY")) {
+        try { child.stdin.end(); } catch (_error) { }
+        finish({ acquired: false, ownerPid: 0 });
+      }
+    };
+    child.stdout.on("data", (chunk) => {
+      output = `${output}${chunk}`.slice(-4096);
+      inspectOutput();
+    });
+    child.stderr.on("data", (chunk) => {
+      errorOutput = `${errorOutput}${chunk}`.slice(-4096);
+    });
+    child.once("error", (error) => {
+      finish(null, error);
+    });
+    child.once("exit", (code, signal) => {
+      if (launcherMutexProcess === child) launcherMutexProcess = null;
+      if (!settled) {
+        inspectOutput();
+        if (!settled) {
+          if (code === 2 || output.includes("BUSY")) {
+            finish({ acquired: false, ownerPid: 0 });
+          } else {
+            finish(
+              null,
+              new Error(
+                `AIS launcher mutex helper exited before acquisition `
+                + `(code ${code ?? "-"}, signal ${signal ?? "-"}). ${errorOutput.trim()}`,
+              ),
+            );
+          }
+        }
+      } else if (acquired && !launcherMutexReleaseRequested && !shuttingDown) {
+        console.error("Machine-wide AIS launcher mutex was lost unexpectedly.");
+        shutdown(1);
+      }
+    });
+  });
+}
+
+function acquireFallbackLauncherLock() {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(launcherFallbackLockPath, "wx");
+    fs.writeFileSync(descriptor, `${JSON.stringify({
+      pid: process.pid,
+      createdAt: new Date().toISOString(),
+    })}\n`, "utf8");
+    fs.fsyncSync(descriptor);
+    launcherFallbackLockDescriptor = descriptor;
+    return { acquired: true, ownerPid: process.pid };
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch (_closeError) { }
+      try { fs.rmSync(launcherFallbackLockPath, { force: true }); } catch (_removeError) { }
+    }
+    if (error?.code === "EEXIST") return { acquired: false, ownerPid: 0 };
+    throw error;
+  }
+}
+
+async function acquireLauncherGuard() {
+  if (process.platform === "win32") return acquireWindowsLauncherMutex();
+  return acquireFallbackLauncherLock();
+}
+
+async function releaseLauncherGuard() {
+  if (process.platform !== "win32") {
+    const descriptor = launcherFallbackLockDescriptor;
+    launcherFallbackLockDescriptor = null;
+    if (descriptor === null) return;
+    try {
+      fs.rmSync(launcherFallbackLockPath, { force: true });
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    return;
+  }
+
+  const child = launcherMutexProcess;
+  if (!child) return;
+  launcherMutexReleaseRequested = true;
+  try { child.stdin.end(); } catch (_error) { }
+  if (await waitForChildExit(child, 5000)) return;
+  try { child.kill(); } catch (_error) { }
+  if (await waitForChildExit(child, 5000)) return;
+  try { child.kill("SIGKILL"); } catch (_error) { }
+  if (!(await waitForChildExit(child, 5000))) {
+    throw new Error("Machine-wide AIS launcher mutex helper could not be stopped.");
+  }
+}
+
+function releaseLauncherGuardOnExit() {
+  launcherMutexReleaseRequested = true;
+  const child = launcherMutexProcess;
+  if (child && !childHasExited(child)) {
+    try { child.stdin.end(); } catch (_error) { }
+    try { child.kill(); } catch (_error) { }
+  }
+  const descriptor = launcherFallbackLockDescriptor;
+  launcherFallbackLockDescriptor = null;
+  if (descriptor !== null) {
+    try { fs.rmSync(launcherFallbackLockPath, { force: true }); } catch (_error) { }
+    try { fs.closeSync(descriptor); } catch (_error) { }
   }
 }
 
@@ -205,7 +453,7 @@ function listeningPid(port) {
       if (match && Number(match[1]) === port) return Number(match[2]);
     }
   } catch (_error) {
-    return 0;
+    return null;
   }
   return 0;
 }
@@ -231,13 +479,75 @@ function isPortOpen(host, port) {
   });
 }
 
-async function waitForPort(host, port, timeoutMilliseconds = 12000) {
+async function waitForOwnedPort(host, port, child, timeoutMilliseconds = 12000) {
   const deadline = Date.now() + timeoutMilliseconds;
   while (Date.now() < deadline) {
-    if (await isPortOpen(host, port)) return true;
+    if (shuttingDown) return false;
+    if (child.exitCode !== null || child.signalCode !== null) return false;
+    if (await isPortOpen(host, port)) {
+      const ownerPid = listeningPid(port);
+      if (ownerPid === child.pid) return true;
+      if (ownerPid > 0) return false;
+    }
     await wait(300);
   }
   return false;
+}
+
+async function inspectListeningPort(host, port, attempts = 3) {
+  const totalAttempts = Math.max(1, Math.floor(Number(attempts) || 1));
+  for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
+    const ownerPid = listeningPid(port);
+    if (ownerPid > 0) return { open: true, pid: ownerPid };
+    if (ownerPid === 0 && !(await isPortOpen(host, port))) {
+      return { open: false, pid: 0 };
+    }
+    if (attempt + 1 < totalAttempts) await wait(300);
+  }
+  return { open: true, pid: 0 };
+}
+
+function childHasExited(child) {
+  return !child || child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForChildExit(child, timeoutMilliseconds) {
+  if (childHasExited(child)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let timer;
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.off("exit", onExit);
+    };
+    const onExit = () => {
+      cleanup();
+      resolve(true);
+    };
+    child.once("exit", onExit);
+    timer = setTimeout(() => {
+      cleanup();
+      resolve(childHasExited(child));
+    }, timeoutMilliseconds);
+  });
+}
+
+async function stopManagedChild(child, graceMilliseconds = 5000) {
+  if (childHasExited(child)) return true;
+  try {
+    child.kill();
+  } catch (_error) {
+    // A concurrent exit is observed by waitForChildExit below.
+  }
+  if (await waitForChildExit(child, graceMilliseconds)) return true;
+
+  try {
+    // ChildProcess.kill uses the process handle on Windows, so a reused numeric PID
+    // cannot redirect this force-stop to an unrelated process.
+    child.kill("SIGKILL");
+  } catch (_error) {
+    // A concurrent exit is observed below.
+  }
+  return waitForChildExit(child, 10000);
 }
 
 async function isAisServiceHealthy(port, commonEnvironment = null) {
@@ -278,40 +588,62 @@ async function isAisServiceHealthyWithRetry(
 }
 
 function processCommandLine(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return "";
-  try {
-    return execFileSync(
-      "powershell.exe",
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-Command",
-        `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`,
-      ],
-      { encoding: "utf8", timeout: 7000, windowsHide: true },
-    ).trim();
-  } catch (_error) {
-    return "";
-  }
+  // Compatibility boundary for focused tests; safety callers preserve tri-state.
+  const result = inspectProcessCommandLine(pid);
+  return result.status === "known" ? result.commandLine : "";
 }
 
-function isExpectedNodeServiceProcess(pid, scriptName) {
-  const commandLine = processCommandLine(pid).replace(/\//g, "\\").toLowerCase();
-  const expectedPath = path.join(appRoot, scriptName).replace(/\//g, "\\").toLowerCase();
-  return commandLine.includes("node") && commandLine.includes(expectedPath);
+function buildExpectedProcessStopScript(pid, expectedPath) {
+  const escapedExpectedPath = String(expectedPath).replace(/'/g, "''");
+  return `$ErrorActionPreference = "Stop"
+$target = [Diagnostics.Process]::GetProcessById(${Number(pid)})
+$targetStartedAt = $target.StartTime.ToUniversalTime()
+$cim = Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}" -ErrorAction Stop
+if (-not $cim) { throw "Target process disappeared before identity verification." }
+$cimStartedAt = ([DateTime]$cim.CreationDate).ToUniversalTime()
+if ([Math]::Abs(($cimStartedAt - $targetStartedAt).TotalMilliseconds) -gt 100) {
+  throw "Target PID was reused before identity verification."
+}
+$commandLine = [string]$cim.CommandLine
+if ($target.ProcessName -ine "node" -or $commandLine.IndexOf(
+  '${escapedExpectedPath}',
+  [StringComparison]::OrdinalIgnoreCase
+) -lt 0) {
+  throw "Target process identity does not match the expected AIS script."
+}
+$target.Kill()
+if (-not $target.WaitForExit(10000)) { throw "Target process did not stop." }`;
 }
 
 async function stopExpectedNodeService(pid, scriptName) {
-  if (!isExpectedNodeServiceProcess(pid, scriptName)) {
+  if (pid === process.pid) {
+    throw new Error("Супервизор отказался останавливать собственный процесс по устаревшему PID.");
+  }
+  const processState = inspectExpectedNodeServiceProcess(pid, scriptName);
+  if (processState.status === "unknown") {
+    throw new Error(
+      `Не удалось надёжно проверить процесс ${pid}; автоматический перезапуск отменён.`,
+    );
+  }
+  if (processState.status !== "expected") {
     throw new Error(`Процесс ${pid} не принадлежит службе АИС ${scriptName}; автоматический перезапуск отменён.`);
   }
-  execFileSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
-    timeout: 10000,
-    windowsHide: true,
-    stdio: "ignore",
-  });
-  const deadline = Date.now() + 10000;
-  while (processExists(pid) && Date.now() < deadline) await wait(200);
+  const expectedPath = path.join(appRoot, scriptName).replace(/\//g, "\\");
+  const encodedCommand = Buffer.from(
+    buildExpectedProcessStopScript(pid, expectedPath),
+    "utf16le",
+  ).toString("base64");
+  try {
+    execFileSync(
+      "powershell.exe",
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCommand],
+      { timeout: 20000, windowsHide: true, stdio: "ignore" },
+    );
+  } catch (_error) {
+    throw new Error(
+      `Процесс ${pid} изменился или не завершился; автоматический перезапуск отменён.`,
+    );
+  }
 }
 
 function onlyOfficeContainerSecretMatches(commonEnvironment) {
@@ -343,29 +675,67 @@ async function existingSystemRuntimeMatches(status, commonEnvironment) {
 }
 
 async function startServer(definition, commonEnvironment) {
-  const existingPid = listeningPid(definition.port);
-  if (existingPid) {
-    if (await isAisServiceHealthy(definition.port, commonEnvironment)) {
-      console.log(`${definition.name} is already running (PID ${existingPid}, port ${definition.port}).`);
-      return existingPid;
+  if (typeof shuttingDown !== "undefined" && shuttingDown) {
+    throw new ShutdownRequestedError(
+      `${definition.name}: запуск отменён из-за остановки супервизора.`,
+    );
+  }
+  let trackedChild = managedChildren.get(definition.key);
+  if (trackedChild && childHasExited(trackedChild)) {
+    if (managedChildren.get(definition.key) === trackedChild) {
+      managedChildren.delete(definition.key);
     }
-    if (!(await isAisServiceHealthy(definition.port))) {
+    trackedChild = null;
+  }
+
+  const portState = await inspectListeningPort("127.0.0.1", definition.port);
+  if (portState.open && portState.pid === 0) {
+    throw new Error(
+      `Порт ${definition.port} отвечает, но его владелец не определён; повторный запуск отменён.`,
+    );
+  }
+  if (trackedChild && portState.pid !== trackedChild.pid) {
+    const stopped = await stopManagedChild(trackedChild);
+    if (!stopped) {
+      throw new Error(
+        `${definition.name}: управляемый процесс ${trackedChild.pid} не завершился; повторный запуск отменён.`,
+      );
+    }
+    if (managedChildren.get(definition.key) === trackedChild) {
+      managedChildren.delete(definition.key);
+    }
+  }
+
+  const existingPid = portState.pid;
+  if (existingPid) {
+    let runtimeMatches = await isAisServiceHealthy(definition.port, commonEnvironment);
+    if (!runtimeMatches && !(await isAisServiceHealthy(definition.port))) {
       throw new Error(
         `Порт ${definition.port} занят другим приложением (PID ${existingPid}). `
         + `Освободите порт и повторите запуск АИС.`,
       );
     }
-    // A CPU-heavy XLSB parse can delay the authenticated health request beyond its
-    // timeout while the immediately following anonymous probe succeeds.  Confirm the
-    // runtime-secret mismatch before terminating a valid in-flight application server.
-    if (await isAisServiceHealthyWithRetry(definition.port, commonEnvironment)) {
-      console.log(
-        `${definition.name} recovered after a transient health-check timeout `
-        + `(PID ${existingPid}, port ${definition.port}).`,
+    if (!runtimeMatches) {
+      // A CPU-heavy XLSB parse can delay the authenticated health request beyond its
+      // timeout while the immediately following anonymous probe succeeds. Confirm the
+      // runtime-secret mismatch before terminating a valid in-flight application server.
+      runtimeMatches = await isAisServiceHealthyWithRetry(
+        definition.port,
+        commonEnvironment,
       );
+    }
+    if (runtimeMatches && trackedChild && existingPid === trackedChild.pid) {
+      console.log(`${definition.name} is already running (PID ${existingPid}, port ${definition.port}).`);
       return existingPid;
     }
-    console.log(`${definition.name}: обнаружены несовместимые служебные ключи, выполняется безопасный перезапуск.`);
+    if (runtimeMatches) {
+      console.log(
+        `${definition.name}: найден исправный процесс без активного супервизора `
+        + `(PID ${existingPid}); выполняется безопасный перезапуск.`,
+      );
+    } else {
+      console.log(`${definition.name}: обнаружены несовместимые служебные ключи, выполняется безопасный перезапуск.`);
+    }
     await stopExpectedNodeService(existingPid, definition.scriptName);
     const portDeadline = Date.now() + 10000;
     while (await isPortOpen("127.0.0.1", definition.port)) {
@@ -376,6 +746,11 @@ async function startServer(definition, commonEnvironment) {
 
   const stdoutPath = path.join(logRoot, `${definition.scriptName}.stdout.log`);
   const stderrPath = path.join(logRoot, `${definition.scriptName}.stderr.log`);
+  if (typeof shuttingDown !== "undefined" && shuttingDown) {
+    throw new ShutdownRequestedError(
+      `${definition.name}: запуск отменён из-за остановки супервизора.`,
+    );
+  }
   const stdoutHandle = fs.openSync(stdoutPath, "a");
   const stderrHandle = fs.openSync(stderrPath, "a");
   let child;
@@ -400,17 +775,50 @@ async function startServer(definition, commonEnvironment) {
 
   managedChildren.set(definition.key, child);
   child.once("exit", (code, signal) => {
-    managedChildren.delete(definition.key);
+    if (managedChildren.get(definition.key) === child) {
+      managedChildren.delete(definition.key);
+    }
     if (!shuttingDown) {
       console.error(`${definition.name} stopped (code ${code ?? "-"}, signal ${signal ?? "-"}).`);
     }
   });
 
-  if (!(await waitForPort("127.0.0.1", definition.port))) {
+  if (!(
+    await waitForOwnedPort(
+      "127.0.0.1",
+      definition.port,
+      child,
+      definition.startupTimeoutMilliseconds,
+    )
+  )) {
+    const stopped = await stopManagedChild(child);
+    if (!stopped) {
+      throw new Error(
+        `${definition.name} did not open port ${definition.port}, and its managed process `
+        + `${child.pid} could not be stopped. See ${stderrPath}`,
+      );
+    }
     throw new Error(`${definition.name} did not open port ${definition.port}. See ${stderrPath}`);
   }
   console.log(`${definition.name} started (PID ${child.pid}, port ${definition.port}).`);
   return child.pid;
+}
+
+function startTrackedServer(definition, commonEnvironment) {
+  if (shuttingDown) {
+    return Promise.reject(
+      new ShutdownRequestedError(
+        `${definition.name}: запуск отменён из-за остановки супервизора.`,
+      ),
+    );
+  }
+  let trackedOperation;
+  const operation = startServer(definition, commonEnvironment);
+  trackedOperation = operation.finally(() => {
+    activeServerOperations.delete(trackedOperation);
+  });
+  activeServerOperations.add(trackedOperation);
+  return trackedOperation;
 }
 
 function startDocumentServices(commonEnvironment) {
@@ -616,27 +1024,79 @@ function writeStatus(values) {
 
 async function ensureServers(commonEnvironment, status) {
   for (const definition of serverDefinitions) {
-    status[`${definition.key}Pid`] = await startServer(definition, commonEnvironment);
+    status[`${definition.key}Pid`] = await startTrackedServer(definition, commonEnvironment);
   }
 }
 
-async function shutdown(exitCode = 0) {
-  if (shuttingDown) return;
-  shuttingDown = true;
+async function waitForActiveServerOperations() {
+  while (activeServerOperations.size > 0) {
+    await Promise.allSettled([...activeServerOperations]);
+  }
+}
+
+async function drainManagedChildren() {
+  for (;;) {
+    const children = [...managedChildren.entries()];
+    if (children.length === 0) return;
+    const stopResults = await Promise.all(children.map(async ([key, child]) => {
+      try {
+        return { key, child, stopped: await stopManagedChild(child) };
+      } catch (error) {
+        console.error(`Managed AIS process ${child.pid} stop failed: ${error.message}`);
+        return { key, child, stopped: false };
+      }
+    }));
+    let retryRequired = false;
+    for (const result of stopResults) {
+      if (result.stopped) {
+        if (managedChildren.get(result.key) === result.child) {
+          managedChildren.delete(result.key);
+        }
+      } else {
+        retryRequired = true;
+        requestedExitCode = Math.max(requestedExitCode, 1);
+        console.error(`Managed AIS process ${result.child.pid} is still running; stop will be retried.`);
+      }
+    }
+    if (retryRequired) await wait(1000);
+  }
+}
+
+async function performShutdown() {
   console.log("\nStopping AIS servers started by this window...");
-  for (const child of managedChildren.values()) {
+  await waitForActiveServerOperations();
+  await drainManagedChildren();
+  for (;;) {
     try {
-      child.kill();
-    } catch (_error) {
-      // The child may already be stopped.
+      await releaseLauncherGuard();
+      break;
+    } catch (error) {
+      requestedExitCode = Math.max(requestedExitCode, 1);
+      console.error(`${error.message} Mutex release will be retried.`);
+      await wait(1000);
     }
   }
-  await wait(500);
-  process.exit(exitCode);
+  process.exit(requestedExitCode);
+}
+
+function shutdown(exitCode = 0) {
+  const normalizedExitCode = Math.max(0, Math.floor(Number(exitCode) || 0));
+  requestedExitCode = Math.max(requestedExitCode, normalizedExitCode);
+  process.exitCode = Math.max(Number(process.exitCode) || 0, requestedExitCode);
+  if (shutdownPromise) return shutdownPromise;
+  shuttingDown = true;
+  shutdownPromise = performShutdown();
+  return shutdownPromise;
 }
 
 async function main() {
   ensureDirectories();
+  const launcherLock = await acquireLauncherGuard();
+  if (!launcherLock.acquired) {
+    const ownerSuffix = launcherLock.ownerPid > 0 ? ` (PID ${launcherLock.ownerPid})` : "";
+    console.log(`\n[AIS] Другой процесс запуска уже выполняется${ownerSuffix}.`);
+    return;
+  }
   const commonEnvironment = {
     ONLYOFFICE_JWT_SECRET: getOnlyOfficeSecret(),
     AIS_TRUST_GATEWAY: "1",
@@ -648,6 +1108,7 @@ async function main() {
     if (await existingSystemRuntimeMatches(previousStatus, commonEnvironment)) {
       printExistingSystemStatus(previousStatus);
       openLocalBrowser();
+      await releaseLauncherGuard();
       return;
     }
     const previousLauncherPid = Number(previousStatus.launcherPid);
@@ -682,8 +1143,11 @@ async function main() {
   status.documentServices = startDocumentServices(commonEnvironment);
 
   console.log("\n[AIS] Starting main servers");
-  for (const definition of serverDefinitions) {
-    status[`${definition.key}Pid`] = await startServer(definition, commonEnvironment);
+  await ensureServers(commonEnvironment, status);
+  if (shuttingDown) {
+    throw new ShutdownRequestedError(
+      "Запуск внешнего туннеля отменён из-за остановки супервизора.",
+    );
   }
   console.log("\n[AIS] Starting secure external tunnel");
   status.remoteDocumentServices = startRemoteServicesSupervisor();
@@ -728,7 +1192,9 @@ async function main() {
       await ensureServers(commonEnvironment, status);
       writeStatus(status);
     } catch (error) {
-      console.error(`Server monitor: ${error.message}`);
+      if (error?.code !== "AIS_SHUTDOWN_REQUESTED") {
+        console.error(`Server monitor: ${error.message}`);
+      }
     } finally {
       monitorBusy = false;
     }
@@ -737,6 +1203,7 @@ async function main() {
 
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
+process.on("exit", releaseLauncherGuardOnExit);
 process.on("uncaughtException", (error) => {
   console.error(error.stack || error.message);
   shutdown(1);
@@ -747,6 +1214,7 @@ process.on("unhandledRejection", (error) => {
 });
 
 main().catch((error) => {
+  if (error?.code === "AIS_SHUTDOWN_REQUESTED" && shuttingDown) return;
   console.error(`AIS startup failed: ${error.stack || error.message}`);
   shutdown(1);
 });

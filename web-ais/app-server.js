@@ -32895,6 +32895,20 @@ function isLoopbackEditorHostname(value) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
+function generatedDocumentRequestBackend(req) {
+  const backend = String(req?.headers?.["x-ais-document-backend"] || "").trim().toLowerCase();
+  return ["server", "tunnel"].includes(backend) ? backend : "";
+}
+
+function assertGeneratedDocumentEditorBackendAvailable(req) {
+  if (generatedDocumentRequestBackend(req) !== "server") return;
+  throw generatedDocumentPreviewError(
+    "Онлайн-редактор доступен только через локальный сервис. "
+      + "Предварительный просмотр можно подтвердить без редактирования.",
+    503
+  );
+}
+
 async function resolveGeneratedDocumentEditorBrowserBaseUrl(req) {
   const requestOrigin = requestPublicOrigin(req);
   const pageOrigin = String(req.headers.origin || "").trim();
@@ -33018,6 +33032,7 @@ function generatedDocumentEditorConfig(context, settings, previewToken, editorTo
 async function handleGeneratedDocumentPreviewEditorStart(req, res, authUser) {
   try {
     const body = await readJsonBody(req, GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES);
+    assertGeneratedDocumentEditorBackendAvailable(req);
     const session = await beginGeneratedDocumentPreviewEditor(body.previewToken, authUser);
     const editorBaseUrl = await resolveGeneratedDocumentEditorBrowserBaseUrl(req);
     const editorUrl = generatedDocumentEditorServiceUrl(
@@ -33038,6 +33053,7 @@ async function handleGeneratedDocumentPreviewEditorStart(req, res, authUser) {
 
 async function handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl) {
   try {
+    assertGeneratedDocumentEditorBackendAvailable(req);
     const previewToken = String(requestUrl.searchParams.get("previewToken") || "");
     const editorToken = String(requestUrl.searchParams.get("editorToken") || "");
     const context = await readGeneratedDocumentPreviewEditorContext(
@@ -33129,6 +33145,7 @@ async function handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl) {
 
 async function handleGeneratedDocumentPreviewEditorFile(req, res, requestUrl) {
   try {
+    assertGeneratedDocumentEditorBackendAvailable(req);
     const context = await readGeneratedDocumentPreviewEditorContext(
       requestUrl.searchParams.get("previewToken"),
       requestUrl.searchParams.get("editorToken")
@@ -33192,6 +33209,7 @@ async function handleGeneratedDocumentPreviewEditorCallback(req, res, requestUrl
   const previewToken = String(requestUrl.searchParams.get("previewToken") || "");
   const editorToken = String(requestUrl.searchParams.get("editorToken") || "");
   try {
+    assertGeneratedDocumentEditorBackendAvailable(req);
     const context = await readGeneratedDocumentPreviewEditorContext(
       previewToken,
       editorToken,
@@ -37043,6 +37061,8 @@ module.exports = {
   verifyOnlyOfficeJwt,
   resolveOnlyOfficeEditedDocumentUrl,
   sanitizeOnlyOfficeEditorSaveError,
+  generatedDocumentRequestBackend,
+  assertGeneratedDocumentEditorBackendAvailable,
   registerGeneratedDocumentPreview,
   beginGeneratedDocumentPreviewEditor,
   storeGeneratedDocumentPreviewEditedDocx,

@@ -15,6 +15,7 @@ const paths = {
   favicon: path.join(appRoot, "favicon.ico"),
   logViewer: path.join(__dirname, "show-ais-service-log.ps1"),
   serviceSource: path.join(__dirname, "ais-windows-service.cs"),
+  launcher: path.join(__dirname, "start-lan-system.js"),
   stop: path.join(__dirname, "stop-lan-system.ps1")
 };
 
@@ -29,6 +30,7 @@ const installerSource = read(paths.installer);
 const traySource = read(paths.tray);
 const logViewerSource = read(paths.logViewer);
 const serviceSource = read(paths.serviceSource);
+const launcherSource = read(paths.launcher);
 const stopSource = read(paths.stop);
 
 assert.match(serviceSource, /class AisWindowsService\s*:\s*ServiceBase/u);
@@ -74,6 +76,271 @@ assert.match(hostSource, /Проверка значка АИС в системн
 assert.match(hostSource, /CreateNoWindow\s*=\s*\$true/u);
 assert.match(hostSource, /WindowStyle\s*=\s*\[Diagnostics\.ProcessWindowStyle\]::Hidden/u);
 assert.doesNotMatch(hostSource, /& powershell\.exe[\s\S]*?\$startupUpdatePath/u);
+assert.match(hostSource, /Global\\AisDopobrWeb\.InteractiveHost/u);
+assert.doesNotMatch(hostSource, /Local\\AisDopobrWeb\.InteractiveHost/u);
+assert.match(hostSource, /Threading\.Mutex/u);
+assert.match(hostSource, /WaitOne\(0\)/u);
+assert.match(hostSource, /AbandonedMutexException/u);
+assert.match(hostSource, /Другой интерактивный рабочий процесс уже выполняет запуск АИС/u);
+assert.match(hostSource, /finally[\s\S]*?ReleaseMutex\(\)[\s\S]*?Dispose\(\)/u);
+assert.ok(
+  hostSource.indexOf("$workerMutex.WaitOne(0)") < hostSource.indexOf("Ensure-ServiceDriveMapping $MappedDrive"),
+  "the machine-wide host mutex must be acquired before startup side effects"
+);
+
+assert.match(launcherSource, /launcherMutexName\s*=\s*"Global\\\\AisDopobrWeb\.Launcher"/u);
+assert.match(launcherSource, /function buildLauncherMutexScript/u);
+assert.match(launcherSource, /New-Object Threading\.Mutex/u);
+assert.match(launcherSource, /\$mutex\.WaitOne\(0\)/u);
+assert.match(launcherSource, /\[Console\]::In\.ReadLine\(\)/u);
+assert.doesNotMatch(launcherSource, /\$currentParent|\$parentStartedAt|ReadLineAsync/u);
+assert.match(launcherSource, /process\.on\("exit",\s*releaseLauncherGuardOnExit\)/u);
+assert.doesNotMatch(launcherSource, /function readLauncherLock|lockAgeMilliseconds|acquireLauncherLock/u);
+assert.match(launcherSource, /function inspectNodeProcess/u);
+assert.match(launcherSource, /status:\s*"unknown"/u);
+assert.match(launcherSource, /function inspectExpectedNodeServiceProcess/u);
+assert.match(
+  launcherSource,
+  /processState\.status\s*===\s*"unknown"[\s\S]{0,180}автоматический перезапуск отменён/u
+);
+assert.match(launcherSource, /if \(pid === process\.pid\)[\s\S]{0,180}останавливать собственный процесс/u);
+assert.match(launcherSource, /function buildExpectedProcessStopScript/u);
+assert.match(
+  launcherSource,
+  /Diagnostics\.Process\]::GetProcessById[\s\S]*?targetStartedAt[\s\S]*?cimStartedAt[\s\S]*?\$target\.Kill\(\)/u
+);
+assert.doesNotMatch(
+  launcherSource,
+  /async function stopExpectedNodeService[\s\S]*?(?=\nfunction onlyOfficeContainerSecretMatches)[\s\S]*?taskkill\.exe/u
+);
+assert.match(launcherSource, /scriptName:\s*"app-server\.js"[\s\S]{0,140}startupTimeoutMilliseconds:\s*180000/u);
+assert.match(launcherSource, /scriptName:\s*"local-server\.js"[\s\S]{0,140}startupTimeoutMilliseconds:\s*60000/u);
+assert.match(
+  launcherSource,
+  /managedChildren\.get\(definition\.key\)\s*===\s*child[\s\S]*?managedChildren\.delete\(definition\.key\)/u
+);
+assert.match(
+  launcherSource,
+  /waitForOwnedPort\([\s\S]{0,120}definition\.port,[\s\S]{0,80}child,[\s\S]{0,100}definition\.startupTimeoutMilliseconds/u
+);
+assert.doesNotMatch(launcherSource, /await waitForPort\("127\.0\.0\.1",\s*definition\.port\)/u);
+assert.match(launcherSource, /async function inspectListeningPort/u);
+assert.match(
+  launcherSource,
+  /function listeningPid[\s\S]*?catch \(_error\) \{\s*return null;[\s\S]*?return 0;/u
+);
+assert.match(
+  launcherSource,
+  /ownerPid\s*===\s*0\s*&&\s*!\(await isPortOpen\(host,\s*port\)\)/u
+);
+assert.match(launcherSource, /portState\.open\s*&&\s*portState\.pid\s*===\s*0/u);
+assert.match(launcherSource, /async function stopManagedChild/u);
+assert.match(launcherSource, /function waitForChildExit/u);
+assert.match(
+  launcherSource,
+  /async function stopManagedChild[\s\S]{0,900}child\.kill\("SIGKILL"\)/u
+);
+assert.doesNotMatch(
+  launcherSource,
+  /async function stopManagedChild[\s\S]{0,900}(?:isExpectedNodeServiceProcess|taskkill\.exe)/u
+);
+assert.match(launcherSource, /await stopManagedChild\(child\)/u);
+assert.match(launcherSource, /const activeServerOperations\s*=\s*new Set\(\)/u);
+assert.match(launcherSource, /async function startServer\(definition, commonEnvironment\)/u);
+assert.match(launcherSource, /function startTrackedServer/u);
+assert.match(
+  launcherSource,
+  /typeof shuttingDown\s*!==\s*"undefined"\s*&&\s*shuttingDown[\s\S]{0,300}fs\.openSync\(stdoutPath/u
+);
+assert.match(launcherSource, /activeServerOperations\.add\(trackedOperation\)/u);
+assert.match(launcherSource, /async function waitForActiveServerOperations/u);
+assert.match(launcherSource, /async function drainManagedChildren\(\)[\s\S]*?for \(;;\)/u);
+assert.match(
+  launcherSource,
+  /runtimeMatches\s*&&\s*trackedChild\s*&&\s*existingPid\s*===\s*trackedChild\.pid[\s\S]{0,240}return existingPid/u
+);
+assert.match(
+  launcherSource,
+  /найден исправный процесс без активного супервизора[\s\S]{0,500}await stopExpectedNodeService\(existingPid, definition\.scriptName\)/u
+);
+assert.match(
+  launcherSource,
+  /async function performShutdown[\s\S]*?waitForActiveServerOperations\(\)[\s\S]*?drainManagedChildren\(\)[\s\S]*?releaseLauncherGuard/u
+);
+assert.match(launcherSource, /let shutdownPromise\s*=\s*null/u);
+assert.match(launcherSource, /requestedExitCode\s*=\s*Math\.max\(requestedExitCode,\s*normalizedExitCode\)/u);
+assert.match(launcherSource, /if \(shutdownPromise\) return shutdownPromise/u);
+assert.match(launcherSource, /process\.exit\(requestedExitCode\)/u);
+assert.match(launcherSource, /class ShutdownRequestedError[\s\S]*?AIS_SHUTDOWN_REQUESTED/u);
+assert.match(
+  launcherSource,
+  /main\(\)\.catch\(\(error\)[\s\S]*?AIS_SHUTDOWN_REQUESTED[\s\S]*?&&\s*shuttingDown\) return/u
+);
+
+const diagnosticFunctions = launcherSource.match(
+  /function inspectNodeProcess\(pid\)[\s\S]*?(?=\nfunction buildLauncherMutexScript\()/u
+)?.[0];
+assert.ok(diagnosticFunctions, "tri-state process diagnostic functions are missing");
+const createDiagnosticHarness = new Function(
+  "execFileSync",
+  "path",
+  "appRoot",
+  `${diagnosticFunctions}
+return { inspectNodeProcess, inspectExpectedNodeServiceProcess };`
+);
+const queryFailureHarness = createDiagnosticHarness(
+  () => { throw new Error("query timeout"); },
+  path,
+  appRoot
+);
+assert.deepEqual(queryFailureHarness.inspectNodeProcess(42), { status: "unknown", pid: 42 });
+const commandFailureHarness = createDiagnosticHarness(
+  (command) => {
+    if (command === "tasklist.exe") return '"node.exe","42","Console","1","1 K"';
+    throw new Error("CIM timeout");
+  },
+  path,
+  appRoot
+);
+assert.deepEqual(
+  commandFailureHarness.inspectExpectedNodeServiceProcess(42, "app-server.js"),
+  { status: "unknown", pid: 42 }
+);
+
+const mutexScriptFunction = launcherSource.match(
+  /function buildLauncherMutexScript\(mutexName = launcherMutexName\)[\s\S]*?(?=\nfunction acquireWindowsLauncherMutex\()/u
+)?.[0];
+assert.ok(mutexScriptFunction, "launcher mutex helper script builder is missing");
+if (process.platform === "win32") {
+  const mutexProbe = `"use strict";
+const assert = require("node:assert/strict");
+const { spawn } = require("node:child_process");
+${mutexScriptFunction}
+const mutexName = \`Global\\\\AisDopobrWeb.Test.\${process.pid}.\${Date.now()}\`;
+function launch() {
+  const encoded = Buffer.from(buildLauncherMutexScript(mutexName), "utf16le").toString("base64");
+  const child = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  child.stdout.setEncoding("utf8");
+  let output = "";
+  const marker = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("mutex marker timeout")), 10000);
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      if (output.includes("ACQUIRED")) { clearTimeout(timer); resolve("ACQUIRED"); }
+      if (output.includes("BUSY")) { clearTimeout(timer); resolve("BUSY"); }
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (!output.includes("ACQUIRED") && !output.includes("BUSY")) {
+        clearTimeout(timer);
+        reject(new Error(\`mutex helper exited early: \${code}\`));
+      }
+    });
+  });
+  const exited = () => child.exitCode !== null
+    ? Promise.resolve(child.exitCode)
+    : new Promise((resolve) => child.once("exit", resolve));
+  return { child, marker, exited };
+}
+(async () => {
+  const first = launch();
+  assert.equal(await first.marker, "ACQUIRED");
+  const second = launch();
+  assert.equal(await second.marker, "BUSY");
+  assert.equal(await second.exited(), 2);
+  first.child.stdin.end();
+  assert.equal(await first.exited(), 0);
+  const third = launch();
+  assert.equal(await third.marker, "ACQUIRED");
+  third.child.stdin.end();
+  assert.equal(await third.exited(), 0);
+})().catch((error) => { console.error(error); process.exitCode = 1; });`;
+  const mutexProbeResult = spawnSync(process.execPath, ["-e", mutexProbe], {
+    cwd: appRoot,
+    encoding: "utf8",
+    timeout: 30000
+  });
+  assert.equal(mutexProbeResult.status, 0, `${mutexProbeResult.stdout}\n${mutexProbeResult.stderr}`);
+}
+
+const startServerFunction = launcherSource.match(
+  /async function startServer\(definition, commonEnvironment\)[\s\S]*?(?=\nfunction startTrackedServer\()/u
+)?.[0];
+assert.ok(startServerFunction, "startServer function is missing");
+const inspectListeningPortFunction = launcherSource.match(
+  /async function inspectListeningPort\(host, port, attempts = 3\)[\s\S]*?(?=\nfunction childHasExited\()/u
+)?.[0];
+assert.ok(inspectListeningPortFunction, "inspectListeningPort function is missing");
+const unknownPortOwnerProbe = `"use strict";
+const assert = require("node:assert/strict");
+const path = require("node:path");
+const managedChildren = new Map();
+const logRoot = process.cwd();
+class ShutdownRequestedError extends Error {
+  constructor(message) { super(message); this.code = "AIS_SHUTDOWN_REQUESTED"; }
+}
+let shuttingDown = false;
+let closePortAndRequestShutdown = false;
+let spawnCount = 0;
+function listeningPid() { return closePortAndRequestShutdown ? 0 : null; }
+async function isPortOpen() {
+  if (closePortAndRequestShutdown) shuttingDown = true;
+  return false;
+}
+async function wait() {}
+function childHasExited() { return false; }
+function spawn() { spawnCount += 1; throw new Error("spawn must not run"); }
+${inspectListeningPortFunction}
+${startServerFunction}
+(async () => {
+  await assert.rejects(
+    startServer({ key: "probe", name: "Probe", scriptName: "probe.js", port: 49123 }, {}),
+    /owner|владелец|определён/u
+  );
+  closePortAndRequestShutdown = true;
+  await assert.rejects(
+    startServer({ key: "probe", name: "Probe", scriptName: "probe.js", port: 49123 }, {}),
+    /остановки супервизора/u
+  );
+  assert.equal(spawnCount, 0, "a server was spawned while the listener owner was unknown");
+})().catch((error) => { console.error(error); process.exitCode = 1; });`;
+const unknownPortOwnerResult = spawnSync(process.execPath, ["-e", unknownPortOwnerProbe], {
+  cwd: appRoot,
+  encoding: "utf8",
+  timeout: 10000
+});
+assert.equal(
+  unknownPortOwnerResult.status,
+  0,
+  `${unknownPortOwnerResult.stdout}\n${unknownPortOwnerResult.stderr}`
+);
+
+const shutdownFunction = launcherSource.match(
+  /function shutdown\(exitCode = 0\)[\s\S]*?(?=\nasync function main\()/u
+)?.[0];
+assert.ok(shutdownFunction, "shutdown function is missing");
+const createShutdownHarness = new Function(
+  "process",
+  "performShutdown",
+  `let requestedExitCode = 0;
+let shutdownPromise = null;
+let shuttingDown = false;
+${shutdownFunction}
+return { shutdown, state: () => ({ requestedExitCode, shuttingDown }) };`
+);
+let finishShutdown;
+const shutdownGate = new Promise((resolve) => { finishShutdown = resolve; });
+const fakeProcess = { exitCode: 0 };
+const shutdownHarness = createShutdownHarness(fakeProcess, () => shutdownGate);
+const firstShutdown = shutdownHarness.shutdown(0);
+const escalatedShutdown = shutdownHarness.shutdown(1);
+assert.equal(firstShutdown, escalatedShutdown);
+assert.deepEqual(shutdownHarness.state(), { requestedExitCode: 1, shuttingDown: true });
+assert.equal(fakeProcess.exitCode, 1);
+finishShutdown();
 
 assert.match(controllerSource, /Start-Service\s+-Name\s+\$serviceName/u);
 assert.match(controllerSource, /Stop-Service\s+-Name\s+\$serviceName/u);

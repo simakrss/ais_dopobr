@@ -22,6 +22,7 @@ $portableNodePath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, 
 $workerLogPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "tmp\lan-system\worker-launch.log"))
 $powerShellPath = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\v1.0\powershell.exe"
 $programDataRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) "AisDopobrWeb"
+$workerMutexName = "Global\AisDopobrWeb.InteractiveHost"
 $protectedControllerPath = Join-Path $programDataRoot "control-ais-service.ps1"
 $sourceControllerPath = [IO.Path]::GetFullPath([IO.Path]::Combine($resolvedAppRoot, "scripts\control-ais-service.ps1"))
 $controllerPath = if (Test-Path -LiteralPath $sourceControllerPath -PathType Leaf) {
@@ -280,11 +281,24 @@ function Ensure-ServiceDriveMapping([string]$Drive, [string]$Target) {
   Write-ServiceStep "Служебный диск $driveName сопоставлен с $targetPath"
 }
 
-$service = Get-Service -Name "AisDopobrWeb" -ErrorAction SilentlyContinue
-if (-not $service -or [string]$service.Status -notin @("Running", "StartPending")) {
-  Write-Host "[Служба АИС] Интерактивный рабочий процесс не запущен: служба АИС остановлена или не установлена."
-  exit 0
-}
+$workerMutex = New-Object Threading.Mutex($false, $workerMutexName)
+$ownsWorkerMutex = $false
+try {
+  try {
+    $ownsWorkerMutex = $workerMutex.WaitOne(0)
+  } catch [Threading.AbandonedMutexException] {
+    $ownsWorkerMutex = $true
+  }
+  if (-not $ownsWorkerMutex) {
+    Write-ServiceStep "Другой интерактивный рабочий процесс уже выполняет запуск АИС; повторный экземпляр завершён."
+    exit 0
+  }
+
+  $service = Get-Service -Name "AisDopobrWeb" -ErrorAction SilentlyContinue
+  if (-not $service -or [string]$service.Status -notin @("Running", "StartPending")) {
+    Write-Host "[Служба АИС] Интерактивный рабочий процесс не запущен: служба АИС остановлена или не установлена."
+    exit 0
+  }
 
 Ensure-ServiceDriveMapping $MappedDrive $MappedTarget
 if (-not (Test-Path -LiteralPath $resolvedAppRoot -PathType Container)) {
@@ -355,5 +369,15 @@ try {
 } finally {
   $ErrorActionPreference = $previousErrorActionPreference
 }
-Write-ServiceStep "Фоновый супервизор завершён с кодом $exitCode."
-exit $exitCode
+  Write-ServiceStep "Фоновый супервизор завершён с кодом $exitCode."
+  exit $exitCode
+} finally {
+  if ($ownsWorkerMutex) {
+    try {
+      $workerMutex.ReleaseMutex()
+    } catch [ApplicationException] {
+      # The process no longer owns the mutex; disposal is still safe.
+    }
+  }
+  $workerMutex.Dispose()
+}

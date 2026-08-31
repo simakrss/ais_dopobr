@@ -31,7 +31,9 @@ const {
   signOnlyOfficeJwt,
   verifyOnlyOfficeJwt,
   resolveOnlyOfficeEditedDocumentUrl,
-  sanitizeOnlyOfficeEditorSaveError
+  sanitizeOnlyOfficeEditorSaveError,
+  generatedDocumentRequestBackend,
+  assertGeneratedDocumentEditorBackendAvailable
 } = require(path.join(root, "app-server.js"));
 
 const owner = { id: "preview-test-owner", login: "owner", authSessionKey: "session-owner" };
@@ -53,6 +55,23 @@ const tamperedJwt = `${signedJwt.slice(0, -1)}${signedJwt.endsWith("A") ? "B" : 
 assert.throws(
   () => verifyOnlyOfficeJwt(tamperedJwt, jwtSecret),
   /недействительный JWT-токен/u
+);
+assert.equal(
+  generatedDocumentRequestBackend({ headers: { "x-ais-document-backend": " TUNNEL " } }),
+  "tunnel"
+);
+assert.doesNotThrow(
+  () => assertGeneratedDocumentEditorBackendAvailable({
+    headers: { "x-ais-document-backend": "tunnel" }
+  }),
+  "Tunnel-primary editor lifecycle должен остаться доступным."
+);
+assert.throws(
+  () => assertGeneratedDocumentEditorBackendAvailable({
+    headers: { "x-ais-document-backend": "server" }
+  }),
+  (error) => error?.statusCode === 503 && /Онлайн/u.test(String(error.message)),
+  "SERVER editor lifecycle должен fail-closed до выдачи iframe URL."
 );
 
 assert.equal(
@@ -746,6 +765,11 @@ assert.match(serverSource, /await registerDocumentConversionSource\(docxBytes\)/
 assert.match(serverSource, /await readDocumentConversionSource\(token\)/u);
 assert.match(serverSource, /editableBytes:\s*docxResult/u);
 assert.match(serverSource, /handleGeneratedDocumentPreviewEditorStart/u);
+assert.match(
+  serverSource,
+  /function assertGeneratedDocumentEditorBackendAvailable[\s\S]+generatedDocumentRequestBackend\(req\) !== "server"[\s\S]+Онлайн-редактор доступен только через локальный сервис[\s\S]+503/u,
+  "SERVER preview не должен выдавать editor URL на tunnel, где нет его token."
+);
 assert.match(serverSource, /handleGeneratedDocumentPreviewEditorCallback/u);
 assert.match(serverSource, /handleGeneratedDocumentPreviewEditorSave/u);
 assert.match(

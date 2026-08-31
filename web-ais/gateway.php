@@ -5,6 +5,15 @@ declare(strict_types=1);
 const AIS_GATEWAY_MAX_REQUEST_BYTES = 42 * 1024 * 1024;
 const AIS_GATEWAY_TIMEOUT_SECONDS = 760;
 const AIS_GATEWAY_JOB_TTL_SECONDS = 3600;
+const AIS_TUNNEL_CONNECT_TIMEOUT_SECONDS = 5;
+const AIS_TUNNEL_RUNTIME_MAX_AGE_SECONDS = 8 * 60 * 60;
+const AIS_TUNNEL_RUNTIME_CLOCK_SKEW_SECONDS = 5 * 60;
+const AIS_DOCUMENT_PREVIEW_AFFINITY_TTL_SECONDS = 3 * 60 * 60;
+const AIS_DOCUMENT_PREVIEW_AFFINITY_MAX_TOKENS = 8;
+
+final class GatewayTunnelUnavailableException extends RuntimeException
+{
+}
 
 $authLibraryCandidates = [
     dirname(__DIR__, 2) . '/lms-runtime/app/auth-lib.php',
@@ -682,12 +691,33 @@ function gateway_send_node_response(array $response): void
     exit;
 }
 
+function gateway_tunnel_runtime_is_fresh(array $runtime, ?int $now = null): bool
+{
+    $updatedAt = trim((string) ($runtime['updatedAt'] ?? ''));
+    $parseableUpdatedAt = preg_replace(
+        '/(\.\d{6})\d+(?=Z$|[+-]\d{2}:?\d{2}$)/',
+        '$1',
+        $updatedAt
+    );
+    $updatedTimestamp = $updatedAt === '' ? false : strtotime($parseableUpdatedAt ?? $updatedAt);
+    if ($updatedTimestamp === false) {
+        return false;
+    }
+    $currentTimestamp = $now ?? time();
+    return $updatedTimestamp <= $currentTimestamp + AIS_TUNNEL_RUNTIME_CLOCK_SKEW_SECONDS
+        && $currentTimestamp - $updatedTimestamp <= AIS_TUNNEL_RUNTIME_MAX_AGE_SECONDS;
+}
+
 function gateway_tunnel_settings(): ?array
 {
     $path = __DIR__ . '/storage/tunnel-runtime.json';
     $text = is_file($path) ? file_get_contents($path) : false;
     $settings = $text === false ? null : json_decode($text, true);
-    if (!is_array($settings) || ($settings['enabled'] ?? false) !== true) {
+    if (
+        !is_array($settings)
+        || ($settings['enabled'] ?? false) !== true
+        || !gateway_tunnel_runtime_is_fresh($settings)
+    ) {
         return null;
     }
     $baseUrl = rtrim(trim((string) ($settings['baseUrl'] ?? '')), '/');
@@ -784,9 +814,11 @@ function gateway_tunnel_admin_summary(): array
     $secretLength = strlen((string) ($runtime['secret'] ?? ''));
     $secretConfigured = $secretLength >= 32 && $secretLength <= 512;
     $enabled = ($runtime['enabled'] ?? false) === true;
+    $fresh = gateway_tunnel_runtime_is_fresh($runtime);
     return [
         'enabled' => $enabled,
-        'configured' => $enabled && $baseUrl !== '' && $secretConfigured,
+        'configured' => $enabled && $fresh && $baseUrl !== '' && $secretConfigured,
+        'stale' => $enabled && !$fresh,
         'baseUrl' => $baseUrl,
         'updatedAt' => substr(trim((string) ($runtime['updatedAt'] ?? '')), 0, 80),
         'secretConfigured' => $secretConfigured,
@@ -874,6 +906,168 @@ function gateway_handle_admin_external_services(
     gateway_json(200, gateway_external_services_admin_payload());
 }
 
+function gateway_document_tunnel_handles(string $method, string $path): bool
+{
+    if ($method === 'POST' && $path === '/api/contracts/student-document') {
+        return true;
+    }
+    $previewMethods = [
+        '/api/contracts/student-document-preview/finalize' => ['POST'],
+        '/api/contracts/student-document-preview/editor-start' => ['POST'],
+        '/api/contracts/student-document-preview/editor-save' => ['POST'],
+        '/api/contracts/student-document-preview/editor-discard' => ['POST'],
+        '/api/contracts/student-document-preview/cancel' => ['POST'],
+        '/api/contracts/student-document-preview/editor-page' => ['GET'],
+        '/api/contracts/student-document-preview/editor-file' => ['GET', 'HEAD'],
+        '/api/contracts/student-document-preview/editor-callback' => ['POST'],
+    ];
+    return in_array($method, $previewMethods[$path] ?? [], true);
+}
+
+function gateway_response_header(array $response, string $expectedName): string
+{
+    foreach (($response['headers'] ?? []) as $name => $value) {
+        if (strcasecmp((string) $name, $expectedName) === 0 && is_scalar($value)) {
+            return trim((string) $value);
+        }
+    }
+    return '';
+}
+
+function gateway_document_preview_request_token(
+    string $method,
+    string $path,
+    string $body,
+    string $queryToken = ''
+): string
+{
+    if (!str_starts_with($path, '/api/contracts/student-document-preview/')) {
+        return '';
+    }
+    $token = '';
+    if (in_array($path, [
+        '/api/contracts/student-document-preview/editor-page',
+        '/api/contracts/student-document-preview/editor-file',
+        '/api/contracts/student-document-preview/editor-callback',
+    ], true)) {
+        $token = trim($queryToken);
+    } elseif ($method === 'POST' && strlen($body) <= 8192) {
+        $payload = json_decode($body, true);
+        $token = is_array($payload) ? trim((string) ($payload['previewToken'] ?? '')) : '';
+    }
+    return preg_match('/^[A-Za-z0-9_-]{32}$/D', $token) === 1 ? $token : '';
+}
+
+function gateway_document_preview_affinities(?int $now = null): array
+{
+    $currentTimestamp = $now ?? time();
+    $stored = is_array($_SESSION['ais_document_preview_affinity'] ?? null)
+        ? $_SESSION['ais_document_preview_affinity']
+        : [];
+    $affinities = [];
+    foreach ($stored as $tokenHash => $item) {
+        $backend = is_array($item) ? (string) ($item['backend'] ?? '') : '';
+        $expiresAt = is_array($item) ? (int) ($item['expiresAt'] ?? 0) : 0;
+        if (
+            preg_match('/^[a-f0-9]{64}$/D', (string) $tokenHash) === 1
+            && in_array($backend, ['server', 'tunnel'], true)
+            && $expiresAt > $currentTimestamp
+        ) {
+            $affinities[(string) $tokenHash] = [
+                'backend' => $backend,
+                'expiresAt' => $expiresAt,
+            ];
+        }
+    }
+    uasort($affinities, static fn (array $left, array $right): int =>
+        $right['expiresAt'] <=> $left['expiresAt']
+    );
+    $affinities = array_slice(
+        $affinities,
+        0,
+        AIS_DOCUMENT_PREVIEW_AFFINITY_MAX_TOKENS,
+        true
+    );
+    if ($affinities === []) {
+        unset($_SESSION['ais_document_preview_affinity']);
+    } else {
+        $_SESSION['ais_document_preview_affinity'] = $affinities;
+    }
+    return $affinities;
+}
+
+function gateway_document_preview_affinity_backend(string $token): string
+{
+    if (preg_match('/^[A-Za-z0-9_-]{32}$/D', $token) !== 1) {
+        return '';
+    }
+    $affinities = gateway_document_preview_affinities();
+    return (string) ($affinities[hash('sha256', $token)]['backend'] ?? '');
+}
+
+function gateway_set_document_preview_affinity(string $token, string $backend): void
+{
+    if (
+        preg_match('/^[A-Za-z0-9_-]{32}$/D', $token) !== 1
+        || !in_array($backend, ['server', 'tunnel'], true)
+    ) {
+        return;
+    }
+    $affinities = gateway_document_preview_affinities();
+    $affinities[hash('sha256', $token)] = [
+        'backend' => $backend,
+        'expiresAt' => time() + AIS_DOCUMENT_PREVIEW_AFFINITY_TTL_SECONDS,
+    ];
+    $_SESSION['ais_document_preview_affinity'] = $affinities;
+    gateway_document_preview_affinities();
+}
+
+function gateway_clear_document_preview_affinity(string $token): void
+{
+    if (preg_match('/^[A-Za-z0-9_-]{32}$/D', $token) !== 1) {
+        return;
+    }
+    $affinities = gateway_document_preview_affinities();
+    unset($affinities[hash('sha256', $token)]);
+    if ($affinities === []) {
+        unset($_SESSION['ais_document_preview_affinity']);
+    } else {
+        $_SESSION['ais_document_preview_affinity'] = $affinities;
+    }
+}
+
+function gateway_track_document_preview_affinity(
+    string $method,
+    string $path,
+    string $body,
+    array $response,
+    string $backend
+): void {
+    if (!gateway_document_tunnel_handles($method, $path)) {
+        return;
+    }
+    $status = (int) ($response['status'] ?? 0);
+    if ($status < 200 || $status >= 400) {
+        return;
+    }
+    $createdToken = gateway_response_header($response, 'X-Document-Preview-Token');
+    if ($createdToken !== '') {
+        gateway_set_document_preview_affinity($createdToken, $backend);
+    }
+    $controlToken = gateway_document_preview_request_token($method, $path, $body);
+    if ($controlToken === '') {
+        return;
+    }
+    if (in_array($path, [
+        '/api/contracts/student-document-preview/finalize',
+        '/api/contracts/student-document-preview/cancel',
+    ], true)) {
+        gateway_clear_document_preview_affinity($controlToken);
+        return;
+    }
+    gateway_set_document_preview_affinity($controlToken, $backend);
+}
+
 function gateway_tunnel_handles(string $method, string $path): bool
 {
     if (
@@ -902,13 +1096,7 @@ function gateway_tunnel_handles(string $method, string $path): bool
     if ($method === 'POST' && str_starts_with($path, '/api/local-documents/')) {
         return true;
     }
-    if (
-        $method === 'POST'
-        && (
-            $path === '/api/contracts/student-document'
-            || str_starts_with($path, '/api/contracts/student-document-preview/')
-        )
-    ) {
+    if (gateway_document_tunnel_handles($method, $path)) {
         return true;
     }
     return in_array($method, ['GET', 'HEAD', 'POST'], true)
@@ -978,7 +1166,7 @@ function gateway_run_tunnel(
             CURLOPT_HTTPHEADER => $outgoingHeaders,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_CONNECTTIMEOUT => 20,
+            CURLOPT_CONNECTTIMEOUT => AIS_TUNNEL_CONNECT_TIMEOUT_SECONDS,
             CURLOPT_TIMEOUT => AIS_GATEWAY_TIMEOUT_SECONDS,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
@@ -1000,7 +1188,13 @@ function gateway_run_tunnel(
         $responseBody = curl_exec($curl);
         if ($responseBody === false) {
             $message = curl_error($curl);
+            $connectTime = (float) curl_getinfo($curl, CURLINFO_CONNECT_TIME);
             curl_close($curl);
+            if ($connectTime <= 0.0) {
+                throw new GatewayTunnelUnavailableException(
+                    $message !== '' ? $message : 'Туннель не ответил.'
+                );
+            }
             throw new RuntimeException($message !== '' ? $message : 'Туннель не ответил.');
         }
         $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
@@ -2708,6 +2902,7 @@ try {
     $authenticatedHeaders['x-ais-user-role'] = (string) ($currentUser['role'] ?? 'manager');
     $authenticatedHeaders['x-ais-employee-id'] = (string) ($currentUser['employeeId'] ?? '');
     $authenticatedHeaders['x-ais-session-id'] = hash('sha256', (string) session_id());
+    unset($authenticatedHeaders['x-ais-document-backend']);
     if ((string) ($currentUser['role'] ?? '') === 'partner'
         && !str_starts_with($requestPath, '/api/partner/')) {
         gateway_fail(403, 'Раздел недоступен в кабинете партнёра.');
@@ -2751,18 +2946,59 @@ try {
         gateway_handle_record_locks($method, $body, $currentUser);
     }
 
+    $documentTunnelRoute = gateway_document_tunnel_handles($method, $path);
+    $previewRequestToken = gateway_document_preview_request_token(
+        $method,
+        $path,
+        $body,
+        (string) ($_GET['previewToken'] ?? '')
+    );
+    $previewAffinityBackend = gateway_document_preview_affinity_backend($previewRequestToken);
     $tunnelSettings = gateway_tunnel_settings();
-    if ($tunnelSettings !== null && gateway_tunnel_handles($method, $path)) {
+    if ($previewAffinityBackend === 'tunnel' && $tunnelSettings === null) {
+        gateway_fail(
+            503,
+            'Предварительный просмотр создан локальным сервисом, который сейчас недоступен. '
+            . 'Запустите локальные сервисы и повторите действие.'
+        );
+    }
+    if (
+        $previewAffinityBackend !== 'server'
+        && $tunnelSettings !== null
+        && gateway_tunnel_handles($method, $path)
+    ) {
         try {
+            $tunnelHeaders = $authenticatedHeaders;
+            if ($documentTunnelRoute) {
+                $tunnelHeaders['x-ais-document-backend'] = 'tunnel';
+            }
             $response = gateway_run_tunnel(
                 $tunnelSettings,
                 $url,
                 $method,
-                $authenticatedHeaders,
+                $tunnelHeaders,
                 $body
+            );
+            gateway_track_document_preview_affinity(
+                $method,
+                $path,
+                $body,
+                $response,
+                'tunnel'
             );
             $response['headers']['X-AIS-Processing'] = 'local-tunnel';
             gateway_send_node_response($response);
+        } catch (GatewayTunnelUnavailableException $tunnelError) {
+            if (!$documentTunnelRoute || $previewRequestToken !== '') {
+                gateway_fail(
+                    503,
+                    $previewRequestToken !== ''
+                        ? 'Предварительный просмотр нельзя безопасно перенести на другой сервис. '
+                            . 'Запустите локальные сервисы и повторите действие.'
+                        : 'Локальный сервис системы недоступен. '
+                            . 'Проверьте, что компьютер включён и туннель запущен.'
+                );
+            }
         } catch (Throwable $tunnelError) {
             gateway_fail(
                 503,
@@ -2863,7 +3099,18 @@ try {
         ]);
     }
 
-    $response = gateway_run_node($url, $method, $authenticatedHeaders, $body);
+    $serverHeaders = $authenticatedHeaders;
+    if ($documentTunnelRoute) {
+        $serverHeaders['x-ais-document-backend'] = 'server';
+    }
+    $response = gateway_run_node($url, $method, $serverHeaders, $body);
+    gateway_track_document_preview_affinity(
+        $method,
+        $path,
+        $body,
+        $response,
+        'server'
+    );
     gateway_send_node_response($response);
 } catch (Throwable $error) {
     gateway_fail(500, $error->getMessage());
