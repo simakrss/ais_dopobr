@@ -822,7 +822,9 @@ const PROGRAM_DATABASE_COLUMN_MAP = Object.freeze({
   "Наименование": "name",
   "Наименование программы (без часов)": "shortName",
   "Статус": "status",
+  "№ в лендинге": "landingPosition",
   "Код лендинга": "landingCode",
+  "Код": "productId",
   "Стоимость": "price",
   "Старая цена": "oldPrice",
   "Тип": "type",
@@ -867,7 +869,9 @@ const PROGRAM_DATABASE_COMMENT_FIELDS = new Set([
 const PROGRAM_DATABASE_NUMBER_FIELDS = new Set([
   "price",
   "oldPrice",
-  "hours"
+  "hours",
+  "landingPosition",
+  "productId"
 ]);
 const PROGRAM_DATABASE_LIST_FIELDS = new Set([
   "qualification",
@@ -20876,7 +20880,11 @@ function assertAdvertisingSitesConnectionIdentities(workbookConnections = {}, se
   });
 }
 
-function publicAdvertisingSitesSettings(connectionSettings = {}, source = "webdav") {
+function normalizeAdvertisingSitesSource() {
+  return "mysql";
+}
+
+function publicAdvertisingSitesSettings(connectionSettings = {}, source = "mysql") {
   const publicConnection = (connection = {}, label) => ({
     label,
     host: normalizeAdvertisingSitesText(connection.host),
@@ -20888,25 +20896,17 @@ function publicAdvertisingSitesSettings(connectionSettings = {}, source = "webda
     valid: Boolean(connection.valid)
   });
   return {
-    source: normalizeStudentDatabaseSource(source),
+    source: normalizeAdvertisingSitesSource(source),
     landing: publicConnection(connectionSettings.landing, "Лендинг"),
     shop: publicConnection(connectionSettings.shop, "Магазин")
   };
 }
 
-function publicAdvertisingSitesSource(source = "webdav") {
-  const type = normalizeStudentDatabaseSource(source);
-  const configured = getStudentDatabaseSourceSetting();
-  let location = normalizeAdvertisingSitesText(configured).split(/[\\/]/u).at(-1) || "АИС Допобразование.xlsb";
-  try {
-    location = decodeURIComponent(location.split(/[?#]/u)[0]) || "АИС Допобразование.xlsb";
-  } catch (error) {
-    location = "АИС Допобразование.xlsb";
-  }
+function publicAdvertisingSitesSource() {
   return {
-    type,
-    label: type === "local" ? "Локальный диск" : "WebDAV",
-    location
+    type: "mysql",
+    label: "MySQL-база АИС",
+    location: ""
   };
 }
 
@@ -21285,10 +21285,10 @@ function stableAdvertisingSitesJson(value) {
   return JSON.stringify(value);
 }
 
-function hashAdvertisingSitesSnapshot({ source = "webdav", sourceHash = "", plan = {} } = {}) {
+function hashAdvertisingSitesSnapshot({ source = "mysql", sourceHash = "", plan = {} } = {}) {
   return crypto.createHash("sha256").update(stableAdvertisingSitesJson({
     version: 1,
-    source: normalizeStudentDatabaseSource(source),
+    source: normalizeAdvertisingSitesSource(source),
     sourceHash: String(sourceHash || "").trim().toLowerCase(),
     rows: plan.rows || [],
     operations: plan.operations || {},
@@ -21302,20 +21302,74 @@ function advertisingSitesSnapshotHashesEqual(left, right) {
   return first.length === 64 && second.length === 64 && crypto.timingSafeEqual(first, second);
 }
 
-async function buildAdvertisingSitesPreview(source = "webdav") {
-  const sourceType = normalizeStudentDatabaseSource(source);
-  const bytes = await loadStudentDatabaseBytes(undefined, null, { source: sourceType });
-  const parsed = parseAdvertisingSitesWorkbook(bytes);
-  const plan = buildAdvertisingSitesPlan(parsed.rows);
-  const workbookConnectionSettings = buildAdvertisingSitesConnectionSettings(
-    parsed.macroSettings,
-    parsed.macroSettingsSecret
-  );
+function buildAdvertisingSitesRowsFromPrograms(programs = []) {
+  return (Array.isArray(programs) ? programs : [])
+    .filter((program) => program && typeof program === "object" && !Array.isArray(program))
+    .map((program, index) => ({
+      rowNumber: Math.max(1, Math.trunc(Number(program.xlsbProgramRow) || index + 2)),
+      name: program.name,
+      shortName: program.shortName,
+      status: program.status,
+      type: program.type,
+      promoSite: program.promoSite,
+      price: program.price,
+      oldPrice: program.oldPrice,
+      landingBlockNumber: program.landingPosition ?? program.landingBlockNumber,
+      landingPostId: program.landingCode ?? program.landingPostId,
+      shopProductId: program.productId ?? program.shopProductId
+    }))
+    .sort((left, right) => left.rowNumber - right.rowNumber);
+}
+
+async function buildAdvertisingSitesPreview() {
+  const sourceType = "mysql";
+  let sharedState;
+  try {
+    const pool = await getSharedRecordLocksMySqlPool();
+    if (!pool) {
+      const error = new Error("Основная MySQL-база АИС не настроена.");
+      error.statusCode = 409;
+      throw error;
+    }
+    sharedState = await readSharedApplicationStateMySqlDocument(pool);
+  } catch (error) {
+    if (error?.statusCode) throw error;
+    const publicError = new Error("Не удалось прочитать программы из основной MySQL-базы АИС.");
+    publicError.statusCode = isMySqlConnectivityError(error) ? 503 : 500;
+    throw publicError;
+  }
+  if (!sharedState?.exists || !sharedState.document) {
+    const error = new Error("В основной MySQL-базе АИС ещё нет общего снимка данных.");
+    error.statusCode = 409;
+    throw error;
+  }
+  const programs = sharedState.document.data?.collections?.programs;
+  if (!Array.isArray(programs) || !programs.length) {
+    const error = new Error("В основной MySQL-базе АИС нет программ для обновления сайтов.");
+    error.statusCode = 409;
+    throw error;
+  }
+  const sourceRows = buildAdvertisingSitesRowsFromPrograms(programs);
+  const plan = buildAdvertisingSitesPlan(sourceRows);
   const serverConnectionSettings = buildAdvertisingSitesServerConnectionSettings();
-  assertAdvertisingSitesConnectionIdentities(workbookConnectionSettings, serverConnectionSettings);
+  const publicConnectionIdentity = (connection = {}) => ({
+    host: normalizeAdvertisingSitesText(connection.host).toLowerCase(),
+    port: Math.max(1, Number(connection.port) || 3306),
+    database: normalizeAdvertisingSitesText(connection.database),
+    user: normalizeAdvertisingSitesText(connection.user)
+  });
+  const sourceHash = crypto.createHash("sha256")
+    .update(stableAdvertisingSitesJson({
+      programs: sourceRows,
+      connections: {
+        landing: publicConnectionIdentity(serverConnectionSettings.landing),
+        shop: publicConnectionIdentity(serverConnectionSettings.shop)
+      }
+    }))
+    .digest("hex");
   const snapshotHash = hashAdvertisingSitesSnapshot({
     source: sourceType,
-    sourceHash: hashStudentDatabaseBytes(bytes),
+    sourceHash,
     plan
   });
   return {
@@ -21604,7 +21658,7 @@ async function handleAdvertisingSites(req, res, authUser, requestUrl) {
   }
   if (req.method === "GET") {
     try {
-      const preview = await buildAdvertisingSitesPreview(requestUrl.searchParams.get("source") || "webdav");
+      const preview = await buildAdvertisingSitesPreview();
       const connections = {
         landing: preview.settings.landing,
         shop: preview.settings.shop
@@ -21658,14 +21712,14 @@ async function handleAdvertisingSites(req, res, authUser, requestUrl) {
   let landingPool = null;
   let shopPool = null;
   try {
-    const preview = await buildAdvertisingSitesPreview(body?.source || "webdav");
+    const preview = await buildAdvertisingSitesPreview();
     if (!advertisingSitesSnapshotHashesEqual(requestedSnapshotHash, preview.snapshotHash)) {
-      const error = new Error("XLSB изменился после предварительного просмотра. Постройте план заново.");
+      const error = new Error("Данные программ в MySQL-базе АИС изменились после предварительного просмотра. Обновите данные.");
       error.statusCode = 409;
       throw error;
     }
     if (!Number(preview.plan.summary?.ready)) {
-      const error = new Error("В XLSB нет ни одной безопасной строки программы для обновления сайтов.");
+      const error = new Error("В MySQL-базе АИС нет ни одной программы со всеми обязательными реквизитами для обновления сайтов.");
       error.statusCode = 409;
       throw error;
     }
@@ -38795,6 +38849,7 @@ module.exports = {
   publicAdvertisingSitesSettings,
   formatAdvertisingSitesSummaryValue,
   consolidateAdvertisingSitesOperations,
+  buildAdvertisingSitesRowsFromPrograms,
   buildAdvertisingSitesPlan,
   hashAdvertisingSitesSnapshot,
   advertisingSitesSnapshotHashesEqual,

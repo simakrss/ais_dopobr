@@ -185,10 +185,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.380",
+    version: "1.7.381",
     releasedAt: "2026-08-31"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.381",
+      releasedAt: "2026-08-31",
+      changes: [
+        "Обновление сайтов теперь использует только программы из основной MySQL-базы АИС; локальный XLSB и WebDAV больше не являются источниками этой операции."
+      ]
+    },
     {
       version: "1.7.380",
       releasedAt: "2026-08-31",
@@ -14392,6 +14399,9 @@ MAX - https://bizvmax.ru/zifra_plus
     return labels[key] || key;
   }
 
+  const ADVERTISING_SITES_SOURCE = "mysql";
+  const ADVERTISING_SITES_SOURCE_LABEL = "MySQL-база АИС";
+
   function normalizeAdvertisingSitesPreview(payload = {}) {
     const nested = payload?.preview && typeof payload.preview === "object"
       ? payload.preview
@@ -14453,9 +14463,6 @@ MAX - https://bizvmax.ru/zifra_plus
       };
     });
     const summarySource = nested.summary && typeof nested.summary === "object" ? nested.summary : {};
-    const source = nested.source && typeof nested.source === "object"
-      ? nested.source
-      : { type: String(nested.source || "") };
     const normalizeConnection = (connection) => {
       const value = connection && typeof connection === "object" ? connection : {};
       return {
@@ -14502,9 +14509,9 @@ MAX - https://bizvmax.ru/zifra_plus
       generatedAt: String(nested.generatedAt || payload.generatedAt || "").trim(),
       snapshotHash: String(nested.snapshotHash || payload.snapshotHash || "").trim(),
       source: {
-        type: String(source.type || source.sourceType || "").trim(),
-        label: String(source.label || source.name || "").trim(),
-        location: String(source.location || source.path || "").trim()
+        type: ADVERTISING_SITES_SOURCE,
+        label: ADVERTISING_SITES_SOURCE_LABEL,
+        location: ""
       },
       summary: {
         totalRows: advertisingSitesMetric(
@@ -14678,7 +14685,7 @@ MAX - https://bizvmax.ru/zifra_plus
               ${missingDetails.slice(0, 100).map((detail) => `
                 <li>
                   <strong>${escapeHtml(detail.label)} · ${escapeHtml(detail.metaKey || "поле без названия")}</strong>
-                  <span>${detail.postId ? `ID ${escapeHtml(detail.postId)}` : "Общее поле"}${detail.rowNumbers.length ? ` · строки XLSB ${escapeHtml(detail.rowNumbers.join(", "))}${detail.rowCount > detail.rowNumbers.length ? "…" : ""}` : ""}</span>
+                  <span>${detail.postId ? `ID ${escapeHtml(detail.postId)}` : "Общее поле"}${detail.rowNumbers.length ? ` · записи ${escapeHtml(detail.rowNumbers.join(", "))}${detail.rowCount > detail.rowNumbers.length ? "…" : ""}` : ""}</span>
                 </li>
               `).join("")}
             </ul>
@@ -14709,8 +14716,6 @@ MAX - https://bizvmax.ru/zifra_plus
       && !sites.loading
       && !sites.applying
     );
-    const sourceLabel = preview?.source.label
-      || getStudentDatabaseSourceLabel(sites.source || getStudentDocumentsSource());
     return `
       <section class="panel advertising-sites-panel">
         <div class="advertising-sites-heading">
@@ -14724,19 +14729,18 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         <div class="advertising-sites-source">
           <span>Источник</span>
-          <strong>${escapeHtml(sourceLabel)}</strong>
-          ${preview?.source.location ? `<small title="${escapeAttr(preview.source.location)}">${escapeHtml(preview.source.location)}</small>` : ""}
+          <strong>${ADVERTISING_SITES_SOURCE_LABEL}</strong>
           ${preview?.generatedAt ? `<time datetime="${escapeAttr(preview.generatedAt)}">Проверено ${escapeHtml(formatDateTimeRu(preview.generatedAt))}</time>` : ""}
         </div>
         ${sites.error ? `<div class="advertising-inline-message is-error" role="alert">${escapeHtml(sites.error)}</div>` : ""}
         ${sites.message ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(sites.message)}</div>` : ""}
         ${sites.loading && !preview
-          ? '<div class="advertising-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Читается реестр программ и проверяются подключения…</span></div>'
+          ? '<div class="advertising-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Читаются программы из MySQL-базы АИС и проверяются подключения…</span></div>'
           : !preview
-            ? '<div class="empty-state compact"><strong>Предварительные данные ещё не получены</strong><span>Нажмите «Обновить данные», чтобы проверить XLSB и подключения.</span></div>'
+            ? '<div class="empty-state compact"><strong>Предварительные данные ещё не получены</strong><span>Нажмите «Обновить данные», чтобы проверить MySQL-базу АИС и подключения.</span></div>'
             : `
               <div class="advertising-kpi-grid advertising-sites-kpi-grid">
-                <article class="statistics-kpi-card"><span>Строк в реестре</span><strong>${formatStatisticsInteger(summary.totalRows)}</strong><small>Прочитано из XLSB</small></article>
+                <article class="statistics-kpi-card"><span>Программ в базе</span><strong>${formatStatisticsInteger(summary.totalRows)}</strong><small>Прочитано из MySQL-базы АИС</small></article>
                 <article class="statistics-kpi-card tone-green"><span>Готовы</span><strong>${formatStatisticsInteger(summary.ready)}</strong><small>Можно обновить</small></article>
                 ${summary.partial ? `<article class="statistics-kpi-card tone-amber"><span>Частично</span><strong>${formatStatisticsInteger(summary.partial)}</strong><small>Часть полей исключена</small></article>` : ""}
                 <article class="statistics-kpi-card tone-red"><span>Пропущены</span><strong>${formatStatisticsInteger(summary.skipped)}</strong><small>Требуют проверки</small></article>
@@ -14763,7 +14767,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 <summary><span>Готовые и частичные программы</span><strong>${formatStatisticsInteger(readyRows.length)}</strong></summary>
                 ${renderAdvertisingSitesRows(readyRows, {
                   emptyTitle: "Нет готовых программ",
-                  emptyText: "Проверьте реестр программ и обязательные реквизиты."
+                  emptyText: "Проверьте программы и обязательные реквизиты."
                 })}
               </details>
               ${skippedRows.length ? `
@@ -14805,7 +14809,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!isAdminUser()) return;
     const sites = state.advertising.sites;
     if (sites.loading || (sites.loaded && !options.force)) return;
-    const source = getStudentDocumentsSource();
+    const source = ADVERTISING_SITES_SOURCE;
     sites.loading = true;
     sites.source = source;
     sites.error = "";
@@ -14836,13 +14840,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const sites = state.advertising.sites;
     const preview = sites.preview ? normalizeAdvertisingSitesPreview(sites.preview) : null;
     if (!preview?.snapshotHash || !preview.summary.ready || sites.error || sites.loading || sites.applying) return;
-    const source = sites.source || getStudentDocumentsSource();
+    const source = ADVERTISING_SITES_SOURCE;
     const confirmed = window.confirm([
       "Обновить цены и ссылки на действующих сайтах?",
-      `Источник: ${preview.source.label || getStudentDatabaseSourceLabel(source)}.`,
+      `Источник: ${ADVERTISING_SITES_SOURCE_LABEL}.`,
       `Готовых программ: ${formatStatisticsInteger(preview.summary.ready)}. Операций сайта: ${formatStatisticsInteger(preview.summary.landingOperations)}. Операций магазина: ${formatStatisticsInteger(preview.summary.shopOperations)}.`,
       preview.summary.partial ? `Из них частичных: ${formatStatisticsInteger(preview.summary.partial)}. Для них будут записаны только однозначно определённые поля.` : "",
-      "Будут изменены рабочий сайт учебного центра и интернет-магазин. Перед записью сервер повторно проверит снимок XLSB."
+      "Будут изменены рабочий сайт учебного центра и интернет-магазин. Перед записью сервер повторно проверит снимок данных MySQL-базы АИС."
     ].filter(Boolean).join("\n\n"));
     if (!confirmed) return;
     sites.applying = true;
@@ -59629,6 +59633,15 @@ MAX - https://bizvmax.ru/zifra_plus
         || (
           result.eventSettingsHash
           && syncBaseline.eventSettingsHash !== result.eventSettingsHash
+        )
+        || (
+          (result.formulaMetadataCriticalHash || result.criticalHash)
+          && syncBaseline.criticalHash
+            !== (result.formulaMetadataCriticalHash || result.criticalHash)
+        )
+        || (
+          result.criticalIdentityHash
+          && syncBaseline.criticalIdentityHash !== result.criticalIdentityHash
         )
       ) {
         const synchronizedAt = new Date().toISOString();

@@ -24,6 +24,7 @@ const {
   assertAdvertisingSitesConnectionIdentities,
   publicAdvertisingSitesSettings,
   formatAdvertisingSitesSummaryValue,
+  buildAdvertisingSitesRowsFromPrograms,
   buildAdvertisingSitesPlan,
   hashAdvertisingSitesSnapshot,
   advertisingSitesSnapshotHashesEqual,
@@ -114,12 +115,50 @@ const fixtureConnections = buildAdvertisingSitesConnectionSettings(
   parsedFixture.macroSettingsSecret
 );
 const publicFixtureSettings = publicAdvertisingSitesSettings(fixtureConnections, "local");
+assert.equal(publicFixtureSettings.source, "mysql");
 assert.equal(publicFixtureSettings.landing.configured, true);
 assert.equal(publicFixtureSettings.shop.configured, true);
 assert.equal(publicFixtureSettings.landing.hasPassword, true);
 assert.doesNotMatch(JSON.stringify(publicFixtureSettings), new RegExp(macroSettingsSecret, "u"));
 assert.equal(Object.prototype.hasOwnProperty.call(publicFixtureSettings.landing, "password"), false);
 assert.equal(Object.prototype.hasOwnProperty.call(publicFixtureSettings.shop, "password"), false);
+assert.equal(publicAdvertisingSitesSettings(fixtureConnections, "mysql").source, "mysql");
+
+const sharedStateRows = buildAdvertisingSitesRowsFromPrograms([{
+  xlsbProgramRow: 17,
+  name: "Программа из MySQL",
+  shortName: "Программа",
+  status: "Набор",
+  type: "КПК",
+  promoSite: "https://example.test/mysql",
+  price: 3200,
+  oldPrice: 4000,
+  landingPosition: 4,
+  landingCode: 4321,
+  productId: 8765
+}]);
+assert.deepEqual(sharedStateRows, [{
+  rowNumber: 17,
+  name: "Программа из MySQL",
+  shortName: "Программа",
+  status: "Набор",
+  type: "КПК",
+  promoSite: "https://example.test/mysql",
+  price: 3200,
+  oldPrice: 4000,
+  landingBlockNumber: 4,
+  landingPostId: 4321,
+  shopProductId: 8765
+}]);
+assert.equal(buildAdvertisingSitesPlan(sharedStateRows).summary.ready, 1);
+assert.deepEqual(
+  buildAdvertisingSitesRowsFromPrograms([
+    { xlsbProgramRow: 3, name: "Третья строка" },
+    { xlsbProgramRow: 2, name: "Вторая строка" }
+  ]).map((row) => row.rowNumber),
+  [2, 3],
+  "Строки MySQL должны восстанавливать порядок реестра перед построением зависимого от порядка плана"
+);
 const matchingServerConnections = {
   landing: {
     ...fixtureConnections.landing,
@@ -302,10 +341,10 @@ assert.equal(conflictingProductPlan.operations.shop.length, 0);
 assert.ok(conflictingProductPlan.operations.landing.filter((operation) => operation.kind === "program").length > 0);
 
 const sourceHash = "a".repeat(64);
-const snapshotHash = hashAdvertisingSitesSnapshot({ source: "local", sourceHash, plan: ordinaryPlan });
+const snapshotHash = hashAdvertisingSitesSnapshot({ source: "mysql", sourceHash, plan: ordinaryPlan });
 assert.match(snapshotHash, /^[a-f0-9]{64}$/u);
+assert.equal(snapshotHash, hashAdvertisingSitesSnapshot({ source: "mysql", sourceHash, plan: ordinaryPlan }));
 assert.equal(snapshotHash, hashAdvertisingSitesSnapshot({ source: "local", sourceHash, plan: ordinaryPlan }));
-assert.notEqual(snapshotHash, hashAdvertisingSitesSnapshot({ source: "webdav", sourceHash, plan: ordinaryPlan }));
 assert.equal(advertisingSitesSnapshotHashesEqual(snapshotHash, snapshotHash.toUpperCase()), true);
 assert.equal(advertisingSitesSnapshotHashesEqual(snapshotHash, "b".repeat(64)), false);
 
@@ -481,7 +520,7 @@ const handlerBlock = sourceBlock(
 );
 assert.ok(
   handlerBlock.indexOf('authUser?.role !== "admin"') < handlerBlock.indexOf('req.method === "GET"'),
-  "Проверка роли должна предшествовать чтению XLSB"
+  "Проверка роли должна предшествовать чтению основной MySQL-базы"
 );
 assert.match(handlerBlock, /body\?\.confirm !== true/u);
 assert.match(handlerBlock, /advertisingSitesUpdateInProgress/u);
@@ -504,8 +543,14 @@ const previewBlock = sourceBlock(
   "async function applyAdvertisingSitesOperations("
 );
 assert.match(previewBlock, /buildAdvertisingSitesServerConnectionSettings\(\)/u);
-assert.match(previewBlock, /assertAdvertisingSitesConnectionIdentities/u);
+assert.match(previewBlock, /readSharedApplicationStateMySqlDocument\(pool\)/u);
+assert.match(previewBlock, /buildAdvertisingSitesRowsFromPrograms\(programs\)/u);
+assert.match(previewBlock, /connections:\s*\{[\s\S]*landing:\s*publicConnectionIdentity/u);
+assert.doesNotMatch(previewBlock, /loadStudentDatabaseBytes|parseAdvertisingSitesWorkbook/u);
 assert.doesNotMatch(previewBlock, /mysql\.createPool|password:\s*connection\.password/u);
+assert.doesNotMatch(handlerBlock, /searchParams\.get\("source"\)|body\?\.source/u);
+assert.match(serverSource, /"№ в лендинге": "landingPosition"/u);
+assert.match(serverSource, /"Код": "productId"/u);
 assert.match(serverSource, /function getAssistantStatisticsMySqlPool[\s\S]*process\.platform !== "win32"[\s\S]*timeweb/u);
 assert.match(serverSource, /function getStudentApplicationsMySqlPool[\s\S]*process\.platform !== "win32"[\s\S]*timeweb/u);
 const applyBlock = sourceBlock(
