@@ -1,0 +1,59 @@
+web-ais/storage/photos/*
+web-ais/storage/server-settings.json
+web-ais/storage/database-demo-mode.flag
+web-ais/storage/database-demo-mode.secret
+web-ais/storage/jobs/*
+web-ais/storage/users.json
+web-ais/storage/auth-sessions.json
+web-ais/storage/php-sessions/*
+web-ais/storage/generated-document-previews/
+web-ais/storage/audit-log.jsonl
+web-ais/.htpasswd
+.git.bak-*/
+*.lnk
+*.url
+web-ais/tmp/
+web-ais/.runtime/
+web-ais/*.log
+web-ais/storage/*.log
+web-ais/* (2).js
+web-ais/* (2).css
+web-ais/*.broken-encoding.bak
+web-ais/*.bak-*
+web-ais/app-server-[0-9]*.js
+web-ais/app-server-server.js
+web-ais/styles-server.css
+web-ais/services/**/__pycache__/
+web-ais/services/**/*.pyc
+web-ais/services/ocr/runtime/
+
+# Runtime copies of the shared database and local LevelDB caches.
+web-ais/storage/shared-application-state*.json
+web-ais/storage/shared-record-locks*.json*
+web-ais/storage/shared-state-backups/
+web-ais/storage/users.before-*.json
+/-/
+/x/
+
+# Duplicate files produced by Windows/browser downloads.
+/* (2)
+/* (3)
+/* (4)
+/* (2).*
+/* (3).*
+/* (4).*
+/web-ais/* (2)
+/web-ais/* (3)
+/web-ais/* (4)
+/web-ais/* (2).*
+/web-ais/* (3).*
+/web-ais/* (4).*
+/web-ais/scripts/* (2).*
+/web-ais/services/ocr/* (2)
+/web-ais/services/ocr/* (2).*
+/web-ais/storage/users (2).json
+
+# Stamped employee-contract templates contain private signature/seal assets.
+# They remain on the protected local/WebDAV storage and are never published.
+web-ais/storage/document-templates/employee-contract-education.docx
+web-ais/storage/document-templates/employee-contract-general.docx
