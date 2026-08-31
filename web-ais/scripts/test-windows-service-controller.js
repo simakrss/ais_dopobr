@@ -91,6 +91,7 @@ assert.match(controllerSource, /function Request-AisWorkerStart[\s\S]*?Start-Sch
 assert.match(controllerSource, /\[Ожидание\] Прошло/u);
 assert.match(controllerSource, /function Start-AisTrayDirect/u);
 assert.match(controllerSource, /Stop-IncompatibleAisTrayProcesses/u);
+assert.match(controllerSource, /function Start-AisTrayDirect[\s\S]*?UseShellExecute\s*=\s*\$true/u);
 assert.match(controllerSource, /Задача планировщика не подготовила значок/u);
 assert.match(controllerSource, /\$runningFromProtectedRoot[\s\S]*?\$protectedTrayPath/u);
 assert.match(controllerSource, /function Test-AisTrayReady/u);

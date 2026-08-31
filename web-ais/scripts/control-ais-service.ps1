@@ -476,7 +476,8 @@ function Start-AisTrayDirect {
   $startInfo.FileName = $powerShellPath
   $startInfo.Arguments = $argumentLine -join " "
   $startInfo.WorkingDirectory = $appRoot
-  $startInfo.UseShellExecute = $false
+  # Detach the long-lived tray from redirected controller output streams.
+  $startInfo.UseShellExecute = $true
   $startInfo.CreateNoWindow = $true
   $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
   $trayProcess = [Diagnostics.Process]::Start($startInfo)
