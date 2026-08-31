@@ -3,10 +3,18 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..");
 const serverPath = path.join(root, "app-server.js");
 const serverSource = fs.readFileSync(serverPath, "utf8").replace(/\r\n/g, "\n");
+const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8").replace(/\r\n?/gu, "\n");
+const authSource = fs.readFileSync(path.join(root, "auth-bootstrap.js"), "utf8").replace(/\r\n?/gu, "\n");
+const indexSource = fs.readFileSync(path.join(root, "index.html"), "utf8").replace(/\r\n?/gu, "\n");
+const supervisorSource = fs.readFileSync(
+  path.join(root, "scripts", "start-remote-services.ps1"),
+  "utf8"
+).replace(/\r\n?/gu, "\n");
 const XLSX = require(path.join(root, "vendor", "sheetjs", "xlsx.full.min.js"));
 const {
   parseAdvertisingSitesWorkbook,
@@ -510,7 +518,79 @@ assert.match(applyBlock, /WHERE meta_key = \?/u);
 assert.doesNotMatch(applyBlock, /\$\{operation\.(?:value|postId|metaKey)\}/u);
 assert.match(serverSource, /WHERE meta_id = \? AND BINARY meta_value = BINARY \?/u);
 
+const sitesRenderBlock = sourceBlock(
+  appSource,
+  "  function renderAdvertisingSites()",
+  "  function shouldRetryAdvertisingSitesPreview("
+);
+assert.doesNotMatch(sitesRenderBlock, /Реестр программ XLSB/iu);
+assert.doesNotMatch(sitesRenderBlock, /Цены, скидки и ссылки будут подготовлены/iu);
+assert.match(sitesRenderBlock, /<h2>Обновление сайтов<\/h2>/u);
+assert.match(sitesRenderBlock, /data-action="refresh-advertising-sites"/u);
+assert.match(sitesRenderBlock, /data-action="apply-advertising-sites"/u);
+
+const sitesRetryBlock = sourceBlock(
+  appSource,
+  "  function shouldRetryAdvertisingSitesPreview(",
+  "  async function loadAdvertisingSitesPreview("
+);
+assert.match(sitesRetryBlock, /\[500, 502, 503, 504\]/u);
+assert.match(sitesRetryBlock, /maximumAttempts = 3/u);
+
+async function testAdvertisingSitesPreviewRetry() {
+  let calls = 0;
+  const retryContext = {
+    Number,
+    Error,
+    window: {
+      setTimeout(callback) {
+        callback();
+        return 1;
+      }
+    },
+    fetch: async () => {
+      calls += 1;
+      return {
+        status: calls < 3 ? 503 : 200,
+        arrayBuffer: async () => new ArrayBuffer(0)
+      };
+    }
+  };
+  vm.createContext(retryContext);
+  vm.runInContext(
+    `${sitesRetryBlock}\nthis.fetchAdvertisingSitesPreview = fetchAdvertisingSitesPreview;`,
+    retryContext
+  );
+  const response = await retryContext.fetchAdvertisingSitesPreview("/api/advertising/sites");
+  assert.equal(response.status, 200);
+  assert.equal(calls, 3);
+}
+
+const tunnelOriginBlock = sourceBlock(
+  supervisorSource,
+  "function Test-ManagedTunnelOrigin(",
+  "function Ensure-Containers("
+);
+assert.match(tunnelOriginBlock, /Test-ApplicationRuntime/u);
+assert.match(tunnelOriginBlock, /\$OnlyOfficeSecret 15/u);
+assert.doesNotMatch(tunnelOriginBlock, /8082|8083/u);
+const managedTunnelLoopBlock = sourceBlock(
+  supervisorSource,
+  "      if ($ParentProcessId -gt 0) {",
+  "      } else {\n        Ensure-Containers"
+);
+assert.match(managedTunnelLoopBlock, /адрес внешнего туннеля сохранён/u);
+assert.doesNotMatch(managedTunnelLoopBlock, /Stop-Process/u);
+
+const authBuild = authSource.match(/const AUTH_BUILD = "([^"]+)";/u)?.[1] || "";
+const indexBuild = indexSource.match(/const build = "([^"]+)";/u)?.[1] || "";
+const cssBuild = indexSource.match(/styles\.css\?v=([^"']+)/u)?.[1] || "";
+assert.ok(authBuild);
+assert.equal(indexBuild, authBuild);
+assert.equal(cssBuild, authBuild);
+
 Promise.resolve()
+  .then(testAdvertisingSitesPreviewRetry)
   .then(testParameterizedUpdates)
   .then(testSeparateTransactions)
   .then(() => console.log("advertising sites checks: OK"))

@@ -185,10 +185,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.379",
+    version: "1.7.380",
     releasedAt: "2026-08-31"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.380",
+      releasedAt: "2026-08-31",
+      changes: [
+        "Обновление сайтов устойчиво к кратковременным разрывам внешнего туннеля: предварительный запрос автоматически повторяется, а служебные подписи на вкладке убраны."
+      ]
+    },
     {
       version: "1.7.379",
       releasedAt: "2026-08-31",
@@ -14708,9 +14715,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <section class="panel advertising-sites-panel">
         <div class="advertising-sites-heading">
           <div>
-            <p class="eyebrow">Реестр программ XLSB</p>
             <h2>Обновление сайтов</h2>
-            <p>Цены, скидки и ссылки будут подготовлены по правилам функции «ОбновитьСайты» из АИС Допобразование.xlsb.</p>
           </div>
           <div class="advertising-heading-actions">
             <button class="ghost-button" data-action="refresh-advertising-sites" type="button" ${sites.loading || sites.applying ? "disabled" : ""}>${sites.loading ? '<span class="auth-spinner" aria-hidden="true"></span> Загрузка…' : "Обновить данные"}</button>
@@ -14773,6 +14778,29 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function shouldRetryAdvertisingSitesPreview(response) {
+    return [500, 502, 503, 504].includes(Number(response?.status));
+  }
+
+  async function fetchAdvertisingSitesPreview(url, options = {}) {
+    const maximumAttempts = 3;
+    let lastError = null;
+    for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+      try {
+        const response = await fetch(url, options);
+        if (!shouldRetryAdvertisingSitesPreview(response) || attempt === maximumAttempts) {
+          return response;
+        }
+        await response.arrayBuffer().catch(() => {});
+      } catch (error) {
+        lastError = error;
+        if (attempt === maximumAttempts) throw error;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 700 * attempt));
+    }
+    throw lastError || new Error("Не удалось получить данные для обновления сайтов.");
+  }
+
   async function loadAdvertisingSitesPreview(options = {}) {
     if (!isAdminUser()) return;
     const sites = state.advertising.sites;
@@ -14784,7 +14812,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!options.preserveMessage) sites.message = "";
     if (state.view === "advertising" && state.advertising.tab === "sites") render();
     try {
-      const response = await fetch(photoApiUrl(`/api/advertising/sites?source=${encodeURIComponent(source)}`), {
+      const response = await fetchAdvertisingSitesPreview(photoApiUrl(`/api/advertising/sites?source=${encodeURIComponent(source)}`), {
         method: "GET",
         credentials: "same-origin",
         cache: "no-store",

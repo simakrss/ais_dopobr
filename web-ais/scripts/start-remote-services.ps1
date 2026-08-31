@@ -248,13 +248,11 @@ function Test-ManagedParentProcess {
   }
 }
 
-function Test-ManagedDocumentServices(
+function Test-ManagedTunnelOrigin(
   [string]$Secret,
   [string]$OnlyOfficeSecret
 ) {
-  return (Test-Health "http://127.0.0.1:8082/healthcheck") `
-    -and (Test-Health "http://127.0.0.1:8083/health") `
-    -and (Test-ApplicationRuntime "http://127.0.0.1:$appPort/api/health" $Secret $OnlyOfficeSecret)
+  return Test-ApplicationRuntime "http://127.0.0.1:$appPort/api/health" $Secret $OnlyOfficeSecret 15
 }
 
 function Ensure-Containers([string]$OnlyOfficeSecret) {
@@ -390,6 +388,7 @@ $secret = Get-TunnelSecret
 $onlyOfficeSecret = Get-OnlyOfficeSecret
 $tunnel = $null
 $failedHealthChecks = 0
+$originUnavailableLogged = $false
 $lastPublishedAt = [DateTime]::MinValue
 
 try {
@@ -401,15 +400,22 @@ try {
         break
       }
       if ($ParentProcessId -gt 0) {
-        if (-not (Test-ManagedDocumentServices $secret $onlyOfficeSecret)) {
-          if ($null -ne $tunnel -and -not $tunnel.Process.HasExited) {
-            Stop-Process -Id $tunnel.Process.Id -Force -ErrorAction SilentlyContinue
+        if (-not (Test-ManagedTunnelOrigin $secret $onlyOfficeSecret)) {
+          if ($null -ne $tunnel -and $tunnel.Process.HasExited) {
+            $tunnel = $null
           }
-          $tunnel = $null
-          Write-ServiceLog "Ожидание готовности локальных сервисов перед запуском туннеля."
+          if (-not $originUnavailableLogged) {
+            if ($null -ne $tunnel) {
+              Write-ServiceLog "Локальный API временно не отвечает; адрес внешнего туннеля сохранён до восстановления."
+            } else {
+              Write-ServiceLog "Ожидание готовности локального API перед запуском туннеля."
+            }
+          }
+          $originUnavailableLogged = $true
           Start-Sleep -Seconds $CheckIntervalSeconds
           continue
         }
+        $originUnavailableLogged = $false
       } else {
         Ensure-Containers $onlyOfficeSecret
         Ensure-ApplicationServers $secret $onlyOfficeSecret
