@@ -43,6 +43,11 @@ assert.match(
   appSource,
   /function commitLongPressDragOrder[\s\S]*context\.type === "table-column"[\s\S]*reorderTableColumn/u
 );
+assert.match(
+  appSource,
+  /const suppressClick = current\.type === "table-column" && current\.ready;/u,
+  "Длительное нажатие без переноса не должно запускать сортировку"
+);
 
 assert.match(
   appSource,

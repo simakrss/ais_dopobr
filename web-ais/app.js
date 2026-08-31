@@ -36637,6 +36637,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const current = pending;
       pending = null;
       window.clearTimeout(current.timer);
+      const suppressClick = current.type === "table-column" && current.ready;
       const captureElement = current.pointerCaptureElement || current.element;
       if (current.pointerCaptured) {
         try {
@@ -36652,13 +36653,13 @@ MAX - https://bizvmax.ru/zifra_plus
         current.element.draggable = document.body.classList.contains("shift-drag-ready");
       }
       document.body.classList.remove("long-press-drag-ready", "long-press-dragging", "nav-item-dragging", "dashboard-status-dragging", "orderable-tab-dragging", "event-reorder-dragging");
-      if (commit && current.dragging) {
+      if (suppressClick || (commit && current.dragging)) {
         current.element.dataset.wasDragged = "true";
-        commitLongPressDragOrder(current);
         window.setTimeout(() => {
           if (current.element.dataset.wasDragged === "true") current.element.dataset.wasDragged = "";
         }, 220);
       }
+      if (commit && current.dragging) commitLongPressDragOrder(current);
     };
 
     document.addEventListener("pointerdown", (event) => {
