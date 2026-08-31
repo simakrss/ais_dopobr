@@ -1628,6 +1628,12 @@ function gateway_track_document_preview_affinity(
 function gateway_tunnel_handles(string $method, string $path): bool
 {
     if (
+        $path === '/api/advertising/sites'
+        && in_array($method, ['GET', 'POST'], true)
+    ) {
+        return true;
+    }
+    if (
         $path === '/api/local-document-services/health'
         && in_array($method, ['GET', 'HEAD'], true)
     ) {
@@ -3618,6 +3624,7 @@ try {
             '/api/statistics/sources',
             '/api/statistics/sources/test',
             '/api/advertising/email-collector/settings',
+            '/api/advertising/sites',
         ], true)
         || in_array($requestPath, [
             '/api/yandex-disk/test',

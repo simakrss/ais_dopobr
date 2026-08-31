@@ -173,6 +173,30 @@ const ADVERTISING_EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{
 const ADVERTISING_EMAIL_SOURCE_KINDS = new Set(["sql", "ais", "google", "workbook"]);
 const ADVERTISING_EMAIL_SQL_CONNECTIONS = new Set(["assistant", "applications", "abit", "moodle"]);
 const ADVERTISING_EMAIL_WORKBOOK_DATASETS = new Set(["googleContacts", "legacyContacts"]);
+const ADVERTISING_SITES_SUMMARY_DEFINITIONS = Object.freeze([
+  Object.freeze({
+    id: "professionalRetraining",
+    types: Object.freeze(["ППП"]),
+    metaKey: "parametry_glavnoj_stranicy_0_cena_kursov_1"
+  }),
+  Object.freeze({
+    id: "advancedTraining",
+    types: Object.freeze(["КПК"]),
+    metaKey: "parametry_glavnoj_stranicy_0_cena_kursov_2"
+  }),
+  Object.freeze({
+    id: "additionalPrograms",
+    types: Object.freeze(["ПРО", "ДОП"]),
+    metaKey: "parametry_glavnoj_stranicy_0_cena_kursov_3"
+  })
+]);
+const ADVERTISING_SITES_MAX_PRICE = 1000000000;
+const ADVERTISING_SITES_MAX_LANDING_POSITION = 10000;
+const ADVERTISING_SITES_MAX_ROWS = 10000;
+const ADVERTISING_SITES_MAX_OPERATIONS = 5000;
+const ADVERTISING_SITES_MAX_MATCHED_ROWS = 10000;
+const ADVERTISING_SITES_MAX_MATCHED_ROWS_PER_OPERATION = 100;
+const ADVERTISING_SITES_SQL_TIMEOUT_MS = 10000;
 const DEFAULT_STATISTICS_SQL_QUERIES = Object.freeze({
   "assistant.monthly": `
     SELECT
@@ -507,6 +531,7 @@ const DEFAULT_ADVERTISING_EMAIL_SOURCES = Object.freeze([
 ]);
 let serverSettings = {};
 let serverSettingsSaveQueue = Promise.resolve();
+let advertisingSitesUpdateInProgress = false;
 const partnerFeedbackLastSentAt = new Map();
 const DOCUMENT_TEMPLATE_ROOT = path.join(STORAGE_ROOT, "document-templates");
 const PORT = Number(process.env.PORT || 8080);
@@ -20579,6 +20604,10 @@ function parseMacroSettingsBlock(value) {
     "События",
     "СобытияКонтрагент",
     "АвтоНазнОплат",
+    "Лендинг_SQL_сервер",
+    "Лендинг_SQL_база",
+    "Лендинг_SQL_пароль",
+    "Лендинг_SQL_пользователь",
     "Магазин_SQL",
     "Магазин_SQL_сервер",
     "Магазин_SQL_база",
@@ -20620,6 +20649,9 @@ function parseStudentDatabaseMacroSettings(workbook) {
     namedRange: namedCell.name,
     studentEventTemplates,
     contractEventTemplates,
+    landingMysqlHost: String(entries.get("Лендинг_SQL_сервер") || "").trim(),
+    landingMysqlDatabase: String(entries.get("Лендинг_SQL_база") || "").trim(),
+    landingMysqlUser: String(entries.get("Лендинг_SQL_пользователь") || "").trim(),
     applicationsSqlQuery: String(entries.get("Магазин_SQL") || "").replace(/\u000b+/gu, "\n").trim(),
     applicationsMysqlHost: String(entries.get("Магазин_SQL_сервер") || "").trim(),
     applicationsMysqlDatabase: String(entries.get("Магазин_SQL_база") || "").trim(),
@@ -20633,9 +20665,1085 @@ function parseStudentDatabaseMacroSettings(workbook) {
   return {
     macroSettings,
     macroSettingsSecret: {
+      landingMysqlPassword: String(entries.get("Лендинг_SQL_пароль") || ""),
       applicationsMysqlPassword: String(entries.get("Магазин_SQL_пароль") || "")
     }
   };
+}
+
+function normalizeAdvertisingSitesText(value) {
+  return String(value ?? "").replace(/\u00a0/gu, " ").trim();
+}
+
+function normalizeAdvertisingSitesNumber(
+  value,
+  { integer = false, minimum = 0, maximum = Number.MAX_SAFE_INTEGER } = {}
+) {
+  if (value === "" || value === null || value === undefined) return null;
+  const source = typeof value === "number"
+    ? value
+    : Number(normalizeAdvertisingSitesText(value).replace(/\s+/gu, "").replace(",", "."));
+  if (
+    !Number.isFinite(source)
+    || source < minimum
+    || source > maximum
+    || (integer && !Number.isSafeInteger(source))
+  ) return null;
+  return source;
+}
+
+function formatAdvertisingSitesDecimal(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  const rounded = Math.round((number + Number.EPSILON) * 1000000) / 1000000;
+  return String(Object.is(rounded, -0) ? 0 : rounded);
+}
+
+function parseAdvertisingSitesWorkbook(bytes) {
+  let workbook;
+  try {
+    workbook = XLSX.read(bytes, { type: "buffer", cellDates: true });
+  } catch (error) {
+    throw new Error("Не удалось прочитать XLSB для обновления сайтов.");
+  }
+  const worksheet = workbook.Sheets["Реестр программ"];
+  if (!worksheet) throw new Error("В XLSB не найден лист «Реестр программ».");
+  const matrix = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: "",
+    raw: true,
+    UTC: true
+  });
+  const requiredHeaders = [
+    "Стоимость",
+    "Старая цена",
+    "№ в лендинге",
+    "Код лендинга",
+    "Код",
+    "Статус",
+    "На промо сайте",
+    "Тип",
+    "Наименование программы (без часов)"
+  ];
+  const headerRowIndex = matrix.findIndex((row) => (
+    requiredHeaders.every((header) => row.some((value) => normalizeAdvertisingSitesText(value) === header))
+  ));
+  if (headerRowIndex < 0) {
+    throw new Error("На листе «Реестр программ» не найдены обязательные колонки обновления сайтов.");
+  }
+  const headers = matrix[headerRowIndex].map(normalizeAdvertisingSitesText);
+  const indexByHeader = new Map(requiredHeaders.map((header) => [header, headers.indexOf(header)]));
+  const programNameIndex = ["Наименование программы", "Программа", "Наименование"]
+    .map((header) => headers.indexOf(header))
+    .find((index) => index >= 0);
+  let lastRowIndex = matrix.length - 1;
+  while (
+    lastRowIndex > headerRowIndex
+    && !(matrix[lastRowIndex] || []).some((value) => normalizeAdvertisingSitesText(value) !== "")
+  ) lastRowIndex -= 1;
+  const rows = matrix.slice(headerRowIndex + 1, lastRowIndex + 1).map((row, offset) => ({
+    rowNumber: headerRowIndex + offset + 2,
+    name: programNameIndex >= 0 ? normalizeAdvertisingSitesText(row[programNameIndex]) : "",
+    shortName: normalizeAdvertisingSitesText(row[indexByHeader.get("Наименование программы (без часов)")]),
+    status: normalizeAdvertisingSitesText(row[indexByHeader.get("Статус")]),
+    type: normalizeAdvertisingSitesText(row[indexByHeader.get("Тип")]),
+    promoSite: normalizeAdvertisingSitesText(row[indexByHeader.get("На промо сайте")]),
+    price: row[indexByHeader.get("Стоимость")],
+    oldPrice: row[indexByHeader.get("Старая цена")],
+    landingBlockNumber: row[indexByHeader.get("№ в лендинге")],
+    landingPostId: row[indexByHeader.get("Код лендинга")],
+    shopProductId: row[indexByHeader.get("Код")]
+  }));
+  const { macroSettings, macroSettingsSecret } = parseStudentDatabaseMacroSettings(workbook);
+  return { rows, macroSettings, macroSettingsSecret };
+}
+
+function normalizeAdvertisingSitesMysqlConnection(values = {}, label = "") {
+  let host = normalizeAdvertisingSitesText(values.host);
+  let port = 3306;
+  const hostAndPort = /^([^:]+):(\d{1,5})$/u.exec(host);
+  if (hostAndPort) {
+    host = hostAndPort[1].trim();
+    port = Number(hostAndPort[2]);
+  }
+  const database = normalizeAdvertisingSitesText(values.database);
+  const user = normalizeAdvertisingSitesText(values.user);
+  const password = String(values.password ?? "");
+  const issues = [];
+  if (!host || host.length > 255 || !/^[A-Za-z0-9.-]+$/u.test(host)) issues.push("host");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) issues.push("port");
+  if (!database || database.length > 128 || /[;\u0000\r\n]/u.test(database)) issues.push("database");
+  if (!user || user.length > 128 || /[;\u0000\r\n]/u.test(user)) issues.push("user");
+  if (!password || password.length > 1024 || /\u0000/u.test(password)) issues.push("password");
+  return {
+    label: normalizeAdvertisingSitesText(label),
+    host,
+    port,
+    database,
+    user,
+    password,
+    configured: Boolean(host || database || user || password),
+    valid: issues.length === 0,
+    issues
+  };
+}
+
+function buildAdvertisingSitesConnectionSettings(macroSettings = {}, macroSettingsSecret = {}) {
+  return {
+    landing: normalizeAdvertisingSitesMysqlConnection({
+      host: macroSettings.landingMysqlHost,
+      database: macroSettings.landingMysqlDatabase,
+      user: macroSettings.landingMysqlUser,
+      password: macroSettingsSecret.landingMysqlPassword
+    }, "Лендинг"),
+    shop: normalizeAdvertisingSitesMysqlConnection({
+      host: macroSettings.applicationsMysqlHost,
+      database: macroSettings.applicationsMysqlDatabase,
+      user: macroSettings.applicationsMysqlUser,
+      password: macroSettingsSecret.applicationsMysqlPassword
+    }, "Магазин")
+  };
+}
+
+function buildAdvertisingSitesServerConnectionSettings() {
+  const landing = publicAssistantStatisticsMySqlSettings();
+  const shop = publicStudentApplicationsMySqlSettings();
+  return {
+    landing: {
+      label: "Лендинг",
+      host: normalizeAdvertisingSitesText(landing.assistantStatisticsMysqlHost),
+      port: Math.max(1, Number(landing.assistantStatisticsMysqlPort) || 3306),
+      database: normalizeAdvertisingSitesText(landing.assistantStatisticsMysqlDatabase),
+      user: normalizeAdvertisingSitesText(landing.assistantStatisticsMysqlUser),
+      hasPassword: Boolean(landing.assistantStatisticsMysqlHasPassword),
+      configured: Boolean(landing.assistantStatisticsMysqlConfigured),
+      valid: Boolean(
+        landing.assistantStatisticsMysqlConfigured
+        && landing.assistantStatisticsMysqlHost
+        && landing.assistantStatisticsMysqlDatabase
+        && landing.assistantStatisticsMysqlUser
+        && landing.assistantStatisticsMysqlHasPassword
+      )
+    },
+    shop: {
+      label: "Магазин",
+      host: normalizeAdvertisingSitesText(shop.applicationsMysqlHost),
+      port: Math.max(1, Number(shop.applicationsMysqlPort) || 3306),
+      database: normalizeAdvertisingSitesText(shop.applicationsMysqlDatabase),
+      user: normalizeAdvertisingSitesText(shop.applicationsMysqlUser),
+      hasPassword: Boolean(shop.applicationsMysqlHasPassword),
+      configured: Boolean(shop.applicationsMysqlConfigured),
+      valid: Boolean(
+        shop.applicationsMysqlConfigured
+        && shop.applicationsMysqlHost
+        && shop.applicationsMysqlDatabase
+        && shop.applicationsMysqlUser
+        && shop.applicationsMysqlHasPassword
+      )
+    }
+  };
+}
+
+function advertisingSitesConnectionIdentityMatches(workbookConnection = {}, serverConnection = {}) {
+  const workbookIdentityValid = Boolean(
+    workbookConnection.host
+    && workbookConnection.database
+    && workbookConnection.user
+    && Number.isInteger(workbookConnection.port)
+    && !(workbookConnection.issues || []).some((issue) => issue !== "password")
+  );
+  if (!workbookIdentityValid || !serverConnection.valid) return false;
+  return normalizeAdvertisingSitesText(workbookConnection.host).toLowerCase()
+      === normalizeAdvertisingSitesText(serverConnection.host).toLowerCase()
+    && Number(workbookConnection.port) === Number(serverConnection.port)
+    && normalizeAdvertisingSitesText(workbookConnection.database)
+      === normalizeAdvertisingSitesText(serverConnection.database)
+    && normalizeAdvertisingSitesText(workbookConnection.user)
+      === normalizeAdvertisingSitesText(serverConnection.user);
+}
+
+function assertAdvertisingSitesConnectionIdentities(workbookConnections = {}, serverConnections = {}) {
+  [
+    ["landing", "Лендинг"],
+    ["shop", "Магазин"]
+  ].forEach(([key, label]) => {
+    if (advertisingSitesConnectionIdentityMatches(workbookConnections[key], serverConnections[key])) return;
+    const error = new Error(
+      `Настройки MySQL «${label}» в XLSB не совпадают с защищёнными настройками сервера.`
+    );
+    error.statusCode = 409;
+    throw error;
+  });
+}
+
+function publicAdvertisingSitesSettings(connectionSettings = {}, source = "webdav") {
+  const publicConnection = (connection = {}, label) => ({
+    label,
+    host: normalizeAdvertisingSitesText(connection.host),
+    port: Math.max(1, Number(connection.port) || 3306),
+    database: normalizeAdvertisingSitesText(connection.database),
+    user: normalizeAdvertisingSitesText(connection.user),
+    hasPassword: Boolean(connection.hasPassword ?? connection.password),
+    configured: Boolean(connection.configured && connection.valid),
+    valid: Boolean(connection.valid)
+  });
+  return {
+    source: normalizeStudentDatabaseSource(source),
+    landing: publicConnection(connectionSettings.landing, "Лендинг"),
+    shop: publicConnection(connectionSettings.shop, "Магазин")
+  };
+}
+
+function publicAdvertisingSitesSource(source = "webdav") {
+  const type = normalizeStudentDatabaseSource(source);
+  const configured = getStudentDatabaseSourceSetting();
+  let location = normalizeAdvertisingSitesText(configured).split(/[\\/]/u).at(-1) || "АИС Допобразование.xlsb";
+  try {
+    location = decodeURIComponent(location.split(/[?#]/u)[0]) || "АИС Допобразование.xlsb";
+  } catch (error) {
+    location = "АИС Допобразование.xlsb";
+  }
+  return {
+    type,
+    label: type === "local" ? "Локальный диск" : "WebDAV",
+    location
+  };
+}
+
+function advertisingSitesCourseNoun(count) {
+  const absolute = Math.abs(Math.trunc(Number(count) || 0));
+  const lastTwo = absolute % 100;
+  if (lastTwo >= 11 && lastTwo <= 14) return "курсов";
+  if (absolute % 10 === 1) return "курс";
+  if (absolute % 10 >= 2 && absolute % 10 <= 4) return "курса";
+  return "курсов";
+}
+
+function formatAdvertisingSitesSummaryValue(count, minimumPrice) {
+  return `${count} ${advertisingSitesCourseNoun(count)} по цене от ${formatAdvertisingSitesDecimal(minimumPrice || 0)} руб.`;
+}
+
+function consolidateAdvertisingSitesOperations(candidates) {
+  const operationByKey = new Map();
+  const conflictedKeys = new Set();
+  const conflicts = [];
+  let duplicateCount = 0;
+  candidates.forEach((candidate) => {
+    const key = [candidate.site, candidate.postId ?? "", candidate.metaKey].join("\u0000");
+    if (conflictedKeys.has(key)) {
+      const conflict = conflicts.find((item) => item.key === key);
+      if (conflict) conflict.rowNumbers.push(...candidate.rowNumbers);
+      return;
+    }
+    const existing = operationByKey.get(key);
+    if (!existing) {
+      operationByKey.set(key, { ...candidate, rowNumbers: [...candidate.rowNumbers] });
+      return;
+    }
+    if (existing.value === candidate.value) {
+      duplicateCount += 1;
+      existing.rowNumbers.push(...candidate.rowNumbers);
+      existing.rowNumbers = [...new Set(existing.rowNumbers)].sort((left, right) => left - right);
+      return;
+    }
+    operationByKey.delete(key);
+    conflictedKeys.add(key);
+    conflicts.push({
+      key,
+      site: candidate.site,
+      postId: candidate.postId ?? null,
+      metaKey: candidate.metaKey,
+      rowNumbers: [...new Set([...existing.rowNumbers, ...candidate.rowNumbers])].sort((left, right) => left - right)
+    });
+  });
+  return {
+    operations: [...operationByKey.values()].sort((left, right) => (
+      left.site.localeCompare(right.site)
+      || Number(left.postId || 0) - Number(right.postId || 0)
+      || left.metaKey.localeCompare(right.metaKey)
+    )),
+    conflicts,
+    duplicateCount
+  };
+}
+
+function buildAdvertisingSitesPlan(sourceRows = []) {
+  const inputRows = Array.isArray(sourceRows) ? sourceRows : [];
+  if (inputRows.length > ADVERTISING_SITES_MAX_ROWS) {
+    throw new Error("В реестре программ слишком много строк для безопасного обновления сайтов.");
+  }
+  const rows = inputRows.map((sourceRow, index) => {
+    const priceProvided = !["", null, undefined].includes(sourceRow?.price);
+    const oldPriceProvided = !["", null, undefined].includes(sourceRow?.oldPrice);
+    const price = normalizeAdvertisingSitesNumber(sourceRow?.price, {
+      minimum: 0,
+      maximum: ADVERTISING_SITES_MAX_PRICE
+    });
+    let oldPrice = normalizeAdvertisingSitesNumber(sourceRow?.oldPrice, {
+      minimum: 0,
+      maximum: ADVERTISING_SITES_MAX_PRICE
+    });
+    let oldPriceDerived = false;
+    if (!oldPriceProvided && price !== null && price > 0) {
+      const derivedOldPrice = price * 1.25;
+      if (derivedOldPrice <= ADVERTISING_SITES_MAX_PRICE) {
+        oldPrice = derivedOldPrice;
+        oldPriceDerived = true;
+      }
+    }
+    return {
+      rowNumber: Math.max(1, Math.trunc(Number(sourceRow?.rowNumber) || index + 2)),
+      name: normalizeAdvertisingSitesText(sourceRow?.name || sourceRow?.shortName),
+      shortName: normalizeAdvertisingSitesText(sourceRow?.shortName || sourceRow?.name),
+      status: normalizeAdvertisingSitesText(sourceRow?.status),
+      type: normalizeAdvertisingSitesText(sourceRow?.type).toLocaleUpperCase("ru-RU"),
+      promoSite: normalizeAdvertisingSitesText(sourceRow?.promoSite),
+      priceProvided,
+      oldPriceProvided,
+      price,
+      oldPrice,
+      oldPriceDerived,
+      landingBlockNumber: normalizeAdvertisingSitesNumber(sourceRow?.landingBlockNumber, {
+        integer: true,
+        minimum: 1,
+        maximum: ADVERTISING_SITES_MAX_LANDING_POSITION
+      }),
+      landingPostId: normalizeAdvertisingSitesNumber(sourceRow?.landingPostId, {
+        integer: true,
+        minimum: 1
+      }),
+      shopProductId: normalizeAdvertisingSitesNumber(sourceRow?.shopProductId, {
+        integer: true,
+        minimum: 1
+      })
+    };
+  });
+  const candidates = [];
+  const previewRows = [];
+  const summaries = Object.fromEntries(ADVERTISING_SITES_SUMMARY_DEFINITIONS.map((definition) => [
+    definition.id,
+    { ...definition, count: 0, minimumPrice: null }
+  ]));
+  const landingSlotRows = new Map();
+  rows.forEach((row) => {
+    const otherwiseReady = row.status === "Набор"
+      && row.priceProvided
+      && row.price !== null
+      && row.oldPrice !== null
+      && row.oldPrice > 0
+      && row.landingBlockNumber !== null
+      && row.landingPostId !== null
+      && row.shopProductId !== null;
+    if (!otherwiseReady) return;
+    const slot = `${row.landingPostId}:${row.landingBlockNumber}`;
+    if (!landingSlotRows.has(slot)) landingSlotRows.set(slot, []);
+    landingSlotRows.get(slot).push(row.rowNumber);
+  });
+  const duplicateLandingSlots = new Set([...landingSlotRows.entries()]
+    .filter(([, rowNumbers]) => rowNumbers.length > 1)
+    .map(([slot]) => slot));
+  let previousSummaryIdentity = "";
+  let previousLandingPostId = "";
+  const addCandidate = (site, postId, metaKey, value, rowNumber, kind = "program") => {
+    candidates.push({
+      site,
+      postId,
+      metaKey,
+      value: String(value),
+      rowNumbers: Number.isInteger(rowNumber) ? [rowNumber] : [],
+      kind
+    });
+  };
+  rows.forEach((row) => {
+    const summaryDefinition = ADVERTISING_SITES_SUMMARY_DEFINITIONS.find((definition) => (
+      definition.types.includes(row.type)
+    ));
+    if (summaryDefinition && row.price !== null && row.price > 0) {
+      const summary = summaries[summaryDefinition.id];
+      summary.minimumPrice = summary.minimumPrice === null
+        ? row.price
+        : Math.min(summary.minimumPrice, row.price);
+    }
+    const summaryIdentity = `${row.shortName}\u0000${row.type}`;
+    if (
+      summaryDefinition
+      && row.status === "Набор"
+      && row.promoSite
+      && row.shortName
+      && summaryIdentity !== previousSummaryIdentity
+    ) summaries[summaryDefinition.id].count += 1;
+
+    const skippedReasons = [];
+    if (row.status !== "Набор") skippedReasons.push("status");
+    if (!row.priceProvided || row.price === null) skippedReasons.push("price");
+    if (!row.oldPriceProvided && !(row.price !== null && row.price > 0)) skippedReasons.push("oldPrice");
+    if (row.oldPrice === null || row.oldPrice <= 0) skippedReasons.push("oldPrice");
+    if (row.landingBlockNumber === null) skippedReasons.push("landingBlockNumber");
+    if (row.landingPostId === null) skippedReasons.push("landingPostId");
+    const otherwiseReady = skippedReasons.length === 0;
+    const missingProduct = otherwiseReady && row.shopProductId === null;
+    if (missingProduct) skippedReasons.push("shopProductId");
+    const slot = row.landingPostId !== null && row.landingBlockNumber !== null
+      ? `${row.landingPostId}:${row.landingBlockNumber}`
+      : "";
+    const duplicateLandingSlot = Boolean(
+      otherwiseReady
+      && row.shopProductId !== null
+      && slot
+      && duplicateLandingSlots.has(slot)
+    );
+    if (duplicateLandingSlot) skippedReasons.push("duplicateLandingSlot");
+    const ready = otherwiseReady;
+    if (ready) {
+      const blockIndex = row.landingBlockNumber - 1;
+      const priceValue = formatAdvertisingSitesDecimal(row.price);
+      const oldPriceValue = formatAdvertisingSitesDecimal(row.oldPrice);
+      addCandidate("landing", row.landingPostId, `blok_ceny_${blockIndex}_stoimost_kursa`, priceValue, row.rowNumber);
+      if (String(row.landingPostId) !== previousLandingPostId) {
+        addCandidate("landing", row.landingPostId, "stoimost_kursa", priceValue, row.rowNumber);
+      }
+      addCandidate("landing", row.landingPostId, `blok_ceny_${blockIndex}_staraya_cena`, oldPriceValue, row.rowNumber);
+      addCandidate(
+        "landing",
+        row.landingPostId,
+        `blok_ceny_${blockIndex}_skidka`,
+        String(Math.floor(((row.oldPrice - row.price) / row.oldPrice) * 100)),
+        row.rowNumber
+      );
+      if (row.shopProductId !== null && !duplicateLandingSlot) {
+        addCandidate(
+          "landing",
+          row.landingPostId,
+          `blok_ceny_${blockIndex}_ssylka_na_registraciyu`,
+          `https://zifra-plus.ru/checkout/?add-to-cart=${row.shopProductId}`,
+          row.rowNumber
+        );
+      }
+      if (row.shopProductId !== null) {
+        addCandidate("shop", row.shopProductId, "_sale_price", priceValue, row.rowNumber);
+        addCandidate("shop", row.shopProductId, "_price", priceValue, row.rowNumber);
+        addCandidate("shop", row.shopProductId, "_regular_price", oldPriceValue, row.rowNumber);
+      }
+    }
+    const hasContent = Boolean(
+      row.name || row.shortName || row.status || row.type || row.promoSite || row.priceProvided || row.oldPriceProvided
+      || row.landingBlockNumber !== null || row.landingPostId !== null || row.shopProductId !== null
+    );
+    previewRows.push({
+      rowNumber: row.rowNumber,
+      name: row.name,
+      shortName: row.shortName,
+      status: row.status,
+      type: row.type,
+      onPromoSite: Boolean(row.promoSite),
+      price: row.price,
+      oldPrice: row.oldPrice,
+      oldPriceDerived: row.oldPriceDerived,
+      discount: row.oldPrice > 0 && row.price !== null
+        ? Math.floor(((row.oldPrice - row.price) / row.oldPrice) * 100)
+        : null,
+      landingCode: row.landingPostId,
+      landingPosition: row.landingBlockNumber,
+      productId: row.shopProductId,
+      landingBlockNumber: row.landingBlockNumber,
+      landingPostId: row.landingPostId,
+      shopProductId: row.shopProductId,
+      hasContent,
+      ready,
+      partial: missingProduct || duplicateLandingSlot,
+      skippedReasons: [...new Set(skippedReasons)]
+    });
+    previousSummaryIdentity = summaryIdentity;
+    previousLandingPostId = row.landingPostId === null ? "" : String(row.landingPostId);
+  });
+  ADVERTISING_SITES_SUMMARY_DEFINITIONS.forEach((definition) => {
+    const summary = summaries[definition.id];
+    summary.value = formatAdvertisingSitesSummaryValue(summary.count, summary.minimumPrice);
+    addCandidate("landing", null, definition.metaKey, summary.value, null, "summary");
+  });
+  const consolidated = consolidateAdvertisingSitesOperations(candidates);
+  const conflictingRowNumbersBySite = new Map(["landing", "shop"].map((site) => [
+    site,
+    new Set(consolidated.conflicts
+      .filter((conflict) => conflict.site === site)
+      .flatMap((conflict) => conflict.rowNumbers))
+  ]));
+  consolidated.operations = consolidated.operations.filter((operation) => (
+    operation.kind === "summary"
+    || !operation.rowNumbers.some((rowNumber) => (
+      conflictingRowNumbersBySite.get(operation.site)?.has(rowNumber)
+    ))
+  ));
+  if (consolidated.operations.length > ADVERTISING_SITES_MAX_OPERATIONS) {
+    throw new Error("План содержит слишком много операций для безопасного обновления сайтов.");
+  }
+  const plannedRows = new Set(consolidated.operations.flatMap((operation) => operation.rowNumbers));
+  consolidated.conflicts.forEach((conflict) => {
+    conflict.rowNumbers.forEach((rowNumber) => {
+      const row = previewRows.find((item) => item.rowNumber === rowNumber);
+      if (row && !row.skippedReasons.includes("conflictingMetaTarget")) {
+        row.skippedReasons.push("conflictingMetaTarget");
+      }
+    });
+  });
+  const skippedReasonLabels = {
+    status: "Статус программы отличается от «Набор»",
+    price: "Не указана корректная стоимость",
+    oldPrice: "Не указана корректная старая цена",
+    landingBlockNumber: "Не указан корректный номер позиции в лендинге",
+    landingPostId: "Не указан корректный код лендинга",
+    shopProductId: "Не указан корректный код товара интернет-магазина",
+    duplicateLandingSlot: "Позиция лендинга повторяется в нескольких строках",
+    conflictingMetaTarget: "Несколько строк задают разные значения одного поля сайта"
+  };
+  const publicRows = previewRows.filter((row) => row.hasContent).map(({ hasContent, ...row }) => {
+    const ready = row.ready && plannedRows.has(row.rowNumber);
+    const skippedReasons = ready
+      ? row.skippedReasons
+      : [...new Set(row.skippedReasons.length ? row.skippedReasons : ["conflictingMetaTarget"])];
+    return {
+      ...row,
+      ready,
+      partial: ready && (row.partial || skippedReasons.length > 0),
+      planned: ready,
+      skippedReasons,
+      reason: skippedReasons.map((reason) => skippedReasonLabels[reason] || reason).join("; ")
+    };
+  });
+  const landingOperations = consolidated.operations.filter((operation) => operation.site === "landing");
+  const shopOperations = consolidated.operations.filter((operation) => operation.site === "shop");
+  const readyRows = publicRows.filter((row) => row.ready);
+  const partialRows = readyRows.filter((row) => row.partial);
+  const missingProductRows = publicRows.filter((row) => row.skippedReasons.includes("shopProductId"));
+  const duplicateSlotRows = publicRows.filter((row) => row.skippedReasons.includes("duplicateLandingSlot"));
+  const warnings = [];
+  if (missingProductRows.length) {
+    warnings.push(`Без кода товара интернет-магазина: ${missingProductRows.length}. Для них обновляется только лендинг; checkout-ссылка и магазин пропущены.`);
+  }
+  if (duplicateLandingSlots.size) {
+    warnings.push(`Повторяющихся позиций лендинга: ${duplicateLandingSlots.size} (${duplicateSlotRows.length} строк). Неоднозначные checkout-ссылки пропущены; одинаковые цены лендинга и безопасные уникальные товары магазина сохранены.`);
+  }
+  if (consolidated.conflicts.length) {
+    warnings.push(`Конфликтующих полей сайта: ${consolidated.conflicts.length}. Эти операции исключены из плана.`);
+  }
+  const courseLabels = {
+    professionalRetraining: "Профессиональная переподготовка",
+    advancedTraining: "Повышение квалификации",
+    additionalPrograms: "ПРО и ДОП"
+  };
+  const courses = Object.fromEntries(Object.entries(summaries).map(([id, value]) => [id, {
+    count: value.count,
+    minimumPrice: value.minimumPrice,
+    metaKey: value.metaKey,
+    value: value.value
+  }]));
+  return {
+    rows: publicRows,
+    operations: {
+      landing: landingOperations,
+      shop: shopOperations
+    },
+    conflicts: consolidated.conflicts,
+    warnings,
+    categories: Object.entries(courses).map(([key, course]) => ({
+      key,
+      label: courseLabels[key],
+      count: course.count,
+      minPrice: course.minimumPrice,
+      text: course.value
+    })),
+    summary: {
+      totalRows: publicRows.length,
+      ready: readyRows.length,
+      partialRows: partialRows.length,
+      skipped: publicRows.length - readyRows.length,
+      landingOperations: landingOperations.length,
+      shopOperations: shopOperations.length,
+      sourceRows: publicRows.length,
+      plannedRows: readyRows.length,
+      skippedRows: publicRows.length - readyRows.length,
+      duplicateTargets: consolidated.duplicateCount,
+      duplicateLandingSlots: duplicateLandingSlots.size,
+      conflictingTargets: consolidated.conflicts.length,
+      planned: {
+        landing: landingOperations.length,
+        shop: shopOperations.length,
+        total: consolidated.operations.length
+      },
+      courses
+    }
+  };
+}
+
+function stableAdvertisingSitesJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableAdvertisingSitesJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${stableAdvertisingSitesJson(value[key])}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function hashAdvertisingSitesSnapshot({ source = "webdav", sourceHash = "", plan = {} } = {}) {
+  return crypto.createHash("sha256").update(stableAdvertisingSitesJson({
+    version: 1,
+    source: normalizeStudentDatabaseSource(source),
+    sourceHash: String(sourceHash || "").trim().toLowerCase(),
+    rows: plan.rows || [],
+    operations: plan.operations || {},
+    summary: plan.summary || {}
+  })).digest("hex");
+}
+
+function advertisingSitesSnapshotHashesEqual(left, right) {
+  const first = Buffer.from(String(left || "").trim().toLowerCase(), "utf8");
+  const second = Buffer.from(String(right || "").trim().toLowerCase(), "utf8");
+  return first.length === 64 && second.length === 64 && crypto.timingSafeEqual(first, second);
+}
+
+async function buildAdvertisingSitesPreview(source = "webdav") {
+  const sourceType = normalizeStudentDatabaseSource(source);
+  const bytes = await loadStudentDatabaseBytes(undefined, null, { source: sourceType });
+  const parsed = parseAdvertisingSitesWorkbook(bytes);
+  const plan = buildAdvertisingSitesPlan(parsed.rows);
+  const workbookConnectionSettings = buildAdvertisingSitesConnectionSettings(
+    parsed.macroSettings,
+    parsed.macroSettingsSecret
+  );
+  const serverConnectionSettings = buildAdvertisingSitesServerConnectionSettings();
+  assertAdvertisingSitesConnectionIdentities(workbookConnectionSettings, serverConnectionSettings);
+  const snapshotHash = hashAdvertisingSitesSnapshot({
+    source: sourceType,
+    sourceHash: hashStudentDatabaseBytes(bytes),
+    plan
+  });
+  return {
+    source: sourceType,
+    snapshotHash,
+    plan,
+    settings: publicAdvertisingSitesSettings(serverConnectionSettings, sourceType)
+  };
+}
+
+async function acquireAdvertisingSitesConnection(pool) {
+  let timedOut = false;
+  let timer = null;
+  const acquisition = Promise.resolve().then(() => pool.getConnection()).then((connection) => {
+    if (timedOut) {
+      connection?.release();
+      return null;
+    }
+    return connection;
+  });
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(new Error("Истекло время ожидания подключения MySQL."));
+    }, ADVERTISING_SITES_SQL_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  try {
+    const connection = await Promise.race([acquisition, timeout]);
+    if (!connection) throw new Error("Не удалось получить подключение MySQL.");
+    return connection;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function runAdvertisingSitesTransactionControl(connection, operation) {
+  let timer = null;
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
+      connection?.destroy?.();
+      reject(new Error("Истекло время выполнения транзакции MySQL."));
+    }, ADVERTISING_SITES_SQL_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([Promise.resolve().then(operation), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function applyAdvertisingSitesOperations(connection, operations = [], { capturePreImages = false } = {}) {
+  if (!Array.isArray(operations) || operations.length > ADVERTISING_SITES_MAX_OPERATIONS) {
+    throw new Error("План содержит слишком много операций для безопасного обновления сайтов.");
+  }
+  const report = {
+    matched: 0,
+    changed: 0,
+    missing: 0,
+    matchedRows: 0,
+    changedRows: 0,
+    results: [],
+    preImages: []
+  };
+  for (const operation of operations) {
+    const hasPostId = operation.postId !== null && operation.postId !== undefined;
+    const selectSql = hasPostId
+      ? "SELECT meta_id, meta_value FROM wp_postmeta WHERE post_id = ? AND meta_key = ? FOR UPDATE"
+      : "SELECT meta_id, meta_value FROM wp_postmeta WHERE meta_key = ? FOR UPDATE";
+    const selectParameters = hasPostId
+      ? [operation.postId, operation.metaKey]
+      : [operation.metaKey];
+    const [selectedRows] = await connection.execute({
+      sql: selectSql,
+      timeout: ADVERTISING_SITES_SQL_TIMEOUT_MS
+    }, selectParameters);
+    const matches = Array.isArray(selectedRows) ? selectedRows : [];
+    if (
+      matches.length > ADVERTISING_SITES_MAX_MATCHED_ROWS_PER_OPERATION
+      || report.matchedRows + matches.length > ADVERTISING_SITES_MAX_MATCHED_ROWS
+    ) {
+      throw new Error("Операция затрагивает слишком много строк метаданных.");
+    }
+    const changedRows = matches.filter((row) => String(row?.meta_value ?? "") !== operation.value);
+    const result = {
+      site: operation.site,
+      postId: hasPostId ? operation.postId : null,
+      metaKey: operation.metaKey,
+      kind: operation.kind,
+      rowNumbers: Array.isArray(operation.rowNumbers) ? operation.rowNumbers.slice(0, 100) : [],
+      rowCount: Array.isArray(operation.rowNumbers) ? operation.rowNumbers.length : 0,
+      matchedRows: matches.length,
+      changedRows: changedRows.length,
+      status: matches.length ? (changedRows.length ? "changed" : "matched") : "missing"
+    };
+    report.results.push(result);
+    if (!matches.length) {
+      report.missing += 1;
+      continue;
+    }
+    report.matched += 1;
+    report.matchedRows += matches.length;
+    if (!changedRows.length) continue;
+    if (capturePreImages) {
+      report.preImages.push(...changedRows.map((row) => ({
+        metaId: String(row?.meta_id ?? ""),
+        value: String(row?.meta_value ?? ""),
+        appliedValue: operation.value
+      })).filter((row) => /^\d{1,20}$/u.test(row.metaId)));
+      if (report.preImages.length < report.changedRows + changedRows.length) {
+        throw new Error("Не удалось сохранить исходные значения метаданных для безопасной транзакции.");
+      }
+    }
+    const updateSql = hasPostId
+      ? "UPDATE wp_postmeta SET meta_value = ? WHERE post_id = ? AND meta_key = ?"
+      : "UPDATE wp_postmeta SET meta_value = ? WHERE meta_key = ?";
+    const updateParameters = hasPostId
+      ? [operation.value, operation.postId, operation.metaKey]
+      : [operation.value, operation.metaKey];
+    const [updateResult] = await connection.execute({
+      sql: updateSql,
+      timeout: ADVERTISING_SITES_SQL_TIMEOUT_MS
+    }, updateParameters);
+    if (Number(updateResult?.affectedRows) < changedRows.length) {
+      throw new Error("Не все строки метаданных были обновлены.");
+    }
+    report.changed += 1;
+    report.changedRows += changedRows.length;
+  }
+  return report;
+}
+
+async function compensateAdvertisingSitesPreImages(pool, preImages = []) {
+  if (!preImages.length) return true;
+  let connection;
+  try {
+    connection = await acquireAdvertisingSitesConnection(pool);
+    await runAdvertisingSitesTransactionControl(connection, () => connection.beginTransaction());
+    for (const preImage of preImages) {
+      const [result] = await connection.execute(
+        {
+          sql: "UPDATE wp_postmeta SET meta_value = ? WHERE meta_id = ? AND BINARY meta_value = BINARY ?",
+          timeout: ADVERTISING_SITES_SQL_TIMEOUT_MS
+        },
+        [preImage.value, preImage.metaId, preImage.appliedValue]
+      );
+      if (Number(result?.affectedRows) > 0) continue;
+      const [currentRows] = await connection.execute({
+        sql: "SELECT meta_value FROM wp_postmeta WHERE meta_id = ? FOR UPDATE",
+        timeout: ADVERTISING_SITES_SQL_TIMEOUT_MS
+      }, [preImage.metaId]);
+      if (
+        !Array.isArray(currentRows)
+        || currentRows.length !== 1
+        || String(currentRows[0]?.meta_value ?? "") !== preImage.value
+      ) throw new Error("Исходное значение метаданных изменено третьей стороной.");
+    }
+    await runAdvertisingSitesTransactionControl(connection, () => connection.commit());
+    return true;
+  } catch (error) {
+    if (connection) {
+      await runAdvertisingSitesTransactionControl(connection, () => connection.rollback()).catch(() => {});
+    }
+    return false;
+  } finally {
+    connection?.release();
+  }
+}
+
+async function executeAdvertisingSitesPlanWithPools(plan, pools) {
+  const states = [
+    {
+      site: "landing",
+      pool: pools.landing,
+      operations: plan.operations.landing,
+      connection: null,
+      report: null,
+      commitAttempted: false,
+      committed: false
+    },
+    {
+      site: "shop",
+      pool: pools.shop,
+      operations: plan.operations.shop,
+      connection: null,
+      report: null,
+      commitAttempted: false,
+      committed: false
+    }
+  ];
+  try {
+    for (const state of states) state.connection = await acquireAdvertisingSitesConnection(state.pool);
+    for (const state of states) {
+      await runAdvertisingSitesTransactionControl(state.connection, () => state.connection.beginTransaction());
+    }
+    const reports = {};
+    for (const state of states) {
+      state.report = await applyAdvertisingSitesOperations(
+        state.connection,
+        state.operations,
+        { capturePreImages: true }
+      );
+      reports[state.site] = state.report;
+    }
+    if (!Object.values(reports).some((report) => report.matched > 0)) {
+      const noMatchesError = new Error("В базах сайтов не найдено ни одного поля из плана; изменения не применены.");
+      noMatchesError.statusCode = 409;
+      noMatchesError.publicSafe = true;
+      throw noMatchesError;
+    }
+    for (const state of states) {
+      state.commitAttempted = true;
+      await runAdvertisingSitesTransactionControl(state.connection, () => state.connection.commit());
+      state.committed = true;
+    }
+    const summarizeResults = (results) => results.reduce((summary, result) => ({
+      matched: summary.matched + (result.status === "matched" || result.status === "changed" ? 1 : 0),
+      changed: summary.changed + (result.status === "changed" ? 1 : 0),
+      missing: summary.missing + (result.status === "missing" ? 1 : 0),
+      matchedRows: summary.matchedRows + Number(result.matchedRows || 0),
+      changedRows: summary.changedRows + Number(result.changedRows || 0)
+    }), { matched: 0, changed: 0, missing: 0, matchedRows: 0, changedRows: 0 });
+    const landing = summarizeResults(reports.landing.results.filter((result) => result.kind !== "summary"));
+    const homepage = summarizeResults(reports.landing.results.filter((result) => result.kind === "summary"));
+    const shop = summarizeResults(reports.shop.results);
+    const total = [reports.landing, reports.shop].reduce((result, item) => ({
+      matched: result.matched + item.matched,
+      changed: result.changed + item.changed,
+      missing: result.missing + item.missing,
+      matchedRows: result.matchedRows + item.matchedRows,
+      changedRows: result.changedRows + item.changedRows
+    }), { matched: 0, changed: 0, missing: 0, matchedRows: 0, changedRows: 0 });
+    return {
+      ...total,
+      skipped: Number(plan.summary?.skippedRows || 0),
+      landing,
+      shop,
+      homepage,
+      details: {
+        landing: reports.landing.results,
+        shop: reports.shop.results
+      }
+    };
+  } catch (error) {
+    await Promise.all(states.map(async (state) => {
+      if (state.connection && !state.committed) {
+        await runAdvertisingSitesTransactionControl(
+          state.connection,
+          () => state.connection.rollback()
+        ).catch(() => {});
+      }
+    }));
+    states.forEach((state) => {
+      state.connection?.release();
+      state.connection = null;
+    });
+    const commitStates = states.filter((state) => state.commitAttempted && state.report?.preImages?.length);
+    if (commitStates.length) {
+      const compensationResults = await Promise.all(commitStates.map((state) => (
+        compensateAdvertisingSitesPreImages(state.pool, state.report.preImages)
+      )));
+      const compensated = compensationResults.every(Boolean);
+      const publicError = new Error(compensated
+        ? "Фиксация обновления сайтов не завершилась; уже записанные значения восстановлены."
+        : "Фиксация обновления сайтов не завершилась, и автоматическое восстановление выполнено не полностью. Проверьте оба сайта вручную.");
+      publicError.statusCode = 502;
+      publicError.partialCommit = !compensated;
+      publicError.compensated = compensated;
+      throw publicError;
+    }
+    throw error;
+  } finally {
+    states.forEach((state) => state.connection?.release());
+  }
+}
+
+async function handleAdvertisingSites(req, res, authUser, requestUrl) {
+  if (authUser?.role !== "admin") {
+    sendError(res, 403, "Раздел доступен только администратору.");
+    return;
+  }
+  if (!["GET", "POST"].includes(req.method)) {
+    sendError(res, 405, "Method not allowed");
+    return;
+  }
+  if (req.method === "GET") {
+    try {
+      const preview = await buildAdvertisingSitesPreview(requestUrl.searchParams.get("source") || "webdav");
+      const connections = {
+        landing: preview.settings.landing,
+        shop: preview.settings.shop
+      };
+      const warnings = [...preview.plan.warnings];
+      if (!connections.landing.configured) warnings.push("Подключение MySQL «Лендинг» не настроено полностью.");
+      if (!connections.shop.configured) warnings.push("Подключение MySQL «Магазин» не настроено полностью.");
+      sendJson(res, 200, {
+        ok: true,
+        source: publicAdvertisingSitesSource(preview.source),
+        sourceType: preview.source,
+        snapshotHash: preview.snapshotHash,
+        rows: preview.plan.rows,
+        summary: preview.plan.summary,
+        categories: preview.plan.categories,
+        connections,
+        warnings,
+        settings: preview.settings,
+        generatedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      sendError(res, Number(error?.statusCode) || 400, error.message);
+    }
+    return;
+  }
+  if (isDatabaseDemoModeEnabled()) {
+    sendDatabaseDemoModeReadOnly(res);
+    return;
+  }
+  let body;
+  try {
+    body = await readJsonBody(req, 64 * 1024);
+  } catch (error) {
+    sendError(res, 400, "Не удалось прочитать параметры обновления сайтов.");
+    return;
+  }
+  if (body?.confirm !== true) {
+    sendError(res, 400, "Для обновления сайтов требуется явное подтверждение.");
+    return;
+  }
+  const requestedSnapshotHash = String(body?.snapshotHash || "").trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/u.test(requestedSnapshotHash)) {
+    sendError(res, 400, "Укажите snapshotHash предварительного просмотра.");
+    return;
+  }
+  if (advertisingSitesUpdateInProgress) {
+    sendError(res, 409, "Обновление сайтов уже выполняется.");
+    return;
+  }
+  advertisingSitesUpdateInProgress = true;
+  let landingPool = null;
+  let shopPool = null;
+  try {
+    const preview = await buildAdvertisingSitesPreview(body?.source || "webdav");
+    if (!advertisingSitesSnapshotHashesEqual(requestedSnapshotHash, preview.snapshotHash)) {
+      const error = new Error("XLSB изменился после предварительного просмотра. Постройте план заново.");
+      error.statusCode = 409;
+      throw error;
+    }
+    if (!Number(preview.plan.summary?.ready)) {
+      const error = new Error("В XLSB нет ни одной безопасной строки программы для обновления сайтов.");
+      error.statusCode = 409;
+      throw error;
+    }
+    try {
+      landingPool = await getAssistantStatisticsMySqlPool();
+      shopPool = await getStudentApplicationsMySqlPool();
+    } catch (error) {
+      const publicError = new Error("Не удалось открыть защищённые подключения MySQL для обновления сайтов.");
+      publicError.statusCode = 502;
+      throw publicError;
+    }
+    if (!landingPool || !shopPool) {
+      const error = new Error("Защищённые подключения MySQL для обновления сайтов не настроены.");
+      error.statusCode = 409;
+      throw error;
+    }
+    let report;
+    try {
+      report = await executeAdvertisingSitesPlanWithPools(preview.plan, {
+        landing: landingPool,
+        shop: shopPool
+      });
+    } catch (error) {
+      if (error?.publicSafe) throw error;
+      if (error?.partialCommit || error?.compensated) {
+        error.auditDetails = error.compensated
+          ? "Фиксация между двумя базами не завершилась; исходные значения восстановлены автоматически."
+          : "Фиксация между двумя базами не завершилась; автоматическое восстановление требует ручной проверки.";
+        throw error;
+      }
+      const publicError = new Error("Не удалось применить план обновления сайтов; незавершённые транзакции отменены.");
+      publicError.statusCode = 502;
+      throw publicError;
+    }
+    await safelyAppendAuditEntry({
+      action: "Обновление сайтов",
+      area: "Реклама",
+      entityType: "advertising-sites",
+      entityId: preview.snapshotHash.slice(0, 16),
+      details: `Сайты: найдено ${report.matched}, изменено ${report.changed}, отсутствует ${report.missing}, пропущено ${report.skipped}.`,
+      source: "advertising-sites"
+    }, authUser, req);
+    const updatedAt = new Date().toISOString();
+    const warnings = [...preview.plan.warnings];
+    if (report.missing) warnings.push(`В базах сайтов не найдено полей: ${report.missing}.`);
+    const status = report.missing || preview.plan.summary.partialRows ? "partial" : "completed";
+    sendJson(res, 200, {
+      ok: true,
+      status,
+      source: publicAdvertisingSitesSource(preview.source),
+      sourceType: preview.source,
+      snapshotHash: preview.snapshotHash,
+      report,
+      summary: {
+        programs: preview.plan.summary.ready,
+        queries: preview.plan.summary.planned.total,
+        landing: report.landing,
+        shop: report.shop,
+        homepage: report.homepage
+      },
+      planSummary: preview.plan.summary,
+      warnings,
+      updatedAt,
+      appliedAt: updatedAt
+    });
+  } catch (error) {
+    await safelyAppendAuditEntry({
+      action: "Ошибка обновления сайтов",
+      area: "Реклама",
+      entityType: "advertising-sites",
+      entityId: requestedSnapshotHash.slice(0, 16),
+      details: error?.auditDetails || `Попытка обновления сайтов завершилась ошибкой (HTTP ${Number(error?.statusCode) || 400}).`,
+      source: "advertising-sites"
+    }, authUser, req);
+    sendError(res, Number(error?.statusCode) || 400, error.message);
+  } finally {
+    advertisingSitesUpdateInProgress = false;
+  }
 }
 
 function normalizeAgentPaymentWorkbookRate(value) {
@@ -37305,6 +38413,7 @@ async function route(req, res) {
     [
       "/api/statistics/sources",
       "/api/statistics/sources/test",
+      "/api/advertising/sites",
       "/api/advertising/email-collector/settings"
     ].includes(requestUrl.pathname)
     ||
@@ -37400,6 +38509,10 @@ async function route(req, res) {
   }
   if (req.method === "GET" && requestUrl.pathname === "/api/statistics/assistant") {
     await handleAssistantStatistics(res);
+    return;
+  }
+  if (requestUrl.pathname === "/api/advertising/sites") {
+    await handleAdvertisingSites(req, res, authUser, requestUrl);
     return;
   }
   if (requestUrl.pathname === "/api/advertising/email-collector/source-proxy") {
@@ -37673,6 +38786,21 @@ module.exports = {
   normalizeAdvertisingSourceReceivedAt,
   parseAdvertisingCollectorWorkbook,
   parseAdvertisingGoogleWorkbook,
+  parseAdvertisingSitesWorkbook,
+  normalizeAdvertisingSitesNumber,
+  buildAdvertisingSitesConnectionSettings,
+  buildAdvertisingSitesServerConnectionSettings,
+  advertisingSitesConnectionIdentityMatches,
+  assertAdvertisingSitesConnectionIdentities,
+  publicAdvertisingSitesSettings,
+  formatAdvertisingSitesSummaryValue,
+  consolidateAdvertisingSitesOperations,
+  buildAdvertisingSitesPlan,
+  hashAdvertisingSitesSnapshot,
+  advertisingSitesSnapshotHashesEqual,
+  applyAdvertisingSitesOperations,
+  compensateAdvertisingSitesPreImages,
+  executeAdvertisingSitesPlanWithPools,
   normalizeAdvertisingEmailRecords,
   aggregateAdvertisingEmailResults,
   normalizeAdvertisingEmailSources,

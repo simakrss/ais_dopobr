@@ -185,10 +185,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.377",
+    version: "1.7.378",
     releasedAt: "2026-08-31"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.378",
+      releasedAt: "2026-08-31",
+      changes: [
+        "В разделе «Реклама» добавлена доступная администратору вкладка «Сайты»: она предварительно проверяет данные функции «ОбновитьСайты» из XLSB и после подтверждения обновляет цены, скидки, ссылки и сводные показатели лендинга и интернет-магазина."
+      ]
+    },
     {
       version: "1.7.377",
       releasedAt: "2026-08-31",
@@ -6223,6 +6230,16 @@ MAX - https://bizvmax.ru/zifra_plus
         syncedAt: "",
         syncSource: ""
       },
+      sites: {
+        loaded: false,
+        loading: false,
+        applying: false,
+        source: "",
+        preview: null,
+        result: null,
+        error: "",
+        message: ""
+      },
       notice: ""
     },
     financeDetails: {
@@ -12131,6 +12148,14 @@ MAX - https://bizvmax.ru/zifra_plus
       ) {
         queueMicrotask(() => loadAdvertisingEmailExclusions());
       }
+      if (
+        isAdminUser()
+        && state.advertising.tab === "sites"
+        && !state.advertising.sites.loaded
+        && !state.advertising.sites.loading
+      ) {
+        queueMicrotask(() => loadAdvertisingSitesPreview());
+      }
     }
   }
 
@@ -14269,6 +14294,502 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function advertisingSitesMetric(value, fallback = 0) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(0, numeric) : fallback;
+  }
+
+  function advertisingSitesWarningText(value) {
+    if (typeof value === "string") return value.trim();
+    if (!value || typeof value !== "object") return "";
+    return String(value.message || value.reason || value.label || value.error || "").trim();
+  }
+
+  function advertisingSitesSkippedReasonLabel(value) {
+    const labels = {
+      status: "Статус программы отличается от «Набор»",
+      price: "Не указана стоимость",
+      oldPrice: "Не указана старая цена",
+      landingBlockNumber: "Не указан номер позиции в лендинге",
+      landingPostId: "Не указан код лендинга",
+      shopProductId: "Не указан код товара интернет-магазина",
+      duplicateLandingSlot: "Позиция лендинга повторяется в нескольких строках",
+      conflictingMetaTarget: "Несколько строк задают разные значения для одного поля сайта"
+    };
+    const key = String(value || "").trim();
+    return labels[key] || key;
+  }
+
+  function normalizeAdvertisingSitesPreview(payload = {}) {
+    const nested = payload?.preview && typeof payload.preview === "object"
+      ? payload.preview
+      : payload;
+    const readyRows = Array.isArray(nested.readyRows)
+      ? nested.readyRows.map((row) => ({ ...row, ready: true }))
+      : [];
+    const skippedRows = Array.isArray(nested.skippedRows)
+      ? nested.skippedRows.map((row) => ({ ...row, ready: false }))
+      : [];
+    const sourceRows = Array.isArray(nested.rows) && nested.rows.length
+      ? nested.rows
+      : [...readyRows, ...skippedRows];
+    const rows = sourceRows.map((row, index) => {
+      const skippedReasonLabels = (Array.isArray(row?.skippedReasons) ? row.skippedReasons : [])
+        .map(advertisingSitesSkippedReasonLabel)
+        .filter(Boolean);
+      const reason = String(
+        row?.reason
+        || row?.warning
+        || row?.error
+        || skippedReasonLabels.join("; ")
+        || ""
+      ).trim();
+      const ready = Object.prototype.hasOwnProperty.call(row || {}, "ready")
+        ? row.ready !== false
+        : Object.prototype.hasOwnProperty.call(row || {}, "planned")
+          ? row.planned === true
+          : !reason;
+      const price = row?.price === "" || row?.price === null || row?.price === undefined
+        ? null
+        : Number(row.price);
+      const oldPrice = row?.oldPrice === "" || row?.oldPrice === null || row?.oldPrice === undefined
+        ? null
+        : Number(row.oldPrice);
+      const calculatedDiscount = Number.isFinite(price) && Number.isFinite(oldPrice) && oldPrice > 0
+        ? Math.floor((oldPrice - price) / oldPrice * 100)
+        : null;
+      const suppliedDiscount = row?.discount === "" || row?.discount === null || row?.discount === undefined
+        ? null
+        : Number(row.discount);
+      return {
+        ...(row || {}),
+        rowNumber: advertisingSitesMetric(row?.rowNumber ?? row?.row, index + 2),
+        name: String(row?.name || row?.programName || "").trim(),
+        type: String(row?.type || "").trim(),
+        status: String(row?.status || "").trim(),
+        price: Number.isFinite(price) ? price : null,
+        oldPrice: Number.isFinite(oldPrice) ? oldPrice : null,
+        discount: Number.isFinite(suppliedDiscount) ? suppliedDiscount : calculatedDiscount,
+        landingCode: String(row?.landingCode ?? row?.landingPostId ?? "").trim(),
+        landingPosition: String(
+          row?.landingPosition ?? row?.landingNumber ?? row?.landingBlockNumber ?? ""
+        ).trim(),
+        productId: String(row?.productId ?? row?.productCode ?? row?.shopProductId ?? "").trim(),
+        ready,
+        partial: Boolean(row?.partial || (ready && row?.landingReady === false)),
+        reason
+      };
+    });
+    const summarySource = nested.summary && typeof nested.summary === "object" ? nested.summary : {};
+    const source = nested.source && typeof nested.source === "object"
+      ? nested.source
+      : { type: String(nested.source || "") };
+    const normalizeConnection = (connection) => {
+      const value = connection && typeof connection === "object" ? connection : {};
+      return {
+        configured: typeof value.configured === "boolean" ? value.configured : null,
+        host: String(value.host || value.server || "").trim(),
+        database: String(value.database || value.name || "").trim(),
+        label: String(value.label || "").trim()
+      };
+    };
+    const connections = nested.connections && typeof nested.connections === "object"
+      ? nested.connections
+      : nested.settings && typeof nested.settings === "object"
+        ? nested.settings
+        : {};
+    const plannedSummary = summarySource.planned && typeof summarySource.planned === "object"
+      ? summarySource.planned
+      : {};
+    const courseLabels = {
+      professionalRetraining: "Профессиональная переподготовка",
+      advancedTraining: "Повышение квалификации",
+      additionalPrograms: "Прочие программы"
+    };
+    const courseCategories = summarySource.courses && typeof summarySource.courses === "object"
+      ? Object.entries(summarySource.courses).map(([key, course]) => ({
+        key,
+        label: courseLabels[key] || key,
+        count: advertisingSitesMetric(course?.count),
+        minPrice: Number.isFinite(Number(course?.minimumPrice)) ? Number(course.minimumPrice) : 0,
+        text: String(course?.value || "").trim()
+      }))
+      : [];
+    const warnings = [
+      ...(Array.isArray(nested.warnings) ? nested.warnings : []),
+      ...(Array.isArray(payload.warnings) && payload.warnings !== nested.warnings ? payload.warnings : [])
+    ].map(advertisingSitesWarningText).filter(Boolean);
+    if (advertisingSitesMetric(summarySource.conflictingTargets)) {
+      warnings.push(`Конфликтующих полей сайта: ${formatStatisticsInteger(summarySource.conflictingTargets)}. Эти операции исключены из плана.`);
+    }
+    if (advertisingSitesMetric(summarySource.duplicateTargets)) {
+      warnings.push(`Совпадающих повторных назначений: ${formatStatisticsInteger(summarySource.duplicateTargets)}. Они объединены в одну операцию.`);
+    }
+    return {
+      ok: nested.ok !== false && payload.ok !== false,
+      generatedAt: String(nested.generatedAt || payload.generatedAt || "").trim(),
+      snapshotHash: String(nested.snapshotHash || payload.snapshotHash || "").trim(),
+      source: {
+        type: String(source.type || source.sourceType || "").trim(),
+        label: String(source.label || source.name || "").trim(),
+        location: String(source.location || source.path || "").trim()
+      },
+      summary: {
+        totalRows: advertisingSitesMetric(
+          summarySource.totalRows ?? summarySource.sourceRows,
+          rows.length
+        ),
+        ready: advertisingSitesMetric(
+          summarySource.ready ?? summarySource.plannedRows,
+          rows.filter((row) => row.ready).length
+        ),
+        skipped: advertisingSitesMetric(
+          summarySource.skipped ?? summarySource.skippedRows,
+          rows.filter((row) => !row.ready).length
+        ),
+        partial: advertisingSitesMetric(
+          summarySource.partial ?? summarySource.partialRows,
+          rows.filter((row) => row.ready && row.partial).length
+        ),
+        landingOperations: advertisingSitesMetric(
+          summarySource.landingOperations ?? summarySource.siteOperations ?? plannedSummary.landing
+        ),
+        shopOperations: advertisingSitesMetric(
+          summarySource.shopOperations ?? summarySource.storeOperations ?? plannedSummary.shop
+        )
+      },
+      categories: (Array.isArray(nested.categories) ? nested.categories.map((category) => ({
+        key: String(category?.key || category?.type || "").trim(),
+        label: String(category?.label || category?.key || category?.type || "").trim(),
+        count: advertisingSitesMetric(category?.count),
+        minPrice: Number.isFinite(Number(category?.minPrice)) ? Number(category.minPrice) : 0,
+        text: String(category?.text || "").trim()
+      })) : courseCategories),
+      rows,
+      connections: {
+        landing: normalizeConnection(connections.landing || connections.site),
+        shop: normalizeConnection(connections.shop || connections.store)
+      },
+      warnings: [...new Set(warnings)]
+    };
+  }
+
+  function formatAdvertisingSitesPrice(value) {
+    if (value === null || value === undefined || value === "") return "—";
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return "—";
+    return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(amount)} ₽`;
+  }
+
+  function renderAdvertisingSitesConnection(connection, kind) {
+    const label = connection?.label || (kind === "landing"
+      ? "Сайт учебного центра"
+      : "Интернет-магазин");
+    const configured = connection?.configured;
+    const stateLabel = configured === true
+      ? "Подключение настроено"
+      : configured === false ? "Подключение не настроено" : "Состояние подключения не получено";
+    return `
+      <article class="advertising-sites-connection ${configured === false ? "is-error" : configured === true ? "is-ready" : ""}">
+        <span class="advertising-sites-connection-status" aria-hidden="true"></span>
+        <div>
+          <strong>${escapeHtml(label)}</strong>
+          <small>${escapeHtml(stateLabel)}</small>
+          ${connection?.host || connection?.database
+            ? `<span>${escapeHtml([connection.host, connection.database].filter(Boolean).join(" · "))}</span>`
+            : ""}
+        </div>
+      </article>
+    `;
+  }
+
+  function renderAdvertisingSitesRows(rows, options = {}) {
+    const items = Array.isArray(rows) ? rows : [];
+    if (!items.length) {
+      return `<div class="empty-state compact"><strong>${escapeHtml(options.emptyTitle || "Строк нет")}</strong><span>${escapeHtml(options.emptyText || "В выбранной группе нет программ.")}</span></div>`;
+    }
+    return `
+      <div class="table-wrap advertising-sites-table-wrap">
+        <table class="data-table advertising-sites-table ${options.skipped ? "is-skipped" : ""}">
+          <thead><tr><th>Строка</th><th>Программа</th><th>Тип и статус</th><th>Цена</th><th>Старая цена</th><th>Скидка</th><th>Лендинг</th><th>Товар</th>${options.skipped ? "<th>Причина</th>" : ""}</tr></thead>
+          <tbody>${items.map((row) => `
+            <tr class="${row.partial ? "is-partial" : ""}">
+              <td data-label="Строка">${formatStatisticsInteger(row.rowNumber)}</td>
+              <td data-label="Программа"><strong>${escapeHtml(row.name || "—")}</strong></td>
+              <td data-label="Тип и статус"><span>${escapeHtml(row.type || "—")}</span><small>${escapeHtml(row.status || "—")}</small>${row.partial ? '<small class="advertising-sites-partial-badge">Частично</small>' : ""}</td>
+              <td data-label="Цена">${escapeHtml(formatAdvertisingSitesPrice(row.price))}</td>
+              <td data-label="Старая цена">${escapeHtml(formatAdvertisingSitesPrice(row.oldPrice))}</td>
+              <td data-label="Скидка">${row.discount !== null && Number.isFinite(Number(row.discount)) ? `${escapeHtml(formatStatisticsInteger(row.discount))}%` : "—"}</td>
+              <td data-label="Лендинг">${row.landingCode
+                ? `<strong>${escapeHtml(row.landingCode)}</strong>${row.landingPosition ? `<small>позиция ${escapeHtml(row.landingPosition)}</small>` : ""}`
+                : "—"}</td>
+              <td data-label="Товар">${escapeHtml(row.productId || "—")}${!options.skipped && row.reason ? `<small class="advertising-sites-inline-warning">${escapeHtml(row.reason)}</small>` : ""}</td>
+              ${options.skipped ? `<td data-label="Причина"><span class="advertising-sites-row-reason">${escapeHtml(row.reason || "Строка пропущена сервером")}</span></td>` : ""}
+            </tr>
+          `).join("")}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function renderAdvertisingSitesApplyResult(result) {
+    if (!result || typeof result !== "object") return "";
+    const summary = result.summary && typeof result.summary === "object" ? result.summary : {};
+    const report = result.report && typeof result.report === "object" ? result.report : {};
+    const plannedSummary = summary.planned && typeof summary.planned === "object"
+      ? summary.planned
+      : {};
+    const targets = [
+      ["landing", "Сайт учебного центра", report.landing || summary.landing || summary.site],
+      ["shop", "Интернет-магазин", report.shop || summary.shop || summary.store],
+      ["homepage", "Главная страница", report.homepage || summary.homepage]
+    ].filter(([, , value]) => value && typeof value === "object").map(([key, label, value]) => ({
+      key,
+      label,
+      matched: advertisingSitesMetric(value?.matched),
+      changed: advertisingSitesMetric(value?.changed),
+      missing: advertisingSitesMetric(value?.missing)
+    }));
+    const warnings = (Array.isArray(result.warnings) ? result.warnings : [])
+      .map(advertisingSitesWarningText)
+      .filter(Boolean);
+    const detailGroups = report.details && typeof report.details === "object" ? report.details : {};
+    const missingDetails = [
+      ["landing", "Сайт учебного центра", detailGroups.landing],
+      ["shop", "Интернет-магазин", detailGroups.shop]
+    ].flatMap(([site, label, details]) => (Array.isArray(details) ? details : [])
+      .filter((detail) => detail?.status === "missing")
+      .map((detail) => ({
+        site,
+        label,
+        postId: detail?.postId,
+        metaKey: String(detail?.metaKey || "").trim(),
+        rowNumbers: Array.isArray(detail?.rowNumbers) ? detail.rowNumbers : [],
+        rowCount: advertisingSitesMetric(detail?.rowCount, Array.isArray(detail?.rowNumbers) ? detail.rowNumbers.length : 0)
+      })));
+    const updatedAt = String(result.updatedAt || result.appliedAt || "").trim();
+    const programCount = advertisingSitesMetric(summary.programs ?? summary.plannedRows);
+    const queryCount = advertisingSitesMetric(
+      summary.queries ?? plannedSummary.total ?? report.matched
+    );
+    const resultStatus = String(result.status || "").trim().toLowerCase();
+    const resultTitle = resultStatus === "partial"
+      ? "Сайты обновлены частично"
+      : resultStatus === "noop" || resultStatus === "no-op"
+        ? "Изменения не выполнены"
+        : "Сайты обновлены";
+    return `
+      <section class="advertising-sites-result" role="status">
+        <div class="panel-head advertising-results-head">
+          <div><p class="eyebrow">Результат обновления</p><h3>${escapeHtml(resultTitle)}</h3></div>
+          ${updatedAt ? `<time datetime="${escapeAttr(updatedAt)}">${escapeHtml(formatDateTimeRu(updatedAt))}</time>` : ""}
+        </div>
+        <div class="advertising-sites-result-grid">
+          ${targets.map((target) => `
+            <article>
+              <strong>${escapeHtml(target.label)}</strong>
+              <span>Найдено: <b>${formatStatisticsInteger(target.matched)}</b></span>
+              <span>Изменено: <b>${formatStatisticsInteger(target.changed)}</b></span>
+              <span class="${target.missing ? "is-warning" : ""}">Не найдено: <b>${formatStatisticsInteger(target.missing)}</b></span>
+            </article>
+          `).join("")}
+        </div>
+        <div class="advertising-sites-result-meta">
+          <span>Программ: <strong>${formatStatisticsInteger(programCount)}</strong></span>
+          <span>Операций: <strong>${formatStatisticsInteger(queryCount)}</strong></span>
+          ${Object.prototype.hasOwnProperty.call(report, "skipped") ? `<span>Пропущено: <strong>${formatStatisticsInteger(report.skipped)}</strong></span>` : ""}
+        </div>
+        ${missingDetails.length ? `
+          <details class="advertising-sites-details is-skipped">
+            <summary><span>Не найденные поля сайтов</span><strong>${formatStatisticsInteger(missingDetails.length)}</strong></summary>
+            <ul class="advertising-sites-missing-list">
+              ${missingDetails.slice(0, 100).map((detail) => `
+                <li>
+                  <strong>${escapeHtml(detail.label)} · ${escapeHtml(detail.metaKey || "поле без названия")}</strong>
+                  <span>${detail.postId ? `ID ${escapeHtml(detail.postId)}` : "Общее поле"}${detail.rowNumbers.length ? ` · строки XLSB ${escapeHtml(detail.rowNumbers.join(", "))}${detail.rowCount > detail.rowNumbers.length ? "…" : ""}` : ""}</span>
+                </li>
+              `).join("")}
+            </ul>
+          </details>
+        ` : ""}
+        ${warnings.length ? `<ul class="advertising-sites-warnings">${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>` : ""}
+      </section>
+    `;
+  }
+
+  function renderAdvertisingSites() {
+    if (!isAdminUser()) {
+      return '<section class="panel"><div class="empty-state compact"><strong>Обновление сайтов доступно администратору</strong><span>Операция изменяет цены на сайте учебного центра и в интернет-магазине.</span></div></section>';
+    }
+    const sites = state.advertising.sites;
+    const preview = sites.preview ? normalizeAdvertisingSitesPreview(sites.preview) : null;
+    const summary = preview?.summary || {};
+    const readyRows = preview?.rows.filter((row) => row.ready) || [];
+    const skippedRows = preview?.rows.filter((row) => !row.ready) || [];
+    const connectionsReady = preview
+      && preview.connections.landing.configured === true
+      && preview.connections.shop.configured === true;
+    const canApply = Boolean(
+      preview?.snapshotHash
+      && summary.ready > 0
+      && connectionsReady
+      && !sites.error
+      && !sites.loading
+      && !sites.applying
+    );
+    const sourceLabel = preview?.source.label
+      || getStudentDatabaseSourceLabel(sites.source || getStudentDocumentsSource());
+    return `
+      <section class="panel advertising-sites-panel">
+        <div class="advertising-sites-heading">
+          <div>
+            <p class="eyebrow">Реестр программ XLSB</p>
+            <h2>Обновление сайтов</h2>
+            <p>Цены, скидки и ссылки будут подготовлены по правилам функции «ОбновитьСайты» из АИС Допобразование.xlsb.</p>
+          </div>
+          <div class="advertising-heading-actions">
+            <button class="ghost-button" data-action="refresh-advertising-sites" type="button" ${sites.loading || sites.applying ? "disabled" : ""}>${sites.loading ? '<span class="auth-spinner" aria-hidden="true"></span> Загрузка…' : "Обновить данные"}</button>
+            <button class="primary-button" data-action="apply-advertising-sites" type="button" ${canApply ? "" : "disabled"}>${sites.applying ? '<span class="auth-spinner" aria-hidden="true"></span> Обновление…' : "Обновить сайты"}</button>
+          </div>
+        </div>
+        <div class="advertising-sites-source">
+          <span>Источник</span>
+          <strong>${escapeHtml(sourceLabel)}</strong>
+          ${preview?.source.location ? `<small title="${escapeAttr(preview.source.location)}">${escapeHtml(preview.source.location)}</small>` : ""}
+          ${preview?.generatedAt ? `<time datetime="${escapeAttr(preview.generatedAt)}">Проверено ${escapeHtml(formatDateTimeRu(preview.generatedAt))}</time>` : ""}
+        </div>
+        ${sites.error ? `<div class="advertising-inline-message is-error" role="alert">${escapeHtml(sites.error)}</div>` : ""}
+        ${sites.message ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(sites.message)}</div>` : ""}
+        ${sites.loading && !preview
+          ? '<div class="advertising-loading"><span class="auth-spinner" aria-hidden="true"></span><span>Читается реестр программ и проверяются подключения…</span></div>'
+          : !preview
+            ? '<div class="empty-state compact"><strong>Предварительные данные ещё не получены</strong><span>Нажмите «Обновить данные», чтобы проверить XLSB и подключения.</span></div>'
+            : `
+              <div class="advertising-kpi-grid advertising-sites-kpi-grid">
+                <article class="statistics-kpi-card"><span>Строк в реестре</span><strong>${formatStatisticsInteger(summary.totalRows)}</strong><small>Прочитано из XLSB</small></article>
+                <article class="statistics-kpi-card tone-green"><span>Готовы</span><strong>${formatStatisticsInteger(summary.ready)}</strong><small>Можно обновить</small></article>
+                ${summary.partial ? `<article class="statistics-kpi-card tone-amber"><span>Частично</span><strong>${formatStatisticsInteger(summary.partial)}</strong><small>Часть полей исключена</small></article>` : ""}
+                <article class="statistics-kpi-card tone-red"><span>Пропущены</span><strong>${formatStatisticsInteger(summary.skipped)}</strong><small>Требуют проверки</small></article>
+                <article class="statistics-kpi-card tone-blue"><span>Операции сайта</span><strong>${formatStatisticsInteger(summary.landingOperations)}</strong><small>Цены и главная страница</small></article>
+                <article class="statistics-kpi-card tone-amber"><span>Операции магазина</span><strong>${formatStatisticsInteger(summary.shopOperations)}</strong><small>Карточки товаров</small></article>
+              </div>
+              <div class="advertising-sites-connections">
+                ${renderAdvertisingSitesConnection(preview.connections.landing, "landing")}
+                ${renderAdvertisingSitesConnection(preview.connections.shop, "shop")}
+              </div>
+              ${preview.categories.length ? `
+                <div class="advertising-sites-categories">
+                  ${preview.categories.map((category) => `
+                    <article>
+                      <span>${escapeHtml(category.label || category.key || "Категория")}</span>
+                      <strong>${formatStatisticsInteger(category.count)}</strong>
+                      <small>${escapeHtml(category.text || (category.minPrice ? `Цена от ${formatAdvertisingSitesPrice(category.minPrice)}` : "Цена не определена"))}</small>
+                    </article>
+                  `).join("")}
+                </div>
+              ` : ""}
+              ${preview.warnings.length ? `<ul class="advertising-sites-warnings">${preview.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>` : ""}
+              <details class="advertising-sites-details" open>
+                <summary><span>Готовые и частичные программы</span><strong>${formatStatisticsInteger(readyRows.length)}</strong></summary>
+                ${renderAdvertisingSitesRows(readyRows, {
+                  emptyTitle: "Нет готовых программ",
+                  emptyText: "Проверьте реестр программ и обязательные реквизиты."
+                })}
+              </details>
+              ${skippedRows.length ? `
+                <details class="advertising-sites-details is-skipped">
+                  <summary><span>Пропущенные строки</span><strong>${formatStatisticsInteger(skippedRows.length)}</strong></summary>
+                  ${renderAdvertisingSitesRows(skippedRows, { skipped: true })}
+                </details>
+              ` : ""}
+            `}
+        ${renderAdvertisingSitesApplyResult(sites.result)}
+      </section>
+    `;
+  }
+
+  async function loadAdvertisingSitesPreview(options = {}) {
+    if (!isAdminUser()) return;
+    const sites = state.advertising.sites;
+    if (sites.loading || (sites.loaded && !options.force)) return;
+    const source = getStudentDocumentsSource();
+    sites.loading = true;
+    sites.source = source;
+    sites.error = "";
+    if (!options.preserveMessage) sites.message = "";
+    if (state.view === "advertising" && state.advertising.tab === "sites") render();
+    try {
+      const response = await fetch(photoApiUrl(`/api/advertising/sites?source=${encodeURIComponent(source)}`), {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "X-Requested-With": "AIS-Web" }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      sites.preview = normalizeAdvertisingSitesPreview(payload);
+      sites.loaded = true;
+    } catch (error) {
+      sites.error = error.message || "Не удалось подготовить данные для обновления сайтов.";
+      sites.loaded = true;
+    } finally {
+      sites.loading = false;
+      if (state.view === "advertising" && state.advertising.tab === "sites") render();
+    }
+  }
+
+  async function applyAdvertisingSites() {
+    if (!isAdminUser()) return;
+    const sites = state.advertising.sites;
+    const preview = sites.preview ? normalizeAdvertisingSitesPreview(sites.preview) : null;
+    if (!preview?.snapshotHash || !preview.summary.ready || sites.error || sites.loading || sites.applying) return;
+    const source = sites.source || getStudentDocumentsSource();
+    const confirmed = window.confirm([
+      "Обновить цены и ссылки на действующих сайтах?",
+      `Источник: ${preview.source.label || getStudentDatabaseSourceLabel(source)}.`,
+      `Готовых программ: ${formatStatisticsInteger(preview.summary.ready)}. Операций сайта: ${formatStatisticsInteger(preview.summary.landingOperations)}. Операций магазина: ${formatStatisticsInteger(preview.summary.shopOperations)}.`,
+      preview.summary.partial ? `Из них частичных: ${formatStatisticsInteger(preview.summary.partial)}. Для них будут записаны только однозначно определённые поля.` : "",
+      "Будут изменены рабочий сайт учебного центра и интернет-магазин. Перед записью сервер повторно проверит снимок XLSB."
+    ].filter(Boolean).join("\n\n"));
+    if (!confirmed) return;
+    sites.applying = true;
+    sites.error = "";
+    sites.message = "";
+    sites.result = null;
+    if (state.view === "advertising" && state.advertising.tab === "sites") render();
+    try {
+      const response = await fetch(photoApiUrl("/api/advertising/sites"), {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "AIS-Web"
+        },
+        body: JSON.stringify({
+          source,
+          snapshotHash: preview.snapshotHash,
+          confirm: true
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Ошибка сервера: ${response.status}`);
+      sites.result = payload;
+      sites.message = String(payload.status || "").toLowerCase() === "partial"
+        ? "Обновление сайтов завершено частично. Неоднозначные или отсутствующие поля показаны ниже."
+        : "Обновление сайтов завершено. Результаты записи показаны ниже.";
+      if (payload.preview && typeof payload.preview === "object") {
+        sites.preview = normalizeAdvertisingSitesPreview(payload.preview);
+      }
+      sites.loaded = true;
+    } catch (error) {
+      sites.error = error.message || "Не удалось обновить сайты.";
+    } finally {
+      sites.applying = false;
+      if (state.view === "advertising" && state.advertising.tab === "sites") render();
+    }
+  }
+
   function renderAdvertisingHistory() {
     const history = state.advertising.history;
     const rows = Array.isArray(history.rows) ? history.rows : [];
@@ -14393,6 +14914,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const advertisingTabs = getOrderedTabs("advertising", [
       { id: "collector", label: "Сборщик" },
       ...(isAdminUser() ? [{ id: "sources", label: "Источники" }] : []),
+      ...(isAdminUser() ? [{ id: "sites", label: "Сайты" }] : []),
       { id: "exclusions", label: "Исключения" }
     ]);
     const advertisingTab = advertisingTabs.some((tab) => tab.id === advertising.tab)
@@ -14538,7 +15060,11 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${renderTablePagination("advertisingEmails", rows.length, pagination)}
               `)}
         </section>
-        ` : advertisingTab === "sources" ? renderAdvertisingSourceBuilder() : renderAdvertisingExclusions()}
+        ` : advertisingTab === "sources"
+          ? renderAdvertisingSourceBuilder()
+          : advertisingTab === "sites"
+            ? renderAdvertisingSites()
+            : renderAdvertisingExclusions()}
       </section>
     `;
   }
@@ -15232,12 +15758,17 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='switch-advertising-tab']").forEach((button) => {
       button.addEventListener("click", () => {
         const tab = String(button.dataset.advertisingTab || "collector");
-        if (!["collector", "sources", "exclusions"].includes(tab)) return;
+        if (!["collector", "sources", "sites", "exclusions"].includes(tab)) return;
         if (tab === "sources" && !isAdminUser()) return;
+        if (tab === "sites" && !isAdminUser()) return;
         state.advertising.tab = tab;
         render();
       });
     });
+    document.querySelector("[data-action='refresh-advertising-sites']")?.addEventListener("click", () => {
+      loadAdvertisingSitesPreview({ force: true });
+    });
+    document.querySelector("[data-action='apply-advertising-sites']")?.addEventListener("click", applyAdvertisingSites);
     document.querySelector("[data-action='toggle-advertising-source-picker']")?.addEventListener("click", (event) => {
       const button = event.currentTarget;
       const content = document.getElementById("advertisingSourcePickerContent");
