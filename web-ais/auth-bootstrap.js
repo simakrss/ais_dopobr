@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260831-database-demo-mode-v1";
+  const AUTH_BUILD = "20260831-admin-tab-labels-v1";
   const DATABASE_DEMO_MODE_CHANNEL = "ais-database-demo-mode";
   const DATABASE_DEMO_MODE_STORAGE_EVENT_KEY = "ais-database-demo-mode-event";
   const DISMISSIBLE_MODAL_BACKDROP_SELECTOR = ".modal-backdrop, .partner-modal-backdrop, [data-documents-backdrop]";

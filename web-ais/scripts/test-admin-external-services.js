@@ -17,7 +17,9 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-assert.match(appSource, /\{ id: "external-services", label: "Внешние сервисы" \}/u);
+assert.match(appSource, /\{ id: "external-services", label: "Сервисы" \}/u);
+assert.match(appSource, /\{ id: "audit", label: "Журнал" \}/u);
+assert.match(appSource, /<h2>Сервисы<\/h2>/u);
 assert.match(appSource, /\{ id: "email", label: "Почта" \}/u);
 assert.doesNotMatch(appSource, /\{ id: "email", label: "Электронная почта" \}/u);
 assert.match(appSource, /getOrderedTabs\("admin", \[/u);

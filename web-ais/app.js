@@ -185,10 +185,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.375",
+    version: "1.7.376",
     releasedAt: "2026-08-31"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.376",
+      releasedAt: "2026-08-31",
+      changes: [
+        "В админке вкладки «Внешние сервисы» и «Журнал действий» переименованы в «Сервисы» и «Журнал»."
+      ]
+    },
     {
       version: "1.7.375",
       releasedAt: "2026-08-31",
@@ -24859,8 +24866,8 @@ MAX - https://bizvmax.ru/zifra_plus
       { id: "database", label: "Подключение к базе" },
       { id: "email", label: "Почта" },
       { id: "demo", label: "Деморежим" },
-      { id: "external-services", label: "Внешние сервисы" },
-      { id: "audit", label: "Журнал действий" },
+      { id: "external-services", label: "Сервисы" },
+      { id: "audit", label: "Журнал" },
       { id: "users", label: "Пользователи и роли" }
     ]);
     const adminTab = adminTabs.some((tab) => tab.id === state.adminTab)
@@ -25581,7 +25588,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="section-head admin-external-services-head">
           <div>
             <p class="eyebrow">Подключение</p>
-            <h2>Внешние сервисы</h2>
+            <h2>Сервисы</h2>
             <p class="admin-tab-summary">Система сначала использует Docker-сервисы на текущем компьютере, а при их недоступности обращается к этому компьютеру через защищённый туннель.</p>
           </div>
           <button
