@@ -16449,8 +16449,8 @@ MAX - https://bizvmax.ru/zifra_plus
       <section class="panel issued-documents-register" data-issued-documents-register data-main-registry>
         <div class="issued-documents-summary" aria-label="Сводка реестра">
           <span>Всего: <strong>${allRows.length}</strong></span>
-          <span class="is-success">Выгружено в ФРДО: <strong>${exportedCount}</strong></span>
-          <span class="${pendingCount ? "is-warning" : ""}">Ожидают ФРДО: <strong>${pendingCount}</strong></span>
+          <span class="is-success">Выгружено: <strong>${exportedCount}</strong></span>
+          <span class="${pendingCount ? "is-warning" : ""}">Ожидают: <strong>${pendingCount}</strong></span>
           <div class="issued-documents-filter-actions">
             <button class="primary-button issued-documents-frdo-export-button" data-action="export-issued-documents-frdo" type="button" ${pendingCount && !state.issuedDocumentExportRunning ? "" : "disabled"}>Экспорт в ФРДО</button>
             ${filters.frdo === "pending" ? `<button class="ghost-button" data-action="mark-issued-documents-exported" type="button" ${rows.length && !state.issuedDocumentMarkRunning ? "" : "disabled"}>Отметить как выгруженные</button>` : ""}

@@ -96,6 +96,9 @@ const button = {
   assert.equal(button.disabled, false);
   assert.equal(classes.has("is-loading"), false);
   assert.deepEqual(alerts, []);
+  assert.match(appSource, /class="is-success">Выгружено: <strong>\$\{exportedCount\}<\/strong>/u);
+  assert.match(appSource, />Ожидают: <strong>\$\{pendingCount\}<\/strong>/u);
+  assert.doesNotMatch(appSource, /(?:Выгружено в|Ожидают) ФРДО:/u);
 
   state.issuedDocumentFilters.frdo = "exported";
   await helpers.markFilteredIssuedDocumentsAsExported(button);
