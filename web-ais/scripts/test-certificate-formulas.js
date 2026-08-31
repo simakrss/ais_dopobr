@@ -77,6 +77,41 @@ assert.deepEqual(
   [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
 );
 
+const dopCertificateTemplate = fs.readFileSync(path.resolve(
+  __dirname,
+  '..',
+  'storage',
+  'document-templates',
+  'Сертификат ДОП.docx'
+));
+const dopCertificateValues = server.applyCustomDocumentPropertyFormulas(
+  dopCertificateTemplate,
+  {
+    'Дата выдачи': '31.08.2026',
+    'Номер бланка': '0000000001',
+    'Прогр обуч факт': 'Контрольная программа ДОП',
+    'Прогр обуч факт_ENG': 'Test continuing education program',
+    'РегНомер': '1/26-ДОП',
+    'ФИО': 'Иванов Иван Иванович',
+    'ФИО_ENG': 'Ivanov Ivan Ivanovich',
+    'ИО': 'Иван Иванович',
+    'Срок обучения_ENG': '',
+    'Email': 'student@example.test',
+    'QRкод': ''
+  },
+  {
+    'Вид  программы ДПО': 'ДОП',
+    'Количество часов': '72 ч',
+    'Дата начала обучения': '01.08.2026',
+    'Дата окончания обучения': '31.08.2026'
+  }
+);
+assert.match(dopCertificateValues['Прогр обуч факт'], /Контрольная программа ДОП/u);
+assert.match(dopCertificateValues['Прогр обуч факт'], /01\.08\.2026/u);
+assert.match(dopCertificateValues['Прогр обуч факт'], /31\.08\.2026/u);
+assert.match(dopCertificateValues['Срок обучения_ENG'], /01\.08\.2026/u);
+assert.match(dopCertificateValues['Срок обучения_ENG'], /31\.08\.2026/u);
+
 const certificateTemplate = fs.readFileSync(path.resolve(
   __dirname,
   '..',

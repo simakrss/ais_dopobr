@@ -10,6 +10,7 @@ const server = require(path.join(root, "app-server.js"));
 const requiredTemplates = [
   "Диплом о переподготовке_v1.docx",
   "Удостоверение о повышении квалификации_v1.docx",
+  "Сертификат ДОП.docx",
   "Сертификат ПРО.docx"
 ];
 

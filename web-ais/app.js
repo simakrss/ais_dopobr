@@ -3740,6 +3740,7 @@ MAX - https://bizvmax.ru/zifra_plus
     trainingReduction: "Документы/Заявление+доп. согл_сокращение обучения.docx",
     diploma: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/eyxERaRJXPCC4A"],
     qualificationCertificate: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/lAQO0kGbtWTjSA"],
+    dopCertificate: "Документы/Сертификат ДОП.docx",
     proCertificate: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/VSPdwaaaFKUK9g"],
     studyCertificate: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/2SP7KB2PpwykbQ"],
     postalEnvelope: documentTemplatePublicSourceMigrations["https://disk.yandex.ru/i/a5MJDB7nQQYptg"],
@@ -4182,6 +4183,20 @@ MAX - https://bizvmax.ru/zifra_plus
       ]
     },
     {
+      id: "education-document-certificate-dop",
+      title: "Сертификат ДОП",
+      templateUrl: defaultDocumentTemplateWebDavSources.dopCertificate,
+      templatePath: "storage/document-templates/Сертификат ДОП.docx",
+      fileName: "Сертификат ДОП.docx",
+      fileNameTemplate: "Сертификат_#ФИО#_#РегНомер#",
+      saveFolderTemplate: "Документы/Сертификаты мероприятия",
+      programTypes: ["ДОП"],
+      markers: [
+        "Дата выдачи", "ИО", "Номер бланка", "Прогр обуч факт", "Прогр обуч факт_ENG",
+        "РегНомер", "РегНомер_ENG", "Срок обучения_ENG", "ФИО", "ФИО_ENG", "Email", "QRкод"
+      ]
+    },
+    {
       id: "education-document-certificate-dop-pro",
       title: "Сертификат ПРО",
       templateUrl: defaultDocumentTemplateWebDavSources.proCertificate,
@@ -4189,7 +4204,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fileName: "Сертификат ПРО.docx",
       fileNameTemplate: "Сертификат_#ФИО#_#РегНомер#",
       saveFolderTemplate: "Документы/Сертификаты мероприятия",
-      programTypes: ["ДОП", "ПРО"],
+      programTypes: ["ПРО"],
       markers: [
         "Дата выдачи", "ИО", "Номер бланка", "Прогр обуч факт", "Прогр обуч факт_ENG",
         "РегНомер", "РегНомер_ENG", "Срок обучения_ENG", "ФИО", "ФИО_ENG", "Email", "QRкод"
@@ -7604,7 +7619,15 @@ MAX - https://bizvmax.ru/zifra_plus
           existing.fields = (existing.fields || []).filter((field) => String(field?.name || "").trim() !== "Фото");
           existing.originalFields = (existing.originalFields || []).filter((field) => String(field?.name || "").trim() !== "Фото");
         }
-        if (defaultTemplate.documentKind === "education" && !existing.programTypes?.length) existing.programTypes = [...defaultTemplate.programTypes];
+        const fixedEducationProgramTypes = {
+          "education-document-certificate-dop": ["ДОП"],
+          "education-document-certificate-dop-pro": ["ПРО"]
+        }[defaultTemplate.id];
+        if (fixedEducationProgramTypes) {
+          existing.programTypes = [...fixedEducationProgramTypes];
+        } else if (defaultTemplate.documentKind === "education" && !existing.programTypes?.length) {
+          existing.programTypes = [...defaultTemplate.programTypes];
+        }
         if (
           defaultTemplate.generationFormatVersion
           && existing.generationFormatVersion !== defaultTemplate.generationFormatVersion
@@ -61080,10 +61103,17 @@ MAX - https://bizvmax.ru/zifra_plus
   function getEducationDocumentTemplateForRecord(record) {
     const programType = getStudentProgramTypeCode(record);
     if (!programType) return null;
-    return getDocumentTemplates().find((documentTemplate) => (
+    const matchingTemplates = getDocumentTemplates().filter((documentTemplate) => (
       documentTemplate.documentKind === "education"
       && (documentTemplate.programTypes || []).some((type) => normalizeEducationProgramType(type) === programType)
-    )) || null;
+    ));
+    const preferredTemplateId = {
+      "ДОП": "education-document-certificate-dop",
+      "ПРО": "education-document-certificate-dop-pro"
+    }[programType];
+    return matchingTemplates.find((documentTemplate) => documentTemplate.id === preferredTemplateId)
+      || matchingTemplates[0]
+      || null;
   }
 
   function getEducationDocumentButtonTitle(record) {
