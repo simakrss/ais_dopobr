@@ -128,6 +128,15 @@ assert.equal(importHeader.dataset.shiftDragEnabled, undefined);
 assert.equal(protectedDragElement.draggable, false, "Остальные защищённые draggable-элементы не должны менять поведение");
 assert.equal(protectedDragElement.dataset.shiftDragEnabled, "true");
 assert.match(appSource, /renderTableOptions\(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID\)/u);
+assert.match(
+  appSource,
+  /class="ghost-button student-applications-import-button"[^>]*>Импорт<\/button>/u,
+  "Кнопка импорта в реестре слушателей должна иметь короткую подпись"
+);
+assert.doesNotMatch(
+  appSource,
+  /class="ghost-button student-applications-import-button"[^>]*>Импорт слушателей<\/button>/u
+);
 assert.match(appSource, /delete state\.tableSettings\[configId\][\s\S]*STUDENT_APPLICATIONS_IMPORT_DEFAULT_SORT/u);
 assert.match(appSource, /getTableLayoutConfig\(configId\)[\s\S]*studentApplicationsImportTableConfig/u);
 assert.match(stylesSource, /\.student-applications-payment-cell\s*\{[\s\S]*text-align:\s*right/u);

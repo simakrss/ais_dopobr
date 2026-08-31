@@ -16769,7 +16769,7 @@ MAX - https://bizvmax.ru/zifra_plus
               ${state.view === "contracts" ? renderContractSectionFilter() : ""}
             </div>
             <div class="collection-toolbar-actions">
-              ${state.view === "students" ? `<button class="ghost-button student-applications-import-button" data-action="open-student-applications-import" type="button">Импорт слушателей</button>` : ""}
+              ${state.view === "students" ? `<button class="ghost-button student-applications-import-button" data-action="open-student-applications-import" type="button">Импорт</button>` : ""}
               <button class="ghost-button" data-action="export-csv" data-config="${state.view}" type="button">CSV</button>
               <button class="primary-button" data-action="create" data-config="${state.view}" type="button">Добавить</button>
             </div>
