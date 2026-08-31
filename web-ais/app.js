@@ -19976,6 +19976,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   const value = externalUrl
                     ? `<a class="table-edit-link" href="${escapeAttr(externalUrl)}" target="_blank" rel="noopener noreferrer" title="Открыть страницу промосайта">${escapeHtml(displayValue)}</a>`
                     : escapeHtml(displayValue);
+                  const clampedValue = `<span class="table-cell-clamp" data-table-cell-full-text="${escapeAttr(displayValue)}">${value}</span>`;
                   const style = columnStyleAttr(configId, fieldItem.key);
                   const attrs = columnDataAttrs(configId, fieldItem.key);
                   const hoursMismatch = configId === "programs"
@@ -19988,13 +19989,13 @@ MAX - https://bizvmax.ru/zifra_plus
                     return `
                       <td class="table-primary-col" ${attrs} ${filterAttrs} ${style}>
                         <button class="table-edit-link" data-action="edit" data-config="${configId}" data-id="${row.id}" type="button" ${lockedByOther ? `aria-label="${escapeAttr(lockTitle)}"` : ""}>
-                          ${value}
+                          ${clampedValue}
                           ${recordLock ? '<span class="record-lock-indicator" aria-hidden="true">🔒</span>' : ""}
                         </button>
                       </td>
                     `;
                   }
-                   return `<td ${mismatchAttrs} ${attrs} ${filterAttrs} ${style}>${value}</td>`;
+                  return `<td ${mismatchAttrs} ${attrs} ${filterAttrs} ${style}>${clampedValue}</td>`;
                 }).join("")}
               </tr>
             `;
@@ -35772,10 +35773,29 @@ MAX - https://bizvmax.ru/zifra_plus
     return header;
   }
 
+  function getTableCellTooltipTarget(node) {
+    if (!(node instanceof Element)) return null;
+    const target = node.closest("[data-table-cell-full-text]");
+    if (!target) return null;
+    const fullText = String(target.dataset.tableCellFullText || "").trim();
+    const clipped = target.clientHeight > 0 && (
+      target.scrollHeight > target.clientHeight + 1
+      || target.scrollWidth > target.clientWidth + 1
+    );
+    if (!fullText || !clipped) {
+      delete target.dataset.tooltip;
+      return null;
+    }
+    target.dataset.tooltip = fullText;
+    return target;
+  }
+
   function getSystemHelpTarget(node) {
     if (!(node instanceof Element)) return null;
     const tableHeader = getTableHeaderTooltipTarget(node);
     if (tableHeader) return tableHeader;
+    const tableCell = getTableCellTooltipTarget(node);
+    if (tableCell) return tableCell;
     return node.closest("[data-mobile-field-help-source], [title], [data-system-help-source], [data-tooltip]");
   }
 

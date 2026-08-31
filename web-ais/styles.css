@@ -4648,6 +4648,20 @@ tr.is-table-value-filtered-out {
   min-width: 0;
 }
 
+.table-cell-clamp {
+  display: -webkit-box;
+  max-width: 100%;
+  max-height: 4.05em;
+  overflow: hidden;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .table-edit-link {
   max-width: 100%;
   border: 0;
